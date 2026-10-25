@@ -8,6 +8,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { HandoffActionV1, SecretaryArchiveActionV1 } from './session-operation-arms.js';
 import type { GraphWrite } from './task-contracts.js';
 
 export type { GraphWrite } from './task-contracts.js';
@@ -34,15 +35,24 @@ export type SessionCreationInput = {
   provenance?: SessionProvenanceV1;
   /** Slice 6A §3.4.7: absent or null is a creation that opens no line. */
   creation?: SessionCreationIntentV1 | null;
+  /** The handoff operation a successor is created under; absent is null (as `provenance` and `creation`). */
+  parentOperation?: OperationRef | null;
 };
-export type SessionOperationRecord = {
+export type SessionCreateActionV1 = { kind: 'create'; plannedSessionRef: SessionRef; parentOperation: OperationRef | null }
+  & Omit<SessionCreationInput, 'provenance' | 'creation' | 'parentOperation'>
+  & { provenance: SessionProvenanceV1; creation: SessionCreationIntentV1 | null };
+/** The three arms of a `CoreOperation` record; every reader judges `kind` first. */
+export type SessionOperationActionV1 = SessionCreateActionV1 | HandoffActionV1 | SecretaryArchiveActionV1;
+export type SessionOperationRecordOf<A extends SessionOperationActionV1> = {
   ref: OperationRef;
   revision: number;
-  action: { kind: 'create'; plannedSessionRef: SessionRef } & Omit<SessionCreationInput, 'provenance' | 'creation'>
-    & { provenance: SessionProvenanceV1; creation: SessionCreationIntentV1 | null };
+  /** The operation's workspace: the create arm's `workspace`, the handoff's `input.workspace`, the archive's only one. */
+  workspaceId: string;
+  action: A;
   phase: 'accepted' | 'running' | 'completed' | 'failed' | 'unknown';
   requestedAt: string;
   updatedAt: string;
+  /** What the Kernel reported for a creation; `null` on every other arm. */
   observation: null | {
     observedAt: string; adapterId: string; kernelSessionId: string;
     beforeCursor: string | null; afterCursor: string | null;
@@ -50,6 +60,8 @@ export type SessionOperationRecord = {
   };
   failure: null | { code: string; reason: string };
 };
+export type SessionOperationRecord = SessionOperationRecordOf<SessionOperationActionV1>;
+export type SessionCreateOperationRecord = SessionOperationRecordOf<SessionCreateActionV1>;
 export type SessionCreationResult = {
   operationRef: OperationRef;
   sessionRef: SessionRef;
@@ -65,7 +77,7 @@ export type SessionCard = {
   recommendationReasons: string[];
 };
 export interface SessionDirectoryPort {
-  admitSessionCreation(ctx: CoreCallContext, request: GraphWrite<SessionCreationInput>): Promise<WriteResult<SessionOperationRecord>>;
+  admitSessionCreation(ctx: CoreCallContext, request: GraphWrite<SessionCreationInput>): Promise<WriteResult<SessionCreateOperationRecord>>;
   recordSessionCreated(ctx: CoreCallContext, request: GraphWrite<SessionCreationResult>): Promise<WriteResult<SessionRecord>>;
   getSessionOperation(ctx: CoreCallContext, ref: OperationRef): Promise<ReadResult<SessionOperationRecord>>;
   readSession(ctx: CoreCallContext, ref: SessionRef): Promise<ReadResult<SessionCard>>;

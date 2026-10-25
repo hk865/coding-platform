@@ -18,11 +18,12 @@
  * Cards and notices come from ONE whole-page run of the decision queue's source
  * assembly per read (`readWholePage`). A request's cards are those naming one of
  * its rounds and, with an effective Goal, that Goal's own cards (the ones that
- * name no request); a page lists the selected Goal's own cards, then each
- * request's, each card once, and its requests name them by `cardKey`. The page's
- * notices are the selected Goal's lines with that Goal's automatic reworks
- * folded, and the seen advance and display token the page allows; the no-goal
- * view shows none. Reading writes nothing.
+ * name no request); a page lists the page's own cards — the project's, which are
+ * the common part of every view, and the selected Goal's — then each request's,
+ * each card once, and its requests name them by `cardKey`. The page's notices are
+ * the project's lines plus the selected Goal's (the no-goal view: the project's
+ * only), with each subject's automatic reworks folded, and the seen advance and
+ * display token the page allows. Reading writes nothing.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -139,6 +140,15 @@ function goalSourceCard(card: DecisionCardV1, goal: GoalRef): boolean {
 }
 
 /**
+ * The project's own card: the project subject's card that names no request. It
+ * belongs to the page's common part, so every view lists it and no request claims
+ * it (a no-goal request matches by `requestRef` only, and this one names none).
+ */
+function projectSourceCard(card: DecisionCardV1): boolean {
+  return card.requestRef === null && card.subject.kind === 'project';
+}
+
+/**
  * A request's cards (slice-6-SPEC L6): the cards whose `requestRef` names one of
  * its rounds and, when it has an effective Goal, that Goal's own cards. A
  * no-goal request matches by `requestRef` only. The order is the assembly's.
@@ -156,9 +166,10 @@ export function requestCards(
 }
 
 /**
- * A page's cards: the selected Goal's own cards, then each request's, each card
- * once by `cardKey` (the first occurrence keeps its place); every request names
- * its own cards by key.
+ * A page's cards: the page's own cards (the project's and the selected Goal's),
+ * then each request's, each card once by `cardKey` (the first occurrence keeps its
+ * place); every request names its own cards by key. The project's cards are the
+ * common part of every view, including the no-goal one.
  */
 export function pageCards(
   cards: readonly DecisionCardV1[],
@@ -174,7 +185,7 @@ export function pageCards(
     keys.add(card.cardKey);
     listed.push(card);
   };
-  if (goal !== null) for (const card of cards) if (goalSourceCard(card, goal)) listOnce(card);
+  for (const card of cards) if (projectSourceCard(card) || (goal !== null && goalSourceCard(card, goal))) listOnce(card);
   for (const own of perRequest) for (const card of own) listOnce(card);
   return { cards: listed, cardKeys: perRequest.map((own) => own.map((card) => card.cardKey)) };
 }
@@ -291,7 +302,8 @@ async function readMainPage(
 
   const goalRef: GoalRef | null = parsed.goalId === null ? null
     : { aggregateType: 'Goal', projectId: ctx.projectId, goalId: parsed.goalId };
-  const whole = await deps.decisions.readWholePage(ctx, { workspace, notices: goalRef === null ? null : { goalRef } });
+  // The no-goal view still reads notices: the project's lines are the page's common part (`goalRef: null`).
+  const whole = await deps.decisions.readWholePage(ctx, { workspace, notices: { goalRef } });
   if (whole.status !== 'ready') return whole;
   const listed = pageCards(whole.value.cards, views, goalRef, ctx.projectId);
   return { status: 'ready', value: {

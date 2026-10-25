@@ -205,7 +205,7 @@ async function readAutomaticReworkPage(
       }
       items.push(withResourceCapHit({
         itemKey, category: 'automatic_rework',
-        goalRef: { aggregateType: 'Goal', projectId: requeue.ref.projectId, goalId: requeue.ref.goalId },
+        subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: requeue.ref.projectId, goalId: requeue.ref.goalId } },
         position: noticePositionOf(since, itemKey),
         summary,
         objects: [],
@@ -258,7 +258,7 @@ async function readAutomaticReworkPage(
           : reworkSummary(round.subject, count, cap);
         items.push(withResourceCapHit({
           itemKey, category: 'automatic_rework',
-          goalRef: { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId },
+          subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId } },
           position: noticePositionOf(candidate.since, itemKey),
           summary, objects: [],
           rework: { operation: 'reverify', actorClass: reverify.actorClass, taskRef: round.subject,

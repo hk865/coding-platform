@@ -134,6 +134,8 @@ export type QueryRunSnapshot = {
  *     the source Task/Goal phase.
  */
 import type { ActorRef } from "./command-event.js";
+import { defineShape, f, type InferShape } from './data-format.js';
+import { GoalRefShape, ModuleRefShape } from './data-format-refs.js';
 import { canonicalJson, sha256Hex, type JsonValue } from "./fingerprint.js";
 import type { RoleBindingRefV1 } from "./dispatch.js";
 import { validateRuntimeBudget, type RuntimeBudget } from './runtime-budget.js';
@@ -161,7 +163,19 @@ export function queryJobRefFor(projectId: string, workspaceId: string, queryJobI
 // ------------------------------------------------------------------------ //
 /** Created kinds: `request`, `followup`, `routing`; nothing creates `reply`, `expiry` or `explain` yet. */
 export type QueryRoundKind = 'request' | 'followup' | 'reply' | 'expiry' | 'explain' | 'routing';
-export type GoalCardDraftV1 = { objective: string; completion: string[]; autonomy: GoalAutonomyV1; screening: null };
+/** The model's screening of one proposed goal (the full screening shape). `null` = not screened. */
+export const GoalScreeningShape = defineShape({ name: 'GoalScreeningV1', fields: {
+    modules: f.array(f.ref(ModuleRefShape)),
+    size: f.enumOf(['small', 'medium', 'large', 'unknown'] as const),
+    conflictsWith: f.array(f.ref(GoalRefShape)),
+    dependsOn: f.array(f.ref(GoalRefShape)),
+    urgency: f.enumOf(['high', 'normal', 'low'] as const),
+    suggestedPosition: f.nullable(f.integer({ min: 0 })),
+    note: f.string({ max: 512, unit: 'utf8Bytes' }),
+} });
+export type GoalScreeningV1 = InferShape<(typeof GoalScreeningShape)['fields']>;
+export type GoalCardDraftV1 = { objective: string; completion: string[]; autonomy: GoalAutonomyV1;
+    screening: GoalScreeningV1 | null };
 export type QueryCloseDetailV1 = 'too_long' | 'empty' | 'protocol' | 'dropped' | 'no_binding';
 /** The originating command's refs, written once on the created round. */
 export type RequestCommandReceiptV1 =
@@ -541,6 +555,8 @@ export type QueryJobAnswerV1 = {
     /** 0 or 2–3 bounded ideas; the secretary answer's own check enforces the count. */
     ideas: { title: string; detail: string }[];
     goalCardDrafts: GoalCardDraftV1[];
+    /** The draft a no-goal plan answer's plan belongs to; null when the plan names no draft. */
+    planDraftIndex: number | null;
 };
 export type QueryJobAnswerSnapshot = {
     ref: QueryJobAnswerRef;

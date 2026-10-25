@@ -11,7 +11,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejected, rejectedWithCurrent, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
-import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import { CORE_ERRORS, type CoreRejection, type ReadResult } from '../../../contracts/core/results.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 
 /**
@@ -29,9 +29,7 @@ export function atLeastCursorResult<T>(
     required: { kind: 'platform', cursor: required } };
 }
 
-const STORE_FAILURE_CODES: ReadonlySet<string> = new Set(['invalid', 'forbidden', 'revision_conflict',
-  'idempotency_conflict', 'not_found', 'dependency_blocked', 'cycle', 'busy', 'source_stale', 'incomplete',
-  'capacity', 'unsupported', 'unavailable', 'cancelled']);
+const STORE_FAILURE_CODES: ReadonlySet<string> = new Set(CORE_ERRORS);
 
 /** The exact allowed Store failure code set, defaulting to `unavailable`. */
 export function storeFailureCode(failure: { code: string }): CoreRejection['code'] {
@@ -63,7 +61,7 @@ export function pinsFromStoreCurrent(
 }
 
 /** The Session owner's write-failure mapping. */
-export function sessionStoreFailureToRejection(failure: {
+export function sessionStoreFailureToRejection(failure: import('../../record-store/ports.js').StoreFailure | {
   code: string;
   reason: string;
   current?: readonly { refKey: string; revision: number | null }[];

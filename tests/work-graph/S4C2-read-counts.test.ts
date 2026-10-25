@@ -611,7 +611,8 @@ it.each(KINDS)('rework 2/3 item 1 %s: one plan window and exactly one catalog pe
     if (read.status !== 'ready') return;
     const noteCards = read.value.waitingAnswer.filter(card => card.source.kind === 'note_review');
     expect(noteCards).toHaveLength(2);
-    expect(noteCards.map(card => card.goalRef.goalId).sort()).toEqual([GOAL, GOAL2].sort());
+    expect(noteCards.map(card => card.subject.kind === 'goal' ? card.subject.goalRef.goalId : null).sort())
+      .toEqual([GOAL, GOAL2].sort());
 
     const g1 = state.perGoal.get(GOAL);
     const g2 = state.perGoal.get(GOAL2);

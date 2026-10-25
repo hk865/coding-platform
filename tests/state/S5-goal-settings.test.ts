@@ -73,6 +73,8 @@ function goal(ref: GoalRef, overrides: Partial<GoalSnapshot> = {}): GoalSnapshot
     activePlanRevision: ref.goalId === 'A' ? PA1 : PB1,
     revision: GOAL_REVISION,
     settings: settings({ order: ref.goalId === 'A' ? GOAL_ORDER.A : GOAL_ORDER.B }),
+    continuedFrom: null,
+    copiedInterventions: [],
     since: 'c0000000001' as GoalSnapshot['since'],
     ...overrides,
   };
@@ -135,24 +137,10 @@ function basis(captured: GoalSnapshot): GoalDecisionBasisV1 {
 // -------------------------------------------------------------------------- //
 
 describe('S5 goal settings machine (§5.2 GS01..GS15)', () => {
-  it('GS01 an absent settings field reads as the exact §2.2 default without a write', () => {
+  it('GS01 a Goal record without settings is refused, never read as a default', () => {
     const { settings: omitted, ...old } = goal(GOAL_A);
-    const encoded = encodeGoalSnapshot(old);
-    const originalJson = encoded.json;
-    const decoded = decodeGoalSnapshot(encoded);
-    expect(decoded).toEqual({ status: 'decoded', value: old });
-    if (decoded.status !== 'decoded') throw new Error('legacy Goal must decode');
-    const defaultSettings: GoalSettingsV1 = {
-      schemaVersion: 1,
-      autonomy: 'after_plan_confirmation',
-      order: 0,
-      waitForGoalRef: null,
-      parallelRisks: [],
-    };
-    expect(readGoalSettings(decoded.value)).toEqual(defaultSettings);
-    expect(decoded.value).toEqual(old);
-    expect(decoded.value).not.toHaveProperty('settings');
-    expect(encodeGoalSnapshot(decoded.value).json).toBe(originalJson);
+    const encoded = { ...encodeGoalSnapshot(goal(GOAL_A)), json: JSON.stringify(old) };
+    expect(decodeGoalSnapshot(encoded)).toEqual({ status: 'invalid', reason: 'Goal snapshot settings is missing' });
   });
 
   it('GS02 settings_set on active B@7 bumps to @8 without moving desiredStateRevision or the active plan', () => {

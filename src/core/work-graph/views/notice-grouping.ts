@@ -2,10 +2,14 @@
  * Slice 4C-2 U9: the ONE pure notice grouping and the lead ruling 8 seenThrough
  * advance. It performs no I/O and owns no position comparison: `compareNoticePositions`
  * is the only order it uses. Input to `groupNotices` must already be position-sorted.
+ *
+ * Every member is folded and selected by its tagged subject key (`decisionSubjectKey`), so a project's notices fold
+ * per project exactly as a Goal's fold per Goal. The notice's subject is the one authority: there is no second
+ * `goalRef` field to disagree with it.
  */
-import type { NoticeCategoryV1, NoticePositionV1 } from '../../../contracts/goal-decisions.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GoalRef } from '../../../contracts/ledger.js';
+import {
+  decisionSubjectKey, type DecisionSubjectV1, type NoticeCategoryV1, type NoticePositionV1,
+} from '../../../contracts/goal-decisions.js';
 import type { NoticeItemV1 } from '../model/decision-contracts.js';
 import { compareNoticePositions } from './notice-position.js';
 
@@ -24,14 +28,28 @@ export type NoticeLineV1 = NoticeItemV1 & { memberViews?: NoticeItemV1[] };
 
 type NoticeMember = { itemKey: string; position: NoticePositionV1 };
 
+/** The two folded lines: one Goal's scribe results, and (main read only) one Goal's automatic reworks. */
+type FoldKind = 'scribe' | 'rework';
+
 /** A line's member set: its `members` when folded, else the item itself. */
 function membersOf(item: NoticeItemV1): NoticeMember[] {
   return item.members ?? [{ itemKey: item.itemKey, position: item.position }];
 }
 
-/** Canonical key so two equal GoalRefs always fold together. */
-function goalKey(goalRef: GoalRef): string {
-  return canonicalJson(goalRef as unknown as JsonValue);
+/** The tagged subject key: the one fold key and page filter. */
+function subjectKey(subject: DecisionSubjectV1): string {
+  return decisionSubjectKey(subject);
+}
+
+/**
+ * A folded line's key: a Goal's fold is `<name>:<projectId>/<goalId>`, the project's is `<name>_project:<projectId>`;
+ * no Goal fold has that prefix, so no Goal id spells a project key. The ONE spelling; the display never rebuilds it.
+ */
+function foldItemKey(kind: FoldKind, subject: DecisionSubjectV1): string {
+  const name = kind === 'scribe' ? 'note_review_scribe' : 'automatic_rework_group';
+  return subject.kind === 'goal'
+    ? `${name}:${subject.goalRef.projectId}/${subject.goalRef.goalId}`
+    : `${name}_project:${subject.projectRef.projectId}`;
 }
 
 /**
@@ -46,8 +64,7 @@ export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGro
   if (strategy === 'pass_through') return items.slice();
 
   type Line = { item: NoticeLineV1; order: number };
-  type FoldKind = 'scribe' | 'rework';
-  type Folded = { kind: FoldKind; goalRef: GoalRef; members: NoticeMember[]; views: NoticeItemV1[];
+  type Folded = { kind: FoldKind; subject: DecisionSubjectV1; members: NoticeMember[]; views: NoticeItemV1[];
     objects: NoticeItemV1['objects']; newest: NoticePositionV1; order: number };
   const lines: Line[] = [];
   const folded = new Map<string, Folded>();
@@ -59,12 +76,12 @@ export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGro
       lines.push({ item: source, order: index });
       return;
     }
-    const key = `${kind}|${goalKey(source.goalRef)}`;
+    const key = `${kind}|${subjectKey(source.subject)}`;
     const member: NoticeMember = { itemKey: source.itemKey, position: source.position };
     const existing = folded.get(key);
     if (existing === undefined) {
-      folded.set(key, { kind, goalRef: source.goalRef, members: [member], views: [source], objects: [...source.objects],
-        newest: source.position, order: index });
+      folded.set(key, { kind, subject: source.subject, members: [member], views: [source],
+        objects: [...source.objects], newest: source.position, order: index });
       return;
     }
     existing.members.push(member);
@@ -81,15 +98,14 @@ export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGro
   });
 
   for (const entry of folded.values()) {
-    const goal = `${entry.goalRef.projectId}/${entry.goalRef.goalId}`;
     lines.push({ order: entry.order, item: entry.kind === 'scribe' ? {
-      itemKey: `note_review_scribe:${goal}`,
-      category: 'note_review', goalRef: entry.goalRef, position: entry.newest,
+      itemKey: foldItemKey('scribe', entry.subject),
+      category: 'note_review', subject: structuredClone(entry.subject), position: entry.newest,
       summary: `书记整理 · ${entry.members.length} 条注记`, objects: entry.objects,
       rework: null, members: entry.members,
     } : {
-      itemKey: `automatic_rework_group:${goal}`,
-      category: 'automatic_rework', goalRef: entry.goalRef, position: entry.newest,
+      itemKey: foldItemKey('rework', entry.subject),
+      category: 'automatic_rework', subject: structuredClone(entry.subject), position: entry.newest,
       summary: `${entry.members.length} 条自动返工`, objects: entry.objects,
       rework: null, members: entry.members, memberViews: entry.views,
     } });
@@ -138,16 +154,16 @@ export function seenThroughOfNotices(all: readonly NoticeItemV1[],
 }
 
 /**
- * One Goal's notice lines out of `all`, the full ordered line set of the
- * workspace (every category read, after the seen positions, before any Goal
+ * The named subjects' notice lines out of `all`, the full ordered line set of the
+ * workspace (every category read, after the seen positions, before any subject
  * filter), and the advance those lines allow. The advance walks the full member
- * set, so a member of another Goal between two shown members stops it there: a
+ * set, so a member of another subject between two shown members stops it there: a
  * mark of this page never passes a member it did not show.
  */
-export function goalNoticePage(all: readonly NoticeLineV1[], goalRef: GoalRef): {
+export function noticePage(all: readonly NoticeLineV1[], subjects: readonly DecisionSubjectV1[]): {
   lines: NoticeLineV1[]; seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>;
 } {
-  const key = goalKey(goalRef);
-  const lines = all.filter((line) => goalKey(line.goalRef) === key);
+  const keys = new Set(subjects.map(subjectKey));
+  const lines = all.filter((line) => keys.has(subjectKey(line.subject)));
   return { lines, seenThrough: seenThroughOfNotices(all, lines) };
 }

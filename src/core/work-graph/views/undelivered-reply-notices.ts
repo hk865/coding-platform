@@ -14,7 +14,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import type { NoticePositionV1 } from '../../../contracts/goal-decisions.js';
+import { decisionSubjectGoalRef, type NoticePositionV1 } from '../../../contracts/goal-decisions.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
@@ -322,6 +322,8 @@ async function projectReply(
   if (goalRef === 'mismatch') {
     return stableDamage(deps, window, () => mismatch(reply.messageRef.messageId, 'names conflicting Goals'));
   }
+  // A notice is a Goal's notice here: a message with no Goal carries none.
+  if (goalRef === null) return { status: 'ready', value: null };
   // Goal filter first (L11-3): an item proven to belong to another Goal is
   // excluded before its positions are required. An unfiltered workspace read
   // keeps every attributed item in scope.
@@ -341,7 +343,7 @@ async function projectReply(
   const item: NoticeItemV1 = {
     itemKey,
     category: 'undelivered_reply',
-    goalRef: goalRef as GoalRef,
+    subject: { kind: 'goal', goalRef },
     position: laterPosition(itemKey, unavailableSince, responseSince),
     summary: `未送达回复 · Session ${source.sessionId}`,
     objects: [{ kind: 'aggregate', pin: { ref: message.ref, revision: message.revision }, label: '原消息' }],
@@ -419,7 +421,7 @@ function itemSignature(item: NoticeItemV1, original: { respondedAt: string; unav
   responseSince: CommitCursor; source: { projectId: string; sessionId: string } }): string {
   const first = item.objects[0];
   return canonicalJson({
-    goalRef: item.goalRef, position: item.position, summary: item.summary, respondedAt: original.respondedAt,
+    goalRef: decisionSubjectGoalRef(item), position: item.position, summary: item.summary, respondedAt: original.respondedAt,
     unavailableSince: String(original.unavailableSince), responseSince: String(original.responseSince),
     sourceSessionRef: { projectId: original.source.projectId, sessionId: original.source.sessionId },
     ref: first?.kind === 'aggregate' ? first.pin.ref : null,

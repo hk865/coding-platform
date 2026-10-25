@@ -150,8 +150,10 @@ describe('K3-17 review card answer shape', () => {
     // Goal pin in `source.pins` now names the paused revision.
     const pausedCard = await reviewCard(h);
     expect(pausedCard.source.key).toBe(card.source.key);
+    const goalSubject = card.source.subject.kind === 'goal' ? card.source.subject.goalRef : null;
+    if (goalSubject === null) throw new Error('the review card source has no goal subject');
     expect(pausedCard.source.pins).toEqual(card.source.pins.filter(pin => pin.ref.aggregateType !== 'Goal')
-      .concat([{ ref: card.source.goalRef, revision: paused.goal.revision }]));
+      .concat([{ ref: goalSubject, revision: paused.goal.revision }]));
 
     // L18: the answer carries the 附言 and one annotation on the record object
     // (`card.objects[0]`); the object key IS the card object's canonical JSON.

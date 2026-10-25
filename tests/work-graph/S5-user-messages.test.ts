@@ -236,7 +236,8 @@ describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
     }));
     expect(sent.value.decision).toBeUndefined();
     const source: DecisionSourceV1 = { kind: 'message',
-      key: decisionSourceKey({ kind: 'message', messageRef: sent.value.ref }), goalRef: GOAL_B, pins: [] };
+      key: decisionSourceKey({ kind: 'message', messageRef: sent.value.ref }),
+      subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] };
     const before = await h.f.storeSnapshot();
     expect(await h.decisions.answerDecision(h.f.ctx, {
       input: { source, selection: { kind: 'option', optionId: 'accept' }, text: 'no', annotations: [] },

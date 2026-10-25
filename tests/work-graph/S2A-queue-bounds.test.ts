@@ -7,6 +7,8 @@
  * messages, 5,001 waiting cards, 201 Goals) live in
  * `S2A-queue-bounds.scale.test.ts`; here every read layer the case is about is
  * narrowed to 2-item pages, without changing the assertions' shape.
+ * QA-07 has no scale twin: a continuation kept from before the subject key
+ * still resumes after its card.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
@@ -131,8 +133,32 @@ describe.each(['memory', 'sqlite'] as const)('S2A queue bounds (%s)', (kind) => 
     expect(queue.counts.answeredPendingApplication).toBe(1);
     const goalCauses = queue.waitingAnswer.filter((card) => card.source.kind === 'goal_cause');
     expect(goalCauses.map((card) => card.source.key)).toEqual([B_CHANGE_PENDING]);
-    expect(goalCauses.map((card) => card.goalRef.goalId)).toEqual(['B']);
+    expect(goalCauses.map((card) => card.subject.kind === 'goal' ? card.subject.goalRef.goalId : null)).toEqual(['B']);
     // The 2 added Goals provably add no reason card.
-    expect(queue.waitingAnswer.filter((card) => card.goalRef.goalId.startsWith('S5R2-capacity-'))).toEqual([]);
+    expect(queue.waitingAnswer.filter((card) => card.subject.kind === 'goal'
+      && card.subject.goalRef.goalId.startsWith('S5R2-capacity-'))).toEqual([]);
+  });
+
+  it('QA-07 (small: 3 cards, page 1) - a v1 cursor in the pre-subject spelling resumes after its card', async () => {
+    const f = await open();
+    const cRun = (await startRun(f, 's2a-qa07-c', GOAL_C, PLAN_C1, 'c-work')).run;
+    const cCtx = workContext(f, cRun);
+    for (let index = 0; index < 3; index += 1) {
+      await sendUserDecision(f, cCtx, GOAL_C, `s2a-qa07-send-${String(index)}`);
+    }
+    const first = await readGoalQueue(f, GOAL_C, { limit: 1 }, ['waiting_answer'], SMALL_WIDTHS);
+    expect(first.waitingAnswer).toHaveLength(1);
+    const shown = first.waitingAnswer[0]!;
+    if (first.nextCursor === null) throw new Error('three waiting cards end after one');
+    // The continuation a client kept from before the subject key: the shown card's page point in the cursor's v1
+    // spelling, whose `goal` text is the Goal's own canonical GoalRef (written out). It resumes where the platform's
+    // own continuation does, and never replays the card already shown.
+    const kept = JSON.stringify({ card: { goal: '{"aggregateType":"Goal","goalId":"C","projectId":"P"}',
+      key: shown.source.key, kind: 'message', rank: 0 }, v: 1 });
+    const resumed = await readGoalQueue(f, GOAL_C, { limit: 1, cursor: kept }, ['waiting_answer'], SMALL_WIDTHS);
+    const next = await readGoalQueue(f, GOAL_C, { limit: 1, cursor: first.nextCursor }, ['waiting_answer'],
+      SMALL_WIDTHS);
+    expect(resumed.waitingAnswer.map((card) => card.cardKey)).not.toContain(shown.cardKey);
+    expect(resumed.waitingAnswer.map((card) => card.cardKey)).toEqual(next.waitingAnswer.map((card) => card.cardKey));
   });
 });

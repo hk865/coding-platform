@@ -12,7 +12,9 @@ import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
 import type { UnknownCallReviewRef } from './unknown-call-review.js';
 import type { CommandRerunRequestRef } from './command-rerun-request.js';
-import { canonicalJson } from './fingerprint.js';
+import { defineShape, f, type InferShape } from './data-format.js';
+import { GoalRefShape, ProjectScopeShape } from './data-format-refs.js';
+import { canonicalJson, canonicalKey } from './fingerprint.js';
 
 // ------------------------------------------------------------------------ //
 // Goal / Workspace settings (spec §2.2)                                     //
@@ -34,7 +36,10 @@ export type GoalSettingsV1 = {
   parallelRisks: GoalParallelRiskV1[];
 };
 
-/** The exact settings a Goal without a saved `settings` field reads as (spec §2.2). */
+/**
+ * The settings `goals/create` gives a new Goal at birth (spec §2.2). Every Goal carries its own `settings`; this is
+ * a birth value, never a default for a Goal without the field (a record without it is refused).
+ */
 export const DEFAULT_GOAL_SETTINGS_V1: GoalSettingsV1 = {
   schemaVersion: 1,
   autonomy: 'after_plan_confirmation',
@@ -75,13 +80,37 @@ export type DecisionOptionV1 = {
   id: string; label: string; effect: 'apply' | 'reject' | 'defer';
 };
 
+/**
+ * The one authority on the subject of a decision source, card or notice: either a Goal or a project, and nothing
+ * else — a second `goalRef` field beside it could disagree with it. The read side groups and orders by the tagged
+ * key `decisionSubjectKey`, never by a field of its own.
+ */
+export const DecisionSubjectShape = defineShape({ name: 'DecisionSubjectV1', fields: {
+  subject: f.union('kind', {
+    goal: { kind: f.literal('goal'), goalRef: f.ref(GoalRefShape) },
+    project: { kind: f.literal('project'), projectRef: f.ref(ProjectScopeShape) },
+  }),
+} });
+export type DecisionSubjectV1 = InferShape<(typeof DecisionSubjectShape)['fields']>['subject'];
+// = { kind: 'goal'; goalRef: GoalRef } | { kind: 'project'; projectRef: ProjectScope }
+export function decisionSubjectKey(subject: DecisionSubjectV1): string { return canonicalKey(subject); }
+
 export type DecisionSourceV1 = {
   kind: 'message' | 'goal_cause' | 'candidate' | 'note_review'
     | 'planning_question' | 'goal_conflict' | 'message_release'
     | 'unknown_call_review' | 'command_rerun_request';
-  key: string; goalRef: GoalRef; pins: VersionPin[];
+  key: string; subject: DecisionSubjectV1; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
+
+/** The one narrowing read for a decision source, card or notice whose subject is already checked: a goal subject
+ * gives its `goalRef`; a project or absent subject gives `null`. It narrows and does not replace the check of an
+ * input's shape. */
+export function decisionSubjectGoalRef(holder: { subject: DecisionSubjectV1 }): GoalRef | null {
+  const subject = (holder as { subject?: DecisionSubjectV1 } | undefined)?.subject;
+  return subject?.kind === 'goal' && subject.goalRef !== undefined && subject.goalRef !== null
+    ? subject.goalRef : null;
+}
 
 export type DecisionSelectionV1 =
   | { kind: 'option'; optionId: string }

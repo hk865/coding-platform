@@ -14,11 +14,10 @@ const definitions = (texts?: Texts): ToolDefinition[] =>
 const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) }));
 
 /**
- * The `pc1-final` specification, one hand-written JSON literal. Copied by hand
- * from `git show pc1-final:src/core/agent-runtime/communication-tools.ts` (schema shape,
- * key order, constraints) and
- * `git show pc1-final:src/contracts/prompts/platform-pack.generated.ts`
- * (every description and parameter text).
+ * The hand-written pc1-final tool specification, mechanically updated for
+ * 6B-1 SR7 / L-02: decision sources carry the goal/project subject union.
+ * Unchanged schemas and tool texts retain the pc1-final expectations copied
+ * from communication-tools.ts and platform-pack.generated.ts at that tag.
  */
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
@@ -766,28 +765,73 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
               "type": "string",
               "minLength": 1
             },
-            "goalRef": {
-              "type": "object",
-              "properties": {
-                "aggregateType": {
-                  "type": "string",
-                  "const": "Goal"
+            "subject": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "goal"
+                    },
+                    "goalRef": {
+                      "type": "object",
+                      "properties": {
+                        "aggregateType": {
+                          "type": "string",
+                          "const": "Goal"
+                        },
+                        "projectId": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "goalId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "aggregateType",
+                        "projectId",
+                        "goalId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "goalRef"
+                  ],
+                  "additionalProperties": false
                 },
-                "projectId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "goalId": {
-                  "type": "string",
-                  "minLength": 1
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "project"
+                    },
+                    "projectRef": {
+                      "type": "object",
+                      "properties": {
+                        "projectId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "projectId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "projectRef"
+                  ],
+                  "additionalProperties": false
                 }
-              },
-              "required": [
-                "aggregateType",
-                "projectId",
-                "goalId"
-              ],
-              "additionalProperties": false
+              ]
             },
             "pins": {
               "type": "array",
@@ -1285,7 +1329,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
           "required": [
             "kind",
             "key",
-            "goalRef",
+            "subject",
             "pins"
           ],
           "additionalProperties": false
@@ -1397,7 +1441,7 @@ it('PC2-W-communication-tools falls back per tool to the hand-written platform s
   }
 });
 
-it('PC2-W-communication-tools default texts and explicit platform texts match the hand-written pc1-final specification', () => {
+it('PC2-W-communication-tools default texts and explicit platform texts match the hand-written specification with the 6B-1 subject contract', () => {
   const baseline = JSON.stringify(DEFAULT_SPECIFICATION);
   expect(JSON.stringify(specification(definitions()))).toBe(baseline);
   expect(JSON.stringify(specification(definitions(PLATFORM_PROMPT_PACK_V1.tools)))).toBe(baseline);

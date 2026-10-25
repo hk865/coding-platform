@@ -5,10 +5,15 @@ import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, OperationReceipt, Page, ReadResult, WriteResult } from '../../contracts/core/results.js';
+import {
+  CORE_ERRORS, type CoreError, type CoreRejection, type OperationReceipt, type Page, type ReadResult, type WriteResult,
+} from '../../contracts/core/results.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
-import type { SessionCard, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord } from '../work-graph/model/session-contracts.js';
+import type {
+  SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
+  SessionOperationRecord,
+} from '../work-graph/model/session-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
 import { StoreError, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type {
@@ -77,12 +82,6 @@ const MAX_HISTORY_LIMIT = 200;
 const PERMANENT_REJECTIONS = new Set<CoreError>([
   'invalid', 'forbidden', 'not_found', 'idempotency_conflict', 'revision_conflict',
   'dependency_blocked', 'source_stale', 'incomplete',
-]);
-
-const CORE_ERRORS = new Set<string>([
-  'invalid', 'forbidden', 'revision_conflict', 'idempotency_conflict', 'not_found',
-  'dependency_blocked', 'cycle', 'busy', 'source_stale', 'incomplete', 'capacity',
-  'unsupported', 'unavailable', 'cancelled',
 ]);
 
 const HISTORY_CURSOR_PREFIX = 'kernhist1.';
@@ -592,7 +591,7 @@ export function createSessionOperations(deps: {
       }
       const pin = { adapterId: defaultLocation.adapterId, storeKey: defaultLocation.storeKey };
 
-      let admitted: WriteResult<SessionOperationRecord>;
+      let admitted: WriteResult<SessionCreateOperationRecord>;
       try {
         admitted = await sessions.admitSessionCreation(ctx, {
           input: {
@@ -651,7 +650,7 @@ export function createSessionOperations(deps: {
 
       if (operation.phase === 'failed') {
         const failure = operation.failure;
-        const code = failure && CORE_ERRORS.has(failure.code) ? failure.code as CoreError : 'unavailable';
+        const code = failure && (CORE_ERRORS as readonly string[]).includes(failure.code) ? failure.code as CoreError : 'unavailable';
         return rejected(code, failure?.reason ?? 'the Session creation operation previously failed');
       }
 

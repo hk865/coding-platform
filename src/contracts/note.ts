@@ -8,6 +8,7 @@ import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef } from './dispatch.js';
 import type { ContextSourceV1 } from './graph-context.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
+import type { QueryRunRef } from './query-job.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
 
 /** P9: the three aggregate refs the ledger adds (`ledger.ts` `AggregateRef`). */
@@ -60,8 +61,12 @@ export type NoteDraftV1 =
 
 export type NoteState = 'staged' | 'accepted' | 'reviewed' | 'pending_review' | 'rejected' | 'superseded' | 'withdrawn';
 
+/**
+ * Who wrote a note. An agent source names the Work Run (`runRef`) or the secretary's QueryRun (`queryRunRef`) that
+ * wrote it, or null; both come only from trusted execution facts, never from the model.
+ */
 export type NoteSourceV1 =
-  | { kind: 'agent'; sessionRef: SessionRef; runRef: RunRef | null; duty: PlatformDutyV1 }
+  | { kind: 'agent'; sessionRef: SessionRef; runRef: RunRef | null; queryRunRef: QueryRunRef | null; duty: PlatformDutyV1 }
   | { kind: 'user'; principalId: string }
   | { kind: 'platform' };
 

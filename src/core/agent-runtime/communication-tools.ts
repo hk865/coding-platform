@@ -254,12 +254,21 @@ const decisionGoalBasisSchema = z.object({
   settings: decisionGoalSettingsSchema,
 }).strict();
 
+/** A `ProjectScope`: the project a project subject names, and nothing else. */
+const decisionProjectScopeSchema = z.object({ projectId: z.string().min(1) }).strict();
+
+/** The subject of a decision source: a Goal or a project, never both and never a second `goalRef` beside it. */
+const decisionSubjectSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('goal'), goalRef: decisionGoalRefSchema }).strict(),
+  z.object({ kind: z.literal('project'), projectRef: decisionProjectScopeSchema }).strict(),
+]);
+
 /** Canonical `DecisionSourceV1` the model names for a read/record call. */
 const decisionSourceSchema = z.object({
   kind: z.enum(['message', 'goal_cause', 'candidate', 'note_review',
     'planning_question', 'goal_conflict', 'message_release']),
   key: z.string().min(1),
-  goalRef: decisionGoalRefSchema,
+  subject: decisionSubjectSchema,
   pins: z.array(decisionVersionPinSchema),
   goalBases: z.array(decisionGoalBasisSchema).optional(),
 }).strict();

@@ -287,18 +287,19 @@ describe.each<S4ANoteFixtureKind>(['memory', 'sqlite'])('S4C2 rework M1 on %s', 
           decisionRefs: [] } }));
 
       // n1's key with g2: before M1 the answer was stored under g2.
-      const misrouted = { ...structuredClone(card.source), goalRef: goal2Ref };
+      const misrouted = { ...structuredClone(card.source), subject: { kind: 'goal' as const, goalRef: goal2Ref } };
       const result = await resolveOf(f)(ctx, {
         input: { source: misrouted, selection: { kind: 'option', optionId: 'coexist' }, text: '', annotations: [] },
         meta: { requestId: 's4c2-rework-m1-misrouted', expected: misrouted.pins } });
       // RED before the fix: readSource used the request's g2 and the answer committed.
-      expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
+      expect(result).toMatchObject({ status: 'rejected', code: 'invalid',
+        reason: 'the note decision card belongs to another Goal' });
 
       // Nothing answered, the card is still waiting in g1, the note untouched.
       const answer = await f.platform.decisionMessages.readDecisionAnswer(ctx, { source: card.source });
       expect(answer).toMatchObject({ status: 'ready', value: { message: null } });
       expect(await queueCards(f)).toEqual(expect.arrayContaining([
-        expect.objectContaining({ source: expect.objectContaining({ goalRef: f.goalRef }) })]));
+        expect.objectContaining({ source: expect.objectContaining({ subject: { kind: 'goal', goalRef: f.goalRef } }) })]));
       expect(await readNoteOf(f, agentId)).toMatchObject({ version: 1, storedState: 'pending_review' });
     });
   });

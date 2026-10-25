@@ -56,13 +56,13 @@ const DETAIL_600 = '𝄞'.repeat(600);
 describe('semantic_query: accepted answers', () => {
   it('a goal request with no idea: the body, no ideas and no drafts', () => {
     expect(parseSecretaryAnswer(answer(), SEMANTIC_GOAL)).toEqual({
-      ok: true, body: '可以先拆出读取层。', ideas: [], goalCardDrafts: [],
+      ok: true, body: '可以先拆出读取层。', ideas: [], goalCardDrafts: [], planDraftIndex: null,
     });
   });
 
   it('two ideas are kept in order', () => {
     expect(parseSecretaryAnswer(answer({ ideas: [IDEA_A, IDEA_B] }), SEMANTIC_GOAL)).toEqual({
-      ok: true, body: '可以先拆出读取层。', goalCardDrafts: [],
+      ok: true, body: '可以先拆出读取层。', goalCardDrafts: [], planDraftIndex: null,
       ideas: [
         { title: '先拆读取层', detail: '把读取和写入分开，再逐步迁移调用方。' },
         { title: 'Keep one module', detail: 'Add a facade and leave the files where they are.' },
@@ -73,7 +73,7 @@ describe('semantic_query: accepted answers', () => {
   it('three ideas, a 120-code-point title and a 600-code-point detail are within the bounds', () => {
     const ideas = [IDEA_A, { title: TITLE_120, detail: DETAIL_600 }, IDEA_C];
     expect(parseSecretaryAnswer(answer({ ideas }), SEMANTIC_GOAL)).toEqual({
-      ok: true, body: '可以先拆出读取层。', goalCardDrafts: [],
+      ok: true, body: '可以先拆出读取层。', goalCardDrafts: [], planDraftIndex: null,
       ideas: [
         { title: '先拆读取层', detail: '把读取和写入分开，再逐步迁移调用方。' },
         { title: TITLE_120, detail: DETAIL_600 },
@@ -82,10 +82,10 @@ describe('semantic_query: accepted answers', () => {
     });
   });
 
-  it('a request without a goal may carry drafts; the platform sets screening to null', () => {
+  it('a request without a goal may carry drafts; an absent screening is null', () => {
     const drafts = [DRAFT, { objective: 'Write the migration guide.', completion: ['the guide lists every caller'], autonomy: 'every_step' }];
     expect(parseSecretaryAnswer(answer({ goalCardDrafts: drafts }), SEMANTIC_NO_GOAL)).toEqual({
-      ok: true, body: '可以先拆出读取层。', ideas: [],
+      ok: true, body: '可以先拆出读取层。', ideas: [], planDraftIndex: null,
       goalCardDrafts: [
         { objective: 'Split the reader from the writer.', completion: ['the reader has its own module', 'all callers compile'],
           autonomy: 'after_plan_confirmation', screening: null },
@@ -97,11 +97,23 @@ describe('semantic_query: accepted answers', () => {
 
   it('a request without a goal may also carry no draft', () => {
     expect(parseSecretaryAnswer(answer({ ideas: [IDEA_A, IDEA_B] }), SEMANTIC_NO_GOAL)).toEqual({
-      ok: true, body: '可以先拆出读取层。', goalCardDrafts: [],
+      ok: true, body: '可以先拆出读取层。', goalCardDrafts: [], planDraftIndex: null,
       ideas: [
         { title: '先拆读取层', detail: '把读取和写入分开，再逐步迁移调用方。' },
         { title: 'Keep one module', detail: 'Add a facade and leave the files where they are.' },
       ],
+    });
+  });
+
+  it('a draft keeps the screening the model returned', () => {
+    const screening = { modules: [{ projectId: 'p1', moduleId: 'm-reader' }], size: 'small',
+      conflictsWith: [], dependsOn: [], urgency: 'high', suggestedPosition: null, note: '和 goal-7 冲突' };
+    expect(parseSecretaryAnswer(answer({ goalCardDrafts: [{ ...DRAFT, screening }] }), SEMANTIC_NO_GOAL)).toEqual({
+      ok: true, body: '可以先拆出读取层。', ideas: [], planDraftIndex: null,
+      goalCardDrafts: [{ objective: 'Split the reader from the writer.',
+        completion: ['the reader has its own module', 'all callers compile'], autonomy: 'after_plan_confirmation',
+        screening: { modules: [{ projectId: 'p1', moduleId: 'm-reader' }], size: 'small',
+          conflictsWith: [], dependsOn: [], urgency: 'high', suggestedPosition: null, note: '和 goal-7 冲突' } }],
     });
   });
 });
@@ -195,27 +207,23 @@ describe('rejects: semantic_query answers that break the protocol', () => {
   it('a draft with an autonomy outside GoalAutonomyV1', () => {
     expectProtocol(parseSecretaryAnswer(answer({ goalCardDrafts: [{ ...DRAFT, autonomy: 'never_ask' }] }), SEMANTIC_NO_GOAL));
   });
-
-  it('a draft that sets screening itself', () => {
-    expectProtocol(parseSecretaryAnswer(answer({ goalCardDrafts: [{ ...DRAFT, screening: null }] }), SEMANTIC_NO_GOAL));
-  });
 });
 
 describe('initial_coordination: accepted answers', () => {
   it('a v2 plan on a goal request: the body is the whole v2 text, with no ideas and no drafts', () => {
     const text = JSON.stringify(V2_PLAN);
-    expect(parseSecretaryAnswer(text, COORDINATION_GOAL)).toEqual({ ok: true, body: text, ideas: [], goalCardDrafts: [] });
+    expect(parseSecretaryAnswer(text, COORDINATION_GOAL)).toEqual({ ok: true, body: text, ideas: [], goalCardDrafts: [], planDraftIndex: null });
   });
 
   it('a v2 needs_decision answer on a request without a goal and without drafts', () => {
     const text = JSON.stringify(V2_QUESTIONS);
-    expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({ ok: true, body: text, ideas: [], goalCardDrafts: [] });
+    expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({ ok: true, body: text, ideas: [], goalCardDrafts: [], planDraftIndex: null });
   });
 
   it('a needs_decision answer on a request without a goal: its drafts are parsed and the body keeps them', () => {
     const text = JSON.stringify({ ...V2_QUESTIONS, goalCardDrafts: [DRAFT] });
     expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({
-      ok: true, body: text, ideas: [],
+      ok: true, body: text, ideas: [], planDraftIndex: null,
       goalCardDrafts: [{ objective: 'Split the reader from the writer.',
         completion: ['the reader has its own module', 'all callers compile'], autonomy: 'after_plan_confirmation', screening: null }],
     });
@@ -224,7 +232,7 @@ describe('initial_coordination: accepted answers', () => {
   it('a request without a goal: the top-level drafts are parsed and the body keeps them', () => {
     const text = JSON.stringify({ ...V2_PLAN, goalCardDrafts: [DRAFT] });
     expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({
-      ok: true, body: text, ideas: [],
+      ok: true, body: text, ideas: [], planDraftIndex: null,
       goalCardDrafts: [{ objective: 'Split the reader from the writer.',
         completion: ['the reader has its own module', 'all callers compile'], autonomy: 'after_plan_confirmation', screening: null }],
     });

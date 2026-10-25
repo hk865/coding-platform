@@ -122,6 +122,7 @@ const ANSWER: QueryJobAnswerSnapshot = {
       { objective: 'objective one', completion: ['done one'], autonomy: 'every_step', screening: null },
       { objective: 'objective two', completion: [], autonomy: 'every_step', screening: null },
     ],
+    planDraftIndex: null,
   },
 };
 

@@ -51,7 +51,7 @@ import type { DecisionHostSenderV1, MessageRecipient, SessionMessageRef, UserMes
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { DecisionObjectV1, DecisionOptionV1,
   GoalDecisionBasisV1 } from '../../../contracts/goal-decisions.js';
-import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import {
   deriveArchiveStepCommitIdentityV1, type ArchiveStepRefV1, type ArchiveWaitChoiceV1,
@@ -1482,7 +1482,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       workspaceRef: structuredClone(goal.workspaceRef),
       objective: goal.objective,
       activePlanRef: structuredClone(goal.activePlanRevision),
-      settings: structuredClone(goal.settings ?? DEFAULT_GOAL_SETTINGS_V1),
+      settings: structuredClone(goal.settings),
     };
   }
 
@@ -3457,7 +3457,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       const source = {
         kind: 'message' as const,
         key: decisionSourceKey({ kind: 'message', messageRef }),
-        goalRef: structuredClone(goalRef),
+        subject: { kind: 'goal' as const, goalRef: structuredClone(goalRef) },
         pins: sourcePins,
         goalBases: [goalBasis(goal)],
       };

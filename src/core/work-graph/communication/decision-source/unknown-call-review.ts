@@ -1,9 +1,9 @@
 import type { CoreCallContext } from '../../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../../contracts/core/identity.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
-  DecisionSourceV1, GoalDecisionBasisV1 } from '../../../../contracts/goal-decisions.js';
+  GoalDecisionBasisV1 } from '../../../../contracts/goal-decisions.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
-import type { GoalSnapshot } from '../../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { decodeRun } from '../../materials/run-snapshot-decoder.js';
 import { readTaskClosure } from '../../tasks/plan-readers.js';
 import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts,
@@ -16,9 +16,9 @@ import type { SourceDependencies, SourceReadResult, SourceReadSupport } from './
 export async function readUnknownCallReviewSource(
   support: SourceReadSupport,
   ctx: CoreCallContext,
-  source: DecisionSourceV1,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'unknown_call_review' }>,
   deps: SourceDependencies,
+  goalRef: GoalRef,
 ): Promise<SourceReadResult> {
   let goal: GoalSnapshot;
   let objects: DecisionObjectV1[] = [];
@@ -32,9 +32,9 @@ export async function readUnknownCallReviewSource(
   // are never trusted.
   const reviewProblem = support.scopeProblem(identity.reviewRef);
   if (reviewProblem !== null) return reviewProblem;
-  const goalProblem = support.scopeProblem(source.goalRef);
+  const goalProblem = support.scopeProblem(goalRef);
   if (goalProblem !== null) return goalProblem;
-  const goalRead = await support.readGoal(source.goalRef);
+  const goalRead = await support.readGoal(goalRef);
   if (goalRead.status !== 'ready') return goalRead;
   goal = goalRead.value;
   if (goal.workspaceRef.projectId !== support.scope.projectId || goal.workspaceRef.workspaceId !== support.scope.workspaceId) {

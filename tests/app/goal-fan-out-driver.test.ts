@@ -281,7 +281,9 @@ function fanOutIntent(epoch: number, control: 'pause' | 'resume', status: 'queue
 function resumeWorld(goalState: { desiredState: 'active' | 'paused'; epoch: number } = { desiredState: 'active', epoch: 3 }) {
   const goal = { ref: GOAL_REF, workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: SCOPE.workspaceId },
     objective: 'drv', desiredState: goalState.desiredState, desiredStateRevision: goalState.epoch, desiredStateRequestedBy: OPERATOR,
-    activePlanRevision: null, revision: goalState.epoch, since: 'c0000000001' } as unknown as GoalSnapshot;
+    activePlanRevision: null, revision: goalState.epoch,
+    settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+    continuedFrom: null, copiedInterventions: [], since: 'c0000000001' } as unknown as GoalSnapshot;
   const resumed = goalState.desiredState === 'active';
   const pause = fanOutIntent(2, 'pause', 'queued');
   const intents = new Map<string, ControlIntentSnapshotV1>(resumed ? [[pause.ref.intentId, pause]] : []);

@@ -18,8 +18,10 @@
  *      overridden by a newer current version -> no card (closed `source_resolved`);
  *  (4) otherwise one `NoteDecisionCardFactsV1` (the port's answer type; §2's
  *      `NoteDecisionCardV1` cannot carry pins/objects/options).
- * A note with `goalId: null` never gets a card (D-09). A failed read is
- * `unavailable`, never an empty list.
+ * A goal subject reads the Goal's window and bucket; the project subject reads
+ * the goal-less bucket `[projectId, null, 'pending_review']` once, with no Goal
+ * window and no cancelled gate. A failed read is `unavailable`, never an empty
+ * list.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
@@ -28,8 +30,8 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
 import { renderNoteHeader } from '../../../contracts/note.js';
-import type { DecisionObjectV1, DecisionOptionV1 } from '../../../contracts/goal-decisions.js';
-import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import type { DecisionObjectV1, DecisionOptionV1, DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
+import { decisionSourceKey, decisionSubjectGoalRef } from '../../../contracts/goal-decisions.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { NoteDecisionApplicationInputV1, NoteDecisionApplyPort } from '../model/note-contracts.js';
@@ -111,13 +113,15 @@ function cardFactsOf(projectId: string, head: NoteHeadSnapshot, pointer: Pointer
 
 export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDecisionSourcePort {
   /** The open-card facts of one pending head, or the shared closed verdict. */
-  async function cardFor(ctx: CoreCallContext, head: NoteHeadSnapshot, planWindow: NotePlanWindowFactsV1):
+  async function cardFor(ctx: CoreCallContext, head: NoteHeadSnapshot, planWindow: NotePlanWindowFactsV1 | null):
   Promise<{ ok: true; card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }
   | { ok: false; reason: string }> {
     const targetRead = await readHeadBatch(deps.records, ctx.projectId, actualDispositionTargets(head),
       { requireAll: true });
     if (!targetRead.ok) return { ok: false, reason: targetRead.reason };
-    const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()], [planWindow]);
+    // A project card has no Goal, so no plan window is seeded either.
+    const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()],
+      planWindow === null ? [] : [planWindow]);
     if (facts.status !== 'ready') {
       return { ok: false, reason: facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable' };
     }
@@ -135,66 +139,86 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
       closedReason: null };
   }
 
+  /** One pending bucket, and the same batched head, pointer and reason reads for every subject. */
+  async function cardsOfBucket(ctx: CoreCallContext, bucketGoalId: string | null,
+    planWindows: readonly NotePlanWindowFactsV1[], attempt?: DecisionSourceAttempt):
+  Promise<ReadResult<NoteDecisionCardFactsV1[]>> {
+    const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
+      [ctx.projectId, bucketGoalId, 'pending_review']);
+    if (!page.ok) return rejected('unavailable', page.reason);
+    if (page.heads.length === 0) return ready([]);
+
+    // ONE batched read of every pending note's relation targets, shared by
+    // every card of the bucket (RW-12a / §11.7).
+    const targetIds = new Set<string>();
+    for (const head of page.heads) for (const noteId of actualDispositionTargets(head)) targetIds.add(noteId);
+    const targetRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
+    if (!targetRead.ok) return rejected('unavailable', targetRead.reason);
+    const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()], planWindows, attempt);
+    if (facts.status !== 'ready') {
+      return rejected('unavailable', facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable');
+    }
+
+    // ONE batched pointer + pointed-head read across every pending anchor.
+    const anchorKeys = [...new Set(page.heads.map(head => head.anchorKey0))];
+    const pointerRead = await readPointerAndHeadBatch(deps.records, ctx.projectId, anchorKeys);
+    if (!pointerRead.ok) return rejected('unavailable', pointerRead.reason);
+
+    const cards: NoteDecisionCardFactsV1[] = [];
+    for (const head of page.heads) {
+      const reasons = userReasonsOf(head, actualDispositionTargets(head)
+        .flatMap(noteId => facts.value.get(noteId) ?? []));
+      const pointer = pointerRead.value.pointers.get(head.anchorKey0) ?? { noteId: null, revision: null };
+      const current = pointer.noteId === null ? null : (pointerRead.value.heads.get(pointer.noteId) ?? null);
+      if (reasons.length === 0 || pendingUnderstandingOverridden(head, current)) continue;
+      cards.push(cardFactsOf(ctx.projectId, head, pointer, targetRead.value, reasons));
+    }
+    return ready(cards);
+  }
+
   return {
     async readNoteDecisions(ctx, input): Promise<ReadResult<NoteDecisionCardFactsV1[]>> {
-      const goalRef: GoalRef = input.goalRef;
-      const window = await readGoalPlanWindow(deps.records, goalRef);
-      if (window.status !== 'ready') return rejected('unavailable', window.reason);
-      if (window.goal.desiredState === 'cancelled') return ready([]);
-      const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
-        [ctx.projectId, goalRef.goalId, 'pending_review']);
-      if (!page.ok) return rejected('unavailable', page.reason);
-      if (page.heads.length === 0) return ready([]);
-
-      // ONE batched read of every pending note's relation targets, shared by
-      // every card of the Goal (RW-12a / §11.7).
-      const targetIds = new Set<string>();
-      for (const head of page.heads) for (const noteId of actualDispositionTargets(head)) targetIds.add(noteId);
-      const targetRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
-      if (!targetRead.ok) return rejected('unavailable', targetRead.reason);
-      const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()],
-        [{ goalId: goalRef.goalId, window }], input.attempt);
-      if (facts.status !== 'ready') {
-        return rejected('unavailable', facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable');
+      const goalRef = decisionSubjectGoalRef(input);
+      if (goalRef !== null) {
+        const window = await readGoalPlanWindow(deps.records, goalRef);
+        if (window.status !== 'ready') return rejected('unavailable', window.reason);
+        if (window.goal.desiredState === 'cancelled') return ready([]);
+        return cardsOfBucket(ctx, goalRef.goalId, [{ goalId: goalRef.goalId, window }], input.attempt);
       }
-
-      // ONE batched pointer + pointed-head read across every pending anchor.
-      const anchorKeys = [...new Set(page.heads.map(head => head.anchorKey0))];
-      const pointerRead = await readPointerAndHeadBatch(deps.records, ctx.projectId, anchorKeys);
-      if (!pointerRead.ok) return rejected('unavailable', pointerRead.reason);
-
-      const cards: NoteDecisionCardFactsV1[] = [];
-      for (const head of page.heads) {
-        const reasons = userReasonsOf(head, actualDispositionTargets(head)
-          .flatMap(noteId => facts.value.get(noteId) ?? []));
-        const pointer = pointerRead.value.pointers.get(head.anchorKey0) ?? { noteId: null, revision: null };
-        const current = pointer.noteId === null ? null : (pointerRead.value.heads.get(pointer.noteId) ?? null);
-        if (reasons.length === 0 || pendingUnderstandingOverridden(head, current)) continue;
-        cards.push(cardFactsOf(ctx.projectId, head, pointer, targetRead.value, reasons));
+      if (input.subject.kind !== 'project' || input.subject.projectRef.projectId !== ctx.projectId) {
+        return rejected('forbidden', 'the project subject is outside the bound call scope');
       }
-      return ready(cards);
+      return cardsOfBucket(ctx, null, [], input.attempt);
     },
 
-    async readNoteDecision(ctx, input): Promise<ReadResult<{
-      card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }>> {
+    async readNoteDecision(ctx, input): Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null;
+      closedReason: NoteDecisionClosedReasonV1 | null; subject: DecisionSubjectV1 | null }>> {
       const headRead = await readHeadBatch(deps.records, ctx.projectId, [input.pin.noteId]);
       if (!headRead.ok) return rejected('unavailable', headRead.reason);
       const head = headRead.value.get(input.pin.noteId) ?? null;
       // A missing head, a moved version or a non-pending head is the
-      // `source_stale` signal (null card and null closed reason).
+      // `source_stale` signal (null card, null closed reason, null subject).
       if (head === null || head.version !== input.pin.version || head.state !== 'pending_review') {
-        return ready({ card: null, closedReason: null });
+        return ready({ card: null, closedReason: null, subject: null });
       }
-      if (head.goalId === null) return ready({ card: null, closedReason: null });
+      if (head.goalId === null) {
+        // The project card: no Goal window and no cancelled reason.
+        const subject: DecisionSubjectV1 = { kind: 'project', projectRef: { projectId: ctx.projectId } };
+        const carded = await cardFor(ctx, head, null);
+        if (!carded.ok) return rejected('unavailable', carded.reason);
+        return ready({ card: carded.card, closedReason: carded.closedReason, subject });
+      }
       const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId: head.goalId };
+      // The head's own subject travels with every answer, the closed ones too.
+      const subject: DecisionSubjectV1 = { kind: 'goal', goalRef };
       const window = await readGoalPlanWindow(deps.records, goalRef);
       if (window.status !== 'ready') return rejected('unavailable', window.reason);
       if (window.goal.desiredState === 'cancelled') {
-        return ready({ card: null, closedReason: 'goal_cancelled' });
+        return ready({ card: null, closedReason: 'goal_cancelled', subject });
       }
       const carded = await cardFor(ctx, head, { goalId: goalRef.goalId, window });
       if (!carded.ok) return rejected('unavailable', carded.reason);
-      return ready({ card: carded.card, closedReason: carded.closedReason });
+      return ready({ card: carded.card, closedReason: carded.closedReason, subject });
     },
 
     async applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1) {

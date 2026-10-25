@@ -1133,7 +1133,7 @@ export type NewSyntheticDecisionAnswerInput = {
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
-  goalRef: GoalRef;
+  goalRef: GoalRef | null;
   decision: DecisionMessageMetadataV1;
   response: UserMessageResponseV1;
 };

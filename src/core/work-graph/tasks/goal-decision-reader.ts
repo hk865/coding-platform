@@ -18,7 +18,6 @@ import type { RunRef } from '../../../contracts/dispatch.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
-  DEFAULT_GOAL_SETTINGS_V1,
   decisionSourceKey,
   type DecisionObjectV1,
   type DecisionOptionV1,
@@ -107,7 +106,7 @@ function basisOf(goal: GoalSnapshot): GoalDecisionBasisV1 {
     workspaceRef: goal.workspaceRef,
     objective: goal.objective,
     activePlanRef: goal.activePlanRevision,
-    settings: goal.settings ?? DEFAULT_GOAL_SETTINGS_V1,
+    settings: goal.settings,
   };
 }
 
@@ -173,7 +172,7 @@ export function createGoalDecisionCauseReader(
       source: {
         kind: 'goal_cause',
         key: decisionSourceKey({ kind: 'goal_cause', goalRef: input.goal.ref, code: input.code, affected }),
-        goalRef: input.goal.ref,
+        subject: { kind: 'goal', goalRef: input.goal.ref },
         pins: [{ ref: input.goal.ref, revision: input.goal.revision }, ...affected],
         goalBases: [basisOf(input.goal)],
       },
@@ -330,7 +329,7 @@ export function createGoalDecisionCauseReader(
    * (§8.2 line 1357: a pause must not make an emitted card unanswerable).
    */
   async function automationCauses(goal: GoalSnapshot, rows: Map<string, TaskRow>): Promise<CauseReadResult> {
-    const settings = goal.settings ?? DEFAULT_GOAL_SETTINGS_V1;
+    const settings = goal.settings;
     const causes: GoalDecisionCauseReadV1[] = [];
     // §4.5 line 888 / defect-1(GV-5): the ONE coverage/phase derivation the Plan
     // service's gate fact builder also uses, over the same Task rows this reader

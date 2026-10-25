@@ -5,6 +5,9 @@
  */
 import type { Opaque } from "./opaque.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
+import type { GoalSettingsV1 } from "./goal-decisions.js";
+import type { GoalContinuationV1 } from "./ledger.js";
+import type { SessionMessageRef } from "./core/session-message.js";
 export type CommitCursor = Opaque<string, "CommitCursor">;
 export type CommandFingerprint = Opaque<string, "CommandFingerprint">;
 /**
@@ -62,10 +65,17 @@ export type GoalCreatedEvent = {
     idempotencyKey: string;
     actor: ActorRef;
     occurredAt: string;
+    /**
+     * The birth fields of the created Goal. The event is the only historical record of that Goal, so a receipt
+     * replay rebuilds the original snapshot from it alone, with no default for a missing field.
+     */
     payload: {
         objective: string;
         desiredState: "active";
         activePlanRevision: null;
+        settings: GoalSettingsV1;
+        continuedFrom: GoalContinuationV1 | null;
+        copiedInterventions: SessionMessageRef[];
     };
 };
 /**

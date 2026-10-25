@@ -31,7 +31,6 @@ import type {
   DecisionSourceV1,
   GoalControlRebaseV1,
 } from '../../../contracts/goal-decisions.js';
-import { DEFAULT_GOAL_SETTINGS_V1 } from '../../../contracts/goal-decisions.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
@@ -328,7 +327,11 @@ function decisionSourceFromUnknown(value: unknown): DecisionSourceV1 | null {
   if (typeof value['kind'] !== 'string'
     || !(DECISION_SOURCE_KINDS as readonly string[]).includes(value['kind'])) return null;
   if (!nonEmpty(value['key'])) return null;
-  const goalRef = value['goalRef'];
+  // §3.7 item 5: only a goal subject is accepted here; a project or missing
+  // subject is the caller's existing `null` refusal.
+  const subject = value['subject'];
+  if (!isRecord(subject) || subject['kind'] !== 'goal') return null;
+  const goalRef = subject['goalRef'];
   if (!isRecord(goalRef) || goalRef['aggregateType'] !== 'Goal' || !nonEmpty(goalRef['projectId'])
     || !nonEmpty(goalRef['goalId'])) return null;
   if (!Array.isArray(value['pins'])) return null;
@@ -2566,7 +2569,7 @@ function adoptionPolicyOf(
   goal: GoalSnapshot, action: DecisionActionV1, actorClass: ReworkActorClass,
 ): PlanRequestCandidateFacts['adoptionPolicy'] {
   return decisionActionPolicy({
-    autonomy: (goal.settings ?? DEFAULT_GOAL_SETTINGS_V1).autonomy,
+    autonomy: goal.settings.autonomy,
     action, actorClass, countedNext: null, cap: 0,
   });
 }

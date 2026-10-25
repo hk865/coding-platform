@@ -67,7 +67,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "base": {

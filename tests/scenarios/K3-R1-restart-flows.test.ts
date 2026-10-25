@@ -269,7 +269,7 @@ describe('K3 R1 restart flows', () => {
     const card = queueRead.value.waitingAnswer.find(entry => entry.source.key === key);
     expect(card, 'the needs_decision review record has its card').toBeDefined();
     expect(card).toMatchObject({ state: 'waiting_answer', readOnly: false, actions: ['answer'],
-      source: { kind: 'unknown_call_review', goalRef: { goalId: AG2B_GOAL_REF.goalId } },
+      source: { kind: 'unknown_call_review', subject: { kind: 'goal', goalRef: { goalId: AG2B_GOAL_REF.goalId } } },
       options: [{ id: 'rerun_as_is' }, { id: 'skip_as_done' }, { id: 'handle_myself' }] });
     expect(queueRead.value.capabilities)
       .toContainEqual({ source: 'unknown_call_review', availability: 'available' });

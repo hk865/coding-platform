@@ -31,7 +31,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A queue derived cards (%s)', (ki
     if (last === undefined) throw new Error('the planning fixture built no answer');
     const lastKey = decisionSourceKey({ kind: 'planning_question', answerRef: last, questionIndex: 0 });
     const card = ready(await owners(f).reads.readDecisionCard(f.ctx, {
-      source: { kind: 'planning_question', key: lastKey, goalRef: PLANNING_GOAL_REF, pins: [] },
+      source: { kind: 'planning_question', key: lastKey, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF }, pins: [] },
     }));
     expect(card).toMatchObject({ cardKey: lastKey, state: 'waiting_answer', actions: ['answer'] });
   }, S2A_SCALE_TIMEOUT_MS);
@@ -46,11 +46,11 @@ describe.each(['memory', 'sqlite'] as const)('S2A queue derived cards (%s)', (ki
     };
     const key = decisionSourceKey({ kind: 'planning_question', answerRef: beyond, questionIndex: 0 });
     const card = ready(await owners(f).reads.readDecisionCard(f.ctx, {
-      source: { kind: 'planning_question', key, goalRef: PLANNING_GOAL_REF, pins: [] },
+      source: { kind: 'planning_question', key, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF }, pins: [] },
     }));
     expect(card).toMatchObject({
-      cardKey: key, goalRef: PLANNING_GOAL_REF,
-      source: { kind: 'planning_question', key, goalRef: PLANNING_GOAL_REF },
+      cardKey: key, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF },
+      source: { kind: 'planning_question', key, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF } },
       state: 'waiting_answer', options: [], objects: [], answer: null, application: null,
       actions: ['answer'], readOnly: false,
     });

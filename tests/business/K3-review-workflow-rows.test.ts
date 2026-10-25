@@ -582,7 +582,7 @@ it.each([
     expect((result.value as { source?: unknown }).source).toEqual({
       kind: 'unknown_call_review',
       key: reviewSourceKeyOf(review),
-      goalRef: GOAL_B,
+      subject: { kind: 'goal', goalRef: GOAL_B },
       pins: [{ ref: review.ref, revision: review.revision }],
     });
     expect(w.settleCalls).toBe(0);
@@ -1023,7 +1023,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 real owner (%s): a real answered 
   const record = await world.createRecord('k3-20-a');
   const lookupSource: DecisionSourceV1 = { kind: 'unknown_call_review',
     key: reviewSourceKeyOf(record),
-    goalRef: GOAL_B, pins: [] };
+    subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] };
   const read = await world.readModel.readDecisionCard(f.ctx, { source: lookupSource });
   if (read.status !== 'ready') throw new Error(`the review card is not readable: ${JSON.stringify(read)}`);
   const card = read.value;
@@ -1050,7 +1050,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 real owner (%s): a real answered 
   // basis, exactly as the answer saved them — the minimal lookup source would
   // be refused `invalid` by the owner's L19 guard.
   expect(request.input.source.key).toBe(card.source.key);
-  expect(request.input.source.goalRef).toEqual(card.source.goalRef);
+  expect(request.input.source.subject).toEqual(card.source.subject);
   expect(request.input.source.pins).toEqual(card.source.pins);
   expect(request.input.source.pins).toHaveLength(3);
   expect(request.meta.expected).toEqual(card.source.pins);
@@ -1143,7 +1143,7 @@ function realOwnerWorkflow(world: K3ReviewCardWorld, options: RealOwnerWorkflowO
 function reviewLookupSource(record: UnknownCallReviewV1): DecisionSourceV1 {
   return { kind: 'unknown_call_review',
     key: reviewSourceKeyOf(record),
-    goalRef: GOAL_B, pins: [] };
+    subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] };
 }
 
 function selectFor(flowId: string): WorkflowAdvanceInput {

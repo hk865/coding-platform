@@ -6,7 +6,7 @@
  * three event kinds in ONE RecordStore commit. Reads go through
  * `notes/note-read-model.ts`; this file never reads the database to answer a test.
  */
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type {
   CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteHeadSnapshot,
@@ -43,6 +43,7 @@ import type {
   NoteDecisionApplicationInputV1, NoteDecisionApplyPort, NoteDispositionResult, NoteDutyResolver, NoteErrorCode,
   NoteExistingTopicV1, NoteWritePort, WriteNoteInput, WriteNoteResult,
 } from '../model/note-contracts.js';
+import type { SecretaryQueryRunPort, SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import {
   NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES, NOTE_EXISTING_TOPICS_MAX,
@@ -61,7 +62,7 @@ import {
 } from '../persistence/note-record-codecs.js';
 import {
   actualDispositionTargets, admitNoteWrite, moveCurrentPointerRecord, newCurrentPointerRecord, newNoteHeadRecord,
-  newNoteVersionRecord, noticeClassOf, noteWriteAuthority, transitionNote, userReasonsOf,
+  newNoteVersionRecord, noticeClassOf, noteWriteAuthority, secretaryNoteScope, transitionNote, userReasonsOf,
   type NoteDispositionEventV1, type NoteUserReasonTargetV1,
 } from '../state/note-machine.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -89,6 +90,8 @@ export type NoteServiceDependencies = {
   plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   duties: NoteDutyResolver;
   runFacts: NoteRunFactResolver;
+  /** The one trusted resolver for a running secretary QueryRun (§3.4 item 2). */
+  secretaryQueryRun: SecretaryQueryRunPort;
   workspace: NoteAnchorWorkspace;
   workspaceMaxFileBytes: number;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
@@ -130,20 +133,34 @@ type Caller = {
   goalId: string | null;
   duty: string | null;
   sessionRef: SessionRef | null;
-  /** The Run-bound plan for a work_run caller, `null` for a user. */
+  /** The Run-bound plan for a work_run caller, the Plan frozen at preparation for a secretary QueryRun, `null` for a user. */
   planRef: PlanRevisionRef | null;
+  /** The trusted facts of a secretary QueryRun caller, `null` for every other caller. */
+  queryRun: SecretaryQueryRunV1 | null;
 };
 
 async function resolveCaller(ctx: CoreCallContext, input: WriteNoteInput, deps: NoteServiceDependencies):
 Promise<{ ok: true; value: Caller } | { ok: false; rejection: Rejected }> {
   const principal = ctx.principal;
-  if (principal.kind === 'query_run') return { ok: false, rejection: forbidden('a read-only copy cannot write a note') };
+  if (principal.kind === 'query_run') {
+    // A running secretary QueryRun is admitted only through the trusted resolver;
+    // a plain Query or a read-only copy stays refused there (§3.4 item 2).
+    const resolved = await deps.secretaryQueryRun.resolveSecretaryQueryRun(ctx);
+    if (resolved.status === 'rejected') {
+      return { ok: false, rejection: rejected(resolved.code === 'forbidden' ? 'forbidden' : 'unavailable',
+        resolved.reason) };
+    }
+    const round = resolved.value;
+    return { ok: true, value: { source: { kind: 'agent', sessionRef: round.session, runRef: null,
+      queryRunRef: round.run, duty: 'secretary' }, isUser: false, goalId: round.effectiveGoalId,
+      duty: 'secretary', sessionRef: round.session, planRef: round.planRef, queryRun: round } };
+  }
   if (principal.kind === 'host') {
     const actor = principal.actor;
     const actorClass = reworkActorClassOf(principal, actor);
     if (actorClass !== 'human') return { ok: false, rejection: forbidden('a system actor cannot write a note') };
     return { ok: true, value: { source: { kind: 'user', principalId: actor.id }, isUser: true,
-      goalId: input.goalId, duty: null, sessionRef: null, planRef: null } };
+      goalId: input.goalId, duty: null, sessionRef: null, planRef: null, queryRun: null } };
   }
   // work_run: the trusted execution fixes the goal, the Session and the duty.
   // The public execution reader is Host-only, so the composition root injects
@@ -173,9 +190,9 @@ Promise<{ ok: true; value: Caller } | { ok: false; rejection: Rejected }> {
   if (duty === 'reviewer' || duty === 'unknown') {
     return { ok: false, rejection: forbidden('the caller has no duty that may write a note') };
   }
-  return { ok: true, value: { source: { kind: 'agent', sessionRef: facts.value.sessionRef, runRef,
+  return { ok: true, value: { source: { kind: 'agent', sessionRef: facts.value.sessionRef, runRef, queryRunRef: null,
     duty: duty as never }, isUser: false, goalId: facts.value.goalId, duty, sessionRef: facts.value.sessionRef,
-    planRef: facts.value.planRef } };
+    planRef: facts.value.planRef, queryRun: null } };
 }
 
 // --------------------------------------------------------------------------
@@ -235,21 +252,6 @@ function pointerPayload(pointer: PointerRead | null): { noteId: string | null; r
 }
 
 /**
- * R4: the trusted caller folded into the replay identity and fingerprint, built
- * from `ctx.principal` only (the model can never name another caller). The same
- * shape as the WorkGraph peers so two principals never replay each other.
- */
-function principalOf(ctx: CoreCallContext): unknown {
-  const principal = ctx.principal;
-  if (principal.kind === 'host') return { kind: 'host', actor: { kind: principal.actor.kind, id: principal.actor.id } };
-  if (principal.kind === 'work_run') {
-    return { kind: 'work_run', runRef: { projectId: principal.runRef.projectId, goalId: principal.runRef.goalId,
-      runId: principal.runRef.runId } };
-  }
-  return { kind: 'query_run', queryRunRef: { ...principal.queryRunRef } };
-}
-
-/**
  * L4 / decision 72 (U1): the ONE identity/fingerprint pair the note writer
  * (`writeNote`, `dispose`) and the read-only `lookupToolCommit` all use. The
  * builder and these helpers were factored out so the write and the lookup call
@@ -257,7 +259,8 @@ function principalOf(ctx: CoreCallContext): unknown {
  */
 function noteCommandIdentity(op: 'write' | 'review' | 'withdraw', ctx: CoreCallContext, commandId: string): string {
   return `s4-note-${op}:` + sha256Hex(canonicalJson({ schemaVersion: 1, op, projectId: ctx.projectId,
-    workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx), commandId } as unknown as JsonValue));
+    workspaceId: ctx.workspaceId ?? null, principal: principalIdentity(ctx.principal),
+    commandId } as unknown as JsonValue));
 }
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 
@@ -267,7 +270,8 @@ function noteCommandReceiptOf(ctx: CoreCallContext, built: RecordNoteRequestV1):
     const request = built.request;
     return {
       identityKey: noteCommandIdentity('write', ctx, request.commandId),
-      fingerprint: fingerprintOf({ kind: 's4-note-write', projectId: ctx.projectId, principal: principalOf(ctx),
+      fingerprint: fingerprintOf({ kind: 's4-note-write', projectId: ctx.projectId,
+        principal: principalIdentity(ctx.principal),
         commandId: request.commandId, note: request.note, expectedPointerRevision: request.expectedPointerRevision,
         goalId: request.goalId }),
     };
@@ -276,7 +280,8 @@ function noteCommandReceiptOf(ctx: CoreCallContext, built: RecordNoteRequestV1):
     const request = built.request;
     return {
       identityKey: noteCommandIdentity('review', ctx, request.commandId),
-      fingerprint: fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId, principal: principalOf(ctx),
+      fingerprint: fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId,
+        principal: principalIdentity(ctx.principal),
         commandId: request.commandId, noteId: request.noteId, expectedVersion: request.expectedVersion,
         eventKind: request.verdict, reason: request.reason,
         expectedPointerRevision: request.expectedPointerRevision, resolution: request.resolution ?? null }),
@@ -285,7 +290,8 @@ function noteCommandReceiptOf(ctx: CoreCallContext, built: RecordNoteRequestV1):
   const request = built.request;
   return {
     identityKey: noteCommandIdentity('withdraw', ctx, request.commandId),
-    fingerprint: fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId, principal: principalOf(ctx),
+    fingerprint: fingerprintOf({ kind: 's4-note-disposition', projectId: ctx.projectId,
+      principal: principalIdentity(ctx.principal),
       commandId: request.commandId, noteId: request.noteId, expectedVersion: request.expectedVersion,
       eventKind: 'withdraw', reason: request.reason, expectedPointerRevision: null, resolution: null }),
   };
@@ -1174,7 +1180,28 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // C3.1/§11.4: the project understanding is always goal-less, has no extra
     // anchors and is written by the project scribe or the user.
     const isProjectUnderstanding = draft.kind === 'understanding' && draft.anchor.kind === 'project';
-    const storedGoalId = isProjectUnderstanding ? null : caller.goalId;
+    // A secretary QueryRun's range and stored goal are the round's frozen
+    // effective goal (or the single Goal a live understanding command grants),
+    // never `caller.goalId`; the pure scope decides both and refuses out-of-range
+    // anchors here, before any anchor read.
+    const scope = caller.queryRun === null ? null : secretaryNoteScope({
+      kind: draft.kind,
+      target: draft.kind !== 'understanding' ? null
+        : draft.anchor.kind === 'goal' || draft.anchor.kind === 'stage' || draft.anchor.kind === 'project'
+          ? draft.anchor.kind : null,
+      anchorGoalIds: [draft.anchor, ...draft.extraAnchors].flatMap(anchor => 'goalId' in anchor ? [anchor.goalId] : []),
+      mainAnchorGoalId: 'goalId' in draft.anchor ? draft.anchor.goalId : null,
+      effectiveGoalId: caller.queryRun.effectiveGoalId,
+      grantedGoalIds: caller.queryRun.goals.map(goal => goal.goalId),
+    });
+    if (scope !== null && 'ok' in scope) return rejectedInput(input, noteCodeOf(scope.code), scope.detail);
+    // A secretary's stage anchor takes the version of the Plan frozen at the
+    // round's preparation; a round prepared without one has no stage version.
+    if (caller.queryRun !== null && caller.queryRun.planRef === null
+      && [draft.anchor, ...draft.extraAnchors].some(anchor => anchor.kind === 'stage')) {
+      return rejectedInput(input, 'invalid', 'a stage anchor needs the Plan frozen at the round preparation');
+    }
+    const storedGoalId = scope === null ? (isProjectUnderstanding ? null : caller.goalId) : scope.storedGoalId;
     // L4 step 2 / L5 authority: only an agent or a scribe stages a repair.
     const authority = noteWriteAuthority({ kind: draft.kind, isUser: caller.isUser, duty: caller.duty });
     if (authority !== null) return rejectedInput(input, noteCodeOf(authority.code), authority.detail);
@@ -1729,7 +1756,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const noteId = input.pin.noteId;
     const identityKey = noteCommandIdentity('review', ctx, input.commandId);
     const fingerprint = fingerprintOf({ kind: 's4-note-card-decision', projectId: ctx.projectId,
-      workspaceId: ctx.workspaceId ?? null, principal: principalOf(ctx), commandId: input.commandId,
+      workspaceId: ctx.workspaceId ?? null, principal: principalIdentity(ctx.principal), commandId: input.commandId,
       cardId: input.cardId, optionId: input.optionId, pin: input.pin,
       expectedPointerRevision: input.expectedPointerRevision, answerMessageRef: input.answerMessageRef,
       conditions: input.conditions });

@@ -12,6 +12,7 @@ import type {
 import type { GoalSnapshot } from '../../contracts/ledger.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
+import { PLATFORM_DUTIES } from '../../contracts/platform-duty.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
@@ -26,8 +27,6 @@ import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
 /** A direct call keeps the generated platform pack (ruling 14). */
 const DEFAULT_TEXTS: PromptTextsV1 = PLATFORM_PROMPT_PACK_V1;
-
-const PLATFORM_DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 
 /** §2.4 item 3 / §2.5: the duty a versioned legacy template Session role ref fixes, or none. */
 function templateDutyOf(sessionRole: RoleConfigurationRef | undefined, texts: PromptTextsV1): PlatformDutyV1 | undefined {

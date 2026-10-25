@@ -56,11 +56,11 @@
 | `dispatchCoreRoute` | `src/app/core-routes.ts:1096` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
 | `parseCoreRouteRequest` | `src/app/core-routes.ts:586` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
 | `createWorkbenchTools` | `src/app/workbench-tools.ts:283` | 适配 Kernel 文件沙箱与进程沙箱：读写、列目录、后台命令 | 工作台的文件/命令路由；不要直接碰 Kernel sandbox |
-| `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:394` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
-| `validateWorkbenchRuntimeConfiguration` | `src/app/runtime-configuration.ts:285` | 纯校验 binding/profile/grant/budget，重复或错配直接报错 | 装载或替换运行期配置前 |
-| `narrowResolvedReadonlyCommands` | `src/app/runtime-configuration.ts:188` | 按 Host `allowReadonlyCommands:false` 收窄每个已解析 binding 的工具 | 通用 binding 解析边界；设置重建也要走 |
-| `createSecretaryProfiles` | `src/app/secretary-profiles.ts:50` | Host 的 `SecretaryProfilePort`：`forSession` 只按实时 profile 列表匹配 workspace 与完整 `sessionRole`（`sameJson`），不做 duty 判定；`forNewLine` 调真正的 duty resolver | Host 在 `src/app/secretary-profiles.ts:50` 构造并作为 `secretaryProfiles` 选项注入（`src/app/secretary-profiles.ts:50`）；duty 正本是 `createSessionDutyResolver`（`src/composition/session-duty.ts:57`），不要另写判断 |
-| `createSessionDutyResolver` | `src/composition/session-duty.ts:57` | **正本**：受信任 duty 解析；RoleSpec 的 `platformDuty` 与精确 legacy 模板任一侧可定，缺证据才回退 Work binding 的 `sessionRole`，否则 `unknown` | admission、secretary 判定都调它；本层 `forNewLine` 经它，不要另写 duty 判断 |
+| `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:391` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
+| `validateWorkbenchRuntimeConfiguration` | `src/app/runtime-configuration.ts:281` | 纯校验 binding/profile/grant/budget，重复或错配直接报错 | 装载或替换运行期配置前 |
+| `narrowResolvedReadonlyCommands` | `src/app/runtime-configuration.ts:186` | 按 Host `allowReadonlyCommands:false` 收窄每个已解析 binding 的工具 | 通用 binding 解析边界；设置重建也要走 |
+| `createSecretaryProfiles` | `src/app/secretary-profiles.ts:50` | Host 的 `SecretaryProfilePort`：`forSession` 只按实时 profile 列表匹配 workspace 与完整 `sessionRole`（`sameJson`），不做 duty 判定；`forNewLine` 调真正的 duty resolver | Host 在 `src/app/secretary-profiles.ts:50` 构造并作为 `secretaryProfiles` 选项注入（`src/app/secretary-profiles.ts:50`）；duty 正本是 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`），不要另写判断 |
+| `createSessionDutyResolver` | `src/composition/session-duty.ts:55` | **正本**：受信任 duty 解析；RoleSpec 的 `platformDuty` 与精确 legacy 模板任一侧可定，缺证据才回退 Work binding 的 `sessionRole`，否则 `unknown` | admission、secretary 判定都调它；本层 `forNewLine` 经它，不要另写 duty 判断 |
 | `sameJson` | `src/contracts/fingerprint.ts:50` | **正本**：按规范 JSON 做与键序无关的相等比较；不能编码的值永不相等 | 比较完整 `sessionRole` 等结构时；不要另写比较 |
 | `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:83` | **正本**（路径校验这一层的入口）：经 Host 绑定的 root realpath 与当前授权开工作区读访问 | 判断工作区路径是否可读/在根内时；不要用本层 `isPathWithin` 当通用校验 |
 | `createHostSettings` | `src/app/host-settings.ts:470` | 读写 Host 本地设置：目录、模型、检查、自动化、资源上限、提示词包，并推送私有快照 | Host 启动或设置路由；凭据只写不读 |
@@ -73,7 +73,7 @@
 | `createGoalFanOutDriver` | `src/app/goal-fan-out-driver.ts:201` | Goal 控制提交后，对每个受影响 Run 提交幂等 fan-out 控制并观察未知结果 | Goal pause/resume/cancel 与启动重驱；不要重复提交 intent |
 | `createWakeLoop` | `src/app/wake-loop.ts:131` | 两条请求队列的唤醒循环：合并脏标记、一次一个 pass、`more` 让出后重跑、失败退避、commit notice 配对、未武装与 `close` | Host 的请求队列驱动；`driving` 传租约是否持有，别在别处另写合并或退避 |
 | `acquireHostInstanceLease` | `src/app/host-instance-lease.ts:113` | 取得/释放 SQLite 旁的单 Host 锁，处理陈旧锁与 takeover | 建平台之前；没持锁的 Host 只做读与 owner 写 |
-| `runStartupReconcile` | `src/app/startup-reconcile.ts:262` | 持锁启动时把未决 Run/Query/check/control 分类、结清、重驱 | 每次 Host 启动、开新 workspace 时；不重跑 Kernel Turn |
+| `runStartupReconcile` | `src/app/startup-reconcile.ts:263` | 持锁启动时把未决 Run/Query/check/control 分类、结清、重驱 | 每次 Host 启动、开新 workspace 时；不重跑 Kernel Turn |
 | `createHostCoreCallContext` | `src/app/core-call-context.ts:17` | 只用启动 actor 与已解析 scope 构造 `CoreCallContext` | server 进入路由前；永远不接受请求体 principal |
 | `readDiskPromptPack` | `src/app/prompt-packs.ts:260` | 从磁盘读一个包及其 extends 链并解析；`platform` 是虚拟包 | 设置/提示词路由读取包时 |
 | `createDiskPromptPackSource` | `src/app/prompt-packs.ts:314` | 把磁盘目录暴露成 `PromptPackSourcePort` | 平台装配要注入提示词包来源时 |
@@ -91,7 +91,7 @@
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
 - 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1236`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
-- 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:57`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
+- 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。
 - 不要假设未配置的 secretary/cap/wake 有默认实现：默认 profile 返回 null、无 cap 全放行、`wake` 为 no-op；真实行为必须显式配置（FP-12、MH-12）。
 - 请求驱动只在持实例锁且 `requestDriver` 不是 `'off'` 时装配：`'off'` 时既不建唤醒循环也不建请求队列，提交的轮停在命令留下的地方，等 Query 路由或下一个开着驱动的 Host；测试用手工步骤推进轮时必须用它。请求命令的 wake（平台选项 `requestWake`）和 commit notice 都经晚绑定 sink 进循环，循环从不影响 commit；队列的 `context` 用 Host 的系统 reconcile actor，drain 的 `AbortSignal` 由循环传入。

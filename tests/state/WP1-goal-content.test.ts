@@ -32,6 +32,9 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
     desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
+    settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+    continuedFrom: null,
+    copiedInterventions: [],
     since: 'c0000000001' as GoalSnapshot['since'],
     ...overrides,
   };

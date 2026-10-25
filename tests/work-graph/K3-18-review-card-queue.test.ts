@@ -253,7 +253,7 @@ describe('K3-18 (四) review card digests', () => {
         const cardSource = createUnknownCallReviewCardSource({ records: f.records, reviews: world.reviews, workspace });
         const source = { kind: 'unknown_call_review' as const,
           key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: created.ref, revision: created.revision }),
-          goalRef: GOAL_B, pins: [] };
+          subject: { kind: 'goal' as const, goalRef: GOAL_B }, pins: [] };
         const readCard = async () => {
           const read = await cardSource.readByKey!(f.ctx, { workspace: WORKSPACE_SCOPE, source });
           if (read.status !== 'ready' || read.value === null) throw new Error(JSON.stringify(read));

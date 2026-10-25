@@ -14,6 +14,14 @@ import type { VersionPin } from "./identity.js";
  * wider `StoreError` union (core/record-store/ports.ts).
  */
 export type CoreError = "invalid" | "forbidden" | "revision_conflict" | "idempotency_conflict" | "not_found" | "dependency_blocked" | "cycle" | "busy" | "source_stale" | "incomplete" | "capacity" | "unsupported" | "unavailable" | "cancelled";
+/** Keyed by `CoreError`, so a code added there must be added here (the list is the keys, in this order). */
+const CORE_ERROR_KEYS: Readonly<Record<CoreError, true>> = {
+    invalid: true, forbidden: true, revision_conflict: true, idempotency_conflict: true, not_found: true,
+    dependency_blocked: true, cycle: true, busy: true, source_stale: true, incomplete: true, capacity: true,
+    unsupported: true, unavailable: true, cancelled: true,
+};
+/** The one runtime list of the core failure codes, in the order of `CoreError`. */
+export const CORE_ERRORS = Object.keys(CORE_ERROR_KEYS) as [CoreError, ...CoreError[]];
 export type CoreRejection = {
     status: "rejected";
     code: CoreError;

@@ -70,7 +70,7 @@ function reworkNotices(seeded: S6AReworkNotices): [NoticeItemV1, NoticeItemV1, N
       + ref.goalId + '","projectId":"' + ref.projectId + '","taskId":"' + ref.taskId + '"}';
     const position: NoticePositionV1 = { kind: 'commit', cursor: notice.position.cursor, itemKey };
     return {
-      itemKey, category: 'automatic_rework', goalRef: rework.goal, position,
+      itemKey, category: 'automatic_rework', subject: { kind: 'goal', goalRef: rework.goal }, position,
       summary: `自动返工 · ${rework.taskId} · 第 1 次（1/3）`, objects: [],
       rework: {
         operation: 'requeue', actorClass: 'system', taskRef: { projectId: ref.projectId, goalId: ref.goalId, taskId: ref.taskId },
@@ -84,7 +84,8 @@ function reworkNotices(seeded: S6AReworkNotices): [NoticeItemV1, NoticeItemV1, N
 /** The folded line of one goal: its key, the newest member's position, the members and their views. */
 function foldedLine(goal: GoalRef, members: readonly NoticeItemV1[]): NoticeLine {
   return {
-    itemKey: `automatic_rework_group:${goal.projectId}/${goal.goalId}`, category: 'automatic_rework', goalRef: goal,
+    itemKey: `automatic_rework_group:${goal.projectId}/${goal.goalId}`, category: 'automatic_rework',
+    subject: { kind: 'goal', goalRef: goal },
     position: members.at(-1)!.position, summary: `${String(members.length)} 条自动返工`, objects: [], rework: null,
     members: members.map(member => ({ itemKey: member.itemKey, position: member.position })),
     memberViews: [...members],

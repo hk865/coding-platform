@@ -27,10 +27,11 @@
 import type { QueryEntryTicket, QueryExecutionRecord } from './contracts.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import { validQueryExecution } from '../../../contracts/query-job.js';
+import { GoalScreeningShape, validQueryExecution } from '../../../contracts/query-job.js';
 import {
   invalid, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import type {
   PendingQueryJobSnapshot,
@@ -61,7 +62,7 @@ import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { isPlatformCursor } from '../sessions/session-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { QUERY_ACTIVITY_RECORD_SCHEMAS } from '../persistence/query-activity-codecs.js';
-import { sessionRefProblem } from '../persistence/rework-codecs.js';
+import { planRevisionRefProblem, sessionRefProblem } from '../persistence/rework-codecs.js';
 import { QUERY_RUN_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 import {
   QUERY_BY_REQUEST_INDEX, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX,
@@ -353,7 +354,11 @@ function goalCardDraftIssues(value: unknown, path: string): string[] {
   if (!['every_step', 'after_plan_confirmation'].includes(value['autonomy'] as string)) {
     issues.push(`${path}.autonomy is not a legal GoalAutonomyV1`);
   }
-  if (value['screening'] !== null) issues.push(`${path}.screening must be null in the 6A format`);
+  // `null` is not screened; any other value is the model's screening, kept as returned.
+  if (value['screening'] !== null) {
+    const problem = checkShape(GoalScreeningShape, value['screening'], 'stored');
+    if (problem !== null) issues.push(`${path}.screening: ${problem}`);
+  }
   return issues;
 }
 
@@ -453,6 +458,18 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
   else drafts.forEach((draft, index) => {
     issues.push(...goalCardDraftIssues(draft, `answer.goalCardDrafts[${index}]`));
   });
+  // Required, with no old-format default: `null` is a plan that names no draft;
+  // an integer names one of this answer's own drafts.
+  if (!Object.hasOwn(value, 'planDraftIndex')) {
+    issues.push('answer.planDraftIndex is missing');
+  } else {
+    const planDraftIndex = value['planDraftIndex'];
+    if (planDraftIndex !== null) {
+      const namesDraft = Number.isSafeInteger(planDraftIndex) && (planDraftIndex as number) >= 0
+        && Array.isArray(drafts) && (planDraftIndex as number) <= drafts.length - 1;
+      if (!namesDraft) issues.push('answer.planDraftIndex must be null or name one of the goal card drafts');
+    }
+  }
   return issues;
 }
 
@@ -591,6 +608,16 @@ export function queryManifestProblem(value: unknown): string | null {
       || !isPos(goal['revision'])) {
       return 'the Query manifest goal is not a Goal pin';
     }
+  }
+  // The frozen Plan pins a Plan of the goal's project (a secretary's stage
+  // anchors take its version); a manifest without a goal freezes none.
+  const focusPlan = value['focusPlan'];
+  if (focusPlan !== null) {
+    if (goal === null) return 'a Query manifest without a goal must not freeze a Plan';
+    if (!isRecord(focusPlan) || !isPos(focusPlan['revision'])) return 'the Query manifest focusPlan is not a Plan pin';
+    const planProblem = planRevisionRefProblem(focusPlan['ref'], 'the Query manifest focusPlan.ref',
+      (goal['ref'] as Record<string, unknown>)['projectId'] as string);
+    if (planProblem !== null) return planProblem;
   }
   const request = value['request'];
   if (request !== null && !isRecord(request)) return 'the Query manifest request is not an object';

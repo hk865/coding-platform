@@ -35,7 +35,7 @@
 | `validateCreateGoalCommand` | `src/contracts/validation/goal.ts:6` | 校验 CreateGoal 命令的完整形状，含 NFC+trim 后非空 objective。 | WorkGraph 受理 CreateGoal 前的纯输入检查。 |
 | `validateActor` | `src/contracts/validation/identity.ts:5` | 校验 human/system/agent actor；agent 必须带完整 runRef。 | 所有 actor 字段；本层只需要 `ValidationIssue[]` 时用这个入口。 |
 | `validateCommandIdentity` | `src/contracts/validation/identity.ts:24` | 校验 projectId、actor、idempotencyKey。 | 所有命令的 identity 字段。 |
-| `validateRoleSpecContent` | `src/contracts/validation/role.ts:18` | 校验角色规格正文：职责、材料、权限/工具、必产出、预算与退出条件。 | 安装角色规格与角色记录 codec 的安装期判据。 |
+| `validateRoleSpecContent` | `src/contracts/validation/role.ts:17` | 校验角色规格正文：职责、材料、权限/工具、必产出、预算与退出条件。 | 安装角色规格与角色记录 codec 的安装期判据。 |
 | `validateCoordinationRoleMatrix` | `src/contracts/validation/role.ts:132` | 校验 catalog 的每个 RoleSpecRevision pin，以及 coordinator 必须指向 catalog 内角色。 | 协调策略正文安装/解码时。 |
 | `validateRoleSpecPin` | `src/contracts/validation/role.ts:166` | 校验 RoleSpecRevision 三元组 pin 与 digest。 | 任何引用角色规格版本的位置。 |
 | `validateInstallRoleSpecRevisionCommand` | `src/contracts/validation/role.ts:199` | 校验安装角色规格命令体，并复用正文校验。 | 安装命令的纯输入检查。 |

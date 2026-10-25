@@ -63,7 +63,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A card semantics (%s)', (kind) =
       return { identityKey: match.input.identityKey, fingerprint: match.input.fingerprint, cursor };
     };
     const source = ready(await services.reads.readDecisionCard(f.ctx,
-      { source: { kind: 'candidate', key: requestKey(), goalRef: GOAL_B, pins: [] } })).source;
+      { source: { kind: 'candidate', key: requestKey(), subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] } })).source;
     // `other` is a real selection; a non-message source makes the answer synthetic.
     const answered = mustCommit(await services.decisions.answerDecision(f.ctx, {
       input: { source, selection: { kind: 'other' }, text: 'Adopt the candidate', annotations: [] },

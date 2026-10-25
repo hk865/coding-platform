@@ -10,6 +10,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
+import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
+import { CurrentPointerRefShape, GoalRefShape, OperationRefShape, QueryJobRefShape, QueryRunRefShape, id } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind,
@@ -174,3 +176,42 @@ export const REQUEST_ROOT_MARK = 'root';
 export function requestGoalSlot(goalId: string | null): string {
   return goalId === null ? 'no-goal' : `g:${goalId}`;
 }
+
+// ------------------------------------------------------------------------ //
+// The understanding command (the type only)                                //
+// ------------------------------------------------------------------------ //
+
+/** The goals are unique, and there is one pointer per goal, in the goals' order. */
+export function understandingPointersProblem(value: unknown): string | null {
+  const command = value as RequestUnderstandingCommandV1;
+  const seen = new Set<string>();
+  for (const goal of command.goals) {
+    const key = canonicalJson(goal as unknown as JsonValue);
+    if (seen.has(key)) return `RequestUnderstandingCommand.goals repeats ${goal.goalId}`;
+    seen.add(key);
+  }
+  if (command.pointers.length !== command.goals.length) {
+    return 'RequestUnderstandingCommand.pointers does not have one entry per goal';
+  }
+  for (let index = 0; index < command.goals.length; index += 1) {
+    const goal = command.goals[index]!;
+    const pointer = command.pointers[index]!.goalRef;
+    if (pointer.projectId !== goal.projectId || pointer.goalId !== goal.goalId) {
+      return `RequestUnderstandingCommand.pointers[${index}] is not goals[${index}]`;
+    }
+  }
+  return null;
+}
+
+export const RequestUnderstandingCommandShape = defineShape({ name: 'RequestUnderstandingCommandV1', fields: {
+  kind: f.literal('request_understanding'),
+  operationId: id,
+  operationRef: f.ref(OperationRefShape),
+  requestRoot: f.ref(QueryJobRefShape),
+  goals: f.array(f.ref(GoalRefShape), { min: 1 }),
+  pointers: f.array(f.object({ goalRef: f.ref(GoalRefShape), pointer: f.ref(CurrentPointerRefShape), revision: f.integer({ min: 0 }) })),
+  checkedRound: f.nullable(f.ref(QueryRunRefShape)),
+  generation: f.integer({ min: 1 }),
+  state: f.enumOf(['live', 'closed', 'consumed'] as const),
+}, rules: [understandingPointersProblem] });
+export type RequestUnderstandingCommandV1 = InferShape<(typeof RequestUnderstandingCommandShape)['fields']>;

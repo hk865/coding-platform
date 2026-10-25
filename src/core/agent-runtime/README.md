@@ -72,7 +72,7 @@
 ### 观察与恢复
 做原历史观察、活动计数、continuation brief 和启动对账的去这组。
 - `execution-observation.ts` — Work 观察：沿 locator 读原历史、归约 Turn、提交唯一终态。
-- `query-observation.ts` — Query 原历史观察与终态提交；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；普通 Query 照旧记 `gap`。终态提交在同一 commit 里写这一 Turn 的活动计数（`tallyTurnActivity`，`bound: 'end_position'`），格式失败的终态也照写。
+- `query-observation.ts` — Query 原历史观察与终态提交；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；回答写回时带上解析出的草稿 `screening` 和顶层 `planDraftIndex`（普通 Query 是 `null`）；普通 Query 照旧记 `gap`。终态提交在同一 commit 里写这一 Turn 的活动计数（`tallyTurnActivity`，`bound: 'end_position'`），格式失败的终态也照写。
 - `observation-recovery.ts` — 按 Kernel run/turn 过滤的精确原历史读取。
 - `graph-execution-history.ts` — WorkGraph locator 到 RT7 原历史的适配。
 - `continuation-brief-assembly.ts` — continuation brief 的事实读取与纯装配。
@@ -102,12 +102,12 @@
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:237` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:148` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:176` | 一次 fresh QueryRun 驱动 | 正式 Query 启动 |
-| `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:269` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck` | observe QueryRun |
+| `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:277` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
 | `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:117` | 安全点 pause/cancel 协调与退出证明 | 投递控制意图 |
 | `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
 | `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
-| `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:533` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
-| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:894` | 完成轮边界、cursor 与 turn bounds 读取 | 需要 completed boundary |
+| `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:529` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
+| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:890` | 完成轮边界、cursor 与 turn bounds 读取 | 需要 completed boundary |
 | `createKernelStoreRegistry` | `src/core/agent-runtime/kernel-store-locator.ts:46` | Session 到 Kernel store 的固定映射 | 组合根构造 Kernel reader |
 | `createRegisteredCheckRunner` | `src/core/agent-runtime/check-execution.ts:78` | 执行注册检查并记录真实观察 | verification 检查 |
 | `createGraphExecutionHistoryReader` | `src/core/agent-runtime/graph-execution-history.ts:170` | 图 locator 到原始历史的分页读取 | 读某 Run 的 Kernel 历史 |

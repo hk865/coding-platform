@@ -108,7 +108,8 @@ it('RT02 decisions/answer is a Host-bound graph write: ctx operator stays, body 
   const answer = ready({ state: 'answered' });
   respond('workflow.resolveDecision', answer);
   const messageRef = { aggregateType: 'SessionMessage' as const, ...WORKSPACE_SCOPE, messageId: 'rt02' };
-  const input = { source: { kind: 'message', key: decisionSourceKey({ kind: 'message', messageRef }), goalRef: GOAL_B, pins: [] },
+  const input = { source: { kind: 'message', key: decisionSourceKey({ kind: 'message', messageRef }),
+    subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] },
     selection: { kind: 'option', optionId: 'accept' }, text: 'go', annotations: [] };
   const forged = { ...input, actor: { kind: 'human', id: 'forged' }, duties: ['admin'] };
   const meta = { requestId: 's5-rt02', expected: [{ ref: messageRef, revision: 1 }] };

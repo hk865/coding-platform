@@ -140,6 +140,7 @@ describe('queryManifestProblem', () => {
       kind: 'query_execution',
       contextAssembly: { callKind: 'query-copy' },
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
+      focusPlan: null,
       request: null,
     };
     expect(queryManifestProblem(JSON.parse(JSON.stringify(plain)))).toBeNull();
@@ -151,6 +152,7 @@ describe('queryManifestProblem', () => {
       kind: 'query_execution',
       contextAssembly: { callKind: 'secretary' },
       goal: null,
+      focusPlan: null,
       request: REQUEST_FACTS,
     };
     expect(queryManifestProblem(JSON.parse(JSON.stringify(secretary)))).toBeNull();
@@ -160,6 +162,7 @@ describe('queryManifestProblem', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'secretary' },
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
+      focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
     })).toBeNull();
   });
@@ -170,6 +173,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'query-copy' },
       goal: null,
+      focusPlan: null,
       request: null,
     })).not.toBeNull();
   });
@@ -178,6 +182,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'secretary' },
       goal: null,
+      focusPlan: null,
       request: null,
     })).not.toBeNull();
   });
@@ -186,6 +191,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'query-copy' },
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
+      focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
     })).not.toBeNull();
   });
@@ -194,6 +200,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'secretary' },
       goal: null,
+      focusPlan: null,
       request: { ...REQUEST_FACTS, round: { ...MATERIAL, since: 'not-a-cursor' } },
     })).not.toBeNull();
   });
@@ -202,6 +209,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'secretary' },
       goal: null,
+      focusPlan: null,
       request: { ...REQUEST_FACTS, batch: [{ ...MATERIAL, runRef: undefined }] },
     })).not.toBeNull();
   });
@@ -210,7 +218,18 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
     expect(queryManifestProblem({
       contextAssembly: { callKind: 'secretary' },
       goal: null,
+      focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
     })).not.toBeNull();
+  });
+});
+
+describe('rejects: a manifest that omits its frozen Plan', () => {
+  it('a goal-bound manifest without the focusPlan key (decision 79-1: no default for a missing field)', () => {
+    expect(queryManifestProblem({
+      contextAssembly: { callKind: 'query-copy' },
+      goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
+      request: null,
+    })).toBe('the Query manifest focusPlan is not a Plan pin');
   });
 });

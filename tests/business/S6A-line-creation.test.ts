@@ -150,6 +150,8 @@ describe.each(['memory', 'sqlite'] as const)('S6A-1 line creation over the real 
         await creationOperationRef(runtime, input.commandId));
       expect(operation.status).toBe('ready');
       if (operation.status !== 'ready') return;
+      expect(operation.value.action.kind).toBe('create');
+      if (operation.value.action.kind !== 'create') return;
       expect(operation.value.action.creation).toEqual({
         duty: 'secretary', scope: { kind: 'project' }, reason: 'secretary_needed', creator: actor,
       });
@@ -213,6 +215,8 @@ describe.each(['memory', 'sqlite'] as const)('S6A-1 line creation over the real 
       const operation = await directory.getSessionOperation(ctx, first.operationRef);
       expect(operation.status).toBe('ready');
       if (operation.status !== 'ready') return;
+      expect(operation.value.action.kind).toBe('create');
+      if (operation.value.action.kind !== 'create') return;
       expect(operation.value.action.creation).toBeNull();
       expect(await entry.findLine(ctx, { commandId: 's6a-plain-session' })).toEqual({ status: 'ready', value: { status: 'none' } });
     } finally { await backend.close(); }
@@ -295,6 +299,8 @@ describe.each(['memory', 'sqlite'] as const)('S6A-1 line creation refusals and c
       const operation = await directory.getSessionOperation(ctx, pending.operationRef);
       expect(operation.status).toBe('ready');
       if (operation.status !== 'ready') return;
+      expect(operation.value.action.kind).toBe('create');
+      if (operation.value.action.kind !== 'create') return;
       expect(operation.value.action.plannedSessionRef).toEqual(replay.session);
       const card = await directory.readSession(ctx, replay.session);
       expect(card.status).toBe('ready');

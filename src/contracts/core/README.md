@@ -9,13 +9,13 @@
 
 ## 文件
 
-- `call-context.ts` — 受信 Host/工具适配器绑定的调用身份与范围：`CorePrincipal`、`MaterialReader`、`PlatformMaterialOrigin`、`CoreCallContext`；`query_run` 主体可带冻结的 `goalId`（只由 Runtime 从 manifest 设置）。
+- `call-context.ts` — 受信 Host/工具适配器绑定的调用身份与范围：`CorePrincipal`、`MaterialReader`、`PlatformMaterialOrigin`、`CoreCallContext`；`query_run` 主体可带冻结的 `goalId`（只由 Runtime 从 manifest 设置）；命令身份里的主体 `principalIdentity` 与 Host 调用者检查 `hostPrincipalOf`。
 - `execution-history.ts` — `RunExecutionHistoryV1`：Run 在 Kernel Session 里的起止/已观察位置。
 - `identity.ts` — 作用域、版本 pin、命令元数据，以及 `SessionRef`、`ModuleRef`、`WorkLinkTarget`、`RoleConfigurationRef` 等身份。
 - `operations.ts` — `OperationRef`：跨 Store 与 Kernel 效果的操作身份。
 - `prepared-execution.ts` — 准备执行清单：`PreparedTaskManifestV1`、`PreparedQueryManifestV1`、`UnknownCallReviewInputV1` 与 `renderUnknownCallReviewZh`。
 - `rejections.ts` — 拒绝结果构造器：`rejected`、`rejectedWithCurrent`、`rejectedWithNonEmptyCurrent`、`okFalse`。
-- `results.ts` — 结果词汇：`CoreError`、`CoreRejection`、`ReadResult`、`WriteResult`、`ReadStamp`、`Page`、`OperationReceipt`。
+- `results.ts` — 结果词汇：`CoreError`（唯一的运行时列表 `CORE_ERRORS`）、`CoreRejection`、`ReadResult`、`WriteResult`、`ReadStamp`、`Page`、`OperationReceipt`。
 - `session-archive.ts` — 不可变归档请求 `SessionArchiveRequestV1` 与 `deriveArchiveStepCommitIdentityV1`。
 - `session-message.ts` — `SessionMessageRef` 完整地址、通信意图、用户/决策消息与 `isUserMessageRecipient`。
 - `session.ts` — Session 记录/占用/健康/来源：`SessionRecord`、`SessionProvenanceV1`、`SessionHealthConclusion`、`SESSION_HEALTH_CONCLUSIONS`。
@@ -31,11 +31,12 @@
 | `rejectedWithNonEmptyCurrent` | `src/contracts/core/rejections.ts:22` | 生成拒绝；只在 `current` 非空时附带。 | 修订冲突等只回传实际观察到的非空版本集时。 |
 | `okFalse` | `src/contracts/core/rejections.ts:33` | 生成 `{ok:false,code,reason}` 结果。 | 返回布尔式结果而不是 `ReadResult`/`WriteResult` 的读/查询端口。 |
 | `CoreError` | `src/contracts/core/results.ts:16` | 关闭的端口失败词汇（拒绝形状见 `CoreRejection`）。 | 声明端口失败码；不要另造同义词或把损坏折叠成普通失败。 |
-| `ReadResult` | `src/contracts/core/results.ts:25` | 区分 `ready`、`not_found`、带真实戳的 `not_ready` 与拒绝。 | 所有读取端口；失败读取不得变成空事实。 |
-| `WriteResult` | `src/contracts/core/results.ts:32` | 提交结果必带真实 cursor 与 `replayed`。 | 所有写入端口；没写任何东西的分支不得报 `committed`。 |
-| `ReadStamp` | `src/contracts/core/results.ts:39` | 读水位：platform/plan/source/session 四种戳。 | 声明读取的新鲜度要求。 |
-| `Page` | `src/contracts/core/results.ts:44` | 带下一游标与 basis 的分页结果。 | 声明分页端口。 |
-| `OperationReceipt` | `src/contracts/core/results.ts:45` | accepted/completed 的操作回执（含 replay 与 cursor）。 | 跨操作提交的结果形状。 |
+| `CORE_ERRORS` **正本** | `src/contracts/core/results.ts:24` | 端口失败码的唯一运行时列表，顺序同 `CoreError`；它由以 `CoreError` 为键的表取键，少一个失败码就编译不过。 | 运行时校验失败码（如读回存储的失败）；不要再另写一份失败码列表。 |
+| `ReadResult` | `src/contracts/core/results.ts:33` | 区分 `ready`、`not_found`、带真实戳的 `not_ready` 与拒绝。 | 所有读取端口；失败读取不得变成空事实。 |
+| `WriteResult` | `src/contracts/core/results.ts:40` | 提交结果必带真实 cursor 与 `replayed`。 | 所有写入端口；没写任何东西的分支不得报 `committed`。 |
+| `ReadStamp` | `src/contracts/core/results.ts:47` | 读水位：platform/plan/source/session 四种戳。 | 声明读取的新鲜度要求。 |
+| `Page` | `src/contracts/core/results.ts:52` | 带下一游标与 basis 的分页结果。 | 声明分页端口。 |
+| `OperationReceipt` | `src/contracts/core/results.ts:53` | accepted/completed 的操作回执（含 replay 与 cursor）。 | 跨操作提交的结果形状。 |
 | `SessionProvenanceV1` | `src/contracts/core/session.ts:22` | 区分 `new`、任务续接、秘书换手与只读副本。 | 跟随/排除后继 Session 时按 kind 判定；不要用一个 kind 代替另一个。 |
 | `SessionOccupancy` | `src/contracts/core/session.ts:7` | Session 被 execution/maintenance 占用的形状与 generation。 | 声明占用形状；不在这里做占用变更。 |
 | `SessionRecord` | `src/contracts/core/session.ts:29` | 持久化 Session 的完整记录形状。 | 编解码与只读投影的共享声明。 |
@@ -43,8 +44,10 @@
 | `TaskClaim` | `src/contracts/core/task-claim.ts:15` | 任务领取结果的唯一声明。 | 准备执行与入口契约引用 claim 时。 |
 | `SourceCaptureRef` | `src/contracts/core/source.ts:9` | 指向 WorkspaceTools 临时捕获的引用；过期/重启后失效。 | 传递来源观测；不要把它当持久化事实。 |
 | `PersistedSourceCaptureRef` | `src/contracts/core/source.ts:24` | 临时捕获与其持久化 Artifact 正文的配对。 | 捕获已落盘后读取；持久化不等于当前文件见证。 |
-| `CorePrincipal` | `src/contracts/core/call-context.ts:12` | 受信绑定的人/工作 Run/Query Run 主体。 | 端口接收调用者身份时；它只记录身份，不授予能力。 |
-| `CoreCallContext` | `src/contracts/core/call-context.ts:51` | 项目/工作区、主体、材料读者与取消信号。 | Core 端口统一的调用上下文。 |
+| `CorePrincipal` | `src/contracts/core/call-context.ts:13` | 受信绑定的人/工作 Run/Query Run 主体。 | 端口接收调用者身份时；它只记录身份，不授予能力。 |
+| `CoreCallContext` | `src/contracts/core/call-context.ts:52` | 项目/工作区、主体、材料读者与取消信号。 | Core 端口统一的调用上下文。 |
+| `principalIdentity` **正本** | `src/contracts/core/call-context.ts:64` | 把受信主体（Host 的 actor、工作 Run 的 RunRef、Query Run 的 QueryRunRef）折成命令身份与指纹里的 `principal`。 | 带命令身份的写入算 identity/fingerprint 时；不要再写一份 `principalOf`，两个主体才不会互相重放。 |
+| `hostPrincipalOf` **正本**、`HostPrincipal` | `src/contracts/core/call-context.ts:79`、`src/contracts/core/call-context.ts:73` | 调用者是指定 kind（人或受信 system）的 Host 时返回该主体，否则 `null`。 | Host 命令的授权检查；之后的步骤只拿返回的主体。 |
 | `RunExecutionHistoryV1` | `src/contracts/core/execution-history.ts:7` | Run 历史位置与已观察水位。 | 记录/读取 Run 执行历史；旧 Run 缺失表示未索引，不是未执行。 |
 | `SessionArchiveRequestV1` | `src/contracts/core/session-archive.ts:21` | 不可变归档请求（任务去留、等待、执行、回执）。 | 发起/重放 Session 归档。 |
 | `deriveArchiveStepCommitIdentityV1` | `src/contracts/core/session-archive.ts:52` | 由请求与步骤派生 identityKey、fingerprint、eventId。 | 归档各步骤提交；步骤必须属于该请求，否则抛错。 |

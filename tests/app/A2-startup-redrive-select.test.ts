@@ -34,7 +34,9 @@ const goalRefOf = (goalId: string): GoalRef => ({ aggregateType: 'Goal', project
 function goalOf(goalId: string, over: Partial<GoalSnapshot> = {}): GoalSnapshot {
   return { ref: goalRefOf(goalId), workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
     objective: goalId, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
-    activePlanRevision: planRef as never, revision: 3, since: 'c0000000001' as GoalSnapshot['since'], ...over };
+    activePlanRevision: planRef as never, revision: 3,
+    settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+    continuedFrom: null, copiedInterventions: [], since: 'c0000000001' as GoalSnapshot['since'], ...over };
 }
 
 const REQUEUE: TaskAutomationVerdictV1 = { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false };

@@ -41,7 +41,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef | import('./session-activity.js').SessionActivityRef | import('./initialization-binding.js').InitializationBindingRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;
@@ -65,6 +65,16 @@ export type WorkspaceSnapshot = {
 };
 /** D-9 durable desired state; `GoalCreated` still writes only "active". */
 export type GoalDesiredState = "active" | "paused" | "cancelled";
+/**
+ * Where a copied Goal continues from (slice-6-SPEC L12): the cancelled source Goal at the revision the copy read
+ * (≥ 1), and the source's understanding note version the copy read — that version, never the current one; null when
+ * the source had none.
+ */
+export type GoalContinuationV1 = {
+    goal: GoalRef;
+    sourceRevision: number;
+    understanding: { noteId: string; version: number } | null;
+};
 export type GoalSnapshot = {
     ref: GoalRef;
     workspaceRef: WorkspaceRef;
@@ -84,8 +94,12 @@ export type GoalSnapshot = {
     activePlanRevision: PlanRevisionRef | null;
     /** 1 at creation; 2+ after an accepted plan revision. */
     revision: number;
-    /** Slice 5 optional Goal settings; absent reads as the default. */
-    settings?: GoalSettingsV1;
+    /** Slice 5 Goal settings; written at creation and changed only by the settings rows (no absent default). */
+    settings: GoalSettingsV1;
+    /** The cancelled Goal this one was copied from (slice-6-SPEC L12); null for a Goal not born as a copy. */
+    continuedFrom: GoalContinuationV1 | null;
+    /** The interventions the copy carried over (slice-6-SPEC L12); [] for a Goal not born as a copy. */
+    copiedInterventions: SessionMessageRef[];
     /** The Goal's creation commit cursor; every later write carries it unchanged. */
     since: CommitCursor;
 };

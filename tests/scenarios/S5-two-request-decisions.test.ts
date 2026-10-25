@@ -63,7 +63,7 @@ it('SC01 two root requests: Q2 candidate@1 until replaced, the same card key, a 
   if (queuedCard === undefined) throw new Error('Q2 must remain in the real queue');
   const source = queuedCard.source;
   const capturedGoalPin = await s5GoalPin(world.platform, world.ctx, S5_GOAL_A);
-  expect(source).toMatchObject({ kind: 'candidate', key: cardKey, goalRef: S5_GOAL_A });
+  expect(source).toMatchObject({ kind: 'candidate', key: cardKey, subject: { kind: 'goal', goalRef: S5_GOAL_A } });
   expect(source.pins).toContainEqual(capturedGoalPin);
   expect(source.goalBases).toEqual([expect.objectContaining({ goalRef: S5_GOAL_A, activePlanRef: accepted.ref })]);
   const card = await readDecisionCard(world.platform, world.ctx, source);

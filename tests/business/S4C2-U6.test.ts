@@ -30,7 +30,8 @@ const MESSAGE_REF: SessionMessageRef = {
 const answerMessage: SessionMessage = { ref: MESSAGE_REF, revision: 1 } as unknown as SessionMessage;
 
 const sourceOf = (kind: DecisionSourceV1['kind']): DecisionSourceV1 => ({
-  kind, key: `${kind}:key`, goalRef: { aggregateType: 'Goal', projectId: 'P', goalId: 'G' }, pins: [],
+  kind, key: `${kind}:key`,
+  subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 'P', goalId: 'G' } }, pins: [],
 });
 
 const request = (source: DecisionSourceV1, selection: DecisionSelectionV1): GraphWrite<ResolveDecisionInputV1> => ({

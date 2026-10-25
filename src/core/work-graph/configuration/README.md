@@ -30,7 +30,7 @@
 | `ROLE_RECORD_SCHEMAS` | `src/core/work-graph/configuration/role-record-codecs.ts:491` | role-spec / coordination-policy 四类记录与两个事件的 backend schema 注册 | 组合根注册记录与事件 schema 时 |
 | `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` | `src/core/work-graph/configuration/project-bootstrap-record-codecs.ts:425` | 四个初始化事件的 schema 注册 | 组合根注册事件 schema 时 |
 
-同一种能力的正本：`canonicalKey` 在 `src/contracts/fingerprint.ts`；`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:79`）把对象 ref 交给它。`sameActorIdentity`（unknown 值）与 `sameActorKindAndId`（typed 形状）在 `src/contracts/actor-equality.ts`，本层用前者。
+同一种能力的正本：`canonicalKey` 在 `src/contracts/fingerprint.ts`；`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:81`）把对象 ref 交给它。`sameActorIdentity`（unknown 值）与 `sameActorKindAndId`（typed 形状）在 `src/contracts/actor-equality.ts`，本层用前者。
 
 ## 内部用
 - 设置基元：`ownScope`、`isOwned`、`workspacePinProblem`、`loadWorkspace`、`replayWorkspace`。

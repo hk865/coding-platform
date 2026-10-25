@@ -27,6 +27,7 @@ import type { GoalRef, WorkspaceRef } from '../../src/contracts/ledger.js';
 import type { RoleBindingRefV1, RunRef, TaskBudgetV1 } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { DecisionSubjectV1 } from '../../src/contracts/goal-decisions.js';
 import type { MemoryHistoryResultV1, NoteDispositionResult, WriteNoteResult } from '../../src/core/work-graph/model/note-contracts.js';
 import {
   createS4ANoteScopeFixture,
@@ -85,8 +86,12 @@ export type S4C2NoteCardFixture = {
   waitingCards(options?: { goalRef?: GoalRef; limit?: number }): Promise<DecisionCardV1[]>;
   /** The live waiting card whose NoteHead pin is `noteId@version`, or null. */
   cardOf(noteId: string, options?: { version?: number }): Promise<DecisionCardV1 | null>;
-  /** `readDecisionCard` by a constructed NoteHead source: open, closed or null. */
-  readCard(noteId: string, options?: { version?: number; goalRef?: GoalRef }): Promise<DecisionCardV1 | null>;
+  /**
+   * `readDecisionCard` by a constructed NoteHead source: open, closed or null.
+   * `projectSubject: true` asks for the project subject (a goal-less note's card).
+   */
+  readCard(noteId: string, options?: { version?: number; goalRef?: GoalRef; projectSubject?: boolean }):
+    Promise<DecisionCardV1 | null>;
   /** The real coordinator: answer + application for one note card. */
   resolve(card: DecisionCardV1, optionId: string, requestId: string, text?: string):
     ReturnType<NonNullable<S4ANoteScopeFixture['platform']['workflow']['resolveDecision']>>;
@@ -130,12 +135,18 @@ export function noteCardKey(projectId: string, noteId: string, version = 1): str
     + `"revision":${JSON.stringify(version)}}}`;
 }
 
+/** The canonical `note_review` source of one subject (pins are not re-read). */
+export function noteCardSubjectSource(subject: DecisionSubjectV1, projectId: string, noteId: string,
+  version: number): { kind: 'note_review'; key: string; subject: DecisionSubjectV1;
+    pins: { ref: { aggregateType: 'NoteHead'; projectId: string; noteId: string }; revision: number }[] } {
+  return { kind: 'note_review', key: noteCardKey(projectId, noteId, version), subject,
+    pins: [{ ref: { aggregateType: 'NoteHead', projectId, noteId }, revision: version }] };
+}
+
 /** The canonical `note_review` source a by-key read uses (pins are not re-read). */
 export function noteCardSource(projectId: string, noteId: string, version: number,
-  goalRef: GoalRef): { kind: 'note_review'; key: string; goalRef: GoalRef;
-    pins: { ref: { aggregateType: 'NoteHead'; projectId: string; noteId: string }; revision: number }[] } {
-  return { kind: 'note_review', key: noteCardKey(projectId, noteId, version), goalRef,
-    pins: [{ ref: { aggregateType: 'NoteHead', projectId, noteId }, revision: version }] };
+  goalRef: GoalRef): ReturnType<typeof noteCardSubjectSource> {
+  return noteCardSubjectSource({ kind: 'goal', goalRef }, projectId, noteId, version);
 }
 
 type PlanAdditions = {
@@ -332,9 +343,13 @@ export async function createS4C2NoteCardFixture(kind: S4C2NoteCardFixtureKind): 
       return read.value.waitingAnswer.find(card => card.source.key === cardKey) ?? null;
     },
     async readCard(targetId, options = {}) {
-      const goalRef = options.goalRef ?? f.goalRef;
+      // The default is the Goal subject (today's path). `projectSubject` asks for
+      // the project subject a goal-less note's card carries.
+      const subject: DecisionSubjectV1 = options.projectSubject === true
+        ? { kind: 'project', projectRef: { projectId: f.scope.projectId } }
+        : { kind: 'goal', goalRef: options.goalRef ?? f.goalRef };
       const read = await f.platform.decisions.readDecisionCard(f.ctx(), {
-        source: noteCardSource(f.scope.projectId, targetId, options.version ?? 1, goalRef),
+        source: noteCardSubjectSource(subject, f.scope.projectId, targetId, options.version ?? 1),
       });
       if (read.status === 'not_found') return null;
       if (read.status !== 'ready') throw new Error(`S4C2 readDecisionCard failed: ${JSON.stringify(read)}`);

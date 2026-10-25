@@ -82,6 +82,7 @@ describe('S4C2 N2 own-line note_review notices over a real platform', () => {
     ]);
     // Both are own lines: the grouping never attaches a member set to them.
     expect(read.notices.map(item => item.members)).toEqual([undefined, undefined]);
-    expect(read.notices.map(item => item.goalRef)).toEqual([f.goalRef, f.goalRef]);
+    expect(read.notices.map(item => item.subject))
+      .toEqual([{ kind: 'goal', goalRef: f.goalRef }, { kind: 'goal', goalRef: f.goalRef }]);
   });
 });

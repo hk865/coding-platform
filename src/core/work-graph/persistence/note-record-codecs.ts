@@ -13,10 +13,13 @@ import type {
 import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
+import { defineShape, f } from '../../../contracts/data-format.js';
+import { QueryRunRefShape } from '../../../contracts/data-format-refs.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { WriteNoteResult } from '../model/note-contracts.js';
 import { NOTE_EXISTING_TOPICS_MAX } from '../model/note-contracts.js';
 import type {
@@ -104,7 +107,6 @@ const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding',
 const NOTE_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pending_review', 'rejected', 'superseded',
   'withdrawn'];
 const REVIEW_REASONS: readonly NoteReviewReason[] = ['structural', 'contradiction', 'quota_full', 'user_note_replaced'];
-const DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 const CHANGE_KINDS: readonly NoteVersionSnapshot['change']['kind'][] = ['write', 'review', 'accept', 'reject',
   'withdraw', 'supersede', 'coexist', 'merge'];
 const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion', 'body', 'sections', 'anchor',
@@ -192,6 +194,13 @@ function noteAnchorProblem(value: unknown): string | null {
       return 'anchor kind is not recognized';
   }
 }
+/**
+ * The agent source's QueryRun as a field-table fragment: null or a complete
+ * QueryRunRef. Whether a `query_run` caller has one is the admission
+ * resolver's rule, not the format's (the table has no principal).
+ */
+const NoteSourceQueryRunShape = defineShape({ name: 'NoteSourceV1', fields: { queryRunRef: f.nullable(f.ref(QueryRunRefShape)) } });
+
 function sourceProblem(value: unknown, label: string): string | null {
   if (!isRecord(value)) return `${label} must be a NoteSourceV1`;
   if (value['kind'] === 'platform') return hasOnlyKeys(value, ['kind']) ? null : `${label} platform carries unknown fields`;
@@ -199,14 +208,17 @@ function sourceProblem(value: unknown, label: string): string | null {
     return nonEmpty(value['principalId']) && hasOnlyKeys(value, ['kind', 'principalId']) ? null : `${label} user is invalid`;
   }
   if (value['kind'] === 'agent') {
-    if (!hasOnlyKeys(value, ['kind', 'sessionRef', 'runRef', 'duty'])) return `${label} agent carries unknown fields`;
+    if (!hasOnlyKeys(value, ['kind', 'sessionRef', 'runRef', 'queryRunRef', 'duty'])) return `${label} agent carries unknown fields`;
     const session = sessionRefProblem(value['sessionRef'], `${label} agent sessionRef`);
     if (session !== null) return session;
     if (value['runRef'] !== null) {
       const run = runRefProblem(value['runRef']);
       if (run !== null) return run;
     }
-    if (!DUTIES.includes(value['duty'] as PlatformDutyV1)) return `${label} agent duty is not recognized`;
+    const queryRun = checkShape(NoteSourceQueryRunShape,
+      Object.hasOwn(value, 'queryRunRef') ? { queryRunRef: value['queryRunRef'] } : {}, 'stored');
+    if (queryRun !== null) return `${label} agent: ${queryRun}`;
+    if (!PLATFORM_DUTIES.includes(value['duty'] as PlatformDutyV1)) return `${label} agent duty is not recognized`;
     return null;
   }
   return `${label} kind is not recognized`;

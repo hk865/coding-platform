@@ -11,9 +11,10 @@ import type { KernelCommandReader } from '../../model/kernel-command-read-contra
 import type { UnknownCallReviewReadPort } from '../../model/unknown-call-review-contracts.js';
 import type { WorkspaceToolsPort } from '../../../workspace/ports.js';
 
-/** The complete branch facts one decision-source handler returns. */
+/** The complete branch facts one decision-source handler returns. `goal` is null for a project subject: no Goal
+ * record is loaded for it. */
 export type DecisionSourceBranchFacts = {
-  goal: GoalSnapshot;
+  goal: GoalSnapshot | null;
   objects: DecisionObjectV1[];
   options: DecisionOptionV1[];
   pins: VersionPin[];

@@ -65,9 +65,10 @@ export type GoalCreateCompileInput = {
   command: CreateGoalCommand;
   /**
    * Goal@1 as GOAL-01 wrote it (`newGoalSnapshot`), with the caller's
-   * normalized objective. The event carries this same objective, so the event
-   * and the snapshot can never disagree. `since` is the null placeholder the
-   * creating commit fills with its cursor.
+   * normalized objective and birth fields. The event carries the same
+   * objective, settings and copy fields, so the event and the snapshot can
+   * never disagree. `since` is the null placeholder the creating commit fills
+   * with its cursor.
    */
   goal: PendingGoalSnapshot;
   /** GOAL-01's CAS guards as record guards, in the machine's order. */
@@ -105,6 +106,9 @@ export function compileGoalCreate(input: GoalCreateCompileInput): PreparedCommit
       objective: input.goal.objective,
       desiredState: "active",
       activePlanRevision: null,
+      settings: input.goal.settings,
+      continuedFrom: input.goal.continuedFrom,
+      copiedInterventions: input.goal.copiedInterventions,
     },
   };
 

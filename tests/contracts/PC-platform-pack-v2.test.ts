@@ -112,7 +112,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'query-planning-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'query-copy-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'secretary-round': { packId: 'platform', version: 1, mentionsTools: [] },
-            'secretary-answer': { packId: 'platform', version: 1, mentionsTools: [] },
+            'secretary-answer': { packId: 'platform', version: 2, mentionsTools: [] },
             base: { packId: 'platform', version: 2, mentionsTools: [] },
             'skill-platform-work': { packId: 'platform', version: 3, mentionsTools: [] },
             'skill-platform-secretary': { packId: 'platform', version: 3, mentionsTools: [] },

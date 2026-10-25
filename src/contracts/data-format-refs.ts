@@ -57,3 +57,8 @@ export const VerificationRoundRefShape = defineShape({
     roundId: id,
   },
 });
+export const ProjectScopeShape = defineShape({ name: 'ProjectScope', fields: { projectId: id } });
+export const WorkspaceScopeShape = defineShape({ name: 'WorkspaceScope', fields: { projectId: id, workspaceId: id } });
+export const CurrentPointerRefShape = defineShape({
+  name: 'CurrentPointerRef', fields: { aggregateType: f.literal('CurrentPointer'), projectId: id, anchorKey: id },
+});

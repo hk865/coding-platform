@@ -28,6 +28,7 @@ const GOAL: GoalSnapshot = {
   objective: 'K3-18 card', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
   activePlanRevision: { aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-1' }, revision: 4,
   settings: { schemaVersion: 1, autonomy: 'every_step', order: 0, waitForGoalRef: null, parallelRisks: [] },
+  continuedFrom: null, copiedInterventions: [],
   since: 'c0000000001' as GoalSnapshot['since'],
 };
 const RUN = { ref: RUN_REF, revision: 3 } as unknown as RunSnapshot;

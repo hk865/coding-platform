@@ -17,6 +17,10 @@
  *   `no_secretary` publishes the plain profile only. The book's third configuration is
  *   `reopen({ configuration: 'no_secretary' })` of a `with_secretary` world. The runtime bindings are the same in
  *   every configuration; only the profile list changes.
+ * - `scribe: true` adds two Host inputs: a runtime binding for the platform scribe template
+ *   (`platformRoleProfile('scribe').template`, duty `scribe`) whose grant adds `record_note`, and the Workflow
+ *   binding for that role, so a Plan task assigned to it runs on a scribe line through `workflow/advance`.
+ *   `scriptReplies` queues replies (text or tool calls) on the one scripted model for the runs a test drives itself.
  * - `extraHostOptions`: Host options 6A adds (`secretaryOpenCap`) do not exist yet; they are spread, untyped,
  *   into the real Host options on open and on every reopen (a reopen may pass a new value). An extra key that
  *   would replace a fixture option is refused.
@@ -27,7 +31,8 @@
  * - The clock is the process `Date`, faked alone (never the timers), because the Session directory and the
  *   archive stamp `new Date()`; the Host's `now` reads the same value. Worlds open at once share it.
  * - The seed, through the HTTP routes: `projects/create`, `workspaces/register`, `goals/create` twice (goal 1 is
- *   the AG2b goal id, so the A2 `claimQueryOn` helper applies). The automatic architecture capture that the
+ *   the AG2b goal id, so the A2 `claimQueryOn` helper applies); `defaultGoals: false` skips both, so the workspace
+ *   has no goal until a test creates one (never a delete). The automatic architecture capture that the
  *   registration starts runs as the platform's detached work: the fixture waits for it through a delegating wrapper
  *   around `platform.trackDetached` (A3: the real tracker, its result unchanged), then reads
  *   `architecture/observation-state` once and fails if the capture is still pending. No polling, no timer.
@@ -120,6 +125,13 @@ export const S6A_PLAIN_ROLE = AG2B_QUERY_ROLE;
 export const S6A_PLAIN_ROLE_BINDING = AG2B_QUERY_ROLE_BINDING;
 export const S6A_WORK_ROLE = AG2B_WORK_ROLE;
 export const S6A_WORK_ROLE_BINDING = AG2B_WORK_ROLE_BINDING;
+/** The platform scribe template (the duty resolver reads it as `scribe`); configured only with `scribe: true`. */
+export const S6A_SCRIBE_ROLE: Extract<RoleConfigurationRef, { kind: 'legacy_template' }> =
+  platformRoleProfile('scribe').template;
+export const S6A_SCRIBE_ROLE_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1, bindingId: 's6a-scribe-binding', templateId: S6A_SCRIBE_ROLE.templateId,
+  templateRevision: S6A_SCRIBE_ROLE.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template',
+};
 
 export const S6A_SECRETARY_PROFILE_ID = 's6a-secretary-profile';
 export const S6A_PLAIN_PROFILE_ID = 's6a-plain-profile';
@@ -131,6 +143,7 @@ const SECRET_VALUE = 's6a-controlled-secret-value';
 const SECRETARY_INSTRUCTION = 'S6A trusted secretary guidance';
 const PLAIN_INSTRUCTION = 'S6A trusted read-only consultation guidance';
 const WORK_INSTRUCTION = 'S6A trusted work guidance';
+const SCRIBE_INSTRUCTION = 'S6A trusted scribe guidance';
 const OPERATOR: WorkbenchActor = { kind: 'human', id: 's6a-operator' };
 const AUTOMATION: WorkbenchActor = { kind: 'system', id: 's6a-automation' };
 
@@ -164,16 +177,17 @@ const BINDING_OF_PROFILE: Record<string, string> = {
   [S6A_PLAIN_PROFILE_ID]: 's6a-plain-binding',
 };
 
-function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfileOrder): WorkbenchRuntimeConfiguration {
+function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfileOrder, scribe: boolean):
+WorkbenchRuntimeConfiguration {
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
-  const binding = (id: string, role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>, instruction: string):
-  WorkbenchRuntimeBinding => ({
+  const binding = (id: string, role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>, instruction: string,
+    tools: string[] = ['read']): WorkbenchRuntimeBinding => ({
     id, label: `S6A ${id}`, scope: S6A_SCOPE, role, configurationRevision: `${id}@1`,
     model: { revision: `${id}-model@1`, provider: 'deepseek', model: `s6a-scripted-${id}`, secretEnvironmentVariable: SECRET_VAR },
     grant: {
       budget: AG2B_RUNTIME_BUDGET,
       hostTemplate: { templateId: role.templateId, revision: role.templateRevision, digest: sha256Hex(instruction) },
-      tools: ['read'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+      tools, writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
       systemInstruction: instruction, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
     },
   });
@@ -189,6 +203,7 @@ function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfi
       binding('s6a-secretary-binding', S6A_SECRETARY_ROLE, SECRETARY_INSTRUCTION),
       binding('s6a-plain-binding', S6A_PLAIN_ROLE, PLAIN_INSTRUCTION),
       binding('s6a-work-binding', S6A_WORK_ROLE, WORK_INSTRUCTION),
+      ...(scribe ? [binding('s6a-scribe-binding', S6A_SCRIBE_ROLE, SCRIBE_INSTRUCTION, ['read', 'record_note'])] : []),
     ],
     queryProfiles,
   };
@@ -199,6 +214,8 @@ const WORKFLOW: WorkflowHostConfiguration = {
   bindings: [{ workspace: S6A_SCOPE, sessionRole: S6A_WORK_ROLE, roleBinding: S6A_WORK_ROLE_BINDING,
     budget: { tokenBudget: 1_000_000, deadline: null } }],
 };
+const SCRIBE_WORKFLOW_BINDING: WorkflowHostConfiguration['bindings'][number] = { workspace: S6A_SCOPE,
+  sessionRole: S6A_SCRIBE_ROLE, roleBinding: S6A_SCRIBE_ROLE_BINDING, budget: { tokenBudget: 1_000_000, deadline: null } };
 
 // ---------------------------------------------------------------------------
 // The Host's platform object (A3: a delegating spy around the real factory)
@@ -280,6 +297,13 @@ export type S6AWorldOptions = {
   actor?: WorkbenchActor;
   /** The clock's first instant; default `S6A_AT`. */
   at?: string;
+  /**
+   * Default true. `false`: the seed creates no goal; `goals` then throws, and `occupy` (with what builds on it),
+   * `makeReadonlyCopy` and `submitPlanningQuery` run on goal 1's id and fail until a test creates that goal.
+   */
+  defaultGoals?: boolean;
+  /** Default false. `true`: the Host also binds the platform scribe template for Runtime and Workflow (see the header). */
+  scribe?: boolean;
 };
 
 export type S6AReopenOptions = {
@@ -334,6 +358,8 @@ export type S6ARequestWorld = {
   readonly goals: { readonly first: GoalRef; readonly second: GoalRef };
   /** The one scripted model every binding uses (calls are counted). */
   readonly model: ScriptedModel;
+  /** Appends replies the scripted model serves in order, each to the next call (the world's own helpers add theirs). */
+  scriptReplies(replies: readonly ScriptedReply[]): void;
   /** Resolves once the current Host's detached platform work (the automatic architecture capture) has settled. */
   settleDetached(): Promise<void>;
   /** Fresh trusted call contexts: the human operator (the Host's HTTP actor) and a non-human Host actor. */
@@ -471,6 +497,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
   let configuration: S6AConfiguration = options.configuration ?? 'with_secretary';
   let order: S6AProfileOrder = options.order ?? 'secretary_first';
   let extraHostOptions: Record<string, unknown> = { ...(options.extraHostOptions ?? {}) };
+  const goals = options.defaultGoals === false ? null : { first: S6A_GOAL_1, second: S6A_GOAL_2 };
+  const scribe = options.scribe === true;
 
   type Live = StartedHost & { base: string; token: string };
   let live: Live | null = null;
@@ -485,8 +513,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
     kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
       databasePath: join(database, 'kernel.sqlite') }] },
-    runtimeConfiguration: runtimeConfigurationOf(configuration, order),
-    workflow: structuredClone(WORKFLOW),
+    runtimeConfiguration: runtimeConfigurationOf(configuration, order, scribe),
+    workflow: structuredClone(scribe ? { ...WORKFLOW, bindings: [...WORKFLOW.bindings, SCRIBE_WORKFLOW_BINDING] } : WORKFLOW),
     publicDir,
     now: () => clock.now(),
     runtimeProvider: { registry, secretSource: { get: (name: string) => name === SECRET_VAR ? SECRET_VALUE : undefined } },
@@ -616,8 +644,14 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     get secretaryProfile() { return configuration === 'with_secretary' ? SECRETARY_PROFILE : null; },
     plainProfile: PLAIN_PROFILE,
     get extraHostOptions() { return { ...extraHostOptions }; },
-    goals: { first: S6A_GOAL_1, second: S6A_GOAL_2 },
+    get goals() {
+      if (goals === null) throw new Error('S6A: the world was opened with defaultGoals: false and has no goal 1 or 2');
+      return goals;
+    },
     model,
+    scriptReplies(next) {
+      for (const reply of next) { replies.push(structuredClone(reply)); steps.push({ kind: 'answer' }); }
+    },
     settleDetached: () => current().settleDetached(),
     humanContext: () => contextOf(actor.kind === 'human' ? actor : OPERATOR),
     systemContext: () => contextOf(AUTOMATION),
@@ -799,7 +833,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
       [{ ref: AG2B_PROJECT_REF, revision: 0 }]));
     await seed('workspaces/register', graphWrite(S6A_SCOPE, { workspace: S6A_SCOPE }, 's6a-workspace',
       [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 0 }]));
-    for (const [goal, objective] of [[S6A_GOAL_1, 'S6A goal one'], [S6A_GOAL_2, 'S6A goal two']] as const) {
+    const seeded = goals === null ? [] : [[S6A_GOAL_1, 'S6A goal one'], [S6A_GOAL_2, 'S6A goal two']] as const;
+    for (const [goal, objective] of seeded) {
       await seed('goals/create', graphWrite(S6A_SCOPE, { goalId: goal.goalId, workspace: S6A_SCOPE, objective },
         `s6a-${goal.goalId}`, [{ ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 1 }]));
     }

@@ -32,7 +32,8 @@ afterEach(async () => { for (const f of fixtures.splice(0)) await f.close(); });
 const open = async (kind: S5FixtureKind) => { const f = await openS5DecisionFixture(kind); fixtures.push(f); return f; };
 const pos = (n: number, itemKey: string): NoticePositionV1 => ({ kind: 'commit', cursor: makeCommitCursor(n), itemKey });
 const item = (category: NoticeCategoryV1, itemKey: string, n: number): NoticeItemV1 =>
-  ({ itemKey, category, goalRef: GOAL_B, position: pos(n, itemKey), summary: itemKey, objects: [], rework: null });
+  ({ itemKey, category, subject: { kind: 'goal', goalRef: GOAL_B }, position: pos(n, itemKey),
+    summary: itemKey, objects: [], rework: null });
 
 /** Narrow upstream category pages for the pagination rows; the merger/token/
  * markSeen code under test is always the production implementation. */

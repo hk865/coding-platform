@@ -249,7 +249,8 @@ function answeredCardSource(record: UnknownCallReviewV1): DecisionSourceV1 {
   return {
     kind: 'unknown_call_review',
     key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: record.ref, revision: record.revision }),
-    goalRef: { aggregateType: 'Goal', projectId: record.ref.projectId, goalId: record.ref.goalId },
+    subject: { kind: 'goal',
+      goalRef: { aggregateType: 'Goal', projectId: record.ref.projectId, goalId: record.ref.goalId } },
     pins: [],
   };
 }

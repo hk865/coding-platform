@@ -34,14 +34,18 @@ describe.each(['memory', 'sqlite'] as const)('S2A automatic-rework workspace iso
     const own = ready(await source.readPage(f.ctx, { workspace: WORKSPACE_SCOPE, page: { limit: 50 } }));
     expect(own.items.map(notice => notice.itemKey)).toEqual([requeueKey(first.ref)]);
     expect(own.items.map(notice => notice.itemKey)).not.toContain(requeueKey(second.ref));
-    expect(own.items[0]?.goalRef).toMatchObject({ aggregateType: 'Goal', goalId: 'S2A' });
+    const ownNotice = own.items[0];
+    expect(ownNotice !== undefined && ownNotice.subject.kind === 'goal' ? ownNotice.subject.goalRef : null)
+      .toMatchObject({ aggregateType: 'Goal', goalId: 'S2A' });
     expect(own.availability).toBe('available');
 
     // The W2 read uses a W2 call context and returns only W2's notice.
     const foreign = ready(await source.readPage(w2Context(f), { workspace: W2_SCOPE, page: { limit: 50 } }));
     expect(foreign.items.map(notice => notice.itemKey)).toEqual([requeueKey(second.ref)]);
     expect(foreign.items.map(notice => notice.itemKey)).not.toContain(requeueKey(first.ref));
-    expect(foreign.items[0]?.goalRef).toMatchObject({ aggregateType: 'Goal', goalId: worldW2.goalRef.goalId });
+    const foreignNotice = foreign.items[0];
+    expect(foreignNotice !== undefined && foreignNotice.subject.kind === 'goal' ? foreignNotice.subject.goalRef : null)
+      .toMatchObject({ aggregateType: 'Goal', goalId: worldW2.goalRef.goalId });
     expect(foreign.availability).toBe('available');
   }, 600_000);
 
@@ -64,7 +68,8 @@ describe.each(['memory', 'sqlite'] as const)('S2A automatic-rework workspace iso
     await completeWorldGoal(f, completedWorld, openReverifyChain(f), 'completed-work');
 
     const page = ready(await automaticRework(f).readPage(f.ctx, { workspace: WORKSPACE_SCOPE, page: { limit: 50 } }));
-    const byGoal = new Map(page.items.map((notice) => [notice.goalRef.goalId, notice.itemKey]));
+    const byGoal = new Map(page.items.map((notice) => [
+      notice.subject.kind === 'goal' ? notice.subject.goalRef.goalId : null, notice.itemKey]));
     expect(byGoal.get('Q-CANCEL')).toBe(requeueKey(cancelled.ref));
     expect(byGoal.get('Q-COMPLETE')).toBe(requeueKey(completed.ref));
     expect(new Set(page.items.map((notice) => notice.itemKey)))

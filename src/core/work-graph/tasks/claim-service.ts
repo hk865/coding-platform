@@ -919,7 +919,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     // settings change after this read makes the claim lose (SS13); an existing
     // Run is never stopped.
     const waitingGuards: RecordGuard[] = [];
-    const waitingRef = goal.settings?.waitForGoalRef ?? null;
+    const waitingRef = goal.settings.waitForGoalRef;
     if (waitingRef !== null) {
       const predecessorRead = await readGoal(records, waitingRef);
       // S5-AU-01: a missing predecessor Goal is `incomplete`; only a read

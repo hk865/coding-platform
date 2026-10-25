@@ -66,6 +66,7 @@ import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeT
 import type { QueryJobIntentV1, QueryJobRef } from '../../src/contracts/query-job.js';
 import type { GoalDecisionBasisV1, GoalSettingsV1 } from '../../src/contracts/goal-decisions.js';
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
+import { PLATFORM_DUTIES } from '../../src/contracts/platform-duty.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
@@ -423,7 +424,8 @@ export type S5DecisionFixture = {
 /** Identity and captured CAS facts are separate: never hash a DecisionSource. */
 function sourceOf(identity: DecisionSourceIdentityV1, goalRef: GoalRef,
   pins: readonly VersionPin[], goalBases?: readonly GoalDecisionBasisV1[]): DecisionSourceV1 {
-  return { kind: identity.kind, key: decisionSourceKey(identity), goalRef: structuredClone(goalRef),
+  return { kind: identity.kind, key: decisionSourceKey(identity),
+    subject: { kind: 'goal', goalRef: structuredClone(goalRef) },
     pins: pins.map(pin => structuredClone(pin)),
     ...(goalBases === undefined ? {} : { goalBases: goalBases.map(basis => structuredClone(basis)) }) };
 }
@@ -1135,9 +1137,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   // ---- DecisionMessage + answered decision message through the real owner -----
   // TP-101: the sending Session's formal `platform-adviser` template is the
   // production five-template match; the fixture adds no template mapping.
-  const platformDuties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
   const legacyDuty = (role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>): PlatformDutyV1 | undefined =>
-    platformDuties.find(duty => {
+    PLATFORM_DUTIES.find(duty => {
       const template = platformRoleProfile(duty).template;
       return role.templateId === template.templateId && role.templateRevision === template.templateRevision;
     });

@@ -650,7 +650,8 @@ describe('Run terminalPayload, reconciliation and input binding (spec §6.1)', (
 const legacyGoal: GoalSnapshot = { ref: { aggregateType: 'Goal', projectId: P, goalId: G },
   workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W }, objective: 'Ship the module',
   desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1,
-  since: 'c0000000001' as GoalSnapshot['since'] };
+  settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+  continuedFrom: null, copiedInterventions: [], since: 'c0000000001' as GoalSnapshot['since'] };
 const pausedGoal: GoalSnapshot = { ...legacyGoal, desiredState: 'paused', revision: 2, desiredStateRevision: 2,
   desiredStateRequestedBy: human };
 const resumedGoal: GoalSnapshot = { ...legacyGoal, desiredState: 'active', revision: 3, desiredStateRevision: 3,

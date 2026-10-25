@@ -135,6 +135,10 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         return { status: 'rejected', code: 'unavailable', reason: `the line operation could not be read: ${errorReason(error)}` };
       }
       if (existing.status === 'ready') {
+        // Only a creation can be this line's operation; another arm is never replayed as one.
+        if (existing.value.action.kind !== 'create') {
+          return { status: 'rejected', code: 'unavailable', reason: 'the line operation is not a Session creation' };
+        }
         // The caller replays with the input the operation stored (ruling 4.7);
         // the directory's identity+fingerprint then restores that operation.
         return admit(ctx, trusted.actor, input, true);
@@ -170,6 +174,7 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
       }
       if (read.status === 'not_found') return { status: 'ready', value: { status: 'none' } };
       if (read.status !== 'ready') return read;
+      if (read.value.action.kind !== 'create') return rejected('unavailable', 'the line operation is not a Session creation');
       const creation = read.value.action.creation;
       // An operation with no line intent is not a line for a retried request command.
       if (creation === null) return { status: 'ready', value: { status: 'none' } };

@@ -8,14 +8,17 @@
  * version with the note header and the disposition verb.
  *
  * It reads only: it never writes a disposition, wakes an owner or fabricates a
- * count. `goalId === null` versions carry no goal and are never a notice (7D2);
- * versions whose Goal is outside the requested Workspace are skipped too.
+ * count. A version whose Goal is outside the requested Workspace is skipped. A
+ * `goalId === null` version belongs to the project (6B): it is the project's notice,
+ * scoped to the bound project by its own ordered stream, out of a Goal-filtered page
+ * (a project notice is not a Goal's member) and in the unfiltered one.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
 import { renderNoteHeader, type NoteVersionSnapshot } from '../../../contracts/note.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
@@ -118,15 +121,22 @@ async function readNoteReviewPage(
         if (seenCursor !== null && version.since < seenCursor) {
           return rejected('unavailable', `note review version ${record.refKey} is outside the requested window`);
         }
-        // 7D2: a version with no Goal is never a notice.
-        if (version.goalId === null) continue;
-        if (!goalIds.has(version.goalId)) continue;
-        if (input.goalRef !== undefined && version.goalId !== input.goalRef.goalId) continue;
+        // The read's own stream is keyed by the bound project, so a version with no Goal is the project's notice and
+        // its scope is that project alone; a Goal-filtered page holds no project member.
+        if (version.goalId === null) {
+          if (input.goalRef !== undefined) continue;
+        } else {
+          if (!goalIds.has(version.goalId)) continue;
+          if (input.goalRef !== undefined && version.goalId !== input.goalRef.goalId) continue;
+        }
+        const subject: DecisionSubjectV1 = version.goalId === null
+          ? { kind: 'project', projectRef: { projectId: input.workspace.projectId } }
+          : { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: version.ref.projectId,
+            goalId: version.goalId } };
         const itemKey = `note_review:${noteVersionRefKey(version.ref)}`;
         const versionClass = version.noticeClass ?? noticeClass;
         items.push({
-          itemKey, category: 'note_review',
-          goalRef: { aggregateType: 'Goal', projectId: version.ref.projectId, goalId: version.goalId },
+          itemKey, category: 'note_review', subject,
           position: { kind: 'commit', cursor: version.since, itemKey },
           summary: `注记 · ${noteChangeAction(version.change.kind)} · ${renderNoteHeader(version)}`,
           objects: [], rework: null, noteClass: versionClass,

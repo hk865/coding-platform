@@ -61,7 +61,7 @@ function answer(overrides: Partial<QueryJobAnswerV1> = {}): QueryJobAnswerV1 {
   return {
     schemaVersion: 1, answerId: 'a1', queryJobRef: { ...JOB_REF }, runRef: { ...RUN_REF }, roundIndex: 0,
     answer: 'the answer', sources: [], followsAnswerRef: null, stale: false, staleReason: null,
-    ideas: [], goalCardDrafts: [],
+    ideas: [], goalCardDrafts: [], planDraftIndex: null,
     answeredAt: '2026-10-04T00:00:07.000Z',
     bodyRef: { kind: 'artifact', contentType: 'text/plain', digest: 'd'.repeat(64), sizeBytes: 10, source: { kind: 'query_run', ref: RUN_REF } } as unknown as QueryJobAnswerV1['bodyRef'],
     ...overrides,

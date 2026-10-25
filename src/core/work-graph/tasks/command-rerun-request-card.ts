@@ -191,7 +191,7 @@ export function commandRerunRequestCardFacts(
   const source: DecisionSourceV1 = {
     kind: 'command_rerun_request',
     key: decisionSourceKey({ kind: 'command_rerun_request', requestRef: request.ref, revision: request.revision }),
-    goalRef: { ...goal.ref },
+    subject: { kind: 'goal', goalRef: { ...goal.ref } },
     pins: [
       requestPin(request),
       { ref: structuredClone(review.ref), revision: review.revision },

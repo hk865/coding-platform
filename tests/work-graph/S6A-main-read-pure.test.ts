@@ -17,7 +17,7 @@ import type { NoticePositionV1 } from '../../src/contracts/goal-decisions.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { DecisionCardV1, NoticeItemV1 } from '../../src/core/work-graph/model/decision-contracts.js';
-import { goalNoticePage, groupNotices } from '../../src/core/work-graph/views/notice-grouping.js';
+import { groupNotices, noticePage } from '../../src/core/work-graph/views/notice-grouping.js';
 import {
   mainPageStep, mainReadPhases, mainReadStart, pageCards, parseMainReadInput, requestCards, type MainReadRowV1,
 } from '../../src/core/work-graph/views/main-surface-read-model.js';
@@ -33,8 +33,9 @@ function row(phase: 'goal' | 'pre', sequence: number): MainReadRowV1 {
 
 function card(cardKey: string, goalId: string, requestRef: QueryJobRef | null): DecisionCardV1 {
   return {
-    cardKey, source: { kind: 'candidate', key: cardKey, goalRef: goal(goalId), pins: [] }, state: 'waiting_answer',
-    goalRef: goal(goalId), senderSessionRef: null, requestRef, objects: [], options: [], answerMessageRef: null,
+    cardKey, source: { kind: 'candidate', key: cardKey, subject: { kind: 'goal', goalRef: goal(goalId) }, pins: [] },
+    state: 'waiting_answer', subject: { kind: 'goal', goalRef: goal(goalId) }, senderSessionRef: null, requestRef,
+    objects: [], options: [], answerMessageRef: null,
     answer: null, application: null, candidateStatus: 'candidate', staleReason: null, closedReason: null,
     readOnly: false, actions: ['answer', 'adopt', 'abandon'],
   };
@@ -50,7 +51,8 @@ function position(sequence: number, itemKey: string): NoticePositionV1 {
 
 function rework(itemKey: string, goalId: string, sequence: number): NoticeItemV1 {
   return {
-    itemKey, category: 'automatic_rework', goalRef: goal(goalId), position: position(sequence, itemKey),
+    itemKey, category: 'automatic_rework', subject: { kind: 'goal', goalRef: goal(goalId) },
+    position: position(sequence, itemKey),
     summary: `自动返工 · ${itemKey}`, objects: [{ kind: 'aggregate', pin: { ref: goal(goalId), revision: sequence }, label: itemKey }],
     rework: null,
   };
@@ -182,10 +184,10 @@ describe('the automatic-rework fold of the main read', () => {
 
   it('one line per goal: "n 条自动返工", its members and their views, at the newest member', () => {
     expect(groupNotices([n1, n2, n3], 'main_conversation')).toEqual([
-      { itemKey: 'automatic_rework_group:p1/g2', category: 'automatic_rework', goalRef: goal('g2'),
+      { itemKey: 'automatic_rework_group:p1/g2', category: 'automatic_rework', subject: { kind: 'goal', goalRef: goal('g2') },
         position: position(11, 'n2'), summary: '1 条自动返工', objects: n2.objects, rework: null,
         members: [{ itemKey: 'n2', position: position(11, 'n2') }], memberViews: [n2] },
-      { itemKey: 'automatic_rework_group:p1/g1', category: 'automatic_rework', goalRef: goal('g1'),
+      { itemKey: 'automatic_rework_group:p1/g1', category: 'automatic_rework', subject: { kind: 'goal', goalRef: goal('g1') },
         position: position(12, 'n3'), summary: '2 条自动返工', objects: [...n1.objects, ...n3.objects], rework: null,
         members: [{ itemKey: 'n1', position: position(10, 'n1') }, { itemKey: 'n3', position: position(12, 'n3') }],
         memberViews: [n1, n3] },
@@ -204,18 +206,18 @@ describe('the seen advance of a goal’s page', () => {
 
   it('positions 1 and 3 shown, 2 on another goal: the advance stops at 1', () => {
     const all = groupNotices([n1, n2, n3], 'main_conversation');
-    const page = goalNoticePage(all, goal('g1'));
+    const page = noticePage(all, [{ kind: 'goal', goalRef: goal('g1') }]);
     expect(page.lines.map(line => line.itemKey)).toEqual(['automatic_rework_group:p1/g1']);
     expect(page.seenThrough).toEqual({ automatic_rework: position(10, 'n1') });
   });
 
   it('the other goal’s page shows 2 but advances nothing while 1 is unseen', () => {
     const all = groupNotices([n1, n2, n3], 'main_conversation');
-    expect(goalNoticePage(all, goal('g2')).seenThrough).toEqual({});
+    expect(noticePage(all, [{ kind: 'goal', goalRef: goal('g2') }]).seenThrough).toEqual({});
   });
 
   it('a goal with no notice: no line, no advance', () => {
     const all = groupNotices([n1, n2, n3], 'main_conversation');
-    expect(goalNoticePage(all, goal('g3'))).toEqual({ lines: [], seenThrough: {} });
+    expect(noticePage(all, [{ kind: 'goal', goalRef: goal('g3') }])).toEqual({ lines: [], seenThrough: {} });
   });
 });

@@ -27,6 +27,7 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { isNonNeg, isRecord, utf8Bytes } from '../../../contracts/validation/common.js';
+import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import type {
   ContextAssemblyBindingV1, ContextCallKindV1, ContextSectionNameV1, InputDeclarationV1,
   InputSelectionV1, PlatformDutyV1, SelectedInputSourceV1,
@@ -37,8 +38,6 @@ const CONTEXT_FORMAT_VERSION: ContextAssemblyBindingV1['formatVersion'] = 's3-co
 const CALL_KINDS: readonly ContextCallKindV1[] = [
   'work', 'continuation', 'handoff', 'review', 'secretary', 'copy', 'planning', 'attention',
 ];
-
-const DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
 
 /** The four budgeted optional sections that may be omitted as a whole (§4.3 T2). */
 const BUDGET_SECTIONS: ReadonlySet<ContextSectionNameV1> = new Set(['footprint', 'notes', 'reminders', 'inputs']);
@@ -290,7 +289,7 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   if (binding.schemaVersion !== 1) return invalid('the context assembly binding schemaVersion must be 1');
   if (binding.formatVersion !== CONTEXT_FORMAT_VERSION) return invalid('the context assembly formatVersion is not s3-context-v1');
   if (!CALL_KINDS.includes(binding.callKind)) return invalid('the context assembly callKind is not recognized');
-  if (!DUTIES.includes(binding.duty)) return invalid('the context assembly duty is not recognized');
+  if (!PLATFORM_DUTIES.includes(binding.duty)) return invalid('the context assembly duty is not recognized');
   if (!isNonNeg(binding.residentBudgetBytes)) return invalid('residentBudgetBytes must be a non-negative safe integer');
   if (!isNonNeg(binding.residentBytes)) return invalid('residentBytes must be a non-negative safe integer');
   if (binding.residentBytes > binding.residentBudgetBytes) return invalid('residentBytes cannot exceed residentBudgetBytes');
@@ -613,10 +612,10 @@ export function effectivePlatformDuty(input: {
 }): ReadResult<PlatformDutyV1> {
   const roleDuty = input.roleDuty;
   const hostDuty = input.hostDuty;
-  if (roleDuty !== undefined && !DUTIES.includes(roleDuty)) {
+  if (roleDuty !== undefined && !PLATFORM_DUTIES.includes(roleDuty)) {
     return { status: 'rejected', code: 'invalid', reason: 'the resolved Role duty is not recognized' };
   }
-  if (hostDuty !== undefined && !DUTIES.includes(hostDuty)) {
+  if (hostDuty !== undefined && !PLATFORM_DUTIES.includes(hostDuty)) {
     return { status: 'rejected', code: 'invalid', reason: 'the Host duty is not recognized' };
   }
   if (roleDuty !== undefined) {

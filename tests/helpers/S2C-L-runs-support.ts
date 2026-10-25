@@ -423,7 +423,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     if (answerBody.status !== 'ready') throw new Error(`S2C-L answer body store failed: ${JSON.stringify(answerBody)}`);
     const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: `s2c-l-answer-${suffix}`, queryJobRef,
       runRef: queryRunRef, roundIndex: 0, answer: answerText, sources: [], followsAnswerRef: null,
-      stale: false, staleReason: null, answeredAt: now(), bodyRef: answerBody.value.ref, ideas: [], goalCardDrafts: [] };
+      stale: false, staleReason: null, answeredAt: now(), bodyRef: answerBody.value.ref, ideas: [], goalCardDrafts: [], planDraftIndex: null };
     const terminal = await execution.recordQueryObservation(base.ctx, { input: { entry,
       history: { ...history, observedThroughPosition: 3, endPosition: 3 },
       source: { position: 3, cursor: `s2c-l-qend-${suffix}` },

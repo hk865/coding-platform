@@ -20,7 +20,9 @@
  * (see `RequestRoundDependencies`).
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import {
+  hostPrincipalOf, principalIdentity, type CoreCallContext, type HostPrincipal,
+} from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
@@ -164,28 +166,10 @@ function unavailable(reason: string): RequestRejectionV1 {
   return rejected('unavailable', reason);
 }
 
-/** The trusted Host principal a request command runs under. */
-type HostPrincipal = Extract<CoreCallContext['principal'], { kind: 'host' }>;
-
-/**
- * The authorization check: the caller's Host principal when its actor is of
- * the kind the command needs (the person for a public command, the trusted
- * system for an internal one), else null. Every later step takes the returned
- * principal, so nothing after the check can meet a caller that is not the Host.
- */
-function hostPrincipalOf(ctx: CoreCallContext, actorKind: 'human' | 'system'): HostPrincipal | null {
-  return ctx.principal.kind === 'host' && ctx.principal.actor.kind === actorKind ? ctx.principal : null;
-}
-
-/** The trusted principal folded into the identity (the notes pattern, `note-service.ts:247`). */
-function principalOf(principal: HostPrincipal): JsonValue {
-  return { kind: 'host', actor: { kind: principal.actor.kind, id: principal.actor.id } };
-}
-
 /** `request.<kind>:<sha256(operation, project, workspace, principal, commandId)>`. */
 function commandIdentity(ctx: CoreCallContext, principal: HostPrincipal, kind: string, commandId: string): string {
   return `request.${kind}:` + sha256Hex(canonicalJson({ schemaVersion: 1, operation: `request.${kind}`,
-    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, principal: principalOf(principal),
+    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, principal: principalIdentity(principal),
     commandId } as unknown as JsonValue));
 }
 

@@ -11,7 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { NoteDraftAnchorV1 } from '../../src/contracts/note.js';
 import {
-  claimWithPlan, createAuxSession, createS4C2NoteCardFixture, currentPlanOf, generalNote,
+  claimWithPlan, createAuxSession, createS4C2NoteCardFixture, currentPlanOf, generalNote, noteCardKey,
   reviseNoteStages, S4C2_GOAL_ANCHOR, understandingNote,
   type S4C2NoteCardFixture, type S4C2NoteCardFixtureKind,
 } from '../helpers/S4C2-note-card-fixture.js';
@@ -151,7 +151,7 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
     expect(waiting.map(card => card.cardKey)).toEqual([AGENT_CARD_KEY]);
   });
 
-  it.each(KINDS)('D-09 %s: a goal-less pending note never opens a card but notes/list sees it', async kind => {
+  it.each(KINDS)('D-09 %s: a goal-less pending note opens one project card and notes/list still sees it', async kind => {
     const f = await createS4C2NoteCardFixture(kind);
     fixtures.push(f);
     // A project understanding is the platform's goal-less note (goalId null),
@@ -162,11 +162,20 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
     const noteId = idOf(note);
     expect(await noteOf(f, noteId)).toMatchObject({ goalId: null, storedState: 'pending_review' });
 
-    // No card for any Goal, and a by-key read for g1 finds nothing.
+    // The two explicit Goal filters never show it; the global read returns
+    // exactly the ONE project card, whose key is the hand-written JCS literal.
+    const projectCardKey = noteCardKey('s4a-scope-project', noteId, 1);
+    const projectSubject = { kind: 'project', projectRef: { projectId: 's4a-scope-project' } };
     expect(await f.waitingCards({ goalRef: f.goalRef })).toEqual([]);
     expect(await f.waitingCards({ goalRef: f.goal2Ref })).toEqual([]);
-    expect(await f.waitingCards()).toEqual([]);
+    const global = await f.waitingCards();
+    expect(global).toMatchObject([{
+      cardKey: projectCardKey, state: 'waiting_answer', subject: projectSubject,
+      source: { kind: 'note_review', key: projectCardKey, subject: projectSubject },
+    }]);
+    // The goal-subject by-key read still finds nothing; the project subject reads the same card.
     expect(await f.readCard(noteId)).toBeNull();
+    expect(await f.readCard(noteId, { projectSubject: true })).toEqual(global[0]);
 
     // `notes/list` with the goal-less filter still sees it.
     const listed = await f.platform.notes.listNotes(f.ctx(), {
@@ -292,5 +301,87 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
       coexistWith: [userId] });
     expect((await noteOf(f, userId)).storedState).toBe('accepted');
     expect(await f.waitingCards()).toEqual([]);
+  });
+});
+
+/** The fixture's Goal and its project, written out. */
+const GOAL_SUBJECT = { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 's4a-scope-project', goalId: 's4a-goal' } };
+const PROJECT_SUBJECT = { kind: 'project', projectRef: { projectId: 's4a-scope-project' } };
+
+/** A by-key read's state, closed reason and subject (the card must be there). */
+function stateOf(card: Awaited<ReturnType<S4C2NoteCardFixture['readCard']>>) {
+  if (card === null) throw new Error('the note card under its own subject is missing');
+  return { state: card.state, closedReason: card.closedReason, subject: card.subject };
+}
+async function headOf(f: S4C2NoteCardFixture, noteId: string) {
+  const note = await noteOf(f, noteId);
+  return { storedState: note.storedState, version: note.version };
+}
+
+/** The Goal's pending contradiction note and its open card (memory). */
+async function goalNoteCard() {
+  const f = await createS4C2NoteCardFixture('memory');
+  fixtures.push(f);
+  const user = await f.writeUser(generalNote({ topic: 'target', conclusion: 'user target' }), f.goalRef.goalId);
+  const agent = await f.writeAgent(f.executor, generalNote({ kind: 'decision', topic: 'agent',
+    conclusion: 'agent note', contradicts: [idOf(user)] }), f.goalRef.goalId);
+  const agentId = idOf(agent);
+  const card = await f.cardOf(agentId);
+  if (card === null) throw new Error('the Goal note card is not waiting');
+  return { f, agentId, card };
+}
+
+/** The project subject on a cancelled Goal's pending note (the Goal's own read closes it `goal_cancelled`). */
+async function projectSubjectOnCancelledGoalNote() {
+  const { f, agentId } = await goalNoteCard();
+  expect(await f.cancelGoal(f.goalRef)).toMatchObject({ status: 'committed' });
+  return { read: await f.readCard(agentId, { projectSubject: true }),
+    after: { own: stateOf(await f.readCard(agentId)), note: await headOf(f, agentId) } };
+}
+
+/** A Goal subject on a goal-less pending understanding the person's newer project understanding closed. */
+async function goalSubjectOnResolvedProjectNote() {
+  const f = await createS4C2NoteCardFixture('memory');
+  fixtures.push(f);
+  const pending = await f.writeAgent(f.scribe, understandingNote({ structural: true,
+    anchor: { kind: 'project' }, conclusion: 'goal-less pending' }), null);
+  expect(pending).toMatchObject({ status: 'pending_review', reasons: ['structural'] });
+  const noteId = idOf(pending);
+  expect(await f.writeUser(understandingNote({ anchor: { kind: 'project' }, conclusion: 'newer project' }), null))
+    .toMatchObject({ status: 'accepted' });
+  return { read: await f.readCard(noteId),
+    after: { own: stateOf(await f.readCard(noteId, { projectSubject: true })), note: await headOf(f, noteId) } };
+}
+
+/** The project subject on a Goal note answered under its Goal (`reject`), the Goal then cancelled. */
+async function projectSubjectOnAnsweredGoalNote() {
+  const { f, agentId, card } = await goalNoteCard();
+  expect(await f.resolve(card, 'reject', 's4c2-d-answered-goal-note')).toMatchObject({ status: 'ready',
+    value: { answer: { status: 'committed' }, state: 'applied' } });
+  expect(await f.cancelGoal(f.goalRef)).toMatchObject({ status: 'committed' });
+  return { read: await f.readCard(agentId, { projectSubject: true }),
+    after: { own: stateOf(await f.readCard(agentId)), note: await headOf(f, agentId) } };
+}
+
+describe('rejects: a note card read under a subject that is not the note’s own', () => {
+  // The note's own subject decides before its open or closed state: a Goal's note is never the project's card, and
+  // a goal-less note never a Goal's. Each read is `decisions/card` with a source a caller can send (the hand-written
+  // key and the other subject); the note's own read and its head show that nothing moved.
+  it.each([
+    { entry: 'the project subject on a cancelled Goal’s pending note', observe: projectSubjectOnCancelledGoalNote,
+      after: { own: { state: 'closed', closedReason: 'goal_cancelled', subject: GOAL_SUBJECT },
+        note: { storedState: 'pending_review', version: 1 } } },
+    { entry: 'a Goal subject on a goal-less note a newer project understanding closed',
+      observe: goalSubjectOnResolvedProjectNote,
+      after: { own: { state: 'closed', closedReason: 'source_resolved', subject: PROJECT_SUBJECT },
+        note: { storedState: 'pending_review', version: 1 } } },
+    { entry: 'the project subject on a Goal note answered under its Goal, the Goal cancelled',
+      observe: projectSubjectOnAnsweredGoalNote,
+      after: { own: { state: 'closed', closedReason: 'goal_cancelled', subject: GOAL_SUBJECT },
+        note: { storedState: 'rejected', version: 2 } } },
+  ])('memory: $entry is no card', async ({ observe, after }) => {
+    const result = await observe();
+    expect(result.read).toBeNull();
+    expect(result.after).toEqual(after);
   });
 });

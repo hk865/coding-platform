@@ -19,7 +19,9 @@
  */
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { DecisionSubjectShape } from '../../../contracts/goal-decisions.js';
 import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
   hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
@@ -154,7 +156,7 @@ export const K3_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   {
     name: K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP,
     aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.goalRef.goalId'],
+    paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.subject.goalRef.goalId'],
   },
 ];
 
@@ -517,13 +519,13 @@ const DECISION_SOURCE_KINDS: readonly string[] = [
 ];
 
 function checkDecisionSourceShape(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'key', 'goalRef', 'pins', 'goalBases'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'key', 'subject', 'pins', 'goalBases'])) {
     return 'decision source carries unknown fields';
   }
   if (!DECISION_SOURCE_KINDS.includes(String(value['kind']))) return 'decision source kind is not recognized';
   if (!nonEmpty(value['key'])) return 'decision source requires a non-empty key';
-  const goal = checkGoalRefShape(value['goalRef']);
-  if (goal !== null) return `decision source goalRef: ${goal}`;
+  const subject = checkShape(DecisionSubjectShape, { subject: value['subject'] }, 'stored');
+  if (subject !== null) return `decision source subject: ${subject}`;
   const pins = checkVersionPinList(value['pins']);
   if (pins !== null) return `decision source pins: ${pins}`;
   const bases = value['goalBases'];

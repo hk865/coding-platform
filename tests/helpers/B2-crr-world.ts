@@ -387,5 +387,5 @@ export async function crrCardOf(world: K3ReviewCardWorld): Promise<DecisionCardV
 export function crrSourceOf(request: CommandRerunRequestV1, revision = request.revision, goalRef = GOAL_B): DecisionSourceV1 {
   return { kind: 'command_rerun_request',
     key: decisionSourceKey({ kind: 'command_rerun_request', requestRef: request.ref, revision }),
-    goalRef, pins: [] };
+    subject: { kind: 'goal', goalRef }, pins: [] };
 }

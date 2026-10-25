@@ -7,8 +7,10 @@
  * text is parsed as that object; JSON is never extracted from surrounding text
  * or repaired. An `initial_coordination` round keeps the v2 initial-planning
  * answer, checked by its one parser; a request without a goal may add top-level
- * `goalCardDrafts`. Drafts are proposals only: a request that already has a goal
- * carries none, and the platform, never the model, sets `screening: null`.
+ * `goalCardDrafts` and, on a `kind: 'plan'` answer, the `planDraftIndex` naming
+ * the draft the plan belongs to. Drafts are proposals only: a request that
+ * already has a goal carries none. A draft may carry the model's optional
+ * `screening`; `null` or an absent field means not screened.
  *
  * Every refusal is `protocol` with a platform reason. An empty or over-long
  * final text never reaches this parse: the Runtime observation decides those
@@ -16,18 +18,23 @@
  */
 import type { GoalAutonomyV1 } from '../../../contracts/goal-decisions.js';
 import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
-import type { GoalCardDraftV1 } from '../../../contracts/query-job.js';
+import { GoalScreeningShape, type GoalCardDraftV1, type GoalScreeningV1 } from '../../../contracts/query-job.js';
 import { hasOnlyKeys, isRecord, nonEmpty, parseTaggedObject } from '../../../contracts/validation/common.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import { ideasIssues } from '../model/request-ideas.js';
 
 type SecretaryIdea = { title: string; detail: string };
 type SecretaryAnswerCheck =
-  | { ok: true; body: string; ideas: SecretaryIdea[]; goalCardDrafts: GoalCardDraftV1[] }
+  | {
+    ok: true; body: string; ideas: SecretaryIdea[]; goalCardDrafts: GoalCardDraftV1[];
+    /** The draft a no-goal plan answer's plan belongs to; null when the plan names none. */
+    planDraftIndex: number | null;
+  }
   | { ok: false; detail: 'protocol'; reason: string };
 
 const ANSWER_FIELDS = ['schemaVersion', 'body', 'ideas', 'goalCardDrafts'] as const;
 const IDEA_FIELDS = ['title', 'detail'] as const;
-const DRAFT_FIELDS = ['objective', 'completion', 'autonomy'] as const;
+const DRAFT_FIELDS = ['objective', 'completion', 'autonomy', 'screening'] as const;
 /** Keyed by `GoalAutonomyV1`, so a new autonomy value cannot be missed here. */
 const AUTONOMIES: Readonly<Record<GoalAutonomyV1, true>> = { every_step: true, after_plan_confirmation: true };
 
@@ -57,23 +64,46 @@ function semanticAnswer(text: string, hasGoal: boolean): SecretaryAnswerCheck {
   if (typeof ideas === 'string') return protocol(ideas);
   const drafts = draftsOf(parsed['goalCardDrafts'], hasGoal);
   if (typeof drafts === 'string') return protocol(drafts);
-  return { ok: true, body, ideas, goalCardDrafts: drafts };
+  // A semantic answer has no top-level plan index: ANSWER_FIELDS refuses one above.
+  return { ok: true, body, ideas, goalCardDrafts: drafts, planDraftIndex: null };
 }
 
 /** The formal answer text stays the whole v2 JSON text: the plan proposal path reads it as it is. */
 function coordinationAnswer(text: string, hasGoal: boolean): SecretaryAnswerCheck {
   const outer = parseInitialPlanningResponseV2(text);
   if (outer.status !== 'parsed') return protocol(outer.reason);
-  // The outer parse proved the text is one JSON object; the drafts are a
-  // top-level field the v2 protocol itself does not judge, read from the text
-  // as given (a needs_decision response is rebuilt without them).
+  // The outer parse proved the text is one JSON object; the drafts and the plan
+  // index are top-level fields the v2 protocol itself does not judge, read from
+  // the text as given (a needs_decision response is rebuilt without them).
   const object = JSON.parse(text) as Record<string, unknown>;
   const present = Object.hasOwn(object, 'goalCardDrafts');
   // Only a request without a goal is offered drafts, so a goal request's answer carries no such field at all.
   if (hasGoal && present) return protocol('an initial_coordination answer on a request that has a goal carries no goalCardDrafts');
   const drafts = present ? draftsOf(object['goalCardDrafts'], hasGoal) : [];
   if (typeof drafts === 'string') return protocol(drafts);
-  return { ok: true, body: text, ideas: [], goalCardDrafts: drafts };
+  const planDraftIndex = planDraftIndexOf(object, hasGoal, drafts.length);
+  if (typeof planDraftIndex === 'string') return protocol(planDraftIndex);
+  return { ok: true, body: text, ideas: [], goalCardDrafts: drafts, planDraftIndex };
+}
+
+/**
+ * A no-goal `initial_coordination` answer of `kind: 'plan'` may name
+ * the draft its plan belongs to. Absent means the plan belongs to no draft; a
+ * goal request, a `needs_decision` answer and an answer with no drafts carry
+ * none, and a present index must be one of the answer's own drafts.
+ */
+function planDraftIndexOf(
+  object: Record<string, unknown>, hasGoal: boolean, draftCount: number,
+): number | null | string {
+  if (!Object.hasOwn(object, 'planDraftIndex')) return null;
+  if (hasGoal) return 'an initial_coordination answer on a request that has a goal carries no planDraftIndex';
+  if (object['kind'] === 'needs_decision') return 'a needs_decision answer carries no planDraftIndex';
+  if (draftCount === 0) return 'a planDraftIndex needs a goal card draft to name';
+  const value = object['planDraftIndex'];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > draftCount - 1) {
+    return `planDraftIndex must be an index of one of the ${String(draftCount)} goal card drafts`;
+  }
+  return value;
 }
 
 /** The one idea rule, then the model's format: an idea carries only a title and a detail. */
@@ -95,7 +125,7 @@ function draftsOf(value: unknown, hasGoal: boolean): GoalCardDraftV1[] | string 
   const drafts: GoalCardDraftV1[] = [];
   for (const [index, draft] of value.entries()) {
     if (!isRecord(draft) || !hasOnlyKeys(draft, DRAFT_FIELDS)) {
-      return `goal card draft ${index + 1} may carry only objective, completion and autonomy`;
+      return `goal card draft ${String(index + 1)} may carry only objective, completion, autonomy and screening`;
     }
     const objective = draft['objective'];
     if (!nonEmpty(objective)) return `goal card draft ${index + 1} needs a non-empty objective`;
@@ -108,7 +138,19 @@ function draftsOf(value: unknown, hasGoal: boolean): GoalCardDraftV1[] | string 
     if (typeof autonomy !== 'string' || !Object.hasOwn(AUTONOMIES, autonomy)) {
       return `goal card draft ${index + 1} autonomy must be every_step or after_plan_confirmation`;
     }
-    drafts.push({ objective, completion: [...completion], autonomy: autonomy as GoalAutonomyV1, screening: null });
+    const screening = screeningOf(draft['screening'], index);
+    if (typeof screening === 'string') return screening;
+    drafts.push({
+      objective, completion: [...completion], autonomy: autonomy as GoalAutonomyV1, screening,
+    });
   }
   return drafts;
+}
+
+/** The model's screening is kept as returned; `null` or an absent field means not screened. */
+function screeningOf(value: unknown, index: number): GoalScreeningV1 | null | string {
+  if (value === null || value === undefined) return null;
+  const problem = checkShape(GoalScreeningShape, value, 'stored');
+  if (problem === null) return value as GoalScreeningV1;
+  return `goal card draft ${String(index + 1)} screening: ${problem}`;
 }

@@ -18,7 +18,6 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
-  DEFAULT_GOAL_SETTINGS_V1,
   decisionSourceKey,
   type GoalDecisionBasisV1,
 } from '../../../contracts/goal-decisions.js';
@@ -62,7 +61,7 @@ const LOOKUP_PAGE_LIMIT = 200;
 function basisOf(goal: GoalSnapshot): GoalDecisionBasisV1 {
   return {
     goalRef: goal.ref, workspaceRef: goal.workspaceRef, objective: goal.objective,
-    activePlanRef: goal.activePlanRevision, settings: goal.settings ?? DEFAULT_GOAL_SETTINGS_V1,
+    activePlanRef: goal.activePlanRevision, settings: goal.settings,
   };
 }
 
@@ -193,9 +192,10 @@ export function createPlanningQuestionReader(
               ];
               cards.push({
                 cardKey: source,
-                source: { kind: 'planning_question', key: source, goalRef: goal.ref, pins, goalBases: [basisOf(goal)] },
+                source: { kind: 'planning_question', key: source,
+                  subject: { kind: 'goal', goalRef: goal.ref }, pins, goalBases: [basisOf(goal)] },
                 state: 'waiting_answer',
-                goalRef: goal.ref,
+                subject: { kind: 'goal', goalRef: goal.ref },
                 senderSessionRef: null,
                 requestRef: null,
                 objects: [],

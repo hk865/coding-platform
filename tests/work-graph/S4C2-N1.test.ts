@@ -75,15 +75,17 @@ describe('S4C2 N1 note_review folding over a real platform', () => {
     expect(read.counts.notices.note_review).toBe(4);
     expect(read.notices).toHaveLength(2);
 
-    const g1 = read.notices.find(item => item.goalRef.goalId === f.goalRef.goalId)!;
-    const g2 = read.notices.find(item => item.goalRef.goalId === f.goal2Ref.goalId)!;
+    const g1 = read.notices.find(item => item.subject.kind === 'goal'
+      && item.subject.goalRef.goalId === f.goalRef.goalId)!;
+    const g2 = read.notices.find(item => item.subject.kind === 'goal'
+      && item.subject.goalRef.goalId === f.goal2Ref.goalId)!;
     expect(g1.summary).toBe('书记整理 · 3 条注记');
     expect(g2.summary).toBe('书记整理 · 1 条注记');
     expect(g1.itemKey).toBe(`note_review_scribe:${PROJECT_ID}/${f.goalRef.goalId}`);
     expect(g2.itemKey).toBe(`note_review_scribe:${PROJECT_ID}/${f.goal2Ref.goalId}`);
     expect([g1.members?.length, g2.members?.length]).toEqual([3, 1]);
-    expect(g1.goalRef).toEqual(f.goalRef);
-    expect(g2.goalRef).toEqual(f.goal2Ref);
+    expect(g1.subject).toEqual({ kind: 'goal', goalRef: f.goalRef });
+    expect(g2.subject).toEqual({ kind: 'goal', goalRef: f.goal2Ref });
 
     expect(g1.members!.map(member => member.itemKey)).toEqual([
       versionKey(f.noteId(1), 2), versionKey(f.noteId(2), 2), versionKey(f.noteId(4), 2),

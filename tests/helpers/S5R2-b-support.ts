@@ -207,7 +207,8 @@ export function waitingCard(queue: DecisionQueueReadV1, source: DecisionSourceV1
   expect(matches).toHaveLength(1);
   const card = matches[0];
   if (card === undefined) throw new Error('R2B: the emitted cause must be in the queue');
-  expect(card).toMatchObject({ cardKey: source.key, source: { kind: 'goal_cause', key: source.key, goalRef: GOAL_B },
+  expect(card).toMatchObject({ cardKey: source.key,
+    source: { kind: 'goal_cause', key: source.key, subject: { kind: 'goal', goalRef: GOAL_B } },
     state: 'waiting_answer', readOnly: false, options: [], answerMessageRef: null });
   return card;
 }

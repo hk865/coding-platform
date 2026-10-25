@@ -75,7 +75,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A request candidates (%s)', (kin
     // S2AQ09-4 is the fifth item, on the last page.
     const key = requestKey();
     const direct = ready(await owners(f, f.records, f.bodies, SMALL_WIDTHS).reads.readDecisionCard(f.ctx,
-      { source: { kind: 'candidate', key, goalRef: GOAL_B, pins: [] } }));
+      { source: { kind: 'candidate', key, subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] } }));
     expect(direct).toMatchObject({ cardKey: key, requestRef: REQUEST_Q1, state: 'waiting_answer',
       candidateStatus: 'candidate' });
     expect(proposalPins(direct)).toEqual([{ ref: liveRef, revision: 1 }]);

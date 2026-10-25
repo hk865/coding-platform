@@ -90,7 +90,7 @@ function sameSession(left: SessionRef, right: SessionRef): boolean {
 /** The canonical facts `DecisionSourceFactsPort.readSource` returns. */
 type SourceFacts = {
   source: DecisionSourceV1;
-  goal: GoalSnapshot;
+  goal: GoalSnapshot | null;
   objects: DecisionObjectV1[];
   options: DecisionOptionV1[];
   guards: readonly RecordGuard[];
@@ -823,10 +823,13 @@ export function createDecisionMessageService(
     const recipient: MessageRecipient = { kind: 'user', projectId: owned.projectId, workspaceId: owned.workspaceId };
     const next = createSyntheticDecisionAnswerRecord({
       ref: messageRef, sender, recipient, bodyRef: messageStored.value.bodyRef,
-      sourceRef: messageStored.value.sourceRef, createdAt: respondedAt, goalRef: facts.goal.ref, decision, response,
+      sourceRef: messageStored.value.sourceRef, createdAt: respondedAt,
+      goalRef: facts.goal === null ? null : facts.goal.ref, decision, response,
     });
+    // A project card is one card of the whole project (every workspace lists it), so its answer slot is the project's.
+    const claimWorkspaceId = facts.source.subject.kind === 'project' ? null : owned.workspaceId;
     const claimKey = 's5-decision-answer:' + canonicalJson({
-      projectId: owned.projectId, workspaceId: owned.workspaceId, kind: source.kind, key: source.key,
+      projectId: owned.projectId, workspaceId: claimWorkspaceId, kind: source.kind, key: source.key,
     } as unknown as JsonValue);
     return persistDecisionMessage(owned, {
       before: null, next, guards: facts.guards,

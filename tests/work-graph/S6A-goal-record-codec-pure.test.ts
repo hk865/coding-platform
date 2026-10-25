@@ -24,6 +24,9 @@ function goal(): GoalSnapshot {
     desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
+    settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+    continuedFrom: null,
+    copiedInterventions: [],
     since: cursor('c0000000007'),
   };
 }

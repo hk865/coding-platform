@@ -102,7 +102,7 @@ describe('S4C2 N3 seenThrough only over delivered members', () => {
     expect(page2.notices).toHaveLength(1);
     const folded = page2.notices[0]!;
     expect(folded.summary).toBe('书记整理 · 2 条注记');
-    expect(folded.goalRef).toEqual(f.goalRef);
+    expect(folded.subject).toEqual({ kind: 'goal', goalRef: f.goalRef });
     expect(folded.members?.map(member => member.itemKey)).toEqual([
       versionKey(f.noteId(2), 2), versionKey(f.noteId(6), 2),
     ]);

@@ -307,7 +307,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
 function emptyCardSource(kind: DecisionSourceV1['kind']): DecisionCardSourcePort {
   return {
     kind,
-    needsGoal: true,
+    serves: ['goal'],
     async readPage() {
       return { status: 'ready' as const, value: { availability: 'available' as const, items: [],
         nextCursor: null, sourceCursor: null } };

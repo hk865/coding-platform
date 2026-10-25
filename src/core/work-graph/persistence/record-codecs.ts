@@ -22,13 +22,15 @@ import {
   type WorkspaceRef, type WorkspaceSnapshot,
 } from "../../../contracts/ledger.js";
 import {
-  DEFAULT_GOAL_SETTINGS_V1,
   DEFAULT_WORKSPACE_DECISION_SETTINGS_V1,
   type GoalSettingsV1,
   type WorkspaceDecisionSettingsV1,
 } from "../../../contracts/goal-decisions.js";
 import type { PlanRevisionRef } from "../../../contracts/plan.js";
 import { canonicalJson, canonicalKey, type JsonValue } from "../../../contracts/fingerprint.js";
+import { defineShape, f, type InferShape } from "../../../contracts/data-format.js";
+import { GoalRefShape, SessionMessageRefShape } from "../../../contracts/data-format-refs.js";
+import { checkShape } from "../../../contracts/validation/data-format.js";
 import {
   invalid, isNonNeg, isRecord, nonEmpty, parseTaggedObject,
 } from "../../../contracts/validation/common.js";
@@ -313,6 +315,38 @@ function isGoalDesiredState(value: unknown): value is GoalDesiredState {
 }
 
 /**
+ * The two copy fields of a Goal (slice-6-SPEC L12) as one field table: a Goal
+ * not born as a copy holds `continuedFrom: null` and `copiedInterventions: []`.
+ * The table checks the stored fields only; which versions the copy read is the
+ * copy owner's.
+ */
+const GoalCopyFieldsShape = defineShape({ name: "GoalSnapshot", fields: {
+  continuedFrom: f.nullable(f.object({
+    goal: f.ref(GoalRefShape), sourceRevision: f.integer({ min: 1 }),
+    understanding: f.nullable(f.object({ noteId: f.string({ min: 1, unit: "codePoints" }), version: f.integer({ min: 1 }) })),
+  })),
+  copiedInterventions: f.array(f.ref(SessionMessageRefShape)),
+} });
+
+/**
+ * The copy fields of a Goal body or of the GoalCreated payload that births it.
+ * Only the two keys are handed to the table, so a missing one reads `is missing`.
+ */
+function goalCopyFieldsProblem(value: UnknownRecord): string | null {
+  // Compile-time check: the table's type and the Goal's two copy fields are each
+  // assignable to the other (otherwise `false` does not satisfy `true`).
+  type Table = InferShape<(typeof GoalCopyFieldsShape)["fields"]>;
+  type OfGoal = Pick<GoalSnapshot, "continuedFrom" | "copiedInterventions">;
+  type MustHold<T extends true> = T;
+  type TableMatchesGoal = MustHold<[Table, OfGoal] extends [OfGoal, Table] ? true : false>;
+  const fields: UnknownRecord = {};
+  for (const key of Object.keys(GoalCopyFieldsShape.fields)) {
+    if (Object.hasOwn(value, key)) fields[key] = value[key];
+  }
+  return checkShape(GoalCopyFieldsShape, fields, "stored");
+}
+
+/**
  * Pure shape check of one Goal snapshot body, shared by the record validator
  * and the `GoalDesiredStateChanged` replay event. D-9: `desiredState` is any of
  * the three stored values; `desiredStateRevision` and `desiredStateRequestedBy`
@@ -351,13 +385,14 @@ export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
       return "Goal snapshot desiredStateRequestedBy must be null or a Host (human/system) actor";
     }
   }
-  // The optional §2.2 settings. Absent stays absent (the default helper
-  // applies it at consumption); present must be a complete legal shape, so a
-  // corrupt ref/enum/float/negative order can never be read as "no settings".
-  if (parsed["settings"] !== undefined) {
-    const settingsProblem = goalSettingsProblem(parsed["settings"], ref.projectId);
-    if (settingsProblem !== null) return settingsProblem;
-  }
+  // The §2.2 settings are written at birth: a record without them is refused,
+  // never read as a default, and a corrupt ref/enum/float/negative order is
+  // refused too.
+  if (!Object.hasOwn(parsed, "settings")) return "Goal snapshot settings is missing";
+  const settingsProblem = goalSettingsProblem(parsed["settings"], ref.projectId);
+  if (settingsProblem !== null) return settingsProblem;
+  const copyProblem = goalCopyFieldsProblem(parsed);
+  if (copyProblem !== null) return copyProblem;
   // The creation cursor is bound by the creating commit; a record still holding
   // the null placeholder (or any other value) is not a readable Goal. The ledger's
   // own cursor rule decides the rest: ten digits and a sequence >= 1, so the zero
@@ -491,6 +526,13 @@ function validateGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<Encod
   if (payload["activePlanRevision"] !== null) {
     return invalid("GoalCreated payload.activePlanRevision must be null");
   }
+  // The birth fields: the event alone rebuilds the created Goal, so none of
+  // them may be missing (no default stands in for an old event).
+  if (!Object.hasOwn(payload, "settings")) return invalid("GoalCreated payload.settings is missing");
+  const settingsProblem = goalSettingsProblem(payload["settings"], parsed["projectId"]);
+  if (settingsProblem !== null) return invalid(`GoalCreated payload: ${settingsProblem}`);
+  const copyProblem = goalCopyFieldsProblem(payload);
+  if (copyProblem !== null) return invalid(`GoalCreated payload: ${copyProblem}`);
   return { status: "decoded", value: copyEvent(event) };
 }
 
@@ -508,28 +550,26 @@ function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
 /**
  * The Goal a `GoalDesiredStateChanged` event carries has no unknown or missing
  * field at any level, so a receipt replay can return it as the written
- * snapshot (shape-checked separately by `goalSnapshotProblem`). `settings` is
- * an optional extra whose presence is preserved, never defaulted in.
+ * snapshot (shape-checked separately by `goalSnapshotProblem`, whose copy-field
+ * table also refuses unknown keys inside the two copy fields).
  */
 const WRITTEN_GOAL_KEYS: readonly string[] = [
   "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
-  "activePlanRevision", "revision", "since",
+  "activePlanRevision", "revision", "settings", "continuedFrom", "copiedInterventions", "since",
 ];
 
 function writtenGoalHasExactShape(goal: UnknownRecord): boolean {
-  const hasSettings = Object.prototype.hasOwnProperty.call(goal, "settings");
-  return hasExactKeys(goal, hasSettings ? [...WRITTEN_GOAL_KEYS, "settings"] : WRITTEN_GOAL_KEYS)
+  return hasExactKeys(goal, WRITTEN_GOAL_KEYS)
     && hasExactKeys(goal["ref"], ["aggregateType", "projectId", "goalId"])
     && hasExactKeys(goal["workspaceRef"], ["aggregateType", "projectId", "workspaceId"])
     && (goal["activePlanRevision"] === null || hasExactKeys(goal["activePlanRevision"], ["aggregateType", "projectId", "planId"]))
     && (goal["desiredStateRequestedBy"] === null || hasExactKeys(goal["desiredStateRequestedBy"], ["kind", "id"]))
-    && (!hasSettings || hasExactKeys(goal["settings"], GOAL_SETTINGS_KEYS));
+    && hasExactKeys(goal["settings"], GOAL_SETTINGS_KEYS);
 }
 
 /**
  * Full `GoalSnapshot` value check for the write events: the record
- * validator's field rules plus the exact written field set (a present
- * `settings` is preserved, an absent one stays absent).
+ * validator's field rules plus the exact written field set.
  */
 export function goalSnapshotValueProblem(value: unknown): string | null {
   if (!isRecord(value)) return "Goal value must be an object";
@@ -764,7 +804,6 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
   const workspaceRef = workspaceRefFromValue(parsed.workspaceRef)!;
   const active = parsed.activePlanRevision;
   const requestedBy = parsed.desiredStateRequestedBy;
-  const settings = parsed.settings;
   return {
     status: "decoded",
     value: {
@@ -779,24 +818,19 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
       activePlanRevision:
         active === null ? null : planRevisionRefFromValue(active, ref.projectId),
       revision: record.revision,
-      // Present stays byte-identical, absent stays absent (the default
-      // is applied by `readGoalSettings` at the consumption point, never stored).
-      ...(settings === undefined ? {} : { settings }),
+      // The validated settings and copy fields, as stored.
+      settings: parsed.settings,
+      continuedFrom: parsed.continuedFrom,
+      copiedInterventions: parsed.copiedInterventions,
       // The validated creation cursor, not the envelope's revision.
       since: parsed.since,
     },
   };
 }
 
-/**
- * The default-applying read helper (spec §2.2): returns the saved Goal settings
- * or the exact §2.2 defaults when the record predates the field. It never
- * backfills the stored record.
- */
+/** The Goal's saved settings (spec §2.2), exactly as stored; every Goal carries them from birth. */
 export function readGoalSettings(goal: GoalSnapshot): GoalSettingsV1 {
-  // Present settings are returned exactly as stored; an old record reads the
-  // §2.2 default, freshly cloned so a caller can never mutate the shared const.
-  return goal.settings === undefined ? structuredClone(DEFAULT_GOAL_SETTINGS_V1) : goal.settings;
+  return goal.settings;
 }
 
 /**
@@ -834,6 +868,9 @@ export function decodeGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<
         objective: parsed.payload.objective,
         desiredState: "active",
         activePlanRevision: null,
+        settings: parsed.payload.settings,
+        continuedFrom: parsed.payload.continuedFrom,
+        copiedInterventions: parsed.payload.copiedInterventions,
       },
     },
   };
@@ -860,6 +897,9 @@ export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): PendingGo
     desiredStateRequestedBy: null,
     activePlanRevision: event.payload.activePlanRevision,
     revision: 1,
+    settings: event.payload.settings,
+    continuedFrom: event.payload.continuedFrom,
+    copiedInterventions: event.payload.copiedInterventions,
     since: null,
   };
 }

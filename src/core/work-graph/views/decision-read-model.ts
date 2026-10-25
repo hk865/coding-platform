@@ -17,9 +17,12 @@ import type { UserMessageResponseV1 } from '../../../contracts/core/session-mess
 import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import {
+  decisionSubjectGoalRef,
+  decisionSubjectKey,
   decisionSourceKey,
   type DecisionSourceIdentityV1,
   type DecisionSourceV1,
+  type DecisionSubjectV1,
   type NoticeCategoryV1,
   type NoticePositionV1,
 } from '../../../contracts/goal-decisions.js';
@@ -92,7 +95,7 @@ import {
   type GoalTerminalState,
 } from './goal-conflicts.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
-import { goalNoticePage, groupNotices, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
+import { groupNotices, noticePage, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
 
 /**
  * The narrow readers, the shared Store seam and the two injected helpers. A
@@ -115,15 +118,17 @@ export type DecisionReadModelDependencies = {
 /**
  * The main conversation's whole page (slice-6-SPEC L6): the queue's own source
  * assembly run once for the workspace, with no page limit and no cursor. It
- * answers every card in the queue's order and, when `notices` names a Goal, that
- * Goal's notice lines as the main read groups them (each Goal's automatic
- * reworks folded into one line), with the seen advance computed over the
- * workspace's full member set and a display token issued for it; with
- * `notices: null` it reads no notice and issues no token.
+ * answers every card in the queue's order and, when `notices` is not null, the
+ * notice lines of the project plus — for a Goal view — that Goal's, as the main
+ * read groups them (each subject's automatic reworks folded into one line), with
+ * the seen advance computed over the workspace's full member set and a display
+ * token issued for it. The project's lines are the page's common part, so the
+ * no-goal view (`goalRef: null`) shows them too; with `notices: null` it reads no
+ * notice and issues no token.
  */
 export type DecisionWholePageInputV1 = {
   workspace: WorkspaceScope;
-  notices: { goalRef: GoalRef } | null;
+  notices: { goalRef: GoalRef | null } | null;
 };
 export type DecisionWholePageV1 = {
   cards: DecisionCardV1[];
@@ -179,7 +184,8 @@ const enumerateClosedCandidates = enumerateClosedGoalCandidates as unknown as (
   options?: { lookupPageLimit?: number },
 ) => ReturnType<typeof enumerateClosedGoalCandidates>;
 
-/** §4.1/§4.3: a card's stable page point, ordered exactly like the output list. */
+/** §4.1/§4.3: a card's stable page point, ordered exactly like the output list. `goal` holds a Goal subject's GoalRef
+ * canonical JSON (the v1 spelling) and the project subject's `decisionSubjectKey`; see `cardSeek`. */
 type CardSeekV1 = { rank: 0 | 1 | 2; goal: string; kind: string; key: string };
 
 /**
@@ -221,7 +227,7 @@ export function createDecisionReadModel(
 export function createGoalCauseCardSource(reader: GoalDecisionCauseReader): DecisionCardSourcePort {
   return {
     kind: 'goal_cause',
-    needsGoal: true,
+    serves: ['goal'],
     async readPage(ctx, input) {
       if (input.goalRef === undefined) {
         return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: null } };
@@ -230,7 +236,10 @@ export function createGoalCauseCardSource(reader: GoalDecisionCauseReader): Deci
         ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) });
       if (result.status !== 'ready') return result;
       return { status: 'ready', value: { availability: 'available',
-        items: result.value.map(goalCauseCard), nextCursor: null, sourceCursor: null } };
+        items: result.value.flatMap((cause) => {
+          const card = goalCauseCard(cause);
+          return card === null ? [] : [card];
+        }), nextCursor: null, sourceCursor: null } };
     },
   };
 }
@@ -239,7 +248,7 @@ export function createGoalCauseCardSource(reader: GoalDecisionCauseReader): Deci
 export function createPlanningQuestionCardSource(reader: PlanningQuestionReader): DecisionCardSourcePort {
   return {
     kind: 'planning_question',
-    needsGoal: true,
+    serves: ['goal'],
     async readPage(ctx, input) {
       if (input.goalRef === undefined) {
         return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: null } };
@@ -258,12 +267,14 @@ export function createPlanningQuestionCardSource(reader: PlanningQuestionReader)
  */
 export type CardCollectionSourceSpec<T> = {
   kind: DecisionSourceV1['kind'];
-  needsGoal: boolean;
-  readCollection(ctx: CoreCallContext, input: { workspace: WorkspaceScope; goalRef: GoalRef;
+  /** The subjects the source serves (`DecisionCardSourcePort.serves`). */
+  serves: readonly DecisionSubjectV1['kind'][];
+  readCollection(ctx: CoreCallContext, input: { workspace: WorkspaceScope; subject: DecisionSubjectV1;
     attempt?: DecisionSourceAttempt }): Promise<ReadResult<readonly T[]>>;
   /** The item's canonical `decisionSourceKey(identity)`; needed only for closed cards. */
   keyOf?(item: T): string;
-  project(item: T, goalRef: GoalRef, goal: GoalSnapshot | null): DecisionCardV1;
+  /** The item's card under the subject it was read for; `goal` is that subject's readable Goal, else null. */
+  project(item: T, subject: DecisionSubjectV1, goal: GoalSnapshot | null): DecisionCardV1;
   /** `null` = the item is still open; a reason closes it. A missing reader means always open. */
   closedReasonOf?(item: T): DecisionCardV1['closedReason'];
   readByKey(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
@@ -282,10 +293,11 @@ export type CardCollectionGoalReader = (goalRef: GoalRef) => Promise<GoalSnapsho
 
 /**
  * §4.2 U7: build a `DecisionCardSourcePort` from a collection spec. `readPage`
- * answers an empty page without a Goal, assembles the collection and the Goal
- * ONCE per window attempt, applies `closedReasonOf` to every item, and serves
- * numeric-offset pages (SOURCE_PAGE_LIMIT fallback). `readByKey` never pages: it
- * delegates one item read, then projects it with one Goal read.
+ * answers an empty page for a subject the spec does not serve (no Goal asks for
+ * the project), assembles the subject's collection and its Goal ONCE per window
+ * attempt, applies `closedReasonOf` to every item, and serves numeric-offset
+ * pages (SOURCE_PAGE_LIMIT fallback). `readByKey` never pages: it delegates one
+ * item read, then projects it with one Goal read.
  */
 export function createCollectionCardSource<T>(
   spec: CardCollectionSourceSpec<T>,
@@ -297,24 +309,33 @@ export function createCollectionCardSource<T>(
   });
   return {
     kind: spec.kind,
-    needsGoal: spec.needsGoal,
+    serves: spec.serves,
     async readPage(ctx, input) {
-      if (input.goalRef === undefined) return emptyPage();
-      const goalRef = input.goalRef;
-      // L11: assemble the Goal's whole card set once per window attempt.
+      // No Goal asks for the bound project's cards; a subject the spec does not
+      // serve is an empty page.
+      const subject: DecisionSubjectV1 = input.goalRef === undefined
+        ? { kind: 'project', projectRef: { projectId: input.workspace.projectId } }
+        : { kind: 'goal', goalRef: input.goalRef };
+      if (!spec.serves.includes(subject.kind)) return emptyPage();
+      const goalRef = decisionSubjectGoalRef({ subject });
+      // L11: assemble the subject's whole card set once per window attempt. A
+      // Goal's entry is keyed by its id, the project's by its subject key, each
+      // with the source kind and the workspace.
       const cache = input.page.attempt?.cache;
       const cacheKey = canonicalJson({ kind: spec.kind, projectId: input.workspace.projectId,
-        workspaceId: input.workspace.workspaceId, goalId: goalRef.goalId } as unknown as JsonValue);
+        workspaceId: input.workspace.workspaceId,
+        ...(goalRef === null ? { subject: decisionSubjectKey(subject) } : { goalId: goalRef.goalId }),
+      } as unknown as JsonValue);
       let assembled = cache?.get(cacheKey) as DecisionCardV1[] | undefined;
       if (assembled === undefined) {
-        const listed = await spec.readCollection(ctx, { workspace: input.workspace, goalRef,
+        const listed = await spec.readCollection(ctx, { workspace: input.workspace, subject,
           ...(input.page.attempt === undefined ? {} : { attempt: input.page.attempt }) });
         if (listed.status !== 'ready') return listed;
-        const goal = await readGoal(goalRef);
+        const goal = goalRef === null ? null : await readGoal(goalRef);
         assembled = listed.value.map((item) => {
           const closedReason = spec.closedReasonOf === undefined ? null : spec.closedReasonOf(item);
-          if (closedReason === null || spec.keyOf === undefined) return spec.project(item, goalRef, goal);
-          const card = spec.project(item, goalRef, goal);
+          if (closedReason === null || spec.keyOf === undefined) return spec.project(item, subject, goal);
+          const card = spec.project(item, subject, goal);
           return closedCollectionCard({ ...card.source, key: spec.keyOf(item) }, closedReason);
         });
         cache?.set(cacheKey, assembled);
@@ -336,8 +357,14 @@ export function createCollectionCardSource<T>(
       if ('closed' in read.value) {
         return { status: 'ready', value: closedCollectionCard(input.source, read.value.closed) };
       }
-      const goal = await readGoal(input.source.goalRef);
-      return { status: 'ready', value: spec.project(read.value.item, input.source.goalRef, goal) };
+      // The card carries the source's own subject; a subject the spec does not
+      // serve is no card, and a project subject reads no Goal record.
+      const subject = input.source.subject as DecisionSubjectV1 | undefined;
+      if (subject === undefined || !spec.serves.includes(subject.kind)) return { status: 'ready', value: null };
+      const goalRef = decisionSubjectGoalRef(input.source);
+      if (subject.kind === 'goal' && goalRef === null) return { status: 'ready', value: null };
+      const goal = goalRef === null ? null : await readGoal(goalRef);
+      return { status: 'ready', value: spec.project(read.value.item, subject, goal) };
     },
   };
 }
@@ -357,10 +384,10 @@ export type NoteReviewCardSourceDependencies = {
 export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencies): DecisionCardSourcePort {
   return createCollectionCardSource<NoteDecisionCardFactsV1>({
     kind: 'note_review',
-    needsGoal: true,
-    readCollection: (ctx, { goalRef, attempt }) => deps.noteDecisions.readNoteDecisions(ctx, { goalRef,
+    serves: ['goal', 'project'],
+    readCollection: (ctx, { subject, attempt }) => deps.noteDecisions.readNoteDecisions(ctx, { subject,
       ...(attempt === undefined ? {} : { attempt }) }),
-    project: noteReviewCard,
+    project: noteCard,
     async readByKey(ctx, { source }) {
       const identity = parseIdentity(source.key);
       if (identity === null || identity.kind !== 'note_review') {
@@ -372,25 +399,33 @@ export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencie
       }
       const read = await deps.noteDecisions.readNoteDecision(ctx, { pin: { noteId: ref.noteId, version: identity.note.revision } });
       if (read.status !== 'ready') return read;
+      // M1: the note must belong to the subject the request names, decided on
+      // the head's own subject BEFORE open or closed: a goal-less note is only
+      // the project's card, a note of some Goal only that Goal's card, so the
+      // closed reason of another subject's note is no card here either.
+      const noteSubject = read.value.subject;
+      if (noteSubject === null || decisionSubjectKey(noteSubject) !== decisionSubjectKey(source.subject)) {
+        return { status: 'ready', value: null };
+      }
       if (read.value.card === null) {
         return read.value.closedReason === null ? { status: 'ready', value: null }
           : { status: 'ready', value: { closed: read.value.closedReason } };
       }
-      // M1: the card's note must belong to the Goal the request names; a note of
-      // another Goal in the same Workspace is never that Goal's card.
-      if (read.value.card.goalId !== source.goalRef.goalId) return { status: 'ready', value: null };
       return { status: 'ready', value: { item: read.value.card } };
     },
   }, (goalRef) => readGoalForBasis(deps.records, goalRef));
 }
 
-function noteReviewCard(card: NoteDecisionCardFactsV1, goalRef: GoalRef, goal: GoalSnapshot | null): DecisionCardV1 {
+/** A note card under its subject; a goal-less note is the project's card, with no Goal basis. */
+function noteCard(card: NoteDecisionCardFactsV1, subject: DecisionSubjectV1,
+  goal: GoalSnapshot | null): DecisionCardV1 {
   return {
     cardKey: card.cardId,
-    source: { kind: 'note_review', key: card.cardId, goalRef: { ...goalRef },
+    source: { kind: 'note_review', key: card.cardId, subject: structuredClone(subject),
       pins: card.pins.map((pin) => structuredClone(pin)),
       goalBases: goal === null ? [] : [goalDecisionBasis(goal)] },
-    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
+    state: 'waiting_answer', subject: structuredClone(subject),
+    senderSessionRef: null, requestRef: null,
     objects: card.objects, options: card.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null, readOnly: false, actions: ['answer'],
   };
@@ -447,9 +482,13 @@ export function createUnknownCallReviewCardSource(
 ): DecisionCardSourcePort {
   const base = createCollectionCardSource<UnknownCallReviewCardFactsV1>({
     kind: 'unknown_call_review',
-    needsGoal: true,
+    serves: ['goal'],
     pageLimit: deps.pageLimit ?? SOURCE_PAGE_LIMIT,
-    async readCollection(ctx, { workspace, goalRef, attempt }) {
+    async readCollection(ctx, { workspace, subject, attempt }) {
+      const goalRef = decisionSubjectGoalRef({ subject });
+      if (goalRef === null) {
+        return { status: 'rejected', code: 'invalid', reason: 'an unknown_call_review card source needs a Goal' };
+      }
       const cache = attempt?.cache;
       const planKey = `unknown-call-review-plan:${canonicalJson(goalRef as unknown as JsonValue)}`;
       let window = cache?.get(planKey) as Awaited<ReturnType<typeof readGoalPlanWindow>> | undefined;
@@ -502,15 +541,17 @@ export function createUnknownCallReviewCardSource(
       return { status: 'ready', value: cards };
     },
     keyOf: (facts) => facts.source.key,
-    project: (facts, goalRef) => unknownCallReviewCard(facts, goalRef),
+    project: unknownCallReviewCard,
     closedReasonOf: (facts) => facts.closedReason,
     async readByKey(ctx, { source }) {
       const identity = parseIdentity(source.key);
       if (identity === null || identity.kind !== 'unknown_call_review') {
         return { status: 'rejected', code: 'invalid', reason: 'an unknown_call_review source key is not a review identity' };
       }
-      if (identity.reviewRef.projectId !== source.goalRef.projectId
-        || identity.reviewRef.goalId !== source.goalRef.goalId) {
+      const goalRef = decisionSubjectGoalRef(source);
+      if (goalRef === null) return { status: 'ready', value: null };
+      if (identity.reviewRef.projectId !== goalRef.projectId
+        || identity.reviewRef.goalId !== goalRef.goalId) {
         return { status: 'ready', value: null };
       }
       const read = await deps.reviews.readReview(ctx, { ref: identity.reviewRef });
@@ -519,8 +560,8 @@ export function createUnknownCallReviewCardSource(
       const record = read.value;
       // A moved record is a stale source key, not the current card.
       if (record.revision !== identity.revision) return { status: 'ready', value: null };
-      if (record.task.goalId !== source.goalRef.goalId) return { status: 'ready', value: null };
-      const window = await readGoalPlanWindow(deps.records, source.goalRef);
+      if (record.task.goalId !== goalRef.goalId) return { status: 'ready', value: null };
+      const window = await readGoalPlanWindow(deps.records, goalRef);
       if (window.status !== 'ready') return window;
       let encoded;
       try {
@@ -531,7 +572,7 @@ export function createUnknownCallReviewCardSource(
       if (encoded === null) return { status: 'ready', value: null };
       const decoded = decodeRun(encoded);
       if (!decoded.ok) return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
-      const closure = await readTaskClosureCached(deps.records, source.goalRef, record.task.taskId, undefined);
+      const closure = await readTaskClosureCached(deps.records, goalRef, record.task.taskId, undefined);
       if (closure.status !== 'ready') return closure;
       const fileDigests = await readReviewTargetDigests(ctx, deps.workspace,
         unknownCallReviewTargetPaths(record).slice(0, UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX));
@@ -570,7 +611,7 @@ export function createUnknownCallReviewCardSource(
 export function createCommandRerunRequestCardSource(
   deps: CommandRerunRequestCardSourceDependencies,
 ): DecisionCardSourcePort {
-  const goalRefOf = (request: CommandRerunRequestV1): GoalRef => ({
+  const requestGoalRef = (request: CommandRerunRequestV1): GoalRef => ({
     aggregateType: 'Goal', projectId: request.ref.projectId, goalId: request.ref.goalId,
   });
 
@@ -610,7 +651,7 @@ export function createCommandRerunRequestCardSource(
     ctx: CoreCallContext, request: CommandRerunRequestV1,
     cache: Map<string, unknown> | undefined,
   ): Promise<ReadResult<CommandRerunRequestCardFactsV1>> {
-    const goalRef = goalRefOf(request);
+    const goalRef = requestGoalRef(request);
     const windowKey = `crr-plan:${canonicalJson(goalRef as unknown as JsonValue)}`;
     let window = cache?.get(windowKey) as Awaited<ReturnType<typeof readGoalPlanWindow>> | undefined;
     if (window === undefined) {
@@ -678,9 +719,13 @@ export function createCommandRerunRequestCardSource(
 
   const base = createCollectionCardSource<CommandRerunRequestCardFactsV1>({
     kind: 'command_rerun_request',
-    needsGoal: true,
+    serves: ['goal'],
     pageLimit: deps.pageLimit ?? SOURCE_PAGE_LIMIT,
-    async readCollection(ctx, { workspace, goalRef, attempt }) {
+    async readCollection(ctx, { workspace, subject, attempt }) {
+      const goalRef = decisionSubjectGoalRef({ subject });
+      if (goalRef === null) {
+        return { status: 'rejected', code: 'invalid', reason: 'a command_rerun_request card source needs a Goal' };
+      }
       const requests: CommandRerunRequestV1[] = [];
       let cursor: string | undefined;
       for (;;) {
@@ -701,15 +746,17 @@ export function createCommandRerunRequestCardSource(
       return { status: 'ready', value: cards };
     },
     keyOf: (facts) => facts.source.key,
-    project: (facts, goalRef) => commandRerunRequestCard(facts, goalRef),
+    project: commandRerunRequestCard,
     closedReasonOf: (facts) => facts.closedReason,
     async readByKey(ctx, { source }) {
       const identity = commandRerunRequestCardIdentity(source);
       if (identity === null) {
         return { status: 'rejected', code: 'invalid', reason: 'a command_rerun_request source key is not a request identity' };
       }
-      if (identity.requestRef.projectId !== source.goalRef.projectId
-        || identity.requestRef.goalId !== source.goalRef.goalId) {
+      const goalRef = decisionSubjectGoalRef(source);
+      if (goalRef === null) return { status: 'ready', value: null };
+      if (identity.requestRef.projectId !== goalRef.projectId
+        || identity.requestRef.goalId !== goalRef.goalId) {
         return { status: 'ready', value: null };
       }
       const read = await deps.requests.readRequest(ctx, { ref: identity.requestRef });
@@ -728,20 +775,22 @@ export function createCommandRerunRequestCardSource(
   return base;
 }
 
-function commandRerunRequestCard(facts: CommandRerunRequestCardFactsV1, goalRef: GoalRef): DecisionCardV1 {
+function commandRerunRequestCard(facts: CommandRerunRequestCardFactsV1, subject: DecisionSubjectV1): DecisionCardV1 {
   return {
     cardKey: facts.source.key, source: facts.source,
-    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
+    state: 'waiting_answer', subject: structuredClone(subject),
+    senderSessionRef: null, requestRef: null,
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
     readOnly: false, actions: ['answer'],
   };
 }
 
-function unknownCallReviewCard(facts: UnknownCallReviewCardFactsV1, goalRef: GoalRef): DecisionCardV1 {
+function unknownCallReviewCard(facts: UnknownCallReviewCardFactsV1, subject: DecisionSubjectV1): DecisionCardV1 {
   return {
     cardKey: facts.source.key, source: facts.source,
-    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null,
+    state: 'waiting_answer', subject: structuredClone(subject),
+    senderSessionRef: null, requestRef: null,
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
     readOnly: false, actions: ['answer'],
@@ -753,7 +802,7 @@ function closedCollectionCard(source: DecisionSourceV1, closedReason: DecisionCa
   return {
     cardKey: source.key,
     source: { ...source, pins: source.pins.map((pin) => structuredClone(pin)) },
-    state: 'closed', goalRef: { ...source.goalRef }, senderSessionRef: null, requestRef: null,
+    state: 'closed', subject: source.subject, senderSessionRef: null, requestRef: null,
     objects: [], options: [], answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason, readOnly: true, actions: [],
   };
@@ -788,9 +837,13 @@ function goalCauseActions(cause: GoalDecisionCauseReadV1): DecisionCardV1['actio
   return [...new Set(actions)];
 }
 
-function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 {
+function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 | null {
+  // A goal_cause source names a Goal; a source with no Goal is not this card.
+  const goalRef = decisionSubjectGoalRef(cause.source);
+  if (goalRef === null) return null;
   return {
-    cardKey: cause.source.key, source: cause.source, state: 'waiting_answer', goalRef: cause.source.goalRef,
+    cardKey: cause.source.key, source: cause.source, state: 'waiting_answer',
+    subject: { kind: 'goal', goalRef },
     senderSessionRef: null, requestRef: null, objects: cause.objects, options: [],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
     closedReason: null, readOnly: false, actions: goalCauseActions(cause),
@@ -970,9 +1023,11 @@ async function readDecisionQueueWindow(
       if (!isUserMessageRecipient(message.recipient) || message.decision === undefined) continue;
       if (message.decision.syntheticAnswer) {
         if (message.status !== 'responded' || !isUserDecisionResponse(message.response)) continue;
-        add(syntheticAnswerCard(message));
+        const card = syntheticAnswerCard(message);
+        if (card !== null) add(card);
       } else if (message.intent === 'decision_request') {
-        add(messageCard(message.decision.source, message));
+        const card = messageCard(message.decision.source, message);
+        if (card !== null) add(card);
       }
     }
   }
@@ -1020,9 +1075,14 @@ async function readDecisionQueueWindow(
   if (wantsCards) {
     for (const source of deps.cardSources) {
       if (source.kind === 'message' || source.kind === 'candidate' || source.kind === 'goal_conflict') continue;
-      const targets: (GoalRef | undefined)[] = source.needsGoal
+      // Every Goal in scope for a goal-serving source, then — for a
+      // project-serving source — the project ONCE (no `goalRef`), also in a
+      // workspace with zero Goals. A read filtered to one Goal never shows a
+      // project card (`cardInScope`), so it never enumerates the project.
+      const targets: (GoalRef | undefined)[] = source.serves.includes('goal')
         ? (scopedGoals.length > 0 ? scopedGoals.map((goal) => goal.ref) : (input.goalRef === undefined ? [] : [input.goalRef]))
-        : [input.goalRef];
+        : [];
+      if (source.serves.includes('project') && input.goalRef === undefined) targets.push(undefined);
       for (const goalRef of targets) {
         // §4.1 line 772 / §4.2 line 821: every adapter receives the same
         // `atLeastCursor` and is paged to the end (2A L6/L8); a discarded
@@ -1065,7 +1125,9 @@ async function readDecisionQueueWindow(
   }
   const finalized: DecisionCardV1[] = [];
   for (const raw of collected.values()) {
-    const goal = goalByKey.get(canonicalJson(raw.goalRef as unknown as JsonValue)) ?? null;
+    const rawGoalRef = decisionSubjectGoalRef(raw);
+    const goal = rawGoalRef === null ? null
+      : goalByKey.get(canonicalJson(rawGoalRef as unknown as JsonValue)) ?? null;
     let source: DecisionSourceV1;
     try {
       source = await refreshSourcePins(deps.records, raw.source);
@@ -1134,7 +1196,8 @@ async function readDecisionQueueWindow(
   if (input.sections.includes('answered_pending_application')) for (const card of answered) orderedCards.push(card);
   if (input.sections.includes('history')) for (const card of history) orderedCards.push(card);
 
-  const cut = mode.kind === 'whole' ? wholePageCut(orderedCards, groupedAll, mode.noticeGoal)
+  const cut = mode.kind === 'whole'
+    ? wholePageCut(orderedCards, groupedAll, mode.noticeGoal, wantsNotices, workspace.projectId)
     : queuePageCut(input, orderedCards, groupedAll);
   if (cut === 'invalid') return { status: 'rejected', code: 'invalid', reason: 'the queue cursor is not a real page point' };
   const { displayedCards, displayedNotices, seenThrough, nextCursor } = cut;
@@ -1226,16 +1289,23 @@ function queuePageCut(
 }
 
 /**
- * The main read's whole page: every card, and the one Goal's lines out of the
- * workspace's full line set with the advance `goalNoticePage` allows (none
- * without a Goal); no limit and no continuation.
+ * The main read's whole page: every card, and the project's notice lines plus —
+ * when the view has a Goal — that Goal's, out of the workspace's full line set,
+ * with the advance `noticePage` allows over it; no limit and no continuation. The
+ * project's lines are the page's common part, so they appear once in every view.
  */
 function wholePageCut(
   orderedCards: readonly DecisionCardV1[],
   groupedAll: readonly NoticeLineV1[],
   noticeGoal: GoalRef | null,
+  wantsNotices: boolean,
+  projectId: string,
 ): WindowPageCutV1 {
-  const page = noticeGoal === null ? { lines: [], seenThrough: {} } : goalNoticePage(groupedAll, noticeGoal);
+  const subjects: DecisionSubjectV1[] = wantsNotices
+    ? [{ kind: 'project', projectRef: { projectId } },
+      ...(noticeGoal === null ? [] : [{ kind: 'goal' as const, goalRef: noticeGoal }])]
+    : [];
+  const page = noticePage(groupedAll, subjects);
   return { displayedCards: orderedCards.slice(), displayedNotices: page.lines, seenThrough: page.seenThrough, nextCursor: null };
 }
 
@@ -1254,7 +1324,42 @@ async function readDecisionCard(
   const scopeProblem = decisionSourceScopeProblem(ctx, source);
   if (scopeProblem !== null) return scopeProblem;
   try {
-    const goalKey = canonicalJson(source.goalRef as unknown as JsonValue);
+    const subjectGoalRef = decisionSubjectGoalRef(source);
+    if (subjectGoalRef === null) {
+      // A project subject has no Goal record: only a card source that serves
+      // the project answers it, and its card is finalized with no Goal
+      // terminal state.
+      const provider = deps.cardSources.find((candidate) => candidate.kind === source.kind);
+      if (!isRecord(source.subject) || source.subject['kind'] !== 'project' || provider === undefined
+        || !provider.serves.includes('project')) {
+        return { status: 'not_found' };
+      }
+      if (provider.readByKey === undefined) {
+        return { status: 'rejected', code: 'unavailable',
+          reason: `decision source ${source.kind} is not connected on this Host` };
+      }
+      if (typeof ctx.workspaceId !== 'string' || ctx.workspaceId.length === 0) {
+        return { status: 'rejected', code: 'forbidden', reason: 'a project card needs a trusted bound workspace' };
+      }
+      const workspace: WorkspaceScope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId };
+      const answerMessage = await findAnswerMessage(deps.records, workspace, source);
+      let projectCard: DecisionCardV1 | null = answerMessage === null ? null : syntheticAnswerCard(answerMessage);
+      // A saved answer given under a Goal is that Goal's card, never the project's.
+      if (projectCard !== null && decisionSubjectKey(projectCard.subject) !== decisionSubjectKey(source.subject)) {
+        return { status: 'not_found' };
+      }
+      if (projectCard === null) {
+        const byKey = await provider.readByKey(ctx, { workspace, source });
+        if (byKey.status === 'not_found') return { status: 'not_found' };
+        if (byKey.status !== 'ready') return byKey;
+        projectCard = byKey.value;
+      }
+      if (projectCard === null) return { status: 'not_found' };
+      const refreshed = await refreshSourcePins(deps.records, projectCard.source);
+      return { status: 'ready', value: finalizeCard({ ...projectCard, source: refreshed }, null,
+        { cancelled: false, completed: false }) };
+    }
+    const goalKey = canonicalJson(subjectGoalRef as unknown as JsonValue);
     const goalRecord = await readOne(deps.records, goalKey);
     if (goalRecord === null) return { status: 'not_found' };
     const goalDecoded = decodeGoalSnapshot(goalRecord);
@@ -1347,8 +1452,13 @@ async function resolveExplicitGoal(
 
 /** §8.2: project/workspace scope of an explicit decision source, decided before any read. */
 function decisionSourceScopeProblem(ctx: CoreCallContext, source: DecisionSourceV1): CoreRejection | null {
-  if (source.goalRef.projectId !== ctx.projectId) {
+  const goalRef = decisionSubjectGoalRef(source);
+  if (goalRef !== null && goalRef.projectId !== ctx.projectId) {
     return { status: 'rejected', code: 'forbidden', reason: 'the goal is outside the bound call scope' };
+  }
+  if (goalRef === null && source.subject?.kind === 'project'
+    && source.subject.projectRef?.projectId !== ctx.projectId) {
+    return { status: 'rejected', code: 'forbidden', reason: 'the project subject is outside the bound call scope' };
   }
   const identity = parseIdentity(source.key);
   if (identity !== null) {
@@ -1505,11 +1615,20 @@ async function deriveOpenCard(
 // Cards                                                                       //
 // -------------------------------------------------------------------------- //
 
-function messageCard(source: DecisionSourceV1, message: SessionMessage): DecisionCardV1 {
+/** A message card's subject: its Goal when it names one, else a project source's own subject. */
+function messageCardSubject(message: SessionMessage, source: DecisionSourceV1): DecisionSubjectV1 | null {
+  const goalRef = message.goalRef ?? decisionSubjectGoalRef(source);
+  if (goalRef !== null) return { kind: 'goal', goalRef };
+  return source.subject?.kind === 'project' ? source.subject : null;
+}
+
+function messageCard(source: DecisionSourceV1, message: SessionMessage): DecisionCardV1 | null {
   const answered = message.status === 'responded' && isUserDecisionResponse(message.response);
+  const subject = messageCardSubject(message, source);
+  if (subject === null) return null;
   return {
     cardKey: source.key, source, state: answered ? 'answered_pending_application' : 'waiting_answer',
-    goalRef: message.goalRef ?? source.goalRef,
+    subject,
     senderSessionRef: message.sender.kind === 'work_run' ? message.sender.sessionRef : null,
     requestRef: null,
     objects: message.decision?.objects ?? [], options: message.decision?.options ?? [],
@@ -1521,12 +1640,14 @@ function messageCard(source: DecisionSourceV1, message: SessionMessage): Decisio
   };
 }
 
-function syntheticAnswerCard(message: SessionMessage): DecisionCardV1 {
+function syntheticAnswerCard(message: SessionMessage): DecisionCardV1 | null {
   const response = message.response as UserMessageResponseV1;
   const source = response.decision.source;
+  const subject = messageCardSubject(message, source);
+  if (subject === null) return null;
   return {
     cardKey: source.key, source, state: 'answered_pending_application',
-    goalRef: message.goalRef ?? source.goalRef,
+    subject,
     senderSessionRef: message.sender.kind === 'work_run' ? message.sender.sessionRef : null,
     requestRef: null,
     objects: message.decision?.objects ?? [], options: message.decision?.options ?? [],
@@ -1559,9 +1680,10 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
       : ['answer', 'adopt', 'abandon'];
   return {
     cardKey: key,
-    source: { kind: 'candidate', key, goalRef: goal.ref, pins, goalBases: [goalDecisionBasis(goal)] },
+    source: { kind: 'candidate', key, subject: { kind: 'goal', goalRef: goal.ref }, pins,
+      goalBases: [goalDecisionBasis(goal)] },
     state: closed ? 'closed' : 'waiting_answer',
-    goalRef: goal.ref, senderSessionRef: null, requestRef,
+    subject: { kind: 'goal', goalRef: goal.ref }, senderSessionRef: null, requestRef,
     objects: pins.map(pin => ({ kind: 'aggregate' as const, pin: structuredClone(pin), label: 'candidate' })), options: [],
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: closed ? null : stale ? 'stale' : 'candidate', staleReason: stale ? 'basedOn is not the active Plan pointer' : null,
@@ -1640,8 +1762,9 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
 
 function sortCards(cards: readonly DecisionCardV1[]): DecisionCardV1[] {
   return [...cards].sort((left, right) => {
-    const byGoal = compareText(canonicalJson(left.goalRef as unknown as JsonValue), canonicalJson(right.goalRef as unknown as JsonValue));
-    if (byGoal !== 0) return byGoal;
+    // The tagged subject key: the Goal's subjects keep their order and the project's sorts after them by its own text.
+    const bySubject = compareText(decisionSubjectKey(left.subject), decisionSubjectKey(right.subject));
+    if (bySubject !== 0) return bySubject;
     const byKind = compareText(left.source.kind, right.source.kind);
     return byKind !== 0 ? byKind : compareText(left.source.key, right.source.key);
   });
@@ -1686,9 +1809,13 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
           }
           const cursor = since as CommitCursor;
           const itemKey = `member_notice:${sessionMessageRefKey(message.ref)}`;
+          // A notification that names no Goal belongs to the project: the project subject, never an invented empty
+          // Goal id. It stays out of a Goal-filtered page, where only that Goal's messages are members.
+          const subject: DecisionSubjectV1 = message.goalRef === null || message.goalRef === undefined
+            ? { kind: 'project', projectRef: { projectId: message.ref.projectId } }
+            : { kind: 'goal', goalRef: message.goalRef };
           items.push({
-            itemKey, category: 'member_notice',
-            goalRef: message.goalRef ?? { aggregateType: 'Goal', projectId: message.ref.projectId, goalId: '' },
+            itemKey, category: 'member_notice', subject,
             position: { kind: 'commit', cursor, itemKey },
             summary: '你有一条新通知', objects: [], rework: null,
           });
@@ -1949,10 +2076,17 @@ function isNoticePosition(value: unknown): value is NoticePositionV1 {
   return value['kind'] === 'commit' && typeof value['cursor'] === 'string';
 }
 
-/** The stable page point of one card, ordered exactly like the output sections. */
+/**
+ * The stable page point of one card, ordered exactly like the output sections. A goal subject keeps the v1 seek text
+ * (its GoalRef's canonical JSON), so a v1 cursor issued before the subject key still resumes after its card; the
+ * project subject's text is its `decisionSubjectKey`. Both orders are `sortCards`'s: two Goals compare by the same
+ * GoalRef text under either spelling, and the project's key (`{"kind":"project"...`) sorts after every Goal's under
+ * both (`{"aggregateType"...` and `{"goalRef"...` are lower).
+ */
 function cardSeek(card: DecisionCardV1): CardSeekV1 {
-  return { rank: cardRank(card.state), goal: canonicalJson(card.goalRef as unknown as JsonValue),
-    kind: card.source.kind, key: card.source.key };
+  const goal = card.subject.kind === 'goal'
+    ? canonicalJson(card.subject.goalRef as unknown as JsonValue) : decisionSubjectKey(card.subject);
+  return { rank: cardRank(card.state), goal, kind: card.source.kind, key: card.source.key };
 }
 
 function cardRank(state: DecisionCardV1['state']): 0 | 1 | 2 {
@@ -1961,8 +2095,8 @@ function cardRank(state: DecisionCardV1['state']): 0 | 1 | 2 {
 
 function compareCardSeek(left: CardSeekV1, right: CardSeekV1): number {
   if (left.rank !== right.rank) return left.rank < right.rank ? -1 : 1;
-  const byGoal = compareText(left.goal, right.goal);
-  if (byGoal !== 0) return byGoal;
+  const bySubject = compareText(left.goal, right.goal);
+  if (bySubject !== 0) return bySubject;
   const byKind = compareText(left.kind, right.kind);
   return byKind !== 0 ? byKind : compareText(left.key, right.key);
 }
@@ -2003,7 +2137,8 @@ function sameGoal(left: GoalRef, right: GoalRef): boolean {
  * takes a Goal's cards by the same rule.
  */
 export function cardInScope(card: DecisionCardV1, goalRef: GoalRef): boolean {
-  if (sameGoal(card.goalRef, goalRef)) return true;
+  const cardGoalRef = decisionSubjectGoalRef(card);
+  if (cardGoalRef !== null && sameGoal(cardGoalRef, goalRef)) return true;
   if (card.source.kind !== 'goal_conflict') return false;
   const identity = parseIdentity(card.source.key);
   return identity !== null && identity.kind === 'goal_conflict'

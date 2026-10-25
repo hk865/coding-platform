@@ -88,7 +88,7 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
                 expect(answer).toMatchObject({
                     status: 'ready',
                     value: {
-                        templateId: 'secretary-answer', version: 2, fromPack: PACK_ID, text: 'ANSWER FROM THE PERSON',
+                        templateId: 'secretary-answer', version: 3, fromPack: PACK_ID, text: 'ANSWER FROM THE PERSON',
                     },
                 });
 
@@ -110,7 +110,7 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
                 }, 'secretary-round')).toEqual(['role', 'goal', 'task', 'notes']);
                 const readAnswer = await world.packs.readTemplate(PACK_ID, 'secretary-answer');
                 expect(readAnswer).toMatchObject({
-                    status: 'ready', value: { text: 'ANSWER FROM THE PERSON', version: 2, slots: {} },
+                    status: 'ready', value: { text: 'ANSWER FROM THE PERSON', version: 3, slots: {} },
                 });
 
                 const list = await world.settings('prompts/packs/list', {});

@@ -159,7 +159,10 @@ type AnswerCheck = NonNullable<Extract<QueryHistoryObservation['observation'], {
 /** The answer format a request round's manifest froze. */
 type RequestAnswerFormat = { executionKind: SecretaryRequestManifestV1['executionKind']; hasGoal: boolean };
 type FormalAnswer =
-  | { kind: 'answer'; text: string; ideas: QueryJobAnswerV1['ideas']; goalCardDrafts: QueryJobAnswerV1['goalCardDrafts'] }
+  | {
+    kind: 'answer'; text: string; ideas: QueryJobAnswerV1['ideas'];
+    goalCardDrafts: QueryJobAnswerV1['goalCardDrafts']; planDraftIndex: QueryJobAnswerV1['planDraftIndex'];
+  }
   | { kind: 'gap' }
   | { kind: 'invalid'; check: AnswerCheck };
 
@@ -169,11 +172,13 @@ type FormalAnswer =
  * must answer in the secretary format of the execution kind its manifest froze
  * (slice-6 spec L7): no text, an over-long text or a broken format fails the
  * round with that reason and no answer, and the formal answer text is the
- * parsed body with its ideas and drafts.
+ * parsed body with its ideas, the drafts and the draft its plan names.
  */
 function formalAnswerOf(final: FinalText, request: RequestAnswerFormat | null): FormalAnswer {
   if (request === null) {
-    return final.kind === 'text' ? { kind: 'answer', text: final.text, ideas: [], goalCardDrafts: [] } : { kind: 'gap' };
+    return final.kind === 'text'
+      ? { kind: 'answer', text: final.text, ideas: [], goalCardDrafts: [], planDraftIndex: null }
+      : { kind: 'gap' };
   }
   if (final.kind === 'empty') {
     return { kind: 'invalid', check: { detail: 'empty', reason: 'the secretary turn ended without answer text' } };
@@ -183,7 +188,10 @@ function formalAnswerOf(final: FinalText, request: RequestAnswerFormat | null): 
   }
   const parsed = parseSecretaryAnswer(final.text, { kind: request.executionKind, hasGoal: request.hasGoal });
   if (!parsed.ok) return { kind: 'invalid', check: { detail: parsed.detail, reason: parsed.reason } };
-  return { kind: 'answer', text: parsed.body, ideas: parsed.ideas, goalCardDrafts: parsed.goalCardDrafts };
+  return {
+    kind: 'answer', text: parsed.body, ideas: parsed.ideas, goalCardDrafts: parsed.goalCardDrafts,
+    planDraftIndex: parsed.planDraftIndex,
+  };
 }
 
 /** Real successful `project_source` tool results only; model-reported sources never count. */
@@ -517,6 +525,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           // Both arrays are required: a plain Query answer carries none, a request round's answer what it parsed to.
           ideas: formal.ideas,
           goalCardDrafts: formal.goalCardDrafts,
+          planDraftIndex: formal.planDraftIndex,
         };
       }
     }

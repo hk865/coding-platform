@@ -136,8 +136,11 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/core/work-graph/state/message-machine.ts', name: 'SessionMessageRecord', kind: 'record',
     fields: MESSAGE_FIELDS, use: MESSAGE_USE },
   { file: 'src/contracts/ledger.ts', name: 'GoalSnapshot', kind: 'record',
-    fields: ['desiredState', 'desiredStateRevision', 'activePlanRevision', 'desiredStateRequestedBy', 'settings'],
+    fields: ['desiredState', 'desiredStateRevision', 'activePlanRevision', 'desiredStateRequestedBy', 'settings',
+      'continuedFrom', 'copiedInterventions'],
     use: 'state/goal-machine.ts newGoalSnapshot, nextGoalPointer or nextGoalDesiredState' },
+  { file: 'src/contracts/session-activity.ts', name: 'SessionActivityV1', kind: 'record',
+    fields: ['revision', 'lastActivityAt', 'kind', 'source'], use: 'state/session-activity.ts nextSessionActivity' },
   { file: 'src/contracts/ledger.ts', name: 'WorkspaceSnapshot', kind: 'record',
     fields: ['decisionSettings', 'lineSettings'], use: WORKSPACE_USE },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',
@@ -174,6 +177,11 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/note.ts', name: 'CurrentPointerSnapshot', kind: 'record',
     fields: ['noteId', 'revision'],
     use: 'state/note-machine.ts newCurrentPointerRecord or moveCurrentPointerRecord' },
+  // The handoff and archive arms of a CoreOperation (field tables): their progress is written only by the state layer.
+  { file: 'src/core/work-graph/model/session-operation-arms.ts', name: 'HandoffActionV1', kind: 'record',
+    fields: ['progress'], use: 'state/session-handoff.ts newHandoffOperationRecord or newSecretaryArchiveOperationRecord' },
+  { file: 'src/core/work-graph/model/session-operation-arms.ts', name: 'SecretaryArchiveActionV1', kind: 'record',
+    fields: ['progress'], use: 'state/session-handoff.ts newHandoffOperationRecord or newSecretaryArchiveOperationRecord' },
 ];
 
 // -------------------------------------------------------------------------- //

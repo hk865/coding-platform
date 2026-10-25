@@ -1,6 +1,5 @@
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import { canonicalOf } from '../../../../contracts/fingerprint.js';
-import { DEFAULT_GOAL_SETTINGS_V1 } from '../../../../contracts/goal-decisions.js';
 import { isRecord } from '../../../../contracts/validation/common.js';
 import type { VersionPin } from '../../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../../contracts/core/results.js';
@@ -69,7 +68,7 @@ export function goalBasis(goal: GoalSnapshot): GoalDecisionBasisV1 {
     workspaceRef: structuredClone(goal.workspaceRef),
     objective: goal.objective,
     activePlanRef: structuredClone(goal.activePlanRevision),
-    settings: structuredClone(goal.settings ?? DEFAULT_GOAL_SETTINGS_V1),
+    settings: structuredClone(goal.settings),
   };
 }
 

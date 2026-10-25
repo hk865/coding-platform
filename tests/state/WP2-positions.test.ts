@@ -96,7 +96,7 @@ function queryAnswer(respondedAt: string): MessageResponseRecord {
 
 const DECISION_SOURCE: DecisionSourceV1 = {
   kind: 'message', key: 'decision:card-1',
-  goalRef: { aggregateType: 'Goal', projectId: PROJECT, goalId: 'g-1' }, pins: [],
+  subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: PROJECT, goalId: 'g-1' } }, pins: [],
 };
 
 /** The user's answer to a decision card (spec §2.3: a Host-sent response). */

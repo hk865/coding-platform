@@ -24,7 +24,7 @@ import {
   type SecretSource,
 } from '../../vendor/coding-agent/dist/public-api.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../contracts/core/identity.js';
-import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
+import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
@@ -81,9 +81,6 @@ export type WorkbenchSkillConfiguration = WorkbenchSkillResourceSelection | Work
 /** The behaviors the trusted `platform` bundle accepts; order is always the
  * caller's explicit input order, never this list order. */
 const PLATFORM_BEHAVIORS: readonly PlatformBehavior[] = ['secretary', 'adviser', 'scribe', 'reviewer'];
-
-/** The closed platform-duty enum, validated only when an explicit grant names it. */
-const PLATFORM_DUTIES = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'] as const;
 
 /** The repository `resources/skills` root. The Runtime owns the binding (core
  * may not import `src/app`); this re-export keeps the Host-facing name and the
@@ -315,6 +312,7 @@ export function validateWorkbenchRuntimeConfiguration(
       return { code: 'invalid', reason: `bindings[${index}].grant.contextResidentBytes must be a non-negative safe integer` };
     }
     const duty = binding.grant['platformDuty'];
+    // The closed platform-duty enum, validated only when an explicit grant names it.
     if (duty !== undefined) {
       if (typeof duty !== 'string' || !(PLATFORM_DUTIES as readonly string[]).includes(duty)) {
         return { code: 'invalid', reason: `bindings[${index}].grant.platformDuty must be one of ${PLATFORM_DUTIES.join('|')}` };

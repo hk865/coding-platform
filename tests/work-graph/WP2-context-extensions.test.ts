@@ -171,12 +171,13 @@ function decisionCard(options: {
   objects?: DecisionCardV1['objects'];
   state?: DecisionCardV1['state'];
 }): DecisionCardV1 {
-  const source = { kind: options.kind, key: options.cardKey, goalRef: GOAL_REF, pins: options.pins ?? [] };
+  const source = { kind: options.kind, key: options.cardKey, subject: { kind: 'goal' as const, goalRef: GOAL_REF },
+    pins: options.pins ?? [] };
   return {
     cardKey: options.cardKey,
     source,
     state: options.state ?? 'waiting_answer',
-    goalRef: GOAL_REF,
+    subject: { kind: 'goal', goalRef: GOAL_REF },
     senderSessionRef: null,
     requestRef: null,
     objects: options.objects ?? [],

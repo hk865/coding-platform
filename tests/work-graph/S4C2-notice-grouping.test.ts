@@ -27,7 +27,22 @@ function item(input: {
   objects?: DecisionObjectV1[];
 }): NoticeItemV1 {
   return {
-    itemKey: input.itemKey, category: input.category, goalRef: input.goalRef,
+    itemKey: input.itemKey, category: input.category, subject: { kind: 'goal', goalRef: input.goalRef },
+    position: pos(input.n, input.itemKey), summary: input.itemKey,
+    objects: input.objects ?? [], rework: null,
+    ...(input.noteClass === undefined ? {} : { noteClass: input.noteClass }),
+  };
+}
+
+/** The same notice with the project subject (a goal-less note's notice). */
+function projectItem(input: {
+  itemKey: string; category: NoticeCategoryV1; n: number;
+  noteClass?: 'user_affected' | 'structural' | 'scribe_result';
+  objects?: DecisionObjectV1[];
+}): NoticeItemV1 {
+  return {
+    itemKey: input.itemKey, category: input.category,
+    subject: { kind: 'project', projectRef: { projectId: 'p1' } },
     position: pos(input.n, input.itemKey), summary: input.itemKey,
     objects: input.objects ?? [], rework: null,
     ...(input.noteClass === undefined ? {} : { noteClass: input.noteClass }),
@@ -62,7 +77,7 @@ describe('S4C2-N2 groupNotices user_affected_per_goal', () => {
     const member = item({ itemKey: 'm1', category: 'member_notice', goalRef: g1, n: 8 });
 
     const foldedG1: NoticeItemV1 = {
-      itemKey: 'note_review_scribe:p1/g1', category: 'note_review', goalRef: g1,
+      itemKey: 'note_review_scribe:p1/g1', category: 'note_review', subject: { kind: 'goal', goalRef: g1 },
       position: pos(6, 's3'), summary: '书记整理 · 3 条注记',
       objects: [object('s1.ts'), object('s2.ts'), object('s3.ts')], rework: null,
       members: [
@@ -72,7 +87,7 @@ describe('S4C2-N2 groupNotices user_affected_per_goal', () => {
       ],
     };
     const foldedG2: NoticeItemV1 = {
-      itemKey: 'note_review_scribe:p1/g2', category: 'note_review', goalRef: g2,
+      itemKey: 'note_review_scribe:p1/g2', category: 'note_review', subject: { kind: 'goal', goalRef: g2 },
       position: pos(7, 't1'), summary: '书记整理 · 1 条注记',
       objects: [object('t1.ts')], rework: null,
       members: [{ itemKey: 't1', position: pos(7, 't1') }],
@@ -88,6 +103,66 @@ describe('S4C2-N2 groupNotices user_affected_per_goal', () => {
     expect(grouped[2]).not.toHaveProperty('members');
     expect(grouped[5]).not.toHaveProperty('members');
   });
+
+  it('S4C2-N2b folds a project’s scribe results into one project line, apart from a Goal’s', () => {
+    const g1 = goal('g1');
+    const projectSubject = { kind: 'project' as const, projectRef: { projectId: 'p1' } };
+    const p1 = projectItem({ itemKey: 'ps1', category: 'note_review', n: 1, noteClass: 'scribe_result', objects: [object('ps1.ts')] });
+    const p2 = projectItem({ itemKey: 'ps2', category: 'note_review', n: 2, noteClass: 'scribe_result', objects: [object('ps2.ts')] });
+    const g1Line = item({ itemKey: 'gs1', category: 'note_review', goalRef: g1, n: 3, noteClass: 'scribe_result', objects: [object('gs1.ts')] });
+
+    const foldedProject: NoticeItemV1 = {
+      itemKey: 'note_review_scribe_project:p1', category: 'note_review', subject: projectSubject,
+      position: pos(2, 'ps2'), summary: '书记整理 · 2 条注记',
+      objects: [object('ps1.ts'), object('ps2.ts')], rework: null,
+      members: [
+        { itemKey: 'ps1', position: pos(1, 'ps1') },
+        { itemKey: 'ps2', position: pos(2, 'ps2') },
+      ],
+    };
+    const foldedGoal: NoticeItemV1 = {
+      itemKey: 'note_review_scribe:p1/g1', category: 'note_review', subject: { kind: 'goal', goalRef: g1 },
+      position: pos(3, 'gs1'), summary: '书记整理 · 1 条注记',
+      objects: [object('gs1.ts')], rework: null,
+      members: [{ itemKey: 'gs1', position: pos(3, 'gs1') }],
+    };
+
+    const grouped = groupNotices([p1, p2, g1Line], 'user_affected_per_goal');
+    expect(grouped).toEqual([foldedProject, foldedGoal]);
+    expect(grouped.map(line => line.itemKey))
+      .toEqual(['note_review_scribe_project:p1', 'note_review_scribe:p1/g1']);
+    expect(grouped[0]!.subject).toEqual(projectSubject);
+  });
+
+  it('S4C2-N2c keeps a project’s own-line notice as its own line', () => {
+    const userLine = projectItem({ itemKey: 'pu', category: 'note_review', n: 1, noteClass: 'user_affected' });
+    const structuralLine = projectItem({ itemKey: 'pst', category: 'note_review', n: 2, noteClass: 'structural' });
+    const absentLine = projectItem({ itemKey: 'pa', category: 'note_review', n: 3 });
+    const scribeLine = projectItem({ itemKey: 'ps', category: 'note_review', n: 4, noteClass: 'scribe_result' });
+    const folded: NoticeItemV1 = {
+      itemKey: 'note_review_scribe_project:p1', category: 'note_review',
+      subject: { kind: 'project', projectRef: { projectId: 'p1' } },
+      position: pos(4, 'ps'), summary: '书记整理 · 1 条注记', objects: [], rework: null,
+      members: [{ itemKey: 'ps', position: pos(4, 'ps') }],
+    };
+
+    const grouped = groupNotices([userLine, structuralLine, absentLine, scribeLine], 'user_affected_per_goal');
+    expect(grouped).toEqual([userLine, structuralLine, absentLine, folded]);
+    expect(grouped[0]).not.toHaveProperty('members');
+    expect(grouped[1]).not.toHaveProperty('members');
+    expect(grouped[2]).not.toHaveProperty('members');
+  });
+
+  it('S4C2-N2d keeps the project fold of project "x" apart from the fold of Goal "x" in project "project"', () => {
+    const goalLine: NoticeItemV1 = { itemKey: 'gx', category: 'note_review',
+      subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 'project', goalId: 'x' } },
+      position: pos(1, 'gx'), summary: 'gx', objects: [], rework: null, noteClass: 'scribe_result' };
+    const projectLine: NoticeItemV1 = { itemKey: 'px', category: 'note_review',
+      subject: { kind: 'project', projectRef: { projectId: 'x' } },
+      position: pos(2, 'px'), summary: 'px', objects: [], rework: null, noteClass: 'scribe_result' };
+    expect(groupNotices([goalLine, projectLine], 'user_affected_per_goal').map((line) => line.itemKey))
+      .toEqual(['note_review_scribe:project/x', 'note_review_scribe_project:x']);
+  });
 });
 
 describe('S4C2-N3 seenThroughOfNotices over shown members', () => {
@@ -101,7 +176,7 @@ describe('S4C2-N3 seenThroughOfNotices over shown members', () => {
   ];
   const lineAt2: NoticeItemV1 = item({ itemKey: 'a2', category: 'note_review', goalRef: g1, n: 2 });
   const foldedLine13: NoticeItemV1 = {
-    itemKey: 'note_review_scribe:p1/g1', category: 'note_review', goalRef: g1,
+    itemKey: 'note_review_scribe:p1/g1', category: 'note_review', subject: { kind: 'goal', goalRef: g1 },
     position: p3, summary: '书记整理 · 2 条注记', objects: [], rework: null,
     members: [{ itemKey: 'a1', position: p1 }, { itemKey: 'a3', position: p3 }],
   };
@@ -117,5 +192,22 @@ describe('S4C2-N3 seenThroughOfNotices over shown members', () => {
   it('S4C2-N4b falls back to the last displayed position for a category without members', () => {
     const m1 = item({ itemKey: 'm1', category: 'member_notice', goalRef: g1, n: 9 });
     expect(seenThroughOfNotices([m1], [m1])).toEqual({ member_notice: pos(9, 'm1') });
+  });
+
+  it('S4C2-N4c advances a project line over the project members it shows, like a Goal’s', () => {
+    const projectAll: NoticeItemV1[] = [
+      projectItem({ itemKey: 'q1', category: 'note_review', n: 1, noteClass: 'scribe_result' }),
+      projectItem({ itemKey: 'q2', category: 'note_review', n: 2 }),
+      projectItem({ itemKey: 'q3', category: 'note_review', n: 3, noteClass: 'scribe_result' }),
+    ];
+    const projectLineAt2 = projectAll[1]!;
+    const foldedProject: NoticeItemV1 = {
+      itemKey: 'note_review_scribe_project:p1', category: 'note_review',
+      subject: { kind: 'project', projectRef: { projectId: 'p1' } },
+      position: pos(3, 'q3'), summary: '书记整理 · 2 条注记', objects: [], rework: null,
+      members: [{ itemKey: 'q1', position: pos(1, 'q1') }, { itemKey: 'q3', position: pos(3, 'q3') }],
+    };
+    expect(seenThroughOfNotices(projectAll, [projectLineAt2, foldedProject])).toEqual({ note_review: pos(3, 'q3') });
+    expect(seenThroughOfNotices(projectAll, [projectLineAt2])).toEqual({});
   });
 });

@@ -37,9 +37,11 @@ import type {
 } from '../../../contracts/control-intent.js';
 import type { RunOutcome, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { GoalSettingsV1 } from '../../../contracts/goal-decisions.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type {
-  GoalDesiredState, GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef,
+  GoalContinuationV1, GoalDesiredState, GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef,
 } from '../../../contracts/ledger.js';
 import type { Disposition, Phase, PlanRevisionRef, RequirementLevel, TaskKind } from '../../../contracts/plan.js';
 import type { TaskReductionRef } from '../../../contracts/reduction.js';
@@ -88,9 +90,14 @@ export function goalControlTarget(control: GoalControl): GoalDesiredState {
  * literal, same key order). The two D-9 fields carry their creation values:
  * `desiredStateRevision` 1 and `desiredStateRequestedBy` null (`ledger.ts`);
  * a fresh commit returns this value with the creation cursor it bound
- * (`graph-repository.ts`). `since` is the pre-bind placeholder.
+ * (`graph-repository.ts`). The Goal is born with its settings and the two copy
+ * fields its creator gives (a Goal not born as a copy: `continuedFrom` null,
+ * `copiedInterventions` []). `since` is the pre-bind placeholder.
  */
-export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRef; objective: string }): PendingGoalSnapshot {
+export function newGoalSnapshot(input: {
+  ref: GoalRef; workspaceRef: WorkspaceRef; objective: string;
+  settings: GoalSettingsV1; continuedFrom: GoalContinuationV1 | null; copiedInterventions: SessionMessageRef[];
+}): PendingGoalSnapshot {
   return {
     ref: input.ref,
     workspaceRef: input.workspaceRef,
@@ -100,6 +107,9 @@ export function newGoalSnapshot(input: { ref: GoalRef; workspaceRef: WorkspaceRe
     desiredStateRequestedBy: null,
     activePlanRevision: null,
     revision: 1,
+    settings: input.settings,
+    continuedFrom: input.continuedFrom,
+    copiedInterventions: input.copiedInterventions,
     since: null,
   };
 }
@@ -134,9 +144,10 @@ export function nextGoalDesiredState(goal: GoalSnapshot, input: {
     desiredStateRequestedBy: { kind: input.requestedBy.kind, id: input.requestedBy.id },
     activePlanRevision: goal.activePlanRevision,
     revision,
-    // Slice 5 F87: an explicitly configured Goal keeps its settings; a Goal
-    // written before the field keeps its exact old shape (no `settings` key).
-    ...(goal.settings === undefined ? {} : { settings: goal.settings }),
+    // Slice 5 F87: the Goal keeps its settings; the copy fields never change.
+    settings: goal.settings,
+    continuedFrom: goal.continuedFrom,
+    copiedInterventions: goal.copiedInterventions,
     // The creation cursor never moves; every later write copies it unchanged.
     since: goal.since,
   };
@@ -248,12 +259,16 @@ export type GoalControlRequest = {
 
 /**
  * §2.2. `goal_created` carries the normalized objective (the owner validates
- * the command first); `plan_adopted` is the Goal side of PLAN-04/05 (`basedOn`
+ * the command first) and the birth fields: the settings and the two copy
+ * fields; `plan_adopted` is the Goal side of PLAN-04/05 (`basedOn`
  * = the candidate's source, `target` = the new PlanRevision); `goal_completed`
  * carries the caller's two pins and the reduction instant.
  */
 export type GoalEvent =
-  | { type: 'goal_created'; ref: GoalRef; workspaceRef: WorkspaceRef; objective: string }
+  | {
+    type: 'goal_created'; ref: GoalRef; workspaceRef: WorkspaceRef; objective: string;
+    settings: GoalSettingsV1; continuedFrom: GoalContinuationV1 | null; copiedInterventions: SessionMessageRef[];
+  }
   | { type: 'plan_adopted'; basedOn: PlanRevisionRef | null; target: PlanRevisionRef }
   | ({ type: 'goal_pause_requested' } & GoalControlRequest)
   | ({ type: 'goal_resume_requested' } & GoalControlRequest)
@@ -370,7 +385,10 @@ function onGoalCreated(
   // The creation transition hands the owner the pre-bind record; the creating
   // commit fills `since`. Every Goal the machine reads from a store already
   // carries a bound cursor, so only this placeholder has a null one.
-  const goal = newGoalSnapshot({ ref: event.ref, workspaceRef: event.workspaceRef, objective: event.objective });
+  const goal = newGoalSnapshot({
+    ref: event.ref, workspaceRef: event.workspaceRef, objective: event.objective,
+    settings: event.settings, continuedFrom: event.continuedFrom, copiedInterventions: event.copiedInterventions,
+  });
   return accept<GoalMachineState<PendingGoalSnapshot>, GoalEffect>(goalStateOf(goal, state.goalPhase), [
     { kind: 'write_goal' },
     { kind: 'append_event', eventType: 'GoalCreated' },

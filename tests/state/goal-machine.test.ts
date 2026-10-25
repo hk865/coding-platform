@@ -74,8 +74,12 @@ const REDUCTION: { ref: TaskReductionRef; revision: number } = {
   ref: { aggregateType: 'TaskReduction', projectId: PROJECT, goalId: GOAL_ID, taskId: 't-build' }, revision: 1,
 };
 const OBJECTIVE = 'ship the release';
+/** The §2.2 birth settings of a Goal created through `goals/create`, written out; not a copy. */
+const SETTINGS = { schemaVersion: 1 as const, autonomy: 'after_plan_confirmation' as const, order: 0, waitForGoalRef: null,
+  parallelRisks: [] };
 
-const pendingGoal = newGoalSnapshot({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE });
+const pendingGoal = newGoalSnapshot({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, settings: SETTINGS,
+  continuedFrom: null, copiedInterventions: [] });
 /** The same Goal as the creating commit stores it: the bound creation cursor. */
 const GOAL_NEW: GoalSnapshot = { ...pendingGoal, since: 'c0000000001' as GoalSnapshot['since'] };
 /** Active Goals never changed their desired state; paused/cancelled ones did, by an operator. */
@@ -114,7 +118,8 @@ function ctxFor(state: GoalMachineState, overrides: Partial<GoalGuardContext> = 
     completion: state.activePlanRef === null ? null : completionFacts(state.activePlanRef), ...overrides };
 }
 
-const CREATED: GoalEvent = { type: 'goal_created', ref: GOAL, workspaceRef: WS, objective: OBJECTIVE };
+const CREATED: GoalEvent = { type: 'goal_created', ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, settings: SETTINGS,
+  continuedFrom: null, copiedInterventions: [] };
 const ADOPT_INITIAL: GoalEvent = { type: 'plan_adopted', basedOn: null, target: P1 };
 const ADOPT_FUTURE: GoalEvent = { type: 'plan_adopted', basedOn: P1, target: P2 };
 function controlEvent(type: 'goal_pause_requested' | 'goal_resume_requested' | 'goal_cancel_requested',
@@ -181,7 +186,7 @@ describe('§14.1 Goal record constructors', () => {
   it('newGoalSnapshot writes Goal@1 with today\'s key order, epoch 1 and no requester (commit-compiler.ts:111-118)', () => {
     expect(JSON.stringify(pendingGoal)).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE,
       desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1,
-      since: null }));
+      settings: SETTINGS, continuedFrom: null, copiedInterventions: [], since: null }));
     expect(pendingGoal.desiredStateRevision).toBe(1);
     expect(pendingGoal.desiredStateRequestedBy).toBeNull();
     // The contract reads the explicit fields as epoch 1 and no requester.
@@ -201,7 +206,8 @@ describe('§14.1 Goal record constructors', () => {
     expect(moved.desiredStateRequestedBy).toEqual(HUMAN);
     expect(JSON.stringify(nextGoalPointer(GOAL_NEW, P1))).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS,
       objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
-      activePlanRevision: P1, revision: 2, since: 'c0000000001' }));
+      activePlanRevision: P1, revision: 2, settings: SETTINGS, continuedFrom: null, copiedInterventions: [],
+      since: 'c0000000001' }));
   });
 
   it('nextGoalDesiredState writes every Goal field, the epoch rev+1 and a copy of the requester', () => {
@@ -209,9 +215,11 @@ describe('§14.1 Goal record constructors', () => {
     const actor = { kind: 'system' as const, id: 'host:operator-console' };
     const paused = nextGoalDesiredState(planned, { to: 'paused', requestedBy: actor });
     expect(Object.keys(paused)).toEqual(['ref', 'workspaceRef', 'objective', 'desiredState', 'desiredStateRevision',
-      'desiredStateRequestedBy', 'activePlanRevision', 'revision', 'since']);
+      'desiredStateRequestedBy', 'activePlanRevision', 'revision', 'settings', 'continuedFrom', 'copiedInterventions',
+      'since']);
     expect(paused).toEqual({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, desiredState: 'paused',
-      desiredStateRevision: 3, desiredStateRequestedBy: actor, activePlanRevision: P1, revision: 3, since: 'c0000000001' });
+      desiredStateRevision: 3, desiredStateRequestedBy: actor, activePlanRevision: P1, revision: 3, settings: SETTINGS,
+      continuedFrom: null, copiedInterventions: [], since: 'c0000000001' });
     expect(paused.desiredStateRequestedBy).not.toBe(actor);
     // LA-7: a Host started with a kind:'system' actor is still an operator.
     expect(goalStateOf(paused, null).desiredStateRequestedByClass).toBe('human');

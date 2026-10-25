@@ -27,8 +27,8 @@
 | `compileVerificationPlan` | `src/core/work-graph/evidence/verification-plan.ts:61` | 纯编译：每个必需要求绑定可覆盖的冻结能力，缺覆盖记 `uncovered`，空必需集 `invalid`，不接受调用方 digest/coverage/PASS | open/reverify 冻结检查计划 |
 | `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet` | `src/core/work-graph/tasks/evidence-coverage.ts:153`、`src/core/work-graph/tasks/evidence-coverage.ts:76` | 证据适用性判定与有效证据的单一纯折叠 | finalize 与完成读取；不要在本层重算 applicability |
 | `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 引用的结构判等；不是 `sameJson` 的等价物 | 证据 commit 组装；执行入口的 `sameJson as sameRef` 转出已删除，F 行副本直接用 `src/contracts/fingerprint.ts:50` 的 `sameJson` |
-| `mergeGuards`、`mapStoreFailure` | `src/core/work-graph/persistence/record-guards.ts:12`、`src/core/work-graph/tasks/execution-entry-service.ts:147` | 合并一个 commit 的读 guards、把执行写失败映射成 `CoreRejection` | 证据 commit 组装（M1-27、M1-30、M1-32） |
-| `bindTrustedContext`、`isolateWrite` | `src/core/work-graph/tasks/execution-entry-service.ts:207`、`src/core/work-graph/tasks/execution-entry-service.ts:215` | 绑定可信 Host 上下文并同步隔离写入请求 | 每个证据写入入口；不要另写绑定与检查顺序 |
+| `mergeGuards`、`mapStoreFailure` | `src/core/work-graph/persistence/record-guards.ts:12`、`src/core/work-graph/tasks/execution-entry-service.ts:148` | 合并一个 commit 的读 guards、把执行写失败映射成 `CoreRejection` | 证据 commit 组装（M1-27、M1-30、M1-32） |
+| `bindTrustedContext`、`isolateWrite` | `src/core/work-graph/tasks/execution-entry-service.ts:208`、`src/core/work-graph/tasks/execution-entry-service.ts:216` | 绑定可信 Host 上下文并同步隔离写入请求 | 每个证据写入入口；不要另写绑定与检查顺序 |
 
 ## 内部用
 

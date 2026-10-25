@@ -105,8 +105,9 @@ describe.each(['memory', 'sqlite'] as const)('S2A queue bounds (%s)', (kind) => 
     expect(queue.counts.answeredPendingApplication).toBe(1);
     const goalCauses = queue.waitingAnswer.filter((card) => card.source.kind === 'goal_cause');
     expect(goalCauses.map((card) => card.source.key)).toEqual([B_CHANGE_PENDING]);
-    expect(goalCauses.map((card) => card.goalRef.goalId)).toEqual(['B']);
+    expect(goalCauses.map((card) => card.subject.kind === 'goal' ? card.subject.goalRef.goalId : null)).toEqual(['B']);
     // The 198 added Goals provably add no reason card.
-    expect(queue.waitingAnswer.filter((card) => card.goalRef.goalId.startsWith('S5R2-capacity-'))).toEqual([]);
+    expect(queue.waitingAnswer.filter((card) => card.subject.kind === 'goal'
+      && card.subject.goalRef.goalId.startsWith('S5R2-capacity-'))).toEqual([]);
   }, 600_000);
 });

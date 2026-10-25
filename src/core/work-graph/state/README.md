@@ -14,8 +14,10 @@
 
 做 Session 生命周期、占用、责任交接、请求轮与控制意图的去这组。
 
+- `session-activity.ts` — Session 活动记录的纯规则与记录构造都在这里：`latestActivityAt`（线卡时钟，`src/core/work-graph/state/session-activity.ts:25`；`tasks/line-clock.ts` 只再导出）与 `nextSessionActivity`（`src/core/work-graph/state/session-activity.ts:41`；一次提交事实之后的下一条记录：revision 递增、时刻不回退、迟到的旧事实不改 kind/source）。
 - `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入。
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
+- `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写。
 - `session-anomaly.ts` — Session 异常锚点的构造/迁移/读取与 Task 归档状态派生。
 - `request-rounds.ts` — 请求轮构造：新请求、路由轮、未开始结束、新尝试、吸收、intake、entered。
 - `review-lease.ts` — 复查租约释放、可证明未进入的复查取消、复查轮已知结束。
@@ -50,7 +52,7 @@
 
 做注记、消息、通知已读、命令、上下文守卫、未知调用、架构捕获与 ref 比较的去这组。
 
-- `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针。
+- `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
 - `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
 - `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。
@@ -79,8 +81,8 @@
 | `parseShellActionsDetailed` | `src/core/work-graph/state/command-normalization.ts:522` | 解析一条命令里的 shell 动作，保留词边界 | 命令分类、重跑与审查 |
 | `newCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:78` | 建 CommandRerunRequest 记录 | 收到一次重跑请求 |
 | `transitionCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:109` | 重跑请求迁移，含同身份同指纹重放 | 处理/重放重跑请求 |
-| `frozenSectionOrderProblem` | `src/core/work-graph/state/context-input.ts:97` | 检查冻结的段序 | 校验 ContextAssemblyBinding |
-| `contextAssemblyProblem` | `src/core/work-graph/state/context-input.ts:285` | G-CTX 总检查：结构、区间、字节、段、来源 | 读取或写入上下文绑定时 |
+| `frozenSectionOrderProblem` | `src/core/work-graph/state/context-input.ts:96` | 检查冻结的段序 | 校验 ContextAssemblyBinding |
+| `contextAssemblyProblem` | `src/core/work-graph/state/context-input.ts:284` | G-CTX 总检查：结构、区间、字节、段、来源 | 读取或写入上下文绑定时 |
 | `pointerAfterSubmit` | `src/core/work-graph/state/control-intent-machine.ts:185` | 提交后 Run 控制指针的变化 | 与意图同一提交写 Run 指针 |
 | `controlSubmissionProblem` | `src/core/work-graph/state/control-intent-machine.ts:230` | 控制提交两机器共用的检查 | 提交 pause/cancel/resume/steer |
 | `newQueuedControlIntentRecord` | `src/core/work-graph/state/control-intent-machine.ts:364` | 建 Queued@1 意图记录 | 接受控制请求 |
@@ -89,15 +91,15 @@
 | `decisionActionPolicy` | `src/core/work-graph/state/decision-policy.ts:31` | 自主级别 × 动作的唯四值表 | owner、工具、Workflow、路由都查它 |
 | `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:71` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
 | `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:118` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
-| `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:93` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标） | 新建 Goal |
-| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:206` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
-| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:433` | 完成事件的前置检查 | goal_completed 提交 |
-| `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:583` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
-| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:628` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
-| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:681` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
-| `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:190` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
-| `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:238` | 启动准入策略 | 自动启动 Goal 前 |
-| `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:256` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
+| `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:97` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
+| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:217` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
+| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:451` | 完成事件的前置检查 | goal_completed 提交 |
+| `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:601` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
+| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:646` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
+| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:699` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
+| `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:189` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
+| `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:237` | 启动准入策略 | 自动启动 Goal 前 |
+| `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:255` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
 | `transitionLinePins` | `src/core/work-graph/state/line-pin-machine.ts:81` | 一次原子增删置顶项；无变化时 effects 为空 | 修改工作线置顶 |
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
@@ -109,10 +111,11 @@
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
 | `admitNoteWrite` | `src/core/work-graph/state/note-machine.ts:59` | 新注记的准入状态 | 写注记前 |
-| `transitionNote` | `src/core/work-graph/state/note-machine.ts:354` | 注记处置迁移 | 注记状态写入 |
-| `newNoteHeadRecord` | `src/core/work-graph/state/note-machine.ts:220` | 建 pending 注记头 | 新建注记 |
-| `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:294` | 建注记版本 | 追加注记版本 |
-| `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:150` | 由处置关系算用户复查原因 | 注记复查 |
+| `transitionNote` | `src/core/work-graph/state/note-machine.ts:425` | 注记处置迁移 | 注记状态写入 |
+| `newNoteHeadRecord` | `src/core/work-graph/state/note-machine.ts:291` | 建 pending 注记头 | 新建注记 |
+| `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:365` | 建注记版本 | 追加注记版本 |
+| `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:221` | 由处置关系算用户复查原因 | 注记复查 |
+| `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:131`、`src/core/work-graph/state/note-machine.ts:102` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
 | `newCandidateProposal` | `src/core/work-graph/state/plan-machine.ts:119` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较） | 提交计划草案 |
 | `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:186` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
@@ -163,6 +166,9 @@
 | `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:680` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
 | `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:515` | 分派准入：归档、只读副本、Work 等待 | 选秘书/分派候选 |
 | `transitionResponsibility` | `src/core/work-graph/state/session-responsibility.ts:33` | 责任转移/关闭：关源链接、开目标链接 | 责任交接 |
+| `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:74`、`:97` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |
+| `OperationCallerV1`、`OperationSessionFactV1`、`HandoffAdmissionFactsV1`、`SecretaryArchiveAdmissionFactsV1`、`OperationAdmissionV1` | `src/core/work-graph/state/session-handoff.ts:18`、`:20`、`:23`、`:38`、`:46` | 两张准入表的输入和结果：调用者的分类、公开读到的 Session 事实、交接和秘书归档各自的事实、准入结果（`busy` 带未完成操作的 pin） | owner 读完事实后调 `admitHandoff` 或 `admitSecretaryArchive` |
+| `admitSecretaryArchive`、`newSecretaryArchiveOperationRecord` | `src/core/work-graph/state/session-handoff.ts:121`、`:134` | 秘书归档的拒绝顺序（人、范围、形状、源、秘书职责、未完成操作）；接受时的记录，每个选择一项 | 秘书归档 owner 的接受 |
 | `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:208` | 失败分类（FC-1..FC-17） | 重排队前 |
 | `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:137` | 人工停止围栏 | 判定谁能重做 |
 | `reworkPermission` | `src/core/work-graph/state/task-failure.ts:390` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
@@ -176,9 +182,9 @@
 | `transitionTask` | `src/core/work-graph/state/task-machine.ts:797` | Task 写入合法性（TASK-01..30） | claim、完成、处置、重排队 |
 | `taskRequeueStateProblem` | `src/core/work-graph/state/task-machine.ts:1164` | 当前状态能否重排队 | 重排队前 |
 | `newTaskRequeueRecord` | `src/core/work-graph/state/task-machine.ts:711` | 建 TaskRequeue 记录 | 重排队提交 |
-| `effectivePlatformDuty` | `src/core/work-graph/state/context-input.ts:610` | 解析有效平台职责 | 判断平台/职责时 |
+| `effectivePlatformDuty` | `src/core/work-graph/state/context-input.ts:609` | 解析有效平台职责 | 判断平台/职责时 |
 | `normalizeCommandText` | `src/core/work-graph/state/command-normalization.ts:29` | 规范化命令文本 | 比较/算指纹前 |
-| `declaredInputProblem` | `src/core/work-graph/state/context-input.ts:479` | 检查声明输入 | 校验工具/上下文输入时 |
+| `declaredInputProblem` | `src/core/work-graph/state/context-input.ts:478` | 检查声明输入 | 校验工具/上下文输入时 |
 | `observationPairingProblem` | `src/core/work-graph/state/control-intent-machine.ts:294` | 意图与观察的配对检查 | 提交观察结果前 |
 | `unreachable` | `src/core/work-graph/state/transition.ts:53` | 穷尽检查的兜底 | switch 的 never 分支 |
 | `UNKNOWN_CALL_KIND_TABLE` | `src/core/work-graph/state/unknown-call-kinds.ts:19` | 固定工具种类表，首个匹配生效 | 分类未知调用 |
@@ -218,5 +224,5 @@
 - 不要在服务里 spread 一条 Run/Session/Task 改字段或另写一套迁移；受保护字段写入一律走本层构造器与 `transition*`（M1-05、M1-06）。
 - 不要手抄 Session 的 lifecycle/health/occupancy 判定：领用走 `occupancyAdmissionProblem`，只共享 lifecycle/health 的候选筛选走 `sessionAvailabilityAdmissionProblem` 并把 busy 单列（FP-09、M1-04）。
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
-- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:889`）翻译。
+- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:890`）翻译。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

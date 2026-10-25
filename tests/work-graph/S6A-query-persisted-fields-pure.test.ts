@@ -84,7 +84,7 @@ function answerSnapshot(ideas: { title: string; detail: string }[]): QueryJobAns
         source: { kind: 'workspace', refId: 'w1', revision: '1' },
       },
       ideas,
-      goalCardDrafts: [],
+      goalCardDrafts: [], planDraftIndex: null,
     },
   };
 }

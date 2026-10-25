@@ -51,7 +51,9 @@ const planRef = { aggregateType: 'PlanRevision' as const, projectId: P, planId: 
 const BINDING_BUDGET: TaskBudgetV1 = { tokenBudget: 1000, deadline: null };
 const goal: GoalSnapshot = { ref: goalRef, workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
   objective: 'A2 rework', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
-  activePlanRevision: planRef as never, revision: 3, since: 'c0000000001' as GoalSnapshot['since'] };
+  activePlanRevision: planRef as never, revision: 3,
+  settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+  continuedFrom: null, copiedInterventions: [], since: 'c0000000001' as GoalSnapshot['since'] };
 
 const runRefOf = (taskId: string): RunRef => ({ aggregateType: 'Run', projectId: P, goalId: G, runId: `run-${taskId}` });
 const refusalRefOf = (taskId: string) => ({ aggregateType: 'TaskReworkRefusal' as const, projectId: P, goalId: G, taskId,

@@ -157,7 +157,7 @@ export function decisionReadsOver(base: TaskClaimFixture, records: WorkLineStore
   const causes = createGoalDecisionCauseReader({ records, plans });
   const emptyGoalConflict: DecisionCardSourcePort = {
     kind: 'goal_conflict',
-    needsGoal: true,
+    serves: ['goal'],
     async readPage() {
       return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: null } };
     },

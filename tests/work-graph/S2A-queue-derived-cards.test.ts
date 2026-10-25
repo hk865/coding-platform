@@ -50,7 +50,8 @@ describe.each(['memory', 'sqlite'] as const)('S2A queue derived cards (%s)', (ki
     expect(queue.counts.waitingAnswer).toBe(PLANNING_JOBS);
     expect(queue.waitingAnswer.every((card) => card.source.kind === 'planning_question')).toBe(true);
     const card = ready(await owners(f, f.records, f.bodies, SMALL_WIDTHS).reads.readDecisionCard(f.ctx, {
-      source: { kind: 'planning_question', key: LAST_PLANNING_KEY, goalRef: PLANNING_GOAL_REF, pins: [] },
+      source: { kind: 'planning_question', key: LAST_PLANNING_KEY,
+        subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF }, pins: [] },
     }));
     expect(card).toMatchObject({ cardKey: LAST_PLANNING_KEY, state: 'waiting_answer', actions: ['answer'] });
   });
@@ -62,11 +63,11 @@ describe.each(['memory', 'sqlite'] as const)('S2A queue derived cards (%s)', (ki
     // fixture.
     const key = LAST_PLANNING_KEY;
     const card = ready(await owners(f, f.records, f.bodies, SMALL_WIDTHS).reads.readDecisionCard(f.ctx, {
-      source: { kind: 'planning_question', key, goalRef: PLANNING_GOAL_REF, pins: [] },
+      source: { kind: 'planning_question', key, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF }, pins: [] },
     }));
     expect(card).toMatchObject({
-      cardKey: key, goalRef: PLANNING_GOAL_REF,
-      source: { kind: 'planning_question', key, goalRef: PLANNING_GOAL_REF },
+      cardKey: key, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF },
+      source: { kind: 'planning_question', key, subject: { kind: 'goal', goalRef: PLANNING_GOAL_REF } },
       state: 'waiting_answer', options: [], objects: [], answer: null, application: null,
       actions: ['answer'], readOnly: false,
     });

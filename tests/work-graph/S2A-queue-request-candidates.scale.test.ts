@@ -75,7 +75,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A request candidates (%s)', (kin
 
     const key = requestKey();
     const direct = ready(await owners(f).reads.readDecisionCard(f.ctx,
-      { source: { kind: 'candidate', key, goalRef: GOAL_B, pins: [] } }));
+      { source: { kind: 'candidate', key, subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] } }));
     expect(direct).toMatchObject({ cardKey: key, requestRef: REQUEST_Q1, state: 'waiting_answer',
       candidateStatus: 'candidate' });
     expect(proposalPins(direct)).toEqual([{ ref: liveRef, revision: 1 }]);

@@ -47,7 +47,7 @@ type CardRecord = { ref: UnknownCallReviewRef; revision: number };
 function answeredSource(record: CardRecord): DecisionSourceV1 {
   return { kind: 'unknown_call_review',
     key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: record.ref, revision: record.revision }),
-    goalRef: GOAL_B, pins: [] };
+    subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] };
 }
 
 /** The real card source read by key; the answer uses its exact captured source. */

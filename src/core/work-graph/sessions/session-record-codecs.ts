@@ -17,7 +17,11 @@
  *     cursor in the same transaction. A typed read requires `since` to be bound.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
+import { defineEvent, f } from '../../../contracts/data-format.js';
+import { id, OperationRefShape } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
   hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
@@ -30,9 +34,11 @@ import { SESSION_HEALTH_CONCLUSIONS, type SessionRecord, type SessionWorkLink } 
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import type { SessionOperationRecord } from '../model/session-contracts.js';
+import type { SessionCreateOperationRecord, SessionOperationRecord } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
+import { HandoffActionShape, SecretaryArchiveActionShape } from '../model/session-operation-arms.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { createEventCodec } from '../persistence/field-table-codec.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
 
 // --------------------------------------------------------------------------
@@ -53,6 +59,8 @@ export const SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP = 'session-by-workspace-spec-
 export const SESSION_LINKS_BY_MODULE_LOOKUP = 'session-links-by-module';
 export const SESSION_LINKS_BY_TASK_LOOKUP = 'session-links-by-task';
 export const SESSION_LINKS_BY_WORK_LOOKUP = 'session-links-by-work';
+/** The operations of a workspace by phase; unfinished is `accepted` or `running`, and readers filter by `action.kind`. */
+export const CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP = 'core-operation-by-workspace-phase';
 
 // Slice 2C L4 indexes 1–5 (spec §2).
 export const S2C_SESSION_BY_KIND_FROM_LOOKUP = 's2c-session-by-kind-from';
@@ -88,7 +96,7 @@ export type SessionCreationAdmittedEvent = {
   projectId: string;
   workspaceId: string;
   operationRef: OperationRef;
-  operation: SessionOperationRecord;
+  operation: SessionCreateOperationRecord;
 };
 
 export type SessionCreatedEvent = {
@@ -360,10 +368,11 @@ export function checkWorkLinkRef(value: unknown): Problem {
 // --------------------------------------------------------------------------
 
 const OPERATION_BODY_KEYS: readonly string[] = [
-  'ref', 'revision', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
+  'ref', 'revision', 'workspaceId', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
 ];
-const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'workspace', 'kernelStore', 'role', 'recommendedRefs', 'initialLinks', 'provenance', 'creation'];
-const OPERATION_PHASES: readonly string[] = ['accepted', 'running', 'completed', 'failed', 'unknown'];
+const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'parentOperation', 'workspace', 'kernelStore', 'role',
+  'recommendedRefs', 'initialLinks', 'provenance', 'creation'];
+const OPERATION_PHASES = ['accepted', 'running', 'completed', 'failed', 'unknown'] as const;
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
   'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance', 'archiveRequest', 'unavailableSince',
@@ -442,14 +451,12 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
  * the current-format value of every creation that opens no line; an object must
  * carry exactly the frozen four fields.
  */
-const SESSION_CREATION_DUTIES: readonly string[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
-
 export function checkSessionCreationIntent(value: unknown): Problem {
   if (value === null) return null;
   if (!isRecord(value) || !hasOnlyKeys(value, ['duty', 'scope', 'reason', 'creator'])) {
     return 'creation must be null or {duty,scope,reason,creator}';
   }
-  if (!SESSION_CREATION_DUTIES.includes(String(value['duty']))) return 'creation duty is not recognized';
+  if (!(PLATFORM_DUTIES as readonly string[]).includes(String(value['duty']))) return 'creation duty is not recognized';
   const scope = value['scope'];
   if (!isRecord(scope) || !hasOnlyKeys(scope, ['kind']) || scope['kind'] !== 'project') {
     return 'creation scope must be {kind:project}';
@@ -651,18 +658,74 @@ export function checkSessionArchiveRequest(value: unknown, ownProjectId: string)
   return null;
 }
 
+/** The first object below `value` (depth first, in key order) whose `projectId` is not `projectId`, as its path. */
+function foreignProjectPath(value: unknown, projectId: string, path: string): string | null {
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const found = foreignProjectPath(item, projectId, `${path}[${index}]`);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  if (typeof value['projectId'] === 'string' && value['projectId'] !== projectId) return path;
+  for (const [key, item] of Object.entries(value)) {
+    const found = foreignProjectPath(item, projectId, `${path}.${key}`);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * The record shell, then its arm by `action.kind`: the create arm is checked by hand below, the handoff and archive
+ * arms by their field tables (`model/session-operation-arms.ts`). Then the shell's own rules: the top-level workspace
+ * is the arm's, every nested `projectId` is the operation's, and only a creation carries a Kernel observation.
+ */
 function checkSessionOperationBody(body: UnknownRecord): Problem {
   if (!hasOnlyKeys(body, OPERATION_BODY_KEYS)) return 'operation record carries unknown fields';
   const ref = checkOperationRef(body['ref']);
   if (ref !== null) return ref;
   if (!isPos(body['revision'])) return 'operation record revision must be a positive integer';
+  if (!nonEmpty(body['workspaceId'])) return 'operation workspaceId must be a non-empty string';
   const action = body['action'];
-  if (!isRecord(action) || !hasOnlyKeys(action, ACTION_KEYS) || action['kind'] !== 'create') {
-    return 'operation action must be a create action';
+  if (!isRecord(action)) return 'operation action must be an object';
+  const kind = action['kind'];
+  const arm = kind === 'create' ? checkCreateAction(body, action)
+    : kind === 'handoff' ? checkShape(HandoffActionShape, action, 'stored')
+      : kind === 'secretary_archive' ? checkShape(SecretaryArchiveActionShape, action, 'stored')
+        : 'action.kind is not recognized';
+  if (arm !== null) return arm;
+  // The archive arm names no workspace: the top-level field is its only one.
+  const armWorkspace = kind === 'create' ? (action['workspace'] as UnknownRecord)['workspaceId']
+    : kind === 'handoff' ? ((action['input'] as UnknownRecord)['workspace'] as UnknownRecord)['workspaceId']
+      : body['workspaceId'];
+  if (body['workspaceId'] !== armWorkspace) return 'operation workspaceId disagrees with the action workspace';
+  const foreign = foreignProjectPath(action, (body['ref'] as UnknownRecord)['projectId'] as string, 'action');
+  if (foreign !== null) return `operation ${foreign} belongs to another project`;
+  if (!(OPERATION_PHASES as readonly string[]).includes(String(body['phase']))) return 'operation phase is not recognized';
+  if (!nonEmpty(body['requestedAt']) || !nonEmpty(body['updatedAt'])) return 'operation requires requestedAt and updatedAt';
+  if (body['observation'] !== null) {
+    if (kind !== 'create') return `operation observation must be null on a ${String(kind)} action`;
+    const observation = checkObservation(body['observation']);
+    if (observation !== null) return observation;
   }
+  if (body['failure'] !== null) {
+    const failure = checkFailure(body['failure']);
+    if (failure !== null) return failure;
+  }
+  return null;
+}
+
+/** The create arm, by hand; `parentOperation` is the handoff a successor is created under, or `null`. */
+function checkCreateAction(body: UnknownRecord, action: UnknownRecord): Problem {
+  if (!hasOnlyKeys(action, ACTION_KEYS)) return 'operation action must be a create action';
   const plannedValue = action['plannedSessionRef'];
   const planned = checkPlainSessionRef(plannedValue);
   if (planned !== null) return planned;
+  const parent = action['parentOperation'];
+  if (parent === undefined || (parent !== null && checkOperationRef(parent) !== null)) {
+    return 'operation parentOperation must be null or a CoreOperation ref';
+  }
   const workspaceValue = action['workspace'];
   const workspace = checkWorkspace(workspaceValue);
   if (workspace !== null) return workspace;
@@ -703,16 +766,6 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
     const target = checkTarget(entry['target']);
     if (target !== null) return `initialLink target: ${target}`;
     if (!relation(entry['relation'])) return 'initialLink relation is not recognized';
-  }
-  if (!OPERATION_PHASES.includes(String(body['phase']))) return 'operation phase is not recognized';
-  if (!nonEmpty(body['requestedAt']) || !nonEmpty(body['updatedAt'])) return 'operation requires requestedAt and updatedAt';
-  if (body['observation'] !== null) {
-    const observation = checkObservation(body['observation']);
-    if (observation !== null) return observation;
-  }
-  if (body['failure'] !== null) {
-    const failure = checkFailure(body['failure']);
-    if (failure !== null) return failure;
   }
   return null;
 }
@@ -867,6 +920,7 @@ function checkAdmittedEventBody(body: UnknownRecord): Problem {
   if (!isRecord(operation)) return 'admitted event requires the full operation record';
   const operationProblem = checkSessionOperationBody(operation);
   if (operationProblem !== null) return operationProblem;
+  if ((operation['action'] as UnknownRecord)['kind'] !== 'create') return 'admitted operation must be a create action';
   if (operation['revision'] !== 1) return 'admitted operation must be revision 1';
   if (operation['phase'] !== 'accepted') return 'admitted operation phase must be accepted';
   const eventOperationRefKey = canonicalOf(body['operationRef']);
@@ -905,6 +959,23 @@ function checkCreatedEventBody(body: UnknownRecord): Problem {
   }
   return null;
 }
+
+// --------------------------------------------------------------------------
+// The handoff and archive arm events (field tables)
+// --------------------------------------------------------------------------
+
+/** Every write of a handoff operation appends it with the record's new revision; the write's result reads it. */
+export const sessionHandoffRecordedCodec = createEventCodec(defineEvent({
+  name: 'SessionHandoffRecorded', eventType: 'SessionHandoffRecorded', schemaVersion: 1,
+  fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
+    phase: f.enumOf(OPERATION_PHASES), action: f.ref(HandoffActionShape) },
+}));
+/** The same for a secretary archive operation. */
+export const secretaryArchiveRecordedCodec = createEventCodec(defineEvent({
+  name: 'SecretaryArchiveRecorded', eventType: 'SecretaryArchiveRecorded', schemaVersion: 1,
+  fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
+    phase: f.enumOf(OPERATION_PHASES), action: f.ref(SecretaryArchiveActionShape) },
+}));
 
 // --------------------------------------------------------------------------
 // The single registration
@@ -950,8 +1021,12 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
       schemaVersion: SESSION_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_CREATED_EVENT_TYPE, checkCreatedEventBody),
     },
+    sessionHandoffRecordedCodec.registration,
+    secretaryArchiveRecordedCodec.registration,
   ],
   lookups: [
+    { name: CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, aggregateType: 'CoreOperation',
+      paths: ['ref.projectId', 'workspaceId', 'phase'] },
     { name: SESSION_BY_WORKSPACE_LOOKUP, aggregateType: 'Session', paths: ['ref.projectId', 'workspaceId'] },
     { name: SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP, aggregateType: 'Session',
       paths: ['ref.projectId', 'workspaceId', 'lifecycle'] },
@@ -1074,12 +1149,12 @@ export function decodeSessionWorkLink(record: EncodedRecord): DecodeResult<Sessi
  * Restores the ORIGINAL admission record from the recorded event. This is the
  * only source a replay may use; it never re-derives identity or timestamps.
  */
-export function sessionOperationFromAdmittedEvent(event: EncodedDomainEvent): DecodeResult<SessionOperationRecord> {
+export function sessionOperationFromAdmittedEvent(event: EncodedDomainEvent): DecodeResult<SessionCreateOperationRecord> {
   const checked = validateEvent(event, SESSION_CREATION_ADMITTED_EVENT_TYPE, checkAdmittedEventBody);
   if (checked.status !== 'decoded') return checked;
   const body = parseObject(event.json);
   if (body === null) return invalid('SessionCreationAdmitted event json is not an object');
-  return { status: 'decoded', value: body['operation'] as unknown as SessionOperationRecord };
+  return { status: 'decoded', value: body['operation'] as unknown as SessionCreateOperationRecord };
 }
 
 /** Stable replay payload of one `SessionCreated` event. */

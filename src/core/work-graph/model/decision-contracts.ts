@@ -26,6 +26,7 @@ import type {
   DecisionOptionV1,
   DecisionSelectionV1,
   DecisionSourceV1,
+  DecisionSubjectV1,
   GoalAutonomyV1,
   GoalSettingsV1,
   NoticeCategoryV1,
@@ -171,7 +172,7 @@ export interface MessageWriteOwnerPort {
 
 export interface DecisionSourceFactsPort {
   readSource(ctx: CoreCallContext, source: DecisionSourceV1):
-    Promise<ReadResult<{ source: DecisionSourceV1; goal: GoalSnapshot;
+    Promise<ReadResult<{ source: DecisionSourceV1; goal: GoalSnapshot | null;
       objects: DecisionObjectV1[]; options: DecisionOptionV1[];
       guards: readonly RecordGuard[]; closed: boolean;
       allowedReaderSessionRefs: SessionRef[] }>>;
@@ -194,18 +195,25 @@ export type NoteDecisionCardV1 = { cardId: string; source: 'note_review'; noteId
   pointer: { noteId: string | null; revision: number | null } | null };
 export type NoteDecisionCardFactsV1 = NoteDecisionCardV1 & {
   /**
-   * 4C-2 rework M1: the note head's own goal. A goal-less note never gets a
-   * card (D-09), so a returned card normally carries a string; the null member
-   * keeps the head fact exact for the reader's goal-linking gate.
+   * The note head's own goal. A goal-less note is the project's card, so the
+   * null member is a real card too; the reader's subject check decides which
+   * subject may answer it.
    */
   goalId: string | null;
   pins: VersionPin[]; objects: DecisionObjectV1[]; options: DecisionOptionV1[] };
 export type NoteDecisionClosedReasonV1 = 'goal_cancelled' | 'source_resolved';
 export interface NoteDecisionSourcePort {
-  readNoteDecisions(ctx: CoreCallContext, input: { goalRef: GoalRef; attempt?: DecisionSourceAttempt }):
+  readNoteDecisions(ctx: CoreCallContext, input: { subject: DecisionSubjectV1; attempt?: DecisionSourceAttempt }):
     Promise<ReadResult<NoteDecisionCardFactsV1[]>>;
+  /**
+   * One pinned note. `subject` is the pinned head's own subject (its Goal, or the project for a goal-less head)
+   * whenever the head is still pending at the pinned version, with an open card and with a closed reason alike;
+   * it is `null` only with the stale signal (`card` and `closedReason` both null). A reader checks it against the
+   * requested subject before it looks at the card or the closed reason.
+   */
   readNoteDecision(ctx: CoreCallContext, input: { pin: { noteId: string; version: number } }):
-    Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }>>;
+    Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null;
+      subject: DecisionSubjectV1 | null }>>;
   applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1): Promise<NoteDispositionResult>;
 }
 
@@ -281,7 +289,7 @@ export type DecisionCardStateV1 =
 export type DecisionCardV1 = {
   cardKey: string; source: DecisionSourceV1;
   state: DecisionCardStateV1;
-  goalRef: GoalRef; senderSessionRef: SessionRef | null;
+  subject: DecisionSubjectV1; senderSessionRef: SessionRef | null;
   requestRef: QueryJobRef | null;
   objects: DecisionObjectV1[]; options: DecisionOptionV1[];
   answerMessageRef: SessionMessageRef | null;
@@ -297,7 +305,7 @@ export type DecisionCardV1 = {
 };
 
 export type NoticeItemV1 = {
-  itemKey: string; category: NoticeCategoryV1; goalRef: GoalRef;
+  itemKey: string; category: NoticeCategoryV1; subject: DecisionSubjectV1;
   position: NoticePositionV1; summary: string; objects: DecisionObjectV1[];
   /** L16（决定 55）：只加在触发返工的那一轮有 `resourceCapHit` 的条目上；别的条目不带这个字段。 */
   actions?: readonly { kind: 'raise_memory_cap' }[];
@@ -368,8 +376,15 @@ export interface DecisionReadPort {
 
 export interface DecisionCardSourcePort {
   kind: DecisionSourceV1['kind'];
-  /** True when the queue lists this source only inside one Goal's scope. */
-  needsGoal: boolean;
+  /**
+   * The subjects the source serves. `goal`: the queue reads it once per Goal in scope; `project`: once for the bound
+   * project when the read is not filtered to one Goal, also with zero Goals.
+   */
+  serves: readonly DecisionSubjectV1['kind'][];
+  /**
+   * No `goalRef` asks a project-serving source for the bound project's cards; a source answers an empty page for a
+   * subject it does not serve.
+   */
   readPage(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope; goalRef?: GoalRef;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; attempt?: DecisionSourceAttempt };

@@ -117,8 +117,9 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     }
     const planningKey = decisionSourceKey({ kind: 'planning_question', answerRef, questionIndex: 0 });
     const planning = mustCard(read.waitingAnswer, planningKey);
-    expect(planning).toMatchObject({ goalRef: PLANNING_GOAL,
-      source: { kind: 'planning_question', key: planningKey, goalRef: PLANNING_GOAL }, options: [], state: 'waiting_answer' });
+    expect(planning).toMatchObject({ subject: { kind: 'goal', goalRef: PLANNING_GOAL },
+      source: { kind: 'planning_question', key: planningKey, subject: { kind: 'goal', goalRef: PLANNING_GOAL } },
+      options: [], state: 'waiting_answer' });
     expect(planning.actions).toContain('answer');
     const conflictKey = decisionSourceKey({ kind: 'goal_conflict', pair: [
       { goalRef: GOAL_A, activePlanRef: PLAN_A1 }, { goalRef: GOAL_B, activePlanRef: PLAN_B1 }] });
@@ -130,7 +131,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     expect(conflict.actions).toContain('answer');
     const causes = read.waitingAnswer.filter(c => c.source.kind === 'goal_cause');
     expect(causes).toHaveLength(1);
-    expect(causes[0]).toMatchObject({ goalRef: GOAL_B, options: [], state: 'waiting_answer' });
+    expect(causes[0]).toMatchObject({ subject: { kind: 'goal', goalRef: GOAL_B }, options: [], state: 'waiting_answer' });
     // §3.3 identifies this cause by its concrete pending proposal. The spec does not
     // enumerate the other affected pins or the full action list for this code.
     const identity = JSON.parse(causes[0]!.source.key) as { kind: 'goal_cause'; goalRef: typeof GOAL_B; code: string; affected: VersionPin[] };

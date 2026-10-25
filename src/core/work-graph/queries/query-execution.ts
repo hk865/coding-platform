@@ -27,6 +27,7 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type { ContextCallKindV1, PlatformDutyV1 } from '../../../contracts/graph-context.js';
+import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import { consultationQueryRefs, isRequestRound, queryExecutionBindingOf } from '../../../contracts/query-job.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
@@ -103,10 +104,9 @@ function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
   return [...seen.values()];
 }
 /** §2.4 item 3 / §2.5: the duty a versioned legacy Session role ref fixes, or none. */
-function legacyTemplateDutyOf(role: PreparedQueryManifestV1['sessionRole']): PlatformDutyV1 | undefined {
+export function legacyTemplateDutyOf(role: PreparedQueryManifestV1['sessionRole']): PlatformDutyV1 | undefined {
   if (role.kind !== 'legacy_template' || role.templateRevision !== 's3.1') return undefined;
-  const duties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
-  return duties.find(duty => role.templateId === `platform-${duty}`);
+  return PLATFORM_DUTIES.find(duty => role.templateId === `platform-${duty}`);
 }
 /**
  * §4.3/G-CTX: the duty the Query's resolved Role or its Session's versioned legacy template
@@ -468,8 +468,12 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, queryRunRe
   if (decodedWorkspace.status !== 'decoded') return rejectedWithNonEmptyCurrent('unavailable', `the Workspace snapshot is not decodable: ${decodedWorkspace.reason}`);
   const workspace: WorkspaceSnapshot = decodedWorkspace.value;
 
+  // Focus Tasks are proved on the active Plan. A goal-bound request round
+  // freezes its goal's active Plan too, when there is one, so a secretary's
+  // stage anchor takes the version the round was prepared under.
   let focusPlan: PlanRevisionSnapshot | null = null;
-  if (record.value.job.job.intent.focusTaskRefs.length > 0) {
+  const freezesGoalPlan = isRequestRound(record.value.job) && goal.activePlanRevision !== null;
+  if (record.value.job.job.intent.focusTaskRefs.length > 0 || freezesGoalPlan) {
     const activePlan = goal.activePlanRevision;
     if (activePlan === null) return rejectedWithNonEmptyCurrent('invalid', 'the Query focus is not provable without an active Plan');
     const planKey = planRevisionRefKey(activePlan);
@@ -495,7 +499,8 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, queryRunRe
 // Manifest re-read
 // --------------------------------------------------------------------------
 
-function loadQueryManifest(
+/** Reads the manifest a prepared Query is bound to and checks its owner, bytes, digest and shape. */
+export function loadQueryManifest(
   bodies: QueryExecutionDependencies['bodies'],
   prepared: PreparedQueryExecution,
 ): Promise<ReadResult<{ manifest: PreparedQueryManifestV1; bundleRef: ArtifactRef }>> {

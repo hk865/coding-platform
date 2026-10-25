@@ -134,7 +134,7 @@ describe('K3-19 (一) review unavailable', () => {
     const card = await reviewCardOf(h, settled.value);
     expect(card, 'the needs_decision review record has its card').toBeDefined();
     expect(card).toMatchObject({ state: 'waiting_answer', readOnly: false, actions: ['answer'],
-      source: { kind: 'unknown_call_review', goalRef: { goalId: AG2B_GOAL_REF.goalId } },
+      source: { kind: 'unknown_call_review', subject: { kind: 'goal', goalRef: { goalId: AG2B_GOAL_REF.goalId } } },
       options: [{ id: 'rerun_as_is' }, { id: 'safer_method' }, { id: 'skip_as_done' }, { id: 'handle_myself' }] });
   }, 240_000);
 });

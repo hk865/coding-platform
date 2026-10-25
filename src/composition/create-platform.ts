@@ -80,6 +80,7 @@ import {
   createRequestRoundService, type RequestFactsReader, type RequestRoundPort,
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
+import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-query-run.js';
 import type { SecretaryProfilePort } from '../core/work-graph/model/request-contracts.js';
 
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
@@ -128,11 +129,14 @@ import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
+import { createSessionHandoffService, type SessionHandoffPort } from '../core/work-graph/sessions/session-handoff-service.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../core/work-graph/sessions/session-activity.js';
+import { INITIALIZATION_BINDING_SCHEMAS } from '../core/work-graph/persistence/initialization-binding-codecs.js';
 // Slice 1 (spec §3.3, §4.4): the Session-facts, responsibility and anomaly owners
 // constructed by this composition root and injected through the narrow ports.
 import { createSessionFactsService } from '../core/work-graph/tasks/session-facts.js';
@@ -165,7 +169,7 @@ import type { VersionPin } from '../contracts/core/identity.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
-import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
+import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
 import { canonicalJson, sameJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
@@ -728,7 +732,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.records,
       ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
-      ...NOTE_RECORD_SCHEMAS.records],
+      ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -740,7 +744,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
-      ...NOTE_RECORD_SCHEMAS.events],
+      ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -751,8 +755,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [],
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.lookups ?? [],
-      ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [],
-      ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [], ...NOTE_RECORD_SCHEMAS.lookups ?? []],
+      ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [], ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [],
+      ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -896,9 +900,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
-    const platformDuties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
     const legacyDuty = (role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>): PlatformDutyV1 | undefined =>
-      platformDuties.find(duty => {
+      PLATFORM_DUTIES.find(duty => {
         const template = platformRoleProfile(duty).template;
         return role.templateId === template.templateId && role.templateRevision === template.templateRevision;
       });
@@ -1699,6 +1702,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       plans: planService,
       runFacts: noteRunFacts,
       duties: sessionDutyResolver,
+      secretaryQueryRun: createSecretaryQueryRun({ records: backend.records, duties: sessionDutyResolver, bodies }),
       workspace: noteWorkspace,
       workspaceMaxFileBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes,
       architecture: catalog,
@@ -2376,6 +2380,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       drainUnassigned: (ctx, scope, input) =>
         trackedCall(() => rawRequestIntake.drainUnassigned(ctx, scope, input), requestClosed),
     };
+    // The handoff owner: `handoff.accept` through the shared write executor; internal like the request owners.
+    const rawSessionHandoff = createSessionHandoffService({ records: backend.records, sessions: sessionDirectory,
+      duty: sessionDutyResolver, now });
+    const sessionHandoff: SessionHandoffPort = {
+      acceptHandoff: (ctx, input) => trackedCall(() => rawSessionHandoff.acceptHandoff(ctx, input), unavailable),
+    };
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -2404,6 +2414,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       requestIntake, requestRounds, requestFacts, secretaryProfiles,
       // The main read and `requests/read` owner; internal like the request owners.
       mainSurface,
+      sessionHandoff,
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -2481,7 +2492,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
-      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface'] as const) {
+      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

@@ -9,8 +9,8 @@
 - 读失败原样返回，不折成空收件箱、空来源或“没有读者”。
 
 ## 文件
-- `decision-service.ts` — 决定答复 owner：`answerDecision`、`recordDecisionApplication`、`readDecisionAnswer`，加消息 pin 读、应用回放与工具提交查询。
-- `decision-source-facts.ts` — 从正式记录重建决定来源的 Goal/对象/选项/pins/closed/允许读者，并接应用证明读法。
+- `decision-service.ts` — 决定答复 owner：`answerDecision`、`recordDecisionApplication`、`readDecisionAnswer`，加消息 pin 读、应用回放与工具提交查询；项目卡的答复消息存项目 `subject` 且 `goalRef: null`，答复的唯一占位按整个项目算（各工作区都列出同一张项目卡）。
+- `decision-source-facts.ts` — 从正式记录重建决定来源的 Goal/对象/选项/pins/closed/允许读者，并接应用证明读法；`subject` 的形状先在这层检查（先于任何 Goal 读），Goal subject 读它的 Goal，项目 subject 不读 Goal、只接 `note_review` 分支（越界项目 `forbidden`）；canonical source 的 subject 按分支读到的事实重建（Goal subject 取分支实际读到的 Goal，项目 subject 取绑定的项目），不照抄调用方的。
 - `decision-source/` — 每种来源一个 handler，每个返回完整分支事实；原文件保留工厂、共同前置检查、分派、最终 pin 复核与结果组装。
 - `decision-application.ts` — 只从正式 receipt/event 证明一次已记录的决定应用（事件白名单，拒绝调用方自报版本）。
 - `mailbox-service.ts` — `SessionMailboxPort` 全实现与唯一消息写入 facade（body → record → event → receipt 一次提交）。
@@ -18,10 +18,10 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createSessionMailbox` | `src/core/work-graph/communication/mailbox-service.ts:1045` | 发信、读消息/正文、收件箱/发件箱、ack、回复、consultation、input、wait 处置、未送达/已路由回复与工具回执查询 | 组合根装配 `platform.messages` 时；不要另写发信或分页 |
-| `createMessageWriteOwner` | `src/core/work-graph/communication/mailbox-service.ts:3627` | `storeBody` + `persist`：唯一正文存储与消息提交路径（replay、CAS、event、claim 同一套） | 任何要写 SessionMessage 的 owner；不要绕过它直接 commit |
-| `createDecisionMessageService` | `src/core/work-graph/communication/decision-service.ts:200` | 答复决定、记录决定应用、读回答复、读消息 pin、应用回放、工具提交查询 | 组合根装配 `platform.decisionMessages` 或工具适配时 |
-| `createDecisionSourceFacts` | `src/core/work-graph/communication/decision-source-facts.ts:99` | 从正式记录重建 `DecisionSourceV1` 的 Goal、objects、options、pins、closed 与允许读者；读应用证明 | 答复/卡片前必须证明来源真实时；不要从 `views` 读一手事实 |
+| `createSessionMailbox` | `src/core/work-graph/communication/mailbox-service.ts:1043` | 发信、读消息/正文、收件箱/发件箱、ack、回复、consultation、input、wait 处置、未送达/已路由回复与工具回执查询 | 组合根装配 `platform.messages` 时；不要另写发信或分页 |
+| `createMessageWriteOwner` | `src/core/work-graph/communication/mailbox-service.ts:3625` | `storeBody` + `persist`：唯一正文存储与消息提交路径（replay、CAS、event、claim 同一套） | 任何要写 SessionMessage 的 owner；不要绕过它直接 commit |
+| `createDecisionMessageService` | `src/core/work-graph/communication/decision-service.ts:198` | 答复决定、记录决定应用、读回答复、读消息 pin、应用回放、工具提交查询；项目卡答复的 `readSource.goal` 与消息 `goalRef` 都是 `null` | 组合根装配 `platform.decisionMessages` 或工具适配时 |
+| `createDecisionSourceFacts` | `src/core/work-graph/communication/decision-source-facts.ts:100` | 从正式记录重建 `DecisionSourceV1` 的 Goal、objects、options、pins、closed 与允许读者；读应用证明；`subject` 形状先检查，Goal subject 读 Goal，项目 subject 不读 Goal、只服务 `note_review`（越界项目 `forbidden`），分支不再解 subject；canonical subject 按分支读到的 Goal 或绑定的项目重建 | 答复/卡片前必须证明来源真实时；不要从 `views` 读一手事实 |
 
 ## 内部用
 

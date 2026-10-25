@@ -208,6 +208,7 @@ function answerJob(): QueryJobAnswerSnapshot {
       goalCardDrafts: [
         { objective: 'Ship C', completion: ['the suite is green'], autonomy: 'after_plan_confirmation', screening: null },
       ],
+      planDraftIndex: null,
     },
   };
 }

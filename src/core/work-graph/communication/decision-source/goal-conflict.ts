@@ -1,10 +1,10 @@
 import type { ModuleRef, SessionRef, VersionPin } from '../../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../../contracts/core/results.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
-  DecisionSourceV1, GoalDecisionBasisV1, GoalFootprintV1 } from '../../../../contracts/goal-decisions.js';
+  GoalDecisionBasisV1, GoalFootprintV1 } from '../../../../contracts/goal-decisions.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../../contracts/fingerprint.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
-import type { GoalSnapshot } from '../../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { goalConflictFacts } from '../../state/goal-settings-machine.js';
 import { decodeGoalPhaseSnapshot } from '../../tasks/completion-record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../../persistence/plan-record-codecs.js';
@@ -70,8 +70,8 @@ async function goalTerminal(support: SourceReadSupport, goal: GoalSnapshot): Pro
 /** The `goal_conflict` decision source: both Goals, both active Plans and a real §4.3 overlap. */
 export async function readGoalConflictSource(
   support: SourceReadSupport,
-  source: DecisionSourceV1,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'goal_conflict' }>,
+  goalRef: GoalRef,
 ): Promise<SourceReadResult> {
   let goal: GoalSnapshot;
   let objects: DecisionObjectV1[] = [];
@@ -109,7 +109,7 @@ export async function readGoalConflictSource(
   if (!goalConflictFacts(leftFootprint.value, rightFootprint.value).overlaps) {
     return rejectedWithCurrent('not_found', 'the two Goals have no §4.3 footprint conflict');
   }
-  const named = goals.find((candidate) => sameJson(candidate.ref, source.goalRef));
+  const named = goals.find((candidate) => sameJson(candidate.ref, goalRef));
   if (named === undefined) return rejectedWithCurrent('invalid', 'the conflict source does not name one of its Goals');
   goal = named;
   pins = goals.map((member) => ({ ref: structuredClone(member.ref), revision: member.revision }));

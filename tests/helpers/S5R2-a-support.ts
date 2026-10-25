@@ -130,7 +130,8 @@ export async function expectClosedQ1(f: S5DecisionFixture, previous: Candidate, 
   expect(cards).toHaveLength(1);
   const card = cards[0];
   if (card === undefined) throw new Error('Q1 history card is missing');
-  const source: DecisionSourceV1 = { kind: 'candidate', key: requestKey(), goalRef: GOAL_B, pins: [] };
+  const source: DecisionSourceV1 = { kind: 'candidate', key: requestKey(),
+    subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] };
   const direct = ready(await owners(f).reads.readDecisionCard(f.ctx, { source }));
   expect(await f.storeSnapshot()).toEqual(before);
   expect(f.allocationCounts).toEqual(allocations);

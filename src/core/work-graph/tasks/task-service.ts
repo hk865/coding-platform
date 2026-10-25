@@ -27,6 +27,7 @@ import type { VersionPin } from "../../../contracts/core/identity.js";
 import { rejected as sharedRejected } from "../../../contracts/core/rejections.js";
 import type { CoreError, WriteResult } from "../../../contracts/core/results.js";
 import { canonicalJson, type JsonValue } from "../../../contracts/fingerprint.js";
+import { DEFAULT_GOAL_SETTINGS_V1 } from "../../../contracts/goal-decisions.js";
 import type { AggregateRef, GoalSnapshot } from "../../../contracts/ledger.js";
 import { reworkActorClassOf } from "../../../contracts/task-requeue.js";
 import { validateCreateGoalCommand } from "../../../contracts/validation/goal.js";
@@ -217,10 +218,14 @@ export async function admitGoalCreation(
 
   // (4) GOAL-01 judges the pins, writes Goal@1 (§14.1) and names exactly 3
   // guards. Goal absence is guaranteed by the null guard; a pre-read Goal never
-  // short-circuits the in-transaction idempotency opportunity.
+  // short-circuits the in-transaction idempotency opportunity. A Goal created
+  // here is born with the §2.2 birth settings and is not a copy.
   const created = transitionGoal(
     goalStateOf(observed.goal ?? null, null),
-    { type: "goal_created", ref: refs.goalRef, workspaceRef: refs.workspaceRef, objective },
+    {
+      type: "goal_created", ref: refs.goalRef, workspaceRef: refs.workspaceRef, objective,
+      settings: structuredClone(DEFAULT_GOAL_SETTINGS_V1), continuedFrom: null, copiedInterventions: [],
+    },
     {
       // The Host-bound command actor (§1.3); GOAL-01 does not read it.
       callerClass: reworkActorClassOf(null, command.identity.actor),

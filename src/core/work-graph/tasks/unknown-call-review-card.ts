@@ -157,7 +157,7 @@ export function unknownCallReviewCardFacts(input: UnknownCallReviewCardInputV1):
   const source: DecisionSourceV1 = {
     kind: 'unknown_call_review',
     key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: record.ref, revision: record.revision }),
-    goalRef: { ...goal.ref },
+    subject: { kind: 'goal', goalRef: { ...goal.ref } },
     pins: [
       { ref: structuredClone(record.ref), revision: record.revision },
       { ref: structuredClone(record.runRef), revision: run.revision },

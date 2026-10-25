@@ -60,7 +60,7 @@ function countingSource(real: DecisionCardSourcePort,
   if (realByKey === undefined) throw new Error('the note_review source has no by-key read');
   return {
     kind: real.kind,
-    needsGoal: real.needsGoal,
+    serves: real.serves,
     async readPage(ctx, input) {
       list.value += 1;
       return real.readPage(ctx, input);
@@ -122,7 +122,7 @@ describe('S4C2 U7 note-card source (real pending card, counted production source
       expect(card).toMatchObject({
         cardKey: AGENT_CARD_KEY,
         state: 'waiting_answer',
-        source: { kind: 'note_review', key: AGENT_CARD_KEY, goalRef: f.goalRef,
+        source: { kind: 'note_review', key: AGENT_CARD_KEY, subject: { kind: 'goal', goalRef: f.goalRef },
           pins: [{ ref: { aggregateType: 'NoteHead', projectId: PROJECT_ID, noteId: agentId },
             revision: 1 }] },
       });
@@ -148,7 +148,7 @@ describe('S4C2 U7 note-card source (real pending card, counted production source
 
       // M1: the same g1 card key carrying goalRef g2 is not that Goal's card.
       const crossGoal = await f.platform.decisions.readDecisionCard(f.ctx(), {
-        source: { ...card.source, goalRef: f.goal2Ref },
+        source: { ...card.source, subject: { kind: 'goal', goalRef: f.goal2Ref } },
       });
       expect(crossGoal).toEqual({ status: 'not_found' });
       expect(counters.listCalls()).toBe(1);
@@ -161,7 +161,7 @@ describe('S4C2 U7 note-card source (real pending card, counted production source
       // The real g1 card is still waiting after both failed reads.
       const again = await f.platform.decisions.readDecisionCard(f.ctx(), { source: card.source });
       expect(again).toMatchObject({ status: 'ready', value: { cardKey: AGENT_CARD_KEY,
-        state: 'waiting_answer', source: { kind: 'note_review', goalRef: f.goalRef } } });
+        state: 'waiting_answer', source: { kind: 'note_review', subject: { kind: 'goal', goalRef: f.goalRef } } } });
       expect(counters.listCalls()).toBe(1);
       // The confirmed user note stayed accepted; the agent's replacement is the
       // only pending note.

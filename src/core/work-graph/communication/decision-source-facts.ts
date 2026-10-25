@@ -24,11 +24,12 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
   DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
-import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { DecisionSubjectShape, decisionSubjectGoalRef, decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isRecord } from '../../../contracts/validation/common.js';
-import type { GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { CommandRerunRequestReadPort } from '../model/command-rerun-request-contracts.js';
@@ -109,7 +110,7 @@ export function createDecisionSourceFacts(
 
   return {
     async readSource(ctx: CoreCallContext, source: DecisionSourceV1): Promise<ReadResult<{
-      source: DecisionSourceV1; goal: GoalSnapshot;
+      source: DecisionSourceV1; goal: GoalSnapshot | null;
       objects: DecisionObjectV1[]; options: DecisionOptionV1[];
       guards: readonly import('../../record-store/ports.js').RecordGuard[]; closed: boolean;
       allowedReaderSessionRefs: SessionRef[];
@@ -135,28 +136,49 @@ export function createDecisionSourceFacts(
       if (decisionSourceKey(identity) !== source.key) {
         return rejectedWithCurrent('invalid', 'the decision source key is not the canonical natural identity');
       }
+      // §3.7 item 2: the subject decides which branch runs. A goal subject
+      // loads its Goal; a project subject never loads one, and only the
+      // note_review branch serves it. The shape is checked once here, before
+      // any branch reads anything, so no branch re-reads the subject.
+      const subjectProblem = checkShape(DecisionSubjectShape, { subject: source.subject }, 'stored');
+      if (subjectProblem !== null) {
+        return rejectedWithCurrent('invalid', 'the decision source subject is not recognized');
+      }
+      const subject = source.subject;
+      const subjectGoalRef = decisionSubjectGoalRef(source);
+      if (subjectGoalRef === null && subject.kind === 'project' && subject.projectRef.projectId !== ctx.projectId) {
+        return rejectedWithCurrent('forbidden', 'the project subject is outside the bound call scope');
+      }
+      const goalRef: GoalRef | null = subjectGoalRef;
 
       const support = createSourceReadSupport(records, scope);
 
       /** §4.6 line 915: an unimplemented or unknown kind stays an explicit refusal. */
       async function readBranch(): Promise<ReadResult<DecisionSourceBranchFacts>> {
+        if (goalRef === null) {
+          // A project subject serves no other source kind in this slice; a
+          // branch that would need a Goal stays an explicit refusal.
+          return identity.kind === 'note_review'
+            ? readNoteReviewSource(support, ctx, source, identity, deps, null)
+            : rejectedWithCurrent('invalid', 'a project subject serves only a note_review source');
+        }
         switch (identity.kind) {
           case 'message':
-            return readMessageSource(support, identity);
+            return readMessageSource(support, identity, goalRef);
           case 'goal_cause':
             return readGoalCauseSource(support, ctx, identity, goalCauses);
           case 'candidate':
             return readCandidateSource(support, identity);
           case 'planning_question':
-            return readPlanningQuestionSource(support, source, identity);
+            return readPlanningQuestionSource(support, identity, goalRef);
           case 'goal_conflict':
-            return readGoalConflictSource(support, source, identity);
+            return readGoalConflictSource(support, identity, goalRef);
           case 'note_review':
-            return readNoteReviewSource(support, ctx, source, identity, deps);
+            return readNoteReviewSource(support, ctx, source, identity, deps, goalRef);
           case 'unknown_call_review':
-            return readUnknownCallReviewSource(support, ctx, source, identity, deps);
+            return readUnknownCallReviewSource(support, ctx, identity, deps, goalRef);
           case 'command_rerun_request':
-            return readCommandRerunRequestSource(support, ctx, source, identity, deps);
+            return readCommandRerunRequestSource(support, ctx, identity, deps, goalRef);
           case 'message_release':
             return rejectedWithCurrent('unsupported', 'this decision source is not available in this slice');
           default:
@@ -175,7 +197,14 @@ export function createDecisionSourceFacts(
       const canonicalSource: DecisionSourceV1 = {
         kind: source.kind,
         key: source.key,
-        goalRef: structuredClone(goal.ref),
+        // The canonical subject is rebuilt from what the branch read: a goal
+        // subject from the Goal actually read (candidate, Goal cause and message
+        // read their Goal by their own identity, not by the caller's subject); a
+        // project subject from the bound project, whose goal-less note the
+        // note_review branch has proved.
+        subject: goal !== null
+          ? { kind: 'goal', goalRef: structuredClone(goal.ref) }
+          : { kind: 'project', projectRef: { projectId: scope.projectId } },
         pins: clonePins(pins),
         goalBases: goalBases.map((basis) => structuredClone(basis)),
       };

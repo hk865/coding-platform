@@ -14,7 +14,6 @@
  * below is built from `src/contracts`; `Transition` comes from `./transition.js`.
  */
 import {
-  DEFAULT_GOAL_SETTINGS_V1,
   type GoalConflictFactsV1,
   type GoalDecisionBasisV1,
   type GoalFootprintV1,
@@ -85,9 +84,9 @@ function samePlanPointer(left: PlanRevisionRef | null, right: PlanRevisionRef | 
   return left === null || right === null ? left === right : sameJsonOrThrow(left, right);
 }
 
-/** The saved settings, or the exact §2.2 default, as an owned (mutable) copy. */
+/** The saved settings as an owned (mutable) copy. */
 function settingsOf(state: GoalSnapshot): GoalSettingsV1 {
-  const base = state.settings ?? DEFAULT_GOAL_SETTINGS_V1;
+  const base = state.settings;
   return {
     schemaVersion: 1,
     autonomy: base.autonomy,
@@ -242,7 +241,7 @@ export function goalStartPolicy(input: {
 }): { allowed: boolean; reason: 'goal_stopped' | 'waiting_predecessor' | null } {
   if (!BLOCKING_START_ACTIONS.has(input.action)) return { allowed: true, reason: null };
   if (input.goal.desiredState !== 'active') return { allowed: false, reason: 'goal_stopped' };
-  const waiting = input.goal.settings?.waitForGoalRef ?? null;
+  const waiting = input.goal.settings.waitForGoalRef;
   if (waiting === null) return { allowed: true, reason: null };
   const predecessor = input.predecessor;
   if (predecessor === null || !predecessor.exists) return { allowed: false, reason: 'waiting_predecessor' };
@@ -258,8 +257,8 @@ export function goalDecisionBasisMatches(basis: GoalDecisionBasisV1, current: Go
   if (!sameJsonOrThrow(basis.workspaceRef, current.workspaceRef)) return false;
   if (basis.objective !== current.objective) return false;
   if (!samePlanPointer(basis.activePlanRef, current.activePlanRevision)) return false;
-  const captured = comparableSettings({ ...DEFAULT_GOAL_SETTINGS_V1, ...basis.settings });
-  const actual = comparableSettings({ ...DEFAULT_GOAL_SETTINGS_V1, ...(current.settings ?? {}) });
+  const captured = comparableSettings(basis.settings);
+  const actual = comparableSettings(current.settings);
   return sameJsonOrThrow(captured, actual);
 }
 

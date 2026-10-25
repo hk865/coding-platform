@@ -53,8 +53,8 @@ import {
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
-  SessionCard, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
-  SessionOperationRecord, SessionPage,
+  SessionCard, SessionCreateOperationRecord, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult,
+  SessionDirectoryPort, SessionOperationRecord, SessionPage,
 } from '../model/session-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
@@ -133,12 +133,15 @@ const SESSION_REGISTER_IDENTITY_PREFIX = 'session-register:';
 
 function sessionCreateIdentityKey(
   actor: HostActor, projectId: string, requestId: string, creation: SessionCreationIntentV1 | null,
+  parentOperation: OperationRef | null,
 ): string {
   return SESSION_CREATE_IDENTITY_PREFIX + sha256Hex(canonicalJson({
     actor: actorIdentity(actor), projectId, requestId,
     // Slice 6A §3.4.7: a non-line creation keeps the pre-6A payload byte for
-    // byte (no `creation: null` key); a line creation adds the intent.
+    // byte (no `creation: null` key); a line creation adds the intent. A
+    // creation without a parent handoff likewise has no `parentOperation` key.
     ...(creation === null ? {} : { creation }),
+    ...(parentOperation === null ? {} : { parentOperation }),
   } as unknown as JsonValue));
 }
 function sessionRegisterIdentityKey(actor: HostActor, projectId: string, requestId: string): string {
@@ -235,6 +238,7 @@ type NormalizedCreation = {
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
   creation: SessionCreationIntentV1 | null;
+  parentOperation: OperationRef | null;
 };
 type NormalizeOutcome<T> = { ok: true; value: T } | { ok: false; code: CoreError; reason: string };
 
@@ -303,6 +307,18 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
     if (problem !== null) return { ok: false, code: 'invalid', reason: `session creation intent: ${problem}` };
     creation = rawCreation as SessionCreationIntentV1;
   }
+  // Absent and explicit null both mean "no parent handoff"; a present parent is
+  // an operation of this project.
+  const rawParent = raw['parentOperation'];
+  let parentOperation: OperationRef | null = null;
+  if (rawParent !== undefined && rawParent !== null) {
+    const problem = checkOperationRef(rawParent);
+    if (problem !== null) return { ok: false, code: 'invalid', reason: `session parentOperation: ${problem}` };
+    parentOperation = rawParent as OperationRef;
+    if (parentOperation.projectId !== scope.projectId) {
+      return { ok: false, code: 'forbidden', reason: 'session parentOperation belongs to another project' };
+    }
+  }
   return {
     ok: true,
     value: {
@@ -312,6 +328,7 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
       recommendedRefs: refs as ArtifactRef[],
       initialLinks: links as { target: WorkLinkTarget; relation: WorkLinkRelation }[],
       creation,
+      parentOperation,
     },
   };
 }
@@ -552,7 +569,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     expectedRefKey: string,
     scope: WorkspaceScope,
     plannedRef: SessionRef,
-  ): Promise<RestoreOutcome<SessionOperationRecord>> {
+  ): Promise<RestoreOutcome<SessionCreateOperationRecord>> {
     if (receipt.eventIds.length !== 1) {
       return {
         ok: false,
@@ -570,6 +587,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (String(located.value.cursor) !== String(receipt.cursor) || located.value.event.eventId !== receipt.eventIds[0]) {
       return { ok: false, rejection: reject('unavailable', 'the admission receipt disagrees with the recorded event') };
     }
+    // The admitted event carries only the create arm: another arm does not decode.
     const decoded = sessionOperationFromAdmittedEvent(located.value.event);
     if (decoded.status !== 'decoded') {
       return {
@@ -703,7 +721,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
   async function admitSessionCreation(
     ctx: CoreCallContext,
     request: GraphWrite<SessionCreationInput>,
-  ): Promise<WriteResult<SessionOperationRecord>> {
+  ): Promise<WriteResult<SessionCreateOperationRecord>> {
     const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
     if (!trusted.ok) return trusted.rejection;
     const { scope, actor } = trusted;
@@ -723,7 +741,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const pins = normalizeCallerPins(meta['expected'], scope);
     if (!pins.ok) return reject('invalid', pins.reason);
 
-    const identityKey = sessionCreateIdentityKey(actor, scope.projectId, requestId, input.creation);
+    const identityKey = sessionCreateIdentityKey(actor, scope.projectId, requestId, input.creation, input.parentOperation);
     const { operationRef, plannedSessionRef } = stableSessionCreationIdentity(actor, scope.projectId, requestId);
     // Slice 1 §2.2: the caller may name the new Session's provenance, but only
     // the accepted operation's normalized value is authoritative. A present but
@@ -754,6 +772,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       initialLinks: input.initialLinks,
       provenance: createdProvenance,
       ...(input.creation === null ? {} : { creation: input.creation }),
+      ...(input.parentOperation === null ? {} : { parentOperation: input.parentOperation }),
     } as unknown as JsonValue));
 
     const existing = await records.lookupCommit({ identityKey, fingerprint });
@@ -802,12 +821,14 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     }
 
     const now = new Date().toISOString();
-    const operation: SessionOperationRecord = {
+    const operation: SessionCreateOperationRecord = {
       ref: operationRef,
       revision: 1,
+      workspaceId: input.workspace.workspaceId,
       action: {
         kind: 'create',
         plannedSessionRef,
+        parentOperation: input.parentOperation,
         workspace: input.workspace,
         kernelStore: input.kernelStore,
         role: input.role,
@@ -900,14 +921,17 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       return reject('unavailable', `the admitted Session operation is damaged: ${decodedOperation.reason}`);
     }
     const storedOperation = decodedOperation.value;
-    if (storedOperation.action.workspace.projectId !== scope.projectId) {
+    if (storedOperation.ref.projectId !== scope.projectId) {
       return reject('not_found', 'the admitted Session operation belongs to another project');
     }
-    if (storedOperation.action.workspace.workspaceId !== scope.workspaceId) {
+    if (storedOperation.workspaceId !== scope.workspaceId) {
       return reject('forbidden', 'the admitted Session operation belongs to another workspace scope');
     }
-    if (storedOperation.action.kind !== 'create' ||
-      canonicalOf(storedOperation.action.plannedSessionRef) === null ||
+    // A handoff or archive operation at this ref is not a creation this call can complete.
+    if (storedOperation.action.kind !== 'create') {
+      return reject('unavailable', `the operation is a ${storedOperation.action.kind} operation, not a Session creation`);
+    }
+    if (canonicalOf(storedOperation.action.plannedSessionRef) === null ||
       canonicalOf(storedOperation.action.plannedSessionRef) !== canonicalOf(registration.sessionRef)) {
       return reject('invalid', 'the admitted operation plans another Session reference');
     }
@@ -1109,8 +1133,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const decoded = decodeSessionOperationRecord(record);
     if (decoded.status !== 'decoded') return reject('unavailable', `the Session operation is damaged: ${decoded.reason}`);
     const operation = decoded.value;
-    if (operation.action.workspace.projectId !== scope.projectId ||
-      operation.action.workspace.workspaceId !== scope.workspaceId) {
+    // Every arm: the record's own project and workspace (the codec ties them to the arm's).
+    if (operation.ref.projectId !== scope.projectId || operation.workspaceId !== scope.workspaceId) {
       return { status: 'not_found' };
     }
     return { status: 'ready', value: operation };

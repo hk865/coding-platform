@@ -158,7 +158,8 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     // Lead: a read adds the slice-1 decode defaults (replyHandler/archiveWaitDisposition = null).
     expect(ready(await mailbox.readMessage(f.ctx, sent.ref))).toEqual({ ...sent, replyHandler: null, archiveWaitDisposition: null });
     const source: DecisionSourceV1 = { kind: 'message',
-      key: decisionSourceKey({ kind: 'message', messageRef: sent.ref }), goalRef: GOAL_B, pins: [] };
+      key: decisionSourceKey({ kind: 'message', messageRef: sent.ref }),
+      subject: { kind: 'goal', goalRef: GOAL_B }, pins: [] };
     const before = await f.storeSnapshot();
     expect(await owners(f).reads.readDecisionCard(f.ctx, { source })).toEqual({ status: 'not_found' });
     expect(await f.storeSnapshot()).toEqual(before);
@@ -169,12 +170,13 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     const pa = await propose(f, 's5r2-a11-pa', { planId: 'PA2', goalRef: GOAL_A });
     expect(pa).toMatchObject({ goalRef: GOAL_A, revision: 1, status: 'candidate' });
     expect(pa.requestRef ?? null).toBeNull();
-    const validSource: DecisionSourceV1 = { kind: 'candidate', goalRef: GOAL_A, pins: [],
+    const validSource: DecisionSourceV1 = { kind: 'candidate', subject: { kind: 'goal', goalRef: GOAL_A }, pins: [],
       key: decisionSourceKey({ kind: 'candidate', goalRef: GOAL_A, proposalRef: pa.ref }) };
     const valid = ready(await owners(f).reads.readDecisionCard(f.ctx, { source: validSource }));
-    expect(valid).toMatchObject({ goalRef: GOAL_A, state: 'waiting_answer', cardKey: validSource.key });
+    expect(valid).toMatchObject({ subject: { kind: 'goal', goalRef: GOAL_A }, state: 'waiting_answer',
+      cardKey: validSource.key });
     expect(proposalPins(valid)).toEqual([{ ref: pa.ref, revision: 1 }]);
-    const source: DecisionSourceV1 = { kind: 'candidate', goalRef: GOAL_B, pins: [],
+    const source: DecisionSourceV1 = { kind: 'candidate', subject: { kind: 'goal', goalRef: GOAL_B }, pins: [],
       key: decisionSourceKey({ kind: 'candidate', goalRef: GOAL_B, proposalRef: pa.ref }) };
     const before = await f.storeSnapshot();
     expect(await owners(f).reads.readDecisionCard(f.ctx, { source })).toEqual({ status: 'not_found' });

@@ -10,7 +10,7 @@
  * seam never rejects and never writes.
  */
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
-import type { PlatformDutyV1 } from '../contracts/platform-duty.js';
+import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
@@ -23,9 +23,6 @@ export type SessionDutyResolverDependencies = {
   configuration: WorkflowHostConfiguration | undefined;
 };
 
-/** The five versioned platform profile templates `platform-<duty>@s3.1`. */
-const DUTIES: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
-
 function known(value: PlatformDutyV1 | 'unknown'): ReadResult<PlatformDutyV1 | 'unknown'> {
   return { status: 'ready', value };
 }
@@ -36,7 +33,8 @@ function known(value: PlatformDutyV1 | 'unknown'): ReadResult<PlatformDutyV1 | '
  * otherwise none. A legacy ref is never read through `readRoleSpec`.
  */
 function legacyTemplateDutyOf(role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>): PlatformDutyV1 | undefined {
-  return DUTIES.find((duty) => {
+  // The five versioned platform profile templates `platform-<duty>@s3.1`.
+  return PLATFORM_DUTIES.find((duty) => {
     const template = platformRoleProfile(duty).template;
     return template.templateId === role.templateId && template.templateRevision === role.templateRevision;
   });

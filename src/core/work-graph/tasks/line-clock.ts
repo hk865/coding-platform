@@ -2,9 +2,11 @@
  * The line clock and the record reads a line's clock shares with secretary
  * selection (`latestActivityAt`).
  *
- * `latestActivityAt` is the line card's clock as one pure rule: the Session's
+ * `latestActivityAt` — the line card's clock as one pure rule, the Session's
  * creation instant plus every instant the caller gathered, the lexicographically
- * greatest ISO instant, ignoring null/undefined and falling back to `createdAt`.
+ * greatest ISO instant, ignoring null/undefined and falling back to `createdAt` —
+ * now lives in `state/session-activity.ts`, where the activity record is built,
+ * and is re-exported here so existing importers do not change.
  *
  * The record reads below serve `views/work-line-reader.ts` and
  * `tasks/secretary-selection.ts` with ONE implementation of the active
@@ -37,19 +39,9 @@ export type LineClockFailureSink = (failure: LineClockFailure) => void;
 /** Active read-only copies of a workspace, indexed by the source Session's id. */
 export type ActiveCopies = Map<string, SessionRecord[]>;
 
-/**
- * The line card's clock (L10): the latest of the Session's creation, the
- * caller's instants and nothing else. ISO instants compare as UTC strings; an
- * absent instant is ignored, and an empty/earlier set falls back to `createdAt`.
- */
-export function latestActivityAt(createdAt: string, instants: readonly (string | null | undefined)[]): string {
-  let latest = createdAt;
-  for (const instant of instants) {
-    if (instant === null || instant === undefined) continue;
-    if (instant > latest) latest = instant;
-  }
-  return latest;
-}
+// The rule now lives in `state/session-activity.ts`, next to the activity
+// record it feeds; re-exported here for existing importers.
+export { latestActivityAt } from '../state/session-activity.js';
 
 /**
  * L1/N1: the ACTIVE copies of a workspace, indexed by the source Session they

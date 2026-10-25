@@ -82,6 +82,7 @@ import {
   executionEntryEnteredEventFromEvent, executionRunResultRecordedEventFromEvent,
   inputBindingProblem,
 } from '../persistence/execution-entry-codecs.js';
+import { legacyTemplateDutyOf } from '../queries/query-execution.js';
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
@@ -966,18 +967,6 @@ function roleDutyOf(role: RoleSpecResolutionV1): PlatformDutyV1 | undefined {
   return role.status === 'resolved' ? role.spec.platformDuty : undefined;
 }
 
-/**
- * §2.4 item 3 / §2.5: the duty a legacy Session role ref fixes, when it is one
- * of the five versioned profile templates `platform-<duty>@s3.1`; otherwise
- * none (a custom legacy ref is `executor`). The five template refs are the same
- * table `platformRoleProfile` publishes.
- */
-function legacyTemplateDutyOf(role: RoleConfigurationRef): PlatformDutyV1 | undefined {
-  if (role.kind !== 'legacy_template' || role.templateRevision !== 's3.1') return undefined;
-  const duties: readonly PlatformDutyV1[] = ['executor', 'secretary', 'adviser', 'scribe', 'reviewer'];
-  return duties.find(duty => role.templateId === `platform-${duty}`);
-}
-
 /** The template ids an entry check re-renders from the saved manifest's frozen set. */
 function frozenRenderTemplateIds(manifest: PreparedTaskManifestV1): string[] {
   const ids: string[] = [];
@@ -1122,6 +1111,10 @@ function contextConsumptionProblem(input: {
 }): CoreRejection | null {
   const binding = input.manifest.contextAssembly;
   const roleDuty = roleDutyOf(input.manifest.role);
+  // §2.4 item 3 / §2.5: the duty a legacy Session role ref fixes, when it is one
+  // of the five versioned profile templates `platform-<duty>@s3.1`; otherwise
+  // none (a custom legacy ref is `executor`). The five template refs are the same
+  // table `platformRoleProfile` publishes.
   const templateDuty = legacyTemplateDutyOf(input.manifest.sessionRole);
   const duty = effectivePlatformDuty({ roleDuty, hostDuty: templateDuty });
   if (duty.status !== 'ready') {
@@ -1533,7 +1526,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       // authorizes a new entry; the predecessor read versions join this commit's
       // CAS guards so a new wait still wins the race.
       const waitingGuards: RecordGuard[] = [];
-      const waitingRef = goalScope.goal.settings?.waitForGoalRef ?? null;
+      const waitingRef = goalScope.goal.settings.waitForGoalRef;
       if (waitingRef !== null) {
         const predecessorRead = await readGoal(records, waitingRef);
         // S5-AU-01: a missing predecessor Goal is `incomplete`; only a read

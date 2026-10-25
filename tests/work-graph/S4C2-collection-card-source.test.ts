@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { DecisionSubjectV1 } from '../../src/contracts/goal-decisions.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import {
@@ -45,10 +46,12 @@ function items(): FakeItem[] {
   return Array.from({ length: 201 }, (_unused, index) => ({ id: `n${String(index)}`, closed: index === 199 }));
 }
 
-function project(item: FakeItem, goalRef: GoalRef): DecisionCardV1 {
+function project(item: FakeItem, subject: DecisionSubjectV1): DecisionCardV1 {
   return {
-    cardKey: cardKeyOf(item.id), source: { kind: 'note_review', key: cardKeyOf(item.id), goalRef: { ...goalRef }, pins: [] },
-    state: 'waiting_answer', goalRef: { ...goalRef }, senderSessionRef: null, requestRef: null, objects: [], options: [],
+    cardKey: cardKeyOf(item.id), source: { kind: 'note_review', key: cardKeyOf(item.id),
+      subject: structuredClone(subject), pins: [] },
+    state: 'waiting_answer', subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
+    objects: [], options: [],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
     closedReason: null, readOnly: false, actions: ['answer'],
   };
@@ -66,13 +69,13 @@ function harness(): Harness {
   let byKeyCalls = 0;
   const spec: CardCollectionSourceSpec<FakeItem> = {
     kind: 'note_review',
-    needsGoal: true,
+    serves: ['goal'],
     async readCollection() {
       collectionCalls += 1;
       return { status: 'ready', value: collection };
     },
     keyOf: (item) => cardKeyOf(item.id),
-    project: (item, goalRef) => project(item, goalRef),
+    project: (item, subject) => project(item, subject),
     closedReasonOf: (item) => (item.closed ? 'source_resolved' : null),
     async readByKey(_ctx, { source }) {
       byKeyCalls += 1;
@@ -124,7 +127,7 @@ describe('S4C2 U7 generic collection card source', () => {
     const h = harness();
     const found = await h.source.readByKey?.(ctx(), {
       workspace: WORKSPACE,
-      source: { kind: 'note_review', key: N200_KEY, goalRef: GOAL, pins: [] },
+      source: { kind: 'note_review', key: N200_KEY, subject: { kind: 'goal', goalRef: GOAL }, pins: [] },
     });
     expect(found).toMatchObject({ status: 'ready', value: { cardKey: N200_KEY, state: 'waiting_answer' } });
     expect(h.collectionCalls()).toBe(0);
@@ -132,14 +135,14 @@ describe('S4C2 U7 generic collection card source', () => {
 
     const missing = await h.source.readByKey?.(ctx(), {
       workspace: WORKSPACE,
-      source: { kind: 'note_review', key: MISSING_KEY, goalRef: GOAL, pins: [] },
+      source: { kind: 'note_review', key: MISSING_KEY, subject: { kind: 'goal', goalRef: GOAL }, pins: [] },
     });
     expect(missing).toEqual({ status: 'ready', value: null });
     expect(h.collectionCalls()).toBe(0);
 
     const closed = await h.source.readByKey?.(ctx(), {
       workspace: WORKSPACE,
-      source: { kind: 'note_review', key: N199_KEY, goalRef: GOAL, pins: [] },
+      source: { kind: 'note_review', key: N199_KEY, subject: { kind: 'goal', goalRef: GOAL }, pins: [] },
     });
     expect(closed).toMatchObject({ status: 'ready', value: { cardKey: N199_KEY, state: 'closed',
       closedReason: 'source_resolved', readOnly: true, actions: [], options: [] } });

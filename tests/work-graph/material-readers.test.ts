@@ -53,7 +53,9 @@ function expectedWorkspace(ref: WorkspaceRef): WorkspaceSnapshot {
 function expectedGoal(ref: GoalRef, workspaceRef: WorkspaceRef, objective: string,
   activePlanRevision: PlanRevisionRef | null, revision: number, since: GoalSnapshot['since']): GoalSnapshot {
   return { ref, workspaceRef, objective, desiredState: 'active', desiredStateRevision: 1,
-    desiredStateRequestedBy: null, activePlanRevision, revision, since };
+    desiredStateRequestedBy: null, activePlanRevision, revision,
+    settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
+    continuedFrom: null, copiedInterventions: [], since };
 }
 function expectedRun(ref: RunRef, taskId: string, attemptId: string, planRef: PlanRevisionRef,
   workspaceId: string): RunSnapshot {

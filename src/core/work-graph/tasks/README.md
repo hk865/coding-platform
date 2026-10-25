@@ -6,14 +6,14 @@
 - 依赖方向：只允许 `model, state, persistence, materials, architecture, sessions, queries`（`docs/refactor/module-target.json`）。不得 import `notes/`、`evidence/`、`communication/`、`views/`，也不得 import `src/core/agent-runtime`、`src/app`、`src/business`、`src/composition`。
 - 状态迁移只经 `src/core/work-graph/state/`：本层调用 `transitionX`/状态构造函数拿 next 记录、guards 与 effects，不手改受保护字段（AGENTS 第 9 条）。
 - 写入顺序固定：上下文与请求隔离 → 形状/scope/pins → identity+fingerprint → receipt 重放 → 现状读 → 纯状态机 → 一个 commit。失败的读不得降级成空事实、`not_found` 或普通 blocked。
-- 秘书 profile 是注入端口：本层只声明并消费 `SecretaryProfilePort`（`src/core/work-graph/model/request-contracts.ts:149`）；`createSecretaryProfiles`（`src/app/secretary-profiles.ts:50`）与发布端口 `secretaryProfiles` 在 `src/app/` 和组合根，不在本文件夹。
+- 秘书 profile 是注入端口：本层只声明并消费 `SecretaryProfilePort`（`src/core/work-graph/model/request-contracts.ts:151`）；`createSecretaryProfiles`（`src/app/secretary-profiles.ts:50`）与发布端口 `secretaryProfiles` 在 `src/app/` 和组合根，不在本文件夹。
 - 不负责：纯状态机与记录构造（`state/`）、通用编解码与 store 失败映射（`src/core/work-graph/persistence/`）、跨聚合读模型（`views/`）、Host 路由与接线（`app/`、`composition/`）。
 
 ## 文件
 
-本目录 70 个 `.ts`，按主题分组。
+本目录 71 个 `.ts`，按主题分组。
 
-### 请求、秘书与决定卡（13 个）
+### 请求、秘书与决定卡（14 个）
 
 做 request round 的提交/路由/分配、秘书准入、决定答案与决定卡投影的去这组。
 
@@ -25,6 +25,7 @@
 - `request-facts.ts` — request 核心视图与 candidate adapter：`deriveRequestCore`、`createRequestFacts`、`createCandidateRequestFactsReader`、`readAnswers`（按已读轮次批读答案的唯一读法）。
 - `request-service.ts` — request round 的共享入口：人的命令与可信内部命令共用一条 commit 路径；`workspaceOf` 折调用 scope，`requestAssignmentRow` 是提交行的唯一纯判定；记录键、请求根和 `request-tail` 空操作 claim 用 `src/core/work-graph/queries/request-round-claims.ts` 的那一份。另有两条具名读取：`unassigned`（未分配 drain 的一页请求）与 `open`（某状态分区里有开放轮的请求根，每个根一次），两者共用 `readOpenIndexPage` 的游标解析与页读取。人的 `ask`（对一张卡片问秘书或重出候选）续请求的一轮，卡片引用是 1–20 个本项目的 `VersionedRef`、不重复，存为 `relatedCardRefs`；`askInputText` 给出存下的输入（重出时先放固定的一句），`publicCommandProblem` 是人命令形状与文本的唯一纯判定。加轮之前 precheck 用一次 `readMany` 读这些卡片对象，`cardRefsReadRefusal` 判定结果：存储不保存的类型 `invalid`（再问也没用），别的读失败 `unavailable`，不存在的对象放行（上下文里写 not found），不比较钉住的版本。授权检查收窄出 Host principal，命令身份和事件 actor 都取自它。
 - `secretary-selection.ts` — 秘书候选事实与选择：`admitRequestSecretary` 是唯一准入检查（scope、可用性、派发、duty、profile），`createSecretarySelection` 只列已准入候选；另有 `createProjectSecretaryScope`、`orderCandidates`。
+- `secretary-query-run.ts` — 运行中秘书 QueryRun 的唯一受信解析器 `createSecretaryQueryRun`：只读已存的 QueryRun、它的执行状态、QueryJob、Session 与执行绑定的 manifest（取准备时冻结的 Plan），什么都不取自输入；`forbidden` 与 `unavailable` 分开，`goals` 在 6B-1 为 `[]`。
 - `session-facts.ts` — `SessionFactsPort` 的唯一实现（keyset 分页，有页限）。
 - `unknown-call-review-answers.ts` — 决定答案索引的内部读取（UCR/CRR 两种 source kind）。
 - `unknown-call-review-card.ts` — `UnknownCallReview` 到决定卡的纯投影。
@@ -91,7 +92,7 @@
 - `command-expansion.ts` — `npm run`/脚本的二次展开纯 helper，按上限读 `package.json`。
 - `command-recognition.ts` — 阻塞命令识别器：展平排序后按 exact/action/`declaredForms` 取第一条。
 - `entry-plan-reader.ts` — `entryPlanVerdict` 所需读取：旧 Plan 上钉住的 claim 还能否进入。
-- `line-clock.ts` — 工作线的单一时钟与记录读取：`latestActivityAt`、活跃副本、最近 Query、QueryJob 的 Goal、阶段与 `readClaimedAtForRun`。
+- `line-clock.ts` — 工作线的记录读取：`latestActivityAt`（正本已移到 `src/core/work-graph/state/session-activity.ts:25`，这里只再导出，现有导入者不变）、活跃副本、最近 Query、QueryJob 的 Goal、阶段与 `readClaimedAtForRun`。
 - `owner-record-read.ts` — 单条 owner 记录读取（`readMany` + 解码 + 缺失区分）。
 - `receipt-replay.ts` — 已提交 receipt 的单一重放 helper。
 - `revision-guard.ts` — 从 `meta.expected` 取某引用唯一 revision pin 的纯规则。
@@ -126,24 +127,24 @@
 | `pinRevision` | `revision-guard.ts:19` | 从 `meta.expected` 取某引用的唯一非负 revision | 校验 pins；不要另写数组扫描 |
 | `replayCommittedReceipt` | `receipt-replay.ts:85` | 在 receipt cursor 处定位原事件、核对 receipt/事件与身份、投影结果 | 已提交重放，以及 commit 抛错后的恢复 |
 | `trustedContextOf`、`isolatedWriteOf` | `trusted-context.ts:30`、`trusted-context.ts:98` | 绑定可信 Host 上下文（保留 AbortSignal）并同步隔离请求 | 每个写入服务的入口 |
-| `bindTrustedContext`、`isolateWrite` | `execution-entry-service.ts:207`、`execution-entry-service.ts:215` | 上面两个的带标签包装，检查顺序与文案一致 | 证据、邮箱等要同一拒绝文案的入口 |
-| `mapStoreFailure` | `execution-entry-service.ts:147` | 把 execution-write 的 `StoreFailure` 映射成 `CoreRejection` | 执行类写入的失败映射；其它 owner 用 `src/core/work-graph/persistence/read-result-failures.ts` 的对应映射 |
-| `requestTailKey`、`secretaryIntakeKey` | `src/core/work-graph/model/request-contracts.ts:68`、`src/core/work-graph/model/request-contracts.ts:73` | request tail 与 secretary intake 两个物理唯一槽的 key：前者是 `REQUEST_TAIL_PREFIX` 加请求根 ref 的规范 JSON；后者是 `SECRETARY_INTAKE_PREFIX` 加内联拼出的 Session 聚合 ref（`aggregateType: 'Session'`、`projectId`、`sessionId`）的规范 JSON，不调 `sessionAggregateRefKey`，也不是记录 refKey | 认领/转移 request 所有权 |
-| `workspaceOf` **正本** | `request-service.ts:221` | 把 `CoreCallContext` 折成 `WorkspaceScope`（缺省 workspace 为空串） | 请求、秘书与读取统一 scope；不要各写一份 |
-| `requestAssignmentRow` **正本** | `request-service.ts:833` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
+| `bindTrustedContext`、`isolateWrite` | `execution-entry-service.ts:208`、`execution-entry-service.ts:216` | 上面两个的带标签包装，检查顺序与文案一致 | 证据、邮箱等要同一拒绝文案的入口 |
+| `mapStoreFailure` | `execution-entry-service.ts:148` | 把 execution-write 的 `StoreFailure` 映射成 `CoreRejection` | 执行类写入的失败映射；其它 owner 用 `src/core/work-graph/persistence/read-result-failures.ts` 的对应映射 |
+| `requestTailKey`、`secretaryIntakeKey` | `src/core/work-graph/model/request-contracts.ts:70`、`src/core/work-graph/model/request-contracts.ts:75` | request tail 与 secretary intake 两个物理唯一槽的 key：前者是 `REQUEST_TAIL_PREFIX` 加请求根 ref 的规范 JSON；后者是 `SECRETARY_INTAKE_PREFIX` 加内联拼出的 Session 聚合 ref（`aggregateType: 'Session'`、`projectId`、`sessionId`）的规范 JSON，不调 `sessionAggregateRefKey`，也不是记录 refKey | 认领/转移 request 所有权 |
+| `workspaceOf` **正本** | `request-service.ts:202` | 把 `CoreCallContext` 折成 `WorkspaceScope`（缺省 workspace 为空串） | 请求、秘书与读取统一 scope；不要各写一份 |
+| `requestAssignmentRow` **正本** | `request-service.ts:814` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
 | `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等（F 行副本的正本）；`src/core/work-graph/state/ref-equality.ts:2` 的 `sameRef` 是按结构逐字段比较，不等价 | 判等引用/内容时；不要另写副本 |
-| `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:994` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
-| `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1004` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
+| `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1069` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
+| `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1079` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 取 `Error.message`，否则 `String(error)`；转换抛错不吞 | 错误文案；本目录旧副本已删除，不要再写（M1-38） |
 | `sessionRefProblem` **正本** | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整 `{projectId, sessionId}` 引用 | 校验 SessionRef；不要另写形状检查 |
-| `storeFailureToRejection` **正本** | `src/core/work-graph/persistence/read-result-failures.ts:42` | 按 owner 语义把 Store 失败映射成 `CoreRejection` | 处理 store 失败；owner 写入用同文件的 `ownerWriteStoreFailureToRejection`，读用 `ownerReadStoreFailureToRejection` |
+| `storeFailureToRejection` **正本** | `src/core/work-graph/persistence/read-result-failures.ts:40` | 按 owner 语义把 Store 失败映射成 `CoreRejection` | 处理 store 失败；owner 写入用同文件的 `ownerWriteStoreFailureToRejection`，读用 `ownerReadStoreFailureToRejection` |
 | `rejected` **正本** | `src/contracts/core/rejections.ts:5` | 领域 rejection 构造器（无 `current`） | 返回失败时用 `rejected` |
 | `lookupCommit` **正本** | `src/core/record-store/ports.ts:190` | Store 的 exact identity/fingerprint 幂等查询端口 | 重放/恢复的底层查询；需要失败分类时用 `lookupCommittedReceipt`，不要复制整套分类 |
 | `oldestPendingRound` **正本** | `src/core/work-graph/queries/request-rounds-read.ts:471` | 选最老的 pending 非 routing round | intake 转移、未分配遍历、Workflow 计划；只有这一份 |
-| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:567` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
-| `latestActivityAt` **正本**、`indexActiveCopies`、`readActiveCopies` | `line-clock.ts:45`、`line-clock.ts:59`、`line-clock.ts:74` | 工作线时钟、活跃只读副本索引与完整分页枚举 | 工作线卡、秘书选择；不要把时钟或副本另读一份 |
-| `readLatestQueryRun`、`readQueryRunByRef`、`readQueryJobGoal` | `line-clock.ts:97`、`line-clock.ts:125`、`line-clock.ts:153` | 最近 Query、按 ref 读 QueryRun、读其 QueryJob 的 goal；失败经 sink 原样报 | 线卡与只读副本的阶段；`readQueryJobGoal` 由线卡和副本共用 |
-| `copyPhase`、`readClaimedAtForRun` **正本** | `line-clock.ts:180`、`line-clock.ts:198` | 副本的阶段/开始时刻；Run 无起止时间时按 claim 索引回退读 claimedAt | 线卡、秘书选择；不要把 claimedAt 另读一份 |
+| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:572` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
+| `latestActivityAt` **正本**、`indexActiveCopies`、`readActiveCopies` | `src/core/work-graph/state/session-activity.ts:25`、`line-clock.ts:51`、`line-clock.ts:66` | 工作线时钟（规范化实现在 `state/session-activity.ts`，`line-clock.ts` 只再导出它）、活跃只读副本索引与完整分页枚举 | 工作线卡、秘书选择；不要把时钟或副本另读一份 |
+| `readLatestQueryRun`、`readQueryRunByRef`、`readQueryJobGoal` | `line-clock.ts:89`、`line-clock.ts:117`、`line-clock.ts:145` | 最近 Query、按 ref 读 QueryRun、读其 QueryJob 的 goal；失败经 sink 原样报 | 线卡与只读副本的阶段；`readQueryJobGoal` 由线卡和副本共用 |
+| `copyPhase`、`readClaimedAtForRun` **正本** | `line-clock.ts:172`、`line-clock.ts:190` | 副本的阶段/开始时刻；Run 无起止时间时按 claim 索引回退读 claimedAt | 线卡、秘书选择；不要把 claimedAt 另读一份 |
 | `readCanonicalTaskFacts`、`readTaskClosure`、`taskClosureOf` | `plan-readers.ts:1628`、`plan-readers.ts:1952`、`plan-readers.ts:1932` | 规范 Task 事实（Plan、phase、lease、requeue/refusal）与 Task closure | 认领、完成、对账、节点详情读 Task |
 | `readGoal`、`readGoalScope`、`readPlan`、`readProposal`、`readProposalOrigin` | `plan-readers.ts:386`、`plan-readers.ts:432`、`plan-readers.ts:463`、`plan-readers.ts:477`、`plan-readers.ts:498` | 单条 Goal/Plan/Proposal 及其来源的 canonical 读取 | 任何 owner 要一条已存记录时 |
 | `readGoalsByWorkspaceCreated` | `plan-readers.ts:405` | 按 `s6-goal-by-workspace-created` 升序分页读完一个工作区的全部 Goal（第一项即最早创建的 Goal） | `main/read` 取“首目标”与其前目标区边界 |
@@ -173,23 +174,24 @@
 | `readEntryPlanVerdict` | `entry-plan-reader.ts:32` | 进入判定所需的旧 Plan/新 Plan 读取 | 进入授权与 RUN-03 复核 |
 | `evaluateEligibility` | `eligibility.ts:32` | Task 资格纯规则（phase、kind、assignment、lease） | 候选列表与认领前置；不替代认领准入 |
 | `deriveRequestCore`、`createRequestFacts`、`createCandidateRequestFactsReader` | `request-facts.ts:87`、`request-facts.ts:266`、`request-facts.ts:349` | request 核心视图、事实端口与 candidate adapter | 请求视图与候选列表；不要另算 owner |
-| `readAdmissionFacts`、`readStoredManifest`、`readManifestFromEnvelope` | `execution-entry-service.ts:261`、`execution-entry-service.ts:279`、`execution-entry-service.ts:313` | 执行事实/清单读取与 manifest 解码 | 执行入口与模型调用 |
-| `admitEnteredRun`、`recheckHostRoleAdmission`、`loadReplayEvent` | `execution-entry-service.ts:594`、`execution-entry-service.ts:507`、`execution-entry-service.ts:1346` | 已进入 Run 的准入复核、Host/Role 复核与重放事件加载 | 执行入口与模型调用；不要复制授权算法 |
-| `executionReadGuards`、`claimEffectRecords`、`claimLeaseOf`、`claimSessionOf`、`hostLeaseOf` | `execution-entry-service.ts:946`、`execution-entry-service.ts:889`、`execution-entry-service.ts:674`、`execution-entry-service.ts:685`、`execution-entry-service.ts:792` | 执行读 guard、Run effect 到记录/effect 的翻译、Lease/Session 上下文 | 执行/对账 commit；不要手拼相关记录 |
+| `readAdmissionFacts`、`readStoredManifest`、`readManifestFromEnvelope` | `execution-entry-service.ts:262`、`execution-entry-service.ts:280`、`execution-entry-service.ts:314` | 执行事实/清单读取与 manifest 解码 | 执行入口与模型调用 |
+| `admitEnteredRun`、`recheckHostRoleAdmission`、`loadReplayEvent` | `execution-entry-service.ts:595`、`execution-entry-service.ts:508`、`execution-entry-service.ts:1339` | 已进入 Run 的准入复核、Host/Role 复核与重放事件加载 | 执行入口与模型调用；不要复制授权算法 |
+| `executionReadGuards`、`claimEffectRecords`、`claimLeaseOf`、`claimSessionOf`、`hostLeaseOf` | `execution-entry-service.ts:947`、`execution-entry-service.ts:890`、`execution-entry-service.ts:675`、`execution-entry-service.ts:686`、`execution-entry-service.ts:793` | 执行读 guard、Run effect 到记录/effect 的翻译、Lease/Session 上下文 | 执行/对账 commit；不要手拼相关记录 |
 | `identifyDelegatedWriter`、`authorizeDelegatedWrite` | `plan-write-admission.ts:144`、`plan-write-admission.ts:234` | 委派写者身份识别与当前权限复核（含真实 guards） | Agent 计划写、requeue；两步顺序不可换 |
-| `admitGoalCreation`、`createGoalService` | `task-service.ts:155`、`task-service.ts:414` | Goal 创建的准入管线与服务工厂 | Host 建 Goal |
+| `admitGoalCreation`、`createGoalService` | `task-service.ts:156`、`task-service.ts:419` | Goal 创建的准入管线与服务工厂；新 Goal 以 `DEFAULT_GOAL_SETTINGS_V1` 的副本、`continuedFrom: null`、`copiedInterventions: []` 出生 | Host 建 Goal |
 | `createInitialPlanAnswerReader` | `initial-plan-answer.ts:48` | 初始 Plan 答案的事实读取与采用侧重核（同一 records/materials/bodies 端口） | 初答读取、模型协调草稿的采用前证明 |
-| `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1041`、`plan-service.ts:2103` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
-| `createRequestRoundService` | `request-service.ts:950` | request round 的读写端口 | Host 与 Workflow 的请求入口 |
-| `open`、`unassigned` **正本** | `request-service.ts:1703`、`request-service.ts:1651` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:1703`）的游标解析和页读取，不要另写一份 |
+| `createPlanService`、`createRequestCandidateService` | `plan-service.ts:1044`、`plan-service.ts:2106` | Plan 采用/task 读服务与 request candidate 服务 | 组合根接线 |
+| `createRequestRoundService` | `request-service.ts:931` | request round 的读写端口 | Host 与 Workflow 的请求入口 |
+| `open`、`unassigned` **正本** | `request-service.ts:1684`、`request-service.ts:1632` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:880`）的游标解析和页读取，不要另写一份 |
 | `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:722`、`claim-service.ts:171`、`requeue-service.ts:600`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查、返工服务与对账候选读取器 | 组合根与启动对账 |
-| `createExecutionEntryService`、`createModelCallService`、`createModelRequestReadPort`、`modelRequestPermitIdFor` | `execution-entry-service.ts:1403`、`model-call-service.ts:154`、`model-call-service.ts:366`、`model-call-contracts.ts:80` | 执行入口、模型请求读写与 permit id | 组合根接线 |
+| `createExecutionEntryService`、`createModelCallService`、`createModelRequestReadPort`、`modelRequestPermitIdFor` | `execution-entry-service.ts:1396`、`model-call-service.ts:154`、`model-call-service.ts:366`、`model-call-contracts.ts:80` | 执行入口、模型请求读写与 permit id | 组合根接线 |
 | `createRunControlService`、`controlIntentRefFor`、`createRunStateReader` | `control-service.ts:583`、`control-service.ts:159`、`run-state-service.ts:407` | Run 控制服务、确定性的 intent 引用与执行读取器 | 组合根、Goal 扇出、执行读取 |
 | `createRunReconcileService`、`createExecutionHistoryService`、`createRunActivityService`、`runActivityRefOf` | `run-reconcile-service.ts:649`、`execution-history-service.ts:204`、`run-activity-service.ts:376`、`run-activity-service.ts:277` | Run 对账、执行历史定位器、活动回填与活动引用 | 启动对账与活动回填 |
-| `createGoalSettingsService`、`setGoalControlFromHost`、`createGoalDecisionCauseReader` | `goal-settings-service.ts:174`、`goal-control.ts:125`、`goal-decision-reader.ts:117` | Goal 设置、desired state 与决定原因读取 | 组合根、Host 控制、决定队列 |
-| `createGoalExecutedFilesReader`、`createPlanningQuestionReader` | `goal-executed-files-reader.ts:72`、`planning-question-reader.ts:70` | Goal 已执行文件与已保存 planning question 的只读端口 | 决定队列与 Host 读 |
+| `createGoalSettingsService`、`setGoalControlFromHost`、`createGoalDecisionCauseReader` | `goal-settings-service.ts:174`、`goal-control.ts:125`、`goal-decision-reader.ts:114` | Goal 设置、desired state 与决定原因读取 | 组合根、Host 控制、决定队列 |
+| `createGoalExecutedFilesReader`、`createPlanningQuestionReader` | `goal-executed-files-reader.ts:72`、`planning-question-reader.ts:69` | Goal 已执行文件与已保存 planning question 的只读端口 | 决定队列与 Host 读 |
 | `admitRequestSecretary` **正本** | `secretary-selection.ts:191` | 请求秘书的唯一准入检查：caller scope、occupancy 可用性、Query 派发、duty 与 profile；占用只表示 busy | 分配、转交与候选列表都走它；不要复制准入算法 |
 | `createSecretarySelection`、`createProjectSecretaryScope`、`orderCandidates` | `secretary-selection.ts:498`、`secretary-selection.ts:95`、`secretary-selection.ts:121` | 秘书候选事实、项目 scope 与候选排序 | 请求分配；不要另算候选 |
+| `createSecretaryQueryRun`、`SecretaryQueryRunDependencies` | `secretary-query-run.ts:48`、`secretary-query-run.ts:39` | 运行中秘书 QueryRun 的唯一受信解析器：只读已存的 QueryRun、执行状态、QueryJob 与 Session（三次读都经 `readOwnerRecord`）与执行绑定的 manifest（经 `queries/query-execution.ts` 的 `loadQueryManifest`），返回 `SecretaryQueryRunV1`（含准备时冻结的 `effectiveGoalId` 与 Plan `planRef`）；`forbidden` 与 `unavailable` 分开：读失败、缺 Session 或 QueryJob、坏记录、坏绑定或读不出的 manifest 是 `unavailable` | 组合根把它注入 `createNoteService` 的 `secretaryQueryRun`；7A 复用同一解析器 |
 | `createSessionFactsService`、`createSessionAnomalyService`、`createUnknownCallReviewService` | `session-facts.ts:170`、`session-anomaly-service.ts:355`、`unknown-call-review-service.ts:412` | Session 事实端口、异常锚服务与 UCR 服务 | 组合根接线 |
 | `createCommandRerunRequestService`、`createTaskContextInputService` | `command-rerun-request-service.ts:174`、`context-input-service.ts:948` | CRR 读写服务与精确 task input 服务 | 组合根接线 |
 | `completeTaskFromHost`、`completeGoalFromHost` | `completion.ts:262`、`completion.ts:496` | 正式 Task/Goal 完成 Host 入口 | Host 完成动作 |
@@ -224,18 +226,19 @@
 ## 不要做
 
 - 不要另写 `sameJson`、`sessionRefProblem`、`messageOf`、`mergeGuards`、store 失败映射、`rejected` 的本地副本；上表每个能力只认一个正本（标 **正本** 的那一行）。
+- Host 调用者检查和命令身份里的主体用 `src/contracts/core/call-context.ts:79` 的 `hostPrincipalOf` 与 `src/contracts/core/call-context.ts:64` 的 `principalIdentity`；`request-service.ts` 原来的私有副本已删除，不要再写。
 - `mergeGuards` 只有 `src/core/work-graph/persistence/record-guards.ts:12` 这一份，不要再写；读窗口的 `appendGuardFirstWins`（`src/core/work-graph/queries/request-rounds-read.ts:185`）与 `secretary-selection.ts:112` 的 `appendGuardCopyFirstWins`（带 guard 浅拷贝）是有意保留的 first-wins 追加，不是它的副本（S11、S12）。
 - `oldestPendingRound` 只有 `src/core/work-graph/queries/request-rounds-read.ts:471` 这一份，已合成；不要另写选最老 pending round 的私有副本。
-- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:567` 这一份，已合成；不要在 request-service 内联第二份。
-- 开放轮遍历只有 `unassigned` 和 `open` 两条具名读取，且共用 `readOpenIndexPage`（`request-service.ts:899`）的游标解析与页读取；不要在别处再写 `s6-query-open-by-workspace` 的分页、`after` 解析或候选解码。`open` 只投影 `job.requestRoot`，不读请求事实。
-- `readClaimedAtForRun` 的正本在 `line-clock.ts:198`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:198` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
-- `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:374` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:646` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。
+- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:572` 这一份，已合成；不要在 request-service 内联第二份。
+- 开放轮遍历只有 `unassigned` 和 `open` 两条具名读取，且共用 `readOpenIndexPage`（`request-service.ts:880`）的游标解析与页读取；不要在别处再写 `s6-query-open-by-workspace` 的分页、`after` 解析或候选解码。`open` 只投影 `job.requestRoot`，不读请求事实。
+- `readClaimedAtForRun` 的正本在 `line-clock.ts:190`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:190` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
+- `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:355` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:646` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。
 - `lookupCommit` 只有 `src/core/record-store/ports.ts:190` 这个端口；`lookupCommittedReceipt`（`src/core/work-graph/persistence/receipt-lookup.ts:18`，`src/core/work-graph/queries/query-job-service.ts:410` 转出）是带失败分类的唯一包装。claim/control 等 owner 直接调用端口时也要自己分类失败，不要复制整套重试与分类逻辑。
-- `sessionAggregateRefKey` 与 `plainSessionRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:994`/`:1004` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:73`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是 `sessionAggregateRefKey` 的副本，不要改写成它。
-- `storeFailureToRejection` 只有 `src/core/work-graph/persistence/read-result-failures.ts:42`；owner 用同文件的 `ownerWriteStoreFailureToRejection`（`src/core/work-graph/persistence/read-result-failures.ts:110`），`request-service` 的本地 store 失败 switch 已改为调用它，不要恢复手写映射。
+- `sessionAggregateRefKey` 与 `plainSessionRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1069`/`:1079` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:75`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是 `sessionAggregateRefKey` 的副本，不要改写成它。
+- `storeFailureToRejection` 只有 `src/core/work-graph/persistence/read-result-failures.ts:40`；owner 用同文件的 `ownerWriteStoreFailureToRejection`（`src/core/work-graph/persistence/read-result-failures.ts:108`），`request-service` 的本地 store 失败 switch 已改为调用它，不要恢复手写映射。
 - `rejected` 只有 `src/contracts/core/rejections.ts:5` 这一份；`request-service` 的本地 `rejection` 已删，不要恢复。
 - `messageOf` 只有 `src/contracts/error-message.ts:2` 这一份；本目录与 `record-store`、`agent-runtime` 的旧副本已删除，不要恢复（M1-38）。
-- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:150` 的 `checkPlainSessionRef` 是 planned SessionRef 输入的报错适配器（S06，两种固定文字），不能换成 `sessionRefProblem`；不要新增形状检查副本。
+- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:158` 的 `checkPlainSessionRef` 是 planned SessionRef 输入的报错适配器（S06，两种固定文字），不能换成 `sessionRefProblem`；不要新增形状检查副本。
 - 不要把失败的读取变成空事实、`not_found` 或普通 blocked；`unavailable`/`incomplete` 原样返回（FP-05、M1-12、MH-06）。
 - 不要手改受保护字段或只写生命周期的一半：Run、Attempt、Lease、Outbox、Session 占用、Task/Goal reduction 都经 `state/` 的构造函数，并在同一 commit 里写齐（M1-01、M1-05、M1-36）。
 - 不要先读现状再查 receipt：重放与丢失 ack 的恢复都先 `lookupCommit`/`replayCommittedReceipt`，绝不按今天的快照重建原答案（M1-14、M1-15、M1-25、M1-26）。

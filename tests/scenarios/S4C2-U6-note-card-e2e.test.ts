@@ -64,6 +64,7 @@ describe('S4C2-U6 D-01 a real contradiction card through the real coordinator', 
       cardKey: AGENT_CARD_KEY,
       state: 'waiting_answer',
       source: { kind: 'note_review', key: AGENT_CARD_KEY,
+        subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: PROJECT_ID, goalId: 's4a-goal' } },
         pins: [{ ref: { aggregateType: 'NoteHead', projectId: PROJECT_ID, noteId: agentId }, revision: 1 }] },
     });
     expect(card!.options.map(option => option.id)).toEqual(['supersede', 'coexist', 'reject']);

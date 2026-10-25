@@ -2,7 +2,7 @@ import type { SessionRef, VersionPin } from '../../../../contracts/core/identity
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
   GoalDecisionBasisV1 } from '../../../../contracts/goal-decisions.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
-import type { GoalSnapshot } from '../../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { decodeSessionMessageRecord } from '../../sessions/message-record-codecs.js';
 import { goalBasis, isUserRecipient, sameJson } from './read-support.js';
 import type { SourceReadResult, SourceReadSupport } from './types.js';
@@ -11,6 +11,7 @@ import type { SourceReadResult, SourceReadSupport } from './types.js';
 export async function readMessageSource(
   support: SourceReadSupport,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'message' }>,
+  goalRef: GoalRef,
 ): Promise<SourceReadResult> {
   let goal: GoalSnapshot;
   let objects: DecisionObjectV1[] = [];
@@ -30,7 +31,8 @@ export async function readMessageSource(
     || message.decision.syntheticAnswer || message.intent !== 'decision_request') {
     return rejectedWithCurrent('invalid', 'the decision source message is not an answerable user decision card');
   }
-  const goalRead = await support.readGoal(message.goalRef ?? message.decision.source.goalRef);
+  // The message's own Goal wins when it has one; otherwise the source subject's.
+  const goalRead = await support.readGoal(message.goalRef ?? goalRef);
   if (goalRead.status !== 'ready') return goalRead;
   goal = goalRead.value;
   if (goal.ref.projectId !== support.scope.projectId || goal.workspaceRef.workspaceId !== support.scope.workspaceId) {

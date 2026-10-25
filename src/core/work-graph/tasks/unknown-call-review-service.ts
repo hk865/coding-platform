@@ -1212,13 +1212,13 @@ export function createUnknownCallReviewService(
         { ref: identity.reviewRef, revision: identity.revision },
       ]);
     }
-    // L19: the ANSWER's captured pins and content basis are the untrusted
-    // caller's reference, never a replacement for the caller's copy. The two
-    // must agree; the proof and the T02 check below use the CAPTURED copy.
-    if (!Array.isArray(source.pins) || !isRecord(source.goalRef)
-      || !Array.isArray(captured.source.pins) || !isRecord(captured.source.goalRef)
+    // L19: the ANSWER's captured pins and subject are the untrusted caller's
+    // reference, never a replacement for the caller's copy. The two must
+    // agree; the proof and the T02 check below use the CAPTURED copy.
+    if (!Array.isArray(source.pins) || !isRecord(source.subject)
+      || !Array.isArray(captured.source.pins) || !isRecord(captured.source.subject)
       || canonicalJson(captured.source.pins as unknown as JsonValue) !== canonicalJson(source.pins as unknown as JsonValue)
-      || canonicalJson(captured.source.goalRef as unknown as JsonValue) !== canonicalJson(source.goalRef as unknown as JsonValue)) {
+      || canonicalJson(captured.source.subject as unknown as JsonValue) !== canonicalJson(source.subject as unknown as JsonValue)) {
       return rejected('invalid', 'the disposition source disagrees with the answer\'s captured pins');
     }
     if (canonicalJson(captured.selection as unknown as JsonValue) !== canonicalJson(selection as unknown as JsonValue)) {

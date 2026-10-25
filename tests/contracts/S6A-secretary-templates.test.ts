@@ -42,7 +42,14 @@ const secretaryAnswerText = [
     '- schemaVersion: 1.',
     "- body: your answer to the person, in the person's language. It must not be empty.",
     '- ideas: [] or 2 to 3 options, each {"title", "detail"}. title is one line of at most 120 characters; detail is at most 600 characters. Give options only when the person has a real choice between different approaches. Never give exactly one option and never more than three.',
-    '- goalCardDrafts: [] unless this request has no goal and the person asks for new work. Each draft is {"objective", "completion", "autonomy"}: objective is one sentence; completion is a non-empty array of checkable completion criteria; autonomy is "every_step" or "after_plan_confirmation". A draft is a proposal only; no goal exists until the person confirms it.',
+    '- goalCardDrafts: [] unless this request has no goal and the person asks for new work. Each draft is '
+    + '{"objective", "completion", "autonomy", "screening"}: objective is one sentence; completion is a non-empty '
+    + 'array of checkable completion criteria; autonomy is "every_step" or "after_plan_confirmation"; screening is '
+    + 'optional: omit it or use null when you did not screen the draft, otherwise give {"modules": [ModuleRef...], '
+    + '"size": "small" | "medium" | "large" | "unknown", "conflictsWith": [GoalRef...], "dependsOn": [GoalRef...], '
+    + '"urgency": "high" | "normal" | "low", "suggestedPosition": null or an integer >= 0, "note": a string of at '
+    + 'most 512 UTF-8 bytes}. Use the full ModuleRef and GoalRef objects exactly as the tools show them. A draft is '
+    + 'a proposal only; no goal exists until the person confirms it.',
 ].join('\n');
 
 /** The platform `secretary-round` layout, written out: one blank line after the prelude. */
@@ -56,13 +63,14 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 }
 
 describe('the platform secretary templates', () => {
-    it('declares both at version 1, with their code-owned slots and committed digests', () => {
+    it('declares the round at version 1 and the answer at version 2, with their code-owned slots and digests', () => {
+        const versions = { 'secretary-round': 1, 'secretary-answer': 2 } as const;
         for (const id of ['secretary-round', 'secretary-answer'] as const) {
             expect(PACK.manifest.templates[id], `manifest entry ${id}`).toEqual({
-                file: `templates/${id}.txt`, version: 1, mentionsTools: [],
+                file: `templates/${id}.txt`, version: versions[id], mentionsTools: [],
             });
             expect(PACK.origins[id], `origin ${id}`).toEqual({
-                packId: 'platform', version: 1, mentionsTools: [],
+                packId: 'platform', version: versions[id], mentionsTools: [],
             });
         }
         expect(TEMPLATE_SLOTS['secretary-round']).toEqual({
@@ -82,7 +90,7 @@ describe('the platform secretary templates', () => {
         expect(sha256Hex(PACK.templates['secretary-round']!))
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
-            .toBe('56d38906f282a01b6f627e0d1ffe023445e753daa5fc2c4049c7287e513ba30c');
+            .toBe('c71ab43139a1b843487e7f41a9bb87ee83fd5d59fee5ffd60815f84a6ee75698');
     });
 
     it('renders the three task slots as one adjacent block in the platform order', () => {
@@ -120,9 +128,15 @@ describe('the platform secretary templates', () => {
             noAnswer: '(no answer)',
             notEnded: '(still running or result unknown)',
             initialDrafts: 'You MAY add a top-level "goalCardDrafts" array to the JSON object: each '
-                + '{"objective", "completion", "autonomy"}, objective one sentence, completion a non-empty array '
-                + 'of checkable criteria, autonomy "every_step" or "after_plan_confirmation". A draft is a '
-                + 'proposal only.',
+                + '{"objective", "completion", "autonomy", "screening"}, objective one sentence, completion a non-empty '
+                + 'array of checkable criteria, autonomy "every_step" or "after_plan_confirmation". "screening" is '
+                + 'optional: omit it or use null when the draft was not screened, otherwise {"modules", "size", '
+                + '"conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and '
+                + 'GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", '
+                + 'urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at '
+                + 'most 512 UTF-8 bytes. You MAY also add a top-level "planDraftIndex" integer naming the zero-based '
+                + 'index of the draft this plan is for; omit it when the plan is for no draft. A draft is a proposal '
+                + 'only.',
         });
     });
 

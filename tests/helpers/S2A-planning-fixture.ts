@@ -93,7 +93,7 @@ export async function buildPlanningQuestions(
       origin: { kind: 'run', owner: runRef }, requestedAt: T }));
     const answer: QueryJobAnswerV1 = { schemaVersion: 1, answerId: `S2A-PQ-answer-${suffix}`, queryJobRef: jobRef,
       runRef, roundIndex: 0, answer: answerText, sources: [], followsAnswerRef: null, stale: false,
-      staleReason: null, answeredAt: T, bodyRef: answerBody.ref, ideas: [], goalCardDrafts: [] };
+      staleReason: null, answeredAt: T, bodyRef: answerBody.ref, ideas: [], goalCardDrafts: [], planDraftIndex: null };
     record = mustWrite(await execution.recordQueryObservation(f.ctx, { input: { entry,
       history: { schemaVersion: 1, sessionRef: ticket.sessionRef, kernel: ticket.kernel, startPosition: 1, observedThroughPosition: 3, endPosition: 3 },
       source: { position: 3, cursor: `S2A-PQ-answered-${suffix}` },

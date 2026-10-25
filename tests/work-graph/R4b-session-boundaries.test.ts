@@ -189,7 +189,8 @@ describe.each(['memory', 'sqlite'] as const)('R4b %s scope and identity boundari
     try {
       const source = {
         ref: { aggregateType: 'CoreOperation', projectId, operationId: 'schema-scope-source' },
-        revision: 1, action: { kind: 'create', plannedSessionRef: { projectId, sessionId: 'schema-source-session' },
+        revision: 1, workspaceId,
+        action: { kind: 'create', plannedSessionRef: { projectId, sessionId: 'schema-source-session' }, parentOperation: null,
           workspace, kernelStore: { adapterId: 'workspace-kernel', storeKey: 'workspace-key' }, role,
           recommendedRefs: [], initialLinks: [], creation: null },
         phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null,

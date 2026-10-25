@@ -6,7 +6,7 @@ import type { CoreRejection } from '../../contracts/core/results.js';
 import { canonicalJson, sameJson as sameCanonical, type JsonValue } from '../../contracts/fingerprint.js';
 import { rejected as rejection } from '../../contracts/core/rejections.js';
 import { isRecord } from '../../contracts/validation/common.js';
-import { DEFAULT_GOAL_SETTINGS_V1, decisionSourceKey, type DecisionSourceV1, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
+import { decisionSourceKey, type DecisionSourceV1, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
@@ -140,7 +140,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       const source: DecisionSourceV1 = {
         kind: 'unknown_call_review',
         key: decisionSourceKey({ kind: 'unknown_call_review', reviewRef: review.ref, revision: review.revision }),
-        goalRef: goal.ref,
+        subject: { kind: 'goal', goalRef: goal.ref },
         pins: [{ ref: review.ref, revision: review.revision }],
       };
       let solved: { message: SessionMessage; body: UserDecisionBodyV1 } | null = null;
@@ -157,7 +157,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
         }
       }
       if (solved !== null) {
-        // L19's ② guard compares the caller's source pins/goalRef with the
+        // L19's ② guard compares the caller's source pins/subject with the
         // saved answer's CAPTURED source (record@revision, original Run, Goal
         // content basis). The request therefore carries that captured source,
         // not the minimal lookup source built above, or a real owner would
@@ -312,7 +312,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     // shows that cause; the gate adds only the autonomy rule (spec §3.2
     // "countedNext>cap ... existing fences stay").
     if (countedNext > failure.automation.cap) return null;
-    const settings = goal.settings ?? DEFAULT_GOAL_SETTINGS_V1;
+    const settings = goal.settings;
     // §4.5 line 888 / F8: decide with the shared pure policy FIRST, before the
     // Run revision read below. Under the default `after_plan_confirmation`
     // autonomy no card is needed (`automatic_notice`), and that read must not be
@@ -371,7 +371,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       workspaceRef: goal.workspaceRef,
       objective: goal.objective,
       activePlanRef: goal.activePlanRevision,
-      settings: goal.settings ?? DEFAULT_GOAL_SETTINGS_V1,
+      settings: goal.settings,
     };
     return readyValue({
       state: 'waiting', receipt: null, next: null,
@@ -380,7 +380,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
         source: {
           kind: 'goal_cause',
           key: decisionSourceKey({ kind: 'goal_cause', goalRef: goal.ref, code: cause.code, affected: cause.affected }),
-          goalRef: goal.ref,
+          subject: { kind: 'goal', goalRef: goal.ref },
           pins: [goalPin, ...cause.affected],
           goalBases: [goalBasis],
         },

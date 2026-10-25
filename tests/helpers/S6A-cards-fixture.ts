@@ -392,7 +392,8 @@ export async function seedS6ASharedCards(workspace: S6ACardsWorkspace, input: {
   const independent = await workspace.proposeCandidate({ label: `${input.label}-other`, goal: input.otherGoal, request: null });
   const all = await workspace.readCards();
   const cardOf = (candidate: S6ACandidate): DecisionCardV1 => {
-    const card = all.find(entry => entry.source.kind === 'candidate' && sameGoal(entry.goalRef, candidate.goal)
+    const card = all.find(entry => entry.source.kind === 'candidate'
+      && entry.subject.kind === 'goal' && sameGoal(entry.subject.goalRef, candidate.goal)
       && entry.source.pins.some(pin => asRecord(pin.ref)['proposalId'] === candidate.proposal.ref.proposalId));
     if (card === undefined) throw new Error(`S6A cards: no card for the candidate ${candidate.label}: ${JSON.stringify(all)}`);
     return card;
@@ -404,9 +405,11 @@ export async function seedS6ASharedCards(workspace: S6ACardsWorkspace, input: {
       throw new Error(`S6A cards: the candidate card of ${request.label} names another request: ${JSON.stringify(candidate.card)}`);
     }
   });
-  const goalCards = all.filter(card => sameGoal(card.goalRef, input.goal) && card.requestRef === null);
+  const goalCards = all.filter(card => card.subject.kind === 'goal'
+    && sameGoal(card.subject.goalRef, input.goal) && card.requestRef === null);
   if (goalCards.length === 0) throw new Error(`S6A cards: ${input.goal.goalId} has no card without a request: ${JSON.stringify(all)}`);
-  const otherGoalCards = all.filter(card => sameGoal(card.goalRef, input.otherGoal));
+  const otherGoalCards = all.filter(card => card.subject.kind === 'goal'
+    && sameGoal(card.subject.goalRef, input.otherGoal));
   return { goal: input.goal, otherGoal: input.otherGoal, requests: [first, second], candidates,
     otherCandidate: { ...independent, card: cardOf(independent) }, goalCards, otherGoalCards, all };
 }

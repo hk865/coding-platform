@@ -56,7 +56,7 @@ async function waiting(fixture: S5DecisionFixture, owners: BOwners, input: Workf
   if (cause === undefined || cause === null) throw new Error('the Workflow must emit the automation cause');
   expect(cause).toMatchObject({ code: 'automation_confirmation_required', action,
     taskRef: { projectId: 'P', goalId: 'B', taskId }, runRef: fixture.claimRA.runRef,
-    source: { kind: 'goal_cause', goalRef: GOAL_B }, options: [] });
+    source: { kind: 'goal_cause', subject: { kind: 'goal', goalRef: GOAL_B } }, options: [] });
   const queue = await queueB(fixture, owners);
   const card = waitingCard(queue, cause.source);
   // The cause reader sorts affected refs, while the Workflow emits Task then

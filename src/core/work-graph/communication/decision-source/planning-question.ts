@@ -1,10 +1,10 @@
 import type { SessionRef, VersionPin } from '../../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../../contracts/core/results.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
-  DecisionSourceV1, GoalDecisionBasisV1 } from '../../../../contracts/goal-decisions.js';
+  GoalDecisionBasisV1 } from '../../../../contracts/goal-decisions.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import { isRecord } from '../../../../contracts/validation/common.js';
-import type { GoalSnapshot } from '../../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
   decodeQueryRunSnapshotRecord } from '../../queries/query-record-codecs.js';
 import { parseInitialPlanningResponseV2 } from '../../tasks/initial-plan.js';
@@ -39,8 +39,8 @@ async function questionReaderSessions(support: SourceReadSupport, runRef: unknow
 /** The `planning_question` decision source: a real saved Answer question. */
 export async function readPlanningQuestionSource(
   support: SourceReadSupport,
-  source: DecisionSourceV1,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'planning_question' }>,
+  goalRef: GoalRef,
 ): Promise<SourceReadResult> {
   let goal: GoalSnapshot;
   let objects: DecisionObjectV1[] = [];
@@ -59,10 +59,10 @@ export async function readPlanningQuestionSource(
   const job = jobRead.value;
   const jobGoalId = job.job.goalId;
   if (jobGoalId === null || jobGoalId.length === 0) return rejectedWithCurrent('incomplete', 'the planning QueryJob names no Goal');
-  if (source.goalRef.goalId !== jobGoalId || source.goalRef.projectId !== support.scope.projectId) {
+  if (goalRef.goalId !== jobGoalId || goalRef.projectId !== support.scope.projectId) {
     return rejectedWithCurrent('invalid', 'the planning question does not belong to the named Goal');
   }
-  const goalRead = await support.readGoal(source.goalRef);
+  const goalRead = await support.readGoal(goalRef);
   if (goalRead.status !== 'ready') return goalRead;
   goal = goalRead.value;
   if (goal.workspaceRef.projectId !== support.scope.projectId || goal.workspaceRef.workspaceId !== support.scope.workspaceId) {

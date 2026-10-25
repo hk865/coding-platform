@@ -14,9 +14,9 @@ import {
 
 const USER: NoteSourceV1 = { kind: 'user', principalId: 'u1' };
 const EXECUTOR: NoteSourceV1 = {
-  kind: 'agent', sessionRef: { projectId: 'p1', sessionId: 's-exec' }, runRef: null, duty: 'executor' };
+  kind: 'agent', sessionRef: { projectId: 'p1', sessionId: 's-exec' }, runRef: null, queryRunRef: null, duty: 'executor' };
 const SCRIBE: NoteSourceV1 = {
-  kind: 'agent', sessionRef: { projectId: 'p1', sessionId: 's-scribe' }, runRef: null, duty: 'scribe' };
+  kind: 'agent', sessionRef: { projectId: 'p1', sessionId: 's-scribe' }, runRef: null, queryRunRef: null, duty: 'scribe' };
 const PLATFORM: NoteSourceV1 = { kind: 'platform' };
 
 type ChangeKind = NoteVersionSnapshot['change']['kind'];

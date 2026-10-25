@@ -95,6 +95,77 @@ Extract<Rejected, { ok: false }> | null {
 }
 
 // --------------------------------------------------------------------------
+// The pure scope of a secretary QueryRun's note
+// --------------------------------------------------------------------------
+
+/** The trusted facts one QueryRun note's scope is decided from. */
+export type SecretaryNoteScopeFactsV1 = {
+  kind: NoteKind;
+  /** The understanding's main-anchor kind; `null` for a non-understanding. */
+  target: 'goal' | 'stage' | 'project' | null;
+  /** Every goal the main anchor and the extra anchors name, in order. */
+  anchorGoalIds: readonly string[];
+  mainAnchorGoalId: string | null;
+  /** The round's frozen preparation; `null` in a no-goal round. */
+  effectiveGoalId: string | null;
+  /** The Goal set a still-live `request_understanding` command grants (never the effective goal). */
+  grantedGoalIds: readonly string[];
+};
+
+const everyGoalIs = (anchorGoalIds: readonly string[], goalId: string): boolean =>
+  anchorGoalIds.every(anchorGoalId => anchorGoalId === goalId);
+
+const scopeRefusal = (code: 'forbidden' | 'invalid', detail: string): Extract<Rejected, { ok: false }> =>
+  reject('guard_failed', code, detail) as Extract<Rejected, { ok: false }>;
+
+/**
+ * Where a secretary QueryRun's note may hang and what goal it stores. A plain
+ * note's range and `storedGoalId` follow the round's frozen effective goal
+ * (`null` in a no-goal round, whose anchors may only be project, module,
+ * interface or file). A goal or stage understanding stays inside the effective
+ * goal; only a Goal a live `request_understanding` command grants may be a goal
+ * understanding's main anchor, with every anchor inside it. A repair, a project
+ * understanding and an understanding on anything else are refused. A malformed
+ * value never silently becomes a stored goal.
+ */
+export function secretaryNoteScope(facts: SecretaryNoteScopeFactsV1):
+{ storedGoalId: string | null } | Extract<Rejected, { ok: false }> {
+  if (facts.kind === 'repair') {
+    // L5: the secretary's repair keeps the ONE authority refusal, not a copy of its text.
+    const authority = noteWriteAuthority({ kind: facts.kind, isUser: false, duty: 'secretary' });
+    if (authority !== null) return authority;
+  }
+  if (facts.kind === 'understanding') {
+    if (facts.target === 'project') return scopeRefusal('forbidden', 'project_understanding_scribe_only');
+    const main = facts.mainAnchorGoalId;
+    if (facts.target === 'goal') {
+      if (main !== null && facts.grantedGoalIds.includes(main)) {
+        return everyGoalIs(facts.anchorGoalIds, main) ? { storedGoalId: main }
+          : scopeRefusal('forbidden', 'anchor_out_of_goal');
+      }
+      if (main !== null && facts.effectiveGoalId !== null && main === facts.effectiveGoalId
+        && everyGoalIs(facts.anchorGoalIds, main)) {
+        return { storedGoalId: main };
+      }
+      return scopeRefusal('forbidden', 'anchor_out_of_goal');
+    }
+    if (facts.target === 'stage') {
+      if (main !== null && main === facts.effectiveGoalId && everyGoalIs(facts.anchorGoalIds, main)) {
+        return { storedGoalId: facts.effectiveGoalId };
+      }
+      return scopeRefusal('forbidden', 'anchor_out_of_goal');
+    }
+    return scopeRefusal('invalid', 'an understanding may only hang on a goal, a stage or the project');
+  }
+  if (facts.effectiveGoalId === null) {
+    return facts.anchorGoalIds.length === 0 ? { storedGoalId: null }
+      : scopeRefusal('forbidden', 'anchor_out_of_goal');
+  }
+  return everyGoalIs(facts.anchorGoalIds, facts.effectiveGoalId) ? { storedGoalId: facts.effectiveGoalId }
+    : scopeRefusal('forbidden', 'anchor_out_of_goal');
+}
+
+// --------------------------------------------------------------------------
 // C3.2 (§11.6): the live user-reason set, per actual disposition target
 // --------------------------------------------------------------------------
 

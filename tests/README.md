@@ -8,19 +8,19 @@
 
 - `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（85 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`。
 - `tests/architecture/` — 依赖方向、生产代码可达性和状态写入边界（4 个），入口 `boundaries.test.ts`；`production-reach.ts` 是它自己的扫描器。
-- `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（29 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
+- `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（30 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
 - `tests/context/` — 上下文装配，只有 `verification-workspace-reader.test.ts` 一个。
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（17 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 140 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 142 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（14 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（145 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（117 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景）。
-- `tests/state/` — 状态机、编解码、查询和恢复不变量（52 个），例如 `K3-14-conclusion-pure.test.ts`。
-- `tests/work-graph/` — WorkGraph 域服务和读模型（347 个），是夹具使用最密集的文件夹。
+- `tests/state/` — 状态机、编解码、查询和恢复不变量（54 个），例如 `K3-14-conclusion-pure.test.ts`。
+- `tests/work-graph/` — WorkGraph 域服务和读模型（358 个），是夹具使用最密集的文件夹。
 
 ## tests/helpers/ 的夹具
 
@@ -100,9 +100,11 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S6A-memory-fixture.ts` — 冻结；`seedS6AMemory` 经公开路由写项目理解、规范、注记和两个目标的理解，并给出治理操作（架构采纳和修订、完成策略安装、激活和换版）；`S6A_GOVERNANCE_CASES` 是 R-14 的四种指针组合。
 - `S6A-prompt-samples.ts` — 冻结；按模板、字符串表和 6A-2 裁定 S15 手写的秘书输入期望文本：各段的构造函数和整段的 `secretaryInputText`。
 - `S6A-cards-fixture.ts` — 冻结；6A-3 主对话的世界，两个：`openS6ACardsWorld`（SE1，请求世界加第二个工作区及其秘书绑定和 profile，Host 输入，规则 A8）和 `openS6ANoticesWorld`（SE2，两个目标各有采用的 Plan、一个 Work Session）；步骤：`s6aCardsWorkspace`（路由句柄）、`seedS6ASharedCards`（两请求各一候选、另一目标上的独立候选，卡的 `source.pins` 就是 `ask` 的 `cardRefs`）、`seedS6AGoalOrder`（已知顺序的目标和无目标请求，`goals/create` 返回创建游标）、`submitMany`、`seedReworkNotices`（真实 Workflow 的自动返工通知，位置 1、3 在目标 1、2 在目标 2）、`moveGoal`（只推进 revision）；不写记录、不读 store。
+- `S6B1-fixture.ts` — 冻结，只能在末尾追加导出；6B-1 的公开步骤，搭在请求世界（`S6A-request-fixture.ts`，memory 或 SQLite，`defaultGoals`、`scribe` 两个选项）、它的 host 世界（`S6A-host-fixture.ts`）和 `s6aCardsWorkspace` 上：线和交接记录——`governS6B`、`adoptS6BPlan`、`createS6BLine`（`sessions/create` 带 `initialLinks`，返回 `{ label, ref, operation }`，`operation` 是真实的创建操作）、`seedS6BHandoffLines`（目标第一个 Plan 的三个 work 任务；来源线负责全部三个，目标线一个不负责）、`seedS6BArchiveSource`（一个秘书拥有两个无目标的处理中请求，第二个由 `other` 打开、经手动 `requests/route` 交给 `source`）；项目 subject——`seedS6BScribe`、`understandingPointer`、`writeUserProjectUnderstanding`、`scribeUnderstanding`（书记经 `workflow/advance` 跑下一个任务，脚本模型调真实的 `record_note` 再回答，Run 恰好两次模型调用，否则失败；`structural: true` 把理解留给人审）、`resolveS6BProjectNote`（队列列表 → `decisions/card` → `decisions/answer`，用卡自己的来源和 pins）、`openS6BProjectWorld({ backend })` 给出 `{ world, main, goalless, scribe, close }`（书记在 `main` 的目标 1 上；`goalless` 工作区从不建目标，项目卡和请知悉从它的队列读）；挂起的请求轮——`holdS6BRequestRound`（新秘书 `requests/submit`、带秘书 profile 认领、`queries/prepare`、经 `materials/open` 打开冻结的 manifest，`queries/start` 停在模型闸门上时跑回调，`finally` 里放开闸门并等开始结束）；不写也不读 store，不为 Run 造调用上下文；`tests/business/S6B-create-arm.test.ts`、`tests/work-graph/S6B-handoff-accept.test.ts`、`S6B-secretary-note-scope.test.ts`、`S6B-secretary-note-source.test.ts`、`S6B-subject-message-index.test.ts`、`S6B-subject-read.test.ts`、`S6B-subject-sources.test.ts` 在用。
 - `S8A-L8-reminder-world.ts` — L8 rework-2 两个公开测试的共享世界：Project/Workspace/policy/catalog/Goal/Plan/Session/claim/source capture 全由平台产生，再走 H4 prepare；`tests/work-graph/S8A-L8-reminders-public.test.ts` 在用。
-- `WP2-duties-fixture.ts` — `WP2_DUTIES` 五个平台 duty、legacy template 精确匹配的 `wp2LegacyDuty` 和 `wp2RoleContent`；`tests/work-graph/WP2-message-duties.test.ts` 在用。
+- `WP2-duties-fixture.ts` — legacy template 精确匹配的 `wp2LegacyDuty`（duty 取自 `PLATFORM_DUTIES` 正本，`src/contracts/platform-duty.ts:13`）和 `wp2RoleContent`；`tests/work-graph/WP2-message-duties.test.ts` 在用。
 - `WP2-notices-fixture.ts` — 真实 S1 owner/backend，构造钩子只加 schema 和 beforeWrite 故障点，不种历史或 cursor；`tests/work-graph/WP2-undelivered-notices.test.ts` 在用。
+- `query-context-capture.ts` — 不冻结；A3 透传：`captureQueryContexts()` 包住真实的 `createQueryGraphToolGroup`，原样返回真实工具组，只留 Runtime 交给它的每个 Query 上下文的副本；`latest()` 取最近一个（请求轮里就是 Runtime 自己的 `query_run` principal），`restore()` 撤掉包装；不构造上下文；`tests/work-graph/S6B-secretary-note-source.test.ts`、`S6B-secretary-note-scope.test.ts` 在用。
 - `request-claim-steps.ts` — 不冻结；请求轮测试的 claim 步骤：Host 发布的 query profile 换成 claim 收的形状（`claimProfile`），按刚读到的 Job、Run、Session 版本走 `queries/claim`（`claimQuery`，带或不带 profile；`claimWithSecretaryProfile` 带秘书 profile）；`tests/work-graph/S6A-request-start.test.ts`、`S6A-request-claim.test.ts`、`S6A-request-attempt-restart.test.ts` 在用。
 
 ### 工作线

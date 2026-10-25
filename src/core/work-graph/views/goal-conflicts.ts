@@ -330,13 +330,15 @@ function conflictCard(left: GoalSnapshot, right: GoalSnapshot, terminal: GoalTer
     ...pair.map((entry) => ({ ref: entry.goalRef, revision: entry.revision })),
     ...pair.filter((entry) => entry.activePlanRef !== null).map((entry) => ({ ref: entry.activePlanRef!, revision: 1 })),
   ];
-  const source = { kind: 'goal_conflict' as const, key, goalRef: { ...pair[1]!.goalRef },
+  const source = { kind: 'goal_conflict' as const, key,
+    subject: { kind: 'goal' as const, goalRef: { ...pair[1]!.goalRef } },
     pins, goalBases: [goalDecisionBasis(left), goalDecisionBasis(right)] };
   // Either Goal being terminal (not only the larger-key attributed one) closes
   // the pair's card; the identity/pins above stay the same so old history joins.
   const closed = terminal.cancelled || terminal.completed;
   return {
-    cardKey: key, source, state: closed ? 'closed' : 'waiting_answer', goalRef: { ...pair[1]!.goalRef },
+    cardKey: key, source, state: closed ? 'closed' : 'waiting_answer',
+    subject: { kind: 'goal', goalRef: { ...pair[1]!.goalRef } },
     senderSessionRef: null, requestRef: null, objects: [], options: closed ? [] : [...CONFLICT_OPTIONS],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
     closedReason: closed ? (terminal.cancelled ? 'goal_cancelled' : 'source_resolved') : null,

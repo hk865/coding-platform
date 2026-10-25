@@ -32,7 +32,7 @@
 | --- | --- | --- | --- |
 | `createWorkflow` | `src/business/workflow/workflow.ts:764` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
 | `createTaskGate` | `src/business/workflow/task-gate.ts:71` | `select_work`/`perform` 共用的任务门、自动 requeue/reverify、自动化确认与 gate perform；读 `createWorkflow` 的同一个 `deps` 引用，不复制 | `createWorkflow` 原位装配；不要另写门或确认规则 |
-| `createLineCreation` | `src/business/workflow/line-creation.ts:80` | 按稳定 `commandId` 先查回已有 Session 创建操作并重放，只有新线才查容量，再走真实 `createSession` | 请求选人无候选、崩溃后重试建线 |
+| `createLineCreation` | `src/business/workflow/line-creation.ts:80` | 按稳定 `commandId` 先查回已有 Session 创建操作并重放（那个 ref 上不是创建分支就答 `unavailable`），只有新线才查容量，再走真实 `createSession` | 请求选人无候选、崩溃后重试建线 |
 | `createAlwaysAdmitCapacity` | `src/business/workflow/line-creation.ts:60` | 默认容量适配器：没有真实上限时全部放行 | 直接平台 fixture；真实 Host 必须换成 `secretaryOpenCap` 适配器 |
 | `createRequestIntake` | `src/business/workflow/request-intake.ts:188` | request 的 submit/route/selectIdea/ask 与未分配 drain；重试 submit 先用 `findLine` 查回旧线；drain 在每条请求前看调用 signal，已停止就带着已提交的计数返回 | 请求命令与启动/唤醒 drain |
 | `createQueryStageDriver`、`QueryStageDriver` | `src/business/workflow/query-stage-driver.ts:123`、`src/business/workflow/query-stage-driver.ts:48` | 唯一的 Query 阶段链：请求轮在当刻 owner Session 上用给定 profile 认领（`request-claim`/`request-prepare`/`request-start`），普通 Query 用构建 driver 时绑定的 Host consumer id 准备并启动（`consultation-*`），已开始或 `unknown` 的只观察，无变化的观察只报 `blocked`；每个 owner 的结果在一张表里映射成 `progressed`/`terminal`/`blocked`（`capacity` 等固定上限归 `on_change`） | 请求队列的 `driver` 注入与咨询；不要另写 phase 分派、认领或阶段链 |
@@ -47,10 +47,10 @@
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:122` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:73` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
-| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:157` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
+| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:161` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:102` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
 | `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:121`、`src/core/work-graph/tasks/secretary-selection.ts:498` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
-| `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1000`、`src/core/work-graph/sessions/session-record-codecs.ts:994` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
+| `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1075`、`src/core/work-graph/sessions/session-record-codecs.ts:1069` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
 | `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:471` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
 | `oldestPending`（私有） | `src/business/workflow/request-intake.ts:164` | 把正本结果投影成 `QueryJobRef` 的私有包装 | 本层 intake/drain 使用；不要在这里重写选轮规则 |
 | `sameJson` | `src/contracts/fingerprint.ts:50` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；不要另写比较 |

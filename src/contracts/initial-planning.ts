@@ -1,3 +1,5 @@
+import { defineShape, f, type InferShape } from './data-format.js';
+import { QueryJobAnswerRefShape } from './data-format-refs.js';
 import type { PlanRevisionDraft } from './plan.js';
 
 export type InitialPlanAssignment = {
@@ -17,6 +19,15 @@ export type InitialPlanOrigin = {
     summary: string;
     assignments: InitialPlanAssignment[];
 };
+
+/** Which answer an initialization plan reads: a no-goal answer's binding, or a goal request's manifest. */
+export const InitializationSourceShape = defineShape({ name: 'InitializationSourceV1', fields: {
+  source: f.union('kind', {
+    binding: { kind: f.literal('binding'), answerRef: f.ref(QueryJobAnswerRefShape), draftIndex: f.integer({ min: 0 }) },
+    prepared_goal: { kind: f.literal('prepared_goal'), answerRef: f.ref(QueryJobAnswerRefShape) },
+  }),
+} });
+export type InitializationSourceV1 = InferShape<(typeof InitializationSourceShape)['fields']>['source'];
 
 /**
  * R5b.4 §11.3 versioned initial-planning reply protocol (v2).

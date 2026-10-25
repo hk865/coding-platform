@@ -80,7 +80,7 @@ function decisionSource(): DecisionSourceV1 {
   return {
     kind: 'message',
     key: decisionSourceKey({ kind: 'message', messageRef: MESSAGE_REF }),
-    goalRef: GOAL_B,
+    subject: { kind: 'goal', goalRef: GOAL_B },
     pins: [{ ref: GOAL_B, revision: 7 }],
     goalBases: [{ goalRef: GOAL_B,
       workspaceRef: { aggregateType: 'Workspace', projectId: PROJECT, workspaceId: WORKSPACE },
@@ -432,7 +432,7 @@ describe('S5 message decision unit rows (§5.2 MD01..MD14)', () => {
       kind: 'goal_cause',
       key: decisionSourceKey({ kind: 'goal_cause', goalRef: GOAL_B, code: 'required_task_deferred',
         affected: [{ ref: GOAL_B, revision: 7 }] }),
-      goalRef: GOAL_B, pins: [{ ref: GOAL_B, revision: 7 }],
+      subject: { kind: 'goal', goalRef: GOAL_B }, pins: [{ ref: GOAL_B, revision: 7 }],
     };
     const metadata = decisionMeta({ source: causeSource, options: [], syntheticAnswer: true });
     const response = userResponse({ selection: { kind: 'other' }, text: '先做 B 的第二项', source: causeSource,
