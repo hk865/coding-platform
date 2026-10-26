@@ -2,13 +2,14 @@
  * The ONE trusted resolver for a running secretary QueryRun.
  *
  * It reads only the stored QueryRun named by the caller principal, that run's
- * execution state, its QueryJob, the Session the execution names and the
- * manifest the execution is bound to (for the Plan frozen at preparation);
- * nothing comes from input. A refusal is `forbidden` when the caller is not a QueryRun
+ * execution state, its QueryJob, the Session the execution names, the manifest
+ * the execution is bound to (for the Plan frozen at preparation) and the
+ * manifest's frozen request materials, whose carrier Jobs are re-read for the
+ * command each carries now; nothing comes from input. A refusal is `forbidden` when the caller is not a QueryRun
  * or names none that is stored, the QueryRun is not entered, it is not a
  * request round, the Session is a read-only copy, or the Session's duty, read
  * as ready, is not `secretary`. A failed or thrown read (of the store or of the
- * duty), a missing Session or QueryJob, an undecodable record, a damaged
+ * duty), a missing Session, QueryJob or carrier Job, an undecodable record, a damaged
  * binding (an absent `requestProfile` or `prepared`, a generation that is not
  * positive, a malformed Session ref), a request round whose QueryJob names
  * no request root and a bound manifest that cannot be read are `unavailable`: those facts
@@ -20,6 +21,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { SessionRefShape } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -29,15 +31,24 @@ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { SecretaryQueryRunPort } from '../model/secretary-query-run-contracts.js';
 import type { QueryExecutionDependencies } from '../queries/contracts.js';
-import { loadQueryManifest } from '../queries/query-execution.js';
+import { currentUnderstandingMaterials, currentUnderstandingOperations, loadQueryManifest } from '../queries/query-execution.js';
 import { decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
+import { readRequestRounds, type RequestRoundsStore } from '../queries/request-rounds-read.js';
 import {
   decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
+import { liveUnderstandingGrants } from '../state/request-rounds.js';
 import { readOwnerRecord } from './owner-record-read.js';
 
 export type SecretaryQueryRunDependencies = {
-  records: Pick<GoalRecordTransactionPort, 'readMany'>;
+  /**
+   * The full request-rounds store when a current carrier command exists, so the note-time
+   * grant read takes the root owner from the one request-rounds read. A caller
+   * that supplies only `readMany` gets `unavailable` rather than a second owner
+   * derivation.
+   */
+  records: Pick<GoalRecordTransactionPort, 'readMany'>
+    & Partial<Pick<RequestRoundsStore, 'eventAt' | 'lookup' | 'lookupOrdered'>>;
   duties: SessionDutyReadPort;
   /** The raw body store the bound manifest is read from (the Query execution's). */
   bodies: QueryExecutionDependencies['bodies'];
@@ -121,6 +132,37 @@ export function createSecretaryQueryRun(deps: SecretaryQueryRunDependencies): Se
         return unavailable(`the round manifest cannot be read: ${'reason' in bound ? bound.reason : bound.status}`);
       }
 
+      // The note-time grant set is the same live rule over the manifest's frozen
+      // material list, re-reading each carrier Job in its frozen order and using
+      // the command it carries now, judged against the current operation records
+      // and the request root's current owner. A missing or damaged carrier or
+      // operation is `unavailable`, never an empty set. The result is copied into
+      // the mutable list the note owner consumes; the effective goal never comes
+      // from it.
+      const frozenRequest = bound.value.manifest.request;
+      if (frozenRequest === null) return unavailable('the round manifest carries no request facts');
+      const materialRead = await currentUnderstandingMaterials(deps, frozenRequest);
+      if (materialRead.status !== 'ready') return materialRead;
+      const goals: GoalRef[] = [];
+      if (materialRead.materials.some((material) => material.command !== null)) {
+        if (deps.records.eventAt === undefined || deps.records.lookup === undefined
+          || deps.records.lookupOrdered === undefined) {
+          return unavailable('the request rounds read is not available');
+        }
+        const store = deps.records as RequestRoundsStore;
+        let requestFacts: Awaited<ReturnType<typeof readRequestRounds>>;
+        try {
+          requestFacts = await readRequestRounds(store, ctx, { requestRoot });
+        } catch {
+          return unavailable('the request rounds cannot be read');
+        }
+        if (requestFacts.status !== 'ready') return unavailable('the request rounds cannot be read');
+        const operationRead = await currentUnderstandingOperations(deps, materialRead.materials, requestFacts.value.owner);
+        if (operationRead.status !== 'ready') return operationRead;
+        goals.push(...liveUnderstandingGrants({ materials: materialRead.materials, requestRoot,
+          operations: operationRead.operations }));
+      }
+
       return { status: 'ready', value: {
         principal,
         session: sessionRef,
@@ -132,7 +174,7 @@ export function createSecretaryQueryRun(deps: SecretaryQueryRunDependencies): Se
         planRef: bound.value.manifest.focusPlan === null ? null : bound.value.manifest.focusPlan.ref,
         requestRoot,
         sessionGeneration: execution.sessionGeneration,
-        goals: [],
+        goals,
       } };
     },
   };

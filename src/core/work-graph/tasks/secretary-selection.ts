@@ -36,16 +36,14 @@ import type { SessionFactsPort, SessionWorkWaitV1 } from '../model/session-facts
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import {
   LIVE_ATTEMPT_PHASES, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX, REQUEST_PAGE_SIZE,
-  SECRETARY_HANDOFF_INPUT_TOKENS,
   type SecretaryProfilePort, type SecretaryProfileV1, type SecretaryScopePort,
 } from '../model/request-contracts.js';
 import type { SecretaryCandidateFactsV1, SecretarySelectionFactsV1 } from '../model/request-contracts.js';
 
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
-import {
-  decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP,
-} from '../queries/query-record-codecs.js';
+import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
 import { readRequestRounds, type RequestRoundsStore } from '../queries/request-rounds-read.js';
+import { readSecretaryHandoffBasis } from './secretary-handoff-basis.js';
 import {
   copyPhase, latestActivityAt, readActiveCopies, readClaimedAtForRun, readQueryRunByRef,
   type ActiveCopies, type LineClockFailure,
@@ -361,38 +359,6 @@ async function readOpenRequestFacts(
   return { status: 'ready', value: { pendingOwners, liveAttempts, guards, watermark } };
 }
 
-/**
- * How many model inputs this Session's QueryRuns recorded, newest generation
- * first and inside a run last-to-first until one is non-null; `null` = no usage.
- */
-async function readLastInputTokens(
-  records: SecretarySelectionStore, scope: WorkspaceScope, session: SessionRef,
-): Promise<{ status: 'ready'; value: number | null; watermark: CommitCursor | null } | { status: 'rejected'; reason: string }> {
-  type OrderedAll = Awaited<ReturnType<typeof readAllOrdered>>;
-  let read: OrderedAll;
-  try {
-    read = await readAllOrdered(records, { index: S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP,
-      values: [scope.projectId, scope.workspaceId, session.sessionId], direction: 'desc' });
-  } catch (error) {
-    return { status: 'rejected', reason: `the Session QueryRuns could not be read: ${messageOf(error)}` };
-  }
-  if (read.status !== 'ready') {
-    return { status: 'rejected', reason: `the Session QueryRuns read failed: ${read.code}: ${read.reason}` };
-  }
-  for (const record of read.value.records) {
-    const decoded = decodeQueryRunSnapshotRecord(record);
-    if (decoded.status !== 'decoded') return { status: 'rejected', reason: `a Session QueryRun is damaged: ${decoded.reason}` };
-    const run = decoded.value;
-    if (run.ref.workspaceId !== scope.workspaceId) continue;
-    const requests = run.run.executionState?.requests ?? [];
-    for (let index = requests.length - 1; index >= 0; index -= 1) {
-      const tokens = requests[index]!.inputTokens;
-      if (tokens !== null) return { status: 'ready', value: tokens, watermark: read.value.readThrough };
-    }
-  }
-  return { status: 'ready', value: null, watermark: read.value.readThrough };
-}
-
 /** Whether any entered round of this Session ran the goal's request (`s6-query-ran-by-session-goal`). */
 async function readRanGoal(
   records: SecretarySelectionStore, scope: WorkspaceScope, session: SessionRef, goalId: string | null,
@@ -558,9 +524,12 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
       // cannot narrow a local); the first one makes the whole read unavailable.
       const problems: LineClockFailure[] = [];
       const note = (failure: LineClockFailure): void => { if (problems.length === 0) problems.push(failure); };
-      const usage = await readLastInputTokens(deps.records, scope, entry.ref);
-      if (usage.status !== 'ready') return unavailable(usage.reason);
-      watermark = laterCursor(watermark, usage.watermark);
+      const basis = await readSecretaryHandoffBasis(deps.records, scope, entry.ref,
+        entry.profile.runtimeBudget.contextWindowTokens);
+      if (basis.status !== 'ready') {
+        return basis.status === 'rejected' ? basis : unavailable('the Session QueryRuns read is not ready');
+      }
+      watermark = laterCursor(watermark, basis.value.readThrough);
       const ran = await readRanGoal(deps.records, scope, entry.ref, input.goalId);
       if (ran.status !== 'ready') return unavailable(ran.reason);
       watermark = laterCursor(watermark, ran.watermark);
@@ -570,11 +539,6 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
         return unavailable(`the Session activity could not be read: ${problem.reason}`);
       }
 
-      const lastInputTokens = usage.value;
-      const threshold = Math.min(
-        SECRETARY_HANDOFF_INPUT_TOKENS,
-        Math.floor(0.8 * entry.profile.runtimeBudget.contextWindowTokens),
-      );
       candidates.push({
         session: { projectId: entry.ref.projectId, sessionId: entry.ref.sessionId },
         revision: session.revision,
@@ -584,8 +548,8 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
           || openRead.value.pendingOwners.has(sessionKeyOfEntry)
           || openRead.value.liveAttempts.has(sessionKeyOfEntry),
         ranGoal: ran.value,
-        lastInputTokens,
-        tooLong: lastInputTokens !== null && lastInputTokens >= threshold,
+        lastInputTokens: basis.value.lastInputTokens,
+        tooLong: basis.value.tooLong,
         lastActivityAt: latestActivityAt(session.createdAt, instants),
       });
     }

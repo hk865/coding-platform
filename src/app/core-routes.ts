@@ -13,6 +13,7 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
+import type { SessionRef } from '../contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
@@ -31,6 +32,8 @@ import type {
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
+// The two secretary lifecycle commands' accept owners; the body and progress types are the DTOs derived from them.
+import type { SessionHandoffPort, SessionSecretaryArchivePort } from '../core/work-graph/sessions/session-handoff-service.js';
 // Slice 1 (spec §4.4): the owner ports of the eleven new suffixes.
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
@@ -82,6 +85,11 @@ import {
   type CoreScope,
   type K3CoreRouteDto,
   type RequestCommandCoreRouteDto,
+  type SecretariesArchiveBody,
+  type SecretariesArchiveResponse,
+  type SecretariesHandoffBody,
+  type SecretariesHandoffResponse,
+  type SecretaryLifecycleCoreRouteDto,
   type Slice1CoreRouteDto,
   type Slice2CCoreRouteDto,
   type UnknownCallReviewReleaseHoldValue,
@@ -268,6 +276,11 @@ export type CoreRouteBindings = {
   // open to any trusted caller of the workspace like the other reads.
   readMainPage: MainSurfaceReadPort['readMainPage'];
   readRequestView: MainSurfaceReadPort['readRequestView'];
+  // The two secretary lifecycle commands. Each binding validates the person, accepts through the owner and then
+  // drives the Workflow's advance over the operation it just accepted; the progress it answers with is the
+  // Workflow's own read of that operation.
+  acceptHandoff: (ctx: CoreCallContext, input: SecretariesHandoffBody['input']) => Promise<SecretariesHandoffResponse>;
+  acceptArchive: (ctx: CoreCallContext, input: SecretariesArchiveBody['input']) => Promise<SecretariesArchiveResponse>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -361,6 +374,11 @@ export type CoreRoutePlatform = {
     listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
       Promise<ReadResult<VersionListPageV1>>;
   };
+  /** The two secretary lifecycle accept owners, non-enumerable on the composed platform (they are internal owners,
+   * not public keys), so a narrow platform without them answers `unsupported`. The advance half is the Workflow's
+   * `sessionHandoff`, published beside them. */
+  sessionHandoff?: Pick<SessionHandoffPort, 'acceptHandoff'>;
+  sessionArchive?: Pick<SessionSecretaryArchivePort, 'acceptArchive'>;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -395,7 +413,7 @@ export type CoreRouteSpec = {
  */
 export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
-  | keyof RequestCommandCoreRouteDto,
+  | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -547,6 +565,12 @@ export const CORE_ROUTE_SPECS: Record<
   // The main conversation's read and one request's read with its cards.
   'main/read': { kind: 'plain', binding: 'readMainPage', owner: 'mainSurface.readMainPage' },
   'requests/read': { kind: 'plain', binding: 'readRequestView', owner: 'mainSurface.readRequestView' },
+  // The two secretary lifecycle commands: the person's handoff of one line and
+  // the person's manual archive of one secretary. Both stay internal in the
+  // public key list; the owner named here is the accept half, and the route
+  // drives the Workflow's advance right after it.
+  'secretaries/handoff': { kind: 'plain', binding: 'acceptHandoff', owner: 'sessionHandoff.acceptHandoff' },
+  'secretaries/archive': { kind: 'plain', binding: 'acceptArchive', owner: 'sessionArchive.acceptArchive' },
 };
 
 export type ParsedCoreRequest =
@@ -697,6 +721,21 @@ export function createPlatformCoreRouteBindings(
       return { status: 'rejected', code: 'invalid', reason: 'the request input must be a JSON object' };
     }
     return null;
+  };
+  // A secretary lifecycle command is the person's too: a member or system actor is `forbidden` BEFORE the accept
+  // owner runs, and a non-object body is `invalid`. The accepted operation's own rules stay the owner's.
+  const lifecycleEntryProblem = (ctx: CoreCallContext, input: unknown, what: string): CoreRejection | null => {
+    if (!personOnly(ctx)) {
+      return { status: 'rejected', code: 'forbidden', reason: `only the person may issue ${what}` };
+    }
+    if (!isPlainObject(input)) {
+      return { status: 'rejected', code: 'invalid', reason: `the ${what} input must be a JSON object` };
+    }
+    return null;
+  };
+  /** The accept committed but the Workflow publishes no advance: the operation stays for the Host's queue. */
+  const lifecycleAdvanceMissing: CoreRejection = {
+    status: 'rejected', code: 'unsupported', reason: 'the Workflow does not publish the secretary lifecycle advance',
   };
   /** R-03: write, then on success `checkNotes({ withSimilar: true })`; a failed
    *  check is `{ status: 'unavailable', reason }` and never undoes the write. */
@@ -996,6 +1035,38 @@ export function createPlatformCoreRouteBindings(
     readRequestView: platform.mainSurface === undefined
       ? unsupported('the platform does not publish mainSurface.readRequestView')
       : platform.mainSurface.readRequestView.bind(platform.mainSurface),
+    // The two secretary lifecycle commands. The person's decision is the route's: a member or a system actor is
+    // `forbidden` BEFORE the accept owner runs, so no operation is recorded and no line is created. After a real
+    // accept the route drives the Workflow's own advance/manualArchive once and answers with its progress read.
+    acceptHandoff: platform.sessionHandoff === undefined
+      ? unsupported('the platform does not publish the handoff owner (acceptHandoff)')
+      : async (ctx, input) => {
+        const refusal = lifecycleEntryProblem(ctx, input, 'a handoff');
+        if (refusal !== null) return refusal;
+        const owner = platform.workflow.sessionHandoff;
+        if (owner === undefined) return lifecycleAdvanceMissing;
+        const accepted = await platform.sessionHandoff!.acceptHandoff(ctx, {
+          commandId: input.commandId, workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
+          source: input.session, trigger: 'manual',
+          // The person hands this line to a fresh secretary; the tasks to carry stay empty on this route.
+          assignments: [{ target: { kind: 'create', duty: 'secretary' }, tasks: [] }],
+        });
+        if (accepted.status !== 'committed') return accepted;
+        return owner.advance(ctx, { operation: accepted.value.operation });
+      },
+    acceptArchive: platform.sessionArchive === undefined
+      ? unsupported('the platform does not publish the secretary archive owner (acceptArchive)')
+      : async (ctx, input) => {
+        const refusal = lifecycleEntryProblem(ctx, input, 'a manual archive');
+        if (refusal !== null) return refusal;
+        const owner = platform.workflow.sessionHandoff;
+        if (owner === undefined) return lifecycleAdvanceMissing;
+        const accepted = await platform.sessionArchive!.acceptArchive(ctx, {
+          commandId: input.commandId, source: input.session, choices: input.choices,
+        });
+        if (accepted.status !== 'committed') return accepted;
+        return owner.manualArchive(ctx, { operation: accepted.value.operation });
+      },
   };
 }
 
@@ -1252,6 +1323,9 @@ export async function dispatchCoreRoute(
       case 'requests/ask': return bindings.askRequest(ctx, plain.input as never);
       case 'main/read': return bindings.readMainPage(ctx, plain.input as never);
       case 'requests/read': return bindings.readRequestView(ctx, plain.input as never);
+      // The two secretary lifecycle commands.
+      case 'secretaries/handoff': return bindings.acceptHandoff(ctx, plain.input as never);
+      case 'secretaries/archive': return bindings.acceptArchive(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

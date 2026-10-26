@@ -17,9 +17,9 @@
 - `session-activity.ts` — Session 活动记录的纯规则与记录构造都在这里：`latestActivityAt`（线卡时钟，`src/core/work-graph/state/session-activity.ts:25`；`tasks/line-clock.ts` 只再导出）与 `nextSessionActivity`（`src/core/work-graph/state/session-activity.ts:41`；一次提交事实之后的下一条记录：revision 递增、时刻不回退、迟到的旧事实不改 kind/source）。
 - `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入。
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
-- `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写。
+- `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写，包含三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）、推进用的 `withHandoffProgress`、纯覆盖规则 `coverageHolds`、简报就绪规则 `briefReady` 和 entered 确认的 `consumeHandoffBrief`。
 - `session-anomaly.ts` — Session 异常锚点的构造/迁移/读取与 Task 归档状态派生。
-- `request-rounds.ts` — 请求轮构造：新请求、路由轮、未开始结束、新尝试、吸收、intake、entered。
+- `request-rounds.ts` — 请求轮构造：新请求、路由轮、未开始结束、新尝试、吸收、intake、entered；理解命令的合法状态迁移 `live → closed|consumed`、当前 generation 读取，以及冻结材料列表上仍有效授权集的唯一纯规则（每条命令按自己的 operation 判 generation/state/root owner，按 Goal 去重并保持轮次顺序）。
 - `review-lease.ts` — 复查租约释放、可证明未进入的复查取消、复查轮已知结束。
 - `control-intent-machine.ts` — ControlIntent 机器：一次暂停/取消/恢复/steer 请求的归宿，以及提交前检查。
 
@@ -53,6 +53,7 @@
 做注记、消息、通知已读、命令、上下文守卫、未知调用、架构捕获与 ref 比较的去这组。
 
 - `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
+- `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:31`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
 - `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
 - `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。
@@ -116,6 +117,7 @@
 | `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:365` | 建注记版本 | 追加注记版本 |
 | `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:221` | 由处置关系算用户复查原因 | 注记复查 |
 | `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:131`、`src/core/work-graph/state/note-machine.ts:102` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
+| `secretaryNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:31` | 纯：一轮 Query 的注记准入——没有请求根（普通 Query、副本）是 `none`；秘书请求轮是 `secretary`，写入种类正好是六个通用种类加 `understanding`（`review` 不是写入种类，`repair` 被拒），带 `withdraw: true` 和只含 Goal id 的授权集 | 准备与开始检查都只经这条规则定类；工具声明和注记工具组只消费这个值，调用方不要各自判类 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
 | `newCandidateProposal` | `src/core/work-graph/state/plan-machine.ts:119` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较） | 提交计划草案 |
 | `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:186` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
@@ -132,14 +134,18 @@
 | `queryRecoveryStateOf` | `src/core/work-graph/state/query-run-recovery.ts:505` | Job+Run 的恢复机器状态 | 恢复迁移前 |
 | `MAX_ATTESTATION_REASON_CHARS` / `QueryAnswerCheck` | `src/core/work-graph/state/query-run-recovery.ts:135`、`src/core/work-graph/state/query-run-recovery.ts:129` | 人工确认理由和关闭消息的上限（2000 个 UTF-16 单位，截断不留半个代理对）；答案检查失败的 detail 与理由 | 校验确认理由、结清带答案检查的终态；`src/core/work-graph/tasks/run-reconcile-service.ts` 只复用这个常量，不另写答案检查类型 |
 | `sameRef`（**正本**） | `src/core/work-graph/state/ref-equality.ts:2` | 与键序无关的 ref 结构相等；本层是唯一正本 | 比较 ref；不要再写第二份 |
-| `newRequestRound` | `src/core/work-graph/state/request-rounds.ts:58` | 建新请求轮（Job/Run 对） | 收到新请求 |
-| `newRoutingRound` | `src/core/work-graph/state/request-rounds.ts:101` | 建只路由、不跑的轮（无 Run） | 秘书分派 |
-| `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:143` | 结束未开始的轮 | 未执行即关闭 |
-| `newAttempt` | `src/core/work-graph/state/request-rounds.ts:168` | 在同一 Job 上开新 Run | 重试；保留旧 runId/触发身份 |
-| `absorbRound` | `src/core/work-graph/state/request-rounds.ts:217` | 把批轮吸收进执行轮 | 合并批处理请求 |
-| `recordAbsorbedRounds` | `src/core/work-graph/state/request-rounds.ts:240` | 记录被吸收的批轮（一次一条） | absorb 之后 |
-| `setIntake` | `src/core/work-graph/state/request-rounds.ts:252` | 设置/清除 secretary-intake 持有者 | 秘书领取/释放请求 |
-| `recordEntered` | `src/core/work-graph/state/request-rounds.ts:261` | 一次性写 enteredSession，第二次换 Session 抛错 | 请求第一次真正进入 |
+| `newRequestRound` | `src/core/work-graph/state/request-rounds.ts:63` | 建新请求轮（Job/Run 对），可写入本轮的理解命令 | 收到新请求 |
+| `newRoutingRound` | `src/core/work-graph/state/request-rounds.ts:107` | 建只路由、不跑的轮（无 Run） | 秘书分派 |
+| `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:150` | 结束未开始的轮 | 未执行即关闭 |
+| `newAttempt` | `src/core/work-graph/state/request-rounds.ts:175` | 在同一 Job 上开新 Run | 重试；保留旧 runId/触发身份 |
+| `absorbRound` | `src/core/work-graph/state/request-rounds.ts:224` | 把批轮吸收进执行轮 | 合并批处理请求 |
+| `recordAbsorbedRounds` | `src/core/work-graph/state/request-rounds.ts:247` | 记录被吸收的批轮（一次一条） | absorb 之后 |
+| `setIntake` | `src/core/work-graph/state/request-rounds.ts:259` | 设置/清除 secretary-intake 持有者 | 秘书领取/释放请求 |
+| `recordEntered` | `src/core/work-graph/state/request-rounds.ts:268` | 一次性写 enteredSession，第二次换 Session 抛错 | 请求第一次真正进入 |
+| `transitionUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:286` | 理解命令的唯一合法迁移 `live → closed`、`live → consumed`、`closed → consumed`；已 consumed、回退或 commandId 不符抛错，只改 state/updatedAt、revision+1 | 关闭或消费一条理解命令 |
+| `foldUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:316` | 把一次理解命令迁移的结果折进另一份 Job 快照：保留该快照的 revision/updatedAt，只取迁移产出的命令；没有命令抛错 | 轮结束提交把消费后的命令并入自己的下一份 Job |
+| `UnderstandingOperationFactsV1`、`liveUnderstandingGrants` | `src/core/work-graph/state/request-rounds.ts:356`、`:367` | 冻结材料列表 `[round, ...batch]` 上仍有效授权集的唯一纯规则：命令 live、自身 generation 等于其 operation 当前 generation、requestRoot 是本次请求根且 operation 的 source 仍是 owner；按 Goal 去重、轮次顺序，返回 readonly `GoalRef[]` | 准备读取、启动重核和注记时解析授权集 |
+| `currentUnderstandingGeneration` | `src/core/work-graph/state/request-rounds.ts:397` | operation 的当前理解 generation：`progress.understanding` 最大记录，非交接分支或无记录为 `null` | 判命令 generation 前 |
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
@@ -166,9 +172,13 @@
 | `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:680` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
 | `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:515` | 分派准入：归档、只读副本、Work 等待 | 选秘书/分派候选 |
 | `transitionResponsibility` | `src/core/work-graph/state/session-responsibility.ts:33` | 责任转移/关闭：关源链接、开目标链接 | 责任交接 |
-| `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:74`、`:97` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |
-| `OperationCallerV1`、`OperationSessionFactV1`、`HandoffAdmissionFactsV1`、`SecretaryArchiveAdmissionFactsV1`、`OperationAdmissionV1` | `src/core/work-graph/state/session-handoff.ts:18`、`:20`、`:23`、`:38`、`:46` | 两张准入表的输入和结果：调用者的分类、公开读到的 Session 事实、交接和秘书归档各自的事实、准入结果（`busy` 带未完成操作的 pin） | owner 读完事实后调 `admitHandoff` 或 `admitSecretaryArchive` |
-| `admitSecretaryArchive`、`newSecretaryArchiveOperationRecord` | `src/core/work-graph/state/session-handoff.ts:121`、`:134` | 秘书归档的拒绝顺序（人、范围、形状、源、秘书职责、未完成操作）；接受时的记录，每个选择一项 | 秘书归档 owner 的接受 |
+| `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:77`、`:100` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |
+| `OperationCallerV1`、`OperationSessionFactV1`、`HandoffAdmissionFactsV1`、`SecretaryArchiveAdmissionFactsV1`、`OperationAdmissionV1` | `src/core/work-graph/state/session-handoff.ts:21`、`:23`、`:26`、`:41`、`:49` | 两张准入表的输入和结果：调用者的分类、公开读到的 Session 事实、交接和秘书归档各自的事实、准入结果（`busy` 带未完成操作的 pin） | owner 读完事实后调 `admitHandoff` 或 `admitSecretaryArchive` |
+| `admitSecretaryArchive`、`newSecretaryArchiveOperationRecord` | `src/core/work-graph/state/session-handoff.ts:125`、`:138` | 秘书归档的拒绝顺序（人、范围、形状、源、秘书职责、未完成操作）；接受时的记录，每个选择一项，`input.actor` 从可信上下文保存 | 秘书归档 owner 的接受 |
+| `saveHandoffCreateInput`、`saveUnderstandingCommand`、`saveArchiveSavedInput`、`saveArchiveReceipt` | `src/core/work-graph/state/session-handoff.ts:194`、`:206`、`:219`、`:228` | 三个保存位置的结构拷贝：后继的 `ensureLine` 输入、某理解代的命令、归档的 `GraphWrite`，以及归档注册返回的 `{identityKey,fingerprint}`；写归档 receipt 前必须先有保存输入 | 推进的 before/after 写；原输入按自己的 generation 重放 |
+| `withHandoffProgress`、`coverageHolds` | `src/core/work-graph/state/session-handoff.ts:189`、`:271` | 推进写唯一的 progress 构造；覆盖规则：每个 Goal 的当前理解文字必须由旧 Session 在最后进入并结束的轮写入，无 Goal 不需要覆盖 | 推进的每一步；不要另写 progress 或第二条覆盖规则 |
+| `consumeHandoffBrief` | `src/core/work-graph/state/session-handoff.ts:242` | entered 确认的消费迁移：写 `brief.consumedBy`、revision 加 1，并给出 pin 住读到的 revision 的 guard；不写事件 | D 在 entered 提交里合并 record+guard；推进只设 `brief.ready`，从不消费 |
+| `briefReady`、`BriefReadyFacts` | `src/core/work-graph/state/session-handoff.ts:277` | 简报就绪：受保护的最终归档提交成功且完整路由集已保存（`closed` 且每根有回执或被明确跳过）；`pending`/`partial` 不是成功 | 推进在归档 after 写里设 `brief.ready`；读取按同一规则判 `waiting` |
 | `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:208` | 失败分类（FC-1..FC-17） | 重排队前 |
 | `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:137` | 人工停止围栏 | 判定谁能重做 |
 | `reworkPermission` | `src/core/work-graph/state/task-failure.ts:390` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |

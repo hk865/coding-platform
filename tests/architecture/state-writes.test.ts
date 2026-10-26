@@ -156,7 +156,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/query-job.ts', name: 'QueryJobV1', kind: 'record',
     fields: ['status', 'closeReason', 'requestRoot', 'roundKind', 'requestGoalId', 'assignedSession', 'routing',
       'relatedMessageRef', 'absorbedInto', 'absorbedRounds', 'selectedIdea', 'goalAttribution', 'relatedCardRefs',
-      'enteredSession', 'intakeSession', 'receipt'], use: QUERY_USE },
+      'enteredSession', 'intakeSession', 'receipt', 'understanding'], use: QUERY_USE },
   // Projection: `CanonicalTaskState` and `TaskRow` carry the phase and its TD-1 cause
   // (`CanonicalTaskState.phaseCause` declared in A.2 step 5.3).
   { file: 'src/core/work-graph/tasks/plan-readers.ts', name: 'CanonicalTaskState', kind: 'projection',
@@ -182,6 +182,8 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['progress'], use: 'state/session-handoff.ts newHandoffOperationRecord or newSecretaryArchiveOperationRecord' },
   { file: 'src/core/work-graph/model/session-operation-arms.ts', name: 'SecretaryArchiveActionV1', kind: 'record',
     fields: ['progress'], use: 'state/session-handoff.ts newHandoffOperationRecord or newSecretaryArchiveOperationRecord' },
+  { file: 'src/core/work-graph/model/session-operation-arms.ts', name: 'HandoffActionV1', kind: 'record',
+    fields: ['progress'], use: 'state/session-handoff.ts consumeHandoffBrief' },
 ];
 
 // -------------------------------------------------------------------------- //

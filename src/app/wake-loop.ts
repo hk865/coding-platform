@@ -22,10 +22,12 @@
  * - A handler failure is never read as "nothing to do": it keeps the pair
  *   dirty and backs it off from one second doubling to one minute. A pass that
  *   progresses resets the back-off.
- * - A commit notice is coarse (aggregate types and project only). A notice
- *   touching a QueryJob, QueryRun or Session wakes both request queues of
- *   every registered workspace of that notice's project, because passes
- *   re-read anyway; any other notice wakes nothing.
+ * - A commit notice is coarse (aggregate types and project only). A queue is
+ *   woken by the aggregate types it subscribed to; absent an option that is
+ *   QueryJob, QueryRun or Session (the request queues), and the lifecycle
+ *   queue names its own blocking basis. Every registered workspace of the
+ *   notice's project is woken, because passes re-read anyway; a notice of
+ *   another type wakes no queue that did not subscribe to it.
  * - No pass starts, and a running pass schedules nothing more, unless the
  *   caller's lease check says the Host is driving. Losing the lease is a
  *   close.
@@ -40,6 +42,7 @@
  * handed back on the next pass. `maxItems` is the caller's page budget.
  */
 import type { RecordCommitNotice } from '../composition/commit-observer.js';
+import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../contracts/core/identity.js';
 import {
   REQUEST_BACKOFF_INITIAL_MS, REQUEST_BACKOFF_MAX_MS,
@@ -47,10 +50,37 @@ import {
 
 export type WakeSource = 'request_command' | 'commit' | 'advance_settled' | 'line_registered' | 'start';
 
+/** The queue keys the Host registers; the loop itself never names a second queue. */
+export const LIFECYCLE_QUEUE = 'lifecycle';
+
+/**
+ * The lifecycle queue's own wake types: SessionActivity/CurrentPointer guard the coverage commit; NoteHead/
+ * NoteVersion feed the brief; PlanProposal/Goal end a request's processing, which the routing set and the
+ * handoff archive condition read. Static, not conditional: a pass without a pending operation costs one
+ * indexed read.
+ */
+export const LIFECYCLE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
+  'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal',
+  'NoteHead', 'NoteVersion', 'CurrentPointer',
+]);
+
+/** The aggregate types whose commit wakes a queue that gave no option. */
+export type WakeQueueOptionsV1 = {
+  /** The aggregate types whose commit wakes this queue; absent → the loop's default set (QueryJob, QueryRun, Session). */
+  aggregateTypes?: readonly string[];
+};
+
+/** The loop's one handler shape; the Host's queues implement it. */
+export type QueueHandler = {
+  rebuild(scope: WorkspaceScope): Promise<void>;
+  drain(scope: WorkspaceScope, input: { maxItems: number; continuation: string | null; signal: AbortSignal }):
+    Promise<{ progressed: number; more: boolean; continuation: string | null; wrapped: boolean; blocked: number }>;
+};
+
+type DrainResult = Awaited<ReturnType<QueueHandler['drain']>>;
+
 export interface WakeLoop {
-  register(queueKey: string, handler: { rebuild(scope: WorkspaceScope): Promise<void>;
-    drain(scope: WorkspaceScope, input: { maxItems: number; continuation: string | null; signal: AbortSignal }):
-      Promise<{ progressed: number; more: boolean; continuation: string | null; wrapped: boolean; blocked: number }> }): void;
+  register(queueKey: string, handler: QueueHandler, options?: WakeQueueOptionsV1): void;
   wake(scope: WorkspaceScope, queueKey: string, source: WakeSource): void;
   committed(notice: RecordCommitNotice): void;
   start(workspaces: WorkspaceScope[], input: { resumeOnStartup: boolean }): Promise<void>;
@@ -69,9 +99,51 @@ export type WakeLoopDependencies = {
   maxItems?: number;
 };
 
-// The handler shape is declared once, by the interface above.
-type QueueHandler = Parameters<WakeLoop['register']>[1];
-type DrainResult = Awaited<ReturnType<QueueHandler['drain']>>;
+/** The lifecycle queue's port: one handler call runs one whole traversal. */
+export interface HandoffQueuePort {
+  /** The whole traversal: pending round ends, then every unfinished operation once. */
+  run(ctx: CoreCallContext): Promise<{ continued: number; blocked: number }>;
+  /** Waits for every started call under the loop's close rule. */
+  close(): Promise<void>;
+}
+
+/**
+ * The lifecycle queue's dependencies. The traversal reads the saved facts
+ * through the composition's ports: the operation index, the basis read and the
+ * Workflow's handoff owners live there, so this queue owns the loop bookkeeping
+ * and the composition owns the reads.
+ */
+export type HandoffQueueDependencies = {
+  /** One whole traversal; a transient item failure is recorded and stepped past. */
+  pass: (ctx: CoreCallContext) => Promise<{ continued: number; blocked: number }>;
+};
+
+export function createHandoffQueue(deps: HandoffQueueDependencies): HandoffQueuePort {
+  const started = new Set<Promise<void>>();
+  let closed = false;
+
+  /** Close waits for a started call; the tracked promise settles on both paths, so a failure leaves no unhandled one. */
+  function trackStarted(call: Promise<unknown>): void {
+    const settled: Promise<void> = call.then(() => undefined, () => undefined);
+    started.add(settled);
+    void settled.then(() => { started.delete(settled); });
+  }
+
+  return {
+    async run(ctx) {
+      if (closed) return { continued: 0, blocked: 0 };
+      const call = deps.pass(ctx);
+      trackStarted(call);
+      return await call;
+    },
+
+    async close() {
+      closed = true;
+      while (started.size > 0) await Promise.allSettled([...started]);
+    },
+  };
+}
+
 
 type WorkspaceState = { scope: WorkspaceScope; armed: boolean };
 
@@ -118,6 +190,11 @@ function defaultDelay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** A read that answered anything but `ready` is not an empty result: the caller's own back-off retries it. */
+export function notReady(what: string, result: { status: string; code?: string; reason?: string }): Error {
+  return new Error(`${what} is not ready: ${result.code === undefined ? result.status : `${result.code}: ${result.reason}`}`);
+}
+
 /** One event-loop turn, so a pass never runs inside the call that woke it. */
 function yieldToEventLoop(): Promise<void> {
   return new Promise<void>((resolvePromise) => { setImmediate(resolvePromise); });
@@ -133,7 +210,8 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
   const now = deps.now ?? ((): number => Date.now());
   const maxItems = deps.maxItems ?? 1;
   const controller = new AbortController();
-  const handlers = new Map<string, QueueHandler>();
+  /** Each queue's handler and the aggregate types it subscribes to. */
+  const handlers = new Map<string, { handler: QueueHandler; aggregateTypes: ReadonlySet<string> }>();
   const workspaces = new Map<string, WorkspaceState>();
   const queues = new Map<string, QueueState>();
   const chains = new Set<Promise<void>>();
@@ -203,11 +281,11 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
         }
         entry.dirty = false;
         const scope = queueScope(entry);
-        const handler = handlers.get(entry.queueKey);
-        if (scope === null || handler === undefined) return;
+        const registration = handlers.get(entry.queueKey);
+        if (scope === null || registration === undefined) return;
         let result: DrainResult;
         try {
-          result = await handler.drain(scope, {
+          result = await registration.handler.drain(scope, {
             maxItems, continuation: entry.continuation, signal: controller.signal,
           });
         } catch {
@@ -258,8 +336,8 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
   async function rebuildWorkspace(state: WorkspaceState): Promise<void> {
     const workspaceKey = workspaceKeyOf(state.scope);
     const rebuilds: Promise<void>[] = [];
-    for (const [queueKey, handler] of handlers) {
-      rebuilds.push(rebuildQueue(ensureQueue(workspaceKey, queueKey), handler));
+    for (const [queueKey, registration] of handlers) {
+      rebuilds.push(rebuildQueue(ensureQueue(workspaceKey, queueKey), registration.handler));
     }
     await Promise.all(rebuilds);
   }
@@ -275,9 +353,10 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
   }
 
   return {
-    register(queueKey, handler) {
+    register(queueKey, handler, options) {
       if (closed) return;
-      handlers.set(queueKey, handler);
+      const subscribed = options?.aggregateTypes ?? WAKE_AGGREGATE_TYPES;
+      handlers.set(queueKey, { handler, aggregateTypes: new Set(subscribed) });
       registerLater(queueKey);
     },
 
@@ -286,16 +365,15 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     committed(notice) {
       try {
         if (closed) return;
-        const projects = new Set<string>();
-        for (const aggregate of notice.aggregates) {
-          if (aggregate.projectId !== null && WAKE_AGGREGATE_TYPES.has(aggregate.aggregateType)) {
-            projects.add(aggregate.projectId);
-          }
-        }
-        if (projects.size === 0) return;
         for (const workspace of workspaces.values()) {
-          if (!projects.has(workspace.scope.projectId)) continue;
-          for (const queueKey of handlers.keys()) wake(workspace.scope, queueKey, 'commit');
+          for (const [queueKey, registration] of handlers) {
+            // Each queue judges the notice against its OWN set; an optionless
+            // queue keeps the loop's default set (QueryJob, QueryRun, Session).
+            const touched = notice.aggregates.some(aggregate =>
+              aggregate.projectId === workspace.scope.projectId
+              && registration.aggregateTypes.has(aggregate.aggregateType));
+            if (touched) wake(workspace.scope, queueKey, 'commit');
+          }
         }
       } catch { /* an observer never affects the commit */ }
     },

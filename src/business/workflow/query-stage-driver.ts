@@ -27,6 +27,7 @@ import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { QueryJobRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
 import type { SecretaryProfileV1 } from '../../core/work-graph/model/request-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { HandoffFenceV1 } from '../../core/work-graph/sessions/session-handoff-fence.js';
 import { plainSessionRefToAggregate } from '../../core/work-graph/sessions/session-record-codecs.js';
 import type { RequestFactsReader } from '../../core/work-graph/tasks/request-service.js';
 
@@ -65,6 +66,21 @@ export type QueryStageDriverDependencies = {
    * secretary profile's own consumer id.
    */
   consumerId?: string;
+  /**
+   * The one per-Session handoff fence read, at a new request-round claim only:
+   * a fenced Session takes no new claim, and the pass answers `blocked` (not
+   * `busy`) until the fact change that releases the fence. An attempt that was
+   * already claimed or prepared is saved work: it goes on to prepare/start, and
+   * the entry's own fence read abandons it or settles it `not_entered`.
+   */
+  fence?: (ctx: CoreCallContext, session: SessionRef) =>
+    Promise<{ status: 'ready'; value: HandoffFenceV1 } | CoreRejection>;
+  /**
+   * Called once when a request round reaches `terminal` (its answer or a settled end). The Host reads the round's
+   * threshold basis there and starts the automatic handoff only when it is too long; the owner continues an
+   * unfinished operation instead of accepting a second one.
+   */
+  onRoundEnded?: (ctx: CoreCallContext, session: SessionRef) => Promise<void>;
 };
 
 /** The read-only projection of a formally closed or settled QueryRun: no Answer will follow. */
@@ -115,6 +131,29 @@ function blockedWrite(stage: string, result: Exclude<WriteResult<unknown>, { sta
   return blockedOutcome(stage, result);
 }
 
+/** The round-end hook: one notification per terminal request round, read by the Host's handoff trigger. */
+async function finished(
+  deps: QueryStageDriverDependencies, ctx: CoreCallContext, record: Attempt, outcome: QueryStageOutcome,
+): Promise<QueryStageOutcome> {
+  if (outcome.status !== 'terminal' || deps.onRoundEnded === undefined || !isRequestRound(record.job)) return outcome;
+  const session = record.run.run.executionState?.sessionRef;
+  if (session !== undefined) await deps.onRoundEnded(ctx, session);
+  return outcome;
+}
+
+/** A fenced Session starts no new work: `blocked` on a change, never `busy`. */
+async function fencedOutcome(
+  deps: QueryStageDriverDependencies, ctx: CoreCallContext, session: SessionRef,
+): Promise<Blocked | null> {
+  if (deps.fence === undefined) return null;
+  const read = await deps.fence(ctx, session);
+  if (read.status !== 'ready') return blockedRead('reading the handoff fence', read);
+  if (!read.value.held) return null;
+  const operation = read.value.operation;
+  return blocked('on_change', `the Session is held by handoff operation ${
+    operation === null ? '(unknown)' : operation.operationId}: no new claim or entry until it is released`);
+}
+
 function attemptOutcome(record: { job: QueryJobSnapshot; run: QueryRunSnapshot; answer: QueryJobAnswerSnapshot | null }): QueryStageOutcome {
   if (record.answer !== null) return { status: 'terminal' };
   return queryRunEndedWithoutAnswer(record) ? { status: 'terminal' } : { status: 'progressed' };
@@ -145,6 +184,8 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
     }
     // The claim pins the Session record it occupies, so the facts read's own
     // guard is the revision to expect; nothing else in the read may stand in.
+    const fenced = await fencedOutcome(deps, ctx, owner);
+    if (fenced !== null) return fenced;
     const ownerRef = plainSessionRefToAggregate(owner);
     const ownerKey = canonicalJson(ownerRef as unknown as JsonValue);
     const guard = facts.value.guards.find((candidate) => candidate.refKey === ownerKey);
@@ -164,7 +205,8 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
     if (claimed.status !== 'committed') return blockedWrite('claiming the request round', claimed);
     const claimedState = claimed.value.run.run.executionState;
     if (claimedState === undefined) throw new Error('a committed request-round claim carries no execution state');
-    return advanceAttempt(ctx, { job: claimed.value.job, run: claimed.value.run }, claimedState, true);
+    return finished(deps, ctx, { job: claimed.value.job, run: claimed.value.run },
+      await advanceAttempt(ctx, { job: claimed.value.job, run: claimed.value.run }, claimedState, true));
   }
 
   /**
@@ -181,6 +223,10 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
     // consultation's own byte-identical names.
     const prepareId = requestRound ? `request-prepare:${runId}` : `consultation-prepare:${runId}`;
     const startId = requestRound ? `request-start:${runId}` : `consultation-start:${runId}`;
+    // The fence read belongs to a new claim only (see `claimRequestRound`): an
+    // attempt already claimed or prepared is saved work whose entry applies the
+    // fence itself, abandoning or settling its own attempt instead of parking
+    // here with the claim's occupancy held.
     let prepared: PreparedQueryExecution;
     if (claimed) {
       if (deps.runtime.prepareQuery === undefined) {
@@ -273,16 +319,10 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
         // without an execution state there is no attempt to prepare here.
         return blocked('on_change', 'advancing the attempt failed: the Query has no claimed attempt');
       }
-      switch (state.phase) {
-        case 'claimed':
-        case 'prepared':
-          return advanceAttempt(ctx, record, state, state.phase === 'claimed');
-        case 'entering':
-        case 'entered':
-        case 'settled':
-        case 'unknown':
-          return observe(ctx, record);
-      }
+      const outcome = state.phase === 'claimed' || state.phase === 'prepared'
+        ? await advanceAttempt(ctx, record, state, state.phase === 'claimed')
+        : await observe(ctx, record);
+      return finished(deps, ctx, record, outcome);
     },
   };
 }

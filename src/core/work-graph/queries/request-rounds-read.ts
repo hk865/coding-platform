@@ -23,7 +23,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../../contracts/core/session.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import { seqOfCommitCursor } from '../../../contracts/ledger.js';
+import { compareCursors } from '../../../contracts/ledger.js';
 import type { QueryJobRef, QueryJobSnapshot, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
@@ -35,6 +35,8 @@ import { QUERY_BY_REQUEST_INDEX, REQUEST_PAGE_SIZE } from '../model/request-cont
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 import { decodeSessionRecord, plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
 import type { RequestOwnerStateV1 } from '../model/request-contracts.js';
+
+export { compareCursors } from '../../../contracts/ledger.js';
 
 /** How often a complete read is retried while the request window keeps moving. */
 export const COMPLETE_READ_ATTEMPTS = 4;
@@ -73,15 +75,6 @@ function unavailable(reason: string): { status: 'rejected'; code: 'unavailable';
 
 function keyOfRef(ref: unknown): string {
   return canonicalJson(ref as JsonValue);
-}
-
-/** The store's cursor sequence when both are ledger cursors; textual order otherwise. */
-export function compareCursors(left: CommitCursor, right: CommitCursor): number {
-  try {
-    return Math.sign(seqOfCommitCursor(left) - seqOfCommitCursor(right));
-  } catch {
-    return String(left).localeCompare(String(right));
-  }
 }
 
 function sameCursor(left: CommitCursor | null, right: CommitCursor | null): boolean {

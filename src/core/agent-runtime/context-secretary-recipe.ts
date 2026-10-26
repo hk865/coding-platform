@@ -3,15 +3,17 @@
  * `secretary-round` template from the frozen secretary preparation facts; the
  * three `task_*` slots are one `task` section in the binding.
  *
- * The facts are read HERE, once, through the declared `secretaryFacts` port and
- * returned on the assembly result: preparation freezes the manifest from the
- * same value and never reads the port itself. The shared renderer owns the note
- * budget, the omission block's place at the end of the task segment and the
- * three-slot task range; this file only composes the section bodies.
+ * The facts are declared input: preparation reads the port once, before the
+ * final tool list, and hands the same value to the admission, this recipe, the
+ * render and the manifest. The recipe never reads the port. The shared renderer
+ * owns the note budget, the omission block's place at the end of the task segment
+ * and the three-slot task range; this file only composes the section bodies.
  */
 import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { ReadResult } from '../../contracts/core/results.js';
@@ -24,11 +26,14 @@ import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
-import type { SecretaryRoundMaterialV1 } from '../../contracts/query-job.js';
+import type { SecretaryRoundMaterialV1, QueryJobRef } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
 import type { NoteMemoryMaterialV1 } from '../work-graph/model/note-contracts.js';
 import { SECRETARY_HISTORY_ANSWER_BYTES } from '../work-graph/model/request-contracts.js';
+import type {
+  HandoffBriefNoteV1, HandoffBriefV1,
+} from '../work-graph/model/secretary-lifecycle-contracts.js';
 import type {
   SecretaryHistoryEntryV1, SecretaryPreparationFactsV1,
 } from '../work-graph/model/secretary-contracts.js';
@@ -106,6 +111,71 @@ function earlierEntryText(entry: SecretaryHistoryEntryV1, texts: PromptTextsV1):
   return [...parts, result].join('\n');
 }
 
+/**
+ * The handoff material of a secretary round: an old secretary's understanding
+ * round carries the goals its live command lists; a successor's first entered
+ * round carries the brief it now owns. Both are read by the caller from the
+ * frozen manifest (the live command) or the handoff brief port; this recipe
+ * never re-derives either.
+ */
+export type SecretaryHandoffPromptFactsV1 =
+  | { kind: 'understanding'; goals: readonly GoalRef[] }
+  | { kind: 'brief'; brief: HandoffBriefV1 };
+
+/** A reference line: the aggregate then the identifying fields as canonical JSON, one line. */
+function goalReferenceText(ref: GoalRef): string {
+  return `Goal ${canonicalJson({ projectId: ref.projectId, goalId: ref.goalId })}`;
+}
+
+function requestReferenceText(ref: QueryJobRef): string {
+  return `QueryJob ${canonicalJson({
+    projectId: ref.projectId, workspaceId: ref.workspaceId, queryJobId: ref.queryJobId,
+  })}`;
+}
+
+function sessionReferenceText(ref: SessionRef): string {
+  return `Session ${canonicalJson({ projectId: ref.projectId, sessionId: ref.sessionId })}`;
+}
+
+/** One understanding pointer of a brief: its id, version and text, or the pack's `(none)`. */
+function briefNoteText(note: HandoffBriefNoteV1 | null, texts: PromptTextsV1): string {
+  return note === null
+    ? packString(texts, 'context.none')
+    : `${note.noteId}@${String(note.version)}: ${note.text}`;
+}
+
+/**
+ * Renders the handoff template into the one `task_round` value the secretary
+ * round prepends: the five-part instruction and the command's goal list for an
+ * understanding round, or the whole brief for a successor's first round.
+ */
+function handoffPromptText(
+  facts: SecretaryHandoffPromptFactsV1, texts: PromptTextsV1, toolNames: readonly string[],
+): string {
+  if (facts.kind === 'understanding') {
+    const taskRound = [
+      packString(texts, 'handoff.understandingInstruction'),
+      ...facts.goals.map((goal) => `- ${goalReferenceText(goal)}`),
+    ].join('\n');
+    return renderTemplate(texts, 'handoff-write-understanding-secretary', { task_round: taskRound }, toolNames).text;
+  }
+  const brief = facts.brief;
+  const lines = [packString(texts, 'handoff.briefHeading')];
+  for (const request of brief.requests) {
+    lines.push(`- request ${requestReferenceText(request.requestRoot)}`);
+    lines.push(`  original text: ${request.text}`);
+    lines.push(`  last answer: ${request.lastAnswer ?? packString(texts, 'secretary.noAnswer')}`);
+  }
+  for (const goal of brief.goals) {
+    lines.push(`- ${goalReferenceText(goal.goalRef)}`);
+    lines.push(`  written understanding: ${briefNoteText(goal.written, texts)}`);
+    lines.push(`  current understanding: ${briefNoteText(goal.current, texts)}`);
+  }
+  lines.push(`- old line: ${sessionReferenceText(brief.line)}`);
+  lines.push(packString(texts, 'handoff.briefTools'));
+  return renderTemplate(texts, 'handoff-brief-secretary', { task_round: lines.join('\n') }, toolNames).text;
+}
+
 export async function assembleSecretaryContext(
   deps: ContextAssemblerDependencies, ctx: CoreCallContext,
   input: {
@@ -115,6 +185,10 @@ export async function assembleSecretaryContext(
     permissions: PreparedQueryManifestV1['permissions'];
     question: string; texts?: PromptTextsV1; toolNames: readonly string[];
     history: ContextQueryHistoryInputV1;
+    /** The handoff material this round prepends; absent when the round has no handoff. */
+    handoff?: SecretaryHandoffPromptFactsV1;
+    /** The one facts value preparation read; this recipe never reads the port. */
+    secretaryFacts?: SecretaryPreparationFactsV1;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
@@ -137,21 +211,12 @@ export async function assembleSecretaryContext(
   });
   const roleSection = rolePayload(input.role, permissions, duty, residentBudgetBytes, texts);
 
-  // The secretary facts and the memory material are both declared inputs; their
-  // absence is `unsupported` before any model call, never an empty fact set.
-  const factsPort = deps.secretaryFacts;
-  if (factsPort === undefined) return rejected('unsupported', 'a secretary round requires the secretary preparation facts port');
+  // Both are declared inputs from preparation; their absence is `unavailable`
+  // before any model call, never an empty fact set.
+  const secretary = input.secretaryFacts;
+  if (secretary === undefined) return rejected('unavailable', 'a secretary round requires the secretary preparation facts');
   const memory = deps.memoryMaterial;
   if (memory === undefined) return rejected('unsupported', 'the secretary note memory read is not wired');
-  const queryRunRef = input.facts.record.run.ref;
-  let secretaryRead: ReadResult<SecretaryPreparationFactsV1>;
-  try {
-    secretaryRead = await factsPort.read(ctx, { queryRunRef });
-  } catch (error) {
-    return rejected('unavailable', `the secretary preparation facts read failed: ${messageOf(error)}`);
-  }
-  if (secretaryRead.status !== 'ready') return secretaryRead;
-  const secretary = secretaryRead.value;
 
   const effectiveGoalId = secretary.request.effectiveGoalId;
   const goal = input.facts.goal;
@@ -242,7 +307,13 @@ export async function assembleSecretaryContext(
     ? renderTemplate(texts, 'secretary-answer', {}, input.toolNames).text
     : renderTemplate(texts, 'initial-planning-answer', {}, input.toolNames).text
       + (effectiveGoalId === null ? '\n' + packString(texts, 'secretary.initialDrafts') : '');
-  const taskRoundSection = `${packString(texts, 'secretary.roundHeading')}\n`
+  // Required handoff material is task material: it goes in front of the round,
+  // never in the trimmable notes. One blank line separates it from the round.
+  const handoffSection = input.handoff === undefined
+    ? null
+    : handoffPromptText(input.handoff, texts, input.toolNames);
+  const taskRoundSection = `${handoffSection === null ? '' : `${handoffSection}\n\n`}`
+    + `${packString(texts, 'secretary.roundHeading')}\n`
     + `${roundMaterial(secretary.request.round, texts)}\n\n${answerFormat}`;
   const taskBatchedSection = secretary.request.batch.length === 0
     ? null
@@ -313,7 +384,6 @@ export async function assembleSecretaryContext(
     value: {
       input: rendered.input, binding, continuationBrief: null, sessionBasis: undefined,
       selectedTaskInputs: [], takesSessionHistory, renderMaterial: rendered.material,
-      secretaryFacts: secretary,
     },
   };
 }

@@ -56,6 +56,7 @@ import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.
 import type { WriteResult } from '../contracts/core/results.js';
 import type { GoalFanOutPassOptions, GoalFanOutReportV1 } from './goal-fan-out-driver.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { HandoffQueuePort } from './wake-loop.js';
 import type { RedriveAnswerV1 } from '../business/workflow/contracts.js';
 import type { UnappliedAnswersReadV1 } from '../core/work-graph/tasks/unknown-call-review-answers.js';
 
@@ -146,6 +147,11 @@ export type StartupReconcileDependencies = {
   context(scope: Scope): CoreCallContext;
   /** Step 6: one idempotent fan-out pass for the Goal's current epoch (GOAL-16/14, then GOAL-29 on a resume). */
   fanOut(ctx: CoreCallContext, goalRef: GoalRef, options: GoalFanOutPassOptions): Promise<GoalFanOutReportV1>;
+  /**
+   * Step 6c: after maintenance, run one lifecycle traversal (pending round ends, every unfinished
+   * handoff/archive operation once), so a crash resumes instead of waiting for a new commit.
+   */
+  handoffQueue?: Pick<HandoffQueuePort, 'run'>;
 };
 
 export type ReconcileLine = { ref: string; row: string; status: 'reconciled' | 'left' | 'failed'; reason: string;
@@ -467,6 +473,17 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
         }
       } catch (error) {
         out.problems.push(`${scope.workspaceId}: the Workflow maintenance failed: ${messageOf(error)}`);
+      }
+    }
+
+    // Step 6c: the lifecycle queue's start-up pass. The queue is read-only here; a pass reads
+    // the saved facts again, so a crash resumes the first unfinished stage and never decides a new one.
+    if (deps.handoffQueue !== undefined) {
+      try {
+        const pass = await deps.handoffQueue.run(ctx);
+        if (pass.blocked > 0) out.problems.push(`${scope.workspaceId}: the lifecycle queue left ${pass.blocked} operation(s) waiting`);
+      } catch (error) {
+        out.problems.push(`${scope.workspaceId}: the lifecycle queue's start-up pass failed: ${messageOf(error)}`);
       }
     }
 

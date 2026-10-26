@@ -8,7 +8,7 @@
 - 状态迁移仍只经 `src/core/work-graph/state/`；这里看到状态字段也只校验形状。
 
 ## 文件
-- `command-executor.ts` — 写入执行器：一次原子写的唯一顺序（身份/指纹→回执查找→事实→决定→片段→guard 合并→提交前检查→一次提交→冲突映射/重试→严格结果投影）；导出 `Keys`、`CommittedReceipt`、`CommitFragment`、`CommandRejection`、`CommandResult`、`WriteCommand`、`executeWriteCommand`，owner 只保留自己的事实、决定、片段与结果投影。
+- `command-executor.ts` — 写入执行器：一次原子写的唯一顺序（身份/指纹→回执查找→事实→决定→片段→guard 合并→提交前检查→一次提交→冲突映射/重试→严格结果投影）；唯一的 R2 哈希 `commandIdentity`/`commandKeys` 也在这里，执行器和推进写入共用；导出 `Keys`、`CommittedReceipt`、`CommitFragment`、`CommandRejection`、`CommandResult`、`WriteCommand`、`executeWriteCommand`，owner 只保留自己的事实、决定、片段与结果投影。
 - `commit-compiler.ts` — Goal 创建的纯编译：identity/fingerprint、`GoalCreated` 事件、revision-1 快照与 guard 的 `PreparedCommit`，以及 caller version pins。
 - `control-record-codecs.ts` — `ControlIntentSnapshot@1`、提交/观察事件、控制状态形状检查与注册。
 - `decision-record-codecs.ts` — 决定写事件（`GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`）、notice origin 解码与决定证明校验。
@@ -28,7 +28,7 @@
 - `plan-record-codecs.ts` — PlanProposal/PlanRevision 记录与事件 codec、proposal 链位置比较。`candidate_v2` 必须带 `catalogPin`（`ArchitectureCatalogPinV1` 或 `null`，缺了就是坏记录，不补默认值），非 `null` 的 pin 必须指向本项目的 catalog。
 - `query-activity-codecs.ts` — `QueryActivity@1` 记录与 `QueryActivityRecorded` 事件 codec；tally 规则全部调用 `run-activity-codecs.ts` 的同一份校验器。
 - `read-result-failures.ts` — Store 失败到 `CoreRejection` 的映射与游标下限检查。
-- `receipt-lookup.ts` — 唯一的已提交回执存储查找：按 identity/fingerprint 精确 `lookupCommit` 并分类 found/missing/conflict/invalid/unavailable（抛错也记为 unavailable）；导出 `CommittedReceipt`（`receipt-lookup.ts:4`）、`ReceiptLookup`（`receipt-lookup.ts:6`）、`lookupCommittedReceipt`（`receipt-lookup.ts:18`）；旧的 query 模块改为 import 后再导出它们，既有调用点不变。
+- `receipt-lookup.ts` — 唯一的已提交回执存储查找：按 identity/fingerprint 精确 `lookupCommit` 并分类 found/missing/conflict/invalid/unavailable（抛错也记为 unavailable）；另有只按 identity 的 `lookupCommittedReceiptByIdentity`（found/missing/invalid/unavailable，坏行→unavailable）。导出 `CommittedReceipt`（`receipt-lookup.ts:4`）、`ReceiptLookup`（`receipt-lookup.ts:6`）、`lookupCommittedReceipt`（`receipt-lookup.ts:18`）。
 - `record-guards.ts` — 全仓唯一的 guard 合并：同 key 不同 revision 立即 `revision_conflict`，绝不静默去重。
 - `record-codecs.ts` — Goal 家族记录/事件 codec、`canonicalRefKey`、Goal/Workspace 设置校验。
 - `rework-codecs.ts` — 返工/引用/notice origin 等纯形状校验（actor、Run、Session、Task 等 ref）。
@@ -38,8 +38,11 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `executeWriteCommand` | `src/core/work-graph/persistence/command-executor.ts:145` | 一次原子写的固定顺序与失败表：回执查找与严格重放、guard 合并、提交前检查、单次提交、冲突映射与最多 3 次重试、结果投影 | 新 owner 的原子写入；owner 只提供事实、决定、片段与投影，不复制顺序或失败表 |
+| `executeWriteCommand` | `src/core/work-graph/persistence/command-executor.ts:190` | 一次原子写的固定顺序与失败表：回执查找与严格重放、guard 合并、提交前检查、单次提交、冲突映射与最多 3 次重试、结果投影 | 新 owner 的原子写入；owner 只提供事实、决定、片段与投影，不复制顺序或失败表 |
+| `readCommittedEvent`、`CommittedEventRead` | `src/core/work-graph/persistence/command-executor.ts:137` | 按已提交回执读原事件并逐项核对：游标、最后 eventId、事件类型/版本、解码；失败只给 `failed` 原因 | 执行器的严格重放和 owner 的 identity-only 重放共用；不要另写一份原事件恢复 |
 | `lookupCommittedReceipt` | `src/core/work-graph/persistence/receipt-lookup.ts:18` | 按 identity/fingerprint 精确 `lookupCommit` 并分类回执：found/missing/conflict/invalid/unavailable，抛错记为 unavailable；`CommittedReceipt`、`ReceiptLookup` 随函数一起导出 | 需要幂等回执查找或严格重放的起点；旧的 query 模块已改为再导出，调用点不变 |
+| `commandIdentity`、`commandKeys` | `src/core/work-graph/persistence/command-executor.ts:31`、`:43` | 一次写的 R2 identity 和 fingerprint：identity 只由 operation、scope、principal、commandId 决定，fingerprint 只由 operation 和该写的冻结输入决定 | `executeWriteCommand` 与 H 的 `advanceWriteKeys` 共用；重放只用 `commandIdentity`，不要另写一份哈希 |
+| `lookupCommittedReceiptByIdentity`、`ReceiptByIdentityLookup` | `src/core/work-graph/persistence/receipt-lookup.ts:54`、`:42` | 只按 identity 读已提交回执和提交时的 fingerprint：found/missing/invalid/unavailable；`corrupt` 行归 unavailable | 父写入按 commandId 重放时；不要用当前输入或伪造 fingerprint 代替 |
 | `storeFailureCode` | `src/core/work-graph/persistence/read-result-failures.ts:35` | 把 Store 失败码收窄为 `CoreRejection['code']` | 需要判断失败类别时 |
 | `storeFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:40` | 通用 Store 失败→`CoreRejection`，可带 `current`；**正本** | 没有 owner 特有语义的读写失败；request-service 的旧映射已删，见“不要做” |
 | `pinsFromStoreCurrent` | `src/core/work-graph/persistence/read-result-failures.ts:46` | 从 Store 的 conflict `current` 解出可回填的 version pins | 映射 revision conflict 时 |
@@ -112,7 +115,7 @@
 - `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:40`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
 - `actorRefProblem` 是 actor 字段形状的正本；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换；sessions 的 `checkCreationActor` 包装已删除（S05、FP-17）。
 - `canonicalRefKey` 委托 `src/contracts/fingerprint.ts:59` 的 `canonicalKey`；`configuration/role-record-codecs.ts` 的旧副本已删除，不要恢复。
-- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:158` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
+- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:163` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
 - 不要复制 Store 失败 switch；按 owner 语义选现有映射，request 尾/收件冲突先单独处理（M1-30、M1-10）。
 - 不要把 `lookupAll`/`readAllOrdered` 当成有界队列步；完整集与遍历预算是两个契约（M1-13）。
 - 不要重建事件 codec 管线、改校验顺序或把持久化 JSON 换成 canonical-key 序列化（M1-37）。

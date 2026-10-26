@@ -566,6 +566,7 @@ export function newPendingQueryRecords(input: {
     enteredSession: null,
     intakeSession: null,
     receipt: null,
+    understanding: null,
   };
   const run: QueryRunV1 = {
     schemaVersion: 1,

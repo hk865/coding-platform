@@ -24,13 +24,16 @@
 做 Session 目录、request round、收件箱、工具参数映射和命令识别的去这组。
 - `command-recognition-contracts.ts` — 阻塞命令识别结果 `BlockedCommandMatchV1` 与共享的 `CommandRecognizer` 类型。
 - `communication-contracts.ts` — Session 收件箱的 DTO/端口、消息事件类型与 `deriveSessionInputId`。
-- `request-contracts.ts` — request round 视图、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）、Query/Request 索引名、请求根索引的槽值，以及理解命令的 `RequestUnderstandingCommandShape`/`RequestUnderstandingCommandV1` 与 `understandingPointersProblem`（目标唯一、指针按 Goal 顺序一一对应）。
+- `request-contracts.ts` — request round 视图、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）、Query/Request 索引名、请求根索引的槽值；交接要用的请求侧条目：固定的 Host system 主体 `HANDOFF_SYSTEM_PRINCIPAL`、`InternalRouteCommandV1`、`RequestCommandReceiptReadV1`、`HandoffRequestCommandV1` 与 `HandoffRequestReceiptReadPort`（`tasks/request-service.ts` 再导出前三个），sessions 和 state 的交接文件从这里取，不 import tasks。
 - `request-ideas.ts` — 回答思路的唯一规则：`validIdeaCount` 与 `ideasIssues`（纯函数）。
-- `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
-- `secretary-query-run-contracts.ts` — 运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1` 与解析端口 `SecretaryQueryRunPort`；`goals` 只是本批仍有效的 `request_understanding` 授权集，绝不是本轮的有效 Goal，6B-1 一律是 `[]`；`planRef` 是准备时冻结的 Plan，秘书的阶段锚点取它的版本。
-- `session-activity-contracts.ts` — Session 活动记录的窄读端口：`SessionActivityStateV1`（`src/core/work-graph/model/session-activity-contracts.ts:17`；`revision: 0` 是缺失，`record: null` 与坏记录区分）与 `SessionActivityReadPort`（`src/core/work-graph/model/session-activity-contracts.ts:20`；实现在 `sessions/session-activity.ts`，调用方不拼记录键、不解码信封）。
+- `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`（请求事实带 `briefRef` 与唯一一份 `understandingGrants`）、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
+- `secretary-query-run-contracts.ts` — 运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1` 与解析端口 `SecretaryQueryRunPort`；`goals` 只是冻结材料列表上仍有效的 `request_understanding` 授权集（解析时按当前 operation 记录重算），绝不是本轮的有效 Goal；`planRef` 是准备时冻结的 Plan，秘书的阶段锚点取它的版本。
+- `secretary-lifecycle-contracts.ts` — 秘书生命周期的跨组契约：`SecretaryHandoffBasisV1`、覆盖/路由/简报事实与四态、归档条件的可合并片段、`SecretaryHandoffFactsPort`/`SecretaryArchiveConditionPort`；只有声明，规则和读取器在各自 owner。
+- `secretary-note-contracts.ts` — 再导出 `QueryNoteAdmissionV1`（Query 本轮可写的注记值：none 或 secretary 的 kinds/withdraw/grantedGoalIds）；唯一的声明和纯规则 `secretaryNoteAdmission` 都在 `state/secretary-note.ts`。
+- `session-handoff-contracts.ts` — 交接推进与秘书归档的输入/结果/进度类型，简报消费端口 `HandoffBriefPort`、简报引用的窄读口 `HandoffBriefRefsReadPort` 与 Workflow 入口 `SessionHandoffWorkflowPort`；命令和组合在各自 owner。
+- `session-activity-contracts.ts` — Session 活动记录的窄读端口：`SessionActivityStateV1`（`src/core/work-graph/model/session-activity-contracts.ts:17`；`revision: 0` 是缺失，`record: null` 与坏记录区分）与 `SessionActivityReadPort`（`src/core/work-graph/model/session-activity-contracts.ts:20`；实现在 `sessions/session-activity.ts`，调用方不拼记录键、不解码信封）；这两个契约目前没有生产调用者，留给第 7 片按决定 91 的保留上限重建同一读取（allowlist 的 `kept-for`）。
 - `session-contracts.ts` — Session 创建/目录/分页契约；`CoreOperation` 记录的三个分支（`SessionOperationRecordOf`：顶层 `workspaceId`，`action.kind` 为 `create`/`handoff`/`secretary_archive`；创建分支带 `parentOperation`），读者先判 `kind`；只 `export type { GraphWrite }` 转出（测试经此路径 import），正本在 `task-contracts.ts`。
-- `session-operation-arms.ts` — `CoreOperation` 的交接分支和秘书归档分支：两张字段表（`HandoffActionShape`、`SecretaryArchiveActionShape`）、两组阶段（`HANDOFF_STAGES`、`SECRETARY_ARCHIVE_STAGES`）、四条规则和推出的类型；`progress` 只由 `state/session-handoff.ts` 写。
+- `session-operation-arms.ts` — `CoreOperation` 的交接分支和秘书归档分支：两张字段表（`HandoffActionShape`、`SecretaryArchiveActionShape`）、两组阶段（`HANDOFF_STAGES`、`SECRETARY_ARCHIVE_STAGES`）、四条规则和推出的类型；进度里的三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）和归档的 `input.actor` 也在这里，旧记录由唯一的 `upgradeSessionOperationActionV1` 补 `null`；`progress` 只由 `state/session-handoff.ts` 写。
 - `session-facts-contracts.ts` — Session facts/责任 basis 端口、6 个查找索引名与 `SLICE1_LOOKUP_INDEXES`。
 - `tool-commit-arguments.ts` — Kernel 工具参数到 owner `GraphWrite` 的纯映射，以及 tool commit 的 identity/lookup 辅助。
 
@@ -60,8 +63,10 @@
 | `SessionDirectoryPort` | `src/core/work-graph/model/session-contracts.ts:79` | Session 创建、读取与分页目录 | Session 目录消费者 |
 | `SessionOperationRecordOf`、`SessionOperationRecord`、`SessionCreateOperationRecord` | `src/core/work-graph/model/session-contracts.ts:46`、`:63`、`:64` | `CoreOperation` 记录：按分支取类型；`admitSessionCreation` 只返回创建分支 | 读操作记录先判 `action.kind`，非创建分支在创建身份上答 `unavailable` |
 | `SessionCreateActionV1`、`SessionOperationActionV1` | `src/core/work-graph/model/session-contracts.ts:41`、`:45` | 创建分支的动作（带 `parentOperation`）；`CoreOperation` 三个分支的动作联合 | 只处理创建分支的读者用前者；读通用操作记录的 `action` 先判 `kind` |
-| `HandoffActionShape`、`HandoffActionV1`、`HANDOFF_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:108`、`:203`、`:105` | 交接分支的字段表、类型和阶段顺序（`accepted` … `finished`） | 校验、编码交接操作；推进步骤按这个阶段顺序 |
-| `SecretaryArchiveActionShape`、`SecretaryArchiveActionV1`、`SECRETARY_ARCHIVE_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:181`、`:204`、`:180` | 秘书归档分支的字段表、类型和阶段顺序 | 校验、编码秘书归档操作 |
+| `HandoffActionShape`、`HandoffActionV1`、`HANDOFF_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:215`、`:316`、`:212` | 交接分支的字段表、类型和阶段顺序（`accepted` … `finished`），含每个分配的 `createInput`、每个理解代的 `command` 和 `archiveRequest.savedInput` | 校验、编码交接操作；推进步骤按这个阶段顺序 |
+| `SecretaryArchiveActionShape`、`SecretaryArchiveActionV1`、`SECRETARY_ARCHIVE_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:292`、`:317`、`:291` | 秘书归档分支的字段表、类型和阶段顺序；`input.actor` 是接受时保存的可信 actor，旧记录为 `null` | 校验、编码秘书归档操作 |
+| `handoffReachedInputProblem`、`archiveSavedInputProblem` | `src/core/work-graph/model/session-operation-arms.ts:162`、`:179` | 已到达步骤缺原输入的拒绝规则（交接与秘书归档各一条正本）：`create` 目标的分配已标 successor/createOperation 但 `createInput` 为 `null`、`understanding` 有 round 但 `command` 为 `null`、`archiveRequest` 有 receipt 但 `savedInput` 为 `null` 各给一条原因；`existing` 目标本来不存 create 输入 | 推进服务在选下一步之前据此答 `invalid`；不要重建输入或跳过该步 |
+| `upgradeSessionOperationActionV1` | `src/core/work-graph/model/session-operation-arms.ts:324` | 唯一的兼容读：旧记录/事件缺 `createInput`、`understanding[].command`、`archiveRequest.savedInput` 或归档 `actor` 时读作 `null`；没有可补的字段时原样返回 | `sessions/session-record-codecs.ts` 的记录读和两个分支事件在字段表检查之前调用它，返回的就是升级后的值；不要另写 normalizer |
 | `GoalTaskPort` | `src/core/work-graph/model/task-contracts.ts:59` | Goal 创建、Task/Goal 正式完成与 desired state 控制 | Goal/Task 写 owner |
 | `PlanTaskPort` | `src/core/work-graph/model/plan-contracts.ts:204` | Plan 采用、task 读与规划诊断 | Plan/task 写 owner |
 | `ExecutionEntryPort` | `src/core/work-graph/model/execution-entry-contracts.ts:109` | 执行授权、开始、进入、结果与恢复的写入口 | Runtime 执行进入 |
@@ -74,7 +79,6 @@
 | `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:205` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
 | `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:377` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
 | `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:397` | notice 项的读取与排序 | notice 来源适配 |
-| `understandingPointersProblem`、`RequestUnderstandingCommandShape`、`RequestUnderstandingCommandV1` | `src/core/work-graph/model/request-contracts.ts:185`、`src/core/work-graph/model/request-contracts.ts:206`、`src/core/work-graph/model/request-contracts.ts:217` | 理解命令的跨字段规则（Goal 不重复，指针与 Goal 按顺序一一对应）、它的字段表和类型 | 校验/读取 `request_understanding` 命令时；不要另写一份 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:18`、`src/core/work-graph/model/goal-copy-contracts.ts:23`、`src/core/work-graph/model/goal-copy-contracts.ts:14` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:89` | 注记写入、审核、撤回 | 注记写 owner |
 | `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:317` | 注记按引用/列表/版本读取 | 注记读模型 |
@@ -109,16 +113,50 @@
 | 注记写入上限 | `src/core/work-graph/model/note-contracts.ts:22` | `NOTE_CONCLUSION_MAX_CODEPOINTS`、`NOTE_BODY_MAX_BYTES`、`UNDERSTANDING_BODY_MAX_BYTES`、`NOTE_FACTS_MAX`、`NOTE_BASIS_FILES_MAX`、`NOTE_BASIS_FILE_MAX_BYTES`、`NOTE_SYMBOL_HITS_MAX`、`NOTE_EXTRA_ANCHORS_MAX`、`NOTE_ANCHOR_QUOTA`、`NOTE_GOAL_QUOTA`、`NOTE_EXISTING_TOPICS_MAX`、`NOTE_ANCHOR_CANDIDATES_MAX`、`NOTE_ANCHOR_CANDIDATE_SCAN` | 注记写入/锚点准入的注入初值 |
 | 注记与记忆读取上限 | `src/core/work-graph/model/note-contracts.ts:32` | `MEMORY_PAGE_MAX`、`NOTE_READ_FILES_MAX`、`NOTE_READ_FACTS_MAX`、`NOTE_SYMBOL_RECHECK_MAX`、`MEMORY_PAGE_DEFAULT`、`MEMORY_RESULT_MAX_BYTES`、`NOTE_BODY_PAGE_BYTES`、`MEMORY_TOPICS_MAX` | 注记/记忆读取分页与字节上限 |
 | 检索与项目理解上限 | `src/core/work-graph/model/note-contracts.ts:46` | `TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_CANDIDATE_MAX`、`NOTE_RANK_WEIGHT_TOPIC`、`NOTE_RANK_WEIGHT_CONCLUSION`、`NOTE_RANK_WEIGHT_BODY`、`NOTE_SIMILAR_MAX`、`NOTE_SIMILAR_MIN`、`PROJECT_UNDERSTANDING_BODY_MAX_BYTES`、`FIND_RELATED_FILES_MAX`、`PROJECT_NORMS_CHECK_MAX`、`PROJECT_NORMS_MAX` | 全文检索、排序与项目理解读取；`TEXT_SEARCH_MAX_TERMS` 就是全文检索的词数上限 |
-| 秘书选择与历史预算 | `src/core/work-graph/model/request-contracts.ts:26` | `SECRETARY_HANDOFF_INPUT_TOKENS`、`SECRETARY_IDLE_ARCHIVE_MS`、`SECRETARY_PICK_RETRIES`、`SECRETARY_TAIL_RETRIES`、`IDEA_DETAIL_MAX_CODEPOINTS`、`SECRETARY_HISTORY_ROUNDS`、`SECRETARY_HISTORY_ANSWER_BYTES` | 秘书候选、交接与历史窗口 |
-| request 队列预算 | `src/core/work-graph/model/request-contracts.ts:38` | `REQUEST_PASS_PAGES`、`REQUEST_PAGE_SIZE`、`REQUEST_ADVANCES_PER_PASS`、`REQUEST_DRAINED_PER_PASS`、`REQUEST_BACKOFF_INITIAL_MS`、`REQUEST_BACKOFF_MAX_MS` | request 队列分页、并发与退避 |
-| request 的两个认领槽键 | `src/core/work-graph/model/request-contracts.ts:70` | `requestTailKey`、`secretaryIntakeKey`（前缀 `REQUEST_TAIL_PREFIX`、`SECRETARY_INTAKE_PREFIX`） | 正本：request-tail 与 secretary-intake 的键只从这里构造；queries 和 tasks 都用它，不另拼字符串 |
-| 思路标题上限 | `src/core/work-graph/model/request-contracts.ts:35` | `IDEA_TITLE_MAX_CODEPOINTS`（120 个码点，一行） | 校验或存储一个回答的 ideas 时，和 `IDEA_DETAIL_MAX_CODEPOINTS` 一起用 |
+| 秘书选择与历史预算 | `src/core/work-graph/model/request-contracts.ts:26` | `SECRETARY_HANDOFF_INPUT_TOKENS`、`SECRETARY_PICK_RETRIES`、`SECRETARY_TAIL_RETRIES`、`IDEA_DETAIL_MAX_CODEPOINTS`、`SECRETARY_HISTORY_ROUNDS`、`SECRETARY_HISTORY_ANSWER_BYTES` | 秘书候选、交接与历史窗口 |
+| request 队列预算 | `src/core/work-graph/model/request-contracts.ts:39` | `REQUEST_PASS_PAGES`、`REQUEST_PAGE_SIZE`、`REQUEST_ADVANCES_PER_PASS`、`REQUEST_DRAINED_PER_PASS`、`REQUEST_BACKOFF_INITIAL_MS`、`REQUEST_BACKOFF_MAX_MS` | request 队列分页、并发与退避 |
+| request 的两个认领槽键 | `src/core/work-graph/model/request-contracts.ts:68` | `requestTailKey`、`secretaryIntakeKey`（前缀 `REQUEST_TAIL_PREFIX`、`SECRETARY_INTAKE_PREFIX`） | 正本：request-tail 与 secretary-intake 的键只从这里构造；queries 和 tasks 都用它，不另拼字符串 |
+| 交接 fence 的前缀 | `src/core/work-graph/model/request-contracts.ts:80` | `SECRETARY_HANDOFF_PREFIX` | 每 Session 的交接 fence 键的前缀；键的函数体 `secretaryHandoffClaimKey` 在 D 的 fence 文件，别处不要另拼 |
+| 思路标题上限 | `src/core/work-graph/model/request-contracts.ts:33` | `IDEA_TITLE_MAX_CODEPOINTS`（120 个码点，一行） | 校验或存储一个回答的 ideas 时，和 `IDEA_DETAIL_MAX_CODEPOINTS` 一起用 |
 | 思路的唯一规则 | `src/core/work-graph/model/request-ideas.ts:12`、`src/core/work-graph/model/request-ideas.ts:17` | `validIdeaCount`（0、2 或 3 个）；`ideasIssues`（数组、条数、每条 title/detail 是字符串、标题一行非空且 ≤120 码点、说明 ≤600 码点，返回问题列表） | 正本：秘书回答检查（`queries/secretary-answer.ts`）、回答 codec 的存储复检（`queries/query-record-codecs.ts`）和选思路入口（`tasks/request-service.ts`）都调它，不另写思路规则 |
-| 秘书准备的读取端口 | `src/core/work-graph/model/secretary-contracts.ts:49` | `SecretaryPreparationFactsPort`：按 QueryRun 读一次请求、工作区、架构、政策、目标列表和执行种类，带 guards 和 watermark | 秘书轮的准备只经这个端口取事实 |
-| `SecretaryQueryRunPort`、`SecretaryQueryRunV1` | `src/core/work-graph/model/secretary-query-run-contracts.ts:35`、`src/core/work-graph/model/secretary-query-run-contracts.ts:22` | `resolveSecretaryQueryRun(ctx)` 返回一轮运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1`：Session、duty、scope、round、run、准备时冻结的 `effectiveGoalId` 与 Plan（`planRef`）、requestRoot、sessionGeneration 与授权集（6B-1 为 `[]`） | 注记 owner 的 `query_run` 准入；7A 的发送准入复用同一端口 |
-| Query/Request 索引名 | `src/core/work-graph/model/request-contracts.ts:53` | `QUERY_BY_REQUEST_INDEX`、`QUERY_OPEN_BY_WORKSPACE_INDEX`、`REQUEST_ROOTS_BY_GOAL_INDEX`、`QUERY_RAN_BY_SESSION_GOAL_INDEX` | 注册或查询这些固定索引时；`unassigned` 读取用 `QUERY_OPEN_BY_WORKSPACE_INDEX` |
-| 请求根索引的槽值 **正本** | `src/core/work-graph/model/request-contracts.ts:173`、`src/core/work-graph/model/request-contracts.ts:176` | `REQUEST_ROOT_MARK`（根轮的 `rootMark`）、`requestGoalSlot`（`g:<goalId>`，无 Goal 是 `no-goal`） | 写 `s6-request-roots-by-goal` 的槽（codec）和按它读（主对话）都用这一份，不另拼字符串 |
+| 秘书准备的读取端口 | `src/core/work-graph/model/secretary-contracts.ts:58` | `SecretaryPreparationFactsPort`：按 QueryRun 读一次请求（含 `briefRef` 与 `understandingGrants`）、工作区、架构、政策、目标列表和执行种类，带 guards 和 watermark | 秘书轮的准备只经这个端口取事实 |
+| `SecretaryQueryRunPort`、`SecretaryQueryRunV1` | `src/core/work-graph/model/secretary-query-run-contracts.ts:35`、`src/core/work-graph/model/secretary-query-run-contracts.ts:22` | `resolveSecretaryQueryRun(ctx)` 返回一轮运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1`：Session、duty、scope、round、run、准备时冻结的 `effectiveGoalId` 与 Plan（`planRef`）、requestRoot、sessionGeneration 与当前 `request_understanding` 授权集 | 注记 owner 的 `query_run` 准入；7A 的发送准入复用同一端口 |
+| Query/Request 索引名 | `src/core/work-graph/model/request-contracts.ts:54` | `QUERY_BY_REQUEST_INDEX`、`QUERY_OPEN_BY_WORKSPACE_INDEX`、`REQUEST_ROOTS_BY_GOAL_INDEX`、`QUERY_RAN_BY_SESSION_GOAL_INDEX` | 注册或查询这些固定索引时；`unassigned` 读取用 `QUERY_OPEN_BY_WORKSPACE_INDEX` |
+| 请求根索引的槽值 **正本** | `src/core/work-graph/model/request-contracts.ts:174`、`src/core/work-graph/model/request-contracts.ts:177` | `REQUEST_ROOT_MARK`（根轮的 `rootMark`）、`requestGoalSlot`（`g:<goalId>`，无 Goal 是 `no-goal`） | 写 `s6-request-roots-by-goal` 的槽（codec）和按它读（主对话）都用这一份，不另拼字符串 |
 | Session facts 索引名 | `src/core/work-graph/model/session-facts-contracts.ts:27` | `SESSION_BY_PROVENANCE_LOOKUP`、`WORK_EXECUTION_BY_SESSION_LOOKUP`、`QUERY_RUN_BY_SESSION_LOOKUP`、`SESSION_ANOMALY_BY_TASK_LOOKUP`、`SESSION_ANOMALY_BY_GOAL_LOOKUP`、`SESSION_REPLY_BY_HANDLER_LOOKUP`、`SLICE1_LOOKUP_INDEXES` | 注册/读取 Session facts 索引时 |
+| `SecretaryHandoffBasisV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:23` | too-long 事实：阈值、最后输入 token、来源 QueryRun/请求序号与读取水位；D 的纯规则和读取器产出 |
+| `CoverageGoalV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:40` | 每个 Goal 的当前理解指针、文本版本、最后文本写的 Session 与轮 |
+| `CoverageFactsV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:49` | 覆盖读取的完整事实：源 Session、活动 revision、最后进入并结束的轮、Goal 集与首个读取水位 |
+| `RoutingRootV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:57` | 一个未完成请求根、它的 owner 与 effective goal id |
+| `RoutingSetFactsV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:58` | 路由扫描结果：根集合、是否关闭与读取水位 |
+| `HandoffBriefNoteV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:59` | 简报里的注记条目：noteId、版本与正文 |
+| `HandoffBriefRequestV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:60` | 简报里的请求条目：请求根、原文与最后回答 |
+| `HandoffBriefGoalV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:61` | 简报里的 Goal 条目：旧秘书写的版本与当前版本 |
+| `HandoffBriefV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:62` | 后继第一轮看到的完整简报：操作、源、旧线链接、请求与 Goal |
+| `HandoffBriefStateV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:69` | 简报四态 none/waiting/ready/consumed；waiting 必须阻止准备，不能读成 none |
+| `ConditionCheckV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:80` | 归档条件检查结果：可合并片段或不可归档原因 |
+| `SecretaryArchiveConditionCommitV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:84` | 最终归档提交合并的 guards、fence 与 ledgerHorizon |
+| `SecretaryHandoffFactsPort` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:93` | H 实现的交接事实端口：覆盖、路由集、简报状态与 handoff 条件检查 |
+| `SecretaryArchiveConditionPort` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:102` | 归档 owner 调用的条件检查端口；组合根把 H 的 `checkArchiveCondition` 直接传进去 |
+| `QueryNoteAdmissionV1` | `src/core/work-graph/model/secretary-note-contracts.ts:6` | Query 本轮可写的注记值；none 表示没有注记工具也没有注记声明 |
+| `HandoffStageV1` | `src/core/work-graph/model/session-handoff-contracts.ts:23` | 交接阶段字面量类型，顺序取 HANDOFF_STAGES |
+| `HandoffSavedCreateInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:25` | ensureLine 子调用的冻结输入；W 不能 import B 的 LineCreationInput |
+| `HandoffSavedInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:31` | 一次原子写保存的输入：create/transfer/route/archive/understanding 或无子调用 |
+| `HandoffAdvanceInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:40` | 交接推进输入：continue 从操作自身阶段选下一步，replay 取该 commandId 的回执，refusal 记下子调用的真实拒绝后停止 |
+| `HandoffWriteV1` | `src/core/work-graph/model/session-handoff-contracts.ts:49` | 本次写的 commandId、阶段、项、前后、代、保存输入与回执 |
+| `HandoffAdvanceStopV1` | `src/core/work-graph/model/session-handoff-contracts.ts:57` | 不写任何东西的停止：writer 未停、fence 在别人手里、或覆盖等待未提交的理解轮；操作停在原 revision |
+| `HandoffAdvanceResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:61` | 交接推进命令的写结果、下一阶段与停止原因；无写停走第三臂 |
+| `SessionHandoffWorkflowPort` | `src/core/work-graph/model/session-handoff-contracts.ts:71` | Workflow 侧交接入口：startHandoff/continueHandoff/advance/manualArchive |
+| `HandoffProgressV1` | `src/core/work-graph/model/session-handoff-contracts.ts:81` | 交接操作的进度投影：阶段、phase、后继、归档、notice 键与最后拒绝 |
+| `SecretaryArchiveStageV1` | `src/core/work-graph/model/session-handoff-contracts.ts:89` | 秘书归档阶段字面量类型，顺序取 SECRETARY_ARCHIVE_STAGES |
+| `SecretaryArchiveAcceptInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:90` | 归档接受命令的输入：源 Session 与每个请求根的去向 |
+| `SecretaryArchiveAcceptResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:94` | 归档接受命令的结果：操作、accepted 阶段 |
+| `SecretaryArchiveAdvanceInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:96` | 归档推进输入：continue 或 replay |
+| `SecretaryArchiveProgressV1` | `src/core/work-graph/model/session-handoff-contracts.ts:99` | 归档操作的进度投影：每项结果、路由轮、归档请求与最后拒绝 |
+| `SecretaryArchiveAdvanceResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:107` | 归档推进命令的写结果与停止原因 |
+| `HandoffBriefPort` | `src/core/work-graph/model/session-handoff-contracts.ts:121` | D 在 entered 确认时调用的简报消费端口；H 用 state 构造器实现 |
+| `HandoffBriefGoalRefsV1`、`HandoffBriefGoalRefV1` | `src/core/work-graph/model/session-handoff-contracts.ts:128`、`:129` | 简报保存的每 Goal 引用（written/current），由进度的 brief 字段派生，不另立形状 | 推进写 brief、facts 层给出引用时用同一份 |
+| `HandoffBriefRefsReadPort` | `src/core/work-graph/model/session-handoff-contracts.ts:135` | 简报引用的窄读口：facts 层读 Note，推进只存引用 | I1 把 facts 层作为推进的 `coverage` 依赖注入；Session owner 不读 Note |
 
 ## 内部用
 - 无：本层导出的函数与常量都供上层调用；其余导出是类型契约，不做运行时实现。

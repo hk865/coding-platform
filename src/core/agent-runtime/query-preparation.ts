@@ -26,11 +26,16 @@ import type { PromptPackSourcePort, ResolvedPromptPackV1 } from '../../contracts
 import { promptSelectionOf } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
+import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
+import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
+import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
+import { secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
 import { queryPreparedSectionOrder } from './context-rendering.js';
+import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
 import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextQueryHistoryInputV1 } from './context-types.js';
@@ -143,6 +148,8 @@ export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
    * production always wires the source.
    */
   promptPacks?: PromptPackSourcePort;
+  /** SR3 item 6/§8.3: the SAME hand-off facts owner H publishes, read once for a successor round's brief. */
+  handoff?: Pick<SecretaryHandoffFactsPort, 'readBriefState'>;
 };
 
 export function createQueryPreparation(deps: QueryPreparationDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
@@ -250,8 +257,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         sourceRefs.push({ kind: 'plan-revision', refId: focusPlan.ref.planId, revision: String(focusPlan.planRevision) });
       }
       // The final tool list is computed once here and frozen as
-      // `PromptSetV1.toolNames`. Query builds only the graph group and the
-      // read-only command; every other coordination family fails closed.
+      // `PromptSetV1.toolNames`.
+      // Query builds graph/read-only tools and secretary-admitted note tools.
       const builtinTools = projected.permissions.tools.filter(tool => BUILTIN_TOOL_NAMES.has(tool));
       const readonlyRequested = projected.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
       // The whole-workspace read gate is the real Host authorization, exactly
@@ -267,8 +274,62 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           readonlyAllowsWholeWorkspace = authorized.status === 'ready' && authorized.value.allowsRead('.');
         } catch { readonlyAllowsWholeWorkspace = false; }
       }
+      // A request round reads the secretary facts ONCE, before the final tool
+      // list: the same value decides the note admission here, renders the
+      // context, and freezes the manifest below. A failed or unwired read is
+      // `unavailable`, never an empty grant set. Every non-request Query keeps
+      // its old path and never reads the port.
+      let secretaryFacts: SecretaryPreparationFactsV1 | null = null;
+      if (requestRound) {
+        if (deps.secretaryFacts === undefined) {
+          return rejected('unavailable', 'the secretary preparation facts port is not wired');
+        }
+        try {
+          const read = await deps.secretaryFacts.read(owned, { queryRunRef });
+          if (read.status !== 'ready') return read;
+          secretaryFacts = read.value;
+        } catch (error) {
+          return rejected('unavailable', `the secretary preparation facts read failed: ${messageOf(error)}`);
+        }
+      }
+      // SR3 item 6 (§8.3): the round's hand-off material, read once from the same facts and handed to the recipe
+      // through the frozen input. The understanding goals are the SAME live command's grants (no second rule); a
+      // successor's brief ref reads the four states: `waiting` is the retryable `incomplete` (nothing is prepared),
+      // `ready` renders the brief, `none`/`consumed` no template, a failed read `unavailable`, never an empty brief.
+      let handoff: SecretaryHandoffPromptFactsV1 | undefined;
+      if (secretaryFacts !== null) {
+        if (secretaryFacts.request.briefRef === null) {
+          if (secretaryFacts.request.understandingGrants.length > 0) {
+            handoff = { kind: 'understanding', goals: [...secretaryFacts.request.understandingGrants] };
+          }
+        } else {
+          if (deps.handoff === undefined) {
+            return rejected('unavailable', 'the hand-off brief read port is not wired');
+          }
+          let brief;
+          try {
+            brief = await deps.handoff.readBriefState(owned, { session: executionState.sessionRef });
+          } catch (error) {
+            return rejected('unavailable', `the hand-off brief read failed: ${messageOf(error)}`);
+          }
+          if (brief.status === 'rejected') return brief;
+          if (brief.status !== 'ready') {
+            return rejected('unavailable', `the hand-off brief state is not readable (${brief.status})`);
+          }
+          if (brief.value.state === 'waiting') {
+            return rejected('incomplete', 'the hand-off brief is not ready; the round is prepared once it is');
+          }
+          if (brief.value.state === 'ready') handoff = { kind: 'brief', brief: brief.value.brief };
+        }
+      }
+      const noteAdmission: QueryNoteAdmissionV1 = secretaryNoteAdmission({
+        requestRoot: secretaryFacts === null ? record.job.job.requestRoot : secretaryFacts.request.requestRoot,
+        effectiveGoalId: secretaryFacts === null ? record.job.job.requestGoalId : secretaryFacts.request.effectiveGoalId,
+        grantedGoalIds: secretaryFacts === null ? [] : secretaryFacts.request.understandingGrants,
+      });
       const finalNames = finalToolNamesOf({
         callKind: 'query',
+        noteAdmission,
         // Preparation freezes only the names this Runtime knows; the start
         // checks the real selection and rejects an unknown name first.
         selected: projected.permissions.tools.filter(tool => RUNTIME_TOOL_NAMES.has(tool)),
@@ -279,8 +340,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         frozenSource: builtinTools.includes('read'),
         materialTools: false,
         // Preparation freezes the CAPABILITY set; the actual owner wiring is
-        // re-checked by the same function at start. Query builds only the graph
-        // group and the read-only command; every other family fails closed there.
+        // re-checked by the same function at start.
+        // Query builds graph/read-only tools and secretary-admitted note tools.
         owners: {
           mailbox: true, decisionMessages: true, applicationReceipt: true,
           sessions: true, plans: true, graph: true, notes: true,
@@ -331,15 +392,17 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // Slice 3 C7 (§4.2/§4.3): the ONE assembler owns the Query text and its
       // binding. A non-ready assembler result is propagated unchanged; its
       // rejection (in particular a failing `graphContext` read) is passed back as-is.
-      // A secretary round's recipe reads its facts and returns them here, so the
-      // manifest is frozen from the SAME value the input rendered from.
-      const assemblyInput = {
+      // A request round's facts were read once above and passed into assembly,
+      // so the manifest is frozen from the SAME value the input rendered from.
+      const assemblyInput: Parameters<ContextAssembler['assembleQuery']>[1] = {
         facts: facts.value,
         role: executionState.roleResolution,
         configuration: configured.value,
         permissions: projected.permissions,
         question,
         texts: tracked.texts, toolNames, history,
+        ...(secretaryFacts === null ? {} : { secretaryFacts }),
+        ...(handoff === undefined ? {} : { handoff }),
       };
       let assembled;
       try {
@@ -351,10 +414,6 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       }
       if (assembled.status !== 'ready') return assembled;
       const input = assembled.value.input;
-      const secretaryFacts = assembled.value.secretaryFacts ?? null;
-      if (requestRound && secretaryFacts === null) {
-        return rejected('unavailable', 'the secretary assembly returned no preparation facts');
-      }
       const contextAssembly = assembled.value.binding;
       const inputDigest = sha256Hex(input);
       const takesSessionHistory = assembled.value.takesSessionHistory;
@@ -418,6 +477,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           preparationCursor: secretaryFacts.request.preparationCursor,
           effectiveGoalId: secretaryFacts.request.effectiveGoalId,
           executionKind: secretaryFacts.executionKind,
+          briefRef: secretaryFacts.request.briefRef,
+          understandingGrants: secretaryFacts.request.understandingGrants,
         },
         workspace: { ref: workspace.ref, revision: workspaceRevision },
         focusPlan: focusPlan === null ? null : { ref: focusPlan.ref, revision: focusPlan.planRevision },

@@ -6,15 +6,14 @@
  * dependencies; nothing here reads a store or publishes a platform route.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext, HostPrincipal } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
-import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
-import { CurrentPointerRefShape, GoalRefShape, OperationRefShape, QueryJobRefShape, QueryRunRefShape, id } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
-  GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind,
+  GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind, RequestCommandReceiptV1,
+  RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { RecordGuard } from '../../record-store/ports.js';
@@ -25,7 +24,6 @@ import type { PlanProposalRef } from '../state/plan-machine.js';
 // ------------------------------------------------------------------------ //
 
 export const SECRETARY_HANDOFF_INPUT_TOKENS = 500_000;
-export const SECRETARY_IDLE_ARCHIVE_MS = 24 * 3600 * 1000;
 /** 挑秘书并发重试上限. */
 export const SECRETARY_PICK_RETRIES = 3;
 /** request-tail 归属重试上限. */
@@ -77,6 +75,9 @@ export function secretaryIntakeKey(session: SessionRef): string {
     aggregateType: 'Session', projectId: session.projectId, sessionId: session.sessionId,
   } as unknown as JsonValue);
 }
+
+/** The one per-Session handoff fence prefix: owner = the handoff operation key. */
+export const SECRETARY_HANDOFF_PREFIX = 'secretary-handoff:';
 
 // ------------------------------------------------------------------------ //
 // Read projections (§3.12)                                                  //
@@ -178,40 +179,40 @@ export function requestGoalSlot(goalId: string | null): string {
 }
 
 // ------------------------------------------------------------------------ //
-// The understanding command (the type only)                                //
+// The handoff's request-side entries                                       //
 // ------------------------------------------------------------------------ //
 
-/** The goals are unique, and there is one pointer per goal, in the goals' order. */
-export function understandingPointersProblem(value: unknown): string | null {
-  const command = value as RequestUnderstandingCommandV1;
-  const seen = new Set<string>();
-  for (const goal of command.goals) {
-    const key = canonicalJson(goal as unknown as JsonValue);
-    if (seen.has(key)) return `RequestUnderstandingCommand.goals repeats ${goal.goalId}`;
-    seen.add(key);
-  }
-  if (command.pointers.length !== command.goals.length) {
-    return 'RequestUnderstandingCommand.pointers does not have one entry per goal';
-  }
-  for (let index = 0; index < command.goals.length; index += 1) {
-    const goal = command.goals[index]!;
-    const pointer = command.pointers[index]!.goalRef;
-    if (pointer.projectId !== goal.projectId || pointer.goalId !== goal.goalId) {
-      return `RequestUnderstandingCommand.pointers[${index}] is not goals[${index}]`;
-    }
-  }
-  return null;
-}
+/** The trusted internal route of one request root; `to: null` means the root is dropped. */
+export type InternalRouteCommandV1 = {
+  kind: 'handoff' | 'archived';
+  operationId: string;
+  requestRoot: QueryJobRef;
+  to: SessionRef | null;
+  expectedSource: SessionRef;
+};
 
-export const RequestUnderstandingCommandShape = defineShape({ name: 'RequestUnderstandingCommandV1', fields: {
-  kind: f.literal('request_understanding'),
-  operationId: id,
-  operationRef: f.ref(OperationRefShape),
-  requestRoot: f.ref(QueryJobRefShape),
-  goals: f.array(f.ref(GoalRefShape), { min: 1 }),
-  pointers: f.array(f.object({ goalRef: f.ref(GoalRefShape), pointer: f.ref(CurrentPointerRefShape), revision: f.integer({ min: 0 }) })),
-  checkedRound: f.nullable(f.ref(QueryRunRefShape)),
-  generation: f.integer({ min: 1 }),
-  state: f.enumOf(['live', 'closed', 'consumed'] as const),
-}, rules: [understandingPointersProblem] });
-export type RequestUnderstandingCommandV1 = InferShape<(typeof RequestUnderstandingCommandShape)['fields']>;
+/**
+ * The one principal of the request-side entries the handoff drives. Its actor
+ * is the trusted system literal; identities and receipts are built from it,
+ * never from the caller's principal.
+ */
+export const HANDOFF_SYSTEM_PRINCIPAL: HostPrincipal = {
+  kind: 'host', actor: { kind: 'system', id: 'workflow:session-handoff' },
+};
+
+/**
+ * The read of one internal command's committed receipt. `missing` means the
+ * command never committed; a failed lookup is a rejection, never `missing`.
+ */
+export type RequestCommandReceiptReadV1 =
+  | { status: 'found'; receipt: RequestCommandReceiptV1; cursor: CommitCursor }
+  | { status: 'missing' }
+  | CoreRejection;
+
+/** The request commands a handoff issues: the understanding command and the internal route of a root. */
+export type HandoffRequestCommandV1 = RequestUnderstandingCommandV1 | InternalRouteCommandV1;
+
+/** The receipt read the handoff's W files depend on; the request owner's `readRequestCommandReceipt` implements it. */
+export interface HandoffRequestReceiptReadPort {
+  readRequestCommandReceipt(ctx: CoreCallContext, command: HandoffRequestCommandV1): Promise<RequestCommandReceiptReadV1>;
+}

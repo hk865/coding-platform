@@ -1,5 +1,5 @@
 import { messageOf } from '../../../contracts/error-message.js';
-import type { GoalRecordTransactionPort, StoreCommitReceipt } from '../../record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordCommitIdentityPort, StoreCommitReceipt } from '../../record-store/ports.js';
 
 export type CommittedReceipt = Extract<StoreCommitReceipt, { status: 'committed' }>;
 
@@ -36,5 +36,36 @@ export async function lookupCommittedReceipt(
       return { status: 'invalid', reason: found.reason };
     default:
       return { status: 'unavailable', reason: `${found.code}: ${found.reason}` };
+  }
+}
+
+export type ReceiptByIdentityLookup =
+  | { status: 'found'; receipt: CommittedReceipt; fingerprint: string }
+  | { status: 'missing' }
+  | { status: 'invalid'; reason: string }
+  | { status: 'unavailable'; reason: string };
+
+/**
+ * The identity-only replay read: one committed identity row and the fingerprint
+ * it was committed with. `not_found` is `missing`; a damaged row is `corrupt`
+ * and therefore `unavailable`; a throw is `unavailable`. The current input's
+ * fingerprint never enters this read.
+ */
+export async function lookupCommittedReceiptByIdentity(
+  port: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>, identityKey: string,
+): Promise<ReceiptByIdentityLookup> {
+  let found: Awaited<ReturnType<RecordCommitIdentityPort['readCommitByIdentity']>>;
+  try {
+    found = await port.readCommitByIdentity(identityKey);
+  } catch (error) {
+    return { status: 'unavailable', reason: `the identity read failed: ${messageOf(error)}` };
+  }
+  if (found.status === 'ready') {
+    return { status: 'found', receipt: found.value.receipt, fingerprint: found.value.fingerprint };
+  }
+  switch (found.code) {
+    case 'not_found': return { status: 'missing' };
+    case 'invalid': return { status: 'invalid', reason: found.reason };
+    default: return { status: 'unavailable', reason: `${found.code}: ${found.reason}` };
   }
 }

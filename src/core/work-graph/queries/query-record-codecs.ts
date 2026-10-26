@@ -47,7 +47,14 @@ import type {
   QueryRoundKind,
   QueryRunRef,
   QueryRunSnapshot,
+  RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
+import type { CurrentPointerRef } from '../../../contracts/note.js';
+import {
+  CurrentPointerRefShape, GoalRefShape, OperationRefShape, QueryJobRefShape, QueryRunRefShape,
+} from '../../../contracts/data-format-refs.js';
 import type {
   DecodeResult,
   EncodedDomainEvent,
@@ -309,6 +316,132 @@ function routingIssues(value: unknown): string[] {
   return issues;
 }
 
+/** The three readings of a stored understanding field: absent, the one current shape, or damaged. */
+export type UnderstandingCommandReadV1 =
+  | { kind: 'absent' }
+  | { kind: 'ready'; command: RequestUnderstandingCommandV1 }
+  | { kind: 'damaged'; reason: string };
+
+const UNDERSTANDING_KEYS = [
+  'kind', 'commandId', 'operation', 'generation', 'requestRoot', 'goals', 'checkedRound', 'state',
+] as const;
+/** The pre-migration shape: one `pointers` entry per goal, the operation as `operationRef`. */
+const OLD_UNDERSTANDING_KEYS = [
+  'kind', 'operationId', 'operationRef', 'requestRoot', 'goals', 'pointers', 'checkedRound', 'generation', 'state',
+] as const;
+const UNDERSTANDING_STATES = ['live', 'closed', 'consumed'] as const;
+
+function hasExactlyKeys(value: UnknownRecord, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
+
+/** One `{goalRef, pointer, pointerRevision}` entry: the goal, the pointer it was checked at and that revision. */
+function understandingGoalProblem(value: unknown): string | null {
+  if (!isRecord(value)) return 'must be an object';
+  if (!hasExactlyKeys(value, ['goalRef', 'pointer', 'pointerRevision'])) {
+    return 'must have exactly goalRef, pointer and pointerRevision';
+  }
+  const goal = checkShape(GoalRefShape, value['goalRef'], 'stored');
+  if (goal !== null) return `goalRef: ${goal}`;
+  const pointer = checkShape(CurrentPointerRefShape, value['pointer'], 'stored');
+  if (pointer !== null) return `pointer: ${pointer}`;
+  return isNonNeg(value['pointerRevision']) ? null : 'pointerRevision must be a non-negative safe integer';
+}
+
+/** Validates one command in either the current or the pre-migration shape. */
+function understandingCommandProblem(value: UnknownRecord, old: boolean): string | null {
+  if (value['kind'] !== 'request_understanding') return 'kind must be request_understanding';
+  if (old) {
+    if (!nonEmpty(value['operationId'])) return 'operationId must be a non-empty string';
+    const operation = checkShape(OperationRefShape, value['operationRef'], 'stored');
+    if (operation !== null) return `operationRef: ${operation}`;
+  } else {
+    if (!nonEmpty(value['commandId'])) return 'commandId must be a non-empty string';
+    const operation = checkShape(OperationRefShape, value['operation'], 'stored');
+    if (operation !== null) return `operation: ${operation}`;
+  }
+  if (!isPos(value['generation'])) return 'generation must be a positive integer';
+  const requestRoot = checkShape(QueryJobRefShape, value['requestRoot'], 'stored');
+  if (requestRoot !== null) return `requestRoot: ${requestRoot}`;
+  const goals = value['goals'];
+  if (!Array.isArray(goals)) return 'goals must be an array';
+  if (old) {
+    for (let index = 0; index < goals.length; index += 1) {
+      const goal = checkShape(GoalRefShape, goals[index], 'stored');
+      if (goal !== null) return `goals[${index}]: ${goal}`;
+    }
+  } else {
+    for (let index = 0; index < goals.length; index += 1) {
+      const problem = understandingGoalProblem(goals[index]);
+      if (problem !== null) return `goals[${index}] ${problem}`;
+    }
+  }
+  const checkedRound = value['checkedRound'];
+  if (checkedRound !== null) {
+    const problem = checkShape(QueryRunRefShape, checkedRound, 'stored');
+    if (problem !== null) return `checkedRound: ${problem}`;
+  }
+  if (!UNDERSTANDING_STATES.includes(value['state'] as (typeof UNDERSTANDING_STATES)[number])) {
+    return 'state must be live, closed or consumed';
+  }
+  if (!old) return null;
+  // The old shape kept its per-goal facts in `pointers`, one per goal in the goals' order.
+  const pointers = value['pointers'];
+  if (!Array.isArray(pointers) || pointers.length !== goals.length) {
+    return 'pointers must have one entry per goal';
+  }
+  for (let index = 0; index < pointers.length; index += 1) {
+    const pointer = pointers[index];
+    if (!isRecord(pointer) || !hasExactlyKeys(pointer, ['goalRef', 'pointer', 'revision'])) {
+      return `pointers[${index}] must have exactly goalRef, pointer and revision`;
+    }
+    const goalRef = checkShape(GoalRefShape, pointer['goalRef'], 'stored');
+    if (goalRef !== null) return `pointers[${index}].goalRef: ${goalRef}`;
+    const pointerRef = checkShape(CurrentPointerRefShape, pointer['pointer'], 'stored');
+    if (pointerRef !== null) return `pointers[${index}].pointer: ${pointerRef}`;
+    if (!isNonNeg(pointer['revision'])) return `pointers[${index}].revision must be a non-negative safe integer`;
+    if (canonicalJson(pointer['goalRef'] as unknown as JsonValue)
+      !== canonicalJson(goals[index] as unknown as JsonValue)) {
+      return `pointers[${index}].goalRef is not goals[${index}]`;
+    }
+  }
+  return null;
+}
+
+/**
+ * A missing field is absent; the old shape maps once to the current one; an
+ * unknown or damaged shape is damaged. Later commits write only the current
+ * shape, under the same command identity.
+ */
+export function normalizeUnderstandingCommand(value: unknown): UnderstandingCommandReadV1 {
+  if (value === undefined || value === null) return { kind: 'absent' };
+  if (!isRecord(value)) return { kind: 'damaged', reason: 'must be an object' };
+  if (hasExactlyKeys(value, UNDERSTANDING_KEYS)) {
+    const problem = understandingCommandProblem(value, false);
+    if (problem !== null) return { kind: 'damaged', reason: problem };
+    return { kind: 'ready', command: value as unknown as RequestUnderstandingCommandV1 };
+  }
+  if (!hasExactlyKeys(value, OLD_UNDERSTANDING_KEYS)) return { kind: 'damaged', reason: 'has unknown or missing fields' };
+  const problem = understandingCommandProblem(value, true);
+  if (problem !== null) return { kind: 'damaged', reason: problem };
+  const operation = value['operationRef'] as OperationRef;
+  const pointers = value['pointers'] as { goalRef: GoalRef; pointer: CurrentPointerRef; revision: number }[];
+  return { kind: 'ready', command: {
+    kind: 'request_understanding',
+    commandId: `${operation.operationId}:understanding:${String(value['generation'])}`,
+    operation: structuredClone(operation),
+    generation: value['generation'] as number,
+    requestRoot: structuredClone(value['requestRoot'] as QueryJobRef),
+    goals: pointers.map(pointer => ({
+      goalRef: structuredClone(pointer.goalRef),
+      pointer: structuredClone(pointer.pointer),
+      pointerRevision: pointer.revision,
+    })),
+    checkedRound: value['checkedRound'] === null ? null : structuredClone(value['checkedRound'] as QueryRunRef),
+    state: value['state'] as RequestUnderstandingCommandV1['state'],
+  } };
+}
+
 function receiptIssues(value: unknown): string[] {
   if (value === null) return [];
   if (!isRecord(value)) return ['job.receipt must be null or an object'];
@@ -339,6 +472,10 @@ function receiptIssues(value: unknown): string[] {
       issues.push('job.receipt.secretary must be null or a SessionRef');
     }
     return issues;
+  }
+  if (kind === 'understanding') {
+    return queryJobRefFromValue(value['round']) === null
+      ? ['job.receipt.round is not a complete QueryJobRef'] : [];
   }
   return ['job.receipt.kind is not a legal receipt kind'];
 }
@@ -649,6 +786,18 @@ function secretaryRequestManifestProblem(value: UnknownRecord): string | null {
   if (!['semantic_query', 'initial_coordination'].includes(value['executionKind'] as string)) {
     return 'the request facts executionKind is not legal';
   }
+  // Both members are required on a stored manifest; a missing one is refused
+  // rather than read as null or the empty list.
+  if (value['briefRef'] !== null) {
+    const briefProblem = checkShape(OperationRefShape, value['briefRef'], 'stored');
+    if (briefProblem !== null) return `the request facts briefRef is not an OperationRef: ${briefProblem}`;
+  }
+  const grants = value['understandingGrants'];
+  if (!Array.isArray(grants)) return 'the request facts understandingGrants must be an array';
+  for (let index = 0; index < grants.length; index += 1) {
+    const grantProblem = checkShape(GoalRefShape, grants[index], 'stored');
+    if (grantProblem !== null) return `the request facts understandingGrants[${index}] is not a GoalRef: ${grantProblem}`;
+  }
   const roundProblem = secretaryRoundMaterialProblem(value['round'], 'request.round');
   if (roundProblem !== null) return roundProblem;
   const batch = value['batch'];
@@ -694,6 +843,9 @@ function secretaryRoundMaterialProblem(value: unknown, path: string): string | n
       return `${path}.relatedCards[${index}].current must be null or a positive integer`;
     }
   }
+  if (!Object.hasOwn(value, 'command')) return `${path}.command is missing`;
+  const command = normalizeUnderstandingCommand(value['command']);
+  if (command.kind === 'damaged') return `${path}.command is invalid: ${command.reason}`;
   return null;
 }
 
@@ -798,6 +950,8 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
     issues.push('job.intakeSession must be null or a SessionRef');
   }
   issues.push(...receiptIssues(value['receipt']));
+  const understanding = normalizeUnderstandingCommand(value['understanding']);
+  if (understanding.kind === 'damaged') issues.push(`job.understanding is invalid: ${understanding.reason}`);
   if (!nonEmpty(value['submittedAt'])) issues.push('job.submittedAt must be a non-empty string');
   if (!nonEmpty(value['updatedAt'])) issues.push('job.updatedAt must be a non-empty string');
   return issues;
@@ -878,13 +1032,19 @@ export function encodeQueryJobSnapshot(snapshot: PendingQueryJobSnapshot): Encod
   };
 }
 
-/** Pure QueryJob record decoding; the internal slots are validated then stripped. */
+/** Pure QueryJob record decoding; the internal slots are validated then stripped and the command normalized. */
 export function decodeQueryJobSnapshot(record: EncodedRecord): DecodeResult<QueryJobSnapshot> {
   const checked = validateQueryJobSnapshot(record);
   if (checked.status !== 'decoded') return checked;
   try {
     const parsed = JSON.parse(record.json) as QueryJobSnapshot & { slots?: unknown };
     delete parsed.slots;
+    const job = parsed.job as unknown as Record<string, unknown>;
+    const understanding = normalizeUnderstandingCommand(job['understanding']);
+    if (understanding.kind === 'damaged') {
+      return invalid(`QueryJob snapshot job.understanding is invalid: ${understanding.reason}`);
+    }
+    job['understanding'] = understanding.kind === 'ready' ? understanding.command : null;
     return { status: 'decoded', value: parsed };
   } catch {
     return invalid('QueryJob snapshot JSON is not parseable');

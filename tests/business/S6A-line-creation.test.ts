@@ -54,6 +54,9 @@ const input: LineCreationInput = {
   reason: 'secretary_needed',
   provenance: { schemaVersion: 1, kind: 'new' },
   roleConfiguration: secretaryRole,
+  // The two optional handoff positions, read back as null for an ordinary line.
+  replaces: null,
+  parentOperation: null,
 };
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
@@ -253,9 +256,11 @@ describe.each(['memory', 'sqlite'] as const)('S6A-1 line creation refusals and c
       // its answer returned unchanged.
       const realCap = createSecretaryOpenCapCapacity({ limit: 1, sessions: directory, duty });
       const planned: SessionRef[] = [];
+      const replaced: (SessionRef | null)[] = [];
       const counted: LineCapacityPort = {
         async admit(callCtx, request) {
           planned.push(structuredClone(request.plannedSessionRef));
+          replaced.push(request.replaces);
           return realCap.admit(callCtx, request);
         },
       };
@@ -269,6 +274,7 @@ describe.each(['memory', 'sqlite'] as const)('S6A-1 line creation refusals and c
       // stable planned Session of this command (a new id, in this project).
       const asked = planned.slice(beforeRefused);
       expect(asked).toHaveLength(1);
+      expect(replaced.slice(beforeRefused)).toEqual([null]);
       expect(asked[0]).toEqual({ projectId, sessionId: expect.stringMatching(/^session-[0-9a-f]{64}$/) });
       expect(asked[0]!.sessionId).not.toBe(first.session.sessionId);
       expect(await capped.findLine(ctx, { commandId: input.commandId }))

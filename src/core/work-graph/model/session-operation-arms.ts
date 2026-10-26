@@ -9,24 +9,103 @@
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
 import {
   CurrentPointerRefShape, GoalRefShape, id, OperationRefShape, QueryJobAnswerRefShape, QueryJobRefShape, QueryRunRefShape,
-  RunRefShape, SessionRefShape, TaskTripleShape, WorkspaceScopeShape,
+  RunRefShape, SessionAggregateRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape, WorkspaceScopeShape,
 } from '../../../contracts/data-format-refs.js';
 import { CORE_ERRORS } from '../../../contracts/core/results.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import { sameRef } from '../state/ref-equality.js';
 
+const HumanActorFields = { kind: f.literal('human'), id };
+const SystemActorFields = { kind: f.literal('system'), id };
 /** `ActorRef` (`src/contracts/command-event.ts`). */
 const ActorRefField = f.union('kind', {
-  human: { kind: f.literal('human'), id }, system: { kind: f.literal('system'), id },
+  human: HumanActorFields, system: SystemActorFields,
   agent: { kind: f.literal('agent'), id, runRef: f.ref(RunRefShape) },
 });
+/** A saved trusted actor: an agent is never a command principal. */
+const SavedActorField = f.union('kind', { human: HumanActorFields, system: SystemActorFields });
 /** A work Run or a QueryRun. */
 const ExecutionRefField = f.union('aggregateType', { Run: RunRefShape.fields, QueryRun: QueryRunRefShape.fields });
 const NoteVersionField = f.object({ noteId: id, version: f.integer({ min: 1 }) });
-/** The source's archive request: its id and, once sent, its receipt. */
+const RoleSpecRevisionRefShape = defineShape({ name: 'RoleSpecRevisionRef', fields: {
+  aggregateType: f.literal('RoleSpecRevision'), projectId: id, roleId: id, revision: f.integer({ min: 1 }),
+} });
+/** `SessionProvenanceV1` (`src/contracts/core/session.ts`). */
+const SessionProvenanceField = f.union('kind', {
+  new: { schemaVersion: f.literal(1), kind: f.literal('new') },
+  continuation: { schemaVersion: f.literal(1), kind: f.literal('continuation'), from: f.ref(SessionRefShape),
+    reason: f.enumOf(['interrupted', 'archived', 'damaged', 'role_mismatch'] as const), task: f.ref(TaskTripleShape) },
+  handoff: { schemaVersion: f.literal(1), kind: f.literal('handoff'), from: f.ref(SessionRefShape) },
+  readonly_copy: { schemaVersion: f.literal(1), kind: f.literal('readonly_copy'), from: f.ref(SessionRefShape),
+    messageRef: f.ref(SessionMessageRefShape) },
+});
+/** `RoleConfigurationRef` (`src/contracts/core/identity.ts`). */
+const RoleConfigurationField = f.union('kind', {
+  role_spec: { kind: f.literal('role_spec'), pin: f.object({ ref: f.ref(RoleSpecRevisionRefShape), digest: id }) },
+  legacy_template: { kind: f.literal('legacy_template'), templateId: id, templateRevision: id },
+});
+/** The exact `ensureLine` child input a resume replays; `W` cannot import `B`'s `LineCreationInput`. */
+const HandoffSavedCreateInputField = f.object({
+  commandId: id, duty: f.enumOf(PLATFORM_DUTIES), scope: f.object({ kind: f.literal('project') }), reason: id,
+  provenance: SessionProvenanceField, roleConfiguration: RoleConfigurationField,
+  replaces: f.nullable(f.ref(SessionRefShape)), parentOperation: f.nullable(f.ref(OperationRefShape)),
+});
+/** `RequestUnderstandingCommandV1` (`src/contracts/query-job.ts`); the operation replays it as saved. */
+const RequestUnderstandingCommandField = f.object({
+  kind: f.literal('request_understanding'), commandId: id, operation: f.ref(OperationRefShape),
+  generation: f.integer({ min: 1 }), requestRoot: f.ref(QueryJobRefShape),
+  goals: f.array(f.object({ goalRef: f.ref(GoalRefShape), pointer: f.ref(CurrentPointerRefShape),
+    pointerRevision: f.integer({ min: 0 }) })),
+  checkedRound: f.nullable(f.ref(QueryRunRefShape)),
+  state: f.enumOf(['live', 'closed', 'consumed'] as const),
+});
+const WorkContextRefField = f.object({ aggregateType: f.literal('WorkContextBinding'), projectId: id, workspaceId: id,
+  workId: id });
+const ArchiveTaskChoiceField = f.object({
+  target: f.union('kind', {
+    task: { kind: f.literal('task'), ref: f.ref(TaskTripleShape) },
+    work: { kind: f.literal('work'), ref: WorkContextRefField },
+  }),
+  disposition: f.union('kind', {
+    drop: { kind: f.literal('drop') },
+    transfer: { kind: f.literal('transfer'), to: f.ref(SessionRefShape) },
+  }),
+});
+const ArchiveWaitChoiceField = f.union('kind', {
+  cancel: { kind: f.literal('cancel'), runRef: f.ref(RunRefShape), messageRef: f.ref(SessionMessageRefShape) },
+  transfer: { kind: f.literal('transfer'), runRef: f.ref(RunRefShape), messageRef: f.ref(SessionMessageRefShape),
+    to: f.ref(SessionRefShape) },
+});
+const SessionArchiveConditionField = f.union('kind', {
+  secretary_handoff: { kind: f.literal('secretary_handoff'), operation: f.ref(OperationRefShape) },
+});
+const ARCHIVE_MODES = ['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete',
+  'secretary_handoff'] as const;
+/**
+ * The exact `GraphWrite<RequestSessionArchiveInput>` a resume replays: its
+ * original request id and the Session pin the archive owner reads. The
+ * condition member is the archive owner's and absent until it lands.
+ */
+const SessionArchiveGraphWriteField = f.object({
+  input: f.object({
+    sessionRef: f.ref(SessionRefShape), reason: id, tasks: f.array(ArchiveTaskChoiceField),
+    wait: f.nullable(ArchiveWaitChoiceField),
+    confirmUnknownStopped: f.optional(f.boolean()),
+    mode: f.optional(f.enumOf(ARCHIVE_MODES)),
+    condition: f.optional(f.nullable(SessionArchiveConditionField)),
+  }),
+  meta: f.object({
+    requestId: id,
+    expected: f.array(f.object({ ref: f.ref(SessionAggregateRefShape), revision: f.revision({ min: 0 }) })),
+  }),
+});
+/** The source's archive request: its id, the exact saved write and, once sent, its receipt. */
 const ArchiveRequestField = f.nullable(f.object({
-  requestId: id, receipt: f.nullable(f.object({ identityKey: id, fingerprint: id })),
+  requestId: id,
+  savedInput: f.nullable(SessionArchiveGraphWriteField),
+  receipt: f.nullable(f.object({ identityKey: id, fingerprint: id })),
 }));
 /** The last refusal a step met, kept so the next advance can read why it stopped. */
 const LastRefusalField = <const S extends readonly [string, ...string[]]>(stages: S) => f.nullable(f.object({
@@ -73,6 +152,34 @@ function handoffReceiptProblem(value: unknown): string | null {
   }
   const early = progress.routing?.roots.findIndex(root => root.receipt !== null && root.input === null) ?? -1;
   return early >= 0 ? `HandoffAction.progress.routing.roots[${early}].receipt has no saved input` : null;
+}
+
+/**
+ * A step the operation already reached keeps its original input: a record whose saved position reads `null` cannot be
+ * recovered, and rebuilding one would replay a command the operation never made. An `existing` target's assignment
+ * saves no create input, so it is not a reached create step.
+ */
+export function handoffReachedInputProblem(action: HandoffActionV1): string | null {
+  const { input, progress } = action;
+  for (const [index, assignment] of progress.assignments.entries()) {
+    if (input.assignments[index]?.target.kind !== 'create') continue;
+    if ((assignment.successor !== null || assignment.createOperation !== null) && assignment.createInput === null) {
+      return `HandoffAction.progress.assignments[${index}] is reached but has no saved create input`;
+    }
+  }
+  const round = progress.understanding.findIndex(entry => entry.command === null);
+  if (round >= 0) return `HandoffAction.progress.understanding[${round}] has no saved command`;
+  return archiveSavedInputProblem('HandoffAction', progress.archiveRequest);
+}
+
+/**
+ * An archive request the operation already saved keeps its exact `GraphWrite`; without it a recovery would rebuild a
+ * request the operation never made. The handoff and the manual archive both run this one rule.
+ */
+export function archiveSavedInputProblem(arm: 'HandoffAction' | 'SecretaryArchiveAction',
+  archive: { savedInput: unknown | null } | null): string | null {
+  return archive === null || archive.savedInput !== null ? null
+    : `${arm}.progress.archiveRequest has no saved input`;
 }
 
 /** No request root chosen twice; a choice never routes to the source. */
@@ -132,6 +239,8 @@ export const HandoffActionShape = defineShape({ name: 'HandoffAction', fields: {
     assignments: f.array(f.object({
       successor: f.nullable(f.ref(SessionRefShape)),
       createOperation: f.nullable(f.ref(OperationRefShape)),
+      // Saved before the create child is called; an old record reads null.
+      createInput: f.nullable(HandoffSavedCreateInputField),
       // One per task of the assignment, in the same order.
       transfers: f.array(f.object({
         task: f.ref(TaskTripleShape),
@@ -155,6 +264,8 @@ export const HandoffActionShape = defineShape({ name: 'HandoffAction', fields: {
     // One entry per understanding generation.
     understanding: f.array(f.object({
       generation: f.integer({ min: 1 }), requestRoot: f.ref(QueryJobRefShape), round: f.nullable(f.ref(QueryJobRefShape)),
+      // Saved before the understanding append; an old entry reads null.
+      command: f.nullable(RequestUnderstandingCommandField),
     })),
     brief: f.nullable(f.object({
       requests: f.array(f.object({ requestRoot: f.ref(QueryJobRefShape), lastAnswer: f.nullable(f.ref(QueryJobAnswerRefShape)) })),
@@ -183,6 +294,8 @@ export const SecretaryArchiveActionShape = defineShape({ name: 'SecretaryArchive
   input: f.object({
     source: f.ref(SessionRefShape),
     choices: f.array(f.object({ requestRoot: f.ref(QueryJobRefShape), to: f.nullable(f.ref(SessionRefShape)) }), { min: 1 }),
+    // The trusted actor saved at accept; an old operation reads null.
+    actor: f.nullable(SavedActorField),
     commandId: id, fingerprint: f.sha256(),
   }),
   progress: f.object({
@@ -202,3 +315,51 @@ export const SecretaryArchiveActionShape = defineShape({ name: 'SecretaryArchive
 }, rules: [archiveChoiceProblem, archiveItemsProblem] });
 export type HandoffActionV1 = InferShape<(typeof HandoffActionShape)['fields']>;
 export type SecretaryArchiveActionV1 = InferShape<(typeof SecretaryArchiveActionShape)['fields']>;
+
+/**
+ * The one compatible read for the three saved positions and the archive actor: a
+ * record or event written before a field existed reads it as `null`. Pure;
+ * returns the input unchanged when there is nothing to upgrade.
+ */
+export function upgradeSessionOperationActionV1(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  if (value['kind'] === 'handoff') {
+    const progress = value['progress'];
+    if (!isRecord(progress)) return value;
+    let changed = false;
+    const assignments = Array.isArray(progress['assignments'])
+      ? progress['assignments'].map((entry) => {
+          if (!isRecord(entry) || Object.hasOwn(entry, 'createInput')) return entry;
+          changed = true;
+          return { ...entry, createInput: null };
+        })
+      : progress['assignments'];
+    const understanding = Array.isArray(progress['understanding'])
+      ? progress['understanding'].map((entry) => {
+          if (!isRecord(entry) || Object.hasOwn(entry, 'command')) return entry;
+          changed = true;
+          return { ...entry, command: null };
+        })
+      : progress['understanding'];
+    const archive = progress['archiveRequest'];
+    const archiveRequest = isRecord(archive) && !Object.hasOwn(archive, 'savedInput')
+      ? (() => { changed = true; return { ...archive, savedInput: null }; })()
+      : archive;
+    if (!changed) return value;
+    return { ...value, progress: { ...progress, assignments, understanding, archiveRequest } };
+  }
+  if (value['kind'] === 'secretary_archive') {
+    let changed = false;
+    const input = value['input'];
+    const nextInput = isRecord(input) && !Object.hasOwn(input, 'actor')
+      ? (() => { changed = true; return { ...input, actor: null }; })() : input;
+    const progress = value['progress'];
+    const archive = isRecord(progress) ? progress['archiveRequest'] : null;
+    const nextArchive = isRecord(archive) && !Object.hasOwn(archive, 'savedInput')
+      ? (() => { changed = true; return { ...archive, savedInput: null }; })() : archive;
+    if (!changed) return value;
+    return { ...value, input: nextInput,
+      ...(isRecord(progress) ? { progress: { ...progress, archiveRequest: nextArchive } } : {}) };
+  }
+  return value;
+}

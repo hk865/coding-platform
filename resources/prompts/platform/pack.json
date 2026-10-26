@@ -70,6 +70,16 @@
       "version": 2,
       "mentionsTools": []
     },
+    "handoff-write-understanding-secretary": {
+      "file": "templates/handoff-write-understanding-secretary.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "handoff-brief-secretary": {
+      "file": "templates/handoff-brief-secretary.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "base": {
       "file": "templates/base.txt",
       "version": 2,

@@ -15,12 +15,13 @@ import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { CommandRerunRequestReadPort } from '../work-graph/model/command-rerun-request-contracts.js';
-import type { SecretaryPreparationFactsPort, SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
+import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { NoteMemoryMaterialPort } from '../work-graph/model/note-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
+import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
 
 /**
  * L8 (book ruling 12; interface §8): the one reminder read the assembler takes
@@ -41,8 +42,6 @@ export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
     architectureReminders?: ArchitectureReminderReadPort;
     /** K3 B3 item 7: the Task's requests for the blocked section; optional for old test doubles. */
     commandRerunRequests?: CommandRerunRequestReadPort;
-    /** The secretary facts read; absent makes a secretary round `unsupported` before the model. */
-    secretaryFacts?: SecretaryPreparationFactsPort;
     /** The note memory-material read the notes already share; absent fails a secretary round closed. */
     memoryMaterial?: NoteMemoryMaterialPort };
 
@@ -133,11 +132,6 @@ export type AssembledContextV1 = {
   takesSessionHistory: boolean;
   /** What the review shrink re-renders from. */
   renderMaterial: ContextRenderMaterialV1;
-  /**
-   * The one secretary facts value the recipe read; preparation freezes the
-   * manifest from this value and reads the port nowhere else.
-   */
-  secretaryFacts?: SecretaryPreparationFactsV1;
 };
 
 export interface ContextAssembler {
@@ -159,6 +153,10 @@ export interface ContextAssembler {
     texts?: PromptTextsV1;
     toolNames: readonly string[];
     history: ContextQueryHistoryInputV1;
+    /** The one facts value preparation read before the final tool list; the recipe never reads the port. */
+    secretaryFacts?: SecretaryPreparationFactsV1;
+    /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
+    handoff?: SecretaryHandoffPromptFactsV1;
   }): Promise<ReadResult<AssembledContextV1>>;
   readAttentionGraph(ctx: CoreCallContext, request: AttentionGraphReadRequestV1): Promise<ReadResult<GraphAttentionFactsV1>>;
 }

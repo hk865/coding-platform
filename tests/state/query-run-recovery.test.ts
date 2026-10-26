@@ -489,6 +489,7 @@ describe('newPendingQueryRecords', () => {
         requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
         relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
         goalAttribution: null, relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+        understanding: null,
       },
     } satisfies PendingQueryJobSnapshot);
     expect(records.run).toEqual({

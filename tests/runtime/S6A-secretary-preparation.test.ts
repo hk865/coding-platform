@@ -218,12 +218,14 @@ describe.each(['memory', 'sqlite'] as const)('a goal request prepares from the s
       requestRoot,
       round: {
         ref: round, revision: job.revision, runRef: run.ref, runRevision: run.revision,
-        since: job.since, text: GOAL_TEXT, selectedIdea: null, relatedCards: [],
+        since: job.since, text: GOAL_TEXT, selectedIdea: null, relatedCards: [], command: null,
       },
       batch: [],
       preparationCursor: tail.since,
       effectiveGoalId: S6A_GOAL_1.goalId,
       executionKind: 'semantic_query',
+      briefRef: null,
+      understandingGrants: [],
     });
     expect(manifest.contextAssembly.callKind).toBe('secretary');
 

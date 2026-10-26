@@ -57,8 +57,8 @@ describe('a handoff that passes', () => {
     const transfer = (taskId: string) => ({ task: task(taskId), input: null, receipt: null });
     expect(newHandoffOperationRecord({ ref: op('h1'), at, input })).toEqual({ ref: op('h1'), revision: 1, workspaceId: 'w',
       action: { kind: 'handoff', input, progress: { stage: 'accepted', advanceGeneration: 1, fence: null, stoppedWriter: null,
-        assignments: [{ successor: null, createOperation: null, transfers: [transfer('a'), transfer('b')] },
-          { successor: null, createOperation: null, transfers: [] }],
+        assignments: [{ successor: null, createOperation: null, createInput: null, transfers: [transfer('a'), transfer('b')] },
+          { successor: null, createOperation: null, createInput: null, transfers: [] }],
         coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null, lastRefusal: null } },
       phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null });
   });
@@ -85,6 +85,7 @@ describe('a secretary archive that passes', () => {
     expect(admitSecretaryArchive(archive())).toEqual({ ok: true });
     const root = (queryJobId: string) => ({ aggregateType: 'QueryJob', projectId: P, workspaceId: 'w', queryJobId });
     const input = { source: { projectId: P, sessionId: 's1' }, choices: [{ requestRoot: root('r1'), to: null }],
+      actor: { kind: 'human' as const, id: 'operator' },
       commandId: 'c2', fingerprint: 'b'.repeat(64) };
     expect(newSecretaryArchiveOperationRecord({ ref: op('a1'), workspaceId: 'w', at, input })).toEqual({ ref: op('a1'),
       revision: 1, workspaceId: 'w', action: { kind: 'secretary_archive', input, progress: { stage: 'accepted',

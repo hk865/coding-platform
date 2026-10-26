@@ -7,7 +7,10 @@ import type { WorkspaceRef } from '../../src/contracts/ledger.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { InitialPlanningGoalInput } from '../../src/business/workflow/contracts.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import type { SessionHandoffWorkflowPort } from '../../src/core/work-graph/model/session-handoff-contracts.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
+import { seedS6BArchiveSource } from '../helpers/S6B1-fixture.js';
+import { s6b2Accept, s6b2Scene, s6b2Workspace } from '../helpers/S6B2-handoff-scene.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const actor = { kind: 'human' as const, id: 'trusted-test-human' };
@@ -89,6 +92,58 @@ it.each(['memory', 'sqlite'] as const)('%s: public composition wires Host materi
       } finally { await reopened.close(); }
     }
   } finally { if (!closed) await platform.close(); }
+});
+
+it('rejects: the four published handoff entries admit only the Host that holds the lease', async () => {
+  const scene = s6b2Scene();
+  const opened = await scene.open('sqlite', { requestDriver: 'off' });
+  const seededWorld = opened.world;
+  let held: Awaited<ReturnType<typeof createTargetPlatform>> | null = null;
+  try {
+    // The source, basis and both operations are the S6B2 fixture's real public steps; the held platform opens the
+    // same SQLite store, so one public read after the four refusals can show that nothing moved.
+    const ws = await s6b2Workspace(seededWorld);
+    const handoffSeed = await seedS6BArchiveSource(ws, 'held-handoff');
+    const archiveSeed = await seedS6BArchiveSource(ws, 'held-archive');
+    const handoff = await s6b2Accept(seededWorld, { commandId: 'held-lease-handoff', source: handoffSeed.source });
+    const accepted = await seededWorld.platform.sessionArchive.acceptArchive(seededWorld.humanContext(), {
+      commandId: 'held-lease-archive', source: archiveSeed.source,
+      choices: archiveSeed.requests.map(request => ({ requestRoot: request.requestRoot, to: archiveSeed.other })),
+    });
+    if (accepted.status !== 'committed') {
+      throw new Error(`the manual archive accept failed: ${JSON.stringify(accepted)}`);
+    }
+    const archive = accepted.value.operation;
+    const basis = await seededWorld.platform.readSecretaryHandoffBasis(seededWorld.systemContext(), handoffSeed.source);
+    if (basis.status !== 'ready') throw new Error(`the handoff basis is not readable: ${JSON.stringify(basis)}`);
+    held = await createTargetPlatform({ storage: { kind: 'sqlite', directory: seededWorld.database },
+      workspace: (await fixture()).bindings, now: () => at,
+      hostInstance: { hostInstanceId: 'held-peer', lease: 'held_by_other' } });
+    const ctx = seededWorld.systemContext();
+    const readOperations = async () => {
+      const handoffRead = await held!.sessions.getSessionOperation(ctx, handoff);
+      const archiveRead = await held!.sessions.getSessionOperation(ctx, archive);
+      if (handoffRead.status !== 'ready' || archiveRead.status !== 'ready') {
+        throw new Error(`the seeded operations are not readable: ${JSON.stringify([handoffRead, archiveRead])}`);
+      }
+      return [handoffRead.value, archiveRead.value] as const;
+    };
+    const before = await readOperations();
+    const calls: readonly { entry: string;
+      call: (owner: SessionHandoffWorkflowPort, context: CoreCallContext) => Promise<unknown> }[] = [
+      { entry: 'startHandoff', call: (owner, context) => owner.startHandoff(context, { source: handoffSeed.source, basis: basis.value }) },
+      { entry: 'continueHandoff', call: (owner, context) => owner.continueHandoff(context, { operation: handoff }) },
+      { entry: 'advance', call: (owner, context) => owner.advance(context, { operation: handoff }) },
+      { entry: 'manualArchive', call: (owner, context) => owner.manualArchive(context, { operation: archive }) },
+    ];
+    for (const { entry, call } of calls) {
+      expect(await call(held.workflow.sessionHandoff, ctx), entry).toMatchObject({ status: 'rejected', code: 'busy' });
+    }
+    expect(await readOperations()).toEqual(before);
+  } finally {
+    if (held !== null) await held.close();
+    await scene.closeAll();
+  }
 });
 
 const GOAL_REF = { aggregateType: 'Goal' as const, projectId: workspace.projectId, goalId: 'platform-goal' };

@@ -35,6 +35,7 @@ import type {
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
 import type { SessionArchivePort } from './session-archive.js';
+import type { SessionHandoffWorkflowPort } from '../../core/work-graph/model/session-handoff-contracts.js';
 import type { SessionMaintenancePort } from './session-maintenance.js';
 import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
@@ -240,6 +241,12 @@ export interface WorkflowPort {
   continueArchiveLine?: SessionArchivePort['continueArchiveLine'];
   /** Slice 1 §4.2: at most one bounded maintenance page per call. */
   maintainSessions?: SessionMaintenancePort['maintainSessions'];
+  /**
+   * Slice 6 of the orchestration design: the handoff/archive Workflow owner.
+   * Optional so every old
+   * narrow double stays type-compatible; the real composition publishes it.
+   */
+  sessionHandoff?: SessionHandoffWorkflowPort;
   /**
    * Slice 5 §4.5 finite decision coordination: `answerDecision` first, then the
    * structured conflict action (only for an active Goal's conflict card), then

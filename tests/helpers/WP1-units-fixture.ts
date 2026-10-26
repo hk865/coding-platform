@@ -458,7 +458,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
         runRef: queryRunRef, answerRefs: [], closeReason: null, submittedAt: T0, updatedAt: T0,
         requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
         relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null, goalAttribution: null,
-        relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+        relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null, understanding: null,
         intent: { schemaVersion: 1, intentId: 'cu-query-intent', projectId: 'p', workspaceId: 'w', goalId: 'g',
           question, focusTaskRefs: [], budget: { maxTokens: 4096, deadline: null }, multiTurn: { maxRounds: 1 },
           correlationId: 'cu-query', execution: { kind: 'semantic_query', roleBinding: execution.run.roleBinding,

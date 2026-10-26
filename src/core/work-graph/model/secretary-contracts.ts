@@ -9,8 +9,9 @@ import type { AdoptedArchitecture } from '../../../contracts/architecture-catalo
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import type { GoalDesiredState } from '../../../contracts/ledger.js';
+import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
   QueryJobRef, QueryRunRef, SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
@@ -27,7 +28,13 @@ export type SecretaryHistoryEntryV1 = {
     | { kind: 'not_ended' };
 };
 
-/** Every fact one secretary preparation reads, at one watermark with its guards. */
+/**
+ * Every fact one secretary preparation reads, at one watermark with its guards.
+ *
+ * `briefRef` is the hand-off operation the successor's brief belongs to, and
+ * `understandingGrants` is the one still-valid grant set of the frozen material
+ * list. Both are computed once in this read and never re-derived by a consumer.
+ */
 export type SecretaryPreparationFactsV1 = {
   request: {
     requestRoot: QueryJobRef;
@@ -36,6 +43,8 @@ export type SecretaryPreparationFactsV1 = {
     round: SecretaryRoundMaterialV1;
     batch: SecretaryRoundMaterialV1[];
     earlier: SecretaryHistoryEntryV1[];
+    briefRef: OperationRef | null;
+    understandingGrants: GoalRef[];
   };
   workspace: { workspaceId: string; revision: number };
   architecture: { baselineId: string; revision: number; catalog: AdoptedArchitecture } | null;

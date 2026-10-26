@@ -53,7 +53,10 @@ import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
 import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver } from './auto-capture-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
-import { createWakeLoop, type WakeLoop } from './wake-loop.js';
+import {
+  createHandoffQueue, createWakeLoop, LIFECYCLE_QUEUE,
+  LIFECYCLE_WAKE_AGGREGATE_TYPES, notReady, type QueueHandler, type WakeLoop,
+} from './wake-loop.js';
 import {
   createRequestRoundQueues, REQUEST_ROUNDS_QUEUE, REQUEST_UNASSIGNED_QUEUE,
 } from '../business/workflow/request-round-queue.js';
@@ -64,7 +67,9 @@ import {
 import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
 import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
+import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
+import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
@@ -321,6 +326,10 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
  * graph tools. The local secretary gets these only. */
 const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES];
 
+/** The local secretary's tools: the read tools plus the note writer. `record_note` writes WorkGraph notes only, so it
+ * needs no file write scope; the grant below keeps that scope empty. */
+const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES];
+
 /** The local workbench secretary's binding identity. Its Role is the exact
  * platform secretary legacy template, which the Session duty resolver reads as
  * `secretary`; the local binding keeps its own identity and policy revision. */
@@ -336,7 +345,7 @@ function localSecretaryRoleBinding(): WorkbenchQueryProfile['roleBinding'] {
 }
 
 /** The local secretary's grant: the local grant's model and budget with its read
- * tools only, the platform secretary duty and the secretary behavior. It never
+ * tools and the note writer, the platform secretary duty and the secretary behavior. It never
  * carries a write scope, a command tool or command access. */
 function localSecretaryGrant(localGrant: WorkbenchRuntimeBinding['grant']): WorkbenchRuntimeBinding['grant'] {
   const template = platformRoleProfile('secretary').template;
@@ -346,7 +355,7 @@ function localSecretaryGrant(localGrant: WorkbenchRuntimeBinding['grant']): Work
       templateId: template.templateId, revision: template.templateRevision,
       digest: sha256Hex(PLATFORM_PROMPT_PACK_V1.templates['skill-platform-secretary']),
     },
-    tools: localGrant.tools.filter(name => LOCAL_READ_TOOL_NAMES.includes(name)),
+    tools: [...LOCAL_SECRETARY_TOOL_NAMES],
     writeScope: [],
     skills: { bundle: 'platform', behaviors: ['secretary'] },
     systemInstruction: null,
@@ -761,8 +770,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // waits where the command left it.
   let wakeLoop: WakeLoop | undefined;
   let requestQueues: ReturnType<typeof createRequestRoundQueues> | undefined;
+  let lifecycleQueue: ReturnType<typeof createHandoffQueue> | undefined;
   if (leaseOwned && options.requestDriver !== 'off') {
     const loop = createWakeLoop({ driving: () => leaseOwned });
+    // The automatic entry after a secretary round: the published Workflow's own two entries.
+    const handoffOwner = platform.workflow.sessionHandoff;
+    // The round-end sources waiting for their basis read and start. Memory only: a crash between a round end and
+    // its read loses one check until that line's next round end, which records it again.
+    const pendingRoundEnds = new Map<string, Map<string, SessionRef>>();
+    /** The round-end hook: record the source for this workspace and wake its lifecycle queue. It never throws. */
+    const recordRoundEnd = async (ctx: CoreCallContext, session: SessionRef): Promise<void> => {
+      const key = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
+      const sources = pendingRoundEnds.get(key) ?? new Map<string, SessionRef>();
+      sources.set(plainSessionRefKey(session), session);
+      pendingRoundEnds.set(key, sources);
+      loop.wake({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, LIFECYCLE_QUEUE, 'advance_settled');
+    };
     const queues = createRequestRoundQueues({
       rounds: platform.requestRounds,
       facts: platform.requestFacts,
@@ -771,6 +794,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       drain: platform.requestIntake.drainUnassigned,
       driver: createQueryStageDriver({
         queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
+        fence: platform.readHandoffFence,
+        onRoundEnded: recordRoundEnd,
       }),
       // Every pass runs as the Host's own system actor; the loop's abort signal
       // goes into the context, so closing stops a pass at its next request. A
@@ -788,15 +813,114 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // start-up workspaces in `start` and a later one in `addWorkspace`.
     loop.register(REQUEST_ROUNDS_QUEUE, queues.rounds);
     loop.register(REQUEST_UNASSIGNED_QUEUE, queues.unassigned);
-    // A request command's commit wakes both queues: the round it appended needs
-    // a claim or a drain, and a waiting request needs the unassigned pass.
+    // A request command's commit reaches every queue of its workspace: the round it appended needs a claim or a
+    // drain, a waiting request needs the unassigned pass, and an arming command reaches the lifecycle work at once.
     requestWakeSink = (scope, source) => {
       loop.wake(scope, REQUEST_ROUNDS_QUEUE, source);
       loop.wake(scope, REQUEST_UNASSIGNED_QUEUE, source);
+      loop.wake(scope, LIFECYCLE_QUEUE, source);
     };
+    /** A transient failure: a thrown call, or a read that is not ready / unavailable. Everything else is a wait. */
+    const transient = (result: { status: string; code?: string }): boolean =>
+      result.status === 'not_ready' || (result.status === 'rejected' && result.code === 'unavailable');
+    const failureText = (error: unknown): string => error instanceof Error ? error.message : String(error);
+    /**
+     * Phase 1: each pending round-end source gets one basis read and one `startHandoff`; a business answer removes it.
+     * Phase 1 counts nothing: a start may continue an operation that is already waiting without writing, and the same
+     * traversal's operation read (phase 2) is where a revision that really moved is seen.
+     */
+    const startPendingHandoffs = async (ctx: CoreCallContext, failures: string[]): Promise<void> => {
+      const workspaceKey = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
+      const sources = pendingRoundEnds.get(workspaceKey);
+      if (sources === undefined) return;
+      for (const [key, source] of [...sources]) {
+        try {
+          const basis = await platform.readSecretaryHandoffBasis(ctx, source);
+          if (basis.status !== 'ready' && transient(basis)) {
+            failures.push(notReady('the handoff basis read', basis).message);
+            continue;
+          }
+          if (basis.status !== 'ready' || basis.value.tooLong !== true) { sources.delete(key); continue; }
+          const started = await handoffOwner.startHandoff(ctx, { source, basis: basis.value });
+          if (started.status !== 'ready' && transient(started)) {
+            failures.push(notReady('the handoff start', started).message);
+            continue;
+          }
+          sources.delete(key);
+        } catch (error) {
+          failures.push(`the handoff trigger of ${key} failed: ${failureText(error)}`);
+        }
+      }
+      if (sources.size === 0) pendingRoundEnds.delete(workspaceKey);
+    };
+    /** Phase 2: every unfinished operation once, through its own arm; a wait or a failure never stops the next. */
+    const continueUnfinished = async (ctx: CoreCallContext, failures: string[]):
+      Promise<{ continued: number; blocked: number }> => {
+      let continued = 0;
+      let blocked = 0;
+      let unfinished: Awaited<ReturnType<typeof platform.listUnfinishedOperations>>;
+      try {
+        unfinished = await platform.listUnfinishedOperations(ctx);
+      } catch (error) {
+        failures.push(`the unfinished operation read failed: ${failureText(error)}`);
+        return { continued, blocked };
+      }
+      if (unfinished.status !== 'ready') {
+        if (transient(unfinished)) failures.push(notReady('the unfinished operation read', unfinished).message);
+        else blocked += 1;
+        return { continued, blocked };
+      }
+      for (const { operation, revision, kind } of unfinished.value) {
+        try {
+          const result = kind === 'handoff'
+            ? await handoffOwner.continueHandoff(ctx, { operation })
+            : await handoffOwner.manualArchive(ctx, { operation });
+          if (result.status === 'ready') {
+            if (result.value.revision > revision) continued += 1;
+            else blocked += 1;
+          } else if (transient(result)) {
+            failures.push(notReady(`the ${kind} operation ${operation.operationId}`, result).message);
+          } else {
+            blocked += 1;
+          }
+        } catch (error) {
+          failures.push(`the ${kind} operation ${operation.operationId} failed: ${failureText(error)}`);
+        }
+      }
+      return { continued, blocked };
+    };
+    /**
+     * One whole lifecycle traversal: pending round ends, then every unfinished operation once. A transient item is
+     * recorded and stepped past; only a traversal that progressed nothing throws, so the loop's own back-off reruns the
+     * whole traversal.
+     */
+    const runLifecyclePass = async (ctx: CoreCallContext): Promise<{ continued: number; blocked: number }> => {
+      const failures: string[] = [];
+      await startPendingHandoffs(ctx, failures);
+      const { continued, blocked } = await continueUnfinished(ctx, failures);
+      if (continued === 0 && failures.length > 0) {
+        throw new Error(`the lifecycle pass failed: ${failures.join('; ')}`);
+      }
+      return { continued, blocked };
+    };
+    // The lifecycle queue: one handler call is one whole traversal. The composition binds the reads and the
+    // Workflow owners.
+    const lifecycle = createHandoffQueue({
+      pass: async ctx => await runLifecyclePass(ctx),
+    });
+    const lifecycleHandler: QueueHandler = {
+      async rebuild() {},
+      async drain(scope, input) {
+        const ctx: CoreCallContext = { ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal: input.signal };
+        const pass = await lifecycle.run(ctx);
+        return { progressed: pass.continued, more: false, continuation: null, wrapped: true, blocked: pass.blocked };
+      },
+    };
+    loop.register(LIFECYCLE_QUEUE, lifecycleHandler, { aggregateTypes: LIFECYCLE_WAKE_AGGREGATE_TYPES });
     requestDriverCommitted = notice => loop.committed(notice);
     wakeLoop = loop;
     requestQueues = queues;
+    lifecycleQueue = lifecycle;
   }
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
@@ -1322,6 +1446,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
     context: reconcileContext,
     fanOut: (ctx, goalRef, options) => goalFanOut.fanOut(ctx, goalRef, options),
+    ...(lifecycleQueue === undefined ? {} : { handoffQueue: lifecycleQueue }),
   });
   const reconcileReport = leaseOwned ? await reconcileScopes(workspaces.map(workspace => workspace.scope)) : null;
   const hostReconcile: HostReconcileReportV1 = { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease,
@@ -1897,6 +2022,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         // in-flight advance got, and waits for them; the queues then settle
         // what they launched, so no advance is left running into `close`.
         if (wakeLoop !== undefined) await wakeLoop.close();
+        if (lifecycleQueue !== undefined) await lifecycleQueue.close();
         if (requestQueues !== undefined) await requestQueues.settle();
         await collaborationDriver.close();
         await goalFanOut.close();

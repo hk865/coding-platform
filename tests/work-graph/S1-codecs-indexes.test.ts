@@ -287,10 +287,45 @@ describe.each(['memory', 'sqlite'] as const)('S1 codecs and indexes (%s)', (kind
       archiveRequest: {
         schemaVersion: 1, requestId: 'a', requestedBy: { kind: 'human', id: 'u1' }, requestedAt: T0,
         reason: 'archive', mode: 'operator', tasks: [], wait: null, execution: { kind: 'bogus' },
-        executionPins: [], confirmUnknownStopped: false, receipt: { identityKey: 'i', fingerprint: 'f' },
+        executionPins: [], confirmUnknownStopped: false, condition: null,
+        receipt: { identityKey: 'i', fingerprint: 'f' },
       },
     } as unknown as Record<string, unknown>);
     expect(decodeSessionRecord(encoded).status).toBe('invalid');
+  });
+
+  it.each([
+    ['SV45: a secretary archive request carrying its trusted condition decodes with the condition intact',
+      'secretary_handoff', 'the handoff completed',
+      { kind: 'secretary_handoff', operation: { aggregateType: 'CoreOperation', projectId: P, operationId: 'op-1' } }, 'decoded', ''],
+    ['SV46: an archive condition whose operation ref is malformed is refused with one reason naming the condition',
+      'secretary_handoff', 'the handoff completed',
+      { kind: 'secretary_handoff', operation: { aggregateType: 'CoreOperation', projectId: P, operationId: '' } }, 'invalid', 'condition'],
+    ['SV48: a secretary archive request with a null condition is refused',
+      'secretary_handoff', 'the handoff completed',
+      null, 'invalid', 'archiveRequest condition must match its secretary mode'],
+    ['SV48: an operator archive request carrying a condition is refused',
+      'operator', 'archive',
+      { kind: 'secretary_handoff', operation: { aggregateType: 'CoreOperation', projectId: P, operationId: 'op-1' } },
+      'invalid', 'the archiveRequest condition is only allowed for a secretary mode'],
+  ] as [string, 'secretary_handoff' | 'operator', string, unknown, 'decoded' | 'invalid', string][])('%s',
+  (_name, mode, reason, condition, expected, reasonFragment) => {
+    const encoded = encodedSessionJson({
+      ...baseSessionRecord(),
+      archiveRequest: {
+        schemaVersion: 1, requestId: 'a', requestedBy: { kind: 'system', id: 'workflow' }, requestedAt: T0,
+        reason, mode, tasks: [], wait: null, execution: { kind: 'none' }, executionPins: [],
+        confirmUnknownStopped: false, condition, receipt: { identityKey: 'i', fingerprint: 'f' },
+      },
+    } as unknown as Record<string, unknown>);
+    const decoded = decodeSessionRecord(encoded);
+    if (expected === 'decoded') {
+      expect(decoded).toMatchObject({ status: 'decoded', value: { archiveRequest: { mode: 'secretary_handoff', condition } } });
+      return;
+    }
+    expect(decoded.status).toBe('invalid');
+    if (decoded.status !== 'invalid') throw new Error('a malformed archive condition must be refused');
+    expect(decoded.reason).toContain(reasonFragment);
   });
 
   it('SV43: a complete valid anchor whose outer revision disagrees with its body revision is refused by the decoder', () => {

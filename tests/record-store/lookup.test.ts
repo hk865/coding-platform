@@ -144,7 +144,7 @@ it.each(['memory', 'sqlite'] as const)('%s: full-ref keyset lookup tracks commit
         value: { records: [{ refKey: key('alpha', 'a'), revision: 2 }] } }); }
       finally { await reopened.close(); }
     }
-    expect(Object.keys(backend).sort()).toEqual(['close', 'records']);
+    expect(Object.keys(backend).sort()).toEqual(['close', 'commitIdentities', 'records']);
   } finally { await backend.close(); }
 });
 

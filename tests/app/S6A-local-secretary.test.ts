@@ -221,7 +221,8 @@ function entryOf(read: QueryRead): { hostConfigurationRevision: string; permissi
 }
 
 const localTools = ['read', 'look_graph', 'find_graph', 'run_readonly_command'];
-const secretaryTools = ['read', 'look_graph', 'find_graph'];
+// The secretary's own grant: the three read tools and the note writer, always; never a file write scope or a command tool.
+const secretaryTools = ['read', 'look_graph', 'find_graph', 'record_note'];
 
 // The revision material written out as canonical JSON text: keys in sorted
 // order (duty, modelRevision, residentBytes, scope, tools, writeScope; inside
@@ -234,11 +235,11 @@ function localRevision(scope: CoreScope, modelRevision: string): string {
   })).slice(0, 16)}`;
 }
 
-function secretaryRevision(scope: CoreScope, modelRevision: string): string {
+function secretaryRevision(scope: CoreScope, modelRevision: string, tools: string[] = secretaryTools): string {
   return `local-secretary:s3@${sha256(JSON.stringify({
     duty: 'secretary', modelRevision, residentBytes: 4096,
     scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
-    tools: secretaryTools, writeScope: [],
+    tools, writeScope: [],
   })).slice(0, 16)}`;
 }
 

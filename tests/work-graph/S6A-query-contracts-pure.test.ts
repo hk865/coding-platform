@@ -123,6 +123,7 @@ const MATERIAL = {
   text: 'do the thing',
   selectedIdea: null,
   relatedCards: [],
+  command: null,
 };
 const REQUEST_FACTS = {
   requestRoot: MATERIAL.ref,
@@ -131,6 +132,8 @@ const REQUEST_FACTS = {
   preparationCursor: 'c0000000008',
   effectiveGoalId: null,
   executionKind: 'semantic_query',
+  briefRef: null,
+  understandingGrants: [],
 };
 
 describe('queryManifestProblem', () => {
@@ -165,6 +168,43 @@ describe('queryManifestProblem', () => {
       focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
     })).toBeNull();
+  });
+
+  it('accepts a brief operation and a GoalRef grant list', () => {
+    expect(queryManifestProblem({
+      contextAssembly: { callKind: 'secretary' },
+      goal: null,
+      focusPlan: null,
+      request: {
+        ...REQUEST_FACTS,
+        briefRef: { aggregateType: 'CoreOperation', projectId: 'p1', operationId: 'op-1' },
+        understandingGrants: [{ aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }],
+      },
+    })).toBeNull();
+  });
+});
+
+const secretaryManifest = (request: unknown) => ({
+  contextAssembly: { callKind: 'secretary' }, goal: null, focusPlan: null, request,
+});
+
+describe('rejects: malformed request-fact understanding projections', () => {
+  it.each([
+    ['a briefRef that is not a complete OperationRef', {
+      ...REQUEST_FACTS, briefRef: { aggregateType: 'CoreOperation', projectId: 'p1' },
+    }],
+    ['a briefRef with another aggregate type', {
+      ...REQUEST_FACTS, briefRef: { aggregateType: 'Goal', projectId: 'p1', operationId: 'op-1' },
+    }],
+    ['an understandingGrants entry that is not a complete GoalRef', {
+      ...REQUEST_FACTS, understandingGrants: [{ aggregateType: 'Goal', projectId: 'p1' }],
+    }],
+    ['a material command with an unknown key', {
+      ...REQUEST_FACTS,
+      round: { ...MATERIAL, command: { kind: 'request_understanding', commandId: 'op-1:understanding:1', operation: { aggregateType: 'CoreOperation', projectId: 'p1', operationId: 'op-1' }, generation: 1, requestRoot: MATERIAL.ref, goals: [], checkedRound: null, state: 'live', extra: true } },
+    }],
+  ] as [string, unknown][])('rejects %s', (_label, request) => {
+    expect(queryManifestProblem(secretaryManifest(request))).not.toBeNull();
   });
 });
 

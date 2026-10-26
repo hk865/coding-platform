@@ -102,6 +102,8 @@ function buildNoteTools(overrides: NoteOverrides = {}) {
     notes,
     check,
     requestIdForCall: overrides.requestId ?? (() => 'cmd-1'),
+    kinds: ['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'repair'],
+    withdraw: true,
   };
   const handle = createNoteTools(config);
   const definitions = handle.create(null as unknown as WorkspaceSandbox);

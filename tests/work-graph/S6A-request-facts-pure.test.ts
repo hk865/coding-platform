@@ -64,7 +64,7 @@ function pending(id: string, overrides: Partial<Parameters<typeof newRequestRoun
     queryJobId: id, runId: `run-${id}`, scope: SCOPE, intent: INTENT, kind: id === 'qj-root' ? 'request' : 'followup',
     requestRoot: id === 'qj-root' ? null : ROOT_REF, requestGoalId: 'g1', assignedSession: SESSION_A,
     intakeSession: SESSION_A, selectedIdea: null, relatedCardRefs: [], receipt: RECEIPT, submission: SUBMISSION,
-    submittedAt: AT, ...overrides,
+    submittedAt: AT, understanding: null, ...overrides,
   });
 }
 

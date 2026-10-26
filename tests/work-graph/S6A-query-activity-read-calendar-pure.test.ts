@@ -80,7 +80,7 @@ function requestRoundOn(goalId: string | null): QueryLifecycleRecords {
     intent: intent(goalId), kind: 'request', requestRoot: null, requestGoalId: goalId, assignedSession: SESSION,
     intakeSession: SESSION, selectedIdea: null, relatedCardRefs: [],
     receipt: { kind: 'submit', requestRoot: JOB_REF, round: JOB_REF, assignment: 'assigned', secretary: SESSION, created: true },
-    submission: SUBMISSION, submittedAt: AT }));
+    submission: SUBMISSION, submittedAt: AT, understanding: null }));
 }
 
 function prepared(records: QueryLifecycleRecords, requestEffectiveGoalId: string | null): QueryLifecycleRecords {

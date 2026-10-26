@@ -531,6 +531,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       const reviewPurpose = record.run.purpose?.kind === 'unknown_call_review' ? record.run.purpose : null;
       const startToolNames = finalToolNamesOf({
         callKind: 'work',
+        noteAdmission: { class: 'none' },
         selected: manifest.permissions.tools,
         readOnly,
         reviewPhase: reviewPurpose?.phase ?? null,

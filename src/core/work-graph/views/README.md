@@ -46,7 +46,8 @@
 
 做请求轮的秘书准备事实读取的去这组。
 
-- `secretary-preparation-facts.ts` — `SecretaryPreparationFactsPort` 的唯一实现：一次读齐执行轮的 Job/Run 材料、待吸收批、早先 Session 的历史、workspace、当前架构、两个治理指针与 workspace Goals，以及 `ask` 轮卡片引用对象的当前版本（一次 `readMany`，不存在记 null）；任何失败原样返回，不折成空事实。
+- `secretary-handoff-facts.ts` — 交接的只读事实：`checkArchiveCondition` 按核心谓词（源仍拥有且处理中的请求为零）+ 源/`SessionActivity` guard + 操作持有者的 fence（手工归档为 `null`）+ 首读 horizon 给出可合并片段；`readCoverage` 读源仍拥有且处理中的请求根、它们的有效 Goal、每个 Goal 的当前理解指针/版本/最后文字写入者、最后进入并结束的轮、活动 revision 和一次完整读的首个 horizon；`readRoutingSet` 在同一完整读上返回源仍拥有且处理中的根，`closed` 表示这次读到末尾；`readBriefState` 按五个 phase 找后继是本 Session 的交接操作（含 `existing` 目标与已完成操作），给出 `none`/`waiting`/`ready`/`consumed` 四态，`ready` 只在受保护的最终归档成功且完整路由集保存之后，材料从操作自己的事实和请求/注记读来时读，不存两份（当前理解的正文由同一次 pointer→head→version 读解码一次，written 与 current 同一版本时不再重读）；`readBriefGoalRefs` 是给推进用的窄读口：每个被覆盖的 Goal 给出 written/current 两个引用，推进只存引用，Session 层不读 Note。失败或损坏一律 `unavailable`，不折成空覆盖/空集合，也不把 `waiting` 读成 `none`。
+- `secretary-preparation-facts.ts` — `SecretaryPreparationFactsPort` 的唯一实现：一次读齐执行轮的 Job/Run 材料（材料里的 `command` 从存的 `round.job.understanding` 投影，批轮与早先轮走同一投影）、待吸收批、早先 Session 的历史、workspace、当前架构、两个治理指针与 workspace Goals，以及 `ask` 轮卡片引用对象的当前版本（一次 `readMany`，不存在记 null）；还读齐冻结材料里每个理解命令的 operation 记录（缺失/失败/损坏为 `unavailable`，每条进 guards），产出唯一的 `understandingGrants`，并按五个 phase 找后继 Session 的交接 operation 作为 `briefRef`（多个取 revision 最大者，同样进 guards；这条 operation 的简报已被消费时 `briefRef` 为 null、不进 guards，OP-F1）；任何失败原样返回，不折成空事实。
 
 ### 注记与通知
 
@@ -55,6 +56,7 @@
 - `note-views.ts` — `NoteCheckPort`：注记的 freshness、changedFiles、冲突、配额等派生字段。
 - `note-review-notices.ts` — `note_review` 请知悉来源：三类注记版本流；`goalId: null` 的版本是项目 subject 的行，按绑定的项目作用域读，Goal 过滤页不收。
 - `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮。
+- `handoff-notices.ts` — `handoff` 请知悉来源：每个走到通知写的交接操作一项；位置由 `noticePositionOf` 从操作保存的 Host principal、workspace、通知键和 `advanceGeneration` 重建原写身份并读回执与事件，缺回执或校验不符为 `unavailable`，绝不给无位置条目。
 - `undelivered-reply-notices.ts` — `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复。
 - `notice-display-token.ts` — 请知悉展示页的 HMAC token；密钥由 composition 注入。
 - `notice-grouping.ts` — 请知悉分组的唯一纯函数与 seenThrough 推进；折行与筛选都按带标记的 `decisionSubjectKey`（一个 Goal 或一个项目各折各的），主对话把每个 subject 的自动返工折成一行，`noticePage` 放指定 subject 的行；推进仍按全部显示行的连续前缀算，别的 subject 的行挡住就不越过。
@@ -99,7 +101,9 @@
 | `createGoalConflictAssembler` | `src/core/work-graph/views/goal-conflicts.ts:198` | Goal 冲突读端口，供决定读模型与上层使用 | 需要冲突卡片/冲突事实时 |
 | `readGoalFootprint` | `src/core/work-graph/views/goal-conflicts.ts:350` | 一个 Goal 的足迹：计划模块 + 已执行文件映射 | 冲突判断、执行影响展示 |
 | `mapExecutedFilesToModules` | `src/core/work-graph/views/goal-conflicts.ts:440` | 已执行路径按架构目录做最长合法段匹配；无唯一主人保持 `unmapped` | 需要把文件映射到 `ModuleRef` 时；不要按名字猜 |
-| `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:476` | 秘书请求轮准备事实的唯一读取：请求轮材料与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史或治理指针 |
+| `createSecretaryHandoffFacts` **正本** | `src/core/work-graph/views/secretary-handoff-facts.ts:264` | 覆盖、路由集、简报状态与简报引用的唯一读取：完整分页打开请求、每根走 owner 读、每个 Goal 读 CurrentPointer/NoteHead/NoteVersion（正文一次解码），返回一个首读 horizon；路由集 `closed:true` 只在本次读完整时给出；`readBriefState` 只在归档成功且路由集完整后给 `ready`，否则 `waiting`；`readBriefGoalRefs` 给推进返回每 Goal 的 saved 引用 | 推进的 coverage/fence/recheck/routing 扫描、brief 引用与后继轮的准备；不要另写覆盖、路由或简报读 |
+| `createHandoffNoticeSource`、`noticePositionOf` | `src/core/work-graph/views/handoff-notices.ts:168`、`:53` | `handoff` 请知悉来源与单条位置读：每个操作一项，位置是原通知写的提交；身份只用操作保存的 actor/workspace/键/generation 重建 | I1 注入 `createDecisionReadModel` 的 `noticeSources`；只读，不写记录或事件 |
+| `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:507` | 秘书请求轮准备事实的唯一读取：请求轮材料（含执行轮与批轮各自的理解命令投影）与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals、唯一的 `briefRef`/`understandingGrants` 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史、治理指针或重算授权集 |
 | `workspaceScopeProblem` | `src/core/work-graph/views/goal-conflicts.ts:94` | 在任何记录读之前比较显式 workspace 与 `ctx` 范围 | 每个显式 workspace 输入的读 |
 | `listWorkspaceGoals` | `src/core/work-graph/views/goal-conflicts.ts:121` | 读完一个 workspace 的 Goal 集合，带 watermark 与 truncated | 需要 Goal 全集的读 |
 | `readGoalTerminalState` | `src/core/work-graph/views/goal-conflicts.ts:165` | 判断 Goal 是否 cancelled 或由 GoalPhase 证明 completed；读失败不当“未终止” | 冲突卡片是否需要关闭时 |

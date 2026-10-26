@@ -12,9 +12,9 @@
 - `platform-skills.ts` — 平台 Skill 的 id/title/kind/priority/templateId 清单；包只提供文字，身份与选择优先级留在代码里。
 - `prompt-pack.ts` — 包清单、链条目、解析结果、`PromptPackSourcePort` 和生成平台包的来源实现。
 - `prompt-set.ts` — 冻结的提示词集、模型请求事实、内容类型常量、严格解码、工具说明规范正文/摘要与正文校验。
-- `render-template.ts` — 三种模板构造的解析与渲染、槽的 UTF-8 字节范围、渲染错误类型；`secretary-round` 的三个 `task_*` 槽是同一个 `task` 段，必须相邻且保持内部顺序。
+- `render-template.ts` — 三种模板构造的解析与渲染、槽的 UTF-8 字节范围、渲染错误类型；`secretary-round` 的三个 `task_*` 槽是同一个 `task` 段，必须相邻且保持内部顺序；两个交接模板 `handoff-write-understanding-secretary` 和 `handoff-brief-secretary` 各只有一个 `task_round` 槽，渲染出来是秘书轮 task 段开头的一段材料。
 - `resolve-pack.ts` — 继承链（请求包在前、`platform` 最后）的校验与合并，收集全部问题且不抛错。
-- `slot-tables.ts` — 代码拥有的槽表：包可以改文字，不能增删槽或改必填性。
+- `slot-tables.ts` — 代码拥有的槽表：包可以改文字，不能增删槽或改必填性。除 `secretary-round` 的三个 task 槽外，`handoff-write-understanding-secretary` 与 `handoff-brief-secretary` 各有一行必填的 `task_round`。
 
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
@@ -33,9 +33,9 @@
 | `promptToolTextDigest` | `src/contracts/prompts/prompt-set.ts:238` | 规范工具说明正文的 sha256。 | 冻结集和编辑路由核对同一份工具说明。 |
 | `checkPromptBody` | `src/contracts/prompts/prompt-set.ts:249` | 校验存储正文的 content type、digest、UTF-8 大小与 ref 一致，返回正文或 null。 | 读任何冻结提示词正文（模板、字符串表、base、Skill、工具说明）时。 |
 | `PROMPT_TEXT_CONTENT_TYPE`、`PROMPT_TOOL_SPECS_CONTENT_TYPE`、`PROMPT_TOOL_TEXT_CONTENT_TYPE` | `src/contracts/prompts/prompt-set.ts:14`、`src/contracts/prompts/prompt-set.ts:16`、`src/contracts/prompts/prompt-set.ts:18` | 三类提示词正文的内容类型常量。 | 写/读 artifact 正文时按类型区分。 |
-| `PLATFORM_PROMPT_PACK_V1` | `src/contracts/prompts/platform-pack.generated.ts:4` | 平台包（清单 schemaVersion 1，含 Work/Query 第 2 版模板与两个秘书模板）的只读解析结果。 | 没有自定义包时的默认包、测试默认值；不要运行时从 resources 现读。 |
+| `PLATFORM_PROMPT_PACK_V1` | `src/contracts/prompts/platform-pack.generated.ts:4` | 平台包（清单 schemaVersion 1，含 Work/Query 第 2 版模板、两个秘书模板与两个交接模板）的只读解析结果。 | 没有自定义包时的默认包、测试默认值；不要运行时从 resources 现读。 |
 | `PLATFORM_SKILLS` | `src/contracts/prompts/platform-skills.ts:6` | 五个平台 Skill 的 id/title/kind/priority/templateId。 | agent-runtime 构造或校验平台 Skill 时。 |
-| `TEMPLATE_SLOTS` | `src/contracts/prompts/slot-tables.ts:16` | 每个模板的槽与必填性（代码契约）。 | 包编辑器、解析、渲染校验；包不能改这张表。 |
+| `TEMPLATE_SLOTS` | `src/contracts/prompts/slot-tables.ts:17` | 每个模板的槽与必填性（代码契约）；两个交接模板各只有一行必填的 `task_round`。 | 包编辑器、解析、渲染校验；包不能改这张表。 |
 | 包与解析类型 | `src/contracts/prompts/prompt-pack.ts:9` | `PromptPackManifestV1`、`PromptPackChainEntryV1`、`ResolvedPromptPackV1`、`PromptPackValidationV1`、`PromptPackProblemV1`、`TemplateSlotTableV1`、`ToolTextV1`。 | app 读盘、组合根接线和解析结果传递。 |
 | `PromptTextsV1` | `src/contracts/prompts/prompt-set.ts:26` | 渲染器需要的最小文本面：templates + strings。 | 任何渲染入口的类型；resolved pack 结构上满足它。 |
 | 请求记录类型 | `src/contracts/prompts/prompt-set.ts:35` | `ModelRequestPromptFactsV1`、`QueryRequestPromptFactsV1`、`PromptRecordRequestV1`。 | 冻结每次模型请求的 digest、删除量和输出上限。 |

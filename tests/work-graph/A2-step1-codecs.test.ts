@@ -781,7 +781,7 @@ describe('other step-1 decoders', () => {
       status: 'closed', runRef: queryRunRef, answerRefs: [],
       requestRoot: null, roundKind: null, requestGoalId: null, assignedSession: null, routing: null,
       relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null, goalAttribution: null,
-      relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+      relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null, understanding: null,
       closeReason: { code: 'not_entered', message: 'settled at start-up without entering the Kernel', detail: null },
       submittedAt: at, updatedAt: at } };
     expect(decodeQueryJobSnapshot(encodeQueryJobSnapshot(queryJob))).toEqual({ status: 'decoded', value: queryJob });

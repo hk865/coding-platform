@@ -13,15 +13,15 @@
 - `body-store.ts` — 两种正文实现共用的 put/read 算法（内容寻址、先写者胜、读回校验），`ArtifactBodyRows` 是持久化 seam。
 - `commit-extensions.ts` — 唯一 claim 校验/冲突、ledger horizon 比较、事务内游标绑定、事务内拒绝异常。
 - `guarded-revision.ts` — 事务内用存储正文解码 guard 目标的真实 revision；invalid 只能映射为 corrupt。
-- `in-memory-record-store.ts` — 内存记录 backend：同一事务语义、单份 eventLog/snapshots/claims，供内存模式与测试。
+- `in-memory-record-store.ts` — 内存记录 backend：同一事务语义、单份 eventLog/snapshots/claims，供内存模式与测试；另暴露只读的 `commitIdentities` 成员。
 - `lookup-index.ts` — lookup 注册、请求规则、候选 key、排序/比较、全文词项与比较文本。
 - `lookup-ports.ts` — 精确/有序/计数/全文四个 lookup 端口及其请求/页类型和全文边界常量。
 - `migrations.ts` — 旧 4 表 DDL、逐表列/主键/affinity 兼容检查、`initRecordStoreSchema`；从不删表或重建。
-- `ports.ts` — 核心机械协议：`GoalRecordTransactionPort`、`PreparedCommit`、guard/claim/receipt、记录与事件 DTO、schema 注册形状。
+- `ports.ts` — 核心机械协议：`GoalRecordTransactionPort`、`RecordCommitIdentityPort`（按 identity 读已提交回执和提交时的 fingerprint）、`PreparedCommit`、guard/claim/receipt、记录与事件 DTO、schema 注册形状。
 - `record-codec.ts` — schema 注册、JSON envelope/refKey/revision 一致性、`planPreparedCommit`、事务内游标绑定、guard 规则、幂等行与回执。
 - `sqlite-body-store.ts` — `artifacts(key, record)` 表上的原子 `INSERT ... ON CONFLICT DO NOTHING` 正文实现，`close` 幂等。
 - `sqlite-lookup-indexes.ts` — 每个注册 lookup 一张按 aggregateType 分区的部分表达式索引，以及开库时的增量迁移。
-- `sqlite-record-store.ts` — SQLite 记录 backend：一个连接、`BEGIN IMMEDIATE` 事务、旧列/旧 JSON 字节兼容、精确 `eventAt`。
+- `sqlite-record-store.ts` — SQLite 记录 backend：一个连接、`BEGIN IMMEDIATE` 事务、旧列/旧 JSON 字节兼容、精确 `eventAt`；另暴露只读的 `commitIdentities` 成员。
 - `sqlite-sql-literals.ts` — 只接受注册期已验证的 aggregateType 与 LIMIT 字面量，避免每类查询重新规划。
 - `sqlite-text-scan.ts` — SQLite 全文表（每个 text 索引一张）、缓存、开库 catch-up 与 `through` 水位。
 - `text-scan.ts` — 两个 backend 共用的子串扫描、refKey 快排、内存分桶索引与回滚 undo。
@@ -32,12 +32,13 @@
 | `GoalRecordTransactionPort` | `src/core/record-store/ports.ts:188` | 记录存储端口：`readMany`/`lookupCommit`/`commit`/`eventAt`。 | WorkGraph/AgentRuntime 声明记录依赖时只依赖端口，不依赖具体 backend。 |
 | `readMany`、`RecordBatchRead` | `src/core/record-store/ports.ts:189`、`src/core/record-store/ports.ts:138` | 一次读多个完整 key，返回 records/missing/readThrough。 | 需要成组事实时；不要另写 batch reader，也不要把 missing 当成功空事实（FP-05、M1-28）。 |
 | `lookupCommit` **正本** | `src/core/record-store/ports.ts:190` | 按 identityKey+fingerprint 找已提交回执。 | 重放、提交抛错后的恢复；不要重跑提交或从今天的快照重建结果（M1-14、M1-15、M1-26）。 |
+| `RecordCommitIdentityPort`、`readCommitByIdentity` | `src/core/record-store/ports.ts:206`、`src/core/record-store/in-memory-record-store.ts:468`、`src/core/record-store/sqlite-record-store.ts:553` | 只读一个已提交 identity 行的回执和提交时的 fingerprint；缺行 `not_found`，坏行 `corrupt`。 | 按 commandId 重放父写入、不能拿当前输入重算 fingerprint 时；它是 store 对象上 `records` 之外的独立成员。 |
 | `commit`、`eventAt` | `src/core/record-store/ports.ts:194`、`src/core/record-store/ports.ts:195` | 原子提交一个 `PreparedCommit`；按游标精确读一条事件。 | 所有记录写入与原始结果重放；不要从事件头扫描或倒推 cursor。 |
 | `PreparedCommit`、`RecordGuard`、`UniqueClaimChange`、`StoreCommitReceipt` | `src/core/record-store/ports.ts:110`、`src/core/record-store/ports.ts:82`、`src/core/record-store/ports.ts:85`、`src/core/record-store/ports.ts:127` | 一次提交的全部机械内容：guard、记录、claim、事件、回执。 | 把一组耦合写入合成一个 commit；`expectedRevision:null` 表示必须不存在，数字（含 0）表示必须存在且等于该 revision。 |
 | `StoreFailure`、`StoreResult`、`StoreError`、`DecodeResult` | `src/core/record-store/ports.ts:38`、`src/core/record-store/ports.ts:62`、`src/core/record-store/ports.ts:28`、`src/core/record-store/ports.ts:64` | 机械失败/结果/解码结果；conflict 带事务内观察到的 current。 | 保留 `revision_conflict`/`unique_conflict` 的现场，不要重读最新版本替换它。 |
 | `EncodedRecord`、`EncodedDomainEvent`、`StoredVersion`、`CommitCursorBinding` | `src/core/record-store/ports.ts:72`、`src/core/record-store/ports.ts:102`、`src/core/record-store/ports.ts:100`、`src/core/record-store/ports.ts:91` | 存储 DTO；可绑定的游标字段只有 since/until/unavailableSince/responseSince。 | 编译 commit 与读取结果时。 |
 | `EncodedRecordSchema`、`EncodedEventSchema`、`RecordBackendSchemas` | `src/core/record-store/ports.ts:154`、`src/core/record-store/ports.ts:162`、`src/core/record-store/ports.ts:168` | 注册 record/event codec、lookup 定义和可绑定字段白名单。 | 组合根建 backend 时；注册的 validate 是调用方的纯校验，不是本层的领域判断。 |
-| `PersistedIdempotencyRecord` | `src/core/record-store/ports.ts:209` | 旧库幂等行的字节兼容形状。 | 只在 store 内做 idempotency 编解码/回执恢复；上层不要解析这一行。 |
+| `PersistedIdempotencyRecord` | `src/core/record-store/ports.ts:222` | 旧库幂等行的字节兼容形状。 | 只在 store 内做 idempotency 编解码/回执恢复；上层不要解析这一行。 |
 | `RecordLookupPort`、`lookup` | `src/core/record-store/lookup-ports.ts:35` | 注册索引的 keyset 翻页，带 next 与 readThrough。 | 有界列表/队列；转发 continuation，不要在每页重复去重（M1-11、M1-13）。 |
 | `RecordOrderedLookupPort`、`lookupOrdered` | `src/core/record-store/lookup-ports.ts:67` | 按 (order, refKey) 有序翻页，可带 direction/bound；`lowerBound` 是不分方向的下界，倒序续页要停在某个值之上时用它。 | 需要稳定顺序与续页时；不要扫描无界页来凑一页过滤结果，也不要先探测再在读的一侧比对停止行。 |
 | `RecordCountPort`、`countLookup` | `src/core/record-store/lookup-ports.ts:88` | 相等条件计数或 distinct 计数。 | 只要数量时；不要用翻页自行计数。 |

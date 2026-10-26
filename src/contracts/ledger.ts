@@ -136,3 +136,12 @@ export function seqOfCommitCursor(cursor: CommitCursor): number {
     }
     return seq;
 }
+
+/** The store's cursor sequence when both are ledger cursors; textual order otherwise. */
+export function compareCursors(left: CommitCursor, right: CommitCursor): number {
+  try {
+    return Math.sign(seqOfCommitCursor(left) - seqOfCommitCursor(right));
+  } catch {
+    return String(left).localeCompare(String(right));
+  }
+}

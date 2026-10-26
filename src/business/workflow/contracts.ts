@@ -24,6 +24,20 @@ import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execu
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
 import type { InternalSessionArchivePort } from './session-archive.js';
+import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecycle-contracts.js';
+import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { SessionDirectoryPort, SessionOperationRecord } from '../../core/work-graph/model/session-contracts.js';
+import type { RequestRoundPort, InternalRouteCommandV1 } from '../../core/work-graph/tasks/request-service.js';
+import type {
+  SecretaryHandoffFactsPort, HandoffBriefStateV1,
+} from '../../core/work-graph/model/secretary-lifecycle-contracts.js';
+import type {
+  SecretaryArchiveAcceptInputV1, SecretaryArchiveAcceptResultV1, SecretaryArchiveAdvanceInputV1,
+  SecretaryArchiveAdvanceResultV1,
+} from '../../core/work-graph/model/session-handoff-contracts.js';
+import type { SessionHandoffPort, SessionHandoffAdvancePort }
+  from '../../core/work-graph/sessions/session-handoff-service.js';
+import type { LineCreationPort } from './line-creation.js';
 import type { DecisionActionsPort } from './decision-actions.js';
 
 /**
@@ -389,4 +403,47 @@ export type WorkflowCloseEventV1 = {
 };
 export type WorkflowCloseEventReader = {
   eventAt(cursor: CommitCursor): Promise<ReadResult<{ cursor: CommitCursor; event: WorkflowCloseEventV1 }>>;
+};
+
+// -------------------------------------------------------------------------- //
+// The secretary handoff composite's injected owners                           //
+// -------------------------------------------------------------------------- //
+
+/**
+ * What the composition injects as `WorkflowDependencies.sessionHandoff`: the two operation owners, the facts view,
+ * the create/transfer/routing children. No store is read here; the composite calls one child between two advances and
+ * never writes the RecordStore.
+ */
+export interface HandoffWorkflowDependencies {
+  /** The accept owner and the advance owner, composed into one member by the composition root. */
+  handoff: SessionHandoffPort & SessionHandoffAdvancePort;
+  /** The archive arm of the same owner (accept once by the route, advance per write by the composite). */
+  archive: {
+    acceptArchive(ctx: CoreCallContext, input: SecretaryArchiveAcceptInputV1): Promise<SecretaryArchiveAcceptResultV1>;
+    advanceArchive(ctx: CoreCallContext, input: SecretaryArchiveAdvanceInputV1): Promise<SecretaryArchiveAdvanceResultV1>;
+  };
+  /** `W/views/secretary-handoff-facts.ts`. */
+  facts: SecretaryHandoffFactsPort;
+  /** `B/line-creation.ts`'s `ensureLine`. */
+  lines: LineCreationPort;
+  /** The transfer writer. */
+  responsibilities: Pick<SessionResponsibilityPort, 'transferSessionResponsibility'>;
+  /** D's request owner: exactly the members the composite calls. */
+  requests: Pick<RequestRoundPort, 'append' | 'closeUnderstanding'>;
+  /**
+   * The source's unfinished operations (`accepted`/`running`) through the operation index. The automatic entry
+   * continues the one handoff of this source before it looks at the threshold or accepts a second operation; a
+   * concurrent accept's busy answer is re-read through the same port, never trusted as a pin list.
+   */
+  unfinishedOperations(ctx: CoreCallContext, source: SessionRef):
+    Promise<ReadResult<readonly SessionOperationRecord[]>>;
+}
+
+/** The two owners `createWorkflow` itself already holds; the composite factory gets them locally. */
+export type HandoffCompositeDependencies = HandoffWorkflowDependencies & {
+  /** `B/session-archive.ts`'s internal entry; the only archive child writer. */
+  archiveOwner: Pick<InternalSessionArchivePort, 'archiveLineInternal'>;
+  /** The operation read and the final-archive Session read the advance owner and the composite share. */
+  operations: Pick<SessionDirectoryPort, 'getSessionOperation' | 'readSession'>;
+  releaseArchiveRequest: SessionLifecyclePort['releaseSessionArchiveRequest']; // the manual archive's release
 };

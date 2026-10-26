@@ -112,6 +112,7 @@ import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { RUN_ACTIVITY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/run-activity-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
@@ -503,6 +504,7 @@ const additionalSchemas: RecordBackendSchemas[] = [QUERY_JOB_RECORD_SCHEMAS, SES
   SESSION_ANOMALY_RECORD_SCHEMAS,
   SESSION_LIFECYCLE_RECORD_SCHEMAS,
   RUN_ACTIVITY_RECORD_SCHEMAS,
+  SESSION_ACTIVITY_SCHEMAS,
   { records: [], events: PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events },
   CONTROL_RECORD_SCHEMAS];
 

@@ -3,6 +3,7 @@
 import { canonicalJson, sha256Hex, type JsonValue } from '../fingerprint.js';
 import type { ActorRef } from '../command-event.js';
 import type { SessionRef, VersionPin, WorkLinkTarget, WorkspaceScope } from './identity.js';
+import type { OperationRef } from './operations.js';
 import type { SessionMessageRef } from './session-message.js';
 import type { QueryRunRef } from '../query-job.js';
 import type { RunRef, TaskAttemptRef } from '../dispatch.js';
@@ -18,13 +19,27 @@ export type ArchiveExecutionV1 =
   | { kind: 'none' }
   | { kind: 'work'; runRef: RunRef; attemptRef: TaskAttemptRef }
   | { kind: 'query'; queryRunRef: QueryRunRef };
+/**
+ * The trusted condition of an archive: the handoff or manual-archive operation the archive belongs to; a handoff's
+ * holds the fence. The request field, its builders and the passthrough are the archive owner's; the final commit
+ * merges the condition's checked fragment.
+ */
+export type SessionArchiveConditionV1 = { kind: 'secretary_handoff'; operation: OperationRef };
 export type SessionArchiveRequestV1 = {
   schemaVersion: 1;
   requestId: string;
   requestedBy: Extract<ActorRef, { kind: 'human' | 'system' }>;
   requestedAt: string;
   reason: string;
-  mode: 'operator' | 'executor_idle' | 'retired' | 'answered_copy' | 'handoff_complete';
+  mode: 'operator' | 'executor_idle' | 'retired' | 'answered_copy' | 'handoff_complete'
+    | 'secretary_handoff';
+  /**
+   * The trusted condition the final archive re-checks. `null` for every mode that takes none, so a reader of a
+   * stored request is never left guessing between "no condition" and "the field was dropped". It is part of the
+   * request's immutable identity: the owner's fingerprint and the recovered request both carry the original
+   * value, never one recomputed from the current state.
+   */
+  condition: SessionArchiveConditionV1 | null;
   tasks: ArchiveTaskChoiceV1[];
   wait: ArchiveWaitChoiceV1 | null;
   execution: ArchiveExecutionV1;
@@ -43,6 +58,8 @@ export type RequestSessionArchiveInput = {
   tasks: ArchiveTaskChoiceV1[]; wait: ArchiveWaitChoiceV1 | null;
   confirmUnknownStopped?: boolean;
   mode?: SessionArchiveRequestV1['mode']; // 默认operator，其他mode仅可信Workflow可选。
+  /** The trusted condition of a secretary archive; absent is the same as `null` on the request. */
+  condition?: SessionArchiveConditionV1 | null;
 };
 
 /**

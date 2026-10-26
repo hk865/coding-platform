@@ -27,6 +27,33 @@ import { pinsFromStoreCurrent } from './read-result-failures.js';
 /** The two hashes a command's identity consists of; they are fixed before any read. */
 export type Keys = Readonly<{ identityKey: string; fingerprint: string }>;
 
+/** The R2 identity of one command; a replay rebuilds it from the commandId and needs no fingerprint. */
+export function commandIdentity(input: {
+  operation: string;
+  scope: { projectId: string; workspaceId: string | null };
+  principal: JsonValue;
+  commandId: string;
+}): string {
+  return `${input.operation}:${sha256Hex(canonicalJson({ schemaVersion: 1, operation: input.operation,
+    projectId: input.scope.projectId, workspaceId: input.scope.workspaceId, principal: input.principal,
+    commandId: input.commandId }))}`;
+}
+
+/** The identity and the fingerprint of one write; `executeWriteCommand` and the advance's builder both call this. */
+export function commandKeys(input: {
+  operation: string;
+  scope: { projectId: string; workspaceId: string | null };
+  principal: JsonValue;
+  commandId: string;
+  fingerprintInput: JsonValue;
+}): { identityKey: string; fingerprint: string } {
+  return {
+    identityKey: commandIdentity(input),
+    fingerprint: sha256Hex(canonicalJson({ schemaVersion: 1, operation: input.operation,
+      input: input.fingerprintInput })),
+  };
+}
+
 /** The committed row of the exact identity/fingerprint pair. */
 export type { CommittedReceipt };
 
@@ -99,19 +126,21 @@ function unknownCommitRejection(code: CoreError, reason: string): CommandRejecti
 }
 
 /**
- * The replay branch: rebuild the result from the committed event itself, never
- * from a current record. Every check is strict, every failure is a plain
- * `unavailable`, and a receipt that cannot be replayed is not retried.
+ * The committed event a receipt names, proved before anything is projected: the
+ * cursor, the receipt's last event id, the type and version, then the decode.
+ * The executor's own replay and the owners' identity-only replay share it.
  */
-async function strictReplay<Facts, Decision, Refusal, Decoded, Result>(
-  records: GoalRecordTransactionPort,
-  command: WriteCommand<Facts, Decision, Refusal, Decoded, Result>,
-  keys: Keys,
+export type CommittedEventRead<Decoded> =
+  | { status: 'ready'; value: Decoded }
+  | { status: 'failed'; reason: string };
+
+export async function readCommittedEvent<Decoded>(
+  records: Pick<GoalRecordTransactionPort, 'eventAt'>,
   receipt: CommittedReceipt,
-): Promise<CommandResult<Result, Refusal>> {
-  const fail = (text: string): CommandRejection => rejected('unavailable', `strict replay: ${text}`);
+  result: { eventType: string; schemaVersion: number; decode(event: EncodedDomainEvent): DecodeResult<Decoded> },
+): Promise<CommittedEventRead<Decoded>> {
+  const fail = (reason: string): CommittedEventRead<Decoded> => ({ status: 'failed', reason });
   if (receipt.eventIds.length === 0) return fail('the receipt has no event ids');
-  if (receipt.identityKey !== keys.identityKey) return fail('the receipt identity does not match');
   let read: Awaited<ReturnType<GoalRecordTransactionPort['eventAt']>>;
   try {
     read = await records.eventAt(receipt.cursor);
@@ -124,21 +153,37 @@ async function strictReplay<Facts, Decision, Refusal, Decoded, Result>(
   if (cursor !== receipt.cursor) return fail('the event cursor does not match the receipt cursor');
   const lastEventId = receipt.eventIds[receipt.eventIds.length - 1]!;
   if (event.eventId !== lastEventId) return fail("the event is not the receipt's last event");
-  if (event.eventType !== command.result.eventType) return fail(`the event type is not ${command.result.eventType}`);
-  if (event.schemaVersion !== command.result.schemaVersion) {
-    return fail(`the event version is not ${command.result.schemaVersion}`);
+  if (event.eventType !== result.eventType) return fail(`the event type is not ${result.eventType}`);
+  if (event.schemaVersion !== result.schemaVersion) {
+    return fail(`the event version is not ${result.schemaVersion}`);
   }
-  let decoded: Decoded;
   try {
-    const decodedResult = command.result.decode(event);
-    if (decodedResult.status === 'invalid') return fail(`the event does not decode: ${decodedResult.reason}`);
-    decoded = decodedResult.value;
+    const decoded = result.decode(event);
+    return decoded.status === 'invalid' ? fail(`the event does not decode: ${decoded.reason}`)
+      : { status: 'ready', value: decoded.value };
   } catch (error) {
     return fail(`the event does not decode: ${messageOf(error)}`);
   }
-  const problem = command.result.validate(decoded, receipt, keys);
+}
+
+/**
+ * The replay branch: rebuild the result from the committed event itself, never
+ * from a current record. Every check is strict, every failure is a plain
+ * `unavailable`, and a receipt that cannot be replayed is not retried.
+ */
+async function strictReplay<Facts, Decision, Refusal, Decoded, Result>(
+  records: GoalRecordTransactionPort,
+  command: WriteCommand<Facts, Decision, Refusal, Decoded, Result>,
+  keys: Keys,
+  receipt: CommittedReceipt,
+): Promise<CommandResult<Result, Refusal>> {
+  const fail = (text: string): CommandRejection => rejected('unavailable', `strict replay: ${text}`);
+  if (receipt.identityKey !== keys.identityKey) return fail('the receipt identity does not match');
+  const read = await readCommittedEvent(records, receipt, command.result);
+  if (read.status !== 'ready') return fail(read.reason);
+  const problem = command.result.validate(read.value, receipt, keys);
   if (problem !== null) return fail(`the result does not validate: ${problem}`);
-  return { status: 'committed', value: command.result.project(decoded, receipt.cursor), replayed: true,
+  return { status: 'committed', value: command.result.project(read.value, receipt.cursor), replayed: true,
     cursor: receipt.cursor };
 }
 
@@ -154,10 +199,9 @@ export async function executeWriteCommand<Facts, Decision, Refusal, Decoded, Res
   const principal = command.principal;
   const commandId = command.commandId;
   const fingerprintInput = command.fingerprintInput;
-  const identityKey = `${operation}:${sha256Hex(canonicalJson({ schemaVersion: 1, operation,
-    projectId: scope.projectId, workspaceId: scope.workspaceId, principal, commandId }))}`;
-  const fingerprint = sha256Hex(canonicalJson({ schemaVersion: 1, operation, input: fingerprintInput }));
-  const keys: Keys = { identityKey, fingerprint };
+  const keys: Keys = commandKeys({ operation, scope, principal, commandId, fingerprintInput });
+  const identityKey = keys.identityKey;
+  const fingerprint = keys.fingerprint;
 
   // A write already committed under this identity and input is replayed, never
   // repeated. The lookup classifies every failure; only `missing` may write.

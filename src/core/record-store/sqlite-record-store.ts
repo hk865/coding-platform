@@ -42,7 +42,7 @@ import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountReq
 import { createSqliteTextScan } from "./sqlite-text-scan.js";
 import { migrateLookupIndexes } from "./sqlite-lookup-indexes.js";
 import { aggregateTypeTerm, literalLimit } from "./sqlite-sql-literals.js";
-import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
+import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordCommitIdentityPort, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
 export type SqliteRecordBackendOptions = {
   path: string;
@@ -52,6 +52,8 @@ export type SqliteRecordBackendOptions = {
 
 export type SqliteRecordBackend = {
   readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort & RecordTextSearchPort;
+  /** Read only, from the idempotency row; the separate member the composition injects. */
+  readonly commitIdentities: RecordCommitIdentityPort;
   close(): Promise<void>;
 };
 
@@ -530,6 +532,26 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     return { status: "ready", value: committedReceiptFromIdempotency(identityKey, existing.value) };
   };
 
+  const readCommitByIdentity = async (identityKey: string): Promise<StoreResult<{
+    receipt: Extract<StoreCommitReceipt, { status: "committed" }>; fingerprint: string;
+  }>> => {
+    assertOpen();
+    if (!isNonEmptyString(identityKey)) {
+      return invalidFailure("readCommitByIdentity identityKey must be a non-empty string");
+    }
+    const existing = readIdempotency(identityKey);
+    if (existing.status === "invalid") {
+      return corruptFailure(`idempotency row for ${identityKey} is damaged: ${existing.reason}`);
+    }
+    if (existing.value === undefined) return notFoundFailure(`identity ${identityKey} has not been committed`);
+    return { status: "ready", value: {
+      receipt: committedReceiptFromIdempotency(identityKey, existing.value),
+      fingerprint: String(existing.value.fingerprint),
+    } };
+  };
+
+  const commitIdentities: RecordCommitIdentityPort = { readCommitByIdentity };
+
   const eventAt = async (
     cursor: CommitCursor,
   ): Promise<StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>> => {
@@ -845,5 +867,5 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     }
   };
 
-  return { records, close };
+  return { records, commitIdentities, close };
 }

@@ -35,7 +35,7 @@ import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction } f
 import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, distinctLookupValueKeyOf, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
 import type { OrderedLookupRequest, OrderedLookupValue, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest, RecordTextSearchPort, TextSearchPage, TextSearchRequest } from "./lookup-ports.js";
 import { captureTextScanRow, createTextScanIndex, mergePending, putIndexRow, removeTextScanRow, restoreTextScanRow, scanEntries, textScanRowOf, type TextScanIndex, type TextScanUndo } from "./text-scan.js";
-import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion } from "./ports.js";
+import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordCommitIdentityPort, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion } from "./ports.js";
 
 export type InMemoryRecordBackendOptions = {
   schemas: RecordBackendSchemas;
@@ -44,6 +44,8 @@ export type InMemoryRecordBackendOptions = {
 
 export type InMemoryRecordBackend = {
   readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort & RecordTextSearchPort;
+  /** Read only, from the idempotency row; the separate member the composition injects. */
+  readonly commitIdentities: RecordCommitIdentityPort;
   close(): Promise<void>;
 };
 
@@ -444,6 +446,27 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     return { status: "ready", value: structuredClone(committedReceiptFromIdempotency(identityKey, checked.value)) };
   };
 
+  const readCommitByIdentity = async (identityKey: string): Promise<StoreResult<{
+    receipt: Extract<StoreCommitReceipt, { status: "committed" }>; fingerprint: string;
+  }>> => {
+    assertOpen();
+    if (!isNonEmptyString(identityKey)) {
+      return invalidFailure("readCommitByIdentity identityKey must be a non-empty string");
+    }
+    const existing = state.idempotency.get(identityKey);
+    if (existing === undefined) return notFoundFailure(`identity ${identityKey} has not been committed`);
+    const checked = checkPersistedIdempotencyRecord(existing);
+    if (checked.status === "invalid") {
+      return corruptFailure(`idempotency entry for ${identityKey} is damaged: ${checked.reason}`);
+    }
+    return { status: "ready", value: {
+      receipt: structuredClone(committedReceiptFromIdempotency(identityKey, checked.value)),
+      fingerprint: String(checked.value.fingerprint),
+    } };
+  };
+
+  const commitIdentities: RecordCommitIdentityPort = { readCommitByIdentity };
+
   const eventAt = async (
     cursor: CommitCursor,
   ): Promise<StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>> => {
@@ -658,5 +681,5 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     closed = true;
   };
 
-  return { records, close };
+  return { records, commitIdentities, close };
 }

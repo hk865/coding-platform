@@ -509,6 +509,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       }
       const finalNames = finalToolNamesOf({
         callKind: 'work',
+        noteAdmission: { class: 'none' },
         // Preparation freezes only the names this Runtime knows; an unknown
         // selected name (a rework tool with no registration here) is left to
         // the start, where the real selection and owners are still checked.

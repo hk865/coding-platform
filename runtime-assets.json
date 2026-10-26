@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "a5773aa4bcc73ea3f1037a6d0e493647146829288fa19a8ee1ca6e6461f8959c"
+    "sha256": "57d066e76243c35b326b8d1a3996318ea0a2a98f8b7dac284ec629327703a5f5"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "9664f4e3c96643ea5d298ec73714a5cae38e05794275ffa428978ac9bda30330"
+    "sha256": "14a18ac01c38a95e4e6e9a6580783fc5eb8e9b60fc7672eed4f7d8f586b64adf"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -70,6 +70,14 @@
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
     "sha256": "c71ab43139a1b843487e7f41a9bb87ee83fd5d59fee5ffd60815f84a6ee75698"
+  },
+  {
+    "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
+    "sha256": "d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6"
+  },
+  {
+    "path": "resources/prompts/platform/templates/handoff-brief-secretary.txt",
+    "sha256": "d9207c93fb42718ece6b1e70e3bcbb526a28c3782f4e99e680fd366ffc15b6a9"
   },
   {
     "path": "resources/prompts/platform/templates/base.txt",

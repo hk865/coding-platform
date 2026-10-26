@@ -19,12 +19,12 @@
  * real store, the Session facts, the real duty resolver and the profile port
  * (see `RequestRoundDependencies`).
  */
-import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import {
   hostPrincipalOf, principalIdentity, type CoreCallContext, type HostPrincipal,
 } from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -32,6 +32,7 @@ import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonVal
 import {
   queryJobRefFor, type PendingQueryJobSnapshot, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
   type QueryRunRef, type QueryRunSnapshot, type QuerySubmissionBindingV1, type RequestCommandReceiptV1,
+  type RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -44,8 +45,10 @@ import {
   QUERY_OPEN_BY_WORKSPACE_INDEX, REQUEST_PAGE_SIZE, REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX,
   SECRETARY_TAIL_RETRIES, requestTailKey, secretaryIntakeKey,
   type RequestCoreViewV1, type RequestOwnerStateV1, type SecretaryProfilePort, type SecretaryProfileV1,
+  HANDOFF_SYSTEM_PRINCIPAL, type InternalRouteCommandV1, type RequestCommandReceiptReadV1,
 } from '../model/request-contracts.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
+import type { SessionOperationRecord } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { RequestFactsPort } from './request-facts.js';
 import { oldestPendingRound, type RequestRoundsFactsV1 } from '../queries/request-rounds-read.js';
@@ -57,12 +60,16 @@ import {
 import { queryTextProblem, lookupCommittedReceipt } from '../queries/query-job-service.js';
 import { buildRecordedEvent } from '../queries/query-execution.js';
 import {
-  decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionOperationRecord, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate,
+  sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
+import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
 import {
-  endUnstartedRound, newRequestRound, newRoutingRound, setIntake,
+  currentUnderstandingGeneration, endUnstartedRound, newRequestRound, newRoutingRound, setIntake,
+  transitionUnderstandingCommand,
 } from '../state/request-rounds.js';
 import { releaseUnenteredQuerySession } from '../state/session-availability.js';
+import { commandIdentity } from '../persistence/command-executor.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { sessionRefProblem } from '../persistence/rework-codecs.js';
@@ -77,6 +84,11 @@ import { admitRequestSecretary } from './secretary-selection.js';
 // The command, plan and result unions                                        //
 // ------------------------------------------------------------------------ //
 
+/** Declared in the model so the handoff's `sessions` and `state` files can name them; re-exported for importers here. */
+export {
+  HANDOFF_SYSTEM_PRINCIPAL, type InternalRouteCommandV1, type RequestCommandReceiptReadV1,
+} from '../model/request-contracts.js';
+
 export type RequestPublicCommandV1 =
   | { kind: 'submit'; commandId: string; goalId: string | null; text: string; continues: QueryJobRef | null;
       recipient: SessionRef | null }
@@ -87,7 +99,8 @@ export type RequestPublicCommandV1 =
 export type RequestInternalCommandV1 =
   | { kind: 'assigned'; operationId: string; requestRoot: QueryJobRef; to: SessionRef; guard: VersionedRef }
   | { kind: 'end_unbound'; operationId: string; round: QueryJobRef }
-  | { kind: 'handoff' | 'archived'; operationId: string; requestRoot: QueryJobRef; to: SessionRef };
+  | InternalRouteCommandV1
+  | (RequestUnderstandingCommandV1 & { kind: 'request_understanding' });
 
 export type RequestPlanV1 = {
   assignTo: { session: SessionRef; guard: VersionedRef; fresh: boolean } | null;
@@ -107,6 +120,22 @@ export type RequestAppendResultV1 =
   | { status: 'ended'; round: QueryJobRef; replayed: boolean }
   | RequestRejectionV1;
 
+/** The two methods the request port gains beside `append`. */
+export type CloseUnderstandingInputV1 = { round: QueryJobRef; commandId: string };
+/**
+ * Close only ensures the command is no longer `live`. A fresh `live -> closed`
+ * commit says `committed`; an already terminal command says `already_terminal`
+ * and nothing is written or regressed.
+ */
+export type CloseUnderstandingResultV1 =
+  | { status: 'committed'; commandId: string; state: 'closed'; replayed: boolean; cursor: CommitCursor }
+  | { status: 'already_terminal'; commandId: string; state: 'closed' | 'consumed' }
+  | CoreRejection;
+
+export type ReadRequestCommandReceiptV1 = (
+  ctx: CoreCallContext, command: RequestInternalCommandV1,
+) => Promise<RequestCommandReceiptReadV1>;
+
 export interface RequestRoundPort {
   precheck(ctx: CoreCallContext, command: RequestPublicCommandV1):
     Promise<{ status: 'replay'; result: RequestAppendResultV1 }
@@ -115,6 +144,8 @@ export interface RequestRoundPort {
   append(ctx: CoreCallContext,
     input: { command: RequestPublicCommandV1; plan: RequestPlanV1 } | { command: RequestInternalCommandV1 }):
     Promise<RequestAppendResultV1>;
+  closeUnderstanding(ctx: CoreCallContext, input: CloseUnderstandingInputV1): Promise<CloseUnderstandingResultV1>;
+  readRequestCommandReceipt: ReadRequestCommandReceiptV1;
   unassigned(ctx: CoreCallContext, scope: WorkspaceScope, input: { limit: number; continuation: string | null }):
     Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>>;
   /**
@@ -164,13 +195,6 @@ export { REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX };
 
 function unavailable(reason: string): RequestRejectionV1 {
   return rejected('unavailable', reason);
-}
-
-/** `request.<kind>:<sha256(operation, project, workspace, principal, commandId)>`. */
-function commandIdentity(ctx: CoreCallContext, principal: HostPrincipal, kind: string, commandId: string): string {
-  return `request.${kind}:` + sha256Hex(canonicalJson({ schemaVersion: 1, operation: `request.${kind}`,
-    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, principal: principalIdentity(principal),
-    commandId } as unknown as JsonValue));
 }
 
 /**
@@ -515,12 +539,17 @@ function targetConflict(source: AssignmentSource, reason: string): RequestReject
   return rejected(source === 'fresh' ? 'revision_conflict' : 'busy', reason);
 }
 
+/** The input an append lands on a Session; `null` for a route away, a drop and a replay. */
+export type PreparedAppendActivityV1 = { session: SessionRef; at: string; source: QueryJobRef };
+
 type PreparedAppend = {
   receipt: RequestCommandReceiptV1 | null;
   records: EncodedRecord[];
   events: EncodedDomainEvent[];
   guards: RecordGuard[];
   claims: UniqueClaimChange[];
+  /** The input activity this commit writes with its fact; `null` writes none. */
+  activity: PreparedAppendActivityV1 | null;
   /** The created round, and its `since` binding target; `null` for `end_unbound`. */
   round: QueryJobRef;
   sinceRefKey: string | null;
@@ -945,7 +974,9 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if (shape !== null) return rejected('invalid', shape);
 
     // (3) identity and fingerprint.
-    const identityKey = commandIdentity(ctx, principal, command.kind, command.commandId);
+    const identityKey = commandIdentity({ operation: `request.${command.kind}`,
+      scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+      principal: principalIdentity(principal), commandId: command.commandId });
     const fingerprint = commandFingerprint(command);
 
     // (4) a committed receipt replays before any pick, line or time-dependent check.
@@ -1012,7 +1043,9 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
 
   async function appendPublic(ctx: CoreCallContext, principal: HostPrincipal, command: RequestPublicCommandV1,
     plan: RequestPlanV1): Promise<RequestAppendResultV1> {
-    const identityKey = commandIdentity(ctx, principal, command.kind, command.commandId);
+    const identityKey = commandIdentity({ operation: `request.${command.kind}`,
+      scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+      principal: principalIdentity(principal), commandId: command.commandId });
     const fingerprint = commandFingerprint(command);
     const replay = await replayPublic(deps, identityKey, fingerprint);
     if (replay.status === 'ready') return replay.result;
@@ -1021,31 +1054,129 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
   }
 
-  async function appendInternal(ctx: CoreCallContext, principal: HostPrincipal, command: RequestInternalCommandV1):
-    Promise<RequestAppendResultV1> {
-    const identityKey = commandIdentity(ctx, principal, command.kind, command.operationId);
-    const fingerprint = sha256Hex(canonicalJson({ kind: command.kind,
-      root: command.kind === 'assigned' ? command.requestRoot : null,
-      round: command.kind === 'end_unbound' ? command.round : null,
-      to: command.kind === 'assigned' ? command.to : null } as unknown as JsonValue));
+  /** The one replay lookup of an internal append; a found receipt is projected, every failure is the owner's answer. */
+  async function replayInternal(identityKey: string, fingerprint: string,
+    ended: (() => RequestAppendResultV1) | null): Promise<RequestAppendResultV1 | null> {
     const replay = await lookupCommittedReceipt(deps.records, identityKey, fingerprint);
     if (replay.status === 'found') {
-      if (command.kind === 'end_unbound') return { status: 'ended', round: { ...command.round }, replayed: true };
+      if (ended !== null) return ended();
       return receiptOf(deps, replay.receipt, identityKey, fingerprint);
     }
     if (replay.status === 'conflict') return rejected('idempotency_conflict', replay.reason);
     if (replay.status === 'invalid') return rejected('invalid', replay.reason);
     if (replay.status !== 'missing') return unavailable(`the idempotency lookup failed: ${replay.reason}`);
+    return null;
+  }
+
+  async function appendInternal(ctx: CoreCallContext, principal: HostPrincipal, command: RequestInternalCommandV1):
+    Promise<RequestAppendResultV1> {
+    if (command.kind === 'request_understanding') {
+      const { identityKey, fingerprint } = receiptKeysOf(ctx, command)!;
+      const replayed = await replayInternal(identityKey, fingerprint, null);
+      if (replayed !== null) return replayed;
+      return withTailRetries(() => prepareUnderstanding(ctx, command, identityKey, fingerprint),
+        (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+    }
+    if (command.kind === 'handoff' || command.kind === 'archived') {
+      const { identityKey, fingerprint } = receiptKeysOf(ctx, command)!;
+      const replayed = await replayInternal(identityKey, fingerprint, null);
+      if (replayed !== null) return replayed;
+      return withTailRetries(() => prepareInternalRoute(ctx, command, identityKey, fingerprint),
+        (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+    }
+    if (command.kind !== 'assigned' && command.kind !== 'end_unbound') {
+      return unavailable(`the ${command.kind} operation has no producer on this platform`);
+    }
+    const identityKey = commandIdentity({ operation: `request.${command.kind}`,
+      scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+      principal: principalIdentity(principal), commandId: command.operationId });
+    const fingerprint = sha256Hex(canonicalJson({ kind: command.kind,
+      root: command.kind === 'assigned' ? command.requestRoot : null,
+      round: command.kind === 'end_unbound' ? command.round : null,
+      to: command.kind === 'assigned' ? command.to : null } as unknown as JsonValue));
+    const replayed = await replayInternal(identityKey, fingerprint,
+      command.kind === 'end_unbound' ? () => ({ status: 'ended', round: { ...command.round }, replayed: true }) : null);
+    if (replayed !== null) return replayed;
 
     if (command.kind === 'assigned') {
       return withTailRetries(() => prepareAssigned(ctx, principal, command, identityKey, fingerprint),
         (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
-    if (command.kind !== 'end_unbound') {
-      return unavailable(`the ${command.kind} operation has no producer on this platform`);
-    }
     return withTailRetries(() => prepareEndUnbound(ctx, principal, command, identityKey, fingerprint),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+  }
+
+  /**
+   * The internal understanding input: a follow-up round on the named root,
+   * carrying the command, run on the operation's source Session, written in one
+   * commit with the old secretary's input activity. The operation record is
+   * read through the same records port; its guard joins the commit.
+   */
+  async function prepareUnderstanding(ctx: CoreCallContext,
+    command: RequestUnderstandingCommandV1 & { kind: 'request_understanding' },
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const operationRead = await readOne(deps.records, command.operation, decodeSessionOperationRecord);
+    if (operationRead.status === 'not_found') return rejected('not_found', 'the understanding operation does not exist');
+    if (operationRead.status === 'rejected') return unavailable(`the understanding operation could not be read: ${operationRead.reason}`);
+    const operation: SessionOperationRecord = operationRead.value;
+    if (operation.action.kind !== 'handoff') {
+      return rejected('invalid', 'the understanding command names an operation that is not a handoff');
+    }
+    if (currentUnderstandingGeneration(operation) !== command.generation) {
+      return rejected('busy', "the command generation is not the operation's current understanding generation");
+    }
+    const source = operation.action.input.source;
+    const read = await readRequestFacts(deps, ctx, command.requestRoot);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    if (facts.owner === null || !sameJson(facts.owner, source)) {
+      return rejected('invalid', 'the request root is not owned by the operation source');
+    }
+    const rootJob = facts.rounds.find((round) => sameJson(round.ref, command.requestRoot));
+    if (rootJob === undefined) {
+      return unavailable('the understanding command names a root that the request facts do not list');
+    }
+    const profile = await profileForOwner(deps, ctx, source);
+    if (profile.status !== 'ready') return profile;
+
+    const scope = workspaceOf(ctx);
+    const queryJobId = deps.operationId();
+    const roundRef = queryJobRefFor(scope.projectId, scope.workspaceId, queryJobId);
+    const occurredAt = deps.now();
+    const intent = intentOf({ scope, queryJobId, goalId: rootJob.job.requestGoalId,
+      text: rootJob.job.intent.question, profile: profile.profile, correlationId: command.commandId });
+    const receipt: Extract<RequestCommandReceiptV1, { kind: 'understanding' }> = {
+      kind: 'understanding', round: { ...roundRef },
+    };
+    const eventId = deps.operationId();
+    const pair = newRequestRound({
+      queryJobId, runId: `run-${queryJobId}`, scope, intent, kind: 'followup',
+      requestRoot: command.requestRoot, requestGoalId: rootJob.job.requestGoalId,
+      assignedSession: { ...source }, intakeSession: null, selectedIdea: null, relatedCardRefs: [],
+      receipt, submission: submissionOf(identityKey, fingerprint, eventId), submittedAt: occurredAt,
+      understanding: command,
+    });
+    const guards = preparedGuards([
+      facts.guards,
+      [operationRead.guard, { refKey: keyOf(rootJob.ref), expectedRevision: rootJob.revision }],
+      profile.guards,
+      [nullGuard(keyOf(pair.job.ref)), nullGuard(keyOf(pair.run.ref))],
+    ], { source: 'none', sessionRefKeys: [] });
+    if (guards.status !== 'ready') return guards;
+    return {
+      status: 'ready',
+      value: {
+        receipt, records: [encodeQueryJobSnapshot(pair.job), encodeQueryRunSnapshotRecord(pair.run)],
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal: HANDOFF_SYSTEM_PRINCIPAL, job: pair.job,
+          eventId, identityKey, fingerprint, commandId: command.commandId, occurredAt }))],
+        guards: guards.guards,
+        claims: [moveTailClaim(facts, command.requestRoot, roundRef)],
+        round: roundRef, sinceRefKey: keyOf(pair.job.ref),
+        activity: { session: { ...source }, at: occurredAt, source: { ...roundRef } },
+        conflict: { source: 'none', sessionRefKeys: [], intakeKey: null },
+      },
+    };
   }
 
   /** Re-read and re-commit on every tail conflict, up to SECRETARY_TAIL_RETRIES, then `busy`. */
@@ -1215,6 +1346,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       intakeSession: assignment.takesIntake && assignment.assignedSession !== null ? assignment.assignedSession : null,
       selectedIdea: input.selectedIdea, relatedCardRefs: input.relatedCardRefs, receipt,
       submission: submissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
+      understanding: null,
     });
     const records: EncodedRecord[] = [encodeQueryJobSnapshot(pair.job), encodeQueryRunSnapshotRecord(pair.run)];
     const claims: UniqueClaimChange[] = [moveTailClaim(input.facts, requestRoot, roundRef)];
@@ -1241,6 +1373,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
           identityKey: input.identityKey, fingerprint: input.fingerprint, commandId: input.commandId,
           occurredAt: input.occurredAt }))],
         guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(pair.job.ref),
+        activity: secretary === null ? null : { session: secretary, at: input.occurredAt, source: { ...roundRef } },
         conflict: { source: assignment.source, sessionRefKeys: assignment.sessionRefKeys,
           intakeKey: assignment.takesIntake && assignment.assignedSession !== null
             ? secretaryIntakeKey(assignment.assignedSession) : null },
@@ -1252,35 +1385,28 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   // route                                                                  //
   // ---------------------------------------------------------------------- //
 
-  async function prepareRoute(
-    ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestPublicCommandV1, { kind: 'route' }>,
-    identityKey: string, fingerprint: string,
-  ): Promise<PreparedOutcome> {
-    const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
-    if (resolved.status === 'not_found') return rejected('not_found', 'the round is not a request round of this workspace');
-    if (resolved.status === 'rejected') return unavailable(resolved.reason);
-    const read = await readRequestFacts(deps, ctx, resolved.root);
-    if (read.status !== 'ready') return read;
-    const facts = read.facts;
-    if (!facts.rounds.some((round) => sameJson(round.ref, command.round))) {
-      return rejected('not_found', 'the round does not belong to the request it names');
-    }
+  type RouteRoundInput = {
+    ctx: CoreCallContext; principal: HostPrincipal; commandId: string;
+    identityKey: string; fingerprint: string;
+    facts: RequestRoundsFactsV1; requestRoot: QueryJobRef;
+    routing: NonNullable<QueryJobSnapshot['job']['routing']>; target: SessionRef | null;
+  };
 
+  /** The one routing-round writer: both the person's route and the trusted internal one build through it. */
+  async function buildRouteRound(input: RouteRoundInput): Promise<PreparedOutcome> {
+    const { ctx, facts, requestRoot, routing, target } = input;
     const occurredAt = deps.now();
-    const requestRoot = resolved.root;
     const roundRef = queryJobRefFor(ctx.projectId, ctx.workspaceId ?? '', deps.operationId());
     const claims: UniqueClaimChange[] = [moveTailClaim(facts, requestRoot, roundRef)];
     const records: EncodedRecord[] = [];
     const guardGroups: RecordGuard[][] = [facts.guards];
     const releasedSessions: SessionRecord[] = [];
-    let routing: NonNullable<QueryJobSnapshot['job']['routing']>;
     let source: AssignmentSource = 'none';
     let sessionRefKeys: string[] = [];
     let intakeKey: string | null = null;
 
-    if (command.reason === 'dropped') {
+    if (routing.reason === 'dropped') {
       if (facts.ownerState === 'dropped') return rejected('invalid', 'the request is already dropped');
-      routing = { from: facts.owner === null ? null : { ...facts.owner }, to: null, reason: 'dropped' };
       const holder = intakeHolder(facts);
       const endedRounds = unstarted(facts);
       for (const round of endedRounds) {
@@ -1311,24 +1437,23 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
         records.push(encodeQueryJobSnapshot(ended.job), encodeQueryRunSnapshotRecord(ended.run));
       }
     } else {
-      if (command.to === null) return rejected('invalid', 'a manual route requires a recipient');
-      const target = await assignTo(ctx, command.to, null, false, 'recipient');
-      if (target.status !== 'ready') return target;
-      guardGroups.push(target.value.guards);
-      source = target.value.source;
-      sessionRefKeys = target.value.sessionRefKeys;
-      routing = { from: facts.owner === null ? null : { ...facts.owner }, to: { ...command.to }, reason: 'manual' };
-      // From `owned` a manual route takes no intake; otherwise it takes
+      if (target === null) return rejected('invalid', 'a manual route requires a recipient');
+      const assigned = await assignTo(ctx, target, null, false, 'recipient');
+      if (assigned.status !== 'ready') return assigned;
+      guardGroups.push(assigned.value.guards);
+      source = assigned.value.source;
+      sessionRefKeys = assigned.value.sessionRefKeys;
+      // From `owned` a route takes no intake; otherwise it takes
       // `secretary-intake:<to>` on the oldest pending round as holder when there is one.
       if (facts.ownerState !== 'owned') {
         const holder = oldestPendingRound(facts);
         if (holder !== null) {
-          const intake = intakeChanges({ holder: intakeHolder(facts), desire: command.to,
+          const intake = intakeChanges({ holder: intakeHolder(facts), desire: target,
             next: { kind: 'existing', job: holder } });
           claims.push(...intake.claims);
           records.push(...intake.records);
           guardGroups.push(intake.guards);
-          intakeKey = secretaryIntakeKey(command.to);
+          intakeKey = secretaryIntakeKey(target);
         }
       }
     }
@@ -1344,7 +1469,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       root: facts.rounds.find((round) => sameJson(round.ref, rootOfFacts(facts))) ?? facts.tail,
       routing,
       receipt: { kind: 'route', routingRound: { ...roundRef } },
-      submission: submissionOf(identityKey, fingerprint, eventId),
+      submission: submissionOf(input.identityKey, input.fingerprint, eventId),
       submittedAt: occurredAt,
     });
     const receipt = routingJob.job.receipt;
@@ -1357,13 +1482,58 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       value: {
         receipt,
         records,
-        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal, job: routingJob, eventId, identityKey,
-          fingerprint, commandId: command.commandId, occurredAt }))],
+        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal: input.principal, job: routingJob, eventId,
+          identityKey: input.identityKey, fingerprint: input.fingerprint, commandId: input.commandId, occurredAt }))],
         guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(routingJob.ref),
+        activity: target === null ? null : { session: { ...target }, at: occurredAt, source: { ...roundRef } },
         conflict: { source, sessionRefKeys, intakeKey },
       },
     };
   }
+
+  async function prepareRoute(
+    ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestPublicCommandV1, { kind: 'route' }>,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const resolved = await resolveRequestRoot(deps.records, ctx, command.round);
+    if (resolved.status === 'not_found') return rejected('not_found', 'the round is not a request round of this workspace');
+    if (resolved.status === 'rejected') return unavailable(resolved.reason);
+    const read = await readRequestFacts(deps, ctx, resolved.root);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    if (!facts.rounds.some((round) => sameJson(round.ref, command.round))) {
+      return rejected('not_found', 'the round does not belong to the request it names');
+    }
+    const dropped = command.reason === 'dropped';
+    const routing: NonNullable<QueryJobSnapshot['job']['routing']> = {
+      from: facts.owner === null ? null : { ...facts.owner },
+      to: dropped || command.to === null ? null : { ...command.to },
+      reason: dropped ? 'dropped' : 'manual',
+    };
+    return buildRouteRound({ ctx, principal, commandId: command.commandId, identityKey, fingerprint,
+      facts, requestRoot: resolved.root, routing, target: dropped ? null : command.to });
+  }
+
+  /** The trusted internal route: the same writer, with the owner pinned to the expected source. */
+  async function prepareInternalRoute(
+    ctx: CoreCallContext, command: InternalRouteCommandV1, identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const read = await readRequestFacts(deps, ctx, command.requestRoot);
+    if (read.status !== 'ready') return read;
+    const facts = read.facts;
+    if (facts.owner === null || !sameJson(facts.owner, command.expectedSource)) {
+      return rejected('busy', 'the request owner is not the expected source');
+    }
+    const routing: NonNullable<QueryJobSnapshot['job']['routing']> = {
+      from: { ...facts.owner },
+      to: command.to === null ? null : { ...command.to },
+      reason: command.to === null ? 'dropped' : command.kind,
+    };
+    return buildRouteRound({ ctx, principal: HANDOFF_SYSTEM_PRINCIPAL,
+      commandId: `${command.operationId}:routing:${command.requestRoot.queryJobId}`,
+      identityKey, fingerprint, facts, requestRoot: command.requestRoot, routing, target: command.to });
+  }
+
   // ---------------------------------------------------------------------- //
   // select_idea and ask                                                    //
   // ---------------------------------------------------------------------- //
@@ -1468,6 +1638,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
         guards: guards.guards,
         claims: [moveTailClaim(facts, command.requestRoot, roundRef), ...intake.claims],
         round: roundRef, sinceRefKey: keyOf(routingJob.ref),
+        activity: { session: { ...command.to }, at: occurredAt, source: { ...roundRef } },
         conflict: { source: 'recipient', sessionRefKeys: target.value.sessionRefKeys,
           intakeKey: secretaryIntakeKey(command.to) },
       },
@@ -1538,7 +1709,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       value: {
         receipt: null, records,
         events: [encodeQueryExecutionRecordedEvent(event)],
-        guards: guards.guards, claims, round: { ...round.ref }, sinceRefKey: null,
+        guards: guards.guards, claims, round: { ...round.ref }, sinceRefKey: null, activity: null,
         conflict: { source: 'none', sessionRefKeys, intakeKey: null },
       },
     };
@@ -1555,7 +1726,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if (guards.status !== 'ready') {
       return { status: 'done', result: rejected('revision_conflict', 'the request read window changed during the append') };
     }
-    const preparedCommit: PreparedCommit = {
+    let preparedCommit: PreparedCommit = {
       identityKey,
       fingerprint,
       guards: guards.guards,
@@ -1567,6 +1738,28 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       commitCursorBindings: prepared.sinceRefKey === null ? []
         : [{ refKey: prepared.sinceRefKey, field: 'since' }],
     };
+    // The activity record rides this commit: the planner reads the Session and
+    // the current record, and its guard joins the same write. A conflict on it
+    // is this owner's to re-read and retry, like the request tail.
+    let activityKey: string | null = null;
+    if (prepared.activity !== null) {
+      const planned = await planSessionActivityAdvance(deps.records, {
+        sessionRef: prepared.activity.session, at: prepared.activity.at, kind: 'input',
+        source: prepared.activity.source,
+      });
+      if (!planned.ok) {
+        return { status: 'done', result: { status: 'rejected',
+          code: planned.rejection.code as RequestRejectionV1['code'], reason: planned.rejection.reason } };
+      }
+      const guard = activityGuardOf(planned.guard);
+      const merged = guardList([preparedCommit.guards, [guard]]);
+      if (merged.status !== 'ready') {
+        return { status: 'done', result: rejected('revision_conflict', 'the activity read window changed during the append') };
+      }
+      activityKey = guard.refKey;
+      preparedCommit = { ...preparedCommit, guards: merged.guards,
+        records: [...preparedCommit.records, planned.record] };
+    }
     let committed: StoreCommitReceipt;
     try {
       committed = await deps.records.commit(preparedCommit);
@@ -1600,6 +1793,11 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
         return { status: 'done', result: rejected('busy', `another request write holds a claim: ${committed.reason}`) };
       }
       if (committed.code === 'revision_conflict') {
+        // The activity guard is re-read and the whole append retried, whether
+        // the conflicting current revision is a number or `null`.
+        if (activityKey !== null && committed.current.some((entry) => entry.refKey === activityKey)) {
+          return { status: 'tail_conflict' };
+        }
         const sessionKeys = new Set(prepared.conflict.sessionRefKeys);
         if (committed.current.some((entry) => sessionKeys.has(entry.refKey))) {
           return { status: 'done', result: targetConflict(prepared.conflict.source,
@@ -1625,6 +1823,135 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     }
     return { status: 'done', result: { status: 'appended', receipt: prepared.receipt, replayed: false } };
   }
+  // ---------------------------------------------------------------------- //
+  // The internal command's close and receipt read                          //
+  // ---------------------------------------------------------------------- //
+
+  /** The close identity and fingerprint of one stored command: the same on every replay. */
+  function closeKeys(ctx: CoreCallContext, input: CloseUnderstandingInputV1):
+  { identityKey: string; fingerprint: string } {
+    return {
+      identityKey: commandIdentity({ operation: 'request.request_understanding_close',
+        scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+        principal: principalIdentity(HANDOFF_SYSTEM_PRINCIPAL), commandId: input.commandId }),
+      fingerprint: sha256Hex(canonicalJson({ round: input.round, commandId: input.commandId } as unknown as JsonValue)),
+    };
+  }
+
+  /** The append identity and fingerprint of one internal command, rebuilt from the command itself. */
+  function receiptKeysOf(ctx: CoreCallContext, command: RequestInternalCommandV1):
+  { identityKey: string; fingerprint: string } | null {
+    if (command.kind === 'request_understanding') {
+      return {
+        identityKey: commandIdentity({ operation: 'request.request_understanding',
+          scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+          principal: principalIdentity(HANDOFF_SYSTEM_PRINCIPAL), commandId: command.commandId }),
+        fingerprint: sha256Hex(canonicalJson({ kind: command.kind, commandId: command.commandId,
+          operation: command.operation, generation: command.generation, requestRoot: command.requestRoot,
+          goals: command.goals, checkedRound: command.checkedRound } as unknown as JsonValue)),
+      };
+    }
+    if (command.kind === 'handoff' || command.kind === 'archived') {
+      const childId = `${command.operationId}:routing:${command.requestRoot.queryJobId}`;
+      return {
+        identityKey: commandIdentity({ operation: `request.${command.kind}`,
+          scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+          principal: principalIdentity(HANDOFF_SYSTEM_PRINCIPAL), commandId: childId }),
+        fingerprint: sha256Hex(canonicalJson({ kind: command.kind, operationId: command.operationId,
+          requestRoot: command.requestRoot, to: command.to, expectedSource: command.expectedSource } as unknown as JsonValue)),
+      };
+    }
+    return null;
+  }
+
+  async function readRequestCommandReceipt(ctx: CoreCallContext, command: RequestInternalCommandV1):
+    Promise<RequestCommandReceiptReadV1> {
+    const keys = receiptKeysOf(ctx, command);
+    if (keys === null) return rejected('invalid', 'the receipt read names no internal request command');
+    const found = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+    switch (found.status) {
+      case 'missing': return { status: 'missing' };
+      case 'conflict': return rejected('idempotency_conflict', found.reason);
+      case 'invalid': return rejected('invalid', found.reason);
+      case 'unavailable': return unavailable(`the idempotency lookup failed: ${found.reason}`);
+      case 'found': {
+        const replayed = await replayCommittedReceipt<QueryJobSubmittedEventV1, RequestCommandReceiptReadV1>({
+          receipt: found.receipt,
+          eventAt: (cursor) => deps.records.eventAt(cursor),
+          expectedEventType: 'QueryJobSubmitted',
+          decode: decodeQueryJobSubmittedEvent,
+          expected: { identityKey: keys.identityKey, fingerprint: keys.fingerprint },
+          identityKey: (decoded) => decoded.identityKey,
+          fingerprint: (decoded) => decoded.fingerprint,
+          validate: (decoded) => decoded.payload.job.receipt === null
+            ? unavailable('the original request event carries no receipt') : null,
+          project: (decoded) => ({ status: 'found', receipt: decoded.payload.job.receipt!,
+            cursor: found.receipt.cursor }),
+          onFailure: requestReplayFailure,
+        });
+        return replayed.status === 'committed' ? replayed.value : unavailable(replayed.reason);
+      }
+    }
+  }
+
+  async function closeUnderstanding(ctx: CoreCallContext, input: CloseUnderstandingInputV1):
+    Promise<CloseUnderstandingResultV1> {
+    if (hostPrincipalOf(ctx, 'system') === null) {
+      return rejected('forbidden', 'only the trusted system actor may close an understanding command');
+    }
+    const keys = closeKeys(ctx, input);
+    // Its own original close receipt is restored first, without re-reading the later Job.
+    const replay = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+    if (replay.status === 'found') {
+      return { status: 'committed', commandId: input.commandId, state: 'closed', replayed: true,
+        cursor: replay.receipt.cursor };
+    }
+    if (replay.status === 'conflict') return rejected('idempotency_conflict', replay.reason);
+    if (replay.status === 'invalid') return rejected('invalid', replay.reason);
+    if (replay.status !== 'missing') return unavailable(`the idempotency lookup failed: ${replay.reason}`);
+
+    const read = await readOne(deps.records, input.round, decodeJob);
+    if (read.status === 'not_found') return rejected('not_found', 'the understanding round does not exist');
+    if (read.status === 'rejected') return unavailable(`the understanding round could not be read: ${read.reason}`);
+    const job = read.value;
+    const command = job.job.understanding;
+    if (command === null || command.commandId !== input.commandId) {
+      return rejected('invalid', 'the round does not carry this understanding command');
+    }
+    if (command.state !== 'live') {
+      return { status: 'already_terminal', commandId: input.commandId, state: command.state };
+    }
+    const occurredAt = deps.now();
+    const next = transitionUnderstandingCommand(job, { commandId: input.commandId, to: 'closed', occurredAt });
+    const eventId = deps.operationId();
+    const commit: PreparedCommit = {
+      identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+      guards: [read.guard],
+      records: [encodeQueryJobSnapshot(next)],
+      claims: [], indexGuards: [], indexChanges: [],
+      events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal: HANDOFF_SYSTEM_PRINCIPAL, job: next,
+        eventId, identityKey: keys.identityKey, fingerprint: keys.fingerprint, commandId: input.commandId,
+        occurredAt }))],
+    };
+    let committed: StoreCommitReceipt;
+    try {
+      committed = await deps.records.commit(commit);
+    } catch (error) {
+      const recovered = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+      if (recovered.status === 'found') {
+        return { status: 'committed', commandId: input.commandId, state: 'closed', replayed: true,
+          cursor: recovered.receipt.cursor };
+      }
+      return unavailable(`the close commit failed and its receipt could not be confirmed: ${messageOf(error)}`);
+    }
+    if (committed.status !== 'committed') {
+      const mapped = ownerWriteStoreFailureToRejection(committed);
+      return { status: 'rejected', code: mapped.code as RequestRejectionV1['code'], reason: mapped.reason };
+    }
+    return { status: 'committed', commandId: input.commandId, state: 'closed', replayed: false,
+      cursor: committed.cursor };
+  }
+
   // ---------------------------------------------------------------------- //
   // The named read `s6-query-unassigned`                                   //
   // ---------------------------------------------------------------------- //
@@ -1720,5 +2047,5 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     return { status: 'ready', value: { requests, continuation, wrapped } };
   }
 
-  return { precheck, append, unassigned, open };
+  return { precheck, append, closeUnderstanding, readRequestCommandReceipt, unassigned, open };
 }

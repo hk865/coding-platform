@@ -10,6 +10,7 @@ import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import { isRequestRound } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
+import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
 import {
   annotations, effectiveDuty, goalPayload, notImplementedExtensions, noteSourcesOf,
@@ -23,7 +24,7 @@ import { takesSessionHistoryOf } from './context-history-facts.js';
 import { assembleSecretaryContext } from './context-secretary-recipe.js';
 import { sortedSources } from './context-support.js';
 import type {
-  AssembledContextV1, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
+  AssembledContextV1, ContextAssembler, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
 } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
 
@@ -41,13 +42,18 @@ export async function assembleQueryContext(
     toolNames: readonly string[];
     /** Ruling 14 C7: the Query's formal basis, or the real completed boundary. */
     history: ContextQueryHistoryInputV1;
+    /** The one facts value preparation read; the secretary recipe renders it and reads no port. */
+    secretaryFacts?: SecretaryPreparationFactsV1;
+    /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
+    handoff?: NonNullable<Parameters<ContextAssembler['assembleQuery']>[1]['handoff']>;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
   const job = input.facts.record?.job;
   if (job !== undefined && isRequestRound(job)) {
-    // The secretary recipe reads its own declared facts port and returns the
-    // value for preparation to freeze; nothing travels beside the frozen input.
+    // Preparation read the secretary facts once, before the final tool list,
+    // and passes the same value beside the frozen input; the recipe never reads
+    // the port itself.
     return assembleSecretaryContext(deps, ctx, input);
   }
   const S = (key: string): string => packString(texts, key);

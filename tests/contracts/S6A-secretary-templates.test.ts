@@ -64,8 +64,14 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 
 describe('the platform secretary templates', () => {
     it('declares the round at version 1 and the answer at version 2, with their code-owned slots and digests', () => {
-        const versions = { 'secretary-round': 1, 'secretary-answer': 2 } as const;
-        for (const id of ['secretary-round', 'secretary-answer'] as const) {
+        const versions = {
+            'secretary-round': 1, 'secretary-answer': 2,
+            'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
+        } as const;
+        for (const id of [
+            'secretary-round', 'secretary-answer',
+            'handoff-write-understanding-secretary', 'handoff-brief-secretary',
+        ] as const) {
             expect(PACK.manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`, version: versions[id], mentionsTools: [],
             });
@@ -83,6 +89,8 @@ describe('the platform secretary templates', () => {
             task_earlier: { required: false },
         });
         expect(TEMPLATE_SLOTS['secretary-answer']).toEqual({});
+        expect(TEMPLATE_SLOTS['handoff-write-understanding-secretary']).toEqual({ task_round: { required: true } });
+        expect(TEMPLATE_SLOTS['handoff-brief-secretary']).toEqual({ task_round: { required: true } });
         expect(PACK.templates['secretary-round']).toBe(secretaryRoundBody);
         expect(PACK.templates['secretary-answer']).toBe(secretaryAnswerText);
         expect(parseTemplateV1('secretary-round', PACK.templates['secretary-round']!).status).toBe('parsed');
@@ -91,6 +99,10 @@ describe('the platform secretary templates', () => {
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
             .toBe('c71ab43139a1b843487e7f41a9bb87ee83fd5d59fee5ffd60815f84a6ee75698');
+        expect(sha256Hex(PACK.templates['handoff-write-understanding-secretary']!))
+            .toBe('d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6');
+        expect(sha256Hex(PACK.templates['handoff-brief-secretary']!))
+            .toBe('d9207c93fb42718ece6b1e70e3bcbb526a28c3782f4e99e680fd366ffc15b6a9');
     });
 
     it('renders the three task slots as one adjacent block in the platform order', () => {

@@ -6,8 +6,9 @@
  * preconditions and commits the result (rule 4: state transitions live here).
  */
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { VersionedRef } from '../../../contracts/ledger.js';
-import { canonicalJson, sameJson, sha256Hex } from '../../../contracts/fingerprint.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   PendingQueryJobSnapshot,
   QueryExecutionStateV1,
@@ -19,6 +20,8 @@ import type {
   QueryRunSnapshot,
   QuerySubmissionBindingV1,
   RequestCommandReceiptV1,
+  RequestUnderstandingCommandV1,
+  SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
 import { queryJobRefFor } from '../../../contracts/query-job.js';
 import {
@@ -48,6 +51,8 @@ export type NewRequestRoundInput = {
   receipt: RequestCommandReceiptV1;
   submission: QuerySubmissionBindingV1;
   submittedAt: string;
+  /** The internal understanding command this round writes; `null` on every other round. */
+  understanding: RequestUnderstandingCommandV1 | null;
 };
 
 /**
@@ -78,6 +83,7 @@ export function newRequestRound(input: NewRequestRoundInput): PendingQueryLifecy
       selectedIdea: cloneSelectedIdea(input.selectedIdea),
       relatedCardRefs: structuredClone(input.relatedCardRefs),
       receipt: structuredClone(input.receipt),
+      understanding: input.understanding === null ? null : structuredClone(input.understanding),
     },
   };
   return { job, run: pending.run };
@@ -129,6 +135,7 @@ export function newRoutingRound(input: NewRoutingRoundInput): PendingQueryJobSna
     enteredSession: null,
     intakeSession: null,
     receipt: input.receipt === null ? null : structuredClone(input.receipt),
+    understanding: null,
   };
   return { ref, revision: 1, schemaVersion: 1, job, submission: structuredClone(input.submission), since: null };
 }
@@ -155,7 +162,7 @@ export function endUnstartedRound(
   };
 }
 
-export type NewAttemptTrigger = 'owner_changed' | 'owner_archived' | 'not_entered';
+export type NewAttemptTrigger = 'owner_changed' | 'owner_archived' | 'not_entered' | 'fenced';
 
 /**
  * A new attempt on the same Job: the old Run closes `not_entered`
@@ -269,6 +276,51 @@ export function recordEntered(job: QueryJobSnapshot, session: SessionRef): Query
   return { ...job, revision: job.revision + 1, job: { ...job.job, enteredSession: cloneSession(session) } };
 }
 
+/**
+ * One state move of the stored understanding command: `live -> closed`,
+ * `live -> consumed` or `closed -> consumed`. The immutable input never changes;
+ * only `state` and `updatedAt` move, at `revision + 1`. An already `consumed`
+ * command, a `closed -> closed`/backwards move, or a Job that does not carry
+ * this `commandId` is a programming error and throws.
+ */
+export function transitionUnderstandingCommand(
+  job: QueryJobSnapshot,
+  input: { commandId: string; to: 'closed' | 'consumed'; occurredAt: string },
+): QueryJobSnapshot {
+  const command = job.job.understanding;
+  if (command === null || command.commandId !== input.commandId) {
+    throw new Error('transitionUnderstandingCommand: the QueryJob carries no understanding command with this commandId');
+  }
+  const legal = (command.state === 'live' && (input.to === 'closed' || input.to === 'consumed'))
+    || (command.state === 'closed' && input.to === 'consumed');
+  if (!legal) {
+    throw new Error(`transitionUnderstandingCommand: ${command.state} -> ${input.to} is not a legal understanding command move`);
+  }
+  return {
+    ...job,
+    revision: job.revision + 1,
+    job: {
+      ...job.job,
+      understanding: { ...structuredClone(command), state: input.to },
+      updatedAt: input.occurredAt,
+    },
+  };
+}
+
+/**
+ * Folds a completed understanding transition into another Job snapshot: the end
+ * commit's own next snapshot keeps its revision and update time, and takes only
+ * the command state the transition produced. The transition result is the only
+ * writer of the command; passing a snapshot without one is a programming error.
+ */
+export function foldUnderstandingCommand(job: QueryJobSnapshot, transitioned: QueryJobSnapshot): QueryJobSnapshot {
+  const command = transitioned.job.understanding;
+  if (command === null) {
+    throw new Error('foldUnderstandingCommand: the transitioned QueryJob carries no understanding command');
+  }
+  return { ...job, job: { ...job.job, understanding: command } };
+}
+
 /** The claimed/prepared/settled execution state moves to `settled`; a pending Run has none. */
 function settledExecution(run: QueryRunSnapshot): QueryExecutionStateV1 | null {
   const state = run.run.executionState;
@@ -298,4 +350,57 @@ function requireUnsettled(records: QueryLifecycleRecords, constructor: string): 
     throw new Error(`${constructor}: the QueryRun is already settled`);
   }
   requireSameRun(job, run, constructor);
+}
+
+/** One distinct `command.operation`'s current facts, read once over the whole frozen material list. */
+export type UnderstandingOperationFactsV1 = {
+  operation: OperationRef;
+  /** `currentUnderstandingGeneration(operation)`; `null` when the operation has no record. */
+  generation: number | null;
+  /** The handoff operation's source (`action.input.source`). */
+  source: SessionRef;
+  /** True only when the request root's current owner (`facts.owner`) is `source`. */
+  ownsRoot: boolean;
+};
+
+/** The still-valid grants of `[round, ...batch]`: each command is judged against its own operation; one entry per goal. */
+export function liveUnderstandingGrants(input: {
+  materials: readonly SecretaryRoundMaterialV1[];
+  requestRoot: QueryJobRef;
+  operations: readonly UnderstandingOperationFactsV1[];
+}): readonly GoalRef[] {
+  const factsByOperation = new Map<string, UnderstandingOperationFactsV1>();
+  for (const facts of input.operations) {
+    factsByOperation.set(canonicalJson(facts.operation as unknown as JsonValue), facts);
+  }
+  const grants: GoalRef[] = [];
+  const seen = new Set<string>();
+  for (const material of input.materials) {
+    const command = material.command;
+    if (command === null || command.kind !== 'request_understanding') continue;
+    if (command.state !== 'live') continue;
+    const facts = factsByOperation.get(canonicalJson(command.operation as unknown as JsonValue));
+    if (facts === undefined || facts.generation === null || !facts.ownsRoot) continue;
+    if (command.generation !== facts.generation) continue;
+    if (!sameJson(command.requestRoot, input.requestRoot)) continue;
+    for (const goal of command.goals) {
+      const key = canonicalJson(goal.goalRef as unknown as JsonValue);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      grants.push({ ...goal.goalRef });
+    }
+  }
+  return grants;
+}
+
+/** The operation's current understanding generation: the greatest record, or null when it has none. */
+export function currentUnderstandingGeneration(
+  operation: { action: { kind: 'handoff'; progress: { understanding: readonly { generation: number }[] } } | { kind: 'create' | 'secretary_archive' } },
+): number | null {
+  if (operation.action.kind !== 'handoff') return null;
+  let current: number | null = null;
+  for (const record of operation.action.progress.understanding) {
+    if (current === null || record.generation > current) current = record.generation;
+  }
+  return current;
 }

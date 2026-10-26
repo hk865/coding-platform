@@ -13,7 +13,13 @@
  */
 import type { ActorRef } from '../contracts/command-event.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { RoleConfigurationRef } from '../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef } from '../contracts/core/identity.js';
+// The two secretary lifecycle commands' own input and result shapes: the accept inputs and the progress the Workflow
+// reads back after driving it. Derived from the frozen contracts and ports, never restated here.
+import type {
+  SecretaryArchiveAcceptInputV1, SessionHandoffWorkflowPort,
+} from '../core/work-graph/model/session-handoff-contracts.js';
+import type { HandoffAcceptInputV1 } from '../core/work-graph/sessions/session-handoff-service.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
@@ -293,7 +299,11 @@ export type CoreRouteSuffix =
   | 'requests/ask'
   // The main conversation's read and one request's read with its cards.
   | 'main/read'
-  | 'requests/read';
+  | 'requests/read'
+  // The two secretary lifecycle commands: the person's handoff to a successor line and the manual archive of a
+  // secretary with one choice per open request. Both stay internal in the public key list.
+  | 'secretaries/handoff'
+  | 'secretaries/archive';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -535,6 +545,29 @@ export type RequestCommandCoreRouteDto = {
   'requests/ask': { body: RequestsAskBody; response: RequestsAskResponse };
   'main/read': { body: MainReadBody; response: MainReadResponse };
   'requests/read': { body: RequestsReadBody; response: RequestsReadResponse };
+};
+
+// ---------------------------------------------------------------------------
+// The two secretary lifecycle commands. Both are `plain` (the caller names the
+// operation, the platform its identity) and person-only at the Host layer.
+// `secretaries/handoff` names only the source: the successor line is the
+// platform's, created by the command, so it is never a body field.
+// `secretaries/archive` carries one choice per open request root. The response
+// is the progress the Workflow reads back after driving the accepted operation.
+// ---------------------------------------------------------------------------
+/** The accept input, with only its `source` named `session` in the body; every other body field is the port's own. */
+type HandoffBodyInput = Pick<HandoffAcceptInputV1, 'commandId'> & { session: HandoffAcceptInputV1['source'] };
+type ArchiveBodyInput = Pick<SecretaryArchiveAcceptInputV1, 'commandId' | 'choices'>
+  & { session: SecretaryArchiveAcceptInputV1['source'] };
+export type SecretariesHandoffBody = { scope: CoreScope; input: HandoffBodyInput };
+export type SecretariesHandoffResponse = RouteResponse<SessionHandoffWorkflowPort['advance']>;
+export type SecretariesArchiveBody = { scope: CoreScope; input: ArchiveBodyInput };
+export type SecretariesArchiveResponse = RouteResponse<SessionHandoffWorkflowPort['manualArchive']>;
+
+/** The compile-time typed assembly of the two secretary lifecycle suffixes. */
+export type SecretaryLifecycleCoreRouteDto = {
+  'secretaries/handoff': { body: SecretariesHandoffBody; response: SecretariesHandoffResponse };
+  'secretaries/archive': { body: SecretariesArchiveBody; response: SecretariesArchiveResponse };
 };
 
 // ---------------------------------------------------------------------------

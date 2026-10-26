@@ -40,6 +40,8 @@ import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-co
 import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
 import type { ConsultationInput, ConsultationResult, FailedCardRefV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
+import type { HandoffWorkflowDependencies } from './contracts.js';
+import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer } from './consultation.js';
 import { createTaskGate } from './task-gate.js';
 import { orderTasksByDependency } from './task-order.js';
@@ -761,7 +763,9 @@ function initialPlanningBase(
 // The factory
 // --------------------------------------------------------------------------
 
-export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
+export function createWorkflow(deps: WorkflowDependencies & {
+  sessionHandoff?: HandoffWorkflowDependencies;
+}): WorkflowPort
   & Required<Pick<WorkflowPort, 'consumeConsultation' | 'resolveDecision' | 'orderGoalAdvances'>> {
   /**
    * R5b.4 §11.5 finite first-consumer handoff. Each call delegates exactly ONE
@@ -2449,6 +2453,15 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     ...deps, archive: archiveService,
   });
 
+  // The handoff composite drives one child between two advances; absent, the port keeps its optional member
+  // unpublished and no old caller gains a fake dependency.
+  const archiveLineInternal = archiveService.archiveLineInternal;
+  const sessionHandoff = deps.sessionHandoff === undefined || deps.sessions === undefined
+    || deps.sessionLifecycle === undefined || archiveLineInternal === undefined ? undefined
+    : createSecretaryHandoffWorkflow({ ...deps.sessionHandoff,
+      archiveOwner: { archiveLineInternal }, operations: deps.sessions,
+      releaseArchiveRequest: deps.sessionLifecycle.releaseSessionArchiveRequest });
+
   // AG2a: the explicit-consultation consumer is published on the SAME Workflow
   // port. Without the optional consultation dependencies it stays explicitly
   // unsupported, so existing Workflow fixtures are never forced to extend.
@@ -2537,5 +2550,6 @@ export function createWorkflow(deps: WorkflowDependencies): WorkflowPort
     archiveLine: archiveService.archiveLine,
     continueArchiveLine: archiveService.continueArchiveLine,
     maintainSessions: maintenanceService.maintainSessions,
+    ...(sessionHandoff === undefined ? {} : { sessionHandoff }),
   };
 }

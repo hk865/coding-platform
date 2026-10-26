@@ -8,7 +8,9 @@ type Texts = Readonly<Record<string, { description: string; parameters: Readonly
 type ToolSpecification = { name: string; description: string; inputSchema: unknown };
 const context = { projectId: 'p', workspaceId: 'w', principal: {}, materialReader: {}, signal: new AbortController().signal } as never;
 const definition = (texts?: Texts): ToolDefinition =>
-  createNoteTools({ context, notes: {} as never, check: {} as never, requestIdForCall: () => 'r', ...(texts === undefined ? {} : { texts }) })
+  createNoteTools({ context, notes: {} as never, check: {} as never, requestIdForCall: () => 'r',
+    kinds: ['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'repair'],
+    withdraw: true, ...(texts === undefined ? {} : { texts }) })
     .create({} as never)[0]!;
 const specification = (tool: ToolDefinition) => ({ name: tool.name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) });
 

@@ -13,6 +13,7 @@ import type {
   QueryJobAnswerSnapshot,
   QueryJobRef,
   QueryJobSnapshot,
+  RequestUnderstandingCommandV1,
 } from '../../src/contracts/query-job.js';
 import {
   QUERY_BY_REQUEST_INDEX,
@@ -25,6 +26,7 @@ import {
   decodeQueryJobSnapshot,
   encodeQueryJobAnswerSnapshot,
   encodeQueryJobSnapshot,
+  queryManifestProblem,
   QUERY_JOB_RECORD_SCHEMAS,
   QUERY_JOB_SNAPSHOT_SCHEMA_ID,
 } from '../../src/core/work-graph/queries/query-record-codecs.js';
@@ -82,6 +84,7 @@ function requestJob(): QueryJobSnapshot {
       intakeSession: session('session-4'),
       receipt: { kind: 'submit', requestRoot: root, round: ref('query-3'), assignment: 'assigned',
         secretary: session('session-1'), created: true },
+      understanding: null,
     },
   };
 }
@@ -112,6 +115,7 @@ function nonRequestJob(): QueryJobSnapshot {
       enteredSession: null,
       intakeSession: null,
       receipt: null,
+      understanding: null,
     },
   };
 }
@@ -229,6 +233,15 @@ describe('QueryJob current format (§3.1.1, §3.3)', () => {
     expect(decodeQueryJobSnapshot(encoded)).toEqual({ status: 'decoded', value: job });
   });
 
+  it('round-trips the internal understanding receipt arm', () => {
+    const base = requestJob();
+    const job: QueryJobSnapshot = {
+      ...base,
+      job: { ...base.job, receipt: { kind: 'understanding', round: root } },
+    };
+    expect(decodeQueryJobSnapshot(encodeQueryJobSnapshot(job))).toEqual({ status: 'decoded', value: job });
+  });
+
   it('encodes the pending since placeholder a creator builds, but decode requires the bound cursor (§3.1.2)', () => {
     const pending: PendingQueryJobSnapshot = { ...requestJob(), since: null };
     const encoded = encodeQueryJobSnapshot(pending);
@@ -253,6 +266,90 @@ describe('QueryJob current format (§3.1.1, §3.3)', () => {
     delete body.slots;
     const encoded = { ...encodeQueryJobSnapshot(requestJob()), json: JSON.stringify(body) };
     expect(decodeQueryJobSnapshot(encoded).status).toBe('invalid');
+  });
+});
+
+describe('the stored understanding command', () => {
+  const OPERATION = { aggregateType: 'CoreOperation' as const, projectId: P, operationId: 'op-1' };
+  const GOAL = { aggregateType: 'Goal' as const, projectId: P, goalId: 'goal-1' };
+  const POINTER = { aggregateType: 'CurrentPointer' as const, projectId: P, anchorKey: 'goal:goal-1' };
+  const COMMAND: RequestUnderstandingCommandV1 = {
+    kind: 'request_understanding',
+    commandId: 'op-1:understanding:3',
+    operation: OPERATION,
+    generation: 3,
+    requestRoot: root,
+    goals: [{ goalRef: GOAL, pointer: POINTER, pointerRevision: 4 }],
+    checkedRound: RUN_REF,
+    state: 'live',
+  };
+  /** The pre-migration shape the one normalizer maps: `pointers`, `operationRef` and no `commandId`. */
+  const OLD_COMMAND = {
+    kind: 'request_understanding',
+    operationId: 'op-1',
+    operationRef: OPERATION,
+    requestRoot: root,
+    goals: [GOAL],
+    pointers: [{ goalRef: GOAL, pointer: POINTER, revision: 4 }],
+    checkedRound: RUN_REF,
+    generation: 3,
+    state: 'live',
+  };
+  const withCommand = (value: unknown): QueryJobSnapshot => ({
+    ...requestJob(), job: { ...requestJob().job, understanding: value as RequestUnderstandingCommandV1 | null },
+  });
+
+  it('decodes a Job without the understanding field as null (its historical value)', () => {
+    const encoded = encodeQueryJobSnapshot(requestJob());
+    const body = JSON.parse(encoded.json) as { job: Record<string, unknown> };
+    delete body.job['understanding'];
+    expect(decodeQueryJobSnapshot({ ...encoded, json: JSON.stringify(body) }))
+      .toEqual({ status: 'decoded', value: requestJob() });
+  });
+
+  it('maps the old shape once and a later encode writes only the new shape', () => {
+    const decoded = decodeQueryJobSnapshot(encodeQueryJobSnapshot(withCommand(OLD_COMMAND)));
+    expect(decoded).toEqual({ status: 'decoded', value: withCommand(COMMAND) });
+    if (decoded.status !== 'decoded') return;
+    const stored = JSON.parse(encodeQueryJobSnapshot(decoded.value).json) as { job: { understanding: unknown } };
+    expect(stored.job.understanding).toEqual(COMMAND);
+    expect(stored.job.understanding).not.toHaveProperty('pointers');
+    expect(stored.job.understanding).not.toHaveProperty('operationRef');
+  });
+
+  it.each([
+    ['an unknown key', { ...COMMAND, extra: true }],
+    ['an unknown state', { ...COMMAND, state: 'paused' }],
+    ['an operation that is not a CoreOperation ref', { ...COMMAND, operation: { ...OPERATION, aggregateType: 'Goal' } }],
+    ['a goal entry without its pointer revision', { ...COMMAND, goals: [{ goalRef: GOAL, pointer: POINTER }] }],
+  ] as [string, unknown][])('rejects a stored understanding command with %s', (_label, value) => {
+    const result = decodeQueryJobSnapshot(encodeQueryJobSnapshot(withCommand(value)));
+    expect(result.status).toBe('invalid');
+    if (result.status === 'invalid') expect(result.reason).toContain('understanding');
+  });
+});
+
+describe('the stored request manifest’s required fields', () => {
+  const MATERIAL = {
+    ref: root, revision: 1, runRef: RUN_REF, runRevision: 1, since: 'c0000000002', text: 'do the thing',
+    selectedIdea: null, relatedCards: [], command: null,
+  };
+  const BASE = {
+    requestRoot: root, round: MATERIAL, batch: [], preparationCursor: 'c0000000008',
+    effectiveGoalId: null, executionKind: 'semantic_query',
+  };
+  const FACTS = { ...BASE, briefRef: null, understandingGrants: [] };
+  const manifest = (request: unknown) => ({
+    contextAssembly: { callKind: 'secretary' }, goal: null, focusPlan: null, request,
+  });
+
+  it.each([
+    ['no briefRef', { ...BASE, understandingGrants: [] }],
+    ['no understandingGrants', { ...BASE, briefRef: null }],
+    ['a malformed briefRef', { ...FACTS, briefRef: { aggregateType: 'CoreOperation', projectId: P } }],
+    ['a non-GoalRef understanding grant', { ...FACTS, understandingGrants: [{ aggregateType: 'Goal', projectId: P }] }],
+  ])('refuses a stored manifest with %s', (_label, request) => {
+    expect(queryManifestProblem(manifest(request))).not.toBeNull();
   });
 });
 

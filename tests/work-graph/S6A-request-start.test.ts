@@ -140,7 +140,13 @@ describe.each(['memory', 'sqlite'] as const)('a request round started through th
       expect(await world.route({ commandId: 's6a-r13-route', round: request.round, to: b }))
         .toMatchObject({ status: 'routed' });
 
-      expect(await start(world, prepared, 's6a-r13-start')).toEqual(ABANDONED);
+      // A3: the abandon is the first begin commit; it must not require the handoff fence slot to be empty.
+      const abandon = commitBarrier.hold(byIdentityPrefix('r5b-query-execution:entering:'), 'the R-13 abandon commit');
+      const started = start(world, prepared, 's6a-r13-start');
+      const abandoned = await abandon.reached;
+      abandon.release();
+      expect(await started).toEqual(ABANDONED);
+      expect(abandoned.claims.some(claim => claim.claimKey.startsWith('secretary-handoff:'))).toBe(false);
 
       const after = await readQuery(world.ag2b, request.round);
       expect(after.job.job).toMatchObject({ status: 'pending', runRef: after.run.ref, intakeSession: null });

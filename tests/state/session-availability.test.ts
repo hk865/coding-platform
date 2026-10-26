@@ -63,7 +63,7 @@ const ARCHIVE_REQUEST: SessionArchiveRequestV1 = {
   schemaVersion: 1, requestId: 'a',
   requestedBy: { kind: 'human', id: 'operator-1' } as Extract<ActorRef, { kind: 'human' | 'system' }>,
   requestedAt: '2026-10-08T00:00:00.000Z', reason: 'the operator asked to archive this line',
-  mode: 'operator', tasks: [], wait: null, execution: { kind: 'none' }, executionPins: [],
+  mode: 'operator', condition: null, tasks: [], wait: null, execution: { kind: 'none' }, executionPins: [],
   confirmUnknownStopped: false, receipt: { identityKey: 's1-archive-step:k', fingerprint: 'f' },
 };
 

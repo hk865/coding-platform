@@ -19,6 +19,7 @@ import type {
   QueryRunSnapshot,
   QuerySubmissionBindingV1,
   RequestCommandReceiptV1,
+  RequestUnderstandingCommandV1,
 } from '../../src/contracts/query-job.js';
 import {
   absorbRound,
@@ -29,6 +30,7 @@ import {
   recordAbsorbedRounds,
   recordEntered,
   setIntake,
+  transitionUnderstandingCommand,
 } from '../../src/core/work-graph/state/request-rounds.js';
 import type { PendingQueryLifecycleRecords, QueryExecutionStep, QueryLifecycleRecords } from '../../src/core/work-graph/state/query-run-recovery.js';
 import { advanceQueryExecutionRecord } from '../../src/core/work-graph/state/query-run-recovery.js';
@@ -53,7 +55,8 @@ function requestRound(overrides: Partial<Parameters<typeof newRequestRound>[0]> 
   return newRequestRound({
     queryJobId: 'qj-root', runId: 'qr-root', scope: SCOPE, intent: INTENT, kind: 'request', requestRoot: null,
     requestGoalId: 'g1', assignedSession: SESSION_A, intakeSession: SESSION_A, selectedIdea: null,
-    relatedCardRefs: [CARD_REF], receipt: RECEIPT, submission: SUBMISSION, submittedAt: SUBMITTED_AT, ...overrides,
+    relatedCardRefs: [CARD_REF], receipt: RECEIPT, submission: SUBMISSION, submittedAt: SUBMITTED_AT,
+    understanding: null, ...overrides,
   });
 }
 
@@ -80,7 +83,7 @@ describe('newRequestRound', () => {
         requestRoot: JOB_REF, roundKind: 'request', requestGoalId: 'g1', assignedSession: SESSION_A,
         routing: null, relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
         goalAttribution: null, relatedCardRefs: [CARD_REF], enteredSession: null, intakeSession: SESSION_A,
-        receipt: RECEIPT,
+        receipt: RECEIPT, understanding: null,
       },
     } satisfies PendingQueryJobSnapshot);
     expect(records.run).toEqual({
@@ -90,6 +93,17 @@ describe('newRequestRound', () => {
     expect(records.job.ref).not.toBe(JOB_REF);
     expect(records.run.ref).not.toBe(RUN_REF);
     expect(records.run.run.queryJobRef).toEqual(records.job.ref);
+  });
+
+  it('writes the internal understanding command onto the Job and leaves new requests without one', () => {
+    const command: RequestUnderstandingCommandV1 = {
+      kind: 'request_understanding', commandId: 'op-1:understanding:3',
+      operation: { aggregateType: 'CoreOperation', projectId: 'p1', operationId: 'op-1' }, generation: 3,
+      requestRoot: JOB_REF, goals: [],
+      checkedRound: null, state: 'live',
+    };
+    expect(requestRound({ understanding: command }).job.job.understanding).toEqual(command);
+    expect(requestRound().job.job.understanding).toBeNull();
   });
 
   it('writes a follow-up on the given root, carrying the selected idea and no intake', () => {
@@ -128,6 +142,7 @@ describe('newRoutingRound', () => {
       routing: { from: null, to: SESSION_B, reason: 'assigned' },
       relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
       goalAttribution: null, relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+      understanding: null,
     });
     // A routing round never creates a QueryRun: the constructor returns one Job snapshot.
     expect(routing.job.runRef).toBeNull();
@@ -304,5 +319,62 @@ describe('recordEntered', () => {
     expect(recordEntered(entered, SESSION_A).revision).toBe(entered.revision);
     expect(() => recordEntered(entered, SESSION_B)).toThrow(/enteredSession/);
     expect(entered.job.enteredSession).toEqual(SESSION_A);
+  });
+});
+
+describe('transitionUnderstandingCommand', () => {
+  const OPERATION = { aggregateType: 'CoreOperation' as const, projectId: 'p1', operationId: 'op-1' };
+  const GOAL = { aggregateType: 'Goal' as const, projectId: 'p1', goalId: 'g1' };
+  const POINTER = { aggregateType: 'CurrentPointer' as const, projectId: 'p1', anchorKey: 'goal:g1' };
+  const COMMAND: RequestUnderstandingCommandV1 = {
+    kind: 'request_understanding', commandId: 'op-1:understanding:3', operation: OPERATION, generation: 3,
+    requestRoot: JOB_REF, goals: [{ goalRef: GOAL, pointer: POINTER, pointerRevision: 2 }],
+    checkedRound: null, state: 'live',
+  };
+  const commandJob = (state: RequestUnderstandingCommandV1['state'], commandId = COMMAND.commandId): QueryJobSnapshot =>
+    boundJob({ understanding: { ...COMMAND, commandId, state } });
+
+  it.each([
+    ['live', 'closed'],
+    ['live', 'consumed'],
+    ['closed', 'consumed'],
+  ] as [RequestUnderstandingCommandV1['state'], 'closed' | 'consumed'][])(
+    'moves %s -> %s, changing only state, updatedAt and revision',
+    (from, to) => {
+      const before = commandJob(from);
+      const after = transitionUnderstandingCommand(before, { commandId: COMMAND.commandId, to, occurredAt: AT });
+      expect(after.revision).toBe(before.revision + 1);
+      expect(after.job.understanding).toEqual({ ...COMMAND, state: to });
+      expect(after).toEqual({
+        ...before,
+        revision: before.revision + 1,
+        job: { ...before.job, understanding: { ...COMMAND, state: to }, updatedAt: AT },
+      });
+    },
+  );
+
+  it.each([
+    ['live', 'live'],
+    ['closed', 'closed'],
+    ['closed', 'live'],
+    ['consumed', 'consumed'],
+    ['consumed', 'closed'],
+    ['consumed', 'live'],
+  ] as [RequestUnderstandingCommandV1['state'], string][])('refuses the %s -> %s move', (from, to) => {
+    const before = commandJob(from);
+    expect(() => transitionUnderstandingCommand(before, {
+      commandId: COMMAND.commandId, to: to as 'closed' | 'consumed', occurredAt: AT,
+    })).toThrow(/transitionUnderstandingCommand/);
+    expect(before.job.understanding).toEqual({ ...COMMAND, state: from });
+  });
+
+  it('refuses a Job whose command is absent or has another commandId', () => {
+    const absent = boundJob({ understanding: null });
+    expect(() => transitionUnderstandingCommand(absent, { commandId: COMMAND.commandId, to: 'closed', occurredAt: AT }))
+      .toThrow(/transitionUnderstandingCommand/);
+    const other = commandJob('live', 'op-1:understanding:4');
+    expect(() => transitionUnderstandingCommand(other, { commandId: COMMAND.commandId, to: 'closed', occurredAt: AT }))
+      .toThrow(/transitionUnderstandingCommand/);
+    expect(other.job.understanding).toEqual({ ...COMMAND, commandId: 'op-1:understanding:4', state: 'live' });
   });
 });

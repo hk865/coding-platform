@@ -42,6 +42,7 @@ import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-sto
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
 import type { SecretaryProfileV1 } from '../model/request-contracts.js';
+import type { HandoffBriefPort } from '../model/session-handoff-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
@@ -244,6 +245,11 @@ export type QueryExecutionDependencies = {
    * claim keeps its old behaviour.
    */
   sessionFacts?: SessionFactsPort;
+  /**
+   * The entered-confirmation consumer. A non-null
+   * frozen briefRef without this port is unavailable, never "no brief".
+   */
+  brief?: HandoffBriefPort;
 };
 
 /**

@@ -15,6 +15,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -34,10 +35,13 @@ import { decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/reco
 import { mergeGuards } from '../persistence/record-guards.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
+import { currentUnderstandingOperations } from '../queries/query-execution.js';
 import {
   COMPLETE_READ_ATTEMPTS, compareCursors, compareRequestRounds, readRequestRounds,
 } from '../queries/request-rounds-read.js';
-import { plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
+import { operationRefKey, plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
+import { successorOperationsOf } from '../sessions/session-handoff-service.js';
+import { liveUnderstandingGrants } from '../state/request-rounds.js';
 import { readAnswers } from '../tasks/request-facts.js';
 import { readInitializationPointers } from '../tasks/initialization-pointers.js';
 import { listWorkspaceGoals, readWatermark } from './goal-conflicts.js';
@@ -285,6 +289,7 @@ async function readSecretaryFactsOnce(
         text: round.job.intent.question,
         selectedIdea,
         relatedCards,
+        command: round.job.understanding,
       },
     };
   };
@@ -297,6 +302,28 @@ async function readSecretaryFactsOnce(
     if (material.status !== 'ready') return material;
     batch.push(material.value);
   }
+
+  // Every distinct operation the frozen material carries, read and decoded
+  // once. A missing, failed or damaged record is unavailable, never an empty
+  // grant set; each record's revision is guarded by the same commit.
+  const materials: SecretaryRoundMaterialV1[] = [roundMaterial.value, ...batch];
+  const operationRead = await currentUnderstandingOperations(deps, materials, facts.owner);
+  if (operationRead.status !== 'ready') return operationRead;
+  const understandingGrants = [...liveUnderstandingGrants({ materials, requestRoot, operations: operationRead.operations })];
+
+  // The successor's brief: the newest hand-off naming this executing Session over every phase, a completed one
+  // included, until an entered round consumes it (SR5 item 6). It fills only `briefRef`; never a generation.
+  const successors = await successorOperationsOf(deps.records, projectId, workspaceId, executingSession);
+  if (successors.status !== 'ready') return successors;
+  const latest = successors.value.reduce<typeof successors.value[number] | null>((left, right) =>
+    left === null || right.revision > left.revision ? right : left, null);
+  const successor = latest?.record.action.kind === 'handoff'
+    && (latest.record.action.progress.brief?.consumedBy ?? null) === null ? latest : null;
+  const briefRef: OperationRef | null = successor?.record.ref ?? null;
+  const briefRevision: number | null = successor?.revision ?? null;
+  const briefGuards: RecordGuard[] = briefRef === null || briefRevision === null
+    ? [] : [{ refKey: operationRefKey(briefRef), expectedRevision: briefRevision }];
+
   const earlier: SecretaryHistoryEntryV1[] = [];
   for (const candidate of earlierRounds) {
     const material = materialOf(candidate.round);
@@ -445,6 +472,8 @@ async function readSecretaryFactsOnce(
     ...goalGuards,
     ...sessionGuards,
     ...cardGuards,
+    ...operationRead.guards,
+    ...briefGuards,
     { refKey: workspaceKey, expectedRevision: workspaceRecord.revision },
   ]);
   if (!merged.ok) return merged.rejection;
@@ -461,6 +490,8 @@ async function readSecretaryFactsOnce(
         round: roundMaterial.value,
         batch,
         earlier,
+        briefRef,
+        understandingGrants,
       },
       workspace,
       architecture,

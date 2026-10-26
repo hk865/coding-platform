@@ -34,36 +34,65 @@
  * spec states for each of the four picks.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { CommitCursor } from '../../src/contracts/command-event.js';
+import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
-import type { QueryJobRef } from '../../src/contracts/query-job.js';
+import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
+import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
+import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
+import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
+import { readSecretaryHandoffBasis } from '../../src/core/work-graph/tasks/secretary-handoff-basis.js';
 import { readQuery } from '../helpers/A2-restart-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { claimProfile, claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
-import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { byIdentityPrefix, commitBarrier, type CommitHold } from '../helpers/S6A-commit-barrier.js';
 import {
   ensureProjectPointers, openS6AHostWorld, queryStepCommitOn, usageOf, type S6AHostWorld,
 } from '../helpers/S6A-host-fixture.js';
 import { S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import { platformRecordSchemas } from '../state/invariants.js';
 
 // The frozen commit barrier the fixture's gates use (S6A-commit-barrier.ts: the test file owns its two mocks).
-vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
-  (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
-vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) =>
-  (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
+// The same pass-through also keeps each real backend, so the basis rows can call the real reader over the
+// platform's own store (A3/A4: the real factory, its result unchanged).
+const backendBox = vi.hoisted(() => ({ backends: [] as unknown[] }));
+
+vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) => {
+  const module = await (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal);
+  return { ...module, createInMemoryRecordBackend: (options: Parameters<typeof module.createInMemoryRecordBackend>[0]) => {
+    const backend = module.createInMemoryRecordBackend(options);
+    backendBox.backends.push(backend);
+    return backend;
+  } };
+});
+vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) => {
+  const module = await (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal);
+  return { ...module, createSqliteRecordBackend: (options: Parameters<typeof module.createSqliteRecordBackend>[0]) => {
+    const backend = module.createSqliteRecordBackend(options);
+    backendBox.backends.push(backend);
+    return backend;
+  } };
+});
 
 const BACKENDS = ['memory', 'sqlite'] as const;
 /** The window the row names: 0.8 × 625,000 = 500,000, so 500,000 is too long and 100,000 is not. */
 const WINDOW_TOKENS = 625_000;
 
 const worlds: S6AHostWorld[] = [];
+const basisTemp: string[] = [];
 
 afterEach(async () => {
   // A held commit keeps a tracked call open, so the barrier goes first.
   const left = commitBarrier.reset();
   const open = worlds.splice(0);
   await Promise.all(open.map(world => world.close()));
+  for (const dir of basisTemp.splice(0)) await rm(dir, { recursive: true, force: true });
   expect(left).toEqual([]);
 });
 
@@ -75,6 +104,79 @@ function remember(world: S6AHostWorld): S6AHostWorld {
 let commandSeq = 0;
 function nextId(prefix: string): string {
   return `s6a-r1b-${prefix}-${++commandSeq}`;
+}
+
+// ------------------------------------------------------------------------ //
+// The too-long basis on the platform's real store                           //
+// ------------------------------------------------------------------------ //
+
+/** The store surface the basis reader declares; a backend's real `records` is one. */
+type BasisStore = Pick<GoalRecordTransactionPort, 'readMany'> & RecordOrderedLookupPort;
+
+/** The real backend the current world built (A3/A4: captured, never replaced). */
+function latestBackend(): BasisStore {
+  const backend = backendBox.backends[backendBox.backends.length - 1] as
+    { records: BasisStore } | undefined;
+  if (backend === undefined) throw new Error('S6B2 basis: no record backend was captured');
+  return backend.records;
+}
+
+/** A real store with no commit at all: only then is the ordered read's watermark `null`. */
+async function openEmptyLedger(backend: 'memory' | 'sqlite'): Promise<{ records: BasisStore; close(): Promise<void> }> {
+  const schemas = platformRecordSchemas();
+  if (backend === 'memory') {
+    const built = createInMemoryRecordBackend({ schemas });
+    return { records: built.records as unknown as BasisStore, close: () => built.close() };
+  }
+  const dir = await mkdtemp(join(tmpdir(), 's6b2-basis-'));
+  basisTemp.push(dir);
+  const built = createSqliteRecordBackend({ path: join(dir, 'records.sqlite'), schemas });
+  return { records: built.records as unknown as BasisStore, close: () => built.close() };
+}
+
+async function basisOf(
+  records: Pick<RecordOrderedLookupPort, 'lookupOrdered'>, session: SessionRef,
+  contextWindowTokens = WINDOW_TOKENS,
+) {
+  const read = await readSecretaryHandoffBasis(records, S6A_SCOPE, session, contextWindowTokens);
+  if (read.status !== 'ready') throw new Error(`S6B2 basis: ${JSON.stringify(read)}`);
+  return read.value;
+}
+
+/** The last page's watermark the real read saw; `null` only for the empty ledger. */
+type WatermarkWatch = { read: CommitCursor | null | undefined };
+
+/**
+ * A3/A2 wrapper over the real ordered read: it records the real watermark, or at a named point answers a throw, a
+ * failed page or a page whose real first record is damaged. No value is built and no state changes.
+ */
+function wrappedBasis(
+  records: BasisStore, watch: WatermarkWatch, mode: 'real' | 'throw' | 'failed_page' | 'damaged' = 'real',
+): Pick<RecordOrderedLookupPort, 'lookupOrdered'> {
+  return {
+    async lookupOrdered(request) {
+      if (mode === 'throw') throw new Error('S6B2 basis: the ordered read threw');
+      if (mode === 'failed_page') {
+        return { status: 'rejected', code: 'unavailable', reason: 'S6B2 basis: the ordered page failed' };
+      }
+      const page = await records.lookupOrdered(request);
+      if (page.status !== 'ready') return page;
+      watch.read = page.value.readThrough;
+      if (mode === 'damaged' && page.value.records.length > 0) {
+        const [head, ...rest] = page.value.records;
+        return { status: 'ready', value: { ...page.value,
+          records: [{ ...head!, json: '{"not":"a QueryRun"' }, ...rest] } };
+      }
+      return page;
+    },
+  };
+}
+
+/** The run's execution state; a stored run without one is the row's own failure. */
+function executionStateOf(query: Awaited<ReturnType<typeof readQuery>>) {
+  const state = query.run.run.executionState;
+  if (state === undefined) throw new Error('S6B2 basis: the stored run has no execution state');
+  return state;
 }
 
 type QueuedSubmit = Extract<Awaited<ReturnType<S6AHostWorld['submit']>>, { status: 'queued' }>;
@@ -126,11 +228,15 @@ async function startStep(world: S6AHostWorld, session: S6ASession, prepared: Pre
   })).then(answer => answer.body, () => undefined);
 }
 
-/** One plain Query on the line whose one model call reports `inputTokens`. */
-async function runQueryWithUsage(world: S6AHostWorld, session: S6ASession, inputTokens: number): Promise<void> {
-  await world.scripted.script(session, [{ kind: 'text', text: `S6A usage ${inputTokens}`,
-    usage: usageOf(inputTokens) }]);
-  await world.finishQuery(await world.occupy(session));
+/** One plain Query on the line whose one model call reports `inputTokens` (`null` = it reports no usage). */
+async function runQueryWithUsage(
+  world: S6AHostWorld, session: S6ASession, inputTokens: number | null,
+): Promise<Awaited<ReturnType<S6AHostWorld['occupy']>>> {
+  await world.scripted.script(session, [{ kind: 'text', text: `S6A usage ${inputTokens ?? 'none'}`,
+    ...(inputTokens === null ? {} : { usage: usageOf(inputTokens) }) }]);
+  const refs = await world.occupy(session);
+  await world.finishQuery(refs);
+  return refs;
 }
 
 /** A semantic answer body: the v2 answer format's JSON, as the scripted model writes it. */
@@ -140,6 +246,15 @@ function answerBodyOf(body: string): string {
 
 /** The routing rounds of one request view (the view exposes the round's kind, not its reason). */
 const routingRounds = (view: RequestCoreViewV1) => view.rounds.filter(round => round.kind === 'routing');
+
+/**
+ * A secretary round that ends too long starts the automatic handoff (6B-2 L10, `book-6b.md` §3.2 item 1), whose
+ * first commit is its accept. A row that judges picks over a line that is still too long holds that accept for the
+ * whole row (the state between the round's end and the handoff) and lets it go at the row's end.
+ */
+function holdAutomaticHandoff(label: string): CommitHold {
+  return commitBarrier.hold(byIdentityPrefix('handoff.accept:'), `the automatic handoff accept of ${label}`);
+}
 
 /**
  * The bounded public wait for a request's one round to end with the answer its
@@ -161,6 +276,8 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
     // Both pointers present: a Secretary round is the ordinary one, whose answer this row
     // scripts, not the initial-planning branch.
     await ensureProjectPointers(world);
+    // C's too-long round starts the automatic handoff; its accept is held, so C keeps no successor in this row.
+    const handoffOfC = holdAutomaticHandoff('c');
     // C: 500,000 = too long for this window; it never becomes a candidate. Its measured
     // input comes from its own entered round (0.8 × 625,000 = 500,000 is the threshold).
     const c = await world.createSecretary('c', { at: '2026-10-23T09:30:00.000Z' });
@@ -272,6 +389,7 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
     expect(await world.scripted.requests(a)).toHaveLength(3);
     expect(await world.scripted.requests(b)).toHaveLength(2);
     expect(await world.scripted.requests(d)).toHaveLength(2);
+    handoffOfC.release();
   }, 120_000);
 
   it('reads a Run whose last model request reported no usage as its last known input', async () => {
@@ -280,6 +398,8 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
       extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 1 } }));
     await ensureProjectPointers(world);
     const p = await world.createSecretary('p');
+    // P's too-long round starts the automatic handoff; its accept is held, so P keeps no successor in this row.
+    const handoffOfP = holdAutomaticHandoff('p');
     // One Run, two model requests: the second-to-last reported 500,000, the last none. A
     // round whose reply calls a real tool asks the model again, so the Run has two requests.
     // Both replies are scripted before the submit; the Host's driver runs the round.
@@ -303,6 +423,7 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
       waitReason: 'secretary_open_cap', processing: true });
     expect(view.rounds).toHaveLength(1);
     expect(view.rounds[0]).toMatchObject({ kind: 'request', status: 'queued', assignedSession: null });
+    handoffOfP.release();
   }, 120_000);
 
   it('counts a measured input many runs old, after runs that report none', async () => {
@@ -311,6 +432,8 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
       extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 1 } }));
     await ensureProjectPointers(world);
     const q = await world.createSecretary('q');
+    // Q's too-long round starts the automatic handoff; its accept is held, so Q stays live and keeps no successor.
+    const handoffOfQ = holdAutomaticHandoff('q');
     await world.scripted.script(q, [{ kind: 'text', text: answerBodyOf('S6A old-usage answer'),
       usage: usageOf(500_000) }]);
     const round = await submitOrThrow(world, { goalId: S6A_GOAL_1.goalId, text: 'S6A old-usage round' });
@@ -328,7 +451,102 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
     expect(view).toMatchObject({ assignment: 'unassigned', owner: null, ownerState: 'waiting',
       waitReason: 'secretary_open_cap' });
     expect(view.rounds[0]).toMatchObject({ kind: 'request', status: 'queued', assignedSession: null });
+    handoffOfQ.release();
   }, 120_000);
+});
+
+describe.each(BACKENDS)('the too-long basis on the real store (%s)', backend => {
+  const openBasisWorld = async (label: string) => {
+    const world = remember(await openS6AHostWorld({ backend, secretaryBudget: { contextWindowTokens: WINDOW_TOKENS } }));
+    return { world, session: await world.createSecretary(label) };
+  };
+  const expectBasis = async (session: S6ASession, expected: {
+    tooLong: boolean; lastInputTokens: number | null; run: QueryRunRef | null; requestIndex: number | null;
+  }) => {
+    const watch: WatermarkWatch = { read: undefined };
+    const basis = await basisOf(wrappedBasis(latestBackend(), watch), session.ref);
+    expect(watch.read).not.toBeNull();
+    expect(basis).toEqual({ threshold: 500_000, ...expected, readThrough: watch.read });
+  };
+
+  it.each([
+    { usage: 500_000, tooLong: true },
+    { usage: 499_999, tooLong: false },
+  ])('reads a $usage input as tooLong=$tooLong and names its run, request and watermark', async ({ usage, tooLong }) => {
+    const { world, session } = await openBasisWorld(`basis-${usage}`);
+    const refs = await runQueryWithUsage(world, session, usage);
+    const query = await readQuery(world.ag2b, refs.queryJobRef);
+    expect(executionStateOf(query).requests.map(request => request.inputTokens)).toEqual([usage]);
+    await expectBasis(session, { tooLong, lastInputTokens: usage, run: query.run.ref, requestIndex: 0 });
+  });
+
+  it('reads a run whose only request reports no usage as null usage plus the real watermark', async () => {
+    const { world, session } = await openBasisWorld('basis-no-usage');
+    const refs = await runQueryWithUsage(world, session, null);
+    const query = await readQuery(world.ag2b, refs.queryJobRef);
+    expect(executionStateOf(query).requests.map(request => request.inputTokens)).toEqual([null]);
+    await expectBasis(session, { tooLong: false, lastInputTokens: null, run: null, requestIndex: null });
+  });
+
+  it('keeps the watermark of a non-empty ledger that holds no QueryRun for the Session', async () => {
+    const { session } = await openBasisWorld('basis-no-query');
+    // The Session exists and the ledger has its commits, but this line has run no Query.
+    await expectBasis(session, { tooLong: false, lastInputTokens: null, run: null, requestIndex: null });
+  });
+
+  it('returns a null watermark only for an empty ledger', async () => {
+    const store = await openEmptyLedger(backend);
+    try {
+      const basis = await basisOf(store.records, { projectId: S6A_SCOPE.projectId, sessionId: 's-no-ledger' });
+      expect(basis).toEqual({ tooLong: false, threshold: 500_000, lastInputTokens: null, run: null,
+        requestIndex: null, readThrough: null });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('reads the newest generation first and, inside it, the last request first', async () => {
+    const world = remember(await openS6AHostWorld({ backend, secretaryBudget: { contextWindowTokens: WINDOW_TOKENS },
+      extraHostOptions: { requestDriver: 'on' } }));
+    await ensureProjectPointers(world);
+    const session = await world.createSecretary('basis-order');
+    const older = await runQueryWithUsage(world, session, 300_000);
+    // A request round runs a model round per reply: 480,000 on the tool-calling request, 500,000 on the last one.
+    await world.scripted.script(session, [
+      { kind: 'calls', calls: [{ callId: 's6b2-basis-read', name: 'read', args: { path: 'src/module.ts' } }],
+        usage: usageOf(480_000) },
+      { kind: 'text', text: answerBodyOf('S6B2 basis second request'), usage: usageOf(500_000) },
+    ]);
+    const round = await submitOrThrow(world, { goalId: S6A_GOAL_1.goalId, text: 'S6B2 basis order round' });
+    expect(round).toMatchObject({ assignment: 'assigned', secretary: session.ref });
+    await waitRoundEnded(world, round.requestRoot, round.round, 'S6B2 basis second request');
+    const olderRead = await readQuery(world.ag2b, older.queryJobRef);
+    const newerRead = await readQuery(world.ag2b, round.round);
+    expect(executionStateOf(newerRead).requests.map(request => request.inputTokens)).toEqual([480_000, 500_000]);
+    expect(executionStateOf(newerRead).sessionGeneration)
+      .toBeGreaterThan(executionStateOf(olderRead).sessionGeneration);
+
+    const watch: WatermarkWatch = { read: undefined };
+    const basis = await basisOf(wrappedBasis(latestBackend(), watch), session.ref);
+    expect(watch.read).not.toBeNull();
+    // An oldest-first read would name 300,000; a first-request-first read would name 480,000.
+    expect(basis).toEqual({ tooLong: true, threshold: 500_000, lastInputTokens: 500_000,
+      run: newerRead.run.ref, requestIndex: 1, readThrough: watch.read });
+  });
+
+  it.each([
+    { mode: 'throw' as const, what: 'throws' },
+    { mode: 'failed_page' as const, what: 'answers a failed page' },
+    { mode: 'damaged' as const, what: 'returns an undecodable QueryRun' },
+  ])('rejects unavailable when the ordered read $what, never "not too long"', async ({ mode }) => {
+    const world = remember(await openS6AHostWorld({ backend, secretaryBudget: { contextWindowTokens: WINDOW_TOKENS } }));
+    const session = await world.createSecretary(`basis-${mode}`);
+    if (mode === 'damaged') await runQueryWithUsage(world, session, 100_000);
+    const watch: WatermarkWatch = { read: undefined };
+    const read = await readSecretaryHandoffBasis(wrappedBasis(latestBackend(), watch, mode), S6A_SCOPE,
+      session.ref, WINDOW_TOKENS);
+    expect(read).toMatchObject({ status: 'rejected', code: 'unavailable' });
+  });
 });
 
 describe('R-01b secretary selection after a restart (sqlite)', () => {

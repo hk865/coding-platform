@@ -18,6 +18,7 @@
  * the service's `forbidden`, not a second tool-level check.
  */
 import { messageOf } from '../../contracts/error-message.js';
+import type { NoteKind } from '../../contracts/note.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type {
   NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteWritePort, WriteNoteInput,
@@ -54,6 +55,10 @@ export type NoteToolsConfig = {
   check: Pick<NoteCheckPort, 'checkNotes'>;
   /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
   requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** The write kinds this caller admits, in the declaration's order. */
+  kinds: readonly NoteKind[];
+  /** Whether the caller admits the withdraw operation. */
+  withdraw: boolean;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
   texts?: Readonly<Record<string, ToolTextV1>>;
 };
@@ -147,50 +152,55 @@ const sectionsSchema = z.object({
   next: z.string().min(1), risks: z.string().min(1),
 }).strict();
 
-const writeSchema = z.object({
-  op: z.literal('write'),
-  kind: z.enum(['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'repair']),
-  topic: z.string().min(1),
-  conclusion: z.string().min(1),
-  anchor: draftAnchorSchema,
-  extraAnchors: z.array(draftAnchorSchema).max(4).optional(),
-  facts: z.array(z.record(z.string(), z.unknown())).optional(),
-  basisFiles: z.array(z.string().min(1)).optional(),
-  replaces: z.array(z.string().min(1)).optional(),
-  contradicts: z.array(z.string().min(1)).optional(),
-  coexistWith: z.array(z.string().min(1)).optional(),
-  structural: z.boolean().optional(),
-  body: z.string().optional(),
-  sections: sectionsSchema.optional(),
-  expectedPointerRevision: z.number().int().min(0).nullable().optional(),
-}).strict();
-
-const reviewSchema = z.object({
-  op: z.literal('review'),
-  noteId: z.string().min(1),
-  expectedVersion: z.number().int().min(1),
-  verdict: z.enum(['review', 'accept', 'reject']),
-  resolution: z.enum(['supersede', 'coexist']).optional(),
-  reason: z.string().min(1).nullable().optional(),
-  expectedPointerRevision: z.number().int().min(0).nullable().optional(),
-}).strict();
-
-const withdrawSchema = z.object({
-  op: z.literal('withdraw'),
-  noteId: z.string().min(1),
-  expectedVersion: z.number().int().min(1),
-  reason: z.string().min(1).nullable().optional(),
-}).strict();
-
-const recordNoteSchema: z.ZodType = z.discriminatedUnion('op', [writeSchema, reviewSchema, withdrawSchema]);
-
-type WriteArgs = z.infer<typeof writeSchema>;
-type ReviewArgs = z.infer<typeof reviewSchema>;
-type WithdrawArgs = z.infer<typeof withdrawSchema>;
-
 export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
   const description = (config.texts?.['record_note']
     ?? PLATFORM_TOOL_TEXTS['record_note']!).description;
+  if (config.kinds.length === 0) {
+    // An empty declaration would register a tool that can only be refused;
+    // fail at construction instead of hiding that misconfiguration.
+    throw new Error('the note tool requires at least one admitted write kind');
+  }
+  // The declaration follows the caller's admission: the write kind enum holds
+  // exactly the admitted kinds. The withdraw operation exists only when
+  // admitted. The review operation belongs to the full Work declaration, which
+  // alone admits `repair`; a Query must not be shown it.
+  const writeSchema = z.object({
+    op: z.literal('write'),
+    kind: z.enum(config.kinds),
+    topic: z.string().min(1),
+    conclusion: z.string().min(1),
+    anchor: draftAnchorSchema,
+    extraAnchors: z.array(draftAnchorSchema).max(4).optional(),
+    facts: z.array(z.record(z.string(), z.unknown())).optional(),
+    basisFiles: z.array(z.string().min(1)).optional(),
+    replaces: z.array(z.string().min(1)).optional(),
+    contradicts: z.array(z.string().min(1)).optional(),
+    coexistWith: z.array(z.string().min(1)).optional(),
+    structural: z.boolean().optional(),
+    body: z.string().optional(),
+    sections: sectionsSchema.optional(),
+    expectedPointerRevision: z.number().int().min(0).nullable().optional(),
+  }).strict();
+  const reviewSchema = z.object({
+    op: z.literal('review'),
+    noteId: z.string().min(1),
+    expectedVersion: z.number().int().min(1),
+    verdict: z.enum(['review', 'accept', 'reject']),
+    resolution: z.enum(['supersede', 'coexist']).optional(),
+    reason: z.string().min(1).nullable().optional(),
+    expectedPointerRevision: z.number().int().min(0).nullable().optional(),
+  }).strict();
+  const withdrawSchema = z.object({
+    op: z.literal('withdraw'),
+    noteId: z.string().min(1),
+    expectedVersion: z.number().int().min(1),
+    reason: z.string().min(1).nullable().optional(),
+  }).strict();
+  const optionSchemas: [typeof writeSchema, ...(typeof writeSchema | typeof reviewSchema | typeof withdrawSchema)[]] =
+    [writeSchema];
+  if (config.kinds.includes('repair')) optionSchemas.push(reviewSchema);
+  if (config.withdraw) optionSchemas.push(withdrawSchema);
+  const recordNoteSchema = z.discriminatedUnion('op', optionSchemas);
   // Freeze the trusted scope/identity before returning the factory.
   const fixedProjectId = config.context.projectId;
   const fixedWorkspaceId = config.context.workspaceId;
@@ -236,14 +246,14 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     return success(callId, { write: result, check });
   }
 
-  async function execute(call: Readonly<ToolCall>, signal: AbortSignal, schema: z.ZodType): Promise<ToolResult> {
+  async function execute(call: Readonly<ToolCall>, signal: AbortSignal): Promise<ToolResult> {
     const callId = call.callId;
     if (typeof callId !== 'string' || callId.length === 0) {
       return failure('', 'invalid_arguments', 'the Kernel tool call has no callId');
     }
-    const parsed = schema.safeParse(call.arguments);
+    const parsed = recordNoteSchema.safeParse(call.arguments);
     if (!parsed.success) return failure(callId, 'invalid_arguments', 'the tool arguments do not match the strict schema');
-    let accepted: unknown;
+    let accepted: z.infer<typeof recordNoteSchema>;
     try {
       accepted = structuredClone(parsed.data);
     } catch {
@@ -252,7 +262,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     // RW-15: the strict schema cannot refine a discriminated union per `kind`,
     // so the one schema-expressible per-kind mismatch is answered here, before
     // the write owner is reached, as a correctable `{ write, check }` result.
-    const args = accepted as WriteArgs | ReviewArgs | WithdrawArgs;
+    const args = accepted;
     if (args.op === 'write') {
       if (args.kind !== 'understanding' && args.sections !== undefined) {
         return rejectedWrite(callId, 'only an understanding note carries sections');
@@ -307,7 +317,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
       summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
       handler: {
         async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
-          return execute(call, options.signal, recordNoteSchema);
+          return execute(call, options.signal);
         },
       },
     };

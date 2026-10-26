@@ -197,6 +197,19 @@ export interface GoalRecordTransactionPort {
   ): Promise<StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>>;
 }
 
+/**
+ * The receipt committed under one identity and the fingerprint it was committed
+ * with; `not_found` when none. Read only: a replay by identity needs the
+ * original fingerprint, never the current input's. This is a member of the
+ * store object beside `records`, not part of the record transaction port.
+ */
+export interface RecordCommitIdentityPort {
+  readCommitByIdentity(identityKey: string): Promise<StoreResult<{
+    receipt: Extract<StoreCommitReceipt, { status: "committed" }>;
+    fingerprint: string;
+  }>>;
+}
+
 // --------------------------------------------------------------------------
 // Persisted idempotency encoding (compatible with the reference database)
 // --------------------------------------------------------------------------

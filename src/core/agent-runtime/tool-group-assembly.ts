@@ -8,6 +8,8 @@
  * the assembly code below is shared.
  */
 import { messageOf } from '../../contracts/error-message.js';
+import type { NoteKind } from '../../contracts/note.js';
+import { NOTE_GENERAL_KINDS } from '../../contracts/note.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -33,6 +35,7 @@ import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/com
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { NoteMemoryReadPort } from '../work-graph/model/note-contracts.js';
+import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type {
   ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
@@ -295,6 +298,8 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       notes: noteDeps.write,
       check: noteDeps.check,
       requestIdForCall: input.requestIdForCall,
+      kinds: WORK_NOTE_KINDS,
+      withdraw: true,
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
@@ -478,12 +483,23 @@ export function kernelEnabledToolNames(input: {
 }
 
 /**
+ * The Work declaration shows every write kind, so a Work Run keeps the review
+ * and repair operations; only a Query's declaration is narrowed.
+ */
+const WORK_NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
+
+/**
  * Every fact the final tool list needs, all of them facts the
  * preparation and the start already hold. The list is computed once at
  * preparation and compared exactly at start, never sorted.
  */
 export type FinalToolListInputV1 = {
   callKind: 'work' | 'query';
+  /**
+   * What a Query round may write in this round. The Work branch never reads
+   * it; a Query selects a note tool only when the value is `secretary`.
+   */
+  noteAdmission: QueryNoteAdmissionV1;
   /** `manifest.permissions.tools`, already intersected with Host/Role/Query ceilings. */
   selected: readonly string[];
   readOnly: boolean;
@@ -518,10 +534,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   }
   const wanted = new Set(input.selected);
   const owners = input.owners;
-  // A Query builds ONLY its graph group and the read-only command (ruling 16
-  // and the Query execution's own factory set). Every other coordination
-  // family a Query's projected permissions may name is neither built nor a
-  // rejection: it is outside this call kind's final list.
+  // Query builds graph/read-only tools and secretary-admitted note tools.
+  // Every other coordination family a Query's projected permissions may name
+  // is neither built nor a rejection: it is outside this call kind's final list.
   const query = input.callKind === 'query';
   // Review and proposal tools follow the Run, not `selected`. A review-purpose
   // Work Run without its owner fails closed before any tool is added.
@@ -536,7 +551,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
-  const noteNames = query ? [] : NOTE_TOOL_NAMES.filter(name => wanted.has(name));
+  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class === 'secretary'));
   if ((mailboxNames.length > 0 || decisionNames.length > 0) && !owners.mailbox) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
   }

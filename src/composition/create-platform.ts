@@ -130,8 +130,27 @@ import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
 import { createSessionHandoffService, type SessionHandoffPort } from '../core/work-graph/sessions/session-handoff-service.js';
+// The secretary lifecycle: the advance and manual-archive owners, the brief consumer, the one fence read and the
+// handoff facts view.
+import {
+  createSecretaryArchiveService, createSessionHandoffAdvanceService, type SessionSecretaryArchivePort,
+} from '../core/work-graph/sessions/session-handoff-service.js';
+import { createHandoffBriefPort } from '../core/work-graph/sessions/session-handoff-brief.js';
+import {
+  readHandoffFence as readHandoffFenceOf, type HandoffFencePort,
+} from '../core/work-graph/sessions/session-handoff-fence.js';
+import { createSecretaryHandoffFacts } from '../core/work-graph/views/secretary-handoff-facts.js';
+import { createHandoffNoticeSource } from '../core/work-graph/views/handoff-notices.js';
+import type {
+  SecretaryArchiveConditionPort, SecretaryHandoffBasisV1,
+} from '../core/work-graph/model/secretary-lifecycle-contracts.js';
+import { readSecretaryHandoffBasis } from '../core/work-graph/tasks/secretary-handoff-basis.js';
+// The two secretary lifecycle commands' Workflow dependency bag: the composite stays the Workflow's, this root only
+// fills what it injects.
+import type { HandoffWorkflowDependencies } from '../business/workflow/contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
-import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
+  sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -165,6 +184,13 @@ import type { CommitCursor } from '../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
+import type { OperationRef } from '../contracts/core/operations.js';
+import type { SessionOperationRecord } from '../core/work-graph/model/session-contracts.js';
+import { lookupAll } from '../core/work-graph/persistence/lookup-all.js';
+// The one unfinished-operation index the lifecycle queue and the handoff's automatic entry both read.
+import {
+  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord,
+} from '../core/work-graph/sessions/session-record-codecs.js';
 import type { VersionPin } from '../contracts/core/identity.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
@@ -183,7 +209,7 @@ import { ROLE_RECORD_SCHEMAS } from '../core/work-graph/configuration/role-recor
 import { createProjectBootstrapServices } from '../core/work-graph/configuration/project-bootstrap-service.js';
 import { createQueryExecution } from '../core/work-graph/queries/query-execution.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../core/work-graph/tasks/session-anomaly-codecs.js';
-import { projectQueryConfiguration } from '../core/agent-runtime/query-preparation.js';
+import { projectQueryConfiguration, type QueryPreparationDependencies } from '../core/agent-runtime/query-preparation.js';
 import { createTaskContextInputService } from '../core/work-graph/tasks/context-input-service.js';
 import { createGraphContextReader } from '../core/work-graph/views/graph-context-reader.js';
 import { createContextExtensionsReader } from '../core/work-graph/views/context-extensions.js';
@@ -654,7 +680,12 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
  * `secretary` — at admission time and refuses a fresh line at the cap. A replay
  * never reaches this port (`createLineCreation` looks the operation up first);
  * in-flight creations are not counted, because the directory cannot enumerate
- * creation operations. Any read failure is `unavailable`, never an admitted line.
+ * creation operations. A line this admission replaces (`input.replaces`) and a
+ * line an active handoff successor names in its provenance are not counted: the
+ * pair is one line until the source is archived, so a saturated cap still
+ * admits exactly one successor. The successor's own card carries that
+ * provenance, so no extra read is made; the keys are collected across pages.
+ * Any read failure is `unavailable`, never an admitted line.
  */
 export function createSecretaryOpenCapCapacity(deps: {
   limit: number;
@@ -669,7 +700,8 @@ export function createSecretaryOpenCapCapacity(deps: {
         return { status: 'unavailable', reason: 'the secretary open cap is not a positive integer' };
       }
       const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
-      let used = 0;
+      const open = new Set<string>();
+      const replaced = new Set<string>();
       let cursor: string | null = null;
       do {
         const page = await deps.sessions.findSessions(ctx, {
@@ -682,11 +714,15 @@ export function createSecretaryOpenCapCapacity(deps: {
         }
         for (const card of page.value.items) {
           if (card.record.lifecycle !== 'active') continue;
+          // A live handoff successor names the line it replaced: that source counts as this one successor.
+          if (card.record.provenance.kind === 'handoff') replaced.add(plainSessionRefKey(card.record.provenance.from));
           const duty = await deps.duty(card.record.role, ctx);
-          if (duty.status === 'ready' && duty.value === 'secretary') used += 1;
+          if (duty.status === 'ready' && duty.value === 'secretary') open.add(plainSessionRefKey(card.record.ref));
         }
         cursor = page.value.nextCursor;
       } while (cursor !== null);
+      if (input.replaces !== null) replaced.add(plainSessionRefKey(input.replaces));
+      const used = [...open].filter(key => !replaced.has(key)).length;
       return used >= deps.limit ? { status: 'full', limit: deps.limit, used } : { status: 'admitted' };
     },
   };
@@ -928,6 +964,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, roles: roleService, bodies,
       authorizeConfiguration: createAuthorizeQueryConfiguration(options.runtime),
       now, eventId: randomUUID, sessionFacts,
+      // The entered confirmation consumes a frozen handoff brief through the one owner read; without this port a
+      // non-null briefRef would be `unavailable`, never "no brief".
+      brief: createHandoffBriefPort({ operations: sessionDirectory }),
       ...(hostInstance === undefined ? {} : { hostInstance }),
     });
     const queryJobs = createQueryJobService({
@@ -1074,11 +1113,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       executions: executionReader,
       readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input) });
     const noteReviewNotices = createNoteReviewNoticeSource({ records: backend.records });
+    // The handoff notices are a read projection of the handoff operations' own saved writes: one item per operation,
+    // no stored notice and no new writer.
+    const handoffNotices = createHandoffNoticeSource({ records: backend.records });
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
         commandRerunRequestCards],
-      noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices],
+      noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
@@ -1110,8 +1152,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }),
       automationPolicy: currentAutomationPolicy,
       now, eventId: randomUUID });
+    // The handoff facts' condition check enters through this holder because the facts are built after the owners
+    // they share; a conditioned archive that runs before the wiring is complete is an explicit `unavailable`, never
+    // a commit without its condition.
+    let archiveCondition: SecretaryArchiveConditionPort | null = null;
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
-      sessionFacts });
+      sessionFacts, archiveCondition: { check: async (ctx, input) => archiveCondition === null
+        ? { status: 'rejected', code: 'unavailable', reason: 'the archive condition is not wired' }
+        : archiveCondition.check(ctx, input) } });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
@@ -1291,7 +1339,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const entry = createExecutionEntryService(entryDependencies);
       resultWriter = entry;
       const modelRequests = createModelCallService(entryDependencies);
-      const dependencies: RuntimeExecutionDependencies & {
+      const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff'> & {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
       } = {
         claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
@@ -1318,6 +1366,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
         ...(queryExecution === undefined ? {} : { queryExecution }),
         ...(secretaryFacts === undefined ? {} : { secretaryFacts }),
+        // SR3 item 6/§8.3: the SAME hand-off facts owner the lifecycle publishes, read once per successor round.
+        handoff: { readBriefState: (ctx, input) => handoffFacts.readBriefState(ctx, input) },
         memoryMaterial,
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: continuationWorkspaceSource,
@@ -1635,6 +1685,104 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readRoleSpec: roleService.readRoleSpec.bind(roleService),
       configuration: workflowConfiguration,
     });
+    // The request command owners and the secretary lifecycle share ONE request facts reader, ONE profile port, ONE
+    // capacity adapter and ONE line-creation entry: a handoff's successor line is admitted through the same cap and
+    // the same admission a request command's secretary is.
+    const defaultSecretaryProfiles: SecretaryProfilePort = {
+      forSession: () => null,
+      forNewLine: async () => ({ status: 'ready', value: null }),
+    };
+    const rawSecretaryProfiles: SecretaryProfilePort = options.secretaryProfiles ?? defaultSecretaryProfiles;
+    const rawRequestFacts = createRequestFacts({ records: backend.records });
+    const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
+      ? createAlwaysAdmitCapacity()
+      : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
+    const requestLineCreation = createLineCreation({
+      sessions: sessionOperations, operations: sessionDirectory, capacity: requestCapacity,
+    });
+    const rawRequestRounds = createRequestRoundService({
+      records: backend.records, facts: rawRequestFacts, sessionFacts, duty: sessionDutyResolver,
+      profiles: rawSecretaryProfiles, now, operationId: randomUUID,
+    });
+    // The handoff facts: coverage, the routing set, the brief state and the handoff condition.
+    const handoffFacts = createSecretaryHandoffFacts({ records: backend.records, requests: rawRequestFacts,
+      sessions: sessionDirectory, duty: sessionDutyResolver });
+    archiveCondition = { check: handoffFacts.checkArchiveCondition };
+    /**
+     * The trusted read context of a lifecycle owner's own read: the bound workspace and the composition's service
+     * actor. It grants nothing by itself; the owner reads only facts of that workspace.
+     */
+    const lifecycleReadContext = (scope: WorkspaceScope): CoreCallContext => ({
+      projectId: scope.projectId, workspaceId: scope.workspaceId,
+      principal: { kind: 'host', actor: SYSTEM_ACTOR },
+      materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: SYSTEM_ACTOR },
+      signal: new AbortController().signal,
+    });
+    /** D's one threshold reader over the source Session's own secretary profile window (never a fixed number). */
+    async function readHandoffBasis(ctx: CoreCallContext, session: SessionRef):
+      Promise<ReadResult<SecretaryHandoffBasisV1>> {
+      const card = await sessionDirectory.readSession(ctx, session);
+      if (card.status !== 'ready') {
+        return card.status === 'rejected' ? card
+          : { status: 'rejected', code: 'unavailable', reason: 'the handoff source Session read is not ready' };
+      }
+      const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+      const profile = rawSecretaryProfiles.forSession({ workspace, sessionRole: card.value.record.role });
+      if (profile === null) {
+        return { status: 'rejected', code: 'unavailable',
+          reason: 'the handoff source has no secretary profile window' };
+      }
+      return readSecretaryHandoffBasis(backend.records, workspace, session,
+        profile.runtimeBudget.contextWindowTokens);
+    }
+    /** The workspace's unfinished operations through the one phase index; a damaged record is `unavailable`. */
+    async function readUnfinishedOperations(ctx: CoreCallContext):
+      Promise<ReadResult<readonly SessionOperationRecord[]>> {
+      const items: SessionOperationRecord[] = [];
+      try {
+        for (const phase of ['accepted', 'running'] as const) {
+          const page = await lookupAll(backend.records, CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP,
+            [ctx.projectId, ctx.workspaceId ?? '', phase]);
+          for (const encoded of page.items) {
+            const decoded = decodeSessionOperationRecord(encoded);
+            if (decoded.status !== 'decoded') {
+              return { status: 'rejected', code: 'unavailable', reason: 'an unfinished operation is damaged' };
+            }
+            items.push(decoded.value);
+          }
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'the unfinished operation read failed';
+        return { status: 'rejected', code: 'unavailable', reason: `the unfinished operations could not be read: ${reason}` };
+      }
+      return { status: 'ready', value: items };
+    }
+    // The two lifecycle operation owners: the handoff (accept + advance) and the manual archive (accept + advance).
+    // Played as one member each; the Workflow's composite drives them and the routes only accept.
+    const handoffAccept = createSessionHandoffService({ records: backend.records, sessions: sessionDirectory,
+      duty: sessionDutyResolver, now });
+    const handoffAdvance = createSessionHandoffAdvanceService({
+      records: backend.records, commitIdentities: rawBackend.commitIdentities, operations: sessionDirectory,
+      coverage: handoffFacts, basis: (session, scope) => readHandoffBasis(lifecycleReadContext(scope), session),
+      requests: rawRequestRounds, transfers: sessionResponsibility, archive: sessionLifecycle,
+      duty: sessionDutyResolver, now,
+    });
+    /** The one handoff owner the routes accept through and the Workflow advances: the same instance, never a second. */
+    const handoff: SessionHandoffPort = {
+      acceptHandoff: (ctx, input) => trackedCall(() => handoffAccept.acceptHandoff(ctx, input), unavailable),
+      advanceHandoff: (ctx, input) => trackedCall(() => handoffAdvance.advanceHandoff(ctx, input), unavailable),
+    };
+    const archive = createSecretaryArchiveService({ records: backend.records,
+      commitIdentities: rawBackend.commitIdentities, operations: sessionDirectory,
+      requests: { readRequestCommandReceipt: (...args) => rawRequestRounds.readRequestCommandReceipt(...args),
+        readRequest: (...args) => rawRequestFacts.readRequest(...args) },
+      archive: sessionLifecycle, checkArchiveCondition: handoffFacts.checkArchiveCondition, duty: sessionDutyResolver, now,
+    });
+    /** The published archive owner: both methods drained through the one trackedCall path; the raw owner stays internal. */
+    const publishedArchive: SessionSecretaryArchivePort = {
+      acceptArchive: (ctx, input) => trackedCall(() => archive.acceptArchive(ctx, input), unavailable),
+      advanceArchive: (ctx, input) => trackedCall(() => archive.advanceArchive(ctx, input), unavailable),
+    };
     // Slice 4A P2: the ONE note writer and the minimal read model, over the same
     // records/plan/workspace/execution ports the rest of WorkGraph uses.
     // Slice 4A: a work_run caller's Run→Session facts. `notes` may not import
@@ -1879,8 +2027,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       transferSessionResponsibility: sessionResponsibility.transferSessionResponsibility.bind(sessionResponsibility),
       disposeArchiveResponsibility: sessionResponsibility.disposeArchiveResponsibility.bind(sessionResponsibility),
       closeTerminalResponsibility,
+      readTransferReceipt: sessionResponsibility.readTransferReceipt.bind(sessionResponsibility),
     };
-    const workflowDependencies: WorkflowDependencies = {
+    const workflowDependencies: WorkflowDependencies & {
+      sessionHandoff?: HandoffWorkflowDependencies;
+    } = {
       tasks: rawGoals, plans: planService, sessions: sessionDirectory,
       claims: { ...claimService, requeueTask: requeueService.requeueTask,
         readTaskRequeue: requeueService.readTaskRequeue,
@@ -1976,6 +2127,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Runtime publish; the Workflow reads the selected Run's record and
       // performs `settle_review` through it.
       unknownCallReviews,
+      // The secretary lifecycle composite's injected owners. `createWorkflow` assembles the composite itself from
+      // this bag (one child call between two advances); this root supplies only the owners, never a second composite.
+      sessionHandoff: {
+        handoff, archive: publishedArchive, facts: handoffFacts, lines: requestLineCreation,
+        responsibilities: sessionResponsibility, requests: rawRequestRounds,
+        unfinishedOperations: (ctx) => readUnfinishedOperations(ctx),
+      } satisfies HandoffWorkflowDependencies,
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
     /**
@@ -1994,7 +2152,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The public advancement port drains the complete call before any owned
     // store closes; the in-flight raw workflow keeps the raw owner instances.
     const workflow: WorkflowPort & Required<Pick<WorkflowPort,
-      'consumeConsultation' | 'archiveLine' | 'continueArchiveLine' | 'maintainSessions'>> = {
+      'consumeConsultation' | 'archiveLine' | 'continueArchiveLine' | 'maintainSessions' | 'sessionHandoff'>> = {
       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
@@ -2016,6 +2174,20 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // installs `runActivity`), so the non-null assertion is sound here.
       backfillRecentActivity: (...args) => trackedCall(() => rawWorkflow.backfillRecentActivity!(...args), unavailable),
       backfillActivityRange: (...args) => trackedCall(() => rawWorkflow.backfillActivityRange!(...args), unavailable),
+      // The secretary lifecycle composite `createWorkflow` assembles from the bag this root injects. Every entry is
+      // drained like the rest and admitted by the Host instance lease before any composition runs: the two routes
+      // drive `advance`/`manualArchive` and the Host's lifecycle queue drives `startHandoff`/`continueHandoff`, all
+      // over the same owners, and only the leased Host archives or maintains Sessions (L-1).
+      sessionHandoff: {
+        startHandoff: (...args) => trackedCall(async () => archiveLeaseAdmission()
+          ?? await rawWorkflow.sessionHandoff!.startHandoff(...args), unavailable),
+        continueHandoff: (...args) => trackedCall(async () => archiveLeaseAdmission()
+          ?? await rawWorkflow.sessionHandoff!.continueHandoff(...args), unavailable),
+        advance: (...args) => trackedCall(async () => archiveLeaseAdmission()
+          ?? await rawWorkflow.sessionHandoff!.advance(...args), unavailable),
+        manualArchive: (...args) => trackedCall(async () => archiveLeaseAdmission()
+          ?? await rawWorkflow.sessionHandoff!.manualArchive(...args), unavailable),
+      },
     };
     // A.2 step 5.6 (§12.1): the start-up reconcile's internal seam. Only the Host
     // that holds the instance lease calls it, before any execution driver starts;
@@ -2306,31 +2478,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readSessionHistory: (...args) => runtimePort.readSessionHistory(...args),
     });
     // The request commands and the drain over the SAME records, Session owners
-    // and trusted duty resolver the platform already publishes. A direct
-    // platform that supplies no profile port gets the explicit null answer, never
-    // an invented profile.
-    const defaultSecretaryProfiles: SecretaryProfilePort = {
-      forSession: () => null,
-      forNewLine: async () => ({ status: 'ready', value: null }),
-    };
-    const rawSecretaryProfiles: SecretaryProfilePort = options.secretaryProfiles ?? defaultSecretaryProfiles;
-    const rawRequestFacts = createRequestFacts({ records: backend.records });
+    // and trusted duty resolver the platform already publishes. The profile port,
+    // the request facts reader, the capacity adapter, the line-creation entry and
+    // the round owner are the ones the secretary lifecycle shares (above), never a
+    // second copy: a handoff's successor is a real admitted line.
     const requestSelection = createSecretarySelection({
       records: backend.records,
       sessionFacts,
       profiles: rawSecretaryProfiles,
       scope: createProjectSecretaryScope(),
       duty: sessionDutyResolver,
-    });
-    const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
-      ? createAlwaysAdmitCapacity()
-      : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
-    const requestLineCreation = createLineCreation({
-      sessions: sessionOperations, operations: sessionDirectory, capacity: requestCapacity,
-    });
-    const rawRequestRounds = createRequestRoundService({
-      records: backend.records, facts: rawRequestFacts, sessionFacts, duty: sessionDutyResolver,
-      profiles: rawSecretaryProfiles, now, operationId: randomUUID,
     });
     const rawRequestIntake = createRequestIntake({
       rounds: rawRequestRounds, facts: rawRequestFacts, selection: requestSelection,
@@ -2371,6 +2528,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The open-rounds read the Host's request queue traverses; it reads one
       // partition page per call and writes nothing.
       open: (ctx, scope, input) => trackedCall(() => rawRequestRounds.open(ctx, scope, input), requestClosed),
+      // The understanding command's close and its receipt read (D); the hand-off owner calls them.
+      closeUnderstanding: (ctx, input) =>
+        trackedCall(() => rawRequestRounds.closeUnderstanding(ctx, input), requestClosed),
+      readRequestCommandReceipt: (ctx, command) =>
+        trackedCall(() => rawRequestRounds.readRequestCommandReceipt(ctx, command), requestClosed),
     };
     const requestIntake: RequestIntakePort = {
       submitRequest: (ctx, input) => trackedCall(() => rawRequestIntake.submitRequest(ctx, input), requestClosed),
@@ -2380,11 +2542,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       drainUnassigned: (ctx, scope, input) =>
         trackedCall(() => rawRequestIntake.drainUnassigned(ctx, scope, input), requestClosed),
     };
-    // The handoff owner: `handoff.accept` through the shared write executor; internal like the request owners.
-    const rawSessionHandoff = createSessionHandoffService({ records: backend.records, sessions: sessionDirectory,
-      duty: sessionDutyResolver, now });
-    const sessionHandoff: SessionHandoffPort = {
-      acceptHandoff: (ctx, input) => trackedCall(() => rawSessionHandoff.acceptHandoff(ctx, input), unavailable),
+    // The handoff and manual-archive owners are the ones the Workflow's composite and the two routes share; internal
+    // like the request owners. The three reads the Host's lifecycle queue and its automatic entry ask are published
+    // beside them: the fence read, the unfinished-operation index read and D's threshold basis.
+    const handoffFence: HandoffFencePort = {
+      read: (ctx, session) => trackedCall(() => readHandoffFenceOf(backend.records, ctx, session), unavailable),
     };
     let closing: Promise<void> | undefined;
     const platform = {
@@ -2414,7 +2576,27 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       requestIntake, requestRounds, requestFacts, secretaryProfiles,
       // The main read and `requests/read` owner; internal like the request owners.
       mainSurface,
-      sessionHandoff,
+      // The secretary lifecycle owners and the two reads the Host's lifecycle queue asks; internal like the
+      // request owners (never public keys), read by property from the route table and the Host. The queue's read
+      // answers `{operation, revision}` pairs (both arms of an unfinished operation), never a full record.
+      sessionHandoff: handoff,
+      sessionArchive: publishedArchive,
+      readHandoffFence: handoffFence.read,
+      listUnfinishedOperations: (ctx: CoreCallContext) => trackedCall(async () => {
+        const read = await readUnfinishedOperations(ctx);
+        if (read.status !== 'ready') return read;
+        const arms: { operation: OperationRef; revision: number; kind: 'handoff' | 'secretary_archive' }[] = [];
+        for (const record of read.value) {
+          const kind = record.action.kind;
+          // Only the two lifecycle arms are answered, each with its kind: another unfinished operation is not a
+          // handoff to continue, and a manual archive resumes through its own entry.
+          if (kind !== 'handoff' && kind !== 'secretary_archive') continue;
+          arms.push({ operation: record.ref as OperationRef, revision: record.revision, kind });
+        }
+        return { status: 'ready' as const, value: arms };
+      }, unavailable),
+      readSecretaryHandoffBasis: (ctx: CoreCallContext, session: SessionRef) =>
+        trackedCall(() => readHandoffBasis(ctx, session), unavailable),
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -2492,7 +2674,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
-      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff'] as const) {
+      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
+      'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

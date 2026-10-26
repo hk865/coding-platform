@@ -52,6 +52,14 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         task_earlier: { required: false },
     },
     'secretary-answer': {},
+    // Each handoff template renders one task-round value: the five-part
+    // instruction and the command's goal list, or a successor's whole brief.
+    'handoff-write-understanding-secretary': {
+        task_round: { required: true },
+    },
+    'handoff-brief-secretary': {
+        task_round: { required: true },
+    },
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },

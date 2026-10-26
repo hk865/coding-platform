@@ -24,7 +24,7 @@ const RUN: QueryRunRef = { aggregateType: 'QueryRun', projectId: P, workspaceId:
 
 function material(over: Partial<SecretaryRoundMaterialV1> = {}): SecretaryRoundMaterialV1 {
   return { ref: ROUND, revision: 1, runRef: RUN, runRevision: 1, since: makeCommitCursor(42), text: 'why this plan?',
-    selectedIdea: null, relatedCards: [], ...over };
+    selectedIdea: null, relatedCards: [], command: null, ...over };
 }
 
 const GOAL_CARD = { ref: { aggregateType: 'Goal' as const, projectId: P, goalId: 'g1' }, revision: 3 };

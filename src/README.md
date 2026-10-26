@@ -58,8 +58,8 @@
 
 | 要做什么 | 去哪个文件夹（必要时到文件） | 先看的可复用能力（含位置） |
 | --- | --- | --- |
-| 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1096`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:589`） |
-| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:423`）、`createTargetPlatform`（`src/composition/create-platform.ts:697`） |
+| 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1167`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:613`） |
+| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:440`）、`createTargetPlatform`（`src/composition/create-platform.ts:753`） |
 | 加一种记录或索引 | `src/core/record-store/`（`lookup-ports.ts`、`ports.ts`） | `RecordLookupIndex`（`src/core/record-store/lookup-ports.ts:5`）、`RecordLookupPort`（`src/core/record-store/lookup-ports.ts:35`） |
 | 加一种事件/记录编解码 | `src/core/work-graph/persistence/` | `createEventCodec`（`src/core/work-graph/persistence/event-codec-factory.ts:42`）、`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:81`） |
 | 状态迁移 | `src/core/work-graph/state/`（按聚合分文件） | `transitionRun`（`src/core/work-graph/state/run-machine.ts:1366`）、`transitionTask`（`src/core/work-graph/state/task-machine.ts:797`） |
@@ -67,8 +67,8 @@
 | 改提示词模板或渲染 | `src/contracts/prompts/` | `renderTemplate`（`src/contracts/prompts/render-template.ts:387`）、`resolvePromptPackV1`（`src/contracts/prompts/resolve-pack.ts:79`） |
 | Kernel 补丁（vendor 冻结） | 脚本 `scripts/build-kernel-patch.mjs`；适配 `src/core/agent-runtime/`（`observed-model-run.ts`） | `runObservedModel`（`src/core/agent-runtime/observed-model-run.ts:207`） |
 | Workflow 的驱动和唤醒 | `src/business/workflow/` | `createWorkflow`（`src/business/workflow/workflow.ts:764`）、`createRequestIntake`（`src/business/workflow/request-intake.ts:185`） |
-| 请求和秘书 | `src/core/work-graph/tasks/`（`request-service.ts`、`secretary-selection.ts`、`initialization-pointers.ts`）、`src/core/work-graph/views/`（`secretary-preparation-facts.ts`） | `admitRequestSecretary`（`src/core/work-graph/tasks/secretary-selection.ts:191`）、`createRequestRoundService`（`src/core/work-graph/tasks/request-service.ts:931`）、`createSecretaryPreparationFacts`（`src/core/work-graph/views/secretary-preparation-facts.ts:483`）、`readInitializationPointers`（`src/core/work-graph/tasks/initialization-pointers.ts:46`） |
-| Session 生命周期 | `src/core/work-graph/sessions/` | `createSessionLifecycleService`（`src/core/work-graph/sessions/session-lifecycle.ts:259`）、`createSessionDirectory`（`src/core/work-graph/sessions/session-directory.ts:560`） |
+| 请求和秘书 | `src/core/work-graph/tasks/`（`request-service.ts`、`secretary-selection.ts`、`initialization-pointers.ts`）、`src/core/work-graph/views/`（`secretary-preparation-facts.ts`） | `admitRequestSecretary`（`src/core/work-graph/tasks/secretary-selection.ts:191`）、`createRequestRoundService`（`src/core/work-graph/tasks/request-service.ts:931`）、`createSecretaryPreparationFacts`（`src/core/work-graph/views/secretary-preparation-facts.ts:507`）、`readInitializationPointers`（`src/core/work-graph/tasks/initialization-pointers.ts:46`） |
+| Session 生命周期 | `src/core/work-graph/sessions/` | `createSessionLifecycleService`（`src/core/work-graph/sessions/session-lifecycle.ts:273`）、`createSessionDirectory`（`src/core/work-graph/sessions/session-directory.ts:560`） |
 | Session 创建与 Kernel 历史读取 | `src/core/agent-runtime/`（`session-operations.ts`、`observation-recovery.ts`） | `createSessionOperations`（`src/core/agent-runtime/session-operations.ts:529`）、`createExecutionHistoryReader`（`src/core/agent-runtime/observation-recovery.ts:242`） |
 | 工作线读取 | `src/core/work-graph/views/`（`work-line-reader.ts`） | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3035`）、`assembleLineBriefs`（`src/core/work-graph/views/work-line-reader.ts:232`） |
 | 附件和材料 | `src/core/work-graph/materials/` | `createMaterialService`（`src/core/work-graph/materials/material-service.ts:116`）、`createMaterialApplicability`（`src/core/work-graph/materials/applicability.ts:23`） |

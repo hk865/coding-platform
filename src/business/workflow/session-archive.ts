@@ -11,7 +11,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ExecutionRef, SessionRef, VersionPin, WorkLinkTarget } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type {
-  ArchiveStepRefV1, RequestSessionArchiveInput, SessionArchiveRequestV1,
+  ArchiveStepRefV1, RequestSessionArchiveInput, SessionArchiveConditionV1, SessionArchiveRequestV1,
 } from '../../contracts/core/session-archive.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot } from '../../contracts/dispatch.js';
@@ -95,7 +95,8 @@ export type SessionArchiveDependencies = Pick<WorkflowDependencies,
 
 type HostActor = { kind: 'human' | 'system'; id: string };
 const ARCHIVE_MODES: readonly SessionArchiveRequestV1['mode'][] =
-  ['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete'];
+  ['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete',
+    'secretary_handoff'];
 
 function reject(code: CoreRejection['code'], reason: string, current?: VersionPin[]): CoreRejection {
   return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };
@@ -730,7 +731,8 @@ export function createSessionArchiveService(
     if (!internalMode && Object.prototype.hasOwnProperty.call(rawInput, 'mode')) {
       return reject('invalid', 'archive_input_invalid: mode is an internal-only archive input');
     }
-    if (Object.keys(rawInput).some((key) => !['sessionRef', 'reason', 'tasks', 'wait', 'confirmUnknownStopped', 'mode'].includes(key))) {
+    if (Object.keys(rawInput).some((key) => !['sessionRef', 'reason', 'tasks', 'wait', 'confirmUnknownStopped', 'mode',
+      'condition'].includes(key))) {
       return reject('invalid', 'archive_input_invalid: the archive input carries unknown fields');
     }
     if (Object.keys(rawMeta).some((key) => key !== 'requestId' && key !== 'expected')) {
@@ -758,6 +760,9 @@ export function createSessionArchiveService(
       return reject('invalid', 'archive_input_invalid: the archive mode is not recognized');
     }
     const expected = rawMeta['expected'] as readonly VersionPin[];
+    // The trusted condition is forwarded unchanged (it is part of the owner's request identity); the owner's
+    // strict request check refuses a malformed one or one on a mode that takes none, so nothing is re-judged here.
+    const conditionRaw = rawInput['condition'];
     const requestWrite: GraphWrite<RequestSessionArchiveInput> = {
       input: {
         sessionRef, reason: rawInput['reason'] as string,
@@ -765,6 +770,8 @@ export function createSessionArchiveService(
         wait: (rawInput['wait'] ?? null) as RequestSessionArchiveInput['wait'],
         confirmUnknownStopped: confirmUnknownRaw === true,
         mode: mode as SessionArchiveRequestV1['mode'],
+        ...(conditionRaw === undefined
+          ? {} : { condition: conditionRaw as SessionArchiveConditionV1 | null }),
       },
       meta: { requestId: rawMeta['requestId'] as string, expected },
     };

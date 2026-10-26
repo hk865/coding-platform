@@ -190,6 +190,8 @@ describe('RW-12a write and disposition read bounds', () => {
       const writer = f.workCtx(await f.claimRun('rw12b-writer', 't3', 'scribe'));
       // The REAL `record_note` factory over the real write/check owners.
       const handle = createNoteTools({ context: writer, notes: f.platform.notes, check: f.platform.notes,
+        kinds: ['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'repair'],
+        withdraw: true,
         requestIdForCall: call => call.callId });
       const definition: ToolDefinition = handle.create(null as unknown as WorkspaceSandbox)[0]!;
       reset(counter);

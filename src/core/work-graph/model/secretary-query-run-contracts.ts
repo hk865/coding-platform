@@ -8,9 +8,9 @@
  * manifest: a secretary's stage anchor takes its version, and a round prepared
  * without one has no stage version to give.
  *
- * `goals` is the batch's live `request_understanding` grant set only, never the
- * round's effective goal; in this slice nothing can produce such a command, so
- * the resolver returns `[]` without reading anything for it.
+ * `goals` is the live `request_understanding` grant set only, never the
+ * round's effective goal; the resolver computes it from the frozen material
+ * list and the current operation records.
  */
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';

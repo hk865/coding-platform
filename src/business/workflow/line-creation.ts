@@ -31,6 +31,10 @@ export type LineCreationInput = {
   reason: 'secretary_needed' | string;
   provenance: SessionProvenanceV1;
   roleConfiguration: RoleConfigurationRef;
+  /** The source line this successor replaces; absent is null (ordinary creation normalizes to null). */
+  replaces?: SessionRef | null;
+  /** The handoff operation that creates this successor; absent is null. */
+  parentOperation?: OperationRef | null;
 };
 
 export type LineCreationResultV1 =
@@ -48,7 +52,7 @@ export interface LineCreationPort {
 }
 
 export interface LineCapacityPort {
-  admit(ctx: CoreCallContext, input: { duty: PlatformDutyV1; plannedSessionRef: SessionRef }):
+  admit(ctx: CoreCallContext, input: { duty: PlatformDutyV1; plannedSessionRef: SessionRef; replaces: SessionRef | null }):
     Promise<{ status: 'admitted' } | { status: 'full'; limit: number; used: number } | { status: 'unavailable'; reason: string }>;
 }
 
@@ -86,6 +90,8 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
     replayed: boolean,
   ): Promise<LineCreationResultV1> {
     const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId as string };
+    const replaces = input.replaces ?? null;
+    const parentOperation = input.parentOperation ?? null;
     let receipt: OperationReceipt<SessionRecord>;
     try {
       receipt = await deps.sessions.createSession(ctx, {
@@ -97,6 +103,10 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         provenance: input.provenance,
         // The creator is the trusted Host actor of THIS call, never the caller's field.
         creation: { duty: input.duty, scope: input.scope, reason: input.reason, creator: actor },
+        // The parent operation is the runtime request's own optional member; `replaces` is not, so it rides as the
+        // one extra member the admission reads.
+        parentOperation,
+        ...({ replaces } as object),
       });
     } catch (error) {
       return { status: 'rejected', code: 'unavailable', reason: `Session creation did not complete: ${errorReason(error)}` };
@@ -150,7 +160,8 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
 
       let capacity: Awaited<ReturnType<LineCapacityPort['admit']>>;
       try {
-        capacity = await deps.capacity.admit(ctx, { duty: input.duty, plannedSessionRef: stable.plannedSessionRef });
+        capacity = await deps.capacity.admit(ctx, { duty: input.duty, plannedSessionRef: stable.plannedSessionRef,
+          replaces: input.replaces ?? null });
       } catch (error) {
         return { status: 'rejected', code: 'unavailable', reason: `line capacity could not be decided: ${errorReason(error)}` };
       }
@@ -189,6 +200,8 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
             reason: creation.reason,
             provenance: read.value.action.provenance,
             roleConfiguration: read.value.action.role,
+            replaces: read.value.action.provenance.kind === 'handoff' ? read.value.action.provenance.from : null,
+            parentOperation: read.value.action.parentOperation,
           },
         },
       };

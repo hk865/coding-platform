@@ -1346,12 +1346,6 @@
       "note": "slice 6 of the orchestration design (decision 83, prompts and context): the RunRef guard of ModelRequestReadPort.listRunModelRequests, reached through readPromptRecord; E3 adds the route."
     },
     {
-      "file": "src/core/work-graph/model/request-contracts.ts",
-      "name": "SECRETARY_IDLE_ARCHIVE_MS",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B L-03): the idle-archive threshold 6B L-03 reads."
-    },
-    {
       "file": "src/core/work-graph/tasks/request-facts.ts",
       "name": "RequestFactsPort.ownerOf",
       "reason": "kept-for",
@@ -1365,102 +1359,15 @@
     },
     {"file": "src/contracts/data-format-refs.ts", "name": "ProjectRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
     {"file": "src/contracts/data-format-refs.ts", "name": "WorkspaceRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
-    {"file": "src/contracts/data-format-refs.ts", "name": "SessionAggregateRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
     {"file": "src/contracts/data-format-refs.ts", "name": "PlanProposalRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
     {"file": "src/contracts/data-format-refs.ts", "name": "TaskRequeueRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
     {"file": "src/contracts/data-format-refs.ts", "name": "VerificationRoundRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "Keys",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "CommitFragment",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "CommandRejection",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "CommandResult",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "WriteCommand",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "commitFailureRejection",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "unknownCommitRejection",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "strictReplay",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
-      "file": "src/core/work-graph/persistence/command-executor.ts",
-      "name": "executeWriteCommand",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
     {"file": "src/contracts/initial-planning.ts", "name": "InitializationSourceShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 G, SR9.7 and book §3.10): the initialization source the plan reads"},
     {"file": "src/contracts/initial-planning.ts", "name": "InitializationSourceV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 G, SR9.7 and book §3.10): the initialization source the plan reads"},
     {"file": "src/core/work-graph/model/goal-copy-contracts.ts", "name": "CopyInterventionCandidateV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 K injects and 7A implements the SR9.9 copy ports)"},
     {"file": "src/core/work-graph/model/goal-copy-contracts.ts", "name": "CopyInterventionReadPort", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 K injects and 7A implements the SR9.9 copy ports)"},
     {"file": "src/core/work-graph/model/goal-copy-contracts.ts", "name": "CopyInterventionRetractionPort", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 K injects and 7A implements the SR9.9 copy ports)"},
-    {"file": "src/core/work-graph/model/request-contracts.ts", "name": "understandingPointersProblem", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D, SR9.8): the request_understanding command is wired and stored"},
-    {"file": "src/core/work-graph/model/request-contracts.ts", "name": "RequestUnderstandingCommandShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D, SR9.8): the request_understanding command is wired and stored"},
-    {"file": "src/core/work-graph/model/request-contracts.ts", "name": "RequestUnderstandingCommandV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D, SR9.8): the request_understanding command is wired and stored"},
-    {"file": "src/core/work-graph/model/session-activity-contracts.ts", "name": "SessionActivityStateV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D/M, SR4/SR12): the activity read port's state, with the revision 0 default when absent; 7A continues"},
-    {"file": "src/core/work-graph/model/session-activity-contracts.ts", "name": "SessionActivityReadPort", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D/M, SR4/SR12): callers read a Session's activity and its revision; 7A continues"},
-    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "sessionActivityRefOf", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D/M and 7A, SR4): the planner and the reader use one tagged activity address"},
-    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "planSessionActivityAdvance", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D and 7A, SR4; book §3.6 item 1): the input-landing and entered-round-end producers merge its record and guard into their own commit"},
-    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "activityGuardOf", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D/M and 7A, SR4): turns the activity revision pin into a mergeable CAS guard, revision 0 when absent maps to null"},
-    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "createSessionActivityReader", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D/M and 7A, SR4/SR12): the activity read with the createdAt / revision 0 default when absent"},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "HandoffAcceptInputV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): the handoff route supplies the accept input."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "HandoffAcceptResultV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): the handoff route reads the accepted-operation result."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "SessionHandoffPort.acceptHandoff", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): the handoff route calls this owner before advancing the operation."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "OPERATION", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff uses this write-command operation name."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "ReadFacts", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff reads source, target and unfinished-operation facts."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "AcceptFacts", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff carries admission facts and the source revision through the command."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "AcceptedEvent", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff validates and projects the decoded result event."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "handoffOperationId", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff builds and validates its stable operation id."},
-    {"file": "src/core/work-graph/sessions/session-handoff-service.ts", "name": "admissionRejection", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff returns admission refusals with current operation pins."},
-    {"file": "src/core/work-graph/state/session-activity.ts", "name": "nextSessionActivity", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 D and 7A, SR4): the companion-commit planner builds the next activity record with it"},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "OperationCallerV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): handoff admission classifies the trusted Host caller."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "OperationSessionFactV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): handoff admission consumes publicly read Session facts."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "HandoffAdmissionFactsV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff supplies facts to its pure admission table."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "SecretaryArchiveAdmissionFactsV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H, OQ12): the secretary archive accept command supplies admission facts."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "Refusal", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): handoff admission uses the rejected-transition type."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "OperationAdmissionV1", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff consumes the admission result and unfinished-operation pins."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "PASS", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): the handoff admission table returns its success value."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "guardRefusal", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): the handoff admission table constructs guard refusals."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "callerRefusal", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): handoff admission checks manual and too_long callers."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "sourceRefusal", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): handoff admission checks the source Session."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "busyRefusal", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): handoff admission rejects unfinished operations of the source."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "admitHandoff", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff invokes this pure admission table."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "newHandoffOperationRecord", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H): acceptHandoff constructs the accepted operation and its shape-check candidate."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "admitSecretaryArchive", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H, OQ12): the secretary archive accept command invokes this admission table."},
-    {"file": "src/core/work-graph/state/session-handoff.ts", "name": "newSecretaryArchiveOperationRecord", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-2 H, OQ12): the secretary archive accept command constructs its accepted operation."}
-  ]
+    {"file": "src/core/work-graph/model/session-activity-contracts.ts", "name": "SessionActivityStateV1", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule reads the longest inactive idle line, so the activity read is rebuilt there): the activity state with the revision 0 default when absent"},
+    {"file": "src/core/work-graph/model/session-activity-contracts.ts", "name": "SessionActivityReadPort", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule): the port slice 7 reads each secretary line's activity and revision through"},
+    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "createSessionActivityReader", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule): the one activity reader slice 7 rebuilds and wires into its idle-line pick"}]
 }

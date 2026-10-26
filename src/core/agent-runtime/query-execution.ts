@@ -18,7 +18,7 @@ import type { CoreRejection, ReadResult } from '../../contracts/core/results.js'
 import type { ModelCallAccess } from '../../contracts/dispatch.js';
 import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
 import type { GoalRef } from '../../contracts/ledger.js';
-import type { HookPort } from '../../../vendor/coding-agent/dist/public-api.js';
+import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
   decodePromptSetV1, promptSelectionOf, type ModelRequestPromptFactsV1, type PromptSetV1,
@@ -38,6 +38,10 @@ import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
+import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsHandle } from './note-tool.js';
+import type { NoteCheckPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
+import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
+import { secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
 import { sessionHistoryDecision } from './context-history-facts.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import type {
@@ -89,6 +93,36 @@ function samePromptBinding(
   return selection.modelId === set.modelId && selection.promptPack === set.packId
     && selection.reasoningReplay === set.reasoningReplay
     && model.configuration.provider === set.provider && model.configuration.model === set.model;
+}
+
+/**
+ * The real note owners a secretary Query's `record_note` needs. Absent, the
+ * start is `unavailable`; it never builds the tool around a non-null assertion.
+ */
+function noteOwnersOf(notes: RuntimeExecutionDependencies['notes']):
+{ write: NoteWritePort; check: Pick<NoteCheckPort, 'checkNotes'> } | null {
+  if (notes?.write === undefined || notes.check === undefined) return null;
+  return { write: notes.write, check: notes.check };
+}
+
+/**
+ * The trusted command identity of one `record_note` call: the QueryRun
+ * principal plus the Kernel call's own id and name, in the same shape the Work
+ * tool commits use. It never reads model arguments, so a replay of the same
+ * call derives the same id.
+ */
+function queryNoteRequestIdForCall(queryRunRef: QueryRunRef, call: Readonly<ToolCall>): string {
+  if (!nonEmpty(call.callId) || !nonEmpty(call.name)) {
+    throw new Error('the Kernel tool call carries no trusted identity');
+  }
+  return 'r5b-query-note:' + sha256Hex(canonicalJson({
+    queryRunRef: {
+      aggregateType: 'QueryRun', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId,
+      queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId,
+    },
+    operation: call.name,
+    callId: call.callId,
+  }));
 }
 
 async function loadManifest(
@@ -276,10 +310,29 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         }
         if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
       }
+      // The frozen manifest's request facts decide the Query's note class: a
+      // non-null request is exactly a secretary request round. The pure rule
+      // decides the class from the request root, so preparation and this start
+      // read the same frozen fact and cannot disagree.
+      const noteAdmission: QueryNoteAdmissionV1 = manifest.request === null
+        ? { class: 'none' }
+        : secretaryNoteAdmission({
+            requestRoot: manifest.request.requestRoot,
+            effectiveGoalId: manifest.request.effectiveGoalId,
+            grantedGoalIds: manifest.request.understandingGrants,
+          });
+      // A secretary round's `record_note` needs the real write and check owners.
+      // A missing dependency is `unavailable`, never a tool built around a
+      // non-null assertion.
+      const noteOwners = noteOwnersOf(deps.notes);
+      if (noteAdmission.class === 'secretary' && noteOwners === null) {
+        return rejected('unavailable', 'the secretary Query round admits notes but no note write/check dependency is bound');
+      }
       // Ruling 16: the one final tool list, compared with the frozen one before
       // any entry write. A difference is `forbidden`.
       const startToolNames = finalToolNamesOf({
         callKind: 'query',
+        noteAdmission,
         selected: manifest.permissions.tools,
         readOnly: true,
         reviewPhase: null,
@@ -291,7 +344,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           mailbox: false, decisionMessages: false, applicationReceipt: false,
           sessions: false, plans: false,
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
-          notes: false, unknownCallReviews: false, commandRerunRequests: false,
+          notes: noteAdmission.class === 'secretary', unknownCallReviews: false, commandRerunRequests: false,
         },
         // The read-only command is a Host-gated capability: the start reads the
         // real whole-workspace read policy again (the same fact preparation
@@ -310,17 +363,23 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         && frozenToolNames.every((name, index) => name === startToolNames.value[index]);
       if (!sameToolList) return rejected('forbidden', 'the prepared tool list no longer fits this Run');
 
-      // Slice 3: the Query grant may name the two read-only graph tools. They
-      // are the ONLY coordination tools a Query ever injects (no mailbox or
-      // whiteboard write factory exists here); the effective final set is the
-      // Host grant ∩ Role ceiling ∩ Query read ceiling already projected into
-      // `manifest.permissions.tools` by `projectQueryConfiguration`.
+      // The Query grant may name the two read-only graph tools and, for a
+      // secretary round, `record_note`. Those are the ONLY coordination tools a
+      // Query ever injects; the effective final set is the Host grant ∩ Role
+      // ceiling ∩ Query read ceiling already projected into
+      // `manifest.permissions.tools` by `projectQueryConfiguration`. The note
+      // group exposes only the note names the frozen list selected: the
+      // admission alone never widens the Host grant.
       const grantedGraphNames = GRAPH_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
+      const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined
+        ? null
+        : { graph: deps.graphContext, inputs: deps.taskInputs };
+      if (grantedGraphNames.length > 0 && graphDeps === null) {
+        return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
+      }
       let coordinationTools: ToolGroup | null = null;
-      if (grantedGraphNames.length > 0) {
-        if (deps.graphContext === undefined || deps.taskInputs === undefined) {
-          return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
-        }
+      if (grantedGraphNames.length > 0 || noteAdmission.class === 'secretary') {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
         // uses the ORIGINAL initiator's same-scope Host context for RT8 only.
@@ -332,15 +391,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         // goal requirement and its principal shape.
         const secretary = manifest.contextAssembly.callKind === 'secretary';
         const frozenGoalId = manifest.request === null ? null : manifest.request.effectiveGoalId;
-        let goalRef: GoalRef | null;
-        if (secretary) {
-          goalRef = frozenGoalId === null
-            ? null
-            : { aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId: frozenGoalId };
-        } else {
-          if (facts.value.goal === null) return rejected('invalid', 'no goal');
-          goalRef = facts.value.goal.ref;
-        }
         const initiator = structuredClone(facts.value.initiator);
         const toolContext: CoreCallContext = {
           projectId: queryRunRef.projectId,
@@ -352,26 +402,63 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           materialReader: { kind: 'run', requester: structuredClone(queryRunRef) },
           signal,
         };
-        const trustedHostContext: CoreCallContext = {
-          projectId: queryRunRef.projectId,
-          workspaceId: queryRunRef.workspaceId,
-          principal: { kind: 'host', actor: structuredClone(initiator) },
-          materialReader: { kind: 'host', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, actor: structuredClone(initiator) },
-          signal,
-        };
-        coordinationTools = createQueryGraphToolGroup({
-          names: grantedGraphNames,
-          context: toolContext,
-          goalRef,
-          graph: deps.graphContext,
-          inputs: deps.taskInputs,
-          history: deps.graphHistory,
-          hostContext: trustedHostContext,
-          // The notes read port is bound only for a secretary round; a plain
-          // Query keeps the memory branch's explicit refusal.
-          ...(secretary && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
-          texts: toolTexts,
-        });
+        let graphTools: ToolGroup | null = null;
+        if (grantedGraphNames.length > 0 && graphDeps !== null) {
+          let goalRef: GoalRef | null;
+          if (secretary) {
+            goalRef = frozenGoalId === null
+              ? null
+              : { aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId: frozenGoalId };
+          } else {
+            if (facts.value.goal === null) return rejected('invalid', 'no goal');
+            goalRef = facts.value.goal.ref;
+          }
+          const trustedHostContext: CoreCallContext = {
+            projectId: queryRunRef.projectId,
+            workspaceId: queryRunRef.workspaceId,
+            principal: { kind: 'host', actor: structuredClone(initiator) },
+            materialReader: { kind: 'host', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, actor: structuredClone(initiator) },
+            signal,
+          };
+          graphTools = createQueryGraphToolGroup({
+            names: grantedGraphNames,
+            context: toolContext,
+            goalRef,
+            graph: graphDeps.graph,
+            inputs: graphDeps.inputs,
+            history: deps.graphHistory,
+            hostContext: trustedHostContext,
+            // The notes read port is bound only for a secretary round; a plain
+            // Query keeps the memory branch's explicit refusal.
+            ...(secretary && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
+            texts: toolTexts,
+          });
+        }
+        let noteTools: NoteToolsHandle | null = null;
+        if (noteAdmission.class === 'secretary') {
+          if (noteOwners === null) {
+            return rejected('unavailable', 'the secretary Query round admits notes but no note write/check dependency is bound');
+          }
+          noteTools = createNoteTools({
+            context: toolContext,
+            notes: noteOwners.write,
+            check: noteOwners.check,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryNoteRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+            kinds: noteAdmission.kinds,
+            withdraw: noteAdmission.withdraw,
+          });
+        }
+        const names = [...grantedGraphNames, ...noteNames];
+        if (names.length > 0) {
+          coordinationTools = {
+            names,
+            create: (workspace) => [
+              ...(graphTools?.create(workspace) ?? []),
+              ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
+            ],
+          };
+        }
       }
 
       const kernel: QueryEntryIdentity['kernel'] = {

@@ -4,6 +4,7 @@ import { rejected } from '../../contracts/core/rejections.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { OperationRef } from '../../contracts/core/operations.js';
 import type { CommandMeta, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../contracts/core/identity.js';
 import {
   CORE_ERRORS, type CoreError, type CoreRejection, type OperationReceipt, type Page, type ReadResult, type WriteResult,
@@ -40,6 +41,8 @@ export type CreateSessionRequest = {
    * Absent or null is a creation that opens no line.
    */
   creation?: SessionCreationIntentV1 | null;
+  /** The handoff operation this creation answers; absent is a creation without a parent. */
+  parentOperation?: OperationRef | null;
 };
 /** Trusted locator from the task graph; positions are inclusive. */
 export type SessionHistoryRange = {
@@ -100,18 +103,6 @@ type HistoryBinding = {
 /** `lower` is the inclusive first position of the page's frozen range. */
 type HistoryCursor = HistoryBinding & { upper: number; position: number; lower: number };
 
-type CreateSessionValue = {
-  workspace: WorkspaceScope;
-  role: RoleConfigurationRef;
-  recommendedRefs: ArtifactRef[];
-  initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
-  meta: CommandMeta;
-  /** Slice 1 §2.2: threaded through the isolated creation snapshot. */
-  provenance?: SessionProvenanceV1;
-  /** Slice 6A §3.4.7: threaded through the isolated creation snapshot. */
-  creation?: SessionCreationIntentV1 | null;
-};
-
 type HistoryRequestValue = {
   sessionRef: SessionRef;
   afterCursor: string | null;
@@ -127,8 +118,8 @@ function signalAborted(signal: unknown): boolean {
 /** The trusted request value is isolated before the first await so a caller can
  * never mutate what was already admitted or what watermark a page is bound to.
  * The AbortSignal lives on the call context and is deliberately not cloned. */
-function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionValue } | { ok: false; reason: string } {
-  const raw = (typeof request === 'object' && request !== null ? request : {}) as Partial<CreateSessionValue>;
+function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionRequest } | { ok: false; reason: string } {
+  const raw = (typeof request === 'object' && request !== null ? request : {}) as Partial<CreateSessionRequest>;
   const snapshot = {
     workspace: raw.workspace,
     role: raw.role,
@@ -136,10 +127,11 @@ function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionVal
     initialLinks: raw.initialLinks,
     ...(raw.provenance === undefined ? {} : { provenance: raw.provenance }),
     ...(raw.creation === undefined ? {} : { creation: raw.creation }),
+    ...(raw.parentOperation === undefined ? {} : { parentOperation: raw.parentOperation }),
     meta: raw.meta,
   };
   try {
-    return { ok: true, value: structuredClone(snapshot) as CreateSessionValue };
+    return { ok: true, value: structuredClone(snapshot) as CreateSessionRequest };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return { ok: false, reason: `the Session creation request cannot be isolated from the caller: ${detail}` };
@@ -604,6 +596,7 @@ export function createSessionOperations(deps: {
             // or readonly_copy carries its predecessor.
             ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
             ...(value.creation === undefined ? {} : { creation: value.creation }),
+            ...(value.parentOperation === undefined ? {} : { parentOperation: value.parentOperation }),
           },
           meta: value.meta,
         });

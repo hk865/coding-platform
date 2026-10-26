@@ -32,7 +32,7 @@
 - `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`TERMINAL_PAYLOAD_*`。
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
 - `query-execution-context.ts` — `QueryExecutionRequest`：持久化的 Query 请求形状。
-- `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`、`GoalScreeningShape`/`GoalScreeningV1`（目标卡草稿的筛选，整体或 null）、`GoalCardDraftV1` 的 `screening`、回答的 `planDraftIndex`、`consultationQueryRefs`、`queryJobRefFor`、`validQueryExecution`。
+- `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`（`understanding` 是唯一的命令存放处）、`GoalScreeningShape`/`GoalScreeningV1`（目标卡草稿的筛选，整体或 null）、`GoalCardDraftV1` 的 `screening`、回答的 `planDraftIndex`、`RequestUnderstandingCommandV1`（`request_understanding` 命令的唯一格式）、`SecretaryRoundMaterialV1.command`（从 `round.job.understanding` 投影一次）、`SecretaryRequestManifestV1` 的 `briefRef`/`understandingGrants`、`RequestCommandReceiptV1` 的 `understanding` 臂、`consultationQueryRefs`、`queryJobRefFor`、`validQueryExecution`。
 - `initialization-binding.ts` — 初始化绑定记录（字段表格式 `InitializationBinding@1`，`revision`/`goalRevision` 固定为 1）：`InitializationBindingRefShape`、`InitializationBindingFormat`、两个查找名；两条规则要求 ref 指向同一份回答和草稿，且回答、请求、Goal 同一项目、回答与请求同一工作区；记录没有事件，键是完整 ref 的 `canonicalJson`。
 - `run-activity.ts` — Run/Query 活动读数：规则版本、各项上限、`RunActivitySnapshot`、`QueryActivitySnapshot`、带 `querySince` 的 `ActivityRecordingSnapshot`、显式 unknown 的唯一构造 `unknownFacts` 与 `provenNotEnteredKernel`。
 - `runtime-budget.ts` — `RuntimeBudget`、`DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS`、`validateRuntimeBudget`。
@@ -81,7 +81,7 @@
 - `governance.ts` — 完成策略/架构基线的 revision、pin 与 `completionPolicyContentDigest`。
 - `graph-context.ts` — 上下文装配/图读模型/注意力/任务输入页 DTO，以及 `goalContextContentV1`、`goalContextDigestV1`。
 - `human-role-collaboration.ts` — 协作策略 revision/active 与 `coordinationPolicyContentDigest`。
-- `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`/`seqOfCommitCursor`；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。
+- `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:123`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:129`）/ `compareCursors`（`src/contracts/ledger.ts:141`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
 - `note.ts` — 注记 Head/Version/CurrentPointer、锚点、`NOTE_GENERAL_KINDS` 与 `renderNoteHeader`；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
@@ -106,7 +106,7 @@
 | `id` | `src/contracts/data-format-refs.ts:10` | ref 内字段的非空字符串描述（`min: 1`，按码点计）。 | 写 ref 的字段表时复用；不要另写 `f.string({ min: 1 })`。 |
 | `SessionActivityFormat`、`SessionActivityRefShape` | `src/contracts/session-activity.ts:40`、`src/contracts/session-activity.ts:37` | Session 活动记录的字段表和它的 ref；两条规则：`session` 与 ref 同一个 Session、`source` 在同一项目且种类对得上。 | 写或读 Session 的最后活动；类型用 `SessionActivityV1`，不要手写。 |
 | `SessionActivityRef`、`SessionActivityV1`、`SessionActivityKindV1`、`SessionActivitySourceV1` | `src/contracts/session-activity.ts:60`、`src/contracts/session-activity.ts:61`、`src/contracts/session-activity.ts:62`、`src/contracts/session-activity.ts:64` | 由字段表推导的活动引用、记录、类别和来源类型。 | 供活动状态、codec 和读取使用。 |
-| `GoalScreeningShape`、`GoalScreeningV1` | `src/contracts/query-job.ts:167`、`src/contracts/query-job.ts:176` | 目标卡草稿的筛选：模块、规模、冲突/依赖 Goal、紧急度、从 0 起的建议位次、≤512 UTF-8 字节的说明。 | 目标卡草稿的 `screening` 和绑定记录的 `screening`；没有筛选时为 null，不要自己补一个。 |
+| `GoalScreeningShape`、`GoalScreeningV1` | `src/contracts/query-job.ts:194`、`src/contracts/query-job.ts:203` | 目标卡草稿的筛选：模块、规模、冲突/依赖 Goal、紧急度、从 0 起的建议位次、≤512 UTF-8 字节的说明。 | 目标卡草稿的 `screening` 和绑定记录的 `screening`；没有筛选时为 null，不要自己补一个。 |
 | `InitializationBindingFormat`、`InitializationBindingV1`、`InitializationBindingRefShape`、`InitializationBindingRef`、`INITIALIZATION_BINDING_BY_ANSWER_DRAFT_LOOKUP`、`INITIALIZATION_BINDING_BY_GOAL_LOOKUP` | `src/contracts/initialization-binding.ts:52`、`src/contracts/initialization-binding.ts:71`、`src/contracts/initialization-binding.ts:46`、`src/contracts/initialization-binding.ts:70`、`src/contracts/initialization-binding.ts:50`、`src/contracts/initialization-binding.ts:51` | 初始化绑定记录和它的类型、它的 ref 形状和 ref 类型、两条规则和两个查找名（回答+草稿五条路径、按 Goal 两条路径）。 | 确认所有者写绑定、按回答或 Goal 读绑定；类型用 `InitializationBindingV1`，不要另写字段表。 |
 | `InitializationSourceShape`、`InitializationSourceV1` | `src/contracts/initial-planning.ts:24`、`src/contracts/initial-planning.ts:30` | 初始化计划的来源：`binding`（回答 + 草稿号）或 `prepared_goal`（回答）。 | 读取/采用初始化计划时指定来源；不要从回答文本猜来源。 |
 | `GoalContinuationV1` | `src/contracts/ledger.ts:73` | 接续来源：被接续的 Goal、它当时的 revision 和可选的理解注记版本。 | Goal 的 `continuedFrom`；不接续时为 null。 |
@@ -117,12 +117,16 @@
 | `commandIdentityKey` | `src/contracts/command-event.ts:108` | 命令幂等身份键：projectId、actor、idempotencyKey、agentPrincipal。 | 命令幂等/replay 查重；不要退回只比 idempotencyKey。 |
 | `commandFingerprint` | `src/contracts/command-event.ts:90` | `CreateGoalCommand` 的内容指纹（JCS + SHA-256）。 | Goal 创建命令的幂等/replay；其他命令用自己的配方。 |
 | `normalizeObjective` | `src/contracts/command-event.ts:86` | Unicode NFC + 首尾空白裁剪。 | 指纹与存储 Goal 目标之前。 |
-| `queryJobRefFor` | `src/contracts/query-job.ts:158` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
-| `consultationQueryRefs` | `src/contracts/query-job.ts:57` | 由 `SessionMessageRef` 派生咨询 QueryJob/QueryRun 引用。 | 消息驱动的咨询 Query；外层重试因此落在同一对记录上。 |
-| `validQueryExecution` | `src/contracts/query-job.ts:301` | 校验 Query 意图的 execution 绑定。 | 接受 Query 意图前做纯输入校验。 |
-| `isRequestRound` | `src/contracts/query-job.ts:431` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
+| `queryJobRefFor` | `src/contracts/query-job.ts:185` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
+| `RequestUnderstandingCommandV1` | `src/contracts/query-job.ts:55` | 内部 `request_understanding` 命令的唯一格式：操作、代、请求根、每个 Goal 的指针与检查版本、checkedRound 与 live/closed/consumed。 | 交接的 understanding 代写、准备/启动读取与 Runtime 模板；不要另写一份命令形状。 |
+| `QueryJobV1` 的 `understanding`、`SecretaryRoundMaterialV1` 的 `command` | `src/contracts/query-job.ts:370`、`src/contracts/query-job.ts:24` | 一次存储一次投影：Job 上的 `understanding` 是唯一副本（其余 Query 与历史记录为 null），材料的 `command` 由 `round.job.understanding` 投影。 | 存/读 understanding 命令；不要另存第二份，也不要另拼一份命令形状。 |
+| `SecretaryRequestManifestV1` 的 `briefRef`、`understandingGrants` | `src/contracts/query-job.ts:37` | 请求清单冻结的两项：后继者的简报操作（没有则 null）和仍有效的 understanding 授予（按轮次再按批次顺序、每个 Goal 一条）。 | 准备与启动读取、Runtime 清单；冻结一次，不在原地替换。 |
+| `RequestCommandReceiptV1` 的 `understanding` 臂 | `src/contracts/query-job.ts:208` | 内部 `request_understanding` append 的回执：`{ kind: 'understanding'; round }`。 | 写/重放内部命令时；不要借用 `route` 臂或写空回执。 |
+| `consultationQueryRefs` | `src/contracts/query-job.ts:82` | 由 `SessionMessageRef` 派生咨询 QueryJob/QueryRun 引用。 | 消息驱动的咨询 Query；外层重试因此落在同一对记录上。 |
+| `validQueryExecution` | `src/contracts/query-job.ts:329` | 校验 Query 意图的 execution 绑定。 | 接受 Query 意图前做纯输入校验。 |
+| `isRequestRound` | `src/contracts/query-job.ts:461` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18` | 初始规划 v2 回答的外层协议：一个 JSON 对象、`schemaVersion` 2、`plan` 或 `needs_decision` 的外形；不修补模型的计划，计划内容由 Plan 校验器判断。 | 读初始规划回答或秘书 `initial_coordination` 回答；不要另写 v2 JSON 解析。 |
-| `queryExecutionBindingOf` | `src/contracts/query-job.ts:442` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
+| `queryExecutionBindingOf` | `src/contracts/query-job.ts:472` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
 | `decisionSourceKey` | `src/contracts/goal-decisions.ts:208` | 决策来源身份键。 | 决策来源去重/幂等。 |
 | `DecisionSubjectShape`、`DecisionSubjectV1` | `src/contracts/goal-decisions.ts:88`、`src/contracts/goal-decisions.ts:94` | 决定来源/卡片/请知悉的 subject 字段表与推导类型：`{ kind: 'goal', goalRef }` 或 `{ kind: 'project', projectRef }`，旁边不再有第二个 `goalRef` 字段。 | 构造或读 `subject`；不要另写一份只认 Goal 的 subject 形状。 |
 | `decisionSubjectKey` | `src/contracts/goal-decisions.ts:96` | subject 的带标签规范键。 | 读侧按 subject 分组/排序；不要手拼字符串。 |
@@ -132,6 +136,7 @@
 | `legacyDeclarationId` | `src/contracts/input-declaration-id.ts:14` | `inputRequirements` 条目的 `legacy:` 声明 id。 | 兼容旧计划输入时。 |
 | `makeCommitCursor` | `src/contracts/ledger.ts:123` | 由序号构造 `CommitCursor`。 | 合成/测试游标；生产写入从提交回执取真实游标。 |
 | `seqOfCommitCursor` | `src/contracts/ledger.ts:129` | 从 `CommitCursor` 取回序号。 | 排序、日志与范围比较。 |
+| `compareCursors` | `src/contracts/ledger.ts:141` | 两个游标的顺序：都是 ledger 游标时按序号，否则按文本。 | 排序、日志与范围比较；`queries/request-rounds-read.ts` 转出这一份，不要另写。 |
 | `completionPolicyContentDigest` | `src/contracts/governance.ts:106` | 完成策略正文摘要。 | 安装/激活 revision 前对齐摘要。 |
 | `coordinationPolicyContentDigest` | `src/contracts/human-role-collaboration.ts:88` | 协作策略正文摘要。 | 安装/激活协作策略 revision。 |
 | `roleSpecContentDigest` | `src/contracts/role-spec.ts:156` | 角色规格正文摘要。 | 安装/激活角色规格。 |

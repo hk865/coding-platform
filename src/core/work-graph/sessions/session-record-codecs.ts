@@ -17,7 +17,9 @@
  *     cursor in the same transaction. A typed read requires `since` to be bound.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import { defineEvent, f } from '../../../contracts/data-format.js';
+import {
+  defineEvent, f, type EventFormat, type Fields, type InferEvent,
+} from '../../../contracts/data-format.js';
 import { id, OperationRefShape } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
@@ -36,9 +38,12 @@ import type {
 } from '../../record-store/ports.js';
 import type { SessionCreateOperationRecord, SessionOperationRecord } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
-import { HandoffActionShape, SecretaryArchiveActionShape } from '../model/session-operation-arms.js';
+import {
+  HandoffActionShape, SecretaryArchiveActionShape, upgradeSessionOperationActionV1,
+} from '../model/session-operation-arms.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
-import { createEventCodec } from '../persistence/field-table-codec.js';
+import { createEventCodec as createEnvelopeEventCodec } from '../persistence/event-codec-factory.js';
+import { createEventCodec, type EventCodec } from '../persistence/field-table-codec.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
 
 // --------------------------------------------------------------------------
@@ -571,6 +576,28 @@ function checkArchiveExecution(value: unknown): Problem {
   }
 }
 
+/** The archive modes, in the one list the strict request check reads. */
+const ARCHIVE_REQUEST_MODES: readonly string[] = [
+  'operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete',
+  'secretary_handoff',
+];
+/** The one mode whose request carries a trusted `SessionArchiveConditionV1`; every other mode carries `null`. */
+const SECRETARY_ARCHIVE_MODES: readonly string[] = ['secretary_handoff'];
+
+/**
+ * Strict shape of `SessionArchiveConditionV1`'s handoff arm with its exact fields, nothing else.
+ *
+ * One reason for the whole condition: a damaged condition is reported once, so the reader never gets a
+ * per-field cascade that hides which value was wrong first.
+ */
+function checkArchiveCondition(value: UnknownRecord): Problem {
+  if (!hasOnlyKeys(value, ['kind', 'operation'])) {
+    return 'the archiveRequest condition secretary_handoff carries only kind and operation';
+  }
+  const operation = checkOperationRef(value['operation']);
+  return operation === null ? null : `the archiveRequest condition handoff operation: ${operation}`;
+}
+
 /**
  * Strict shape of `SessionArchiveRequestV1` (K3). The immutable choices, the
  * original actor and the receipt are all checked; the owner enforces the
@@ -579,7 +606,7 @@ function checkArchiveExecution(value: unknown): Problem {
 export function checkSessionArchiveRequest(value: unknown, ownProjectId: string): Problem {
   if (!isRecord(value)) return 'archiveRequest must be an object';
   if (!hasOnlyKeys(value, ['schemaVersion', 'requestId', 'requestedBy', 'requestedAt', 'reason', 'mode',
-    'tasks', 'wait', 'execution', 'executionPins', 'confirmUnknownStopped', 'receipt'])) {
+    'condition', 'tasks', 'wait', 'execution', 'executionPins', 'confirmUnknownStopped', 'receipt'])) {
     return 'archiveRequest carries unknown fields';
   }
   if (value['schemaVersion'] !== 1) return 'archiveRequest schemaVersion must be 1';
@@ -591,8 +618,22 @@ export function checkSessionArchiveRequest(value: unknown, ownProjectId: string)
   }
   if (!nonEmpty(value['requestedAt'])) return 'archiveRequest requestedAt is required';
   if (!nonEmpty(value['reason'])) return 'archiveRequest reason is required';
-  if (!['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete'].includes(String(value['mode']))) {
+  const mode = String(value['mode']);
+  if (!ARCHIVE_REQUEST_MODES.includes(mode)) {
     return 'archiveRequest mode is not recognized';
+  }
+  // The condition is part of the immutable request: the field is required (absence is damage, never "no
+  // condition"), `null` for every mode that takes none, and only a secretary mode may carry a non-null one.
+  if (!Object.prototype.hasOwnProperty.call(value, 'condition')) return 'archiveRequest condition is required';
+  const condition = value['condition'];
+  if (SECRETARY_ARCHIVE_MODES.includes(mode)) {
+    if (!isRecord(condition) || condition['kind'] !== mode) {
+      return 'archiveRequest condition must match its secretary mode';
+    }
+    const conditionProblem = checkArchiveCondition(condition);
+    if (conditionProblem !== null) return conditionProblem;
+  } else if (condition !== null) {
+    return 'the archiveRequest condition is only allowed for a secretary mode';
   }
   if (!Array.isArray(value['tasks'])) return 'archiveRequest tasks must be an array';
   for (const choice of value['tasks']) {
@@ -881,6 +922,21 @@ function validateRecord(
   return { status: 'decoded', value: record };
 }
 
+/**
+ * The `CoreOperation` record in `validateRecord`'s original order: its schema id and envelope first, then the body
+ * callback upgrades the arm once (`model/session-operation-arms.ts`) and checks the upgraded body. The same upgraded
+ * body is what a reader receives, so a saved position added later reads `null` and never `undefined`.
+ */
+function validateOperationRecord(record: EncodedRecord): DecodeResult<UnknownRecord> {
+  const out: { body: UnknownRecord | null } = { body: null };
+  const checked = validateRecord(record, 'CoreOperation', CORE_OPERATION_SCHEMA_ID, body => {
+    const upgraded = upgradeSessionOperationActionV1(body['action']);
+    out.body = upgraded === body['action'] ? body : { ...body, action: upgraded };
+    return checkSessionOperationBody(out.body);
+  });
+  return checked.status === 'decoded' && out.body !== null ? { status: 'decoded', value: out.body } : checked;
+}
+
 function validateEvent(
   event: EncodedDomainEvent,
   eventType: string,
@@ -964,14 +1020,43 @@ function checkCreatedEventBody(body: UnknownRecord): Problem {
 // The handoff and archive arm events (field tables)
 // --------------------------------------------------------------------------
 
+/** The arm upgrade applied to one event body's `action`; unchanged when there is nothing to upgrade. */
+function upgradeArmEventBody(body: unknown): unknown {
+  if (!isRecord(body)) return body;
+  const action = upgradeSessionOperationActionV1(body['action']);
+  return action === body['action'] ? body : { ...body, action };
+}
+
+/**
+ * The handoff and archive arm events: the field table checks the upgraded action, and decode and the registration
+ * return that same upgraded action. The envelope pipeline and its order are `persistence/event-codec-factory.ts`'s.
+ */
+function createArmEventCodec<const E extends string, const F extends Fields>(format: EventFormat<E, F>): EventCodec<E, F> {
+  const base = createEventCodec(format);
+  const envelope = createEnvelopeEventCodec<InferEvent<E, F>>({
+    eventType: format.eventType, schemaVersion: 1, jsonLabel: format.name,
+    bodyProblem: value => checkShape(format, upgradeArmEventBody(value), 'stored'),
+  });
+  return {
+    check: (value, phase = 'stored') => checkShape(format, upgradeArmEventBody(value), phase),
+    encode: event => base.encode(event),
+    decode(event) {
+      const decoded = envelope.decodeBody(event);
+      return decoded.status === 'decoded'
+        ? { status: 'decoded', value: upgradeArmEventBody(decoded.value) as InferEvent<E, F> } : decoded;
+    },
+    registration: envelope.registration,
+  };
+}
+
 /** Every write of a handoff operation appends it with the record's new revision; the write's result reads it. */
-export const sessionHandoffRecordedCodec = createEventCodec(defineEvent({
+export const sessionHandoffRecordedCodec = createArmEventCodec(defineEvent({
   name: 'SessionHandoffRecorded', eventType: 'SessionHandoffRecorded', schemaVersion: 1,
   fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
     phase: f.enumOf(OPERATION_PHASES), action: f.ref(HandoffActionShape) },
 }));
 /** The same for a secretary archive operation. */
-export const secretaryArchiveRecordedCodec = createEventCodec(defineEvent({
+export const secretaryArchiveRecordedCodec = createArmEventCodec(defineEvent({
   name: 'SecretaryArchiveRecorded', eventType: 'SecretaryArchiveRecorded', schemaVersion: 1,
   fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
     phase: f.enumOf(OPERATION_PHASES), action: f.ref(SecretaryArchiveActionShape) },
@@ -986,7 +1071,10 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
     {
       aggregateType: 'CoreOperation',
       schemaId: CORE_OPERATION_SCHEMA_ID,
-      validate: (record) => validateRecord(record, 'CoreOperation', CORE_OPERATION_SCHEMA_ID, checkSessionOperationBody),
+      validate: (record) => {
+        const checked = validateOperationRecord(record);
+        return checked.status === 'decoded' ? { status: 'decoded', value: record } : checked;
+      },
     },
     {
       aggregateType: 'Session',
@@ -1120,11 +1208,9 @@ export function encodeSessionCreatedEvent(event: SessionCreatedEvent): EncodedDo
 // --------------------------------------------------------------------------
 
 export function decodeSessionOperationRecord(record: EncodedRecord): DecodeResult<SessionOperationRecord> {
-  const checked = validateRecord(record, 'CoreOperation', CORE_OPERATION_SCHEMA_ID, checkSessionOperationBody);
+  const checked = validateOperationRecord(record);
   if (checked.status !== 'decoded') return checked;
-  const body = parseObject(record.json);
-  if (body === null) return invalid('CoreOperation record json is not an object');
-  return { status: 'decoded', value: body as unknown as SessionOperationRecord };
+  return { status: 'decoded', value: checked.value as unknown as SessionOperationRecord };
 }
 
 export function decodeSessionRecord(record: EncodedRecord): DecodeResult<SessionRecord> {

@@ -30,6 +30,8 @@ export type SecretaryRoundMaterialV1 = {
     text: string;
     selectedIdea: { round: QueryJobRef; index: number; title: string; detail: string } | null;
     relatedCards: { ref: VersionedRef; current: number | null }[];
+    /** The round's stored understanding command, projected from `round.job.understanding`. */
+    command: RequestUnderstandingCommandV1 | null;
 };
 /** The request facts frozen into a request round's prepared manifest. */
 export type SecretaryRequestManifestV1 = {
@@ -39,6 +41,29 @@ export type SecretaryRequestManifestV1 = {
     preparationCursor: CommitCursor;
     effectiveGoalId: string | null;
     executionKind: 'semantic_query' | 'initial_coordination';
+    /** The successor's brief operation, read by its own Session; `null` when there is none. */
+    briefRef: OperationRef | null;
+    /** The still-valid understanding grants, frozen once beside `briefRef`. */
+    understandingGrants: GoalRef[];
+};
+/**
+ * The one canonical `request_understanding` command: one unfinished root of
+ * the old secretary that a handoff operation's understanding generation covers,
+ * and the goals to cover with the pointer each was checked at. The operation's
+ * current generation is compared at prepare and start.
+ */
+export type RequestUnderstandingCommandV1 = {
+    kind: 'request_understanding';
+    /** `<handoffOp>:understanding:<generation>`. */
+    commandId: string;
+    operation: OperationRef;
+    generation: number;
+    /** One unfinished root of the old secretary this generation covers. */
+    requestRoot: QueryJobRef;
+    /** The goals to cover and the pointer each was checked at. */
+    goals: { goalRef: GoalRef; pointer: CurrentPointerRef; pointerRevision: number }[];
+    checkedRound: QueryRunRef | null;
+    state: 'live' | 'closed' | 'consumed';
 };
 export type QueryJobAnswerRef = {
     aggregateType: "QueryJobAnswer";
@@ -140,13 +165,15 @@ import { canonicalJson, sha256Hex, type JsonValue } from "./fingerprint.js";
 import type { RoleBindingRefV1 } from "./dispatch.js";
 import { validateRuntimeBudget, type RuntimeBudget } from './runtime-budget.js';
 import type { RoleConfigurationRef, SessionRef } from './core/identity.js';
+import type { OperationRef } from './core/operations.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RoleSpecResolutionV1 } from './role-spec-materials.js';
 import type { RunExecutionHistoryV1 } from './core/execution-history.js';
 import type { QueryRequestPromptFactsV1 } from './prompts/prompt-set.js';
 import type { GoalAutonomyV1 } from './goal-decisions.js';
 import type { CommitCursor } from './command-event.js';
-import type { VersionedRef } from './ledger.js';
+import type { GoalRef, VersionedRef } from './ledger.js';
+import type { CurrentPointerRef } from './note.js';
 import { validMaterialSourcePin } from './material-access.js';
 export type QueryTaskRef = {
     aggregateType: "Task";
@@ -182,7 +209,8 @@ export type RequestCommandReceiptV1 =
   | { kind: 'submit'; requestRoot: QueryJobRef; round: QueryJobRef; assignment: 'assigned'; secretary: SessionRef; created: boolean }
   | { kind: 'submit'; requestRoot: QueryJobRef; round: QueryJobRef; assignment: 'unassigned'; secretary: null; created: false }
   | { kind: 'route'; routingRound: QueryJobRef }
-  | { kind: 'select_idea' | 'ask'; followupRound: QueryJobRef; secretary: SessionRef | null };
+  | { kind: 'select_idea' | 'ask'; followupRound: QueryJobRef; secretary: SessionRef | null }
+  | { kind: 'understanding'; round: QueryJobRef };
 // ------------------------------------------------------------------------ //
 // Value types                                                                 //
 // ------------------------------------------------------------------------ //
@@ -376,6 +404,8 @@ export type QueryJobV1 = {
     enteredSession: SessionRef | null;
     intakeSession: SessionRef | null;
     receipt: RequestCommandReceiptV1 | null;
+    /** The round's understanding command; `null` on every other Query and every historical record. */
+    understanding: RequestUnderstandingCommandV1 | null;
 };
 // ------------------------------------------------------------------------ //
 // Events (query v1)                                                         //

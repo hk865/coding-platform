@@ -19,6 +19,7 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
@@ -39,6 +40,7 @@ import { decodePromptSetV1, type QueryRequestPromptFactsV1 } from '../../../cont
 import type {
   QueryExecutionStateV1, QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef,
   QueryJobSnapshot, QueryModelRequestV1, QueryModelUsageV1, QueryRunRef, QueryRunSnapshot,
+  SecretaryRequestManifestV1, SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
@@ -52,13 +54,17 @@ import {
 import { planQueryActivityWrite, queryActivityRefOf, queryActivitySourceOf } from '../model/query-activity-plan.js';
 import {
   decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey, SESSION_RECORD_SCHEMA_ID,
+  decodeSessionOperationRecord, operationRefKey,
 } from '../sessions/session-record-codecs.js';
+import { handoffFenceGuard, readHandoffFence } from '../sessions/session-handoff-fence.js';
+import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
 import {
   MAX_ATTESTATION_REASON_CHARS, advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf,
   settleQueryRunRecord, transitionQueryRunRecovery, type QueryAnswerCheck, type QueryRecoveryEffect, type QueryRecoveryEvent,
   type QueryRecoveryGuardContext, type QueryRecoveryPhase,
 } from '../state/query-run-recovery.js';
-import { recordEntered } from '../state/request-rounds.js';
+import { currentUnderstandingGeneration, foldUnderstandingCommand, liveUnderstandingGrants, recordEntered,
+  transitionUnderstandingCommand, type UnderstandingOperationFactsV1 } from '../state/request-rounds.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { SECRETARY_TAIL_RETRIES, type SecretaryProfileV1 } from '../model/request-contracts.js';
 import { readRequestRounds, type RequestRoundsFactsV1 } from './request-rounds-read.js';
@@ -68,7 +74,8 @@ import {
 } from './request-round-claims.js';
 import { contextAssemblyProblem, frozenSectionOrderProblem } from '../state/context-input.js';
 import {
-  bindSessionUnavailableCursor, occupySessionRecord, ownsQuery, releaseSessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
+  bindSessionUnavailableCursor, occupySessionRecord, ownsQuery, releaseSessionRecord, releaseUnenteredQuerySession,
+  sessionDispatchAdmissionProblem, sessionMachineStateOf,
   transitionSession, type SessionGuardContext, type SessionRelease, type SessionReleaseCause,
 } from '../state/session-availability.js';
 import {
@@ -1044,6 +1051,175 @@ async function replayOriginalThrough<T>(
 // The writer
 // --------------------------------------------------------------------------
 
+/**
+ * The distinct carrier Jobs `refs` name, in the order first named, in one batch
+ * read of this call: each decoded snapshot with the guard of its record. A
+ * carrier the batch did not return, or one that will not decode, is
+ * `unavailable`, never a default; `unaccounted` names the case where the batch
+ * reported neither a record nor a miss. Every call reads afresh.
+ */
+async function readCarrierJobs(
+  deps: { records: Pick<QueryExecutionDependencies['records'], 'readMany'> },
+  refs: readonly QueryJobRef[],
+  label: string,
+  unaccounted: (key: string) => string = key => `${label} Job ${key} is missing`,
+): Promise<{ status: 'ready'; jobs: QueryJobSnapshot[]; guards: RecordGuard[] } | CoreRejection> {
+  const keys = [...new Set(refs.map(queryJobRefKey))];
+  let carrierRead: Awaited<ReturnType<QueryExecutionDependencies['records']['readMany']>>;
+  try {
+    carrierRead = await deps.records.readMany(keys);
+  } catch (error) {
+    return rejectedWithNonEmptyCurrent('unavailable', `${label} Jobs read failed: ${messageOf(error)}`);
+  }
+  if (carrierRead.status !== 'ready') {
+    return rejectedWithNonEmptyCurrent('unavailable', `${label} Jobs read failed: ${carrierRead.code}: ${carrierRead.reason}`);
+  }
+  const present = new Map(carrierRead.value.records.map((record) => [record.refKey, record]));
+  const jobs: QueryJobSnapshot[] = [];
+  const guards: RecordGuard[] = [];
+  for (const key of keys) {
+    const record = present.get(key);
+    if (record === undefined) {
+      return rejectedWithNonEmptyCurrent('unavailable',
+        carrierRead.value.missing.includes(key) ? `${label} Job ${key} is missing` : unaccounted(key));
+    }
+    const decoded = decodeQueryJobSnapshot(record);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithNonEmptyCurrent('unavailable', `${label} Job ${key} is damaged: ${decoded.reason}`);
+    }
+    guards.push({ refKey: key, expectedRevision: record.revision });
+    jobs.push(decoded.value);
+  }
+  return { status: 'ready', jobs, guards };
+}
+
+/**
+ * The frozen material list `[round, ...batch]` in its frozen order, with each
+ * command projected from its carrier Job as it is now, and the guards of every
+ * carrier this read touched. A missing or damaged carrier is `unavailable`,
+ * never a default. The material is a shallow projection onto this read's
+ * decoded command: every consumer only reads it.
+ */
+export async function currentUnderstandingMaterials(
+  deps: { records: Pick<QueryExecutionDependencies['records'], 'readMany'> },
+  request: SecretaryRequestManifestV1,
+): Promise<{ status: 'ready'; materials: SecretaryRoundMaterialV1[]; guards: RecordGuard[] } | CoreRejection> {
+  const carriers: SecretaryRoundMaterialV1[] = [request.round, ...request.batch];
+  const read = await readCarrierJobs(deps, carriers.map((material) => material.ref), 'the frozen carrier');
+  if (read.status !== 'ready') return read;
+  const commandByKey = new Map(read.jobs.map((job) => [queryJobRefKey(job.ref), job.job.understanding]));
+  const materials = carriers.map((material) => ({
+    ...material,
+    command: commandByKey.get(queryJobRefKey(material.ref))!,
+  }));
+  return { status: 'ready', materials, guards: read.guards };
+}
+
+/**
+ * The distinct `command.operation`s of `materials` with their current facts and
+ * the guards of every operation record read. A missing or damaged operation, or
+ * one that is not a handoff, is `unavailable`, never an empty grant set.
+ */
+export async function currentUnderstandingOperations(
+  deps: { records: Pick<QueryExecutionDependencies['records'], 'readMany'> },
+  materials: readonly SecretaryRoundMaterialV1[],
+  owner: SessionRef | null,
+): Promise<{ status: 'ready'; operations: UnderstandingOperationFactsV1[]; guards: RecordGuard[] } | CoreRejection> {
+  const operationByKey = new Map<string, OperationRef>();
+  for (const material of materials) {
+    if (material.command === null) continue;
+    operationByKey.set(operationRefKey(material.command.operation), material.command.operation);
+  }
+  const operations: UnderstandingOperationFactsV1[] = [];
+  const guards: RecordGuard[] = [];
+  if (operationByKey.size === 0) return { status: 'ready', operations, guards };
+  let operationRead: Awaited<ReturnType<QueryExecutionDependencies['records']['readMany']>>;
+  try {
+    operationRead = await deps.records.readMany([...operationByKey.keys()]);
+  } catch (error) {
+    return rejectedWithNonEmptyCurrent('unavailable', `the understanding operations read failed: ${messageOf(error)}`);
+  }
+  if (operationRead.status !== 'ready') {
+    return rejectedWithNonEmptyCurrent('unavailable',
+      `the understanding operations read failed: ${operationRead.code}: ${operationRead.reason}`);
+  }
+  const operationRecords = new Map(operationRead.value.records.map((record) => [record.refKey, record]));
+  for (const [key, operationRef] of operationByKey) {
+    const record = operationRecords.get(key);
+    if (record === undefined) return rejectedWithNonEmptyCurrent('unavailable', `the understanding operation ${key} is missing`);
+    const decoded = decodeSessionOperationRecord(record);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithNonEmptyCurrent('unavailable', `the understanding operation ${key} is damaged: ${decoded.reason}`);
+    }
+    const operation = decoded.value;
+    if (operation.action.kind !== 'handoff') {
+      return rejectedWithNonEmptyCurrent('unavailable', `the understanding operation ${key} is not a handoff`);
+    }
+    guards.push({ refKey: key, expectedRevision: record.revision });
+    operations.push({
+      operation: operationRef,
+      generation: currentUnderstandingGeneration(operation),
+      source: operation.action.input.source,
+      ownsRoot: owner !== null && sameRef(owner, operation.action.input.source),
+    });
+  }
+  return { status: 'ready', operations, guards };
+}
+
+type EndCommitCarrierPlan = {
+  executing: QueryJobSnapshot;
+  records: EncodedRecord[];
+  guards: RecordGuard[];
+};
+
+/**
+ * the carrier Jobs of one entered request round, consumed in the ending
+ * commit. `executing` is the end commit's own next Job snapshot: when it is a
+ * carrier, its command transition is folded into that snapshot before encoding
+ * and its guard is the one the end commit already has. Every other carrier
+ * whose stored command is `live`/`closed` is an extra record at `revision + 1`
+ * with the revision just read; an already `consumed` command writes nothing.
+ * A missing or damaged carrier refuses the whole commit.
+ */
+async function endCommitCarriers(
+  deps: QueryExecutionDependencies,
+  manifest: SecretaryRequestManifestV1,
+  executing: QueryJobSnapshot,
+  occurredAt: string,
+): Promise<EndCommitCarrierPlan | CoreRejection> {
+  const executingKey = queryJobRefKey(executing.ref);
+  const read = await readCarrierJobs(
+    deps,
+    [manifest.round, ...manifest.batch].map((material) => material.ref),
+    'the ending carrier',
+    key => `the read batch neither returned nor reported missing the ending carrier Job ${key}`,
+  );
+  if (read.status !== 'ready') return read;
+  let nextExecuting = executing;
+  const records: EncodedRecord[] = [];
+  for (const job of read.jobs) {
+    const key = queryJobRefKey(job.ref);
+    const command = job.job.understanding;
+    if (key === executingKey) {
+      // Its guard is the end commit's own Job guard; never a second record. The
+      // settlement already advanced the snapshot once, so fold only the command
+      // state its own transition produced at `revision + 1`.
+      if (command !== null && command.state !== 'consumed') {
+        const transitioned = transitionUnderstandingCommand(job, {
+          commandId: command.commandId, to: 'consumed', occurredAt,
+        });
+        nextExecuting = foldUnderstandingCommand(nextExecuting, transitioned);
+      }
+      continue;
+    }
+    if (command === null || command.state === 'consumed') continue;
+    records.push(encodeQueryJobSnapshot(transitionUnderstandingCommand(job, {
+      commandId: command.commandId, to: 'consumed', occurredAt,
+    })));
+  }
+  return { executing: nextExecuting, records, guards: read.guards.filter((guard) => guard.refKey !== executingKey) };
+}
+
 export function createQueryExecution(deps: QueryExecutionDependencies): QueryExecutionPort {
   async function authorizeCurrent(ctx: CoreCallContext, core: Core): Promise<ReadResult<{
     configurationRevision: string;
@@ -1479,6 +1655,39 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
       { refKey: sessionAggregateRefKey(session.ref), expectedRevision: expected.session! },
     ];
+    // The Session's handoff fence is read at every start, before any commit. A
+    // held fence abandons a request round or settles a plain Query not_entered;
+    // only a commit that actually starts execution proves the slot empty.
+    const fence = await readHandoffFence(deps.records, owned, state.sessionRef);
+    if (fence.status !== 'ready') return fence;
+    if (fence.value.held && !isRequestRound(job)) {
+      if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query entry was cancelled before commit');
+      const occurredAt = deps.now();
+      const eventId = deps.eventId();
+      if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) {
+        return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
+      }
+      const settled = settleQueryRunRecord({ job, run }, {
+        settlement: { outcome: 'not_entered', closeMessage: 'session_handoff_fence' },
+        history: { kind: 'unchanged' }, occurredAt,
+      });
+      const released = releaseUnenteredQuerySession(session, run);
+      if (!released.ok) return rejectedWithNonEmptyCurrent(released.code, released.detail);
+      const settledRecord: QueryExecutionRecord = {
+        job: settled.job, run: settled.run, session: released.released ?? session, answer: null,
+      };
+      const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(settled.run), encodeQueryJobSnapshot(settled.job)];
+      if (released.released !== null) records.push(encodeSessionRecord(released.released));
+      const event = buildRecordedEvent({
+        eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
+        correlationId: job.job.intent.correlationId, operation: 'observed', result: settledRecord, run: settled.run,
+        endsUnstarted: true,
+      });
+      return commitBegin({
+        deps, identityKey, fingerprint, guards: pins, records,
+        events: [encodeQueryExecutionRecordedEvent(event)], operation: 'observed',
+      }, cursor => abandonedStartAnswer({ status: 'committed', value: settledRecord, replayed: false, cursor }));
+    }
     // A request round starts only on its request's owner. The facts are read
     // here and every one of them is guarded by the start commit itself.
     let requestFacts: RequestRoundsFactsV1 | null = null;
@@ -1486,7 +1695,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       const factsRead = await readRoundFacts(owned, job);
       if (factsRead.status !== 'ready') return toRejection(factsRead);
       requestFacts = factsRead.value;
-      const check = requestStartCheck(requestFacts, state.sessionRef);
+      const check = fence.value.held ? { kind: 'abandon' as const, trigger: 'fenced' as const }
+        : requestStartCheck(requestFacts, state.sessionRef);
       if (check.kind === 'abandon') {
         if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query entry was cancelled before commit');
         const occurredAt = deps.now();
@@ -1515,6 +1725,52 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const loaded = await loadQueryManifest(deps.bodies, prepared as unknown as PreparedQueryExecution);
     if (loaded.status !== 'ready') return toRejection(loaded);
     const manifest = loaded.value.manifest;
+    // A request round restores the frozen grant set and re-runs the same rule on
+    // the current carrier commands and operations. A difference is stale: this
+    // start itself ends the attempt atomically and leaves the next preparation
+    // to the driver; the old manifest is never edited. No difference guards
+    // every carrier and operation record in the entering commit.
+    let frozenGrantGuards: RecordGuard[] = [];
+    if (requestFacts !== null) {
+      if (manifest.request === null) return rejectedWithNonEmptyCurrent('invalid', "a request round's manifest carries no request");
+      const materialRead = await currentUnderstandingMaterials(deps, manifest.request);
+      if (materialRead.status !== 'ready') return materialRead;
+      const operationRead = await currentUnderstandingOperations(deps, materialRead.materials, requestFacts.owner);
+      if (operationRead.status !== 'ready') return operationRead;
+      const current = { materials: materialRead.materials, operations: operationRead.operations,
+        guards: [...materialRead.guards, ...operationRead.guards] };
+      const grants = [...liveUnderstandingGrants({
+        materials: current.materials, requestRoot: manifest.request.requestRoot, operations: current.operations,
+      })];
+      if (!sameRef(grants, manifest.request.understandingGrants)) {
+        if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query entry was cancelled before commit');
+        const occurredAt = deps.now();
+        const eventId = deps.eventId();
+        const newRunEventId = deps.eventId();
+        if (!nonEmpty(occurredAt) || !nonEmpty(eventId) || !nonEmpty(newRunEventId)) {
+          return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
+        }
+        const plan = requestRetry({ records: { job, run }, facts: requestFacts, occurredAt });
+        if ('status' in plan) return plan;
+        const released = releaseUnenteredQuerySession(session, run);
+        if (!released.ok) return rejectedWithNonEmptyCurrent(released.code, released.detail);
+        const guards = mergeGuards([...pins, ...plan.guards]);
+        if (!guards.ok) return guards.rejection;
+        const migrated: QueryExecutionRecord = {
+          job: plan.job, run: plan.oldRun, session: released.released ?? session, answer: null,
+        };
+        const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(plan.oldRun), encodeQueryRunSnapshotRecord(plan.newRun),
+          encodeQueryJobSnapshot(plan.job)];
+        if (released.released !== null) records.push(encodeSessionRecord(released.released));
+        return await commitBegin({
+          deps, identityKey, fingerprint, guards: guards.guards, records, claims: plan.claims,
+          events: newAttemptEvents({ eventIds: [newRunEventId, eventId], identityKey, fingerprint, actor, occurredAt, requestId,
+            correlationId: job.job.intent.correlationId, result: migrated, oldRun: plan.oldRun, newRun: plan.newRun }),
+          operation: 'observed',
+        }, cursor => abandonedStartAnswer({ status: 'committed', value: migrated, replayed: false, cursor }));
+      }
+      frozenGrantGuards = current.guards;
+    }
     const authorized = await authorizeCurrent(owned, { job, run, session });
     if (authorized.status !== 'ready') return toRejection(authorized);
     if (authorized.value.configurationRevision !== manifest.hostConfigurationRevision
@@ -1565,14 +1821,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     });
     const entered = (cursor: CommitCursor): WriteResult<QueryEntryTicket> => ({ status: 'committed', value: ticket, replayed: false, cursor });
     if (startPlan === null) {
+      const guards = mergeGuards([...pins, ...frozenGrantGuards]);
+      if (!guards.ok) return guards.rejection;
       return commitBegin({
-        deps, identityKey, fingerprint, guards: pins,
+        deps, identityKey, fingerprint, guards: guards.guards,
         records: [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)],
         events: [encodeQueryExecutionRecordedEvent(event)],
+        claims: [handoffFenceGuard(state.sessionRef)],
         operation: 'entering',
       }, entered);
     }
-    const guards = mergeGuards([...pins, ...startPlan.guards]);
+    const guards = mergeGuards([...pins, ...startPlan.guards, ...frozenGrantGuards]);
     if (!guards.ok) return guards.rejection;
     const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(startPlan.job)];
     // One event per QueryRun the commit writes: each absorbed pending Run, which
@@ -1591,7 +1850,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     }
     events.push(encodeQueryExecutionRecordedEvent(event));
     const committed = await commitBegin({
-      deps, identityKey, fingerprint, guards: guards.guards, records, events, claims: startPlan.claims, operation: 'entering',
+      deps, identityKey, fingerprint, guards: guards.guards, records, events,
+      claims: [...startPlan.claims, handoffFenceGuard(state.sessionRef)], operation: 'entering',
     }, entered);
     return lostStartRace(committed, raced) ? beginEntry(ctx, request, raced + 1) : committed;
   }
@@ -1865,6 +2125,36 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     };
   }
 
+  /**
+   * For an entered request round: the carriers it used are consumed and
+   * the `round_ended` companion is written in the ending commit. The executing
+   * Job is folded into `nextJob` and written once by the caller.
+   */
+  async function endOfRoundPlan(
+    queryRunRef: QueryRunRef, prepared: QueryExecutionStateV1['prepared'], sessionRef: SessionRef,
+    nextJob: QueryJobSnapshot, nextRun: QueryRunSnapshot, occurredAt: string,
+  ): Promise<{ job: QueryJobSnapshot; records: EncodedRecord[]; guards: RecordGuard[] } | CoreRejection> {
+    if (prepared === null) return rejectedWithNonEmptyCurrent('incomplete', 'the entered QueryRun has no persisted preparation');
+    const loaded = await loadQueryManifest(deps.bodies, {
+      queryRunRef, bundleRef: prepared.bundleRef, inputDigest: prepared.inputDigest,
+    });
+    if (loaded.status !== 'ready') return toRejection(loaded);
+    if (loaded.value.manifest.request === null) {
+      return rejectedWithNonEmptyCurrent('invalid', "a request round's manifest carries no request");
+    }
+    const carriers = await endCommitCarriers(deps, loaded.value.manifest.request, nextJob, occurredAt);
+    if ('status' in carriers) return carriers;
+    const ended = await planSessionActivityAdvance(deps.records, {
+      sessionRef, at: occurredAt, kind: 'round_ended', source: nextRun.ref,
+    });
+    if (!ended.ok) return ended.rejection;
+    return {
+      job: carriers.executing,
+      records: [...carriers.records, ended.record],
+      guards: [...carriers.guards, activityGuardOf(ended.guard)],
+    };
+  }
+
   async function recordObservation(
     ctx: CoreCallContext,
     request: GraphWrite<QueryHistoryObservation>,
@@ -1931,14 +2221,43 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       const nextJob = isRequestRound(job) ? enteredJob(job, run) : job;
       const jobWritten = nextJob.revision !== job.revision;
       const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session, answer: null };
+      // the entered confirmation consumes the frozen brief in the SAME
+      // commit that proves entry. A non-null briefRef without the port is
+      // unavailable (never "no brief"); a failed read or guard conflict refuses
+      // the commit, so the QueryRun stays entering.
+      if (state.prepared === null) return rejectedWithNonEmptyCurrent('incomplete', 'the entered QueryRun has no persisted preparation');
+      const loaded = await loadQueryManifest(deps.bodies, {
+        queryRunRef, bundleRef: state.prepared.bundleRef, inputDigest: state.prepared.inputDigest,
+      });
+      if (loaded.status !== 'ready') return toRejection(loaded);
+      const briefRef = loaded.value.manifest.request === null ? null : loaded.value.manifest.request.briefRef;
+      const briefRecords: EncodedRecord[] = [];
+      const briefGuards: RecordGuard[] = [];
+      if (briefRef !== null) {
+        if (deps.brief === undefined) {
+          return rejectedWithNonEmptyCurrent('unavailable', 'the hand-off brief port is not injected');
+        }
+        const consumed = await deps.brief.consume(owned, { operation: briefRef, queryRun: queryRunRef, at: occurredAt });
+        if (consumed.status !== 'ready') return consumed;
+        briefRecords.push(consumed.value.record);
+        briefGuards.push(consumed.value.guard);
+      }
+      const merged = mergeGuards([
+        ...guards,
+        ...(jobWritten ? [{ refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision }] : []),
+        ...briefGuards,
+      ]);
+      if (!merged.ok) return merged.rejection;
       const event = buildRecordedEvent({
         eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
         correlationId: job.job.intent.correlationId, operation: 'entered', result: nextRecord, run: nextRun,
       });
       return commitOperation({
         deps, identityKey, fingerprint,
-        guards: jobWritten ? [...guards, { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision }] : guards,
-        records: jobWritten ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)] : [encodeQueryRunSnapshotRecord(nextRun)],
+        guards: merged.guards,
+        records: jobWritten
+          ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob), ...briefRecords]
+          : [encodeQueryRunSnapshotRecord(nextRun), ...briefRecords],
         events: [encodeQueryExecutionRecordedEvent(event)],
         value: nextRecord, operation: 'entered',
       });
@@ -1980,18 +2299,29 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const occurredAt = deps.now();
     const next = settledRecords({ job, run, session }, state.phase, settled.effects, occurredAt);
     if ('status' in next) return next;
-    const nextRecord: QueryExecutionRecord = { job: next.job, run: next.run, session: next.session ?? session, answer: next.answer };
+    // an entered request round consumes the carriers it used and writes
+    // `round_ended` in this same closing commit. The executing Job is folded in
+    // and encoded once; a plain Query has neither.
+    let ending: { job: QueryJobSnapshot; records: EncodedRecord[]; guards: RecordGuard[] } =
+      { job: next.job, records: [], guards: [] };
+    if (isRequestRound(job)) {
+      const planned = await endOfRoundPlan(queryRunRef, state.prepared, state.sessionRef, next.job, next.run, occurredAt);
+      if ('status' in planned) return planned;
+      ending = planned;
+    }
+    const nextRecord: QueryExecutionRecord = { job: ending.job, run: next.run, session: next.session ?? session, answer: next.answer };
     // L16: the tally rides in this closing commit; no extra event accompanies it.
-    const activityPlan = await plannedQueryActivity(next.job, next.run, fact.activity, occurredAt);
+    const activityPlan = await plannedQueryActivity(ending.job, next.run, fact.activity, occurredAt);
     if (!('records' in activityPlan)) return activityPlan;
     const event = buildRecordedEvent({
       eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
       correlationId: job.job.intent.correlationId, operation: 'observed', result: nextRecord, run: next.run,
     });
-    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(next.run), encodeQueryJobSnapshot(next.job)];
+    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(next.run), encodeQueryJobSnapshot(ending.job)];
     if (next.answer !== null) records.push(encodeQueryJobAnswerSnapshot(next.answer));
     if (next.session !== null) records.push(encodeSessionRecord(next.session));
     records.push(...activityPlan.records);
+    records.push(...ending.records);
     // The Answer's event first, then the settled Run's, which carries the result a replay restores.
     const events: import('../../record-store/ports.js').EncodedDomainEvent[] = [];
     if (next.answer !== null) {
@@ -2011,6 +2341,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     ];
     if (next.answer !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(next.answer.ref), expectedRevision: null });
     terminalGuards.push(...activityPlan.guards);
+    terminalGuards.push(...ending.guards);
     return commitOperation({
       deps, identityKey, fingerprint, guards: terminalGuards, records, events, value: nextRecord, operation: 'observed',
     });
@@ -2140,10 +2471,19 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // L16: only the two rows whose QueryRun entered the Kernel carry a tally;
     // QRR-01/02 wrote none and QRR-05 marks the Run unknown.
     let activityPlan: { records: EncodedRecord[]; guards: RecordGuard[] } = { records: [], guards: [] };
+    let ending: { job: QueryJobSnapshot; records: EncodedRecord[]; guards: RecordGuard[] } =
+      { job: nextJob, records: [], guards: [] };
     if (event.kind === 'query_reconcile_interrupted_clean' || event.kind === 'query_unknown_attested') {
       const planned = await plannedQueryActivity(nextJob, nextRun, activity, occurredAt);
       if (!('records' in planned)) return planned;
       activityPlan = planned;
+      // QRR-04/QRR-06: the same carrier consumption and round_ended companion.
+      if (isRequestRound(job)) {
+        const end = await endOfRoundPlan(queryRunRef, state.prepared, state.sessionRef, nextJob, nextRun, occurredAt);
+        if ('status' in end) return end;
+        ending = end;
+        nextJob = ending.job;
+      }
     }
     const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session: nextSession ?? session, answer: null };
     // One event per QueryRun the commit writes: a new attempt's pending Run first, then this one.
@@ -2157,12 +2497,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (nextJob.revision !== job.revision) records.push(encodeQueryJobSnapshot(nextJob));
     if (nextSession !== null) records.push(encodeSessionRecord(nextSession));
     records.push(...activityPlan.records);
+    records.push(...ending.records);
     const guards = mergeGuards([
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
       { refKey: sessionAggregateRefKey(session.ref), expectedRevision: session.revision },
       ...requestGuards,
       ...activityPlan.guards,
+      ...ending.guards,
     ]);
     if (!guards.ok) return guards.rejection;
     return commitOperation({ deps, identityKey, fingerprint, guards: guards.guards, records, claims,

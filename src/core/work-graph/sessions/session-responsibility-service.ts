@@ -47,6 +47,16 @@ import {
   type ResponsibilityStateV1,
 } from '../state/session-responsibility.js';
 
+/** The saved four numbers of one handoff transfer plus the task it moves. */
+export type SavedTransferInputV1 = {
+  requestId: string; from: SessionRef; to: SessionRef; target: WorkLinkTarget;
+  expected: { fromSession: number; toSession: number; sourceLink: number; destinationLink: number };
+};
+export interface SessionResponsibilityReceiptReadPort {
+  /** Read only, never attempts: the committed transfer under the saved identity, or `not_found`. */
+  readTransferReceipt(ctx: CoreCallContext, saved: SavedTransferInputV1):
+    Promise<WriteResult<{ from: SessionWorkLink; to: SessionWorkLink }>>;
+}
 export interface SessionResponsibilityPort {
   transferSessionResponsibility(ctx: CoreCallContext, request: GraphWrite<{
     from: SessionRef; to: SessionRef; target: WorkLinkTarget;
@@ -79,7 +89,18 @@ function mapReadFailure<T>(result: ReadResult<T>): CoreRejection {
   return reject('unavailable', 'the responsibility facts are not ready at the requested read window');
 }
 
-function responsibleLinkRef(session: SessionRef, target: WorkLinkTarget) {
+/** The four pins in the order the transfer child's `meta.expected` uses; a `0` is the legal absent revision. */
+export function transferPinsOf(saved: SavedTransferInputV1): VersionPin[] {
+  return [
+    { ref: plainSessionRefToAggregate(saved.from), revision: saved.expected.fromSession },
+    { ref: plainSessionRefToAggregate(saved.to), revision: saved.expected.toSession },
+    { ref: responsibleLinkRef(saved.from, saved.target), revision: saved.expected.sourceLink },
+    { ref: responsibleLinkRef(saved.to, saved.target), revision: saved.expected.destinationLink },
+  ];
+}
+
+/** The one `responsible` link ref of a transfer's source or destination Session. */
+export function responsibleLinkRef(session: SessionRef, target: WorkLinkTarget) {
   return { ...session, aggregateType: 'SessionWorkLink' as const, target, relation: 'responsible' as const };
 }
 
@@ -102,7 +123,8 @@ function destinationEligible(session: SessionRecord): boolean {
   return session.provenance.kind !== 'readonly_copy';
 }
 
-export function createSessionResponsibilityService(stores: SessionResponsibilityStores): SessionResponsibilityPort {
+export function createSessionResponsibilityService(stores: SessionResponsibilityStores):
+  SessionResponsibilityPort & SessionResponsibilityReceiptReadPort {
   const { records, basis, now } = stores;
 
   function linkAt(recordsIn: readonly { refKey: string; json: string }[], key: string): SessionWorkLink | null | CoreRejection {
@@ -839,8 +861,35 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     return { status: 'committed', value: boundClosed(effect.closed, committed.cursor), replayed: false, cursor: committed.cursor };
   }
 
+  async function readTransferReceipt(
+    ctx: CoreCallContext, saved: SavedTransferInputV1,
+  ): Promise<WriteResult<{ from: SessionWorkLink; to: SessionWorkLink }>> {
+    const trusted: TrustedContext = trustedContext(ctx, 'a Session responsibility read');
+    if (!trusted.ok) return trusted.rejection;
+    const { scope, actor } = trusted;
+    if (ctx.signal?.aborted) return reject('cancelled', 'the transfer receipt read was cancelled');
+    const fromKey = sessionAggregateRefKey(plainSessionRefToAggregate(saved.from));
+    const toKey = sessionAggregateRefKey(plainSessionRefToAggregate(saved.to));
+    const sourceLinkKey = sessionWorkLinkRefKey(responsibleLinkRef(saved.from, saved.target));
+    const destinationLinkKey = sessionWorkLinkRefKey(responsibleLinkRef(saved.to, saved.target));
+    const expected: VersionPin[] = transferPinsOf(saved);
+    const pins = normalizeFourPins(expected, scope, {
+      fromKey, toKey, sourceLinkKey, destinationLinkKey, from: saved.from, to: saved.to, target: saved.target,
+    });
+    if (!pins.ok) return reject('invalid', pins.reason);
+    const identityKey = identityKeyOf('session-responsibility-transfer:', actor, scope, saved.requestId);
+    const fingerprint = fingerprintOf('session-responsibility-transfer-request', actor, scope, {
+      from: saved.from, to: saved.to, target: saved.target,
+    }, expected);
+    const found = await records.lookupCommit({ identityKey, fingerprint });
+    if (found.status === 'ready') return readTransferResult(found.value, scope, fromKey);
+    if (found.code === 'not_found') return reject('not_found', 'the transfer receipt has not been committed');
+    return mapStoreFailure(found);
+  }
+
   return {
     transferSessionResponsibility,
+    readTransferReceipt,
     disposeArchiveResponsibility,
     closeTerminalResponsibility,
   };

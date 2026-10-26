@@ -151,7 +151,7 @@ export type RequestAttemptPlan = {
 export function requestAbandon(input: {
   records: QueryLifecycleRecords;
   facts: RequestRoundsFactsV1;
-  trigger: 'owner_changed' | 'owner_archived';
+  trigger: 'owner_changed' | 'owner_archived' | 'fenced';
   session: SessionRecord;
   occurredAt: string;
 }): (RequestAttemptPlan & { session: SessionRecord | null }) | CoreRejection {
@@ -202,7 +202,7 @@ export function requestDroppedEnd(input: {
 // ------------------------------------------------------------------------ //
 
 function attemptPlan(
-  records: QueryLifecycleRecords, facts: RequestRoundsFactsV1, trigger: 'owner_changed' | 'owner_archived' | 'not_entered',
+  records: QueryLifecycleRecords, facts: RequestRoundsFactsV1, trigger: 'owner_changed' | 'owner_archived' | 'not_entered' | 'fenced',
   releaseIntake: boolean, occurredAt: string,
 ): RequestAttemptPlan | CoreRejection {
   if (roundOf(facts, records.job.ref) === undefined) return invalid('the round is not a round of its request');

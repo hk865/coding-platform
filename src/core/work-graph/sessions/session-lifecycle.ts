@@ -47,6 +47,7 @@ import type {
   RequestSessionArchiveInput, SessionArchiveRequestV1,
 } from '../../../contracts/core/session-archive.js';
 import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
@@ -54,9 +55,13 @@ import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { hasOnlyKeys, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
+  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
+import { mergeGuards } from '../persistence/record-guards.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import type {
+  ConditionCheckV1, SecretaryArchiveConditionCommitV1, SecretaryArchiveConditionPort,
+} from '../model/secretary-lifecycle-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type {
   ArchiveSessionInput, LinkSessionWorkInput, SessionLifecyclePort,
@@ -256,7 +261,16 @@ function sessionWrite(
 // The service
 // --------------------------------------------------------------------------
 
-export function createSessionLifecycleService(stores: SessionLifecycleStores): SessionLifecyclePort {
+/**
+ * The archive condition port is optional in the factory's type: a composition that archives no conditioned line
+ * may leave it out, and a conditioned archive then fails `unavailable` instead of committing without its
+ * condition. The composition root passes the handoff facts' `checkArchiveCondition` straight in.
+ */
+export type SessionLifecycleServiceStores = SessionLifecycleStores & {
+  archiveCondition?: SecretaryArchiveConditionPort | null;
+};
+
+export function createSessionLifecycleService(stores: SessionLifecycleServiceStores): SessionLifecyclePort {
   const records: GoalRecordTransactionPort = stores.records;
   const lookups: RecordLookupPort = stores.lookups;
   // Slice 1 §3.3: the injected Session facts port the archive entries use.
@@ -663,7 +677,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
   type ArchiveChoiceProblem = { code: CoreError; reason: string };
 
   const ARCHIVE_MODES: readonly SessionArchiveRequestV1['mode'][] =
-    ['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete'];
+    ['operator', 'executor_idle', 'retired', 'answered_copy', 'handoff_complete', 'secretary_handoff'];
 
   /** Structural Task/wait choice checks only; the Task state itself is the Workflow's. */
   function checkArchiveChoices(
@@ -954,6 +968,9 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
       requestedAt: now,
       reason: input.reason,
       mode,
+      // The trusted condition rides the request unchanged; absent input is the request's explicit `null`, and
+      // the codec refuses a non-null one on a mode that takes none.
+      condition: input.condition ?? null,
       tasks: input.tasks,
       wait: input.wait,
       execution: derived.execution,
@@ -1040,6 +1057,9 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     const fingerprint = fingerprintOf('session-archive-request', actor, scope, {
       sessionRef: input.sessionRef, reason: input.reason, tasks: input.tasks, wait: input.wait,
       confirmUnknownStopped: input.confirmUnknownStopped === true, mode,
+      // The condition is part of the request's identity: a retry that changed it is a different request,
+      // and a recovered archive re-checks the condition it was registered with.
+      condition: input.condition ?? null,
     }, owned.expected);
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session archive request was cancelled before lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
@@ -1079,6 +1099,9 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     const fingerprint = fingerprintOf('session-archive-request', actor, scope, {
       sessionRef: input.sessionRef, reason: input.reason, tasks: input.tasks, wait: input.wait,
       confirmUnknownStopped: input.confirmUnknownStopped === true, mode,
+      // The condition is part of the request's identity: a retry that changed it is a different request,
+      // and a recovered archive re-checks the condition it was registered with.
+      condition: input.condition ?? null,
     }, owned.expected);
     const found = await records.lookupCommit({ identityKey, fingerprint });
     if (found.status !== 'ready') {
@@ -1138,6 +1161,31 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     return request;
   }
 
+  /**
+   * The final archive's condition re-check (`C/core/session-archive.ts`): the stored request carries the trusted
+   * condition (a condition is part of its identity), so every final commit — the first attempt and the recovery
+   * after a crashed one alike — calls the injected condition port and merges the one fragment it returns. A conditioned
+   * request without the injected port is `unavailable`: never a silent success and never an archive without its
+   * condition. The check's failure is the archive's conflict; the caller re-reads and retries.
+   */
+  async function readArchiveConditionCheck(
+    ctx: CoreCallContext, session: SessionRef, condition: NonNullable<SessionArchiveRequestV1['condition']>,
+  ): Promise<ConditionCheckV1 | CoreRejection> {
+    const port = stores.archiveCondition ?? null;
+    if (port === null) {
+      return reject('unavailable',
+        'the archive condition port is not installed, so a conditioned archive cannot be finalised');
+    }
+    let checked: Awaited<ReturnType<SecretaryArchiveConditionPort['check']>>;
+    try {
+      checked = await port.check(ctx, { condition, session });
+    } catch (error) {
+      return reject('unavailable', `the archive condition check failed: ${messageOf(error)}`);
+    }
+    if (checked.status !== 'ready') return mapReadFailure(checked);
+    return checked.value;
+  }
+
   async function runArchiveStepAttempt(args: {
     ctx: CoreCallContext; scope: WorkspaceScope; step: ArchiveStepRefV1; request: SessionArchiveRequestV1;
     identity: { identityKey: string; fingerprint: string; eventId: string };
@@ -1167,6 +1215,24 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     // same revision+1 record; the `clear_archive_request` effect is that clear.
     const nextSession = archiveSessionRecord(session, new Date().toISOString());
     const occurredAt = new Date().toISOString();
+    // Final archive condition: the stored condition is re-checked on the final commit and contributes exactly one
+    // fragment — its guards (the source and the `SessionActivity` revision), its
+    // fence claim and its first read horizon as `ledgerHorizon`, never as a guard.
+    const condition = request.condition ?? null;
+    let conditionCommit: SecretaryArchiveConditionCommitV1 | null = null;
+    if (condition !== null) {
+      const checked = await readArchiveConditionCheck(ctx, step.sessionRef, condition);
+      if ('status' in checked) return checked;
+      if (!checked.ok) return reject('revision_conflict', `archive_condition_failed: ${checked.reason}`);
+      conditionCommit = checked.commit;
+    }
+    const merged = mergeGuards([
+      { refKey: sessionKey, expectedRevision: session.revision },
+      ...(conditionCommit === null ? [] : conditionCommit.guards),
+    ]);
+    if (!merged.ok) return merged.rejection;
+    const claims: UniqueClaimChange[] = conditionCommit === null || conditionCommit.fence === null
+      ? [] : [conditionCommit.fence];
     const event: SessionLifecycleChangedEventV1 = {
       eventId: identity.eventId,
       eventType: SESSION_ARCHIVED_EVENT,
@@ -1179,12 +1245,13 @@ export function createSessionLifecycleService(stores: SessionLifecycleStores): S
     const prepared: PreparedCommit = {
       identityKey: identity.identityKey,
       fingerprint: identity.fingerprint,
-      guards: [{ refKey: sessionKey, expectedRevision: session.revision }],
+      guards: merged.guards,
       records: [encodeSessionRecord(nextSession)],
-      claims: [],
+      claims,
       indexGuards: [],
       indexChanges: [],
       events: [encodeSessionLifecycleChangedEvent(event)],
+      ...(conditionCommit === null ? {} : { ledgerHorizon: conditionCommit.ledgerHorizon }),
     };
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session archive step was cancelled before commit');
     let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;

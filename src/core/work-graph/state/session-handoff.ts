@@ -9,9 +9,13 @@
  * source's), and unfinished work (another handoff or archive of the same source). The owner runs the first three
  * steps before it reads (`read: null`), then all of them on its facts.
  */
+import type { ActorRef } from '../../../contracts/command-event.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError } from '../../../contracts/core/results.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { QueryJobRef, QueryRunRef, RequestUnderstandingCommandV1 } from '../../../contracts/query-job.js';
+import { sameRef } from './ref-equality.js';
 import { reject, type Rejected } from './transition.js';
 
 /** The caller as the owner classified its principal. */
@@ -105,6 +109,7 @@ export function newHandoffOperationRecord<Ref, Input extends {
       progress: {
         stage: 'accepted' as const, advanceGeneration: 1, fence: null, stoppedWriter: null,
         assignments: facts.input.assignments.map(assignment => ({ successor: null, createOperation: null,
+          createInput: null,
           transfers: assignment.tasks.map(task => ({ task: task as Task, input: null, receipt: null })) })),
         coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
         lastRefusal: null,
@@ -131,9 +136,10 @@ export function admitSecretaryArchive(facts: SecretaryArchiveAdmissionFactsV1): 
 }
 
 /** The accepted archive: revision 1, one item per choice with every step ahead `null`. */
-export function newSecretaryArchiveOperationRecord<Ref, Input extends { choices: readonly { requestRoot: unknown }[] }>(
-  facts: { ref: Ref; workspaceId: string; at: string; input: Input },
-) {
+export function newSecretaryArchiveOperationRecord<Ref, Input extends {
+  choices: readonly { requestRoot: unknown }[];
+  actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
+}>(facts: { ref: Ref; workspaceId: string; at: string; input: Input }) {
   type Root = Input['choices'][number]['requestRoot'];
   return {
     ref: facts.ref, revision: 1, workspaceId: facts.workspaceId,
@@ -148,4 +154,143 @@ export function newSecretaryArchiveOperationRecord<Ref, Input extends { choices:
     },
     phase: 'accepted' as const, requestedAt: facts.at, updatedAt: facts.at, observation: null, failure: null,
   };
+}
+
+/**
+ * The structural record the saved-position writes read and copy. State is pure
+ * and imports no model type, so the exact saved inputs stay the caller's types
+ * and are written by name only.
+ */
+type SavedPositionRecord = {
+  ref: unknown;
+  revision: number;
+  updatedAt: string;
+  action: {
+    progress: {
+      assignments?: readonly { createInput: unknown; [key: string]: unknown }[];
+      understanding?: readonly { generation: number; requestRoot: unknown; round: unknown; command: unknown;
+        [key: string]: unknown }[];
+      archiveRequest: null | { requestId: string; savedInput: unknown;
+        receipt: { identityKey: string; fingerprint: string } | null; [key: string]: unknown };
+      brief?: null | { requests: readonly unknown[]; goals: readonly unknown[]; ready: boolean; consumedBy: unknown;
+        [key: string]: unknown };
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+/**
+ * The action whose progress is the advance's one write. The owner builds the
+ * progress value; this constructor is the only place the protected field is
+ * assigned outside the accept constructors.
+ */
+export function withHandoffProgress<A extends { progress: unknown }>(action: A, progress: A['progress']): A {
+  return { ...action, progress };
+}
+
+/** Save the successor's exact `ensureLine` input under its assignment, before the child call. */
+export function saveHandoffCreateInput<R extends SavedPositionRecord, SavedInput>(
+  record: R, index: number, input: SavedInput,
+): R {
+  const assignment = record.action.progress.assignments?.[index];
+  if (assignment === undefined) throw new Error(`saveHandoffCreateInput: assignment ${index} does not exist`);
+  const assignments = (record.action.progress.assignments ?? []).map((entry, position) =>
+    position === index ? { ...entry, createInput: input } : entry);
+  return { ...record, action: { ...record.action,
+    progress: { ...record.action.progress, assignments } } } as R;
+}
+
+/** Save the understanding command under its generation, before the append; a new generation appends. */
+export function saveUnderstandingCommand<R extends SavedPositionRecord>(
+  record: R, entry: { generation: number; requestRoot: QueryJobRef; command: RequestUnderstandingCommandV1 },
+): R {
+  const understanding = record.action.progress.understanding ?? [];
+  const found = understanding.findIndex(item => item.generation === entry.generation);
+  const next = found < 0
+    ? [...understanding, { generation: entry.generation, requestRoot: entry.requestRoot, round: null, command: entry.command }]
+    : understanding.map((item, position) => position === found ? { ...item, command: entry.command } : item);
+  return { ...record, action: { ...record.action,
+    progress: { ...record.action.progress, understanding: next } } } as R;
+}
+
+/** Save the archive owner's exact `GraphWrite` before the child call, keeping any existing receipt. */
+export function saveArchiveSavedInput<R extends SavedPositionRecord, SavedInput>(
+  record: R, requestId: string, savedInput: SavedInput,
+): R {
+  const current = record.action.progress.archiveRequest;
+  return { ...record, action: { ...record.action, progress: { ...record.action.progress,
+    archiveRequest: { requestId, savedInput, receipt: current === null ? null : current.receipt } } } } as R;
+}
+
+/** Record the archive registration's returned receipt; it is never recomputed here. */
+export function saveArchiveReceipt<R extends SavedPositionRecord>(
+  record: R, receipt: { identityKey: string; fingerprint: string },
+): R {
+  const current = record.action.progress.archiveRequest;
+  if (current === null) throw new Error('saveArchiveReceipt: the archive request was not saved');
+  return { ...record, action: { ...record.action, progress: { ...record.action.progress,
+    archiveRequest: { ...current, receipt } } } } as R;
+}
+
+/**
+ * The entered confirmation's consumption transition: the operation record with
+ * `brief.consumedBy` set and the guard that pins the revision it was read at.
+ * It writes no event; the caller merges the record and the guard.
+ */
+export function consumeHandoffBrief<R extends SavedPositionRecord>(
+  record: R, run: QueryRunRef, at: string,
+): { record: R; guard: { refKey: string; expectedRevision: number } } {
+  const brief = record.action.progress.brief;
+  if (brief === null || brief === undefined || !brief.ready || brief.consumedBy !== null) {
+    throw new Error('consumeHandoffBrief: the operation has no ready unconsumed brief');
+  }
+  return {
+    record: { ...record, revision: record.revision + 1, updatedAt: at,
+      action: { ...record.action, progress: { ...record.action.progress,
+        brief: { ...brief, consumedBy: run } } } } as R,
+    guard: { refKey: canonicalKey(record.ref), expectedRevision: record.revision },
+  };
+}
+
+/** The structural coverage a `coverageHolds` call judges; state names no model type. */
+export type CoverageHoldFacts = {
+  source: { projectId: string; sessionId: string };
+  lastRound: unknown;
+  goals: readonly {
+    textSource: unknown;
+    textRound: unknown;
+  }[];
+};
+
+/**
+ * The book's coverage rule: every covered goal's current understanding text was written by the old Session in the
+ * last entered-and-ended round. A goal whose text has another source or round is not covered; no goal needs nothing.
+ */
+export function coverageHolds(facts: CoverageHoldFacts): boolean {
+  return facts.goals.every(goal => sameRef(goal.textSource, facts.source)
+    && facts.lastRound !== null && sameRef(goal.textRound, facts.lastRound));
+}
+
+/** The structural routing a `briefReady` call judges; a saved routing set lists every root it read. */
+export type BriefReadyFacts = {
+  /** The guarded final archive committed; a `pending`/`partial` child is not success. */
+  archiveCommitted: boolean;
+  /** The complete routing set, or `null` when the set was not saved (a non-secretary handoff keeps none). */
+  routing: null | {
+    closed: boolean;
+    roots: readonly { receipt: unknown; skipped: unknown }[];
+  };
+};
+
+/**
+ * The brief is ready only after the guarded final archive succeeded AND the complete routing set was saved: the set
+ * is closed and every root it read is either routed (a receipt) or explicitly skipped. A root still waiting for its
+ * routing command is not complete.
+ */
+export function briefReady(facts: BriefReadyFacts): boolean {
+  if (!facts.archiveCommitted) return false;
+  if (facts.routing === null || !facts.routing.closed) return false;
+  return facts.routing.roots.every(root => root.receipt !== null || root.skipped !== null);
 }
