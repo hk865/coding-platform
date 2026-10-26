@@ -83,7 +83,7 @@
 - **请求的轮（L3–L5）：** 6A 建一个共用入口，下面复用已有的 Query 阶段驱动，支持“同一个 Job、旧的 Run 放弃、新开一次 Run”。7B 只给它回复和到期的输入；7D2 的探索 Query 复用下层驱动，不进请求模型。未分配队列用几个索引、什么形状，在 6A 的施工计划里定（还没定）。
 - **建线（L4、L10）：** 6A 建一个共用的建线入口，包在 Runtime 两段式建 Session 外面：身份、固定职责、范围、建者、原因，加上占保留名额那一步。6B 的接任者、7C 的建成员、7D2 的角色线都调它；第 7 片 §1 的保留名额填进这一步。名额满了 6A 会不会卡住（6B 之前还没有换手和闲置归档），在 6A 的施工计划里定。
 - **换手（L10）：** 6B 的共用换手原语一开始就用第 7 片 L18 的通用身份：一个 `kind: 'handoff'` 的 `SessionOperation`（源、`assignments`、各阶段标记），建接任 Session 是它的子操作；秘书换手 = 交给一条新线，再加请求 `routing` 一步。L10 的“换手身份 = 接任 Session 的创建操作”按此改读。各处阶段顺序统一为：查理解 → 围栏 → 等旧写者停 → 建或选接任者 → 转负责 → （秘书）`routing` → 归档 → 请知悉。
-- **闲置归档（L15）：** 秘书、参谋、书记用同一个钟：从最后一次活动（模型轮结束、收到要处理的消息、你对它的操作、建线；请知悉不算）算起满一天，这就是决定 60-8 的“闲满一天”。L15 的“最后一个新请求满 1 天”按此读。每种职责留一条最近用过、可用的线。
+- **闲置归档（L15）：** 秘书、参谋、书记用同一个钟：从最后一次活动（模型轮结束、收到要处理的消息、你对它的操作、建线；请知悉不算）算起满一天，这就是决定 60-8 的“闲满一天”。L15 的“最后一个新请求满 1 天”按此读。每种职责留一条最近用过、可用的线。**（决定 91 取消：秘书、参谋、书记都不按空闲时间归档。）**
 - **没有目标时的初始化（L8、L11、§6、§7）：** 按绑定 `InitializationBindingV1` 做的提议、采用和计划读取（`plan-service.ts:1147`、`initial-plan.ts`）挪到写绑定的 6B 做，R-14 的提议和采用部分在 6B 验收；7D2 的冷启动和 6C 复用。§7 里“6C 收口”按此改读。6B 的说明书若发现前提不够，报给 lead 再定。
 - **“请知悉”和卡的主体：** 6B 给项目范围的秘书换手发请知悉（L10 第 7 步）是第 4 片之后第一个要用“目标或项目”主体的地方。所以通知和卡的主体底座（goal | project，不含跨工作区的答复身份）在 6B 做，按第 4 片推迟的两种用法（§11.4、§11.6：书记改写你的项目理解时的请知悉、不挂目标的待审注记卡）和第 7 片的用法一次设计好；7D1 只加跨工作区的身份。
 - **活动（L16）：** 日历和轨道里各有一份的活动分类函数，在清理第一轮（决定 70，VW-3）合并；6A 在合并后的上面做，不再合一次。
@@ -255,7 +255,7 @@
   - **生产者改动。** 初始架构、完成标准被采用的事件（`ArchitectureCatalogAdopted`、`ProjectCompletionPolicyActivated`）在来自卡回答时带上 `acknowledgementRef`（那张回答消息）；`decision-application.ts` 照别的证明一样校它（F13）。
   - **历史数据。** 这次改动以前答过的卡：**读的时候**投影成 `source_resolved`，附“没有证明（旧数据）”；读不写任何东西。
   - **写侧修复。** Host 启动时做一个修复步骤，加已有的 `decisions/application` 重试；读只投影。
-- **L15 秘书线自动归档（R33；6B，第一轮审查第 6 条）。**【lead 定，待审】没有还在处理的请求、没有占用、最后一个新请求满 1 天 → 归档；每个项目至少留一条最近用过、可用的秘书线——**按时序读每个项目里合格的秘书，保留轮次 `since` 最晚的那条**；已换手交出的不等一天（L10 第 6 步）（第二轮审查第 5 条）。归档时未答的“请回答”跟着请求走（第 7 片）。用已有的自动维护，加秘书这一类。**这和 7D2 L38 是同一条闲置归档规则（“闲”不含请知悉；每种职责保留最后一条）；7D2 把闲置归档扩到参谋、书记线。**（审查二第 18 条）
+- **L15 秘书线自动归档（R33；6B，第一轮审查第 6 条）。**【lead 定，待审】没有还在处理的请求、没有占用、最后一个新请求满 1 天 → 归档；每个项目至少留一条最近用过、可用的秘书线——**按时序读每个项目里合格的秘书，保留轮次 `since` 最晚的那条**；已换手交出的不等一天（L10 第 6 步）（第二轮审查第 5 条）。归档时未答的“请回答”跟着请求走（第 7 片）。用已有的自动维护，加秘书这一类。**这和 7D2 L38 是同一条闲置归档规则（“闲”不含请知悉；每种职责保留最后一条）；7D2 把闲置归档扩到参谋、书记线。**（审查二第 18 条）**（决定 91 取消 L15：秘书线不按空闲时间归档；换手交出后归档照旧，见 L10。）**
 - **L16 查询也记活动（6A；用户 2026-10-15 晚定，§0.1 第 3 条）。**【lead 定】把 2B 的活动计数扩到查询。2B L1 的算法不变（一步 = 一个 `tool.started`，回答正文不算步；`tallyTurnActivity`，`run-activity-tally.ts:104`）。（审查二额外核对 D2）（审查二额外核对 D3）（审查二额外核对 D4）
   - **记哪些：** 进入过 Kernel 的查询都记：秘书的一轮、`intervention_planning` 的只读查询、问一问的只读副本（第 7 片 7B）、角色线的探索查询（第 7 片 7D2 的 `role_exploration`）。
   - **身份和内容：** `QueryActivity` 和 `QueryRunRef`（`query-job.ts:10`）一一对应，ref 是 `{ aggregateType: 'QueryActivity'; projectId; workspaceId; queryJobId; runId }`。内容是 2B 的 `RunActivityFactsV1` 加 `queryRunRef`、`sessionRef`（执行它的 Session）、`askedSessionRef`（问一问才有，否则 `null`）、`goalId`（可为 `null`）、`queryEndedAt`、`recordedAt`、`recordedBy: 'query_end' | 'backfill'`、`span`（同 2B）。
@@ -385,12 +385,12 @@ export const QUERY_UNASSIGNED_INDEX = 's6-query-unassigned';   // 未分配队�
 | S6-G-01 确认草稿 `goals/confirm-draft` | 人操作者；草稿轮仍是这个请求的最新回答；`commandId` 幂等（重放回原回执） | 建目标；草稿的 `screening` 一起存；完成标准写进卡文（F14）；该轮记上目标；`requestGoalId:null` 的开头请求补一个 `routing` 轮的 `goalAttribution`，归属不受它影响、有效目标取最新非空 `goalAttribution`（第二轮审查第 1 条）；参谋满了时按 62-1 进队列、卡上写“参谋已满，先排队”（7D2 L33；审查二第 18 条）；同时确认多张各建各的 | `invalid`、`forbidden`、`revision_conflict`（草稿轮已不是最新回答） |
 | S6-G-02 复制 `goals/copy-confirm` | 人操作者；源目标 `desiredState:'cancelled'` | 建新目标、`continuedFrom`、复制卡/自治/顺序位置；“等前一个”“已接受并行风险”不复制；`copiedInterventions` 记勾选；**同一次提交里用 7D1 的 `planReanchor` 把目标参谋、目标书记的负责关系挪到新目标**（`reason:'goal_continued'`，7D2 L39）；**确认时经注入端口撤回没勾的干预**：端口未装（7A 前）→ 只记勾选的确认；端口已装但撤回失败 → 确认照常提交（committed），没撤的干预留待 `goals/copy-confirm` 重放重试（第二轮审查第 8 条；最后核对第 2 条；审查二第 18 条） | `invalid`（源不是 cancelled）、`forbidden` |
 | S6-S-01 换手 `secretaries/handoff` | 人操作者（手动）或阈值触发（自动）；先用旧秘书的最后一轮写出全覆盖的当前理解 | **先查理解覆盖（不取围栏）**；覆盖成立 → 取 `secretary-handoff:<旧键>` 围栏并在围栏下重核；重核不过 → 放掉围栏、`incomplete`；建接任 Session；每个未完请求写 `handoff` 的 `routing` 轮（幂等）；旧线归档；一条请知悉（幂等）（第二轮审查第 5 条） | `incomplete`（理解覆盖缺，此时不取围栏、排一个普通轮请旧秘书写）、`busy`（旧线还在跑）、`revision_conflict` |
-| S6-S-02 自动归档 `session-maintenance` | 没有还在处理的请求、没有占用、最后一个新请求满 1 天；项目里保留轮 `since` 最晚的合格秘书 | Session 归档，原因 `secretary_idle`；未答“请回答”跟请求走 | 拒绝保存在已有 Session 归档行；至少留一条时不动 |
+| S6-S-02 自动归档 `session-maintenance`（**决定 91 取消**） | 没有还在处理的请求、没有占用、最后一个新请求满 1 天；项目里保留轮 `since` 最晚的合格秘书 | Session 归档，原因 `secretary_idle`；未答“请回答”跟请求走 | 拒绝保存在已有 Session 归档行；至少留一条时不动 |
 | S6-P-01 按答复改计划 `plans/propose`+`plans/apply` | 答复消息正文带 `approvedPayload`；`plans/propose` 的 `decisionRef` 指向那条答复消息；改动落在回答授权载荷内；每个对象版本＝载荷版本；提议和采用从该答复消息取 `approvedPayload`，按它的 `answerRef`、`payloadDigest` 核到同一份载荷（最后核对第 1 条） | 提议版本；采用时重读版本一致才写目标/验收（第二轮审查第 6、8 条） | `revision_conflict`（越界/版本不符）、`invalid`（载荷空）、`forbidden` |
 | S6-P-02 替代与切换 `plans/apply` | 受影响任务分类（running/waiting/unknown/completed） | running 先停（等它停，`stopping_affected_work`）；waiting/unknown 等；completed 建替代任务、满足与证据留历史；下游改接；不受影响照常；**不物理删任务，要撤的走取消、保留 `taskId` 记 disposition**（`plan-validation.ts:324`）（第二轮审查第 7 条） | `busy`（等待受影响工作时）、`revision_conflict` |
 
 - 查询轮次的状态是今天 `QueryJob`/`QueryRun` 状态的投影（第一轮审查第 1 条）：未领取 → `queued`；claimed/prepared/started → `running`；answered / failed / cancelled / `routing` / `absorbed` 的终态 → `ended`；结果未知 → `unknown`。`routing` 轮写下就是终态，不跑模型（S6-Q-02）。
-- 秘书线归档沿用 Session 的归档行（原因 `secretary_idle`、`secretary_handoff`，S6-S-01、S6-S-02）。
+- 秘书线归档沿用 Session 的归档行（原因 `secretary_idle`、`secretary_handoff`，S6-S-01、S6-S-02）。**（决定 91 以后没有 `secretary_idle`。）**
 - 目标复制：新目标照建目标的行；旧目标不动（S6-G-02）。
 - 初始化补记：读侧把历史答过的卡投影为 `source_resolved`（附“没有证明（旧数据）”）并只读；写侧由 Host 启动步骤加既有 `decisions/application` 重试（S6-P-01 同族，第一轮审查第 9 条）。
 - 初始化分支：项目还没有采用的正式架构、或没有生效的完成标准时，秘书这一轮用执行种类 `initial_coordination`（L8），回答的 `setup` 存成候选、不自动采用（和普通 ideas 回答分开；没有目标的回答先存候选，目标确认后绑定并写不可变绑定事实 `InitializationBindingV1`，7D2 L41 第 1 段）；无 Goal 的读取和规范化从绑定取 Goal 版本和 `planId`，提议和采用都守同一个绑定（审查二第 8 条）；采用仍是你的动作，走现有的人工采用入口（`ui/views/execution/planning.ts:274` 的 `adoptInitialPlanSetup` 路由），补记走 L14。（61-1、61-3）
@@ -449,7 +449,7 @@ export const QUERY_UNASSIGNED_INDEX = 's6-query-unassigned';   // 未分配队�
 - R-17（SE2）没有目标的查询（L16）（审查二额外核对 D4）：还没有目标时发的请求（`requestGoalId: null`），秘书这一轮调 2 次工具 → 工作区范围的日历当天 +2，任何目标范围的日历都没有它；`activity/queries` 读到 `goalId: null`。角色线探索（`role_exploration`，`goalId: null`）同样只在工作区范围出现，这一段 7D2 联动补验。
 - L-01（SE3）换手：A 输入量过阈值、手上两个请求（两个目标）、A 的最后一轮已写两份覆盖的理解 → **先查覆盖（不取围栏）、覆盖成立才取 `secretary-handoff:A` 并在围栏下重核**、走共享换手原语的阶段、新开 A2（接手自 A）、两个请求各一个 `routing` 轮（`reason:'handoff'`）、A 归档、一条请知悉；中途重启 → 从下一步接着；重复调用不重复建接任者、不重复通知（第二轮审查第 5、9 条）。
 - L-02（SE3）覆盖不足 → `incomplete`，**不取围栏、不归档、请求不转**，在 A 上排一个普通轮请它写理解；下一轮写完覆盖后重跑换手。围栏一旦取得（覆盖成立后）Host 不在 A 上开始新轮，新提交仍入队并由 routing 转走；围栏下重核失败 → 放掉围栏、`incomplete`（第二轮审查第 5 条）。
-- L-03（SE3）自动归档：空闲满一天、没有还在处理的请求 → 归档；项目里只剩它一条 → 不归档；有过期候选 → 不归档；两条合格时保留轮 `since` 最晚的那条；“请知悉”不算活动；每种职责至少留一条（这里只涉及秘书）（和 7D2 L38 同一条）。（第一轮审查第 6 条；审查二第 18 条）
+- L-03（SE3）自动归档：空闲满一天、没有还在处理的请求 → 归档；项目里只剩它一条 → 不归档；有过期候选 → 不归档；两条合格时保留轮 `since` 最晚的那条；“请知悉”不算活动；每种职责至少留一条（这里只涉及秘书）（和 7D2 L38 同一条）。（第一轮审查第 6 条；审查二第 18 条）**（决定 91 取消 L-03。）**
 - L-04（SE3）手动归档 A：两个请求，一个交给 B、一个放下；路由回每个请求的结果；放下的那个以后有人接着说 → 按挑秘书另挑。
 - G-01（SE4）目标卡：草稿不建目标；草稿带 `screening`（含 `size`）；确认以后建目标、完成标准进卡文、草稿那一轮记上目标；同时确认两张建两个目标；草稿轮已不是最新回答 → `revision_conflict`；`commandId` 重放回原回执。**没有参谋能接、又因保留上限开不了新参谋时（7D2 L33），卡上写“参谋已满，先排队”，确认以后目标进队列、显示“排队等参谋 · 第 n 位”**（62-1；7D2 L33；审查二第 18 条）。
 - G-02（SE4）复制：从进行中的目标复制 → `invalid`；从已取消的复制：位置、自治照旧，“等前一个”不复制、要重新确认；勾了两条干预记在新目标上；**同一次提交里用 `planReanchor` 把目标参谋、目标书记的负责关系挪到新目标**（`continuedFrom` 记“接续自”，7D2 L39）；**7A 前撤回端口未装 → 只记勾选的确认收下；端口已装但撤回失败 → 确认仍提交，撤回由 `goals/copy-confirm` 重放重试**（第二轮审查第 8 条）；取消草稿什么都不改；旧目标不动。（审查二第 18 条）
