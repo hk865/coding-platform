@@ -27,7 +27,7 @@
 **后注（决定 72 的复用盘点，lead 2026-10-16 夜）：** Codex 把第 6、7、8 片和 K3、4C 剩下的部分放在一起找共用机制，两个 Claude 子 agent 逐条核过引用和代码，lead 裁定。和正文冲突时以本后注为准；产品范围不变。和本片有关的（第 6 片规格开头有同名后注）：
 - **换手（L18、H-01）：** 共用原语在 6B，身份就是本片的 `handoff` SessionOperation，建接任者是它的子操作。阶段顺序统一为：等旧写者停 → 建或选接任者 → 转负责 → 归档（L18 已写明工具在旧线的执行里调、换手排在这次执行结束以后）。H-01 的 t1（建新 Session）和 t2（等旧执行结束）对调，两个崩溃点的要求不变。
 - **建成员和角色线（L17、L26、L27、L42）：** 调 6A 的共用建线入口；本片 §1 和 L31 的保留名额填进它的名额那一步。同时运行的准入仍在 7D2。
-- **L38：** “每种职责的项目范围由一条线负责”只说参谋和书记。秘书的项目范围是过滤，不占位（L23，决定 60-3），可以有几条项目范围的秘书。闲置的钟和第 6 片 L15 相同：从最后一次活动算起满一天。
+- **L38：** “每种职责的项目范围由一条线负责”只说参谋和书记。秘书的项目范围是过滤，不占位（L23，决定 60-3），可以有几条项目范围的秘书。闲置的钟和第 6 片 L15 相同：从最后一次活动算起满一天。**（决定 91 取消闲置归档，见 L38 的旁注。）**
 - **`planReanchor`（L25）：** 留在 7D1；7D1、7D2 以前没有挂在目标或项目上的负责链接可挪。
 - **落实证明（L1、§6 的 7A）：** K3 第 4 组或 4C-2（先做的那个）把 `decision-application.ts` 的证明解码改成按事件种类登记的表；7A 的消息落实在表上加一行、复用共同的回执核对，不另写一个“照 decision-application”的校验器。
 - **等待和唤醒（L7、L8、L10、L12）：** 用 6A 的共用唤醒循环；7B 加“输入真被接受才消费等待”的派生等待和到期输入；7D2 的参谋队列（L33）只注册自己的排空。
@@ -559,7 +559,7 @@ export type RoleCapacityEpisodeV1 = {
 `role-lines/allocation`（每种职责的上限、持有、预留）、`role-lines/operations`（L26–L42 的操作和阶段）。
 新工具：`propose_role_split`（参谋、书记）；秘书查询调用种类的 `create_member`（L42）；8C 的 `propose_architecture_revision`（参谋）。
 新常量：`ROLE_LINE_DEFAULT_LIMITS`、`MAX_GOALS_PER_ADVISER = 3`、`REGION_SLOT_LINE_BUDGET = 15000`（非空行）、`SCRIBE_SLOT_NOTE_LIMIT = 500`、
-`ROLE_LINE_IDLE_ARCHIVE_MS = 86_400_000`、`ROLE_LINE_SLOW_MESSAGE_LIMIT = 10`（比较用 `>`）、`ROLE_LINE_SLOW_WINDOW_MS = 1_800_000`、
+`ROLE_LINE_IDLE_ARCHIVE_MS = 86_400_000`（**决定 91 取消**）、`ROLE_LINE_SLOW_MESSAGE_LIMIT = 10`（比较用 `>`）、`ROLE_LINE_SLOW_WINDOW_MS = 1_800_000`、
 `NOTICE_SUMMARY_WINDOW_MS = 900_000`、`QUEUE_DRAIN_BATCH = 16`；输入量阈值复用第 6 片 L10 的 `min(500000, 模型容量 × 0.8)`（软预算，一轮结束后才拆或换手；用户 2026-10-15 晚定）。
 新错误：`capacity/at_cap`、`revision_conflict/scope_owned`、`invalid/role_line_duty`、`invalid/rule_action_fixed`、`invalid/rule_limit_over_cap`、
 `invalid/no_responsible_adviser`、`invalid/no_running_group`（审查二第 2 条）、`invalid/responsibility_destination_missing`（8C）。都用现有的 code（`results.ts:17`），只加 reason。
