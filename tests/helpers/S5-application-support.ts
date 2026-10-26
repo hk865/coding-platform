@@ -88,6 +88,7 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   const roles = createRoleConfigurationService({ records, now: f.now, eventId: f.newId });
   const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now: f.now });
   const mailboxDeps: SessionMailboxDependencies = {
+    defaultInquiryDeadlineMs: 86_400_000,
     records, sessions: createSessionDirectory({ records, lookups: records }),
     executions: createRunStateReader({ records }), roles, materials, systemActor: { ...OPERATOR },
     now: f.now, newId: f.newId,

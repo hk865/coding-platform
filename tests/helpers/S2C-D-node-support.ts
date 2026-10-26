@@ -592,6 +592,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
     const materials = createMaterialService({ bodies: lineBodies,
       authority: createMaterialRecordReaders(backend.records).authority, now });
     const mailbox = createSessionMailbox({ records: backend.records, sessions, executions,
+      defaultInquiryDeadlineMs: 86_400_000,
       roles: createRoleConfigurationService({ records: backend.records, now, eventId: lineEventId }), materials,
       systemActor: { kind: 'system', id: 's2c-d-line' }, now, newId: lineEventId });
     const requeues = createTaskRequeueService({

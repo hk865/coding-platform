@@ -62,6 +62,102 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
         },
         "waitAfterSend": {
           "type": "boolean"
+        },
+        "expected": {
+          "type": "object",
+          "properties": {
+            "planRevision": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pointerRevision": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "const": "none"
+                }
+              ]
+            },
+            "dispatchSequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "planRevision",
+            "pointerRevision",
+            "dispatchSequence"
+          ],
+          "additionalProperties": false
+        },
+        "taskRef": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "goalId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "taskId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "projectId",
+            "goalId",
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        "followupOf": {
+          "type": "object",
+          "properties": {
+            "aggregateType": {
+              "type": "string",
+              "const": "SessionMessage"
+            },
+            "projectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "messageId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "aggregateType",
+            "projectId",
+            "workspaceId",
+            "messageId"
+          ],
+          "additionalProperties": false
+        },
+        "deadlineMs": {
+          "type": "number",
+          "exclusiveMinimum": 0
         }
       },
       "required": [
@@ -260,52 +356,109 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
     "description": "Session mailbox: respond_session_message",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "messageRef": {
+      "anyOf": [
+        {
           "type": "object",
           "properties": {
-            "aggregateType": {
-              "type": "string",
-              "const": "SessionMessage"
+            "messageRef": {
+              "type": "object",
+              "properties": {
+                "aggregateType": {
+                  "type": "string",
+                  "const": "SessionMessage"
+                },
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "workspaceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "messageId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "aggregateType",
+                "projectId",
+                "workspaceId",
+                "messageId"
+              ],
+              "additionalProperties": false
             },
-            "projectId": {
-              "type": "string",
-              "minLength": 1
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
             },
-            "workspaceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "messageId": {
+            "text": {
               "type": "string",
               "minLength": 1
             }
           },
           "required": [
-            "aggregateType",
-            "projectId",
-            "workspaceId",
-            "messageId"
+            "messageRef",
+            "expectedRevision",
+            "text"
           ],
           "additionalProperties": false
         },
-        "expectedRevision": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "text": {
-          "type": "string",
-          "minLength": 1
+        {
+          "type": "object",
+          "properties": {
+            "messageRef": {
+              "type": "object",
+              "properties": {
+                "aggregateType": {
+                  "type": "string",
+                  "const": "SessionMessage"
+                },
+                "projectId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "workspaceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "messageId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "aggregateType",
+                "projectId",
+                "workspaceId",
+                "messageId"
+              ],
+              "additionalProperties": false
+            },
+            "expectedRevision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "reject": {
+              "type": "boolean",
+              "const": true
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "messageRef",
+            "expectedRevision",
+            "reject",
+            "reason"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "messageRef",
-        "expectedRevision",
-        "text"
-      ],
-      "additionalProperties": false
+      ]
     }
   },
   {

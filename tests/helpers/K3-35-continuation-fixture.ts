@@ -70,7 +70,7 @@ import type { TaskRequeueSnapshotV1 } from '../../src/contracts/task-requeue.js'
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
-import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { assembleUnknownCallReviewSection } from '../../src/core/agent-runtime/continuation-brief-assembly.js';
 import { createKernelStoreRegistry, type KernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionHistoryCursorOwner, type SessionMappingProbe } from '../../src/core/agent-runtime/session-operations.js';
@@ -142,9 +142,12 @@ function longCallId(alias: number): string {
  * dependency objects only have to answer the Runtime's selection checks; no
  * message is fabricated and no send happens while the calls stay unresolved.
  */
-function emptyMailbox(): SessionMailboxPort {
+function emptyMailbox(): SessionMessageCommandPort {
   const page = async () => ({ status: 'ready' as const,
     value: { items: [], nextCursor: null, sourceCursor: 'c0000000000' as never } });
+  const notUsed = (what: string) => async (): Promise<never> => {
+    throw new Error(`the §5.1 mailbox seam never ${what}`);
+  };
   return {
     readInbox: page, readOutbox: page, readRoutedReplies: page,
     async readMessage() { return { status: 'rejected', code: 'not_found', reason: 'the K3-35 record Run reads no message' }; },
@@ -152,7 +155,11 @@ function emptyMailbox(): SessionMailboxPort {
     async sendMessage() { throw new Error('the §5.1 mailbox seam never sends'); },
     async ackMessage() { throw new Error('the §5.1 mailbox seam never acks'); },
     async respondMessage() { throw new Error('the §5.1 mailbox seam never responds'); },
-  } as unknown as SessionMailboxPort;
+    withdrawMessage: notUsed('withdraws'),
+    releaseMessage: notUsed('releases'),
+    readMessageView: notUsed('reads a message view'),
+    readInboxView: notUsed('reads an inbox view'),
+  };
 }
 
 export const K3_35_TASK_ID = 'k3-20-a';

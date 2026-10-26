@@ -73,6 +73,7 @@ export function assembleS5R2C(f: S5DecisionFixture) {
     },
   } satisfies MessageDutiesFactsPort);
   const mailbox: SessionMailboxDependencies = { records: f.records, sessions, executions, roles, materials,
+    defaultInquiryDeadlineMs: 86_400_000,
     systemActor: f.operatorActor, now: f.now, newId: f.newId, duties };
   // Match create-platform.ts:628: both the message owner and Workflow receive
   // the real source reader WITH the real Plan service, including its retry seam.

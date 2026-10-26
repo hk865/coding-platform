@@ -120,6 +120,7 @@ export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDepende
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     materials: materialsFor(f), runtimeAdmission: { bodies: f.bodies, authorizeConfiguration },
+    defaultInquiryDeadlineMs: 86_400_000,
     systemActor: OPERATOR, now: f.now, newId: f.newId,
     duties: { async readMessageDutiesFacts() { return { status: 'ready', value: {
       duties: ['adviser'], readOnlyCopy: false, independentReview: false, guards: [] } }; } } };

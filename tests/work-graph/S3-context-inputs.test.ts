@@ -62,6 +62,7 @@ import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persiste
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
@@ -264,7 +265,8 @@ const INPUT_EXTRA_SCHEMAS: RecordBackendSchemas = {
   records: [...EVIDENCE_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
     ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
     ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
-    ...LINE_SETTINGS_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records],
+    ...LINE_SETTINGS_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
+    ...SESSION_ACTIVITY_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
     ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
     ...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,

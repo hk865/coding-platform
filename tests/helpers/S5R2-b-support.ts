@@ -57,6 +57,7 @@ export async function assembleB(f: S5DecisionFixture) {
   const plans = createPlanService({ records, materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const sources = createDecisionSourceFacts({ records, plans });
   const mailboxDeps: SessionMailboxDependencies = {
+    defaultInquiryDeadlineMs: 86_400_000,
     records, sessions, executions, roles, materials, systemActor: f.operatorActor,
     now: f.now, newId: f.newId,
     duties: ({

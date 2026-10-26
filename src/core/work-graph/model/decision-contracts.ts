@@ -33,7 +33,7 @@ import type {
   NoticePositionV1,
   UserDecisionBodyV1,
 } from '../../../contracts/goal-decisions.js';
-import type { GoalRef, GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
+import type { DispatchBasisV1, GoalRef, GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { NoteKind } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -42,13 +42,18 @@ import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../../../contracts/verification.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { GoalRecordTransactionPort, RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
+import type {
+  CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordGuard, UniqueClaimChange,
+} from '../../record-store/ports.js';
 import type { MessageQueryAnswerSender, MessageSender, SessionMailboxPort, SessionMessage,
   SessionMessageEventV1 } from './communication-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { NoteDecisionApplicationInputV1, NoteDispositionResult } from './note-contracts.js';
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
+import type {
+  MessageAppliedChangeV1, MessageReleaseDecidedChangeV1, MessageReleasedChangeV1, MessageWithdrawnChangeV1,
+} from '../state/message-machine.js';
 
 // ------------------------------------------------------------------------ //
 // First-slice seams (spec §2.6)                                             //
@@ -167,6 +172,56 @@ export interface MessageWriteOwnerPort {
     event: SessionMessageEventV1;
     guards: readonly RecordGuard[];
     claims: readonly UniqueClaimChange[];
+  }> & { identityKey: string; fingerprint: string }): Promise<WriteResult<SessionMessage>>;
+}
+
+export type SessionMessageCommitCompanions = {
+  records: readonly EncodedRecord[];
+  events: readonly EncodedDomainEvent[];
+  guards: readonly RecordGuard[];
+  claims: readonly UniqueClaimChange[];
+  commitCursorBindings?: readonly CommitCursorBinding[];
+  ledgerHorizon?: CommitCursor | null;
+};
+
+/** The event envelope the facade cannot invent: the command carries it. */
+export type SessionMessageWriteEnvelopeV1 = {
+  messageRef: SessionMessageRef;
+  /** The record this call read; its `revision` is the accepted CAS version. */
+  before: SessionMessage;
+  expectedRevision: number;
+  event: {
+    eventId: string; occurredAt: string; requestId: string;
+    projectId: string; workspaceId: string; actor: MessageSender;
+  };
+};
+
+export type SessionMessageWriteCommandV1 =
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.withdraw'; change: MessageWithdrawnChangeV1 })
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.release'; change: MessageReleaseDecidedChangeV1 })
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.releaseApproved'; change: MessageReleasedChangeV1 })
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.apply'; change: MessageAppliedChangeV1 });
+
+/** The fragment's shape, declared in model so the port never imports persistence. */
+export type SessionMessageCommitFragment = {
+  records: readonly EncodedRecord[];
+  events: readonly EncodedDomainEvent[];
+  guards: readonly RecordGuard[];
+  claims: readonly UniqueClaimChange[];
+  commitCursorBindings?: readonly CommitCursorBinding[];
+  ledgerHorizon?: CommitCursor | null;
+};
+
+export interface MessageCommandWritePort extends MessageWriteOwnerPort {
+  prepare(ctx: CoreCallContext, command: SessionMessageWriteCommandV1,
+    companions: SessionMessageCommitCompanions): Promise<SessionMessageCommitFragment | CoreRejection>;
+  /** The old path widened; `companions` is optional so `decision-service.ts` keeps compiling. */
+  persist(ctx: CoreCallContext, request: GraphWrite<{
+    before: SessionMessage | null; next: SessionMessage; event: SessionMessageEventV1;
+    guards: readonly RecordGuard[]; claims: readonly UniqueClaimChange[];
+    companions?: SessionMessageCommitCompanions;
+    commitCursorBindings?: readonly CommitCursorBinding[];
+    ledgerHorizon?: CommitCursor | null;
   }> & { identityKey: string; fingerprint: string }): Promise<WriteResult<SessionMessage>>;
 }
 
@@ -454,3 +509,53 @@ export type GoalSettingsChangedEventV1 = DecisionWriteEventBaseV1<
 /** `WorkspaceNoticeSeenChanged@1`: the exact Workspace snapshot the mark wrote. */
 export type WorkspaceNoticeSeenChangedEventV1 = DecisionWriteEventBaseV1<WorkspaceSnapshot>
   & { eventType: 'WorkspaceNoticeSeenChanged' };
+
+// ------------------------------------------------------------------------ //
+// `message_release`'s remaining TS (SM-20; the card and its entry are built by their owner) //
+// ------------------------------------------------------------------------ //
+
+/**
+ * The trusted entry's ONLY input: the target, the option and the source are derived from the saved
+ * answer and checked there; a caller naming a message or an option is not this entry.
+ */
+export type MessageReleaseApplicationInputV1 = { answerRef: SessionMessageRef };
+
+/** The bounded release-candidate page: approved, not released, not withdrawn. */
+export type MessageReleaseCandidatesInputV1 = {
+  /** The bound scope; a goal narrows the page, absent means every goal of the workspace. */
+  scope: WorkspaceScope;
+  goalRef: GoalRef | null;
+  /** The declared index's opaque keyset cursor; `null` on the first page. */
+  after: string | null;
+  /** 1–100; any other value is `invalid`. */
+  limit: number;
+};
+export type MessageReleaseCandidateV1 = {
+  messageRef: SessionMessageRef;
+  /** The record revision, the release command's CAS pin. */
+  revision: number;
+  /** The revision at which the message became `awaiting`; the card's identity, never the CAS revision. */
+  creationRevision: number;
+  pins: DispatchBasisV1 | null;
+  deadline: string | null;
+  /** Why this pass cannot release it; `null` means releasable. A stale item is blocked, never a pass failure. */
+  blockedReason: 'stale_pins' | 'goal_not_active' | 'activity_conflict' | null;
+};
+export type MessageReleaseCandidatesPageV1 = {
+  items: readonly MessageReleaseCandidateV1[];
+  /** The page's own consistent watermark. */
+  readThrough: CommitCursor;
+  nextCursor: string | null;
+};
+export interface MessageReleaseCandidatesPort {
+  /** A read failure is the failure, never an empty page; a cross-goal ref is refused. */
+  readReleaseCandidates(ctx: CoreCallContext, input: MessageReleaseCandidatesInputV1):
+    Promise<ReadResult<MessageReleaseCandidatesPageV1>>;
+}
+
+export interface MessageReleasePort {
+  releaseApproved(ctx: CoreCallContext, input: { messageRef: SessionMessageRef; approvalRevision: number }):
+    Promise<WriteResult<SessionMessage>>;
+  applyMessageRelease(ctx: CoreCallContext, input: MessageReleaseApplicationInputV1):
+    Promise<WriteResult<SessionMessage>>;
+}

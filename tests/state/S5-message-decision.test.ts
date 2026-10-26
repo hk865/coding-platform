@@ -220,6 +220,8 @@ function baseCtx(overrides: Partial<MessageGuardContext> = {}): MessageGuardCont
 
 const PENDING_STATE: MessageMachineState = {
   status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+  release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+  approvalRevision: null, pins: null,
 };
 const SENT_EFFECTS: readonly MessageEffect[] = [
   { kind: 'store_body', part: 'message', source: 'workspace' },
@@ -254,7 +256,8 @@ function answer(record: SessionMessageRecord, response: UserMessageResponseV1,
   }));
   expect(result).toEqual({ ok: true,
     next: { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false,
-      revision: record.revision + 1 }, effects: answeredEffects(record.revision) });
+      revision: record.revision + 1, release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null,
+      rejectedAt: null, approvedAt: null, approvalRevision: null, pins: null }, effects: answeredEffects(record.revision) });
   if (!result.ok) throw new Error('the user answer must be admitted');
   const next = nextSessionMessageRecord(record, { kind: 'decision_answered', response });
   // Wiring 2 §2.3 P02 (L10/L11, §8.9): every caller passes pendingRecord(), whose sender is the work_run
@@ -412,7 +415,9 @@ describe('S5 message decision unit rows (§5.2 MD01..MD14)', () => {
     expect(result).toMatchObject({ ok: true });
     if (!result.ok) throw new Error('the synthetic answer must be admitted');
     expect(result.next).toEqual({ status: 'responded', hasReadAt: true, hasResponse: true,
-      acceptedInputIds: [], hasDerivation: false, revision: 1 });
+      acceptedInputIds: [], hasDerivation: false, revision: 1,
+      release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+      approvalRevision: null, pins: null });
     expect(result.effects.filter((effect) => effect.kind === 'store_body')).toEqual([
       { kind: 'store_body', part: 'message', source: 'workspace' },
       { kind: 'store_body', part: 'response', source: 'workspace' },
@@ -449,6 +454,10 @@ describe('S5 message decision unit rows (§5.2 MD01..MD14)', () => {
       ref: MESSAGE_REF, schemaVersion: 1, revision: 1, sender: HOST_SENDER, recipient: USER_RECIPIENT,
       bodyRef: messageBody, sourceRef: SOURCE, createdAt: ANSWER_AT, status: 'responded', readAt: ANSWER_AT,
       response, intent: 'notify', goalRef: GOAL_B, decision: metadata, application: null,
+      taskRef: null, requestRoot: null, followupOf: null, deadline: null, deadlineMs: null, release: null,
+      delivery: 'queued', deliveryEvidence: null, expiredAt: null, withdrawnAt: null, waitCancelledAt: null,
+      transferredTo: null, originalRef: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+      approvalRevision: null, applicationProof: null, pins: null,
     });
     expect(messageMachineStateOf(synthetic)).toEqual(result.next);
   });
@@ -478,7 +487,9 @@ describe('S5 message decision unit rows (§5.2 MD01..MD14)', () => {
       pins: { count: 1, matchesMessage: true, revision: 2 }, decisionApplication: applicationFacts(),
     }));
     expect(result).toEqual({ ok: true,
-      next: { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 3 },
+      next: { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 3,
+        release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        approvalRevision: null, pins: null },
       effects: [
         { kind: 'write_message', change: 'decision_applied' },
         { kind: 'append_event', eventType: 'SessionMessageDecisionApplied' },

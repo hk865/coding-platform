@@ -198,6 +198,7 @@ function digestDecisions(world: K3ReviewCardWorld, workspace: Pick<WorkspaceTool
   const materials = createMaterialService({ bodies: f.bodies,
     authority: createMaterialRecordReaders(f.records).authority, now: () => FIXTURE_T });
   const mailboxDeps: SessionMailboxDependencies = {
+    defaultInquiryDeadlineMs: 86_400_000,
     records: f.records, materials, now: () => FIXTURE_T, newId: nextId, systemActor: f.operatorActor,
     sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
     executions: createRunStateReader({ records: f.records }),

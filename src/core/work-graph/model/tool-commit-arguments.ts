@@ -10,14 +10,15 @@ import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js
 import type { DecisionApplicationReceiptV1, SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { DecisionObjectV1, DecisionOptionV1 } from '../../../contracts/goal-decisions.js';
-import type { GoalRef } from '../../../contracts/ledger.js';
+import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../../contracts/plan.js';
-import type { RunRef } from '../../../contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { StoreResult } from '../../record-store/ports.js';
 import type { StoreCommitReceipt } from '../../record-store/ports.js';
 import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { PlanChangeReason } from './plan-contracts.js';
+import type { RespondBodyV1, RespondMessageV1 } from './message-payload.js';
 
 export type SessionMessageSendInput = {
   recipient: SessionRef;
@@ -25,10 +26,14 @@ export type SessionMessageSendInput = {
   intent?: SessionMessageIntentV1;
   needsReply?: boolean;
   waitAfterSend?: boolean;
+  expected?: DispatchBasisV1;
+  taskRef?: TaskTriple;
+  followupOf?: SessionMessageRef;
+  deadlineMs?: number;
 };
 
 export type SessionMessageAckInput = { messageRef: SessionMessageRef };
-export type SessionMessageRespondInput = { messageRef: SessionMessageRef; text: string };
+export type SessionMessageRespondInput = { messageRef: SessionMessageRef } & RespondBodyV1;
 
 export type SendUserMessageInput = {
   goalRef: GoalRef;
@@ -94,6 +99,10 @@ GraphWrite<SessionMessageSendInput> {
       ...(input.intent === undefined ? {} : { intent: input.intent }),
       ...(input.needsReply === undefined ? {} : { needsReply: input.needsReply }),
       ...(input.waitAfterSend === undefined ? {} : { waitAfterSend: input.waitAfterSend }),
+      ...(input.expected === undefined ? {} : { expected: { ...input.expected } }),
+      ...(input.taskRef === undefined ? {} : { taskRef: { ...input.taskRef } }),
+      ...(input.followupOf === undefined ? {} : { followupOf: { ...input.followupOf } }),
+      ...(input.deadlineMs === undefined ? {} : { deadlineMs: input.deadlineMs }),
     },
     meta: { requestId, expected: [] },
   };
@@ -109,12 +118,12 @@ GraphWrite<SessionMessageAckInput> {
 }
 
 /** `respond_session_message` arguments -> the exact `mailbox.respondMessage` request. */
-export function respondSessionMessageRequest(
-  input: { messageRef: SessionMessageRef; expectedRevision: number; text: string }, requestId: string,
-): GraphWrite<SessionMessageRespondInput> {
+export function respondSessionMessageRequest(input: RespondMessageV1, requestId: string):
+GraphWrite<SessionMessageRespondInput> {
+  const { messageRef, expectedRevision, ...body } = input;
   return {
-    input: { messageRef: { ...input.messageRef }, text: input.text },
-    meta: { requestId, expected: [{ ref: { ...input.messageRef }, revision: input.expectedRevision }] },
+    input: { messageRef: { ...messageRef }, ...body },
+    meta: { requestId, expected: [{ ref: { ...messageRef }, revision: expectedRevision }] },
   };
 }
 

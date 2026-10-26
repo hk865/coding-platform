@@ -267,6 +267,7 @@ export async function openK3ReviewCardWorld(
   let decisionSequence = 0;
   const nextDecisionId = (): string => `k3-review-card-decision-${String(++decisionSequence)}`;
   const mailboxDeps: SessionMailboxDependencies = {
+    defaultInquiryDeadlineMs: 86_400_000,
     records: decisionRecords, materials, now: () => T, newId: nextDecisionId,
     systemActor: fixture.operatorActor,
     sessions: createSessionDirectory({ records: decisionRecords, lookups: fixture.records }),

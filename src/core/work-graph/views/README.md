@@ -14,9 +14,10 @@
 
 做工作线列表/详情、图节点、图上下文与轨道条读取的去这组。
 
-- `work-line-reader.ts` — 工作线列表/归档/详情/分区页的唯一组装路径；线摘要也被悬停复用。
+- `work-line-reader.ts` — 工作线列表/归档/详情/分区页的唯一组装路径；线摘要也被悬停复用。消息分节对每条消息调一次 `deriveMessageDelivery`：事实取记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，收件线的 `archived`/`retired` 取 `resolveLine` 已读线头的 `lifecycle === 'archived'`/`health === 'unavailable'`，不另开读取；`release` 取记录的字段，一次结果填 `delivery`/`deliveredTo`/`evidence`/`reason`/`disposition`（记录上存的 `delivery` 仍不读），`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。
 - `node-detail-reader.ts` — 图悬停（只用已读数据）与单节点分区详情。
 - `graph-context-reader.ts` — 上下文事实、图 look/find、注意力图的唯一只读视图；look/find 的 `goalRef` 为 `null` 时读项目分支（架构 module、项目 Session、请求点名的 Goal 只读），需要 Goal 的节点/关系拒绝。
+- `pointer-facts.ts` — `createGoalPointerFacts`：一次读取 Goal 理解指针的版本、CAS 地址与同次读取水位；缺失为 `'none'`/null 版本期待，失败不当缺失。
 - `track-read-model.ts` — 轨道条读模型：Run、验收轮、Query 区间的有界分页。Query 条带带各自的 `QueryActivity` 视图。每个选中 Session 自己的 Query 先按它的 provenance 定画法（`queryOwnScanOf`）：普通 Session 画自己的 turn（按轨道 Goal 过滤）；只读副本画成从来源被问的 consultation，不按 Goal 过滤；来源也被选中时由来源的副本流画，副本自己不画——与 `sessionRefs` 顺序无关。`dedupeQueryBarsByRunRef` 只是按完整 `QueryRunRef` 的身份防重；`queryBarAskedOf` 优先取记录的正式被问 Session、否则取副本来源。
 
 ### 活动与时间
@@ -66,7 +67,8 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3035` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
+| `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3049` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
+| `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:98` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
 | `assembleLineBriefs` | `src/core/work-graph/views/work-line-reader.ts:232` | 把线头批量投影成 `LineBriefV1`，与 `lines/list` 同一路径 | 其他读要线摘要、且必须与列表逐字节一致时 |
 | `resolveContinuationLine` | `src/core/work-graph/views/work-line-reader.ts:1428` | 沿 continuation 后继找线头；分支返回全部头，环返回成员，最多 32 步 | 从线中任一 Session 找头时；不要另写遍历 |
 | `secretaryOrdinals` | `src/core/work-graph/views/work-line-reader.ts:269` | 秘书线名“秘书 N”的 N：本工作区秘书 Session 按 `createdAt`、同刻按 Session 键排，从 1 数（纯函数；一次读只算一回，归档的也算，只读副本不算；有 Session 的职责读不到、或 RoleSpec 角色的职责为 unknown 时整张编号读不到，秘书线名只给“秘书”并带问题；旧模板角色为 unknown 的肯定不是秘书，跳过） |
@@ -74,6 +76,7 @@
 | `readLatestQueryGoal` | `src/core/work-graph/views/work-line-reader.ts:1347` | 线头最近一次 Query 的目标，读法与线自己的一致 | 图悬停的 Goal owners 过滤；不要拿线名判断 |
 | `createNodeDetailReader` | `src/core/work-graph/views/node-detail-reader.ts:1436` | 悬停与单节点分区详情的读端口 | 图悬停、节点面板 |
 | `createGraphContextReader` | `src/core/work-graph/views/graph-context-reader.ts:475` | 上下文事实、图 look/find、注意力图的只读视图；无 Goal 的 look/find 走项目分支 | 上下文组装、图页、注意力扫描、秘书轮的项目视图 |
+| `createGoalPointerFacts` | `src/core/work-graph/views/pointer-facts.ts:23` | 返回 Goal 理解指针及同次读取的水位，缺失保留必须不存在的版本期待 | 组合根向三版本读取器注入指针端口时 |
 | `createContextExtensionsReader` | `src/core/work-graph/views/context-extensions.ts:256` | 图读取的可选 extensions：异常锚点、决定队列提示、记忆材料；无 Goal 的请求只投影项目理解和 norms，其余 Goal 专属行跳过；读失败原样返回 | 组装上下文、需要这些扩展行时 |
 | `createDecisionReadModel` | `src/core/work-graph/views/decision-read-model.ts:203` | 决定队列的唯一聚合器：卡片、请知悉、冲突合成一页，卡片按 `decisionSubjectKey` 排序与过滤；`DecisionWholePageReader` 的 `readWholePage` 是同一装配的整页读（`notices.goalRef` 可为 `null`，项目行是公共部分） | 读决定队列或标记请知悉已看时；主对话要卡片和请知悉时用整页读，不要另写装配 |
 | `cardInScope` | `src/core/work-graph/views/decision-read-model.ts:2139` | 一张卡是否属于某个 Goal（队列的 Goal 过滤用的同一条规则） | 按 Goal 挑卡时；`requests/read` 的卡片也用它 |

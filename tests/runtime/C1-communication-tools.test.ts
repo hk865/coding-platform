@@ -19,10 +19,10 @@ import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
-import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { SendRejectionV1, SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import { SESSION_MESSAGE_CONTENT_TYPE } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort, SessionMessageSendInputV1, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import type { ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 
@@ -35,7 +35,6 @@ function toolCall(name: string, callId: string, args: Record<string, unknown>): 
 }
 
 function outputValue(result: ToolResult): unknown {
-  if (result.status !== 'success') return undefined;
   const first = result.output[0];
   return first !== undefined && first.kind === 'json' ? first.value : undefined;
 }
@@ -52,22 +51,27 @@ function fakeMessage(recipient: SessionRef, text: string): SessionMessage {
     sender: { kind: 'host', actor: { kind: 'human', id: 'c1-tool-host' } },
     recipient, bodyRef: { kind: 'artifact', contentType: SESSION_MESSAGE_CONTENT_TYPE, digest: 'a'.repeat(64), sizeBytes: 1, source },
     sourceRef: source, createdAt: AT, status: 'pending', readAt: null, response: null,
+    goalRef: null, taskRef: null, requestRoot: null, followupOf: null, deadline: null, deadlineMs: null,
+    release: null, delivery: 'queued', deliveryEvidence: null, expiredAt: null, withdrawnAt: null,
+    waitCancelledAt: null, transferredTo: null, originalRef: null, appliedAt: null, rejectedAt: null,
+    approvedAt: null, approvalRevision: null, applicationProof: null, pins: null,
   };
 }
 
-type RecordedSend = { ctx: CoreCallContext; request: { input: { recipient: SessionRef; text: string }; meta: { requestId: string; expected: readonly unknown[] } } };
+type RecordedSend = { ctx: CoreCallContext; request: SessionMessageSendInputV1 };
 type RecordedWrite = { ctx: CoreCallContext; request: { input: unknown; meta: { requestId: string; expected: readonly unknown[] } } };
 
-function recordingMailbox() {
+function recordingMailbox(results: { send?: SendRejectionV1 } = {}) {
   const sends: RecordedSend[] = [];
   const acks: RecordedWrite[] = [];
   const responds: RecordedWrite[] = [];
   let seq = 0;
   const cursor = () => `c${String(++seq).padStart(10, '0')}` as CommitCursor;
-  const port: SessionMailboxPort = {
+  const port: SessionMessageCommandPort = {
     async sendMessage(ctx, request) {
-      sends.push({ ctx, request: request as unknown as RecordedSend['request'] });
-      return { status: 'committed', value: fakeMessage(request.input.recipient, request.input.text), replayed: false, cursor: cursor() };
+      sends.push({ ctx, request });
+      if (results.send !== undefined) return results.send;
+      return { status: 'committed', sendStatus: 'sent', value: fakeMessage(request.input.recipient, request.input.text), replayed: false, cursor: cursor() };
     },
     async readMessage() { return { status: 'not_found' }; },
     async readMessageBody() { return { status: 'not_found' }; },
@@ -80,6 +84,14 @@ function recordingMailbox() {
       responds.push({ ctx, request: request as unknown as RecordedWrite['request'] });
       return { status: 'committed', value: fakeMessage({ projectId: request.input.messageRef.projectId, sessionId: 'recipient' }, 'respond'), replayed: false, cursor: cursor() };
     },
+    async withdrawMessage() {
+      return { status: 'committed', value: fakeMessage(recipient, 'withdraw'), replayed: false, cursor: cursor() };
+    },
+    async releaseMessage() {
+      return { status: 'committed', value: fakeMessage(recipient, 'release'), replayed: false, cursor: cursor() };
+    },
+    async readMessageView() { return { status: 'not_found' }; },
+    async readInboxView() { return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: cursor() } }; },
   };
   return { port, sends, acks, responds };
 }
@@ -96,7 +108,7 @@ const HOST_PROJECT = 'c1-tool-project';
 const recipient: SessionRef = { projectId: HOST_PROJECT, sessionId: 'c1-tool-recipient' };
 const messageRef: SessionMessageRef = { aggregateType: 'SessionMessage', projectId: HOST_PROJECT, workspaceId: HOST_WORKSPACE, messageId: 'm-1' };
 
-function buildTools(mailbox: SessionMailboxPort, context: CoreCallContext = hostCtx(HOST_PROJECT, HOST_WORKSPACE), sessionRef: SessionRef = recipient) {
+function buildTools(mailbox: SessionMessageCommandPort, context: CoreCallContext = hostCtx(HOST_PROJECT, HOST_WORKSPACE), sessionRef: SessionRef = recipient) {
   const handle = createSessionMailboxTools({ mailbox, context, sessionRef, requestIdForCall: call => `c1:${call.callId}` });
   const definitions = handle.create(null as unknown as WorkspaceSandbox);
   const byName = (name: string) => {
@@ -141,17 +153,20 @@ describe('C1 SessionMailbox tool adapter', () => {
     const { port, sends } = recordingMailbox();
     const { byName } = buildTools(port);
     const definition = byName('send_session_message');
-    const firstArgs: Record<string, unknown> = { recipient: { ...recipient }, text: 'snapshot' };
+    const expected = { planRevision: 2, pointerRevision: 'none' as const, dispatchSequence: 7 };
+    const firstArgs: Record<string, unknown> = { recipient: { ...recipient }, text: 'snapshot', expected };
     const firstCall = toolCall('send_session_message', 'call-stable', firstArgs);
     const pending = definition.handler.execute(firstCall, { signal: signal() });
     // Mutating the caller's argument object after acceptance must not change it.
     (firstArgs['recipient'] as Record<string, unknown>)['sessionId'] = 'mutated';
     firstArgs['text'] = 'mutated';
+    expected.planRevision = 9;
     await pending;
     expect(sends[0]?.request.meta.requestId).toBe('c1:call-stable');
     expect(sends[0]?.request.meta.expected).toEqual([]);
     expect(sends[0]?.request.input.recipient).toEqual(recipient);
     expect(sends[0]?.request.input.text).toBe('snapshot');
+    expect(sends[0]?.request.input.expected).toEqual({ planRevision: 2, pointerRevision: 'none', dispatchSequence: 7 });
 
     await definition.handler.execute(toolCall('send_session_message', 'call-stable', { recipient, text: 'again' }), { signal: signal() });
     await definition.handler.execute(toolCall('send_session_message', 'call-other', { recipient, text: 'again' }), { signal: signal() });
@@ -186,7 +201,7 @@ describe('C1 SessionMailbox tool adapter', () => {
     const cancelled = await definition.handler.execute(toolCall('send_session_message', 'call-cancel', { recipient, text: 'x' }), { signal: aborted.signal });
     expect(cancelled).toMatchObject({ status: 'cancelled' });
 
-    const rejecting: SessionMailboxPort = { ...port, async sendMessage() { return { status: 'rejected', code: 'forbidden', reason: 'not permitted' }; } };
+    const rejecting: SessionMessageCommandPort = { ...port, async sendMessage() { return { status: 'rejected', code: 'forbidden', reason: 'not permitted' }; } };
     const rejected = await buildTools(rejecting).byName('send_session_message').handler.execute(
       toolCall('send_session_message', 'call-reject', { recipient, text: 'x' }), { signal: signal() });
     expect(rejected).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
@@ -201,6 +216,63 @@ describe('C1 SessionMailbox tool adapter', () => {
       .handler.execute(toolCall('send_session_message', 'call-nobind', { recipient, text: 'x' }), { signal: signal() });
     expect(failed).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
     expect(throwing.definitions).toHaveLength(6);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Adapter rows moved from S7A-tools (TA-08): the same seam, reusing the
+// recorder, refs, buildTools and call helpers above.
+// --------------------------------------------------------------------------
+
+const OTHER_MESSAGE_REF: SessionMessageRef = { ...messageRef, messageId: 'm-2' };
+const EXPECTED = { planRevision: 2, pointerRevision: 'none' as const, dispatchSequence: 7 };
+const TASK_REF = { projectId: HOST_PROJECT, goalId: 'goal-1', taskId: 'task-1' };
+
+describe('the tool adapter hands the owner the one built command', () => {
+  it('send forwards the four optional fields with the empty meta pin list', async () => {
+    const recorded = recordingMailbox();
+    const args = {
+      recipient, text: 'question', expected: EXPECTED, taskRef: TASK_REF, followupOf: messageRef,
+      deadlineMs: 2500,
+    };
+    await buildTools(recorded.port).byName('send_session_message')
+      .handler.execute(toolCall('send_session_message', 's7a-send-service', args), { signal: signal() });
+    expect(recorded.sends[0]?.request).toStrictEqual({
+      input: { recipient, text: 'question', expected: EXPECTED, taskRef: TASK_REF,
+        followupOf: messageRef, deadlineMs: 2500 },
+      meta: { requestId: 'c1:s7a-send-service', expected: [] },
+    });
+  });
+
+  it.each([
+    ['text', { messageRef, expectedRevision: 4, text: 'the answer' },
+      { messageRef, text: 'the answer' }],
+    ['reject', { messageRef: OTHER_MESSAGE_REF, expectedRevision: 7, reject: true, reason: 'not mine' },
+      { messageRef: OTHER_MESSAGE_REF, reject: true, reason: 'not mine' }],
+  ] as const)('respond %s stays flat, with the revision only in meta.expected', async (_arm, args, body) => {
+    const recorded = recordingMailbox();
+    await buildTools(recorded.port).byName('respond_session_message')
+      .handler.execute(toolCall('respond_session_message', 's7a-respond-service', args), { signal: signal() });
+    expect(recorded.responds[0]?.request).toStrictEqual({
+      input: body,
+      meta: { requestId: 'c1:s7a-respond-service',
+        expected: [{ ref: args.messageRef, revision: args.expectedRevision }] },
+    });
+  });
+
+  const refusals: readonly [string, SendRejectionV1][] = [
+    ['a version rejection', { status: 'rejected', code: 'revision_conflict', reason: 'the dispatch basis moved',
+      current: [{ ref: messageRef, revision: 9 }] }],
+    ['a refused sender', { status: 'rejected', code: 'forbidden', reason: 'the sender is not admitted' }],
+  ];
+  it.each(refusals)('%s is returned unchanged and stays uncommitted', async (_name, refusal) => {
+    const recorded = recordingMailbox({ send: refusal });
+    const result = await buildTools(recorded.port).byName('send_session_message')
+      .handler.execute(toolCall('send_session_message', 's7a-send-refused', { recipient, text: 'question' }),
+        { signal: signal() });
+    expect(result.status).toBe('error');
+    expect(outputValue(result)).toStrictEqual(refusal);
+    expect(JSON.stringify(result.output)).not.toContain('"committed"');
   });
 });
 

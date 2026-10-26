@@ -21,6 +21,10 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { DecisionSubjectShape } from '../../../contracts/goal-decisions.js';
 import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
+import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
+import {
+  QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape,
+} from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
   hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, type UnknownRecord,
@@ -30,6 +34,7 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { parseJsonObject } from '../../record-store/record-codec.js';
+import { dispatchBasisProblem } from '../model/message-payload.js';
 import { checkArtifactRef, checkPlainSessionRef, checkSessionBody, isNonZeroPlatformCursor, isPlatformCursor } from './session-record-codecs.js';
 import type { Slice1EventHeaderV1 } from './lifecycle-record-codecs.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
@@ -52,6 +57,11 @@ export const SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE = 'SessionMessageInputAcc
 /** Slice 5 replay event selectors (SPEC §2.3, §2.8). */
 export const SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE = 'SessionMessageDecisionAnswered';
 export const SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE = 'SessionMessageDecisionApplied';
+/** Persisted lifecycle events; every one carries the full message snapshot. */
+export const SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE = 'SessionMessageWithdrawn';
+export const SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE = 'SessionMessageReleaseDecided';
+export const SESSION_MESSAGE_RELEASED_EVENT_TYPE = 'SessionMessageReleased';
+export const SESSION_MESSAGE_APPLIED_EVENT_TYPE = 'SessionMessageApplied';
 export const SESSION_MESSAGE_EVENT_SCHEMA_VERSION = 1;
 /** Slice 1 §2.9: the wait-disposal replay event written by the mailbox owner. */
 export const ARCHIVE_WAIT_DISPOSED_EVENT_TYPE = 'ArchiveWaitDisposed';
@@ -64,6 +74,8 @@ export const SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP = 'session-message-by-re
  * become a candidate of a concrete Run query. */
 export const SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP = 'session-message-by-sender-run';
 export const SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP = 'session-message-by-sender-session';
+/** A secretary round's message root, ordered by the record's own creation time. */
+export const SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP = 'session-message-by-request-root';
 /** Slice 5 decision indexes on the SAME SessionMessage aggregate codec (SPEC §2.5). */
 export const S5_USER_MESSAGE_BY_GOAL = 's5-user-message-by-goal';
 export const S5_MESSAGE_BY_WORKSPACE_STATUS = 's5-message-by-workspace-status';
@@ -119,6 +131,12 @@ export const SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     name: SESSION_REPLY_BY_HANDLER_LOOKUP,
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'replyHandler.sessionRef.sessionId'],
+  },
+  {
+    name: SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP,
+    aggregateType: 'SessionMessage',
+    paths: ['requestRoot.projectId', 'requestRoot.workspaceId', 'requestRoot.queryJobId'],
+    orderBy: { path: 'createdAt', valueType: 'text' },
   },
 ];
 
@@ -186,6 +204,10 @@ export type {
   SessionMessageRespondedEventV1,
   SessionMessageDecisionAnsweredEventV1,
   SessionMessageDecisionAppliedEventV1,
+  SessionMessageWithdrawnEventV1,
+  SessionMessageReleaseDecidedEventV1,
+  SessionMessageReleasedEventV1,
+  SessionMessageAppliedEventV1,
   SessionMessageEventV1,
 } from '../model/communication-contracts.js';
 import type {
@@ -196,6 +218,10 @@ import type {
   SessionMessageRespondedEventV1,
   SessionMessageDecisionAnsweredEventV1,
   SessionMessageDecisionAppliedEventV1,
+  SessionMessageWithdrawnEventV1,
+  SessionMessageReleaseDecidedEventV1,
+  SessionMessageReleasedEventV1,
+  SessionMessageAppliedEventV1,
   SessionMessageEventV1,
 } from '../model/communication-contracts.js';
 
@@ -213,6 +239,102 @@ export type ArchiveWaitDisposedEventV1 = Slice1EventHeaderV1 & {
 
 /** `null` = the check passed; a string is the precise rejection reason. */
 export type Problem = string | null;
+
+/**
+ * The seventeen lifecycle fields this shape can describe. `pins` and
+ * `applicationProof` are NOT here: `pointerRevision: number | 'none'` and the
+ * open `AggregateRef` of `effect.ref` are outside its closed kinds, so they keep
+ * the named pure checks below. One fragment serves the record and the event's
+ * full snapshot.
+ */
+export const SessionMessageFieldsShape = defineShape({ name: 'SessionMessageFields', fields: {
+  taskRef: f.nullable(f.ref(TaskTripleShape)),
+  requestRoot: f.nullable(f.ref(QueryJobRefShape)),
+  followupOf: f.nullable(f.ref(SessionMessageRefShape)),
+  deadline: f.nullable(f.isoTime()),
+  deadlineMs: f.nullable(f.finite({ min: 0, minExclusive: true })),
+  release: f.nullable(f.enumOf(['awaiting', 'approved', 'released', 'denied'] as const)),
+  delivery: f.enumOf(['queued', 'delivered'] as const),
+  deliveryEvidence: f.nullable(f.object({
+    executionRef: f.union('aggregateType', { Run: RunRefShape.fields, QueryRun: QueryRunRefShape.fields }),
+    acceptedAt: f.isoTime(),
+  })),
+  expiredAt: f.nullable(f.isoTime()),
+  withdrawnAt: f.nullable(f.isoTime()),
+  waitCancelledAt: f.nullable(f.isoTime()),
+  transferredTo: f.nullable(f.ref(SessionRefShape)),
+  originalRef: f.nullable(f.ref(SessionMessageRefShape)),
+  appliedAt: f.nullable(f.isoTime()),
+  rejectedAt: f.nullable(f.isoTime()),
+  approvedAt: f.nullable(f.isoTime()),
+  approvalRevision: f.nullable(f.integer({ min: 1 })),
+} });
+
+/**
+ * Checks the fragment's own keys; a missing required field reads
+ * `<shape>.<field> is missing`. The four local types assert that the shape's
+ * inferred type equals the record's picked fields.
+ */
+function messageFieldsProblem(body: UnknownRecord): Problem {
+  type SessionMessageFields = InferShape<(typeof SessionMessageFieldsShape)['fields']>;
+  type PickSessionMessageFields = Pick<SessionMessage,
+    'taskRef' | 'requestRoot' | 'followupOf' | 'deadline' | 'deadlineMs' | 'release' | 'delivery'
+    | 'deliveryEvidence' | 'expiredAt' | 'withdrawnAt' | 'waitCancelledAt' | 'transferredTo' | 'originalRef'
+    | 'appliedAt' | 'rejectedAt' | 'approvedAt' | 'approvalRevision'>;
+  type MustHold<T extends true> = T;
+  type FieldsMatchRecord = MustHold<
+    [SessionMessageFields, PickSessionMessageFields] extends [PickSessionMessageFields, SessionMessageFields] ? true : false
+  >;
+  const fields: UnknownRecord = {};
+  for (const key of Object.keys(SessionMessageFieldsShape.fields)) {
+    if (Object.hasOwn(body, key)) fields[key] = body[key];
+  }
+  return checkShape(SessionMessageFieldsShape, fields, 'stored');
+}
+
+const APPLICATION_PROOF_EFFECT_KINDS: readonly string[] = [
+  'claim_created', 'proposal_created', 'requeue', 'recheck', 'member_created',
+];
+
+/**
+ * `pins` is `DispatchBasisV1 | null` (`null` means none); a non-null basis is
+ * checked by the payload model's one basis check.
+ */
+function messagePinsProblem(value: unknown): Problem {
+  if (value === null) return null;
+  const problem = dispatchBasisProblem(value);
+  return problem === null ? null : `message pins ${problem}`;
+}
+
+/**
+ * `applicationProof` carries the open `AggregateRef` of its effect, so its `ref`
+ * is validated by the ONE aggregate-ref check (never a tag-only copy). The
+ * release-decision owner validates the proof's party and deep decision rules;
+ * this codec fixes only the slot.
+ */
+function applicationProofProblem(value: unknown): Problem {
+  if (value === null) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['receipt', 'effect']) || Object.keys(value).length !== 2) {
+    return 'application proof must carry exactly receipt and effect';
+  }
+  const receipt = value['receipt'];
+  if (!isRecord(receipt) || !hasOnlyKeys(receipt, ['identityKey', 'fingerprint', 'cursor'])
+    || Object.keys(receipt).length !== 3 || !nonEmpty(receipt['identityKey'])
+    || !nonEmpty(receipt['fingerprint']) || !isPlatformCursor(receipt['cursor'])) {
+    return 'application proof receipt must carry identityKey, fingerprint and a platform cursor';
+  }
+  const effect = value['effect'];
+  if (!isRecord(effect) || !hasOnlyKeys(effect, ['kind', 'ref']) || Object.keys(effect).length !== 2) {
+    return 'application proof effect must carry exactly kind and ref';
+  }
+  const kind = effect['kind'];
+  if (typeof kind !== 'string' || !APPLICATION_PROOF_EFFECT_KINDS.includes(kind)) {
+    return 'application proof effect kind is not recognized';
+  }
+  const refProblem = aggregateRefProblem(effect['ref']);
+  if (refProblem !== null) return `application proof effect ref: ${refProblem}`;
+  return null;
+}
 
 const SOURCE_KINDS: readonly string[] = ['plan-revision', 'workspace', 'governance', 'artifact', 'memory'];
 
@@ -287,7 +409,20 @@ export function checkMessageSender(value: unknown): Problem {
     if (!isPos(value['generation'])) return 'work_run sender generation must be a positive integer';
     return null;
   }
-  return 'message sender kind must be host or work_run';
+  if (value['kind'] === 'secretary_round') {
+    if (!hasOnlyKeys(value, ['kind', 'sessionRef', 'queryRunRef', 'requestRoot', 'generation'])) {
+      return 'secretary_round sender carries unknown fields';
+    }
+    const session = checkPlainSessionRef(value['sessionRef']);
+    if (session !== null) return `secretary_round sender session: ${session}`;
+    const run = checkQueryRunRef(value['queryRunRef']);
+    if (run !== null) return `secretary_round sender run: ${run}`;
+    const requestRoot = checkShape(QueryJobRefShape, value['requestRoot'], 'stored');
+    if (requestRoot !== null) return `secretary_round sender requestRoot: ${requestRoot}`;
+    if (!isPos(value['generation'])) return 'secretary_round sender generation must be a positive integer';
+    return null;
+  }
+  return 'message sender kind must be host, work_run or secretary_round';
 }
 
 function checkQueryRunRef(value: unknown): Problem {
@@ -702,7 +837,7 @@ function checkUserMessageResponse(value: UnknownRecord): Problem {
 function checkMessageResponse(value: unknown): Problem {
   // Slice 5: the presence of `decision` selects the widened user-answer variant.
   if (isRecord(value) && 'decision' in value) return checkUserMessageResponse(value);
-  if (!isRecord(value) || !hasOnlyKeys(value, ['sender', 'bodyRef', 'sourceRef', 'respondedAt'])) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['sender', 'bodyRef', 'sourceRef', 'respondedAt', 'reject', 'reason'])) {
     return 'message response carries unknown fields';
   }
   const sender = checkResponseSender(value['sender']);
@@ -712,6 +847,14 @@ function checkMessageResponse(value: unknown): Problem {
   const source = checkSourceRef(value['sourceRef']);
   if (source !== null) return `message response source: ${source}`;
   if (!nonEmpty(value['respondedAt'])) return 'message response requires respondedAt';
+  // The refusal branch is the pair; a plain reply has neither key (never one alone).
+  const hasReject = Object.hasOwn(value, 'reject');
+  const hasReason = Object.hasOwn(value, 'reason');
+  if (hasReject !== hasReason) return 'message response reject and reason must be present together';
+  if (hasReject) {
+    if (value['reject'] !== true) return 'message response reject must be true';
+    if (!nonEmpty(value['reason'])) return 'message response reason must be a non-empty string';
+  }
   return null;
 }
 
@@ -724,6 +867,10 @@ const MESSAGE_KEYS: readonly string[] = [
   'goalRef', 'decision', 'application', 'since', 'noticeAutomationCap',
   // Wiring package 2 (spec §2.3 P02): the first-response commit position.
   'responseSince',
+  // Lifecycle fields; appended so the historical key order stays intact.
+  'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery',
+  'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef',
+  'appliedAt', 'rejectedAt', 'approvedAt', 'approvalRevision', 'applicationProof', 'pins',
 ];
 
 /** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. */
@@ -853,9 +1000,10 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
       return 'SessionMessage archiveWaitDisposition belongs to another project';
     }
   }
-  // Slice 5 additive fields (SPEC §2.3): optional, and NEVER backfilled here.
+  // Slice 5 additive fields (SPEC §2.3): `goalRef` is REQUIRED and null is legal.
+  if (!Object.hasOwn(body, 'goalRef')) return 'SessionMessage.goalRef is missing';
   const goalRef = body['goalRef'];
-  if (goalRef !== undefined && goalRef !== null) {
+  if (goalRef !== null) {
     const goalRefProblem = checkGoalRefShape(goalRef);
     if (goalRefProblem !== null) return `SessionMessage goalRef: ${goalRefProblem}`;
   }
@@ -884,8 +1032,9 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
       return 'SessionMessage responseSince must be a nonzero ledger commit cursor';
     }
     const senderValue = body['sender'];
-    if (!isRecord(senderValue) || senderValue['kind'] !== 'work_run') {
-      return 'SessionMessage responseSince requires a work_run sender';
+    if (!isRecord(senderValue)
+      || (senderValue['kind'] !== 'work_run' && senderValue['kind'] !== 'secretary_round')) {
+      return 'SessionMessage responseSince requires a work_run or secretary_round sender';
     }
     if (body['response'] === null) return 'SessionMessage responseSince requires a saved response';
   }
@@ -895,6 +1044,15 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
       || noticeAutomationCap < 0 || noticeAutomationCap > MAX_AUTO_REWORK_LIMIT)) {
     return `SessionMessage noticeAutomationCap must be an integer between 0 and ${MAX_AUTO_REWORK_LIMIT}`;
   }
+  // The fragment checks only its own keys; the two open fields keep named checks.
+  const fieldsProblem = messageFieldsProblem(body);
+  if (fieldsProblem !== null) return `SessionMessage fields: ${fieldsProblem}`;
+  if (!Object.hasOwn(body, 'pins')) return 'SessionMessage.pins is missing';
+  const pinsProblem = messagePinsProblem(body['pins']);
+  if (pinsProblem !== null) return `SessionMessage pins: ${pinsProblem}`;
+  if (!Object.hasOwn(body, 'applicationProof')) return 'SessionMessage.applicationProof is missing';
+  const proofProblem = applicationProofProblem(body['applicationProof']);
+  if (proofProblem !== null) return `SessionMessage applicationProof: ${proofProblem}`;
   // The status/readAt/response triple is monotone and consistent.
   if (status === 'pending' && (readAt !== null || response !== null)) {
     return 'a pending message must be unread and unanswered';
@@ -915,9 +1073,18 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
 const EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'requestId', 'actor', 'message',
 ];
+/** Only the release decision carries the proof; every other event must not. */
+const EVENT_PROOF_KEYS: readonly string[] = [...EVENT_KEYS, 'proof'];
 
 function checkEventBody(body: UnknownRecord, eventType: string): Problem {
-  if (!hasOnlyKeys(body, EVENT_KEYS)) return `${eventType} carries unknown fields`;
+  const allowedKeys = eventType === SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE ? EVENT_PROOF_KEYS : EVENT_KEYS;
+  if (!hasOnlyKeys(body, allowedKeys)) return `${eventType} carries unknown fields`;
+  if (eventType === SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE) {
+    if (!Object.hasOwn(body, 'proof')) return `${eventType} requires proof`;
+    const proof = body['proof'];
+    // The release-decision owner validates the proof's contents; the codec only fixes the slot.
+    if (proof !== null && !isRecord(proof)) return `${eventType} proof must be null or an object`;
+  }
   if (body['eventType'] !== eventType) return `${eventType} eventType disagrees with the envelope`;
   if (body['schemaVersion'] !== SESSION_MESSAGE_EVENT_SCHEMA_VERSION) {
     return `${eventType} schemaVersion must be ${SESSION_MESSAGE_EVENT_SCHEMA_VERSION}`;
@@ -1137,6 +1304,14 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_RELEASED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_RELEASED_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_APPLIED_EVENT_TYPE) },
   ],
   lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES,
     ...K3_SESSION_MESSAGE_LOOKUP_INDEXES],
@@ -1187,6 +1362,18 @@ export function encodeSessionMessageDecisionAnsweredEvent(event: SessionMessageD
 export function encodeSessionMessageDecisionAppliedEvent(event: SessionMessageDecisionAppliedEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
+export function encodeSessionMessageWithdrawnEvent(event: SessionMessageWithdrawnEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
+export function encodeSessionMessageReleaseDecidedEvent(event: SessionMessageReleaseDecidedEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
+export function encodeSessionMessageReleasedEvent(event: SessionMessageReleasedEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
+export function encodeSessionMessageAppliedEvent(event: SessionMessageAppliedEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
 
 export function encodeArchiveWaitDisposedEvent(event: ArchiveWaitDisposedEventV1): EncodedDomainEvent {
   return encodeEventEnvelope(event);
@@ -1224,7 +1411,11 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
     && eventType !== SESSION_MESSAGE_RESPONDED_EVENT_TYPE && eventType !== SESSION_MESSAGE_DERIVATION_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) {
+    && eventType !== SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_RELEASED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_APPLIED_EVENT_TYPE) {
     return invalid(`eventType ${String(eventType)} is not a SessionMessage event`);
   }
   const checked = validateEvent(event, eventType);

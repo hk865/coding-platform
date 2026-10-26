@@ -9,7 +9,9 @@ import type { CommitCursor } from './command-event.js';
 import type { ControlIntentRef } from './control-intent.js';
 import type { ModuleRef, SessionRef, VersionPin, WorkLinkRelation, WorkLinkTarget } from './core/identity.js';
 import type { CoreError } from './core/results.js';
-import type { SessionMessageRef } from './core/session-message.js';
+import type {
+  MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SessionMessageRef,
+} from './core/session-message.js';
 import type { SessionHealthConclusion, SessionProvenanceV1 } from './core/session.js';
 import type { RunOutcome, RunRef, TaskTriple } from './dispatch.js';
 import type { DecisionSourceV1 } from './goal-decisions.js';
@@ -175,13 +177,17 @@ export type LineParticipationV1 = {
 };
 export type LineMessageStateV1 = {
   messageRef: SessionMessageRef; revision: number; createdAt: string;
-  delivery: 'queued' | 'delivered';
-  deliveredTo: { executionRef: RunRef | QueryRunRef; acceptedAt: string } | null;
-  read: boolean; responded: boolean;
-  replyHandler: SessionRef | null;
+  release: MessageReleaseV1 | null;
+  /** The derived triple's own value, never the stored record's `delivery`. */
+  delivery: MessageDeliveryStateV1['delivery'];
+  deliveredTo: MessageDeliveryStateV1['deliveredTo'];
+  evidence: MessageDeliveryStateV1['evidence'];
+  /** The undelivered READ reason; `null` unless `delivery === 'undelivered'`. */
+  reason: MessageDeliveryStateV1['undeliveredReason'];
+  read: boolean; responded: boolean; replyHandler: SessionRef | null;
   waitDisposition: 'cancel' | 'transfer' | null;
-  undelivered: boolean;
-  disposition: NotYetV1;                     // 已生效、被拒绝、已到期、已转交、已撤回、待放行、不发（第 7 片）
+  undelivered: boolean;                       // an undelivered REPLY; keeps its old meaning
+  disposition: MessageReadDispositionV1;
 };
 export type WorkLineSectionPageV1 =
   | { section: 'participation'; items: LineParticipationV1[]; nextCursor: string | null; sourceCursor: CommitCursor }
@@ -198,7 +204,6 @@ export type LineBriefV1 = {                                                 // �
   key: SessionRef; duty: PlatformDutyV1 | 'unknown'; name: LineNameV1;
   status: LineStatusV1;                                                     // 和 LineRowV1.status 同一个类型、同一个函数算出
 };
-export type NotYetV1 = { availability: 'not_available'; reason: string };    // 还没接上，写明哪一片（注记一栏等）
 export type FromExecutedFilesV1<T> =                                        // 要用“执行改过的文件”的字段（L15）
   | { availability: 'available'; value: T; possiblyIncomplete: boolean; sourceCursor: CommitCursor | null }
   | { availability: 'unavailable'; cause: 'not_recorded' | 'read_failed'; reason: string };

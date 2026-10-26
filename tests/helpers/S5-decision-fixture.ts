@@ -1146,6 +1146,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     });
   const messageMaterials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
   const messageDeps: SessionMailboxDependencies = {
+    defaultInquiryDeadlineMs: 86_400_000,
     records, sessions: sessionsPort, executions: reads, roles, materials: messageMaterials,
     systemActor: { ...operatorActor }, now, newId,
     duties: createMessageDutiesFactsAdapter({ roles, sessions: sessionsPort, legacyDuty }),

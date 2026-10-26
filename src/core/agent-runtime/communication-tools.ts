@@ -23,7 +23,7 @@
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
-import type { SessionMessageIntentV1, SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import { decisionSourceKey } from '../../contracts/goal-decisions.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
@@ -36,12 +36,13 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
+import type { SessionMessage, SessionMessageCommandPort } from '../work-graph/model/communication-contracts.js';
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
 import {
   ackSessionMessageRequest, recordDecisionApplicationRequest, respondSessionMessageRequest,
-  sendSessionMessageRequest, sendUserMessageRequest,
+  sendSessionMessageRequest, sendUserMessageRequest, type SessionMessageSendInput,
 } from '../work-graph/model/tool-commit-arguments.js';
+import type { RespondMessageV1 } from '../work-graph/model/message-payload.js';
 
 /** Typed view: the generated pack's literal `tools` object has no string index signature. */
 const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
@@ -68,7 +69,7 @@ export const USER_DECISION_TOOL_NAMES = [
 ] as const;
 
 export type SessionMailboxToolsConfig = {
-  mailbox: SessionMailboxPort;
+  mailbox: SessionMessageCommandPort;
   /** Trusted, already-bound context. Snapshotted per call; never model JSON. */
   context: CoreCallContext;
   /** Trusted Host-bound Session used to address inbox reads. */
@@ -334,6 +335,17 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     workspaceId: z.string().min(1),
     messageId: z.string().min(1),
   }).strict();
+  const taskTriple = z.object({
+    projectId: z.string().min(1),
+    goalId: z.string().min(1),
+    taskId: z.string().min(1),
+  }).strict();
+  /** The exact `DispatchBasisV1` shape: `planRevision` may be null and `pointerRevision` may be 'none'. */
+  const dispatchBasis = z.object({
+    planRevision: z.number().int().min(0).nullable(),
+    pointerRevision: z.union([z.number().int().min(0), z.literal('none')]),
+    dispatchSequence: z.number().int().min(0),
+  }).strict();
   const schemas: readonly z.ZodType[] = [
     z.object({
       recipient: session,
@@ -344,6 +356,14 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
       needsReply: z.boolean().optional(),
       /** Independent of needsReply: yield after the message is durably saved. */
       waitAfterSend: z.boolean().optional(),
+      /** The dispatch basis the sender observed; omitted means no pin. */
+      expected: dispatchBasis.optional(),
+      /** The Task this message belongs to; omitted means no task pin. */
+      taskRef: taskTriple.optional(),
+      /** The message this one follows up; it does NOT start a new request root by itself. */
+      followupOf: message.optional(),
+      /** Inquiry only: a finite budget greater than 0; overflow belongs to the write. */
+      deadlineMs: z.number().finite().gt(0).optional(),
     }).strict(),
     z.object({
       status: z.enum(['pending', 'read', 'responded']).optional(),
@@ -356,7 +376,13 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     z.object({ messageRef: message }).strict(),
     z.object({ messageRef: message, part: z.enum(['message', 'response']) }).strict(),
     z.object({ messageRef: message, expectedRevision: z.number().int().min(1) }).strict(),
-    z.object({ messageRef: message, expectedRevision: z.number().int().min(1), text: z.string().min(1) }).strict(),
+    z.union([
+      z.object({ messageRef: message, expectedRevision: z.number().int().min(1), text: z.string().min(1) }).strict(),
+      z.object({
+        messageRef: message, expectedRevision: z.number().int().min(1),
+        reject: z.literal(true), reason: z.string().min(1),
+      }).strict(),
+    ]),
   ];
   const trustedSessionRef: SessionRef = { projectId: config.sessionRef.projectId, sessionId: config.sessionRef.sessionId };
 
@@ -434,10 +460,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
           return execute(call, options.signal, schema, async (args, requestId, context) => {
             switch (name) {
               case 'send_session_message': {
-                const input = args as {
-                  recipient: SessionRef; text: string; intent?: SessionMessageIntentV1;
-                  needsReply?: boolean; waitAfterSend?: boolean;
-                };
+                const input = args as SessionMessageSendInput;
                 const result = await config.mailbox.sendMessage(context, sendSessionMessageRequest(input, requestId));
                 if (result.status !== 'committed') return mapWrite(call.callId, result);
                 // The historical fire-and-forget send keeps the untouched result.
@@ -487,7 +510,9 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
                 return mapWrite(call.callId, result);
               }
               case 'respond_session_message': {
-                const input = args as { messageRef: SessionMessageRef; expectedRevision: number; text: string };
+                const input = args as RespondMessageV1;
+                // The payload is flat; its body arm is spread into the owner's
+                // input. The full command port is the one that carries both arms.
                 const result = await config.mailbox.respondMessage(context, respondSessionMessageRequest(input, requestId));
                 return mapWrite(call.callId, result);
               }

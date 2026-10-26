@@ -85,7 +85,7 @@
 - `run-reconcile-service.ts` — 无 Kernel terminal 的 Run end 判定、未知结果处置与一 commit。
 - `run-state-service.ts` — 精确 Task execution 读取：三段 `readMany`，只在引用漂移时重试。
 
-### 记录读取与共享纯规则（11 个）
+### 记录读取与共享纯规则（12 个）
 
 做工作线时钟、owner 单条读、receipt 重放、路由守卫与阻塞命令纯规则的去这组。
 
@@ -94,6 +94,7 @@
 - `command-recognition.ts` — 阻塞命令识别器：展平排序后按 exact/action/`declaredForms` 取第一条。
 - `entry-plan-reader.ts` — `entryPlanVerdict` 所需读取：旧 Plan 上钉住的 claim 还能否进入。
 - `line-clock.ts` — 工作线的记录读取：`latestActivityAt`（正本已移到 `src/core/work-graph/state/session-activity.ts:25`，这里只再导出，现有导入者不变）、活跃副本、最近 Query、QueryJob 的 Goal、阶段与 `readClaimedAtForRun`。
+- `dispatch-basis.ts` — 三版本读取的唯一实现 `createDispatchBasisReader`：按顺序读 active Plan 窗口、Goal 理解指针（经 `GoalUnderstandingPointerPort`，本目录不导入 `notes/`）和计数器；三次读的 `readThrough` 不齐时整窗重读一次，并固定最后一次计数器读取的 watermark；第二次必须内部一致且仍等于该 watermark，任何再次移动是 `revision_conflict`；不取最大游标；读失败原样返回，缺失指针是 `'none'`、缺失计数器是 0；同时给出 Goal/指针/计数器的 guards。
 - `owner-record-read.ts` — 单条 owner 记录读取（`readMany` + 解码 + 缺失区分）。
 - `receipt-replay.ts` — 已提交 receipt 的单一重放 helper。
 - `revision-guard.ts` — 从 `meta.expected` 取某引用唯一 revision pin 的纯规则。
@@ -142,7 +143,7 @@
 | `rejected` **正本** | `src/contracts/core/rejections.ts:5` | 领域 rejection 构造器（无 `current`） | 返回失败时用 `rejected` |
 | `lookupCommit` **正本** | `src/core/record-store/ports.ts:190` | Store 的 exact identity/fingerprint 幂等查询端口 | 重放/恢复的底层查询；需要失败分类时用 `lookupCommittedReceipt`，不要复制整套分类 |
 | `oldestPendingRound` **正本** | `src/core/work-graph/queries/request-rounds-read.ts:464` | 选最老的 pending 非 routing round | intake 转移、未分配遍历、Workflow 计划；只有这一份 |
-| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:579` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
+| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:581` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
 | `latestActivityAt` **正本**、`indexActiveCopies`、`readActiveCopies` | `src/core/work-graph/state/session-activity.ts:25`、`line-clock.ts:51`、`line-clock.ts:66` | 工作线时钟（规范化实现在 `state/session-activity.ts`，`line-clock.ts` 只再导出它）、活跃只读副本索引与完整分页枚举 | 工作线卡、秘书选择；不要把时钟或副本另读一份 |
 | `readLatestQueryRun`、`readQueryRunByRef`、`readQueryJobGoal` | `line-clock.ts:89`、`line-clock.ts:117`、`line-clock.ts:145` | 最近 Query、按 ref 读 QueryRun、读其 QueryJob 的 goal；失败经 sink 原样报 | 线卡与只读副本的阶段；`readQueryJobGoal` 由线卡和副本共用 |
 | `copyPhase`、`readClaimedAtForRun` **正本** | `line-clock.ts:172`、`line-clock.ts:190` | 副本的阶段/开始时刻；Run 无起止时间时按 claim 索引回退读 claimedAt | 线卡、秘书选择；不要把 claimedAt 另读一份 |
@@ -150,6 +151,7 @@
 | `readGoal`、`readGoalScope`、`readPlan`、`readProposal`、`readProposalOrigin` | `plan-readers.ts:386`、`plan-readers.ts:432`、`plan-readers.ts:463`、`plan-readers.ts:477`、`plan-readers.ts:498` | 单条 Goal/Plan/Proposal 及其来源的 canonical 读取 | 任何 owner 要一条已存记录时 |
 | `readGoalsByWorkspaceCreated` | `plan-readers.ts:405` | 按 `s6-goal-by-workspace-created` 升序分页读完一个工作区的全部 Goal（第一项即最早创建的 Goal） | `main/read` 取“首目标”与其前目标区边界 |
 | `readGoalPlanWindow`、`confirmActivePlan`、`findPendingProposal`、`terminalProposalOf` | `plan-readers.ts:1011`、`plan-readers.ts:995`、`plan-readers.ts:549`、`plan-readers.ts:790` | Goal 的 Plan 窗口、active Plan 确认与 proposal 终态 | 采用、决定队列、完成判定 |
+| `createDispatchBasisReader`、`readDispatchFacts`、`readDispatchBasis` **正本** | `dispatch-basis.ts:64`、`dispatch-basis.ts:144`、`dispatch-basis.ts:172` | 一个水位读出 Plan revision、指针 revision（缺失 `'none'`）和计数器 sequence（缺失 0），并给出 Goal/指针/计数器三个 guards；窗口不齐只重读一次，并固定最后一次计数器读取的 watermark，第二次必须内部一致且仍等于该 watermark，任何再次移动为 `revision_conflict` | 发送前的三版本读取、`look_graph` 的 Goal 卡；不要把三个值分开读，也不要把读失败当 0 |
 | `enumerateGoalCandidates`、`enumerateClosedGoalCandidates`、`readGoalTriggerRecords`、`readGoalRunsForCount` | `plan-readers.ts:650`、`plan-readers.ts:698`、`plan-readers.ts:1356`、`plan-readers.ts:1329` | 按索引枚举 Goal 候选、触发记录与 Run 计数 | 决定队列、预算/上限判断 |
 | `readRunRoundChain`、`readGateRoundChain`、`readPointerIntents`、`readPinnedCompletionPolicy` | `plan-readers.ts:1258`、`plan-readers.ts:1295`、`plan-readers.ts:1492`、`plan-readers.ts:944` | Run/gate 的 round 链、控制指针意图、钉住的完成策略 | 对账、完成、控制扇出 |
 | `readInitializationPointers` **正本** | `src/core/work-graph/tasks/initialization-pointers.ts:49` | 项目两个 active 治理指针的读取与 `activeRevision` 解码：返回架构基线/完成策略的 id 与 revision；缺失为 `null`，坏读为 `unavailable` | 判断项目是否已初始化、或者要指针里的 id/revision 时；不要另读这两个指针 |
@@ -232,7 +234,7 @@
 - Host 调用者检查和命令身份里的主体用 `src/contracts/core/call-context.ts:79` 的 `hostPrincipalOf` 与 `src/contracts/core/call-context.ts:64` 的 `principalIdentity`；`request-service.ts` 原来的私有副本已删除，不要再写。
 - `mergeGuards` 只有 `src/core/work-graph/persistence/record-guards.ts:12` 这一份，不要再写；读窗口的 `appendGuardFirstWins`（`src/core/work-graph/queries/request-rounds-read.ts:178`）与 `secretary-selection.ts:112` 的 `appendGuardCopyFirstWins`（带 guard 浅拷贝）是有意保留的 first-wins 追加，不是它的副本（S11、S12）。
 - `oldestPendingRound` 只有 `src/core/work-graph/queries/request-rounds-read.ts:464` 这一份，已合成；不要另写选最老 pending round 的私有副本。
-- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:579` 这一份，已合成；不要在 request-service 内联第二份。
+- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:581` 这一份，已合成；不要在 request-service 内联第二份。
 - 开放轮遍历只有 `unassigned` 和 `open` 两条具名读取，且共用 `readOpenIndexPage`（`request-service.ts:915`）的游标解析与页读取；不要在别处再写 `s6-query-open-by-workspace` 的分页、`after` 解析或候选解码。`open` 只投影 `job.requestRoot`，不读请求事实。
 - `readClaimedAtForRun` 的正本在 `line-clock.ts:190`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:190` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
 - `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:385` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:646` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。

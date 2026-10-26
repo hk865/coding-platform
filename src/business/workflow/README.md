@@ -11,7 +11,7 @@
 ## 文件
 
 - `activity-backfill.ts` — 两个活动回填批次（Host 启动的近期窗口与人工区间），Work Run 与 Query 共用一张合并候选；计数分别走 `countRunActivity`/`countQueryActivity`，写回分别走 `recordRunActivity`/`recordQueryActivity`；缺 Query 一侧的依赖只让 Query 分支答 `unsupported`，Work 分支不变。
-- `consultation.ts` — 一条已保存信箱输入 → 一条确定性只读 Query；复用已有 Query/Answer，不重跑发送者的 Work；阶段链交给 `query-stage-driver.ts`。
+- `consultation.ts` — 一条已保存信箱输入 → 一条确定性只读 Query；复用已有 Query/Answer，不重跑发送者的 Work；新的咨询在回复位检查前先过共用消费规则 `messageConsumptionProblem(messageFactsOfRecord(message))`，按 `code`/`reason` 拒绝，已保存的 Query 结果仍先重放，提交时同一条消息 revision 由现有 `consultationMessageGuard` 复核；阶段链交给 `query-stage-driver.ts`。
 - `query-stage-driver.ts` — 一条 Query attempt 的唯一阶段链：按 `executionState.phase` 认领请求轮、准备并启动、只观察已开始或 `unknown` 的 attempt，并把每个 owner 的结果映射成 `progressed`/`terminal`/`blocked`。
 - `contracts.ts` — Workflow 的调用/步骤/推进/归档/回填 DTO 与 `WorkflowOperation`、`WorkflowAdvanceResult`；交接组合的注入契约 `HandoffWorkflowDependencies`（两个操作 owner、源未完成操作的读口、事实读、子 owner 与 D 的请求端口）也在这里。
 - `decision-actions.ts` — 有限决定协调：先提交答案，再做结构化冲突动作，最后记录应用；另有只读 `orderGoalAdvances`。
@@ -47,7 +47,7 @@
 | `createSessionMaintenanceService` | `src/business/workflow/session-maintenance.ts:151` | 每次最多一页的有界维护；按到期与真实关闭时间归档 | 启动或推进时跑一页维护 |
 | `createDecisionActions` | `src/business/workflow/decision-actions.ts:289` | `resolveDecision` 的三段有限协调与只读 `orderGoalAdvances` | 决定卡作答与 Host 排序 |
 | `createCommandRerunRequestApplicationAdapter` | `src/business/workflow/decision-actions.ts:247` | `command_rerun_request` 卡的第②步适配器：按答案派生身份提交，重试重放 | 组合根注册 `command_rerun_request` 应用 |
-| `createConsultationConsumer` | `src/business/workflow/consultation.ts:99` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
+| `createConsultationConsumer` | `src/business/workflow/consultation.ts:100` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:112` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:75` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |

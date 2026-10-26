@@ -38,13 +38,15 @@ import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type {
   LineBriefV1, LineChainEntryV1, LineConversationSourceV1, LineCountV1, LineExecutionItemV1,
   LineGateCheckV1, LineMessageStateV1, LineNameV1, LineParticipationV1,
-  LineRowV1, LineSegmentV1, NotYetV1, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
+  LineRowV1, LineSegmentV1, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
 } from '../../../contracts/work-line.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../model/work-line-contracts.js';
 import type { DecisionCardV1, DecisionReadPort } from '../model/decision-contracts.js';
-import type { SessionMailboxPort, SessionMessage } from '../model/communication-contracts.js';
+import {
+  deriveMessageDelivery, type MessageDeliveryFactsV1, type SessionMailboxPort, type SessionMessage,
+} from '../model/communication-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { decodeDispatchOutboxEntry, S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP } from '../tasks/claim-record-codecs.js';
 import { decodeSessionAnomalyAnchor, sessionAnomalyRefKey, S2C_ANOMALY_BY_SESSION_LOOKUP } from '../tasks/session-anomaly-codecs.js';
@@ -2796,6 +2798,11 @@ async function readMessagesSection(
   const sessionsOldest = [...resolved.value.sessions].reverse();
   const chainKeys = sessionsOldest.map((session) => plainSessionKey(sessionRefOf(session)));
   const keyStr = plainSessionKey({ projectId: key.projectId, sessionId: key.sessionId });
+  // Every message below is looked up by recipient Session, so the recipient
+  // line is this line: its archived/retired facts are the head's, the same pair
+  // `deriveLineStatus` reads.
+  const head = resolved.value.head;
+  const recipientLine = { archived: head.lifecycle === 'archived', retired: head.health === 'unavailable' };
 
   const undelivered = new Set<string>();
   const listPageLimit = deps.listPageLimit ?? 100;
@@ -2858,22 +2865,29 @@ async function readMessagesSection(
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') continue;
       const message = decoded.value;
-      const accepted = (message.acceptedInputs ?? []).find((entry) => entry.part === 'message');
-      const deliveredTo = accepted === undefined ? null
-        : { executionRef: accepted.executionRef as RunRef | QueryRunRef, acceptedAt: accepted.acceptedAt };
+      const facts: MessageDeliveryFactsV1 = {
+        ref: message.ref,
+        status: message.status,
+        release: message.release,
+        withdrawnAt: message.withdrawnAt,
+        ...(message.acceptedInputs === undefined ? {} : { acceptedInputs: message.acceptedInputs }),
+      };
+      const derived = deriveMessageDelivery(facts, recipientLine);
       items.push({
         messageRef: message.ref,
         revision: message.revision,
         createdAt: message.createdAt,
-        delivery: accepted === undefined ? 'queued' : 'delivered',
-        deliveredTo,
+        release: message.release,
+        delivery: derived.delivery.delivery,
+        deliveredTo: derived.delivery.deliveredTo,
+        evidence: derived.delivery.evidence,
+        reason: derived.delivery.undeliveredReason,
         read: message.status !== 'pending',
         responded: message.response !== null,
         replyHandler: message.replyHandler?.sessionRef ?? null,
         waitDisposition: message.archiveWaitDisposition?.kind ?? null,
         undelivered: undelivered.has(sessionMessageRefKey(message.ref)),
-        // NotYetV1 is the intended DTO field type (L17; slice 7 supplies the disposition).
-        disposition: { availability: 'not_available', reason: 'slice_7' as const } satisfies NotYetV1,
+        disposition: derived.disposition,
       });
     }
     if (page.value.next !== null) {

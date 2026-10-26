@@ -18,7 +18,7 @@ import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import type { ModelRequest, ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
@@ -201,13 +201,17 @@ const DEPLOYED_SKILLS: Readonly<Record<(typeof C2_SKILL_IDS)[number], string>> =
 
 describe('C2 platform tool adapters', () => {
   it('publishes the six frozen mailbox names and the workspace_read read-only registration label', () => {
-    const port: SessionMailboxPort = {
+    const port: SessionMessageCommandPort = {
       async sendMessage() { return { status: 'rejected', code: 'unsupported', reason: 'unused' }; },
       async readMessage() { return { status: 'not_found' }; },
       async readMessageBody() { return { status: 'not_found' }; },
       async readInbox() { return { status: 'not_found' }; },
       async ackMessage() { return { status: 'rejected', code: 'unsupported', reason: 'unused' }; },
       async respondMessage() { return { status: 'rejected', code: 'unsupported', reason: 'unused' }; },
+      async withdrawMessage() { return { status: 'rejected', code: 'unsupported', reason: 'unused' }; },
+      async releaseMessage() { return { status: 'rejected', code: 'unsupported', reason: 'unused' }; },
+      async readMessageView() { return { status: 'not_found' }; },
+      async readInboxView() { return { status: 'not_found' }; },
     };
     const handle = createSessionMailboxTools({ mailbox: port, context: trustedContext(signal()), sessionRef: SESSION,
       requestIdForCall: call => `c2:${call.name}:${call.callId}` });
@@ -234,13 +238,17 @@ describe('C2 platform tool adapters', () => {
   it('keeps a typed domain rejection in the JSON output instead of flattening it to execution_failed', async () => {
     const rejectedWrite = { status: 'rejected' as const, code: 'capacity' as const, reason: 'message text exceeds the bound' };
     const notReadyRead = { status: 'not_ready' as const, observed: null, required: { kind: 'platform' as const, cursor: 'c0000000005' as CommitCursor } };
-    const port: SessionMailboxPort = {
+    const port: SessionMessageCommandPort = {
       async sendMessage() { return rejectedWrite; },
       async readMessage() { return { status: 'not_found' }; },
       async readMessageBody() { return { status: 'not_found' }; },
       async readInbox() { return notReadyRead; },
       async ackMessage() { return rejectedWrite; },
       async respondMessage() { return rejectedWrite; },
+      async withdrawMessage() { return rejectedWrite; },
+      async releaseMessage() { return rejectedWrite; },
+      async readMessageView() { return { status: 'not_found' }; },
+      async readInboxView() { return notReadyRead; },
     };
     const handle = createSessionMailboxTools({ mailbox: port, context: trustedContext(signal()), sessionRef: SESSION,
       requestIdForCall: call => `c2:${call.name}:${call.callId}` });
@@ -252,6 +260,18 @@ describe('C2 platform tool adapters', () => {
     const inbox = definitions.find(candidate => candidate.name === 'read_session_inbox')!;
     const inboxResult = await inbox.handler.execute(toolCall('read_session_inbox', 'call-inbox', { page: { limit: 10 } }), { signal: signal() });
     expect(outputValue(inboxResult)).toEqual(notReadyRead);
+  });
+});
+
+describe('C2 committed send result (phase-2 target)', () => {
+  it.each(['fresh', 'replay'] as const)('a %s Host send carries its committed sendStatus', async mode => {
+    const fx = await createC2RuntimePlatform({ scriptedReplies: [] });
+    fixtures.push(fx);
+    const request = { input: { recipient: fx.sessionRef, text: 'C2 send status' },
+      meta: { requestId: 'c2-send-status', expected: [] } };
+    if (mode === 'replay') await fx.platform.messages.sendMessage(fx.ctx, request);
+    const sent = await fx.platform.messages.sendMessage(fx.ctx, request);
+    expect(sent).toMatchObject({ status: 'committed', sendStatus: 'sent' });
   });
 });
 

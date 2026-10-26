@@ -146,16 +146,16 @@ describe('WP2 positions', () => {
 
   it('P01 the first work_run reply marks a pending response position for a text reply and a Query Answer', () => {
     const sent = createSessionMessageRecord(messageInput());
-    const text = nextSessionMessageRecord(sent, { kind: 'responded', response: textReply('T-text') });
+    const text = nextSessionMessageRecord(sent, { kind: 'responded', rejectedAt: null, response: textReply('T-text') });
     expect(text.responseSince).toBeNull();
 
     // A derived Query Answer fills the original work_run message's response slot
     // and marks the same reply position (spec §2.3, "覆盖 Work/Query Answer").
-    const answer = nextSessionMessageRecord(sent, { kind: 'responded', response: queryAnswer('T-answer') });
+    const answer = nextSessionMessageRecord(sent, { kind: 'responded', rejectedAt: null, response: queryAnswer('T-answer') });
     expect(answer.responseSince).toBeNull();
 
     const hostSent = createSessionMessageRecord(messageInput({ sender: HOST_SENDER, needsReply: false }));
-    const hostResponded = nextSessionMessageRecord(hostSent, { kind: 'responded', response: textReply('T-host') });
+    const hostResponded = nextSessionMessageRecord(hostSent, { kind: 'responded', rejectedAt: null, response: textReply('T-host') });
     expect('responseSince' in hostResponded).toBe(false);
   });
 
@@ -179,12 +179,12 @@ describe('WP2 positions', () => {
 
   it('P01 binding replaces only the explicit pending null, never an absent or bound position', () => {
     const sent = createSessionMessageRecord(messageInput());
-    const responded = nextSessionMessageRecord(sent, { kind: 'responded', response: textReply('T-text') });
+    const responded = nextSessionMessageRecord(sent, { kind: 'responded', rejectedAt: null, response: textReply('T-text') });
     expect(bindMessageResponseCursor(responded, P1).responseSince).toBe(P1);
     expect(bindMessageResponseCursor({ ...responded, responseSince: P1 }, P2).responseSince).toBe(P1);
     const hostResponded = nextSessionMessageRecord(
       createSessionMessageRecord(messageInput({ sender: HOST_SENDER, needsReply: false })),
-      { kind: 'responded', response: textReply('T-host') });
+      { kind: 'responded', rejectedAt: null, response: textReply('T-host') });
     expect('responseSince' in bindMessageResponseCursor(hostResponded, P3)).toBe(false);
     expect(bindMessageResponseCursor(hostResponded, P3)).toEqual(hostResponded);
 

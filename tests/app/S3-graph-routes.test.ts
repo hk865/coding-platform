@@ -48,7 +48,7 @@ function emptyIndexes(): ContextExtensionsV1 {
 
 function goalCard(): NodeCardV1 {
   return { node: { kind: 'goal', ref: GOAL_REF }, name: 'g', paths: [], summary: 'Ship platform',
-    task: null, goal: null, stage: null, module: null, session: null, run: null, round: null, state: null,
+    task: null, goal: null, dispatchBasis: null, stage: null, module: null, session: null, run: null, round: null, state: null,
     children: [], neighbours: [], executions: [], rounds: [], inputDeclarations: [],
     indexes: emptyIndexes(), sources: [] };
 }

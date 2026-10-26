@@ -220,6 +220,7 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });
   const materialReads = createMaterialRecordReaders(records);
   const mailbox = createSessionMailbox({
+    defaultInquiryDeadlineMs: 86_400_000,
     records,
     sessions: base.sessionsPort,
     executions: createRunStateReader({ records }),

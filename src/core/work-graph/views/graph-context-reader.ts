@@ -33,7 +33,7 @@ import type {
   InputDeclarationV1, InputSelectionV1,
 } from '../../../contracts/graph-context.js';
 import type { ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
-import type { AggregateRef, GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
+import type { AggregateRef, DispatchBasisV1, GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type {
   AcceptanceObligation, DependencyRequirement, PlanRevisionRef, PlanRevisionSnapshot,
   PlanStage, PlanTaskAssignment, RuntimeTask,
@@ -56,6 +56,9 @@ import type {
   ContextExtensionsReaderV1, ContextExtensionsRequestV1, ContextReadRequestV1, GraphContextFactsV1, GraphContextReadPort,
   GraphFindRequestV1, GraphLookRequestV1, GraphReadPageV1, GraphTaskCardV1, NodeCardV1,
 } from '../model/graph-context-contracts.js';
+import type { DispatchBasisReadPort } from '../model/dispatch-basis-contracts.js';
+import { createDispatchBasisReader } from '../tasks/dispatch-basis.js';
+import { createGoalPointerFacts } from './pointer-facts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
   decodeVerificationRoundSnapshot, VERIFICATION_ROUND_BY_TASK_LOOKUP,
@@ -79,6 +82,8 @@ export type GraphContextReaderDependencies = {
   inputs: TaskContextInputPort;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   extensions?: ContextExtensionsReaderV1;
+  /** The one consistent basis read injected by the composition; absent builds the default over `records`. */
+  dispatchBasis?: DispatchBasisReadPort;
 };
 
 // -------------------------------------------------------------------------- //
@@ -470,6 +475,12 @@ type ReadContexts = { sessionCtx: CoreCallContext; executionCtx: CoreCallContext
 type UniverseOptions = { sessions: boolean; planHint?: PlanRevisionRef };
 
 export function createGraphContextReader(deps: GraphContextReaderDependencies): GraphContextReadPort {
+  // The one basis reader: the composition injects the shared one; without it the default is built ONCE here
+  // over the same records, with the pointer adapter's one read. A Goal card never invents a null basis.
+  const readDispatchBasis: DispatchBasisReadPort = deps.dispatchBasis ?? createDispatchBasisReader({
+    records: deps.records,
+    pointer: createGoalPointerFacts({ records: deps.records }),
+  });
   // ---------------------------------------------------------------------- //
   // Local primitives                                                       //
   // ---------------------------------------------------------------------- //
@@ -1326,7 +1337,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     }
   }
 
-  function buildCard(node: GraphNodeRefV1, universe: Universe, indexes: ContextExtensionsV1): NodeCardV1 {
+  function buildCard(node: GraphNodeRefV1, universe: Universe, indexes: ContextExtensionsV1,
+    dispatchBasis: DispatchBasisV1 | null): NodeCardV1 {
     const presentation = presentationOf(node, universe);
     const task = node.kind === 'task' ? taskCardOf(node, universe) : null;
     const goal = node.kind === 'goal' ? universe.goal : null;
@@ -1362,6 +1374,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       summary: presentation.summary,
       task,
       goal,
+      dispatchBasis: goal === null ? null : dispatchBasis,
       stage,
       module,
       session,
@@ -1487,20 +1500,28 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return node.kind === 'stage' || node.kind === 'task' ? node.planRef : undefined;
   }
 
-  /** One find page: sort/dedupe the matches, slide the cursor offset and card them. */
-  function pageOfMatches(universe: Universe, matched: readonly GraphNodeRefV1[], indexes: ContextExtensionsV1,
-    scopeKey: string, queryKey: string, afterOffset: number, limit: number, basisKey: string):
-  ReadResult<GraphReadPageV1<NodeCardV1>> {
+  /** One find page: sort/dedupe the matches, slide the cursor offset and card them. The basis is read ONCE for
+   * a page that shows a Goal card; its failure is the page's rejection, never a null field. */
+  async function pageOfMatches(universe: Universe, matched: readonly GraphNodeRefV1[], indexes: ContextExtensionsV1,
+    scopeKey: string, queryKey: string, afterOffset: number, limit: number, basisKey: string,
+    ctx: CoreCallContext, goalRef: GoalRef | null):
+  Promise<ReadResult<GraphReadPageV1<NodeCardV1>>> {
     const sorted = dedupeSort(matched);
     const pageItems = sorted.slice(afterOffset, afterOffset + limit);
     const nextOffset = afterOffset + pageItems.length;
     const nextCursor = nextOffset < sorted.length
       ? encodeCursor({ v: 1, scopeKey, queryKey, basisKey, offset: nextOffset })
       : null;
+    let dispatchBasis: DispatchBasisV1 | null = null;
+    if (goalRef !== null && pageItems.some(node => node.kind === 'goal')) {
+      const basis = await readDispatchBasis.readDispatchBasis(ctx, { goalRef });
+      if (basis.status !== 'ready') return propagate(basis);
+      dispatchBasis = basis.value;
+    }
     return {
       status: 'ready',
       value: {
-        items: pageItems.map(node => buildCard(node, universe, indexes)),
+        items: pageItems.map(node => buildCard(node, universe, indexes, dispatchBasis)),
         nextCursor,
         readThrough: universe.graph?.sourceCursor ?? null,
       },
@@ -1668,7 +1689,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       if (indexes.status !== 'ready') return propagate(indexes);
       const basisKey = basisKeyOf(universe);
       if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
-      return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
+      return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
     }
 
     const loaded = await loadProjectUniverse(ctx, { sessions: true });
@@ -1702,7 +1723,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (indexes.status !== 'ready') return propagate(indexes);
     const basisKey = basisKeyOf(universe);
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
-    return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
+    return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
   }
 
   // ---------------------------------------------------------------------- //
@@ -1758,7 +1779,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       const basisKey = basisKeyOf(universe);
       if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
       const matched = matchedNodes(universe, candidates, needle);
-      return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
+      return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
     }
 
     const loaded = await loadProjectUniverse(ctx, { sessions: true });
@@ -1776,7 +1797,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     const basisKey = basisKeyOf(universe);
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
     const matched = matchedNodes(universe, candidates, needle);
-    return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey);
+    return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
   }
 
   // ---------------------------------------------------------------------- //

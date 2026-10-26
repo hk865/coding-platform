@@ -22,6 +22,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
@@ -155,7 +156,8 @@ export async function openS1RuntimeFixture(options: {
   beforeReply?: Parameters<typeof createScriptedModel>[1];
 } = {}) {
   const bundles = [EXECUTION_ENTRY_RECORD_SCHEMAS, MODEL_REQUEST_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS,
-    SESSION_MESSAGE_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ANOMALY_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS];
+    SESSION_MESSAGE_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ANOMALY_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS,
+    SESSION_ACTIVITY_SCHEMAS];
   const base = await createTaskClaimFixture('sqlite', { records: bundles.flatMap(b => b.records),
     events: bundles.flatMap(b => b.events), lookups: bundles.flatMap(b => b.lookups ?? []) });
   const bodies = createSqliteRawArtifactStore(join(base.directory, 'artifacts.sqlite'));
@@ -207,6 +209,7 @@ export async function openS1RuntimeFixture(options: {
   const modelRequests = createModelCallService(common);
   const controls = createRunControlService({ records, reads, authority: materialReads.authority, now, eventId: newId });
   const messages = createSessionMailbox({ records, sessions, executions: reads, roles, materials,
+    defaultInquiryDeadlineMs: 86_400_000,
     runtimeAdmission: { bodies, authorizeConfiguration }, systemActor: { kind: 'system', id: 's1-mailbox' }, now, newId });
   const sessionFacts = createSessionFactsService({ records });
   const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });

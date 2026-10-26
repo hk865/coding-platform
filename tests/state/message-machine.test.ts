@@ -9,6 +9,7 @@ import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../src/contracts/core/results.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { DispatchBasisV1 } from '../../src/contracts/ledger.js';
 import type { RoleBindingRefV1, SourceRefV1 } from '../../src/contracts/dispatch.js';
 import { deriveSessionInputId, type SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { checkSessionMessageBody } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -30,6 +31,7 @@ import {
   type MessageMachineState,
   type MessageQueryAnswerSenderRecord,
   type MessageResponseRecord,
+  type MessageSecretaryRoundSenderRecord,
   type MessageTransition,
   type MessageWorkRunSenderRecord,
   type NewSessionMessageInput,
@@ -71,21 +73,45 @@ const ANSWER_SENDER: MessageQueryAnswerSenderRecord = {
   generation: 4,
 };
 const KERNEL = { adapterId: 'fake', kernelSessionId: 'ks-1', runId: 'kr-1', turnId: 't-1', position: 3 };
+
+const SECRETARY_SENDER: MessageSecretaryRoundSenderRecord = {
+  kind: 'secretary_round', sessionRef: SENDER_SESSION,
+  queryRunRef: { aggregateType: 'QueryRun', projectId: PROJECT, workspaceId: WORKSPACE, queryJobId: 'qj-1', runId: 'qr-1' },
+  requestRoot: { aggregateType: 'QueryJob', projectId: PROJECT, workspaceId: WORKSPACE, queryJobId: 'qj-1' },
+  generation: 2,
+};
+const DISPATCH_PINS: DispatchBasisV1 = { planRevision: 2, pointerRevision: 'none', dispatchSequence: 4 };
 const MESSAGE_INPUT = deriveSessionInputId(MESSAGE_REF, 'message');
 const RESPONSE_INPUT = deriveSessionInputId(MESSAGE_REF, 'response');
 
 const STATES = {
   absent: { status: 'absent' },
-  pending: { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1 },
-  read: { status: 'read', hasReadAt: true, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 2 },
-  responded: { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 3 },
+  pending: {
+    status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    approvalRevision: null, pins: null,
+  },
+  read: {
+    status: 'read', hasReadAt: true, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 2,
+    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    approvalRevision: null, pins: null,
+  },
+  responded: {
+    status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 3,
+    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    approvalRevision: null, pins: null,
+  },
   /** pending, with the A′ derivation fixed and the message part already delivered. */
   pendingDerivedDelivered: {
     status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [MESSAGE_INPUT], hasDerivation: true, revision: 3,
+    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    approvalRevision: null, pins: null,
   },
   /** responded, derivation fixed, both parts delivered. */
   respondedComplete: {
     status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [MESSAGE_INPUT, RESPONSE_INPUT], hasDerivation: true, revision: 6,
+    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    approvalRevision: null, pins: null,
   },
 } as const satisfies Record<string, MessageMachineState>;
 type StateName = keyof typeof STATES;
@@ -157,7 +183,8 @@ function happyCtx(event: EventName, state: MessageMachineState): MessageGuardCon
   const base = baseCtx();
   switch (event) {
     case 'sent':
-      return { ...base, recipientScope: 'same_workspace', sendFlags: { needsReply: false, waitAfterSend: false, pinCount: 0 } };
+      return { ...base, recipientScope: 'same_workspace', sendFlags: { needsReply: false, waitAfterSend: false, pinCount: 0 },
+        sendRelease: { release: null, pins: null } };
     case 'read':
       return { ...base, principal: 'work_run', workRunAuthorization: 'ok', callerIsRecipient: true, pins: pinFor(state) };
     case 'respondText':
@@ -251,7 +278,9 @@ const EXISTS = no('illegal', 'revision_conflict');
 /** The full (state, event) table under `happyCtx`. */
 const TABLE: Record<StateName, Record<EventName, Expected>> = {
   absent: {
-    sent: ok({ status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1 }, SEND_HOST), // MSG-01
+    sent: ok({ status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+        release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        approvalRevision: null, pins: null }, SEND_HOST), // MSG-01
     read: NOT_FOUND,
     respondText: NOT_FOUND,
     respondAnswer: NOT_FOUND,
@@ -368,7 +397,9 @@ describe('transitionMessage: every (state, event) pair', () => {
   it('MSG-02: a work_run send also joins the work_run admission guards', () => {
     const ctx = { ...happyCtx('sent', S.absent), principal: 'work_run' as const, workRunAuthorization: 'ok' as const };
     expectResult(transitionMessage(S.absent, EVENTS.sent, ctx), ok(
-      { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1 },
+      { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+        release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        approvalRevision: null, pins: null },
       [...SEND_HOST, { kind: 'guard_work_run_facts' }],
     ));
   });
@@ -631,6 +662,29 @@ describe('§10.4 forbidden transitions', () => {
         .toBe('the Run is not running');
       expect(rejection(transitionMessage(S.read, EVENTS.sent, { ...happy, recipientScope: 'other_workspace' })).code).toBe('not_found');
     });
+
+    it('the accepted state is the release and pins the send already decided', () => {
+      // §3.4 invariant 1: the constructor's record must equal accepted.next, so the
+      // machine's own accepted state carries the send path's release facts.
+      const released = send({ ...happy, sendRelease: { release: 'released', pins: DISPATCH_PINS } });
+      expectResult(released, ok({
+        status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+        release: 'released', delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        approvalRevision: null, pins: DISPATCH_PINS,
+      }, SEND_HOST));
+      const awaiting = send({ ...happy, sendRelease: { release: 'awaiting', pins: null } });
+      expectResult(awaiting, ok({
+        status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+        release: 'awaiting', delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        approvalRevision: null, pins: null,
+      }, SEND_HOST));
+    });
+
+    it.each(['paused', 'cancelled'] as const)('refuses a direct release on a %s Goal', desiredState => {
+      const decided = transitionMessage(S.absent, EVENTS.sent, { ...happy, principal: 'work_run',
+        workRunAuthorization: 'ok', sendRelease: { release: 'released', pins: null, goal: { desiredState, revision: 2 } } });
+      expect(decided).toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy' });
+    });
   });
 
   describe('input_accepted', () => {
@@ -882,6 +936,33 @@ describe('request guards the service asks before its receipt lookup', () => {
   });
 });
 
+describe('7A-1 reply and withdraw guards', () => {
+  const applied = { ...STATES.pending, appliedAt: 'T-applied' };
+  const refused = { ...STATES.pending, rejectedAt: 'T-refused' };
+  it.each([
+    ['respondText to an applied message', 'respondText', applied, EVENTS.respondText],
+    ['respondText to a refused message', 'respondText', refused, EVENTS.respondText],
+    ['respondAnswer to an applied message', 'respondAnswer', applied, EVENTS.respondAnswer],
+    ['respondAnswer to a refused message', 'respondAnswer', refused, EVENTS.respondAnswer],
+  ] as const)('%s keeps the reply allowed and the rejection in the revision-conflict slot', (label, name, state, event) => {
+    const ctx = happyCtx(name, state);
+    expect(transitionMessage(state, event, ctx).ok).toBe(true);
+    expect(transitionMessage(state, { ...event, rejected: true }, ctx))
+      .toMatchObject({ ok: false, code: 'revision_conflict' });
+  });
+  it.each([
+    ['an accepted message part', { ...STATES.pending, acceptedInputIds: [MESSAGE_INPUT] },
+      'only an unread, unanswered, undelivered message can be withdrawn'],
+    ['a denied release', { ...STATES.pending, release: 'denied' }, 'a denied message cannot be withdrawn'],
+    ['an applied message', { ...STATES.pending, appliedAt: 'T-applied' }, 'an applied message cannot be withdrawn'],
+    ['an unread, unanswered message', STATES.pending, null],
+  ] as const)('message_withdrawn: %s', (label, state, detail) => {
+    const transition = transitionMessage(state, { type: 'message_withdrawn' }, baseCtx());
+    if (detail === null) expect(transition.ok).toBe(true);
+    else expect(transition).toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail });
+  });
+});
+
 // --------------------------------------------------------------------------
 // Record constructors
 // --------------------------------------------------------------------------
@@ -929,9 +1010,16 @@ describe('record constructors', () => {
     expect(plain).toEqual({
       ref: MESSAGE_REF, schemaVersion: 1, revision: 1, sender: HOST_SENDER, recipient: RECIPIENT, bodyRef: BODY, sourceRef: SOURCE,
       createdAt: '2026-10-04T00:00:00.000Z', status: 'pending', readAt: null, response: null,
+      goalRef: null, taskRef: null, requestRoot: null, followupOf: null, deadline: null, deadlineMs: null, release: null,
+      delivery: 'queued', deliveryEvidence: null, expiredAt: null, withdrawnAt: null, waitCancelledAt: null,
+      transferredTo: null, originalRef: null, appliedAt: null, rejectedAt: null, approvedAt: null, approvalRevision: null,
+      applicationProof: null, pins: null,
     });
     expect(Object.keys(plain)).toEqual(
-      ['ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef', 'createdAt', 'status', 'readAt', 'response'],
+      ['ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef', 'createdAt', 'status', 'readAt', 'response',
+        'goalRef', 'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery', 'deliveryEvidence',
+        'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt', 'rejectedAt', 'approvedAt',
+        'approvalRevision', 'applicationProof', 'pins'],
     );
     expect(codecProblem(plain)).toBeNull();
     expect(messageMachineStateOf(plain)).toEqual(TABLE.absent.sent.ok ? TABLE.absent.sent.next : null);
@@ -939,7 +1027,10 @@ describe('record constructors', () => {
     const waiting = createSessionMessageRecord(newInput({
       sender: WORK_RUN_SENDER, intent: 'inquiry', needsReply: true, waitAfterSend: true,
     }));
-    expect(Object.keys(waiting).slice(11)).toEqual(['intent', 'needsReply', 'waitAfterSend']);
+    expect(Object.keys(waiting).slice(11)).toEqual(['intent', 'needsReply', 'waitAfterSend', 'goalRef',
+      'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery', 'deliveryEvidence',
+      'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt', 'rejectedAt',
+      'approvedAt', 'approvalRevision', 'applicationProof', 'pins']);
     expect(waiting).toMatchObject({ intent: 'inquiry', needsReply: true, waitAfterSend: true });
     expect(codecProblem(waiting)).toBeNull();
 
@@ -956,23 +1047,32 @@ describe('record constructors', () => {
     expect(Object.keys(read)).toEqual(Object.keys(sent));
     expect(codecProblem(read)).toBeNull();
     expect(() => nextSessionMessageRecord(read, { kind: 'read', readAt: 'T-again' })).toThrow();
-    const responded = nextSessionMessageRecord(read, { kind: 'responded', response: textReply('T-reply') });
+    const responded = nextSessionMessageRecord(read, { kind: 'responded', rejectedAt: null, response: textReply('T-reply') });
     expect(() => nextSessionMessageRecord(responded, { kind: 'read', readAt: 'T-late' })).toThrow();
   });
 
   it('responded (MSG-04/05/06): one slot; readAt ??= respondedAt (I-8)', () => {
     const sent = createSessionMessageRecord(newInput({ sender: WORK_RUN_SENDER, needsReply: true }));
-    const direct = nextSessionMessageRecord(sent, { kind: 'responded', response: textReply('T-reply') });
+    const direct = nextSessionMessageRecord(sent, { kind: 'responded', rejectedAt: null, response: textReply('T-reply') });
     expect(direct).toMatchObject({ revision: 2, status: 'responded', readAt: 'T-reply', response: textReply('T-reply') });
     expect(codecProblem(direct)).toBeNull();
 
     const read = nextSessionMessageRecord(sent, { kind: 'read', readAt: 'T-read' });
-    const answered = nextSessionMessageRecord(read, { kind: 'responded', response: answerReply('T-answer') });
+    const answered = nextSessionMessageRecord(read, { kind: 'responded', rejectedAt: null, response: answerReply('T-answer') });
     expect(answered).toMatchObject({ revision: 3, status: 'responded', readAt: 'T-read', response: answerReply('T-answer') });
     expect(Object.keys(answered.response!)).toEqual(['sender', 'bodyRef', 'sourceRef', 'respondedAt']);
     expect(codecProblem(answered)).toBeNull();
 
-    expect(() => nextSessionMessageRecord(answered, { kind: 'responded', response: textReply('T-late') })).toThrow(/slot/);
+    expect(() => nextSessionMessageRecord(answered, { kind: 'responded', rejectedAt: null, response: textReply('T-late') })).toThrow(/slot/);
+  });
+
+  it('a secretary_round first reply marks the pending reply position like a work_run', () => {
+    const sent = createSessionMessageRecord(newInput({
+      sender: SECRETARY_SENDER, requestRoot: SECRETARY_SENDER.requestRoot, intent: 'inquiry', needsReply: true,
+    }));
+    const replied = nextSessionMessageRecord(sent, { kind: 'responded', rejectedAt: null, response: textReply('T-reply') });
+    expect(replied).toMatchObject({ revision: 2, status: 'responded', readAt: 'T-reply', responseSince: null });
+    expect(codecProblem(replied)).toBeNull();
   });
 
   it('input_accepted (MSG-07/08): append only, status and readAt untouched; response part needs a response; no duplicate inputId', () => {
@@ -983,7 +1083,7 @@ describe('record constructors', () => {
     expect(() => nextSessionMessageRecord(delivered, { kind: 'input_accepted', input: accepted('message', 'T-2') })).toThrow(/already/);
     expect(() => nextSessionMessageRecord(delivered, { kind: 'input_accepted', input: accepted('response', 'T-2') })).toThrow(/response/);
 
-    const responded = nextSessionMessageRecord(delivered, { kind: 'responded', response: textReply('T-reply') });
+    const responded = nextSessionMessageRecord(delivered, { kind: 'responded', rejectedAt: null, response: textReply('T-reply') });
     const consumed = nextSessionMessageRecord(responded, { kind: 'input_accepted', input: accepted('response', 'T-3') });
     expect(consumed).toMatchObject({ revision: 4, status: 'responded', readAt: 'T-reply', response: textReply('T-reply') });
     expect(consumed.acceptedInputs).toEqual([accepted('message', 'T-1'), accepted('response', 'T-3')]);
@@ -1036,9 +1136,9 @@ function applyToRecord(record: SessionMessageRecord | null, event: EventName, at
     case 'read':
       return nextSessionMessageRecord(record!, { kind: 'read', readAt: at });
     case 'respondText':
-      return nextSessionMessageRecord(record!, { kind: 'responded', response: textReply(at) });
+      return nextSessionMessageRecord(record!, { kind: 'responded', rejectedAt: null, response: textReply(at) });
     case 'respondAnswer':
-      return nextSessionMessageRecord(record!, { kind: 'responded', response: answerReply(at) });
+      return nextSessionMessageRecord(record!, { kind: 'responded', rejectedAt: null, response: answerReply(at) });
     case 'acceptMessage':
       return nextSessionMessageRecord(record!, { kind: 'input_accepted', input: accepted('message', at) });
     case 'acceptResponse':

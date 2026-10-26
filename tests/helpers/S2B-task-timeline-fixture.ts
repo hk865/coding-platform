@@ -6,8 +6,8 @@
  *     `createB2ExecutionFixture` (real Goal/Plan/Session/claim/execution-entry
  *     services), layered with `EVIDENCE_RECORD_SCHEMAS`,
  *     `CONTROL_RECORD_SCHEMAS`, `SESSION_ANOMALY_RECORD_SCHEMAS`,
- *     `SESSION_LIFECYCLE_RECORD_SCHEMAS`, `ARCHITECTURE_CATALOG_SCHEMAS` and
- *     `COMPLETION_RECORD_SCHEMAS`;
+ *     `SESSION_LIFECYCLE_RECORD_SCHEMAS`, `ARCHITECTURE_CATALOG_SCHEMAS`,
+ *     `COMPLETION_RECORD_SCHEMAS` and `SESSION_ACTIVITY_SCHEMAS`;
  *   - the Goal and every Plan revision through the REAL public Plan service
  *     (`goals.createGoal` + `plans.proposePlan` + `plans.applyPlanChange`), so
  *     `acceptedAt`, the current-Plan pointer and C7 `dispositionRecord` are the
@@ -69,6 +69,7 @@ import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architec
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
@@ -90,7 +91,8 @@ const HOST_INSTANCE = { hostInstanceId: 's2b-timeline-host', lease: 'owned' as c
 const TIMELINE_SCHEMAS: RecordBackendSchemas = {
   records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
     ...SESSION_ANOMALY_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
-    ...COMPLETION_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
+    ...COMPLETION_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
+    ...SESSION_ACTIVITY_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
     ...SESSION_ANOMALY_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
     ...COMPLETION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,

@@ -50,10 +50,18 @@ const RESPONSE: MessageResponseRecord = { sender: RESPONDER, bodyRef: REPLY_BODY
 const RESPONDED: SessionMessageRecord = {
   ref: MESSAGE_REF, schemaVersion: 1, revision: 3, sender: SENDER, recipient: RECIPIENT, bodyRef: BODY, sourceRef: SOURCE,
   createdAt: T0, status: 'responded', readAt: T0, response: RESPONSE,
+  goalRef: null, taskRef: null, requestRoot: null, followupOf: null, deadline: null, deadlineMs: null, release: null,
+  delivery: 'queued', deliveryEvidence: null, expiredAt: null, withdrawnAt: null, waitCancelledAt: null,
+  transferredTo: null, originalRef: null, appliedAt: null, rejectedAt: null, approvedAt: null, approvalRevision: null,
+  applicationProof: null, pins: null,
 };
 const READ: SessionMessageRecord = {
   ref: MESSAGE_REF, schemaVersion: 1, revision: 2, sender: SENDER, recipient: RECIPIENT, bodyRef: BODY, sourceRef: SOURCE,
   createdAt: T0, status: 'read', readAt: T0, response: null,
+  goalRef: null, taskRef: null, requestRoot: null, followupOf: null, deadline: null, deadlineMs: null, release: null,
+  delivery: 'queued', deliveryEvidence: null, expiredAt: null, withdrawnAt: null, waitCancelledAt: null,
+  transferredTo: null, originalRef: null, appliedAt: null, rejectedAt: null, approvedAt: null, approvalRevision: null,
+  applicationProof: null, pins: null,
 };
 
 const TRANSFER_CHOICE: ArchiveWaitChoiceV1 = { kind: 'transfer', runRef: RUN_R0, messageRef: MESSAGE_REF, to: SESSION_D };

@@ -153,7 +153,7 @@ function emptyIndexes(): ContextExtensionsV1 {
 function nodeCard(node: GraphNodeRefV1, overrides: Partial<NodeCardV1> = {}): NodeCardV1 {
   return {
     node, name: 'B', paths: [], summary: 'Build B',
-    task: null, goal: null, stage: null, module: null, session: null, run: null, round: null,
+    task: null, goal: null, dispatchBasis: null, stage: null, module: null, session: null, run: null, round: null,
     state: 'ready', children: [], neighbours: [], executions: [], rounds: [],
     inputDeclarations: [], indexes: emptyIndexes(), sources: [],
     ...overrides,

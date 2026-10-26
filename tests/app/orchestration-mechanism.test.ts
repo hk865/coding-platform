@@ -15,7 +15,7 @@ import {
   lineDelta,
 } from '../../src/app/attention-observer.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
-import type { SessionMailboxPort, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMessage, SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { ToolCall, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 import {
   attentionConfig,
@@ -117,6 +117,26 @@ function messageStub(): SessionMessage {
     status: 'pending',
     readAt: null,
     response: null,
+    goalRef: null,
+    taskRef: null,
+    requestRoot: null,
+    followupOf: null,
+    deadline: null,
+    deadlineMs: null,
+    release: null,
+    delivery: 'queued',
+    deliveryEvidence: null,
+    expiredAt: null,
+    withdrawnAt: null,
+    waitCancelledAt: null,
+    transferredTo: null,
+    originalRef: null,
+    appliedAt: null,
+    rejectedAt: null,
+    approvedAt: null,
+    approvalRevision: null,
+    applicationProof: null,
+    pins: null,
   };
 }
 
@@ -127,12 +147,27 @@ function mailboxToolHarness(): {
 } {
   const captured: CapturedSend[] = [];
   const waits: SessionMessage[] = [];
-  const mailbox = {
-    async sendMessage(_ctx: unknown, request: { input: CapturedSend['input'] }) {
-      captured.push({ input: structuredClone(request.input) });
-      return { status: 'committed' as const, value: messageStub(), replayed: false, cursor: 'c-1' as never };
+  // Only the send is exercised here; the other members must exist because the
+  // mailbox port is the complete one, and each answers by throwing instead of
+  // pretending to have read or written anything.
+  const notUsed = (what: string) => async (): Promise<never> => {
+    throw new Error(`the orchestration stand-in never ${what}`);
+  };
+  const mailbox: SessionMessageCommandPort = {
+    async sendMessage(_ctx, request) {
+      captured.push({ input: structuredClone(request.input) as unknown as CapturedSend['input'] });
+      return { status: 'committed', value: messageStub(), replayed: false, cursor: 'c-1' as never, sendStatus: 'sent' };
     },
-  } as unknown as SessionMailboxPort;
+    readMessage: notUsed('reads a message'),
+    readMessageBody: notUsed('reads a body'),
+    readInbox: notUsed('reads an inbox'),
+    ackMessage: notUsed('acks'),
+    respondMessage: notUsed('responds'),
+    withdrawMessage: notUsed('withdraws'),
+    releaseMessage: notUsed('releases'),
+    readMessageView: notUsed('reads a message view'),
+    readInboxView: notUsed('reads an inbox view'),
+  };
   const tools = createSessionMailboxTools({
     mailbox,
     context: {

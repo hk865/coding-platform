@@ -17,7 +17,7 @@
 - `rejections.ts` — 拒绝结果构造器：`rejected`、`rejectedWithCurrent`、`rejectedWithNonEmptyCurrent`、`okFalse`。
 - `results.ts` — 结果词汇：`CoreError`（唯一的运行时列表 `CORE_ERRORS`）、`CoreRejection`、`ReadResult`、`WriteResult`、`ReadStamp`、`Page`、`OperationReceipt`。
 - `session-archive.ts` — 不可变归档请求 `SessionArchiveRequestV1`、秘书归档条件 `SessionArchiveConditionV1`（`src/contracts/core/session-archive.ts:27`）与 `deriveArchiveStepCommitIdentityV1`。
-- `session-message.ts` — `SessionMessageRef` 完整地址、通信意图、用户/决策消息与 `isUserMessageRecipient`。
+- `session-message.ts` — `SessionMessageRef` 完整地址、通信意图、用户/决策消息与 `isUserMessageRecipient`；7A-1 加效果证明 `ApplicationProofV1`（`src/contracts/core/session-message.ts:96`）、发送拒绝 `SendRejectionV1`（`:104`）、发布状态 `MessageReleaseV1`（`:109`）、派送三元组 `MessageDeliveryStateV1`（`:111`）与读处置 `MessageReadDispositionV1`（`:117`）。
 - `session.ts` — Session 记录/占用/健康/来源：`SessionRecord`、`SessionProvenanceV1`、`SessionHealthConclusion`、`SESSION_HEALTH_CONCLUSIONS`。
 - `source.ts` — 临时与持久化来源捕获引用：`SourceCaptureRef`、`PersistedSourceCaptureRef`。
 - `task-claim.ts` — `TaskClaim`：不可变的任务领取结果。
@@ -52,8 +52,8 @@
 | `SessionArchiveRequestV1` | `src/contracts/core/session-archive.ts:28` | 不可变归档请求（任务去留、等待、执行、可信条件、回执）。 | 发起/重放 Session 归档；`condition` 必填，非秘书模式一律 `null`，并属于请求指纹。 |
 | `SessionArchiveConditionV1` | `src/contracts/core/session-archive.ts:27` | 归档的可信条件只有一臂：`secretary_handoff`，即归档所属的 handoff 或手动归档操作（handoff 的那条同时持有 fence）。 | 归档 owner 的最终提交重查；只有 `secretary_handoff` 模式可带，`RequestSessionArchiveInput.condition` 可选、缺省即 `null`。 |
 | `deriveArchiveStepCommitIdentityV1` | `src/contracts/core/session-archive.ts:69` | 由请求与步骤派生 identityKey、fingerprint、eventId。 | 归档各步骤提交；步骤必须属于该请求，否则抛错。 |
-| `SessionMessageRef` | `src/contracts/core/session-message.ts:24` | 带项目/工作区范围的完整消息聚合引用。 | 寻址消息；`messageId` 单独不是地址，也不是授权。 |
-| `isUserMessageRecipient` | `src/contracts/core/session-message.ts:99` | 结构判定收件人是否为工作区用户。 | 分派/展示消息；不要从 id 猜收件人。 |
+| `SessionMessageRef` | `src/contracts/core/session-message.ts:27` | 带项目/工作区范围的完整消息聚合引用。 | 寻址消息；`messageId` 单独不是地址，也不是授权。 |
+| `isUserMessageRecipient` | `src/contracts/core/session-message.ts:131` | 结构判定收件人是否为工作区用户。 | 分派/展示消息；不要从 id 猜收件人。 |
 | `renderUnknownCallReviewZh` | `src/contracts/core/prepared-execution.ts:106` | 把结构化审查输入渲染成中文章节，可重渲染比对。 | 准备审查/提案轮输入；WorkGraph 校验章节区间与摘要时复用。 |
 | `PreparedTaskManifestV1` | `src/contracts/core/prepared-execution.ts:206` | 任务执行清单：claim、role、预算、上下文、提示词、唯一 input。 | 准备/校验任务 Run；清单内容必须重新对正式事实核对。 |
 | `PreparedQueryManifestV1` | `src/contracts/core/prepared-execution.ts:278` | Query 执行清单与 `PreparedQueryExecution` 回执形状；`goal` 可空（仅 secretary callKind），`request` 必填（非 request 为 null）。 | 准备/校验 Query Run。 |

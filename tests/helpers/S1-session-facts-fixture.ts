@@ -30,6 +30,7 @@ import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/pers
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
@@ -71,8 +72,8 @@ export function s1Schemas(r3e = false): RecordBackendSchemas {
   const eventIds = new Set(installed.flatMap(bundle => bundle.events.map(schema => `${schema.eventType}@${schema.schemaVersion}`)));
   const lookupIds = new Set(installed.flatMap(bundle => (bundle.lookups ?? []).map(index => index.name)));
   return {
-    records: all.records.filter(schema => !recordIds.has(schema.schemaId)),
-    events: all.events.filter(schema => !eventIds.has(`${schema.eventType}@${schema.schemaVersion}`)),
+    records: [...all.records.filter(schema => !recordIds.has(schema.schemaId)), ...SESSION_ACTIVITY_SCHEMAS.records],
+    events: [...all.events.filter(schema => !eventIds.has(`${schema.eventType}@${schema.schemaVersion}`)), ...SESSION_ACTIVITY_SCHEMAS.events],
     lookups: [...(all.lookups ?? []).filter(index => !lookupIds.has(index.name)),
       ...all.records.map(schema => ({ name: `fx2-census-${schema.aggregateType}`, aggregateType: schema.aggregateType,
         paths: ['ref.projectId'] }))],
@@ -223,6 +224,7 @@ export function workHistory(b2: B2ExecutionFixture) {
   const entry = createExecutionEntryService({ records: base.records, reads, roles, bodies: b2.bodies,
     authorizeConfiguration, now, eventId, newId: () => `fx2-entry-${++seq}` });
   const mailbox = createSessionMailbox({ records: base.records, sessions: sessionOwners(base).directory,
+    defaultInquiryDeadlineMs: 86_400_000,
     executions: reads, roles, materials: createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(base.records).authority, now }),
     runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration },

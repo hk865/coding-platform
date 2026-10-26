@@ -44,13 +44,15 @@ import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js
 import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
+import { principalIdentity, type CoreCallContext, type CorePrincipal, type MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { DecisionHostSenderV1, MessageRecipient, SessionMessageRef, UserMessageRecipientV1,
-  DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import { QueryJobRefShape, QueryRunRefShape } from '../../../contracts/data-format-refs.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
+import type { DecisionHostSenderV1, MessageRecipient, MessageReleaseV1, SessionMessageRef,
+  UserMessageRecipientV1, DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
+import type { DispatchBasisV1, GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { DecisionObjectV1, DecisionOptionV1,
-  GoalDecisionBasisV1 } from '../../../contracts/goal-decisions.js';
+  GoalAutonomyV1, GoalDecisionBasisV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import {
@@ -70,8 +72,8 @@ import {
 } from '../model/tool-commit-arguments.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
-import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
-import { deriveSessionInputId } from '../model/communication-contracts.js';
+import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
+import { deriveMessageDelivery, deriveSessionInputId } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
@@ -81,10 +83,14 @@ import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSe
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
 } from '../sessions/lifecycle-record-codecs.js';
-import type { SessionPage, SessionPageRequest } from '../model/session-contracts.js';
+import type { SessionCard, SessionPage, SessionPageRequest } from '../model/session-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
-import type { DecisionMessagePort, MessageWriteOwnerPort } from '../model/decision-contracts.js';
+import type { RecipientOpenExecutionsV1 } from '../model/session-facts-contracts.js';
+import type { DecisionMessagePort, MessageCommandWritePort, SessionMessageCommitCompanions, SessionMessageCommitFragment, SessionMessageWriteCommandV1 } from '../model/decision-contracts.js';
+import {
+  executeWriteCommand, type CommandResult, type CommittedReceipt, type Keys, type WriteCommand,
+} from '../persistence/command-executor.js';
 import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
@@ -95,6 +101,7 @@ import { readBatch, type ReadBatch } from '../tasks/plan-readers.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
+  SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP,
   SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
   SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES,
   archiveWaitDisposedEventFromEvent, checkSessionMessageRef, decodeSessionMessageRecord,
@@ -102,6 +109,8 @@ import {
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
   encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent,
   encodeSessionMessageDecisionAnsweredEvent, encodeSessionMessageDecisionAppliedEvent,
+  encodeSessionMessageWithdrawnEvent, encodeSessionMessageReleaseDecidedEvent, encodeSessionMessageReleasedEvent,
+  encodeSessionMessageAppliedEvent,
   type SessionMessageEventV1,
 } from '../sessions/message-record-codecs.js';
 import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
@@ -113,14 +122,25 @@ import {
   bindMessageResponseCursor, createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messagePrincipalProblem,
   messageRecipientProjectProblem, messageSendFlagsProblem, nextSessionMessageRecord, transitionMessage,
   type MessageEffect, type MessageEvent, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
-  type SessionMessageEventType,
+  type SessionMessageEventType, type MessageWithdrawnChangeV1, type MessageReleaseDecidedChangeV1,
 } from '../state/message-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
-import { canSendUserMessage } from '../state/decision-policy.js';
+import { canSendUserMessage, decisionActionPolicy } from '../state/decision-policy.js';
+import { firstDispatch, nextDispatch } from '../state/dispatch-counter.js';
+import { dispatchCounterCodec } from '../persistence/dispatch-counter-codecs.js';
+import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
+import { normalizeRespondMessageInput, normalizeSendMessageInput } from '../model/message-payload.js';
+import { mergeGuards } from '../persistence/record-guards.js';
+import type { DispatchBasisFactsV1 } from '../model/dispatch-basis-contracts.js';
+import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 
 type Unknown = Record<string, unknown>;
-/** `ownContext` admits only these two principals. */
-type MailboxPrincipal = Extract<CorePrincipal, { kind: 'host' | 'work_run' }>;
+/**
+ * `ownContext` admits these principals. A `query_run` principal is only the
+ * literal caller here; its round is resolved after a receipt miss (send) or on
+ * every read, never in `ownContext`.
+ */
+type MailboxPrincipal = Extract<CorePrincipal, { kind: 'host' | 'work_run' | 'query_run' }>;
 type WorkRunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
 type HostActor = Extract<CorePrincipal, { kind: 'host' }>['actor'];
 
@@ -161,16 +181,6 @@ function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRejection 
   if (result.status === 'not_found') return reject('not_found', 'the requested record does not exist');
   if (result.status === 'not_ready') return reject('incomplete', 'the requested record is not readable at the required watermark');
   return result.status === 'ready' ? result : result;
-}
-function dedupeGuards(guards: readonly RecordGuard[]): RecordGuard[] {
-  const map = new Map<string, number | null>();
-  for (const guard of guards) {
-    const previous = map.get(guard.refKey);
-    if (previous === undefined || (previous === null && guard.expectedRevision !== null)) {
-      map.set(guard.refKey, guard.expectedRevision);
-    }
-  }
-  return [...map].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
 }
 
 /**
@@ -220,8 +230,11 @@ async function replaySessionMessageReceipt(
   records: SessionMessageStore,
   receipt: MessageCommitReceipt,
 ): Promise<WriteResult<SessionMessage>> {
-  if (receipt.eventIds.length !== 1 || !nonEmpty(receipt.eventIds[0])) {
-    return reject('unavailable', 'the mailbox receipt does not name exactly one event');
+  // Companion events come first and the one message snapshot is LAST: the receipt
+  // names a non-empty list, and `receipt.cursor` is that last event.
+  const lastEventId = receipt.eventIds.at(-1);
+  if (lastEventId === undefined || !nonEmpty(lastEventId)) {
+    return reject('unavailable', 'the mailbox receipt does not name a last event');
   }
   let located: StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>;
   try {
@@ -233,7 +246,7 @@ async function replaySessionMessageReceipt(
   if (String(located.value.cursor) !== String(receipt.cursor)) {
     return reject('unavailable', 'the recorded mailbox event cursor disagrees with the receipt');
   }
-  if (located.value.event.eventId !== receipt.eventIds[0]) {
+  if (located.value.event.eventId !== lastEventId) {
     return reject('unavailable', 'the recorded mailbox event id disagrees with the receipt');
   }
   // Slice 1 §2.9: the wait-disposal replay event carries the changed message
@@ -283,8 +296,170 @@ type PreparedSessionMessageWrite = {
   messageRevision: number | null;
   guards: readonly RecordGuard[];
   claims: readonly UniqueClaimChange[];
+  /** The companion contribution of the same fact (a counter, a Session activity): records first, then this message. */
+  companions?: SessionMessageCommitCompanions;
   cancelledReason: string;
   commitFailureReason: string;
+};
+
+/** A companion contribution's own validation; absent normalizes to no contribution. */
+function companionContributionOf(raw: unknown):
+  { ok: true; value: SessionMessageCommitCompanions | undefined } | { ok: false; rejection: CoreRejection } {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (!isObject(raw)) return { ok: false, rejection: reject('invalid', 'the commit companions must be an object') };
+  for (const key of ['records', 'events', 'guards', 'claims', 'commitCursorBindings'] as const) {
+    if (raw[key] !== undefined && !Array.isArray(raw[key])) {
+      return { ok: false, rejection: reject('invalid', `the commit companions' ${key} must be an array`) };
+    }
+  }
+  return { ok: true, value: raw as unknown as SessionMessageCommitCompanions };
+}
+
+/**
+ * The one snapshot event a lifecycle command appends. The command names its
+ * operation, envelope and change; the event type and the message are the
+ * operation's. A release writes the change's own proof (a direct release's
+ * change carries `null`; a trusted caller's decision change carries its proof).
+ */
+function lifecycleEventOf(command: SessionMessageWriteCommandV1, message: SessionMessage): EncodedDomainEvent {
+  const envelope = command.event;
+  const base = {
+    eventId: envelope.eventId, schemaVersion: 1 as const, occurredAt: envelope.occurredAt,
+    projectId: envelope.projectId, workspaceId: envelope.workspaceId,
+    requestId: envelope.requestId, actor: envelope.actor, message,
+  };
+  switch (command.operation) {
+    case 'message.withdraw': return encodeSessionMessageWithdrawnEvent({ ...base, eventType: 'SessionMessageWithdrawn' });
+    case 'message.release':
+      return encodeSessionMessageReleaseDecidedEvent({ ...base, eventType: 'SessionMessageReleaseDecided',
+        proof: command.change.proof });
+    case 'message.releaseApproved': return encodeSessionMessageReleasedEvent({ ...base, eventType: 'SessionMessageReleased' });
+    case 'message.apply': return encodeSessionMessageAppliedEvent({ ...base, eventType: 'SessionMessageApplied' });
+    default: return unreachable(command, 'message write operation');
+  }
+}
+
+/** The machine event each lifecycle operation's change corresponds to. */
+function lifecycleMachineEventOf(command: SessionMessageWriteCommandV1): MessageEvent {
+  switch (command.operation) {
+    case 'message.withdraw': return { type: 'message_withdrawn' };
+    case 'message.release': return { type: 'message_release_decided', allow: command.change.allow };
+    case 'message.releaseApproved': return { type: 'message_released' };
+    case 'message.apply': return { type: 'message_applied' };
+    default: return unreachable(command, 'message write operation');
+  }
+}
+
+/**
+ * The one non-committing prepared fragment for a lifecycle command. It reads
+ * the notice origin, builds the next record through the machine's constructor,
+ * asserts the result is the state the machine accepted (the change's own times
+ * are the owner's facts, like a send's release), and encodes the message record
+ * and its one snapshot event last. It never looks up a receipt and never
+ * commits.
+ */
+async function prepareSessionMessage(
+  records: SessionMessageStore,
+  owned: Owned,
+  command: SessionMessageWriteCommandV1,
+  companions: SessionMessageCommitCompanions,
+): Promise<SessionMessageCommitFragment | CoreRejection> {
+  const refKey = sessionMessageRefKey(command.before.ref);
+  const preserved = await preservedNoticeOrigin(records, refKey);
+  if (!preserved.ok) return preserved.rejection;
+  let next: SessionMessage;
+  try {
+    next = nextSessionMessageRecord(command.before,
+      command.change as unknown as Parameters<typeof nextSessionMessageRecord>[1]);
+  } catch {
+    return reject('revision_conflict', 'the message changed since this command read it');
+  }
+  const { decided } = judge(owned.principal, command.before, lifecycleMachineEventOf(command), {});
+  if (!decided.ok) return reject('revision_conflict', 'the message state no longer accepts this command');
+  let accepted = decided.next as Record<string, unknown>;
+  if (command.operation === 'message.withdraw') {
+    accepted = { ...accepted, withdrawnAt: command.change.withdrawnAt };
+  } else if (command.operation === 'message.apply') {
+    accepted = { ...accepted, appliedAt: command.change.appliedAt };
+  } else if (command.operation === 'message.release' && command.change.allow) {
+    // The machine's change carries only the release and the approval revision;
+    // the same commit's record also writes the change's approval time.
+    accepted = { ...accepted, approvedAt: command.change.approvedAt };
+  } else if (command.operation === 'message.releaseApproved') {
+    accepted = { ...accepted, pins: command.change.pins };
+  }
+  if (canonicalOf(messageMachineStateOf(next)) !== canonicalOf(accepted as unknown as JsonValue)) {
+    return reject('revision_conflict', 'the prepared message is not the state the machine accepted');
+  }
+  const bindings = companions.commitCursorBindings ?? [];
+  const merged = mergeGuards([...companions.guards, { refKey, expectedRevision: command.expectedRevision }]);
+  if (!merged.ok) return merged.rejection;
+  return {
+    records: [...companions.records, encodeSessionMessageRecord(next, preserved.value)],
+    events: [...companions.events, lifecycleEventOf(command, next)],
+    guards: merged.guards,
+    claims: [...companions.claims],
+    ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }),
+    ...(companions.ledgerHorizon === undefined ? {} : { ledgerHorizon: companions.ledgerHorizon }),
+  };
+}
+
+/** The receipt's message version must be the decoded event's own revision. */
+function messageVersionAgainstReceipt(decoded: SessionMessage, receipt: CommittedReceipt, keys: Keys): string | null {
+  if (receipt.identityKey !== keys.identityKey) return 'the receipt identity does not match';
+  const version = receipt.versions.find((entry) => entry.refKey === sessionMessageRefKey(decoded.ref));
+  return version !== undefined && version.revision === decoded.revision
+    ? null : 'the receipt message version does not match';
+}
+
+const withdrawnResult = {
+  eventType: 'SessionMessageWithdrawn' as const,
+  schemaVersion: 1 as const,
+  decode: sessionMessageFromEvent,
+  validate: messageVersionAgainstReceipt,
+  project: (decoded: SessionMessage, _cursor: CommitCursor) => decoded,
+};
+
+/** An approval or denial restores its own snapshot event exactly like a withdrawal's. */
+const releaseDecidedResult = {
+  eventType: 'SessionMessageReleaseDecided' as const,
+  schemaVersion: 1 as const,
+  decode: sessionMessageFromEvent,
+  validate: messageVersionAgainstReceipt,
+  project: (decoded: SessionMessage, _cursor: CommitCursor) => decoded,
+};
+
+/** The executor's public result: one shell, never its refusal wrapper or internal cause. */
+function messageWriteResult(result: CommandResult<SessionMessage, CoreRejection>): WriteResult<SessionMessage> {
+  if (result.status === 'committed') return result;
+  if (result.status === 'refused') return result.refusal;
+  return {
+    status: 'rejected', code: result.code, reason: result.reason,
+    ...(result.current === undefined ? {} : { current: result.current }),
+  };
+}
+
+type WithdrawFacts = {
+  message: SessionMessage;
+  open: RecipientOpenExecutionsV1;
+  guards: readonly RecordGuard[];
+  actor: MessageSender;
+};
+type WithdrawDecision = {
+  before: SessionMessage;
+  change: MessageWithdrawnChangeV1;
+  at: string;
+  actor: MessageSender;
+  guards: readonly RecordGuard[];
+  horizon: CommitCursor;
+};
+
+type ReleaseFacts = { message: SessionMessage; actor: MessageSender };
+type ReleaseDecision = {
+  before: SessionMessage;
+  change: MessageReleaseDecidedChangeV1;
+  at: string;
+  actor: MessageSender;
 };
 
 /** The one commit tail both writer paths use. */
@@ -309,16 +484,28 @@ async function commitPreparedSessionMessage(
     }
   }
   const accepted: RecordGuard = { refKey, expectedRevision: spec.messageRevision };
+  // Book §3.11: the companion contribution comes first — its records, its events,
+  // its guards, its claims and its cursor bindings — and this message's record and
+  // its one snapshot event are the tail. The three binding inputs are merged by
+  // (refKey, field) and deduplicated; the tail is never replaced.
+  const companions = spec.companions;
+  const companionBindings = companions?.commitCursorBindings ?? [];
+  const allBindings = [...companionBindings, ...bindings];
+  const mergedBindings = allBindings.filter((binding, index) => allBindings.findIndex(
+    (candidate) => candidate.refKey === binding.refKey && candidate.field === binding.field) === index);
+  const merged = mergeGuards([accepted, ...(companions?.guards ?? []), ...spec.guards]);
+  if (!merged.ok) return merged.rejection;
   const prepared: PreparedCommit = {
     identityKey: spec.identityKey,
     fingerprint: spec.fingerprint,
-    guards: dedupeGuards([accepted, ...spec.guards]),
-    records: [encodeSessionMessageRecord(spec.message, origin)],
-    claims: [...spec.claims],
+    guards: merged.guards,
+    records: [...(companions?.records ?? []), encodeSessionMessageRecord(spec.message, origin)],
+    claims: [...(companions?.claims ?? []), ...spec.claims],
     indexGuards: [],
     indexChanges: [],
-    events: [spec.event],
-    ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }),
+    events: [...(companions?.events ?? []), spec.event],
+    ...(mergedBindings.length === 0 ? {} : { commitCursorBindings: mergedBindings }),
+    ...(companions?.ledgerHorizon === undefined ? {} : { ledgerHorizon: companions.ledgerHorizon }),
   };
   if (spec.owned.signal.aborted) return reject('cancelled', spec.cancelledReason);
   let receipt: Awaited<ReturnType<SessionMessageStore['commit']>>;
@@ -351,6 +538,21 @@ type Owned = {
 type OwnedContext = Owned | { ok: false; rejection: CoreRejection };
 
 /**
+ * The context the resolver and the request-owner read see: the cloned,
+ * validated identity and the original bound signal. The caller's original
+ * object is never read again after `ownContext`.
+ */
+function isolatedContext(owned: Owned): CoreCallContext {
+  return {
+    projectId: owned.projectId,
+    workspaceId: owned.workspaceId,
+    principal: structuredClone(owned.principal),
+    materialReader: structuredClone(owned.reader),
+    signal: owned.signal,
+  };
+}
+
+/**
  * The project/workspace scope `identityKeyOf`/`fingerprintOf` bind. The real
  * owner methods pass their `Owned` context; the L4 lookup passes the original
  * Run's `origin` so the identity matches what that Run actually committed.
@@ -379,7 +581,21 @@ function ownContext(ctx: CoreCallContext): OwnedContext {
   }
   if (!isObject(principal)) return { ok: false, rejection: reject('forbidden', 'a mailbox call requires a trusted principal') };
   if (principal['kind'] === 'query_run') {
-    return { ok: false, rejection: reject('unsupported', 'query_run mailbox access is not supported in this batch') };
+    // The literal principal is the identity material; no resolver, round or
+    // authority read happens here. The ref's shape and its bound scope are
+    // checked, nothing more.
+    const refProblem = checkShape(QueryRunRefShape, principal['queryRunRef'], 'stored');
+    if (refProblem !== null) return { ok: false, rejection: reject('invalid', `a query_run mailbox call requires a complete QueryRunRef: ${refProblem}`) };
+    const queryRunRef = principal['queryRunRef'] as QueryRunRef;
+    if (queryRunRef.projectId !== projectId || queryRunRef.workspaceId !== workspaceId) {
+      return { ok: false, rejection: reject('forbidden', 'the QueryRun belongs to another project/workspace') };
+    }
+    return {
+      ok: true, projectId, workspaceId,
+      principal: principal as unknown as MailboxPrincipal,
+      reader: reader as unknown as MaterialReader,
+      signal: signal as unknown as AbortSignal,
+    };
   }
   if (principal['kind'] === 'host') {
     const actor = principal['actor'];
@@ -541,7 +757,7 @@ function guardRejection(problem: Rejected | null): CoreRejection | null {
 
 /** The row's first guard refusing a write's principal; the write compares the kind itself only to narrow its principal. */
 function principalRefusal(principal: MailboxPrincipal, event: Parameters<typeof messagePrincipalProblem>[0]): CoreRejection {
-  const rejection = guardRejection(messagePrincipalProblem(event, principal.kind));
+  const rejection = guardRejection(messagePrincipalProblem(event, principal.kind === 'query_run' ? 'other' : principal.kind));
   if (rejection === null) throw new Error(`the message machine admits the ${principal.kind} principal this write refused`);
   return rejection;
 }
@@ -570,7 +786,9 @@ function pinsOf(expected: readonly VersionPin[], ref: SessionMessageRef):
 function judge(principal: MailboxPrincipal, message: SessionMessage | null, event: MessageEvent,
   facts: Partial<Omit<MessageGuardContext, 'principal'>>): { decided: MessageTransition; ctx: MessageGuardContext } {
   const ctx: MessageGuardContext = {
-    principal: principal.kind,
+    // The machine's send row only distinguishes the fresh work_run admission;
+    // a resolved secretary send is a trusted non-work sender, like a Host.
+    principal: principal.kind === 'work_run' ? 'work_run' : 'host',
     workRunAuthorization: null,
     callerIsRecipient: null,
     recipientScope: null,
@@ -596,6 +814,55 @@ function admissionRefusalOf(refused: Refused, ctx: MessageGuardContext): CoreRej
 /** A machine refusal as the rejection today's service returned; a refused admission is its own rejection. */
 function refusalOf(refused: Refused, ctx: MessageGuardContext): CoreRejection {
   return admissionRefusalOf(refused, ctx) ?? reject(refused.code, refused.detail);
+}
+
+/** The three dispatch values are equal only when all three agree. */
+function sameBasis(left: DispatchBasisV1, right: DispatchBasisV1): boolean {
+  return left.planRevision === right.planRevision
+    && left.pointerRevision === right.pointerRevision
+    && left.dispatchSequence === right.dispatchSequence;
+}
+
+/** The one consistent read's values plus its own cursor; the caller re-reads at it. */
+function dispatchCurrentOf(facts: DispatchBasisFactsV1): DispatchBasisV1 & { readCursor: CommitCursor } {
+  return { ...facts.values, readCursor: facts.readCursor };
+}
+
+/** The version pins of the two records whose revisions the read knows: the Goal and the counter. */
+function basisPinsOf(facts: DispatchBasisFactsV1): VersionPin[] {
+  const pins: VersionPin[] = [{ ref: structuredClone(facts.goal.ref), revision: facts.goal.revision }];
+  if (facts.counter.record !== null) {
+    pins.push({ ref: structuredClone(facts.counter.record.ref), revision: facts.counter.record.revision });
+  }
+  return pins;
+}
+
+/** The Session a message's sender is, when its sender kind names one. */
+function messageSenderSessionOf(message: SessionMessage): SessionRef | null {
+  if (message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round') {
+    return { projectId: message.sender.sessionRef.projectId, sessionId: message.sender.sessionRef.sessionId };
+  }
+  return null;
+}
+
+function sameSessionRefAs(left: SessionRef | null, right: SessionRef | null): boolean {
+  return left !== null && right !== null
+    && left.projectId === right.projectId && left.sessionId === right.sessionId;
+}
+
+/** `followupOf`: an existing message between the same two Sessions, either direction. */
+function followupConnects(message: SessionMessage, sender: MessageSender, recipient: SessionRef): boolean {
+  const addressed = message.recipient;
+  if (isUserRecipient(addressed)) return false;
+  const to: SessionRef = { projectId: addressed.projectId, sessionId: addressed.sessionId };
+  const from = messageSenderSessionOf(message);
+  if (sender.kind === 'work_run' || sender.kind === 'secretary_round') {
+    return (sameSessionRefAs(from, sender.sessionRef) && sameSessionRefAs(to, recipient))
+      || (sameSessionRefAs(from, recipient) && sameSessionRefAs(to, sender.sessionRef));
+  }
+  // A Host sender has no Session of its own: the follow-up is between the
+  // recipient and the message's other Session.
+  return sameSessionRefAs(from, recipient) || sameSessionRefAs(to, recipient);
 }
 
 /**
@@ -717,6 +984,7 @@ function senderIdentityOf(sender: MessageSender | MessageQueryAnswerSender): Unk
       generation: sender.generation,
     };
   }
+  if (sender.kind === 'secretary_round') return { kind: 'query_run', queryRunRef: { ...sender.queryRunRef } };
   return {
     kind: 'query_run',
     sessionRef: { ...sender.sessionRef },
@@ -777,6 +1045,10 @@ const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   ArchiveWaitDisposed: 'archive-wait-disposed',
   SessionMessageDecisionAnswered: 'decision-answered',
   SessionMessageDecisionApplied: 'decision-applied',
+  SessionMessageWithdrawn: 'withdrawn',
+  SessionMessageReleaseDecided: 'release-decided',
+  SessionMessageReleased: 'released',
+  SessionMessageApplied: 'applied',
 };
 
 function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
@@ -856,6 +1128,38 @@ function decodeOutboxCursor(raw: string): OutboxCursorV1 | null {
 }
 
 // --------------------------------------------------------------------------
+// Secretary outbox cursor: a FOURTH keyset namespace. It binds the scope, the
+// resolved request root, the caller and the after key; a Host/work_run cursor
+// never satisfies it.
+// --------------------------------------------------------------------------
+
+type SecretaryOutboxCursorV1 = {
+  v: 1;
+  projectId: string;
+  workspaceId: string;
+  requestRoot: QueryJobRef;
+  callerKey: string;
+  after: string;
+};
+
+function encodeSecretaryOutboxCursor(cursor: SecretaryOutboxCursorV1): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+function decodeSecretaryOutboxCursor(raw: string): SecretaryOutboxCursorV1 | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!isObject(parsed) || parsed['v'] !== 1) return null;
+  const { projectId, workspaceId, requestRoot, callerKey, after } = parsed;
+  if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || !nonEmpty(callerKey) || !nonEmpty(after)) return null;
+  if (checkShape(QueryJobRefShape, requestRoot, 'stored') !== null) return null;
+  return { v: 1, projectId, workspaceId, requestRoot: requestRoot as QueryJobRef, callerKey, after };
+}
+
+// --------------------------------------------------------------------------
 // Reply cursor: binds scope, the exact source/handler Session, the kind and the
 // caller to the after key. It is a THIRD keyset namespace (inbox/outbox/reply).
 // --------------------------------------------------------------------------
@@ -892,12 +1196,14 @@ function decodeReplyCursor(raw: string): ReplyCursorV1 | null {
 // --------------------------------------------------------------------------
 
 /**
- * The full result `createSessionMailbox` provides: the frozen `SessionMailboxPort`
- * plus the two methods that are always present and the slice-5 user-send owner
+ * The full result `createSessionMailbox` provides: the frozen full command port
+ * (`SessionMessageCommandPort`: the two sender-read methods and the two view
+ * reads on top of the historical narrow `SessionMailboxPort`), the two methods
+ * that are always present and the slice-5 user-send owner
  * (`DecisionMessagePort.sendUserMessage`). The user address never enters the
  * legacy `SessionRef` `sendMessage` admission.
  */
-export type SessionMailboxWithUserSend = SessionMailboxPort
+export type SessionMailboxWithUserSend = SessionMessageCommandPort
   & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox'>>
   & Pick<DecisionMessagePort, 'sendUserMessage'>;
 
@@ -1405,15 +1711,14 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const runKey = canonicalOf(run.ref) ?? '';
     const sessionKey = canonicalOf(session.ref) ?? '';
     const leaseKey = canonicalOf(lease.ref) ?? '';
-    return {
-      ok: true,
-      guards: dedupeGuards([
-        { refKey: runKey, expectedRevision: run.revision },
-        { refKey: sessionKey, expectedRevision: session.revision },
-        { refKey: leaseKey, expectedRevision: lease.revision },
-        ...hostRole.value.roleFacts.guards,
-      ]),
-    };
+    const merged = mergeGuards([
+      { refKey: runKey, expectedRevision: run.revision },
+      { refKey: sessionKey, expectedRevision: session.revision },
+      { refKey: leaseKey, expectedRevision: lease.revision },
+      ...hostRole.value.roleFacts.guards,
+    ]);
+    if (!merged.ok) return { ok: false, rejection: merged.rejection };
+    return { ok: true, guards: merged.guards };
   }
 
   // ---- canonical reads ----------------------------------------------------
@@ -1446,6 +1751,34 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (loaded.status === 'ready') return { ok: true, message: loaded.value };
     if (loaded.status === 'not_found') return { ok: true, message: null };
     return { ok: false, rejection: mapReadResult(loaded) as CoreRejection };
+  }
+
+  /**
+   * The recipient line's two read-time facts (R7A1-09): `archived` is the
+   * Session's lifecycle and `retired` its unavailable health. A `{kind:'user'}`
+   * recipient has no Session line; an absent or unreadable one is the read's
+   * failure, never a pair of false values.
+   */
+  async function recipientLineFacts(owned: Owned, recipient: MessageRecipient): Promise<
+    { ok: true; value: { archived: boolean; retired: boolean } } | { ok: false; rejection: CoreRejection }> {
+    if (isUserRecipient(recipient)) return { ok: true, value: { archived: false, retired: false } };
+    if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the recipient Session read was cancelled') };
+    let read: ReadResult<SessionCard>;
+    try {
+      read = await deps.sessions.readSession(internalHostContext(owned), {
+        projectId: recipient.projectId, sessionId: recipient.sessionId,
+      });
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'the recipient Session could not be read') };
+    }
+    if (read.status === 'not_found') {
+      return { ok: false, rejection: reject('not_found', 'the recipient Session does not exist') };
+    }
+    if (read.status !== 'ready') return { ok: false, rejection: mapReadResult(read) as CoreRejection };
+    return { ok: true, value: {
+      archived: read.value.record.lifecycle === 'archived',
+      retired: read.value.record.health === 'unavailable',
+    } };
   }
 
   async function readWorkspaceSource(owned: Owned): Promise<{ ok: true; value: ArtifactRef['source'] } | { ok: false; rejection: CoreRejection }> {
@@ -1914,6 +2247,22 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     cancelled: string;
     /** Slice 5 read-fact guards (duties, Goal) the user-message row joins to its one commit. */
     extraGuards?: readonly RecordGuard[];
+    /**
+     * A refusal reply's `rejectedAt` is the commit's own clock instant, the same
+     * fact the change carries; the machine state holds only that the slot is
+     * taken, so the owner's instant overlays the accepted state before the
+     * canonical comparison. A send's release and pins are the machine's own
+     * accepted state (`sendRelease`), so they need no overlay.
+     */
+    acceptedRejectedAt?: true;
+    /**
+     * The companion contribution of this same fact, planned at the commit's one
+     * clock instant: a released `action_request`'s counter, a released non-notify
+     * message's Session activity. Planned before the record so a deadline that
+     * overflows is refused before anything is written.
+     */
+    companions?: (at: string) => Promise<
+      { ok: true; value: SessionMessageCommitCompanions } | { ok: false; rejection: CoreRejection }>;
   } & (
     /** `write_message`: the record the machine's constructor builds at the write's clock instant, around the stored body. */
     | { body: BodyInput; record: (at: string, bodyRef: ArtifactRef) => SessionMessage }
@@ -1942,8 +2291,19 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     const at = deps.now();
     if (!nonEmpty(at)) return reject('invalid', 'the injected clock is not a legal instant');
+    let companions: SessionMessageCommitCompanions | undefined;
+    if (write.companions !== undefined) {
+      const planned = await write.companions(at);
+      if (!planned.ok) return planned.rejection;
+      companions = planned.value;
+    }
     const message = record(at);
-    if (canonicalOf(messageMachineStateOf(message)) !== canonicalOf(accepted.next)) {
+    let acceptedState = accepted.next;
+    if (write.acceptedRejectedAt === true) {
+      if (acceptedState.status === 'absent') throw new Error('a refusal cannot change an absent message');
+      acceptedState = { ...acceptedState, rejectedAt: at };
+    }
+    if (canonicalOf(messageMachineStateOf(message)) !== canonicalOf(acceptedState)) {
       throw new Error('the written SessionMessage is not the state the message machine accepted');
     }
     const event = {
@@ -1972,6 +2332,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         // itself is the accepted pin below, never this record's revision.
         before: plan.messageRevision === null ? null : message,
         next: message, event, guards, claims: [],
+        ...(companions === undefined ? {} : { companions }),
       },
       meta: {
         requestId: write.requestId,
@@ -1986,29 +2347,110 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   /**
    * Slice 1 §2.5: the effective reply handler of a wait. A recorded `replyHandler`
-   * wins; otherwise the original `work_run` sender Session handles the reply. A
-   * Host-sent message has no effective handler.
+   * wins; otherwise the original `work_run` or secretary sender Session handles
+   * the reply. A Host-sent message has no effective handler.
    */
   function effectiveReplyHandler(message: SessionMessage): SessionRef | null {
     const handler = message.replyHandler ?? null;
     if (handler !== null) return handler.sessionRef;
-    return message.sender.kind === 'work_run' ? message.sender.sessionRef : null;
+    return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
+      ? message.sender.sessionRef : null;
   }
 
-  function canReadMessage(sessionRef: SessionRef, message: SessionMessage): boolean {
+  /**
+   * The one secretary-round resolution: the resolver runs after a receipt miss
+   * (or on every read) and the resolved round must be exactly the literal
+   * QueryRun caller and scope. Each entry keeps its own required injections and
+   * business authorization, and the withdraw shares the session-project check.
+   */
+  async function resolveSecretaryRound(owned: Owned):
+  Promise<{ ok: true; round: SecretaryQueryRunV1 } | { ok: false; rejection: CoreRejection }> {
+    if (owned.principal.kind !== 'query_run') {
+      return { ok: false, rejection: reject('forbidden', 'the secretary round requires a query_run caller') };
+    }
+    if (deps.secretaryRounds === undefined) {
+      return { ok: false, rejection: reject('unsupported', 'the secretary round is not configured') };
+    }
+    let resolved: { status: 'ready'; value: SecretaryQueryRunV1 } | CoreRejection;
+    try {
+      resolved = await deps.secretaryRounds.resolveSecretaryQueryRun(isolatedContext(owned));
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'the secretary round could not be resolved') };
+    }
+    if (resolved.status !== 'ready') return { ok: false, rejection: resolved };
+    const round = resolved.value;
+    if (canonicalOf(round.run) !== canonicalOf(owned.principal.queryRunRef)
+      || round.scope.projectId !== owned.projectId || round.scope.workspaceId !== owned.workspaceId
+      || round.session.projectId !== owned.projectId) {
+      return { ok: false, rejection: reject('forbidden', 'the resolved round is not this QueryRun caller') };
+    }
+    return { ok: true, round };
+  }
+
+  /**
+   * The one secretary read admission: the resolver runs on every `query_run`
+   * read (there is no receipt to miss), and its Session is the reader. It reads
+   * no message, no owner and no outbox.
+   */
+  async function secretaryReader(owned: Owned): Promise<
+    { ok: true; round: SecretaryQueryRunV1; reader: SessionRef } | { ok: false; rejection: CoreRejection }
+  > {
+    if (owned.principal.kind !== 'query_run') {
+      return { ok: false, rejection: reject('forbidden', 'the secretary reader requires a query_run caller') };
+    }
+    if (deps.secretaryRounds === undefined || deps.requestOwners === undefined
+      || deps.recipientExecutions === undefined) {
+      return { ok: false, rejection: reject('unsupported', 'the secretary mailbox read is not configured') };
+    }
+    const resolved = await resolveSecretaryRound(owned);
+    if (!resolved.ok) return resolved;
+    return { ok: true, round: resolved.round, reader: { ...resolved.round.session } };
+  }
+
+  type ReadRight = { ok: true; allowed: boolean } | { ok: false; rejection: CoreRejection };
+
+  /**
+   * The one single-message read right. Steps 1–4 establish a right without any
+   * read; only a secretary-sent message with a request root and no established
+   * right consults the request's owner. `ready(null)` and `not_found` add no
+   * right; any other failure is `unavailable`; a failure never erases an
+   * already established right.
+   */
+  async function canReadMessage(owned: Owned, reader: SessionRef, message: SessionMessage): Promise<ReadRight> {
     const recipient = message.recipient;
     if (!isUserRecipient(recipient)
-      && recipient.projectId === sessionRef.projectId && recipient.sessionId === sessionRef.sessionId) return true;
-    if (message.sender.kind === 'work_run'
-      && message.sender.sessionRef.projectId === sessionRef.projectId
-      && message.sender.sessionRef.sessionId === sessionRef.sessionId) return true;
+      && recipient.projectId === reader.projectId && recipient.sessionId === reader.sessionId) {
+      return { ok: true, allowed: true };
+    }
+    if (message.sender.kind === 'work_run' && sameSessionRefAs(message.sender.sessionRef, reader)) {
+      return { ok: true, allowed: true };
+    }
+    if (message.sender.kind === 'secretary_round' && sameSessionRefAs(message.sender.sessionRef, reader)) {
+      return { ok: true, allowed: true };
+    }
     // Slice 1 §2.5: the effective reply handler may read the original message
     // and its response body, but this never widens ack/respond rights (those
     // still use `ownsInbox`, i.e. the original recipient).
     const handler = message.replyHandler ?? null;
-    return handler !== null
-      && handler.sessionRef.projectId === sessionRef.projectId
-      && handler.sessionRef.sessionId === sessionRef.sessionId;
+    if (handler !== null && sameSessionRefAs(handler.sessionRef, reader)) return { ok: true, allowed: true };
+    if (message.sender.kind !== 'secretary_round' || message.requestRoot === null) {
+      return { ok: true, allowed: false };
+    }
+    if (deps.requestOwners === undefined) {
+      return { ok: false, rejection: reject('unsupported', 'the request-owner read is not configured') };
+    }
+    let owner: ReadResult<SessionRef | null>;
+    try {
+      owner = await deps.requestOwners.ownerOf(isolatedContext(owned), { requestRoot: message.requestRoot });
+    } catch {
+      return { ok: false, rejection: reject('unavailable', 'the request owner could not be read') };
+    }
+    if (owner.status === 'not_found') return { ok: true, allowed: false };
+    if (owner.status !== 'ready') {
+      return { ok: false, rejection: reject('unavailable', 'the request owner could not be read') };
+    }
+    if (owner.value === null) return { ok: true, allowed: false };
+    return { ok: true, allowed: canonicalOf(owner.value) === canonicalOf(reader) };
   }
 
   function ownsInbox(sessionRef: SessionRef, message: SessionMessage): boolean {
@@ -2018,71 +2460,137 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       && recipient.sessionId === sessionRef.sessionId;
   }
 
+  /**
+   * The one single-message read right shared by `readMessage`, `readMessageBody`
+   * and `readMessageView` (R7A1-09): a Host inside its workspace, a Work Run
+   * through its own derived sender, or a secretary round through its resolved
+   * Session; the per-message check is `canReadMessage`. `null` means allowed.
+   */
+  async function messageReadRight(owned: Owned, message: SessionMessage,
+    secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null): Promise<CoreRejection | null> {
+    if (owned.principal.kind === 'host') return null;
+    let reader: SessionRef;
+    if (owned.principal.kind === 'query_run') {
+      if (secretary === null) return reject('forbidden', 'the secretary read was not resolved');
+      reader = secretary.reader;
+    } else {
+      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
+      if (!identity.ok) return identity.rejection;
+      const derived = deriveWorkRunSender(identity);
+      if (!derived.ok) return derived.rejection;
+      reader = derived.sender.sessionRef;
+    }
+    const right = await canReadMessage(owned, reader, message);
+    if (!right.ok) return right.rejection;
+    return right.allowed ? null : reject('forbidden', 'this message is not addressed to or sent by the caller Session');
+  }
+
   // ---- sendMessage --------------------------------------------------------
 
-  async function sendMessage(ctx: CoreCallContext, request: GraphWrite<{ recipient: SessionRef; text: string; intent?: 'notify' | 'inquiry' | 'action_request'; needsReply?: boolean; waitAfterSend?: boolean }>): Promise<WriteResult<SessionMessage>> {
+  /**
+   * The send's own result: the one commit's outcome plus the release state it
+   * wrote (`awaiting_release` exactly when the stored `release` is `'awaiting'`).
+   * A rejection already carries the frozen `SendRejectionV1` shape.
+   */
+  function sendStatusOf(result: WriteResult<SessionMessage>): SendMessageResultV1 {
+    if (result.status !== 'committed') return result;
+    return { ...result, sendStatus: result.value.release === 'awaiting' ? 'awaiting_release' : 'sent' };
+  }
+
+  async function refuseSend<T extends CoreRejection>(rejection: T, identityKey: string, fingerprint: string): Promise<SendMessageResultV1> {
+    const restored = await recheckAfterMiss(identityKey, fingerprint);
+    return restored === null ? rejection : sendStatusOf(restored);
+  }
+
+  async function sendMessage(ctx: CoreCallContext, request: SessionMessageSendInputV1): Promise<SendMessageResultV1> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before validation');
     const write = ownWrite(request);
     if (!write.ok) return write.rejection;
-    const raw = write.input as unknown as Unknown | null | undefined;
-    if (!isObject(raw)) return reject('invalid', 'sendSessionMessage requires an input object');
-    const recipientProblem = checkPlainSessionRef(raw['recipient']);
-    if (recipientProblem !== null) return reject('invalid', `send recipient: ${recipientProblem}`);
-    const recipient = structuredClone(raw['recipient']) as SessionRef;
-    const projectRejection = guardRejection(messageRecipientProjectProblem(recipient.projectId === owned.projectId));
-    if (projectRejection !== null) return projectRejection;
-    const text = normalizeText(raw['text']);
+    // T's ONE normalizer replaces the inline shape checks: the recipient, the ten
+    // payload fields and their defaults. It reads no Goal, Run or Session.
+    const normalized = normalizeSendMessageInput(write.input);
+    if (normalized.status === 'rejected') return normalized;
+    if (normalized.status !== 'ready') return reject('invalid', 'the send input could not be normalized');
+    const send = normalized.value;
+    const text = normalizeText(send.text);
     if (!text.ok) return text.rejection;
-    // Omitted fields keep the exact historical fire-and-forget fingerprint.
-    const intent = raw['intent'];
-    if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry' && intent !== 'action_request') {
-      return reject('invalid', 'the send intent must be notify, inquiry or action_request');
-    }
-    const explicitNeedsReply = raw['needsReply'];
-    if (explicitNeedsReply !== undefined && typeof explicitNeedsReply !== 'boolean') {
-      return reject('invalid', 'the send needsReply must be a boolean');
-    }
-    const explicitWaitAfterSend = raw['waitAfterSend'];
-    if (explicitWaitAfterSend !== undefined && typeof explicitWaitAfterSend !== 'boolean') {
-      return reject('invalid', 'the send waitAfterSend must be a boolean');
-    }
-    const waitAfterSend = explicitWaitAfterSend === true;
-    const needsReply = explicitNeedsReply === true || (explicitNeedsReply === undefined && waitAfterSend);
+    const projectRejection = guardRejection(messageRecipientProjectProblem(send.recipient.projectId === owned.projectId));
+    if (projectRejection !== null) return projectRejection;
     const sendFlags: NonNullable<MessageGuardContext['sendFlags']> = {
-      needsReply, waitAfterSend, pinCount: write.expected.length,
+      needsReply: send.needsReply, waitAfterSend: send.waitAfterSend, pinCount: write.expected.length,
     };
     const flagRejection = guardRejection(messageSendFlagsProblem(sendFlags));
     if (flagRejection !== null) return flagRejection;
 
-    let sender: MessageSender;
+    // The stable sender facts: Host => the same trusted actor; a work Run => the
+    // persisted claim and Run; a `query_run` principal => only its literal
+    // `queryRunRef` (the round is resolved after the receipt miss). The identity
+    // and the fingerprint never read the resolver.
+    let sender: MessageSender | null = null;
+    let senderIdentity: Unknown;
     let workRunPrincipal: WorkRunPrincipal | null = null;
+    let secretaryRound: SecretaryQueryRunV1 | null = null;
     if (owned.principal.kind === 'host') {
       sender = { kind: 'host', actor: { ...owned.principal.actor } };
-    } else {
+      senderIdentity = senderIdentityOf(sender);
+    } else if (owned.principal.kind === 'work_run') {
       const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
       if (!identity.ok) return identity.rejection;
       const derived = deriveWorkRunSender(identity);
       if (!derived.ok) return derived.rejection;
       sender = derived.sender;
       workRunPrincipal = owned.principal;
+      senderIdentity = senderIdentityOf(sender);
+    } else {
+      senderIdentity = { kind: 'query_run', queryRunRef: { ...owned.principal.queryRunRef } };
     }
-    const senderIdentity = senderIdentityOf(sender);
-    const identityKey = identityKeyOf('send', owned, senderIdentity, write.requestId);
-    // The reply expectation is part of the request identity ONLY when it is
-    // explicitly present: an omitted field keeps the exact historical
-    // fingerprint, so every existing fire-and-forget send replays unchanged.
-    const fingerprint = fingerprintOf('send', owned, senderIdentity,
-      { recipient, text: text.text,
-        ...(intent === undefined ? {} : { intent }),
-        ...(explicitNeedsReply === undefined ? {} : { needsReply: explicitNeedsReply }),
-        ...(explicitWaitAfterSend === undefined ? {} : { waitAfterSend: explicitWaitAfterSend }) }, write.expected);
 
+    // The identity and the fingerprint are fixed from the stable facts and the
+    // WHOLE normalized payload (all ten fields, the explicit nulls included): a
+    // changed field under the same identity is `idempotency_conflict`, never a
+    // silent re-send.
+    const identityKey = identityKeyOf('send', owned, senderIdentity, write.requestId);
+    const fingerprint = fingerprintOf('send', owned, senderIdentity, send as unknown as Unknown, write.expected);
+
+    // Receipt first: a replay restores the original result from the original
+    // event, before any admission and without re-reading the world.
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
-    if (existing.status === 'ready') return replayMessage(existing.value);
+    if (existing.status === 'ready') return sendStatusOf(await replayMessage(existing.value));
     if (existing.code !== 'not_found') return mapStoreFailure(existing);
+
+    // The secretary's one admission, only after the receipt miss: the resolved
+    // round must be this QueryRun, in this scope, and it supplies the persisted
+    // sender and the trusted goal. A NEW secretary path needs all three
+    // injections; it never reads open executions.
+    if (owned.principal.kind === 'query_run') {
+      if (deps.secretaryRounds === undefined || deps.requestOwners === undefined
+        || deps.recipientExecutions === undefined) {
+        return reject('unsupported', 'the secretary send is not configured');
+      }
+      const resolved = await resolveSecretaryRound(owned);
+      if (!resolved.ok) {
+        // A business refusal (no stored round, not entered, not a secretary
+        // round) may be stale: a concurrent same-identity send can have committed
+        // after this send's lookup missed, so restore its receipt. A read failure
+        // stays the read failure.
+        return resolved.rejection.code === 'forbidden'
+          ? refuseSend(resolved.rejection, identityKey, fingerprint) : resolved.rejection;
+      }
+      const round = resolved.round;
+      secretaryRound = round;
+      sender = {
+        kind: 'secretary_round',
+        sessionRef: { ...round.session },
+        queryRunRef: { ...round.run },
+        requestRoot: { ...round.requestRoot },
+        generation: round.sessionGeneration,
+      };
+    }
+    if (sender === null) throw new Error('a send reached admission without its trusted sender facts');
+    const committedSender: MessageSender = sender;
 
     // MSG-02's fresh admission comes before the target Session read; a refused
     // admission never reads the target (the machine asks the admission first).
@@ -2091,6 +2599,18 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       authorized = await authorizeNewWorkRunAction({
         owned, principal: workRunPrincipal, operationToolName: 'send_session_message',
       });
+      // The trusted duties facts refuse the two senders that are never senders:
+      // a read-only copy and an independent reviewer. The adapter is the only
+      // source; when it is not bound the historical paths stay unchanged.
+      if (authorized.ok && deps.duties !== undefined && sender.kind === 'work_run') {
+        if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the duties read');
+        const duties = await deps.duties.readMessageDutiesFacts(internalHostContext(owned), {
+          sessionRef: sender.sessionRef, roleBinding: sender.roleBinding,
+        });
+        if (duties.status !== 'ready') return duties.status === 'rejected' ? duties : mapReadResult(duties) as CoreRejection;
+        if (duties.value.readOnlyCopy) return refuseSend(reject('forbidden', 'a read-only copy never sends a Session message'), identityKey, fingerprint);
+        if (duties.value.independentReview) return refuseSend(reject('forbidden', 'an independent reviewer never sends a Session message'), identityKey, fingerprint);
+      }
     }
 
     // The target Session must exist in the same project/workspace. busy/archived
@@ -2098,7 +2618,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     let recipientScope: MessageGuardContext['recipientScope'] = null;
     if (authorized === null || authorized.ok) {
       if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the target Session read');
-      const target = await deps.sessions.readSession(internalHostContext(owned), recipient);
+      const target = await deps.sessions.readSession(internalHostContext(owned), send.recipient);
       if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled during the target Session read');
       if (target.status !== 'ready' && target.status !== 'not_found') return mapReadResult(target) as CoreRejection;
       recipientScope = target.status === 'not_found' ? null
@@ -2110,25 +2630,240 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     // not read: an existing one is caught by the create CAS@0. A refused
     // admission first restores this identity's receipt if a concurrent identical
     // request committed after the lookup missed (`refuse`).
-    const { decided, ctx: messageCtx } = judge(owned.principal, null, { type: 'message_sent' }, {
+    const sendFacts: Partial<Omit<MessageGuardContext, 'principal'>> = {
       workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
       recipientScope,
       sendFlags,
-    });
-    if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
+    };
+    const { decided, ctx: messageCtx } = judge(owned.principal, null, { type: 'message_sent' }, sendFacts);
+    if (!decided.ok) return refuseSend(refusalOf(decided, messageCtx), identityKey, fingerprint);
+
+    // The Goal comes from the sender's trusted facts: a work Run's Task goal, the
+    // secretary round's `effectiveGoalId` (never its `goals` batch), the person's
+    // own `goalRef` input. An input that disagrees with the trusted fact is
+    // `invalid`, never a silent override.
+    let trustedGoal: GoalRef | null = null;
+    if (sender.kind === 'host') {
+      if (send.goalRef !== null) trustedGoal = structuredClone(send.goalRef);
+    } else if (sender.kind === 'work_run') {
+      trustedGoal = { aggregateType: 'Goal', projectId: owned.projectId, goalId: sender.runRef.goalId };
+      if (send.goalRef !== null
+        && (send.goalRef.projectId !== trustedGoal.projectId || send.goalRef.goalId !== trustedGoal.goalId)) {
+        return refuseSend(reject('invalid', 'the send goalRef disagrees with the sender Session\'s trusted Goal'), identityKey, fingerprint);
+      }
+    } else {
+      const effectiveGoalId = secretaryRound === null ? null : secretaryRound.effectiveGoalId;
+      trustedGoal = effectiveGoalId === null
+        ? null : { aggregateType: 'Goal', projectId: owned.projectId, goalId: effectiveGoalId };
+      if (send.goalRef !== null && (trustedGoal === null
+        || send.goalRef.projectId !== trustedGoal.projectId || send.goalRef.goalId !== trustedGoal.goalId)) {
+        return refuseSend(reject('invalid', 'the send goalRef disagrees with the sender round\'s effective Goal'), identityKey, fingerprint);
+      }
+    }
+    // `taskRef` is a full Task triple of that Goal, and `followupOf` an existing
+    // message between these two Sessions: one error each, no message written.
+    if (send.taskRef !== null) {
+      if (trustedGoal === null || send.taskRef.projectId !== trustedGoal.projectId
+        || send.taskRef.goalId !== trustedGoal.goalId) {
+        return refuseSend(reject('invalid', 'the send taskRef is not a Task of the message\'s Goal'), identityKey, fingerprint);
+      }
+    }
+    if (send.followupOf !== null) {
+      if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the follow-up read');
+      const followed = await loadMessage(owned, send.followupOf);
+      if (followed.status === 'not_found') return refuseSend(reject('invalid', 'the followupOf message does not exist'), identityKey, fingerprint);
+      if (followed.status !== 'ready') return mapReadResult(followed) as CoreRejection;
+      if (!followupConnects(followed.value, sender, send.recipient)) {
+        return refuseSend(reject('invalid', 'the followupOf message is not between these two Sessions'), identityKey, fingerprint);
+      }
+    }
+
+    // Only an autonomy-controlled, goal-bearing `action_request` uses the one
+    // facts read; every other send never reads it. A read failure is the failure
+    // and its guards are the facts' own.
+    let basis: DispatchBasisFactsV1 | null = null;
+    if (send.intent === 'action_request' && sender.kind !== 'host') {
+      if (trustedGoal === null) return refuseSend(reject('invalid', 'an agent action_request requires the Goal it belongs to'), identityKey, fingerprint);
+      if (send.expected === null) return refuseSend(reject('invalid', 'a goal-bearing action_request requires the expected basis'), identityKey, fingerprint);
+      if (deps.dispatchBasis === undefined) {
+        return refuseSend(reject('unsupported', 'the dispatch basis read is not configured for a new action_request'), identityKey, fingerprint);
+      }
+      if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the dispatch facts read');
+      const facts = await deps.dispatchBasis.readDispatchFacts(internalHostContext(owned), { goalRef: trustedGoal });
+      if (facts.status !== 'ready') return facts.status === 'rejected' ? facts : mapReadResult(facts) as CoreRejection;
+      if (facts.value.plan === null) return refuseSend(reject('invalid', 'an action_request requires the Goal\'s active Plan'), identityKey, fingerprint);
+      basis = facts.value;
+      // A three-version mismatch is the stage's own read: its values and cursor,
+      // and the current versions the caller has to re-read.
+      if (!sameBasis(basis.values, send.expected)) {
+        return refuseSend({
+          ...reject('revision_conflict', 'the dispatch basis moved since it was read', basisPinsOf(basis)),
+          dispatchCurrent: dispatchCurrentOf(basis),
+        }, identityKey, fingerprint);
+      }
+    }
+
+    // The action_request's own guard keys: a commit conflict on one of them is
+    // the three-version window's, and only that one gets the post-miss read.
+    const basisRefKeys = new Set((basis?.guards ?? []).map((guard) => guard.refKey));
+
+    // Book §3.3 / §2.1 steps 8-11: a send is the record CONSTRUCTOR's create, and
+    // its release is this path's own fact. A person's send keeps `release: null`.
+    // A notify is always released and never counts or advances the Session. An
+    // agent's inquiry or action_request takes the Goal's autonomy through the one
+    // shared policy: 「每步确认」 awaits the person, the automatic level releases.
+    // An inquiry freezes its duration; an `action_request` reads the basis above.
+    let release: MessageReleaseV1 | null = null;
+    let pins: DispatchBasisV1 | null = null;
+    let goalGuard: RecordGuard | null = null;
+    // The Goal facts the release was decided on travel to the state original,
+    // which owns direct-release eligibility (`desiredState === 'active'`).
+    let releaseGoal: { desiredState: 'active' | 'paused' | 'cancelled'; revision: number } | null = null;
+    // Every inquiry freezes its duration (the input's, else the injected
+    // default); the record stores `deadlineMs` and only a RELEASED inquiry stores
+    // the instant. A missing injection is `unsupported`, never an invented one.
+    let deadlineMs: number | null = null;
+    if (send.intent === 'inquiry') {
+      const duration = send.deadlineMs ?? deps.defaultInquiryDeadlineMs;
+      // A NEW inquiry without a duration is `unsupported`: no silent "no deadline".
+      if (duration === undefined) return refuseSend(reject('unsupported', 'the inquiry deadline duration is not configured'), identityKey, fingerprint);
+      deadlineMs = duration;
+    }
+    if (sender.kind !== 'host' && send.intent !== null) {
+      if (trustedGoal === null) {
+        // A no-goal notify or inquiry is released directly; no Goal, no
+        // counter and no pins. Any other agent intent still needs its Goal.
+        if (send.intent !== 'notify' && send.intent !== 'inquiry') {
+          return refuseSend(reject('invalid', `an agent ${send.intent} requires the Goal it belongs to`), identityKey, fingerprint);
+        }
+        release = 'released';
+      } else {
+        // An action_request reuses the ONE facts read's Goal; every other
+        // goal-bearing send reads the Goal here and guards that same revision.
+        let autonomy: GoalAutonomyV1;
+        if (send.intent === 'action_request') {
+          if (basis === null) throw new Error('an action_request release needs its dispatch facts');
+          autonomy = basis.goal.settings.autonomy;
+          releaseGoal = { desiredState: basis.goal.desiredState, revision: basis.goal.revision };
+          goalGuard = { refKey: canonicalRefKey(basis.goal.ref), expectedRevision: basis.goal.revision };
+        } else {
+          if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the Goal read');
+          const goal = await loadGoal(owned, trustedGoal);
+          if (goal.status !== 'ready') return mapReadResult(goal) as CoreRejection;
+          autonomy = goal.value.settings.autonomy;
+          releaseGoal = { desiredState: goal.value.desiredState, revision: goal.value.revision };
+          goalGuard = { refKey: canonicalRefKey(goal.value.ref), expectedRevision: goal.value.revision };
+        }
+        if (send.intent === 'notify') {
+          // Notify is always released: it skips the counter and the activity
+          // advance, never the Goal read or its guard.
+          release = 'released';
+        } else {
+          const verdict = decisionActionPolicy({
+            autonomy,
+            action: send.intent === 'inquiry' ? 'secretary_inquiry' : 'secretary_action',
+            actorClass: 'agent', countedNext: null, cap: 0,
+          });
+          release = verdict === 'needs_decision' ? 'awaiting' : 'released';
+          if (send.intent === 'action_request') {
+            // A released action_request pins the facts read BEFORE the counter +1; an
+            // awaiting one pins the sender's own expected basis.
+            pins = release === 'awaiting' ? send.expected : (basis === null ? null : basis.values);
+          }
+        }
+      }
+    }
+
     const messageRef: SessionMessageRef = {
       aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
       messageId: messageIdOf(owned, senderIdentity, write.requestId),
     };
-    return writeMessage(decided, {
-      owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
+    // The release is decided above; the machine's accepted state carries it, so
+    // the canonical comparison at commit needs no overlay (§3.4 invariant 1).
+    // Its normal refusals (a direct release on a non-active Goal) are a result,
+    // never an exception, and recover the same identity's receipt like the first
+    // judge's refusals.
+    const { decided: sent, ctx: sentCtx } = judge(owned.principal, null, { type: 'message_sent' },
+      { ...sendFacts, sendRelease: { release, pins, goal: releaseGoal } });
+    if (!sent.ok) return refuseSend(refusalOf(sent, sentCtx), identityKey, fingerprint);
+    // The released inquiry's deadline is frozen at the commit's one clock instant;
+    // an overflow is refused before anything is written.
+    let frozenDeadline: string | null = null;
+    const companions = async (at: string) => {
+      const contribution: {
+        records: EncodedRecord[]; events: []; guards: RecordGuard[]; claims: []; } =
+        { records: [], events: [], guards: goalGuard === null ? [] : [goalGuard], claims: [] };
+      if (deadlineMs !== null && release === 'released') {
+        // The instant is representable iff the Date is; a fractional duration is
+        // legal, an out-of-range one is refused before anything is written.
+        const deadline = new Date(Date.parse(at) + deadlineMs);
+        if (!Number.isFinite(deadline.getTime())) {
+          return { ok: false as const, rejection: reject('invalid', 'the inquiry deadline overflows the representable instant') };
+        }
+        frozenDeadline = deadline.toISOString();
+      }
+      // A released action_request counts itself and carries the facts' guards; its
+      // pins are the values before that +1.
+      if (release === 'released' && send.intent === 'action_request' && basis !== null) {
+        const counted = basis.counter.record === null
+          ? firstDispatch(basis.goal.ref, messageRef)
+          : nextDispatch(basis.counter.record, messageRef);
+        contribution.records.push(dispatchCounterCodec.encode(counted.record));
+        contribution.guards.push({ refKey: basis.counter.refKey, expectedRevision: counted.expectedRevision });
+        contribution.guards.push(...basis.guards);
+      }
+      // A released non-notify message advances the recipient Session; a notify,
+      // a read and a replay never do.
+      if (release === 'released' && send.intent !== 'notify') {
+        const planned = await planSessionActivityAdvance(records, {
+          sessionRef: send.recipient, at, kind: 'input', source: messageRef,
+        });
+        if (!planned.ok) return { ok: false as const, rejection: planned.rejection };
+        contribution.records.push(planned.record);
+        contribution.guards.push(activityGuardOf(planned.guard));
+      }
+      return { ok: true as const, value: contribution };
+    };
+
+    const written = await writeMessage(sent, {
+      owned, identityKey, fingerprint, requestId: write.requestId, actor: committedSender, admission: authorized,
       cancelled: 'the send was cancelled before commit',
+      companions,
       body: { messageRef, text: text.text, answerSource: null },
       record: (createdAt, bodyRef) => createSessionMessageRecord({
-        ref: messageRef, sender, recipient, bodyRef, sourceRef: bodyRef.source, createdAt,
-        intent: intent ?? null, needsReply, waitAfterSend,
+        ref: messageRef, sender: committedSender, recipient: send.recipient, bodyRef, sourceRef: bodyRef.source, createdAt,
+        intent: send.intent, needsReply: send.needsReply, waitAfterSend: send.waitAfterSend,
+        goalRef: trustedGoal === null ? null : structuredClone(trustedGoal),
+        taskRef: send.taskRef === null ? null : structuredClone(send.taskRef),
+        followupOf: send.followupOf === null ? null : structuredClone(send.followupOf),
+        requestRoot: secretaryRound === null ? null : { ...secretaryRound.requestRoot },
+        release, pins, deadlineMs, deadline: frozenDeadline,
       }),
     });
+    // The writer already re-checked this identity's receipt (a replay would have
+    // returned committed). Only a three-version guard conflict reads the basis
+    // once more; an activity-only or message conflict is never re-projected, and
+    // this one extra read's failure returns the original written rejection.
+    if (written.status === 'rejected' && written.code === 'revision_conflict'
+      && basis !== null && trustedGoal !== null && deps.dispatchBasis !== undefined
+      && (written.current ?? []).some((pin) => {
+        const refKey = canonicalOf(pin.ref);
+        return refKey !== null && basisRefKeys.has(refKey);
+      })) {
+      let again: Awaited<ReturnType<NonNullable<typeof deps.dispatchBasis>['readDispatchFacts']>>;
+      try {
+        again = await deps.dispatchBasis.readDispatchFacts(internalHostContext(owned), { goalRef: trustedGoal });
+      } catch {
+        return sendStatusOf(written);
+      }
+      if (again.status === 'ready') {
+        return {
+          ...reject('revision_conflict', 'the dispatch basis moved while the send committed', basisPinsOf(again.value)),
+          dispatchCurrent: dispatchCurrentOf(again.value),
+        };
+      }
+    }
+    return sendStatusOf(written);
   }
 
   // ---- readMessage --------------------------------------------------------
@@ -2136,24 +2871,23 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   async function readMessage(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
+    // A read has no receipt to miss: a `query_run` caller's round is resolved on
+    // every read, before any record read.
+    let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+    if (owned.principal.kind === 'query_run') {
+      const reading = await secretaryReader(owned);
+      if (!reading.ok) return reading.rejection;
+      secretary = reading;
+    }
     const normalized = normalizeMessageRef(ref);
     if (!normalized.ok) return reject('invalid', normalized.reason);
     const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
     if (scopeProblem !== null) return scopeProblem;
     const loaded = await loadMessage(owned, normalized.ref);
     if (loaded.status !== 'ready') return loaded;
-    if (owned.principal.kind === 'host') return loaded;
-    if (owned.principal.kind === 'work_run') {
-      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
-      if (!identity.ok) return identity.rejection;
-      const derived = deriveWorkRunSender(identity);
-      if (!derived.ok) return derived.rejection;
-      if (!canReadMessage(derived.sender.sessionRef, loaded.value)) {
-        return reject('forbidden', 'this message is not addressed to or sent by the caller Session');
-      }
-      return loaded;
-    }
-    return reject('forbidden', 'the mailbox reader principal is not supported');
+    const right = await messageReadRight(owned, loaded.value, secretary);
+    if (right !== null) return right;
+    return loaded;
   }
 
   // ---- readMessageBody ----------------------------------------------------
@@ -2161,6 +2895,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   async function readMessageBody(ctx: CoreCallContext, input: { messageRef: SessionMessageRef; part: 'message' | 'response' }): Promise<ReadResult<import('../model/communication-contracts.js').MessageBody>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
+    let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+    if (owned.principal.kind === 'query_run') {
+      const reading = await secretaryReader(owned);
+      if (!reading.ok) return reading.rejection;
+      secretary = reading;
+    }
     let raw: Unknown;
     try {
       raw = structuredClone(input) as unknown as Unknown;
@@ -2180,17 +2920,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const loaded = await loadMessage(owned, normalized.ref);
     if (loaded.status !== 'ready') return loaded;
     const message = loaded.value;
-    if (owned.principal.kind === 'work_run') {
-      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
-      if (!identity.ok) return identity.rejection;
-      const derived = deriveWorkRunSender(identity);
-      if (!derived.ok) return derived.rejection;
-      if (!canReadMessage(derived.sender.sessionRef, message)) {
-        return reject('forbidden', 'this message is not addressed to or sent by the caller Session');
-      }
-    } else if (owned.principal.kind !== 'host') {
-      return reject('forbidden', 'the mailbox reader principal is not supported');
-    }
+    const right = await messageReadRight(owned, message, secretary);
+    if (right !== null) return right;
     const bodyRef = part === 'message' ? message.bodyRef : message.response?.bodyRef;
     const sourceRef = part === 'message' ? message.sourceRef : message.response?.sourceRef;
     if (bodyRef === undefined || sourceRef === undefined) return { status: 'not_found' };
@@ -2218,13 +2949,20 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- readInbox ----------------------------------------------------------
 
-  async function readInbox(ctx: CoreCallContext, input: {
+  type InboxPage = {
+    items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor; recipient: SessionRef;
+  };
+
+  /**
+   * `readInbox`'s own body (input validation, keyset cursor, `atLeastCursor`,
+   * page limit, recipient/filter binding and recipient-bound authorization),
+   * shared with `readInboxView` so the two can never drift.
+   */
+  async function readInboxPage(owned: Owned, input: {
     recipient: SessionRef;
     status?: SessionMessageStatus;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
-  }): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
-    const owned = ownContext(ctx);
-    if (!owned.ok) return owned.rejection;
+  }): Promise<ReadResult<InboxPage>> {
     const raw = input as unknown as Unknown | null | undefined;
     if (!isObject(raw)) return reject('invalid', 'readInbox requires an input object');
     if (Object.keys(raw).some((key) => key !== 'recipient' && key !== 'status' && key !== 'page')) {
@@ -2263,6 +3001,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!atLeast.ok) return atLeast.rejection;
     const after = decodedCursor?.after;
 
+    let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+    if (owned.principal.kind === 'query_run') {
+      const reading = await secretaryReader(owned);
+      if (!reading.ok) return reading.rejection;
+      secretary = reading;
+    }
     let callerKey: string;
     if (owned.principal.kind === 'host') {
       callerKey = canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '';
@@ -2278,7 +3022,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       }
       callerKey = canonicalOf({ kind: 'work_run', sessionRef, runRef: identity.run.ref }) ?? '';
     } else {
-      return reject('forbidden', 'the mailbox reader principal is not supported');
+      if (secretary === null) return reject('forbidden', 'the secretary inbox was not resolved');
+      if (!sameSessionRefAs(secretary.reader, recipient)) {
+        return reject('forbidden', 'a query_run inbox is limited to the resolved round Session');
+      }
+      callerKey = canonicalOf({ kind: 'query_run', sessionRef: secretary.reader,
+        queryRunRef: secretary.round.run }) ?? '';
     }
     // Bind the ALREADY-DECODED snapshot to the trusted caller.
     if (decodedCursor !== null && decodedCursor.callerKey !== callerKey) {
@@ -2330,7 +3079,39 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       callerKey,
       after: pageResult.value.next,
     });
-    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough, recipient } };
+  }
+
+  async function readInbox(ctx: CoreCallContext, input: {
+    recipient: SessionRef;
+    status?: SessionMessageStatus;
+    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+  }): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const page = await readInboxPage(owned, input);
+    if (page.status !== 'ready') return page;
+    const { items, nextCursor, sourceCursor } = page.value;
+    return { status: 'ready', value: { items, nextCursor, sourceCursor } };
+  }
+
+  async function readInboxView(ctx: CoreCallContext, input: {
+    recipient: SessionRef;
+    status?: SessionMessageStatus;
+    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+  }): Promise<ReadResult<SessionMessageReadPageV1>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const page = await readInboxPage(owned, input);
+    if (page.status !== 'ready') return page;
+    const { items, nextCursor, sourceCursor, recipient } = page.value;
+    if (items.length === 0) return { status: 'ready', value: { items: [], nextCursor, sourceCursor } };
+    const line = await recipientLineFacts(owned, recipient);
+    if (!line.ok) return line.rejection;
+    return { status: 'ready', value: {
+      items: items.map((message) => ({ message, ...deriveMessageDelivery(message, line.value) })),
+      nextCursor, sourceCursor,
+    } };
   }
 
   // ---- readOutbox ---------------------------------------------------------
@@ -2370,6 +3151,69 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (page.rawCursor !== undefined && !nonEmpty(page.rawCursor)) {
       return reject('invalid', 'the outbox cursor must be a non-empty string');
     }
+    const atLeast = atLeastCursorOf(page.rawAtLeast);
+    if (!atLeast.ok) return atLeast.rejection;
+
+    // A secretary's outbox is the request root's messages, not a Run/Session
+    // index range: the resolver supplies the root and the sending Session, and
+    // the request-root index pages it. Host/work_run semantics stay below.
+    if (owned.principal.kind === 'query_run') {
+      const reading = await secretaryReader(owned);
+      if (!reading.ok) return reading.rejection;
+      if (senderRun !== undefined) return reject('invalid', 'a secretary outbox read requires senderSession');
+      const session = senderSession as SessionRef;
+      if (!sameSessionRefAs(session, reading.reader)) {
+        return reject('forbidden', 'a secretary outbox read is limited to the resolved round Session');
+      }
+      const callerKey = canonicalOf({ kind: 'query_run', sessionRef: reading.reader,
+        queryRunRef: reading.round.run }) ?? '';
+      let cursor: SecretaryOutboxCursorV1 | null = null;
+      if (page.rawCursor !== undefined) {
+        cursor = decodeSecretaryOutboxCursor(page.rawCursor);
+        if (cursor === null) return reject('invalid', 'the outbox cursor is not a valid continuation token');
+        if (cursor.projectId !== owned.projectId || cursor.workspaceId !== owned.workspaceId
+          || canonicalOf(cursor.requestRoot) !== canonicalOf(reading.round.requestRoot)
+          || cursor.callerKey !== callerKey) {
+          return reject('invalid', 'the outbox cursor belongs to another scope, request root or caller');
+        }
+      }
+      const request: RecordLookupRequest = {
+        index: SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP,
+        values: [owned.projectId, owned.workspaceId, reading.round.requestRoot.queryJobId],
+        limit: page.limit,
+        ...(cursor === null ? {} : { after: cursor.after }),
+      };
+      let result: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
+      try {
+        result = await records.lookup(request);
+      } catch {
+        return reject('unavailable', 'the outbox lookup failed');
+      }
+      if (result.status !== 'ready') return mapStoreFailure(result);
+      const progress = readProgress(result.value.readThrough, atLeast.atLeast);
+      if (!progress.ok) return progress.result;
+      const items: SessionMessage[] = [];
+      for (const record of result.value.records) {
+        const decoded = decodeSessionMessageRecord(record);
+        if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
+        const message = decoded.value;
+        if (sessionMessageRefKey(message.ref) !== record.refKey
+          || message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId
+          || message.requestRoot === null
+          || canonicalOf(message.requestRoot) !== canonicalOf(reading.round.requestRoot)
+          || message.sender.kind !== 'secretary_round'
+          || canonicalOf(message.sender.requestRoot) !== canonicalOf(reading.round.requestRoot)) {
+          return reject('unavailable', 'an outbox candidate disagrees with the resolved request root');
+        }
+        items.push(message);
+      }
+      const nextCursor = result.value.next === null ? null : encodeSecretaryOutboxCursor({
+        v: 1, projectId: owned.projectId, workspaceId: owned.workspaceId,
+        requestRoot: { ...reading.round.requestRoot }, callerKey, after: result.value.next,
+      });
+      return { status: 'ready', value: { items, nextCursor, sourceCursor: progress.readThrough } };
+    }
+
     let decodedCursor: OutboxCursorV1 | null = null;
     if (page.rawCursor !== undefined) {
       decodedCursor = decodeOutboxCursor(page.rawCursor);
@@ -2379,8 +3223,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         return reject('invalid', 'the outbox cursor belongs to another scope or sender Run');
       }
     }
-    const atLeast = atLeastCursorOf(page.rawAtLeast);
-    if (!atLeast.ok) return atLeast.rejection;
     const after = decodedCursor?.after;
 
     let callerKey: string;
@@ -2423,12 +3265,18 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
       const message = decoded.value;
-      if (sessionMessageRefKey(message.ref) !== record.refKey
-        || message.ref.projectId !== owned.projectId
-        || message.ref.workspaceId !== owned.workspaceId
-        || message.sender.kind !== 'work_run'
-        || (senderRun === undefined ? canonicalOf(message.sender.sessionRef) !== canonicalOf(senderSession)
-          : canonicalOf(message.sender.runRef) !== canonicalOf(senderRun))) {
+      if (sessionMessageRefKey(message.ref) !== record.refKey || message.ref.projectId !== owned.projectId
+        || message.ref.workspaceId !== owned.workspaceId) return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
+      // The person reads the Session's whole outbox, including what its
+      // secretary round sent; a work_run keeps only its own work_run messages.
+      if (senderRun === undefined && message.sender.kind === 'secretary_round'
+        && canonicalOf(message.sender.sessionRef) === canonicalOf(senderSession)) {
+        if (owned.principal.kind === 'host') items.push(message);
+        continue;
+      }
+      if (message.sender.kind !== 'work_run' || (senderRun === undefined
+        ? canonicalOf(message.sender.sessionRef) !== canonicalOf(senderSession)
+        : canonicalOf(message.sender.runRef) !== canonicalOf(senderRun))) {
         return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
       }
       items.push(message);
@@ -2503,7 +3351,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   // ---- respondMessage -----------------------------------------------------
 
-  async function respondMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef; text: string }>): Promise<WriteResult<SessionMessage>> {
+  async function respondMessage(ctx: CoreCallContext, request: SessionMessageRespondInputV1): Promise<WriteResult<SessionMessage>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
@@ -2512,14 +3360,29 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!write.ok) return write.rejection;
     const raw = write.input as unknown as Unknown | null | undefined;
     if (!isObject(raw)) return reject('invalid', 'respondMessage requires an input object');
-    const normalized = normalizeMessageRef(raw['messageRef']);
-    if (!normalized.ok) return reject('invalid', normalized.reason);
-    const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+    // T's ONE respond payload model: the version is the single message pin in
+    // `meta.expected` (never a body key), so the normalized value is decoded
+    // with it and the fingerprint payload keeps only `{messageRef, ...body}`.
+    const pin = write.expected.length === 1 && isObject(write.expected[0])
+      ? write.expected[0] as unknown as Unknown : null;
+    const normalized = normalizeRespondMessageInput({
+      ...raw, expectedRevision: pin === null ? undefined : pin['revision'],
+    });
+    if (normalized.status === 'not_found') return reject('not_found', 'the requested record does not exist');
+    if (normalized.status === 'not_ready') return reject('incomplete', 'the response payload is not readable');
+    if (normalized.status === 'rejected') return normalized;
+    const value = normalized.value;
+    const messageRef = value.messageRef;
+    const arm = 'reject' in value
+      ? { reject: true as const, reason: value.reason }
+      : { text: value.text };
+    const scopeProblem = scopeOfMessageRef(owned, messageRef);
     if (scopeProblem !== null) return scopeProblem;
-    const text = normalizeText(raw['text']);
-    if (!text.ok) return text.rejection;
-    const pins = pinsOf(write.expected, normalized.ref);
+    const pins = pinsOf(write.expected, messageRef);
     if (!pins.ok) return pins.rejection;
+    // The reason is the refusal's reply body, held to the same bound as text.
+    const saved = normalizeText(arm.reject === true ? arm.reason : arm.text);
+    if (!saved.ok) return saved.rejection;
 
     const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -2528,7 +3391,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const sender = derived.sender;
     const senderIdentity = senderIdentityOf(sender);
     const identityKey = identityKeyOf('respond', owned, senderIdentity, write.requestId);
-    const fingerprint = fingerprintOf('respond', owned, senderIdentity, { messageRef: normalized.ref, text: text.text }, write.expected);
+    const fingerprint = fingerprintOf('respond', owned, senderIdentity, { messageRef, ...arm }, write.expected);
     if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
@@ -2537,10 +3400,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       owned, principal: owned.principal, operationToolName: 'respond_session_message',
     });
     // MSG-04/05. A refused admission never reads the message.
-    const read = authorized.ok ? await loadMessageForWrite(owned, normalized.ref) : { ok: true as const, message: null };
+    const read = authorized.ok ? await loadMessageForWrite(owned, messageRef) : { ok: true as const, message: null };
     if (!read.ok) return read.rejection;
     const message = read.message;
-    const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'message_responded', via: 'text' }, {
+    const { decided, ctx: messageCtx } = judge(owned.principal, message,
+      arm.reject === true
+        ? { type: 'message_responded', via: 'text', rejected: true }
+        : { type: 'message_responded', via: 'text' }, {
       workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
       callerIsRecipient: message === null ? null : ownsInbox(sender.sessionRef, message),
       pins: pins.pins,
@@ -2553,10 +3419,15 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return writeMessage(decided, {
       owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
       cancelled: 'the response was cancelled before commit',
-      body: { messageRef: current.ref, text: text.text, answerSource: null },
-      record: (respondedAt, bodyRef) => nextSessionMessageRecord(current, {
-        kind: 'responded', response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt },
-      }),
+      body: { messageRef: current.ref, text: saved.text, answerSource: null },
+      ...(arm.reject === true ? { acceptedRejectedAt: true as const } : {}),
+      // A refusal and an application share one first-wins slot; the time is
+      // this commit's own instant.
+      record: (respondedAt, bodyRef) => arm.reject === true
+        ? nextSessionMessageRecord(current, { kind: 'responded', rejectedAt: respondedAt,
+            response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt, reject: true, reason: arm.reason } })
+        : nextSessionMessageRecord(current, { kind: 'responded', rejectedAt: null,
+            response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt } }),
     });
   }
 
@@ -2645,7 +3516,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       cancelled: 'the answer association was cancelled before commit',
       body: { messageRef: message.ref, text: facts.text, answerSource: facts.answerSource },
       record: (respondedAt, bodyRef) => nextSessionMessageRecord(message, {
-        kind: 'responded', response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt },
+        kind: 'responded', response: { sender, bodyRef, sourceRef: bodyRef.source, respondedAt }, rejectedAt: null,
       }),
     });
   }
@@ -2963,8 +3834,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       { refKey: sessionAggregateRefKey(source.ref), expectedRevision: args.source.revision },
       ...args.guards,
     ];
+    const merged = mergeGuards(guards);
+    if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = {
-      identityKey: args.identityKey, fingerprint: args.fingerprint, guards: dedupeGuards(guards),
+      identityKey: args.identityKey, fingerprint: args.fingerprint, guards: merged.guards,
       records: [encodeSessionMessageRecord(message, preserved.value), encodeSessionRecord(source)],
       claims: [], indexGuards: [], indexChanges: [], events: [event],
     };
@@ -3480,6 +4353,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       sendFlags: { needsReply, waitAfterSend, pinCount: 0 },
       userSend: { goalScopeMatches: true, dutiesAllowSend, decisionParamsValid: true },
       workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
+      // A person's send keeps no release (§3.3), the same fact its record carries.
+      sendRelease: { release: null, pins: null },
     });
     if (!decided.ok) return refuse(decided, messageCtx, identityKey, fingerprint);
 
@@ -3548,14 +4423,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       switch (input.toolName) {
         case 'send_session_message': {
           const request = sendSessionMessageRequest(args as unknown as SessionMessageSendInput, requestId);
+          // The one normalized payload is the fingerprint's payload on both the
+          // write and this lookup, so the same arguments hash identically.
+          const normalized = normalizeSendMessageInput(request.input);
+          if (normalized.status !== 'ready') throw new Error('invalid_arguments');
           operation = 'send';
           expected = request.meta.expected;
-          payload = {
-            recipient: request.input.recipient, text: request.input.text,
-            ...(request.input.intent === undefined ? {} : { intent: request.input.intent }),
-            ...(request.input.needsReply === undefined ? {} : { needsReply: request.input.needsReply }),
-            ...(request.input.waitAfterSend === undefined ? {} : { waitAfterSend: request.input.waitAfterSend }),
-          };
+          payload = normalized.value;
           break;
         }
         case 'ack_session_message': {
@@ -3567,11 +4441,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
           break;
         }
         case 'respond_session_message': {
-          const input2 = args as unknown as { messageRef: SessionMessageRef; expectedRevision: number; text: string };
-          const request = respondSessionMessageRequest(input2, requestId);
+          const normalized = normalizeRespondMessageInput(args);
+          if (normalized.status !== 'ready') throw new Error('invalid_arguments');
+          const request = respondSessionMessageRequest(normalized.value, requestId);
           operation = 'respond';
           expected = request.meta.expected;
-          payload = { messageRef: request.input.messageRef, text: request.input.text };
+          payload = request.input;
           break;
         }
         case 'send_user_message': {
@@ -3610,8 +4485,274 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return toolCommitLookupResult(lookup);
   };
 
+  // ---- message.withdraw ---------------------------------------------------
+
+  /**
+   * The withdraw's facts: the message, the caller's trusted sender facts (and,
+   * for a Work Run, the fresh admission guards), and the recipient line's one
+   * consistent open-execution read. The message's own state refusal is the
+   * machine's, decided by `decideWithdraw`.
+   */
+  async function readWithdrawFacts(owned: Owned, ref: SessionMessageRef):
+  Promise<{ status: 'ready'; facts: WithdrawFacts } | CoreRejection> {
+    const loaded = await loadMessage(owned, ref);
+    if (loaded.status === 'not_found') return reject('not_found', 'the message does not exist');
+    if (loaded.status !== 'ready') {
+      return loaded.status === 'rejected' ? loaded : mapReadResult(loaded) as CoreRejection;
+    }
+    const message = loaded.value;
+    let actor: MessageSender;
+    let guards: readonly RecordGuard[] = [];
+    if (owned.principal.kind === 'host') {
+      actor = { kind: 'host', actor: { ...owned.principal.actor } };
+      // A Host system sender may withdraw only a message it sent itself; a
+      // person may withdraw any message of this workspace.
+      if (owned.principal.actor.kind === 'system'
+        && (message.sender.kind !== 'host' || !sameActor(message.sender.actor, owned.principal.actor))) {
+        return reject('forbidden', 'a Host system sender may withdraw only its own message');
+      }
+    } else if (owned.principal.kind === 'query_run') {
+      // The secretary withdraws only a message of the same resolved round.
+      if (deps.secretaryRounds === undefined) {
+        return reject('unsupported', 'the secretary withdraw is not configured');
+      }
+      const resolved = await resolveSecretaryRound(owned);
+      if (!resolved.ok) return resolved.rejection;
+      const round = resolved.round;
+      if (message.sender.kind !== 'secretary_round'
+        || canonicalOf(message.sender.queryRunRef) !== canonicalOf(round.run)
+        || !sameSessionRefAs(message.sender.sessionRef, round.session)) {
+        return reject('forbidden', 'a secretary may withdraw only a message of its own resolved round');
+      }
+      actor = message.sender;
+    } else {
+      const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
+      if (!identity.ok) return identity.rejection;
+      const derived = deriveWorkRunSender(identity);
+      if (!derived.ok) return derived.rejection;
+      const authorized = await authorizeNewWorkRunAction({
+        owned, principal: owned.principal, operationToolName: 'send_session_message',
+      });
+      if (!authorized.ok) return authorized.rejection;
+      if (message.sender.kind !== 'work_run'
+        || !sameSessionRefAs(message.sender.sessionRef, derived.sender.sessionRef)) {
+        return reject('forbidden', 'a Work Run may withdraw only a message of its own Session');
+      }
+      actor = derived.sender;
+      guards = authorized.guards;
+    }
+
+    const recipientExecutions = deps.recipientExecutions;
+    if (recipientExecutions === undefined) {
+      return reject('unsupported', 'the recipient execution read is not configured');
+    }
+    const recipient = message.recipient;
+    if (isUserRecipient(recipient)) {
+      return reject('invalid', 'a message to the person has no recipient execution line');
+    }
+    const sessionRef: SessionRef = { projectId: recipient.projectId, sessionId: recipient.sessionId };
+    const open = await recipientExecutions.readRecipientOpenExecutions(isolatedContext(owned),
+      { sessionRef, messageRef: ref });
+    if (open.status !== 'ready') {
+      return open.status === 'rejected' ? open : mapReadResult(open) as CoreRejection;
+    }
+    return { status: 'ready', facts: { message, open: open.value, guards, actor } };
+  }
+
+  /** The machine decides every withdrawal refusal; the owner supplies the one clock. */
+  function decideWithdraw(owned: Owned, facts: WithdrawFacts):
+  { refuse: CoreRejection } | { decision: WithdrawDecision } {
+    const { decided, ctx } = judge(owned.principal, facts.message, { type: 'message_withdrawn' }, {});
+    if (!decided.ok) return { refuse: refusalOf(decided, ctx) };
+    // A live offer is the recipient line's refusal, decided after the state so a
+    // delivered message is `invalid`, never masked by the open execution.
+    if (facts.open.executions.length > 0) {
+      return { refuse: reject('unavailable', 'the recipient has an open execution that could have been offered this message') };
+    }
+    const at = deps.now();
+    if (!nonEmpty(at)) return { refuse: reject('invalid', 'the injected clock is not a legal instant') };
+    return {
+      decision: {
+        before: facts.message,
+        change: { kind: 'withdrawn', withdrawnAt: at },
+        at,
+        actor: facts.actor,
+        guards: facts.guards,
+        horizon: facts.open.readCursor,
+      },
+    };
+  }
+
+  // ---- message.release -----------------------------------------------------
+
+  /**
+   * The approve/deny facts: the message and the person's own actor. Only the
+   * Host human actor is a person; the awaiting-only state refusal is the
+   * machine's, decided by `decideRelease`.
+   */
+  async function readReleaseFacts(owned: Owned, ref: SessionMessageRef):
+  Promise<{ status: 'ready'; facts: ReleaseFacts } | CoreRejection> {
+    const loaded = await loadMessage(owned, ref);
+    if (loaded.status === 'not_found') return reject('not_found', 'the message does not exist');
+    if (loaded.status !== 'ready') {
+      return loaded.status === 'rejected' ? loaded : mapReadResult(loaded) as CoreRejection;
+    }
+    if (owned.principal.kind !== 'host' || owned.principal.actor.kind !== 'human') {
+      return reject('forbidden', 'only the person may approve or deny a release');
+    }
+    return {
+      status: 'ready',
+      facts: {
+        message: loaded.value,
+        actor: { kind: 'host', actor: { ...owned.principal.actor } },
+      },
+    };
+  }
+
+  /** The machine decides the awaiting-only admission; the owner supplies the one clock. */
+  function decideRelease(owned: Owned, facts: ReleaseFacts, allow: boolean):
+  { refuse: CoreRejection } | { decision: ReleaseDecision } {
+    const { decided, ctx } = judge(owned.principal, facts.message,
+      { type: 'message_release_decided', allow }, {});
+    if (!decided.ok) return { refuse: refusalOf(decided, ctx) };
+    const at = deps.now();
+    if (!nonEmpty(at)) return { refuse: reject('invalid', 'the injected clock is not a legal instant') };
+    // Exactly one arm: a denial carries no approval fact at all, and a direct
+    // call never writes the trusted entry's proof.
+    const change: MessageReleaseDecidedChangeV1 = allow
+      ? {
+        kind: 'release_decided', allow: true, approvedAt: at,
+        approvalRevision: facts.message.revision + 1, release: 'approved', proof: null,
+      }
+      : {
+        kind: 'release_decided', allow: false, approvedAt: null,
+        approvalRevision: null, release: 'denied', proof: null,
+      };
+    return { decision: { before: facts.message, change, at, actor: facts.actor } };
+  }
+
+  async function withdrawMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>):
+  Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const write = ownWrite(request);
+    if (!write.ok) return write.rejection;
+    const rawRef = (write.input as unknown as { messageRef?: unknown } | null | undefined)?.messageRef;
+    const normalized = normalizeMessageRef(rawRef);
+    if (!normalized.ok) return reject('invalid', normalized.reason);
+    const ref = normalized.ref;
+    const scopeProblem = scopeOfMessageRef(owned, ref);
+    if (scopeProblem !== null) return scopeProblem;
+
+    const withdrawCommand: WriteCommand<WithdrawFacts, WithdrawDecision, CoreRejection, SessionMessage, SessionMessage> = {
+      operation: 'message.withdraw',
+      scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
+      principal: principalIdentity(owned.principal),
+      commandId: write.requestId,
+      fingerprintInput: { messageRef: ref },
+      read: () => readWithdrawFacts(owned, ref),
+      decide: (facts) => decideWithdraw(owned, facts),
+      build: async (decision, keys) => {
+        const command: SessionMessageWriteCommandV1 = {
+          operation: 'message.withdraw',
+          messageRef: decision.before.ref,
+          before: decision.before,
+          expectedRevision: decision.before.revision,
+          event: {
+            eventId: eventIdOf(keys.identityKey, 'SessionMessageWithdrawn'),
+            occurredAt: decision.at,
+            requestId: write.requestId,
+            projectId: owned.projectId,
+            workspaceId: owned.workspaceId,
+            actor: decision.actor,
+          },
+          change: decision.change,
+        };
+        const companions: SessionMessageCommitCompanions = {
+          records: [], events: [], guards: decision.guards, claims: [], ledgerHorizon: decision.horizon,
+        };
+        return prepareSessionMessage(records, owned, command, companions);
+      },
+      result: withdrawnResult,
+    };
+    return messageWriteResult(await executeWriteCommand(records, withdrawCommand));
+  }
+  async function releaseMessage(ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef; allow: boolean }>): Promise<WriteResult<SessionMessage>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const write = ownWrite(request);
+    if (!write.ok) return write.rejection;
+    const raw = write.input as unknown as { messageRef?: unknown; allow?: unknown } | null | undefined;
+    const normalized = normalizeMessageRef(raw?.messageRef);
+    if (!normalized.ok) return reject('invalid', normalized.reason);
+    const ref = normalized.ref;
+    const scopeProblem = scopeOfMessageRef(owned, ref);
+    if (scopeProblem !== null) return scopeProblem;
+    const allow = raw?.allow;
+    if (typeof allow !== 'boolean') return reject('invalid', 'releaseMessage requires allow to be a boolean');
+
+    const releaseCommand: WriteCommand<ReleaseFacts, ReleaseDecision, CoreRejection,
+      SessionMessage, SessionMessage> = {
+      operation: 'message.release',
+      scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
+      principal: principalIdentity(owned.principal),
+      commandId: write.requestId,
+      fingerprintInput: { messageRef: ref, allow },
+      read: () => readReleaseFacts(owned, ref),
+      decide: (facts) => decideRelease(owned, facts, allow),
+      build: async (decision, keys) => {
+        const command: SessionMessageWriteCommandV1 = {
+          operation: 'message.release',
+          messageRef: decision.before.ref,
+          before: decision.before,
+          expectedRevision: decision.before.revision,
+          event: {
+            eventId: eventIdOf(keys.identityKey, 'SessionMessageReleaseDecided'),
+            occurredAt: decision.at,
+            requestId: write.requestId,
+            projectId: owned.projectId,
+            workspaceId: owned.workspaceId,
+            actor: decision.actor,
+          },
+          change: decision.change,
+        };
+        // No version check, no counter: the message CAS, identity and replay are
+        // the only guards, and the approval revision is this commit's revision.
+        const companions: SessionMessageCommitCompanions = {
+          records: [], events: [], guards: [], claims: [],
+        };
+        return prepareSessionMessage(records, owned, command, companions);
+      },
+      result: releaseDecidedResult,
+    };
+    return messageWriteResult(await executeWriteCommand(records, releaseCommand));
+  }
+  async function readMessageView(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessageReadV1>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+    if (owned.principal.kind === 'query_run') {
+      const reading = await secretaryReader(owned);
+      if (!reading.ok) return reading.rejection;
+      secretary = reading;
+    }
+    const normalized = normalizeMessageRef(ref);
+    if (!normalized.ok) return reject('invalid', normalized.reason);
+    const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+    if (scopeProblem !== null) return scopeProblem;
+    const loaded = await loadMessage(owned, normalized.ref);
+    if (loaded.status !== 'ready') return loaded;
+    const right = await messageReadRight(owned, loaded.value, secretary);
+    if (right !== null) return right;
+    const line = await recipientLineFacts(owned, loaded.value.recipient);
+    if (!line.ok) return line.rejection;
+    return { status: 'ready', value: { message: loaded.value, ...deriveMessageDelivery(loaded.value, line.value) } };
+  }
+
   return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted, sendUserMessage,
-    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies, lookupToolCommit };
+    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies, lookupToolCommit,
+    withdrawMessage, releaseMessage, readMessageView, readInboxView };
 }
 
 /**
@@ -3622,7 +4763,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
  * (`sendMessage`/`respond*` and `createDecisionMessageService`) share this one
  * instance.
  */
-export function createMessageWriteOwner(deps: SessionMailboxDependencies): MessageWriteOwnerPort {
+export function createMessageWriteOwner(deps: SessionMailboxDependencies): MessageCommandWritePort {
   const records = deps.records;
   type WriteReceipt = Extract<Awaited<ReturnType<SessionMailboxDependencies['records']['commit']>>, { status: 'committed' }>;
 
@@ -3635,6 +4776,10 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       case 'SessionMessageInputAccepted': return encodeSessionMessageInputAcceptedEvent(event);
       case 'SessionMessageDecisionAnswered': return encodeSessionMessageDecisionAnsweredEvent(event);
       case 'SessionMessageDecisionApplied': return encodeSessionMessageDecisionAppliedEvent(event);
+      case 'SessionMessageWithdrawn': return encodeSessionMessageWithdrawnEvent(event);
+      case 'SessionMessageReleaseDecided': return encodeSessionMessageReleaseDecidedEvent(event);
+      case 'SessionMessageReleased': return encodeSessionMessageReleasedEvent(event);
+      case 'SessionMessageApplied': return encodeSessionMessageAppliedEvent(event);
       default: return unreachable(event, 'message event');
     }
   }
@@ -3672,6 +4817,44 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       });
     },
 
+    /**
+     * The R2 prepared commit's one fragment: the command's message built by the
+     * state machine, its one snapshot event, the command's admitted CAS and the
+     * companions — companion records and events FIRST, this message last. It never
+     * looks up a receipt, never commits and is safe to call again on a retry. A
+     * change the machine refuses is `revision_conflict`, never a crash.
+     */
+    async prepare(ctx, command, companions): Promise<SessionMessageCommitFragment | CoreRejection> {
+      const owned = ownContext(ctx);
+      if (!owned.ok) return owned.rejection;
+      const raw = command as unknown as Unknown | null | undefined;
+      if (!isObject(raw)) return reject('invalid', 'prepare requires a command object');
+      const before = raw['before'] as SessionMessage | null;
+      if (before === null || typeof before !== 'object' || !isObject(before.ref)) {
+        return reject('invalid', 'prepare requires the message the command read');
+      }
+      const expectedRevision = raw['expectedRevision'];
+      if (!isPositiveInt(expectedRevision)) return reject('invalid', 'prepare requires the admitted message revision');
+      const operation = raw['operation'];
+      if (operation !== 'message.withdraw' && operation !== 'message.release'
+        && operation !== 'message.releaseApproved' && operation !== 'message.apply') {
+        return reject('invalid', 'prepare does not know this message write operation');
+      }
+      const change = raw['change'];
+      if (!isObject(change) || !nonEmpty(change['kind'])) return reject('invalid', 'prepare requires the command\'s change');
+      const event = raw['event'];
+      if (!isObject(event) || !nonEmpty(event['eventId']) || !nonEmpty(event['occurredAt'])
+        || !nonEmpty(event['requestId']) || !isObject(event['actor'])) {
+        return reject('invalid', 'prepare requires the command\'s event envelope');
+      }
+      const contribution = companionContributionOf(companions);
+      if (!contribution.ok) return contribution.rejection;
+      const contributed = contribution.value
+        ?? { records: [], events: [], guards: [], claims: [] };
+      return prepareSessionMessage(records, owned,
+        raw as unknown as SessionMessageWriteCommandV1, contributed);
+    },
+
     async persist(ctx, request): Promise<WriteResult<SessionMessage>> {
       const owned = ownContext(ctx);
       if (!owned.ok) return owned.rejection;
@@ -3699,6 +4882,17 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       if (!isObject(event) || !nonEmpty(event.eventType)) return reject('invalid', 'persist requires the appended event');
       const guards: RecordGuard[] = Array.isArray(input['guards']) ? input['guards'] as RecordGuard[] : [];
       const claims: UniqueClaimChange[] = Array.isArray(input['claims']) ? input['claims'] as UniqueClaimChange[] : [];
+      const companions = companionContributionOf(input['companions']);
+      if (!companions.ok) return companions.rejection;
+      // Persist only concatenates the top-level bindings and the companions';
+      // the commit tail dedupes all three sources (these two and the message's
+      // own bindings) once, so this layer keeps no second dedupe.
+      const bound = [...(Array.isArray(input['commitCursorBindings']) ? input['commitCursorBindings'] : []) as CommitCursorBinding[],
+        ...(companions.value?.commitCursorBindings ?? [])];
+      const contributed = { ...(companions.value ?? { records: [], events: [], guards: [], claims: [] }),
+        ...(bound.length === 0 ? {} : { commitCursorBindings: bound }),
+        ...(input['ledgerHorizon'] !== undefined ? { ledgerHorizon: input['ledgerHorizon'] as CommitCursor | null }
+          : companions.value?.ledgerHorizon === undefined ? {} : { ledgerHorizon: companions.value.ledgerHorizon }) };
 
       // §3.3 line 625 / §8.2: the caller's ACCEPTED pins become the commit
       // guards. The message's own pin is the CAS — never a re-read
@@ -3739,6 +4933,7 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
         owned, identityKey, fingerprint, message: next, event: encodePersistEvent(event),
         messageRevision: isCreate ? null : messagePins[0]!.revision,
         guards: [...guards, ...acceptedGuards], claims,
+        companions: contributed,
         cancelledReason: 'the message write was cancelled before commit',
         commitFailureReason: 'the message commit failed before completing',
       });

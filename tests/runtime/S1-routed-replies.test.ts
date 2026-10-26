@@ -4,7 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createMailboxInputSupply, deriveInputId } from '../../src/core/agent-runtime/execution-inputs.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
@@ -148,7 +148,7 @@ describe('S1 routed replies at real before_model boundaries', () => {
     // overlapping copy of the SAME saved reply on each source page. This is
     // an explicit reader-fault seam: strict production keysets do not overlap.
     // The actual records, advancing cursors and acceptance writer stay real.
-    const messages: SessionMailboxPort = { ...f.messages,
+    const messages: SessionMessageCommandPort = { ...f.messages,
       async readOutbox(_ctx, input) {
         pages.outbox++;
         const page = ready(await f.messages.readOutbox!(f.base.ctx, { ...input, senderSession: row.sender.sessionRef,

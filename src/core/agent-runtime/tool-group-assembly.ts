@@ -31,7 +31,7 @@ import {
 import { createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
-import type { SessionMailboxPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { NoteMemoryReadPort } from '../work-graph/model/note-contracts.js';
@@ -174,7 +174,7 @@ export function createGraphHistoryProxy(input: GraphHistoryProxyInput): GraphExe
  */
 export type WorkToolGroupInput = {
   selected: readonly string[];
-  mailbox: SessionMailboxPort | undefined;
+  mailbox: SessionMessageCommandPort | undefined;
   /** Slice 5 §4.6 user-decision owner; absent makes the three tools unregisterable. */
   decisionMessages?: RuntimeExecutionDependencies['decisionMessages'];
   /** Slice 5 §4.5/T-R2-1 plan-application receipt reader; absent keeps the old tool result shape. */
@@ -233,9 +233,6 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
     && graphNames.length === 0 && noteNames.length === 0) {
     return { ok: true, value: null };
   }
-  if ((mailboxNames.length > 0 || decisionNames.length > 0) && input.mailbox === undefined) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
-  }
   if (decisionNames.length > 0 && input.decisionMessages === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
   }
@@ -247,8 +244,12 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
   if (mailboxNames.length > 0 || decisionNames.length > 0) {
+    const mailbox = input.mailbox;
+    if (mailbox === undefined) {
+      return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
+    }
     handles.push(createSessionMailboxTools({
-      mailbox: input.mailbox as SessionMailboxPort,
+      mailbox,
       ...(input.decisionMessages === undefined ? {} : { decisionMessages: input.decisionMessages }),
       context: input.context,
       sessionRef: input.sessionRef,

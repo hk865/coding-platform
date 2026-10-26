@@ -14,6 +14,9 @@ export const WorkspaceRefShape = defineShape({
   name: 'WorkspaceRef', fields: { aggregateType: f.literal('Workspace'), projectId: id, workspaceId: id },
 });
 export const GoalRefShape = defineShape({ name: 'GoalRef', fields: { aggregateType: f.literal('Goal'), projectId: id, goalId: id } });
+export const DispatchCounterRefShape = defineShape({ name: 'DispatchCounterRef', fields: {
+  aggregateType: f.literal('DispatchCounter'), projectId: id, goalId: id,
+} });
 export const SessionRefShape = defineShape({ name: 'SessionRef', fields: { projectId: id, sessionId: id } });
 export const SessionAggregateRefShape = defineShape({
   name: 'SessionAggregateRef', fields: { projectId: id, sessionId: id, aggregateType: f.literal('Session') },

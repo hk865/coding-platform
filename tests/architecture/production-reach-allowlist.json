@@ -1347,12 +1347,6 @@
     },
     {
       "file": "src/core/work-graph/tasks/request-facts.ts",
-      "name": "RequestFactsPort.ownerOf",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6A-3 V read): the owner read member 6A-3 V's route calls."
-    },
-    {
-      "file": "src/core/work-graph/tasks/request-facts.ts",
       "name": "RequestFactsPort.effectiveGoalOf",
       "reason": "kept-for",
       "note": "slice 6 of the orchestration design (6A-3 V read): the effective-goal read member 6A-3 V's route calls."
@@ -1369,5 +1363,16 @@
     {"file": "src/core/work-graph/model/goal-copy-contracts.ts", "name": "CopyInterventionRetractionPort", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 K injects and 7A implements the SR9.9 copy ports)"},
     {"file": "src/core/work-graph/model/session-activity-contracts.ts", "name": "SessionActivityStateV1", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule reads the longest inactive idle line, so the activity read is rebuilt there): the activity state with the revision 0 default when absent"},
     {"file": "src/core/work-graph/model/session-activity-contracts.ts", "name": "SessionActivityReadPort", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule): the port slice 7 reads each secretary line's activity and revision through"},
-    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "createSessionActivityReader", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule): the one activity reader slice 7 rebuilds and wires into its idle-line pick"}]
+    {"file": "src/core/work-graph/sessions/session-activity.ts", "name": "createSessionActivityReader", "reason": "kept-for", "note": "slice 7 of the orchestration design (decision 91's retained-cap rule): the one activity reader slice 7 rebuilds and wires into its idle-line pick"},
+    {"file": "src/contracts/goal-decisions.ts", "name": "MessageReleaseCardItemV1", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-1 hands it to 7A-2 G"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageReleaseApplicationInputV1", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-1 hands it to 7A-2 G"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageReleaseCandidatesInputV1", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-2 R"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageReleaseCandidateV1", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-2 R"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageReleaseCandidatesPageV1", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-2 R"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageReleaseCandidatesPort", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-2 R"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageReleasePort", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-1 hands it to 7A-2 G"},
+    {"file": "src/core/work-graph/model/communication-contracts.ts", "name": "SessionMailboxPort.respondMessage", "reason": "kept-for", "note": "slice 7 of the orchestration design: the published messages object takes respondMessage from the full command port and every production caller resolves to SessionMessageCommandPort.respondMessage; the only caller still typed through the narrow port is tests/helpers/S2C-X-scale-fixture.ts:415, so 7A-2's narrow-port clean-up deletes this member with it"},
+    {"file": "src/core/work-graph/model/decision-contracts.ts", "name": "MessageCommandWritePort.prepare", "reason": "kept-for", "note": "slice 7 of the orchestration design: 7A-2's trusted prepare caller"},
+    {"file": "src/app/core-http-types.ts", "name": "GoalsDispatchBasisBody", "reason": "wire-format", "note": "the goals/dispatch-basis route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
+    {"file": "src/app/core-http-types.ts", "name": "GoalsDispatchBasisResponse", "reason": "wire-format", "note": "the goals/dispatch-basis route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"}]
 }

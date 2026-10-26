@@ -200,6 +200,7 @@ it('2B-41 (BE3): the automatic backfill bounds A by its own closed Turn, exclude
     // The requeue's message reads go to the real mailbox owner over the same store and readers.
     let mailboxSeq = 0;
     const mailbox = createSessionMailbox({ records: fx.records, sessions: fx.deps.sessions,
+      defaultInquiryDeadlineMs: 86_400_000,
       executions: fx.deps.executions, roles: fx.deps.roles, materials: fx.deps.materials,
       systemActor: { kind: 'system', id: 's2b-41-mailbox' }, now: () => A_CLOSE_AT,
       newId: () => `s2b-41-mailbox-${++mailboxSeq}` });

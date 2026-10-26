@@ -1,8 +1,9 @@
 /**
  * The SE2 world: the frozen request world (`openS6ARequestWorld`, tests/helpers/S6A-request-fixture.ts) with its
  * real Host, Runtime and frozen Kernel, plus what the secretary-round rows need to run rounds, hold them at named
- * points, crash the Host and change the Host's own settings. Memory or SQLite; a crash, a reopen and the
- * start-up switch are SQLite only (a restart reopens the same directory).
+ * points, crash the Host and change the Host's own settings. Memory or SQLite; a crash is SQLite only (a restart
+ * reopens the same directory). A reopen is SQLite, or memory with the A4 seam's `sharedMemoryStore` (the same
+ * records, bodies and directory); the start-up switch takes effect at the next start.
  *
  * What it adds, and the public step or allowed double behind each item:
  * - A scripted model per Session (rule sheet A8: the runtime configuration's model provider). Every Host start of

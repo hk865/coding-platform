@@ -60,7 +60,7 @@ import type { NoteCheckPort, NoteMemoryMaterialPort, NoteMemoryReadPort, NoteWri
 import type { ModelRequestPort, ModelRequestReadPort } from '../work-graph/tasks/model-call-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
-import type { SessionMailboxPort } from '../work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort } from '../work-graph/model/communication-contracts.js';
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
@@ -227,7 +227,7 @@ export type RuntimeExecutionDependencies = {
    * communication tool working; a formal grant that selects any communication tool
    * with this dependency absent must fail closed as `unsupported` before the model.
    */
-  messages?: SessionMailboxPort;
+  messages?: SessionMessageCommandPort;
   /**
    * Slice 5 §4.6: the user-decision owner. Optional so an existing composition
    * that never selects a user-decision tool keeps working; a formal grant that

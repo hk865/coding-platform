@@ -78,7 +78,10 @@ const SESSION_USE = 'state/session-availability.ts createSessionRecord, occupySe
 const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhase, buildFinalizedRound or buildSuccessorRound';
 const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord, nextSessionMessageRecord or bindMessageResponseCursor';
 const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
-  'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince'] as const;
+  'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince',
+  'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery', 'deliveryEvidence',
+  'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt', 'rejectedAt',
+  'approvedAt', 'approvalRevision', 'applicationProof', 'pins'] as const;
 const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord or '
   + 'state/line-pin-machine.ts buildWorkspaceLineSettingsRecord';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
@@ -184,6 +187,9 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['progress'], use: 'state/session-handoff.ts newHandoffOperationRecord or newSecretaryArchiveOperationRecord' },
   { file: 'src/core/work-graph/model/session-operation-arms.ts', name: 'HandoffActionV1', kind: 'record',
     fields: ['progress'], use: 'state/session-handoff.ts consumeHandoffBrief' },
+  { file: 'src/contracts/dispatch-counter-format.ts', name: 'DispatchCounterV1', kind: 'record',
+    fields: ['ref', 'schemaVersion', 'revision', 'goalId', 'sequence', 'lastMessageRef'],
+    use: 'state/dispatch-counter.ts firstDispatch or nextDispatch' },
 ];
 
 // -------------------------------------------------------------------------- //
@@ -707,6 +713,9 @@ describe('state writes in src/', () => {
     expect(result.unknownProtected).toEqual([]);
     expect(result.unknownAllowed).toEqual([]);
     expect(result.violations).toEqual([]);
+    for (const name of ['createSessionMessageRecord', 'nextSessionMessageRecord', 'bindMessageResponseCursor']) {
+      expect(MESSAGE_USE).toContain(name);
+    }
   }, 300_000);
 });
 
@@ -1221,5 +1230,55 @@ describe('state-writes checker: record types inferred from field-table formats',
       ...hit(12, 'Sample', 'status', 'tags'), ...hit(13, 'Sample', 'status'), ...hit(13, 'Spread', 'status'), // delete, Object.assign; spread copies
       ...hit(14, 'Sample', 'status', 'tags'), ...hit(15, 'Sample', 'status', 'tags'), ...hit(17, 'Sample', 'status'), // Partial patch and helper; generic
     ]);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// R-message-fields: one mutation per protected field (book §5, 7A-1 M-1)      //
+// -------------------------------------------------------------------------- //
+
+/** Book §3.1's nineteen new required record fields, in declaration order. */
+const NEW_MESSAGE_FIELDS = ['taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery',
+  'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt',
+  'rejectedAt', 'approvedAt', 'approvalRevision', 'applicationProof', 'pins'] as const;
+/** The ten lifecycle fields the table protected before 7A-1. */
+const HISTORICAL_MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
+  'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince'] as const;
+/** The only non-contract imports of `state/message-machine.ts`. */
+const MESSAGE_FIELD_COPIES = ['core/work-graph/state/message-machine.ts', 'core/work-graph/state/transition.ts'];
+const MESSAGE_FIELD_FILE = 'core/work-graph/tasks/message-field-writes.ts';
+
+/** One assignment per protected field; the expected line offset comes from the same generated text. */
+function messageFieldFixture(fields: readonly string[]): { files: Record<string, string>; headerLines: number } {
+  const header = ["import type { SessionMessageRecord } from '../state/message-machine.js';", '',
+    'export function mutateEveryMessageField(message: SessionMessageRecord): void {'];
+  const body = fields.map(field => `  message.${field} = message.${field};`);
+  return { files: { [MESSAGE_FIELD_FILE]: [...header, ...body, '}', ''].join('\n') }, headerLines: header.length };
+}
+
+describe('state-writes checker: R-message-fields (one mutation per field)', () => {
+  const fixture = messageFieldFixture(MESSAGE_FIELDS);
+  let dir = '';
+  let result: ScanResult = { violations: [], unknownProtected: [], unknownAllowed: [], scannedFiles: 0 };
+  const reportedFieldNames = () => result.violations.map(line => line.split(': ')[1]?.split(' ')[0]);
+
+  beforeAll(async () => {
+    dir = await fixtureProject(fixture.files, MESSAGE_FIELD_COPIES);
+    result = scanStateWrites(dir, PROTECTED_TYPES.filter(entry => entry.file === 'src/core/work-graph/state/message-machine.ts'));
+  }, 120_000);
+  afterAll(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
+
+  it('names the ten historical fields and the nineteen new ones in declaration order', () => {
+    expect(MESSAGE_FIELDS).toEqual([...HISTORICAL_MESSAGE_FIELDS, ...NEW_MESSAGE_FIELDS]);
+  });
+
+  it('reports exactly one mutation of every MESSAGE_FIELDS entry, and nothing unknown', () => {
+    expect(result.unknownProtected).toEqual([]);
+    expect(result.violations.map(line => line.split(' written')[0])).toEqual(MESSAGE_FIELDS.map((field, index) =>
+      `src/${MESSAGE_FIELD_FILE}:${fixture.headerLines + index + 1}: SessionMessageRecord.${field}`));
+  });
+
+  it.each(MESSAGE_FIELDS)('reports %s exactly once', (field) => {
+    expect(reportedFieldNames().filter(name => name === `SessionMessageRecord.${field}`)).toHaveLength(1);
   });
 });

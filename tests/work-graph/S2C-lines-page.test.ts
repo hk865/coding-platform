@@ -348,9 +348,9 @@ describe.each(['memory', 'sqlite'] as const)('2C-18 line page sections (%s)', (k
       return item;
     };
 
-    expect(await readOne()).toMatchObject({ delivery: 'queued', deliveredTo: null, read: false, responded: false,
-      replyHandler: null, waitDisposition: null, undelivered: false,
-      disposition: { availability: 'not_available', reason: 'slice_7' } });
+    expect(await readOne()).toMatchObject({ delivery: 'queued', deliveredTo: null, evidence: null, reason: null,
+      read: false, responded: false, replyHandler: null, waitDisposition: null, undelivered: false,
+      disposition: { kind: 'offerable' } });
 
     const current = await f.runs.readExecution(e1);
     const kernel = { adapterId: current.session.kernel.adapterId,

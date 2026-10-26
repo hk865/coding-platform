@@ -55,7 +55,9 @@ import type {
   DecisionMessagePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
   RequestCandidatePort, WorkspaceDecisionSettingsPort,
 } from '../core/work-graph/model/decision-contracts.js';
-import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
+import type {
+  SessionMailboxPort, SessionMessageCommandPort,
+} from '../core/work-graph/model/communication-contracts.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
@@ -73,6 +75,9 @@ import {
   createAlwaysAdmitCapacity, createLineCreation, type LineCapacityPort,
 } from '../business/workflow/line-creation.js';
 import { createRequestFacts } from '../core/work-graph/tasks/request-facts.js';
+import { createDispatchBasisReader } from '../core/work-graph/tasks/dispatch-basis.js';
+import { createGoalPointerFacts } from '../core/work-graph/views/pointer-facts.js';
+import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
 import {
   createMainSurfaceReadModel, type MainSurfaceReadPort,
 } from '../core/work-graph/views/main-surface-read-model.js';
@@ -81,6 +86,7 @@ import {
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
 import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-query-run.js';
+import { createRecipientExecutions } from '../core/work-graph/sessions/recipient-executions.js';
 import type { SecretaryProfilePort } from '../core/work-graph/model/request-contracts.js';
 
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
@@ -156,6 +162,7 @@ import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ACTIVITY_SCHEMAS } from '../core/work-graph/sessions/session-activity.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../core/work-graph/persistence/initialization-binding-codecs.js';
+import { DISPATCH_COUNTER_SCHEMAS } from '../core/work-graph/persistence/dispatch-counter-codecs.js';
 // Slice 1 (spec §3.3, §4.4): the Session-facts, responsibility and anomaly owners
 // constructed by this composition root and injected through the narrow ports.
 import { createSessionFactsService } from '../core/work-graph/tasks/session-facts.js';
@@ -768,7 +775,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.records,
       ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
-      ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records],
+      ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records,
+      ...DISPATCH_COUNTER_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -780,7 +788,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
-      ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events],
+      ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events,
+      ...DISPATCH_COUNTER_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -792,7 +801,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [],
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [], ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [],
-      ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? []],
+      ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? [],
+      ...DISPATCH_COUNTER_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -933,6 +943,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, eventId: randomUUID,
     });
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
+    const workflowConfiguration = options.workflow === undefined
+      ? undefined : structuredClone(options.workflow);
+    // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
+    // this narrow port, and the Workflow uses the SAME resolver instance (the
+    // composition root injects one result, never a second resolver). Slice 4A P5:
+    // the notes service shares this instance too.
+    const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
+      readRoleSpec: roleService.readRoleSpec.bind(roleService),
+      configuration: workflowConfiguration,
+    });
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
@@ -949,9 +969,27 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // message seam; no second mailbox/service instance exists. The same
     // dependency bag builds the slice-5 `MessageWriteOwnerPort` so the message
     // body/persist helpers have exactly one owner.
+    // The ONE secretary-round resolver, the ONE request-owner read and the ONE
+    // withdraw reader the new mailbox commands consult. Both owners are the
+    // platform's own instances: the resolver is shared with the notes owner and
+    // the request facts with the published request read below, so there is no
+    // second resolver and no second owner.
+    const secretaryQueryRun = createSecretaryQueryRun({
+      records: backend.records, duties: sessionDutyResolver, bodies });
+    const rawRequestFacts = createRequestFacts({ records: backend.records });
+    const recipientExecutions = createRecipientExecutions({
+      sessions: sessionFacts, executions: executionReader, records: backend.records });
+    // The ONE dispatch-basis read: the mailbox's send facts and the graph reader's Goal cards share this instance, so
+    // `goals/dispatch-basis` and `look_graph` answer from one window (the pointer adapter keeps `tasks/` free of `notes/`).
+    const dispatchBasis = createDispatchBasisReader({ records: backend.records,
+      pointer: createGoalPointerFacts({ records: backend.records }) });
     const mailboxDependencies = { records: backend.records, sessions: sessionDirectory,
       executions: executionReader, roles: roleService, materials: rawMaterials,
       systemActor: SYSTEM_ACTOR, now, newId: randomUUID, duties: messageDuties,
+      // An absent duration is the platform's day; the owner keeps no second
+      // default and a caller-named duration always wins.
+      defaultInquiryDeadlineMs: 86_400_000,
+      secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis,
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
     const messageWrites = createMessageWriteOwner(mailboxDependencies);
@@ -1270,6 +1308,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       sessions: sessionDirectory,
       executions: executionReader,
       inputs: taskInputsOwner,
+      // The ONE basis read the mailbox already holds; the reader builds no second instance.
+      dispatchBasis,
       hostActor: SYSTEM_ACTOR,
       // Wiring 1 I-3 (§2.5, L7): the anomaly projection is installed ONLY here,
       // on the graph-context reader. The provider rebinds the caller's ctx to
@@ -1402,11 +1442,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     }
     // The completion methods are published on the SAME Goal service and drained
     // through the one trackedCall/close path; no second service or store exists.
-    const goals: GoalTaskPort = {
+    const goals: GoalTaskPort & DispatchBasisReadPort = {
       createGoal: (...args) => trackedCall(() => rawGoals.createGoal(...args), unavailable),
       completeTask: (...args) => trackedCall(() => rawGoals.completeTask(...args), unavailable),
       completeGoal: (...args) => trackedCall(() => rawGoals.completeGoal(...args), unavailable),
       setGoalControl: (...args) => trackedCall(() => rawGoals.setGoalControl(...args), unavailable),
+      // The Goal read region's basis route: the SAME instance the graph reader and the mailbox take.
+      readDispatchBasis: (...args) => trackedCall(() => dispatchBasis.readDispatchBasis(...args), unavailable),
     };
     function sessionCall<T>(call: () => Promise<T>): Promise<T | CoreRejection> {
       return trackedCall<T | CoreRejection>(call, unavailable);
@@ -1534,7 +1576,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       storeArtifact: (...args) => trackedCall(() => rawMaterials.storeArtifact(...args), unavailable),
       openArtifact: (...args) => trackedCall(() => rawMaterials.openArtifact(...args), unavailable),
     };
-    const messages: Omit<SessionMailboxPort, 'ackMessage'> & Required<Pick<SessionMailboxPort, 'readOutbox'>> = {
+    // The published messages surface: the narrow mailbox port's reads and old writes, with `ackMessage` unpublished,
+    // plus the full command port's send/respond and its release/withdraw commands and the two derived view reads. Every
+    // published member drains through the ONE trackedCall/close path; the owners themselves stay private.
+    type PublishedMessages =
+      Omit<SessionMailboxPort, 'ackMessage' | 'sendMessage' | 'respondMessage'>
+      & Required<Pick<SessionMailboxPort, 'readOutbox'>>
+      & Pick<SessionMessageCommandPort,
+        'sendMessage' | 'respondMessage' | 'withdrawMessage' | 'releaseMessage' | 'readMessageView' | 'readInboxView'>;
+    const messages: PublishedMessages = {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
       readMessage: (...args) => trackedCall(() => mailbox.readMessage(...args), unavailable),
       readMessageBody: (...args) => trackedCall(() => mailbox.readMessageBody(...args), unavailable),
@@ -1547,6 +1597,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // execution's acceptance of a saved reply, so an accepted reply leaves the
       // notice set. No other mailbox method is published here.
       recordInputAccepted: (...args) => trackedCall(() => mailbox.recordInputAccepted!(...args), unavailable),
+      withdrawMessage: (...args) => trackedCall(() => mailbox.withdrawMessage(...args), unavailable),
+      releaseMessage: (...args) => trackedCall(() => mailbox.releaseMessage(...args), unavailable),
+      readMessageView: (...args) => trackedCall(() => mailbox.readMessageView(...args), unavailable),
+      readInboxView: (...args) => trackedCall(() => mailbox.readInboxView(...args), unavailable),
     };
     // Slice 5 §4.5 platform ports: the same trackedCall drain convention as every
     // other owner, so an in-flight decision write is accounted for before close.
@@ -1675,25 +1729,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       createSession: (...args: Parameters<typeof sessionOperations.createSession>) =>
         sessionOperations.createSession(...args),
     };
-    const workflowConfiguration = options.workflow === undefined
-      ? undefined : structuredClone(options.workflow);
-    // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
-    // this narrow port, and the Workflow uses the SAME resolver instance (the
-    // composition root injects one result, never a second resolver). Slice 4A P5:
-    // the notes service shares this instance too.
-    const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
-      readRoleSpec: roleService.readRoleSpec.bind(roleService),
-      configuration: workflowConfiguration,
-    });
-    // The request command owners and the secretary lifecycle share ONE request facts reader, ONE profile port, ONE
-    // capacity adapter and ONE line-creation entry: a handoff's successor line is admitted through the same cap and
-    // the same admission a request command's secretary is.
+    // The request command owners and the secretary lifecycle share ONE request facts reader (`rawRequestFacts`, built
+    // before the mailbox above), ONE profile port, ONE capacity adapter and ONE line-creation entry: a handoff's
+    // successor line is admitted through the same cap and the same admission a request command's secretary is.
     const defaultSecretaryProfiles: SecretaryProfilePort = {
       forSession: () => null,
       forNewLine: async () => ({ status: 'ready', value: null }),
     };
     const rawSecretaryProfiles: SecretaryProfilePort = options.secretaryProfiles ?? defaultSecretaryProfiles;
-    const rawRequestFacts = createRequestFacts({ records: backend.records });
     const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
       ? createAlwaysAdmitCapacity()
       : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
@@ -1850,7 +1893,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       plans: planService,
       runFacts: noteRunFacts,
       duties: sessionDutyResolver,
-      secretaryQueryRun: createSecretaryQueryRun({ records: backend.records, duties: sessionDutyResolver, bodies }),
+      secretaryQueryRun,
       workspace: noteWorkspace,
       workspaceMaxFileBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes,
       architecture: catalog,

@@ -14,9 +14,9 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord, SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
-import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, RunStatus, TaskTriple } from '../../../contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
-import type { QueryRunSnapshot } from '../../../contracts/query-job.js';
+import type { QueryExecutionStateV1, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import type { SessionPage, SessionPageRequest } from './session-contracts.js';
 
@@ -89,4 +89,28 @@ export interface SessionResponsibilityBasisPort {
   readResponsibilityBasis(ctx: CoreCallContext, input: {
     sessionRef: SessionRef; target: WorkLinkTarget;
   }): Promise<ReadResult<SessionResponsibilityBasisV1>>;
+}
+
+// ------------------------------------------------------------------------ //
+// The withdraw's open-execution port                                        //
+// ------------------------------------------------------------------------ //
+
+/** One execution the recipient line still has open, with the run facts read beside the enumeration. */
+export type RecipientOpenExecutionV1 =
+  | { kind: 'work'; ref: RunRef; stage: RunStatus; startedAt: string | null }
+  | { kind: 'query'; ref: QueryRunRef; stage: QueryExecutionStateV1['phase']; startedAt: string | null };
+
+/** A Work Run is open while it is `starting` or `running`; `ended` is terminal. */
+export const OPEN_WORK_STAGES = ['starting', 'running'] as const satisfies readonly RunStatus[];
+/** A QueryRun is open while it is claimed, prepared, entering, entered or unknown; `settled` is terminal. */
+export const OPEN_QUERY_PHASES = ['claimed', 'prepared', 'entering', 'entered', 'unknown'] as const satisfies readonly QueryExecutionStateV1['phase'][];
+
+export type RecipientOpenExecutionsV1 = {
+  executions: readonly RecipientOpenExecutionV1[];
+  /** The ledger horizon taken BEFORE the first enumeration; every page and execution read is checked at it. */
+  readCursor: CommitCursor;
+};
+export interface RecipientExecutionsPort {
+  readRecipientOpenExecutions(ctx: CoreCallContext, input: { sessionRef: SessionRef; messageRef: SessionMessageRef }):
+    Promise<ReadResult<RecipientOpenExecutionsV1>>;
 }

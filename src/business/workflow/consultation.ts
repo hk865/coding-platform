@@ -18,6 +18,7 @@ import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import { messageConsumptionProblem, messageFactsOfRecord } from '../../core/work-graph/state/message-machine.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
@@ -272,6 +273,14 @@ export function createConsultationConsumer(deps: {
     if (queryRunEndedWithoutAnswer(record)) {
       return ended(message, record, null, 'the existing consultation Query ended without a formal answer');
     }
+    // An existing Query that can still be claimed, prepared or started reads the
+    // SAME consumption rule as a new one; a formal Answer and an ended Query
+    // were reported above and are never re-run.
+    const phase = run.run.executionState?.phase;
+    if (phase === undefined || phase === 'claimed' || phase === 'prepared') {
+      const problem = messageConsumptionProblem(messageFactsOfRecord(message));
+      if (problem !== null) return reject(problem.code, problem.reason);
+    }
     const configMatches = job.job.intent.goalId === input.goalRef.goalId
       && sameCanonical(job.job.intent.budget, input.budget)
       && sameCanonical(execution.roleBinding, input.roleBinding)
@@ -280,7 +289,6 @@ export function createConsultationConsumer(deps: {
       return waiting(message, record, null, 'the existing consultation Query was configured differently and is not re-run');
     }
 
-    const phase = run.run.executionState?.phase;
     if (phase !== undefined) {
       // claimed / prepared / entering / entered / unknown: continue the SAME
       // execution, never a new Query.
@@ -342,6 +350,11 @@ export function createConsultationConsumer(deps: {
     if (existing.status === 'ready') return continueExisting(owned, value, message, existing.value);
     if (existing.status !== 'not_found') return existing;
 
+    // The shared consumption rule runs before a NEW consultation is derived, so
+    // an unreleased or withdrawn message is never turned into a Query/model run;
+    // an already saved Query/Answer still replays above.
+    const consumption = messageConsumptionProblem(messageFactsOfRecord(message));
+    if (consumption !== null) return reject(consumption.code, consumption.reason);
     if (value.part === 'response' ? (message.response === null || message.sender.kind !== 'work_run') : message.status === 'responded') {
       return reject('invalid', 'the original message already has a response');
     }

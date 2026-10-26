@@ -277,7 +277,10 @@ async function createSession(started: Started, requestId: string): Promise<{ ses
 }
 
 async function sendMessage(started: Started, recipient: SessionRef, text: string, requestId: string, intent: 'inquiry' | 'action_request' = 'inquiry'): Promise<SessionMessageRef> {
-  const response = await corePost(started.base, 'messages/send', started.token, graphWrite({ recipient, text, intent, needsReply: true }, requestId, []));
+  // §2.1 step 3 / BX-11: an inquiry names its own duration, so the send needs no
+  // injected default and no silent "no deadline".
+  const response = await corePost(started.base, 'messages/send', started.token,
+    graphWrite({ recipient, text, intent, needsReply: true, deadlineMs: 86_400_000 }, requestId, []));
   expect(response.status).toBe(200);
   const body = await response.json() as WriteResult<SessionMessage>;
   expect(body).toMatchObject({ status: 'committed', value: { status: 'pending', recipient } });

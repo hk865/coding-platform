@@ -31,6 +31,7 @@ import { createSessionHealthService } from '../../src/core/work-graph/sessions/s
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
@@ -73,7 +74,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(t0));
   const groups = [SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
-    SESSION_ANOMALY_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS];
+    SESSION_ANOMALY_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS, SESSION_ACTIVITY_SCHEMAS];
   const b2 = await createB2ExecutionFixture(kind, { records: groups.flatMap(g => g.records),
     events: groups.flatMap(g => g.events), lookups: groups.flatMap(g => g.lookups ?? []) });
   const base = b2.base;
@@ -145,6 +146,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
     hostInstance: { hostInstanceId: 'fx1-host', lease: 'owned' }, now, eventId: id });
   function mailboxOn() {
     const box = createSessionMailbox({ records, sessions, executions: reads, roles, materials,
+      defaultInquiryDeadlineMs: 86_400_000,
       runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration },
       systemActor: { kind: 'system', id: 'fx1-materials' }, now, newId: id });
     if (!box.disposeArchiveWait || !box.readUndeliveredReplies || !box.readRoutedReplies || !box.recordInputAccepted) {

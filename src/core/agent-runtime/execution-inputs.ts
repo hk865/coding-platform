@@ -24,6 +24,7 @@ import type { SessionRecord as KernelSessionRecord } from '../../../vendor/codin
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import { deriveSessionInputId, type SessionMailboxPort, type SessionMessage } from '../work-graph/model/communication-contracts.js';
+import { messageConsumptionProblem, messageFactsOfRecord } from '../work-graph/state/message-machine.js';
 
 export type InputPart = 'message' | 'response';
 
@@ -112,6 +113,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
   const readResponse = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
     results: SuppliedInput[]): Promise<void> => {
     if (message === undefined) return;
+    if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) return;
     if (message.status !== 'responded' || message.response === null) return;
     // §2.5: the effective reply handler is the recorded `replyHandler` when set,
     // otherwise the original work_run sender. A transferred reply is supplied
@@ -128,6 +130,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
   };
   const readMessagePart = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
     results: SuppliedInput[]): Promise<void> => {
+    if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) return;
     if (message.intent === 'inquiry') return;
     const inputId = deriveInputId(message.ref, 'message');
     if (seen.has(inputId) || alreadyAcceptedBySource(message, inputId)) return;

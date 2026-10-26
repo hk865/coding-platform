@@ -20,24 +20,30 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionMessageIntentFields, SessionMessageRef,
+import type { MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SendRejectionV1,
+  SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef,
   DecisionHostSenderV1 } from '../../../contracts/core/session-message.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
-import type { RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
-import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
+import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 import type { MessageDutiesFactsPort } from './decision-contracts.js';
+import type { DispatchBasisFactsPort } from './dispatch-basis-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
+import type { SecretaryQueryRunPort } from './secretary-query-run-contracts.js';
+import type { RecipientExecutionsPort } from './session-facts-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
 import type {
-  MessageQueryAnswerSenderRecord, MessageWorkRunSenderRecord,
+  MessageAcceptedInput, MessageQueryAnswerSenderRecord, MessageSecretaryRoundSenderRecord, MessageWorkRunSenderRecord,
   SessionMessageRecord, SessionMessageStatus as SessionMessageStatusRecord,
 } from '../state/message-machine.js';
 
@@ -45,13 +51,19 @@ export type {
   MessageAcceptedInput, MessageConsultationDerivation, MessageResponseRecord as MessageResponse,
 } from '../state/message-machine.js';
 
+/** C's DTOs, named here so every model caller keeps one import site (Q7A1-02). */
+export type { MessageDeliveryStateV1, MessageReadDispositionV1 };
+
 /** Trusted host actor: a real human/system identity, never fabricated per recipient.
  * Compatibility alias: the shared declaration lives in `contracts/core/session-message.ts`. */
 export type MessageHostSender = DecisionHostSenderV1;
 
 export type MessageWorkRunSender = MessageWorkRunSenderRecord;
 
-export type MessageSender = MessageHostSender | MessageWorkRunSender;
+export type MessageSender = MessageHostSender | MessageWorkRunSender | MessageSecretaryRoundSender;
+
+/** The trusted secretary sender the mailbox writes; every identity field comes from the resolver, never input. */
+export type MessageSecretaryRoundSender = MessageSecretaryRoundSenderRecord;
 
 /** The stable identity of one persisted source part; shared by Kernel supply and mailbox consumption. */
 export function deriveSessionInputId(messageRef: SessionMessageRef, part: 'message' | 'response'): string {
@@ -63,6 +75,69 @@ export type MessageQueryAnswerSender = MessageQueryAnswerSenderRecord;
 export type SessionMessageStatus = SessionMessageStatusRecord;
 
 export type SessionMessage = SessionMessageRecord;
+
+/**
+ * R7A1-01: the derivation's input is its OWN structure, so `7a1-ports` typechecks before M-1 adds `release` and
+ * `withdrawnAt` to the record. A `SessionMessage` is assignable to it; `MessageAcceptedInput` is the file's existing
+ * type.
+ */
+export type MessageDeliveryFactsV1 = {
+  ref: SessionMessageRef;
+  status: SessionMessageStatus;
+  acceptedInputs?: readonly MessageAcceptedInput[];
+  release: MessageReleaseV1 | null;
+  withdrawnAt: string | null;
+};
+/** The ONE derivation's result: delivery and disposition always come from the same call (R7A1-09). */
+export type MessageDeliveryDerivationV1 = {
+  delivery: MessageDeliveryStateV1;
+  disposition: MessageReadDispositionV1;
+};
+
+/** The ONE derivation (M-2's body); the two view reads, the work line and the withdraw check take this result. */
+export function deriveMessageDelivery(
+  message: MessageDeliveryFactsV1,
+  recipientLine: { archived: boolean; retired: boolean },
+): MessageDeliveryDerivationV1 {
+  const accepted = message.acceptedInputs?.find((input) => input.part === 'message');
+  let delivery: MessageDeliveryStateV1;
+  if (accepted !== undefined) {
+    delivery = {
+      delivery: 'delivered',
+      deliveredTo: { executionRef: accepted.executionRef, acceptedAt: accepted.acceptedAt },
+      evidence: 'accepted',
+      undeliveredReason: null,
+    };
+  } else if (message.status === 'read' || message.status === 'responded') {
+    delivery = {
+      delivery: 'delivered', deliveredTo: null, evidence: 'legacy_unknown', undeliveredReason: null,
+    };
+  } else if (recipientLine.archived || recipientLine.retired) {
+    delivery = {
+      delivery: 'undelivered',
+      deliveredTo: null,
+      evidence: null,
+      // Archived wins when both are true (the read rule names archived before retired).
+      undeliveredReason: recipientLine.archived ? 'recipient_archived' : 'recipient_retired',
+    };
+  } else {
+    delivery = { delivery: 'queued', deliveredTo: null, evidence: null, undeliveredReason: null };
+  }
+
+  let disposition: MessageReadDispositionV1;
+  if (message.withdrawnAt !== null) {
+    disposition = { kind: 'withdrawn' };
+  } else if (message.release !== null && message.release !== 'released') {
+    disposition = { kind: 'not_released', release: message.release };
+  } else if (delivery.delivery === 'delivered') {
+    disposition = { kind: 'delivered', evidence: delivery.evidence! };
+  } else if (delivery.delivery === 'undelivered') {
+    disposition = { kind: 'undelivered', reason: delivery.undeliveredReason! };
+  } else {
+    disposition = { kind: 'offerable' };
+  }
+  return { delivery, disposition };
+}
 
 /** Slice 1 §2.5: a read-only source item for a reply that reached a retired line. */
 export type UndeliveredReplyV1 = {
@@ -118,11 +193,61 @@ export type SessionMessageEventV1 =
   | SessionMessageConsultationDerivedEventV1
   | SessionMessageInputAcceptedEventV1
   | SessionMessageDecisionAnsweredEventV1
-  | SessionMessageDecisionAppliedEventV1;
+  | SessionMessageDecisionAppliedEventV1
+  | SessionMessageLifecycleEventV1;
+
+export type SessionMessageWithdrawnEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageWithdrawn' };
+/** The release-decided event carries the proof; a direct `messages/release` writes the `null` arm. */
+export type SessionMessageReleaseDecidedEventV1 = MessageSessionEventBaseV1 & {
+  eventType: 'SessionMessageReleaseDecided';
+  proof: DecisionChangeProofV1 | null;
+};
+export type SessionMessageReleasedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageReleased' };
+export type SessionMessageAppliedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageApplied' };
+export type SessionMessageLifecycleEventV1 =
+  | SessionMessageWithdrawnEventV1 | SessionMessageReleaseDecidedEventV1
+  | SessionMessageReleasedEventV1 | SessionMessageAppliedEventV1;
 
 /** One keyset page shared by the inbox and the sender-Run outbox. */
 export type SessionMessagePage = {
   items: SessionMessage[];
+  nextCursor: string | null;
+  sourceCursor: CommitCursor;
+};
+
+export type SendMessageResultV1 =
+  (Extract<WriteResult<SessionMessage>, { status: 'committed' }> & { sendStatus: 'sent' | 'awaiting_release' })
+  | SendRejectionV1;
+
+export type SessionMessageSendInputV1 = GraphWrite<{
+  recipient: SessionRef;
+  text: string;
+  intent?: SessionMessageIntentV1;
+  needsReply?: boolean;
+  waitAfterSend?: boolean;
+  expected?: DispatchBasisV1;
+  taskRef?: TaskTriple;
+  followupOf?: SessionMessageRef;
+  deadlineMs?: number;
+  goalRef?: GoalRef;
+}>;
+
+export type SessionMessageRespondInputV1 = GraphWrite<
+  { messageRef: SessionMessageRef } & ({ text: string } | { reject: true; reason: string })
+>;
+
+/**
+ * The full mailbox read: the record, the derived delivery triple and the
+ * disposition as three separate fields; the stored `delivery` on the record is never overloaded.
+ */
+export type SessionMessageReadV1 = {
+  message: SessionMessage;
+  delivery: MessageDeliveryStateV1;
+  disposition: MessageReadDispositionV1;
+};
+/** The view read's page: the same keyset shape as `SessionMessagePage`, items carrying the derived fields. */
+export type SessionMessageReadPageV1 = {
+  items: SessionMessageReadV1[];
   nextCursor: string | null;
   sourceCursor: CommitCursor;
 };
@@ -235,6 +360,29 @@ export interface SessionMailboxPort {
    */
   lookupToolCommit?: ToolCommitLookup;
 }
+/** The full command port; the historical `SessionMailboxPort` stays the narrow read/old-write port. */
+export interface SessionMessageCommandPort extends SessionMailboxPort {
+  sendMessage(ctx: CoreCallContext, request: SessionMessageSendInputV1): Promise<SendMessageResultV1>;
+  respondMessage(ctx: CoreCallContext, request: SessionMessageRespondInputV1): Promise<WriteResult<SessionMessage>>;
+  withdrawMessage(ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>>;
+  releaseMessage(ctx: CoreCallContext,
+    request: GraphWrite<{ messageRef: SessionMessageRef; allow: boolean }>): Promise<WriteResult<SessionMessage>>;
+  /** One message with its derived delivery and disposition; never a second derivation. */
+  readMessageView(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessageReadV1>>;
+  /** The inbox page with the same derived fields; `status` and the page keys are the record read's. */
+  readInboxView(ctx: CoreCallContext, input: {
+    recipient: SessionRef;
+    status?: SessionMessageStatus;
+    page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+  }): Promise<ReadResult<SessionMessageReadPageV1>>;
+}
+
+/** The request's owner Session, read through the existing owner read's facts; never sent by the caller. */
+export interface RequestOwnerReadPort {
+  ownerOf(ctx: CoreCallContext, input: { requestRoot: QueryJobRef }):
+    Promise<ReadResult<SessionRef | null>>;
+}
 
 /**
  * Trusted service dependencies. `systemActor` is fixed by the composition root
@@ -269,4 +417,16 @@ export type SessionMailboxDependencies = {
   systemActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   now(): string;
   newId(): string;
+  /** Injected by the composition root: 86,400,000 ms. Absent: a NEW inquiry send is `unsupported`; old paths unchanged. */
+  defaultInquiryDeadlineMs?: number;
+  /** The one resolver; called only after a receipt miss; absent: a NEW secretary path is `unsupported`. */
+  secretaryRounds?: SecretaryQueryRunPort;
+  /** The request's owner read (model's `RequestOwnerReadPort`, satisfied by `W/tasks/request-facts.ts`);
+   * absent: a NEW secretary path is `unsupported`; the owner is never guessed from the sending secretary. */
+  requestOwners?: RequestOwnerReadPort;
+  /** The withdraw's one open-execution read; absent: withdraw is `unsupported`. */
+  recipientExecutions?: RecipientExecutionsPort;
+  /** The three-version facts read (D's `createDispatchBasisReader`); absent: a NEW autonomy-controlled, goal-bearing
+   *  `action_request` is `unsupported`; every other path is unchanged and never reads it. */
+  dispatchBasis?: DispatchBasisFactsPort;
 };

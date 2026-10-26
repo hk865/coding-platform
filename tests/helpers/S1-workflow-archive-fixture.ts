@@ -374,6 +374,7 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     const eventId = () => `fx3-query-${requestId}-${++seq}`;
     const materialReads = createMaterialRecordReaders(records);
     const mailbox = createSessionMailbox({ records, sessions: base.sessionsPort,
+      defaultInquiryDeadlineMs: 86_400_000,
       executions: createRunStateReader({ records }), roles: createRoleConfigurationService({ records, now, eventId }),
       materials: createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now }),
       systemActor: { kind: 'system', id: 'fx3-query' }, now, newId: eventId });
@@ -582,6 +583,7 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   const authority = createMaterialRecordReaders(records).authority;
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
   const messages = createSessionMailbox({ records, sessions: base.sessionsPort, executions: reads, roles, materials,
+    defaultInquiryDeadlineMs: 86_400_000,
     systemActor: { kind: 'system', id: prefix }, now, newId: eventId });
   const controls = createRunControlService({ records, authority, reads, now, eventId });
   const workspaceHost = {

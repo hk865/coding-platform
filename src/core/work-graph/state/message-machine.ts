@@ -49,17 +49,20 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
 import type {
+  ApplicationProofV1,
   DecisionApplicationV1,
   DecisionMessageMetadataV1,
   MessageRecipient,
+  MessageReleaseV1,
   SessionMessageIntentV1,
   SessionMessageRef,
   UserMessageResponseV1,
 } from '../../../contracts/core/session-message.js';
 import type { ArchiveWaitChoiceV1 } from '../../../contracts/core/session-archive.js';
-import type { RoleBindingRefV1, RunRef, SourceRefV1 } from '../../../contracts/dispatch.js';
-import type { GoalRef } from '../../../contracts/ledger.js';
-import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
+import type { RoleBindingRefV1, RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { DispatchBasisV1, GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
+import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
@@ -102,16 +105,71 @@ export type MessageQueryAnswerSenderRecord = {
 /**
  * A reply lives in the ORIGINAL message's single response slot. It never
  * produces a second inbox message and never fabricates a sender Session. The
- * original message `sender` stays restricted to host/work_run; only the
- * response slot additionally accepts the derived `query_run` Answer source.
- * The response slot is written once.
+ * original message `sender` stays restricted to host/work_run/secretary_round;
+ * only the response slot additionally accepts the derived `query_run` Answer
+ * source. The response slot is written once.
  */
 export type MessageResponseRecord = {
   sender: MessageWorkRunSenderRecord | MessageQueryAnswerSenderRecord;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   respondedAt: string;
+  /** A refusal reply; present only with `reason`, absent (never `undefined`) on a plain reply. */
+  reject?: MessageResponseRejectV1['reject'];
+  reason?: MessageResponseRejectV1['reason'];
 };
+
+// The crossing value types are C's; `state/` names them, never redeclares them.
+export type {
+  MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1,
+} from '../../../contracts/core/session-message.js';
+
+/** The record's stored delivery value only; the derived triple lives in C. */
+export type MessageDeliveryV1 = 'queued' | 'delivered';
+export type MessageDeliveryEvidenceV1 = { executionRef: RunRef | QueryRunRef; acceptedAt: string };
+
+/**
+ * The standalone secretary sender record: a running secretary round. Its
+ * identity comes from the resolver, never from input, and the message `sender`
+ * union admits it beside host and work_run.
+ */
+export type MessageSecretaryRoundSenderRecord = {
+  kind: 'secretary_round';
+  sessionRef: SessionRef;
+  queryRunRef: QueryRunRef;      // the resolver's `run`, never `round`
+  requestRoot: QueryJobRef;      // equal to the resolver's requestRoot
+  generation: number;            // the resolver's `sessionGeneration`
+};
+
+/** The reject branch of the single response slot; a plain reply has neither key. */
+export type MessageResponseRejectV1 = { reject: true; reason: string };
+
+export type MessageWithdrawnChangeV1 = { kind: 'withdrawn'; withdrawnAt: string };
+/** Two discriminated arms; a denial carries no approval fact at all. */
+export type MessageReleaseDecidedChangeV1 =
+  | { kind: 'release_decided'; allow: true; approvedAt: string; approvalRevision: number; release: 'approved';
+      proof: DecisionChangeProofV1 | null }
+  | { kind: 'release_decided'; allow: false; approvedAt: null; approvalRevision: null; release: 'denied';
+      proof: DecisionChangeProofV1 | null };
+export type MessageReleasedChangeV1 = {
+  kind: 'released'; releasedAt: string; deadline: string | null; pins: DispatchBasisV1 | null;
+};
+export type MessageAppliedChangeV1 = { kind: 'applied'; appliedAt: string; proof: ApplicationProofV1 };
+/** The refusal reply's own change; `rejectedAt` is the same commit's time, and a plain reply passes null. */
+export type MessageRespondedChangeV1 =
+  | { kind: 'responded'; response: MessageResponseRecord; rejectedAt: null }
+  | { kind: 'responded'; response: MessageResponseRecord; rejectedAt: string };
+
+export type MessageWithdrawnEventV1 = { type: 'message_withdrawn' };
+export type MessageReleaseDecidedEventV1 = { type: 'message_release_decided'; allow: boolean };
+export type MessageReleasedEventV1 = { type: 'message_released' };
+export type MessageAppliedEventV1 = { type: 'message_applied' };
+/** The refusal fact the existing `message_responded` arm carries (absent = a plain reply). */
+export type MessageRespondedRejectFactV1 = { rejected: true };
+export type MessageSeventhEventV1 = MessageWithdrawnEventV1 | MessageReleaseDecidedEventV1
+  | MessageReleasedEventV1 | MessageAppliedEventV1;
+export type Message7AChangeV1 = MessageWithdrawnChangeV1 | MessageReleaseDecidedChangeV1
+  | MessageReleasedChangeV1 | MessageAppliedChangeV1 | MessageRespondedChangeV1;
 
 export type SessionMessageStatus = 'pending' | 'read' | 'responded';
 
@@ -147,12 +205,16 @@ export type MessageConsultationDerivation = {
  * Persisted message. `revision` starts at 1 (send CAS@0) and is the CAS unit for
  * ack/respond. `bodyRef` is the only durable body address; text is never inlined
  * in the message record.
+ *
+ * Every lifecycle field from `taskRef` on is required. A field with no producer
+ * yet keeps the initial value the constructor writes (`null`, or
+ * `delivery: 'queued'`), never an absent key.
  */
 export type SessionMessageRecord = {
   ref: SessionMessageRef;
   schemaVersion: 1;
   revision: number;
-  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord;
+  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord | MessageSecretaryRoundSenderRecord;
   recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
@@ -168,8 +230,8 @@ export type SessionMessageRecord = {
    * work_run message that has never been replied to.
    */
   responseSince?: CommitCursor | null;
-  /** Slice 5: the owning Goal; absent/null keeps the historical message shape. */
-  goalRef?: GoalRef | null;
+  /** The owning Goal; required, `null` when the message has none. */
+  goalRef: GoalRef | null;
   /** Slice 5: decision metadata, only on a user decision request or synthetic answer. */
   decision?: DecisionMessageMetadataV1;
   /** Slice 5: the recorded application of the user's answer, when requirements demanded one. */
@@ -200,13 +262,37 @@ export type SessionMessageRecord = {
     archiveRequestId: string;
     recordedAt: string;
   } | null;
+  taskRef: TaskTriple | null;
+  requestRoot: QueryJobRef | null;
+  followupOf: SessionMessageRef | null;
+  deadline: string | null;
+  deadlineMs: number | null;
+  release: MessageReleaseV1 | null;
+  delivery: MessageDeliveryV1;
+  deliveryEvidence: MessageDeliveryEvidenceV1 | null;
+  expiredAt: string | null;
+  withdrawnAt: string | null;
+  waitCancelledAt: string | null;
+  transferredTo: SessionRef | null;
+  originalRef: SessionMessageRef | null;
+  appliedAt: string | null;
+  rejectedAt: string | null;
+  approvedAt: string | null;
+  approvalRevision: number | null;
+  applicationProof: ApplicationProofV1 | null;
+  pins: DispatchBasisV1 | null;
 };
 
 // --------------------------------------------------------------------------
 // Machine state, events, guard context, effects (§10.1, §10.2)
 // --------------------------------------------------------------------------
 
-/** `absent | {status, hasReadAt, hasResponse, acceptedInputIds, hasDerivation, revision}` (§10.1). */
+/**
+ * The machine state of a message. The present arm carries the lifecycle facts
+ * `messageMachineStateOf` reads from the record: release, stored delivery, the
+ * withdrawal and the first-wins application/refusal times, the approval and its
+ * message revision, and the release's dispatch pins.
+ */
 export type MessageMachineState =
   | { status: 'absent' }
   | {
@@ -216,13 +302,22 @@ export type MessageMachineState =
     acceptedInputIds: readonly string[];
     hasDerivation: boolean;
     revision: number;
+    release: MessageReleaseV1 | null;
+    delivery: MessageDeliveryV1;
+    withdrawnAt: string | null;
+    appliedAt: string | null;
+    rejectedAt: string | null;
+    approvedAt: string | null;
+    approvalRevision: number | null;
+    pins: DispatchBasisV1 | null;
   };
 
 type PresentMessageState = Exclude<MessageMachineState, { status: 'absent' }>;
 
 /**
  * §10.2. `message_responded.via`: `text` is the work_run reply (MSG-04/05),
- * `query_answer` the Host association of a formal Query Answer (MSG-06).
+ * `query_answer` the Host association of a formal Query Answer (MSG-06);
+ * `rejected: true` marks the refusal reply (absent = a plain reply).
  * `input_accepted.inputId` is `deriveSessionInputId(messageRef, part)`
  * (`communication-contracts.ts:57-59`), computed by the service. `task_claimed` is the
  * read-only continuation-claim check (MSG-10).
@@ -230,7 +325,8 @@ type PresentMessageState = Exclude<MessageMachineState, { status: 'absent' }>;
 export type MessageEvent =
   | { type: 'message_sent' }
   | { type: 'message_read' }
-  | { type: 'message_responded'; via: 'text' | 'query_answer' }
+  | { type: 'message_responded'; via: 'text' | 'query_answer';
+      rejected?: MessageRespondedRejectFactV1['rejected'] }
   | { type: 'input_accepted'; part: 'message' | 'response'; inputId: string }
   | { type: 'consultation_derived' }
   | { type: 'task_claimed' }
@@ -239,7 +335,11 @@ export type MessageEvent =
   // same `decision_application_recorded` event when `requiresApplication=false`).
   | { type: 'user_decision_answered' }
   | { type: 'synthetic_decision_answered' }
-  | { type: 'decision_application_recorded' };
+  | { type: 'decision_application_recorded' }
+  // The release/withdraw/apply lifecycle. The four events carry no clock and no
+  // deadline/pins/proof, so a transition sets only the facts its event names;
+  // the owner writes the change's times through `nextSessionMessageRecord`.
+  | MessageSeventhEventV1;
 
 /**
  * S5-MSG-01 extension (`user_message_sent`) guard facts (spec §3.1 guard column).
@@ -300,6 +400,18 @@ export type MessageGuardContext = {
   recipientScope: 'same_workspace' | 'other_workspace' | 'other_project' | null;
   /** message_sent only: the normalized flags (`mailbox-service.ts:1356-1358`) and the pin count. */
   sendFlags: { needsReply: boolean; waitAfterSend: boolean; pinCount: number } | null;
+  /**
+   * message_sent only: the release and its dispatch pins the send path decided
+   * from the Goal's autonomy. The record constructor writes them, so the
+   * machine's accepted state must carry them too (§3.4 invariant 1 compares the
+   * two); absent = the person's send, whose release is `null`.
+   */
+  sendRelease?: {
+    release: MessageReleaseV1 | null;
+    pins: DispatchBasisV1 | null;
+    /** The same window's Goal facts; a direct release needs it `active`. */
+    goal?: { desiredState: GoalDesiredState; revision: number } | null;
+  } | null;
   /** ack/respond/derive need exactly one pin naming this message; `revision` is null when not a positive integer. */
   pins: { count: number; matchesMessage: boolean; revision: number | null };
   /**
@@ -376,7 +488,12 @@ export type SessionMessageEventType =
   | 'ArchiveWaitDisposed'
   // Slice 5 §3.1 rows S5-MSG-03/04 (spec §2.8 event bodies).
   | 'SessionMessageDecisionAnswered'
-  | 'SessionMessageDecisionApplied';
+  | 'SessionMessageDecisionApplied'
+  // Message lifecycle events.
+  | 'SessionMessageWithdrawn'
+  | 'SessionMessageReleaseDecided'
+  | 'SessionMessageReleased'
+  | 'SessionMessageApplied';
 
 /**
  * Effects the owner service translates (§10.3 effects column):
@@ -418,6 +535,14 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
     acceptedInputIds: (message.acceptedInputs ?? []).map((entry) => entry.inputId),
     hasDerivation: message.consultationDerivation !== undefined,
     revision: message.revision,
+    release: message.release,
+    delivery: message.delivery,
+    withdrawnAt: message.withdrawnAt,
+    appliedAt: message.appliedAt,
+    rejectedAt: message.rejectedAt,
+    approvedAt: message.approvedAt,
+    approvalRevision: message.approvalRevision,
+    pins: message.pins,
   };
 }
 
@@ -593,9 +718,18 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
       : 'the recipient Session is outside the bound workspace');
   }
   switch (state.status) {
-    case 'absent':
+    case 'absent': {
+      // Direct release (automatic release or notify) needs the same-window Goal
+      // `active`; the Goal revision rides from the one read that decided it.
+      const releaseGoal = ctx.sendRelease?.goal ?? null;
+      if (ctx.sendRelease?.release === 'released' && releaseGoal !== null && releaseGoal.desiredState !== 'active') {
+        return reject('guard_failed', 'busy', 'the Goal is not active');
+      }
       return accept<MessageMachineState, MessageEffect>(
-        { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1 },
+        { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
+          release: ctx.sendRelease == null ? null : ctx.sendRelease.release, delivery: 'queued',
+          withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+          approvalRevision: null, pins: ctx.sendRelease == null ? null : ctx.sendRelease.pins },
         [
           { kind: 'store_body', part: 'message', source: 'workspace' },
           { kind: 'write_message', change: 'created' },
@@ -604,6 +738,7 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
           ...(workRun ? [{ kind: 'guard_work_run_facts' } as const] : []),
         ],
       );
+    }
     case 'pending':
     case 'read':
     case 'responded':
@@ -648,7 +783,11 @@ function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): Me
 }
 
 /** MSG-04 / MSG-05; checks in the pre-step-3 `respondMessage` order (`mailbox-service.ts:1629-1713`). */
-function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
+function onTextResponse(
+  state: MessageMachineState,
+  event: Extract<MessageEvent, { type: 'message_responded' }>,
+  ctx: MessageGuardContext,
+): MessageTransition {
   const problem = first(
     () => messagePrincipalProblem({ type: 'message_responded', via: 'text' }, ctx.principal),
     // :1642-1643 — text normalization runs before the pin and the receipt lookup.
@@ -663,6 +802,10 @@ function onTextResponse(state: MessageMachineState, ctx: MessageGuardContext): M
     case 'pending':
     case 'read':
       if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
+      if (event.rejected === true) {
+        const slotProblem = applicationOrRefusalProblem(state);
+        if (slotProblem !== null) return slotProblem;
+      }
       return accept<MessageMachineState, MessageEffect>(respondedState(state), [
         { kind: 'store_body', part: 'response', source: 'workspace' },
         { kind: 'write_message', change: 'responded' },
@@ -726,7 +869,11 @@ function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): Message
 }
 
 /** MSG-06; checks in the pre-step-3 `respondFromQueryAnswer` order (`mailbox-service.ts:1726-1880`). */
-function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
+function onAnswerResponse(
+  state: MessageMachineState,
+  event: Extract<MessageEvent, { type: 'message_responded' }>,
+  ctx: MessageGuardContext,
+): MessageTransition {
   const problem = first(
     () => messagePrincipalProblem({ type: 'message_responded', via: 'query_answer' }, ctx.principal),
     () => messagePinProblem(ctx.pins),
@@ -744,6 +891,10 @@ function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext):
   switch (state.status) {
     case 'pending':
     case 'read':
+      if (event.rejected === true) {
+        const slotProblem = applicationOrRefusalProblem(state);
+        if (slotProblem !== null) return slotProblem;
+      }
       return accept<MessageMachineState, MessageEffect>(respondedState(state), [
         { kind: 'store_body', part: 'response', source: 'answer' },
         { kind: 'write_message', change: 'responded' },
@@ -761,6 +912,15 @@ function onAnswerResponse(state: MessageMachineState, ctx: MessageGuardContext):
 /** `readAt ??= respondedAt` (I-8): a responded message always carries readAt. */
 function respondedState(state: PresentMessageState): MessageMachineState {
   return { ...state, status: 'responded', hasReadAt: true, hasResponse: true, revision: state.revision + 1 };
+}
+
+/**
+ * A refusal reply and an application share one first-wins slot; a plain reply
+ * does not consult it, so only the refusal half of the pair races.
+ */
+function applicationOrRefusalProblem(state: PresentMessageState): Rejected | null {
+  return state.appliedAt === null && state.rejectedAt === null ? null
+    : reject('stale', 'revision_conflict', 'the message already has an application or refusal');
 }
 
 /** MSG-07 / MSG-08; checks in the pre-step-3 `recordInputAccepted` order (`mailbox-service.ts:1947-2064`). */
@@ -852,19 +1012,65 @@ function onConsultationDerived(state: MessageMachineState, ctx: MessageGuardCont
   }
 }
 
+/**
+ * The one consumption rule's facts, from either a decoded record or the
+ * machine state the wait helper already holds.
+ */
+export type MessageConsumptionFactsV1 = {
+  status: SessionMessageStatus;
+  release: MessageReleaseV1 | null;
+  withdrawnAt: string | null;
+};
+
+export type MessageConsumptionProblemV1 = {
+  code: Extract<CoreError, 'busy' | 'forbidden' | 'invalid'>;
+  reason: string;
+};
+
+/**
+ * The one pure consumption rule; `null` = offerable. A withdrawn message is
+ * `invalid` before any release judgment; an unreleased (`awaiting`, `approved`,
+ * `denied`) message is `busy`. `null` and `released` are offerable, and
+ * `expiredAt` is not part of this rule (no producer yet).
+ */
+export function messageConsumptionProblem(facts: MessageConsumptionFactsV1): MessageConsumptionProblemV1 | null {
+  if (facts.withdrawnAt !== null) return { code: 'invalid', reason: 'the message was withdrawn' };
+  if (facts.release === 'awaiting' || facts.release === 'approved' || facts.release === 'denied') {
+    return { code: 'busy', reason: 'the message has not been released' };
+  }
+  return null;
+}
+
+export function messageFactsOfRecord(
+  message: Pick<SessionMessageRecord, 'status' | 'release' | 'withdrawnAt'>,
+): MessageConsumptionFactsV1 {
+  return { status: message.status, release: message.release, withdrawnAt: message.withdrawnAt };
+}
+
+export function messageFactsOfState(state: MessageMachineState): MessageConsumptionFactsV1 | null {
+  return state.status === 'absent' ? null
+    : { status: state.status, release: state.release, withdrawnAt: state.withdrawnAt };
+}
+
+/** R2-7A1-06: the wait's verdict; the predicate's problem code passes through unchanged. */
 export type MessageWaitVerdict =
   | { satisfied: true }
-  | { satisfied: false; code: Extract<CoreError, 'busy' | 'forbidden'>; detail: string };
+  | { satisfied: false; code: Extract<CoreError, 'busy' | 'forbidden' | 'invalid'>; detail: string };
 
 /**
  * MSG-10 read-only predicate (`claim-service.ts:619-638`): only a responded
  * message whose saved reply body is the claim's `responseRef`, in the bound
- * workspace, satisfies a wait. `read` or `acceptedInputs` never do (M3).
+ * workspace, satisfies a wait. `read` or `acceptedInputs` never do (M3). The
+ * shared consumption rule runs first, so a withdrawn or unreleased message is
+ * refused with the predicate's own code before the status switch.
  */
 export function messageSatisfiesWait(
   state: MessageMachineState,
   consumedWait: { responseRefMatches: boolean; sameWorkspace: boolean },
 ): MessageWaitVerdict {
+  const facts = messageFactsOfState(state);
+  const problem = facts === null ? null : messageConsumptionProblem(facts);
+  if (problem !== null) return { satisfied: false, code: problem.code, detail: problem.reason };
   switch (state.status) {
     case 'absent':
       return { satisfied: false, code: 'busy', detail: 'the continuation wait message record does not exist' };
@@ -1003,7 +1209,9 @@ function onSyntheticDecisionAnswered(state: MessageMachineState, ctx: MessageGua
     return reject('illegal', 'revision_conflict', 'the synthetic answer message already exists; only its original receipt replays');
   }
   return accept<MessageMachineState, MessageEffect>(
-    { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 1 },
+    { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 1,
+      release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+      approvalRevision: null, pins: null },
     [
       { kind: 'store_body', part: 'message', source: 'workspace' },
       { kind: 'store_body', part: 'response', source: 'workspace' },
@@ -1058,6 +1266,83 @@ function onDecisionApplicationRecorded(state: MessageMachineState, ctx: MessageG
   }
 }
 
+/**
+ * Lifecycle rows. The four events deliberately carry NO clock and NO
+ * deadline/pins/proof (frozen types), so their `next` state cannot set
+ * `withdrawnAt`/`approvedAt`/`appliedAt`/`deadline`/`pins`; it sets only the
+ * facts the event carries (`release`, `approvalRevision` for an approval). The
+ * owner writes the change's times into the record through
+ * `nextSessionMessageRecord`. After responses are excluded, accepted input ids
+ * can only belong to the message body, so a nonempty list blocks withdrawal.
+ */
+function onWithdrawn(state: MessageMachineState): MessageTransition {
+  if (state.status === 'absent') return absentMessage();
+  if (state.withdrawnAt !== null) return reject('illegal', 'invalid', 'the message is already withdrawn');
+  if (state.hasReadAt || state.hasResponse || state.acceptedInputIds.length > 0) {
+    return reject('illegal', 'invalid', 'only an unread, unanswered, undelivered message can be withdrawn');
+  }
+  if (state.release === 'denied') {
+    return reject('illegal', 'invalid', 'a denied message cannot be withdrawn');
+  }
+  if (state.appliedAt !== null) {
+    return reject('illegal', 'invalid', 'an applied message cannot be withdrawn');
+  }
+  return accept<MessageMachineState, MessageEffect>(
+    { ...state, revision: state.revision + 1 },
+    [
+      { kind: 'write_message', change: 'withdrawn' },
+      { kind: 'append_event', eventType: 'SessionMessageWithdrawn' },
+      { kind: 'guard_message', expectedRevision: state.revision },
+    ],
+  );
+}
+
+/** Only an `awaiting` release can be decided; the event carries only `allow`. */
+function onReleaseDecided(
+  state: MessageMachineState,
+  event: Extract<MessageEvent, { type: 'message_release_decided' }>,
+): MessageTransition {
+  if (state.status === 'absent') return absentMessage();
+  if (state.release !== 'awaiting') return reject('illegal', 'invalid', 'only an awaiting release can be decided');
+  const next: MessageMachineState = event.allow
+    ? { ...state, release: 'approved', approvalRevision: state.revision + 1, revision: state.revision + 1 }
+    : { ...state, release: 'denied', approvedAt: null, approvalRevision: null, revision: state.revision + 1 };
+  return accept<MessageMachineState, MessageEffect>(next, [
+    { kind: 'write_message', change: 'release_decided' },
+    { kind: 'append_event', eventType: 'SessionMessageReleaseDecided' },
+    { kind: 'guard_message', expectedRevision: state.revision },
+  ]);
+}
+
+/** Only an `approved` release can be released; the inquiry's direct path is the send transition. */
+function onReleased(state: MessageMachineState): MessageTransition {
+  if (state.status === 'absent') return absentMessage();
+  if (state.release !== 'approved') return reject('illegal', 'invalid', 'only an approved release can be released');
+  return accept<MessageMachineState, MessageEffect>(
+    { ...state, release: 'released', revision: state.revision + 1 },
+    [
+      { kind: 'write_message', change: 'released' },
+      { kind: 'append_event', eventType: 'SessionMessageReleased' },
+      { kind: 'guard_message', expectedRevision: state.revision },
+    ],
+  );
+}
+
+/** `appliedAt`/`rejectedAt` are one first-wins slot; the later change is `revision_conflict`. */
+function onApplied(state: MessageMachineState): MessageTransition {
+  if (state.status === 'absent') return absentMessage();
+  const slotProblem = applicationOrRefusalProblem(state);
+  if (slotProblem !== null) return slotProblem;
+  return accept<MessageMachineState, MessageEffect>(
+    { ...state, revision: state.revision + 1 },
+    [
+      { kind: 'write_message', change: 'applied' },
+      { kind: 'append_event', eventType: 'SessionMessageApplied' },
+      { kind: 'guard_message', expectedRevision: state.revision },
+    ],
+  );
+}
+
 export function transitionMessage(state: MessageMachineState, event: MessageEvent, ctx: MessageGuardContext): MessageTransition {
   switch (event.type) {
     case 'message_sent':
@@ -1067,9 +1352,9 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
     case 'message_responded':
       switch (event.via) {
         case 'text':
-          return onTextResponse(state, ctx);
+          return onTextResponse(state, event, ctx);
         case 'query_answer':
-          return onAnswerResponse(state, ctx);
+          return onAnswerResponse(state, event, ctx);
         default:
           return unreachable(event.via, 'message response source');
       }
@@ -1089,6 +1374,15 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
       return onSyntheticDecisionAnswered(state, ctx);
     case 'decision_application_recorded':
       return onDecisionApplicationRecorded(state, ctx);
+    // Lifecycle events.
+    case 'message_withdrawn':
+      return onWithdrawn(state);
+    case 'message_release_decided':
+      return onReleaseDecided(state, event);
+    case 'message_released':
+      return onReleased(state);
+    case 'message_applied':
+      return onApplied(state);
     default:
       return unreachable(event, 'message event');
   }
@@ -1101,7 +1395,7 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
 
 export type NewSessionMessageInput = {
   ref: SessionMessageRef;
-  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord;
+  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord | MessageSecretaryRoundSenderRecord;
   recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
@@ -1111,17 +1405,38 @@ export type NewSessionMessageInput = {
   needsReply: boolean;
   waitAfterSend: boolean;
   /**
-   * [lead S5-T3-D7] S5-MSG-01 (spec §2.3, §2.7): the owning Goal and the
-   * decision metadata of a new user-recipient message. Written only when
-   * present, so a historical message keeps its shape; only this constructor
-   * writes them (protected fields).
+   * The owning Goal and the
+   * decision metadata of a new user-recipient message. `goalRef` is always
+   * written (`null` when omitted) and both record constructors write the
+   * nineteen lifecycle fields unconditionally; `decision` is written only when
+   * present. These are protected fields.
    */
-  goalRef?: GoalRef;
+  goalRef?: GoalRef | null;
   decision?: DecisionMessageMetadataV1;
+  // Lifecycle inputs; the constructor always writes each value below.
+  taskRef?: TaskTriple | null;
+  requestRoot?: QueryJobRef | null;
+  followupOf?: SessionMessageRef | null;
+  deadline?: string | null;
+  deadlineMs?: number | null;
+  release?: MessageReleaseV1 | null;
+  delivery?: MessageDeliveryV1;
+  deliveryEvidence?: MessageDeliveryEvidenceV1 | null;
+  expiredAt?: string | null;
+  withdrawnAt?: string | null;
+  waitCancelledAt?: string | null;
+  transferredTo?: SessionRef | null;
+  originalRef?: SessionMessageRef | null;
+  appliedAt?: string | null;
+  rejectedAt?: string | null;
+  approvedAt?: string | null;
+  approvalRevision?: number | null;
+  applicationProof?: ApplicationProofV1 | null;
+  pins?: DispatchBasisV1 | null;
 };
 
 /**
- * [lead S5-T3-D7] S5-MSG-03 (spec §0.2 T06, §2.3, §3.1): the synthetic user
+ * S5-MSG-03 (spec §0.2 T06, §2.3, §3.1): the synthetic user
  * message that holds the answer of a NON-message card. `sender` is the
  * configured operator as Host sender; `decision.syntheticAnswer` is true;
  * `response` is the answer (its `decision.source` is the card source).
@@ -1139,7 +1454,7 @@ export type NewSyntheticDecisionAnswerInput = {
 };
 
 /**
- * [lead S5-T3-D7] S5-MSG-03: the synthetic answer record, written directly as
+ * S5-MSG-03: the synthetic answer record, written directly as
  * `responded` at revision 1 with `intent: 'notify'` (spec §2.3), `readAt` =
  * the answer time, `application` null.
  * The service adds the `s5-decision-answer:` unique claim (spec §2.5) and the
@@ -1164,13 +1479,33 @@ export function createSyntheticDecisionAnswerRecord(input: NewSyntheticDecisionA
     // marker, so a caller can never save a synthetic answer card as a normal one.
     decision: { ...input.decision, syntheticAnswer: true },
     application: null,
+    taskRef: null,
+    requestRoot: null,
+    followupOf: null,
+    deadline: null,
+    deadlineMs: null,
+    release: null,
+    delivery: 'queued',
+    deliveryEvidence: null,
+    expiredAt: null,
+    withdrawnAt: null,
+    waitCancelledAt: null,
+    transferredTo: null,
+    originalRef: null,
+    appliedAt: null,
+    rejectedAt: null,
+    approvedAt: null,
+    approvalRevision: null,
+    applicationProof: null,
+    pins: null,
   };
 }
 
 /**
- * MSG-01/02: `pending` at revision 1 (send CAS@0). Optional fields are written
- * only when present, exactly as the pre-step-3 literal (`mailbox-service.ts:1149-1165`),
- * so a historical fire-and-forget message keeps its shape.
+ * MSG-01/02: `pending` at revision 1 (send CAS@0). `intent`, `needsReply`,
+ * `waitAfterSend` and `decision` are written only when present. `goalRef` and
+ * the nineteen lifecycle fields are always written: `delivery` defaults to
+ * `'queued'`, every other absent value to `null`, and no key is omitted.
  */
 export function createSessionMessageRecord(input: NewSessionMessageInput): SessionMessageRecord {
   if (input.waitAfterSend && !input.needsReply) {
@@ -1191,17 +1526,37 @@ export function createSessionMessageRecord(input: NewSessionMessageInput): Sessi
     ...(input.intent === null ? {} : { intent: input.intent }),
     ...(input.needsReply ? { needsReply: true } : {}),
     ...(input.waitAfterSend ? { waitAfterSend: true } : {}),
-    // [lead S5-T3-D7] S5-MSG-01: the owning Goal and the decision metadata are
-    // written only when present, so a historical message keeps its exact shape.
-    ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }),
+    // S5-MSG-01: the owning Goal is always written (`null` is legal); the
+    // decision metadata stays conditional.
+    goalRef: input.goalRef ?? null,
     ...(input.decision === undefined ? {} : { decision: input.decision }),
+    taskRef: input.taskRef ?? null,
+    requestRoot: input.requestRoot ?? null,
+    followupOf: input.followupOf ?? null,
+    deadline: input.deadline ?? null,
+    deadlineMs: input.deadlineMs ?? null,
+    release: input.release ?? null,
+    delivery: input.delivery ?? 'queued',
+    deliveryEvidence: input.deliveryEvidence ?? null,
+    expiredAt: input.expiredAt ?? null,
+    withdrawnAt: input.withdrawnAt ?? null,
+    waitCancelledAt: input.waitCancelledAt ?? null,
+    transferredTo: input.transferredTo ?? null,
+    originalRef: input.originalRef ?? null,
+    appliedAt: input.appliedAt ?? null,
+    rejectedAt: input.rejectedAt ?? null,
+    approvedAt: input.approvedAt ?? null,
+    approvalRevision: input.approvalRevision ?? null,
+    applicationProof: input.applicationProof ?? null,
+    pins: input.pins ?? null,
   };
 }
 
 /** One accepted change of an existing message; time comes from the service clock. */
 export type SessionMessageChange =
   | { kind: 'read'; readAt: string }
-  | { kind: 'responded'; response: MessageResponseRecord }
+  // The refusal reply plus withdraw/release/apply lifecycle changes.
+  | Message7AChangeV1
   | { kind: 'input_accepted'; input: MessageAcceptedInput }
   | { kind: 'consultation_derived'; derivation: MessageConsultationDerivation }
   | { kind: 'archive_wait_disposed'; choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef;
@@ -1227,17 +1582,27 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       if (message.status === 'responded' || message.response !== null) {
         throw new Error('nextSessionMessageRecord: the response slot is already written');
       }
+      // The first of `appliedAt`/`rejectedAt` wins; the caller maps this throw to
+      // `revision_conflict`.
+      if (message.appliedAt !== null && change.rejectedAt !== null) {
+        throw new Error('nextSessionMessageRecord: the message already has an application');
+      }
       const response: MessageResponseRecord = {
         sender: change.response.sender,
         bodyRef: change.response.bodyRef,
         sourceRef: change.response.sourceRef,
         respondedAt: change.response.respondedAt,
+        // A plain reply keeps its exact old keys (absent, never `undefined`).
+        ...(change.response.reject === true
+          ? { reject: change.response.reject, reason: change.response.reason }
+          : {}),
       };
       const next: SessionMessageRecord = { ...message, revision, status: 'responded',
-        readAt: message.readAt ?? response.respondedAt, response };
-      // Spec §2.3 P02: the first reply on a work_run message marks the pending
-      // reply position; other senders never gain the field.
-      return message.sender.kind === 'work_run' ? { ...next, responseSince: null } : next;
+        readAt: message.readAt ?? response.respondedAt, response, rejectedAt: change.rejectedAt };
+      // Spec §2.3 P02: the first reply on a work_run or secretary_round message
+      // marks the pending reply position; other senders never gain the field.
+      return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
+        ? { ...next, responseSince: null } : next;
     }
     case 'input_accepted': {
       // MSG-07/08 (pre-step-3 `:2045-2047`): append only; status and readAt are untouched.
@@ -1296,9 +1661,10 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       }
       const next: SessionMessageRecord = { ...message, revision, status: 'responded',
         readAt: message.readAt ?? change.response.respondedAt, response: change.response, application: null };
-      // Spec §2.3 P02: a user answer to a work_run message also marks the pending
-      // reply position; other senders never gain the field.
-      return message.sender.kind === 'work_run' ? { ...next, responseSince: null } : next;
+      // Spec §2.3 P02: a user answer to a work_run or secretary_round message
+      // also marks the pending reply position; other senders never gain the field.
+      return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
+        ? { ...next, responseSince: null } : next;
     }
     case 'decision_applied': {
       // S5-MSG-04/05: the application proof is recorded once on an answered card.
@@ -1310,6 +1676,36 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       }
       return { ...message, revision, application: change.application };
     }
+    // The withdraw/release/apply lifecycle, each a first-wins slot.
+    case 'withdrawn':
+      if (message.withdrawnAt !== null) throw new Error('nextSessionMessageRecord: the message is already withdrawn');
+      if (message.readAt !== null || message.response !== null) {
+        throw new Error('nextSessionMessageRecord: only an unread, unanswered message can be withdrawn');
+      }
+      if ((message.acceptedInputs ?? []).some((entry) => entry.part === 'message')) {
+        throw new Error('nextSessionMessageRecord: an accepted message part cannot be withdrawn');
+      }
+      if (message.release === 'denied') {
+        throw new Error('nextSessionMessageRecord: a denied message cannot be withdrawn');
+      }
+      if (message.appliedAt !== null) {
+        throw new Error('nextSessionMessageRecord: an applied message cannot be withdrawn');
+      }
+      return { ...message, revision, withdrawnAt: change.withdrawnAt };
+    case 'release_decided':
+      if (message.release !== 'awaiting') throw new Error('nextSessionMessageRecord: only an awaiting release can be decided');
+      if (change.allow && change.approvalRevision !== revision) {
+        throw new Error('nextSessionMessageRecord: approvalRevision must equal the produced revision');
+      }
+      return { ...message, revision, release: change.release,
+        approvedAt: change.approvedAt, approvalRevision: change.approvalRevision };
+    case 'released':
+      if (message.release !== 'approved') throw new Error('nextSessionMessageRecord: only an approved release can be released');
+      return { ...message, revision, release: 'released', deadline: change.deadline, pins: change.pins };
+    case 'applied':
+      if (message.rejectedAt !== null) throw new Error('nextSessionMessageRecord: the message already has a refusal');
+      if (message.appliedAt !== null) throw new Error('nextSessionMessageRecord: the message already has an application');
+      return { ...message, revision, appliedAt: change.appliedAt, applicationProof: change.proof };
     default:
       return unreachable(change, 'message change');
   }
@@ -1318,7 +1714,7 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
 /**
  * Spec §2.3 P02: the record-store's mechanical commit tail replaces the explicit
  * `null` reply placeholder with the cursor of the commit that saved the first
- * response. It never fills an absent (non-work_run) or already-bound field, and
+ * response. It never fills an absent or already-bound field, and
  * never parses a cursor.
  */
 export function bindMessageResponseCursor(message: SessionMessageRecord, cursor: CommitCursor): SessionMessageRecord {

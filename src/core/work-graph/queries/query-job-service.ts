@@ -62,6 +62,7 @@ import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { lookupCommittedReceipt, type CommittedReceipt, type ReceiptLookup } from '../persistence/receipt-lookup.js';
 import { newPendingQueryRecords } from '../state/query-run-recovery.js';
+import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
 import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
 import {
   decodeQueryJobSnapshot,
@@ -653,6 +654,8 @@ async function submit(
     if (messageRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message is not readable at the required watermark');
     if (messageRead.status !== 'ready') return messageRead;
     const message = messageRead.value;
+    const consumption = messageConsumptionProblem(messageFactsOfRecord(message));
+    if (consumption !== null) return rejectedWithNonEmptyCurrent(consumption.code, consumption.reason);
     const target = draft.consultation.part === 'response'
       ? (message.sender.kind === 'work_run' ? message.sender.sessionRef : null)
       : ('kind' in message.recipient ? null : message.recipient);

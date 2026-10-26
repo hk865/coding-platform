@@ -35,7 +35,7 @@ import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-
 import {
   bindMessageResponseCursor, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
   nextSessionMessageRecord, transitionMessage, type MessageEvent, type MessageGuardContext,
-  type MessageTransition, type SessionMessageEventType, type SessionMessageRecord,
+  type MessageTransition, type SessionMessageRecord,
 } from '../state/message-machine.js';
 import { S5_DECISION_ANSWER_BY_SOURCE, decodeSessionMessageRecord,
   sessionMessageFromEvent, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
@@ -98,12 +98,10 @@ type SourceFacts = {
   allowedReaderSessionRefs: SessionRef[];
 };
 
-const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
-  SessionMessageSent: 'sent', SessionMessageRead: 'read', SessionMessageResponded: 'responded',
-  SessionMessageConsultationDerived: 'consultation-derived', SessionMessageInputAccepted: 'input-accepted',
-  SessionMessageDecisionAnswered: 'decision-answered', SessionMessageDecisionApplied: 'decision-applied',
-  // §2.9: the wait-disposal event, same suffix as the mailbox table.
-  ArchiveWaitDisposed: 'archive-wait-disposed',
+const EVENT_ID_SUFFIX: Record<Parameters<typeof decisionEvent>[0], string> = {
+  SessionMessageResponded: 'responded',
+  SessionMessageDecisionAnswered: 'decision-answered',
+  SessionMessageDecisionApplied: 'decision-applied',
 };
 
 function decisionEvent(eventType: 'SessionMessageResponded' | 'SessionMessageDecisionAnswered' | 'SessionMessageDecisionApplied',

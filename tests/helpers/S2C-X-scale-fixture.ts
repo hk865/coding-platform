@@ -214,6 +214,7 @@ function mailboxOver(f: LineFixture, records: GoalRecordTransactionPort & Record
   bodies: RawArtifactStorePort, now: () => string): SessionMailboxPort {
   let seq = 0;
   return createSessionMailbox({
+    defaultInquiryDeadlineMs: 86_400_000,
     records, sessions: f.base.sessionsPort,
     executions: createRunStateReader({ records }),
     roles: createRoleConfigurationService({ records, now, eventId: () => `s2c-x-mail-event-${++seq}` }),

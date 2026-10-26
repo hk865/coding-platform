@@ -290,6 +290,7 @@ function decisions(x: Ctx) {
   const readers = createMaterialRecordReaders(f.records);
   const materials = createMaterialService({ bodies: f.bodies, authority: readers.authority, now: f.now });
   const deps: SessionMailboxDependencies = { records: f.records,
+    defaultInquiryDeadlineMs: 86_400_000,
     sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),

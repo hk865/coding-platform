@@ -9,7 +9,8 @@
  *   Work), the query profiles of the chosen configuration, the Host Workflow binding for the Work role, one
  *   scripted model (no network, no real model) and a Kernel store. The Host's own platform object comes from the
  *   real `createTargetPlatform` call through a delegating spy that records the result and returns it unchanged
- *   (rule sheet A3; installed only while the Host starts). Reopen (restart on the same directory) is SQLite only.
+ *   (rule sheet A3; installed only while the Host starts). Reopen (restart on the same directory) is SQLite, or
+ *   memory through the A4 seam's `sharedMemoryStore` flag (the test's one records backend and body store).
  * - Secretary profiles come from the Host configuration (book ruling 4.1). `with_secretary` publishes a
  *   secretary profile, whose `sessionRole` is the platform secretary template
  *   (`platformRoleProfile('secretary').template`, which `src/composition/session-duty.ts` reads as `secretary`),
@@ -177,8 +178,8 @@ const BINDING_OF_PROFILE: Record<string, string> = {
   [S6A_PLAIN_PROFILE_ID]: 's6a-plain-binding',
 };
 
-function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfileOrder, scribe: boolean):
-WorkbenchRuntimeConfiguration {
+function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfileOrder, scribe: boolean,
+  extraBindings: readonly S6AExtraBinding[] = []): WorkbenchRuntimeConfiguration {
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
   const binding = (id: string, role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>, instruction: string,
     tools: string[] = ['read']): WorkbenchRuntimeBinding => ({
@@ -197,7 +198,7 @@ WorkbenchRuntimeConfiguration {
     roleBinding: structuredClone(profile.roleBinding), runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET,
     consumerId: AG2B_CONSUMER_ID,
   }));
-  return {
+  const built: WorkbenchRuntimeConfiguration = {
     schemaVersion: 1,
     bindings: [
       binding('s6a-secretary-binding', S6A_SECRETARY_ROLE, SECRETARY_INSTRUCTION),
@@ -207,6 +208,24 @@ WorkbenchRuntimeConfiguration {
     ],
     queryProfiles,
   };
+  for (const entry of extraBindings) {
+    const index = built.bindings.findIndex(candidate => candidate.id === entry.binding.id);
+    if (index >= 0) {
+      if (entry.workflow !== undefined || entry.queryProfile !== undefined) {
+        throw new Error(`S6A: the binding ${entry.binding.id} already exists; an extension cannot re-declare it`);
+      }
+      const existing = built.bindings[index]!;
+      const tools = [...existing.grant.tools, ...(entry.mergeTools ?? [])];
+      built.bindings[index] = { ...existing, grant: { ...existing.grant, tools: [...new Set(tools)] } };
+      continue;
+    }
+    if (entry.mergeTools !== undefined) {
+      throw new Error(`S6A: mergeTools names the new binding ${entry.binding.id}; only an existing binding merges`);
+    }
+    built.bindings.push(structuredClone(entry.binding));
+    if (entry.queryProfile !== undefined) built.queryProfiles.push(structuredClone(entry.queryProfile));
+  }
+  return built;
 }
 
 const WORKFLOW: WorkflowHostConfiguration = {
@@ -285,6 +304,20 @@ async function startCapturingPlatform(options: LocalWorkbenchHostOptions): Promi
 // The world
 // ---------------------------------------------------------------------------
 
+/**
+ * One extension entry: either a new binding (a `binding.id` no fixture binding uses) or tools merged additively into
+ * an EXISTING binding by its id. The existing Work/scribe/secretary binding is never registered twice.
+ */
+export type S6AExtraBinding = {
+  binding: WorkbenchRuntimeBinding;
+  /** Added to the existing `binding.id`'s `grant.tools`; refused (`invalid`) when `binding.id` is new. */
+  mergeTools?: readonly string[];
+  /** Only with a new binding id. */
+  workflow?: WorkflowHostConfiguration['bindings'][number];
+  /** Only with a new binding id. */
+  queryProfile?: WorkbenchQueryProfile;
+};
+
 export type S6AWorldOptions = {
   backend: S6ABackend;
   /** Default `with_secretary`. */
@@ -304,6 +337,8 @@ export type S6AWorldOptions = {
   defaultGoals?: boolean;
   /** Default false. `true`: the Host also binds the platform scribe template for Runtime and Workflow (see the header). */
   scribe?: boolean;
+  /** Applied to the Host's traced configuration; never replaces a fixture binding and never duplicates one. */
+  extraBindings?: readonly S6AExtraBinding[];
 };
 
 export type S6AReopenOptions = {
@@ -311,6 +346,13 @@ export type S6AReopenOptions = {
   order?: S6AProfileOrder;
   /** Replaces the previous extra options; omitted keeps them, `{}` clears them. */
   extraHostOptions?: Record<string, unknown>;
+  /**
+   * Memory only, and only with the A4 seam: the test's file-level mocks make every Host start use the ONE real
+   * in-memory records backend and the ONE `RawArtifactBodyStore` the test opened, whose `close` leaves them open.
+   * The Host then restarts on the SAME `root`/`database`/`publicDir` with those facts and bodies; nothing is
+   * re-allocated, deleted or seeded. Omitted, memory still refuses (SQLite keeps its own reopen).
+   */
+  sharedMemoryStore?: true;
 };
 
 /** One Session the world created, with the role it was created with. */
@@ -397,7 +439,8 @@ export type S6ARequestWorld = {
   }>;
   /** SQLite only: a secretary retired `unavailable` / `kernel_turn_open` by the A8 Q-04 crash path (restarts the Host). */
   makeUnavailableSecretary(label: string, options?: { at?: string }): Promise<S6ASession>;
-  /** SQLite only: close the Host and start a new one on the same directory. */
+  /** SQLite, or memory with the A4 seam (`sharedMemoryStore`): close the Host and start a new one on the same
+   * directory and store. */
   reopen(options?: S6AReopenOptions): Promise<void>;
   close(): Promise<void>;
 };
@@ -506,19 +549,25 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
   const abandoned: { host: LocalWorkbenchHost; release: Deferred; inFlight: Promise<unknown> }[] = [];
   let closed = false;
 
-  const hostOptions = (): LocalWorkbenchHostOptions => ({
-    storage: backend === 'sqlite' ? { kind: 'sqlite', directory: database } : { kind: 'memory' },
-    actor: { ...actor },
-    workspaces: [{ scope: S6A_SCOPE, name: 'S6A request world', root, workspaceRevision: 1, readPrefixes: ['.'] }],
-    architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
-    kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
-      databasePath: join(database, 'kernel.sqlite') }] },
-    runtimeConfiguration: runtimeConfigurationOf(configuration, order, scribe),
-    workflow: structuredClone(scribe ? { ...WORKFLOW, bindings: [...WORKFLOW.bindings, SCRIBE_WORKFLOW_BINDING] } : WORKFLOW),
-    publicDir,
-    now: () => clock.now(),
-    runtimeProvider: { registry, secretSource: { get: (name: string) => name === SECRET_VAR ? SECRET_VALUE : undefined } },
-  });
+  const hostOptions = (): LocalWorkbenchHostOptions => {
+    const extraRows = (options.extraBindings ?? []).flatMap(entry =>
+      entry.workflow === undefined ? [] : [structuredClone(entry.workflow)]);
+    const workflow = { ...structuredClone(WORKFLOW),
+      bindings: [...WORKFLOW.bindings, ...(scribe ? [SCRIBE_WORKFLOW_BINDING] : []), ...extraRows] };
+    return {
+      storage: backend === 'sqlite' ? { kind: 'sqlite', directory: database } : { kind: 'memory' },
+      actor: { ...actor },
+      workspaces: [{ scope: S6A_SCOPE, name: 'S6A request world', root, workspaceRevision: 1, readPrefixes: ['.'] }],
+      architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
+      kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
+        databasePath: join(database, 'kernel.sqlite') }] },
+      runtimeConfiguration: runtimeConfigurationOf(configuration, order, scribe, options.extraBindings ?? []),
+      workflow,
+      publicDir,
+      now: () => clock.now(),
+      runtimeProvider: { registry, secretSource: { get: (name: string) => name === SECRET_VAR ? SECRET_VALUE : undefined } },
+    };
+  };
 
   async function startHost(): Promise<void> {
     const base = hostOptions();
@@ -794,7 +843,12 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     },
 
     async reopen(reopenOptions = {}) {
-      if (backend !== 'sqlite') throw new Error('S6A: reopen restarts the Host on the same directory (SQLite only)');
+      // Memory reopens only through the A4 seam (the shared records and bodies); every other memory caller keeps
+      // the refusal. SQLite needs no flag: its directory already holds the store.
+      if (backend !== 'sqlite' && reopenOptions.sharedMemoryStore !== true) {
+        throw new Error('S6A: reopen restarts the Host on the same directory (SQLite only; memory needs the A4 '
+          + 'seam\'s sharedMemoryStore)');
+      }
       await current().host.close();
       live = null;
       if (reopenOptions.configuration !== undefined) configuration = reopenOptions.configuration;

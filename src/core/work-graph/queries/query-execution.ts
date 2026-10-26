@@ -58,6 +58,8 @@ import {
 } from '../sessions/session-record-codecs.js';
 import { handoffFenceGuard, readHandoffFence } from '../sessions/session-handoff-fence.js';
 import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
 import {
   MAX_ATTESTATION_REASON_CHARS, advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf,
   settleQueryRunRecord, transitionQueryRunRecovery, type QueryAnswerCheck, type QueryRecoveryEffect, type QueryRecoveryEvent,
@@ -2060,6 +2062,28 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (!state.entry!.permissions.tools.every(tool => authorized.value.permissions.tools.includes(tool))) {
       return rejectedWithNonEmptyCurrent('forbidden', 'the model request no longer fits the current Host and Role ceilings');
     }
+    // A submitted consultation Query is prepared and started straight through
+    // the Query routes, never through the Workflow's consumption gate: the
+    // source message's own facts decide the model admission, and the same
+    // commit guards the revision this read saw.
+    const consultation = job.job.intent.execution.consultation;
+    let messageGuard: RecordGuard | null = null;
+    if (consultation !== undefined) {
+      const messageKey = sessionMessageRefKey(consultation.messageRef);
+      let messageRead;
+      try { messageRead = await deps.records.readMany([messageKey]); }
+      catch (error) { return rejectedWithNonEmptyCurrent('unavailable', `the consultation source message read failed: ${messageOf(error)}`); }
+      if (messageRead.status !== 'ready') return rejectedWithNonEmptyCurrent('unavailable', `${messageRead.code}: ${messageRead.reason}`);
+      const messageRecord = messageRead.value.records.find(candidate => candidate.refKey === messageKey);
+      if (messageRecord === undefined) return rejectedWithNonEmptyCurrent('not_found', 'the consultation source message does not exist');
+      const decoded = decodeSessionMessageRecord(messageRecord);
+      if (decoded.status !== 'decoded') {
+        return rejectedWithNonEmptyCurrent('unavailable', `the consultation source message is damaged: ${decoded.reason}`);
+      }
+      const problem = messageConsumptionProblem(messageFactsOfRecord(decoded.value));
+      if (problem !== null) return rejectedWithNonEmptyCurrent(problem.code, problem.reason);
+      messageGuard = { refKey: messageKey, expectedRevision: messageRecord.revision };
+    }
     const requests = state.requests.map(candidate => candidate.requestId === modelRequestId ? { ...candidate, admitted: true } : candidate);
     const executionState: QueryExecutionStateV1 = { ...structuredClone(state), requests };
     const nextRun: QueryRunSnapshot = { ...run, revision: run.revision + 1, run: { ...run.run, executionState } };
@@ -2067,9 +2091,10 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       eventId: deps.eventId(), identityKey, fingerprint, actor, occurredAt: deps.now(), queryRunRef,
       requestId, correlationId: job.job.intent.correlationId, operation: 'admitted', result: nextRun, run: nextRun,
     });
+    const guards: RecordGuard[] = [{ refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! }];
+    if (messageGuard !== null) guards.push(messageGuard);
     return commitOperation({
-      deps, identityKey, fingerprint,
-      guards: [{ refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! }],
+      deps, identityKey, fingerprint, guards,
       records: [encodeQueryRunSnapshotRecord(nextRun)],
       events: [encodeQueryExecutionRecordedEvent(event)],
       value: nextRun, operation: 'admitted',

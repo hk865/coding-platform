@@ -322,6 +322,7 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
   const unknownCallReviews = createUnknownCallReviewService({ records, reads: executions, now, eventId });
   const mailbox = options.withMailbox === true
     ? createSessionMailbox({ records, sessions, executions, roles, materials,
+      defaultInquiryDeadlineMs: 86_400_000,
       runtimeAdmission: { bodies, authorizeConfiguration },
       systemActor: { kind: 'system', id: 's2b-runtime-steps' }, now, newId: eventId })
     : undefined;

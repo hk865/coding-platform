@@ -12,7 +12,7 @@ import type {
   AttentionGraphReadRequestV1, ContextExtensionsV1, ContextSourceV1, GraphAttentionFactsV1,
   GraphNodeRefV1, InputDeclarationV1, InputSelectionV1,
 } from '../../../contracts/graph-context.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot, DispatchBasisV1 } from '../../../contracts/ledger.js';
 import type {
   AcceptanceObligation, DependencyRequirement, Phase, PlanRevisionRef, PlanStage, PlanTaskAssignment,
   RuntimeTask,
@@ -65,6 +65,8 @@ export type NodeCardV1 = {
   node: GraphNodeRefV1; name: string; paths: string[]; summary: string;
   task: GraphTaskCardV1 | null;
   goal: GoalSnapshot | null; stage: PlanStage | null; module: ModuleDefinition | null;
+  /** The three dispatch values beside the Goal card; null only when the card is not a Goal. */
+  dispatchBasis: DispatchBasisV1 | null;
   session: SessionRecord | null; run: RunSnapshot | null; round: RoundSnapshot | null;
   state: string | null; children: GraphNodeRefV1[]; neighbours: GraphNodeRefV1[];
   executions: RunRef[]; rounds: VerificationRoundRef[];

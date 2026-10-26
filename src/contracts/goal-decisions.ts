@@ -7,7 +7,7 @@
 import type { CommitCursor } from './command-event.js';
 import type { ModuleRef, VersionPin, WorkspaceScope } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
-import type { GoalRef, WorkspaceRef } from './ledger.js';
+import type { DispatchBasisV1, GoalRef, WorkspaceRef } from './ledger.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
 import type { UnknownCallReviewRef } from './unknown-call-review.js';
@@ -151,6 +151,17 @@ export type DecisionChangeProofV1 = {
   capturedPins: VersionPin[];
   changes: { before: VersionPin; after: VersionPin }[];
   basisRebases: GoalControlRebaseV1[];
+};
+
+/** The `message_release` card's item; C names no W type and no port. */
+export type MessageReleaseCardItemV1 = {
+  messageRef: SessionMessageRef;
+  /** The message revision at which it became `awaiting`; the card's stable identity, not its CAS revision. */
+  creationRevision: number;
+  requestRoot: QueryJobRef | null;
+  release: 'awaiting' | 'approved' | 'released' | 'denied';
+  pins: DispatchBasisV1 | null;
+  deadline: string | null;
 };
 
 export type GoalFootprintV1 = {

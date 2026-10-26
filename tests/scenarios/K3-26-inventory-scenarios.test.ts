@@ -61,7 +61,7 @@ vi.mock('../../src/core/work-graph/communication/mailbox-service.js', async (imp
   return {
     ...actual,
     createSessionMailbox: (deps: Parameters<typeof actual.createSessionMailbox>[0]) => {
-      const mailbox = actual.createSessionMailbox(deps);
+      const mailbox = actual.createSessionMailbox({ ...deps, defaultInquiryDeadlineMs: 86_400_000 });
       return { ...mailbox,
         async readMessage(ctx: Parameters<typeof mailbox.readMessage>[0], ref: Parameters<typeof mailbox.readMessage>[1]) {
           if (mailboxSeam.failNextRead) {

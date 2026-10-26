@@ -25,7 +25,9 @@ import { seqOfCommitCursor } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
-import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
+import type {
+  SessionMailboxPort, SessionMessageCommandPort,
+} from '../core/work-graph/model/communication-contracts.js';
 import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
@@ -43,6 +45,7 @@ import type { UnknownCallReviewReadPort, UnknownCallReviewPort } from '../core/w
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
+import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
@@ -84,6 +87,7 @@ import {
   type CoreRouteSuffix,
   type CoreScope,
   type K3CoreRouteDto,
+  type MessagesCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
@@ -141,6 +145,11 @@ export type CoreRouteBindings = {
   readMessage: SessionMailboxPort['readMessage'];
   readMessageBody: SessionMailboxPort['readMessageBody'];
   readOutbox: NonNullable<SessionMailboxPort['readOutbox']>;
+  // The message commands and the two derived view reads: each binding is the command port's exact method.
+  releaseMessage: SessionMessageCommandPort['releaseMessage'];
+  withdrawMessage: SessionMessageCommandPort['withdrawMessage'];
+  readMessageView: SessionMessageCommandPort['readMessageView'];
+  readInboxView: SessionMessageCommandPort['readInboxView'];
   // R6 execution-entry routes: one named binding per new suffix.
   readWorkspaceRegistration: ProjectRegistrationPort['readWorkspaceRegistration'];
   submitQueryJob: QueryJobPort['submitQueryJob'];
@@ -220,6 +229,8 @@ export type CoreRouteBindings = {
   setGoalSettings: GoalSettingsPort['setGoalSettings'];
   reorderGoals: GoalSettingsPort['reorderGoals'];
   queryGoalConflicts: DecisionReadPort['queryGoalConflicts'];
+  /** §3.6 item 5: the Goal card's three-version read, published on the Goal service. */
+  readDispatchBasis: DispatchBasisReadPort['readDispatchBasis'];
   readRequestCandidate: RequestCandidatePort['readRequestCandidate'];
   abandonPlanProposal: RequestCandidatePort['abandonPlanProposal'];
   queryDecisionQueue: DecisionReadPort['queryDecisionQueue'];
@@ -298,7 +309,7 @@ export type CoreRoutePlatform = {
   controls: RunControlPort;
   projects: ProjectRegistrationPort;
   completionPolicies: CompletionPolicyConfigurationPort;
-  goals: GoalTaskPort;
+  goals: GoalTaskPort & DispatchBasisReadPort;
   plans: PlanTaskPort;
   architecture: ArchitectureCatalogPort & ObservedArchitecturePort;
   workspace: WorkspaceToolsPort;
@@ -319,7 +330,8 @@ export type CoreRoutePlatform = {
   evidence: Pick<EvidencePort, 'reverifyRound'>;
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
     & Required<Pick<SessionMailboxPort, 'readOutbox'>>
-    & Pick<SessionMailboxPort, 'readUndeliveredReplies'>;
+    & Pick<SessionMailboxPort, 'readUndeliveredReplies'>
+    & Pick<SessionMessageCommandPort, 'releaseMessage' | 'withdrawMessage' | 'readMessageView' | 'readInboxView'>;
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
   /** Slice 5 §4.5 decision owners: Goal settings/order, the workspace notice
@@ -413,6 +425,7 @@ export type CoreRouteSpec = {
  */
 export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
+  | keyof MessagesCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto,
   CoreRouteSpec
 > = {
@@ -457,6 +470,12 @@ export const CORE_ROUTE_SPECS: Record<
   'messages/outbox': { kind: 'plain', binding: 'readOutbox', owner: 'messages.readOutbox' },
   'messages/read': { kind: 'plain', binding: 'readMessage', owner: 'messages.readMessage' },
   'messages/body': { kind: 'plain', binding: 'readMessageBody', owner: 'messages.readMessageBody' },
+  // The release/withdraw commands stay in the messages family; the two view reads are the derived reads the page
+  // consumes, so it never derives delivery itself. The Workflow's own release has no route here.
+  'messages/release': { kind: 'graph_write', binding: 'releaseMessage', owner: 'messages.releaseMessage' },
+  'messages/withdraw': { kind: 'graph_write', binding: 'withdrawMessage', owner: 'messages.withdrawMessage' },
+  'messages/view': { kind: 'plain', binding: 'readMessageView', owner: 'messages.readMessageView' },
+  'messages/inbox-view': { kind: 'plain', binding: 'readInboxView', owner: 'messages.readInboxView' },
   'workspaces/registration': { kind: 'plain', binding: 'readWorkspaceRegistration', owner: 'projects.readWorkspaceRegistration' },
   'queries/submit': { kind: 'graph_write', binding: 'submitQueryJob', owner: 'queries.submitQueryJob' },
   'queries/read': { kind: 'plain', binding: 'readQueryJob', owner: 'queries.readQueryJob' },
@@ -524,6 +543,8 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/settings/set': { kind: 'graph_write', binding: 'setGoalSettings', owner: 'goalSettings.setGoalSettings' },
   'goals/reorder': { kind: 'graph_write', binding: 'reorderGoals', owner: 'goalSettings.reorderGoals' },
   'goals/conflicts': { kind: 'plain', binding: 'queryGoalConflicts', owner: 'decisions.queryGoalConflicts' },
+  // §3.6 item 5: the three-version read a Goal card carries, as its own Goal read row (not a messages entry).
+  'goals/dispatch-basis': { kind: 'plain', binding: 'readDispatchBasis', owner: 'goals.readDispatchBasis' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
@@ -808,6 +829,15 @@ export function createPlatformCoreRouteBindings(
     readOutbox: platform.messages.readOutbox.bind(platform.messages),
     readMessage: platform.messages.readMessage.bind(platform.messages),
     readMessageBody: platform.messages.readMessageBody.bind(platform.messages),
+    // The release decision is the person's: the route refuses a member or a system actor BEFORE the owner runs, and
+    // the owner re-checks the same rule together with the awaiting-only admission. The withdraw route adds no check
+    // of its own; the owner admits the person or the original sender and refuses everyone else.
+    releaseMessage: async (ctx, request) => personOnly(ctx)
+      ? platform.messages.releaseMessage(ctx, request)
+      : { status: 'rejected', code: 'forbidden', reason: 'only the person may approve or deny a message release' },
+    withdrawMessage: platform.messages.withdrawMessage.bind(platform.messages),
+    readMessageView: platform.messages.readMessageView.bind(platform.messages),
+    readInboxView: platform.messages.readInboxView.bind(platform.messages),
     readWorkspaceRegistration: platform.projects.readWorkspaceRegistration.bind(platform.projects),
     submitQueryJob: platform.queries.submitQueryJob.bind(platform.queries),
     readQueryJob: platform.queries.readQueryJob.bind(platform.queries),
@@ -931,6 +961,7 @@ export function createPlatformCoreRouteBindings(
       : platform.goalSettings.reorderGoals.bind(platform.goalSettings),
     queryGoalConflicts: platform.decisions === undefined ? unsupported('the platform does not publish decisions.queryGoalConflicts')
       : platform.decisions.queryGoalConflicts.bind(platform.decisions),
+    readDispatchBasis: platform.goals.readDispatchBasis.bind(platform.goals),
     readRequestCandidate: platform.requestCandidates === undefined ? unsupported('the platform does not publish requestCandidates.readRequestCandidate')
       : platform.requestCandidates.readRequestCandidate.bind(platform.requestCandidates),
     abandonPlanProposal: platform.requestCandidates === undefined ? unsupported('the platform does not publish requestCandidates.abandonPlanProposal')
@@ -1230,6 +1261,10 @@ export async function dispatchCoreRoute(
       case 'messages/outbox': return bindings.readOutbox(ctx, plain.input as never);
       case 'messages/read': return bindings.readMessage(ctx, plain.input as never);
       case 'messages/body': return bindings.readMessageBody(ctx, plain.input as never);
+      case 'messages/release': return bindings.releaseMessage(ctx, graphWrite.request as never);
+      case 'messages/withdraw': return bindings.withdrawMessage(ctx, graphWrite.request as never);
+      case 'messages/view': return bindings.readMessageView(ctx, plain.input as never);
+      case 'messages/inbox-view': return bindings.readInboxView(ctx, plain.input as never);
       case 'workspaces/registration': return bindings.readWorkspaceRegistration(ctx, plain.input as never);
       case 'queries/submit': return bindings.submitQueryJob(ctx, graphWrite.request as never);
       case 'queries/read': return bindings.readQueryJob(ctx, plain.input as never);
@@ -1286,6 +1321,7 @@ export async function dispatchCoreRoute(
       case 'goals/settings/set': return bindings.setGoalSettings(ctx, graphWrite.request as never);
       case 'goals/reorder': return bindings.reorderGoals(ctx, graphWrite.request as never);
       case 'goals/conflicts': return bindings.queryGoalConflicts(ctx, plain.input as never);
+      case 'goals/dispatch-basis': return bindings.readDispatchBasis(ctx, plain.input as never);
       case 'plans/request-candidate': return bindings.readRequestCandidate(ctx, plain.input as never);
       case 'plans/abandon': return bindings.abandonPlanProposal(ctx, graphWrite.request as never);
       case 'decisions/queue': return bindings.queryDecisionQueue(ctx, plain.input as never);

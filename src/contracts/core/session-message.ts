@@ -10,7 +10,7 @@
 // of the identity, exactly like every other persisted aggregate ref.
 import type { ArtifactRef } from '../artifact.js';
 import type { ActorRef, CommitCursor } from '../command-event.js';
-import type { SourceRefV1 } from '../dispatch.js';
+import type { RunRef, SourceRefV1 } from '../dispatch.js';
 import type {
   DecisionAnnotationV1,
   DecisionObjectV1,
@@ -19,6 +19,9 @@ import type {
   DecisionSourceV1,
   GoalControlRebaseV1,
 } from '../goal-decisions.js';
+import type { AggregateRef, DispatchCurrentV1 } from '../ledger.js';
+import type { QueryRunRef } from '../query-job.js';
+import type { CoreRejection } from './results.js';
 import type { SessionRef, VersionPin } from './identity.js';
 
 export type SessionMessageRef = {
@@ -88,6 +91,35 @@ export type UserMessageResponseV1 = {
 export type DecisionApplicationReceiptV1 = {
   identityKey: string; fingerprint: string; cursor: CommitCursor;
 };
+
+/** The message's effect proof; never shares the old `application` field. */
+export type ApplicationProofV1 = {
+  receipt: DecisionApplicationReceiptV1;
+  effect: {
+    kind: 'claim_created' | 'proposal_created' | 'requeue' | 'recheck' | 'member_created';
+    ref: AggregateRef;
+  };
+};
+/** The send's rejection; `dispatchCurrent` is the one consistent read's values plus its own cursor. */
+export type SendRejectionV1 = CoreRejection & { dispatchCurrent?: DispatchCurrentV1 };
+
+// The pure DTOs that cross layers: `W/state`, `W/views` and `C/work-line.ts` all name them, so they are
+// declared in C and only re-exported by the model; C imports no W module.
+/** The message's release state; the record's stored `delivery` is 7B's separate value. */
+export type MessageReleaseV1 = 'awaiting' | 'approved' | 'released' | 'denied';
+/** The derived delivery triple, recomputed on read and never stored. */
+export type MessageDeliveryStateV1 = {
+  delivery: 'queued' | 'delivered' | 'undelivered';
+  deliveredTo: { executionRef: RunRef | QueryRunRef; acceptedAt: string } | null;
+  evidence: 'accepted' | 'legacy_unknown' | null;
+  undeliveredReason: 'recipient_archived' | 'recipient_retired' | null;
+};
+export type MessageReadDispositionV1 =
+  | { kind: 'offerable' }
+  | { kind: 'not_released'; release: 'awaiting' | 'approved' | 'denied' }
+  | { kind: 'withdrawn' }
+  | { kind: 'delivered'; evidence: 'accepted' | 'legacy_unknown' }
+  | { kind: 'undelivered'; reason: 'recipient_archived' | 'recipient_retired' };
 
 export type DecisionApplicationV1 = {
   schemaVersion: 1; actor: ActorRef; appliedAt: string;

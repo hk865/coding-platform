@@ -211,73 +211,95 @@ describe.each(['memory', 'sqlite'] as const)('K3-39 propose_future_plan owner lo
 });
 
 describe.each(['memory', 'sqlite'] as const)('K3-39 mailbox owner lookups (%s)', kind => {
-  it('K3-39 send_session_message reports committed, not_committed and idempotency_conflict through the dispatch', async () => {
-    const h = await createC1Harness(kind);
-    c1Fixtures.push(h);
-    const mailboxLookup = h.mailbox.lookupToolCommit;
-    expect(typeof mailboxLookup).toBe('function');
-    if (mailboxLookup === undefined) return;
-    const lookup = mailboxDispatch(mailboxLookup);
+  it.each([
+    ['the original default input', (h: C1Harness) =>
+      ({ recipient: h.busySession, text: 'from the original Run' }), false],
+    ['the input with the new fields', (h: C1Harness) => ({
+      recipient: h.busySession, text: 'from the original Run',
+      intent: 'inquiry' as const, taskRef: h.claim.task, deadlineMs: 2500,
+    }), true],
+  ] as const)('K3-39 send_session_message reports committed, not_committed and idempotency_conflict for %s',
+    async (_name, argsOf, deadlinePinned) => {
+      const h = await createC1Harness(kind);
+      c1Fixtures.push(h);
+      const mailboxLookup = h.mailbox.lookupToolCommit;
+      expect(typeof mailboxLookup).toBe('function');
+      if (mailboxLookup === undefined) return;
+      const lookup = mailboxDispatch(mailboxLookup);
 
-    const origin = {
-      runRef: h.claim.runRef, sessionRef: h.claim.sessionRef,
-      generation: h.claim.generation, workspaceId: h.ctxHost.workspaceId as string,
-    };
-    const kernelCallId = 'k3-39-mailbox-call-1';
-    const requestId = toolCommitRequestId({ origin, toolName: 'send_session_message', kernelCallId });
-    const args = { recipient: h.busySession, text: 'from the original Run' };
-    const sent = committed(await h.mailbox.sendMessage(h.ctxWork, sendSessionMessageRequest(args, requestId)));
+      const origin = {
+        runRef: h.claim.runRef, sessionRef: h.claim.sessionRef,
+        generation: h.claim.generation, workspaceId: h.ctxHost.workspaceId as string,
+      };
+      const kernelCallId = 'k3-39-mailbox-call-1';
+      const requestId = toolCommitRequestId({ origin, toolName: 'send_session_message', kernelCallId });
+      const args = argsOf(h);
+      const sent = committed(await h.mailbox.sendMessage(h.ctxWork, sendSessionMessageRequest(args, requestId)));
 
-    // The reconcile runs on a Host ctx; the committed row must still be found.
-    const hit = await lookup(h.ctxHost, { toolName: 'send_session_message', arguments: args, kernelCallId, origin });
-    expect(hit).toMatchObject({ status: 'committed', cursor: sent.cursor });
+      // The reconcile runs on a Host ctx; the committed row must still be found.
+      const hit = await lookup(h.ctxHost, { toolName: 'send_session_message', arguments: args, kernelCallId, origin });
+      expect(hit).toMatchObject({ status: 'committed', cursor: sent.cursor });
 
-    const miss = await lookup(h.ctxHost, {
-      toolName: 'send_session_message', arguments: args, kernelCallId: 'k3-39-mailbox-call-2', origin,
+      const miss = await lookup(h.ctxHost, {
+        toolName: 'send_session_message', arguments: args, kernelCallId: 'k3-39-mailbox-call-2', origin,
+      });
+      expect(miss).toEqual({ status: 'not_committed' });
+
+      const conflict = await lookup(h.ctxHost, {
+        toolName: 'send_session_message', arguments: { ...args, text: 'different content' }, kernelCallId, origin,
+      });
+      expect(conflict).toMatchObject({ status: 'undetermined' });
+      expect((conflict as Extract<ToolCommitLookupResult, { status: 'undetermined' }>).reason)
+        .toContain('idempotency_conflict');
+      if (deadlinePinned) {
+        // The new deadline is part of the ONE payload/fingerprint, so a
+        // different deadline under the same command identity is the conflict.
+        const deadlineConflict = await lookup(h.ctxHost, {
+          toolName: 'send_session_message', arguments: { ...args, deadlineMs: 3000 }, kernelCallId, origin,
+        });
+        expect(deadlineConflict).toMatchObject({ status: 'undetermined' });
+        expect((deadlineConflict as Extract<ToolCommitLookupResult, { status: 'undetermined' }>).reason)
+          .toContain('idempotency_conflict');
+      }
     });
-    expect(miss).toEqual({ status: 'not_committed' });
 
-    const conflict = await lookup(h.ctxHost, {
-      toolName: 'send_session_message', arguments: { ...args, text: 'different content' }, kernelCallId, origin,
+  it.each([
+    ['the text body', { text: 'the answer' }],
+    ['the reject body', { reject: true as const, reason: 'not mine to answer' }],
+  ] as const)('K3-39 ack_session_message and respond_session_message report the committed rows for %s',
+    async (_name, body) => {
+      const h = await createC1Harness(kind);
+      c1Fixtures.push(h);
+      const mailboxLookup = h.mailbox.lookupToolCommit;
+      expect(typeof mailboxLookup).toBe('function');
+      if (mailboxLookup === undefined) return;
+      const lookup = mailboxDispatch(mailboxLookup);
+
+      const origin = {
+        runRef: h.claim.runRef, sessionRef: h.claim.sessionRef,
+        generation: h.claim.generation, workspaceId: h.ctxHost.workspaceId as string,
+      };
+      const seed = committed(await h.mailbox.sendMessage(h.ctxWork, sendSessionMessageRequest(
+        { recipient: h.busySession, text: 'ack and respond me' }, 'k3-39-mailbox-seed')));
+
+      const ackCallId = 'k3-39-ack-call-1';
+      const ackArgs = { messageRef: seed.value.ref, expectedRevision: seed.value.revision };
+      const ackRequestId = toolCommitRequestId({ origin, toolName: 'ack_session_message', kernelCallId: ackCallId });
+      const acked = committed(await h.mailbox.ackMessage(h.ctxWork, ackSessionMessageRequest(ackArgs, ackRequestId)));
+      const ackHit = await lookup(h.ctxHost, { toolName: 'ack_session_message', arguments: ackArgs,
+        kernelCallId: ackCallId, origin });
+      expect(ackHit).toMatchObject({ status: 'committed', cursor: acked.cursor });
+
+      const respondCallId = 'k3-39-respond-call-1';
+      const respondArgs = { messageRef: seed.value.ref, expectedRevision: acked.value.revision, ...body };
+      const respondRequestId = toolCommitRequestId({ origin, toolName: 'respond_session_message',
+        kernelCallId: respondCallId });
+      const responded = committed(
+        await h.mailbox.respondMessage(h.ctxWork, respondSessionMessageRequest(respondArgs, respondRequestId)));
+      const respondHit = await lookup(h.ctxHost, { toolName: 'respond_session_message', arguments: respondArgs,
+        kernelCallId: respondCallId, origin });
+      expect(respondHit).toMatchObject({ status: 'committed', cursor: responded.cursor });
     });
-    expect(conflict).toMatchObject({ status: 'undetermined' });
-    expect((conflict as Extract<ToolCommitLookupResult, { status: 'undetermined' }>).reason)
-      .toContain('idempotency_conflict');
-  });
-
-  it('K3-39 ack_session_message and respond_session_message report the committed rows through the dispatch', async () => {
-    const h = await createC1Harness(kind);
-    c1Fixtures.push(h);
-    const mailboxLookup = h.mailbox.lookupToolCommit;
-    expect(typeof mailboxLookup).toBe('function');
-    if (mailboxLookup === undefined) return;
-    const lookup = mailboxDispatch(mailboxLookup);
-
-    const origin = {
-      runRef: h.claim.runRef, sessionRef: h.claim.sessionRef,
-      generation: h.claim.generation, workspaceId: h.ctxHost.workspaceId as string,
-    };
-    const seed = committed(await h.mailbox.sendMessage(h.ctxWork, sendSessionMessageRequest(
-      { recipient: h.busySession, text: 'ack and respond me' }, 'k3-39-mailbox-seed')));
-
-    const ackCallId = 'k3-39-ack-call-1';
-    const ackArgs = { messageRef: seed.value.ref, expectedRevision: seed.value.revision };
-    const ackRequestId = toolCommitRequestId({ origin, toolName: 'ack_session_message', kernelCallId: ackCallId });
-    const acked = committed(await h.mailbox.ackMessage(h.ctxWork, ackSessionMessageRequest(ackArgs, ackRequestId)));
-    const ackHit = await lookup(h.ctxHost, { toolName: 'ack_session_message', arguments: ackArgs,
-      kernelCallId: ackCallId, origin });
-    expect(ackHit).toMatchObject({ status: 'committed', cursor: acked.cursor });
-
-    const respondCallId = 'k3-39-respond-call-1';
-    const respondArgs = { messageRef: seed.value.ref, expectedRevision: acked.value.revision, text: 'the answer' };
-    const respondRequestId = toolCommitRequestId({ origin, toolName: 'respond_session_message',
-      kernelCallId: respondCallId });
-    const responded = committed(
-      await h.mailbox.respondMessage(h.ctxWork, respondSessionMessageRequest(respondArgs, respondRequestId)));
-    const respondHit = await lookup(h.ctxHost, { toolName: 'respond_session_message', arguments: respondArgs,
-      kernelCallId: respondCallId, origin });
-    expect(respondHit).toMatchObject({ status: 'committed', cursor: responded.cursor });
-  });
 });
 
 describe.each(['memory', 'sqlite'] as const)('K3-39 send_user_message owner lookup (%s)', kind => {

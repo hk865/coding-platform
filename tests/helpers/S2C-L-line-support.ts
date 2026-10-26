@@ -35,6 +35,7 @@ import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createRunSupport, runKey, waitContinuation, yieldedEvent, type RunSupport } from './S2C-L-runs-support.js';
@@ -181,7 +182,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records,
-      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records],
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records],
     events: [...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events,
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
       ...QUERY_JOB_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events,

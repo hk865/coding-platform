@@ -19,6 +19,7 @@ import * as memoryBackend from '../../src/core/record-store/in-memory-record-sto
 import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { createDecisionSettingsService } from '../../src/core/work-graph/configuration/decision-settings-service.js';
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
@@ -55,7 +56,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
   const types = new Set<string>();
   const beforeWrite = () => { beforeWrites++; if (failBeforeWrite) { failBeforeWrite = false; throw new Error('WP2 beforeWrite failure'); } };
   function schemas(original: RecordBackendSchemas): RecordBackendSchemas {
-    const groups = [original, DECISION_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS];
+    const groups = [original, DECISION_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS, SESSION_ACTIVITY_SCHEMAS];
     const records = [...new Map(groups.flatMap(g => g.records).map(s => [s.schemaId, s])).values()];
     records.forEach(s => types.add(s.aggregateType));
     return { records,
@@ -93,6 +94,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       permissions: structuredClone(input.permissions), hostTemplate: structuredClone(B2_HOST.hostTemplate) } };
   };
   const mailboxDeps = { records, sessions: f.sessions, executions: reads, roles, materials,
+    defaultInquiryDeadlineMs: 86_400_000,
     runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration }, systemActor: actor, now: f.now, newId: f.id,
     // NR tests reply binding; DU owns testing how these trusted facts are resolved.
     duties: { async readMessageDutiesFacts() { return { status: 'ready' as const,

@@ -15,7 +15,7 @@
 - `contracts.ts` — capability 词汇（`RuntimeCapabilities`）。
 - `ports.ts` — `RuntimeExecutionPort`/`AgentRuntimePort`/`AgentRuntimeService`：整个执行面的正式端口；`countRunActivity` 与 `countQueryActivity` 是并排的只读活动计数。
 - `runtime.ts` — `createAgentRuntime`：装配并发布端口；无依赖时只给显式 unsupported/unavailable，不伪造能力。`countQueryActivity` 先按 ref 读已结束的 QueryRun：没有执行状态、没有固定入口或结果是 `not_entered` 的答 `not_entered`；其余再读执行 Session，窗口上界与 `countRunActivity` 共用一个选择（`endPosition` → Turn 终点 → 保存的对账观察 → Kernel 尾部），丢失窗口时从位置 0 读起；`maxPages` 原样交给窗口读取器校验。
-- `execution-contracts.ts` — 执行与 Query 的 prepare/start/observe 请求、结果和 `RuntimeExecutionDependencies` 依赖束。
+- `execution-contracts.ts` — 执行与 Query 的 prepare/start/observe 请求、结果和 `RuntimeExecutionDependencies` 依赖束；`messages` 是完整 `SessionMessageCommandPort`。
 - `execution-history-contracts.ts` — 原历史分页与图执行历史的请求/端口类型。
 - `execution-control.ts` — 内部安全点控制协调器：pause/cancel 的 live handle 与退出证明。
 - `execution-driver.ts` — Work fresh 执行驱动与 shell blocked/allowance hook。
@@ -58,12 +58,12 @@
 
 ### 工具注册与工具实现
 做工具组装配和每个 Kernel 工具实现的去这组。
-- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。
+- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`WorkToolGroupInput.mailbox` 是完整 `SessionMessageCommandPort`；未绑定的检查在 mailbox/decision 分支内，只选用户决策工具同样要求它。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。
 - `exploration-tools.ts` — 源码探索工具组。
 - `graph-tools.ts` — `look_graph`/`find_graph` 只读图工具；`goalRef` 可为 `null`（请求无目标时的项目读分支）。`history` 模式没有可信目标时以 `invalid`“this request has no goal”拒绝，不拿别的目标的历史。
 - `note-tool.ts` — `record_note` 工具。`NoteToolsConfig` 的 `kinds`/`withdraw` 决定声明：写入种类枚举正好是 `kinds`，`review` 只在完整 Work 种类集（含 `repair`）下才建，`withdraw` 只在被准可时才建；空 `kinds` 在构造时抛错，不注册一个只能被拒的工具。
 - `whiteboard-tools.ts` — 白板/未来计划工具。
-- `communication-tools.ts` — SessionMailbox 与用户决策工具。
+- `communication-tools.ts` — SessionMailbox 与用户决策工具。`SessionMailboxToolsConfig.mailbox` 是完整 `SessionMessageCommandPort`；`send_session_message` 带 `expected`/`taskRef`/`followupOf`/`deadlineMs`，没有 `goalRef`；`respond_session_message` 是扁平的两臂 `{ messageRef, expectedRevision, text } | { messageRef, expectedRevision, reject: true, reason }`。
 - `session-discovery-tools.ts` — Session 发现工具（已弃用，保留旧 Run 行为）。
 - `unknown-call-review-tools.ts` — review 轮的记录与更安全方案工具。
 - `command-rerun-tools.ts` — `request_command_rerun` 工具。
@@ -140,11 +140,11 @@
 | `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
 | `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
 | `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:218` | 按 grant/配置选 Work 工具组 | 驱动装配 |
-| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:530` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具 | 提交工具声明 |
+| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:531` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具 | 提交工具声明 |
 | `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:119` | 图历史读端口的工具代理 | 工具需要图历史 |
 | `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:235` | `project_source` 冻结模式工具 | 源码工具组 |
 | `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |
-| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:466` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
+| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:467` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
 | `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
 | `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
 | `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |

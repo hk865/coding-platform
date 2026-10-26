@@ -22,7 +22,9 @@ import type {
 import type { HandoffAcceptInputV1 } from '../core/work-graph/sessions/session-handoff-service.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
-import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
+import type {
+  SessionMailboxPort, SessionMessageCommandPort,
+} from '../core/work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -61,6 +63,7 @@ import type { QueryJobIntentV1 } from '../contracts/query-job.js';
 import type { RuntimeBudget } from '../contracts/runtime-budget.js';
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
+import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
@@ -185,6 +188,10 @@ export type CoreRouteSuffix =
   | 'messages/read'
   | 'messages/body'
   | 'messages/outbox'
+  | 'messages/release'
+  | 'messages/withdraw'
+  | 'messages/view'
+  | 'messages/inbox-view'
   | 'workspaces/registration'
   | 'queries/submit'
   | 'queries/read'
@@ -303,7 +310,9 @@ export type CoreRouteSuffix =
   // The two secretary lifecycle commands: the person's handoff to a successor line and the manual archive of a
   // secretary with one choice per open request. Both stay internal in the public key list.
   | 'secretaries/handoff'
-  | 'secretaries/archive';
+  | 'secretaries/archive'
+  // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
+  | 'goals/dispatch-basis';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -390,8 +399,10 @@ export type SessionsCreateBody = PlainBody<RuntimeExecutionPort['createSession']
 export type SessionsCreateResponse = RouteResponse<RuntimeExecutionPort['createSession']>;
 export type SessionsHistoryBody = PlainBody<RuntimeExecutionPort['readSessionHistory']>;
 export type SessionsHistoryResponse = RouteResponse<RuntimeExecutionPort['readSessionHistory']>;
-export type MessagesSendBody = GraphWriteBody<SessionMailboxPort['sendMessage']>;
-export type MessagesSendResponse = RouteResponse<SessionMailboxPort['sendMessage']>;
+// The send's aliases follow the full command port: the mailbox's own send answers the send result (not the record the
+// narrow port's old member returned), and `messages/send` publishes that result. Every other alias keeps its spelling.
+export type MessagesSendBody = GraphWriteBody<SessionMessageCommandPort['sendMessage']>;
+export type MessagesSendResponse = RouteResponse<SessionMessageCommandPort['sendMessage']>;
 export type MessagesInboxBody = PlainBody<SessionMailboxPort['readInbox']>;
 export type MessagesInboxResponse = RouteResponse<SessionMailboxPort['readInbox']>;
 export type MessagesReadBody = PlainBody<SessionMailboxPort['readMessage']>;
@@ -400,6 +411,23 @@ export type MessagesBodyBody = PlainBody<SessionMailboxPort['readMessageBody']>;
 export type MessagesBodyResponse = RouteResponse<SessionMailboxPort['readMessageBody']>;
 export type MessagesOutboxBody = PlainBody<NonNullable<SessionMailboxPort['readOutbox']>>;
 export type MessagesOutboxResponse = RouteResponse<NonNullable<SessionMailboxPort['readOutbox']>>;
+// The two release/withdraw commands and the two derived view reads, each derived from the command port's exact method.
+export type MessagesReleaseBody = GraphWriteBody<SessionMessageCommandPort['releaseMessage']>;
+export type MessagesReleaseResponse = RouteResponse<SessionMessageCommandPort['releaseMessage']>;
+export type MessagesWithdrawBody = GraphWriteBody<SessionMessageCommandPort['withdrawMessage']>;
+export type MessagesWithdrawResponse = RouteResponse<SessionMessageCommandPort['withdrawMessage']>;
+export type MessagesViewBody = PlainBody<SessionMessageCommandPort['readMessageView']>;
+export type MessagesViewResponse = RouteResponse<SessionMessageCommandPort['readMessageView']>;
+export type MessagesInboxViewBody = PlainBody<SessionMessageCommandPort['readInboxView']>;
+export type MessagesInboxViewResponse = RouteResponse<SessionMessageCommandPort['readInboxView']>;
+
+/** The message routes' DTO assembly: the production-reach anchor for the eight aliases above. */
+export type MessagesCoreRouteDto = {
+  'messages/release': { body: MessagesReleaseBody; response: MessagesReleaseResponse };
+  'messages/withdraw': { body: MessagesWithdrawBody; response: MessagesWithdrawResponse };
+  'messages/view': { body: MessagesViewBody; response: MessagesViewResponse };
+  'messages/inbox-view': { body: MessagesInboxViewBody; response: MessagesInboxViewResponse };
+};
 
 // ---------------------------------------------------------------------------
 // Slice 5 §4.5 decision routes. Each alias derives from the exact owner method
@@ -417,6 +445,8 @@ export type GoalsReorderBody = GraphWriteBody<GoalSettingsPort['reorderGoals']>;
 export type GoalsReorderResponse = RouteResponse<GoalSettingsPort['reorderGoals']>;
 export type GoalsConflictsBody = PlainBody<DecisionReadPort['queryGoalConflicts']>;
 export type GoalsConflictsResponse = RouteResponse<DecisionReadPort['queryGoalConflicts']>;
+export type GoalsDispatchBasisBody = PlainBody<DispatchBasisReadPort['readDispatchBasis']>;
+export type GoalsDispatchBasisResponse = RouteResponse<DispatchBasisReadPort['readDispatchBasis']>;
 export type PlansRequestCandidateBody = PlainBody<RequestCandidatePort['readRequestCandidate']>;
 export type PlansRequestCandidateResponse = RouteResponse<RequestCandidatePort['readRequestCandidate']>;
 export type PlansAbandonBody = GraphWriteBody<RequestCandidatePort['abandonPlanProposal']>;

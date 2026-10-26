@@ -145,6 +145,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   const authority = createMaterialRecordReaders(records).authority;
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
   const messages = createSessionMailbox({ records, sessions: base.sessionsPort, executions: reads, roles, materials,
+    defaultInquiryDeadlineMs: 86_400_000,
     systemActor: { kind: 'system', id: prefix }, now, newId: eventId });
   const controls = createRunControlService({ records, authority, reads, now, eventId });
   const workspaceHost = {

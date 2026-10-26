@@ -6,21 +6,21 @@
 
 ## tests/ 下的直接子文件夹
 
-- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（85 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`。
+- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（88 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`。
 - `tests/architecture/` — 依赖方向、生产代码可达性和状态写入边界（4 个），入口 `boundaries.test.ts`；`production-reach.ts` 是它自己的扫描器。
-- `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（30 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
+- `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（36 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
 - `tests/context/` — 上下文装配，只有 `verification-workspace-reader.test.ts` 一个。
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（17 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 142 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 147 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
-- `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（14 个），例如 `SP-lookup-index-migration.test.ts`。
-- `tests/runtime/` — 真实 Runtime/Kernel 执行链（145 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
+- `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（15 个），例如 `SP-lookup-index-migration.test.ts`。
+- `tests/runtime/` — 真实 Runtime/Kernel 执行链（147 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（117 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景）。
-- `tests/state/` — 状态机、编解码、查询和恢复不变量（54 个），例如 `K3-14-conclusion-pure.test.ts`。
-- `tests/work-graph/` — WorkGraph 域服务和读模型（358 个），是夹具使用最密集的文件夹。
+- `tests/state/` — 状态机、编解码、查询和恢复不变量（55 个），例如 `K3-14-conclusion-pure.test.ts`。
+- `tests/work-graph/` — WorkGraph 域服务和读模型（383 个），是夹具使用最密集的文件夹。
 
 ## tests/helpers/ 的夹具
 
@@ -104,6 +104,8 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S6B2-fixture.ts` — 冻结；6B-2 的公开步骤，搭在 host 世界（`S6A-host-fixture.ts`）和 6B-1 的步骤上：`openS6B2World`、`seedS6BTooLongSecretary`（秘书轮跑完并公开核对窗口和用量）、`holdS6BUnderstandingRound`（轮结束后按本轮 QueryRun 精确读历史，核对本轮的调用、成功写入和公开指针/版本）、`driveS6BHandoff` 与 `teardownS6BHandoff`（经 `world.platform.workflow.sessionHandoff` 驱动到完成、等 writer 或拒绝；崩溃时先等 `reached` 再 `crash()` 一次、从同一世界取新 owner，旧调用和按住的提交交给 teardown 在断言之后 `commitBarrier.reset()`；请求的 hold 在没有公开的生产身份构造入口前直接报错）、`seedS6BTwoProcessingRoots`、`seedS6BStaleCandidate`；不写也不读 store，不为 Run 造调用上下文；6B-2 的各组测试在用。
 - `S6B2-handoff-scene.ts` — 第 1 轮返工（AH-30）的共享场景，六个 H 业务测试在用：`s6b2Scene().open(backend)`/`closeAll()` 管一个世界列表；`sealInMemory`/`sealSqlite`（内部 `vi.mock` 工厂）包住真实 backend 工厂，memory 与 SQLite 两种真实后端都保留，`hold` 另接 `S6A-commit-barrier`；`s6b2Facts`、`s6b2Transfers`、`s6b2Basis`、`s6b2Advance`、`s6b2Archive` 用捕获的真实 backend 和 `world.platform` 的真实生产 owner 装配；threshold basis 由 `s6b2Basis` 调真实 `readSecretaryHandoffBasis` 读取，`createSessionResponsibilityBasisReader` 只用于 `s6b2Transfers` 的 responsibility basis；duty 来自真实 `createSessionDutyResolver`，archive 注册读走 `world.platform.sessions`；不手写 receipt、basis、duty、record 或 stage。
 - `S6B2-prompt-samples.ts` — 手写的 P7 交接期望文本：两个平台模板文件的全文（`HANDOFF_TEMPLATE_TEXTS`）、三条交接字符串（`HANDOFF_STRINGS`）、各模板文件的 sha256（`HANDOFF_TEMPLATE_DIGESTS`）和渲染结果（`HANDOFF_RENDERED`）；每个字面量都从冻结规则手抄，不调用生产渲染代码、不导入生产常量；`tests/runtime/S6B2-handoff-templates.test.ts` 在用。
+- `S7A-fixture.ts` — 冻结；7A-1 的公开步骤，搭在 host 世界（`S6A-host-fixture.ts`）、请求世界（`S6A-request-fixture.ts`，其中 SR13.1 的一个 Host 绑定扩展条目：新增一个绑定或按 id 合并工具）和 6B-1 的步骤上：`openS7AWorkWorld`（真实建 Goal、采用计划、建线并经 Workflow 跑完第一个 Task，核本次 `claim_task` 的 `claim.runRef` 和 `complete_task` 回执；任务没完成就具名报错）、`openS7AQueryWorld`（真实只读副本）、`seedS7AGoalPlan`、`setS7AAutonomy`、`pauseS7AGoal`、`resumeS7AGoal`、`moveS7APlan`（同一条 propose/apply 公开路径，读回核计划 ref 和 revision+1）、`moveS7APointer`（核新指针指向本次写入的 noteId）、`seedS7ASenders`（三种 Work 发送者走真实工具，核完整 `sender.runRef`）、`holdS7AQueryRound`（包装真实 query 工具组，按本轮 `prepared.queryRunRef` 取 Runtime 的原始上下文，执行被按住的回调，任何路径都恢复 wrapper）、`sendS7ASecretaryMessage`（经 `holdS7AQueryRound` 在挂起的请求轮里发送，读回保存的消息核秘书身份）、`holdS7ACommitter` 与 `crashS7AHost`（先等 `reached` 再 `crash()` 一次，从同一世界取新实例，按住的提交留给测试在断言之后 `commitBarrier.reset()`）、`runS7ASameSessionAgain`（同 Session 新 Run，核与上次不同）、`transferS7ASession`（两个 Session 和两条链接钉版本，缺失的目的链接按 revision 0）、`seedS7AHostSystemSender`、`nameS7AReplyHandler`；不写也不读 store，不为 Run 造调用上下文；7A-1 的各组测试在用。
+- `S7A-message-fixtures.ts` — 消息记录行和 codec 行共用的纯字面量：`s7aRecordInput`（Host 发送的新记录输入，可覆盖字段）和 `SECRETARY_SENDER`（秘书轮发送方记录）；不注册测试；`tests/work-graph/S7A-record-pure.test.ts`、`tests/work-graph/S7A-codec.test.ts` 在用。
 - `S8A-L8-reminder-world.ts` — L8 rework-2 两个公开测试的共享世界：Project/Workspace/policy/catalog/Goal/Plan/Session/claim/source capture 全由平台产生，再走 H4 prepare；`tests/work-graph/S8A-L8-reminders-public.test.ts` 在用。
 - `WP2-duties-fixture.ts` — legacy template 精确匹配的 `wp2LegacyDuty`（duty 取自 `PLATFORM_DUTIES` 正本，`src/contracts/platform-duty.ts:13`）和 `wp2RoleContent`；`tests/work-graph/WP2-message-duties.test.ts` 在用。
 - `WP2-notices-fixture.ts` — 真实 S1 owner/backend，构造钩子只加 schema 和 beforeWrite 故障点，不种历史或 cursor；`tests/work-graph/WP2-undelivered-notices.test.ts` 在用。
@@ -116,7 +118,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 
 - `S2B-r2-timeline-public-flows.ts` — 在 timeline fixture 上经真实 claim/control/entry 产生记录，补 claim 未 enter、pre-entry control 等公开流程；`tests/work-graph/S2B-r2-s-preentry-control.test.ts` 在用。
 - `S2B-r2-track-support.ts` — 经公开 fixture 流为每条 track 任务造真实 Run，用低 `readRecordCap` 区分分页读和全窗扫；`tests/work-graph/S2B-r3-consultation-cap.test.ts` 在用。
-- `S2B-task-timeline-fixture.ts` — 真实 Store + 公共 Plan/claim/entry，注册 evidence/control/anomaly/lifecycle/catalog/completion schema，给 task timeline；`tests/app/S2B-35-activity-routes.test.ts` 在用。
+- `S2B-task-timeline-fixture.ts` — 真实 Store + 公共 Plan/claim/entry，注册 evidence/control/anomaly/lifecycle/catalog/completion/Session 活动 schema，给 task timeline；`tests/app/S2B-35-activity-routes.test.ts` 在用。
 - `S2B-track-fixture.ts` — 真实 Store + 公共 Plan/claim/entry，只注册 track 读需要的 schema，用可拨时钟造 Run；`tests/app/S2B-35-activity-routes.test.ts` 在用。
 - `S2C-D-node-support.ts` — 完整 schema 的真实后端，可信 scope/Goal/Plan/catalog/Session/responsibility links 走 owner，给 node-detail/hover；`tests/work-graph/S2C-node-detail-task.test.ts` 在用。
 - `S2C-K-scenario-support.ts` — K1 的 LE4 Host 场景读写层，基于 `openHostScenario`/`restart()`/`direct()` 的真实路由；`tests/scenarios/S2C-K2-paused-transfer.test.ts` 在用。

@@ -23,7 +23,8 @@
 ### Session/请求/通信
 做 Session 目录、request round、收件箱、工具参数映射和命令识别的去这组。
 - `command-recognition-contracts.ts` — 阻塞命令识别结果 `BlockedCommandMatchV1` 与共享的 `CommandRecognizer` 类型。
-- `communication-contracts.ts` — Session 收件箱的 DTO/端口、消息事件类型与 `deriveSessionInputId`。
+- `communication-contracts.ts` — Session 收件箱的 DTO/端口、消息事件类型与 `deriveSessionInputId`；投递与读 `disposition` 的唯一纯推导 `deriveMessageDelivery`（输入 `MessageDeliveryFactsV1`、结果 `MessageDeliveryDerivationV1`），并再导出 C 的 `MessageDeliveryStateV1`/`MessageReadDispositionV1`；完整命令端口（`SessionMessageCommandPort`，扩展窄的 `SessionMailboxPort`）、发送结果、两个视图读、四个生命周期事件、请求 owner 读端口和信箱依赖的五个可选注入。
+- `message-payload.ts` — send/respond 工具参数的唯一载荷模型：`SendMessageV1`、`RespondMessageV1` 与两个纯规范化函数；工具 schema、请求构造和只读查找共用它，同样的参数得到同样的 owner 输入和指纹。
 - `request-contracts.ts` — request round 视图、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）、Query/Request 索引名、请求根索引的槽值；交接要用的请求侧条目：固定的 Host system 主体 `HANDOFF_SYSTEM_PRINCIPAL`、`InternalRouteCommandV1`、`RequestCommandReceiptReadV1`、`HandoffRequestCommandV1` 与 `HandoffRequestReceiptReadPort`（`tasks/request-service.ts` 再导出前三个），sessions 和 state 的交接文件从这里取，不 import tasks。
 - `request-ideas.ts` — 回答思路的唯一规则：`validIdeaCount` 与 `ideasIssues`（纯函数）。
 - `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`（请求事实带 `briefRef` 与唯一一份 `understandingGrants`）、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
@@ -34,12 +35,13 @@
 - `session-activity-contracts.ts` — Session 活动记录的窄读端口：`SessionActivityStateV1`（`src/core/work-graph/model/session-activity-contracts.ts:17`；`revision: 0` 是缺失，`record: null` 与坏记录区分）与 `SessionActivityReadPort`（`src/core/work-graph/model/session-activity-contracts.ts:20`；实现在 `sessions/session-activity.ts`，调用方不拼记录键、不解码信封）；这两个契约目前没有生产调用者，留给第 7 片按决定 91 的保留上限重建同一读取（allowlist 的 `kept-for`）。
 - `session-contracts.ts` — Session 创建/目录/分页契约；`CoreOperation` 记录的三个分支（`SessionOperationRecordOf`：顶层 `workspaceId`，`action.kind` 为 `create`/`handoff`/`secretary_archive`；创建分支带 `parentOperation`），读者先判 `kind`；只 `export type { GraphWrite }` 转出（测试经此路径 import），正本在 `task-contracts.ts`。
 - `session-operation-arms.ts` — `CoreOperation` 的交接分支和秘书归档分支：两张字段表（`HandoffActionShape`、`SecretaryArchiveActionShape`）、两组阶段（`HANDOFF_STAGES`、`SECRETARY_ARCHIVE_STAGES`）、四条规则和推出的类型；进度里的三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）和归档的 `input.actor` 也在这里，旧记录由唯一的 `upgradeSessionOperationActionV1` 补 `null`；`progress` 只由 `state/session-handoff.ts` 写。
-- `session-facts-contracts.ts` — Session facts/责任 basis 端口、6 个查找索引名与 `SLICE1_LOOKUP_INDEXES`。
+- `session-facts-contracts.ts` — Session facts/责任 basis 端口、6 个查找索引名与 `SLICE1_LOOKUP_INDEXES`；撤回用的收件方未结束执行端口（`RecipientExecutionsPort`）与 `OPEN_WORK_STAGES`/`OPEN_QUERY_PHASES`。
+- `dispatch-basis-contracts.ts` — 派发依据：三版事实（计划窗口、理解指针、`DispatchCounter`）的事实读与公开投影端口，以及目标理解指针端口（`GoalUnderstandingPointerPort`）。
 - `tool-commit-arguments.ts` — Kernel 工具参数到 owner `GraphWrite` 的纯映射，以及 tool commit 的 identity/lookup 辅助。
 
 ### 计划/证据/审查
 做 Plan、证据/验证、决定队列和未知调用审查的去这组。
-- `decision-contracts.ts` — 决定队列/卡片/notice、Goal 设置与答复的端口和读 DTO；`DecisionCardV1` 与 `NoticeItemV1` 带 `subject`（`DecisionSubjectV1`，Goal 或 project），没有并列的 `goalRef`；卡片来源端口用 `project?: boolean` 标记兼服务项目 subject，注记决定来源按 `subject` 读。
+- `decision-contracts.ts` — 决定队列/卡片/notice、Goal 设置与答复的端口和读 DTO；`DecisionCardV1` 与 `NoticeItemV1` 带 `subject`（`DecisionSubjectV1`，Goal 或 project），没有并列的 `goalRef`；卡片来源端口用 `project?: boolean` 标记兼服务项目 subject，注记决定来源按 `subject` 读；7A-1 的消息提交写端口（`MessageCommandWritePort`，扩展窄的 `MessageWriteOwnerPort`）、提交伴随记录与片段，以及交给 7A-2 的放行端口（`MessageReleasePort`、`MessageReleaseCandidatesPort`）和放行卡条目输入。
 - `goal-copy-contracts.ts` — 复制取消 Goal 的两个端口：`CopyInterventionReadPort`（分页读可复制干预，失败是拒绝不是空集）与 `CopyInterventionRetractionPort`（撤回一条），以及候选 DTO `CopyInterventionCandidateV1`。
 - `evidence-contracts.ts` — `EvidencePort`：验证轮、检查开始/记录/终止/重验的写入口。
 - `plan-contracts.ts` — Plan/Goal 读模型、诊断、`PlanTaskPort` 与 `PlanServicePort`。
@@ -73,12 +75,12 @@
 | `ExecutionReadPort` | `src/core/work-graph/model/execution-read-contracts.ts:96` | 精确 Task execution 与按 Goal/Task 的分页读取 | 读执行事实，不再另写读取器 |
 | `EvidencePort` | `src/core/work-graph/model/evidence-contracts.ts:110` | 验证轮与检查生命周期的唯一受信写入口 | 证据/验证 owner |
 | `MaterialPort` | `src/core/work-graph/model/material-contracts.ts:11` | 存 artifact、按引用打开并区分历史用途 | 材料读写 |
-| `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:147` | 消息发送、读取、ack、回复；读不改状态 | 收件箱与决定消息 |
-| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:358` | 决定队列、来源页与冲突读取 | 决定读模型 |
-| `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:173` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
-| `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:205` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
-| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:377` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
-| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:397` | notice 项的读取与排序 | notice 来源适配 |
+| `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:273` | 消息发送、读取、ack、回复；读不改状态 | 收件箱与决定消息 |
+| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:413` | 决定队列、来源页与冲突读取 | 决定读模型 |
+| `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:228` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
+| `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:260` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
+| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:432` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
+| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:452` | notice 项的读取与排序 | notice 来源适配 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:18`、`src/core/work-graph/model/goal-copy-contracts.ts:23`、`src/core/work-graph/model/goal-copy-contracts.ts:14` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:89` | 注记写入、审核、撤回 | 注记写 owner |
 | `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:317` | 注记按引用/列表/版本读取 | 注记读模型 |
@@ -91,7 +93,11 @@
 | `GraphContextReadPort` | `src/core/work-graph/model/graph-context-contracts.ts:91` | 图上下文、look/find 与节点卡；`goalRef` 为 `null` 时走项目分支（架构 module、Session、项目注记，命名 Goal 只读） | 图上下文读取、无 Goal 的秘书轮 |
 | `RoleConfigurationPort` | `src/core/work-graph/model/configuration-contracts.ts:15` | RoleSpec 安装/激活/读取、按绑定解析角色 | 角色配置与准入 |
 | `CommandRecognizer` | `src/core/work-graph/model/command-recognition-contracts.ts:23` | 请求 owner 与 shell hook 共用的唯一命令识别器 | 识别阻塞命令，不要另写解析 |
-| `deriveSessionInputId` | `src/core/work-graph/model/communication-contracts.ts:56` | 由 message ref 与 part 生成稳定的 session-input id | Kernel 供给与 mailbox 消费对齐时 |
+| `deriveSessionInputId` | `src/core/work-graph/model/communication-contracts.ts:69` | 由 message ref 与 part 生成稳定的 session-input id | Kernel 供给与 mailbox 消费对齐时 |
+| `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:98` | 消息投递与读 `disposition` 的唯一推导（`MessageDeliveryFactsV1` → `MessageDeliveryDerivationV1`）：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因（archived 优先）；剩下 `queued`；withdrawn、未放行、已送达、未送达、可发送依次决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读记录上存的 `delivery` | 工作线消息分节及其它要判投递/读 `disposition` 的消息读；不要另写投递判断 |
+| `dispatchBasisProblem` | `src/core/work-graph/model/message-payload.ts:70` | 非空 `DispatchBasisV1` 的唯一检查：恰好 `planRevision`、`pointerRevision`、`dispatchSequence` 三个字段，`planRevision` 为 null 或非负整数，`pointerRevision` 为 `'none'` 或非负整数，`dispatchSequence` 为非负整数；返回问题文字，没问题返回 null | send 的 `expected` 规范化和消息 codec 的 pins 检查（`message pins ` 加这里的文字）；不要另写 |
+| `normalizeSendMessageInput` | `src/core/work-graph/model/message-payload.ts:87` | send 工具参数 → `SendMessageV1`：没给的可选字段取 mailbox owner 的默认值（`waitAfterSend` 为 false；`needsReply` 只在显式 true，或没给且 `waitAfterSend` 为 true 时为 true）；`deadlineMs` 须是大于 0 的有限数；多余或坏的字段是 `invalid`。纯函数，不读时钟 | send 工具、请求构造和提交查找解码参数时；不要另写解码 |
+| `normalizeRespondMessageInput` | `src/core/work-graph/model/message-payload.ts:152` | respond 工具参数 → `RespondMessageV1`：正文是 `{ text }` 或 `{ reject: true, reason }` 二选一，`expectedRevision` 是正整数；两臂都给、都不给、缺 `messageRef` 或多余字段是 `invalid` | respond 工具、请求构造和提交查找解码参数时 |
 | `recordNoteRequestOf` | `src/core/work-graph/model/note-contracts.ts:159` | 工具参数 → 注记 owner 请求，注入可信 commandId 并补默认值 | note 工具与查找共用同一份参数 |
 | `buildTaskAdjacency` | `src/core/work-graph/model/task-index.ts:23` | 构造一个 plan 的正向/反向依赖表，保留声明顺序 | 需要 plan-local 邻接时 |
 | `hasDirectedCycle` | `src/core/work-graph/model/task-index.ts:46` | 对已有邻接表做 DFS 环检测 | 已构造邻接后校验 |
@@ -99,17 +105,17 @@
 | `queryActivityRefOf` | `src/core/work-graph/model/query-activity-plan.ts:26` | 由完整 `QueryRunRef` 构造 `QueryActivity` 记录 ref | 读写 Query 活动记录；不要另拼 ref |
 | `planQueryActivityWrite` | `src/core/work-graph/model/query-activity-plan.ts:41` | 调 `decideActivityOutcome` 定 created/replaced/unchanged 并构造下一版 `QueryActivity` 快照与 span | Query 收尾提交与 Query backfill；不要另写替换规则 |
 | `queryActivitySourceOf` | `src/core/work-graph/model/query-activity-plan.ts:79` | 从 QueryJob 与 QueryRun 读出记录要写的目标（请求轮取 prepared manifest 冻结的目标，其他取 intent 目标）、执行 Session 和被问 Session；两个 Session 都投影成 `{projectId, sessionId}`（claim 可能留下完整 Session aggregate ref）；进入了却没有 prepared manifest 的请求轮答原因 | Query 收尾提交与 Query backfill 写记录内容；不要另读目标或 Session |
-| `toolCommitRequestId` | `src/core/work-graph/model/tool-commit-arguments.ts:63` | 由 origin/toolName/kernelCallId 派生稳定的工具 commit request id | 工具 handler 与 lookup 需要同一 id |
-| `agentActorOf` | `src/core/work-graph/model/tool-commit-arguments.ts:80` | 由 SessionRef/RunRef 构造唯一的 agent actor | 委派写入身份 |
-| `sendSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:89` | `send_session_message` 参数 → mailbox 请求 | 工具 handler 构造请求 |
-| `ackSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:103` | `ack_session_message` 参数 → 带 revision pin 的请求 | ack 工具 |
-| `respondSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:112` | `respond_session_message` 参数 → 带 revision pin 的请求 | respond 工具 |
-| `sendUserMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:122` | `send_user_message` 参数 → mailbox 请求 | 用户消息工具 |
-| `recordDecisionApplicationInput` | `src/core/work-graph/model/tool-commit-arguments.ts:137` | 规范化决定应用的输入形状 | 指纹计算与写入共用 |
-| `recordDecisionApplicationRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:153` | 决定应用参数 → 带 expected pins 的请求 | 决定应用工具 |
-| `proposeFuturePlanRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:159` | `propose_future_plan` 参数 → plan owner 请求 | 未来 Plan 工具 |
-| `toolCommitLookupResult` | `src/core/work-graph/model/tool-commit-arguments.ts:168` | 把 Store lookup 结果映射成 committed/not_committed/undetermined | owner 的只读 lookup |
-| `toolCommitLookupUnknownTool` | `src/core/work-graph/model/tool-commit-arguments.ts:179` | 对不属于该 owner 的工具名返回 undetermined | 统一 lookup 分发 |
+| `toolCommitRequestId` | `src/core/work-graph/model/tool-commit-arguments.ts:68` | 由 origin/toolName/kernelCallId 派生稳定的工具 commit request id | 工具 handler 与 lookup 需要同一 id |
+| `agentActorOf` | `src/core/work-graph/model/tool-commit-arguments.ts:85` | 由 SessionRef/RunRef 构造唯一的 agent actor | 委派写入身份 |
+| `sendSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:94` | `send_session_message` 参数 → mailbox 请求 | 工具 handler 构造请求 |
+| `ackSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:112` | `ack_session_message` 参数 → 带 revision pin 的请求 | ack 工具 |
+| `respondSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:121` | `respond_session_message` 参数 → 带 revision pin 的请求 | respond 工具 |
+| `sendUserMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:131` | `send_user_message` 参数 → mailbox 请求 | 用户消息工具 |
+| `recordDecisionApplicationInput` | `src/core/work-graph/model/tool-commit-arguments.ts:146` | 规范化决定应用的输入形状 | 指纹计算与写入共用 |
+| `recordDecisionApplicationRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:162` | 决定应用参数 → 带 expected pins 的请求 | 决定应用工具 |
+| `proposeFuturePlanRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:168` | `propose_future_plan` 参数 → plan owner 请求 | 未来 Plan 工具 |
+| `toolCommitLookupResult` | `src/core/work-graph/model/tool-commit-arguments.ts:177` | 把 Store lookup 结果映射成 committed/not_committed/undetermined | owner 的只读 lookup |
+| `toolCommitLookupUnknownTool` | `src/core/work-graph/model/tool-commit-arguments.ts:188` | 对不属于该 owner 的工具名返回 undetermined | 统一 lookup 分发 |
 | 注记写入上限 | `src/core/work-graph/model/note-contracts.ts:22` | `NOTE_CONCLUSION_MAX_CODEPOINTS`、`NOTE_BODY_MAX_BYTES`、`UNDERSTANDING_BODY_MAX_BYTES`、`NOTE_FACTS_MAX`、`NOTE_BASIS_FILES_MAX`、`NOTE_BASIS_FILE_MAX_BYTES`、`NOTE_SYMBOL_HITS_MAX`、`NOTE_EXTRA_ANCHORS_MAX`、`NOTE_ANCHOR_QUOTA`、`NOTE_GOAL_QUOTA`、`NOTE_EXISTING_TOPICS_MAX`、`NOTE_ANCHOR_CANDIDATES_MAX`、`NOTE_ANCHOR_CANDIDATE_SCAN` | 注记写入/锚点准入的注入初值 |
 | 注记与记忆读取上限 | `src/core/work-graph/model/note-contracts.ts:32` | `MEMORY_PAGE_MAX`、`NOTE_READ_FILES_MAX`、`NOTE_READ_FACTS_MAX`、`NOTE_SYMBOL_RECHECK_MAX`、`MEMORY_PAGE_DEFAULT`、`MEMORY_RESULT_MAX_BYTES`、`NOTE_BODY_PAGE_BYTES`、`MEMORY_TOPICS_MAX` | 注记/记忆读取分页与字节上限 |
 | 检索与项目理解上限 | `src/core/work-graph/model/note-contracts.ts:46` | `TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_CANDIDATE_MAX`、`NOTE_RANK_WEIGHT_TOPIC`、`NOTE_RANK_WEIGHT_CONCLUSION`、`NOTE_RANK_WEIGHT_BODY`、`NOTE_SIMILAR_MAX`、`NOTE_SIMILAR_MIN`、`PROJECT_UNDERSTANDING_BODY_MAX_BYTES`、`FIND_RELATED_FILES_MAX`、`PROJECT_NORMS_CHECK_MAX`、`PROJECT_NORMS_MAX` | 全文检索、排序与项目理解读取；`TEXT_SEARCH_MAX_TERMS` 就是全文检索的词数上限 |

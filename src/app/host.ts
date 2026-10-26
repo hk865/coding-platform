@@ -70,6 +70,7 @@ import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
 import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
+import { messageConsumptionProblem, messageFactsOfRecord } from '../core/work-graph/state/message-machine.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
@@ -1613,6 +1614,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const inbox = await platform.messages.readInbox(ctx, { recipient: entry.sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
       if (inbox.status !== 'ready') return;
       for (const message of inbox.value.items) {
+        // §3.9: the Host offers only messages the one consumption rule allows; the owner re-checks with the message
+        // revision guarded, and the public reads still show every message.
+        if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) continue;
         const inquiry = message.intent === 'inquiry';
         if (message.status === 'responded' || (!inquiry && await inputCompleted(ctx, message))) continue;
         if (!inquiry && (card.value.availability !== 'idle' || card.value.record.occupancy !== null)) continue;
@@ -1630,6 +1634,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const outbox = await platform.messages.readOutbox(ctx, { senderSession: entry.sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
       if (outbox.status !== 'ready') return;
       for (const message of outbox.value.items) {
+        if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) continue;
         if (message.response === null || (message.acceptedInputs ?? []).some(input => input.part === 'response')) continue;
         if (message.sender.kind !== 'work_run') continue;
         const source = await platform.executions.readExecution(ctx, message.sender.runRef);
