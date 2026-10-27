@@ -20,7 +20,7 @@ import { sameRef } from '../state/ref-equality.js';
 const HumanActorFields = { kind: f.literal('human'), id };
 const SystemActorFields = { kind: f.literal('system'), id };
 /** `ActorRef` (`src/contracts/command-event.ts`). */
-const ActorRefField = f.union('kind', {
+export const ActorRefField = f.union('kind', {
   human: HumanActorFields, system: SystemActorFields,
   agent: { kind: f.literal('agent'), id, runRef: f.ref(RunRefShape) },
 });

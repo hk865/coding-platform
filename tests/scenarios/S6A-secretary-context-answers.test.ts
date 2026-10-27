@@ -209,7 +209,7 @@ describe('R-14: the initialization branch of a no-goal request round', () => {
         expect(roundView.ideas, governanceCase.name).toEqual([]);
         expect(roundView.goalCardDrafts, governanceCase.name).toEqual([{ index: 0, draft: {
           objective: V2_DRAFT.objective, completion: [...V2_DRAFT.completion],
-          autonomy: V2_DRAFT.autonomy, screening: null } }]);
+          autonomy: V2_DRAFT.autonomy, screening: null }, confirmedGoalRef: null }]);
       } else {
         // The semantic answer stores its body, not the JSON text, and carries no draft.
         expect(roundView.answer, governanceCase.name).toBe(semanticBody);
@@ -277,7 +277,7 @@ describe('R-14: the initialization branch of a no-goal request round', () => {
     expect(roundView.answer).toBe(V2_ANSWER);
     expect(roundView.ideas).toEqual([]);
     expect(roundView.goalCardDrafts).toEqual([{ index: 0, draft: { objective: V2_DRAFT.objective,
-      completion: [...V2_DRAFT.completion], autonomy: V2_DRAFT.autonomy, screening: null } }]);
+      completion: [...V2_DRAFT.completion], autonomy: V2_DRAFT.autonomy, screening: null }, confirmedGoalRef: null }]);
     // The draft is a proposal only: the round left no pending plan candidate behind.
     expect(view.candidate).toBeNull();
     expect(view.processing).toBe(false);

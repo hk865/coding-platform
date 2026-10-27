@@ -93,27 +93,31 @@ export type NewRoutingRoundInput = {
   queryJobId: string;
   scope: WorkspaceScope;
   root: QueryJobSnapshot;
-  routing: NonNullable<QueryJobV1['routing']>;
   receipt: RequestCommandReceiptV1 | null;
   submission: QuerySubmissionBindingV1;
   submittedAt: string;
-};
+} & (
+  | { routing: NonNullable<QueryJobV1['routing']> }
+  | { routing: null; goalAttribution: GoalRef }
+);
 
 /**
- * Spec L1's routing round: created terminal (`runRef: null`, `closed`,
- * `not_entered`), never runs a model, never occupies a Session and creates no
- * QueryRun. Its intent is the root's, kept as source metadata only.
+ * Spec L1's routing round: created terminal (`runRef: null`, `closed`, `not_entered`), never runs a model,
+ * never occupies a Session and creates no QueryRun; its intent is the root's, kept as source metadata only.
+ * An attribution round stores the Goal id as `goalId` and `goalAttribution`; its `understanding` stays null.
  */
 export function newRoutingRound(input: NewRoutingRoundInput): PendingQueryJobSnapshot {
   const scope = input.scope;
   const ref = queryJobRefFor(scope.projectId, scope.workspaceId, input.queryJobId);
   const root = input.root;
+  const attributionGoalId = input.routing === null ? input.goalAttribution.goalId : null;
+  const goalId = attributionGoalId === null ? root.job.requestGoalId : attributionGoalId;
   const job: QueryJobV1 = {
     schemaVersion: 1,
     queryJobId: ref.queryJobId,
     projectId: scope.projectId,
     workspaceId: scope.workspaceId,
-    goalId: root.job.requestGoalId,
+    goalId,
     intent: structuredClone(root.job.intent),
     status: 'closed',
     runRef: null,
@@ -125,12 +129,12 @@ export function newRoutingRound(input: NewRoutingRoundInput): PendingQueryJobSna
     roundKind: 'routing',
     requestGoalId: root.job.requestGoalId,
     assignedSession: null,
-    routing: structuredClone(input.routing),
+    routing: input.routing === null ? null : structuredClone(input.routing),
     relatedMessageRef: null,
     absorbedInto: null,
     absorbedRounds: [],
     selectedIdea: null,
-    goalAttribution: null,
+    goalAttribution: attributionGoalId,
     relatedCardRefs: [],
     enteredSession: null,
     intakeSession: null,

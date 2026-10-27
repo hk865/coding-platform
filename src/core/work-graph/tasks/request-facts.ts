@@ -26,6 +26,7 @@ import type {
   QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRoundKind, QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
 import type { CandidateRequestFactsPort } from '../model/decision-contracts.js';
+import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type {
   RequestCoreViewV1, RequestOwnerStateV1, RequestRoundStatus, RequestRoundViewV1,
 } from '../model/request-contracts.js';
@@ -40,6 +41,7 @@ import {
   type RequestRoundsFactsV1, type RequestRoundsStore,
 } from '../queries/request-rounds-read.js';
 import { readRequestCandidateHead } from './plan-readers.js';
+import { readOwnerRecord } from './owner-record-read.js';
 
 export { deriveCoveredByDrop, deriveEffectiveGoalId } from '../queries/request-rounds-read.js';
 
@@ -82,6 +84,11 @@ export type RequestCoreFactsV1 = {
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
 };
 
+/** The map key of one `(answerRef, draftIndex)` initialization binding; canonical JSON keeps the pair unambiguous. */
+function draftBindingKey(answerRef: QueryJobAnswerRef, draftIndex: number): string {
+  return canonicalJson({ answerRef, draftIndex } as unknown as JsonValue);
+}
+
 /**
  * The pure `RequestCoreViewV1` projection (§3.12): status, session, drafts,
  * selected idea, close code/detail, reasons, assignment and wait reason.
@@ -90,6 +97,7 @@ export function deriveRequestCore(
   rounds: readonly QueryJobSnapshot[],
   runs: readonly QueryRunSnapshot[],
   facts: RequestCoreFactsV1,
+  bindingByAnswerDraft?: ReadonlyMap<string, GoalRef>,
 ): RequestCoreViewV1 {
   const roundsByKey = new Map(runs.map((run) => [canonicalJson(run.ref as unknown as JsonValue), run]));
   const answersByKey = new Map(facts.answers.map((answer) => [answerKey(answer.ref), answer]));
@@ -110,7 +118,11 @@ export function deriveRequestCore(
       input: round.job.intent.question,
       answer: answer?.answer.answer ?? null,
       ideas: answer === null ? [] : answer.answer.ideas.map((idea) => ({ ...idea })),
-      goalCardDrafts: answer === null ? [] : answer.answer.goalCardDrafts.map((draft, index) => ({ index, draft: structuredClone(draft) })),
+      goalCardDrafts: answer === null ? [] : answer.answer.goalCardDrafts.map((draft, index) => ({
+        index,
+        draft: structuredClone(draft),
+        confirmedGoalRef: bindingByAnswerDraft?.get(draftBindingKey(answer.ref, index)) ?? null,
+      })),
       selectedIdea: round.job.selectedIdea === null ? null : { round: { ...round.job.selectedIdea.round }, index: round.job.selectedIdea.index },
       assignedSession: round.job.assignedSession === null ? null : { ...round.job.assignedSession },
       session: run === undefined || run.run.executionState === undefined
@@ -155,6 +167,8 @@ export type RequestFactsDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   /** The complete ordered read; production's records implements it, a narrow test double may inject it. */
   ordered?: RecordOrderedLookupPort;
+  /** The initialization binding read; without it every draft reads `confirmedGoalRef: null`. */
+  bindings?: InitializationBindingReadPort;
 };
 
 export interface RequestFactsPort {
@@ -165,6 +179,31 @@ export interface RequestFactsPort {
 
 function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
   return { status: 'rejected', code: 'unavailable', reason };
+}
+
+/**
+ * The request root a round belongs to: the round's own record names it, and a plain Query (or a
+ * foreign ref) is `not_found`. The one resolver the request owner and the confirm owner share.
+ */
+export async function resolveRequestRoot(
+  records: Pick<GoalRecordTransactionPort, 'readMany'>, ctx: CoreCallContext, round: QueryJobRef,
+): Promise<{ status: 'ready'; root: QueryJobRef } | { status: 'not_found' }
+  | { status: 'rejected'; code: 'unavailable'; reason: string }> {
+  if (round.projectId !== ctx.projectId || round.workspaceId !== (ctx.workspaceId ?? '')) {
+    return { status: 'not_found' };
+  }
+  const read = await readOwnerRecord({
+    store: records,
+    refKey: keyOf(round),
+    decode: decodeQueryJobSnapshot,
+    readError: (message) => unavailable(message),
+  });
+  if (!read.ok) {
+    return 'rejection' in read
+      ? unavailable(`the request round could not be read: ${read.rejection.reason}`) : { status: 'not_found' };
+  }
+  const root = read.value.job.requestRoot;
+  return root === null ? { status: 'not_found' } : { status: 'ready', root: { ...root } };
 }
 
 function orderedStoreOf(deps: RequestFactsDependencies): RecordOrderedLookupPort | null {
@@ -221,6 +260,37 @@ export async function readAnswers(
     guards.push({ refKey: record.refKey, expectedRevision: record.revision });
   }
   return { status: 'ready', value: answers, guards };
+}
+
+/**
+ * Each draft's confirmed Goal, from the injected binding read. A `not_found`
+ * binding is the normal unconfirmed draft; any other failed read rejects the
+ * whole request read instead of quietly reading the draft as unconfirmed.
+ */
+async function readConfirmedGoalRefs(
+  deps: RequestFactsDependencies, ctx: CoreCallContext, answers: readonly QueryJobAnswerSnapshot[],
+): Promise<{ status: 'ready'; value: ReadonlyMap<string, GoalRef> }
+  | { status: 'rejected'; code: 'unavailable'; reason: string }> {
+  const bindings = deps.bindings;
+  if (bindings === undefined) return { status: 'ready', value: new Map() };
+  const confirmed = new Map<string, GoalRef>();
+  for (const answer of answers) {
+    for (let index = 0; index < answer.answer.goalCardDrafts.length; index += 1) {
+      let read;
+      try {
+        read = await bindings.readBindingByAnswerDraft(ctx, { answerRef: answer.ref, draftIndex: index });
+      } catch (error) {
+        return unavailable(`the draft binding could not be read: ${messageOf(error)}`);
+      }
+      if (read.status === 'not_found') continue;
+      if (read.status !== 'ready') {
+        return unavailable(`the draft binding read failed: ${
+          read.status === 'rejected' ? `${read.code}: ${read.reason}` : read.status}`);
+      }
+      confirmed.set(draftBindingKey(answer.ref, index), { ...read.value.goalRef });
+    }
+  }
+  return { status: 'ready', value: confirmed };
 }
 
 async function readCandidate(
@@ -282,6 +352,8 @@ export function createRequestFacts(deps: RequestFactsDependencies): RequestFacts
     }
     const answers = await readAnswers(deps, facts.value.rounds);
     if (answers.status !== 'ready') return { status: 'rejected', code: answers.code, reason: answers.reason };
+    const confirmed = await readConfirmedGoalRefs(deps, ctx, answers.value);
+    if (confirmed.status !== 'ready') return { status: 'rejected', code: confirmed.code, reason: confirmed.reason };
     const candidate = await readCandidate(deps, ctx, {
       requestRoot: input.requestRoot, effectiveGoalId: facts.value.effectiveGoalId,
     });
@@ -297,7 +369,7 @@ export function createRequestFacts(deps: RequestFactsDependencies): RequestFacts
         coveredByDrop: facts.value.coveredByDrop,
         answers: answers.value,
         candidate: candidate.value,
-      }),
+      }, confirmed.value),
     };
   }
 

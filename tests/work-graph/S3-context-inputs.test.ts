@@ -72,6 +72,7 @@ import {
 } from '../../src/core/work-graph/tasks/context-input-service.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
@@ -423,7 +424,8 @@ async function createInputFixture(
         reason: 'S3 fixture setup reads no artifact for a Plan' };
     },
   };
-  const plans = createPlanService({ records: backend.records, materials: planMaterials, now: () => AT, eventId });
+  const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+    materials: planMaterials, now: () => AT, eventId });
 
   /**
    * One real Goal + one accepted Plan through the public owners. It is the same

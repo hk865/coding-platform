@@ -8,6 +8,7 @@ import type { CommitCursor } from './command-event.js';
 import type { ModuleRef, VersionPin, WorkspaceScope } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { DispatchBasisV1, GoalRef, WorkspaceRef } from './ledger.js';
+import type { InitializationBindingRef } from './initialization-binding.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
 import type { UnknownCallReviewRef } from './unknown-call-review.js';
@@ -177,6 +178,15 @@ export type GoalConflictFactsV1 = {
   possiblyIncomplete: boolean;
 };
 
+/** A saved planning question; a binding source carries its binding selector so two bindings of one answer keep distinct Goals, while a `prepared_goal` key stays pre-binding. */
+export type PlanningQuestionIdentityV1 = {
+  kind: 'planning_question';
+  answerRef: QueryJobAnswerRef;
+  questionIndex: number;
+  /** Present only for a binding source; a prepared_goal card's key stays byte-identical. */
+  binding?: InitializationBindingRef;
+};
+
 /**
  * The natural, immutable identity of one decision source (spec §3.3 line 629),
  * per kind. It never contains CAS pins, Goal bases, Goal revisions or order:
@@ -189,7 +199,7 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'candidate'; goalRef: GoalRef; proposalRef: {
       aggregateType: 'PlanProposal'; projectId: string; workspaceId: string; proposalId: string } }
   | { kind: 'goal_cause'; goalRef: GoalRef; code: string; affected: VersionPin[] }
-  | { kind: 'planning_question'; answerRef: QueryJobAnswerRef; questionIndex: number }
+  | PlanningQuestionIdentityV1
   | { kind: 'note_review'; note: VersionPin }
   | { kind: 'message_release'; messageRef: SessionMessageRef; revision: number }
   | { kind: 'goal_conflict'; pair: [
@@ -207,7 +217,8 @@ const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 
  * identity only. message = full messageRef; candidate = goalRef + requestRef
  * (no request: proposalRef); goal_cause = goalRef + cause code + affected
  * refs/versions (sorted by canonical ref, de-duplicated); planning_question =
- * answerRef + question index; note_review = note ref/revision;
+ * answerRef + question index (+ the binding selector on a binding source);
+ * note_review = note ref/revision;
  * message_release = messageRef + revision; goal_conflict = the UNORDERED Goal
  * pair sorted by ascending Goal key, each with its active Plan pointer. Goal
  * revisions, order and CAS pins never enter the key, so a reorder never makes
@@ -232,6 +243,7 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
     case 'planning_question':
       return canonicalJson({
         kind: 'planning_question', answerRef: identity.answerRef, questionIndex: identity.questionIndex,
+        ...(identity.binding === undefined ? {} : { binding: identity.binding }),
       } as never);
     case 'note_review':
       return canonicalJson({ kind: 'note_review', note: identity.note } as never);

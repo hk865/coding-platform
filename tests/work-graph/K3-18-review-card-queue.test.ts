@@ -22,6 +22,7 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -206,7 +207,8 @@ function digestDecisions(world: K3ReviewCardWorld, workspace: Pick<WorkspaceTool
     duties: { async readMessageDutiesFacts() { return { status: 'ready' as const, value: {
       duties: [...f.duties], readOnlyCopy: false, independentReview: false, guards: [] } }; } },
   };
-  const sources = createDecisionSourceFacts({ records: f.records, plans: f.b2.base.plans,
+  const sources = createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    plans: f.b2.base.plans,
     unknownCallReviews: world.reviews, workspace });
   return createDecisionMessageService({ records: f.records, now: () => FIXTURE_T, newId: nextId,
     operatorActor: f.operatorActor, messages: createSessionMailbox(mailboxDeps), materials,

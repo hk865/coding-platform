@@ -31,6 +31,7 @@ import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
+import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { CommandRerunRequestReadPort } from '../model/command-rerun-request-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
@@ -94,6 +95,8 @@ export type DecisionSourceFactsDependencies = {
    * absent, every file object's digest is `null`.
    */
   workspace?: Pick<WorkspaceToolsPort, 'readWorkspace'>;
+  /** The initialization binding read a planning-question binding source checks. */
+  bindings: InitializationBindingReadPort;
 };
 
 /** Builds the canonical source/application facts reader. */
@@ -170,7 +173,7 @@ export function createDecisionSourceFacts(
           case 'candidate':
             return readCandidateSource(support, identity);
           case 'planning_question':
-            return readPlanningQuestionSource(support, identity, goalRef);
+            return readPlanningQuestionSource(support, ctx, identity, goalRef, deps.bindings);
           case 'goal_conflict':
             return readGoalConflictSource(support, identity, goalRef);
           case 'note_review':

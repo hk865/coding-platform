@@ -22,6 +22,7 @@ import {
   type CoreScope,
 } from '../../src/app/core-http-types.js';
 import { PLATFORM_TOKEN_META_NAME, writeHostPage } from '../helpers/host-page.js';
+import { EXPECTED_ROUTE_ROWS, MVP_UI_ROUTES } from '../helpers/S6B3-route-suffixes.js';
 import type { GoalRef, WorkspaceRef } from '../../src/contracts/ledger.js';
 
 const scope: CoreScope = { projectId: 'mvp-ui-project', workspaceId: 'mvp-ui-workspace' };
@@ -86,14 +87,9 @@ async function corePost(base: string, suffix: string, token: string | undefined,
 
 describe('MVP UI route table (stage-one green)', () => {
   it('publishes the frozen UI suffixes with explicit, named classifications', () => {
-    expect(CORE_ROUTE_SPECS['executions/list']).toEqual({ kind: 'plain', binding: 'listExecutions', owner: 'executions.listExecutions' });
-    expect(CORE_ROUTE_SPECS['projects/read']).toEqual({ kind: 'plain', binding: 'readProject', owner: 'projects.readProject' });
-    expect(CORE_ROUTE_SPECS['files/save']).toEqual({ kind: 'plain', binding: 'saveWorkspaceFile', owner: 'workbench.saveFile' });
-    expect(CORE_ROUTE_SPECS['files/list']).toEqual({ kind: 'plain', binding: 'listWorkspaceFiles', owner: 'workbench.listFiles' });
-    expect(CORE_ROUTE_SPECS['files/compare']).toEqual({ kind: 'plain', binding: 'compareWorkspaceFiles', owner: 'workspace.compareWorkspace' });
-    expect(CORE_ROUTE_SPECS['commands/start']).toEqual({ kind: 'plain', binding: 'startCommand', owner: 'workbench.startCommand' });
-    expect(CORE_ROUTE_SPECS['commands/read']).toEqual({ kind: 'plain', binding: 'readCommand', owner: 'workbench.readCommand' });
-    expect(CORE_ROUTE_SPECS['commands/stop']).toEqual({ kind: 'plain', binding: 'stopCommand', owner: 'workbench.stopCommand' });
+    for (const suffix of MVP_UI_ROUTES) {
+      expect(CORE_ROUTE_SPECS[suffix], suffix).toEqual(EXPECTED_ROUTE_ROWS[suffix]);
+    }
   });
 });
 

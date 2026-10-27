@@ -18,7 +18,7 @@
 | `message.ts` | `readMessageSource` | message 来源的完整分支事实。 |
 | `goal-cause.ts` | `readGoalCauseSource` | goal cause 来源的完整分支事实，含原因白名单与正式原因核对。 |
 | `candidate.ts` | `readCandidateSource` | candidate 来源的完整分支事实。 |
-| `planning-question.ts` | `readPlanningQuestionSource` | planning question 来源的完整分支事实，含 QueryRun 读者读取。 |
+| `planning-question.ts` | `readPlanningQuestionSource` | planning question 来源的完整分支事实，含 QueryRun 读者读取。带绑定的身份从其绑定取 Goal：绑定读端口必须注入，按回答 + 草稿号读到的绑定必须是 `ready`（缺失是错，不给空卡）、其 ref 与本身份一致、其 Goal 与本分支的 `goalRef` 一致，已存答案仍须是 Job 的已答答案，绑定进来源 pins；没有绑定时保留原来的 Goal 要求。 |
 | `goal-conflict.ts` | `readGoalConflictSource` | goal conflict 来源的完整分支事实，含 footprint、Goal 终态与固定冲突选项。 |
 | `note-review.ts` | `readNoteReviewSource` | note review 来源的完整分支事实；Goal 为 `null` 时读无 Goal 的注记卡（`goalId: null`）；先按注记自己的 subject 比对（卡开着、关了都先比），别的 subject 的注记拒绝。 |
 | `unknown-call-review.ts` | `readUnknownCallReviewSource` | unknown call review 来源的完整分支事实。 |

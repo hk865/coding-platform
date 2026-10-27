@@ -59,6 +59,7 @@ import { createRunControlService } from '../../../src/core/work-graph/tasks/cont
 import type { TaskExecutionRecord } from '../../../src/core/work-graph/model/execution-read-contracts.js';
 import type { PlanChangeReason, PlanProposalRef, PlanServicePort, TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
 import { createPlanService } from '../../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { buildEffectiveTaskBasis } from '../../../src/core/work-graph/tasks/plan-task-basis.js';
 import { createTaskRequeueService } from '../../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../../src/core/work-graph/tasks/run-state-service.js';
@@ -821,7 +822,8 @@ export function raceWindow(database: string, writer: RaceWriter, inside: () => P
   } };
   const policy = (): TaskAutomationPolicyV1 => ({ ...DEFAULT_TASK_AUTOMATION_POLICY });
   return {
-    plans: createPlanService({ records, now: host.now, eventId: id, automationPolicy: policy }),
+    plans: createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      now: host.now, eventId: id, automationPolicy: policy }),
     claims: createTaskClaimService({ records, roles: createRoleConfigurationService({ records, now: host.now, eventId: id }),
       now: host.now, newId: id }),
     requeues: createTaskRequeueService({ records, reads, workspaceHost: workspace, source: new VerificationWorkspaceReader(),

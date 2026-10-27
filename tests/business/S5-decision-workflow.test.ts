@@ -26,6 +26,7 @@ import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-e
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -110,7 +111,8 @@ function assemble(fixture: S5DecisionFixture, goalSettings: GoalSettingsPort, cl
   };
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }).tasks,
-    plans: createPlanService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }),
+    plans: createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
+      now: fixture.now, eventId: fixture.newId }),
     sessions: createSessionDirectory({ records: fixture.records, lookups: fixture.records }),
     claims,
     executions: createRunStateReader({ records: fixture.records }),
@@ -174,7 +176,8 @@ async function endRunCrashed(fixture: S5DecisionFixture, claim: TaskClaim): Prom
   };
   const result = committed(await entry.recordRunResult(fixture.ctx, request));
   expect(result.value).toMatchObject({ status: 'ended', outcome: 'crashed', endedAt: T });
-  const plans = createPlanService({ records: fixture.records, now: fixture.now, eventId: fixture.newId });
+  const plans = createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
+    now: fixture.now, eventId: fixture.newId });
   const graph = ready(await plans.queryTaskGraph(fixture.ctx, { goalRef: GOAL_B }));
   expect(graph.tasks.find(task => task.ref.taskId === claim.task.taskId)).toMatchObject({
     ref: claim.task, effectivePhase: 'failed', execution: claim.runRef,

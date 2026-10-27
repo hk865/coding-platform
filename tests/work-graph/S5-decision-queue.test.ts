@@ -16,6 +16,7 @@ import { createArchitectureCatalogService } from '../../src/core/work-graph/arch
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
@@ -38,7 +39,8 @@ afterEach(async () => { for (const close of closers.splice(0)) await close(); })
 function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTaskPort) {
   return createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(createGoalDecisionCauseReader({ records, plans })),
-      createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans }))],
+      createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans,
+        bindings: createInitializationBindingReader({ records }) }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records })],
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
@@ -52,13 +54,14 @@ function mustCard(cards: readonly DecisionCardV1[], sourceKey: string): Decision
 async function open(kind: 'memory' | 'sqlite', reopen = false) {
   const f = await openS5DecisionFixture(kind); closers.push(() => f.close());
   if (reopen && kind === 'sqlite') await f.reopen();
-  const plans = createPlanService({ records: f.records, materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const reads = readers(f.records, plans);
   const mailboxDeps = mailboxDependencies(f);
   const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: OPERATOR,
     messages: mailbox, materials: mailboxDeps.materials,
-    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records }) });
+    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
   const q = async (extra: Partial<QueueInput> = {}) => ready(await reads.queryDecisionQueue(f.ctx,
     { workspace: WORKSPACE_SCOPE, sections: SECTIONS, page: { limit: 50 }, ...extra }));
   const card = async (source: DecisionSourceV1) => ready(await reads.readDecisionCard(f.ctx, { source }));
@@ -75,7 +78,8 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
         meta: { requestId: f.newId(), expected: [await pin(f.records, goalRef), { ref: phaseRef, revision: phase?.revision ?? 0 }] } }));
   };
   const abandon = async (proposalRef: typeof CANDIDATE_U1 | typeof CANDIDATE_U2) => committed(await
-    createRequestCandidateService({ records: f.records, now: f.now, eventId: f.newId }).abandonPlanProposal(f.ctx,
+    createRequestCandidateService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+      now: f.now, eventId: f.newId }).abandonPlanProposal(f.ctx,
       { input: { proposalRef }, meta: { requestId: f.newId(), expected: [await pin(f.records, proposalRef), await pin(f.records, GOAL_B)] } }));
   return { f, plans, q, card, answer, control, abandon, mailbox };
 }

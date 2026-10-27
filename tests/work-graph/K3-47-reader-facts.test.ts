@@ -18,6 +18,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { unknownCallReviewRefKey } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import { GOAL_B, PLAN_B2, T } from '../helpers/S5-decision-fixture.js';
@@ -84,7 +85,8 @@ function failReviewRead(records: B2Records, reviewKey: string, code: ReviewReadF
 /** The real Plan service `queryTaskGraph` read over the given record port. */
 async function taskRow(world: K3ReviewCardWorld, taskId: string, records: B2Records = world.records): Promise<TaskRow> {
   let seq = 0;
-  const plans = createPlanService({ records, now: () => T, eventId: () => `k3-47-reader-plan-event-${String(++seq)}` });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => T, eventId: () => `k3-47-reader-plan-event-${String(++seq)}` });
   const read = await plans.queryTaskGraph(world.fixture.ctx, { goalRef: GOAL_B, planRef: PLAN_B2 });
   if (read.status !== 'ready') throw new Error(`the Task graph read failed: ${JSON.stringify(read)}`);
   const row = read.value.tasks.find(task => task.ref.taskId === taskId);

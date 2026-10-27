@@ -26,6 +26,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -175,7 +176,8 @@ export async function openManyTaskWorld(f: S5DecisionFixture, taskIds: readonly 
       taskIds: [...taskIds, ...optionalTaskIds, 's2a-gate'], verificationRequirements: [{ requirementId: 's2a-check', kind: 'static',
         requirementLevel: 'required', description: 'Registered check' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
-  const plans = createPlanService({ records: f.records, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    now: f.now, eventId: f.newId });
   const proposal = committed(await plans.proposePlan(ctx, { input: { goalRef, basedOn: null, draft,
     reason: { text: 'Slice 2A rework world', sources: [] } },
     meta: { requestId: `s2a-many-propose-${goalId}`, expected: [{ ref: goalRef, revision: goal.revision }] } }));

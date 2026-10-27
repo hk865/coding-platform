@@ -9,6 +9,8 @@ import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
+import type { AdoptionGovernancePinsV1 } from '../../../contracts/initialization-adoption.js';
+import type { InitializationSourceV1 } from '../../../contracts/initial-planning.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../../contracts/query-job.js';
 import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, PlanRevisionRef,
   PlanRevisionSnapshot, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
@@ -35,12 +37,28 @@ export type {
 } from '../state/plan-machine.js';
 export type PlanProposal = PlanProposalRecord;
 /** Slice 5 proposePlan input (spec §2.4): the original fields plus the request slot facts. */
-export type ProposedPlanRequestV1 = {
-  goalRef: GoalRef; basedOn: PlanRevisionRef | null;
-  draft: PlanRevisionDraft; reason: PlanChangeReason;
+export type ProposedPlanDraftRequestV1 = {
+  goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft; reason: PlanChangeReason;
   requestRef?: QueryJobRef | null;
-  replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
+  replaces?: { proposalRef: PlanProposalRef; revision: number } | null; source?: undefined;
 };
+export type ProposedPlanSourceRequestV1 = {
+  goalRef?: undefined; basedOn: null; draft?: undefined; reason: PlanChangeReason;
+  requestRef?: QueryJobRef | null; replaces?: null; source: InitializationSourceV1;
+};
+/** P-3 freezes both arms; G's commit changes this alias to `ProposedPlanDraftRequestV1 |
+ *  ProposedPlanSourceRequestV1` (one line, its only edit in this file). */
+export type ProposedPlanRequestV1 = ProposedPlanDraftRequestV1 | ProposedPlanSourceRequestV1;
+
+export type ProposeInitialPlanFromAnswer = (
+  ctx: CoreCallContext,
+  request: GraphWrite<{ answerRef: QueryJobAnswerRef; reason: PlanChangeReason;
+    source?: InitializationSourceV1 }>,
+) => Promise<InitialPlanProposalResult>;
+export type HostProposePlan = (
+  ctx: CoreCallContext,
+  request: GraphWrite<ProposedPlanRequestV1>,
+) => Promise<WriteResult<PlanProposal>>;
 export type GoalDetail = { goal: GoalSnapshot; pendingPlan: PlanProposal | null };
 /**
  * 只读规划诊断（W2 §4.2）。它由已采用的 Plan + canonical task facts 在内存投影，
@@ -227,7 +245,8 @@ export interface PlanTaskPort {
      * `meta.expected` as today. Without it the proof has capturedPins [] and
      * basisRebases [].
      */
-    decisionSource?: DecisionSourceV1 }>): Promise<WriteResult<PlanRevisionSnapshot>>;
+    decisionSource?: DecisionSourceV1;
+    governancePins?: AdoptionGovernancePinsV1 }>): Promise<WriteResult<PlanRevisionSnapshot>>;
   /**
    * R5b.4 §11.2 the ONE thin consumer of a formal `initial_coordination` answer.
    * It accepts no caller draft/origin/assignments/digest: the candidate is the
@@ -240,15 +259,15 @@ export interface PlanTaskPort {
    * batch keep compiling; the real Plan service always publishes it.
    */
   proposeInitialPlanFromAnswer?(ctx: CoreCallContext, request: GraphWrite<{
-    answerRef: QueryJobAnswerRef; reason: PlanChangeReason
+    answerRef: QueryJobAnswerRef; reason: PlanChangeReason; source?: InitializationSourceV1
   }>): Promise<InitialPlanProposalResult>;
   /**
    * Slice 5 read-only seam (spec §4.2): the formal facts the v2 normalization
    * consumes, read without creating a candidate. Optional for the same reason
    * as the other read-only seams; the real Plan service publishes it.
    */
-  readInitialPlanAnswerFacts?(ctx: CoreCallContext, answerRef: QueryJobAnswerRef):
-    Promise<ReadResult<InitialPlanAnswerFacts>>;
+  readInitialPlanAnswerFacts?(ctx: CoreCallContext, answerRef: QueryJobAnswerRef,
+    source?: InitializationSourceV1): Promise<ReadResult<InitialPlanAnswerFacts>>;
   queryTaskGraph(ctx: CoreCallContext, input: { goalRef: GoalRef; planRef?: PlanRevisionRef;
     atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskGraph>>;
   queryReadyTasks(ctx: CoreCallContext, input: { goalRef: GoalRef; roleIds?: string[];

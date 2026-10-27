@@ -14,6 +14,7 @@ import { createProjectBootstrapServices } from '../../src/core/work-graph/config
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
@@ -115,7 +116,8 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `goal-${++sequence}` }).tasks;
     let materialReads = 0;
-    const plans = createPlanService({ records: backend.records, now: () => at,
+    const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      now: () => at,
       eventId: () => `plan-${++sequence}`, materials: { openArtifact: async () => {
         materialReads += 1;
         return { status: 'rejected', code: 'unsupported', reason: 'not expected for graph/ready' };
@@ -212,7 +214,8 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
     await backend.close();
     if (kind === 'sqlite') {
       backend = open();
-      const resumed = createPlanService({ records: backend.records, now: () => at,
+      const resumed = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+        now: () => at,
         eventId: () => `resumed-${++sequence}` });
       expect(await resumed.queryTaskGraph(ctx, { goalRef: goal.value.ref })).toMatchObject({ status: 'ready',
         value: { plan: applied.value, tasks: [{}, { inputRequirements: [{ verification: 'not_checked' }] }, {}] } });

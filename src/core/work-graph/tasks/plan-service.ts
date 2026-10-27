@@ -39,6 +39,10 @@ import { messageOf } from '../../../contracts/error-message.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
+import {
+  InitializationSourceShape, type InitializationSourceV1,
+} from '../../../contracts/initial-planning.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot,
   RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
 import {
@@ -99,17 +103,21 @@ import type {
   TaskPlanningDiagnostic,
   TaskRow,
 } from '../model/plan-contracts.js';
+import type { AdoptionGovernancePinsV1 } from '../../../contracts/initialization-adoption.js';
+import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { RequestCandidatePort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   compileFuturePlanAdoption, compileInitialPlanAdoption, type PlanAcceptanceDecisionProofV1,
-  type PlanAdoptionCommit, type PlanRequestSlotChangeV1, type PlanRevisionWrite,
+  type PlanAdoptionCommit, type PlanRequestSlotChangeV1, type PlanRevisionWrite, type VerifiedGovernance,
 } from './plan-commit-compiler.js';
 import {
+  initialAnswerProposeFingerprint,
   normalizeInitialPlanningResponseV2,
   parseInitialPlanningResponseV2,
+  sourceProposeFingerprint,
 } from './initial-plan.js';
-import { createInitialPlanAnswerReader } from './initial-plan-answer.js';
+import { createInitialPlanAnswerReader, sourceFactsGuards } from './initial-plan-answer.js';
 import {
   decodePlanProposalRecordedEvent,
   decodePlanRevisionAcceptedEvent,
@@ -139,6 +147,8 @@ import {
   readProposalOrigin,
   readRequestCandidateHead,
   candidateRequestRef,
+  architectureRefFromBody,
+  policyRefFromBody,
   resolveGovernance,
   sameCursor,
   taskRecordRefKey,
@@ -194,6 +204,8 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
    * the new model-origin consumption explicitly unavailable; every old Plan
    * path keeps its exact I/O. */
   initialPlanning?: { bodies: Pick<RawArtifactStorePort, 'read'> };
+  /** The initialization binding read port the composition root wires. */
+  bindings: InitializationBindingReadPort;
   /** W2: optional delegated Agent admission. Absent keeps the original Host-only behavior. */
   delegatedWrites?: PlanDelegatedWriteDependencies;
   /**
@@ -341,6 +353,35 @@ function decisionSourceFromUnknown(value: unknown): DecisionSourceV1 | null {
   }
   return value as unknown as DecisionSourceV1;
 }
+/** The non-ref half of a governance pin: the immutable revision row's aggregate revision and its content digest. */
+function governancePinFacts(raw: unknown): { revision: number; digest: string } | null {
+  if (!isRecord(raw) || typeof raw['revision'] !== 'number' || !Number.isSafeInteger(raw['revision'])
+    || raw['revision'] < 1 || !nonEmpty(raw['digest'])) return null;
+  return { revision: raw['revision'], digest: raw['digest'] };
+}
+/** The governance pins the caller captured (architecture and policy ref, immutable record revision, content digest); anything else is refused, never repaired. */
+function adoptionGovernancePinsFromUnknown(value: unknown, projectId: string): AdoptionGovernancePinsV1 | null {
+  if (!isRecord(value)) return null;
+  const architecture = governancePinFacts(value['architecture']);
+  const policy = governancePinFacts(value['policy']);
+  if (architecture === null || policy === null) return null;
+  const architectureRef = architectureRefFromBody((value['architecture'] as Record<string, unknown>)['ref'], projectId);
+  const policyRef = policyRefFromBody((value['policy'] as Record<string, unknown>)['ref'], projectId);
+  if (architectureRef === null || policyRef === null) return null;
+  return { architecture: { ref: architectureRef, ...architecture }, policy: { ref: policyRef, ...policy } };
+}
+/** The pins the caller captured against the governance the adoption reads now: any moved part is a `revision_conflict`, never a silent adoption. */
+function governancePinsDrift(pins: AdoptionGovernancePinsV1, governance: VerifiedGovernance): string | null {
+  const drift = (what: string, pin: AdoptionGovernancePinsV1['architecture'] | AdoptionGovernancePinsV1['policy'],
+    ref: unknown, recordRevision: number, digest: string): string | null =>
+    pin.revision === recordRevision && pin.digest === digest
+      && canonicalJson(pin.ref as unknown as JsonValue) === canonicalJson(ref as JsonValue)
+      ? null : `the ${what} governance moved since the adoption captured its pin`;
+  return drift('architecture', pins.architecture, governance.architectureBaseline.ref,
+    governance.architectureBaselineRecordRevision, governance.architectureBaseline.digest)
+    ?? drift('policy', pins.policy, governance.completionPolicy.ref,
+      governance.completionPolicyRecordRevision, governance.completionPolicy.digest);
+}
 
 // --------------------------------------------------------------------------
 // Identity, fingerprint and command-shape derivation
@@ -374,33 +415,21 @@ function proposeFingerprint(input: {
 }): string {
   return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...input } as unknown as JsonValue));
 }
-/**
- * R5b.4 §11.2 the initial-entry request fingerprint. It binds the COMPLETE
- * original input (answerRef + reason), the complete meta (requestId + expected
- * pins) and the trusted actor/scope, so an already-committed request is restored
- * from its original event without reading or re-parsing the answer body and
- * without refreshing pins on a repeat.
- */
-function initialProposeFingerprint(input: {
-  projectId: string; workspaceId: string; actor: ActorRef;
-  answerRef: unknown; reason: unknown; requestId: string; expected: unknown;
-}): string {
-  return sha256Hex(canonicalJson({
-    schemaVersion: 1, commandType: 'PlanProposeInitial', ...input,
-  } as unknown as JsonValue));
-}
 function applyFingerprint(input: {
   projectId: string; workspaceId: string; proposalRef: PlanProposalRef;
   expectedProposalRevision: number; decisionRefs: unknown;
   acknowledgementRef?: SessionMessageRef | null;
   decisionSource?: DecisionSourceV1 | null;
+  governancePins?: AdoptionGovernancePinsV1;
 }): string {
   // Slice 5 (lead, LB3): attribution enters the fingerprint only when present, so
   // a request without it keeps the pre-slice canonical payload byte-identical.
-  const { acknowledgementRef, decisionSource, ...base } = input;
+  // The governance pins follow the same rule: the caller's pin set enters only when present, a call without it is unchanged.
+  const { acknowledgementRef, decisionSource, governancePins, ...base } = input;
   return sha256Hex(canonicalJson({ schemaVersion: 1, commandType: 'PlanApply', ...base,
     ...(acknowledgementRef === undefined || acknowledgementRef === null ? {} : { acknowledgementRef }),
     ...(decisionSource === undefined || decisionSource === null ? {} : { decisionSource }),
+    ...(governancePins === undefined ? {} : { governancePins }),
   } as unknown as JsonValue));
 }
 
@@ -1082,6 +1111,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     requestRef: QueryJobRef | null;
     /** Slice 5 §2.4: the current request head this candidate replaces, or null. */
     replaces: { proposalRef: PlanProposalRef; revision: number } | null;
+    /** The Goal revision the explicit source froze; only the source arms pass it, and the commit's own Goal guard holds the same revision. */
+    expectedGoalRevision?: number;
   }): Promise<WriteResult<PlanProposal>> {
     const { goalRef, workspaceId, requestRef, replaces } = input;
     const ctx = input.ctx;
@@ -1101,6 +1132,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const scoped = await readPlanScope(records, goalRef, workspaceId, pins.pins);
     if (scoped.status !== 'ready') return scoped;
+    // The source froze its Goal revision; a Goal that moved since is a conflict, never a proposal against the newer revision.
+    if (input.expectedGoalRevision !== undefined && scoped.scope.goal.revision !== input.expectedGoalRevision) {
+      return rejected('revision_conflict', 'the Goal moved since the source captured its revision');
+    }
 
     // Slice 5 §2.4/§2.6: the request seam proves the real same-Goal root and
     // reads the current per-request head. It runs after the scope read and
@@ -1213,7 +1248,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const encodedRecords = (replacedRecord === null ? [] : [encodePlanProposal(replacedRecord, replacedOrigin)])
       .concat([encodePlanProposal(candidate, replacing ? replacedOrigin : { since: null })]);
     const cursorBindings = replacing ? [] : [{ refKey: planProposalRefKey(candidate.ref), field: 'since' as const }];
-    const merged = mergeGuards([...commitGuards, ...requestGuards]);
+    const merged = mergeGuards([...commitGuards, ...requestGuards, ...input.extraGuards]);
     if (!merged.ok) return merged.rejection;
     const claims: UniqueClaimChange[] = requestSlotEffect === null ? [] : [requestSlotClaim(requestSlotEffect)];
     // The FIRST read of the window is the horizon: any fact added after it must
@@ -1243,6 +1278,11 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const rawInput = body?.input;
     const rawMeta = body?.meta;
     if (!isRecord(rawInput) || !isRecord(rawMeta)) return rejected('invalid', 'proposePlan requires an input and meta object');
+    // The explicit-source arm has no draft identity: the selector is the whole input, and the Goal comes from the
+    // resolved facts. It runs before the draft/Goal admission below so the owner never guesses either.
+    if (rawInput['source'] !== undefined && rawInput['source'] !== null) {
+      return proposePlanFromSource(ctx, rawInput, rawMeta);
+    }
     const rawGoalRef = rawInput['goalRef'];
     if (!isRecord(rawGoalRef) || !nonEmpty(rawGoalRef['projectId'])) return rejected('invalid', 'proposePlan requires a full GoalRef');
     const goalRef = goalRefFromUnknown(rawGoalRef, rawGoalRef['projectId']);
@@ -1318,6 +1358,75 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     });
   }
 
+  /** The explicit-source propose arm: the client sends only the selector; the owner restores its Goal-free receipt
+   * first, then reads the answer, derives the Goal/version from the facts and commits through the same Host proposal commit. */
+  async function proposePlanFromSource(
+    ctx: CoreCallContext,
+    rawInput: Record<string, unknown>,
+    rawMeta: Record<string, unknown>,
+  ): Promise<WriteResult<PlanProposal>> {
+    const rawSource = rawInput['source'];
+    // A source is a selector only; the declared shape refuses binding content and an incomplete answer ref.
+    const sourceProblem = checkShape(InitializationSourceShape, { source: rawSource }, 'pending');
+    if (sourceProblem !== null) return rejected('invalid', `proposePlan source is invalid: ${sourceProblem}`);
+    const source = rawSource as InitializationSourceV1;
+    const answerRef = source.answerRef;
+    const rawReason = rawInput['reason'];
+    if (!isRecord(rawReason) || !nonEmpty(rawReason['text']) || !Array.isArray(rawReason['sources'])) {
+      return rejected('invalid', 'proposePlan requires a reason with text and sources');
+    }
+    const requestId = rawMeta['requestId'];
+    if (!nonEmpty(requestId)) return rejected('invalid', 'proposePlan requires meta.requestId');
+    // The source fixes the Goal and the draft; a request that also carries a draft/Goal/replacement is not this arm.
+    if (rawInput['goalRef'] !== undefined || rawInput['draft'] !== undefined
+      || (rawInput['basedOn'] !== undefined && rawInput['basedOn'] !== null)
+      || (rawInput['requestRef'] !== undefined && rawInput['requestRef'] !== null)
+      || (rawInput['replaces'] !== undefined && rawInput['replaces'] !== null)) {
+      return rejected('invalid', 'a source propose carries only the selector; the Goal and draft come from the source');
+    }
+    const ownedContext = ownCallContext(ctx);
+    if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
+    const workspaceId = ownedContext.value.workspaceId;
+    if (!nonEmpty(workspaceId)) return forbidden('proposePlan requires a workspace-bound context');
+    const bound = boundWriteActor(ownedContext.value, answerRef.projectId, answerRef.workspaceId);
+    if (bound.status !== 'ok') return rejected(bound.code, bound.reason);
+    if (bound.aborted) return rejected('cancelled', 'plan proposal was cancelled before admission');
+    const identity = { projectId: answerRef.projectId, actor: bound.actor, idempotencyKey: requestId };
+    const identityKey = PLAN_PROPOSE_IDENTITY_PREFIX + commandIdentityKey(identity);
+    const proposalId = initialPlanProposalIdFor({ projectId: answerRef.projectId, workspaceId, requestId });
+    const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: answerRef.projectId,
+      workspaceId, proposalId };
+    const fingerprint = sourceProposeFingerprint({ projectId: answerRef.projectId, workspaceId, actor: bound.actor,
+      source, reason: rawReason, requestId, expected: rawMeta['expected'] });
+    // The locator is Goal-free and runs before any answer/binding/manifest read, so a later-unreadable source still replays its receipt.
+    const early = await records.lookupCommit({ identityKey, fingerprint });
+    if (early.status === 'ready') {
+      const restored = await restoreProposal(records, early.value, { identityKey,
+        projectId: answerRef.projectId, workspaceId, proposalId, idempotencyKey: requestId, actor: bound.actor });
+      if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
+      return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor };
+    }
+    if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
+    if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
+    const factsRead = await readInitialPlanAnswerFacts(ownedContext.value, answerRef, source);
+    if (factsRead.status !== 'ready') {
+      return asWriteRejection(factsRead, 'the initial-plan answer facts are not readable');
+    }
+    const facts = factsRead.value;
+    const parsed = parseInitialPlanningResponseV2(facts.answerText);
+    if (parsed.status === 'rejected') return parsed;
+    const normalized = normalizeInitialPlanningResponseV2(parsed.response, facts);
+    if (normalized.status === 'rejected') return normalized;
+    if (normalized.status === 'needs_decision') {
+      return rejected('invalid', 'the initial-plan answer asks for a decision and carries no plan to propose');
+    }
+    const goalRef = facts.resolution.goal;
+    return commitHostPlanProposal({ ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey,
+      fingerprint, proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
+      expected: rawMeta['expected'], extraGuards: sourceFactsGuards(facts), expectedGoalRevision: facts.resolution.goalRevision,
+      requestRef: null, replaces: null });
+  }
+
   async function applyPlanChange(
     ctx: CoreCallContext,
     request: GraphWrite<{ proposalRef: PlanProposalRef; expectedProposalRevision: number;
@@ -1365,6 +1474,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (rawInput['decisionSource'] !== undefined && rawInput['decisionSource'] !== null && decisionSource === null) {
       return rejected('invalid', 'decisionSource must be a DecisionSourceV1 shape');
     }
+    // The caller captures the governance pins; any pin set without a ref, record revision and digest per row is refused before receipt/scope reads.
+    const rawGovernancePins = rawInput['governancePins'];
+    const governancePins = rawGovernancePins === undefined || rawGovernancePins === null
+      ? null : adoptionGovernancePinsFromUnknown(rawGovernancePins, proposalRef.projectId);
+    if (rawGovernancePins !== undefined && rawGovernancePins !== null && governancePins === null) {
+      return rejected('invalid', 'governancePins must name the architecture and policy revisions, each with its record revision and digest');
+    }
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return rejected('invalid', 'applyPlanChange requires meta.requestId');
     // W2 Agent branch is recognized first and never falls through to the Host-only binding.
@@ -1387,7 +1503,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const identity = { projectId: proposalRef.projectId, actor: bound.actor, idempotencyKey: requestId };
     const identityKey = PLAN_APPLY_IDENTITY_PREFIX + commandIdentityKey(identity);
     const fingerprint = applyFingerprint({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId,
-      proposalRef, expectedProposalRevision, decisionRefs: rawInput['decisionRefs'], acknowledgementRef, decisionSource });
+      proposalRef, expectedProposalRevision, decisionRefs: rawInput['decisionRefs'], acknowledgementRef, decisionSource,
+      ...(governancePins === null ? {} : { governancePins }) });
 
     const prePins = normalizeCallerPlanPins({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId }, rawMeta['expected']);
     if (prePins.status === 'invalid') return rejected('invalid', prePins.reason);
@@ -1460,7 +1577,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       let originGuards: RecordGuard[] = [];
       let origin: 'ok' | CoreRejection = 'ok';
       if (candidate.draft.origin !== undefined) {
-        const verified = await initialPlanAnswerReader.verifyModelCoordinationDraft(capturedContext, candidate);
+        // The scope's Goal revision is the one this adoption reads; an explicit source frozen elsewhere is a conflict (its re-read guards join the commit).
+        const verified = await initialPlanAnswerReader.verifyModelCoordinationDraft(capturedContext, candidate,
+          scope.goal.revision);
         if ('rejection' in verified) origin = verified.rejection;
         else originGuards = verified.guards;
       }
@@ -1474,6 +1593,11 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (refused !== null) return refusalOf(refused);
       // PLAN-04 refused an unresolved governance above.
       const resolved = governanceRead.status === 'resolved' ? governanceRead : null;
+      // The pins the caller captured must still be the governance read now; any move is a revision_conflict, never a silent adoption under newer governance.
+      if (governancePins !== null) {
+        const drift = governancePinsDrift(governancePins, resolved!.governance);
+        if (drift !== null) return rejected('revision_conflict', drift);
+      }
       // L10: a module-scoped task is checked against the catalog governance selected, whatever the candidate's pin.
       // Governance's guards already hold the pointer and the baseline, and the catalog row is create-only.
       let modules: 'ok' | CoreRejection = 'ok';
@@ -1558,7 +1682,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
    */
   async function proposeInitialPlanFromAnswer(
     ctx: CoreCallContext,
-    request: { input: { answerRef: QueryJobAnswerRef; reason: PlanChangeReason };
+    request: { input: { answerRef: QueryJobAnswerRef; reason: PlanChangeReason; source?: InitializationSourceV1 };
       meta: { requestId: string; expected: readonly VersionPin[] } },
   ): Promise<InitialPlanProposalResult> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'the initial plan proposal was cancelled before admission');
@@ -1571,6 +1695,15 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const rawMeta = body?.meta;
     if (!isRecord(rawInput) || !isRecord(rawMeta)) {
       return rejected('invalid', 'proposeInitialPlanFromAnswer requires an input and meta object');
+    }
+    const rawSource = rawInput['source'];
+    let source: InitializationSourceV1 | undefined;
+    if (rawSource !== undefined && rawSource !== null) {
+      const sourceProblem = checkShape(InitializationSourceShape, { source: rawSource }, 'pending');
+      if (sourceProblem !== null) {
+        return rejected('invalid', `proposeInitialPlanFromAnswer source is invalid: ${sourceProblem}`);
+      }
+      source = rawSource as InitializationSourceV1;
     }
     const rawAnswerRef = rawInput['answerRef'];
     if (!isRecord(rawAnswerRef) || rawAnswerRef['aggregateType'] !== 'QueryJobAnswer'
@@ -1603,8 +1736,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const proposalId = initialPlanProposalIdFor({ projectId: answerRef.projectId, workspaceId, requestId });
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: answerRef.projectId,
       workspaceId, proposalId };
-    const fingerprint = initialProposeFingerprint({ projectId: answerRef.projectId, workspaceId,
-      actor: bound.actor, answerRef, reason: rawReason, requestId, expected });
+    const fingerprint = initialAnswerProposeFingerprint({ projectId: answerRef.projectId, workspaceId,
+      actor: bound.actor, answerRef, reason: rawReason, requestId, expected,
+      ...(source === undefined ? {} : { source }) });
 
     // R5b.4 §11.2: the original receipt is restored FIRST, before the answer body
     // or any current Goal/scope fact is required; a repeat never refreshes pins.
@@ -1621,7 +1755,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (deps.materials === undefined || deps.initialPlanning === undefined) {
       return rejected('unsupported', 'the initial-plan answer consumption requires the injected materials and prepared-body stores');
     }
-    const factsRead = await readInitialPlanAnswerFacts(ownedContext.value, answerRef);
+    const factsRead = await readInitialPlanAnswerFacts(ownedContext.value, answerRef, source);
     if (factsRead.status !== 'ready') {
       return asWriteRejection(factsRead, 'the initial-plan answer facts are not readable');
     }
@@ -1634,17 +1768,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       return { status: 'needs_decision', answerRef: { ...facts.answerRef },
         summary: normalized.summary, questions: normalized.questions };
     }
-    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: facts.job.job.intent.projectId,
-      goalId: facts.job.job.intent.goalId as string };
-    // The Answer/Job/Run revisions actually read join the SAME candidate commit CAS.
-    const originGuards: RecordGuard[] = [
-      { refKey: canonicalJson(facts.answerRef as unknown as JsonValue), expectedRevision: 1 },
-      { refKey: canonicalJson(facts.job.ref as unknown as JsonValue), expectedRevision: facts.job.revision },
-      { refKey: canonicalJson(facts.run.ref as unknown as JsonValue), expectedRevision: facts.run.revision },
-    ];
+    // The read resolved the source once; the Goal/version come from it, never from the saved Job intent.
+    const goalRef = facts.resolution.goal;
     return commitHostPlanProposal({ ctx, writer: 'initial_answer', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
       proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
-      expected, extraGuards: originGuards, requestRef: null, replaces: null });
+      expected, extraGuards: sourceFactsGuards(facts), requestRef: null, replaces: null,
+      // Only the explicit source froze a Goal revision; the ordinary plain entry keeps today's behavior.
+      ...(facts.resolution.kind === 'plain' ? {} : { expectedGoalRevision: facts.resolution.goalRevision }) });
   }
 
   async function queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>> {

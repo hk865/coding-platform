@@ -28,6 +28,7 @@ import type { GoalRecordTransactionPort } from '../../src/core/record-store/port
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
@@ -79,7 +80,8 @@ function changePolishDraft(planId: string, planRevision: number): PlanDraftV2 {
 
 function planServiceOver(records: Records, tag: string): ReturnType<typeof createPlanService> {
   let n = 0;
-  return createPlanService({ records, now: () => AT, eventId: () => `w1-${tag}-${++n}` });
+  return createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => AT, eventId: () => `w1-${tag}-${++n}` });
 }
 
 const dirs: string[] = [];

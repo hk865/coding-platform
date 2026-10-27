@@ -14,6 +14,7 @@ import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/recor
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
@@ -148,7 +149,8 @@ async function seedAcceptedTask(records: Awaited<ReturnType<typeof open>>['backe
         requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
   };
-  const plans = createPlanService({ records, now: () => at, eventId: () => `r4b-plan-${++sequence}` });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => at, eventId: () => `r4b-plan-${++sequence}` });
   const proposed = await plans.proposePlan(ctx, {
     input: { goalRef, basedOn: null, draft, reason: { text: 'Accepted task plan', sources: [] } },
     meta: { requestId: 'r4b-propose-plan', expected: [{ ref: goalRef, revision: created.value.revision }] },

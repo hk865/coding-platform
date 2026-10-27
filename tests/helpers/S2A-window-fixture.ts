@@ -14,6 +14,7 @@ import type { DecisionReadPort } from '../../src/core/work-graph/model/decision-
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
@@ -38,11 +39,13 @@ export function windowReadModel(f: S5DecisionFixture, records: S5Records): Decis
   const inner = f.records;
   const materials = createMaterialService({ bodies: f.bodies,
     authority: createMaterialRecordReaders(inner).authority, now: f.now });
-  const plans = createPlanService({ records: inner, materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: inner, bindings: createInitializationBindingReader({ records: inner }),
+    materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const causes = createGoalDecisionCauseReader({ records: inner, plans });
   return createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(causes),
-      createPlanningQuestionCardSource(createPlanningQuestionReader({ records: inner, plans }))],
+      createPlanningQuestionCardSource(createPlanningQuestionReader({ records: inner, plans,
+        bindings: createInitializationBindingReader({ records: inner }) }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records: inner })],
     // The production executed-files reader over the real records; the S5 fixture
     // registers RUN_ACTIVITY_RECORD_SCHEMAS and forwards the real `lookupOrdered`.

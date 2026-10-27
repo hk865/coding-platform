@@ -32,6 +32,7 @@ import { makeCommitCursor } from '../../src/contracts/ledger.js';
 import type { ArchiveStepRefV1 } from '../../src/contracts/core/session-archive.js';
 import type { ArchiveLineResultV1 } from '../../src/business/workflow/session-archive.js';
 import { AG2B_SCOPE, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { EXPECTED_ROUTE_ROWS, SLICE1_ROUTES } from '../helpers/S6B3-route-suffixes.js';
 import {
   assertInvariants, cleanupScenarios, openHostScenario, openPlatformScenario, performs, readSqlite,
 } from '../scenarios/harness.js';
@@ -66,35 +67,11 @@ afterEach(async () => {
 const SCOPE = { projectId: 's1-routes', workspaceId: 'w' };
 
 /** The eleven suffixes the slice adds (`CoreRouteSuffix` is declared in core-http-types.ts). */
-const NEW_ROUTES = [
-  'sessions/archive-line',
-  'sessions/archive-continue',
-  'sessions/archive-release',
-  'sessions/facts',
-  'sessions/successors',
-  'sessions/executions',
-  'sessions/queries',
-  'sessions/transfer-responsibility',
-  'tasks/archive-state',
-  'anomalies/list',
-  'messages/undelivered-replies',
-] as const satisfies readonly CoreRouteSuffix[];
+const NEW_ROUTES = SLICE1_ROUTES satisfies readonly CoreRouteSuffix[];
 
-/** Spec §4.4: kind, binding and documented owner of each new suffix. */
-const EXPECTED: Record<(typeof NEW_ROUTES)[number], { kind: CoreRouteKind; binding: keyof CoreRouteBindings; owner: string }> = {
-  'sessions/archive-line': { kind: 'graph_write', binding: 'archiveLine', owner: 'workflow.archiveLine' },
-  'sessions/archive-continue': { kind: 'plain', binding: 'continueArchiveLine', owner: 'workflow.continueArchiveLine' },
-  'sessions/archive-release': { kind: 'graph_write', binding: 'releaseSessionArchiveRequest', owner: 'sessions.releaseSessionArchiveRequest' },
-  'sessions/facts': { kind: 'plain', binding: 'readSessionFacts', owner: 'sessionFacts.readSessionFacts' },
-  'sessions/successors': { kind: 'plain', binding: 'findSessionSuccessors', owner: 'sessionFacts.findSessionSuccessors' },
-  'sessions/executions': { kind: 'plain', binding: 'listSessionExecutions', owner: 'sessionFacts.listSessionExecutions' },
-  'sessions/queries': { kind: 'plain', binding: 'listSessionQueries', owner: 'sessionFacts.listSessionQueries' },
-  'sessions/transfer-responsibility': { kind: 'graph_write', binding: 'transferSessionResponsibility',
-    owner: 'responsibilities.transferSessionResponsibility' },
-  'tasks/archive-state': { kind: 'plain', binding: 'readTaskArchiveState', owner: 'sessionAnomalies.readTaskArchiveState' },
-  'anomalies/list': { kind: 'plain', binding: 'listSessionAnomalies', owner: 'sessionAnomalies.listSessionAnomalies' },
-  'messages/undelivered-replies': { kind: 'plain', binding: 'readUndeliveredReplies', owner: 'messages.readUndeliveredReplies' },
-};
+/** Spec §4.4: kind, binding and documented owner of each new suffix (row 40's shared expected table). */
+const EXPECTED: Record<(typeof NEW_ROUTES)[number], { kind: CoreRouteKind; binding: keyof CoreRouteBindings; owner: string }> =
+  EXPECTED_ROUTE_ROWS;
 
 function context(scope: { projectId: string; workspaceId: string }): CoreCallContext {
   const actor = { kind: 'human' as const, id: 's1-routes-operator' };

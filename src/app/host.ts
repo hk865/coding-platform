@@ -46,7 +46,6 @@ import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostRecon
 import { acquireHostInstanceLease } from './host-instance-lease.js';
 import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
-import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
 import { createChangeFeed } from './change-feed.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
@@ -83,10 +82,12 @@ import {
   type HostSettingsOpenedHost,
   type HostSettingsPrivateSnapshot,
   type HostSettingsStoredModel,
+  type ChecksAdoptionHostCallbacks,
 } from './host-settings.js';
 import type {
-  HostSettingsPort, OpenSettingsWorkspace, SettingsResponse,
+  ChecksAdoptionEntryPort, HostSettingsPort, OpenSettingsWorkspace, SettingsResponse,
 } from './host-settings-types.js';
+import { createInitializationAdoptionHost, type InitializationAdoptionDependencies } from './initialization-adoption.js';
 import {
   createWorkbenchRuntimeHostBindings,
   LOCAL_WORKBENCH_BUDGET,
@@ -1092,6 +1093,26 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return { schemaVersion: 1, bindings: nextBindings, queryProfiles: nextProfiles };
   }
 
+  /** The one trusted checks configuration of a saved or adopted source: its revision is a function of the exact
+   *  checks AND their saved-Answer digest, so a re-approval of other content or source is a new version. The settings
+   *  restore and the adoption's checks stage both build through it. */
+  const buildCheckConfiguration: ChecksAdoptionHostCallbacks['buildConfiguration'] = input => {
+    const workspace = workspaces.find(candidate => scopeKey(candidate.scope) === scopeKey(input.scope));
+    if (workspace === undefined) throw new Error('the checks scope has no workspace');
+    return {
+      configurationRevision: `host-settings-checks:${sha256Hex(canonicalJson({
+        answerDigest: input.source.answerDigest, checks: input.checks,
+      } as unknown as JsonValue)).slice(0, 16)}`,
+      workspace: { aggregateType: 'Workspace', projectId: input.scope.projectId, workspaceId: input.scope.workspaceId },
+      executor: { ...actor },
+      permissionRevision: permissionRevision(actor, workspace),
+      sourceAccess: 'verification_workspace',
+      processAccess: 'all_except_denied',
+      deniedPrefixes: ['.git'],
+      checks: structuredClone([...input.checks]),
+    };
+  };
+
   const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
     // C8 (A.2 step 5.6): the Host setting `automation` (defaults 3 / true) governs the
     // requeue owner, the read model and the start-up re-drive (`resumeOnStartup`).
@@ -1103,26 +1124,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // R6 cold-start: restore/refresh the trusted check configuration for every
     // scope whose saved checks were explicitly approved. It replaces only the
     // per-scope registration; an already-open round keeps its frozen config.
+    // An approved empty array installs too: it replaces the old configuration
+    // and the static fallback (AM1 A3).
     for (const entry of snapshot.checks) {
-      const workspace = workspaces.find(candidate => scopeKey(candidate.scope) === scopeKey(entry.scope));
-      if (workspace === undefined || entry.checks.length === 0) continue;
-      // R6 cold-start: the configuration revision is a function of the exact
-      // approved checks AND their saved-Answer source digest, not the scope
-      // alone, so a re-approval of different content/source is a new version.
-      const configurationRevision = `host-settings-checks:${sha256Hex(canonicalJson({
-        answerDigest: entry.answerDigest, checks: entry.checks,
-      } as unknown as JsonValue)).slice(0, 16)}`;
-      const configuration: TrustedCheckConfiguration = {
-        configurationRevision,
-        workspace: { aggregateType: 'Workspace', projectId: entry.scope.projectId, workspaceId: entry.scope.workspaceId },
-        executor: { ...actor },
-        permissionRevision: permissionRevision(actor, workspace),
-        sourceAccess: 'verification_workspace',
-        processAccess: 'all_except_denied',
-        deniedPrefixes: ['.git'],
-        checks: structuredClone(entry.checks),
-      };
-      platform.registerCheckConfiguration({ configuration });
+      if (!workspaces.some(candidate => scopeKey(candidate.scope) === scopeKey(entry.scope))) continue;
+      platform.registerCheckConfiguration({ configuration: buildCheckConfiguration({ scope: entry.scope,
+        source: { answerRef: entry.answerRef, answerDigest: entry.answerDigest }, checks: entry.checks }) });
     }
     if (!rebuildRuntimeFromSettings || resolverRegistry === undefined) return;
     const configuration = buildRuntimeConfiguration(snapshot);
@@ -1394,7 +1401,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const settingsCatalog = settingsEnabled
     ? projectSettingsCatalog(runtimeConfiguration)
     : { models: [] as HostSettingsModelDefinition[], seedSelection: {} as Record<string, string | null> };
-  const hostSettings: HostSettingsPort | undefined = settingsEnabled
+  const hostSettings: (HostSettingsPort & ChecksAdoptionEntryPort) | undefined = settingsEnabled
     ? await createHostSettings({
       settingsDirectory: settingsDirectory as string,
       ...(promptsRoot === undefined ? {} : {
@@ -1409,8 +1416,23 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ],
       seedSelection: settingsCatalog.seedSelection,
       assembly: hostAssembly,
-    }, { onConfigurationChanged: installFromSettings })
+    }, {
+      onConfigurationChanged: installFromSettings,
+      adoption: { buildConfiguration: buildCheckConfiguration, confirmInstalledChecks: platform.confirmInstalledChecks },
+    })
     : undefined;
+  // The adoption composite over J's operation owner and the settings object J publishes (its entry, saved read,
+  // serial gate and the forwarded confirmation); a Host without settings publishes no adoption (`unsupported`).
+  const adoptionHost = hostSettings === undefined ? undefined : createInitializationAdoptionHost({
+    operations: platform.initializationAdoption,
+    checks: hostSettings, savedChecks: hostSettings, settingsGate: hostSettings, confirmChecks: hostSettings,
+    plans: platform.plans as InitializationAdoptionDependencies['plans'],
+    architecture: platform.architecture,
+    policies: platform.completionPolicies as InitializationAdoptionDependencies['policies'],
+    registration: platform.projects,
+    leaseOwned,
+    buildConfiguration: buildCheckConfiguration,
+  });
 
   // A.2 step 5.6 (§12.1 steps 1..7): the start-up reconcile, on the Host holding the instance lease only,
   // after the settings restore registered every workspace's Kernel Store and installed the automation
@@ -1973,7 +1995,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   // The real route bindings share the ONE platform instance assembled above.
   const routeBindings = createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
-    { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) });
+    { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) }, adoptionHost);
   // L8 (book ruling 1): the route-registration path uses the SAME shared step as
   // the settings flow, only after a NON-REPLAYED committed registration. The
   // step itself triggers only when `byScope` already holds the scope.

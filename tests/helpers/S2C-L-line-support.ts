@@ -50,6 +50,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../../src/contracts/task-requeue.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -149,7 +150,7 @@ export function lineReaderOver(base: TaskClaimFixture, records: WorkLineStore,
 export function decisionReadsOver(base: TaskClaimFixture, records: WorkLineStore,
   options: { autoReworkLimit?: number } = {}): DecisionReadPort {
   const plans = options.autoReworkLimit === undefined ? base.plans
-    : createPlanService({ records,
+    : createPlanService({ records, bindings: createInitializationBindingReader({ records }),
       materials: { async openArtifact() {
         return { status: 'rejected' as const, code: 'unsupported' as const, reason: 'S2C-L read-only plan service' };
       } },

@@ -86,7 +86,7 @@
 - 不要 import 上层模块；本层只允许 `model, state, persistence, materials, architecture`。
 - 不要复制 actor 校验：正本是 `src/core/work-graph/persistence/rework-codecs.ts:98` 的 `actorRefProblem`；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换（FP-17）。
 - `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:163` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不是它的副本，也不能换成它（CS-11、M1-31）。
-- `sessionAggregateRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1157` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:73`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是它的副本，不要改写成它（M1-32）。
+- `sessionAggregateRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1157` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:74`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是它的副本，不要改写成它（M1-32）。
 - 不要绕过 `state/` 写生命周期、占用或健康；所有受保护状态写入只经状态构造器（M1-01、M1-36）。
 - 不要用裸 local id 拼 key 或另写聚合 key；用 `sessionAggregateRefKey` 等完整 key（M1-32）。
 - 不要把失败读当空卡、把截断当完整列表、或把 intake claim 释放当 Session 释放（FP-05、M1-13、M1-36）。

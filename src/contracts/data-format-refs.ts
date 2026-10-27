@@ -2,7 +2,7 @@
  * The reusable ref descriptions for field-table formats (`data-format.ts`). Each is the complete shape of the
  * hand-written ref type it mirrors (fields, literals and tag), so `InferShape` of its fields equals that type. A tagged
  * aggregate ref carries its `aggregateType` literal; a plain ref (`SessionRef`, `ModuleRef`, `TaskTriple`) has none and
- * is never a record's address. A ref a later format introduces is defined there.
+ * is never a record's address. Later refs live here too: `DispatchCounterRefShape` and `PlanRevisionRefShape`.
  */
 import { defineShape, f } from './data-format.js';
 
@@ -48,6 +48,9 @@ export const OperationRefShape = defineShape({
 export const PlanProposalRefShape = defineShape({
   name: 'PlanProposalRef',
   fields: { aggregateType: f.literal('PlanProposal'), projectId: id, workspaceId: id, proposalId: id },
+});
+export const PlanRevisionRefShape = defineShape({
+  name: 'PlanRevisionRef', fields: { aggregateType: f.literal('PlanRevision'), projectId: id, planId: id },
 });
 export const TaskRequeueRefShape = defineShape({
   name: 'TaskRequeueRef',

@@ -1,5 +1,7 @@
 import type { ArtifactRef } from "./artifact.js";
 import type { PreparedQueryManifestV1 } from "./core/prepared-execution.js";
+import type { InitializationBindingRef } from "./initialization-binding.js";
+import type { InitializationSourceV1 } from "./initial-planning.js";
 export type QueryJobRef = {
     aggregateType: "QueryJob";
     projectId: string;
@@ -600,6 +602,14 @@ export type QueryJobAnswerSnapshot = {
  * without importing `tasks/` (module-target `model -> state` only); the task
  * parser re-exports it.
  */
+/** Which source the answer was read through and the exact Goal/version it proved. `plain` is the ordinary Query
+ *  path: no source, no binding, the Job's own Goal and the frozen manifest's revision. */
+export type InitialPlanSourceResolutionV1 =
+    | { kind: 'plain'; source: null; bindingRef: null; goal: GoalRef; goalRevision: number }
+    | { kind: 'binding'; source: InitializationSourceV1; bindingRef: InitializationBindingRef;
+        goal: GoalRef; goalRevision: 1 }
+    | { kind: 'prepared_goal'; source: InitializationSourceV1; bindingRef: null;
+        goal: GoalRef; goalRevision: number };
 export type InitialPlanAnswerFacts = {
     answer: QueryJobAnswerV1;
     answerRef: QueryJobAnswerRef;
@@ -607,4 +617,5 @@ export type InitialPlanAnswerFacts = {
     run: QueryRunSnapshot;
     manifest: PreparedQueryManifestV1;
     answerText: string;
+    resolution: InitialPlanSourceResolutionV1;
 };

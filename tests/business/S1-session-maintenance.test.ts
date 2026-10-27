@@ -38,6 +38,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { createSessionResponsibilityService, type SessionResponsibilityPort } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionAnomalyService, type SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
@@ -289,7 +290,8 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   async function adoptPlan(at: string, edit: (draft: PlanRevisionDraft) => PlanRevisionDraft): Promise<PlanRevisionSnapshot> {
     clock = at;
     vi.setSystemTime(new Date(at));
-    const plans = createPlanService({ records, now: () => at, eventId: () => `s1-maintenance-plan-${++planSeq}` });
+    const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      now: () => at, eventId: () => `s1-maintenance-plan-${++planSeq}` });
     const draft = edit(draftOf(currentPlan));
     const affectedTaskIds = draft.tasks.filter(task =>
       JSON.stringify(task) !== JSON.stringify(currentPlan.tasks.find(previous => previous.taskId === task.taskId)))

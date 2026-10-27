@@ -28,9 +28,11 @@
  *   the round is not yet claimed; (b) the bind-prepared commit (`…:prepared:`), so the round is claimed and not yet
  *   prepared; (c) the start commit (`…:entering:`), so it is prepared and not yet started; (e) a drop commit
  *   (`request.route:` writing a routing round with reason `dropped`). (a)–(c) and (e) hold the prepared commit
- *   before `records.commit` through the frozen commit barrier (tests/helpers/S6A-commit-barrier.ts), so THE TEST
- *   FILE MUST INSTALL THE BARRIER'S TWO `vi.mock`s (see that file); matching reads only the held commit's own
- *   records. (d) holds `runCodingAgent` for a Session: the start commit has landed, the Kernel has not been
+ *   before `records.commit` through the commit barrier's pre-commit `hold` (tests/helpers/S6A-commit-barrier.ts,
+ *   which wraps the real backend's `records.commit` and `records.readMany`; these gates use neither its `holdAfter`
+ *   nor its store faults), so THE TEST FILE MUST INSTALL THE BARRIER'S TWO `vi.mock`s (see that file); matching
+ *   reads only the held commit's own records.
+ *   (d) holds `runCodingAgent` for a Session: the start commit has landed, the Kernel has not been
  *   entered. A model hold holds a Session's next model request before its reply, whether the Session's queue or
  *   the world's model would serve it (holds of one Session in the order they were set); a tool hold holds the real
  *   handler of a named Kernel extension tool (`list_files`, `look_graph`, …) once the Kernel has started the call,
@@ -41,6 +43,8 @@
  * - Crash and restart (SQLite; rule sheet A2 v3, the `restart({ crash: true })` shape of tests/scenarios/harness.ts):
  *   `crash()` abandons the running Host (no `close`; it keeps whatever it holds), rewrites the lock to an exited
  *   process (`writeStaleLock`) and starts a new Host on the same directory through the base world's `reopen`.
+ *   A peer start (`crash({ keepLease: true })`) skips the stale-lock write: the abandoned Host's live lock still
+ *   names this process, and the new Host starts `held_by_other` (HL-02, a second workbench on one data directory).
  *   The abandoned Host is closed only by `close()`, after every gate of the world is released. Call `crash()` only
  *   while nothing of the old Host runs on (the rule of tests/scenarios/harness.ts:32; an entered commit of the old
  *   Host keeps waiting at its gate, as at :1068): the abandoned Host keeps its in-memory lease and drivers, and a
@@ -303,7 +307,7 @@ async function heldUntilRelease(gate: Promise<void>, signal: AbortSignal): Promi
 }
 
 /** One Host start of the world. */
-type HostInstance = { index: number; abandoned: boolean; crashOnClose: boolean };
+type HostInstance = { index: number; abandoned: boolean; crashOnClose: boolean; keepsLease?: true };
 
 export type S6AAbandonedCall = { instance: number; request: ModelRequest };
 
@@ -370,8 +374,9 @@ export type S6AHostWorld = S6ARequestWorld & {
     /** Labels of the gates not released yet. */
     unreleased(): string[];
   };
-  /** SQLite: abandon the running Host (stale lock) and start a new one on the same directory. */
-  crash(options?: S6AReopenOptions): Promise<void>;
+  /** SQLite: abandon the running Host (stale lock) and start a new one on the same directory. `keepLease: true`
+   *  keeps the abandoned Host's live lock, so the new Host starts `held_by_other` instead of taking the lease over. */
+  crash(options?: S6AReopenOptions & { keepLease?: true }): Promise<void>;
   /** The Host's `automation.resumeOnStartup` through `automation/save` (used by the next start). */
   setResumeOnStartup(on: boolean): Promise<HostSettingsSnapshot>;
   /** Any Host settings route (`/api/real/settings/<route>`) as the Host's page; answers the route's result. */
@@ -512,7 +517,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       if (database === null) throw new Error('S6A: a crash needs the SQLite directory');
       instance.abandoned = true;
       abandoned.push(real);
-      await writeStaleLock(database);
+      // A peer start keeps the live lock: the abandoned Host still runs and holds the instance lease (HL-02).
+      if (instance.keepsLease !== true) await writeStaleLock(database);
     },
     get reconcile() { return real.reconcile; },
   });
@@ -657,8 +663,10 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       if (world.backend !== 'sqlite') throw new Error('S6A: a crash restarts the Host on the same directory (SQLite only)');
       const live = instances.at(-1);
       if (live === undefined) throw new Error('S6A: the world has no Host');
+      const { keepLease, ...reopen } = reopenOptions;
       live.crashOnClose = true;
-      await hostStart(() => base.reopen(reopenOptions));
+      if (keepLease === true) live.keepsLease = true;
+      await hostStart(() => base.reopen(reopen));
     },
     reopen: reopenOptions => hostStart(() => base.reopen(reopenOptions)),
     makeUnavailableSecretary: (label, unavailableOptions) =>

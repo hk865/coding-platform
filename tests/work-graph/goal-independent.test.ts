@@ -10,6 +10,7 @@ import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/recor
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -73,7 +74,8 @@ it.each(['memory', 'sqlite'] as const)('%s: Goal creation uses only the new Stor
       .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
     expect(await goal.tasks.createGoal({ ...ctx, workspaceId: 'other-workspace' }, request(pins, 'forged-scope')))
       .toMatchObject({ status: 'rejected', code: 'forbidden' });
-    const plans = createPlanService({ records: backend.records, now: () => at, eventId: () => 'goal-event-' + ++sequence });
+    const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      now: () => at, eventId: () => 'goal-event-' + ++sequence });
     expect(await plans.queryGoal(ctx, { aggregateType: 'Goal', projectId, goalId: 'new-goal' }))
       .toMatchObject({ status: 'ready', value: { goal: { ref: { aggregateType: 'Goal', projectId, goalId: 'new-goal' }, revision: 1 } } });
     if (first.status !== 'committed') throw Error('created Goal missing');

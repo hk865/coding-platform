@@ -47,6 +47,7 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import type { PlanProposal, PlanWriteProvenanceV1 } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
@@ -159,7 +160,8 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
   const delegatedWrites: PlanDelegatedWriteDependencies = {
     reads, roles, bodies: b2.bodies, authorizeConfiguration,
   };
-  const plans = createPlanService({ records, now, eventId, delegatedWrites });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now, eventId, delegatedWrites });
 
   // Both Runs reach `entered` through the real Runtime: production prepare,
   // `port.startRun` (authorize / begin / recordExecutionEntered with the real

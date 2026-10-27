@@ -19,7 +19,7 @@
  * real store, the Session facts, the real duty resolver and the profile port
  * (see `RequestRoundDependencies`).
  */
-import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import {
   hostPrincipalOf, principalIdentity, type CoreCallContext, type HostPrincipal,
 } from '../../../contracts/core/call-context.js';
@@ -30,8 +30,8 @@ import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
-  queryJobRefFor, type PendingQueryJobSnapshot, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
-  type QueryRunRef, type QueryRunSnapshot, type QuerySubmissionBindingV1, type RequestCommandReceiptV1,
+  queryJobRefFor, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
+  type QueryRunRef, type QueryRunSnapshot, type RequestCommandReceiptV1,
   type RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -42,17 +42,18 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
+  latestAnsweredRound,
   QUERY_OPEN_BY_WORKSPACE_INDEX, REQUEST_PAGE_SIZE, REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX,
-  SECRETARY_TAIL_RETRIES, requestTailKey, secretaryIntakeKey,
+  SECRETARY_TAIL_RETRIES, secretaryIntakeKey,
   type RequestCoreViewV1, type RequestOwnerStateV1, type SecretaryProfilePort, type SecretaryProfileV1,
   HANDOFF_SYSTEM_PRINCIPAL, type InternalRouteCommandV1, type RequestCommandReceiptReadV1,
 } from '../model/request-contracts.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { SessionOperationRecord } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
-import type { RequestFactsPort } from './request-facts.js';
+import { resolveRequestRoot, type RequestFactsPort } from './request-facts.js';
 import { oldestPendingRound, type RequestRoundsFactsV1 } from '../queries/request-rounds-read.js';
-import { noopTailClaim, rootOfFacts } from '../queries/request-round-claims.js';
+import { noopTailClaim } from '../queries/request-round-claims.js';
 import {
   decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent, encodeQueryExecutionRecordedEvent, encodeQueryJobSnapshot,
   encodeQueryJobSubmittedEvent, encodeQueryRunSnapshotRecord, type QueryJobSubmittedEventV1,
@@ -65,7 +66,7 @@ import {
 } from '../sessions/session-record-codecs.js';
 import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
 import {
-  currentUnderstandingGeneration, endUnstartedRound, newRequestRound, newRoutingRound, setIntake,
+  currentUnderstandingGeneration, endUnstartedRound, newRequestRound, setIntake,
   transitionUnderstandingCommand,
 } from '../state/request-rounds.js';
 import { releaseUnenteredQuerySession } from '../state/session-availability.js';
@@ -75,10 +76,14 @@ import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { readOwnerRecord } from './owner-record-read.js';
 import { validIdeaCount } from '../model/request-ideas.js';
-import { mergeGuards as mergeGuardsChecked } from '../persistence/record-guards.js';
 import { ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { replayCommittedReceipt, type ReceiptReplayFailure } from './receipt-replay.js';
 import { admitRequestSecretary } from './secretary-selection.js';
+import {
+  guardList, moveTailClaim, nullGuard, preparedGuards, prepareRoutingRequestTail, requestTailSubmissionOf, submittedEvent,
+  targetConflict, type RequestTailActivityV1, type RequestTailAssignmentSourceV1 as AssignmentSource,
+  type RequestTailCommitFragmentV1,
+} from './request-tail-fragment.js';
 
 // ------------------------------------------------------------------------ //
 // The command, plan and result unions                                        //
@@ -405,19 +410,6 @@ async function readOne<T>(
 
 const decodeJob = (record: EncodedRecord) => decodeQueryJobSnapshot(record);
 
-/** The request root a round belongs to; a plain Query (or a foreign ref) is `not_found`. */
-async function resolveRequestRoot(
-  records: RequestServiceStore, ctx: CoreCallContext, round: QueryJobRef,
-): Promise<{ status: 'ready'; root: QueryJobRef } | { status: 'not_found' } | { status: 'rejected'; reason: string }> {
-  if (round.projectId !== ctx.projectId || round.workspaceId !== (ctx.workspaceId ?? '')) return { status: 'not_found' };
-  const read = await readOne(records, round, decodeJob);
-  if (read.status === 'not_found') return { status: 'not_found' };
-  if (read.status === 'rejected') return { status: 'rejected', reason: read.reason };
-  const root = read.value.job.requestRoot;
-  if (root === null) return { status: 'not_found' };
-  return { status: 'ready', root: { ...root } };
-}
-
 async function readRequestFacts(
   deps: RequestRoundDependencies, ctx: CoreCallContext, root: QueryJobRef,
 ): Promise<{ status: 'ready'; facts: RequestRoundsFactsV1 } | RequestRejectionV1> {
@@ -526,35 +518,14 @@ async function profileForWaiting(
 // Commit plumbing                                                           //
 // ------------------------------------------------------------------------ //
 
-/** Where the round's new holder came from: this decides which conflict re-picks. */
-type AssignmentSource = 'fresh' | 'recipient' | 'none';
+/** The input an append lands on a Session; the one activity shape is `request-tail-fragment.ts`'s. */
+export type PreparedAppendActivityV1 = RequestTailActivityV1;
 
-/**
- * A conflict on the target Session, classified by where the target came from:
- * a fresh pick answers `revision_conflict`, so Workflow re-picks without it; a
- * target the person or the drain named answers `busy`, because re-picking would
- * override that choice.
- */
-function targetConflict(source: AssignmentSource, reason: string): RequestRejectionV1 {
-  return rejected(source === 'fresh' ? 'revision_conflict' : 'busy', reason);
-}
-
-/** The input an append lands on a Session; `null` for a route away, a drop and a replay. */
-export type PreparedAppendActivityV1 = { session: SessionRef; at: string; source: QueryJobRef };
-
-type PreparedAppend = {
+/** The fragment one ordinary append carries: the frozen request side with the caller's activity; `end_unbound` leaves two nulls. */
+type PreparedAppend = Omit<RequestTailCommitFragmentV1, 'activity' | 'receipt' | 'sinceRefKey'> & {
   receipt: RequestCommandReceiptV1 | null;
-  records: EncodedRecord[];
-  events: EncodedDomainEvent[];
-  guards: RecordGuard[];
-  claims: UniqueClaimChange[];
-  /** The input activity this commit writes with its fact; `null` writes none. */
-  activity: PreparedAppendActivityV1 | null;
-  /** The created round, and its `since` binding target; `null` for `end_unbound`. */
-  round: QueryJobRef;
   sinceRefKey: string | null;
-  /** The plan's source and every target-Session guard this commit writes. */
-  conflict: { source: AssignmentSource; sessionRefKeys: string[]; intakeKey: string | null };
+  activity: PreparedAppendActivityV1 | null;
 };
 
 type CommitOutcome =
@@ -565,41 +536,6 @@ type PreparedOutcome =
   | { status: 'ready'; value: PreparedAppend }
   | { status: 'retry' }
   | RequestRejectionV1;
-
-/** A duplicate guard disagreement means the read window moved: re-read it, never pick a winner. */
-const RETRY_WINDOW = { status: 'retry' } as const;
-
-/** The one guard merge (`execution-entry-service.ts`); a conflicting duplicate rebuilds the read window. */
-function guardList(groups: readonly (readonly RecordGuard[])[]):
-  { status: 'ready'; guards: RecordGuard[] } | { status: 'retry' } {
-  const merged = mergeGuardsChecked(groups.flat());
-  if (!merged.ok) return RETRY_WINDOW;
-  return { status: 'ready', guards: merged.guards };
-}
-
-/**
- * The guard merge of one prepared commit. A target Session read twice at two
- * revisions (once among the request facts, once by the admission check) changed
- * under this command and is classified by its source; any other disagreement
- * only means the request window moved, and the window is re-read.
- */
-function preparedGuards(
-  groups: readonly (readonly RecordGuard[])[],
-  target: { source: AssignmentSource; sessionRefKeys: readonly string[] },
-): { status: 'ready'; guards: RecordGuard[] } | { status: 'retry' } | RequestRejectionV1 {
-  if (target.source !== 'none') {
-    const all = groups.flat();
-    for (const refKey of target.sessionRefKeys) {
-      const revisions = new Set(all.filter((guard) => guard.refKey === refKey).map((guard) => guard.expectedRevision));
-      if (revisions.size > 1) return targetConflict(target.source, 'the target Session changed while the request was read');
-    }
-  }
-  return guardList(groups);
-}
-
-function nullGuard(refKey: string): RecordGuard {
-  return { refKey, expectedRevision: null };
-}
 
 // ------------------------------------------------------------------------ //
 // Replay                                                                    //
@@ -733,11 +669,6 @@ function intakeChanges(input: IntakeInput): IntakeChanges {
   return { claims, records, guards };
 }
 
-function moveTailClaim(facts: RequestRoundsFactsV1 | null, requestRoot: QueryJobRef, next: QueryJobRef): UniqueClaimChange {
-  const expected = facts === null ? null : keyOf(facts.tail.ref);
-  return { claimKey: requestTailKey(requestRoot), expectedOwner: expected, nextOwner: keyOf(next) };
-}
-
 /** The pending round that currently holds an intake, if any (the invariant allows at most one). */
 function intakeHolder(facts: RequestRoundsFactsV1): QueryJobSnapshot | null {
   return facts.rounds.find((round) => round.job.intakeSession !== null) ?? null;
@@ -785,35 +716,6 @@ function intentOf(input: {
   };
 }
 
-function submittedEvent(input: {
-  principal: HostPrincipal; job: PendingQueryJobSnapshot; eventId: string; identityKey: string; fingerprint: string;
-  commandId: string; occurredAt: string;
-}): QueryJobSubmittedEventV1 {
-  const actor = input.principal.actor;
-  return {
-    eventId: input.eventId,
-    eventType: 'QueryJobSubmitted',
-    schemaVersion: 1,
-    projectId: input.job.ref.projectId,
-    workspaceId: input.job.ref.workspaceId,
-    aggregateType: 'QueryJob',
-    aggregateId: input.job.ref.queryJobId,
-    aggregateRevision: 1,
-    causationId: input.identityKey,
-    correlationId: input.job.job.intent.correlationId,
-    idempotencyKey: input.commandId,
-    actor: { kind: actor.kind, id: actor.id } as ActorRef,
-    occurredAt: input.occurredAt,
-    identityKey: input.identityKey,
-    fingerprint: input.fingerprint,
-    payload: { job: structuredClone(input.job.job) },
-  };
-}
-
-function submissionOf(identityKey: string, fingerprint: string, eventId: string): QuerySubmissionBindingV1 {
-  return { schemaVersion: 1, identityKey, fingerprint, eventId };
-}
-
 // ------------------------------------------------------------------------ //
 // select_idea validation                                                   //
 // ------------------------------------------------------------------------ //
@@ -827,8 +729,8 @@ function selectIdeaProblemOf(view: RequestCoreViewV1, round: QueryJobRef, index:
     return rejected('invalid', 'the answer does not carry 2-3 ideas');
   }
   if (index >= target.ideas.length) return rejected('invalid', 'index is outside the answer ideas');
-  const latest = [...view.rounds].reverse().find((candidate) => candidate.answer !== null);
-  if (latest === undefined || !sameJson(latest.ref, round)) {
+  const latest = latestAnsweredRound(view.rounds, (candidate) => candidate.answer !== null);
+  if (latest === null || !sameJson(latest, round)) {
     return rejected('revision_conflict', 'the round is no longer the request latest answered round');
   }
   return null;
@@ -1154,7 +1056,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       queryJobId, runId: `run-${queryJobId}`, scope, intent, kind: 'followup',
       requestRoot: command.requestRoot, requestGoalId: rootJob.job.requestGoalId,
       assignedSession: { ...source }, intakeSession: null, selectedIdea: null, relatedCardRefs: [],
-      receipt, submission: submissionOf(identityKey, fingerprint, eventId), submittedAt: occurredAt,
+      receipt, submission: requestTailSubmissionOf(identityKey, fingerprint, eventId), submittedAt: occurredAt,
       understanding: command,
     });
     const guards = preparedGuards([
@@ -1345,7 +1247,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       // follow-up take none.
       intakeSession: assignment.takesIntake && assignment.assignedSession !== null ? assignment.assignedSession : null,
       selectedIdea: input.selectedIdea, relatedCardRefs: input.relatedCardRefs, receipt,
-      submission: submissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
+      submission: requestTailSubmissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
       understanding: null,
     });
     const records: EncodedRecord[] = [encodeQueryJobSnapshot(pair.job), encodeQueryRunSnapshotRecord(pair.run)];
@@ -1462,33 +1364,20 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       sessionRefKeys = [...sessionRefKeys, sessionAggregateRefKey(released.ref)];
     }
 
-    const eventId = deps.operationId();
-    const routingJob = newRoutingRound({
-      queryJobId: roundRef.queryJobId,
+    return prepareRoutingRequestTail(input.principal, {
+      facts,
+      command: { kind: 'routing', routing },
+      identity: { commandId: input.commandId, identityKey: input.identityKey, fingerprint: input.fingerprint },
       scope: workspaceOf(ctx),
-      root: facts.rounds.find((round) => sameJson(round.ref, rootOfFacts(facts))) ?? facts.tail,
-      routing,
-      receipt: { kind: 'route', routingRound: { ...roundRef } },
-      submission: submissionOf(input.identityKey, input.fingerprint, eventId),
       submittedAt: occurredAt,
+      roundRef,
+      eventId: deps.operationId(),
+      claims,
+      records,
+      guards: guardGroups,
+      conflict: { source, sessionRefKeys, intakeKey },
+      activity: target === null ? null : { session: { ...target }, at: occurredAt, source: { ...roundRef } },
     });
-    const receipt = routingJob.job.receipt;
-    if (receipt === null) return unavailable('the routing round carries no receipt');
-    records.push(encodeQueryJobSnapshot(routingJob));
-    const guards = preparedGuards([...guardGroups, [nullGuard(keyOf(routingJob.ref))]], { source, sessionRefKeys });
-    if (guards.status !== 'ready') return guards;
-    return {
-      status: 'ready',
-      value: {
-        receipt,
-        records,
-        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal: input.principal, job: routingJob, eventId,
-          identityKey: input.identityKey, fingerprint: input.fingerprint, commandId: input.commandId, occurredAt }))],
-        guards: guards.guards, claims, round: roundRef, sinceRefKey: keyOf(routingJob.ref),
-        activity: target === null ? null : { session: { ...target }, at: occurredAt, source: { ...roundRef } },
-        conflict: { source, sessionRefKeys, intakeKey },
-      },
-    };
   }
 
   async function prepareRoute(
@@ -1605,44 +1494,31 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     const occurredAt = deps.now();
     const roundRef = queryJobRefFor(ctx.projectId, ctx.workspaceId ?? '', deps.operationId());
     const eventId = deps.operationId();
-    const routingJob = newRoutingRound({
-      queryJobId: roundRef.queryJobId,
-      scope: workspaceOf(ctx),
-      root: facts.rounds.find((round) => sameJson(round.ref, rootOfFacts(facts))) ?? facts.tail,
-      routing: {
+    // The intake is taken on the OLDEST PENDING ROUND, not on the routing round.
+    const intake = intakeChanges({ holder: intakeHolder(facts), desire: command.to,
+      next: { kind: 'existing', job: holder } });
+    return prepareRoutingRequestTail(principal, {
+      facts,
+      command: { kind: 'routing', routing: {
         from: facts.ownerState === 'owner_archived'
           ? (facts.lastOwner === null ? null : { ...facts.lastOwner })
           : null,
         to: { ...command.to },
         reason: 'assigned',
-      },
-      receipt: { kind: 'route', routingRound: { ...roundRef } },
-      submission: submissionOf(identityKey, fingerprint, eventId),
+      } },
+      identity: { commandId: command.operationId, identityKey, fingerprint },
+      scope: workspaceOf(ctx),
       submittedAt: occurredAt,
+      roundRef,
+      eventId,
+      claims: [moveTailClaim(facts, command.requestRoot, roundRef), ...intake.claims],
+      records: [],
+      recordsAfterRound: intake.records,
+      guards: [facts.guards, target.value.guards, intake.guards],
+      conflict: { source: 'recipient', sessionRefKeys: target.value.sessionRefKeys,
+        intakeKey: secretaryIntakeKey(command.to) },
+      activity: { session: { ...command.to }, at: occurredAt, source: { ...roundRef } },
     });
-    const receipt = routingJob.job.receipt;
-    if (receipt === null) return unavailable('the routing round carries no receipt');
-    // The intake is taken on the OLDEST PENDING ROUND, not on the routing round.
-    const intake = intakeChanges({ holder: intakeHolder(facts), desire: command.to,
-      next: { kind: 'existing', job: holder } });
-    const records: EncodedRecord[] = [encodeQueryJobSnapshot(routingJob), ...intake.records];
-    const guards = preparedGuards([facts.guards, target.value.guards, intake.guards, [nullGuard(keyOf(routingJob.ref))]],
-      target.value);
-    if (guards.status !== 'ready') return guards;
-    return {
-      status: 'ready',
-      value: {
-        receipt, records,
-        events: [encodeQueryJobSubmittedEvent(submittedEvent({ principal, job: routingJob, eventId, identityKey,
-          fingerprint, commandId: command.operationId, occurredAt }))],
-        guards: guards.guards,
-        claims: [moveTailClaim(facts, command.requestRoot, roundRef), ...intake.claims],
-        round: roundRef, sinceRefKey: keyOf(routingJob.ref),
-        activity: { session: { ...command.to }, at: occurredAt, source: { ...roundRef } },
-        conflict: { source: 'recipient', sessionRefKeys: target.value.sessionRefKeys,
-          intakeKey: secretaryIntakeKey(command.to) },
-      },
-    };
   }
 
   // ---------------------------------------------------------------------- //

@@ -10,6 +10,7 @@ import type { DecodeResult, PreparedCommit, StoreCommitReceipt } from '../../src
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import type { MessageDutiesFactsPort } from '../../src/core/work-graph/model/decision-contracts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -104,8 +105,9 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   };
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.newId, operatorActor: { ...OPERATOR },
     messages: createSessionMailbox(mailboxDeps), materials, messageWrites: createMessageWriteOwner(mailboxDeps),
-    sources: createDecisionSourceFacts({ records }) });
-  const planDeps = { records, materials, initialPlanning: { bodies }, now: f.now, eventId: f.newId };
+    sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }) });
+  const planDeps = { records, bindings: createInitializationBindingReader({ records }), materials, initialPlanning: { bodies },
+    now: f.now, eventId: f.newId };
   const plans = createPlanService(planDeps);
   const causes = createGoalDecisionCauseReader({ records, plans });
   // The real ordered port forwarded through the same records the test wraps
@@ -130,7 +132,8 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   // be implemented by the production reader; this helper never manufactures cards.
   const reads = createDecisionReadModel({ records, ...decisionWidths,
     cardSources: [createGoalCauseCardSource(causes),
-      createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans, ...planningQuestionWidths }))],
+      createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans,
+        bindings: createInitializationBindingReader({ records }), ...planningQuestionWidths }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records: orderedRecords, ...automaticReworkWidths })],
     conflicts: createGoalConflictAssembler({ records: orderedRecords,
       catalog: createArchitectureCatalogService({ records: orderedRecords }),

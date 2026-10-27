@@ -9,9 +9,11 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionProvenanceV1 } from '../../src/contracts/core/session.js';
-import { makeCommitCursor } from '../../src/contracts/ledger.js';
+import { makeCommitCursor, type GoalRef } from '../../src/contracts/ledger.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type {
   QueryExecutionStateV1,
+  QueryJobAnswerRef,
   QueryJobAnswerSnapshot,
   QueryJobIntentV1,
   QueryJobRef,
@@ -29,6 +31,8 @@ import {
   type RequestOwnerSessionFactV1, type RequestRoundsFactsV1,
 } from '../../src/core/work-graph/queries/request-rounds-read.js';
 import { deriveRequestCore, type RequestCoreFactsV1 } from '../../src/core/work-graph/tasks/request-facts.js';
+import { createRequestTailFragment } from '../../src/core/work-graph/tasks/request-tail-fragment.js';
+import type { CoreCallContext, HostPrincipal } from '../../src/contracts/core/call-context.js';
 
 const SCOPE = { projectId: 'p1', workspaceId: 'w1' } as const;
 const AT = '2026-10-23T00:00:00.000Z';
@@ -132,6 +136,7 @@ function derive(
   runs: QueryRunSnapshot[],
   overrides: Partial<RequestCoreFactsV1> = {},
   sessions: RequestOwnerSessionFactV1[] = [LIVE_A, LIVE_B],
+  bindings?: ReadonlyMap<string, GoalRef>,
 ) {
   const root = rounds.find(candidate => candidate.job.roundKind === 'request');
   if (root === undefined) throw new Error('the fixture has no request root');
@@ -147,7 +152,12 @@ function derive(
     answers: [],
     candidate: null,
     ...overrides,
-  });
+  }, bindings);
+}
+
+/** The map key the projection uses for one `(answerRef, draftIndex)` binding. */
+function draftBindingKey(answerRef: QueryJobAnswerRef, draftIndex: number): string {
+  return canonicalJson({ answerRef, draftIndex } as unknown as JsonValue);
 }
 
 function factsOf(rounds: QueryJobSnapshot[]): RequestRoundsFactsV1 {
@@ -195,8 +205,8 @@ describe('deriveRequestCore: one round', () => {
       status: 'ended', answer: 'the answer', session: SESSION_A,
       ideas: [{ title: 'first idea', detail: 'first detail' }, { title: 'second idea', detail: 'second detail' }],
       goalCardDrafts: [
-        { index: 0, draft: ANSWER.answer.goalCardDrafts[0] },
-        { index: 1, draft: ANSWER.answer.goalCardDrafts[1] },
+        { index: 0, draft: ANSWER.answer.goalCardDrafts[0], confirmedGoalRef: null },
+        { index: 1, draft: ANSWER.answer.goalCardDrafts[1], confirmedGoalRef: null },
       ],
     });
     expect(view.reasons).toEqual([]);
@@ -269,6 +279,67 @@ describe('deriveRequestCore: one round', () => {
     expect(view.rounds[2]!.status).toBe('queued');
     expect(view.reasons).toEqual(['round']);
     expect(view.processing).toBe(true);
+  });
+
+  it('projects each draft with its own confirmed Goal, and null for the same drafts without a binding map', () => {
+    const pendingRoot = pending('qj-root');
+    const job: QueryJobSnapshot = {
+      ...bound(pendingRoot, 1),
+      job: { ...pendingRoot.job.job, status: 'answered', answerRefs: [ANSWER.ref] },
+    };
+    const drafts = [
+      { index: 0, draft: { objective: 'objective one', completion: ['done one'], autonomy: 'every_step', screening: null },
+        confirmedGoalRef: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g2' } },
+      { index: 1, draft: { objective: 'objective two', completion: [], autonomy: 'every_step', screening: null },
+        confirmedGoalRef: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g3' } },
+    ];
+    const bindings = new Map<string, GoalRef>([
+      [draftBindingKey(ANSWER.ref, 0), { aggregateType: 'Goal', projectId: 'p1', goalId: 'g2' }],
+      [draftBindingKey(ANSWER.ref, 1), { aggregateType: 'Goal', projectId: 'p1', goalId: 'g3' }],
+    ]);
+    const view = derive([job], [runOf(job)], { answers: [ANSWER] }, [LIVE_A, LIVE_B], bindings);
+    expect(view.rounds[0]!.goalCardDrafts).toEqual(drafts);
+    const unconfirmed = derive([job], [runOf(job)], { answers: [ANSWER] });
+    expect(unconfirmed.rounds[0]!.goalCardDrafts).toEqual(drafts.map(draft => ({ ...draft, confirmedGoalRef: null })));
+  });
+});
+
+describe('newRoutingRound: the attribution arm', () => {
+  it('writes the Goal id string into goalId and goalAttribution and reads as the effective goal', () => {
+    const root = bound(pending('qj-root'), 1);
+    const attributed = newRoutingRound({
+      queryJobId: 'qj-attribution', scope: SCOPE, root, routing: null,
+      goalAttribution: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g2' },
+      receipt: null, submission: SUBMISSION, submittedAt: AT,
+    });
+    expect([attributed.job.goalId, attributed.job.goalAttribution]).toEqual(['g2', 'g2']);
+    expect(attributed.job.routing).toBeNull();
+    expect(attributed.job.understanding).toBeNull();
+    expect(attributed.job.requestGoalId).toBe('g1');
+    expect(deriveEffectiveGoalId([root, boundRouting(attributed, 2)], 'g1')).toBe('g2');
+  });
+
+  it('keeps the ordinary routing arm byte-identical', () => {
+    const root = bound(pending('qj-root'), 1);
+    const ordinary = newRoutingRound({
+      queryJobId: 'qj-routing', scope: SCOPE, root, routing: { from: null, to: SESSION_B, reason: 'assigned' },
+      receipt: null, submission: SUBMISSION, submittedAt: AT,
+    });
+    expect(ordinary).toEqual({
+      ref: { aggregateType: 'QueryJob', projectId: 'p1', workspaceId: 'w1', queryJobId: 'qj-routing' },
+      revision: 1, schemaVersion: 1, submission: SUBMISSION, since: null,
+      job: {
+        schemaVersion: 1, queryJobId: 'qj-routing', projectId: 'p1', workspaceId: 'w1', goalId: 'g1', intent: INTENT,
+        status: 'closed', runRef: null, answerRefs: [],
+        closeReason: { code: 'not_entered', message: 'routing_round_created_closed', detail: null },
+        submittedAt: AT, updatedAt: AT,
+        requestRoot: ROOT_REF, roundKind: 'routing', requestGoalId: 'g1', assignedSession: null,
+        routing: { from: null, to: SESSION_B, reason: 'assigned' },
+        relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
+        goalAttribution: null, relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+        understanding: null,
+      },
+    });
   });
 });
 
@@ -392,5 +463,39 @@ describe('the round status projection', () => {
       ],
     );
     expect(view.rounds.map(entry => entry.status)).toEqual(['queued', 'running', 'ended', 'unknown']);
+  });
+});
+
+describe('createRequestTailFragment: the attribution ids', () => {
+  const CONFIRMED_GOAL: GoalRef = { aggregateType: 'Goal', projectId: 'p1', goalId: 'g2' };
+  const PRINCIPAL: HostPrincipal = { kind: 'host', actor: { kind: 'human', id: 'operator-1' } };
+  const CTX: CoreCallContext = {
+    projectId: 'p1', workspaceId: 'w1', principal: PRINCIPAL,
+    materialReader: { kind: 'host', projectId: 'p1', workspaceId: 'w1', actor: { kind: 'human', id: 'operator-1' } },
+    signal: new AbortController().signal,
+  };
+
+  async function attributionFor(identityKey: string) {
+    const outcome = await createRequestTailFragment()(CTX, PRINCIPAL, {
+      facts: factsOf([round('qj-root', 1)]),
+      command: { kind: 'attribution', goalAttribution: CONFIRMED_GOAL },
+      identity: { commandId: 'confirm-row-1', identityKey, fingerprint: 'f'.repeat(64) },
+      scope: SCOPE, submittedAt: AT,
+    });
+    if ('status' in outcome) throw new Error('the attribution prepare was rejected');
+    return outcome;
+  }
+
+  it('seeds the round and its event from the identity, and keeps the command id as the command field', async () => {
+    const first = await attributionFor('identity-one');
+    const second = await attributionFor('identity-two');
+    expect(first.round).toEqual({
+      aggregateType: 'QueryJob', projectId: 'p1', workspaceId: 'w1', queryJobId: 'identity-one:attribution',
+    });
+    expect(second.round.queryJobId).toBe('identity-two:attribution');
+    expect(first.events.map((event) => event.eventId)).toEqual(['identity-one:attribution:submitted']);
+    expect(second.events.map((event) => event.eventId)).toEqual(['identity-two:attribution:submitted']);
+    const submitted = JSON.parse(first.events[0]!.json) as { idempotencyKey: string };
+    expect(submitted.idempotencyKey).toBe('confirm-row-1');
   });
 });

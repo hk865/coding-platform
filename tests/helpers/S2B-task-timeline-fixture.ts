@@ -74,6 +74,7 @@ import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/e
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import {
   createTaskStateTimeline, type TaskStateTimelinePageV1, type TaskTimelineReadPort,
 } from '../../src/core/work-graph/views/task-state-timeline.js';
@@ -183,7 +184,8 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
   const now = (): string => clock;
   const eventId = (): string => `s2b-timeline-event-${++seq}`;
   const newId = (): string => `s2b-timeline-id-${++seq}`;
-  const plans = createPlanService({ records: baseRecords, now, eventId });
+  const plans = createPlanService({ records: baseRecords, bindings: createInitializationBindingReader({ records: baseRecords }),
+    now, eventId });
   const runReads = createRunStateReader({ records: baseRecords });
   const sessionFacts = createSessionFactsService({ records: baseRecords });
   const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, sessionFacts });

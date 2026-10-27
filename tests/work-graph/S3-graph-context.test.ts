@@ -57,6 +57,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createTaskContextInputService } from '../../src/core/work-graph/tasks/context-input-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
@@ -730,7 +731,8 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
 
   const architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> =
     createArchitectureCatalogService({ records: readerRecords });
-  const readerPlans = createPlanService({ records: readerRecords, now, eventId });
+  const readerPlans = createPlanService({ records: readerRecords, bindings: createInitializationBindingReader({ records: readerRecords }),
+    now, eventId });
   const sessionDirectory = createSessionDirectory({ records: readerRecords, lookups: readerRecords });
   const sessionSpy: SessionSpy = { findSessionsCalls: 0, readSessionCalls: 0, contexts: [] };
   const sessions = {

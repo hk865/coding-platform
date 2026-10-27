@@ -4,8 +4,9 @@
  *
  * Where it sits (rule sheet A4 backend seam, composed with the frozen commit barrier): `vi.mock` factories for the
  * two real backend factories that `createTargetPlatform` calls. Each factory builds the commit barrier's module
- * first (tests/helpers/S6A-commit-barrier.ts: the real backend with the barrier around `records.commit`), gives
- * the real backend one extra `beforeWrite` and wraps `records.commit` once more, outside the barrier. So:
+ * first (tests/helpers/S6A-commit-barrier.ts: the real backend with the barrier around `records.commit` and
+ * `records.readMany`), gives the real backend one extra `beforeWrite` and wraps `records.commit` once more,
+ * outside the barrier. So:
  *   - a test file installs THESE two mocks instead of the barrier's; the barrier's holds and the SE2 world's gates
  *     (tests/helpers/S6A-host-fixture.ts, with its scripted model and its controlled Kernel `Date`) work as before,
  *     and a commit the barrier holds is the commit as this double changed it;

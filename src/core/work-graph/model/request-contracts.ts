@@ -11,6 +11,7 @@ import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type {
   GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind, RequestCommandReceiptV1,
   RequestUnderstandingCommandV1,
@@ -86,6 +87,14 @@ export const SECRETARY_HANDOFF_PREFIX = 'secretary-handoff:';
 export type RequestOwnerStateV1 = 'owned' | 'waiting' | 'owner_archived' | 'dropped';
 export type RequestRoundStatus = 'queued' | 'running' | 'ended' | 'unknown';
 
+/** One goal-card draft of a round's answer and the Goal its initialization binding named, if confirmed. */
+export type GoalCardDraftViewV1 = {
+  index: number;
+  draft: GoalCardDraftV1;
+  confirmedGoalRef: GoalRef | null;
+};
+export type GoalCardDraftRowsV1 = GoalCardDraftViewV1[];
+
 export type RequestRoundViewV1 = {
   ref: QueryJobRef;
   kind: QueryRoundKind;
@@ -93,7 +102,7 @@ export type RequestRoundViewV1 = {
   input: string;
   answer: string | null;
   ideas: { title: string; detail: string }[];
-  goalCardDrafts: { index: number; draft: GoalCardDraftV1 }[];
+  goalCardDrafts: GoalCardDraftRowsV1;
   selectedIdea: { round: QueryJobRef; index: number } | null;
   assignedSession: SessionRef | null;
   session: SessionRef | null;
@@ -116,6 +125,14 @@ export type RequestCoreViewV1 = {
   rounds: RequestRoundViewV1[];
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
 };
+
+/** The request's latest answered round: the LAST round the caller counts as answered; one order for every reader. */
+export function latestAnsweredRound<T extends { ref: QueryJobRef }>(
+  rounds: readonly T[], isAnswered: (round: T) => boolean,
+): QueryJobRef | null {
+  const round = rounds.findLast(isAnswered);
+  return round === undefined ? null : { ...round.ref };
+}
 
 // ------------------------------------------------------------------------ //
 // Secretary profile / scope ports (§3.12)                                   //

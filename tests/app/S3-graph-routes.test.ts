@@ -27,6 +27,7 @@ import {
 } from '../../src/app/core-routes.js';
 import { CORE_API_PREFIX, PLATFORM_TOKEN_HEADER } from '../../src/app/core-http-types.js';
 import { createWorkbenchServer, type WorkbenchServer } from '../../src/app/server.js';
+import { EXPECTED_ROUTE_ROWS, LEGACY_READ_ROUTES } from '../helpers/S6B3-route-suffixes.js';
 
 const SCOPE = { projectId: 'p', workspaceId: 'w' };
 const GOAL_REF: GoalRef = { aggregateType: 'Goal', projectId: 'p', goalId: 'g' };
@@ -183,7 +184,7 @@ describe('S3 graph routes', () => {
       request: { input: FIND_REQUEST, meta: { requestId: 'rt04', expected: [] } },
     });
     expect(parsed).toMatchObject({ ok: false, rejection: { code: 'invalid' } });
-    expect(CORE_ROUTE_SPECS['graph/find']).toEqual({ kind: 'plain', binding: 'findGraph', owner: 'graphContext.findGraph' });
+    expect(CORE_ROUTE_SPECS['graph/find']).toEqual(EXPECTED_ROUTE_ROWS['graph/find']);
     // The write package is dispatched for real: the read port is never called
     // and no receipt-minting write owner is reached.
     await expect(dispatchCoreRoute(bindings, 'graph/find', ctx, parsed)).rejects.toMatchObject({
@@ -232,9 +233,9 @@ describe('S3 graph routes', () => {
   });
 
   it('RT06: the legacy tasks/query, executions/history and executions/brief suffixes, parsing and owner forwarding are unchanged and start no model', async () => {
-    expect(CORE_ROUTE_SPECS['tasks/query']).toEqual({ kind: 'plain', binding: 'queryTaskGraph', owner: 'plans.queryTaskGraph' });
-    expect(CORE_ROUTE_SPECS['executions/history']).toEqual({ kind: 'plain', binding: 'readTaskExecutionHistory', owner: 'runtime.readTaskExecutionHistory' });
-    expect(CORE_ROUTE_SPECS['executions/brief']).toEqual({ kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' });
+    for (const suffix of LEGACY_READ_ROUTES) {
+      expect(CORE_ROUTE_SPECS[suffix], suffix).toEqual(EXPECTED_ROUTE_ROWS[suffix]);
+    }
     const seen: string[] = [];
     let ownerCalls = 0;
     let modelStarts = 0;

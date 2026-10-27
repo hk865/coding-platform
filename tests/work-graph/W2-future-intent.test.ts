@@ -26,6 +26,7 @@ import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-co
 import { decodePlanRevisionSnapshot } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import type { EncodedRecord, PreparedCommit } from '../../src/core/record-store/ports.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type Records, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 
 type PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
@@ -80,7 +81,8 @@ function legacyFullDraft(goalId: string, planId: string, planRevision: number): 
 }
 function planServiceOver(records: Records, tag: string): ReturnType<typeof createPlanService> {
   let n = 0;
-  return createPlanService({ records, now: () => CLAIM_FIXTURE_AT, eventId: () => `w2-${tag}-${++n}` });
+  return createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => CLAIM_FIXTURE_AT, eventId: () => `w2-${tag}-${++n}` });
 }
 
 async function createSecondGoal(f: TaskClaimFixture, goalId: string): Promise<GoalRef> {

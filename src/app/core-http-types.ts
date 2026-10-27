@@ -64,6 +64,9 @@ import type { RuntimeBudget } from '../contracts/runtime-budget.js';
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
 import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
+// The Goal-card confirmation and copy owners and the Host's initialization adoption owner.
+import type { GoalConfirmPort, GoalCopyPort } from '../core/work-graph/model/goal-card-contracts.js';
+import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
@@ -312,7 +315,12 @@ export type CoreRouteSuffix =
   | 'secretaries/handoff'
   | 'secretaries/archive'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
-  | 'goals/dispatch-basis';
+  | 'goals/dispatch-basis'
+  // The two person-only Goal-card commands, the copy preview and the person-only initialization adoption.
+  | 'goals/confirm-draft'
+  | 'goals/copy-draft'
+  | 'goals/copy-confirm'
+  | 'initialization/adopt';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -447,6 +455,14 @@ export type GoalsConflictsBody = PlainBody<DecisionReadPort['queryGoalConflicts'
 export type GoalsConflictsResponse = RouteResponse<DecisionReadPort['queryGoalConflicts']>;
 export type GoalsDispatchBasisBody = PlainBody<DispatchBasisReadPort['readDispatchBasis']>;
 export type GoalsDispatchBasisResponse = RouteResponse<DispatchBasisReadPort['readDispatchBasis']>;
+export type GoalsConfirmDraftBody = PlainBody<GoalConfirmPort['confirmDraft']>;
+export type GoalsConfirmDraftResponse = RouteResponse<GoalConfirmPort['confirmDraft']>;
+export type GoalsCopyDraftBody = PlainBody<GoalCopyPort['readDraft']>;
+export type GoalsCopyDraftResponse = RouteResponse<GoalCopyPort['readDraft']>;
+export type GoalsCopyConfirmBody = PlainBody<GoalCopyPort['confirm']>;
+export type GoalsCopyConfirmResponse = RouteResponse<GoalCopyPort['confirm']>;
+export type InitializationAdoptBody = PlainBody<InitializationAdoptionHostPort['adopt']>;
+export type InitializationAdoptResponse = RouteResponse<InitializationAdoptionHostPort['adopt']>;
 export type PlansRequestCandidateBody = PlainBody<RequestCandidatePort['readRequestCandidate']>;
 export type PlansRequestCandidateResponse = RouteResponse<RequestCandidatePort['readRequestCandidate']>;
 export type PlansAbandonBody = GraphWriteBody<RequestCandidatePort['abandonPlanProposal']>;

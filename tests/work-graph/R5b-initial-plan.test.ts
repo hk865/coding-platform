@@ -308,6 +308,7 @@ it('consumes one real v2 answer into the same Plan owner candidate, then adopts 
     if (origin === undefined) throw new Error('the candidate has no model-coordination origin');
     expect(origin).toMatchObject({
       kind: 'model_coordination',
+      source: { kind: 'plain' },
       answerRef: { ...answerRef },
       answerDigest: sha256Hex(PLAN_ANSWER_TEXT),
       goalRevision: 1,

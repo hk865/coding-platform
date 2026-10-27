@@ -29,6 +29,7 @@ import type { CanonicalTaskFacts } from '../../src/core/work-graph/tasks/plan-re
 import { readCanonicalTaskFacts, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import { GOAL_B, PLAN_B2, WORKSPACE_REVISION } from '../helpers/S5-decision-fixture.js';
@@ -218,7 +219,8 @@ async function durableFacts(world: K3ReviewCardWorld, taskId: string,
 /** The real Task row read over `records` (the Task read model the book names). */
 async function taskRowOf(world: K3ReviewCardWorld, taskId: string, records: B2Records): Promise<TaskRow> {
   let seq = 0;
-  const plans = createPlanService({ records, now: () => world.fixture.now(),
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => world.fixture.now(),
     eventId: () => `k3-47-plan-event-${String(++seq)}` });
   const read = await plans.queryTaskGraph(world.fixture.ctx, { goalRef: GOAL_B, planRef: PLAN_B2 });
   if (read.status !== 'ready') throw new Error(`the Task graph read failed: ${JSON.stringify(read)}`);

@@ -17,6 +17,7 @@ import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
@@ -91,7 +92,7 @@ async function openDecisionHarness(): Promise<DecisionHarness> {
   const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: OPERATOR, messages: mailbox, materials: mailboxDeps.materials,
-    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records }) });
+    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
   return { f, mailbox, decisions, queue: realDecisionQueue(f) };
 }
 
@@ -165,7 +166,8 @@ async function openDeferredDecisionHarness(kind: 'memory' | 'sqlite'): Promise<D
       verificationRequirements: [{ requirementId: 'wp2-f07-check', requirementLevel: 'required', kind: 'test',
         description: 'F07 test' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
-  const plans = createPlanService({ records: f.records, materials: materialsFor(f),
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    materials: materialsFor(f),
     initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const proposed = await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: null, draft,
     reason: { text: 'F07 deferred plan', sources: [] } },

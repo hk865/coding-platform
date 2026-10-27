@@ -63,6 +63,7 @@ import type {
 import { createExecutionEntryService } from '../../../src/core/work-graph/tasks/execution-entry-service.js';
 import type { PlanChangeReason, PlanProposal, PlanTaskPort } from '../../../src/core/work-graph/model/plan-contracts.js';
 import { createPlanService } from '../../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../../src/core/work-graph/tasks/goal-confirm-service.js';
 import type { PlanDelegatedWriteDependencies } from '../../../src/core/work-graph/tasks/plan-write-admission.js';
 import { createTaskRequeueService } from '../../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../../src/core/work-graph/tasks/run-state-service.js';
@@ -2169,7 +2170,8 @@ export class AgentFuzz {
       authorizeConfiguration, now, eventId, newId: () => `fuzz-agent-${options.seed}-id-${++this.sequence}` });
     this.controls = createRunControlService({ records, authority: materialReads.authority, reads, now, eventId });
     this.delegatedWrites = { reads, roles, bodies: b2.bodies, authorizeConfiguration };
-    this.plans = createPlanService({ records, now, eventId, delegatedWrites: this.delegatedWrites });
+    this.plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      now, eventId, delegatedWrites: this.delegatedWrites });
     // The 5.9 evidence owner (as tests/work-graph/R3e-reverify.test.ts builds it): the R3e checks configuration for
     // this scope, the fuzz's automation policy and the Agent admission.
     this.evidence = createEvidenceService({ records, materials: r3e.materials, executions: reads,
@@ -2922,7 +2924,8 @@ export class AgentFuzz {
     }
     const base = this.b2.base;
     const barrier = commitBarrier(base.records, this.rng.chance(0.5));
-    const racedPlans = createPlanService({ records: barrier.records, now: () => B2_AT,
+    const racedPlans = createPlanService({ records: barrier.records, bindings: createInitializationBindingReader({ records: barrier.records }),
+      now: () => B2_AT,
       eventId: () => `fuzz-agent-${this.options.seed}-race-${++this.sequence}`, delegatedWrites: this.delegatedWrites });
     const proposal = prepared.proposal;
     const [requeued, adopted] = await Promise.all([
@@ -3011,7 +3014,8 @@ export class AgentFuzz {
     const barrier = commitBarrier(base.records, this.rng.chance(0.5));
     const now = (): string => B2_AT;
     const eventId = (): string => `fuzz-agent-${this.options.seed}-race9-${++this.sequence}`;
-    const racedPlans = createPlanService({ records: barrier.records, now, eventId, delegatedWrites: this.delegatedWrites });
+    const racedPlans = createPlanService({ records: barrier.records, bindings: createInitializationBindingReader({ records: barrier.records }),
+      now, eventId, delegatedWrites: this.delegatedWrites });
     const racedControls = createRunControlService({ records: barrier.records, authority: createMaterialRecordReaders(barrier.records).authority,
       reads: createRunStateReader({ records: barrier.records }), now, eventId });
     const [adopted, paused] = await Promise.all([
@@ -3064,7 +3068,8 @@ export class AgentFuzz {
     const barrier = commitBarrier(base.records, this.rng.chance(0.5));
     const now = (): string => B2_AT;
     const eventId = (): string => `fuzz-agent-${this.options.seed}-racew16c-${++this.sequence}`;
-    const racedPlans = createPlanService({ records: barrier.records, now, eventId, delegatedWrites: this.delegatedWrites });
+    const racedPlans = createPlanService({ records: barrier.records, bindings: createInitializationBindingReader({ records: barrier.records }),
+      now, eventId, delegatedWrites: this.delegatedWrites });
     const racedControls = createRunControlService({ records: barrier.records, authority: createMaterialRecordReaders(barrier.records).authority,
       reads: createRunStateReader({ records: barrier.records }), now, eventId });
     const proposal = prepared.proposal;

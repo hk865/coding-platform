@@ -22,6 +22,7 @@ import type {
 } from '../../../contracts/governance.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { CompletionPolicyReadPort } from '../model/completion-policy-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 
 /**
@@ -84,10 +85,7 @@ export interface ProjectRegistrationPort {
  * has NO active pointer yet (an explicit absence); a missing or damaged PINNED
  * revision row is a different failure and is NEVER reported as absence.
  */
-export type CurrentCompletionPolicyRead = {
-  active: ProjectCompletionPolicyActiveSnapshot;
-  policy: CompletionPolicyRevisionSnapshot;
-};
+export type { CurrentCompletionPolicyRead } from '../model/completion-policy-contracts.js';
 
 export interface CompletionPolicyConfigurationPort {
   installCompletionPolicy(
@@ -108,10 +106,7 @@ export interface CompletionPolicyConfigurationPort {
    * or cached value). Optional only so existing narrow port doubles keep
    * compiling; the real composition always publishes it.
    */
-  readCurrentCompletionPolicy?(
-    ctx: CoreCallContext,
-    input: { projectId: string },
-  ): Promise<ReadResult<CurrentCompletionPolicyRead>>;
+  readCurrentCompletionPolicy?: CompletionPolicyReadPort['readCurrentCompletionPolicy'];
 }
 
 /**

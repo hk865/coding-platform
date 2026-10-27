@@ -13,6 +13,7 @@
  * rule's own reason is returned unchanged.
  */
 import type { EventFormat, Field, FieldPhase, Fields, RecordFormat, Shape, ShapeRule } from '../data-format.js';
+import type { JsonValue } from '../fingerprint.js';
 import { codePoints, isInt, isRecord, isSha256Hex, nonEmpty, utf8Bytes, type UnknownRecord } from './common.js';
 import { isNonZeroPlatformCursor, isPlatformCursor } from './cursors.js';
 import { isIsoZulu } from './time.js';
@@ -64,6 +65,18 @@ function within(count: number, min: number | undefined, max: number | undefined)
   return (min === undefined || count >= min) && (max === undefined || count <= max);
 }
 
+/** The exact JSON value kind: no `undefined`, function, symbol, bigint, non-finite number or class instance. */
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  return Object.values(value as Record<string, unknown>).every(isJsonValue);
+}
+
 function fieldProblem(field: Field, value: unknown, path: string, phase: FieldPhase): string | null {
   const invalid = `${path} is invalid`;
   if (value === undefined) return invalid;
@@ -85,6 +98,7 @@ function fieldProblem(field: Field, value: unknown, path: string, phase: FieldPh
     case 'literal': return value === field.value ? null : `${path} is not recognized`;
     case 'enum': return typeof value === 'string' && field.values.includes(value) ? null : `${path} is not recognized`;
     case 'boolean': return typeof value === 'boolean' ? null : invalid;
+    case 'json': return isJsonValue(value) ? null : invalid;
     case 'ref': return isRecord(value) ? objectProblem(path, {}, field.shape.fields, value, 'stored', field.shape.rules) : invalid;
     case 'cursor': {
       const valid = field.cursor === 'ledger' ? isPlatformCursor(value)

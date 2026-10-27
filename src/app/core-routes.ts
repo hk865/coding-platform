@@ -46,6 +46,11 @@ import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-
 import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
 import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
+// The Goal draft confirmation, the Goal copy and the Host's initialization adoption owner.
+import type {
+  GoalConfirmPort, GoalCopyPort,
+} from '../core/work-graph/model/goal-card-contracts.js';
+import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
@@ -292,6 +297,12 @@ export type CoreRouteBindings = {
   // Workflow's own read of that operation.
   acceptHandoff: (ctx: CoreCallContext, input: SecretariesHandoffBody['input']) => Promise<SecretariesHandoffResponse>;
   acceptArchive: (ctx: CoreCallContext, input: SecretariesArchiveBody['input']) => Promise<SecretariesArchiveResponse>;
+  // The two Goal-card commands and the initialization adoption are person-only, so their binding can answer a
+  // `forbidden` rejection; the copy preview is a read like the other reads.
+  confirmGoalDraft: GoalConfirmPort['confirmDraft'];
+  readGoalCopyDraft: GoalCopyPort['readDraft'];
+  confirmGoalCopy: GoalCopyPort['confirm'];
+  adoptInitialization: InitializationAdoptionHostPort['adopt'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -309,7 +320,10 @@ export type CoreRoutePlatform = {
   controls: RunControlPort;
   projects: ProjectRegistrationPort;
   completionPolicies: CompletionPolicyConfigurationPort;
-  goals: GoalTaskPort & DispatchBasisReadPort;
+  /** The Goal service also publishes the draft confirmation `confirmDraft` and the copy under the names
+   *  `readGoalCopyDraft`/`confirmGoalCopy` (`GoalCopyPort`'s `readDraft`/`confirm`). */
+  goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
+    & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'] };
   plans: PlanTaskPort;
   architecture: ArchitectureCatalogPort & ObservedArchitecturePort;
   workspace: WorkspaceToolsPort;
@@ -545,6 +559,11 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/conflicts': { kind: 'plain', binding: 'queryGoalConflicts', owner: 'decisions.queryGoalConflicts' },
   // §3.6 item 5: the three-version read a Goal card carries, as its own Goal read row (not a messages entry).
   'goals/dispatch-basis': { kind: 'plain', binding: 'readDispatchBasis', owner: 'goals.readDispatchBasis' },
+  // The two Goal-card commands, the copy preview and the initialization adoption.
+  'goals/confirm-draft': { kind: 'plain', binding: 'confirmGoalDraft', owner: 'goals.confirmDraft' },
+  'goals/copy-draft': { kind: 'plain', binding: 'readGoalCopyDraft', owner: 'goals.readGoalCopyDraft' },
+  'goals/copy-confirm': { kind: 'plain', binding: 'confirmGoalCopy', owner: 'goals.confirmGoalCopy' },
+  'initialization/adopt': { kind: 'plain', binding: 'adoptInitialization', owner: 'initialization.adopt' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
@@ -708,6 +727,7 @@ export function createPlatformCoreRouteBindings(
   workbenchTools?: WorkbenchToolsPort,
   goalControl?: GoalControlPort,
   hostReport?: HostReconcileReportPort,
+  initialization?: InitializationAdoptionHostPort,
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -725,11 +745,12 @@ export function createPlatformCoreRouteBindings(
   // Slice 4C C1.4 (L15): the three notes writes are person-only. The note
   // service itself also admits an agent writer (the `record_note` tool); the
   // person's HTTP routes accept only the Host's human actor, so a member
-  // identity is `forbidden` before the write is attempted.
+  // identity is `forbidden` before the write is attempted. The two Goal-card
+  // commands and the initialization adoption sit behind the same guard.
   const personOnly = (ctx: CoreCallContext): boolean =>
     ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'human';
   const forbiddenPerson = (): CoreRejection =>
-    ({ status: 'rejected', code: 'forbidden', reason: 'only the person may call this notes route' });
+    ({ status: 'rejected', code: 'forbidden', reason: 'only the person may call this route' });
   // A request command is the person's; a member or system
   // actor is `forbidden` BEFORE any read, pick or line. The route also refuses a
   // non-object input body; every other input rule is the request service's
@@ -780,8 +801,8 @@ export function createPlatformCoreRouteBindings(
     }
     return { write, check };
   };
-  const personDisposition = <A>(method: (ctx: CoreCallContext, input: A) => Promise<NoteDispositionResult>) =>
-    async (ctx: CoreCallContext, input: A): Promise<NoteDispositionResult | CoreRejection> =>
+  const personEntry = <A, R>(method: (ctx: CoreCallContext, input: A) => Promise<R>) =>
+    async (ctx: CoreCallContext, input: A): Promise<R | CoreRejection> =>
       personOnly(ctx) ? method(ctx, input) : forbiddenPerson();
   return {
     submitControl: platform.controls.submitControl.bind(platform.controls),
@@ -1021,9 +1042,9 @@ export function createPlatformCoreRouteBindings(
     writeNote: platform.notes === undefined ? unsupported('the platform does not publish notes.writeNote')
       : writeNoteEnvelope,
     withdrawNote: platform.notes === undefined ? unsupported('the platform does not publish notes.withdrawNote')
-      : personDisposition(platform.notes.withdrawNote.bind(platform.notes)),
+      : personEntry(platform.notes.withdrawNote.bind(platform.notes)),
     reviewNote: platform.notes === undefined ? unsupported('the platform does not publish notes.reviewNote')
-      : personDisposition(platform.notes.reviewNote.bind(platform.notes)),
+      : personEntry(platform.notes.reviewNote.bind(platform.notes)),
     listPlanVersions: platform.notes === undefined ? unsupported('the platform does not publish notes.listPlanVersions')
       : platform.notes.listPlanVersions.bind(platform.notes),
     listCatalogVersions: platform.notes === undefined ? unsupported('the platform does not publish notes.listCatalogVersions')
@@ -1098,6 +1119,13 @@ export function createPlatformCoreRouteBindings(
         if (accepted.status !== 'committed') return accepted;
         return owner.manualArchive(ctx, { operation: accepted.value.operation });
       },
+    // The Goal service's three card owners; the Host's adoption owner arrives as the sixth argument.
+    confirmGoalDraft: personEntry(platform.goals.confirmDraft.bind(platform.goals)),
+    readGoalCopyDraft: platform.goals.readGoalCopyDraft.bind(platform.goals),
+    confirmGoalCopy: personEntry(platform.goals.confirmGoalCopy.bind(platform.goals)),
+    adoptInitialization: initialization === undefined
+      ? unsupported('the Host does not publish initialization adoption')
+      : personEntry(initialization.adopt.bind(initialization)),
   };
 }
 
@@ -1362,6 +1390,11 @@ export async function dispatchCoreRoute(
       // The two secretary lifecycle commands.
       case 'secretaries/handoff': return bindings.acceptHandoff(ctx, plain.input as never);
       case 'secretaries/archive': return bindings.acceptArchive(ctx, plain.input as never);
+      // The two Goal-card commands, the copy preview and the initialization adoption.
+      case 'goals/confirm-draft': return bindings.confirmGoalDraft(ctx, plain.input as never);
+      case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);
+      case 'goals/copy-confirm': return bindings.confirmGoalCopy(ctx, plain.input as never);
+      case 'initialization/adopt': return bindings.adoptInitialization(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

@@ -8,6 +8,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -54,7 +55,8 @@ it.each(['memory', 'sqlite'] as const)('%s: plan reads the Goal created by the r
     let sequence = 0;
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `r3c-goal-${++sequence}` }).tasks;
-    const plans = createPlanService({ records: backend.records, now: () => at,
+    const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      now: () => at,
       eventId: () => `r3c-plan-${++sequence}` });
     const created = await goals.createGoal(ctx, { meta: { requestId: 'r3c-create-goal',
       expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },

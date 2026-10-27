@@ -1,10 +1,12 @@
 import type { SessionRef, VersionPin } from '../../../../contracts/core/identity.js';
+import type { CoreCallContext } from '../../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../../contracts/core/results.js';
-import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
-  GoalDecisionBasisV1 } from '../../../../contracts/goal-decisions.js';
+import type { DecisionObjectV1, DecisionOptionV1, GoalDecisionBasisV1,
+  PlanningQuestionIdentityV1 } from '../../../../contracts/goal-decisions.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import { isRecord } from '../../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
+import type { InitializationBindingReadPort } from '../../model/goal-card-contracts.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot,
   decodeQueryRunSnapshotRecord } from '../../queries/query-record-codecs.js';
 import { parseInitialPlanningResponseV2 } from '../../tasks/initial-plan.js';
@@ -36,11 +38,14 @@ async function questionReaderSessions(support: SourceReadSupport, runRef: unknow
     ? [] : [{ projectId: sessionRef.projectId, sessionId: sessionRef.sessionId }] };
 }
 
-/** The `planning_question` decision source: a real saved Answer question. */
+/** The `planning_question` decision source: a real saved Answer question. A binding source takes its Goal from the
+ * binding (guarded against the subject's Goal) and admits a no-Goal Job; without a binding the Job must name the Goal. */
 export async function readPlanningQuestionSource(
   support: SourceReadSupport,
-  identity: Extract<DecisionSourceIdentityV1, { kind: 'planning_question' }>,
+  ctx: CoreCallContext,
+  identity: PlanningQuestionIdentityV1,
   goalRef: GoalRef,
+  bindings: InitializationBindingReadPort,
 ): Promise<SourceReadResult> {
   let goal: GoalSnapshot;
   let objects: DecisionObjectV1[] = [];
@@ -58,9 +63,27 @@ export async function readPlanningQuestionSource(
   if (jobRead.status !== 'ready') return jobRead;
   const job = jobRead.value;
   const jobGoalId = job.job.goalId;
-  if (jobGoalId === null || jobGoalId.length === 0) return rejectedWithCurrent('incomplete', 'the planning QueryJob names no Goal');
-  if (goalRef.goalId !== jobGoalId || goalRef.projectId !== support.scope.projectId) {
-    return rejectedWithCurrent('invalid', 'the planning question does not belong to the named Goal');
+  // A binding card's Goal is the binding's, never the Job's; the answer must still be the Job's own, and a missing read/record is unavailable/not_found.
+  let bindingPin: VersionPin | null = null;
+  if (identity.binding === undefined) {
+    if (jobGoalId === null || jobGoalId.length === 0) return rejectedWithCurrent('incomplete', 'the planning QueryJob names no Goal');
+    if (goalRef.goalId !== jobGoalId || goalRef.projectId !== support.scope.projectId) {
+      return rejectedWithCurrent('invalid', 'the planning question does not belong to the named Goal');
+    }
+  } else {
+    const bindingRead = await bindings.readBindingByAnswerDraft(ctx,
+      { answerRef: identity.answerRef, draftIndex: identity.binding.draftIndex });
+    if (bindingRead.status === 'not_found') {
+      return rejectedWithCurrent('not_found', 'the initialization binding for this answer and draft does not exist');
+    }
+    if (bindingRead.status !== 'ready') return bindingRead;
+    if (!sameJson(bindingRead.value.ref, identity.binding)) {
+      return rejectedWithCurrent('invalid', 'the stored initialization binding is not the named binding');
+    }
+    if (!sameJson(bindingRead.value.goalRef, goalRef)) {
+      return rejectedWithCurrent('invalid', 'the initialization binding belongs to another Goal');
+    }
+    bindingPin = { ref: structuredClone(identity.binding), revision: 1 };
   }
   const goalRead = await support.readGoal(goalRef);
   if (goalRead.status !== 'ready') return goalRead;
@@ -81,6 +104,7 @@ export async function readPlanningQuestionSource(
   pins = [{ ref: structuredClone(goal.ref), revision: goal.revision },
     { ref: structuredClone(identity.answerRef), revision: 1 },
     { ref: structuredClone(job.ref), revision: job.revision }];
+  if (bindingPin !== null) pins.push(bindingPin);
   objects = [];
   options = [];
   goalBases = [goalBasis(goal)];

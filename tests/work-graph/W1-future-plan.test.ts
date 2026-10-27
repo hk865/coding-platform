@@ -38,6 +38,7 @@ import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2
 import { createS2BRuntimeSteps, type S2BRunHandle, type S2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 import type { Records } from '../helpers/task-claim-fixture.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -466,7 +467,8 @@ async function setup(sourceDraft: PlanDraftV2 = initialDraft()): Promise<W1Fixtu
 
 function planServiceOver(records: Records, tag: string): ReturnType<typeof createPlanService> {
   let n = 0;
-  return createPlanService({ records, now: () => AT, eventId: () => `w1-${tag}-${++n}` });
+  return createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => AT, eventId: () => `w1-${tag}-${++n}` });
 }
 
 /** Soft-assert an adoption happened and return the snapshot for follow-ups.

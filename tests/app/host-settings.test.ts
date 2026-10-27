@@ -815,9 +815,7 @@ describe('HOST settings immutable resolver versions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// R6 cold-start Stage-1 contract: explicit per-workspace approval of the checks
-// suggested by one saved initial-plan Answer. Stage 1 publishes the route/DTO
-// and stays `unsupported`; the behavior below is the Stage-2 acceptance.
+// Explicitly approving one saved initial-plan Answer's checks makes them this workspace's trusted checks.
 // ---------------------------------------------------------------------------
 
 const checkBody = (checkId: string, command: string) => ({
@@ -916,6 +914,47 @@ describe('HOST settings workspace check approval (R6 cold-start)', () => {
       expect(restored.workspaces.find(item => item.scope.workspaceId === a.scope.workspaceId)?.commandsAllowed).toBe(true);
       expect(restored.workspaces.find(item => item.scope.workspaceId === b.scope.workspaceId)?.commandsAllowed).toBe(true);
       expect(restored.workspaces.find(item => item.scope.workspaceId === locked.scope.workspaceId)?.commandsAllowed).toBe(false);
+    } finally {
+      await reopened?.host.close().catch(() => { /* already closed */ });
+      await started.host.close().catch(() => { /* already closed */ });
+    }
+  });
+});
+
+describe('HOST settings approved empty check array (R6 cold-start)', () => {
+  it('keeps an approved empty array across a real reopen', async () => {
+    const provider = controlledHostProvider([{ kind: 'text', text: planAnswer([]) }]);
+    const database = await mkdtemp(join(tmpdir(), 'host-settings-checks-empty-db-'));
+    temporary.push(database);
+    const settingsDirectory = join(database, 'settings');
+    const kernelStores = { entries: [{ adapterId: 'host-settings-checks-empty-kernel',
+      storeKey: 'host-settings-checks-empty-kernel-store', workspace: STARTUP_SCOPE,
+      databasePath: join(database, 'kernel.sqlite') }] };
+    const started = await startHost({
+      database, settingsDirectory, runtimeConfiguration: hostRuntimeConfiguration(), runtimeProvider: provider, kernelStores,
+    });
+    let reopened: Started | undefined;
+    try {
+      const dir = await mkdtemp(join(tmpdir(), 'checks-empty-source-')); temporary.push(dir);
+      const opened = expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+        { path: dir, writeAllowed: true, commandsAllowed: true })).json() as SettingsResponse<OpenValue>);
+      const model = (await readSettingsSnapshot(started)).models.find(entry => entry.model === 'startup-model');
+      if (model === undefined) throw new Error('the startup model is missing from the catalog');
+      expect((await settingsPost(started.base, 'models/select', started.token,
+        { scope: opened.scope, modelId: model.id })).status).toBe(200);
+      // The saved Answer proposes no checks; the explicit approval of that exact empty list is the one save.
+      const answer = await saveInitialPlanAnswer(started, opened.scope, 'empty');
+      const approved = expectReady(await (await settingsPost(started.base, 'checks/approve', started.token,
+        { scope: opened.scope, answerRef: answer, checks: [] })).json() as SettingsResponse<HostSettingsSnapshot>);
+      expect(approved.workspaces.find(item => item.scope.workspaceId === opened.scope.workspaceId)?.checks).toEqual([]);
+
+      await started.host.close();
+      reopened = await startHost({
+        database, settingsDirectory, runtimeConfiguration: hostRuntimeConfiguration(), runtimeProvider: provider, kernelStores,
+      });
+      const restored = expectReady(await (await settingsPost(reopened.base, 'snapshot', reopened.token, {}))
+        .json() as SettingsResponse<HostSettingsSnapshot>);
+      expect(restored.workspaces.find(item => item.scope.workspaceId === opened.scope.workspaceId)?.checks).toEqual([]);
     } finally {
       await reopened?.host.close().catch(() => { /* already closed */ });
       await started.host.close().catch(() => { /* already closed */ });

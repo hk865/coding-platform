@@ -1,6 +1,8 @@
 import { defineShape, f, type InferShape } from './data-format.js';
 import { QueryJobAnswerRefShape } from './data-format-refs.js';
+import type { InitializationBindingRef } from './initialization-binding.js';
 import type { PlanRevisionDraft } from './plan.js';
+import type { QueryJobAnswerRef } from './query-job.js';
 
 export type InitialPlanAssignment = {
     taskId: string;
@@ -8,10 +10,17 @@ export type InitialPlanAssignment = {
     instruction: string;
 };
 
+export type InitialPlanOriginSourceV1 =
+    | { kind: 'binding'; selector: InitializationSourceV1; bindingRef: InitializationBindingRef }
+    | { kind: 'prepared_goal'; selector: InitializationSourceV1 }
+    | { kind: 'plain' };
+
 // Completed-capability migration: selected original declarations, no legacy service port.
 export type InitialPlanOrigin = {
     kind: 'model_coordination';
-    answerRef: import('./query-job.js').QueryJobAnswerRef;
+    /** Every new proposal writes source; absence denotes an old plain record. */
+    source?: InitialPlanOriginSourceV1;
+    answerRef: QueryJobAnswerRef;
     answerDigest: string;
     goalRevision: number;
     workspaceRevision: number;

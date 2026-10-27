@@ -81,21 +81,51 @@ export type GoalCreateCompileInput = {
  * Compiles one Goal creation into the exact 3 guards / 1 record / 1 event write
  * set. Field order matches the original Control builders byte for byte so the
  * stored `snapshot_json` / `event_json` stay compatible with existing rows.
+ *
+ * The one option: an owner whose own single result event records the birth
+ * (`GoalDraftConfirmed`, `GoalCopied`) passes `birthEvent: "none"` instead of
+ * the event id and time, and no `GoalCreated` event is built or encoded; the
+ * record, guards and cursor binding are the default's.
  */
-export function compileGoalCreate(input: GoalCreateCompileInput): PreparedCommit {
+export function compileGoalCreate(
+  input: GoalCreateCompileInput | (Omit<GoalCreateCompileInput, "eventId" | "occurredAt"> & { birthEvent: "none" }),
+): PreparedCommit {
   const command = input.command;
   const projectId = command.identity.projectId;
-  const workspaceId = command.payload.workspaceId;
   const goalId = command.aggregateId;
 
-  const event: GoalCreatedEvent = {
+  return {
+    identityKey: goalCreateIdentityKey(command.identity),
+    fingerprint: goalCreateFingerprint(command),
+    guards: input.guards,
+    records: [encodeGoalSnapshot(input.goal)],
+    claims: [],
+    indexGuards: [],
+    indexChanges: [],
+    events: "birthEvent" in input ? [] : [encodeGoalCreatedEvent(goalCreatedEvent(input))],
+    // The creation commit itself is the only source of the Goal's cursor.
+    commitCursorBindings: [{
+      refKey: canonicalRefKey({
+        aggregateType: "Goal",
+        projectId,
+        goalId,
+      }),
+      field: "since",
+    }],
+  };
+}
+
+/** The deterministic `GoalCreated@1` event of a default birth. */
+function goalCreatedEvent(input: GoalCreateCompileInput): GoalCreatedEvent {
+  const command = input.command;
+  return {
     eventId: input.eventId,
     eventType: "GoalCreated",
     schemaVersion: 1,
-    projectId,
-    workspaceId,
+    projectId: command.identity.projectId,
+    workspaceId: command.payload.workspaceId,
     aggregateType: "Goal",
-    aggregateId: goalId,
+    aggregateId: command.aggregateId,
     aggregateRevision: 1,
     causationId: command.commandId,
     correlationId: command.correlationId,
@@ -110,26 +140,6 @@ export function compileGoalCreate(input: GoalCreateCompileInput): PreparedCommit
       continuedFrom: input.goal.continuedFrom,
       copiedInterventions: input.goal.copiedInterventions,
     },
-  };
-
-  return {
-    identityKey: goalCreateIdentityKey(command.identity),
-    fingerprint: goalCreateFingerprint(command),
-    guards: input.guards,
-    records: [encodeGoalSnapshot(input.goal)],
-    claims: [],
-    indexGuards: [],
-    indexChanges: [],
-    events: [encodeGoalCreatedEvent(event)],
-    // The creation commit itself is the only source of the Goal's cursor.
-    commitCursorBindings: [{
-      refKey: canonicalRefKey({
-        aggregateType: "Goal",
-        projectId,
-        goalId,
-      }),
-      field: "since",
-    }],
   };
 }
 

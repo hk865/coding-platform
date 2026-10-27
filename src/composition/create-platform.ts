@@ -92,7 +92,8 @@ import type { SecretaryProfilePort } from '../core/work-graph/model/request-cont
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
 import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evidence-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
-import { NOTE_RECORD_SCHEMAS } from '../core/work-graph/persistence/note-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS, currentPointerRefKey, noteHeadRefKey } from '../core/work-graph/persistence/note-record-codecs.js';
+import { anchorKeyOf } from '../core/work-graph/notes/note-anchors.js';
 import { createNoteService } from '../core/work-graph/notes/note-service.js';
 import type { NoteRunFactResolver, NoteService } from '../core/work-graph/notes/note-service.js';
 import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMemoryMaterialReadPort } from '../core/work-graph/notes/note-read-model.js';
@@ -162,6 +163,24 @@ import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ACTIVITY_SCHEMAS } from '../core/work-graph/sessions/session-activity.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../core/work-graph/persistence/initialization-binding-codecs.js';
+// The initialization adoption operation owner and its bundle; the Host's adoption composite drives it.
+import { INITIALIZATION_ADOPTION_SCHEMAS } from '../core/work-graph/persistence/initialization-adoption-codecs.js';
+import {
+  createInitializationAdoptionService, type InitializationAdoptionServiceDependencies,
+} from '../core/work-graph/tasks/initialization-adoption-service.js';
+import type {
+  ChecksConfirmationPort, InitializationAdoptionPort,
+} from '../core/work-graph/model/initialization-adoption-contracts.js';
+// The initialization binding reader, the Goal draft confirmation, the Goal copy and the request tail the
+// confirmation prepares with.
+import {
+  GOAL_CONFIRM_SCHEMAS, createGoalConfirmService, createInitializationBindingReader,
+} from '../core/work-graph/tasks/goal-confirm-service.js';
+import { GOAL_COPY_RECORD_SCHEMAS, createGoalCopyService } from '../core/work-graph/tasks/goal-copy-service.js';
+import { createRequestTailFragment } from '../core/work-graph/tasks/request-tail-fragment.js';
+import type {
+  GoalConfirmPort, GoalCopyPort, GoalUnderstandingReadPort, InitializationBindingReadPort,
+} from '../core/work-graph/model/goal-card-contracts.js';
 import { DISPATCH_COUNTER_SCHEMAS } from '../core/work-graph/persistence/dispatch-counter-codecs.js';
 // Slice 1 (spec §3.3, §4.4): the Session-facts, responsibility and anomaly owners
 // constructed by this composition root and injected through the narrow ports.
@@ -203,7 +222,7 @@ import type { GoalRef } from '../contracts/ledger.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
 import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
-import { canonicalJson, sameJson, type JsonValue } from '../contracts/fingerprint.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
   ContinuationWorkspaceSource, ReadonlyCommandAccessInput, RuntimeExecutionDependencies, RuntimeHostBindings,
@@ -735,6 +754,40 @@ export function createSecretaryOpenCapCapacity(deps: {
   };
 }
 
+/**
+ * The Goal understanding read the Goal copy pins, over the note read model. A missing pointer or a null
+ * pointer revision is `revision: null` with no head and no note; an existing empty pointer keeps its revision; a
+ * pointer naming a missing note is `unavailable`.
+ */
+const readGoalUnderstandingFrom = (notes: NoteReadPort): GoalUnderstandingReadPort['readGoalUnderstanding'] =>
+  async (ctx, input) => {
+    const anchor = { kind: 'goal' as const, goalId: input.goalRef.goalId };
+    const page = await notes.listByAnchor(ctx, { anchor, limit: 1, cursor: null });
+    if (page.status !== 'ready') return page;
+    const pointerRefKey = currentPointerRefKey({ aggregateType: 'CurrentPointer',
+      projectId: input.goalRef.projectId, anchorKey: anchorKeyOf(anchor) });
+    const pointer = page.value.pointer;
+    if (pointer === null || pointer.revision === null) {
+      return { status: 'ready', value: {
+        pointer: { refKey: pointerRefKey, revision: null, noteId: null }, head: null, note: null } };
+    }
+    if (pointer.noteId === null) {
+      return { status: 'ready', value: {
+        pointer: { refKey: pointerRefKey, revision: pointer.revision, noteId: null }, head: null, note: null } };
+    }
+    const note = await notes.readNote(ctx, { noteId: pointer.noteId });
+    if (note.status !== 'ready') {
+      return note.status === 'not_found'
+        ? { status: 'rejected', code: 'unavailable', reason: 'the pointer names a missing note' } : note;
+    }
+    return { status: 'ready', value: {
+      pointer: { refKey: pointerRefKey, revision: pointer.revision, noteId: pointer.noteId },
+      head: { refKey: noteHeadRefKey({ aggregateType: 'NoteHead',
+        projectId: input.goalRef.projectId, noteId: pointer.noteId }), version: note.value.version },
+      note: { noteId: pointer.noteId, version: note.value.version },
+    } };
+  };
+
 /** Trusted local composition root. Old Ledger/Index/Vault instances cannot be
  * supplied. No business bootstrap/claim API is invented by the storage factory. */
 export async function createTargetPlatform(options: TargetPlatformOptions) {
@@ -776,7 +829,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.records,
       ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
       ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records,
-      ...DISPATCH_COUNTER_SCHEMAS.records],
+      ...DISPATCH_COUNTER_SCHEMAS.records, ...GOAL_CONFIRM_SCHEMAS.records, ...GOAL_COPY_RECORD_SCHEMAS.records,
+      ...INITIALIZATION_ADOPTION_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -789,7 +843,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
       ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events,
-      ...DISPATCH_COUNTER_SCHEMAS.events],
+      ...DISPATCH_COUNTER_SCHEMAS.events, ...GOAL_CONFIRM_SCHEMAS.events, ...GOAL_COPY_RECORD_SCHEMAS.events,
+      ...INITIALIZATION_ADOPTION_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -802,7 +857,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [], ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [],
       ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? [],
-      ...DISPATCH_COUNTER_SCHEMAS.lookups ?? []],
+      ...DISPATCH_COUNTER_SCHEMAS.lookups ?? [], ...GOAL_CONFIRM_SCHEMAS.lookups ?? [],
+      ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -976,7 +1032,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // second resolver and no second owner.
     const secretaryQueryRun = createSecretaryQueryRun({
       records: backend.records, duties: sessionDutyResolver, bodies });
-    const rawRequestFacts = createRequestFacts({ records: backend.records });
+    // The ONE initialization binding reader. The request facts, the Plan owner, the decision sources, the
+    // planning-question reader, the draft confirmation and the published `bindings` all read this instance; the
+    // request facts fill a request card's `confirmedGoalRef` from it.
+    const bindingReads = createInitializationBindingReader({ records: backend.records });
+    const rawRequestFacts = createRequestFacts({ records: backend.records, bindings: bindingReads });
     const recipientExecutions = createRecipientExecutions({
       sessions: sessionFacts, executions: executionReader, records: backend.records });
     // The ONE dispatch-basis read: the mailbox's send facts and the graph reader's Goal cards share this instance, so
@@ -1052,6 +1112,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(operatorActor === undefined ? {} : { operatorActor }),
       // R5b.4: the SAME raw body store already owned by the composition root.
       initialPlanning: { bodies },
+      // The binding source arm of the source-aware initial plan reads the same binding reader.
+      bindings: bindingReads,
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }) };
@@ -1078,7 +1140,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           reason: 'the note-decision source is not bound yet' })
         : boundNoteDecisionSource.readNoteDecision(ctx, input),
     };
-    const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService,
+    const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService, bindings: bindingReads,
       noteDecisions: noteDecisionSourcePort, unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace },
       // K3 L19a: the SAME CRR owner, original-Run execution read and Kernel
       // command reader (the K L9 window) the card source uses.
@@ -1127,7 +1189,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // factory yet and are reported `not_available` by the read model; the
     // automatic-rework projector is the one notice source built here.
     const goalDecisionCauseReader = createGoalDecisionCauseReader({ records: backend.records, plans: planService });
-    const planningQuestionReader = createPlanningQuestionReader({ records: backend.records, plans: planService });
+    const planningQuestionReader = createPlanningQuestionReader({ records: backend.records, plans: planService,
+      bindings: bindingReads });
     const goalCauseCards = createGoalCauseCardSource(goalDecisionCauseReader);
     const planningQuestionCards = createPlanningQuestionCardSource(planningQuestionReader);
     const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
@@ -1440,16 +1503,66 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       };
       runtime = createAgentRuntime(dependencies);
     }
+    // The Goal copy pins the Goal's understanding through the note read model, which is built further down this
+    // file; this holder forwards to it once bound (the `boundNoteDecisionSource` rule).
+    let boundNoteReads: NoteReadPort | null = null;
+    const goalUnderstanding: GoalUnderstandingReadPort = {
+      readGoalUnderstanding: (ctx, input) => boundNoteReads === null
+        ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
+          reason: 'the note read model is not bound yet' })
+        : readGoalUnderstandingFrom(boundNoteReads)(ctx, input),
+    };
+    const requestTail = createRequestTailFragment();
+    const goalConfirm = createGoalConfirmService({ records: backend.records, tail: requestTail, bindings: bindingReads, now });
+    const goalCopy = createGoalCopyService({ records: backend.records, understanding: goalUnderstanding, now, eventId: randomUUID });
     // The completion methods are published on the SAME Goal service and drained
     // through the one trackedCall/close path; no second service or store exists.
-    const goals: GoalTaskPort & DispatchBasisReadPort = {
+    const goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
+      & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'] } = {
       createGoal: (...args) => trackedCall(() => rawGoals.createGoal(...args), unavailable),
       completeTask: (...args) => trackedCall(() => rawGoals.completeTask(...args), unavailable),
       completeGoal: (...args) => trackedCall(() => rawGoals.completeGoal(...args), unavailable),
       setGoalControl: (...args) => trackedCall(() => rawGoals.setGoalControl(...args), unavailable),
       // The Goal read region's basis route: the SAME instance the graph reader and the mailbox take.
       readDispatchBasis: (...args) => trackedCall(() => dispatchBasis.readDispatchBasis(...args), unavailable),
+      // The draft confirmation and the copy preview and confirmation, under the route table's owner names.
+      confirmDraft: (...args) => trackedCall(() => goalConfirm.confirmDraft(...args), unavailable),
+      readGoalCopyDraft: (...args) => trackedCall(() => goalCopy.readDraft(...args), unavailable),
+      confirmGoalCopy: (...args) => trackedCall(() => goalCopy.confirm(...args), unavailable),
     };
+    // The binding read, published by property only (not a public key).
+    const bindings: InitializationBindingReadPort = {
+      readBindingByAnswerDraft: (ctx, input) =>
+        trackedCall(() => bindingReads.readBindingByAnswerDraft(ctx, input), unavailable),
+      readBindingByGoal: (ctx, input) =>
+        trackedCall(() => bindingReads.readBindingByGoal(ctx, input), unavailable),
+    };
+    // The adoption operation owner over the same store, binding reader, plan, catalog and policy owners; published by
+    // property only, like the binding read. The two casts name methods the real owners always publish.
+    const adoptionOperations = createInitializationAdoptionService({ records: backend.records, bindings: bindingReads,
+      sources: planService as InitializationAdoptionServiceDependencies['sources'], architecture: catalog,
+      policies: bootstrap.completionPolicies as InitializationAdoptionServiceDependencies['policies'],
+      now, eventId: randomUUID });
+    const initializationAdoption: InitializationAdoptionPort = {
+      accept: (ctx, input) => trackedCall(() => adoptionOperations.accept(ctx, input), unavailable),
+      resume: (ctx, input) => trackedCall(() => adoptionOperations.resume(ctx, input), unavailable),
+      read: (ctx, input) => trackedCall(() => adoptionOperations.read(ctx, input), unavailable),
+      saveBefore: (ctx, input) => trackedCall(() => adoptionOperations.saveBefore(ctx, input), unavailable),
+      saveAfter: (ctx, input) => trackedCall(() => adoptionOperations.saveAfter(ctx, input), unavailable),
+    };
+    /** The installed checks of one scope as the next round resolves them (the registration, else the static fallback):
+     *  a read of the map, never the settings file. No configuration is the only answer with a null revision and digest. */
+    const readInstalledChecks: ChecksConfirmationPort['confirmInstalledChecks'] = async (_ctx, input) => {
+      const configuration = currentCheckConfiguration(input.scope);
+      if (configuration === undefined) {
+        return { status: 'ready', value: { configurationRevision: null, contentDigest: null, settings: null, checks: [] } };
+      }
+      return { status: 'ready', value: { configurationRevision: configuration.configurationRevision,
+        contentDigest: sha256Hex(canonicalJson(configuration.checks as unknown as JsonValue)),
+        settings: null, checks: structuredClone([...configuration.checks]) } };
+    };
+    const confirmInstalledChecks: ChecksConfirmationPort['confirmInstalledChecks'] =
+      (ctx, input) => trackedCall(() => readInstalledChecks(ctx, input), unavailable);
     function sessionCall<T>(call: () => Promise<T>): Promise<T | CoreRejection> {
       return trackedCall<T | CoreRejection>(call, unavailable);
     }
@@ -1973,6 +2086,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // work Run's own task and bound plan from the trusted principal.
       runTask: createNoteRunTaskResolver(backend.records),
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
+    boundNoteReads = noteReads;
     // Slice 4C-2 U8 (§11.4/L20): the ONE memory-material read reaches the
     // extensions reader through the SAME deps object created above; the caller
     // still picks the parts. §11.5: the narrow update-due and scribe to-do
@@ -2619,6 +2733,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       requestIntake, requestRounds, requestFacts, secretaryProfiles,
       // The main read and `requests/read` owner; internal like the request owners.
       mainSurface,
+      // The initialization binding read, the adoption operation owner and the installed-checks confirmation;
+      // internal like the request owners.
+      bindings, initializationAdoption, confirmInstalledChecks,
       // The secretary lifecycle owners and the two reads the Host's lifecycle queue asks; internal like the
       // request owners (never public keys), read by property from the route table and the Host. The queue's read
       // answers `{operation, revision}` pairs (both arms of an unfinished operation), never a full record.
@@ -2718,7 +2835,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
-      'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis'] as const) {
+      'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
+      'bindings', 'initializationAdoption', 'confirmInstalledChecks'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

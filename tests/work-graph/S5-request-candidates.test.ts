@@ -4,7 +4,7 @@ import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
-import type { PlanProposal, PlanProposalRef, ProposedPlanRequestV1 } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef, ProposedPlanDraftRequestV1 } from '../../src/core/work-graph/model/plan-contracts.js';
 import {
   PLAN_PROPOSAL_SCHEMA_ID, decodePlanProposalRecord, decodePlanProposalRecordedEvent,
 } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
@@ -23,11 +23,11 @@ const candidate = (proposal: PlanProposal) => {
   if (proposal.kind !== 'candidate_v2') throw new Error('expected a v2 candidate fixture');
   return proposal;
 };
-const request = (f: S5DecisionFixture, extra: Partial<ProposedPlanRequestV1> = {}): ProposedPlanRequestV1 => ({
+const request = (f: S5DecisionFixture, extra: Partial<ProposedPlanDraftRequestV1> = {}): ProposedPlanDraftRequestV1 => ({
   goalRef: GOAL_B, basedOn: PLAN_B1, draft: candidate(f.candidates.U1).draft,
   reason: { text: 'RC candidate', sources: [] }, requestRef: REQUEST_Q1, ...extra,
 });
-async function propose(f: S5DecisionFixture, id: string, input: ProposedPlanRequestV1, records: S5Records = f.records) {
+async function propose(f: S5DecisionFixture, id: string, input: ProposedPlanDraftRequestV1, records: S5Records = f.records) {
   return owners(f, records).plans.proposePlan(f.ctx, { input,
     meta: { requestId: `s5-${id}`, expected: [pin(input.goalRef, (await goalAt(records, input.goalRef)).revision)] },
   });

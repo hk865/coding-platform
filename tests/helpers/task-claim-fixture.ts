@@ -56,6 +56,7 @@ import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/ta
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -293,7 +294,8 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     },
   };
   const goalsService = createGoalService({ records: backend.records, now, eventId });
-  const plans = createPlanService({ records: backend.records, materials: materialsPort, now, eventId });
+  const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+    materials: materialsPort, now, eventId });
   const sessionsPort = createSessionDirectory({ records: backend.records, lookups: backend.records });
 
   const roleService = createRoleConfigurationService({ records: backend.records, now, eventId });

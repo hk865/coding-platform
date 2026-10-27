@@ -20,6 +20,7 @@ import {
   type CoreRouteBindings,
 } from '../../src/app/core-routes.js';
 import { createS4ANoteFixture, type S4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
+import { EXPECTED_ROUTE_ROWS, NOTES_ROUTES } from '../helpers/S6B3-route-suffixes.js';
 
 const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
 const SCOPE = { projectId: 's4a-project', workspaceId: 's4a-workspace' };
@@ -103,16 +104,8 @@ describe('S4C R-01 notes routes', () => {
   });
 
   it('R-01 route table: the six rows keep their literal kind/binding/owner', () => {
-    const expected: Record<string, { kind: string; binding: string; owner: string }> = {
-      'notes/list': { kind: 'plain', binding: 'listNotes', owner: 'notes.listNotes' },
-      'notes/write': { kind: 'plain', binding: 'writeNote', owner: 'notes.writeNote' },
-      'notes/withdraw': { kind: 'plain', binding: 'withdrawNote', owner: 'notes.withdrawNote' },
-      'notes/review': { kind: 'plain', binding: 'reviewNote', owner: 'notes.reviewNote' },
-      'plans/versions': { kind: 'plain', binding: 'listPlanVersions', owner: 'notes.listPlanVersions' },
-      'architecture/versions': { kind: 'plain', binding: 'listCatalogVersions', owner: 'notes.listCatalogVersions' },
-    };
-    for (const [suffix, spec] of Object.entries(expected)) {
-      expect(CORE_ROUTE_SPECS[suffix as CoreRouteSuffix]).toEqual(spec);
+    for (const suffix of NOTES_ROUTES) {
+      expect(CORE_ROUTE_SPECS[suffix], suffix).toEqual(EXPECTED_ROUTE_ROWS[suffix]);
     }
   });
 });

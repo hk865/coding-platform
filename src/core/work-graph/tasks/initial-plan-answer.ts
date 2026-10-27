@@ -10,7 +10,10 @@ import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-e
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import type { InitializationSourceV1 } from '../../../contracts/initial-planning.js';
 import type {
+  InitialPlanAnswerFacts,
+  InitialPlanSourceResolutionV1,
   QueryJobAnswerRef,
   QueryJobRef,
   QueryJobSnapshot,
@@ -19,6 +22,7 @@ import type {
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
+import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
 import {
@@ -30,7 +34,6 @@ import { QUERY_MANIFEST_CONTENT_TYPE } from '../queries/query-execution.js';
 import {
   normalizeInitialPlanningResponseV2,
   parseInitialPlanningResponseV2,
-  type InitialPlanAnswerFacts,
 } from './initial-plan.js';
 import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } from './plan-result-helpers.js';
 
@@ -38,7 +41,23 @@ type InitialPlanAnswerDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   materials?: Pick<MaterialPort, 'openArtifact'>;
   initialPlanning?: { bodies: Pick<RawArtifactStorePort, 'read'> };
+  /** The binding owner's read port. Absent makes only the binding source arm `unavailable`; the plain and
+   *  prepared_goal arms never read it. */
+  bindings?: InitializationBindingReadPort;
 };
+
+/** The Answer/Job/Run revisions the read saw, plus a binding source's record (revision 1): the provenance guards every proposal and adoption takes. */
+export function sourceFactsGuards(facts: InitialPlanAnswerFacts): RecordGuard[] {
+  const guards: RecordGuard[] = [
+    { refKey: canonicalJson(facts.answerRef as unknown as JsonValue), expectedRevision: 1 },
+    { refKey: canonicalJson(facts.job.ref as unknown as JsonValue), expectedRevision: facts.job.revision },
+    { refKey: canonicalJson(facts.run.ref as unknown as JsonValue), expectedRevision: facts.run.revision },
+  ];
+  if (facts.resolution.kind === 'binding') {
+    guards.push({ refKey: canonicalJson(facts.resolution.bindingRef as unknown as JsonValue), expectedRevision: 1 });
+  }
+  return guards;
+}
 
 /**
  * `records` is the instance the plan service already took from `deps` when it was built, so the store is read
@@ -55,6 +74,7 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
   async function readInitialPlanAnswerFacts(
     ctx: CoreCallContext,
     answerRef: QueryJobAnswerRef,
+    source?: InitializationSourceV1,
   ): Promise<ReadResult<InitialPlanAnswerFacts>> {
     const materials = deps.materials;
     const bodies = deps.initialPlanning?.bodies;
@@ -68,6 +88,13 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     }
     const wanted = answerRef as QueryJobAnswerRef;
     const answerKey = canonicalJson(wanted as unknown as JsonValue);
+    // An explicit source is a selector only: it must name the answer being read, never a second answer's facts.
+    if (source !== undefined && (!isRecord(source)
+      || (source.kind !== 'binding' && source.kind !== 'prepared_goal')
+      || !isRecord(source.answerRef)
+      || canonicalJson(source.answerRef as unknown as JsonValue) !== answerKey)) {
+      return rejected('source_stale', 'the initial-plan source does not name the requested answer');
+    }
     let answerRead;
     try { answerRead = await records.readMany([answerKey]); }
     catch (error) { return rejected('unavailable', `the Query answer read failed: ${messageOf(error)}`); }
@@ -117,10 +144,17 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
       || job.job.projectId !== wanted.projectId || job.job.workspaceId !== wanted.workspaceId) {
       return rejected('forbidden', 'the QueryJob is outside the requested answer scope');
     }
-    if (job.job.intent.execution.kind !== 'initial_coordination') {
-      return rejected('invalid', 'the QueryJob intent is not an initial_coordination request');
+    // The ordinary Query path keeps its old intent admission and no-Goal refusal. An explicit source bypasses
+    // both: the frozen manifest (prepared_goal) or the binding decides which Goal the answer planned.
+    const jobGoalId = job.job.goalId;
+    if (source === undefined) {
+      if (job.job.intent.execution.kind !== 'initial_coordination') {
+        return rejected('invalid', 'the QueryJob intent is not an initial_coordination request');
+      }
+      if (jobGoalId === null || jobGoalId === '') {
+        return rejected('incomplete', 'the QueryJob intent has no Goal');
+      }
     }
-    if (!nonEmpty(job.job.goalId)) return rejected('incomplete', 'the QueryJob intent has no Goal');
     if (job.job.runRef === null || job.job.runRef.runId !== runRef.runId) {
       return rejected('invalid', 'the QueryJob does not point at the answered QueryRun');
     }
@@ -151,12 +185,14 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     const body = opened.value;
     if (body.body !== answer.answer.answer || body.ref.digest !== answer.answer.bodyRef.digest
       || sha256Hex(body.body) !== answer.answer.bodyRef.digest) {
-      return rejected('invalid', 'the stored Query answer body disagrees with the recorded answer');
+      // A source read names the exact answer it proved; a digest drift is that source being stale.
+      return source === undefined
+        ? rejected('invalid', 'the stored Query answer body disagrees with the recorded answer')
+        : rejected('source_stale', 'the stored Query answer body no longer matches its recorded digest');
     }
-    if (body.ownerRunRef === null || body.ownerRunRef === undefined
-      || canonicalJson(body.ownerRunRef as unknown as JsonValue) !== runKey) {
-      return rejected('forbidden', 'the stored Query answer body is not owned by this QueryRun');
-    }
+    // No body-owner check: a body is content-addressed and keeps its first writer (`contracts/artifact.ts`), so another
+    // QueryRun's byte-identical answer is this answer's body too. The Answer's runRef, matched against the Job above,
+    // and the digest check prove the body is this QueryRun's answer.
     // The frozen prepared manifest body, re-read through the same raw body store.
     const prepared = state.prepared;
     const bundleRef = prepared.bundleRef;
@@ -195,14 +231,66 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     if (sha256Hex(manifest.input) !== manifest.inputDigest || manifest.inputDigest !== prepared.inputDigest) {
       return rejected('invalid', 'the prepared Query manifest input digest is inconsistent');
     }
-    if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
-      || manifest.goal.ref.projectId !== wanted.projectId || manifest.goal.ref.goalId !== job.job.goalId
+    if (!isRecord(manifest.workspace) || !isRecord(manifest.workspace.ref)
       || manifest.workspace.ref.workspaceId !== wanted.workspaceId) {
       return rejected('invalid', 'the prepared Query manifest does not pin this Goal/Workspace');
     }
+    if (source === undefined) {
+      if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
+        || manifest.goal.ref.projectId !== wanted.projectId || manifest.goal.ref.goalId !== job.job.goalId) {
+        return rejected('invalid', 'the prepared Query manifest does not pin this Goal/Workspace');
+      }
+    } else if (source.kind === 'prepared_goal') {
+      // A prepared_goal source is exactly a goal request prepared as initial_coordination; the manifest's Goal is
+      // the authority, not the Job's own Goal (the Job may be a no-goal request).
+      if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
+        || manifest.goal.ref.projectId !== wanted.projectId || !nonEmpty(manifest.goal.ref.goalId)) {
+        return rejected('source_stale', 'the frozen prepared manifest does not carry the source Goal');
+      }
+      if (manifest.request?.executionKind !== 'initial_coordination') {
+        return rejected('source_stale', 'the frozen request is not an initial_coordination preparation');
+      }
+    }
+    let resolution: InitialPlanSourceResolutionV1;
+    if (source === undefined) {
+      // The plain admission above refused a Job that names no Goal, so the resolved Goal is that Job's own Goal.
+      resolution = { kind: 'plain', source: null, bindingRef: null,
+        goal: { aggregateType: 'Goal', projectId: wanted.projectId, goalId: jobGoalId as string },
+        goalRevision: (manifest.goal as { revision: number }).revision };
+    } else if (source.kind === 'prepared_goal') {
+      const manifestGoal = manifest.goal as { ref: { aggregateType: 'Goal'; projectId: string; goalId: string };
+        revision: number };
+      resolution = { kind: 'prepared_goal', source, bindingRef: null,
+        goal: { ...manifestGoal.ref }, goalRevision: manifestGoal.revision };
+    } else {
+      const bindings = deps.bindings;
+      if (bindings === undefined) {
+        return rejected('unavailable', 'the initial-plan binding source requires the injected binding read port');
+      }
+      let bindingRead;
+      try {
+        bindingRead = await bindings.readBindingByAnswerDraft(ctx,
+          { answerRef: wanted, draftIndex: source.draftIndex });
+      } catch (error) {
+        return rejected('unavailable', `the initialization binding read failed: ${messageOf(error)}`);
+      }
+      if (bindingRead.status === 'not_found') {
+        return rejected('source_stale', 'the initialization binding for this answer draft does not exist');
+      }
+      if (bindingRead.status !== 'ready') return bindingRead;
+      const binding = bindingRead.value;
+      // The selector and binding must name the same answer/draft with the still-current digest; planDraftIndex is checked only by normalization.
+      if (canonicalJson(binding.ref.answerRef as unknown as JsonValue) !== answerKey
+        || binding.ref.draftIndex !== source.draftIndex
+        || binding.answerDigest !== sha256Hex(answer.answer.answer)) {
+        return rejected('source_stale', 'the initialization binding does not match the source answer');
+      }
+      resolution = { kind: 'binding', source, bindingRef: { ...binding.ref },
+        goal: { ...binding.goalRef }, goalRevision: 1 };
+    }
     return { status: 'ready', value: {
       answer: answer.answer, answerRef: { ...answer.ref }, job, run, manifest,
-      answerText: answer.answer.answer } };
+      answerText: answer.answer.answer, resolution } };
   }
 
   /**
@@ -214,6 +302,8 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
   async function verifyModelCoordinationDraft(
     ownedContext: Owned<CoreCallContext>,
     proposal: Extract<PlanProposal, { kind: 'candidate_v2' }>,
+    /** The Goal revision the adopting scope read; an explicit source frozen at another revision is a conflict. */
+    currentGoalRevision: number,
   ): Promise<{ guards: RecordGuard[] } | { rejection: Rejection }> {
     const origin = proposal.draft.origin;
     if (origin === undefined || origin.kind !== 'model_coordination') {
@@ -223,26 +313,35 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
       return { rejection: rejected('unsupported', 'model-coordination adoption requires the injected materials and prepared-body stores') };
     }
     if (ownedContext.status === 'invalid') return { rejection: rejected('invalid', ownedContext.reason) };
-    const factsRead = await readInitialPlanAnswerFacts(ownedContext.value, origin.answerRef);
+    // Re-read through the SAME declared source; a binding or prepared_goal source is re-proved against its binding/manifest.
+    const declaredSource = origin.source;
+    const source = declaredSource === undefined || declaredSource.kind === 'plain'
+      ? undefined : declaredSource.selector;
+    const factsRead = await readInitialPlanAnswerFacts(ownedContext.value, origin.answerRef, source);
     if (factsRead.status !== 'ready') {
       return { rejection: asWriteRejection(factsRead, 'the initial-plan answer facts are not readable') };
     }
     const facts = factsRead.value;
+    // An explicit source froze its Goal revision; a moved Goal is a conflict, while the plain path leaves comparison to the machine's scope guard.
+    if (source !== undefined && facts.resolution.goalRevision !== currentGoalRevision) {
+      return { rejection: rejected('revision_conflict', 'the Goal moved since the source captured its revision') };
+    }
     const parsed = parseInitialPlanningResponseV2(facts.answerText);
     if (parsed.status === 'rejected') return { rejection: parsed };
     const normalized = normalizeInitialPlanningResponseV2(parsed.response, facts);
     if (normalized.status !== 'plan') {
       return { rejection: rejected('invalid', 'the real answer no longer normalizes to the proposed plan') };
     }
+    // A record frozen before the source arm carries no source; it reads as { kind: 'plain' } only when the
+    // re-read facts are plain too. The record is never rewritten and every other field is compared strictly.
+    const compared = declaredSource === undefined && facts.resolution.kind === 'plain'
+      ? { ...proposal.draft, origin: { ...origin, source: { kind: 'plain' as const } } }
+      : proposal.draft;
     if (canonicalJson(normalized.draft as unknown as JsonValue)
-      !== canonicalJson(proposal.draft as unknown as JsonValue)) {
+      !== canonicalJson(compared as unknown as JsonValue)) {
       return { rejection: rejected('invalid', 'the candidate draft is not the unique normalization of the real answer') };
     }
-    return { guards: [
-      { refKey: canonicalJson(origin.answerRef as unknown as JsonValue), expectedRevision: 1 },
-      { refKey: canonicalJson(facts.job.ref as unknown as JsonValue), expectedRevision: facts.job.revision },
-      { refKey: canonicalJson(facts.run.ref as unknown as JsonValue), expectedRevision: facts.run.revision },
-    ] };
+    return { guards: sourceFactsGuards(facts) };
   }
 
   return { readInitialPlanAnswerFacts, verifyModelCoordinationDraft };

@@ -111,6 +111,7 @@ import { COMMAND_RERUN_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
 import { RUN_ACTIVITY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/run-activity-codecs.js';
 import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -123,6 +124,7 @@ import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -505,6 +507,7 @@ const additionalSchemas: RecordBackendSchemas[] = [QUERY_JOB_RECORD_SCHEMAS, SES
   SESSION_LIFECYCLE_RECORD_SCHEMAS,
   RUN_ACTIVITY_RECORD_SCHEMAS,
   SESSION_ACTIVITY_SCHEMAS,
+  INITIALIZATION_BINDING_SCHEMAS,
   { records: [], events: PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events },
   CONTROL_RECORD_SCHEMAS];
 
@@ -806,7 +809,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   }
   const planCDraft = planDraft('PC1', GOAL_C.goalId, [{ stageId: 'stage-c', title: 'Module N stage' }],
     [workTask('c-work', 'Plan module N work', { kind: 'module', stageId: 'stage-c', moduleRef: MODULE_N.moduleId })], requirementKind);
-  const plans = createPlanService({ records, now, eventId });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }), now, eventId });
   async function adoptInitial(goalRef: GoalRef, draft: PlanRevisionDraft): Promise<PlanRevisionSnapshot> {
     const proposed = await plans.proposePlan(ctx, { input: { goalRef, basedOn: null, draft,
       reason: { text: `Initial ${draft.planId}`, sources: [] } },
@@ -1156,7 +1159,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const messageDecisions = createDecisionMessageService({
     records, now, newId, operatorActor: { ...operatorActor }, messages: messageMailbox,
     materials: messageMaterials, messageWrites: createMessageWriteOwner(messageDeps),
-    sources: createDecisionSourceFacts({ records }),
+    sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }),
   });
 
   const options: DecisionOptionV1[] = [

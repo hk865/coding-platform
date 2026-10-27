@@ -10,6 +10,7 @@
 - `common.ts` — issue 类型与结构原语：记录/字符串/整数/摘要判定、键集合、UTF-8 字节与码点计数、JSON 解析、`invalid`、字符串字段收集。
 - `cursors.ts` — 账本游标形状：`c` 加十位数字，以及排除 `c0000000000` 的非零版本；Session codec 与字段表共用这一份。
 - `data-format.ts` — 字段表格式（`../data-format.ts`）的唯一值检查 `checkShape`：按固定顺序返回第一个问题（声明顺序、深度优先，再未知键、再规则；事件先查四个信封键），文本是 `<name>.<path> is missing / is not allowed / is not recognized / is invalid`。
+- `initialization-adoption.ts` — 初始化采用的唯一进度规则 `adoptionProgressProblem`（完成前缀、当前 before/stopped 标记、committed 结果、checks 的匹配确认、只有 failed 可重试）；它的 ref 由持久层的 `aggregateRefProblem`（`InitializationAdoption` 行）和 codec 的字段表检查，这里不另写；checks 源/配置 pin 的共享字段形状 `ChecksSettingsSourceShape`/`ChecksConfigurationPinShape` 与 `checksConfigurationPinProblem` 也在这里；状态层、持久层 codec 与 Host 设置入口共用这一份。
 - `time.ts` — ISO UTC 时间形状（以 `Z` 结尾、`Date.parse` 可读）；Run 活动 codec 与字段表共用这一份。
 - `goal.ts` — `CreateGoal` 命令体校验：版本、身份、aggregateId、expectedRevision、归一化后的非空 objective。
 - `identity.ts` — actor（human/system/agent 及 agent 的完整 runRef）与命令身份（projectId/actor/idempotencyKey）。
@@ -31,7 +32,7 @@
 | `stringField`、`stringArrayField` | `src/contracts/validation/common.ts:65`、`src/contracts/validation/common.ts:82` | 读取必填字符串/字符串数组并追加 missing_field/bad_type；数组为空时按 allowEmpty 追加 bad_scope。 | 命令体字段收集；用同一个 displayPath 规则。 |
 | `isPlatformCursor`、`isNonZeroPlatformCursor` | `src/contracts/validation/cursors.ts:8`、`src/contracts/validation/cursors.ts:12` | 账本游标形状；非零版本排除 `c0000000000`。 | 读写游标字段；`f.cursor('ledger' / 'ledgerNonZero')` 用同一份。 |
 | `isIsoZulu` | `src/contracts/validation/time.ts:7` | 以 `Z` 结尾且 `Date.parse` 可读的 UTC 时间。 | ISO 时间字段；`f.isoTime()` 用同一份。 |
-| `checkShape` | `src/contracts/validation/data-format.ts:24` | 按字段表格式检查一个值，返回第一个问题或 `null`；`pending` 允许记录的可绑定游标仍是 `null`。 | 字段表格式的检查只用这一个；RecordStore 编解码经 `src/core/work-graph/persistence/field-table-codec.ts`。 |
+| `checkShape` | `src/contracts/validation/data-format.ts:25` | 按字段表格式检查一个值，返回第一个问题或 `null`；`pending` 允许记录的可绑定游标仍是 `null`。 | 字段表格式的检查只用这一个；RecordStore 编解码经 `src/core/work-graph/persistence/field-table-codec.ts`。 |
 | `validateCreateGoalCommand` | `src/contracts/validation/goal.ts:6` | 校验 CreateGoal 命令的完整形状，含 NFC+trim 后非空 objective。 | WorkGraph 受理 CreateGoal 前的纯输入检查。 |
 | `validateActor` | `src/contracts/validation/identity.ts:5` | 校验 human/system/agent actor；agent 必须带完整 runRef。 | 所有 actor 字段；本层只需要 `ValidationIssue[]` 时用这个入口。 |
 | `validateCommandIdentity` | `src/contracts/validation/identity.ts:24` | 校验 projectId、actor、idempotencyKey。 | 所有命令的 identity 字段。 |

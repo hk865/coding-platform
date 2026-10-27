@@ -29,6 +29,8 @@ import type {
 import {
   hasOnlyKeys, invalid, isRecord, nonEmpty, parseTaggedObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
+import { InitializationBindingRefShape } from '../../../contracts/initialization-binding.js';
 import {
   goalSettingsProblem,
   goalSnapshotValueProblem,
@@ -170,6 +172,7 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   // aggregate (`@v -> @v+1`), so no NoteVersion ref rule is needed.
   NoteHead: { strings: ['projectId', 'noteId'] },
   CurrentPointer: { strings: ['projectId', 'anchorKey'] },
+  InitializationAdoption: { strings: ['projectId', 'operationId'] },
 };
 
 /**
@@ -181,6 +184,9 @@ export function aggregateRefProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'an aggregate ref must be an object';
   const aggregateType = value['aggregateType'];
   if (!nonEmpty(aggregateType)) return 'an aggregate ref must carry a non-empty aggregateType';
+  if (aggregateType === 'InitializationBinding') {
+    return checkShape(InitializationBindingRefShape, value, 'stored');
+  }
   const rule = AGGREGATE_REF_RULES[aggregateType];
   if (rule === undefined) return `the aggregate ref type ${aggregateType} is not a known aggregate`;
   for (const field of rule.strings) {

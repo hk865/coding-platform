@@ -13,6 +13,7 @@ import { createArchitectureCatalogService } from '../../src/core/work-graph/arch
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
@@ -135,7 +136,8 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     let sequence = 0;
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `r3c-goal-${++sequence}` }).tasks;
-    const plans = createPlanService({ records: backend.records, now: () => at,
+    const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      now: () => at,
       eventId: () => `r3c-plan-${++sequence}` });
     const goal = await goals.createGoal(ctx, { meta: { requestId: 'create-goal',
       expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
@@ -276,7 +278,8 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     // Run is released and awaited to its end before the stale page returns;
     // nothing in this world writes the Workflow's TaskReduction.
     let injectEndedRun = true;
-    const racingReadyReader = createPlanService({ records: {
+    const racingReadyReader = createPlanService({ bindings: createInitializationBindingReader({ records: rf.records }),
+      records: {
       ...rf.records,
       async lookup(request) {
         const page = await rf.records.lookup(request);
@@ -316,7 +319,8 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     let implementRunRef: import('../../src/contracts/dispatch.js').RunRef | undefined;
     let implementStart: ReturnType<typeof runtimeWorld.runtime.port.startRun> | undefined;
     let injectImplement = true;
-    const racingGraphReader = createPlanService({ records: {
+    const racingGraphReader = createPlanService({ bindings: createInitializationBindingReader({ records: rf.records }),
+      records: {
       ...rf.records,
       async lookup(request) {
         const page = await rf.records.lookup(request);
@@ -384,7 +388,8 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     pendingDraft.goalId = 'goal-2';
     pendingDraft.planId = 'pending-race-plan';
     let injectProposal = true;
-    const racingProposalReader = createPlanService({ records: {
+    const racingProposalReader = createPlanService({ bindings: createInitializationBindingReader({ records: backend.records }),
+      records: {
       ...backend.records,
       async lookup(request) {
         const page = await backend.records.lookup(request);
@@ -460,7 +465,8 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     const thirdGoalKey = canonicalJson(thirdGoal.value.ref as JsonValue);
     let injectAdoption = true;
     let adoptedRacePlanRef: typeof applied.value.ref | null = null;
-    const racingGoalReader = createPlanService({ records: {
+    const racingGoalReader = createPlanService({ bindings: createInitializationBindingReader({ records: backend.records }),
+      records: {
       ...backend.records,
       async readMany(keys) {
         const batch = await backend.records.readMany(keys);

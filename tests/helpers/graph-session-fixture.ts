@@ -34,6 +34,7 @@ import {
 } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
@@ -405,7 +406,8 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       input: { goalId: goalRef.goalId, workspace: scope, objective: 'Deliver the A1 work' },
     });
     if (created.status !== 'committed') throw new Error(`A1 goal creation failed: ${JSON.stringify(created)}`);
-    const plans = createPlanService({ records: wrapped, now: () => GRAPH_FIXTURE_AT, eventId });
+    const plans = createPlanService({ records: wrapped, bindings: createInitializationBindingReader({ records: wrapped }),
+      now: () => GRAPH_FIXTURE_AT, eventId });
     const draft: PlanRevisionDraft = {
       schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId, stages: [],
       tasks: [

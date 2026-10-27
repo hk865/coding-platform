@@ -65,6 +65,7 @@ import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueOutcomeV1, type TaskRequeueR
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
@@ -279,7 +280,8 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
   const bodies = new RawArtifactBodyStore();
   const materialsPort = { async openArtifact() { return { status: 'rejected' as const, code: 'unsupported' as const, reason: 'S2C-D does not read material' }; } };
   const goals = createGoalService({ records: backend.records, now, eventId }).tasks;
-  const plans = createPlanService({ records: backend.records, materials: materialsPort, now, eventId });
+  const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+    materials: materialsPort, now, eventId });
   const catalog = createArchitectureCatalogService({ records: backend.records });
   const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
   const lifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,

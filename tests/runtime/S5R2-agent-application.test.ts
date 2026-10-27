@@ -8,6 +8,7 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contract
 import { createWhiteboardTools } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createToolCommitLookup } from '../../src/composition/tool-commit-lookup.js';
 import { recordDecisionApplicationRequest } from '../../src/core/work-graph/model/tool-commit-arguments.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -79,7 +80,8 @@ async function harness(kind: S5FixtureKind) {
   const messages = realOwners(f, ['adviser'], records);
   const reads = owners(f, records).reads;
   const executions = createRunStateReader({ records });
-  const plans = createPlanService({ records, now: f.now, eventId: f.newId, operatorActor: f.operatorActor,
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: f.now, eventId: f.newId, operatorActor: f.operatorActor,
     delegatedWrites: {
       reads: executions,
       roles: createRoleConfigurationService({ records, now: f.now, eventId: f.newId }),
@@ -232,7 +234,7 @@ async function adoptAsAgent(h: Harness, given: Answered) {
 async function recordApplication(h: Harness, given: Answered, receipt: DecisionApplicationReceiptV1) {
   const before = await h.queue();
   expect(before.counts.answeredPendingApplication).toBe(2);
-  const expected = ready(await createDecisionSourceFacts({ records: h.records }).readApplication(h.f.ctx, {
+  const expected = ready(await createDecisionSourceFacts({ records: h.records, bindings: createInitializationBindingReader({ records: h.records }) }).readApplication(h.f.ctx, {
     answer: given.saved, receipt,
   }));
   expect(expected.actor).toEqual({ kind: 'agent',

@@ -24,6 +24,7 @@ import { createWorkbenchServer, type WorkbenchServer } from '../../src/app/serve
 import { createObservedArchitecture } from '../../src/core/work-graph/architecture/architecture-service.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { actor, context, fixture, projectId, workspaceId } from '../work-graph/R3d-fixture.js';
+import { ARCHITECTURE_READ_ROUTES, EXPECTED_ROUTE_ROWS } from '../helpers/S6B3-route-suffixes.js';
 
 const scope = { projectId, workspaceId };
 const TOKEN = 's8a-architecture-routes-token';
@@ -51,12 +52,9 @@ async function corePost(base: string, suffix: string, input: unknown): Promise<R
 
 describe('S8A architecture read routes', () => {
   it('registers the three routes as plain reads bound to their one architecture owner method', () => {
-    expect(CORE_ROUTE_SPECS['architecture/compare']).toEqual(
-      { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' });
-    expect(CORE_ROUTE_SPECS['architecture/compare-formal']).toEqual(
-      { kind: 'plain', binding: 'compareFormalObserved', owner: 'architecture.compareFormalObserved' });
-    expect(CORE_ROUTE_SPECS['architecture/impact']).toEqual(
-      { kind: 'plain', binding: 'queryImpact', owner: 'architecture.queryImpact' });
+    for (const suffix of ARCHITECTURE_READ_ROUTES) {
+      expect(CORE_ROUTE_SPECS[suffix], suffix).toEqual(EXPECTED_ROUTE_ROWS[suffix]);
+    }
   });
 
   it('dispatches a bad/empty input to the real owner method, not an unpublished-route not_found', async () => {

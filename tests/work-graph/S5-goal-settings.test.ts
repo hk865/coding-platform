@@ -21,6 +21,7 @@ import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -90,7 +91,8 @@ async function open(kind: Kind, pausedB: boolean): Promise<Ctx> {
   return { kind, f, service: settings(f) };
 }
 function plans(x: Ctx) {
-  return createPlanService({ records: x.f.records, now: x.f.now, eventId: x.f.newId });
+  return createPlanService({ records: x.f.records, bindings: createInitializationBindingReader({ records: x.f.records }),
+    now: x.f.now, eventId: x.f.newId });
 }
 async function goal(x: Ctx, ref: GoalRef): Promise<GoalSnapshot> {
   const read = await plans(x).queryGoal(x.f.ctx, ref);
@@ -297,7 +299,7 @@ function decisions(x: Ctx) {
     materials, systemActor: f.operatorActor, now: f.now, newId: f.newId };
   return createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: f.operatorActor,
     messages: createSessionMailbox(deps), materials, messageWrites: createMessageWriteOwner(deps),
-    sources: createDecisionSourceFacts({ records: f.records }) });
+    sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
 }
 async function conflicts(x: Ctx): Promise<GoalConflictReadV1> {
   const reads = createDecisionReadModel({ records: x.f.records, cardSources: [], noticeSources: [],

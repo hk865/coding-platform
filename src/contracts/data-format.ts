@@ -10,6 +10,7 @@
  * `<what> description is invalid: <detail>` and never reaches a value check.
  */
 import type { CommitCursor } from './command-event.js';
+import type { JsonValue } from './fingerprint.js';
 import { isInt, nonEmpty } from './validation/common.js';
 
 /** `pending`: a value about to be committed, whose bound cursors may still be `null`; `stored`: a value as stored. */
@@ -51,7 +52,8 @@ export type Field =
   | { readonly kind: 'nullable'; readonly field: Field }
   | { readonly kind: 'array'; readonly element: Field; readonly min?: number; readonly max?: number }
   | { readonly kind: 'object'; readonly fields: Fields }
-  | { readonly kind: 'union'; readonly tag: string; readonly branches: { readonly [branch: string]: Fields } };
+  | { readonly kind: 'union'; readonly tag: string; readonly branches: { readonly [branch: string]: Fields } }
+  | { readonly kind: 'json' };
 export type Fields = { readonly [key: string]: Field };
 
 /** A nested shape, e.g. a ref: its fields and the rules that run after them. */
@@ -91,6 +93,7 @@ type InferField<T, P extends FieldPhase> =
   : T extends { kind: 'object'; fields: infer F extends Fields } ? InferShape<F>
   : T extends { kind: 'union'; branches: infer B extends { readonly [branch: string]: Fields } }
     ? { [N in keyof B]: InferShape<B[N]> }[keyof B]
+  : T extends { kind: 'json' } ? JsonValue
   : never;
 /**
  * The object a field table describes: required keys required, `f.optional` keys `?:` (absent, never `undefined`).
@@ -177,6 +180,9 @@ export const f = {
     return { kind: 'enum' as const, values };
   },
   boolean: () => ({ kind: 'boolean' as const }),
+  /** Any JSON value exactly as `JsonValue` defines it: null, boolean, finite number, string, an array of JSON
+   *  values, or an object with string keys and JSON values. Not a stringified JSON text and not a narrower subset. */
+  json: () => ({ kind: 'json' as const }),
   /** A ref described by its own `defineShape`: tagged aggregate refs and plain refs are each their own shape. */
   ref: <F extends Fields>(shape: Shape<F>) => ({ kind: 'ref' as const, shape }),
   /** A ledger cursor (`c` and ten digits), one that is not `c0000000000`, or an opaque non-empty Kernel cursor. */

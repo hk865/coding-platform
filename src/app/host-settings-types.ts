@@ -7,6 +7,9 @@ import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.
 import type {
   PromptPackProblemV1, TemplateSlotTableV1, ToolTextV1,
 } from '../contracts/prompts/prompt-pack.js';
+import type {
+  ChecksConfirmationPort, ChecksEntryPort, SavedChecksReadPort, SettingsSerialGatePort,
+} from '../core/work-graph/model/initialization-adoption-contracts.js';
 
 export const SETTINGS_API_PREFIX = '/api/real/settings/';
 export type SettingsProvider = 'deepseek' | 'openai';
@@ -170,3 +173,11 @@ export type SettingsResponse<T> = { status: 'ready'; value: T }
 export interface HostSettingsPort {
   call<K extends SettingsRoute>(route: K, input: SettingsRoutes[K]['input']): Promise<SettingsResponse<SettingsRoutes[K]['value']>>;
 }
+
+/**
+ * The checks entry published on the settings object: the narrow adoption save, the saved-state read, the
+ * installed confirmation, and the one settings serial queue. Callers use these methods; there is no second
+ * settings writer or installed-configuration map.
+ */
+export interface ChecksAdoptionEntryPort
+  extends ChecksEntryPort, ChecksConfirmationPort, SavedChecksReadPort, SettingsSerialGatePort {}

@@ -55,6 +55,7 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { readGoalTriggerRecords } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
@@ -170,7 +171,8 @@ async function setupPlans(): Promise<PlanFixture> {
       input: { goalId: GOAL, workspace: b2.base.scope, objective: 'S4C2 trigger subject' } });
     if (created.status !== 'committed') throw new Error(`S4C2 trigger Goal creation failed: ${JSON.stringify(created)}`);
 
-    const plans = createPlanService({ records, now: () => planClock.at, eventId });
+    const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      now: () => planClock.at, eventId });
 
     async function currentGoal(): Promise<GoalSnapshot> {
       const read = await b2.base.plans.queryGoal(ctx, goalRef);

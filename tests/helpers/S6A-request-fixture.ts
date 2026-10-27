@@ -145,7 +145,7 @@ const SECRETARY_INSTRUCTION = 'S6A trusted secretary guidance';
 const PLAIN_INSTRUCTION = 'S6A trusted read-only consultation guidance';
 const WORK_INSTRUCTION = 'S6A trusted work guidance';
 const SCRIBE_INSTRUCTION = 'S6A trusted scribe guidance';
-const OPERATOR: WorkbenchActor = { kind: 'human', id: 's6a-operator' };
+export const OPERATOR: WorkbenchActor = { kind: 'human', id: 's6a-operator' };
 const AUTOMATION: WorkbenchActor = { kind: 'system', id: 's6a-automation' };
 
 export type S6ABackend = 'memory' | 'sqlite';

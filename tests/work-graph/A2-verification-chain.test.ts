@@ -45,6 +45,7 @@ import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/compl
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { readCanonicalTaskFacts } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
@@ -295,7 +296,8 @@ it('a round chain the projection cannot read makes the task graph unavailable, n
   const records = recordsWithLookup(fixture, async request => request.index === VERIFICATION_ROUND_ORIGINAL_LOOKUP
     ? { status: 'rejected', code: 'unavailable', reason: 'a2: the round index is unavailable' }
     : fixture.records.lookup(request));
-  const plans = createPlanService({ records, now: () => B2_AT, eventId: () => 'a2-unused-event' });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => B2_AT, eventId: () => 'a2-unused-event' });
   expect(await plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef }))
     .toMatchObject({ status: 'rejected', code: 'unavailable' });
   expect(await readCanonicalTaskFacts(records, fixture.goalRef, fixture.plan))

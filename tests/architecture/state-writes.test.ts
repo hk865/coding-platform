@@ -190,6 +190,12 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/dispatch-counter-format.ts', name: 'DispatchCounterV1', kind: 'record',
     fields: ['ref', 'schemaVersion', 'revision', 'goalId', 'sequence', 'lastMessageRef'],
     use: 'state/dispatch-counter.ts firstDispatch or nextDispatch' },
+  { file: 'src/contracts/initialization-binding.ts', name: 'InitializationBindingV1',
+    kind: 'record', fields: 'all', use: 'state/goal-confirm.ts newInitializationBinding' },
+  // The initialization adoption's record: every field, including `since`, is written only by the state layer.
+  { file: 'src/contracts/initialization-adoption.ts', name: 'InitializationAdoptionRecordV1', kind: 'record',
+    fields: 'all',
+    use: 'state/initialization-adoption.ts newInitializationAdoptionRecord, acceptExistingInitializationAdoption, nextAdoptionStage, advanceInitializationAdoption, stopInitializationAdoption, completeInitializationAdoption or committedAdoptionRecord' },
 ];
 
 // -------------------------------------------------------------------------- //

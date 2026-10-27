@@ -29,7 +29,7 @@ import {
   CORE_ROUTE_SPECS, CoreRouteRejectionError, createPlatformCoreRouteBindings, dispatchCoreRoute,
   parseCoreRouteRequest, type CoreRouteBindings,
 } from '../../src/app/core-routes.js';
-import type { CoreRouteSuffix } from '../../src/app/core-http-types.js';
+import { EXPECTED_ROUTE_ROWS, SLICE2C_ROUTES } from '../helpers/S6B3-route-suffixes.js';
 import { createLineSettingsService } from '../../src/core/work-graph/configuration/line-settings-service.js';
 import type { WorkLineStore } from '../../src/core/work-graph/views/work-line-reader.js';
 import {
@@ -47,18 +47,6 @@ const noWorkspace = {
   async authorize() {
     return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'no route fixture workspace IO' };
   },
-};
-
-/** The literal §2 route table for the seven suffixes. */
-const EXPECTED_ROUTES: Record<'lines/list' | 'lines/archived' | 'lines/read' | 'lines/page'
-  | 'lines/pin' | 'graph/hover' | 'graph/detail', { kind: 'plain' | 'graph_write'; binding: string; owner: string }> = {
-  'lines/list': { kind: 'plain', binding: 'listWorkLines', owner: 'workLines.listWorkLines' },
-  'lines/archived': { kind: 'plain', binding: 'listArchivedLines', owner: 'workLines.listArchivedLines' },
-  'lines/read': { kind: 'plain', binding: 'readWorkLine', owner: 'workLines.readWorkLine' },
-  'lines/page': { kind: 'plain', binding: 'readWorkLinePage', owner: 'workLineConversation.readWorkLinePage' },
-  'lines/pin': { kind: 'graph_write', binding: 'setLinePins', owner: 'lineSettings.setLinePins' },
-  'graph/hover': { kind: 'plain', binding: 'readGraphHover', owner: 'nodeDetail.readGraphHover' },
-  'graph/detail': { kind: 'plain', binding: 'readNodeDetail', owner: 'nodeDetail.readNodeDetail' },
 };
 
 const SCOPE: WorkspaceScope = { projectId: 'p-2c31', workspaceId: 'w-2c31' };
@@ -113,8 +101,9 @@ function failingReads(store: WorkLineStore): WorkLineStore {
 
 describe('2C-31 route table and envelopes', () => {
   it('2C-31 (a) the seven routes are in CORE_ROUTE_SPECS with the exact kind, binding and owner', () => {
-    for (const [suffix, expected] of Object.entries(EXPECTED_ROUTES)) {
-      expect(CORE_ROUTE_SPECS[suffix as CoreRouteSuffix]).toEqual(expected);
+    // The literal §2 route table for the seven suffixes (row 40's shared expected table).
+    for (const suffix of SLICE2C_ROUTES) {
+      expect(CORE_ROUTE_SPECS[suffix], suffix).toEqual(EXPECTED_ROUTE_ROWS[suffix]);
     }
   });
 

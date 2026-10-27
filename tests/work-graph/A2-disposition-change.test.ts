@@ -50,6 +50,7 @@ import type { PlanProposal, PlanTaskPort, TaskRow } from '../../src/core/work-gr
 import type { ClaimFixtureKind, Records, TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
@@ -398,7 +399,7 @@ async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
       if (paused.status !== 'committed' || paused.value.desiredState !== 'paused') throw new Error(`C7 pause failed: ${JSON.stringify(paused)}`);
     }
     const planServiceOver = (target: Records): PlanTaskPort =>
-      createPlanService({ records: target, now, eventId });
+      createPlanService({ records: target, bindings: createInitializationBindingReader({ records: target }), now, eventId });
 
     let closed = false;
     const close = async (): Promise<void> => {

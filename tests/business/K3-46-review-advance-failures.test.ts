@@ -27,6 +27,7 @@ import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-e
 import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
@@ -165,7 +166,8 @@ function assemble(world: K3ReviewCardWorld, options: {
       budget: f.runRA.budget,
     }],
   };
-  const plans = createPlanService({ records: f.records, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    now: f.now, eventId: f.newId });
   const goalSettings = createGoalSettingsService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: f.operatorActor });
   const dependencies: WorkflowDependencies = {

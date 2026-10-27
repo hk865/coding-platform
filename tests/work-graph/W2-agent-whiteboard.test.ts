@@ -25,6 +25,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import {
@@ -252,7 +253,8 @@ describe('W2 Agent authorization rejects', () => {
         commits++;
         return f.records.commit(prepared);
       } };
-      const plans = createPlanService({ records, delegatedWrites: f.delegatedWrites,
+      const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+        delegatedWrites: f.delegatedWrites,
         now: () => '2026-09-26T00:00:00.000Z', eventId: () => `w2-outside-scope-${variant}-event` });
       const result = await plans.proposePlan(f.ctxWork, request);
       expect(result, JSON.stringify(result)).toMatchObject({ status: 'rejected',
@@ -329,7 +331,8 @@ describe('W2 Agent identity and replay', () => {
       }
       return f.records.commit(prepared);
     } };
-    const plans = createPlanService({ records, delegatedWrites: f.delegatedWrites,
+    const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      delegatedWrites: f.delegatedWrites,
       now: () => '2026-09-26T00:00:00.000Z', eventId: () => 'w2-unrelated-proposal-event' });
     const request = await f.buildAgentProposeRequest(f.goalRef, f.planRef,
       f.futureDraft('w2-agent-plan-unrelated'), f.planRef, { requestId: 'w2-agent-unrelated' });
@@ -348,7 +351,8 @@ describe('W2 Agent identity and replay', () => {
       }
       return f.records.commit(prepared);
     } };
-    const plans = createPlanService({ records, delegatedWrites: f.delegatedWrites,
+    const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      delegatedWrites: f.delegatedWrites,
       now: () => '2026-09-26T00:00:00.000Z', eventId: () => 'w2-terminal-cas-event' });
     const request = await f.buildAgentProposeRequest(f.goalRef, f.planRef,
       f.futureDraft('w2-terminal-cas-plan'), f.planRef, { requestId: 'w2-terminal-cas-propose' });
@@ -374,7 +378,8 @@ describe('W2 Agent identity and replay', () => {
       }
       return receipt;
     } };
-    const plans = createPlanService({ records, delegatedWrites: f.delegatedWrites,
+    const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      delegatedWrites: f.delegatedWrites,
       now: () => '2026-09-26T00:00:00.000Z', eventId: () => 'w2-loser-unused-event' });
     const result = await plans.proposePlan(f.ctxWork, request);
     expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed', replayed: true });
@@ -439,7 +444,7 @@ describe('W2 Agent identity and replay', () => {
         commits++;
         return f.records.commit(prepared);
       } };
-      const plans = createPlanService({ records, delegatedWrites,
+      const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }), delegatedWrites,
         now: () => '2026-09-26T00:00:00.000Z', eventId: () => `w2-context-${operation}-event` });
       const expected = await f.callerPins();
       const pending = operation === 'apply' && proposed?.status === 'committed'
@@ -479,7 +484,8 @@ describe('W2 Agent identity and replay', () => {
       }
       return receipt;
     } };
-    const plans = createPlanService({ records, delegatedWrites: f.delegatedWrites,
+    const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      delegatedWrites: f.delegatedWrites,
       now: () => '2026-09-26T00:00:00.000Z', eventId: () => 'w2-late-apply-event' });
     const result = await plans.applyPlanChange({ ...f.ctxWork, signal: controller.signal }, {
       input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] },
@@ -508,7 +514,7 @@ describe('W2 persistence', () => {
     f.host.enabled = false;
     const calls = f.host.calls;
     try {
-      const plans = createPlanService({ records: reopened.records,
+      const plans = createPlanService({ records: reopened.records, bindings: createInitializationBindingReader({ records: reopened.records }),
         delegatedWrites: { ...f.delegatedWrites, reads: createRunStateReader({ records: reopened.records }) },
         now: () => '2026-09-26T00:00:00.000Z', eventId: () => 'w2-reopened-unused-event',
       });

@@ -138,7 +138,7 @@ function isLegalParallelRisk(risk: unknown): risk is GoalParallelRiskV1 {
 }
 
 /** S5-GS-01 `settings 形状` (§2.2): enum/order and every complete ref must be legal. */
-function isLegalSettings(settings: unknown): boolean {
+export function isLegalSettings(settings: unknown): boolean {
   if (typeof settings !== 'object' || settings === null) return false;
   const value = settings as GoalSettingsV1;
   if (value.schemaVersion !== 1) return false;

@@ -30,6 +30,7 @@ import type { DecisionActionsPort } from '../../src/business/workflow/decision-a
 import { createDecisionActions, type DecisionApplicationAdapter } from '../../src/business/workflow/decision-actions.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -282,7 +283,7 @@ export async function openK3ReviewCardWorld(
     },
   };
   const mailbox = createSessionMailbox(mailboxDeps);
-  const decisionSources = createDecisionSourceFacts({ records: decisionRecords,
+  const decisionSources = createDecisionSourceFacts({ records: decisionRecords, bindings: createInitializationBindingReader({ records: decisionRecords }),
     plans: fixture.b2.base.plans, unknownCallReviews: reviews,
     commandRerunRequests: commandRerun, readKernelCommandFacts, commandRerunExecutions: reads });
   const decisions = createDecisionMessageService({ records: decisionRecords, now: () => T, newId: nextDecisionId,

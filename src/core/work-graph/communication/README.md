@@ -22,7 +22,7 @@
 | `createMessageWriteOwner` | `src/core/work-graph/communication/mailbox-service.ts:4766` | `storeBody` + `persist` + `prepare`：唯一正文存储、消息提交与准备片段路径（replay、CAS、event、claim 同一套） | 任何要写 SessionMessage 的 owner；不要绕过它直接 commit |
 | `createRecipientExecutions` | `src/core/work-graph/sessions/recipient-executions.ts:66` | 读收件方的未结束执行与账本 horizon，供撤回的开放执行窗口判定；读失败原样返回 | 撤回 owner 判定能否撤回时；不要另读执行或自己拼 horizon |
 | `createDecisionMessageService` | `src/core/work-graph/communication/decision-service.ts:198` | 答复决定、记录决定应用、读回答复、读消息 pin、应用回放、工具提交查询；项目卡答复的 `readSource.goal` 与消息 `goalRef` 都是 `null` | 组合根装配 `platform.decisionMessages` 或工具适配时 |
-| `createDecisionSourceFacts` | `src/core/work-graph/communication/decision-source-facts.ts:100` | 从正式记录重建 `DecisionSourceV1` 的 Goal、objects、options、pins、closed 与允许读者；读应用证明；`subject` 形状先检查，Goal subject 读 Goal，项目 subject 不读 Goal、只服务 `note_review`（越界项目 `forbidden`），分支不再解 subject；canonical subject 按分支读到的 Goal 或绑定的项目重建 | 答复/卡片前必须证明来源真实时；不要从 `views` 读一手事实 |
+| `createDecisionSourceFacts` | `src/core/work-graph/communication/decision-source-facts.ts:103` | 从正式记录重建 `DecisionSourceV1` 的 Goal、objects、options、pins、closed 与允许读者；读应用证明；`subject` 形状先检查，Goal subject 读 Goal，项目 subject 不读 Goal、只服务 `note_review`（越界项目 `forbidden`），分支不再解 subject；canonical subject 按分支读到的 Goal 或绑定的项目重建 | 答复/卡片前必须证明来源真实时；不要从 `views` 读一手事实 |
 
 ## 内部用
 

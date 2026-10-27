@@ -6,6 +6,7 @@ import type { DecisionAnnotationV1, DecisionSelectionV1, DecisionSourceV1, UserD
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { sessionMessageFromEvent } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { synchronizeB2Commits } from '../helpers/B2-execution-fixture.js';
 import {
@@ -36,7 +37,8 @@ async function harness(kind: S5FixtureKind, duties: readonly PlatformDutyV1[] | 
     };
     return owners.mailbox.sendUserMessage(work, { input, meta: meta(requestId, [{ ref: GOAL_B, revision: GOAL_REVISION }]) });
   };
-  const plans = createPlanService({ records: f.records, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    now: f.now, eventId: f.newId });
   // A Task's definition is stored in the Plan; its current phase is derived
   // from persisted Run/Attempt/Lease facts, not from the fixture's cached Plan.
   const readTask = async () => {

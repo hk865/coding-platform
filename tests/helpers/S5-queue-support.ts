@@ -30,6 +30,7 @@ import { createExecutionEntryService } from '../../src/core/work-graph/tasks/exe
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { parseInitialPlanningResponseV2 } from '../../src/core/work-graph/tasks/initial-plan.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
@@ -41,6 +42,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -260,7 +262,8 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
   expect(record.job.job.status).toBe('answered');
   expect(record.session.occupancy).toBeNull();
   if (record.answer === null) throw new Error('missing formal planning answer');
-  const plans = createPlanService({ records: f.records, materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   if (plans.readInitialPlanAnswerFacts === undefined) throw new Error('missing formal answer reader');
   const saved = ready(await plans.readInitialPlanAnswerFacts(f.ctx, record.answer.ref));
   expect(saved.answerText).toBe(answerText);
@@ -277,7 +280,7 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
 /** DQ03 starts before adoption. The B2 world's independent scope is left alone. */
 export async function openUninitializedQueue(kind: S5FixtureKind) {
   const bundles = [QUERY_JOB_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS, DECISION_RECORD_SCHEMAS,
-    COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS,
+    COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, INITIALIZATION_BINDING_SCHEMAS,
     { records: [], events: PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events }];
   const b2 = await createB2ExecutionFixture(kind, { records: bundles.flatMap(b => [...b.records]),
     events: bundles.flatMap(b => [...b.events]), lookups: bundles.flatMap(b => [...(b.lookups ?? [])]) });
@@ -296,7 +299,8 @@ export async function openUninitializedQueue(kind: S5FixtureKind) {
   committed(await goals.createGoal(ctx, { input: { goalId: 'B', workspace: WORKSPACE_SCOPE,
     objective: 'Choose the initial architecture' }, meta: { requestId: 'dq03-create', expected: [
       { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: 1 }] } }));
-  return { records, ctx, plans: createPlanService({ records, now: () => T, eventId: () => 'dq03-event' }), close: () => b2.close() };
+  return { records, ctx, plans: createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    now: () => T, eventId: () => 'dq03-event' }), close: () => b2.close() };
 }
 
 /** Build an independent static-check Plan through propose/apply, then use real
@@ -334,7 +338,8 @@ export async function noticeWork(f: S5DecisionFixture) {
     obligations: [{ obligationId: 'nr-obligation', title: 'Static acceptance', requirementLevel: 'required', taskIds: [...tasks, 'gate'],
       verificationRequirements: [{ requirementId: 'nr-check', kind: 'static', requirementLevel: 'required', description: 'Registered check' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
-  const plans = createPlanService({ records: f.records, now: f.now, eventId: f.newId });
+  const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    now: f.now, eventId: f.newId });
   const proposal = committed(await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: null, draft,
     reason: { text: 'Notice preconditions', sources: [] } }, meta: { requestId: 'nr-propose', expected: [{ ref: goalRef, revision: goal.revision }] } }));
   expect(proposal.issues).toEqual([]);

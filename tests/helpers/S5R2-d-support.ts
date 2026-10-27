@@ -15,6 +15,7 @@ import type { SessionDirectoryPort } from '../../src/core/work-graph/model/sessi
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
@@ -82,7 +83,8 @@ export async function orderedDriver(f: S5DecisionFixture, script: AdvanceScript,
   };
   const realWorkflow = createWorkflow({
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
-    plans: createPlanService({ records: f.records, now: f.now, eventId: f.newId }),
+    plans: createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+      now: f.now, eventId: f.newId }),
     sessions,
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
       roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),

@@ -320,7 +320,7 @@ function isGoalDesiredState(value: unknown): value is GoalDesiredState {
  * The table checks the stored fields only; which versions the copy read is the
  * copy owner's.
  */
-const GoalCopyFieldsShape = defineShape({ name: "GoalSnapshot", fields: {
+export const GoalCopyFieldsShape = defineShape({ name: "GoalSnapshot", fields: {
   continuedFrom: f.nullable(f.object({
     goal: f.ref(GoalRefShape), sourceRevision: f.integer({ min: 1 }),
     understanding: f.nullable(f.object({ noteId: f.string({ min: 1, unit: "codePoints" }), version: f.integer({ min: 1 }) })),

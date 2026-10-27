@@ -19,7 +19,7 @@
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
 - `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写，包含三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）、推进用的 `withHandoffProgress`、纯覆盖规则 `coverageHolds`、简报就绪规则 `briefReady` 和 entered 确认的 `consumeHandoffBrief`。
 - `session-anomaly.ts` — Session 异常锚点的构造/迁移/读取与 Task 归档状态派生。
-- `request-rounds.ts` — 请求轮构造：新请求、路由轮、未开始结束、新尝试、吸收、intake、entered；理解命令的合法状态迁移 `live → closed|consumed`、当前 generation 读取，以及冻结材料列表上仍有效授权集的唯一纯规则（每条命令按自己的 operation 判 generation/state/root owner，按 Goal 去重并保持轮次顺序）。
+- `request-rounds.ts` — 请求轮构造：新请求、路由轮（普通路由与 `routing: null` 的归属臂）、未开始结束、新尝试、吸收、intake、entered；归属臂把 `goalAttribution.goalId` 同时写进 `job.goalId` 与 `job.goalAttribution`（下游按字符串比较），`understanding` 保持 `null`，普通路由臂不变；理解命令的合法状态迁移 `live → closed|consumed`、当前 generation 读取，以及冻结材料列表上仍有效授权集的唯一纯规则（每条命令按自己的 operation 判 generation/state/root owner，按 Goal 去重并保持轮次顺序）。
 - `review-lease.ts` — 复查租约释放、可证明未进入的复查取消、复查轮已知结束。
 - `control-intent-machine.ts` — ControlIntent 机器：一次暂停/取消/恢复/steer 请求的归宿，以及提交前检查。
 
@@ -40,6 +40,8 @@
 
 - `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。
 - `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录。
+- `goal-confirm.ts` — `goals/confirm-draft` 的纯规则：`decideGoalConfirm` 的拒绝顺序（不是最新已答轮 → `revision_conflict`；草稿下标越界 → `invalid`；同一 `(answerRef, draftIndex)` 已确认 → `revision_conflict`）、确认后的 objective 文本 `confirmObjectiveText`（正文与每条完成标准都经 `normalizeObjective`），以及不可变 `InitializationBinding@1` 的唯一构造 `newInitializationBinding`（ref 指 answer+draft，revision 与 goalRevision 都是 1，顺序和重复原样保留）。无 I/O、无时钟、无 id；服务只编码它并放进自己的一次提交。
+- `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选且未被干预的候选（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom` 与 `copiedInterventions`。`planReanchorHook` 是 7D1 填的唯一具名缝（现在只答 `not_implemented`）。
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交。
@@ -47,6 +49,7 @@
 - `decision-policy.ts` — 自主级别动作表、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
+- `initialization-adoption.ts` — 初始化采用操作的纯记录表：出生 `newInitializationAdoptionRecord`、既有操作的再次接受 `acceptExistingInitializationAdoption`、写入前标记 `nextAdoptionStage`，以及三个后写 `advanceInitializationAdoption`/`stopInitializationAdoption`/`completeInitializationAdoption`，再加供服务重建已提交记录的纯投影 `committedAdoptionRecord`（前缀、before/stopped 标记与 `record.result` 只在这里形成；不读时钟、不生成 id、不碰存储）。
 
 ### 注记/消息/其他生命周期
 
@@ -94,7 +97,12 @@
 | `decisionActionPolicy` | `src/core/work-graph/state/decision-policy.ts:31` | 自主级别 × 动作的唯四值表 | owner、工具、Workflow、路由都查它 |
 | `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:71` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
 | `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:118` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
+| `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:23` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions` 与 `selection`（`selection_only`/`retraction_pending`） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
+| `planReanchorHook` | `src/core/work-graph/state/goal-copy.ts:11` | 7D1 要填的具名 seam：把目标参谋/书记的负责关系挪到新 Goal；现在只返回 `not_implemented`，不写事实、不给回执 | 复制确认里预留的负责关系迁移点；不要另开一条迁移路径 |
 | `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:97` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
+| `decideGoalConfirm` | `src/core/work-graph/state/goal-confirm.ts:32` | confirm-draft 的唯一纯决定：拒绝顺序、草稿、objective、出生设置与 order | 确认草稿前；不要另写拒绝顺序 |
+| `confirmObjectiveText` | `src/core/work-graph/state/goal-confirm.ts:21` | 确认后的 objective：正文 + 空行 + `完成标准：` + 每条 `- ` 完成标准，两段都规范化 | 建确认 Goal 的 objective |
+| `newInitializationBinding` | `src/core/work-graph/state/goal-confirm.ts:60` | 不可变 `InitializationBinding@1` 的唯一构造：ref、answerRef、digest、requestRef、draftIndex、goalRef、screening | 确认提交；服务只编码，不自己构造 |
 | `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:217` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
 | `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:451` | 完成事件的前置检查 | goal_completed 提交 |
 | `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:601` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
@@ -103,6 +111,7 @@
 | `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:189` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
 | `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:237` | 启动准入策略 | 自动启动 Goal 前 |
 | `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:255` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
+| `isLegalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:141` | Goal 设置形状的唯一纯检查（schema 版本、autonomy、order、wait/risk 字段） | 构造或复制设置后写之前；`decideGoalCopy` 与设置迁移共用 |
 | `transitionLinePins` | `src/core/work-graph/state/line-pin-machine.ts:81` | 一次原子增删置顶项；无变化时 effects 为空 | 修改工作线置顶 |
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
@@ -140,17 +149,17 @@
 | `MAX_ATTESTATION_REASON_CHARS` / `QueryAnswerCheck` | `src/core/work-graph/state/query-run-recovery.ts:135`、`src/core/work-graph/state/query-run-recovery.ts:129` | 人工确认理由和关闭消息的上限（2000 个 UTF-16 单位，截断不留半个代理对）；答案检查失败的 detail 与理由 | 校验确认理由、结清带答案检查的终态；`src/core/work-graph/tasks/run-reconcile-service.ts` 只复用这个常量，不另写答案检查类型 |
 | `sameRef`（**正本**） | `src/core/work-graph/state/ref-equality.ts:2` | 与键序无关的 ref 结构相等；本层是唯一正本 | 比较 ref；不要再写第二份 |
 | `newRequestRound` | `src/core/work-graph/state/request-rounds.ts:63` | 建新请求轮（Job/Run 对），可写入本轮的理解命令 | 收到新请求 |
-| `newRoutingRound` | `src/core/work-graph/state/request-rounds.ts:107` | 建只路由、不跑的轮（无 Run） | 秘书分派 |
-| `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:150` | 结束未开始的轮 | 未执行即关闭 |
-| `newAttempt` | `src/core/work-graph/state/request-rounds.ts:175` | 在同一 Job 上开新 Run | 重试；保留旧 runId/触发身份 |
-| `absorbRound` | `src/core/work-graph/state/request-rounds.ts:224` | 把批轮吸收进执行轮 | 合并批处理请求 |
-| `recordAbsorbedRounds` | `src/core/work-graph/state/request-rounds.ts:247` | 记录被吸收的批轮（一次一条） | absorb 之后 |
-| `setIntake` | `src/core/work-graph/state/request-rounds.ts:259` | 设置/清除 secretary-intake 持有者 | 秘书领取/释放请求 |
-| `recordEntered` | `src/core/work-graph/state/request-rounds.ts:268` | 一次性写 enteredSession，第二次换 Session 抛错 | 请求第一次真正进入 |
-| `transitionUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:286` | 理解命令的唯一合法迁移 `live → closed`、`live → consumed`、`closed → consumed`；已 consumed、回退或 commandId 不符抛错，只改 state/updatedAt、revision+1 | 关闭或消费一条理解命令 |
-| `foldUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:316` | 把一次理解命令迁移的结果折进另一份 Job 快照：保留该快照的 revision/updatedAt，只取迁移产出的命令；没有命令抛错 | 轮结束提交把消费后的命令并入自己的下一份 Job |
-| `UnderstandingOperationFactsV1`、`liveUnderstandingGrants` | `src/core/work-graph/state/request-rounds.ts:356`、`:367` | 冻结材料列表 `[round, ...batch]` 上仍有效授权集的唯一纯规则：命令 live、自身 generation 等于其 operation 当前 generation、requestRoot 是本次请求根且 operation 的 source 仍是 owner；按 Goal 去重、轮次顺序，返回 readonly `GoalRef[]` | 准备读取、启动重核和注记时解析授权集 |
-| `currentUnderstandingGeneration` | `src/core/work-graph/state/request-rounds.ts:397` | operation 的当前理解 generation：`progress.understanding` 最大记录，非交接分支或无记录为 `null` | 判命令 generation 前 |
+| `newRoutingRound` | `src/core/work-graph/state/request-rounds.ts:109` | 建只路由、不跑的轮（无 Run）；`routing: null` 的归属臂带 `goalAttribution`，`job.goalId` 与 `job.goalAttribution` 都写该 Goal id，`understanding` 保持 `null` | 秘书分派与 Goal 归属轮；不要另写归属轮 |
+| `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:154` | 结束未开始的轮 | 未执行即关闭 |
+| `newAttempt` | `src/core/work-graph/state/request-rounds.ts:179` | 在同一 Job 上开新 Run | 重试；保留旧 runId/触发身份 |
+| `absorbRound` | `src/core/work-graph/state/request-rounds.ts:228` | 把批轮吸收进执行轮 | 合并批处理请求 |
+| `recordAbsorbedRounds` | `src/core/work-graph/state/request-rounds.ts:251` | 记录被吸收的批轮（一次一条） | absorb 之后 |
+| `setIntake` | `src/core/work-graph/state/request-rounds.ts:263` | 设置/清除 secretary-intake 持有者 | 秘书领取/释放请求 |
+| `recordEntered` | `src/core/work-graph/state/request-rounds.ts:272` | 一次性写 enteredSession，第二次换 Session 抛错 | 请求第一次真正进入 |
+| `transitionUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:290` | 理解命令的唯一合法迁移 `live → closed`、`live → consumed`、`closed → consumed`；已 consumed、回退或 commandId 不符抛错，只改 state/updatedAt、revision+1 | 关闭或消费一条理解命令 |
+| `foldUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:320` | 把一次理解命令迁移的结果折进另一份 Job 快照：保留该快照的 revision/updatedAt，只取迁移产出的命令；没有命令抛错 | 轮结束提交把消费后的命令并入自己的下一份 Job |
+| `UnderstandingOperationFactsV1`、`liveUnderstandingGrants` | `src/core/work-graph/state/request-rounds.ts:360`、`:371` | 冻结材料列表 `[round, ...batch]` 上仍有效授权集的唯一纯规则：命令 live、自身 generation 等于其 operation 当前 generation、requestRoot 是本次请求根且 operation 的 source 仍是 owner；按 Goal 去重、轮次顺序，返回 readonly `GoalRef[]` | 准备读取、启动重核和注记时解析授权集 |
+| `currentUnderstandingGeneration` | `src/core/work-graph/state/request-rounds.ts:401` | operation 的当前理解 generation：`progress.understanding` 最大记录，非交接分支或无记录为 `null` | 判命令 generation 前 |
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
