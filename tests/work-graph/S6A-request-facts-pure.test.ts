@@ -184,7 +184,7 @@ describe('deriveRequestCore: one round', () => {
     expect(view.rounds[0]).toEqual({
       ref: ROOT_REF, kind: 'request', status: 'queued', input: 'what next?', answer: null, ideas: [],
       goalCardDrafts: [], selectedIdea: null, assignedSession: SESSION_A, session: null, absorbedInto: null,
-      closeCode: null, closeDetail: null, since: makeCommitCursor(1),
+      closeCode: null, closeDetail: null, closeMessage: null, since: makeCommitCursor(1),
     });
     expect(view).toMatchObject({ goalId: 'g1', effectiveGoalId: 'g1', owner: SESSION_A, ownerState: 'owned',
       assignment: 'assigned', waitReason: null, reasons: ['round'], processing: true });

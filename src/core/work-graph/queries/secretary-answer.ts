@@ -5,8 +5,11 @@
  * fields of the `secretary-answer` format: `schemaVersion` 1, a non-empty
  * `body`, `ideas` of 0, 2 or 3 options and `goalCardDrafts`. The whole final
  * text is parsed as that object; JSON is never extracted from surrounding text
- * or repaired. An `initial_coordination` round keeps the v2 initial-planning
- * answer, checked by its one parser. A goal-less plan carries at least one
+ * or repaired, with one exception: a single code fence that wraps the whole
+ * answer is stripped, and prose before or after it is still refused. The
+ * form-filled answer (97-1) replaces that stopgap. An `initial_coordination`
+ * round keeps the v2 initial-planning answer, checked by its one parser. A
+ * goal-less plan carries at least one
  * draft and names it in `planDraftIndex`; a goal request carries no drafts; a
  * `needs_decision` answer may carry drafts and never carries a `planDraftIndex`.
  * Drafts are proposals only. A draft may carry the model's optional
@@ -42,13 +45,31 @@ function protocol(reason: string): SecretaryAnswerCheck {
   return { ok: false, detail: 'protocol', reason };
 }
 
+/**
+ * The one wrapping fence this check strips: the whole text, outer whitespace
+ * ignored, is exactly an opening line of three backticks with an optional
+ * language word, the content, and a closing line of three backticks. Prose
+ * around it or a second fence stays in place, so the strict parse refuses it.
+ */
+function oneFenceContent(text: string): string {
+  const whole = text.trim();
+  const open = whole.indexOf('\n');
+  if (open < 0 || !/^```[A-Za-z0-9_+.-]*$/.test(whole.slice(0, open).replace(/\r$/, ''))) return text;
+  const close = whole.lastIndexOf('\n');
+  if (whole.slice(close + 1) !== '```') return text;
+  const end = whole[close - 1] === '\r' ? close - 1 : close;
+  const content = whole.slice(open + 1, end);
+  return content.split(/\r?\n/).some(line => line.startsWith('```')) ? text : content;
+}
+
 export function parseSecretaryAnswer(
   text: string,
   input: { kind: 'semantic_query' | 'initial_coordination'; hasGoal: boolean },
 ): SecretaryAnswerCheck {
+  const content = oneFenceContent(text);
   return input.kind === 'initial_coordination'
-    ? coordinationAnswer(text, input.hasGoal)
-    : semanticAnswer(text, input.hasGoal);
+    ? coordinationAnswer(content, input.hasGoal)
+    : semanticAnswer(content, input.hasGoal);
 }
 
 function semanticAnswer(text: string, hasGoal: boolean): SecretaryAnswerCheck {

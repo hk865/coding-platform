@@ -109,6 +109,7 @@ export type RequestRoundViewV1 = {
   absorbedInto: QueryJobRef | null;
   closeCode: string | null;
   closeDetail: QueryCloseDetailV1 | null;
+  closeMessage: string | null;
   since: CommitCursor;
 };
 

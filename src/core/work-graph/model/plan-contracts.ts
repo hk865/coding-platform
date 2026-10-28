@@ -61,7 +61,7 @@ export type HostProposePlan = (
   ctx: CoreCallContext,
   request: GraphWrite<ProposedPlanRequestV1>,
 ) => Promise<EffectWriteResultV1<PlanProposal>>;
-export type GoalDetail = { goal: GoalSnapshot; pendingPlan: PlanProposal | null };
+export type GoalDetail = { goal: GoalSnapshot; pendingPlan: PlanProposal | null; continuedBy: GoalRef[] };
 /**
  * 只读规划诊断（W2 §4.2）。它由已采用的 Plan + canonical task facts 在内存投影，
  * 不写入 Task/Goal 的运行状态，也不是第二套持久 completeness 表；缺省表示该生产者

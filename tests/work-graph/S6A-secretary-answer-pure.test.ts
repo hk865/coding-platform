@@ -39,6 +39,9 @@ const V2_PLAN = {
     executionDag: { dependsOn: [] } },
 };
 const V2_QUESTIONS = { schemaVersion: 2, kind: 'needs_decision', summary: 'One question', questions: ['Which database?'] };
+/** The v2 plan's body split after its first field: two lines joined by CRLF, kept byte for byte. */
+const V2_PLAN_TWO_LINES = '{"schemaVersion":2,\r\n'
+  + JSON.stringify(V2_PLAN).slice('{"schemaVersion":2,'.length);
 
 /** A refusal is always `protocol` with a non-empty platform reason. */
 function expectProtocol(result: ReturnType<typeof parseSecretaryAnswer>): void {
@@ -118,11 +121,31 @@ describe('semantic_query: accepted answers', () => {
   });
 });
 
-describe('rejects: semantic_query answers that break the protocol', () => {
-  it('an object inside a markdown fence is not extracted', () => {
-    expectProtocol(parseSecretaryAnswer('```json\n' + answer() + '\n```', SEMANTIC_GOAL));
+describe('one wrapping code fence: its content is parsed, anything else is refused', () => {
+  type FenceCase = { label: string; text: string;
+    input: { kind: 'semantic_query' | 'initial_coordination'; hasGoal: boolean }; accepted?: string };
+  const CASES: readonly FenceCase[] = [
+    { label: 'a semantic answer in a json fence', input: SEMANTIC_GOAL,
+      text: '```json\n' + answer() + '\n```', accepted: '可以先拆出读取层。' },
+    { label: 'a semantic answer in a fence with no language word', input: SEMANTIC_GOAL,
+      text: '```\n' + answer() + '\n```', accepted: '可以先拆出读取层。' },
+    { label: 'an initial_coordination plan in a fence: the body is the inner text', input: COORDINATION_GOAL,
+      text: '```json\n' + V2_PLAN_TWO_LINES + '\n```', accepted: V2_PLAN_TWO_LINES },
+    { label: 'one sentence before the fence is still prose', input: SEMANTIC_GOAL,
+      text: 'Here it is.\n```json\n' + answer() + '\n```' },
+    { label: 'text after the closing fence is not prose-free', input: SEMANTIC_GOAL,
+      text: '```json\n' + answer() + '\n```\nThanks.' },
+    { label: 'two fences: the content carries another fence', input: SEMANTIC_GOAL,
+      text: '```json\n' + answer() + '\n```\n```json\n' + answer() + '\n```' },
+  ];
+  it.each(CASES)('$label', ({ text, input, accepted }) => {
+    const result = parseSecretaryAnswer(text, input);
+    if (accepted === undefined) { expectProtocol(result); return; }
+    expect(result).toEqual({ ok: true, body: accepted, ideas: [], goalCardDrafts: [], planDraftIndex: null });
   });
+});
 
+describe('rejects: semantic_query answers that break the protocol', () => {
   it('the JSON value null is not one object', () => {
     expectProtocol(parseSecretaryAnswer('null', SEMANTIC_GOAL));
   });

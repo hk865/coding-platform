@@ -407,12 +407,33 @@ async function readInitiator(deps: QueryExecutionDependencies, job: QueryJobSnap
   return { status: 'ready', value: { kind: actor.kind, id: actor.id } };
 }
 
-async function readPreparationFacts(deps: QueryExecutionDependencies, queryRunRef: QueryRunRef): Promise<ReadResult<QueryPreparationFacts>> {
+/** A request round's facts (`readRequestRounds`), read at its start, its not-entered recovery and preparation. */
+async function readRoundFacts(deps: QueryExecutionDependencies, ctx: CoreCallContext,
+  job: QueryJobSnapshot): Promise<ReadResult<RequestRoundsFactsV1>> {
+  const requestRoot = job.job.requestRoot;
+  if (requestRoot === null) return rejectedWithNonEmptyCurrent('invalid', 'a request round names no request root');
+  try {
+    return await readRequestRounds(deps.records, ctx, { requestRoot });
+  } catch (error) {
+    return rejectedWithNonEmptyCurrent('unavailable', `the request facts read failed: ${messageOf(error)}`);
+  }
+}
+
+async function readPreparationFacts(deps: QueryExecutionDependencies, ctx: CoreCallContext,
+  queryRunRef: QueryRunRef): Promise<ReadResult<QueryPreparationFacts>> {
   const record = await readExecutionRecord(deps, queryRunRef);
   if (record.status !== 'ready') return record;
   const state = record.value.run.run.executionState;
   if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
-  const goalId = record.value.job.job.goalId;
+  const requestRound = isRequestRound(record.value.job);
+  // A request round's goal is the request's effective goal (book 6A §4 item 2): a confirmed
+  // draft's attribution round moves it there, while `job.goalId` stays the goal at submit.
+  let goalId = record.value.job.job.goalId;
+  if (requestRound) {
+    const facts = await readRoundFacts(deps, ctx, record.value.job);
+    if (facts.status !== 'ready') return facts;
+    goalId = facts.value.effectiveGoalId;
+  }
   if (goalId === null) {
     // A no-goal request round is a secretary round: its workspace comes from
     // the call scope, never from a Goal. Every other Query still requires its
@@ -1518,7 +1539,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       }
       return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is already prepared');
     }
-    const facts = await readPreparationFacts(deps, queryRunRef);
+    const facts = await readPreparationFacts(deps, owned, queryRunRef);
     if (facts.status !== 'ready') return toRejection(facts);
     const manifestGoal = manifest.goal;
     const factsGoal = facts.value.goal;
@@ -1694,7 +1715,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // here and every one of them is guarded by the start commit itself.
     let requestFacts: RequestRoundsFactsV1 | null = null;
     if (isRequestRound(job)) {
-      const factsRead = await readRoundFacts(owned, job);
+      const factsRead = await readRoundFacts(deps, owned, job);
       if (factsRead.status !== 'ready') return toRejection(factsRead);
       requestFacts = factsRead.value;
       const check = fence.value.held ? { kind: 'abandon' as const, trigger: 'fenced' as const }
@@ -1868,17 +1889,6 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
    */
   function lostStartRace(committed: WriteResult<unknown>, raced: number): boolean {
     return committed.status === 'rejected' && committed.code === 'revision_conflict' && raced < SECRETARY_TAIL_RETRIES;
-  }
-
-  /** A request round's facts (`readRequestRounds`), read at its start and at its not-entered recovery. */
-  async function readRoundFacts(ctx: CoreCallContext, job: QueryJobSnapshot): Promise<ReadResult<RequestRoundsFactsV1>> {
-    const requestRoot = job.job.requestRoot;
-    if (requestRoot === null) return rejectedWithNonEmptyCurrent('invalid', 'a request round names no request root');
-    try {
-      return await readRequestRounds(deps.records, ctx, { requestRoot });
-    } catch (error) {
-      return rejectedWithNonEmptyCurrent('unavailable', `the request facts read failed: ${messageOf(error)}`);
-    }
   }
 
   function entryIdentity(state: QueryExecutionStateV1, queryRunRef: QueryRunRef): QueryEntryIdentity | null {
@@ -2419,7 +2429,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // A request round's not-entered close reads whether a drop covers it.
     let requestFacts: RequestRoundsFactsV1 | null = null;
     if (isRequestRound(job) && event.kind === 'query_reconcile_not_entered') {
-      const factsRead = await readRoundFacts(ctx, job);
+      const factsRead = await readRoundFacts(deps, ctx, job);
       if (factsRead.status !== 'ready') return toRejection(factsRead);
       requestFacts = factsRead.value;
     }
@@ -2673,7 +2683,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
         return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
       }
-      return readPreparationFacts(deps, queryRunRef);
+      return readPreparationFacts(deps, ctx, queryRunRef);
     },
     async claimQuery(ctx, request) { return claim(ctx, request); },
     async bindPreparedQuery(ctx, request) { return bindPrepared(ctx, request); },

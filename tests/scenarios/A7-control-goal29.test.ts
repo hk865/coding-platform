@@ -21,8 +21,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/app/core-http-types.js';
 import { createGoalFanOutDriver } from '../../src/app/goal-fan-out-driver.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
+import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import { GOAL_FAN_OUT_ACTOR } from '../../src/contracts/task-requeue.js';
-import { AG2B_GOAL_REF, AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { controlGoal, readControl, readExecution, readGoal } from '../helpers/A2-restart-fixture.js';
 import {
   assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, SCENARIO_OPERATOR, type HostScenario,
@@ -112,6 +114,69 @@ it('A7-G4 with history (closing supported; KA-07, GOAL-29, LA-1, contract (e)): 
   expect(scenario.modelCalls()).toBe(4);
   await scenario.drainAbandoned();
 }, 180_000);
+
+it('A7-G4 with history under every_step (GOAL-29, C-151; STATE-MACHINES-SPEC.md:398, :400): resuming the Goal continues its fan-out-paused Task in the same Session instead of asking for a decision', async () => {
+  const RUN0 = 'ag2b-work-0';
+  const RUN0_TEXT = 'A7-G4 history: Run0 completed this Turn in S1';
+  let h: HostScenario | undefined;
+  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], script: {
+    // Run0 (a read, then its answer) completes in S1; the work Run's first reply declares a read, and the Goal pause
+    // submitted during that request lands at the safe point before the read runs; the continuation answers.
+    replies: [readCall('a7-g4h-run0'), { kind: 'text', text: RUN0_TEXT }, readCall('a7-g4h-interrupted'),
+      { kind: 'text', text: 'A7-G4 history: the continuation answers' }],
+    duringReply: async (index) => {
+      if (index !== 2 || h === undefined) return;
+      await goalControlled(h.host, 'pause', 'a7-g4h-pause');
+    } } });
+  h = scenario;
+  // The person's Goal autonomy is every_step before the pause (the public settings route); GOAL-29's continuation
+  // is still the person's resume, not an automatic requeue that would ask for a decision at GOAL-05.
+  const before = await readGoal(scenario.host);
+  const set = await scenario.post<WriteResult<GoalSnapshot>>('goals/settings/set', graphWrite(AG2B_SCOPE, {
+    goalRef: AG2B_GOAL_REF, autonomy: 'every_step', waitForGoalRef: null,
+  }, 'a7-g4h-set-autonomy', [{ ref: AG2B_GOAL_REF, revision: before.revision }]));
+  expect(set).toMatchObject({ status: 'committed' });
+  await scenario.advance(scenario.select('a7-g4h-run0', RUN0));
+  const run0 = await readExecution(scenario.host, await selectedRun(scenario, RUN0));
+  expect(run0.run).toMatchObject({ status: 'ended', outcome: 'completed' });
+  const s1: SessionRef = { projectId: run0.session.ref.projectId, sessionId: run0.session.ref.sessionId };
+  expect((await scenario.advance({ ...scenario.select('a7-g4h-run1', AG2B_WORK_TASK_ID), sessionHint: s1 })).state).toBe('waiting');
+  const runRef = await selectedRun(scenario);
+  const paused = await readExecution(scenario.host, runRef);
+  expect(paused.session.ref.sessionId, 'the work Run runs in S1').toBe(s1.sessionId);
+  const pausedEpoch = (await readGoal(scenario.host)).desiredStateRevision ?? 1;
+  expect(await readControl(scenario.host, fanOutIntentRef(pausedEpoch, runRef, 'pause'))).toMatchObject({ status: 'applied' });
+
+  // The crash: W-20 (the fan-out pause in effect), the Session retired (LA-1); the paused Goal continues nothing.
+  const report = await scenario.restart({ crash: true });
+  expect(report.report).toMatchObject({ runs: [{ ref: JSON.stringify(runRef), row: 'W-20', status: 'reconciled' }], problems: [] });
+  expect((await readExecution(scenario.host, runRef)).session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
+
+  // The person resumes the Goal: the continuation is requeued under the fan-out actor even though every_step would
+  // ask before an automatic requeue; the paused-interrupted Task is not left stopped.
+  const resumed = await goalControlled(scenario.host, 'resume', 'a7-g4h-resume');
+  expect(resumed.fanOut).toMatchObject({ control: 'resume', continuations: [{ taskId: AG2B_WORK_TASK_ID, afterRunRef: runRef,
+    outcome: 'requeued' }] });
+  const afterResume = await scenario.taskRow();
+  expect(afterResume, 'the Task is not stopped by the pause').not.toMatchObject({ effectivePhase: 'stopped' });
+  expect(afterResume.phaseCause?.code, 'the Task is not stopped/task_paused').not.toBe('task_paused');
+  await assertInvariants(scenario, 'A7-G4 history under every_step: GOAL-29',
+    ownerStep('task_requeued', GOAL_FAN_OUT_ACTOR, scenario.automationPolicy(), 'A7-G4 history under every_step: GOAL-29'));
+
+  // The Workflow closes S1's dangling Kernel Turn and continues the Task in S1 itself, in a new Run (KA-07).
+  const done = await scenario.advance(scenario.select('a7-g4h-continue'));
+  expect(done.state).toBe('completed');
+  expect(done.receipts.map(receipt => receipt.kind)).toEqual(expect.arrayContaining(['close_open_turn', 'claim_task']));
+  expect(done.receipts.map(receipt => receipt.kind).filter(kind =>
+    ['create_session', 'transfer_responsibility', 'archive_predecessor'].includes(kind))).toEqual([]);
+  const continuedRef = await selectedRun(scenario);
+  expect(continuedRef.runId, 'KA-07: a new Run').not.toBe(runRef.runId);
+  const continued = await readExecution(scenario.host, continuedRef);
+  expect(continued.session.ref.sessionId, 'KA-07: the same Session').toBe(s1.sessionId);
+  expect(scenario.lastWorld?.requeues).toHaveLength(1);
+  expect(scenario.modelCalls()).toBe(4);
+  await scenario.drainAbandoned();
+});
 
 it('A7-G4 with history (closing unsupported; GOAL-29, LA-1, contract (e)): a Run the Goal fan-out paused after an earlier completed Turn of its Session is continued by the Goal resume in a new Session seeded with that history; the first request carries the earlier Turn, never the interrupted one', async () => {
   const RUN0 = 'ag2b-work-0';

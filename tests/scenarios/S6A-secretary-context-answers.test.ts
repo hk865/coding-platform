@@ -149,7 +149,7 @@ describe('R-11: a semantic answer stores its body, its ideas and no draft', () =
       const view = await waitForRound(world, requestRoot, round, 'ended');
       // The round view keeps the body as the answer and exactly the ideas that were sent.
       expect(roundOf(view, round), entry.label).toMatchObject({ ref: round, status: 'ended', answer: answerBody,
-        ideas: entry.ideas, goalCardDrafts: [] });
+        ideas: entry.ideas, goalCardDrafts: [], closeMessage: null });
 
       const { answerRef, value } = await answerSnapshot(world, round);
       expect(value, entry.label).toMatchObject({ ref: answerRef, revision: 1, schemaVersion: 1,
@@ -170,8 +170,9 @@ describe('rejects: invalid secretary answers', () => {
       const { requestRoot, round } = await submitRound(world, { commandId: `s6a-context-invalid-${entry.label}`.replace(/ /g, '-'),
         goalId: S6A_GOAL_1.goalId, text: `S6A invalid ${entry.label}`, recipient: a });
       const view = await waitForRound(world, requestRoot, round, 'ended');
+      const roundView = roundOf(view, round);
       // The request read shows a closed round with no answer and the protocol detail.
-      expect(roundOf(view, round), entry.label).toMatchObject({ ref: round, status: 'ended', answer: null,
+      expect(roundView, entry.label).toMatchObject({ ref: round, status: 'ended', answer: null,
         closeCode: 'invalid_answer', closeDetail: 'protocol' });
 
       const { job } = await readQuery(world.ag2b, round);
@@ -179,6 +180,8 @@ describe('rejects: invalid secretary answers', () => {
         closeReason: { code: 'invalid_answer', detail: 'protocol' } });
       const closeReason = job.job.closeReason;
       if (closeReason === null) throw new Error(`${entry.label}: the closed round records no close reason`);
+      // The round view shows the same round's close message; only its identity is checked, never its text.
+      expect(roundView?.closeMessage, entry.label).toBe(closeReason.message);
       // The message is the platform's own reason; only its shape is checked, never its text.
       expect(typeof closeReason.message, entry.label).toBe('string');
       expect(closeReason.message.length, entry.label).toBeGreaterThan(0);

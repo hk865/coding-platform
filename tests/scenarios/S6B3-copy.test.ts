@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalCopyConfirmResultV1, GoalCopyDraftResultV1 } from '../../src/contracts/goal-card.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { GoalDetail } from '../../src/core/work-graph/model/plan-contracts.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   callS6B3LateRoute, configureS6B3SecondWorkspace, openS6B3World, readS6B3DecisionQuestionKeys, runS6B3PlanningQuery,
@@ -29,6 +30,11 @@ describe('G-02: a cancelled Goal is copied and the copy is planned (memory)', ()
       'committed');
       expect(copy.goal.continuedFrom).toEqual({ goal: preview.source.goal, sourceRevision: preview.source.revision,
         understanding: preview.understanding });
+      // DESIGN :335: the source reads "已由 <新目标> 接续" from the copy's `continuedFrom`, never from a
+      // second copy stored on the source; the copy itself continues nothing.
+      const sourceRead = await route<GoalDetail>('goals/read', source.goal.ref, 'ready');
+      expect(sourceRead.continuedBy).toEqual([copy.goal.ref]);
+      expect((await route<GoalDetail>('goals/read', copy.goal.ref, 'ready')).continuedBy).toEqual([]);
       // The copy is planned as its own Goal: its planning round gives a question card under the copy, none under the source.
       await runS6B3PlanningQuery(world, { scope, goalRef: copy.goal.ref, label: 'g02-copy' });
       expect(await readS6B3DecisionQuestionKeys(world, { scope, goals: [copy.goal.ref] })).toHaveLength(1);

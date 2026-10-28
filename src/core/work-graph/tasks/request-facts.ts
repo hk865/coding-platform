@@ -130,6 +130,7 @@ export function deriveRequestCore(
       absorbedInto: round.job.absorbedInto === null ? null : { ...round.job.absorbedInto },
       closeCode: round.job.closeReason?.code ?? null,
       closeDetail: round.job.closeReason?.detail ?? null,
+      closeMessage: round.job.closeReason?.message ?? null,
       since: round.since,
     });
   }

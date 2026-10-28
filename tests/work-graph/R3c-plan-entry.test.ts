@@ -9,7 +9,7 @@ import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/recor
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { GOAL_BY_CONTINUED_FROM_INDEX, PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -29,7 +29,8 @@ const schemas: RecordBackendSchemas = { records: [...GOAL_RECORD_SCHEMAS.records
     ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
-  lookups: PLAN_RECORD_SCHEMAS.lookups };
+  lookups: [...PLAN_RECORD_SCHEMAS.lookups,
+    ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []).filter(index => index.name === GOAL_BY_CONTINUED_FROM_INDEX)] };
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 

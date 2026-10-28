@@ -996,9 +996,12 @@ export function createTaskRequeueService(
     // An applied review-card disposition (rerun_as_is/skip_as_done, an
     // approved safer method, or a released "I'll handle it") IS the person's
     // confirmation of this ONE system requeue, so every_step does not ask again.
+    // GOAL-29's goal_resume continuation is the person's resume, not an orchestration choice
+    // (`STATE-MACHINES-SPEC.md:398`, `:400`), so a trigger validated above is not asked again.
     const requeueConfirmedByCard = actorClass === 'system'
       && requeueConfirmedByCardOf(window, task.taskId, afterRun.ref.runId);
-    if (policyCode === null && actorClass !== 'human' && !requeueConfirmedByCard) {
+    if (policyCode === null && actorClass !== 'human' && !requeueConfirmedByCard
+      && input.trigger === undefined) {
       let autonomy = goalSettingsOf(goal).autonomy;
       if (deps.goalSettings !== undefined) {
         const settingsRead = await deps.goalSettings.readGoalSettings(owned.ctx, { goalRef });

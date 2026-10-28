@@ -110,7 +110,7 @@ function requestView(made: S6ARequest, since: CommitCursor, candidate: S6ACandid
     rounds: [{
       ref: made.round, kind: 'request', status: 'queued', input: made.text, answer: null, ideas: [], goalCardDrafts: [],
       selectedIdea: null, assignedSession: made.secretary, session: null, absorbedInto: null, closeCode: null,
-      closeDetail: null, since,
+      closeDetail: null, closeMessage: null, since,
     }],
     candidate: candidate === null ? null : { proposalRef: candidate.proposal.ref, state: 'candidate', stale: false },
   };

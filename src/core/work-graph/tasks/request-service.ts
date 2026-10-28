@@ -440,7 +440,8 @@ async function readRequestView(
   return { status: 'ready', view: read.value };
 }
 
-/** The workspace Goal must exist, be live and belong here (the `plan-service.ts:455` reading of live). */
+/** The workspace Goal must exist, belong here and not be cancelled: `active` and `paused` are live
+ *  (DESIGN :341, slice-6 :213: a paused Goal can still be read, explained and drafted for). */
 async function readLiveGoal(
   deps: RequestRoundDependencies, ctx: CoreCallContext, goalId: string,
 ): Promise<{ status: 'ready'; guard: RecordGuard } | RequestRejectionV1> {
@@ -451,7 +452,7 @@ async function readLiveGoal(
   if (read.value.workspaceRef.projectId !== ctx.projectId || read.value.workspaceRef.workspaceId !== ctx.workspaceId) {
     return rejected('invalid', 'the Goal belongs to another workspace');
   }
-  if (read.value.desiredState !== 'active') return rejected('invalid', 'the Goal is not live');
+  if (read.value.desiredState === 'cancelled') return rejected('invalid', 'the Goal is not live');
   return { status: 'ready', guard: read.guard };
 }
 

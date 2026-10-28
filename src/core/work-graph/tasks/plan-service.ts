@@ -80,7 +80,8 @@ import type {
   UniqueClaimChange,
 } from '../../record-store/ports.js';
 import { catalogPinOf, readCurrentCatalogWindow, readRevisionByRef } from '../architecture/catalog-service.js';
-import { cloneActorRef } from '../persistence/record-codecs.js';
+import { cloneActorRef, decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { lookupAll } from '../persistence/lookup-all.js';
 import { goalRefFor, projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
 import { evaluateEligibility } from './eligibility.js';
 import type {
@@ -155,6 +156,7 @@ import {
   sameCursor,
   taskRecordRefKey,
   tryPolicyContent,
+  GOAL_BY_CONTINUED_FROM_INDEX,
   type CanonicalTaskFacts,
   type CanonicalTaskState,
   type DispositionChangeTaskFacts,
@@ -1826,7 +1828,25 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const pending = await findPendingProposal(records, ref, { revision: read.goal.revision,
       activePlanRevision: read.goal.activePlanRevision });
     if (pending.status !== 'ready') return asReadResult(pending);
-    return { status: 'ready', value: { goal: pending.goal, pendingPlan: pending.proposal } };
+    // DESIGN :335: the source Goal's "已由 <新目标> 接续" is read from the copies' `continuedFrom.goal`
+    // through the existing index, in canonical-key order; nothing is stored back on the source Goal.
+    let copies;
+    try {
+      copies = await lookupAll(records, GOAL_BY_CONTINUED_FROM_INDEX, [ref.projectId, ref.goalId]);
+    } catch (failure) {
+      const detail = isRecord(failure) && typeof failure['reason'] === 'string'
+        ? failure['reason'] : messageOf(failure);
+      return rejected('unavailable', `the Goals continuing ${ref.goalId} could not be read: ${detail}`);
+    }
+    const continuedBy: GoalRef[] = [];
+    for (const record of copies.items) {
+      const decoded = decodeGoalSnapshot(record);
+      if (decoded.status !== 'decoded') {
+        return rejected('unavailable', `the Goal copy ${record.refKey} is damaged: ${decoded.reason}`);
+      }
+      continuedBy.push(decoded.value.ref);
+    }
+    return { status: 'ready', value: { goal: pending.goal, pendingPlan: pending.proposal, continuedBy } };
   }
 
   async function readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposal>> {

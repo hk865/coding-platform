@@ -21,7 +21,7 @@ import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import { sameJson } from '../../src/contracts/fingerprint.js';
 import {
-  openS6ARequestWorld, S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ARequestWorld, type S6ASession,
+  openS6ARequestWorld, S6A_GOAL_1, S6A_GOAL_2, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ARequestWorld, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
@@ -578,7 +578,7 @@ for (const backend of BACKENDS) {
     // ---------------------------------------------------------------------
     // A follow-up's explicit goalId is re-read and guarded at append.
     // ---------------------------------------------------------------------
-    it('re-reads an explicit follow-up goal at append and refuses a paused goal', async () => {
+    it('re-reads an explicit follow-up goal at append and refuses a cancelled goal', async () => {
       const secretary = await world.createSecretary('secretary-1');
       const root = await submit('s6a-goal-guard', 'the root', { recipient: secretary.ref });
       if (root.status !== 'queued') throw new Error('the root submit failed');
@@ -588,12 +588,12 @@ for (const backend of BACKENDS) {
         goalId: S6A_GOAL_1.goalId, continues: root.round,
       });
       await hold.reached;
-      const paused = await post<Record<string, unknown>>(world.ag2b, 'goals/control', graphWrite(S6A_SCOPE,
-        { goalRef: S6A_GOAL_1, control: 'pause', reason: 'S6A pause' }, 's6a-goal-guard-pause', [
+      const cancelled = await post<Record<string, unknown>>(world.ag2b, 'goals/control', graphWrite(S6A_SCOPE,
+        { goalRef: S6A_GOAL_1, control: 'cancel', reason: 'S6A cancel' }, 's6a-goal-guard-cancel', [
           { ref: S6A_GOAL_1, revision: 1 },
           { ref: { aggregateType: 'GoalPhase', projectId: S6A_SCOPE.projectId, goalId: S6A_GOAL_1.goalId }, revision: 0 },
         ]));
-      expect(paused['status']).toBe('committed');
+      expect(cancelled['status']).toBe('committed');
       hold.release();
 
       expect(await followup).toEqual({ status: 'rejected', code: 'invalid', reason: 'the Goal is not live' });
@@ -982,3 +982,56 @@ for (const backend of BACKENDS) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// C-115 (DESIGN :341, slice-6 :213): a paused Goal can still be asked and
+// drafted for; only a cancelled Goal is not live. The file's two-backend rows
+// above stay exactly as they are; this rule is a business rule, so memory only.
+// ---------------------------------------------------------------------------
+describe('S6A request rounds naming a paused or cancelled Goal (memory)', () => {
+  let world: S6ARequestWorld;
+
+  beforeEach(async () => {
+    world = await openS6ARequestWorld({ backend: 'memory' });
+  });
+
+  afterEach(async () => {
+    await world.close();
+  });
+
+  /** `goals/control` at the seeded Goal's revision 1 and its absent GoalPhase (0 = none stored). */
+  async function setGoalState(goal: typeof S6A_GOAL_1, control: 'pause' | 'cancel') {
+    const written = await world.post('goals/control', graphWrite(S6A_SCOPE, {
+      goalRef: goal, control, reason: `the test ${control}s the goal`,
+    }, `smk3-goal-${goal.goalId}-${control}`, [
+      { ref: goal, revision: 1 },
+      { ref: { aggregateType: 'GoalPhase', projectId: S6A_SCOPE.projectId, goalId: goal.goalId }, revision: 0 },
+    ]));
+    expect(written.body).toMatchObject({ status: 'committed' });
+  }
+
+  it.each([
+    { case: 'a submit naming a paused Goal', action: 'submit', goal: S6A_GOAL_1, state: 'pause',
+      expected: { status: 'queued' } },
+    { case: 'a follow-up naming a paused Goal', action: 'followup', goal: S6A_GOAL_1, state: 'pause',
+      expected: { status: 'queued' } },
+    { case: 'a submit naming a cancelled Goal', action: 'submit', goal: S6A_GOAL_2, state: 'cancel',
+      expected: { status: 'rejected', code: 'invalid', reason: 'the Goal is not live' } },
+  ] as const)('$case', async ({ action, goal, state, expected }) => {
+    const ctx = world.humanContext();
+    if (action === 'followup') {
+      // The root was accepted while the Goal was active; the follow-up meets it paused at append.
+      const root = await world.platform.requestIntake.submitRequest(ctx, submitInput('smk3-paused-root', 'the root'));
+      if (root.status !== 'queued') throw new Error(`the root submit failed: ${JSON.stringify(root)}`);
+      await setGoalState(goal, state);
+      const followup = await world.platform.requestIntake.submitRequest(ctx,
+        submitInput('smk3-paused-followup', 'the follow-up', { continues: root.round }));
+      expect(followup).toMatchObject(expected);
+      return;
+    }
+    await setGoalState(goal, state);
+    const submitted = await world.platform.requestIntake.submitRequest(ctx,
+      submitInput(`smk3-${state}-submit`, 'the request', { goalId: goal.goalId }));
+    expect(submitted).toMatchObject(expected);
+  });
+});
