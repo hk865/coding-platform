@@ -1380,7 +1380,7 @@
       - DSH 02:00–20:00 先走 Ollama，再网关，再 OpenCode Go 直连，最后 DeepSeek（用户点名的是 09:00–18:00；18:00–20:00 和 02:00–09:00 也不在 Ollama 的峰价里，按同一顺序）；
       - 冒烟用量小，任何时段都先用网关；网关调不了时，白天换 Ollama、夜里换 DeepSeek 原生 API。冒烟 Host 的配置里有三个模型（`smoke-flash`、`smoke-ollama`、`smoke-deepseek`），开工前探一次选第一个，中途网关断了用 `models/select` 换（lead 笔记 `impl/smoke/srr/smoke-route.sh`、`smoke-switch.sh`）。
       - 已经在跑的会话不换路由。
-      - lead 笔记里的 `tools/dsh-route.sh` 按本地钟点选顺序，缓存只在同一时段内有效；`tools/dsh-run.sh` 把失败过的路由记成一个列表，最多换三次。WSL 这边的 DSH 凭据和冒烟的模型环境还缺 `OLLAMA_API_KEY`、`DEEPSEEK_API_KEY`，由用户自己补（`tools/add-route-keys.sh`，只打印名字和长度）；补上之前对应的探针立即失败、顺延到下一条。
+      - lead 笔记里的 `tools/dsh-route.sh` 按本地钟点选顺序，缓存只在同一时段内有效；`tools/dsh-run.sh` 把失败过的路由记成一个列表，最多换三次。密钥都在用户的 DSH 凭据里（`OLLAMA_API_KEY` 由用户 23:3x 加上）；冒烟 Host 启动时从那里把 Ollama 和 DeepSeek 的密钥读进自己的进程（lead 笔记 `impl/smoke/srr/dsh-keys.sh`），不另存一份。23:3x 探过：DSH 的 Ollama 路线、冒烟的三个模型都能用。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
