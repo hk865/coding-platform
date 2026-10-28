@@ -251,7 +251,7 @@
 | 96-6 | 2026-10-28 | 提前件只在所属分片开工时合入，不提前进主线。 | 现行 | HANDOFF L1359 |
 | 96-7 | 2026-10-28 | 过程教训：Bash 的 `cd` 会移动整个 Session 工作目录；post-run 80 文件上限藏文件；WSL 重解析反引号和 `$`；Git Bash 的 `MSYS_NO_PATHCONV=1`；DSH 只认副本；vitest 位置参数会静默跳过。 | 现行 | HANDOFF L1364 |
 | 96-8 | 2026-10-28 | 7B-1 冻结 v3.3：底 `7b1-ew2` = `a97833d`；N1–N13 两个后端 13/13 成立；v3.2 漏映射的 137 处短行号改正；夹具由 DSH 写。施工等 SMK2 和第二轮冒烟。 | 现行 | HANDOFF L1372 |
-| 96-9 | 2026-10-28 | DSH 的路由按时段：20:00–02:00 先网关 `opencode2api`、再 OpenCode Go 直连、再 Ollama；02:00–20:00 先 Ollama、再网关、再直连；都不通用 DeepSeek 默认；在跑的会话不换路由。改 88-3。 | 现行 | HANDOFF L1378 |
+| 96-9 | 2026-10-28 | 模型路由按时段（UTC+8）：DSH 20:00–02:00 先网关 `opencode2api`、再 OpenCode Go 直连、再 DeepSeek 原生；02:00–20:00 先 Ollama、再网关、再直连、再 DeepSeek；冒烟任何时段先网关，调不了时白天 Ollama、夜里 DeepSeek 原生；在跑的会话不换路由。改 88-3。 | 现行 | HANDOFF L1378 |
 
 ## 表后
 

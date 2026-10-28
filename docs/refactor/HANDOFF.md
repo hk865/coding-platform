@@ -1375,11 +1375,12 @@
       - 按 94-1 把夹具的写者从 Opus 改成 DSH；新夹具导入 S7A 的四个私有小函数（加 `export`），不再复制一份。
       - 7B-1 施工要等 SMK2 和第二轮冒烟（96-5）；施工前把底再挪到 SMK2 的结果上，短引用一起按同样的办法核对。
       - 来源：`impl/lines/7b1/7b1-probe.md`、`7b1-freeze-v33.md`、`out/v33/changes-v33.md`。
-    - **96-9 DSH 的路由按时段（用户 10-28 23:00）。** 改 88-3 和 10-25 的顺序。DSH 加了 Ollama 的 API（`https://ollama.com/v1`，`deepseek-v4.1-flash`）。Ollama 的峰价在每天 20:00 到次日 02:00（UTC+8），`opencode2api` 网关的额度偏紧，所以：
-      - 20:00–02:00 先走网关 `opencode2api`，再 OpenCode Go 直连，再 Ollama；
-      - 02:00–20:00 先走 Ollama，再网关，再 OpenCode Go 直连（用户点名的是 09:00–18:00；18:00–20:00 和 02:00–09:00 也不在 Ollama 的峰价里，按同一顺序）；
-      - 都不通才用 DeepSeek 默认路由。已经在跑的会话不换路由。
-      - lead 笔记里的 `tools/dsh-route.sh` 按本地钟点选顺序，缓存只在同一时段内有效；`tools/dsh-run.sh` 把失败过的路由记成一个列表，最多换三次。WSL 这边的 DSH 凭据还缺 `OLLAMA_API_KEY`，由用户自己补（`tools/add-ollama-key.sh`）；补上之前 Ollama 的探针立即失败、顺延到下一条。
+    - **96-9 模型路由按时段（用户 10-28 23:00，23:15 补充）。** 改 88-3 和 10-25 的顺序。DSH 加了 Ollama 的 API（`https://ollama.com/v1`，`deepseek-v4.1-flash`）。Ollama 的峰价在每天 20:00 到次日 02:00（UTC+8，用户在新加坡）；OpenCode 的两份周额度都只剩约 20%，下周一（11-02）才重置，可能中途调不了。所以：
+      - DSH（开发，用量的大头）20:00–02:00 先走网关 `opencode2api`，再 OpenCode Go 直连，都不通用 DeepSeek 原生 API（夜里不用 Ollama）；
+      - DSH 02:00–20:00 先走 Ollama，再网关，再 OpenCode Go 直连，最后 DeepSeek（用户点名的是 09:00–18:00；18:00–20:00 和 02:00–09:00 也不在 Ollama 的峰价里，按同一顺序）；
+      - 冒烟用量小，任何时段都先用网关；网关调不了时，白天换 Ollama、夜里换 DeepSeek 原生 API。冒烟 Host 的配置里有三个模型（`smoke-flash`、`smoke-ollama`、`smoke-deepseek`），开工前探一次选第一个，中途网关断了用 `models/select` 换（lead 笔记 `impl/smoke/srr/smoke-route.sh`、`smoke-switch.sh`）。
+      - 已经在跑的会话不换路由。
+      - lead 笔记里的 `tools/dsh-route.sh` 按本地钟点选顺序，缓存只在同一时段内有效；`tools/dsh-run.sh` 把失败过的路由记成一个列表，最多换三次。WSL 这边的 DSH 凭据和冒烟的模型环境还缺 `OLLAMA_API_KEY`、`DEEPSEEK_API_KEY`，由用户自己补（`tools/add-route-keys.sh`，只打印名字和长度）；补上之前对应的探针立即失败、顺延到下一条。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
