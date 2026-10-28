@@ -109,6 +109,8 @@ export const RUN_BY_WORKSPACE_OUTCOME_INDEX = 'a2-run-by-workspace-outcome';
 export const S2B_RUN_BY_GOAL_ENDED_LOOKUP = 's2b-run-by-goal-ended';
 /** Slice 2B L14/L8: one workspace's ended Runs, ordered by `endedAt` (backfill candidates). */
 export const S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP = 's2b-run-by-workspace-ended';
+/** The Goals copied from one source Goal (`continuedFrom.goal`). */
+export const GOAL_BY_CONTINUED_FROM_INDEX = 's7a2-goal-by-continued-from';
 const LOOKUP_PAGE_LIMIT = 200;
 /** Bounded retries when the candidate set and the canonical re-read do not
  * share one ledger watermark; never stamp a newer watermark onto an older set. */
@@ -319,6 +321,8 @@ export const PLAN_STATE_RECORD_SCHEMAS: RecordBackendSchemas = {
       paths: ['ref.projectId', 'ref.goalId'], orderBy: { path: 'endedAt' } },
     { name: S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP, aggregateType: 'Run',
       paths: ['ref.projectId', 'workspaceSnapshot.workspaceId'], orderBy: { path: 'endedAt' } },
+    { name: GOAL_BY_CONTINUED_FROM_INDEX, aggregateType: 'Goal',
+      paths: ['ref.projectId', 'continuedFrom.goal.goalId'] },
   ],
 };
 

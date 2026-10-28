@@ -21,7 +21,7 @@ import type {
 } from '../goal-decisions.js';
 import type { AggregateRef, DispatchCurrentV1 } from '../ledger.js';
 import type { QueryRunRef } from '../query-job.js';
-import type { CoreRejection } from './results.js';
+import type { CoreRejection, WriteResult } from './results.js';
 import type { SessionRef, VersionPin } from './identity.js';
 
 export type SessionMessageRef = {
@@ -91,6 +91,15 @@ export type UserMessageResponseV1 = {
 export type DecisionApplicationReceiptV1 = {
   identityKey: string; fingerprint: string; cursor: CommitCursor;
 };
+
+/**
+ * 7A §3.5 item 2: an effect owner's committed result carries the receipt a message proof cites. Present exactly
+ * when the call carried an acknowledgement and the effect committed (first success, replay, recovery); absent on
+ * a call without one (whose result is unchanged), on a committed policy refusal and on every rejection.
+ */
+export type EffectWriteResultV1<T> =
+  | (Extract<WriteResult<T>, { status: 'committed' }> & { proofReceipt?: DecisionApplicationReceiptV1 })
+  | CoreRejection;
 
 /** The message's effect proof; never shares the old `application` field. */
 export type ApplicationProofV1 = {

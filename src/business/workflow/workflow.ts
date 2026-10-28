@@ -32,6 +32,7 @@ import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decisi
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
+import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
 import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
 } from '../../core/work-graph/state/verification-machine.js';
@@ -88,6 +89,11 @@ export type Base = {
    * `apply_review_disposition` carries it forward, every other successor drops it.
    */
   failedCardRefs: FailedCardRefV1[];
+  /**
+   * 〔L5, R3-2〕 `book-7a.md:386–:389`: the message keys this release pass already found blocked, taken from the
+   * Host driver's `WorkflowAdvanceInternal.releaseSkip` (`B/contracts.ts:230`). Empty for every other caller.
+   */
+  releaseSkip: ReadonlySet<string>;
 };
 
 /**
@@ -503,6 +509,9 @@ function readRejection(result: { status: 'not_found' } | { status: 'not_ready' }
   if (result.status === 'not_found') return rejection('not_found', 'the requested fact does not exist');
   return rejection('incomplete', 'the requested read is not ready at the required watermark');
 }
+/** Book §3.8 item 3 (`book-7a.md:385`): one bounded candidate page — the port's own maximum (`decision-contracts.ts:531`). */
+const RELEASE_CANDIDATE_PAGE_LIMIT = 100;
+
 function receiptReason(result: unknown, fallback: string): string {
   if (isRecord(result) && typeof result['reason'] === 'string' && result['reason'].length > 0) return result['reason'];
   if (isRecord(result) && result['status'] === 'not_found') return 'the requested record does not exist';
@@ -719,7 +728,8 @@ function baseFromInput(
   const internalRefs = failedCardRefsFromInternal(internal, owned);
   if ('rejection' in internalRefs) return { rejection: internalRefs.rejection };
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
-    taskId: rawTaskId === undefined ? null : rawTaskId, failedCardRefs: internalRefs.failedCardRefs };
+    taskId: rawTaskId === undefined ? null : rawTaskId, failedCardRefs: internalRefs.failedCardRefs,
+    releaseSkip: new Set<string>(internal?.releaseSkip ?? []) };
 }
 
 /**
@@ -756,7 +766,7 @@ function initialPlanningBase(
     return { rejection: rejection('invalid', 'handleGoalInput requires an executeWithinRequest boolean') };
   }
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
-    taskId: null, failedCardRefs: [], executeWithinRequest: raw['executeWithinRequest'] };
+    taskId: null, failedCardRefs: [], releaseSkip: new Set(), executeWithinRequest: raw['executeWithinRequest'] };
 }
 
 // --------------------------------------------------------------------------
@@ -1331,6 +1341,46 @@ export function createWorkflow(deps: WorkflowDependencies & {
     workflow: deps, bindingForRole, isUnadmittedStarting, claimContinuation,
   });
 
+  /**
+   * 〔L5〕 Book §3.8 item 3 (`book-7a.md:384–:388`): the first candidate of this Goal that no block reason and no
+   * earlier refusal of this pass stops, with its approval identity from the message record itself (`approvalRevision`,
+   * never the current revision — `:368–:370`). Read-only: `perform` calls the owner. The pages run until one item is
+   * selectable (`:386`, rd7a2a-02); a read failure is the failure, never an empty page (`:551–:552`, rd7a2a-05).
+   */
+  async function releaseCandidatePerform(owned: Owned, base: Base): Promise<WorkflowAdvanceResult | null> {
+    const owner = deps.messageRelease;
+    const messages = deps.messages;
+    // Book `:383–:384`: without the owner (an old composition) the release step names nothing, and without the
+    // message read it has no approval identity (D8-5 (a)).
+    if (owner === undefined || messages === undefined) return null;
+    for (let after: string | null = null; ;) {
+      const page = await owner.readReleaseCandidates(owned.ctx, {
+        scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
+        goalRef: base.goalRef, after, limit: RELEASE_CANDIDATE_PAGE_LIMIT,
+      });
+      // A read failure is the failure (D8-10 (a), `decision-contracts.ts:552`), never "no candidate".
+      if (page.status !== 'ready') return readRejection(page);
+      for (const candidate of page.value.items) {
+        // A blocked item is stepped past and the pass continues (`book-7a.md:386`); the item this pass already
+        // refused is stepped past too, so one pass never asks for it twice (`:386–:389`).
+        if (candidate.blockedReason !== null) continue;
+        if (base.releaseSkip.has(sessionMessageRefKey(candidate.messageRef))) continue;
+        const read = await messages.readMessage(owned.ctx, candidate.messageRef);
+        if (read.status !== 'ready') return readRejection(read);
+        return advancing(null, makePerform(base, {
+          kind: 'release_message',
+          // D8-5 (a): the approval commit's revision, written by the approval (`message-machine.ts:1309`); the type
+          // forces this arm — only an approved message reaches the page (rd7a2a-18, list B 3).
+          request: { messageRef: candidate.messageRef, approvalRevision: read.value.approvalRevision! },
+        }));
+      }
+      // A blocked item does not stop the next page (`book-7a.md:386–:387`, rd7a2a-02); nothing selectable on any page
+      // is the ordinary selection's answer.
+      if (page.value.nextCursor === null) return null;
+      after = page.value.nextCursor;
+    }
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -1343,6 +1393,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (goal.desiredState !== 'active') {
       return waiting(null, `the Goal is ${goal.desiredState}; no work is selected while the Goal is not active`);
     }
+    // `book-7a.md:380–:381`: the release step sits AFTER the active check and BEFORE the no-plan return; selection
+    // stays read-only. A page with nothing releasable falls through (`:386–:388`).
+    const releaseStep = await releaseCandidatePerform(owned, base);
+    if (releaseStep !== null) return releaseStep;
     if (goal.activePlanRevision === null) {
       return waiting(null, 'the Goal has no adopted Plan; no work was selected');
     }
@@ -2019,6 +2073,27 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const nextBase: Base = { ...base, sessionHint: claim.sessionRef };
         return advancing(receipt, makePerform(nextBase, { kind: 'prepare', request: prepareStep(nextBase, claim.runRef) }));
       }
+      // 〔L5〕 The one owner call. A refusal is the machine's or R2's own and is never retried here — it is this pass's
+      // "blocked" (`book-7a.md:386–:389`, R2-B-06).
+      case 'release_message': {
+        const owner = deps.messageRelease;
+        // A public `workflow/advance` can name any perform; without the owner the step is `unsupported`, as every
+        // other uninstalled entry of this file (`selectNext`'s configuration arm, :1337).
+        if (owner === undefined) return rejection('unsupported', 'the Workflow has no message release owner');
+        const released = await owner.releaseApproved(owned.ctx, operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'release_message', result: released };
+        // A committed release hands the Goal back to the one selection (`book-7a.md:380–:381`).
+        if (released.status === 'committed') return advancing(receipt, selectWorkStep(base));
+        // 〔a-06〕 The three refusals that mean "blocked this pass" (`book-7a.md:386`, `:389`): a stale item
+        // (`revision_conflict`), a Goal that is not active (`busy`, `message-release.ts:68`) and a missing item
+        // (`not_found`). The pass counts them as `blocked` and steps on (`A/host.ts`'s `releaseHandler`).
+        if (released.code === 'revision_conflict' || released.code === 'busy' || released.code === 'not_found') {
+          return waiting(receipt, `${released.code}: ${released.reason}`);
+        }
+        // Every other refusal of the port is the read's own failure, not "no work": it is returned as the rejection
+        // it is, exactly as `performStep` already answers for its other steps (`:547`'s return type).
+        return released;
+      }
       case 'prepare': {
         const result = await deps.runtime.prepareExecution(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'prepare', result };
@@ -2333,24 +2408,28 @@ export function createWorkflow(deps: WorkflowDependencies & {
       // the SAME advance (K3 ruling 4/answer 7). The handed ref decides the kind.
       if (!isRecord(source) || !isRecord(selection) || selection['kind'] !== 'option') continue;
       const kind = source['kind'];
-      if (kind !== 'unknown_call_review' && kind !== 'command_rerun_request') continue;
+      if (kind !== 'unknown_call_review' && kind !== 'command_rerun_request'
+        && kind !== 'message_release') continue;
       const handedRaw = handed as unknown as Record<string, unknown>;
-      const cardRef = kind === 'unknown_call_review' ? handedRaw['reviewRef'] : handedRaw['requestRef'];
+      // A `message_release` card carries neither a `reviewRef` nor a `requestRef`: `failedCardRefOf` (:406) and
+      // `addFailedCardRef` (:415) stay the two review kinds' and are not reached for it (no failed card exists).
+      const cardRef = kind === 'message_release' ? null
+        : kind === 'unknown_call_review' ? handedRaw['reviewRef'] : handedRaw['requestRef'];
       if (cardRef === undefined) {
         hardFailure = true;
         if (failure === null) failure = 'invalid: a handed-over answer has no card ref of its source kind';
         continue;
       }
-      const card = failedCardRefOf(kind, cardRef);
-      if (card === null) {
+      const card = kind === 'message_release' ? null : failedCardRefOf(kind, cardRef);
+      if (kind !== 'message_release' && card === null) {
         hardFailure = true;
         if (failure === null) failure = `invalid: a handed-over ${kind} answer has an incomplete card ref`;
         continue;
       }
       // K3 UR7 rework 1: the ordinary advance skips a card already failed in
       // this continuous selection, for BOTH kinds. It is never applied twice.
-      if (base.failedCardRefs.some(existing => failedCardKey(existing) === failedCardKey(card))
-        || failedCards.some(existing => failedCardKey(existing) === failedCardKey(card))) continue;
+      if (card !== null && (base.failedCardRefs.some(existing => failedCardKey(existing) === failedCardKey(card))
+        || failedCards.some(existing => failedCardKey(existing) === failedCardKey(card)))) continue;
       const expected = Array.isArray(source['pins']) ? source['pins'] as VersionPin[] : [];
       // The identity is derived from the answer alone, so a crash re-drive sends
       // the same request and ② replays its answer-derived receipt.
@@ -2371,15 +2450,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
       receipt = { kind: 'apply_review_disposition', result };
       if (result.status !== 'ready') {
         hardFailure = true;
-        cardFailure = true;
-        addFailedCardRef(failedCards, card);
+        if (card !== null) { cardFailure = true; addFailedCardRef(failedCards, card); }
         if (failure === null) failure = dispositionReadFailure(result);
         continue;
       }
       if (!dispositionApplied(result.value, expected)) {
         hardFailure = true;
-        cardFailure = true;
-        addFailedCardRef(failedCards, card);
+        if (card !== null) { cardFailure = true; addFailedCardRef(failedCards, card); }
         if (failure === null) failure = dispositionFailure(result.value, expected);
         continue;
       }

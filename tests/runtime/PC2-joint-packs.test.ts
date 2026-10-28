@@ -137,8 +137,7 @@ downstream: [{"dependsOnId":"implement-a","requires":{"kind":"output-contract","
 failure: null
 
 ## Reminders
-还没有观测
-{"key":"decision:not_available:message_release","node":{"kind":"goal","ref":{"aggregateType":"Goal","goalId":"r4c-claim-goal","projectId":"r4c-claim-project"}},"sources":[],"text":"待决来源尚未接入：message_release"}`;
+还没有观测`;
 // The one hand-written difference the changed string table makes to the input.
 const NEW_TASK_INPUT = OLD_TASK_INPUT.replace(
   'label: WP2 platform role', 'CHANGED ROLEWP2 platform role',

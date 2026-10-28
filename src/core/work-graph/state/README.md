@@ -41,7 +41,7 @@
 - `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。
 - `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录。
 - `goal-confirm.ts` — `goals/confirm-draft` 的纯规则：`decideGoalConfirm` 的拒绝顺序（不是最新已答轮 → `revision_conflict`；草稿下标越界 → `invalid`；同一 `(answerRef, draftIndex)` 已确认 → `revision_conflict`）、确认后的 objective 文本 `confirmObjectiveText`（正文与每条完成标准都经 `normalizeObjective`），以及不可变 `InitializationBinding@1` 的唯一构造 `newInitializationBinding`（ref 指 answer+draft，revision 与 goalRevision 都是 1，顺序和重复原样保留）。无 I/O、无时钟、无 id；服务只编码它并放进自己的一次提交。
-- `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选且未被干预的候选（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom` 与 `copiedInterventions`。`planReanchorHook` 是 7D1 填的唯一具名缝（现在只答 `not_implemented`）。
+- `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选的候选，同一 ref 勾选两次被 `invalid` 拒绝（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`retract` 非空即 `retraction_pending`）。`planReanchorHook` 是 7D1 填的唯一具名缝（现在只答 `not_implemented`）。
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交。
@@ -58,6 +58,7 @@
 - `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
 - `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:31`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
 - `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）。
+- `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
 - `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
 - `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。
@@ -97,8 +98,8 @@
 | `decisionActionPolicy` | `src/core/work-graph/state/decision-policy.ts:31` | 自主级别 × 动作的唯四值表 | owner、工具、Workflow、路由都查它 |
 | `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:71` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
 | `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:118` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
-| `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:23` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions` 与 `selection`（`selection_only`/`retraction_pending`） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
-| `planReanchorHook` | `src/core/work-graph/state/goal-copy.ts:11` | 7D1 要填的具名 seam：把目标参谋/书记的负责关系挪到新 Goal；现在只返回 `not_implemented`，不写事实、不给回执 | 复制确认里预留的负责关系迁移点；不要另开一条迁移路径 |
+| `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:24` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里，同一 ref 勾选两次也是 `invalid`；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`selection_only`/`retraction_pending`，`retract` 非空即后者） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
+| `planReanchorHook` | `src/core/work-graph/state/goal-copy.ts:12` | 7D1 要填的具名 seam：把目标参谋/书记的负责关系挪到新 Goal；现在只返回 `not_implemented`，不写事实、不给回执 | 复制确认里预留的负责关系迁移点；不要另开一条迁移路径 |
 | `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:97` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
 | `decideGoalConfirm` | `src/core/work-graph/state/goal-confirm.ts:32` | confirm-draft 的唯一纯决定：拒绝顺序、草稿、objective、出生设置与 order | 确认草稿前；不要另写拒绝顺序 |
 | `confirmObjectiveText` | `src/core/work-graph/state/goal-confirm.ts:21` | 确认后的 objective：正文 + 空行 + `完成标准：` + 每条 `- ` 完成标准，两段都规范化 | 建确认 Goal 的 objective |
@@ -116,9 +117,9 @@
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
 | `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:741` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
-| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1346` | SessionMessage 主迁移 | 消息读/回/派生 |
-| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1510` | 建新消息记录 | 收到用户或系统消息 |
-| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1573` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
+| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1348` | SessionMessage 主迁移 | 消息读/回/派生 |
+| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1512` | 建新消息记录 | 收到用户或系统消息 |
+| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1575` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
 | `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:1036` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
 | `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1044` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
 | `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:1050` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
@@ -231,6 +232,7 @@
 | `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1024` | 轮对应的证据索引 ref | 追加证据 |
 | `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:430` | 展示用轮状态 | 读模型 |
 | `isFinalizedNonPass` | `src/core/work-graph/state/verification-machine.ts:102` | 已定稿且非 PASS | 失败事实/重验证 |
+| `copyInterventionCandidateOf`、`CopyInterventionFactsV1` | `src/core/work-graph/state/copy-intervention.ts:16`、`src/core/work-graph/state/copy-intervention.ts:6` | 复制取消的纯候选规则与事实形状：按书的表序（先排除，再投递/未投递）判一条消息是否候选、可选/可撤回及原因；`null` 不是候选 | 分页读可复制干预时；不要另写状态判定 |
 
 ## 内部用
 

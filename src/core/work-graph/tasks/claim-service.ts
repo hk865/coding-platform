@@ -31,7 +31,8 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
-import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { EffectWriteResultV1 } from '../../../contracts/core/session-message.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type {
   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunContinuationV1, RunRef, RunSnapshot, TaskAttemptRef,
   TaskEligibility, TaskLeaseSnapshot, TaskTriple,
@@ -76,6 +77,7 @@ import {
   encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
+import { sessionMessageRefProblem } from './codec-shape-checks.js';
 import {
   decodeUnknownCallReview, encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent,
   unknownCallReviewRefKey, UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
@@ -579,6 +581,12 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
       return reject('invalid', 'the review request names another Goal or project');
     }
   }
+  if (input.acknowledgement !== undefined) {
+    // 7A §3.5: the acknowledgement is shape-checked only; the owner reads no
+    // message and compares no scope (the apply call judges the effect).
+    const acknowledgementProblem = sessionMessageRefProblem(input.acknowledgement, 'claimTask acknowledgement');
+    if (acknowledgementProblem !== null) return reject('invalid', acknowledgementProblem);
+  }
   return null;
 }
 
@@ -773,7 +781,11 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       projectId: scope.projectId, workspaceId: scope.workspaceId,
       goalRef: input.goalRef, planRef: input.planRef, taskId: input.taskId,
       sessionRef: input.sessionRef, roleBinding: input.roleBinding, budget: input.budget,
-      consumedWait: consumed, expected: expectedCanonical,
+      consumedWait: consumed,
+      // 7A §3.5: part of the fingerprint only when present, so an old call keeps
+      // its fingerprint and its result.
+      ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
+      expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
   }
@@ -805,6 +817,9 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       ...(input.requeueRef === undefined ? {} : { requeueRef: input.requeueRef }),
       // K3 TASK-03r: likewise for a review claim.
       ...(input.review === undefined ? {} : { review: input.review }),
+      // 7A §3.5: the acknowledged request is a different request, so the same
+      // requestId with another acknowledgement (or none) is an idempotency conflict.
+      ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
       expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
@@ -818,7 +833,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     fingerprint: string,
     input: ClaimTaskInput,
     actorBound: boolean,
-  ): Promise<WriteResult<TaskClaim>> {
+  ): Promise<EffectWriteResultV1<TaskClaim>> {
     // K3: a review claim's commit also carries its `UnknownCallReviewChanged`
     // before the claim event, so the claim event is the LAST one the receipt
     // names (the cursor); an ordinary claim still names exactly one.
@@ -849,10 +864,17 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (refKeyOf(claim.planRef) !== refKeyOf(input.planRef)) return unavailable('the recorded claim Plan disagrees with the request');
     if (!sameRef(claim.sessionRef, input.sessionRef)) return unavailable('the recorded claim Session disagrees with the request');
     if (claim.workspaceId !== scope.workspaceId) return unavailable('the recorded claim workspace disagrees with the Host scope');
-    return { status: 'committed', value: claim, replayed: true, cursor: receipt.cursor };
+    return {
+      status: 'committed', value: claim, replayed: true, cursor: receipt.cursor,
+      // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+      // when the call carried an acknowledgement (the fingerprint binds it).
+      ...(input.acknowledgement === undefined ? {}
+        : { proofReceipt: { identityKey, fingerprint, cursor: receipt.cursor } }),
+    };
   }
 
-  async function claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>): Promise<WriteResult<TaskClaim>> {
+  async function claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>):
+  Promise<EffectWriteResultV1<TaskClaim>> {
     const ownedCtx = ownCallContext(ctx);
     if (!ownedCtx.ok) return ownedCtx.rejection;
     const { ctx: scopeCtx, actor } = ownedCtx;
@@ -1227,7 +1249,9 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       reviewRecordAfter = decided.next;
     }
     const event: TaskClaimedEvent = { eventId, eventType: 'TaskClaimed', schemaVersion: 1, occurredAt: claimedAt,
-      identityKey, actor, fingerprint, claim };
+      identityKey, actor, fingerprint, claim,
+      // 7A §3.5 rule 3: the effect event carries the key only when present.
+      ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) };
 
     // 7. One guard per distinct key; a later non-null version wins.
     const guardMap = new Map<string, number | null>();
@@ -1280,7 +1304,13 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     // A concurrent identical request win makes the Store replay the original
     // event; the local freshly-minted ids must NEVER be returned in that case.
     if (receipt.replayed) return readReplay(receipt, actor, scope, identityKey, fingerprint, input, actorBound);
-    return { status: 'committed', value: claim, replayed: false, cursor: receipt.cursor };
+    return {
+      status: 'committed', value: claim, replayed: false, cursor: receipt.cursor,
+      // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+      // when the call carried an acknowledgement.
+      ...(input.acknowledgement === undefined ? {}
+        : { proofReceipt: { identityKey, fingerprint, cursor: receipt.cursor } }),
+    };
   }
 
   return { claimTask };

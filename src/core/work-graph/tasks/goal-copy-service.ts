@@ -1,8 +1,8 @@
 /**
  * Copying a cancelled Goal: the two public entries over one pure decision (`state/goal-copy.ts`).
  *
- * - `readDraft`: a read of the source Goal and its understanding pin. It writes nothing and never reads the
- *   intervention port; with no intervention reader the preview always answers `{ available: false }`.
+ * - `readDraft`: a read of the source Goal, its understanding pin and, when the intervention reader is injected, every
+ *   candidate; with no reader the preview answers `{ available: false }`.
  * - `confirm`: the single birth commit (`goal.copyConfirm`) — the new active Goal with `continuedFrom` /
  *   `copiedInterventions`, its `GoalCopied` event and the receipt. The source Goal is only CAS-guarded, never written.
  *   A retraction failure after the commit is the owner's continuation: the Goal stays, and replaying the same confirm
@@ -44,6 +44,9 @@ import { GoalCopyFieldsShape, canonicalRefKey, goalSettingsProblem } from '../pe
 import { decideGoalCopy, planReanchorHook } from '../state/goal-copy.js';
 import { newGoalSnapshot } from '../state/goal-machine.js';
 import { bindTrustedContext } from './execution-entry-service.js';
+import {
+  GoalCopyRetractionShape, copyRetractionSettledCodec, settleCopyItem, type CopyRetractionSettleScopeV1,
+} from './goal-copy-progress.js';
 import { asWriteRejection } from './plan-result-helpers.js';
 import { readGoal, readGoalScope } from './plan-readers.js';
 
@@ -110,12 +113,6 @@ const PendingGoalSnapshotShape = defineShape({
   ],
 });
 
-const GoalCopyRetractionShape = defineShape({
-  name: 'GoalCopyRetraction',
-  fields: { messageRef: f.ref(SessionMessageRefShape),
-    status: f.enumOf(['retracted', 'not_retractable', 'unfinished']), reason: f.nullable(f.string()) },
-});
-
 const GoalCopiedPayloadShape = defineShape({
   name: 'GoalCopiedPayload',
   fields: {
@@ -143,8 +140,9 @@ const GOAL_COPIED_FORMAT = defineEvent({
 type GoalCopiedEvent = InferEvent<typeof GOAL_COPIED_EVENT_TYPE, typeof GOAL_COPIED_FORMAT.fields>;
 const goalCopiedCodec = createEventCodec(GOAL_COPIED_FORMAT);
 
-/** 注册 Goal 复制出生事件的 schema。 */
-export const GOAL_COPY_RECORD_SCHEMAS: RecordBackendSchemas = formatSchemas([goalCopiedCodec]);
+/** 注册 Goal 复制出生事件与逐项结算事件的 schema。 */
+export const GOAL_COPY_RECORD_SCHEMAS: RecordBackendSchemas =
+  formatSchemas([goalCopiedCodec, copyRetractionSettledCodec]);
 
 // --------------------------------------------------------------------------
 // The service
@@ -176,7 +174,6 @@ type CopyBasis = {
   projectRevision: number;
   workspaceRevision: number;
   pin: GoalUnderstandingPinV1;
-  candidates: GoalCopyFactsV1['selected'];
 };
 
 export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCopyPort {
@@ -218,8 +215,15 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
     const understanding = await deps.understanding.readGoalUnderstanding(trusted.ctx, { goalRef });
     if (understanding.status !== 'ready') return understanding;
     const pin = understanding.value;
-    const decided = decideGoalCopy({ source, understanding: pin, selected: [], intervened: [] }, { goalRef });
+    const decided = decideGoalCopy({ source, understanding: pin, selected: [] }, { goalRef });
     if (decided.outcome === 'refuse') return rejected(decided.code, decided.reason);
+    // With the reader the preview lifts every candidate; a failed read fails the draft, never `{ available: false }`.
+    let interventions: GoalCopyDraftResultV1['interventions'] = { available: false };
+    if (deps.interventions !== undefined) {
+      const candidates = await readInterventionCandidates(trusted.ctx, goalRef);
+      if (!candidates.ok) return candidates.rejection;
+      interventions = { available: true, candidates: candidates.value };
+    }
     return {
       status: 'ready',
       value: {
@@ -233,30 +237,55 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
           parallelRisks: source.settings.parallelRisks.map(risk => risk.otherGoalRef),
         },
         understanding: pin.note === null ? null : { noteId: pin.note.noteId, version: pin.note.version },
-        interventions: { available: false },
+        interventions,
       },
     };
   }
 
-  /** After the birth commit: one retraction call per still-unfinished item; a failure leaves it unfinished. */
+  /**
+   * The continuation after a committed confirm, first call or replay, in the birth event's `retractions` order: a
+   * replay's saved settle, then one retraction call, then the settle. A failure leaves the item `unfinished` with
+   * this call's reason; only a replay of the same confirm retries it.
+   */
   async function finishRetractions(ctx: CoreCallContext, result: GoalCopyConfirmResultV1,
-    confirmIdentity: string, sourceGoalRef: GoalRef): Promise<GoalCopyConfirmResultV1> {
+    settle: CopyRetractionSettleScopeV1, replayed: boolean): Promise<GoalCopyConfirmResultV1> {
     const port = deps.retractions;
     if (port === undefined) return result;
     const retractions: GoalCopyConfirmResultV1['retractions'][number][] = [];
     for (const item of result.retractions) {
-      if (item.status !== 'unfinished') { retractions.push(item); continue; }
-      const commandId = `${confirmIdentity}:retract:${canonicalRefKey(item.messageRef)}`;
-      try {
-        const outcome = await port.retractCopiedIntervention(ctx, { commandId, sourceGoalRef, messageRef: item.messageRef });
-        if (outcome.status === 'retracted' || outcome.status === 'not_retractable') {
-          retractions.push({ messageRef: item.messageRef, status: outcome.status, reason: outcome.reason });
-        } else {
-          retractions.push({ ...item, reason: outcome.reason });
+      const { messageRef } = item;
+      // Only a replay can find a settle: the settle identity hangs on this confirm, which on a first commit has
+      // just come into existence.
+      if (replayed) {
+        const saved = await settleCopyItem(deps.records, settle, messageRef, null);
+        if (saved.status === 'settled') { retractions.push(saved.item); continue; }
+        if (saved.status === 'rejected') {
+          retractions.push({ messageRef, status: 'unfinished', reason: saved.reason });
+          continue;
         }
-      } catch (error) {
-        retractions.push({ ...item, reason: messageOf(error) });
       }
+      const commandId = `${settle.confirmIdentity}:retract:${canonicalRefKey(messageRef)}`;
+      let outcome: { status: 'retracted' | 'not_retractable'; reason: string | null };
+      try {
+        const retracted = await port.retractCopiedIntervention(ctx, {
+          commandId, sourceGoalRef: settle.sourceGoalRef, messageRef,
+        });
+        if (retracted.status !== 'retracted' && retracted.status !== 'not_retractable') {
+          retractions.push({ messageRef, status: 'unfinished', reason: retracted.reason });
+          continue;
+        }
+        outcome = retracted;
+      } catch (error) {
+        retractions.push({ messageRef, status: 'unfinished', reason: messageOf(error) });
+        continue;
+      }
+      // The settle's `missing` arm is the null lookup's; a definite outcome cannot reach it, so the call's wide
+      // return type is narrowed instead of inventing a result for an unreachable case.
+      const settled = (await settleCopyItem(deps.records, settle, messageRef, outcome)) as
+        | { status: 'settled'; item: GoalCopyConfirmResultV1['retractions'][number]; replayed: boolean }
+        | CoreRejection;
+      retractions.push(settled.status === 'settled' ? settled.item
+        : { messageRef, status: 'unfinished', reason: settled.reason });
     }
     return { ...result, retractions };
   }
@@ -334,12 +363,11 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
         basis = {
           goal: scopeRead.goal, projectKey: scopeRead.projectKey, workspaceKey: scopeRead.workspaceKey,
           projectRevision: scopeRead.projectRevision, workspaceRevision: scopeRead.workspaceRevision, pin,
-          candidates: candidates.value,
         };
-        // The intervention reader supplies the intervened set (the source's and its copies' `copiedInterventions`);
-        // without one the owner cannot read it.
+        // The facts carry the complete candidate set: the selection is verified against it, and the unselected
+        // remainder is frozen into the birth event.
         return { status: 'ready', facts: {
-          source: scopeRead.goal, understanding: pin, selected: candidates.value, intervened: [],
+          source: scopeRead.goal, understanding: pin, selected: candidates.value,
         } };
       },
       decide(facts: GoalCopyFactsV1) {
@@ -395,11 +423,9 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
             continuedFrom: decision.continuedFrom,
             copiedInterventions: [...decision.copiedInterventions],
             selection: decision.selection,
-            // The un-checked set is frozen at confirm: the read's complete candidates minus the selection.
-            retractions: basis.candidates
-              .filter(candidate => !selectedInterventions.some(chosen => sameJson(candidate.messageRef, chosen)))
-              .map(candidate => ({ messageRef: { ...candidate.messageRef },
-                status: 'unfinished' as const, reason: null })),
+            // Every candidate the decision did not select, in candidate order; the birth event freezes it unfinished.
+            retractions: decision.retract.map(ref => ({ messageRef: { ...ref },
+              status: 'unfinished', reason: null })),
           },
         };
         return {
@@ -452,7 +478,15 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
       // The hook is where the real re-anchor lands; it returns no receipt and changes no fact, and a replay
       // recovers the original copy without a second effect.
       if (!result.replayed) planReanchorHook();
-      const value = await finishRetractions(ownedCtx, result.value, confirmIdentity, sourceGoalRef);
+      const value = await finishRetractions(ownedCtx, result.value, {
+        scope,
+        principal,
+        confirmIdentity,
+        copyGoalRef: result.value.goal.ref,
+        sourceGoalRef,
+        now: deps.now,
+        eventId: deps.eventId,
+      }, result.replayed);
       return { status: 'committed', value, replayed: result.replayed, cursor: result.cursor };
     }
     if (result.status === 'refused') return result.refusal;

@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AT, createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
+import type { EncodedDomainEvent } from '../../src/core/record-store/ports.js';
+import type { SessionMessageWriteCommandV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 
 const KINDS = ['memory', 'sqlite'] as const;
 const harnesses: C1Harness[] = [];
@@ -82,13 +85,87 @@ describe.each(KINDS)('X-commit-writer: one commit, companions first (%s)', kind 
     const saved = await h.mailbox.readMessage(h.ctxHost, first.value.ref);
     expect(saved).toMatchObject({ status: 'ready', value: { status: 'responded', responseSince: replied.cursor } });
   });
-});
 
-// A non-empty companion EVENT has no public producer: send's companions carry only the
-// counter/Session-activity records. The trusted prepare caller commits one companion event and asserts it
-// precedes the snapshot; the decide-accepts/prepare-refuses pair waits for the same caller and asserts
-// `revision_conflict` and an empty batch. (deferred: 7a2)
-// No route reaches `persist`: a `messages/*` body is `{scope, request: {input, meta}}` (`GraphWriteBody`), so a
-// top-level `commitCursorBindings`/`ledgerHorizon` has no place in it, and both real persist callers
-// (`mailbox-service.ts:2329`, `decision-service.ts:645`) pass the message, guards/claims and companions only.
-// Only the in-process trusted prepare caller of 7a2 can pass them; it asserts both reach the commit. (deferred: 7a2)
+  it('commits one companion event before the message event, and prepares no fragment once the state moves', async () => {
+    const h = await openC1World(kind);
+    const sent = await h.mailbox.sendMessage(h.ctxHost, {
+      input: { recipient: h.idleSession, text: 'one companion event' },
+      meta: { requestId: 'x-cw-companion-send', expected: [] },
+    });
+    if (sent.status !== 'committed') throw new Error(`the send did not commit: ${JSON.stringify(sent)}`);
+    const before = sent.value;
+    // The fixture's own registered seed schema (`task-claim-fixture.ts:209`): the one non-empty EVENT a
+    // trusted prepare caller can commit; send's own companions carry records only.
+    const companion: EncodedDomainEvent = { eventId: 'x-cw-companion-event', eventType: 'TrustedScopeSeeded',
+      schemaVersion: 1, occurredAt: AT, json: JSON.stringify({ eventId: 'x-cw-companion-event',
+        eventType: 'TrustedScopeSeeded', schemaVersion: 1, occurredAt: AT }) };
+    const withdraw = (target: SessionMessage, label: string): SessionMessageWriteCommandV1 => ({
+      operation: 'message.withdraw', messageRef: target.ref, before: target, expectedRevision: target.revision,
+      event: { eventId: `x-cw-event-${label}`, occurredAt: AT, requestId: `x-cw-${label}`,
+        projectId: h.ctxHost.projectId, workspaceId: h.ctxHost.workspaceId!,
+        actor: { kind: 'host', actor: { kind: 'human', id: 'c1-host' } } },
+      change: { kind: 'withdrawn', withdrawnAt: AT },
+    });
+    const owner = h.createWriteOwner();
+    const fragment = await owner.prepare(h.ctxHost, withdraw(before, 'companion'), {
+      records: [], events: [companion], guards: [], claims: [],
+    });
+    if ('status' in fragment) throw new Error(`prepare refused: ${JSON.stringify(fragment)}`);
+    expect(fragment.events).toHaveLength(2);
+    expect(fragment.events[0]!.eventId).toBe('x-cw-companion-event');
+    expect(fragment.events[1]).toMatchObject({ eventType: 'SessionMessageWithdrawn' });
+    const messageKey = sessionMessageRefKey(before.ref);
+    expect(fragment.records.at(-1)?.refKey).toBe(messageKey);
+    const committed = await h.backend.records.commit({ ...fragment, identityKey: 'x-cw-companion-commit',
+      fingerprint: 'x-cw-companion-commit', indexGuards: [], indexChanges: [] });
+    expect(committed.status).toBe('committed');
+    // The command's decide accepted the pending message; a second prepare against the state this commit
+    // wrote refuses with `revision_conflict` and returns no fragment.
+    const moved = await h.mailbox.readMessage(h.ctxHost, before.ref);
+    if (moved.status !== 'ready') throw new Error(`the message is not readable: ${JSON.stringify(moved)}`);
+    const refused = await owner.prepare(h.ctxHost, withdraw(moved.value, 'refused'), {
+      records: [], events: [{ ...companion, eventId: 'x-cw-refused-event' }], guards: [], claims: [],
+    });
+    expect(refused).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+    expect(refused).not.toHaveProperty('records');
+  });
+
+  it('carries the caller\'s top-level binding and horizon into the commit, and the records port refuses a binding on the send\'s bound since', async () => {
+    const h = await openC1World(kind);
+    const sent = await h.mailbox.sendMessage(h.ctxHost, {
+      input: { recipient: h.idleSession, text: 'top-level binding' },
+      meta: { requestId: 'x-cw-binding-send', expected: [] },
+    });
+    if (sent.status !== 'committed') throw new Error(`the send did not commit: ${JSON.stringify(sent)}`);
+    const before = sent.value;
+    const messageKey = sessionMessageRefKey(before.ref);
+    const command: SessionMessageWriteCommandV1 = {
+      operation: 'message.withdraw', messageRef: before.ref, before, expectedRevision: before.revision,
+      event: { eventId: 'x-cw-binding-event', occurredAt: AT, requestId: 'x-cw-binding',
+        projectId: h.ctxHost.projectId, workspaceId: h.ctxHost.workspaceId!,
+        actor: { kind: 'host', actor: { kind: 'human', id: 'c1-host' } } },
+      change: { kind: 'withdrawn', withdrawnAt: AT },
+    };
+    const owner = h.createWriteOwner();
+    const binding = { refKey: messageKey, field: 'since' as const };
+    const fragment = await owner.prepare(h.ctxHost, command, {
+      records: [], events: [], guards: [], claims: [], commitCursorBindings: [binding],
+      ledgerHorizon: sent.cursor,
+    });
+    if ('status' in fragment) throw new Error(`prepare refused: ${JSON.stringify(fragment)}`);
+    expect(fragment.commitCursorBindings).toEqual([binding]);
+    expect(fragment.ledgerHorizon).toBe(sent.cursor);
+    // The send already bound this record's `since` at creation, and the store binds only a null
+    // placeholder (`src/core/record-store/record-codec.ts:615–:617`), so the port refuses before any write.
+    const committed = await h.backend.records.commit({
+      ...fragment, identityKey: 'x-cw-binding-commit', fingerprint: 'x-cw-binding-commit',
+      indexGuards: [], indexChanges: [],
+    });
+    expect(committed).toMatchObject({
+      status: 'rejected', code: 'invalid', reason: expect.stringContaining('since'),
+    });
+    const read = await h.mailbox.readMessage(h.ctxHost, before.ref);
+    if (read.status !== 'ready') throw new Error(`the message is not readable: ${JSON.stringify(read)}`);
+    expect(read.value).toMatchObject({ revision: before.revision, status: 'pending', withdrawnAt: null });
+  });
+});

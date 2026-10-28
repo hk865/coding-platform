@@ -126,7 +126,7 @@ describe.each(['memory', 'sqlite'] as const)('row 37: copy, continuedFrom and th
         order: source.goal.settings.order,
         toReconfirm: { waitForGoalRef: null, parallelRisks: [] },
         understanding: sourcePin,
-        interventions: { available: false },
+        interventions: { available: true, candidates: [] },
       });
       // The preview writes nothing: the source and the workspace Goal count stay put.
       expect((await s6b3ReadGoal(world, scope, sourceRef)).revision).toBe(source.cancelledRevision);
@@ -215,7 +215,7 @@ it('row 37 (sqlite: a Host restart): after a rewrite, a normal reopen keeps the 
   expect(understandingOf(await listedNotes(world, scope, first.goal.ref.goalId))).toBe(0);
 });
 
-describe('row 38: retraction absent, replay creates no second Goal (memory)', () => {
+describe('row 38: selection_only retracts nothing, replay creates no second Goal (memory)', () => {
   it('commits selection_only, then replays the same command to the same Goal', async () => {
     const { world, scope, source } = await openSeededCopy(
       'memory', 'The replayed reader', 'The old reader is cancelled.',

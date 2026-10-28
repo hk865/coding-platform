@@ -2,10 +2,11 @@
  * K3 L28 / §3.4 UR7b: the ONE internal reader over
  * `k3-decision-answer-by-source-goal`.
  *
- * It is parameterized by the source kind (`unknown_call_review` or
- * `command_rerun_request`), pages the index to its end (2A L6/L10) and keeps
- * only a synthetic, responded answer whose formal ② commit exists under the
- * answer-derived identity. A read failure is `unavailable`, never an empty list.
+ * It is parameterized by the source kind (`unknown_call_review`,
+ * `command_rerun_request` or `message_release`), pages the index to its end (2A
+ * L6/L10) and keeps only a synthetic, responded answer whose formal ② commit
+ * exists under the answer-derived identity. A read failure is `unavailable`,
+ * never an empty list.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -26,7 +27,9 @@ import {
 import type { EncodedRecord } from '../../record-store/ports.js';
 import type { S5RecordPort } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
+import { commandKeys } from '../persistence/command-executor.js';
 import { lookupAll, type LookupBatch } from '../persistence/lookup-all.js';
+import { messageReleaseAnswerCommand, messageReleaseAnswerFacts } from './message-release-answer.js';
 import {
   decodeSessionMessageRecord,
   K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP,
@@ -53,7 +56,14 @@ export type CommandRerunAnswerHitV1 = {
   requestRef: CommandRerunRequestRef;
 };
 
-export type RedriveAnswerHitV1 = UnknownCallAnswerHitV1 | CommandRerunAnswerHitV1;
+/** G.4's first hook shape: one answered, unapplied `message_release` card. */
+export type MessageReleaseAnswerHitV1 = {
+  kind: 'message_release';
+  answerMessageRef: SessionMessageRef;
+  source: DecisionSourceV1;
+  messageRef: SessionMessageRef;
+};
+export type RedriveAnswerHitV1 = UnknownCallAnswerHitV1 | CommandRerunAnswerHitV1 | MessageReleaseAnswerHitV1;
 
 export type UnappliedAnswersReadV1 = {
   answers: RedriveAnswerHitV1[];
@@ -161,8 +171,10 @@ async function receiptExists(
 }
 
 /**
- * The internal reader: (project, workspace, kind, goal) over the new index to
- * the end, keeping the answers whose ② commit exists (L28, D4).
+ * The internal reader for the three kinds (`unknown_call_review`,
+ * `command_rerun_request`, `message_release`): (project, workspace, kind, goal)
+ * over the new index to the end, keeping the answers whose ② commit exists
+ * (L28, D4).
  */
 export async function readUnappliedAnswers(
   deps: { records: Pick<S5RecordPort, 'lookup' | 'lookupCommit'> },
@@ -192,6 +204,17 @@ export async function readUnappliedAnswers(
     const source = answerSource(message);
     const selection = answerSelection(message);
     if (source === null || selection === null) continue;
+    if (input.kind === 'message_release') {
+      const command = messageReleaseAnswerCommand(message);
+      if (command === null) continue;
+      const applied = await receiptExists(deps, commandKeys(command));
+      if (applied !== null && applied.status === 'rejected') return applied;
+      const target = messageReleaseAnswerFacts(message);
+      if (target === null) continue;
+      answers.push({ kind: 'message_release', answerMessageRef: message.ref, source,
+        messageRef: target.messageRef });
+      continue;
+    }
     if (input.kind === 'command_rerun_request') {
       const requestRef = commandRerunRequestRefOfSource(source);
       if (requestRef === null) continue;

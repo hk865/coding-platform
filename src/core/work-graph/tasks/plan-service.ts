@@ -23,7 +23,9 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type {
+  DecisionApplicationReceiptV1, EffectWriteResultV1, SessionMessageRef,
+} from '../../../contracts/core/session-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   DecisionActionV1,
@@ -412,8 +414,16 @@ function proposeFingerprint(input: {
   basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft; reason: unknown;
   requestRef?: QueryJobRef | null;
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
+  acknowledgement?: SessionMessageRef;
 }): string {
-  return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...input } as unknown as JsonValue));
+  // rd7a2b-12: `canonicalJson` is the recursive JCS encoder, not `JSON.stringify` — it takes `Object.keys` of the
+  // value and so refuses a `undefined` member (`contracts/fingerprint.ts:24–:45`). An absent key is therefore never
+  // resident: the material is expanded present-only, exactly as `applyFingerprint` does (`:414–:429`), and an old call
+  // keeps its fingerprint byte for byte.
+  const { acknowledgement, ...base } = input;
+  return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...base,
+    ...(acknowledgement === undefined ? {} : { acknowledgement }),
+  } as unknown as JsonValue));
 }
 function applyFingerprint(input: {
   projectId: string; workspaceId: string; proposalRef: PlanProposalRef;
@@ -431,6 +441,13 @@ function applyFingerprint(input: {
     ...(decisionSource === undefined || decisionSource === null ? {} : { decisionSource }),
     ...(governancePins === undefined ? {} : { governancePins }),
   } as unknown as JsonValue));
+}
+
+/** `book-7a.md:244–:245`: the full receipt of this proposal's own commit, present only when the call acknowledged. */
+function proofReceiptOf(input: { identityKey: string; fingerprint: string; acknowledgement?: SessionMessageRef },
+  receipt: { cursor: CommitCursor }): { proofReceipt?: DecisionApplicationReceiptV1 } {
+  if (input.acknowledgement === undefined) return {};
+  return { proofReceipt: { identityKey: input.identityKey, fingerprint: input.fingerprint, cursor: receipt.cursor } };
 }
 
 /**
@@ -676,7 +693,7 @@ async function restoreProposal(
   records: GoalRecordTransactionPort,
   receipt: CommittedReceipt,
   expected: { identityKey: string; projectId: string; workspaceId: string; proposalId: string;
-    idempotencyKey: string; actor: ActorRef },
+    idempotencyKey: string; actor: ActorRef; acknowledgement?: SessionMessageRef },
 ): Promise<{ status: 'restored'; proposal: PlanProposal } | Rejection> {
   if (receipt.identityKey !== expected.identityKey) return rejected('unavailable', 'idempotency receipt belongs to another identity');
   // A PLAN-01 proposal writes one event; a PLAN-02 replacement writes the
@@ -1113,7 +1130,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     replaces: { proposalRef: PlanProposalRef; revision: number } | null;
     /** The Goal revision the explicit source froze; only the source arms pass it, and the commit's own Goal guard holds the same revision. */
     expectedGoalRevision?: number;
-  }): Promise<WriteResult<PlanProposal>> {
+    /** 7A §3.5 item 2: the message this proposal acknowledges; written and receipted only when present. */
+    acknowledgement?: SessionMessageRef;
+  }): Promise<EffectWriteResultV1<PlanProposal>> {
     const { goalRef, workspaceId, requestRef, replaces } = input;
     const ctx = input.ctx;
     const pins = normalizeCallerPlanPins({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId }, input.expected);
@@ -1125,7 +1144,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (early.status === 'ready') {
       const restored = await restoreProposal(records, early.value, receiptExpected);
       if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-      return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor };
+      return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor,
+        ...proofReceiptOf(input, early.value) };
     }
     if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
     if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
@@ -1231,16 +1251,17 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const identity = { projectId: goalRef.projectId, actor: input.actor, idempotencyKey: input.requestId };
     const derived = deriveCommandIds(identity, 'plan-propose');
-    const eventFor = (proposal: PlanProposal): PlanProposalRecordedEvent => ({
+    const eventFor = (proposal: PlanProposal, acknowledgement?: SessionMessageRef): PlanProposalRecordedEvent => ({
       eventId: deps.eventId(), eventType: 'PlanProposalRecorded', schemaVersion: 2,
       projectId: goalRef.projectId, workspaceId, aggregateType: 'PlanProposal', aggregateId: proposal.ref.proposalId,
       aggregateRevision: proposal.revision, causationId: derived.commandId, correlationId: derived.correlationId,
       idempotencyKey: input.requestId, actor: input.actor, occurredAt: deps.now(), payload: { proposal },
+      ...(acknowledgement === undefined ? {} : { acknowledgement }),
     });
     // The replaced record's event goes FIRST and the candidate LAST, so the
     // commit cursor's event is always the candidate: replay needs no scan.
     const encodedEvents = (replacedRecord === null ? [] : [encodePlanProposalRecordedEvent(eventFor(replacedRecord))])
-      .concat([encodePlanProposalRecordedEvent(eventFor(candidate))]);
+      .concat([encodePlanProposalRecordedEvent(eventFor(candidate, input.acknowledgement))]);
     // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds its creation
     // commit cursor to the wire `since`; a replacement copies the old chain's
     // preserved origin into both the rewritten old head and the new candidate.
@@ -1260,17 +1281,19 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       events: encodedEvents, ledgerHorizon: horizon,
       ...(cursorBindings.length === 0 ? {} : { commitCursorBindings: cursorBindings }) });
     if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
-    if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor };
+    if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor,
+      ...proofReceiptOf(input, committed) };
     const restored = await restoreProposal(records, committed, receiptExpected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-    return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor };
+    return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor,
+      ...proofReceiptOf(input, committed) };
   }
 
 
   async function proposePlan(
     ctx: CoreCallContext,
     request: GraphWrite<ProposedPlanRequestV1>,
-  ): Promise<WriteResult<PlanProposal>> {
+  ): Promise<EffectWriteResultV1<PlanProposal>> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'plan proposal was cancelled before admission');
     const owned = ownJsonInput(request, 'proposePlan request');
     if (owned.status === 'invalid') return rejected('invalid', owned.reason);
@@ -1331,13 +1354,21 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       }
       replaces = { proposalRef: replacedRef, revision: replacesRaw['revision'] };
     }
+    // 7A §3.5 item 2: the acknowledged message, present-only; a malformed value is the caller's `invalid`.
+    const acknowledgementRaw = rawInput['acknowledgement'];
+    let acknowledgement: SessionMessageRef | undefined;
+    if (acknowledgementRaw !== undefined) {
+      const parsed = sessionMessageRefFromUnknown(acknowledgementRaw);
+      if (parsed === null) return rejected('invalid', 'proposePlan acknowledgement must be a complete SessionMessageRef');
+      acknowledgement = parsed;
+    }
     // W2 Agent branch is recognized first and never falls through to the Host-only binding.
     if (isWorkRunCaller(ctx)) {
       const ownedContext = ownCallContext(ctx);
       if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
       return proposePlanAsAgent(deps, records, ownedContext.value, {
         goalRef, basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], workspaceId,
-        requestRef, replaces,
+        requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
       });
     }
     const bound = boundWriteActor(ctx, goalRef.projectId, workspaceId);
@@ -1349,12 +1380,12 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const proposalId = planProposalIdFor({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId, requestId });
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: goalRef.projectId, workspaceId, proposalId };
     const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw,
-      requestRef, replaces });
+      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }) });
 
     return commitHostPlanProposal({
       ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
       basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
-      requestRef, replaces,
+      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
     });
   }
 
@@ -3102,13 +3133,14 @@ function agentProposalIdFor(input: { operation: PlanWriteOperation; projectId: s
 async function recheckAgentProposal(
   records: GoalRecordTransactionPort & RecordLookupPort,
   expected: { identityKey: string; fingerprint: string; projectId: string; workspaceId: string;
-    proposalId: string; idempotencyKey: string; actor: ActorRef },
-): Promise<WriteResult<PlanProposal> | null> {
+    proposalId: string; idempotencyKey: string; actor: ActorRef; acknowledgement?: SessionMessageRef },
+): Promise<EffectWriteResultV1<PlanProposal> | null> {
   const receipt = await records.lookupCommit({ identityKey: expected.identityKey, fingerprint: expected.fingerprint });
   if (receipt.status === 'ready') {
     const restored = await restoreProposal(records, receipt.value, expected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-    return { status: 'committed', value: restored.proposal, replayed: true, cursor: receipt.value.cursor };
+    return { status: 'committed', value: restored.proposal, replayed: true, cursor: receipt.value.cursor,
+      ...proofReceiptOf(expected, receipt.value) };
   }
   if (receipt.code === 'idempotency_conflict') return rejected('idempotency_conflict', receipt.reason);
   return null;
@@ -3146,8 +3178,10 @@ async function proposePlanAsAgent(
     /** Slice 5 §2.4: the first user-initiated request this candidate belongs to. */
     requestRef: QueryJobRef | null;
     /** Slice 5 §2.4: the current request head this candidate replaces, or null. */
-    replaces: { proposalRef: PlanProposalRef; revision: number } | null },
-): Promise<WriteResult<PlanProposal>> {
+    replaces: { proposalRef: PlanProposalRef; revision: number } | null;
+    /** 7A §3.5 item 2: the acknowledged message, present-only. */
+    acknowledgement?: SessionMessageRef },
+): Promise<EffectWriteResultV1<PlanProposal>> {
   const delegated = deps.delegatedWrites;
   if (delegated === undefined) {
     return forbidden('plan writes require the W2 delegatedWrites dependency for a work-run caller');
@@ -3176,15 +3210,20 @@ async function proposePlanAsAgent(
   const fingerprint = agentCommandFingerprint('PlanProposeAgent', {
     projectId: scope.projectId, workspaceId: input.workspaceId, goalRef: input.goalRef,
     basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected,
-    requestRef: input.requestRef, replaces: input.replaces });
+    requestRef: input.requestRef, replaces: input.replaces,
+    ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) });
+  // rd7a2b-11: this path's `input` carries no `identityKey`/`fingerprint` — they are the two locals beside it — so the
+  // ONE material `proofReceiptOf` reads is built here and every exit below reads it.
   const receiptExpected = { identityKey, fingerprint, projectId: scope.projectId,
-    workspaceId: input.workspaceId, proposalId, idempotencyKey: input.requestId, actor: writer.actor };
+    workspaceId: input.workspaceId, proposalId, idempotencyKey: input.requestId, actor: writer.actor,
+    ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) };
 
   const early = await records.lookupCommit({ identityKey, fingerprint });
   if (early.status === 'ready') {
     const restored = await restoreProposal(records, early.value, receiptExpected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-    return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor };
+    return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor,
+      ...proofReceiptOf(receiptExpected, early.value) };
   }
   if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
   if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
@@ -3295,16 +3334,17 @@ async function proposePlanAsAgent(
     if (commit.status !== 'ready') return commit;
     const candidate = commit.proposal;
     const derived = deriveCommandIds(identity, 'plan-propose-agent');
-    const eventFor = (proposal: PlanProposal): PlanProposalRecordedEvent => ({
+    const eventFor = (proposal: PlanProposal, acknowledgement?: SessionMessageRef): PlanProposalRecordedEvent => ({
       eventId: deps.eventId(), eventType: 'PlanProposalRecorded', schemaVersion: 2,
       projectId: scope.projectId, workspaceId: input.workspaceId, aggregateType: 'PlanProposal',
       aggregateId: proposal.ref.proposalId, aggregateRevision: proposal.revision, causationId: derived.commandId,
       correlationId: derived.correlationId, idempotencyKey: input.requestId, actor: writer.actor,
-      occurredAt: deps.now(), payload: { proposal } });
+      occurredAt: deps.now(), payload: { proposal },
+      ...(acknowledgement === undefined ? {} : { acknowledgement }) });
     // The replaced record's event goes FIRST and the candidate LAST, exactly as
     // the Host path orders them; the commit cursor's event is always the candidate.
     const encodedEvents = (commit.replaced === null ? [] : [encodePlanProposalRecordedEvent(eventFor(commit.replaced))])
-      .concat([encodePlanProposalRecordedEvent(eventFor(candidate))]);
+      .concat([encodePlanProposalRecordedEvent(eventFor(candidate, input.acknowledgement))]);
     // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds its creation
     // commit cursor to `since`; a replacement copies the old chain's origin.
     const replacing = commit.replaced !== null;
@@ -3319,10 +3359,12 @@ async function proposePlanAsAgent(
       records: encodedRecords, claims, indexGuards: [], indexChanges: [], events: encodedEvents,
       ...(cursorBindings.length === 0 ? {} : { commitCursorBindings: cursorBindings }) });
     if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
-    if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor };
+    if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor,
+      ...proofReceiptOf(receiptExpected, committed) };
     const restored = await restoreProposal(records, committed, receiptExpected);
     if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-    return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor };
+    return { status: 'committed', value: restored.proposal, replayed: true, cursor: committed.cursor,
+      ...proofReceiptOf(receiptExpected, committed) };
   };
 
   const outcome = await evaluate();

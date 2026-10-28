@@ -13,6 +13,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { EvidenceOutcome, EvidenceRef, EvidenceSnapshot } from '../../../contracts/evidence.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -100,6 +101,14 @@ export type ReverifyRoundInput = {
     newInputRefs?: NewBasisInputRefV1[];
     reason?: string;
     note?: string;
+    /**
+     * 7A §3.5: the message this recheck acts on, shape-checked only — the owner
+     * neither reads it nor compares its scope. Part of the fingerprint only when
+     * present, so an old call keeps its fingerprint and its result; a committed
+     * call carries the formal `proofReceipt`, one without the key returns its
+     * result unchanged.
+     */
+    acknowledgement?: SessionMessageRef;
 };
 
 /** `reverifyRound` result: a committed policy refusal is a value, not a CoreError. */
@@ -164,7 +173,7 @@ export interface EvidencePort {
     reverifyRound?(
         ctx: CoreCallContext,
         request: GraphWrite<ReverifyRoundInput>,
-    ): Promise<WriteResult<ReverifyOutcomeV1>>;
+    ): Promise<EffectWriteResultV1<ReverifyOutcomeV1>>;
     beginCheck(
         ctx: CoreCallContext,
         request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>,

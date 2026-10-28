@@ -7,7 +7,7 @@
 import type { CommitCursor } from './command-event.js';
 import type { ModuleRef, VersionPin, WorkspaceScope } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
-import type { DispatchBasisV1, GoalRef, WorkspaceRef } from './ledger.js';
+import type { DispatchBasisV1, DispatchCurrentV1, GoalRef, WorkspaceRef } from './ledger.js';
 import type { InitializationBindingRef } from './initialization-binding.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
@@ -154,6 +154,8 @@ export type DecisionChangeProofV1 = {
   basisRebases: GoalControlRebaseV1[];
 };
 
+export const MESSAGE_RELEASE_OPTIONS = { approve: 'approve', deny: 'deny' } as const;
+
 /** The `message_release` card's item; C names no W type and no port. */
 export type MessageReleaseCardItemV1 = {
   messageRef: SessionMessageRef;
@@ -163,6 +165,19 @@ export type MessageReleaseCardItemV1 = {
   release: 'awaiting' | 'approved' | 'released' | 'denied';
   pins: DispatchBasisV1 | null;
   deadline: string | null;
+  /** §3.8 item 4 / `book :392–:394`: the derived block beside the item's own facts; derived on every read, never stored. */
+  releaseBlock: MessageReleaseBlockV1 | null;
+};
+
+/**
+ * `book :392–:396` / `:517–:518`: why the read cannot release an approved, not withdrawn, not released message, and
+ * the three values its `pins` are judged against. Derived on every read; never stored and never
+ * in `GoalSnapshot`. R's `releaseCandidateBlockedReason` (`message-release.ts:313`) is the ONE projection that decides
+ * the reason; `goal_not_active` is the paused Goal's reason and is never "过期".
+ */
+export type MessageReleaseBlockV1 = {
+  blockedReason: 'stale_pins' | 'goal_not_active' | null;
+  current: DispatchCurrentV1 | null;
 };
 
 export type GoalFootprintV1 = {

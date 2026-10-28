@@ -123,6 +123,13 @@ export type StartupReconcilePlatform = {
       readCommandRerunRequestAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
         Promise<ReadResult<UnappliedAnswersReadV1>>;
       /**
+       * G's start-up answer read (hook 1, `7a2-rgp-v7.md:1063–:1066`): the Goal's unapplied `message_release`
+       * answers through the SAME `k3-decision-answer-by-source-goal` index. Optional like the others; G-late
+       * implements it and L wires it.
+       */
+      readMessageReleaseAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+        Promise<ReadResult<UnappliedAnswersReadV1>>;
+      /**
        * K3 L18/L28 step 6b (c) kind 3: read the current card's answer by its
        * canonical source. Optional as above; an absent read selects no answered
        * record.
@@ -197,6 +204,29 @@ const MAX_REVIEW_PAGES = 100;
 
 function rejectionText(result: CoreRejection | { status: string }): string {
   return 'reason' in result ? `${(result as CoreRejection).code}: ${(result as CoreRejection).reason}` : result.status;
+}
+/**
+ * ONE Goal's unapplied answers of one source (K3 L28, `7a2-rgp-v7.md:1063`): a read failure is a problem line, never a
+ * throw, and `not_found` selects nothing. Every source shares it, so no copy of the rule drifts (decision 90-8). The
+ * answer type is the READER's own: the UCR port's answers carry no `kind` (`unknown-call-review-contracts.ts:44–:56`),
+ * the two decision readers' answers do (rd7a2a-01).
+ */
+async function unappliedAnswersOf<T>(
+  read: ((ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+    Promise<ReadResult<{ answers: readonly T[] }>>) | undefined,
+  label: string, ctx: CoreCallContext, scope: Scope, goalRef: GoalRef, out: StartupReconcileReportV1,
+): Promise<readonly T[]> {
+  if (read === undefined) return [];
+  try {
+    const result = await read(ctx, { goalRef });
+    if (result.status === 'ready') return result.value.answers;
+    if (result.status !== 'not_found') {
+      out.problems.push(`${scope.workspaceId}: the ${label} of ${goalRef.goalId} are not readable (${rejectionText(result)})`);
+    }
+  } catch (error) {
+    out.problems.push(`${scope.workspaceId}: the ${label} of ${goalRef.goalId} are not readable (${messageOf(error)})`);
+  }
+  return [];
 }
 function refText(ref: object): string { return JSON.stringify(ref); }
 function sessionKey(ref: { projectId: string; sessionId: string }): string { return `${ref.projectId}\u0000${ref.sessionId}`; }
@@ -497,6 +527,7 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     const readDecisionAnswer = platform.reconcile.reviews?.readDecisionAnswer;
     const listUnappliedAnswers = platform.reconcile.reviews?.listUnappliedAnswers;
     const readCommandRerunRequestAnswers = platform.reconcile.reviews?.readCommandRerunRequestAnswers;
+    const readMessageReleaseAnswers = platform.reconcile.reviews?.readMessageReleaseAnswers;
     for (const goal of goalRecords) {
       if (goal.desiredState !== 'active') continue;
       const goalReviews = openReviews.filter(record => record.ref.goalId === goal.ref.goalId);
@@ -527,46 +558,25 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
           if (read.value.message !== null) taskIds.push(record.task.taskId);
         }
       }
-      // Kind 4 (L28, M2): ONE read per active Goal; each answer is handed over
-      // by its own `reviewRef`, independent of the Task ids and the record's
-      // `open`. A read failure is a problem line, never a throw.
+      // Kind 4 (L28, M2): ONE read per active Goal per source; each answer is handed over by its own ref,
+      // independent of the Task ids and the record's `open`. A read failure is a problem line, never a throw.
       const answers: RedriveAnswerV1[] = [];
-      if (listUnappliedAnswers !== undefined) {
-        try {
-          const read = await listUnappliedAnswers(ctx, { goalRef: goal.ref });
-          if (read.status === 'ready') {
-            for (const answer of read.value.answers) {
-              answers.push({ kind: 'unknown_call_review', reviewRef: answer.reviewRef,
-                answerMessageRef: answer.answerMessageRef });
-            }
-          } else if (read.status !== 'not_found') {
-            out.problems.push(`${scope.workspaceId}: the unapplied answers of ${goal.ref.goalId} `
-              + `are not readable (${rejectionText(read)})`);
-          }
-        } catch (error) {
-          out.problems.push(`${scope.workspaceId}: the unapplied answers of ${goal.ref.goalId} `
-            + `are not readable (${messageOf(error)})`);
-        }
+      for (const answer of await unappliedAnswersOf(listUnappliedAnswers,
+        'unapplied answers', ctx, scope, goal.ref, out)) {
+        // This source is the UCR kind by construction, so there is no kind to test and no filter.
+        answers.push({ kind: 'unknown_call_review', reviewRef: answer.reviewRef,
+          answerMessageRef: answer.answerMessageRef });
       }
-      // Kind 4 for the CRR source (K3 L19a, ruling 4): the SAME answer index
-      // read per Goal; each answer is handed over by its own request ref.
-      if (readCommandRerunRequestAnswers !== undefined) {
-        try {
-          const read = await readCommandRerunRequestAnswers(ctx, { goalRef: goal.ref });
-          if (read.status === 'ready') {
-            for (const answer of read.value.answers) {
-              if (answer.kind !== 'command_rerun_request') continue;
-              answers.push({ kind: 'command_rerun_request', requestRef: answer.requestRef,
-                answerMessageRef: answer.answerMessageRef });
-            }
-          } else if (read.status !== 'not_found') {
-            out.problems.push(`${scope.workspaceId}: the unapplied command-rerun answers of ${goal.ref.goalId} `
-              + `are not readable (${rejectionText(read)})`);
-          }
-        } catch (error) {
-          out.problems.push(`${scope.workspaceId}: the unapplied command-rerun answers of ${goal.ref.goalId} `
-            + `are not readable (${messageOf(error)})`);
-        }
+      for (const answer of await unappliedAnswersOf(readCommandRerunRequestAnswers,
+        'unapplied command-rerun answers', ctx, scope, goal.ref, out)) {
+        if (answer.kind !== 'command_rerun_request') continue;
+        answers.push({ kind: 'command_rerun_request', requestRef: answer.requestRef,
+          answerMessageRef: answer.answerMessageRef });
+      }
+      // G.4 hook 1: every hit of that reader is a `message_release` answer (its own contract), so no kind test.
+      for (const answer of await unappliedAnswersOf(readMessageReleaseAnswers,
+        'unapplied release answers', ctx, scope, goal.ref, out)) {
+        answers.push({ kind: 'message_release', answerMessageRef: answer.answerMessageRef });
       }
       const uniqueTaskIds = [...new Set(taskIds)];
       if (uniqueTaskIds.length > 0 || answers.length > 0) {

@@ -75,6 +75,7 @@ import type {
 import * as hostModule from '../../src/app/host.js';
 import type { LocalWorkbenchHost, LocalWorkbenchHostOptions } from '../../src/app/host.js';
 import { PLATFORM_TOKEN_HEADER } from '../../src/app/core-http-types.js';
+import { createHostCoreCallContext } from '../../src/app/core-call-context.js';
 import {
   SETTINGS_API_PREFIX, type HostSettingsSnapshot, type SettingsResponse, type SettingsRoutes,
 } from '../../src/app/host-settings-types.js';
@@ -83,6 +84,7 @@ import type {
   RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
 } from '../../src/business/workflow/request-intake.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
@@ -771,4 +773,28 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
   };
   Object.assign(world, extra);
   return world;
+}
+
+/**
+ * A published platform owner called in process as the Host's human operator bound to `scope`, for a case an HTTP
+ * body cannot carry: the caller's own signal (an aborted one for a cancelled caller) or the caller's own input
+ * object. `prefix` names the fixture in the two stable errors. The member is looked up at call time and started
+ * before this returns; an unpublished member rejects with `${prefix}: the ${owner} command is not published yet
+ * (${wave})`. The owner's whole result envelope comes back; this helper composes no fact.
+ */
+export function callPublishedOwnerAsHost(world: S6AHostWorld, prefix: string, call: {
+  owner: string; wave: string; scope: { projectId: string; workspaceId: string }; signal?: AbortSignal;
+}, input: unknown): Promise<unknown> {
+  const [group, member] = call.owner.split('.') as [string, string];
+  const target = asRecord(asRecord(world.platform as unknown as Record<string, unknown>)[group]);
+  const method = target[member];
+  if (typeof method !== 'function') {
+    return Promise.reject(new Error(`${prefix}: the ${call.owner} command is not published yet (${call.wave})`));
+  }
+  const principal = world.humanContext().principal;
+  if (principal.kind !== 'host') throw new Error(`${prefix}: the world has no Host human context`);
+  const ctx = createHostCoreCallContext({
+    scope: call.scope, actor: { ...principal.actor }, signal: call.signal ?? new AbortController().signal,
+  });
+  return (method as (ctx: CoreCallContext, input: unknown) => Promise<unknown>).call(target, ctx, input);
 }

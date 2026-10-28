@@ -1,6 +1,7 @@
 import type { CommitCursor } from './command-event.js';
 import type { GoalSettingsV1 } from './goal-decisions.js';
 import type { GoalContinuationV1, GoalRef, GoalSnapshot } from './ledger.js';
+import type { CopyInterventionCandidateV1 } from './goal-copy-retraction.js';
 import type { InitializationBindingV1 } from './initialization-binding.js';
 import type { GoalCardDraftV1, QueryJobAnswerRef, QueryJobRef, QueryJobSnapshot } from './query-job.js';
 import type { SessionMessageRef } from './core/session-message.js';
@@ -30,7 +31,7 @@ export type GoalCopyDraftResultV1 = {
   objective: string; autonomy: GoalSnapshot['settings']['autonomy']; order: number;
   toReconfirm: { waitForGoalRef: GoalRef | null; parallelRisks: readonly GoalRef[] };
   understanding: { noteId: string; version: number } | null;
-  interventions: { available: false };
+  interventions: { available: false } | { available: true; candidates: readonly CopyInterventionCandidateV1[] };
 };
 export type GoalCopyConfirmInputV1 = {
   commandId: string; sourceGoalRef: GoalRef; expectedSourceRevision: number;
@@ -57,11 +58,11 @@ export type GoalUnderstandingPinV1 = {
 export type GoalCopyFactsV1 = {
   source: GoalSnapshot;                       // the record as read, with its `revision`
   understanding: GoalUnderstandingPinV1;            // always the pointer refKey; `revision: null` when missing
-  selected: readonly { messageRef: SessionMessageRef; version: number; selectable: boolean; reason: string | null }[];
-  intervened: readonly SessionMessageRef[];   // `copiedInterventions` already on the source or its copies
+  selected: readonly CopyInterventionCandidateV1[];
 };
 export type GoalCopyDecisionV1 =
   | { outcome: 'refuse'; code: CoreError; reason: string }
   | { outcome: 'create'; objective: string; settings: GoalSettingsV1;
       continuedFrom: GoalContinuationV1; copiedInterventions: readonly SessionMessageRef[];
+      retract: readonly SessionMessageRef[];   // every candidate not selected, in candidate order; frozen at confirm
       selection: 'selection_only' | 'retraction_pending' };

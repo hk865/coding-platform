@@ -383,6 +383,10 @@ it.each([
       const releasedRecord = await readReview(h.host, prepared.claim.runRef);
       expect(releasedRecord).toMatchObject({ status: 'resolved', activeRound: null, disposition: { hold: 'released' } });
       releasedRevision = releasedRecord.revision;
+      // Goal paused: this explicit advance selects no work, but its one maintenance page (D8-8) now closes
+      // the Turn dangling from the attested Run; the release pass woken by the resume below then has
+      // nothing left to write.
+      await h.advance(h.select('k3-41-paused-maintenance'));
       // Resume the Goal: the re-click below replays the hold and the human
       // requeue now commits.
       const resumed = await h.post<WriteResult<GoalControlOutcomeV1>>('goals/control', graphWrite(AG2B_SCOPE,

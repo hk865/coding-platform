@@ -55,7 +55,7 @@ import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-ex
 import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import type { WorkLineReaderDeps, WorkLineStore } from '../../src/core/work-graph/views/work-line-reader.js';
@@ -211,7 +211,7 @@ async function enterWithPermissions(f: LineFixture, claim: TaskClaim,
 
 /** The real mailbox over a records surface, with the fresh admission dependency. */
 function mailboxOver(f: LineFixture, records: GoalRecordTransactionPort & RecordLookupPort,
-  bodies: RawArtifactStorePort, now: () => string): SessionMailboxPort {
+  bodies: RawArtifactStorePort, now: () => string): SessionMessageCommandPort {
   let seq = 0;
   return createSessionMailbox({
     defaultInquiryDeadlineMs: 86_400_000,

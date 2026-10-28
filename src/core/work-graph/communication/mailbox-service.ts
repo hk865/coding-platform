@@ -48,11 +48,11 @@ import { principalIdentity, type CoreCallContext, type CorePrincipal, type Mater
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import { QueryJobRefShape, QueryRunRefShape } from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
-import type { DecisionHostSenderV1, MessageRecipient, MessageReleaseV1, SessionMessageRef,
-  UserMessageRecipientV1, DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
+import type { DecisionHostSenderV1, MessageRecipient, MessageReleaseV1, SendRejectionV1, SessionMessageIntentV1,
+  SessionMessageRef, UserMessageRecipientV1, DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
 import type { DispatchBasisV1, GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { DecisionObjectV1, DecisionOptionV1,
-  GoalAutonomyV1, GoalDecisionBasisV1 } from '../../../contracts/goal-decisions.js';
+import type { DecisionChangeProofV1, DecisionObjectV1, DecisionOptionV1,
+  GoalAutonomyV1, GoalDecisionBasisV1, MessageReleaseBlockV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import {
@@ -72,7 +72,7 @@ import {
 } from '../model/tool-commit-arguments.js';
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
-import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
+import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
 import { deriveMessageDelivery, deriveSessionInputId } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
@@ -91,13 +91,15 @@ import type { DecisionMessagePort, MessageCommandWritePort, SessionMessageCommit
 import {
   executeWriteCommand, type CommandResult, type CommittedReceipt, type Keys, type WriteCommand,
 } from '../persistence/command-executor.js';
-import type { RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { readStoredManifest, recheckHostRoleAdmission } from '../tasks/execution-entry-service.js';
 import { readBatch, type ReadBatch } from '../tasks/plan-readers.js';
+import { messageReleaseBlockEligible } from '../tasks/message-release-card.js';
+import { releaseCandidateBlockedReason } from './message-release.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
@@ -140,7 +142,7 @@ type Unknown = Record<string, unknown>;
  * literal caller here; its round is resolved after a receipt miss (send) or on
  * every read, never in `ownContext`.
  */
-type MailboxPrincipal = Extract<CorePrincipal, { kind: 'host' | 'work_run' | 'query_run' }>;
+export type MailboxPrincipal = Extract<CorePrincipal, { kind: 'host' | 'work_run' | 'query_run' }>;
 type WorkRunPrincipal = Extract<CorePrincipal, { kind: 'work_run' }>;
 type HostActor = Extract<CorePrincipal, { kind: 'host' }>['actor'];
 
@@ -177,10 +179,38 @@ function mapStoreFailure(failure: StoreFailure): CoreRejection {
     ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
   });
 }
-function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRejection {
+export function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRejection {
   if (result.status === 'not_found') return reject('not_found', 'the requested record does not exist');
   if (result.status === 'not_ready') return reject('incomplete', 'the requested record is not readable at the required watermark');
   return result.status === 'ready' ? result : result;
+}
+
+/**
+ * The one read of a single message by its ref. A read cancelled before the store read, a thrown read, a store
+ * failure, a record the store neither returned nor reported missing, and a damaged record each give their own
+ * rejection; `not_found` only when the store reports the key missing.
+ */
+export async function readSessionMessageRecord(
+  records: Pick<SessionMessageStore, 'readMany'>, signal: AbortSignal, ref: SessionMessageRef,
+): Promise<ReadResult<SessionMessage>> {
+  if (signal.aborted) return reject('cancelled', 'the message read was cancelled before the store read');
+  const key = sessionMessageRefKey(ref);
+  let read: StoreResult<RecordBatchRead>;
+  try {
+    read = await records.readMany([key]);
+  } catch {
+    return reject('unavailable', 'the message record could not be read');
+  }
+  if (read.status !== 'ready') return mapStoreFailure(read);
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) {
+    return read.value.missing.includes(key)
+      ? { status: 'not_found' }
+      : reject('unavailable', 'the record store neither returned nor reported missing the message');
+  }
+  const decoded = decodeSessionMessageRecord(record);
+  if (decoded.status !== 'decoded') return reject('unavailable', `the message record is damaged: ${decoded.reason}`);
+  return { status: 'ready', value: decoded.value };
 }
 
 /**
@@ -405,7 +435,7 @@ async function prepareSessionMessage(
 }
 
 /** The receipt's message version must be the decoded event's own revision. */
-function messageVersionAgainstReceipt(decoded: SessionMessage, receipt: CommittedReceipt, keys: Keys): string | null {
+export function messageVersionAgainstReceipt(decoded: SessionMessage, receipt: CommittedReceipt, keys: Keys): string | null {
   if (receipt.identityKey !== keys.identityKey) return 'the receipt identity does not match';
   const version = receipt.versions.find((entry) => entry.refKey === sessionMessageRefKey(decoded.ref));
   return version !== undefined && version.revision === decoded.revision
@@ -421,7 +451,7 @@ const withdrawnResult = {
 };
 
 /** An approval or denial restores its own snapshot event exactly like a withdrawal's. */
-const releaseDecidedResult = {
+export const releaseDecidedResult = {
   eventType: 'SessionMessageReleaseDecided' as const,
   schemaVersion: 1 as const,
   decode: sessionMessageFromEvent,
@@ -429,8 +459,25 @@ const releaseDecidedResult = {
   project: (decoded: SessionMessage, _cursor: CommitCursor) => decoded,
 };
 
+/** The one constructor of a release decision's change; a direct call passes no proof. */
+export function releaseDecidedChange(
+  message: SessionMessage, allow: boolean, at: string, proof: DecisionChangeProofV1 | null,
+): MessageReleaseDecidedChangeV1 {
+  // Exactly one arm: a denial carries no approval fact at all, and a direct
+  // call never writes the trusted entry's proof.
+  return allow
+    ? {
+      kind: 'release_decided', allow: true, approvedAt: at,
+      approvalRevision: message.revision + 1, release: 'approved', proof,
+    }
+    : {
+      kind: 'release_decided', allow: false, approvedAt: null,
+      approvalRevision: null, release: 'denied', proof,
+    };
+}
+
 /** The executor's public result: one shell, never its refusal wrapper or internal cause. */
-function messageWriteResult(result: CommandResult<SessionMessage, CoreRejection>): WriteResult<SessionMessage> {
+export function messageWriteResult(result: CommandResult<SessionMessage, CoreRejection>): WriteResult<SessionMessage> {
   if (result.status === 'committed') return result;
   if (result.status === 'refused') return result.refusal;
   return {
@@ -527,7 +574,7 @@ async function commitPreparedSessionMessage(
 // Trusted call context
 // --------------------------------------------------------------------------
 
-type Owned = {
+export type Owned = {
   ok: true;
   projectId: string;
   workspaceId: string;
@@ -535,7 +582,7 @@ type Owned = {
   reader: MaterialReader;
   signal: AbortSignal;
 };
-type OwnedContext = Owned | { ok: false; rejection: CoreRejection };
+export type OwnedContext = Owned | { ok: false; rejection: CoreRejection };
 
 /**
  * The context the resolver and the request-owner read see: the cloned,
@@ -559,7 +606,7 @@ function isolatedContext(owned: Owned): CoreCallContext {
  */
 type MailboxScope = { projectId: string; workspaceId: string };
 
-function ownContext(ctx: CoreCallContext): OwnedContext {
+export function ownContext(ctx: CoreCallContext): OwnedContext {
   const raw = ctx as unknown as Unknown | null | undefined;
   if (raw === null || raw === undefined) return { ok: false, rejection: reject('invalid', 'a mailbox call requires a bound call context') };
   const projectId = raw['projectId'];
@@ -783,7 +830,7 @@ function pinsOf(expected: readonly VersionPin[], ref: SessionMessageRef):
  * §10.1: the machine's verdict on the message read (`null` = absent), asked
  * with the caller principal and only the facts this write read or authorized.
  */
-function judge(principal: MailboxPrincipal, message: SessionMessage | null, event: MessageEvent,
+export function judge(principal: MailboxPrincipal, message: SessionMessage | null, event: MessageEvent,
   facts: Partial<Omit<MessageGuardContext, 'principal'>>): { decided: MessageTransition; ctx: MessageGuardContext } {
   const ctx: MessageGuardContext = {
     // The machine's send row only distinguishes the fresh work_run admission;
@@ -812,29 +859,160 @@ function admissionRefusalOf(refused: Refused, ctx: MessageGuardContext): CoreRej
 }
 
 /** A machine refusal as the rejection today's service returned; a refused admission is its own rejection. */
-function refusalOf(refused: Refused, ctx: MessageGuardContext): CoreRejection {
+export function refusalOf(refused: Refused, ctx: MessageGuardContext): CoreRejection {
   return admissionRefusalOf(refused, ctx) ?? reject(refused.code, refused.detail);
 }
 
 /** The three dispatch values are equal only when all three agree. */
-function sameBasis(left: DispatchBasisV1, right: DispatchBasisV1): boolean {
+export function sameBasis(left: DispatchBasisV1, right: DispatchBasisV1): boolean {
   return left.planRevision === right.planRevision
     && left.pointerRevision === right.pointerRevision
     && left.dispatchSequence === right.dispatchSequence;
 }
 
 /** The one consistent read's values plus its own cursor; the caller re-reads at it. */
-function dispatchCurrentOf(facts: DispatchBasisFactsV1): DispatchBasisV1 & { readCursor: CommitCursor } {
+export function dispatchCurrentOf(facts: DispatchBasisFactsV1): DispatchBasisV1 & { readCursor: CommitCursor } {
   return { ...facts.values, readCursor: facts.readCursor };
 }
 
 /** The version pins of the two records whose revisions the read knows: the Goal and the counter. */
-function basisPinsOf(facts: DispatchBasisFactsV1): VersionPin[] {
+export function basisPinsOf(facts: DispatchBasisFactsV1): VersionPin[] {
   const pins: VersionPin[] = [{ ref: structuredClone(facts.goal.ref), revision: facts.goal.revision }];
   if (facts.counter.record !== null) {
     pins.push({ ref: structuredClone(facts.counter.record.ref), revision: facts.counter.record.revision });
   }
   return pins;
+}
+
+/**
+ * The companions of a message the same commit RELEASES (send's direct release and `releaseApproved`); the caller
+ * calls it only then. Send's three conditions, word for word:
+ * - the deadline `at + deadlineMs` is frozen, with the overflow refusal, when `deadlineMs !== null`
+ *   (send `:2796–:2804`, whose other condition `release === 'released'` is the call condition);
+ * - the counter +1 and the facts' guards are added when `intent === 'action_request' && basis !== null` (`:2807`);
+ * - the recipient's activity advance is added when `intent !== 'notify'` (`:2817`).
+ * The record order and the guard order are send's: counter record and guard, basis guards, activity record and guard.
+ */
+export async function releasedMessageCompanions(
+  records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  input: {
+    at: string;
+    messageRef: SessionMessageRef;
+    recipient: SessionRef;
+    intent: SessionMessageIntentV1 | null;
+    deadlineMs: number | null;
+    basis: DispatchBasisFactsV1 | null;
+  },
+): Promise<
+  | { ok: true; value: { records: EncodedRecord[]; guards: RecordGuard[]; deadline: string | null } }
+  | { ok: false; rejection: CoreRejection }> {
+  const { at, messageRef, recipient, intent, deadlineMs, basis } = input;
+  const companionRecords: EncodedRecord[] = [];
+  const companionGuards: RecordGuard[] = [];
+  let deadline: string | null = null;
+  if (deadlineMs !== null) {
+    // The instant is representable iff the Date is; a fractional duration is
+    // legal, an out-of-range one is refused before anything is written.
+    const frozen = new Date(Date.parse(at) + deadlineMs);
+    if (!Number.isFinite(frozen.getTime())) {
+      return { ok: false, rejection: reject('invalid', 'the inquiry deadline overflows the representable instant') };
+    }
+    deadline = frozen.toISOString();
+  }
+  // A released action_request counts itself and carries the facts' guards; its
+  // pins are the values before that +1.
+  if (intent === 'action_request' && basis !== null) {
+    const counted = basis.counter.record === null
+      ? firstDispatch(basis.goal.ref, messageRef)
+      : nextDispatch(basis.counter.record, messageRef);
+    companionRecords.push(dispatchCounterCodec.encode(counted.record));
+    companionGuards.push({ refKey: basis.counter.refKey, expectedRevision: counted.expectedRevision });
+    companionGuards.push(...basis.guards);
+  }
+  // A released non-notify message advances the recipient Session; a notify,
+  // a read and a replay never do.
+  if (intent !== 'notify') {
+    const planned = await planSessionActivityAdvance(records, {
+      sessionRef: recipient, at, kind: 'input', source: messageRef,
+    });
+    if (!planned.ok) return { ok: false, rejection: planned.rejection };
+    companionRecords.push(planned.record);
+    companionGuards.push(activityGuardOf(planned.guard));
+  }
+  return { ok: true, value: { records: companionRecords, guards: companionGuards, deadline } };
+}
+
+/**
+ * After a commit conflict whose `current` names one of `refKeys`, one more consistent read projects the
+ * three values (send `:2843–:2865`). Any other conflict, or a failed re-read, returns `written` unchanged.
+ */
+export async function basisConflictCurrent<T extends WriteResult<unknown>>(
+  written: T,
+  refKeys: ReadonlySet<string>,
+  readAgain: () => Promise<ReadResult<DispatchBasisFactsV1>>,
+): Promise<T | SendRejectionV1> {
+  if (written.status !== 'rejected' || written.code !== 'revision_conflict') return written;
+  const named = (written.current ?? []).some((pin) => {
+    const refKey = canonicalOf(pin.ref);
+    return refKey !== null && refKeys.has(refKey);
+  });
+  if (!named) return written;
+  let again: ReadResult<DispatchBasisFactsV1>;
+  try {
+    again = await readAgain();
+  } catch {
+    return written;
+  }
+  if (again.status !== 'ready') return written;
+  return {
+    ...reject('revision_conflict', 'the dispatch basis moved while the send committed', basisPinsOf(again.value)),
+    dispatchCurrent: dispatchCurrentOf(again.value),
+  };
+}
+
+const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
+
+function cursorSequence(cursor: unknown): number | null {
+  if (typeof cursor !== 'string') return null;
+  try {
+    return seqOfCommitCursor(cursor as CommitCursor);
+  } catch {
+    return null;
+  }
+}
+
+/** A synchronously snapshotted `atLeastCursor`: its comparable sequence and the raw cursor. */
+type AtLeastCursor = { seq: number; cursor: CommitCursor };
+
+/**
+ * The mailbox reads' watermark rule, moved unchanged from the closure (`:1405–:1434`, `lr7` 4): a page must have
+ * observed `atLeast`, and a null read-through reports the minimum (`not_ready`, `observed: null`). R's candidate read
+ * calls it with `atLeast` undefined.
+ */
+export function readProgress(
+  readThrough: CommitCursor | null,
+  atLeast: AtLeastCursor | undefined,
+): { ok: true; readThrough: CommitCursor } | { ok: false; result: ReadResult<never> } {
+  if (atLeast !== undefined) {
+    const observed = readThrough === null ? null : cursorSequence(readThrough);
+    if (observed === null || observed < atLeast.seq) {
+      return {
+        ok: false,
+        result: {
+          status: 'not_ready',
+          observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
+          required: { kind: 'platform', cursor: atLeast.cursor },
+        },
+      };
+    }
+  }
+  if (readThrough === null) {
+    return {
+      ok: false,
+      result: { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } },
+    };
+  }
+  return { ok: true, readThrough };
 }
 
 /** The Session a message's sender is, when its sender kind names one. */
@@ -1051,7 +1229,7 @@ const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageApplied: 'applied',
 };
 
-function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
+export function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
   return sha256Hex(`${identityKey}|${EVENT_ID_SUFFIX[eventType]}`);
 }
 
@@ -1353,23 +1531,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   // (`writeMessage` below is only the body+record builder that calls it), so
   // there is one writer, one replay and one CAS rule for every SessionMessage.
   const messageWrites = createMessageWriteOwner(deps);
-  const MIN_CURSOR: CommitCursor = makeCommitCursor(1);
 
   function internalHostContext(owned: Owned): CoreCallContext {
     return hostWriterContext(deps, owned);
   }
-
-  function cursorSequence(cursor: unknown): number | null {
-    if (typeof cursor !== 'string') return null;
-    try {
-      return seqOfCommitCursor(cursor as CommitCursor);
-    } catch {
-      return null;
-    }
-  }
-
-  /** A synchronously snapshotted `atLeastCursor`: its comparable sequence and the raw cursor. */
-  type AtLeastCursor = { seq: number; cursor: CommitCursor };
 
   /**
    * The page-base checks every paginated mailbox read shares, in order: the page
@@ -1400,37 +1565,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const seq = cursorSequence(rawAtLeast);
     if (seq === null) return { ok: false, rejection: reject('invalid', 'atLeastCursor is not a ledger commit cursor') };
     return { ok: true, atLeast: { seq, cursor: rawAtLeast as CommitCursor } };
-  }
-
-  /**
-   * §4.1 line 772: a fresh page must have observed at least the caller's
-   * `atLeastCursor`; a null read-through is below every watermark and reports
-   * the minimum. The comparison is the numeric commit sequence, never string order.
-   */
-  function readProgress(
-    readThrough: CommitCursor | null,
-    atLeast: AtLeastCursor | undefined,
-  ): { ok: true; readThrough: CommitCursor } | { ok: false; result: ReadResult<never> } {
-    if (atLeast !== undefined) {
-      const observed = readThrough === null ? null : cursorSequence(readThrough);
-      if (observed === null || observed < atLeast.seq) {
-        return {
-          ok: false,
-          result: {
-            status: 'not_ready',
-            observed: readThrough === null ? null : { kind: 'platform', cursor: readThrough },
-            required: { kind: 'platform', cursor: atLeast.cursor },
-          },
-        };
-      }
-    }
-    if (readThrough === null) {
-      return {
-        ok: false,
-        result: { status: 'not_ready', observed: null, required: { kind: 'platform', cursor: MIN_CURSOR } },
-      };
-    }
-    return { ok: true, readThrough };
   }
 
   // ---- exact Run/outbox/Session identity (historical reads) ---------------
@@ -1724,24 +1858,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   // ---- canonical reads ----------------------------------------------------
 
   async function loadMessage(owned: Owned, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>> {
-    if (owned.signal.aborted) return reject('cancelled', 'the message read was cancelled before the store read');
-    const key = sessionMessageRefKey(ref);
-    let read: StoreResult<RecordBatchRead>;
-    try {
-      read = await records.readMany([key]);
-    } catch {
-      return reject('unavailable', 'the message record could not be read');
-    }
-    if (read.status !== 'ready') return mapStoreFailure(read);
-    const record = read.value.records.find((candidate) => candidate.refKey === key);
-    if (record === undefined) {
-      return read.value.missing.includes(key)
-        ? { status: 'not_found' }
-        : reject('unavailable', 'the record store neither returned nor reported missing the message');
-    }
-    const decoded = decodeSessionMessageRecord(record);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the message record is damaged: ${decoded.reason}`);
-    return { status: 'ready', value: decoded.value };
+    return readSessionMessageRecord(records, owned.signal, ref);
   }
 
   /** A write's message read: absent is the machine's `not_found`; any other failure keeps today's rejection. */
@@ -2790,39 +2907,24 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     // an overflow is refused before anything is written.
     let frozenDeadline: string | null = null;
     const companions = async (at: string) => {
-      const contribution: {
-        records: EncodedRecord[]; events: []; guards: RecordGuard[]; claims: []; } =
-        { records: [], events: [], guards: goalGuard === null ? [] : [goalGuard], claims: [] };
-      if (deadlineMs !== null && release === 'released') {
-        // The instant is representable iff the Date is; a fractional duration is
-        // legal, an out-of-range one is refused before anything is written.
-        const deadline = new Date(Date.parse(at) + deadlineMs);
-        if (!Number.isFinite(deadline.getTime())) {
-          return { ok: false as const, rejection: reject('invalid', 'the inquiry deadline overflows the representable instant') };
-        }
-        frozenDeadline = deadline.toISOString();
+      if (release !== 'released') {
+        return { ok: true as const,
+          value: { records: [], events: [], guards: goalGuard === null ? [] : [goalGuard], claims: [] } };
       }
-      // A released action_request counts itself and carries the facts' guards; its
-      // pins are the values before that +1.
-      if (release === 'released' && send.intent === 'action_request' && basis !== null) {
-        const counted = basis.counter.record === null
-          ? firstDispatch(basis.goal.ref, messageRef)
-          : nextDispatch(basis.counter.record, messageRef);
-        contribution.records.push(dispatchCounterCodec.encode(counted.record));
-        contribution.guards.push({ refKey: basis.counter.refKey, expectedRevision: counted.expectedRevision });
-        contribution.guards.push(...basis.guards);
-      }
-      // A released non-notify message advances the recipient Session; a notify,
-      // a read and a replay never do.
-      if (release === 'released' && send.intent !== 'notify') {
-        const planned = await planSessionActivityAdvance(records, {
-          sessionRef: send.recipient, at, kind: 'input', source: messageRef,
-        });
-        if (!planned.ok) return { ok: false as const, rejection: planned.rejection };
-        contribution.records.push(planned.record);
-        contribution.guards.push(activityGuardOf(planned.guard));
-      }
-      return { ok: true as const, value: contribution };
+      const released = await releasedMessageCompanions(records, {
+        at, messageRef, recipient: send.recipient, intent: send.intent, deadlineMs, basis,
+      });
+      if (!released.ok) return released;
+      frozenDeadline = released.value.deadline;
+      return {
+        ok: true as const,
+        value: {
+          records: released.value.records,
+          events: [],
+          guards: goalGuard === null ? released.value.guards : [goalGuard, ...released.value.guards],
+          claims: [],
+        },
+      };
     };
 
     const written = await writeMessage(sent, {
@@ -2845,23 +2947,10 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     // once more; an activity-only or message conflict is never re-projected, and
     // this one extra read's failure returns the original written rejection.
     if (written.status === 'rejected' && written.code === 'revision_conflict'
-      && basis !== null && trustedGoal !== null && deps.dispatchBasis !== undefined
-      && (written.current ?? []).some((pin) => {
-        const refKey = canonicalOf(pin.ref);
-        return refKey !== null && basisRefKeys.has(refKey);
-      })) {
-      let again: Awaited<ReturnType<NonNullable<typeof deps.dispatchBasis>['readDispatchFacts']>>;
-      try {
-        again = await deps.dispatchBasis.readDispatchFacts(internalHostContext(owned), { goalRef: trustedGoal });
-      } catch {
-        return sendStatusOf(written);
-      }
-      if (again.status === 'ready') {
-        return {
-          ...reject('revision_conflict', 'the dispatch basis moved while the send committed', basisPinsOf(again.value)),
-          dispatchCurrent: dispatchCurrentOf(again.value),
-        };
-      }
+      && basis !== null && trustedGoal !== null && deps.dispatchBasis !== undefined) {
+      const dispatchBasis = deps.dispatchBasis;
+      return sendStatusOf(await basisConflictCurrent(written, basisRefKeys,
+        () => dispatchBasis.readDispatchFacts(internalHostContext(owned), { goalRef: trustedGoal })));
     }
     return sendStatusOf(written);
   }
@@ -3109,7 +3198,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const line = await recipientLineFacts(owned, recipient);
     if (!line.ok) return line.rejection;
     return { status: 'ready', value: {
-      items: items.map((message) => ({ message, ...deriveMessageDelivery(message, line.value) })),
+      items: items.map((message) => ({ message, ...deriveMessageDelivery(message, line.value), releaseBlock: null })),
       nextCursor, sourceCursor,
     } };
   }
@@ -3126,7 +3215,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     senderRun?: RunRef;
     senderSession?: SessionRef;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
-  }): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
+  }): Promise<ReadResult<SessionMessageOutboxPageV1>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     const raw = input as unknown as Unknown | null | undefined;
@@ -3211,7 +3300,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         v: 1, projectId: owned.projectId, workspaceId: owned.workspaceId,
         requestRoot: { ...reading.round.requestRoot }, callerKey, after: result.value.next,
       });
-      return { status: 'ready', value: { items, nextCursor, sourceCursor: progress.readThrough } };
+      const releaseBlocks: (MessageReleaseBlockV1 | null)[] = [];
+      for (const message of items) {
+        const block = await releaseBlockOf(owned, message);
+        if (block.status !== 'ready') return block;
+        releaseBlocks.push(block.value);
+      }
+      return { status: 'ready', value: { items, releaseBlocks, nextCursor, sourceCursor: progress.readThrough } };
     }
 
     let decodedCursor: OutboxCursorV1 | null = null;
@@ -3289,7 +3384,13 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       callerKey,
       after: pageResult.value.next,
     });
-    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+    const releaseBlocks: (MessageReleaseBlockV1 | null)[] = [];
+    for (const message of items) {
+      const block = await releaseBlockOf(owned, message);
+      if (block.status !== 'ready') return block;
+      releaseBlocks.push(block.value);
+    }
+    return { status: 'ready', value: { items, releaseBlocks, nextCursor, sourceCursor: readThrough } };
   }
 
   // ---- ackMessage ---------------------------------------------------------
@@ -4617,18 +4718,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!decided.ok) return { refuse: refusalOf(decided, ctx) };
     const at = deps.now();
     if (!nonEmpty(at)) return { refuse: reject('invalid', 'the injected clock is not a legal instant') };
-    // Exactly one arm: a denial carries no approval fact at all, and a direct
-    // call never writes the trusted entry's proof.
-    const change: MessageReleaseDecidedChangeV1 = allow
-      ? {
-        kind: 'release_decided', allow: true, approvedAt: at,
-        approvalRevision: facts.message.revision + 1, release: 'approved', proof: null,
-      }
-      : {
-        kind: 'release_decided', allow: false, approvedAt: null,
-        approvalRevision: null, release: 'denied', proof: null,
-      };
-    return { decision: { before: facts.message, change, at, actor: facts.actor } };
+    return {
+      decision: {
+        before: facts.message, change: releaseDecidedChange(facts.message, allow, at, null),
+        at, actor: facts.actor,
+      },
+    };
   }
 
   async function withdrawMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>):
@@ -4747,7 +4842,29 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (right !== null) return right;
     const line = await recipientLineFacts(owned, loaded.value.recipient);
     if (!line.ok) return line.rejection;
-    return { status: 'ready', value: { message: loaded.value, ...deriveMessageDelivery(loaded.value, line.value) } };
+    const block = await releaseBlockOf(owned, loaded.value);
+    if (block.status !== 'ready') return block;
+    return { status: 'ready', value: { message: loaded.value, ...deriveMessageDelivery(loaded.value, line.value), releaseBlock: block.value } };
+  }
+
+  /**
+   * §3.8 item 4: the derived block of one message, `null` unless it is an approved, not withdrawn, not released
+   * message. Reading derives it and writes nothing (`book :393–:394`).
+   */
+  async function releaseBlockOf(owned: Owned, message: SessionMessage):
+    Promise<ReadResult<MessageReleaseBlockV1 | null>> {
+    if (!messageReleaseBlockEligible(message)) return { status: 'ready', value: null };
+    if (deps.dispatchBasis === undefined) {
+      return reject('unsupported', 'the release block needs the dispatch basis read');
+    }
+    const basis = await deps.dispatchBasis.readDispatchFacts(internalHostContext(owned),
+      { goalRef: message.goalRef! });
+    if (basis.status !== 'ready') return mapReadResult(basis) as CoreRejection;
+    return { status: 'ready', value: {
+      blockedReason: releaseCandidateBlockedReason(message,
+        { desiredState: basis.value.goal.desiredState, currentValues: basis.value.values }),
+      current: dispatchCurrentOf(basis.value),
+    } };
   }
 
   return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted, sendUserMessage,

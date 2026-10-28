@@ -15,10 +15,10 @@
  * id the public open returned.
  *
  * Optional sections with rows: `notes` (the one note we wrote for the new
- * Task), `reminders` (the architecture no-observation row, the one unavailable
- * decision source, and the goal-understanding update-due row the rework trigger
- * adds) and `inputs` (the one exact input requirement). The production
- * footprint producer emits no rows and stays a declared future section.
+ * Task), `reminders` (the architecture no-observation row and the
+ * goal-understanding update-due row the rework trigger adds) and `inputs` (the
+ * one exact input requirement). The production footprint producer emits no
+ * rows and stays a declared future section.
  */
 import { describe, expect, it } from 'vitest';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
@@ -95,7 +95,7 @@ const TASK_TEXT = '## Accepted task\n'
   + '\n'
   + '## Context omissions\n'
   + 'notes: 另有 1 条，用‘看’读\n'
-  + 'reminders: 另有 3 条，用‘看’读\n'
+  + 'reminders: 另有 2 条，用‘看’读\n'
   + 'inputs: 另有 1 条，用‘看’读';
 
 /** The brief body, hand-written; the public Run/round ids are its two tokens. */
@@ -373,7 +373,8 @@ describe('PC2 J-08: a zero resident budget omits every present optional section 
       }))).toEqual([
         { name: 'notes', endByte: null, omitted: 1 },
         { name: 'inputs', endByte: null, omitted: 1 },
-        { name: 'reminders', endByte: null, omitted: 3 },
+        // Hand count: understanding 1 + architecture 1; the message_release card source is wired, so its unavailable row is gone.
+        { name: 'reminders', endByte: null, omitted: 2 },
       ]);
       expect(sections.map((section) => section.name)).not.toContain('footprint');
       // The input requirement reached the public preparation: one selected

@@ -11,9 +11,8 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 
-export type CopyInterventionCandidateV1 = {
-  messageRef: SessionMessageRef; version: number; selectable: boolean; reason: string | null;
-};
+import type { CopyInterventionCandidateV1 } from '../../../contracts/goal-copy-retraction.js';
+export type { CopyInterventionCandidateV1 } from '../../../contracts/goal-copy-retraction.js';
 
 export interface CopyInterventionReadPort {
   readCopyInterventions(ctx: CoreCallContext, input: { sourceGoalRef: GoalRef; page: { limit: number /* 1..200 */; cursor?: string } }):

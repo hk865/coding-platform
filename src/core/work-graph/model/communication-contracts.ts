@@ -27,7 +27,7 @@ import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.j
 import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
-import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
+import type { DecisionChangeProofV1, MessageReleaseBlockV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -215,6 +215,12 @@ export type SessionMessagePage = {
   sourceCursor: CommitCursor;
 };
 
+/** The outbox keeps `items` as the record page and adds the block beside it, one entry per item in the same order;
+ * `null` for a message that is not a candidate. */
+export type SessionMessageOutboxPageV1 = SessionMessagePage & {
+  releaseBlocks: (MessageReleaseBlockV1 | null)[];
+};
+
 export type SendMessageResultV1 =
   (Extract<WriteResult<SessionMessage>, { status: 'committed' }> & { sendStatus: 'sent' | 'awaiting_release' })
   | SendRejectionV1;
@@ -244,6 +250,8 @@ export type SessionMessageReadV1 = {
   message: SessionMessage;
   delivery: MessageDeliveryStateV1;
   disposition: MessageReadDispositionV1;
+  /** §3.8 item 4: `null` unless this message is an approved, not withdrawn, not released message. */
+  releaseBlock: MessageReleaseBlockV1 | null;
 };
 /** The view read's page: the same keyset shape as `SessionMessagePage`, items carrying the derived fields. */
 export type SessionMessageReadPageV1 = {
@@ -300,14 +308,10 @@ export interface SessionMailboxPort {
       senderSession?: SessionRef;
       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
     },
-  ): Promise<ReadResult<SessionMessagePage>>;
+  ): Promise<ReadResult<SessionMessageOutboxPageV1>>;
   ackMessage(
     ctx: CoreCallContext,
     request: GraphWrite<{ messageRef: SessionMessageRef }>,
-  ): Promise<WriteResult<SessionMessage>>;
-  respondMessage(
-    ctx: CoreCallContext,
-    request: GraphWrite<{ messageRef: SessionMessageRef; text: string }>,
   ): Promise<WriteResult<SessionMessage>>;
   /**
    * Host-only association of an ALREADY-SAVED formal Query Answer with the

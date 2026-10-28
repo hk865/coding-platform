@@ -106,7 +106,7 @@ function claimedRunOf(receipts: readonly WorkflowStepReceipt[], what: string): {
   return { claim: claim.result.value, run: claim.result.value.runRef };
 }
 /** The public Task read proves the first Task is satisfied; `verifying` is never accepted. */
-async function assertTaskCompleted(world: S6AHostWorld, goal: GoalRef, taskId: string): Promise<void> {
+export async function assertTaskCompleted(world: S6AHostWorld, goal: GoalRef, taskId: string): Promise<void> {
   const graph = ready<{ tasks: Array<{ ref: { taskId: string }; effectivePhase: string }> }>(
     await world.post('tasks/query', plain(S6A_SCOPE, { goalRef: goal })), `the task graph of ${goal.goalId}`);
   if (!graph.tasks.some(task => task.ref.taskId === taskId && task.effectivePhase === 'satisfied')) throw new Error(
@@ -144,6 +144,12 @@ const S7A_EXTRA_BINDINGS: readonly S6AExtraBinding[] = [
   { binding: bindingOf('s6a-secretary-binding', S6A_SECRETARY_ROLE, 'S6A trusted secretary guidance', ['read']),
     mergeTools: ['look_graph'] },
 ];
+
+/** The Host input a reply Run needs: the Work binding with `respond_session_message` merged in. */
+export const S7A_REPLY_TOOLS: S6AExtraBinding = {
+  binding: bindingOf('s6a-work-binding', S6A_WORK_ROLE, 'S6A trusted work guidance', ['read']),
+  mergeTools: ['respond_session_message'],
+};
 
 const worlds = new WeakSet<S6ARequestWorld>();
 
@@ -610,4 +616,15 @@ export async function replyS7AMessage(world: S6AHostWorld, input: {
   ]);
   await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: input.goal, flowId: `s7a-gate-reply-${input.label}`,
     sessionHint: input.recipient.ref, kind: 'select_work', taskId: input.taskId });
+}
+
+/**
+ * `goals/control` cancel with the two pins `goalControlPins` reads just before the write (`goals/read` and
+ * `tasks/query` at their public revisions); returns the committed Goal.
+ */
+export async function cancelS7AGoal(world: S6AHostWorld, goal: GoalRef) {
+  const value = committed<GoalControlOutcomeV1>(await world.post('goals/control', graphWrite(S6A_SCOPE, {
+    goalRef: goal, control: 'cancel', reason: 'S7A operator cancel',
+  }, `s7a-control-cancel-${goal.goalId}`, await goalControlPins(world, goal))), 'the cancel control');
+  return { goal: value.goal };
 }

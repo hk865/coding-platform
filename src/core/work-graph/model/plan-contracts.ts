@@ -4,7 +4,7 @@ import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contrac
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
@@ -41,6 +41,8 @@ export type ProposedPlanDraftRequestV1 = {
   goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft; reason: PlanChangeReason;
   requestRef?: QueryJobRef | null;
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null; source?: undefined;
+  /** 7A §3.5 item 2: the message this proposal acknowledges; part of the fingerprint only when present. */
+  acknowledgement?: SessionMessageRef;
 };
 export type ProposedPlanSourceRequestV1 = {
   goalRef?: undefined; basedOn: null; draft?: undefined; reason: PlanChangeReason;
@@ -58,7 +60,7 @@ export type ProposeInitialPlanFromAnswer = (
 export type HostProposePlan = (
   ctx: CoreCallContext,
   request: GraphWrite<ProposedPlanRequestV1>,
-) => Promise<WriteResult<PlanProposal>>;
+) => Promise<EffectWriteResultV1<PlanProposal>>;
 export type GoalDetail = { goal: GoalSnapshot; pendingPlan: PlanProposal | null };
 /**
  * 只读规划诊断（W2 §4.2）。它由已采用的 Plan + canonical task facts 在内存投影，
@@ -222,7 +224,7 @@ export type InitialPlanProposalResult = WriteResult<PlanProposal> | InitialPlanD
 export interface PlanTaskPort {
   queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>>;
   readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposal>>;
-  proposePlan(ctx: CoreCallContext, request: GraphWrite<ProposedPlanRequestV1>): Promise<WriteResult<PlanProposal>>;
+  proposePlan(ctx: CoreCallContext, request: GraphWrite<ProposedPlanRequestV1>): Promise<EffectWriteResultV1<PlanProposal>>;
   applyPlanChange(ctx: CoreCallContext, request: GraphWrite<{ proposalRef: PlanProposalRef;
     expectedProposalRevision: number; decisionRefs: VersionedRef[];
     acknowledgementRef?: SessionMessageRef;

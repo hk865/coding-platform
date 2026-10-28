@@ -44,6 +44,7 @@ import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
   createCommandRerunRequestCardSource, createDecisionReadModel, createGoalCauseCardSource,
   createNoteReviewCardSource, createPlanningQuestionCardSource, createUnknownCallReviewCardSource,
+  createMessageReleaseCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
 import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
@@ -54,14 +55,16 @@ import { createNoticeDisplayToken } from '../core/work-graph/views/notice-displa
 import type {
   DecisionMessagePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
   RequestCandidatePort, WorkspaceDecisionSettingsPort,
+  MessageReleaseCandidatesPort, MessageReleasePort,
 } from '../core/work-graph/model/decision-contracts.js';
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
+import type { MessageReleaseApprovedHookV1 } from '../core/work-graph/communication/decision-change-proof.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
-import { createCommandRerunRequestApplicationAdapter } from '../business/workflow/decision-actions.js';
+import { createCommandRerunRequestApplicationAdapter, createMessageReleaseApplicationAdapter } from '../business/workflow/decision-actions.js';
 import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
@@ -177,6 +180,11 @@ import {
   GOAL_CONFIRM_SCHEMAS, createGoalConfirmService, createInitializationBindingReader,
 } from '../core/work-graph/tasks/goal-confirm-service.js';
 import { GOAL_COPY_RECORD_SCHEMAS, createGoalCopyService } from '../core/work-graph/tasks/goal-copy-service.js';
+import { createCopyInterventionPorts } from '../core/work-graph/communication/copy-retraction.js';
+import { createMessageReleaseApplication } from '../core/work-graph/communication/decision-change-proof.js';
+import { createMessageReleaseOwner } from '../core/work-graph/communication/message-release.js';
+import { createMessageApplyOwner, type MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
+import type { CopyInterventionReadPort } from '../core/work-graph/model/goal-copy-contracts.js';
 import { createRequestTailFragment } from '../core/work-graph/tasks/request-tail-fragment.js';
 import type {
   GoalConfirmPort, GoalCopyPort, GoalUnderstandingReadPort, InitializationBindingReadPort,
@@ -397,6 +405,7 @@ export type TargetPlatformOptions = {
    * for the Query routes or a later Host.
    */
   requestWake?: (scope: WorkspaceScope, source: 'request_command') => void;
+  onMessageReleaseApproved?: MessageReleaseApprovedHookV1;
   /**
    * Slice 5 §3.2/§2.6: the exact configured operator of this Host. It is the
    * Host's real start actor (a human or system actor, never a platform
@@ -1053,6 +1062,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
     const messageWrites = createMessageWriteOwner(mailboxDependencies);
+    // R's release owner and G's trusted entry share the ONE message writer and the ONE basis read; the copy ports take
+    // the mailbox itself. The Workflow gets the raw pair (rd7a2c-03), never the tracked surface.
+    const messageReleaseOwner = createMessageReleaseOwner({ records: backend.records, writes: messageWrites,
+      dispatchBasis, now });
+    const messageReleaseApplication = createMessageReleaseApplication({ records: backend.records,
+      writes: messageWrites, now });
+    const rawMessageRelease = { ...messageReleaseOwner, ...messageReleaseApplication };
+    const copyInterventions = createCopyInterventionPorts({ records: backend.records, mailbox });
+    const messageApply = createMessageApplyOwner({ records: backend.records, messageWrites, now });
+    /** R's two-branch release and candidate read, G's trusted entry: one owner group, every member drained. */
+    const messageRelease: MessageReleasePort & MessageReleaseCandidatesPort = {
+      releaseApproved: (...args) => trackedCall(() => messageReleaseOwner.releaseApproved(...args), unavailable),
+      readReleaseCandidates: (...args) =>
+        trackedCall(() => messageReleaseOwner.readReleaseCandidates(...args), unavailable),
+      applyMessageRelease: (...args) =>
+        trackedCall(() => messageReleaseApplication.applyMessageRelease(...args), unavailable),
+    };
     // R5b.2: the ONE internal Query writer shares this records/roles/bodies
     // instance. It is injected into the QueryJob claim/read adapter and the
     // Runtime thin path, never published as a public terminal port. Without a
@@ -1213,6 +1239,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, requests: commandRerunRequests, reviews: unknownCallReviews,
       executions: executionReader,
       readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input) });
+    // G's `message_release` card: a derived source like the other five; no card table is created.
+    const messageReleaseCards = createMessageReleaseCardSource({ records: backend.records, dispatchBasis });
     const noteReviewNotices = createNoteReviewNoticeSource({ records: backend.records });
     // The handoff notices are a read projection of the handoff operations' own saved writes: one item per operation,
     // no stored notice and no new writer.
@@ -1220,7 +1248,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
-        commandRerunRequestCards],
+        commandRerunRequestCards, messageReleaseCards],
       noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices],
       conflicts: goalConflicts,
       positions: noticePositions,
@@ -1514,11 +1542,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const requestTail = createRequestTailFragment();
     const goalConfirm = createGoalConfirmService({ records: backend.records, tail: requestTail, bindings: bindingReads, now });
-    const goalCopy = createGoalCopyService({ records: backend.records, understanding: goalUnderstanding, now, eventId: randomUUID });
+    const goalCopy = createGoalCopyService({ records: backend.records, understanding: goalUnderstanding,
+      interventions: copyInterventions, retractions: copyInterventions, now, eventId: randomUUID });
     // The completion methods are published on the SAME Goal service and drained
     // through the one trackedCall/close path; no second service or store exists.
     const goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
-      & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'] } = {
+      & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'];
+        readCopyInterventions: CopyInterventionReadPort['readCopyInterventions'] } = {
       createGoal: (...args) => trackedCall(() => rawGoals.createGoal(...args), unavailable),
       completeTask: (...args) => trackedCall(() => rawGoals.completeTask(...args), unavailable),
       completeGoal: (...args) => trackedCall(() => rawGoals.completeGoal(...args), unavailable),
@@ -1529,6 +1559,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       confirmDraft: (...args) => trackedCall(() => goalConfirm.confirmDraft(...args), unavailable),
       readGoalCopyDraft: (...args) => trackedCall(() => goalCopy.readDraft(...args), unavailable),
       confirmGoalCopy: (...args) => trackedCall(() => goalCopy.confirm(...args), unavailable),
+      // The candidate page has no route; the row reads it in process through the one published-owner helper.
+      readCopyInterventions: (...args) =>
+        trackedCall(() => copyInterventions.readCopyInterventions(...args), unavailable),
     };
     // The binding read, published by property only (not a public key).
     const bindings: InitializationBindingReadPort = {
@@ -1696,7 +1729,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       Omit<SessionMailboxPort, 'ackMessage' | 'sendMessage' | 'respondMessage'>
       & Required<Pick<SessionMailboxPort, 'readOutbox'>>
       & Pick<SessionMessageCommandPort,
-        'sendMessage' | 'respondMessage' | 'withdrawMessage' | 'releaseMessage' | 'readMessageView' | 'readInboxView'>;
+        'sendMessage' | 'respondMessage' | 'withdrawMessage' | 'releaseMessage' | 'readMessageView' | 'readInboxView'>
+      & Pick<MessageApplyPort, 'applyMessage'>;
     const messages: PublishedMessages = {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
       readMessage: (...args) => trackedCall(() => mailbox.readMessage(...args), unavailable),
@@ -1714,6 +1748,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       releaseMessage: (...args) => trackedCall(() => mailbox.releaseMessage(...args), unavailable),
       readMessageView: (...args) => trackedCall(() => mailbox.readMessageView(...args), unavailable),
       readInboxView: (...args) => trackedCall(() => mailbox.readInboxView(...args), unavailable),
+      // P's applier: the proof is the caller's, compared in the owner; the route adds nothing.
+      applyMessage: (...args) => trackedCall(() => messageApply.applyMessage(...args), unavailable),
     };
     // Slice 5 §4.5 platform ports: the same trackedCall drain convention as every
     // other owner, so an in-flight decision write is accounted for before close.
@@ -2186,6 +2222,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       closeTerminalResponsibility,
       readTransferReceipt: sessionResponsibility.readTransferReceipt.bind(sessionResponsibility),
     };
+    // The approval hook's receive side: G calls it; R's Host binds the sink to `armMessageRelease(scope)`.
+    const onMessageReleaseApproved: MessageReleaseApprovedHookV1 = approved =>
+      options.onMessageReleaseApproved?.(approved);
     const workflowDependencies: WorkflowDependencies & {
       sessionHandoff?: HandoffWorkflowDependencies;
     } = {
@@ -2226,6 +2265,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // it an ordinary transferred-wait archive answers unsupported. It is the
       // SAME mailbox instance the Runtime and routes use, never a second copy.
       messages: mailbox,
+      // Book §3.8 item 3: the release owner, the bounded candidate page and the trusted answer entry. R's Host and the
+      // approval hook arm the same queue; the Workflow only selects and performs.
+      messageRelease: rawMessageRelease,
       // Slice 1 (spec §4.2): the exact close-event reader maintenance uses to
       // derive an executor's `finishedAt` from the terminal responsibility close.
       // The RecordStore's own result is translated to the Workflow's read shape;
@@ -2275,6 +2317,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // K3 L19a (ruling 4): the `command_rerun_request` answer application
         // beside B1's row, over the SAME CRR owner.
         command_rerun_request: createCommandRerunRequestApplicationAdapter(commandRerunRequests),
+        // G's `message_release` row: the trusted entry, then the approval signal after a committed approval.
+        message_release: createMessageReleaseApplicationAdapter({
+          applyMessageRelease: messageReleaseApplication.applyMessageRelease,
+          onApproved: onMessageReleaseApproved }),
       },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
@@ -2444,6 +2490,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // kinds and the Workflow drives each by its own source ref.
         readCommandRerunRequestAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
           readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'command_rerun_request', goalRef }),
+        // G-late's `message_release` answers through the SAME `k3-decision-answer-by-source-goal` reader.
+        readMessageReleaseAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
+          readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'message_release', goalRef }),
         readDecisionAnswer: rawDecisionMessages.readDecisionAnswer.bind(rawDecisionMessages),
       },
       probe: (session: Parameters<typeof historyOwner.probe>[0]['session'], signal: AbortSignal): Promise<SessionMappingProbe> =>
@@ -2707,7 +2756,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     let closing: Promise<void> | undefined;
     const platform = {
-      goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
+      goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       queries,
       // K3 (§2 L7): the read-only UnknownCallReview owner, published for the
       // `unknown-call-reviews/read` route (group 3/4 extend it with writes).
@@ -2836,7 +2885,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
-      'bindings', 'initializationAdoption', 'confirmInstalledChecks'] as const) {
+      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

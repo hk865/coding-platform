@@ -19,6 +19,7 @@
  * only through the `state/` constructors; these codecs only decode them.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type {
   DispatchOutboxRef, RunOutcome, TaskAttemptRef, TaskAttemptSnapshot, TaskAttemptStatus,
 } from '../../../contracts/dispatch.js';
@@ -43,6 +44,7 @@ import {
   planRevisionRefProblem, reworkFailureClassProblem, runRefProblem, sameJson, sessionRefProblem, sourceStampProblem,
   taskAttemptRefProblem, taskBudgetProblem, taskRequeueRefProblem, taskTripleProblem, verificationRoundRefProblem,
 } from '../persistence/rework-codecs.js';
+import { sessionMessageRefProblem as messageRefProblem } from './codec-shape-checks.js';
 
 /** Encoding selectors for the new records. Reuse the existing @1 convention. */
 export const TASK_ATTEMPT_SCHEMA_ID = 'TaskAttemptSnapshot@1';
@@ -84,6 +86,8 @@ export type TaskClaimedEvent = {
   actor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   fingerprint: string;
   claim: TaskClaim;
+  /** 7A §3.5: the acknowledged message; written only when the claim carried one. */
+  acknowledgement?: SessionMessageRef;
 };
 
 /**
@@ -100,6 +104,8 @@ export type TaskRequeuedEvent = {
   actor: ActorRef;
   fingerprint: string;
   requeue: TaskRequeueSnapshotV1;
+  /** 7A §3.5: the acknowledged message; written only when the requeue carried one. */
+  acknowledgement?: SessionMessageRef;
 };
 
 /**
@@ -353,6 +359,12 @@ export function taskClaimedEventFromEvent(event: EncodedDomainEvent): DecodeResu
   }
   const claimProblem = taskClaimProblem(body['claim']);
   if (claimProblem !== null) return invalid(claimProblem);
+  // 7A §3.5: the store runs this decoder at commit time, so a malformed stored
+  // acknowledgement refuses the commit, not only a later replay.
+  if (body['acknowledgement'] !== undefined) {
+    const acknowledgementProblem = messageRefProblem(body['acknowledgement'], 'TaskClaimed acknowledgement');
+    if (acknowledgementProblem !== null) return invalid(acknowledgementProblem);
+  }
   return { status: 'decoded', value: body as unknown as TaskClaimedEvent };
 }
 
@@ -400,14 +412,6 @@ function anomalyAnchorRefProblem(value: unknown, label: string): string | null {
     || value['aggregateType'] !== 'SessionAnomalyAnchor' || !nonEmpty(value['projectId'])
     || !nonEmpty(value['goalId']) || !nonEmpty(value['runId'])) {
     return `${label} must be a complete SessionAnomalyAnchorRef`;
-  }
-  return null;
-}
-function messageRefProblem(value: unknown, label: string): string | null {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
-    || value['aggregateType'] !== 'SessionMessage' || !nonEmpty(value['projectId'])
-    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
-    return `${label} must be a complete SessionMessageRef`;
   }
   return null;
 }
@@ -742,11 +746,18 @@ export function encodeTaskRequeuedEvent(event: TaskRequeuedEvent): EncodedDomain
 export function taskRequeuedEventFromEvent(event: EncodedDomainEvent): DecodeResult<TaskRequeuedEvent> {
   const body = reworkEventBody(event, TASK_REQUEUED_EVENT_TYPE);
   if (typeof body === 'string') return invalid(body);
-  if (!hasOnlyKeys(body, ['eventId', 'eventType', 'schemaVersion', 'occurredAt', 'identityKey', 'actor', 'fingerprint', 'requeue'])) {
+  if (!hasOnlyKeys(body, ['eventId', 'eventType', 'schemaVersion', 'occurredAt', 'identityKey', 'actor', 'fingerprint', 'requeue',
+    'acknowledgement'])) {
     return invalid('TaskRequeued carries unknown fields');
   }
   const problem = taskRequeueSnapshotProblem(body['requeue']);
   if (problem !== null) return invalid(problem);
+  // 7A §3.5: the store runs this decoder at commit time, so a malformed stored
+  // acknowledgement refuses the commit, not only a later replay.
+  if (body['acknowledgement'] !== undefined) {
+    const acknowledgementProblem = messageRefProblem(body['acknowledgement'], 'TaskRequeued acknowledgement');
+    if (acknowledgementProblem !== null) return invalid(acknowledgementProblem);
+  }
   if (!sameJson((body['requeue'] as Record<string, unknown>)['requestedBy'], body['actor'])) {
     return invalid('TaskRequeued requestedBy disagrees with the event actor');
   }

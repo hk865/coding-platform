@@ -54,7 +54,8 @@ import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver } from './auto-capture-driv
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
   createHandoffQueue, createWakeLoop, LIFECYCLE_QUEUE,
-  LIFECYCLE_WAKE_AGGREGATE_TYPES, notReady, type QueueHandler, type WakeLoop,
+  LIFECYCLE_WAKE_AGGREGATE_TYPES, notReady, MESSAGE_RELEASE_QUEUE, MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES,
+  type QueueHandler, type WakeLoop,
 } from './wake-loop.js';
 import {
   createRequestRoundQueues, REQUEST_ROUNDS_QUEUE, REQUEST_UNASSIGNED_QUEUE,
@@ -69,6 +70,7 @@ import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
 import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
+import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
 import { messageConsumptionProblem, messageFactsOfRecord } from '../core/work-graph/state/message-machine.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
@@ -638,6 +640,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // rounds stay on record for the start-up rebuild.
   let requestDriverCommitted: ((notice: RecordCommitNotice) => void) | undefined;
   let requestWakeSink: ((scope: WorkspaceScope, source: 'request_command') => void) | undefined;
+  let armMessageRelease: ((scope: WorkspaceScope) => void) | undefined;
   // L8 (book ruling 1): the mutable trigger sink handed to the platform BEFORE
   // the driver exists; each formal adoption/revision/PASS calls it after its
   // non-replayed commit, and the driver is installed right after the platform.
@@ -693,6 +696,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // landed in; the sink is bound once the loop exists, and the platform
       // never drives a round by itself.
       requestWake: (scope, source) => { requestWakeSink?.(scope, source); },
+      // A committed approval through the trusted entry arms the release queue; a replay included, and
+      // arming twice is harmless (`7a2-rgp-v7.md:1076`).
+      onMessageReleaseApproved: approved => { armMessageRelease?.({
+        projectId: approved.messageRef.projectId, workspaceId: approved.messageRef.workspaceId,
+      }); },
     });
   } catch (error) {
     await instanceLease.release().catch(() => undefined);
@@ -919,6 +927,62 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       },
     };
     loop.register(LIFECYCLE_QUEUE, lifecycleHandler, { aggregateTypes: LIFECYCLE_WAKE_AGGREGATE_TYPES });
+    // The release queue: ONE pass per wake. It chooses no message and no page — the Workflow's own release step
+    // does that (`book-7a.md:380–:381`); the pass asks each active Goal's one selection and performs what the step
+    // names, until that Goal has nothing left in THIS pass. A pass that released nothing reports no progress and
+    // the loop parks the pair until the next wake; a blocked item is never a handler failure (`:386–:389`;
+    // `wake-loop.ts:19–:24`).
+    const runReleasePass = async (ctx: CoreCallContext): Promise<{ released: number; blocked: number }> => {
+      const goals = await platform.reconcile.candidates.listGoals(
+        { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, ctx.signal);
+      // A Goals read failure is the failure: the loop's own back-off retries it (`wake-loop.ts:194`, `:22–:24`).
+      if (goals.status !== 'ready') throw notReady('the release pass Goals', goals);
+      let released = 0;
+      let blocked = 0;
+      for (const goal of goals.value.records) {
+        if (goal.desiredState !== 'active') continue;
+        // This Goal's own copies of the items this pass refused (`7a2-rgp-v7.md:750–:752`); empty on entry.
+        const skip = new Set<string>();
+        for (;;) {
+          // The pass's skip set travels in the Host-driver-only third argument, never in the input.
+          const selected = await platform.workflow.advanceWork(ctx, {
+            schemaVersion: 1, goalRef: goal.ref, flowId: `release:${goal.ref.goalId}`, sessionHint: null,
+            kind: 'select_work',
+          }, { releaseSkip: [...skip] });
+          // A selection that is not ready is the failure, never "no candidate" (rd7a2a-05, D8-10 (a)).
+          if (selected.status !== 'ready') throw notReady('the release selection', selected);
+          const next = selected.value.next;
+          if (next === null || next.kind !== 'perform' || next.operation.kind !== 'release_message') break;
+          const performed = await platform.workflow.advanceWork(ctx, next);
+          // A refused call (bad input or scope) is a failure too, not a blocked item: the item's own refusals
+          // arrive as the `waiting` step result below.
+          if (performed.status !== 'ready') throw notReady('the release performance', performed);
+          if (performed.value.state === 'advance') { released += 1; continue; }
+          // Blocked this pass: an activity-only conflict after R2's bound, `revision_conflict`, `busy` (the Goal
+          // is not active) or `not_found`. A change of its message, Goal, plan pointer, understanding pointer,
+          // counter or activity record wakes the queue again (`book-7a.md:386–:391`); the next item follows in
+          // this same pass.
+          skip.add(sessionMessageRefKey(next.operation.request.messageRef));
+          blocked += 1;
+        }
+      }
+      return { released, blocked };
+    };
+    const releaseHandler: QueueHandler = {
+      async rebuild() {},
+      async drain(scope, input) {
+        // The same system actor as the other queue passes (`HOST_RECONCILE_ACTOR`, imported above).
+        const pass = await runReleasePass({ ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal: input.signal });
+        // No `more`: the inner loop above already exhausted this pass's items of every active Goal, so the
+        // loop's own rule parks the pair after the wrap and the next wake is a real change (`wake-loop.ts:19–:21`).
+        return { progressed: pass.released, more: false, continuation: null, wrapped: true,
+          blocked: pass.blocked };
+      },
+    };
+    loop.register(MESSAGE_RELEASE_QUEUE, releaseHandler, { aggregateTypes: MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES });
+    // The explicit arm (`book-7a.md:382–:383`): the person's approval, a Goal resume or an explicit advance. A
+    // commit notice alone never arms it, which is why `resumeOnStartup: false` is respected (`:383–:384`).
+    armMessageRelease = scope => loop.wake(scope, MESSAGE_RELEASE_QUEUE, 'release_armed');
     requestDriverCommitted = notice => loop.committed(notice);
     wakeLoop = loop;
     requestQueues = queues;
@@ -1995,7 +2059,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   // The real route bindings share the ONE platform instance assembled above.
   const routeBindings = createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
-    { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) }, adoptionHost);
+    { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) }, adoptionHost,
+    scope => { armMessageRelease?.(scope); });
   // L8 (book ruling 1): the route-registration path uses the SAME shared step as
   // the settings flow, only after a NON-REPLAYED committed registration. The
   // step itself triggers only when `byScope` already holds the scope.

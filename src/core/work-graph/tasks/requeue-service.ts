@@ -35,7 +35,8 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
-import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
@@ -89,6 +90,7 @@ import {
   taskRequeuedEventFromEvent, taskRequeueRefKey, taskReworkRefusalRefKey, taskReworkRefusedEventFromEvent,
   type TaskRequeuedEvent, type TaskReworkRefusedEvent,
 } from './claim-record-codecs.js';
+import { sessionMessageRefProblem } from './codec-shape-checks.js';
 import type {
   ReadTaskRequeueByIdentityInputV1, RequeueTaskInput, TaskClaimPort, TaskRequeueReadV1,
 } from '../model/claim-contracts.js';
@@ -273,12 +275,19 @@ function ownRequest(request: GraphWrite<RequeueTaskInput>): { ok: true; value: O
   }
 }
 
-const INPUT_KEYS = ['taskRef', 'afterRunRef', 'reason', 'newInputRefs', 'budget', 'trigger', 'note', 'archiveOrigin'];
+const INPUT_KEYS = ['taskRef', 'afterRunRef', 'reason', 'newInputRefs', 'budget', 'trigger', 'note', 'archiveOrigin',
+  'acknowledgement'];
 
 /** The request shape (§4.1 `RequeueTaskInput`); the actor-dependent fields are judged by the matrix (step 5). */
 function inputProblem(input: RequeueTaskInput, scope: { projectId: string }): Rejection | null {
   const raw = input as unknown as Record<string, unknown>;
   if (!Object.keys(raw).every((key) => INPUT_KEYS.includes(key))) return reject('invalid', 'the requeue input carries unknown fields');
+  // 7A §3.5: the acknowledgement is shape-checked only; the owner reads no
+  // message and compares no scope. It joins the fingerprint only when present.
+  if (input.acknowledgement !== undefined) {
+    const acknowledgementProblem = sessionMessageRefProblem(input.acknowledgement, 'requeueTask acknowledgement');
+    if (acknowledgementProblem !== null) return reject('invalid', acknowledgementProblem);
+  }
   const taskProblem = taskTripleProblem(raw['taskRef'], 'requeue taskRef');
   if (taskProblem !== null) return reject('invalid', taskProblem);
   const runProblem = runRefProblem(raw['afterRunRef'], 'requeue afterRunRef');
@@ -611,7 +620,8 @@ export function createTaskRequeueService(
   /** Receipt replay: the recorded `TaskRequeued` or `TaskReworkRefused` restores the original value. */
   async function replay(
     receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string, actor: ActorRef,
-  ): Promise<WriteResult<TaskRequeueOutcomeV1>> {
+    acknowledgement: SessionMessageRef | null,
+  ): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
     const loaded = await loadReplayEvent(records, receipt);
     if (!loaded.ok) return loaded.rejection;
     const event = loaded.event;
@@ -633,7 +643,11 @@ export function createTaskRequeueService(
     if (!sameRef({ kind: decoded.actor.kind, id: decoded.actor.id }, { kind: actor.kind, id: actor.id })) {
       return reject('unavailable', 'the recorded requeue belongs to another actor');
     }
-    return { status: 'committed', value: decoded.value, replayed: true, cursor: receipt.cursor };
+    return { status: 'committed', value: decoded.value, replayed: true, cursor: receipt.cursor,
+      // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+      // when the call carried an acknowledgement; a refusal never returns one.
+      ...(acknowledgement === null || decoded.value.kind !== 'requeued' ? {}
+        : { proofReceipt: { identityKey: identity, fingerprint, cursor: receipt.cursor } }) };
   }
 
   /** The internal Host-only WG11 read context (the afterRun's claim Session is read through it). */
@@ -785,7 +799,8 @@ export function createTaskRequeueService(
     return { ok: true, value: matched };
   }
 
-  async function requeueTask(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<WriteResult<TaskRequeueOutcomeV1>> {
+  async function requeueTask(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>):
+  Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
     const ownedCall = ownCall(ctx);
     if (!ownedCall.ok) return ownedCall.rejection;
     const owned = ownedCall.value;
@@ -827,7 +842,7 @@ export function createTaskRequeueService(
         workspaceId: owned.scope.workspaceId, input, expected: sortedPins(expected) } as unknown as JsonValue));
     } catch { return reject('invalid', 'the requeue request is not canonicalizable JSON'); }
     const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
-    if (lookup.status === 'ready') return replay(lookup.value, identity, fingerprint, actor);
+    if (lookup.status === 'ready') return replay(lookup.value, identity, fingerprint, actor, input.acknowledgement ?? null);
     if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled during lookup');
     const actorClass: ReworkActorClass | null = reworkActorClassOf(owned.principal, actor);
@@ -1038,7 +1053,8 @@ export function createTaskRequeueService(
       requestedBy: actor, goalEndedRunsAtRefusal, configurationRevision: null };
     const commitBase: CommitBase = { owned, identity, fingerprint, actor, goalRef, window, afterRun, admissionGuards,
       pointerIntent, roundGuards, roundClaims, workspaceGuard: workspace.guard,
-      sessionGuard: { refKey: sessionAggregateRefKey(claimSession.ref), expectedRevision: claimSession.revision } };
+      sessionGuard: { refKey: sessionAggregateRefKey(claimSession.ref), expectedRevision: claimSession.revision },
+      acknowledgement: input.acknowledgement ?? null };
     if (policyCode !== null) {
       return commitRefusal(commitBase, { ...refusalBase, code: policyCode, basisDigest: null, source: null,
         matchedRequeueRef: null, reason: policyCode === 'budget_not_increased'
@@ -1097,7 +1113,9 @@ export function createTaskRequeueService(
     const requeue = written.requeue;
     const event: TaskRequeuedEvent = { eventId: deps.eventId(), eventType: TASK_REQUEUED_EVENT_TYPE,
       schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, occurredAt: requeue.requestedAt, identityKey: identity, actor,
-      fingerprint, requeue };
+      fingerprint, requeue,
+      // 7A §3.5 rule 3: the effect event carries the key only when the input did.
+      ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) };
     return commit(commitBase, {
       records: [encodeTaskRequeueSnapshot(requeue, { since: null })],
       extraGuards: [{ refKey: taskRequeueRefKey(requeue.ref), expectedRevision: null }],
@@ -1239,13 +1257,15 @@ export function createTaskRequeueService(
     workspaceGuard: RecordGuard;
     /** The afterRun's claim Session as read (TASK-16 guards it). */
     sessionGuard: RecordGuard;
+    /** 7A §3.5: the acknowledged message, null when the call carried none (a refusal returns no proof). */
+    acknowledgement: SessionMessageRef | null;
   };
 
   /** TASK-28 (ND-8): the policy refusal @k+1 through the machine, committed with the same read set. */
   async function commitRefusal(
     base: CommitBase,
     input: Omit<Parameters<typeof taskReworkRefusalEffects>[0], 'refusedAt'>,
-  ): Promise<WriteResult<TaskRequeueOutcomeV1>> {
+  ): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
     const refusedAt = deps.now();
     const [written] = taskReworkRefusalEffects({ ...input, refusedAt });
     if (written?.kind !== 'write_task_rework_refusal') throw new Error('a policy refusal writes its TaskReworkRefusal');
@@ -1280,7 +1300,7 @@ export function createTaskRequeueService(
     event: PreparedCommit['events'][number]; value: TaskRequeueOutcomeV1;
     /** Slice 5 §2.5: the wire origin bindings of the records this commit creates. */
     commitCursorBindings?: PreparedCommit['commitCursorBindings'];
-  }): Promise<WriteResult<TaskRequeueOutcomeV1>> {
+  }): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
     const { window } = base;
     const writtenKeys = new Set(write.extraGuards.map((guard) => guard.refKey));
     const merged = mergeGuards([
@@ -1308,8 +1328,12 @@ export function createTaskRequeueService(
       }
       return mapStoreFailure(receipt);
     }
-    if (receipt.replayed) return replay(receipt, base.identity, base.fingerprint, base.actor);
-    return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor };
+    if (receipt.replayed) return replay(receipt, base.identity, base.fingerprint, base.actor, base.acknowledgement);
+    return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor,
+      // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+      // when the call carried an acknowledgement; a refusal never returns one.
+      ...(base.acknowledgement === null || write.value.kind !== 'requeued' ? {}
+        : { proofReceipt: { identityKey: base.identity, fingerprint: base.fingerprint, cursor: receipt.cursor } }) };
   }
 
   return { requeueTask, readTaskRequeue, readTaskRequeueByIdentity };

@@ -4,6 +4,7 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { WriteResult, ReadResult } from '../../../contracts/core/results.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
@@ -69,6 +70,14 @@ export type ClaimTaskInput = {
    * original commit and writes no second link.
    */
   openResponsibleLink?: boolean;
+  /**
+   * 7A §3.5 (7a:242–:245): the message this call acts on, shape-checked only —
+   * the owner neither reads it nor compares its scope. It is part of the
+   * fingerprint only when present, so an old call keeps its fingerprint and its
+   * result; a committed call carries the formal `proofReceipt`, one without the
+   * key returns its result unchanged.
+   */
+  acknowledgement?: SessionMessageRef;
 };
 /**
  * Owner request of `requeueTask` (spec §4.1). `reason` is non-empty and
@@ -88,6 +97,14 @@ export type RequeueTaskInput = {
   note?: string;
   /** Slice 1 §2.6: present only when this requeue is caused by an archive. */
   archiveOrigin?: ArchiveRequeueOriginV1 | null;
+  /**
+   * 7A §3.5: the message this requeue acts on, shape-checked only — the owner
+   * neither reads it nor compares its scope. Part of the fingerprint only when
+   * present, so an old call keeps its fingerprint and its result; a committed
+   * call carries the formal `proofReceipt`, one without the key returns its
+   * result unchanged.
+   */
+  acknowledgement?: SessionMessageRef;
 };
 export type TaskClaimOutbox = DispatchOutboxRecord;
 /**
@@ -113,7 +130,7 @@ export type ReadTaskRequeueByIdentityInputV1 = {
   requestId: string;
 };
 export interface TaskClaimPort {
-  claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>): Promise<WriteResult<TaskClaim>>;
+  claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>): Promise<EffectWriteResultV1<TaskClaim>>;
   /**
    * Spec §4 TASK-16/17/27/28: let a Task whose selected Run ended open a new
    * Attempt. A committed policy refusal is the `refused` value, not a
@@ -121,7 +138,7 @@ export interface TaskClaimPort {
    * `TaskClaimPort` while requeue lives in its own service; the composition
    * always publishes it once implemented (A.2 step 5.4).
    */
-  requeueTask?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<WriteResult<TaskRequeueOutcomeV1>>;
+  requeueTask?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>>;
   /**
    * E5: the smallest no-write read of an already committed requeue. It restores
    * the original `TaskRequeued` event (via `lookupCommit`/`eventAt`) when the

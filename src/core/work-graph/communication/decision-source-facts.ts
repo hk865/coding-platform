@@ -53,6 +53,7 @@ import { readGoalConflictSource } from './decision-source/goal-conflict.js';
 import { readNoteReviewSource } from './decision-source/note-review.js';
 import { readUnknownCallReviewSource } from './decision-source/unknown-call-review.js';
 import { readCommandRerunRequestSource } from './decision-source/command-rerun-request.js';
+import { readMessageReleaseSource } from './decision-source/message-release.js';
 import type { DecisionSourceBranchFacts } from './decision-source/types.js';
 
 /** The one Store seam this reader uses, the same instance every other WorkGraph reader shares. */
@@ -183,7 +184,7 @@ export function createDecisionSourceFacts(
           case 'command_rerun_request':
             return readCommandRerunRequestSource(support, ctx, identity, deps, goalRef);
           case 'message_release':
-            return rejectedWithCurrent('unsupported', 'this decision source is not available in this slice');
+            return readMessageReleaseSource(support, identity, goalRef);
           default:
             return rejectedWithCurrent('invalid', 'the decision source kind is not recognized');
         }

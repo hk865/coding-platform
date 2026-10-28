@@ -52,6 +52,7 @@ import type {
   RequestCandidatePort,
   WorkspaceDecisionSettingsPort,
 } from '../core/work-graph/model/decision-contracts.js';
+import type { MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { PlanRevisionDraft } from '../contracts/plan.js';
@@ -195,6 +196,7 @@ export type CoreRouteSuffix =
   | 'messages/withdraw'
   | 'messages/view'
   | 'messages/inbox-view'
+  | 'messages/apply'
   | 'workspaces/registration'
   | 'queries/submit'
   | 'queries/read'
@@ -428,13 +430,17 @@ export type MessagesViewBody = PlainBody<SessionMessageCommandPort['readMessageV
 export type MessagesViewResponse = RouteResponse<SessionMessageCommandPort['readMessageView']>;
 export type MessagesInboxViewBody = PlainBody<SessionMessageCommandPort['readInboxView']>;
 export type MessagesInboxViewResponse = RouteResponse<SessionMessageCommandPort['readInboxView']>;
+/** `messages/apply` derives from the apply owner's one method, never a second shape. */
+export type MessagesApplyBody = GraphWriteBody<MessageApplyPort['applyMessage']>;
+export type MessagesApplyResponse = RouteResponse<MessageApplyPort['applyMessage']>;
 
-/** The message routes' DTO assembly: the production-reach anchor for the eight aliases above. */
+/** The message routes' DTO assembly: the production-reach anchor for the ten aliases above. */
 export type MessagesCoreRouteDto = {
   'messages/release': { body: MessagesReleaseBody; response: MessagesReleaseResponse };
   'messages/withdraw': { body: MessagesWithdrawBody; response: MessagesWithdrawResponse };
   'messages/view': { body: MessagesViewBody; response: MessagesViewResponse };
   'messages/inbox-view': { body: MessagesInboxViewBody; response: MessagesInboxViewResponse };
+  'messages/apply': { body: MessagesApplyBody; response: MessagesApplyResponse };
 };
 
 // ---------------------------------------------------------------------------

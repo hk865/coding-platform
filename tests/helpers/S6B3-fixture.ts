@@ -34,12 +34,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { CORE_ROUTE_SPECS } from '../../src/app/core-routes.js';
-import { createHostCoreCallContext } from '../../src/app/core-call-context.js';
 import * as hostSettingsModule from '../../src/app/host-settings.js';
 import type { HostSettingsCallbacks } from '../../src/app/host-settings.js';
 import type { HostSettingsSnapshot, SettingsResponse } from '../../src/app/host-settings-types.js';
 import type { BootstrapExecutionQueryProfile, WorkbenchActor } from '../../src/app/core-http-types.js';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { GoalConfirmDraftInputV1 } from '../../src/contracts/goal-card.js';
 import type { GoalAutonomyV1 } from '../../src/contracts/goal-decisions.js';
@@ -74,8 +72,7 @@ import { allOf, byIdentityPrefix, commitBarrier, type CommitMatch } from './S6A-
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { claimProfile as claimProfileOf, claimWithSecretaryProfile } from './request-claim-steps.js';
 import { holdS6BRequestRound } from './S6B1-fixture.js';
-import type { S6AGate, S6AHostWorld } from './S6A-host-fixture.js';
-import { openS6AHostWorld } from './S6A-host-fixture.js';
+import { callPublishedOwnerAsHost, openS6AHostWorld, type S6AGate, type S6AHostWorld } from './S6A-host-fixture.js';
 import {
   OPERATOR, S6A_SCOPE, S6A_SECRETARY_ROLE, type S6ABackend, type S6ASession,
 } from './S6A-request-fixture.js';
@@ -873,18 +870,7 @@ Promise<unknown> {
 export function callS6B3PublishedOwner(world: S6B3World, call: {
   owner: string; wave: string; scope: { projectId: string; workspaceId: string }; signal?: AbortSignal;
 }, input: unknown): Promise<unknown> {
-  const [group, member] = call.owner.split('.') as [string, string];
-  const target = asRecord(asRecord(world.host.platform as unknown as Record<string, unknown>)[group]);
-  const method = target[member];
-  if (typeof method !== 'function') {
-    return Promise.reject(new Error(`S6B3: the ${call.owner} command is not published yet (${call.wave})`));
-  }
-  const principal = world.host.humanContext().principal;
-  if (principal.kind !== 'host') throw new Error('S6B3: the world has no Host human context');
-  const ctx = createHostCoreCallContext({
-    scope: call.scope, actor: { ...principal.actor }, signal: call.signal ?? new AbortController().signal,
-  });
-  return (method as (ctx: CoreCallContext, input: unknown) => Promise<unknown>).call(target, ctx, input);
+  return callPublishedOwnerAsHost(world.host, 'S6B3', call, input);
 }
 
 // ---------------------------------------------------------------------------

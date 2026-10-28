@@ -23,6 +23,7 @@ import {
   type DecisionSourceIdentityV1,
   type DecisionSourceV1,
   type DecisionSubjectV1,
+  type MessageReleaseBlockV1,
   type NoticeCategoryV1,
   type NoticePositionV1,
 } from '../../../contracts/goal-decisions.js';
@@ -50,10 +51,15 @@ import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-con
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { DispatchBasisFactsPort } from '../model/dispatch-basis-contracts.js';
 import {
   commandRerunRequestCardFacts, commandRerunRequestCardIdentity, commandRerunRequestCardWorkspaceOf,
   type CommandRerunRequestCardFactsV1, type CommandRerunRequestCardSourceDependencies,
 } from '../tasks/command-rerun-request-card.js';
+import { messageReleaseBlockEligible, messageReleaseCardFacts,
+  type MessageReleaseCardFactsV1 } from '../tasks/message-release-card.js';
+import { releaseCandidateBlockedReason } from '../communication/message-release.js';
+import { dispatchCurrentOf } from '../communication/mailbox-service.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
 import {
   decodePlanProposalOrigin,
@@ -69,6 +75,7 @@ import {
 import {
   decodeSessionMessageRecord,
   S2A_USER_MESSAGES_LOOKUP,
+  S7A2_RELEASE_BY_GOAL_LOOKUP,
   sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
@@ -775,6 +782,110 @@ export function createCommandRerunRequestCardSource(
   return base;
 }
 
+/**
+ * §3.10: the `message_release` card source. One Goal's `awaiting` and `approved` messages are read through the
+ * record's own by-goal index; a withdrawn message is skipped, and each item's block is derived by the one projection
+ * the candidate read and the mailbox also use. The block is the read's DTO, never stored.
+ */
+export type MessageReleaseCardSourceDependencies = {
+  records: DecisionReadRecordsPort;
+  /** D's one facts read (`W/model/dispatch-basis-contracts.ts:21`): the block's three values and the desired state. */
+  dispatchBasis: Pick<DispatchBasisFactsPort, 'readDispatchFacts'>;
+};
+
+/** §3.10: the `message_release` card on the generic collection adapter (`:302`), subject `{ kind: 'goal' }`. L
+ * registers it (`X/create-platform.ts:1222`). */
+export function createMessageReleaseCardSource(
+  deps: MessageReleaseCardSourceDependencies,
+): DecisionCardSourcePort {
+  const base = createCollectionCardSource<MessageReleaseCardFactsV1 & {
+    releaseBlock: MessageReleaseBlockV1 | null }>({
+    kind: 'message_release',
+    serves: ['goal'],
+    async readCollection(ctx, { subject }) {
+      const goalRef = decisionSubjectGoalRef({ subject });
+      const goal = goalRef === null ? null : await readGoalForBasis(deps.records, goalRef);
+      // A missing or damaged Goal is never an empty page.
+      if (goal === null) {
+        return { status: 'rejected', code: 'unavailable', reason: 'the release card Goal is not readable' };
+      }
+      const messages: SessionMessage[] = [];
+      for (const release of ['awaiting', 'approved'] as const) {
+        const batch = await lookupAll(deps.records, S7A2_RELEASE_BY_GOAL_LOOKUP,
+          [goal.ref.projectId, goal.workspaceRef.workspaceId, release, goal.ref.goalId]);
+        for (const record of batch.items) {
+          const decoded = decodeSessionMessageRecord(record);
+          if (decoded.status !== 'decoded') {
+            throw { status: 'rejected', code: 'unavailable',
+              reason: `release message ${record.refKey}: ${decoded.reason}` } as CoreRejection;
+          }
+          // A withdrawn message is not a card; the read continues with the index's own next page.
+          if (decoded.value.withdrawnAt !== null) continue;
+          messages.push(decoded.value);
+        }
+      }
+      const factsRead = await deps.dispatchBasis.readDispatchFacts(ctx, { goalRef: goal.ref });
+      if (factsRead.status !== 'ready') return factsRead;
+      const items = messages.map((message) => {
+        const facts = messageReleaseCardFacts({ message, goal });
+        const releaseBlock = messageReleaseBlockEligible(message)
+          ? { blockedReason: releaseCandidateBlockedReason(message, {
+              desiredState: goal.desiredState, currentValues: factsRead.value.values,
+            }),
+            current: dispatchCurrentOf(factsRead.value) }
+          : null;
+        return { ...facts, releaseBlock };
+      });
+      return { status: 'ready', value: items };
+    },
+    keyOf: (item) => decisionSourceKey({
+      kind: 'message_release', messageRef: item.messageRef, revision: item.creationRevision,
+    }),
+    project: (item, subject) => messageReleaseCard(item, subject),
+    closedReasonOf: (item) => item.closedReason,
+    async readByKey(ctx, { source }) {
+      const identity = parseIdentity(source.key);
+      if (identity === null || identity.kind !== 'message_release') {
+        return { status: 'rejected', code: 'invalid',
+          reason: 'a message_release source key is not a message_release identity' };
+      }
+      const goalRef = decisionSubjectGoalRef(source);
+      if (goalRef === null) return { status: 'ready', value: null };
+      const record = await readOne(deps.records, sessionMessageRefKey(identity.messageRef));
+      if (record === null) return { status: 'ready', value: null };
+      const decoded = decodeSessionMessageRecord(record);
+      if (decoded.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
+      }
+      const message = decoded.value;
+      // A message of another Goal is not this Goal's card.
+      if (message.goalRef === null || message.goalRef.projectId !== goalRef.projectId
+        || message.goalRef.goalId !== goalRef.goalId) {
+        return { status: 'ready', value: null };
+      }
+      const goal = await readGoalForBasis(deps.records, goalRef);
+      if (goal === null) {
+        return { status: 'rejected', code: 'unavailable', reason: 'the release card Goal is not readable' };
+      }
+      const facts = messageReleaseCardFacts({ message, goal });
+      // The identity carries the creation revision, never the message's CAS revision.
+      if (identity.revision !== facts.creationRevision) return { status: 'ready', value: null };
+      // A withdrawn, denied or released message is closed however the card was answered; no block is derived.
+      if (facts.closedReason !== null) return { status: 'ready', value: { item: { ...facts, releaseBlock: null } } };
+      const factsRead = await deps.dispatchBasis.readDispatchFacts(ctx, { goalRef: goal.ref });
+      if (factsRead.status !== 'ready') return factsRead;
+      const releaseBlock = messageReleaseBlockEligible(message)
+        ? { blockedReason: releaseCandidateBlockedReason(message, {
+            desiredState: goal.desiredState, currentValues: factsRead.value.values,
+          }),
+          current: dispatchCurrentOf(factsRead.value) }
+        : null;
+      return { status: 'ready', value: { item: { ...facts, releaseBlock } } };
+    },
+  });
+  return base;
+}
+
 function commandRerunRequestCard(facts: CommandRerunRequestCardFactsV1, subject: DecisionSubjectV1): DecisionCardV1 {
   return {
     cardKey: facts.source.key, source: facts.source,
@@ -1124,12 +1235,17 @@ async function readDecisionQueueWindow(
     terminalByGoalKey.set(canonicalJson(goal.ref as unknown as JsonValue), terminalRead.value);
   }
   const finalized: DecisionCardV1[] = [];
-  for (const raw of collected.values()) {
+  for (let raw of collected.values()) {
     const rawGoalRef = decisionSubjectGoalRef(raw);
     const goal = rawGoalRef === null ? null
       : goalByKey.get(canonicalJson(rawGoalRef as unknown as JsonValue)) ?? null;
     let source: DecisionSourceV1;
     try {
+      // book :428–:430: the queue merges the same live facts the single card carries.
+      if (raw.source.kind === 'message_release' && raw.messageRelease === undefined) {
+        const live = await deriveOpenCard(deps, ctx, raw.source, goal);
+        if (live !== null) raw = mergeCards(raw, live);
+      }
       source = await refreshSourcePins(deps.records, raw.source);
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
@@ -1395,7 +1511,13 @@ async function readDecisionCard(
       // the workspace from `goalBases[0]` would read it as "no answer".
       const boundWorkspace: WorkspaceScope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId };
       const answerMessage = await findAnswerMessage(deps.records, boundWorkspace, source);
-      card = answerMessage !== null ? syntheticAnswerCard(answerMessage) : await deriveOpenCard(deps, ctx, source, goal);
+      const answered = answerMessage === null ? null : syntheticAnswerCard(answerMessage);
+      if (source.kind !== 'message_release') {
+        card = answered === null ? await deriveOpenCard(deps, ctx, source, goal) : answered;
+      } else {
+        const live = await deriveOpenCard(deps, ctx, source, goal);
+        card = answered === null ? live : live === null ? answered : mergeCards(answered, live);
+      }
     }
     if (card === null) return { status: 'not_found' };
     const refreshed = await refreshSourcePins(deps.records, card.source);
@@ -1706,6 +1828,10 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
   if (terminal.completed && card.source.kind === 'goal_conflict' && card.answer === null) {
     return { ...card, state: 'closed', closedReason: 'source_resolved', readOnly: true, actions: [] };
   }
+  // book :430–:432: a withdrawn, denied or released message is closed however the card was answered.
+  if (card.source.kind === 'message_release' && card.closedReason !== null) {
+    return { ...card, state: 'closed', closedReason: card.closedReason, readOnly: true, actions: [] };
+  }
   if (card.answer !== null) {
     if (card.application !== null) return { ...card, state: 'applied', readOnly: false, actions: [] };
     if (card.answer.decision.requiresApplication) {
@@ -1745,6 +1871,29 @@ function cardTerminalState(
   return { cancelled, completed };
 }
 
+/**
+ * The one `message_release` card of one item. Only `stale_pins` is "过期"; `goal_not_active` is carried in the block
+ * but is not staleness (book :392–:396, :430–:432).
+ */
+function messageReleaseCard(
+  facts: MessageReleaseCardFactsV1 & { releaseBlock: MessageReleaseBlockV1 | null },
+  subject: DecisionSubjectV1,
+): DecisionCardV1 {
+  const stale = facts.releaseBlock?.blockedReason === 'stale_pins';
+  return {
+    cardKey: facts.source.key, source: facts.source,
+    state: facts.closedReason === null ? 'waiting_answer' : 'closed',
+    subject: structuredClone(subject),
+    senderSessionRef: null, requestRef: facts.requestRoot,
+    objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
+    candidateStatus: stale ? 'stale' : null,
+    staleReason: stale ? 'stale_pins' : null,
+    closedReason: facts.closedReason, readOnly: facts.closedReason !== null,
+    actions: facts.closedReason === null ? ['answer'] : [],
+    messageRelease: { deadline: facts.deadline, releaseBlock: facts.releaseBlock },
+  };
+}
+
 function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): DecisionCardV1 {
   return {
     ...existing,
@@ -1757,6 +1906,10 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     candidateStatus: existing.candidateStatus ?? incoming.candidateStatus,
     staleReason: existing.staleReason ?? incoming.staleReason,
     closedReason: existing.closedReason ?? incoming.closedReason,
+    // The message's live facts win over the answer's projection, and every other kind (neither side carries the
+    // field) is unchanged.
+    ...(existing.messageRelease === undefined && incoming.messageRelease === undefined
+      ? {} : { messageRelease: incoming.messageRelease ?? existing.messageRelease }),
   };
 }
 

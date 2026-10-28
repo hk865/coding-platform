@@ -84,6 +84,12 @@ export const S5_DECISION_ANSWER_BY_SOURCE = 's5-decision-answer-by-source';
 export const S2A_USER_MESSAGES_LOOKUP = 's2a-user-messages';
 /** K3 L28: every decision answer of one source kind for one Goal (the UR7b index). */
 export const K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP = 'k3-decision-answer-by-source-goal';
+/** Approved release candidates of one workspace, oldest approval first. */
+export const S7A2_RELEASE_BY_WORKSPACE_LOOKUP = 's7a2-release-by-workspace';
+/** The same, narrowed to one Goal. */
+export const S7A2_RELEASE_BY_GOAL_LOOKUP = 's7a2-release-by-goal';
+/** One source goal's person interventions in creation order (7a:619). */
+export const S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP = 's7a2-copy-intervention-by-goal';
 
 /**
  * Slice 5 notification origin wire (SPEC §2.5 line 289). The single
@@ -188,6 +194,22 @@ export const S2A_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = 
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'recipient.kind'],
   },
+];
+
+export const S7A2_RELEASE_CANDIDATE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  { name: S7A2_RELEASE_BY_WORKSPACE_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'release'],
+    orderBy: { path: 'approvedAt', valueType: 'text' } },
+  { name: S7A2_RELEASE_BY_GOAL_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'release', 'goalRef.goalId'],
+    orderBy: { path: 'approvedAt', valueType: 'text' } },
+];
+
+/** Additive index, registered on the SAME SessionMessage aggregate codec. */
+export const S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  { name: S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'goalRef.goalId', 'sender.actor.kind'],
+    orderBy: { path: 'createdAt', valueType: 'text' } },
 ];
 
 // --------------------------------------------------------------------------
@@ -312,7 +334,7 @@ function messagePinsProblem(value: unknown): Problem {
  * release-decision owner validates the proof's party and deep decision rules;
  * this codec fixes only the slot.
  */
-function applicationProofProblem(value: unknown): Problem {
+export function applicationProofProblem(value: unknown): Problem {
   if (value === null) return null;
   if (!isRecord(value) || !hasOnlyKeys(value, ['receipt', 'effect']) || Object.keys(value).length !== 2) {
     return 'application proof must carry exactly receipt and effect';
@@ -1314,7 +1336,8 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_APPLIED_EVENT_TYPE) },
   ],
   lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES,
-    ...K3_SESSION_MESSAGE_LOOKUP_INDEXES],
+    ...K3_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7A2_RELEASE_CANDIDATE_LOOKUP_INDEXES,
+    ...S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------
@@ -1427,6 +1450,19 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
   // decoder applies the §2.9 null default (SV01). Readers use `?? null`.
   const message = parsed.value['message'] as SessionMessage;
   return { status: 'decoded', value: message };
+}
+
+/** The typed release-decision event, with its proof slot (the codec fixes the slot, `:1076–:1087`). */
+export function sessionMessageReleaseDecidedEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionMessageReleaseDecidedEventV1> {
+  const checked = validateEvent(event, SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE);
+  if (checked.status !== 'decoded') return checked;
+  const parsed = parseJsonObject(event.json);
+  if (parsed.status === 'invalid') {
+    return invalid(`${SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE} event json is not an object`);
+  }
+  return { status: 'decoded', value: parsed.value as unknown as SessionMessageReleaseDecidedEventV1 };
 }
 
 export function archiveWaitDisposedEventFromEvent(

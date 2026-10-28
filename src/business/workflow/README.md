@@ -17,8 +17,8 @@
 - `decision-actions.ts` — 有限决定协调：先提交答案，再做结构化冲突动作，最后记录应用；另有只读 `orderGoalAdvances`。
 - `index.ts` — 对外 barrel：`createWorkflow` 与 Workflow 端口/调用契约类型。
 - `line-creation.ts` — 带稳定 `commandId` 的工作线创建/重放与只读 `findLine`；容量端口。
-- `ports.ts` — `WorkflowPort`、`WorkflowDependencies`、Host 配置、归档策略与职责解析器契约。
-- `WorkflowPort.sessionHandoff`（`src/business/workflow/ports.ts:249`）— 6B-2 的可选 late-binding 成员；真实组合在 I1 发布，旧窄替身保持类型兼容。
+- `ports.ts` — `WorkflowPort`、`WorkflowDependencies`、Host 配置、归档策略与职责解析器契约；可选的 `messageRelease` 依赖是释放步的唯一 owner（`releaseApproved` 加候选分页读）。
+- `WorkflowPort.sessionHandoff`（`src/business/workflow/ports.ts:256`）— 6B-2 的可选 late-binding 成员；真实组合在 I1 发布，旧窄替身保持类型兼容。
 - `request-intake.ts` — request 命令（submit/route/selectIdea/ask）与未分配 drain：选人、建线或退回 waiting；drain 在每条请求前看调用 signal，已停止就返回已提交的计数。
 - `request-round-queue.ts` — 两条请求队列处理器（`request-rounds` 分派开放轮、`unassigned` 跑未分配 drain）及 `settle()`：分页遍历、按 Session 的先飞集合、退避与唤醒都由端口注入，不读记录库。
 - `session-handoff.ts` / `secretary-handoff.ts` — 交接与手动归档的 Workflow 组合：`startHandoff`/`continueHandoff`/`advance`/`manualArchive`，在两次 advance 之间只调一个子 owner（`ensureLine`、transfer、D 的 append、`archiveLineInternal`），从不写 RecordStore；秘书专属的覆盖/理解/路由步序只在源 duty 是 secretary 时跑。组合入口是 `createSecretaryHandoffWorkflow`，秘书专属子调用只剩 `appendUnderstanding`（经固定系统 principal 追加理解命令），源 Session 的 duty 判断 `isSecretaryDuty` 在 advance owner 里；阶段停在已提交 before 写的窗口里只带已保存的输入，组合用同一份输入再调原 owner；理解旧代由组合在真实轮次结束后关闭，子 owner 的真实拒绝经冻结的 `refusal` 臂记下 `lastRefusal` 后停止，原拒绝仍原样返回，任何 `ready` 都不当作完成；手动归档的最终条件失败只在 `revision_conflict` 且 reason 带 `archive_condition_failed:` 时，用返回 Session 的真实 revision/request ID 经 `releaseArchiveRequest` 在 `archiveContextOf` 下释放仍挂起的登记，释放失败原样返回，父操作保留保存的 GraphWrite 和登记回执并从 `archiveLineInternal` 的回执继续。
@@ -26,13 +26,13 @@
 - `session-maintenance.ts` — 有界单页 Session 维护：读到期事实并按到期归档，不启动任何东西。
 - `task-gate.ts` — 任务门与自动 requeue/reverify、自动化确认、gate perform；`createTaskGate` 由 `workflow.ts` 原位装配。
 - `task-order.ts` — 按真实 `executionDag.dependsOn` 的稳定 Kahn 软排序，只改选择顺序。
-- `workflow.ts` — `advanceWork` 的选择/推进、`handleGoalInput` 与 Workflow 工厂；`ownContext` 做可信上下文绑定。
+- `workflow.ts` — `advanceWork` 的选择/推进、`handleGoalInput` 与 Workflow 工厂；`selectNext` 在 Goal 活跃检查之后、无 Plan 返回之前选释放步（有 `messageRelease` 才读候选页并给出 `release_message` perform），`perform` 调 `releaseApproved`；`ownContext` 做可信上下文绑定。
 
 ## 可以复用的能力
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkflow` | `src/business/workflow/workflow.ts:766` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
+| `createWorkflow` | `src/business/workflow/workflow.ts:776` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
 | `createSecretaryHandoffWorkflow` | `src/business/workflow/session-handoff.ts:34` | 交接与手动归档的唯一 Workflow 组合：驱动 advance，两次 advance 之间只调一个子 owner（建线、转移、请求路由、归档），每个父写和子调用都用操作保存的 principal，只有归档子步（登记、回执读和最终读）用平台归档自动化身份 `archiveContextOf`；这个归档申请人是共用的（L9：维护、H 和人的手动归档都以 `workflow:session-archive` 申请），所以归档按 `condition.kind`/`mode` 选，不按申请人 | `createWorkflow` 在注入 `sessionHandoff` 时装配；I1 把它发布成 `workflow.sessionHandoff` |
 | `appendUnderstanding` | `src/business/workflow/secretary-handoff.ts:16` | 秘书专属的理解子调用：经固定系统 principal 追加一条已保存的理解命令 | 只由 `createSecretaryHandoffWorkflow` 的步序调用；不要另写系统 principal 或第二条内部命令 |
 | `createTaskGate` | `src/business/workflow/task-gate.ts:71` | `select_work`/`perform` 共用的任务门、自动 requeue/reverify、自动化确认与 gate perform；读 `createWorkflow` 的同一个 `deps` 引用，不复制 | `createWorkflow` 原位装配；不要另写门或确认规则 |
@@ -45,8 +45,9 @@
 | `REQUEST_ROUNDS_QUEUE`、`REQUEST_UNASSIGNED_QUEUE` | `src/business/workflow/request-round-queue.ts:67`、`src/business/workflow/request-round-queue.ts:69` | 两个队列在 wake loop 里的注册键 | 组合根注册与唤醒；不要另写字面量 |
 | `createSessionArchiveService` | `src/business/workflow/session-archive.ts:146` | 登记不可变归档请求后逐步 stop、anchor、responsibility、reply_handler/wait_cancel、requeue、archive，各一个 sub-commit，已提交步骤不撤销 | Host 归档、维护、咨询回执归档 |
 | `createSessionMaintenanceService` | `src/business/workflow/session-maintenance.ts:151` | 每次最多一页的有界维护；按到期与真实关闭时间归档 | 启动或推进时跑一页维护 |
-| `createDecisionActions` | `src/business/workflow/decision-actions.ts:289` | `resolveDecision` 的三段有限协调与只读 `orderGoalAdvances` | 决定卡作答与 Host 排序 |
-| `createCommandRerunRequestApplicationAdapter` | `src/business/workflow/decision-actions.ts:247` | `command_rerun_request` 卡的第②步适配器：按答案派生身份提交，重试重放 | 组合根注册 `command_rerun_request` 应用 |
+| `createDecisionActions` | `src/business/workflow/decision-actions.ts:320` | `resolveDecision` 的三段有限协调与只读 `orderGoalAdvances` | 决定卡作答与 Host 排序 |
+| `createCommandRerunRequestApplicationAdapter` | `src/business/workflow/decision-actions.ts:249` | `command_rerun_request` 卡的第②步适配器：按答案派生身份提交，重试重放 | 组合根注册 `command_rerun_request` 应用 |
+| `createMessageReleaseApplicationAdapter` | `src/business/workflow/decision-actions.ts:305` | `message_release` 卡的第②步适配器：只把 `answerRef` 交给可信入口，已提交的 `approve` 才调 `onApproved`（其余不调），入口的 committed 结果带着这条命令的正式回执，适配器原样交给第③步 | 组合根注册 `message_release` 应用；不要另写放行释放或再判一次选项 |
 | `createConsultationConsumer` | `src/business/workflow/consultation.ts:100` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:112` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |

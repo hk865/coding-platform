@@ -144,7 +144,7 @@ function longCallId(alias: number): string {
  */
 function emptyMailbox(): SessionMessageCommandPort {
   const page = async () => ({ status: 'ready' as const,
-    value: { items: [], nextCursor: null, sourceCursor: 'c0000000000' as never } });
+    value: { items: [], nextCursor: null, sourceCursor: 'c0000000000' as never, releaseBlocks: [] } });
   const notUsed = (what: string) => async (): Promise<never> => {
     throw new Error(`the §5.1 mailbox seam never ${what}`);
   };

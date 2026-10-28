@@ -963,6 +963,42 @@ describe('7A-1 reply and withdraw guards', () => {
   });
 });
 
+describe('7A-2 R-wd: a withdrawn message cannot be decided or released', () => {
+  // The machine's `next` carries no clock, so withdrawal/approval times are recorded through the
+  // record constructors the owner uses; the state comes back through `messageMachineStateOf`.
+  const awaitingRecord = createSessionMessageRecord(newInput({ release: 'awaiting' }));
+  const approvedRecord = nextSessionMessageRecord(awaitingRecord, {
+    kind: 'release_decided', allow: true, approvedAt: 'T-approved', approvalRevision: 2, release: 'approved', proof: null,
+  });
+  const awaiting = messageMachineStateOf(awaitingRecord);
+  const approved = messageMachineStateOf(approvedRecord);
+  const withdrawnAwaiting = messageMachineStateOf(
+    nextSessionMessageRecord(awaitingRecord, { kind: 'withdrawn', withdrawnAt: 'T-withdrawn' }));
+  const withdrawnApproved = messageMachineStateOf(
+    nextSessionMessageRecord(approvedRecord, { kind: 'withdrawn', withdrawnAt: 'T-withdrawn' }));
+  it.each([
+    ['message_release_decided (allow) on a withdrawn awaiting message', withdrawnAwaiting,
+      { type: 'message_release_decided', allow: true }, { detail: 'a withdrawn message cannot be decided' }],
+    ['message_release_decided (deny) on a withdrawn awaiting message', withdrawnAwaiting,
+      { type: 'message_release_decided', allow: false }, { detail: 'a withdrawn message cannot be decided' }],
+    ['message_released on a withdrawn approved message', withdrawnApproved, { type: 'message_released' },
+      { detail: 'a withdrawn message cannot be released' }],
+    ['message_release_decided (allow) on an awaiting message', awaiting,
+      { type: 'message_release_decided', allow: true }, { release: 'approved' }],
+    ['message_release_decided (deny) on an awaiting message', awaiting,
+      { type: 'message_release_decided', allow: false }, { release: 'denied' }],
+    ['message_released on an approved message', approved, { type: 'message_released' }, { release: 'released' }],
+  ] as const)('%s', (label, state, event, expected) => {
+    const transition = transitionMessage(state, event, baseCtx());
+    if ('detail' in expected) {
+      expect(transition).toEqual({ ok: false, reason: 'illegal', code: 'invalid', detail: expected.detail });
+    } else {
+      expect(transition.ok).toBe(true);
+      expect(transition.ok && transition.next.status !== 'absent' && transition.next.release).toBe(expected.release);
+    }
+  });
+});
+
 // --------------------------------------------------------------------------
 // Record constructors
 // --------------------------------------------------------------------------

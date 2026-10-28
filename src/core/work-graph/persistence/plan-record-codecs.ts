@@ -15,6 +15,7 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { defineShape, f } from '../../../contracts/data-format.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
+import { SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -80,6 +81,8 @@ export type PlanProposalRecordedEvent = {
   actor: ActorRef;
   occurredAt: string;
   payload: { proposal: PlanProposal };
+  /** 7A §3.5: the acknowledged message; written only when the proposal carried one. */
+  acknowledgement?: SessionMessageRef;
 };
 
 // --------------------------------------------------------------------------
@@ -910,6 +913,12 @@ function validatePlanProposalRecordedEvent(event: EncodedDomainEvent): DecodeRes
   if (!nonEmpty(parsed['correlationId'])) issues.push('PlanProposalRecorded correlationId must be a non-empty string');
   if (!nonEmpty(parsed['idempotencyKey'])) issues.push('PlanProposalRecorded idempotencyKey must be a non-empty string');
   if (actorFromValue(parsed['actor']) === null) issues.push('PlanProposalRecorded actor is not a valid ActorRef');
+  if (parsed['acknowledgement'] !== undefined) {
+    const acknowledgementProblem = checkShape(SessionMessageRefShape, parsed['acknowledgement'], 'stored');
+    if (acknowledgementProblem !== null) {
+      issues.push(`PlanProposalRecorded acknowledgement is invalid: ${acknowledgementProblem}`);
+    }
+  }
   const payload = parsed['payload'];
   if (!isRecord(payload)) issues.push('PlanProposalRecorded payload must be an object');
   else {

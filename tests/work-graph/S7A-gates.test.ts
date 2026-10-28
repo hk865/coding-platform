@@ -3,7 +3,6 @@
  * it produces here) and the consultation rows on a real memory Host world whose ONE backend the A4 seam shares with
  * the withdraw owner; the pure table is `S7A-gates-pure.test.ts`.
  */
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMailboxInputSupply } from '../../src/core/agent-runtime/execution-inputs.js';
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
@@ -13,7 +12,6 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
-import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDispatchBasisReader } from '../../src/core/work-graph/tasks/dispatch-basis.js';
@@ -27,10 +25,10 @@ import {
 import { driveWorkflow, readExecution, readGoal, workRow } from '../helpers/A2-restart-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
-import { replyS7AMessage, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { replyS7AMessage, setS7AAutonomy, S7A_REPLY_TOOLS } from '../helpers/S7A-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import {
-  S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6AHttpAnswer, type S6ASession,
+  S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6AHttpAnswer, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
 import type { InMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 
@@ -249,24 +247,6 @@ function readyCellValue<T>(answer: S6AHttpAnswer, what: string): T {
   return body.value;
 }
 
-/**
- * The Host input the reply Run needs (A8): the work binding with the reply tool merged in, the same merge the S7A
- * fixture's senders make. Only the id and `mergeTools` reach the Host's configuration.
- */
-const REPLY_TOOLS: S6AExtraBinding = {
-  binding: { id: 's6a-work-binding', label: 'S6A work binding', scope: S6A_SCOPE, role: S6A_WORK_ROLE,
-    configurationRevision: 's6a-work-binding@1',
-    model: { revision: 's6a-work-binding-model@1', provider: 'deepseek', model: 's6a-scripted-s6a-work-binding',
-      secretEnvironmentVariable: 'S6A_CONTROLLED_SECRET' },
-    grant: { budget: AG2B_RUNTIME_BUDGET, hostTemplate: { templateId: S6A_WORK_ROLE.templateId,
-      revision: S6A_WORK_ROLE.templateRevision, digest: sha256Hex('S6A trusted work guidance') },
-      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(
-        new URL('../../vendor/coding-agent/resources/skills', import.meta.url)), enabledIds: [] },
-      systemInstruction: 'S6A trusted work guidance', deniedPrefixes: [], processSandboxOptions: {},
-      materialBasis: null } },
-  mergeTools: ['respond_session_message'],
-};
-
 type WaitingCell = {
   world: S6AHostWorld;
   /** The world's own ledger, the one memory backend the seam captured (the withdraw owner's). */
@@ -287,7 +267,8 @@ type WaitingCell = {
  */
 async function openWaitingCell(label: string): Promise<WaitingCell> {
   const opening = counted.created.length;
-  const world = await openS6AHostWorld({ backend: 'memory', secretaryWork: true, extraBindings: [REPLY_TOOLS] });
+  // The Host input the reply Run needs (A8): only the id and `mergeTools` reach the Host's configuration.
+  const world = await openS6AHostWorld({ backend: 'memory', secretaryWork: true, extraBindings: [S7A_REPLY_TOOLS] });
   cellWorlds.push(() => world.close().catch(() => undefined));
   const ledger = capturedLedger(counted.created.slice(opening));
   await setS7AAutonomy(world, S6A_GOAL_1, 'every_step');

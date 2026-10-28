@@ -2,8 +2,8 @@
 
 ## 负责什么，不负责什么
 
-- 负责：`DecisionSourceV1` 每种来源一个 handler，从正式记录重建该分支的完整事实（`goal`、`objects`、`options`、`pins`、`goalBases`、`closed`、`allowedReaderSessionRefs`）并返回。handler 不共同修改外层变量。message、planning question、goal conflict、note review、unknown call review、command rerun request 六种 handler 收外层已收窄好的 Goal（`goalRef` 参数；note review 也收 `null`，即项目 subject 的无 Goal 分支），自己不解析 `subject`；goal cause 与 candidate 从身份里的 `goalRef` 读自己的 Goal。
-- 不负责：公开工厂 `createDecisionSourceFacts`、共同前置检查、按 kind 分派、`message_release` 拒绝与未知 kind 默认、最终 pin 复核、guards 与结果组装；这些仍在 `communication/decision-source-facts.ts`。本文件夹不 import 该文件。
+- 负责：`DecisionSourceV1` 每种来源一个 handler，从正式记录重建该分支的完整事实（`goal`、`objects`、`options`、`pins`、`goalBases`、`closed`、`allowedReaderSessionRefs`）并返回。handler 不共同修改外层变量。message、planning question、goal conflict、note review、unknown call review、command rerun request 七种 handler 收外层已收窄好的 Goal（`goalRef` 参数；note review 也收 `null`，即项目 subject 的无 Goal 分支），自己不解析 `subject`；goal cause 与 candidate 从身份里的 `goalRef` 读自己的 Goal。
+- 不负责：公开工厂 `createDecisionSourceFacts`、共同前置检查、按 kind 分派、未知 kind 默认、最终 pin 复核、guards 与结果组装；这些仍在 `communication/decision-source-facts.ts`。本文件夹不 import 该文件。
 - 分层：仍属 `communication`，依赖只用 `model`、`state`、`persistence`、`materials`、`sessions`、`queries`、`tasks` 和 `RecordStore` 端口；不得 import `notes`、`views`、`evidence`、`agent-runtime`、`app`、`business`、`composition`。注记审查只经注入的 `NoteDecisionSourcePort` 读。
 - 读失败、缺依赖、认不出的值原样返回或拒绝，不折成空来源；handler 不做自己的写入，也不加共同读取之外的 store 读取。
 
@@ -23,6 +23,7 @@
 | `note-review.ts` | `readNoteReviewSource` | note review 来源的完整分支事实；Goal 为 `null` 时读无 Goal 的注记卡（`goalId: null`）；先按注记自己的 subject 比对（卡开着、关了都先比），别的 subject 的注记拒绝。 |
 | `unknown-call-review.ts` | `readUnknownCallReviewSource` | unknown call review 来源的完整分支事实。 |
 | `command-rerun-request.ts` | `readCommandRerunRequestSource` | command rerun request 来源的完整分支事实。 |
+| `message-release.ts` | `readMessageReleaseSource` | message release 来源的完整分支事实：消息记录、它的 Goal 与 `tasks/message-release-card.ts` 的卡片事实；派生块是读的 DTO，不在分支事实里。 |
 
 ## 不要做
 

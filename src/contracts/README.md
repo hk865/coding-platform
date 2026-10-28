@@ -14,8 +14,9 @@
 ### 任务与计划
 做 Goal 决定/相位、初始规划、Task/Plan 形状、返工与命令重跑的去这组。
 - `command-rerun-request.ts` — `CommandRerunRequest` 聚合、状态与三个索引名；状态机在 `src/core/work-graph/state/`。
-- `goal-card.ts` — 目标卡确认/复制的输入、回执、事实与决定：`GoalConfirmDraftInputV1`/`GoalConfirmDraftReceiptV1`/`GoalConfirmFactsV1`/`GoalConfirmDecisionV1`、`GoalCopyDraftInputV1`/`GoalCopyDraftResultV1`/`GoalCopyConfirmInputV1`/`GoalCopyConfirmResultV1`/`GoalUnderstandingPinV1`/`GoalCopyFactsV1`/`GoalCopyDecisionV1`。
+- `goal-card.ts` — 目标卡确认/复制的输入、回执、事实与决定：`GoalConfirmDraftInputV1`/`GoalConfirmDraftReceiptV1`/`GoalConfirmFactsV1`/`GoalConfirmDecisionV1`、`GoalCopyDraftInputV1`/`GoalCopyDraftResultV1`/`GoalCopyConfirmInputV1`/`GoalCopyConfirmResultV1`/`GoalUnderstandingPinV1`/`GoalCopyFactsV1`/`GoalCopyDecisionV1`。复制的三处形状：`GoalCopyDraftResultV1.interventions` 为 `{ available: false }` 或带 `candidates` 的 `{ available: true }`（候选用 `goal-copy-retraction.ts` 的 `CopyInterventionCandidateV1`），`GoalCopyFactsV1.selected` 直接就是这个候选类型（没有 `intervened`），决定 create 臂的 `retract` 是未选中的候选 ref。
 - `goal-change.ts` — `UserDecisionV1`/`UserDecisionSnapshot`：有界的 Goal 决定记录。
+- `goal-copy-retraction.ts` — 复制取消的候选契约：`CopyInterventionStateV1`（候选状态闭集）与 `CopyInterventionCandidateV1`（消息 ref、版本、状态、可选/可撤回及各自原因）。
 - `goal-phase.ts` — `GoalPhaseRef`/`GoalPhaseSnapshot`：Goal 终止相位。
 - `initial-planning.ts` — `InitialPlanAssignment`、`InitialPlanOrigin`、`InitializationSourceShape`/`InitializationSourceV1`（初始化计划读哪一份回答：绑定的草稿或已备好的 Goal）、初始规划响应/设置。
 - `initial-planning-parse.ts` — `parseInitialPlanningResponseV2`：初始规划 v2 回答外层协议的唯一纯解析；WorkGraph `tasks/` 的 Plan owner 和 `queries/` 的秘书回答检查共用（`queries` 不能 import `tasks`）。
@@ -80,10 +81,11 @@
 - `dispatch-counter-format.ts` — `DispatchCounter@1` 的字段表 `DispatchCounterFields`（`src/contracts/dispatch-counter-format.ts:5`）、推导类型 `DispatchCounterV1`（`src/contracts/dispatch-counter-format.ts:14`）、具名规则 `dispatchCounterProblem` 与格式 `DispatchCounterFormat`；规则检查正安全整数、Goal 身份和消息项目一致性。
 - `error-message.ts` — `messageOf`：取 `Error.message`，否则 `String(error)`；转换本身抛错时不吞。
 - `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalKey`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
-- `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量；来源/卡片/请知悉的 subject 只有 `DecisionSubjectShape`/`DecisionSubjectV1` 一份（Goal 或 project 的带标签联合），身份键 `decisionSubjectKey`、取 Goal 的 `decisionSubjectGoalRef`；7A-1 加 `message_release` 卡片的条目 `MessageReleaseCardItemV1`（`src/contracts/goal-decisions.ts:158`）。
+- `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量；来源/卡片/请知悉的 subject 只有 `DecisionSubjectShape`/`DecisionSubjectV1` 一份（Goal 或 project 的带标签联合），身份键 `decisionSubjectKey`、取 Goal 的 `decisionSubjectGoalRef`；7A-1 加 `message_release` 卡片的条目 `MessageReleaseCardItemV1`（`src/contracts/goal-decisions.ts:160`）与它的派生字段 `releaseBlock`；7A-2 加那张卡的两个选项 id `MESSAGE_RELEASE_OPTIONS`（`src/contracts/goal-decisions.ts:157`）与派生块 `MessageReleaseBlockV1`（`src/contracts/goal-decisions.ts:178`，`blockedReason` 与三个当前值，`tasks/` 不许 import `communication/`，所以正本在 C）。
 - `governance.ts` — 完成策略/架构基线的 revision、pin 与 `completionPolicyContentDigest`。
 - `graph-context.ts` — 上下文装配/图读模型/注意力/任务输入页 DTO，以及 `goalContextContentV1`、`goalContextDigestV1`。
 - `human-role-collaboration.ts` — 协作策略 revision/active 与 `coordinationPolicyContentDigest`。
+- `keyset-cursor.ts` — 有序查找的翻页游标 `KeysetCursorV1`（`{ v: 1, goalId, after }`，只绑一个 Goal，`goalId` 为 null 是工作区页）与它的 `encodeKeysetCursor`/`decodeKeysetCursor`（base64url 的 JSON）。
 - `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:124`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:130`）/ `compareCursors`（`src/contracts/ledger.ts:142`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:151`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
 - `note.ts` — 注记 Head/Version/CurrentPointer、锚点、`NOTE_GENERAL_KINDS` 与 `renderNoteHeader`；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
@@ -134,7 +136,7 @@
 | `isRequestRound` | `src/contracts/query-job.ts:463` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18` | 初始规划 v2 回答的外层协议：一个 JSON 对象、`schemaVersion` 2、`plan` 或 `needs_decision` 的外形；不修补模型的计划，计划内容由 Plan 校验器判断。 | 读初始规划回答或秘书 `initial_coordination` 回答；不要另写 v2 JSON 解析。 |
 | `queryExecutionBindingOf` | `src/contracts/query-job.ts:474` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
-| `decisionSourceKey` | `src/contracts/goal-decisions.ts:230` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
+| `decisionSourceKey` | `src/contracts/goal-decisions.ts:245` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
 | `DecisionSubjectShape`、`DecisionSubjectV1` | `src/contracts/goal-decisions.ts:89`、`src/contracts/goal-decisions.ts:95` | 决定来源/卡片/请知悉的 subject 字段表与推导类型：`{ kind: 'goal', goalRef }` 或 `{ kind: 'project', projectRef }`，旁边不再有第二个 `goalRef` 字段。 | 构造或读 `subject`；不要另写一份只认 Goal 的 subject 形状。 |
 | `decisionSubjectKey` | `src/contracts/goal-decisions.ts:97` | subject 的带标签规范键。 | 读侧按 subject 分组/排序；不要手拼字符串。 |
 | `decisionSubjectGoalRef` | `src/contracts/goal-decisions.ts:110` | 对已校验的 subject 收窄（来源、卡片、请知悉）：goal 返回 `goalRef`，project 或缺失返回 `null`；不代替输入形状校验。 | 每个来源/卡片分支只经这一处收窄；不要自己再写一份 `goalRefOf`。 |
@@ -144,6 +146,7 @@
 | `makeCommitCursor` | `src/contracts/ledger.ts:124` | 由序号构造 `CommitCursor`。 | 合成/测试游标；生产写入从提交回执取真实游标。 |
 | `seqOfCommitCursor` | `src/contracts/ledger.ts:130` | 从 `CommitCursor` 取回序号。 | 排序、日志与范围比较。 |
 | `compareCursors` | `src/contracts/ledger.ts:142` | 两个游标的顺序：都是 ledger 游标时按序号，否则按文本。 | 排序、日志与范围比较；`queries/request-rounds-read.ts` 转出这一份，不要另写。 |
+| `encodeKeysetCursor`、`decodeKeysetCursor` | `src/contracts/keyset-cursor.ts:11`、`src/contracts/keyset-cursor.ts:18` | 有序查找页的游标：把 Goal（或 null，工作区页）和页的 `next` 原样编成 base64url；解码只认 `v` 为 1 且 `goalId` 相同的游标，否则 `null`。不查 `after` 和页宽，坏值由存储的有序请求规则拒绝。 | 按 Goal 或工作区翻 `lookupOrdered` 的页时；不要另写私有游标。 |
 | `completionPolicyContentDigest` | `src/contracts/governance.ts:106` | 完成策略正文摘要。 | 安装/激活 revision 前对齐摘要。 |
 | `coordinationPolicyContentDigest` | `src/contracts/human-role-collaboration.ts:88` | 协作策略正文摘要。 | 安装/激活协作策略 revision。 |
 | `roleSpecContentDigest` | `src/contracts/role-spec.ts:156` | 角色规格正文摘要。 | 安装/激活角色规格。 |
@@ -205,6 +208,7 @@
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:29` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:186`、`src/contracts/unknown-call-review.ts:195` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
 | `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:14` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
+| `CopyInterventionStateV1`、`CopyInterventionCandidateV1` | `src/contracts/goal-copy-retraction.ts:4`、`src/contracts/goal-copy-retraction.ts:11` | 复制取消的候选状态闭集（`withdrawn`/`applied`/`rejected`/`copied`/`delivered`/`not_delivered`）与候选 DTO（消息 ref、版本、状态、可选/可撤回及各自原因）。 | 候选规则与 copy 端口引用候选类型时；不要另写候选形状。 |
 
 ## 内部用
 

@@ -3,7 +3,7 @@
 ## 负责什么，不负责什么
 - 外层 Host：依赖方向只允许 `src/composition`、`src/contracts` 和 `src/core`/`src/business` 各模块；`scripts/check-boundaries.mjs` 只按模块 owner 判方向，不细化到端口文件。不能开 store，不能被 core/business 反向 import。
 - 负责进程外壳：CLI、HTTP/SSE 传输、实例锁、启动 reconcile、Host 设置、提示词包、运行期配置，以及注意力、自动捕获、协作、Goal 扇出和请求驱动（唤醒循环加每 workspace 的两条请求队列）。
-- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:1387`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
+- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:1415`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
 - 不写状态：任何状态迁移只经 `src/core/work-graph/state/`（AGENTS 第 9 条）；本层只调用平台公开端口。
 - 请求体永远不提供 principal、root、token 或凭据；这些只来自受信任的 `options`。
 - `src/core`、`src/business` 不得反向 import 本层。
@@ -12,7 +12,7 @@
 
 ### Host 启动与选项
 做 Host 装配、CLI、单实例锁和启动对账的去这组。
-- `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁且 `requestDriver` 不是 `'off'` 时建 `createWakeLoop`、两条请求队列和生命周期队列 `LIFECYCLE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列）。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1099`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1426`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
+- `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁且 `requestDriver` 不是 `'off'` 时建 `createWakeLoop`、两条请求队列、生命周期队列 `LIFECYCLE_QUEUE` 和释放队列 `MESSAGE_RELEASE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列）。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1163`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1490`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
 - `main.ts` — CLI：读一份 JSON 配置，启动 loopback Host，只打印不含 token 的地址。
 - `host-instance-lease.ts` — SQLite 旁的单实例锁：存活、陈旧、损坏的判定与 takeover。
 - `startup-reconcile.ts` — 持锁 Host 启动时的一次 reconcile：分类未决 Run/Query/check/control，重驱 Goal 扇出。
@@ -21,8 +21,8 @@
 ### HTTP 路由与服务器
 做 loopback HTTP、路由表和 `changes` SSE 的去这组。
 - `server.ts` — HTTP/静态外壳：token、同源、JSON/大小限制、SSE，再转发给 `core-routes.ts`。
-- `core-routes.ts` — 固定路由表、请求解析、端口绑定和逐 suffix 显式 dispatch；`secretaries/handoff` 与 `secretaries/archive` 是只限人的内部命令：先验人，再经 accept owner，然后驱动 Workflow 的 `advance`/`manualArchive`，公开 key 表不变。6B-3 的四条 `plain` 路由：`goals/confirm-draft` 和 `goals/copy-confirm` 只限人（与注记的两条处置共用一个人的守卫，原因是“only the person may call this route”），`goals/copy-draft` 是读；`initialization/adopt` 也只限人，它的 owner 经 `createPlatformCoreRouteBindings` 可选的第六个参数传入，没传时回答 `unsupported`。
-- `core-http-types.ts` — 从公开端口派生的 HTTP/JSON DTO 与传输常量，含两条秘书生命周期命令的 body/response 和 `SecretaryLifecycleCoreRouteDto`；这两条的 body 从 owner 的 accept 输入派生（只把 `source` 叫 `session`），response 从 Workflow `advance`/`manualArchive` 的返回类型派生，绑定用同一组类型。6B-3 四条路由的 body/response从 `GoalConfirmPort`、`GoalCopyPort` 和 `InitializationAdoptionHostPort` 派生。
+- `core-routes.ts` — 固定路由表、请求解析、端口绑定和逐 suffix 显式 dispatch；7A-2 的 `messages/apply` 是 `graph_write`，绑定 apply owner，路由不加人检查：owner 自己比较调用方的 effect；`secretaries/handoff` 与 `secretaries/archive` 是只限人的内部命令：先验人，再经 accept owner，然后驱动 Workflow 的 `advance`/`manualArchive`，公开 key 表不变。6B-3 的四条 `plain` 路由：`goals/confirm-draft` 和 `goals/copy-confirm` 只限人（与注记的两条处置共用一个人的守卫，原因是“only the person may call this route”），`goals/copy-draft` 是读；`initialization/adopt` 也只限人，它的 owner 经 `createPlatformCoreRouteBindings` 可选的第六个参数传入，没传时回答 `unsupported`。
+- `core-http-types.ts` — 从公开端口派生的 HTTP/JSON DTO 与传输常量，含两条秘书生命周期命令的 body/response 和 `SecretaryLifecycleCoreRouteDto`；这两条的 body 从 owner 的 accept 输入派生（只把 `source` 叫 `session`），response 从 Workflow `advance`/`manualArchive` 的返回类型派生，绑定用同一组类型。6B-3 四条路由的 body/response从 `GoalConfirmPort`、`GoalCopyPort` 和 `InitializationAdoptionHostPort` 派生。7A-2 的 `MessagesApplyBody`/`MessagesApplyResponse` 从 `MessageApplyPort['applyMessage']` 派生，`MessagesCoreRouteDto` 收集这两条别名。
 - `initialization-adoption.ts` — `initialization/adopt` 的 Host owner：端口 `InitializationAdoptionHostPort`（`adopt` 一次调用接受或续跑、冻结输入、跑完能完成的阶段，停下回答 `pending`；`read` 是恢复读，生产里还没有调用者）和 P11 组合 `createInitializationAdoptionHost`（`src/app/initialization-adoption.ts:131`）。每个阶段 `read → resume →（打开的前标记 | 新一代替换停下的标记 | saveBefore）→ 子 owner → saveAfter`；记录只由 J 的 `platform.initializationAdoption` 写，本 owner 只给写入输入、按冻结的 actor 调子 owner；四个子 owner 的身份前缀和指纹配方是它们的私有函数，这里照抄并注明出处。不持实例租约时在 accept 前回答 `busy`。Host 没有设置（没有建这个 owner）时，`initialization/adopt` 回答 `unsupported`。
 - `change-feed.ts` — 进程内变更通知中心，供 `changes` SSE 与 `Last-Event-ID` 恢复。
 
@@ -32,7 +32,7 @@
 - `auto-capture-driver.ts` — 自动捕获驱动：每 Host 一个，按 workspace 串行排队，捕获身份用 requestSeq。
 - `collaboration-driver.ts` — 持续协作的 Host 活句柄：选 Task、并行 Work/outbox、等回复、stop/pause、read。
 - `goal-fan-out-driver.ts` — Goal 级 pause/resume/cancel 对受影响 Run 的幂等扇出。
-- `wake-loop.ts` — 请求队列和生命周期队列的唤醒循环：按（workspace, queue）合并脏标记，一次一个 pass，`more` 让出事件循环后再跑，整圈无进展即停到下次唤醒，处理器失败 1 秒翻倍退避到 60 秒，commit notice 按项目唤醒订阅了该聚合类型的队列（`register` 的 `aggregateTypes`，缺省是 `QueryJob`/`QueryRun`/`Session`），未武装的 workspace 只认 `request_command`，`close` 中止自己的 `AbortSignal` 并等运行中的 pass。生命周期队列的键是 `LIFECYCLE_QUEUE`、订阅 `LIFECYCLE_WAKE_AGGREGATE_TYPES`（含 `CoreOperation`、`SessionActivity`、`PlanProposal`、`Goal` 和三个注记类型）：`createHandoffQueue` 的 `run` 一次跑完整趟（先结束待处理的轮，再把每个未完成操作各继续一次），按种类分派 `continueHandoff` / `manualArchive`，`close` 等它启动的调用；`notReady` 把任何非 `ready` 的读结果转成带 code/reason 的失败（不折成空结果），交给循环的退避重试。
+- `wake-loop.ts` — 请求队列和生命周期队列的唤醒循环：按（workspace, queue）合并脏标记，一次一个 pass，`more` 让出事件循环后再跑，整圈无进展即停到下次唤醒，处理器失败 1 秒翻倍退避到 60 秒，commit notice 按项目唤醒订阅了该聚合类型的队列（`register` 的 `aggregateTypes`，缺省是 `QueryJob`/`QueryRun`/`Session`），未武装的 workspace 只认 `request_command` 或 `release_armed`，`close` 中止自己的 `AbortSignal` 并等运行中的 pass。生命周期队列的键是 `LIFECYCLE_QUEUE`、订阅 `LIFECYCLE_WAKE_AGGREGATE_TYPES`（含 `CoreOperation`、`SessionActivity`、`PlanProposal`、`Goal` 和三个注记类型）：`createHandoffQueue` 的 `run` 一次跑完整趟（先结束待处理的轮，再把每个未完成操作各继续一次），按种类分派 `continueHandoff` / `manualArchive`，`close` 等它启动的调用；`notReady` 把任何非 `ready` 的读结果转成带 code/reason 的失败（不折成空结果），交给循环的退避重试。
 
 ### 配置与设置
 做 Host 设置、模型/工作区配置和运行期热替换的去这组。
@@ -53,8 +53,8 @@
 | --- | --- | --- | --- |
 | `createLocalWorkbenchHost` | `src/app/host.ts:433` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
 | `createWorkbenchServer` | `src/app/server.ts:187` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
-| `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:724` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
-| `dispatchCoreRoute` | `src/app/core-routes.ts:1226` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
+| `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:729` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
+| `dispatchCoreRoute` | `src/app/core-routes.ts:1254` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
 | `parseCoreRouteRequest` | `src/app/core-routes.ts:655` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
 | `createWorkbenchTools` | `src/app/workbench-tools.ts:283` | 适配 Kernel 文件沙箱与进程沙箱：读写、列目录、后台命令 | 工作台的文件/命令路由；不要直接碰 Kernel sandbox |
 | `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:391` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
@@ -73,9 +73,9 @@
 | `createChangeFeed` | `src/app/change-feed.ts:87` | 汇总 commit 与 Host 句柄变更，保留窗口并回答 SSE 恢复 | `changes` 长连接；notice 只带粗粒度类型与 project |
 | `createCollaborationDriver` | `src/app/collaboration-driver.ts:313` | 持续协作的活句柄：Task 选择、Work/outbox 并发、等回复、stop/pause、read | Host 的持续通信；不拥有 store，只组合既有 owner |
 | `createGoalFanOutDriver` | `src/app/goal-fan-out-driver.ts:201` | Goal 控制提交后，对每个受影响 Run 提交幂等 fan-out 控制并观察未知结果 | Goal pause/resume/cancel 与启动重驱；不要重复提交 intent |
-| `createWakeLoop` | `src/app/wake-loop.ts:208` | 请求队列和生命周期队列的唤醒循环：合并脏标记、一次一个 pass、`more` 让出后重跑、失败退避、按队列订阅的聚合类型配对 commit notice、未武装与 `close` | Host 的请求/生命周期队列驱动；`driving` 传租约是否持有，`register` 的 `aggregateTypes` 只给生命周期队列，别在别处另写合并或退避 |
+| `createWakeLoop` | `src/app/wake-loop.ts:221` | 请求队列和生命周期队列的唤醒循环：合并脏标记、一次一个 pass、`more` 让出后重跑、失败退避、按队列订阅的聚合类型配对 commit notice、未武装与 `close` | Host 的请求/生命周期队列驱动；`driving` 传租约是否持有，`register` 的 `aggregateTypes` 只给生命周期队列（`LIFECYCLE_WAKE_AGGREGATE_TYPES`）和释放队列（`MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES`），别在别处另写合并或退避 |
 | `acquireHostInstanceLease` | `src/app/host-instance-lease.ts:113` | 取得/释放 SQLite 旁的单 Host 锁，处理陈旧锁与 takeover | 建平台之前；没持锁的 Host 只做读与 owner 写 |
-| `runStartupReconcile` | `src/app/startup-reconcile.ts:269` | 持锁启动时把未决 Run/Query/check/control 分类、结清、重驱 | 每次 Host 启动、开新 workspace 时；不重跑 Kernel Turn |
+| `runStartupReconcile` | `src/app/startup-reconcile.ts:299` | 持锁启动时把未决 Run/Query/check/control 分类、结清、重驱 | 每次 Host 启动、开新 workspace 时；不重跑 Kernel Turn |
 | `createHostCoreCallContext` | `src/app/core-call-context.ts:17` | 只用启动 actor 与已解析 scope 构造 `CoreCallContext` | server 进入路由前；永远不接受请求体 principal |
 | `readDiskPromptPack` | `src/app/prompt-packs.ts:260` | 从磁盘读一个包及其 extends 链并解析；`platform` 是虚拟包 | 设置/提示词路由读取包时 |
 | `createDiskPromptPackSource` | `src/app/prompt-packs.ts:314` | 把磁盘目录暴露成 `PromptPackSourcePort` | 平台装配要注入提示词包来源时 |
@@ -91,7 +91,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1387`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1415`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。

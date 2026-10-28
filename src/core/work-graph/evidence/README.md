@@ -18,12 +18,12 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createEvidenceService` | `src/core/work-graph/evidence/evidence-service.ts:824` | 构造 `EvidencePort` 的单一实现，依赖全部由组合根注入 | 组合根接线；不要另写证据服务 |
-| `openVerification` | `src/core/work-graph/evidence/evidence-service.ts:987` | 读 subject Run 与已采纳 Plan、捕获固定 source、编译计划、按轮次 revision CAS 登记 pending checks | Run 结束开检查；一个 subject 只开一条轮次链 |
-| `readVerification`、`queryOriginalVerification`、`queryRoundChainHead` | `src/core/work-graph/evidence/evidence-service.ts:1155`、`src/core/work-graph/evidence/evidence-service.ts:1212`、`src/core/work-graph/evidence/evidence-service.ts:1177` | 读一轮、读某 work Run 的原轮链头、读某 subject 的链头 | 启动恢复与完成读取；读不到不是“没有轮” |
-| `beginCheck`、`recordCheckResult`、`abandonCheck`、`interruptCheck` | `src/core/work-graph/evidence/evidence-service.ts:1230`、`src/core/work-graph/evidence/evidence-service.ts:1308`、`src/core/work-graph/evidence/evidence-service.ts:1452`、`src/core/work-graph/evidence/evidence-service.ts:1456` | 检查 pending→executing 并冻结 ticket、记录真实观察/未启动/中断 | 检查 runner 与 Host 记录结果 |
-| `finalizeChecks` | `src/core/work-graph/evidence/evidence-service.ts:1460` | 折冻结 coverage，一次 commit 写 round + Evidence + 索引 + 事件 + receipt；未覆盖/阻塞进 gaps，不当 PASS | 轮次收口；不伪造 PASS |
-| `reverifyRound` | `src/core/work-graph/evidence/evidence-service.ts:1793` | 在 finalized 非 PASS 链头上开后继轮，或提交一条策略拒绝 | 自动复核/返工；不要另开第二轮 |
+| `createEvidenceService` | `src/core/work-graph/evidence/evidence-service.ts:832` | 构造 `EvidencePort` 的单一实现，依赖全部由组合根注入 | 组合根接线；不要另写证据服务 |
+| `openVerification` | `src/core/work-graph/evidence/evidence-service.ts:995` | 读 subject Run 与已采纳 Plan、捕获固定 source、编译计划、按轮次 revision CAS 登记 pending checks | Run 结束开检查；一个 subject 只开一条轮次链 |
+| `readVerification`、`queryOriginalVerification`、`queryRoundChainHead` | `src/core/work-graph/evidence/evidence-service.ts:1163`、`src/core/work-graph/evidence/evidence-service.ts:1220`、`src/core/work-graph/evidence/evidence-service.ts:1185` | 读一轮、读某 work Run 的原轮链头、读某 subject 的链头 | 启动恢复与完成读取；读不到不是“没有轮” |
+| `beginCheck`、`recordCheckResult`、`abandonCheck`、`interruptCheck` | `src/core/work-graph/evidence/evidence-service.ts:1238`、`src/core/work-graph/evidence/evidence-service.ts:1316`、`src/core/work-graph/evidence/evidence-service.ts:1460`、`src/core/work-graph/evidence/evidence-service.ts:1464` | 检查 pending→executing 并冻结 ticket、记录真实观察/未启动/中断 | 检查 runner 与 Host 记录结果 |
+| `finalizeChecks` | `src/core/work-graph/evidence/evidence-service.ts:1468` | 折冻结 coverage，一次 commit 写 round + Evidence + 索引 + 事件 + receipt；未覆盖/阻塞进 gaps，不当 PASS | 轮次收口；不伪造 PASS |
+| `reverifyRound` | `src/core/work-graph/evidence/evidence-service.ts:1816` | 在 finalized 非 PASS 链头上开后继轮，或提交一条策略拒绝；接受可选 `acknowledgement`，提交结果带 `proofReceipt` | 自动复核/返工；不要另开第二轮 |
 | `compileVerificationPlan` | `src/core/work-graph/evidence/verification-plan.ts:61` | 纯编译：每个必需要求绑定可覆盖的冻结能力，缺覆盖记 `uncovered`，空必需集 `invalid`，不接受调用方 digest/coverage/PASS | open/reverify 冻结检查计划 |
 | `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet` | `src/core/work-graph/tasks/evidence-coverage.ts:153`、`src/core/work-graph/tasks/evidence-coverage.ts:76` | 证据适用性判定与有效证据的单一纯折叠 | finalize 与完成读取；不要在本层重算 applicability |
 | `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 引用的结构判等；不是 `sameJson` 的等价物 | 证据 commit 组装；执行入口的 `sameJson as sameRef` 转出已删除，F 行副本直接用 `src/contracts/fingerprint.ts:50` 的 `sameJson` |

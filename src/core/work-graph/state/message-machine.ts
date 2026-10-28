@@ -1303,6 +1303,7 @@ function onReleaseDecided(
   event: Extract<MessageEvent, { type: 'message_release_decided' }>,
 ): MessageTransition {
   if (state.status === 'absent') return absentMessage();
+  if (state.withdrawnAt !== null) return reject('illegal', 'invalid', 'a withdrawn message cannot be decided');
   if (state.release !== 'awaiting') return reject('illegal', 'invalid', 'only an awaiting release can be decided');
   const next: MessageMachineState = event.allow
     ? { ...state, release: 'approved', approvalRevision: state.revision + 1, revision: state.revision + 1 }
@@ -1317,6 +1318,7 @@ function onReleaseDecided(
 /** Only an `approved` release can be released; the inquiry's direct path is the send transition. */
 function onReleased(state: MessageMachineState): MessageTransition {
   if (state.status === 'absent') return absentMessage();
+  if (state.withdrawnAt !== null) return reject('illegal', 'invalid', 'a withdrawn message cannot be released');
   if (state.release !== 'approved') return reject('illegal', 'invalid', 'only an approved release can be released');
   return accept<MessageMachineState, MessageEffect>(
     { ...state, release: 'released', revision: state.revision + 1 },

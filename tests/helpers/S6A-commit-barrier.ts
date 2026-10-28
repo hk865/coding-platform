@@ -13,8 +13,9 @@
  * reaches (the Host's commit observer wraps the same object afterwards,
  * `src/composition/commit-observer.ts:79–90`, with the same spread), and
  * `records.readMany`, which is the real closure unless an armed read fault
- * names one of its keys. `lookupCommit`, `eventAt`, lookups, counts and text
- * search are the real closures, untouched.
+ * names one of its keys, and `records.lookupOrdered`, whose index name is the
+ * same fault's key. `lookupCommit`, `eventAt`, counts and text search are the
+ * real closures, untouched.
  *
  * The control, `commitBarrier`:
  *   - `hold(match)` → `{ reached, release }`. The first commit that matches
@@ -30,9 +31,10 @@
  *   - A commit that no open hold matches goes straight to the real commit,
  *     also while another commit is held.
  *   - `failReads(refKey, effect)` → `{ calls, release }`. Every `readMany` that
- *     asks for `refKey` while the fault is armed is counted; `throw-once` makes
- *     the first of them throw an I/O error, `throw-always` every one, and a
- *     thrown read reaches no store. Every other read is the real one.
+ *     asks for `refKey`, and every `lookupOrdered` whose index is `refKey`,
+ *     while the fault is armed is counted; `throw-once` makes the first of them
+ *     throw an I/O error, `throw-always` every one, and a thrown read reaches
+ *     no store. Every other read is the real one.
  *   - `failCommitOnce(match)` → `{ release }`. The first matching commit throws
  *     an I/O error instead of reaching the store, so it does not land; every
  *     other commit is the real one.
@@ -50,8 +52,8 @@
  *     store's compare-and-swap;
  *   - after its answer: a `holdAfter` lets the commit run and holds the
  *     store's answer, a receipt or a rejection, until `release()`;
- *   - one failed store call: an armed fault fails a matching `readMany` or
- *     commit with an I/O error, and that call reaches no store.
+ *   - one failed store call: an armed fault fails a matching `readMany`,
+ *     `lookupOrdered` or commit with an I/O error, and that call reaches no store.
  *
  * Predicates over the prepared commit's own fields (`PreparedCommit`,
  * `src/core/record-store/ports.ts:110`; `claims` are `UniqueClaimChange`s,
@@ -85,6 +87,7 @@
 import type {
   GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
+import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 
 type InMemoryModule = typeof import('../../src/core/record-store/in-memory-record-store.js');
 type SqliteModule = typeof import('../../src/core/record-store/sqlite-record-store.js');
@@ -98,7 +101,7 @@ export type CommitHold = {
   release(): void;
 };
 
-/** A read fault on one record key; `calls()` counts the `readMany` calls that asked for it while armed. */
+/** A read fault on one record key (or one ordered-lookup index name); `calls()` counts the reads that asked for it while armed. */
 type ReadFault = { calls(): number; release(): void };
 
 /** A one-shot commit fault; `release()` disarms it if it has not fired. */
@@ -147,7 +150,10 @@ export class CommitBarrier {
     return { reached, release: () => { entry.released = true; entry.open(); } };
   }
 
-  /** Fail the `readMany` calls that ask for `refKey`: the first one (`throw-once`) or every one (`throw-always`). */
+  /**
+   * Fail the `readMany` calls that ask for `refKey`, or the `lookupOrdered` calls naming it as their index: the first
+   * one (`throw-once`) or every one (`throw-always`).
+   */
   failReads(refKey: string, effect: 'throw-once' | 'throw-always'): ReadFault {
     const entry: ReadFaultEntry = { refKey, always: effect === 'throw-always', calls: 0, released: false };
     this.readFaults.push(entry);
@@ -243,13 +249,18 @@ export function allOf(...matches: CommitMatch[]): CommitMatch {
   return commit => matches.every(match => match(commit));
 }
 
-type BarrierBackend = { readonly records: Pick<GoalRecordTransactionPort, 'commit' | 'readMany'> };
+type BarrierBackend = {
+  readonly records: Pick<GoalRecordTransactionPort, 'commit' | 'readMany'>
+    & Pick<RecordOrderedLookupPort, 'lookupOrdered'>;
+};
 
 /** Both backends build `records` from closures without `this`, so the spread keeps every other method. */
 function withBarrier<B extends BarrierBackend>(backend: B): B {
   const real = backend.records;
   return { ...backend, records: { ...real,
     readMany: (refKeys: readonly string[]) => commitBarrier.read(refKeys, keys => real.readMany(keys)),
+    lookupOrdered: (request: Parameters<RecordOrderedLookupPort['lookupOrdered']>[0]) =>
+      commitBarrier.read([request.index], () => real.lookupOrdered(request)),
     commit: (input: PreparedCommit) => commitBarrier.pass(input, next => real.commit(next)) } };
 }
 

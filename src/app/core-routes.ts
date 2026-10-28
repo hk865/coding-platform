@@ -13,7 +13,7 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
-import type { SessionRef } from '../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
@@ -28,6 +28,7 @@ import type { ObservedArchitecturePort } from '../core/work-graph/architecture/c
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
+import type { MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
 import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
@@ -155,6 +156,7 @@ export type CoreRouteBindings = {
   withdrawMessage: SessionMessageCommandPort['withdrawMessage'];
   readMessageView: SessionMessageCommandPort['readMessageView'];
   readInboxView: SessionMessageCommandPort['readInboxView'];
+  applyMessage: MessageApplyPort['applyMessage'];
   // R6 execution-entry routes: one named binding per new suffix.
   readWorkspaceRegistration: ProjectRegistrationPort['readWorkspaceRegistration'];
   submitQueryJob: QueryJobPort['submitQueryJob'];
@@ -345,7 +347,8 @@ export type CoreRoutePlatform = {
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
     & Required<Pick<SessionMailboxPort, 'readOutbox'>>
     & Pick<SessionMailboxPort, 'readUndeliveredReplies'>
-    & Pick<SessionMessageCommandPort, 'releaseMessage' | 'withdrawMessage' | 'readMessageView' | 'readInboxView'>;
+    & Pick<SessionMessageCommandPort, 'releaseMessage' | 'withdrawMessage' | 'readMessageView' | 'readInboxView'>
+    & Pick<MessageApplyPort, 'applyMessage'>;
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
   /** Slice 5 §4.5 decision owners: Goal settings/order, the workspace notice
@@ -490,6 +493,8 @@ export const CORE_ROUTE_SPECS: Record<
   'messages/withdraw': { kind: 'graph_write', binding: 'withdrawMessage', owner: 'messages.withdrawMessage' },
   'messages/view': { kind: 'plain', binding: 'readMessageView', owner: 'messages.readMessageView' },
   'messages/inbox-view': { kind: 'plain', binding: 'readInboxView', owner: 'messages.readInboxView' },
+  // The applier's one route: its owner compares the caller's effect, so the route adds no check.
+  'messages/apply': { kind: 'graph_write', binding: 'applyMessage', owner: 'messages.applyMessage' },
   'workspaces/registration': { kind: 'plain', binding: 'readWorkspaceRegistration', owner: 'projects.readWorkspaceRegistration' },
   'queries/submit': { kind: 'graph_write', binding: 'submitQueryJob', owner: 'queries.submitQueryJob' },
   'queries/read': { kind: 'plain', binding: 'readQueryJob', owner: 'queries.readQueryJob' },
@@ -728,6 +733,7 @@ export function createPlatformCoreRouteBindings(
   goalControl?: GoalControlPort,
   hostReport?: HostReconcileReportPort,
   initialization?: InitializationAdoptionHostPort,
+  armMessageRelease?: (scope: WorkspaceScope) => void,
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -853,12 +859,20 @@ export function createPlatformCoreRouteBindings(
     // The release decision is the person's: the route refuses a member or a system actor BEFORE the owner runs, and
     // the owner re-checks the same rule together with the awaiting-only admission. The withdraw route adds no check
     // of its own; the owner admits the person or the original sender and refuses everyone else.
-    releaseMessage: async (ctx, request) => personOnly(ctx)
-      ? platform.messages.releaseMessage(ctx, request)
-      : { status: 'rejected', code: 'forbidden', reason: 'only the person may approve or deny a message release' },
+    releaseMessage: async (ctx, request) => {
+      if (!personOnly(ctx)) {
+        return { status: 'rejected', code: 'forbidden', reason: 'only the person may approve or deny a message release' };
+      }
+      const written = await platform.messages.releaseMessage(ctx, request);
+      if (written.status === 'committed' && written.value.release === 'approved') {
+        armMessageRelease?.({ projectId: written.value.ref.projectId, workspaceId: written.value.ref.workspaceId });
+      }
+      return written;
+    },
     withdrawMessage: platform.messages.withdrawMessage.bind(platform.messages),
     readMessageView: platform.messages.readMessageView.bind(platform.messages),
     readInboxView: platform.messages.readInboxView.bind(platform.messages),
+    applyMessage: platform.messages.applyMessage.bind(platform.messages),
     readWorkspaceRegistration: platform.projects.readWorkspaceRegistration.bind(platform.projects),
     submitQueryJob: platform.queries.submitQueryJob.bind(platform.queries),
     readQueryJob: platform.queries.readQueryJob.bind(platform.queries),
@@ -869,7 +883,13 @@ export function createPlatformCoreRouteBindings(
     readQueryAnswer: platform.queries.readQueryAnswer.bind(platform.queries),
     openArtifact: platform.materials.openArtifact.bind(platform.materials),
     handleGoalInput: platform.workflow.handleGoalInput.bind(platform.workflow),
-    advanceWork: platform.workflow.advanceWork.bind(platform.workflow),
+    advanceWork: async (ctx, input, internal) => {
+      const advanced = await platform.workflow.advanceWork(ctx, input, internal);
+      if (advanced.status === 'ready') {
+        armMessageRelease?.({ projectId: input.goalRef.projectId, workspaceId: ctx.workspaceId ?? '' });
+      }
+      return advanced;
+    },
     consumeConsultation: platform.workflow.consumeConsultation.bind(platform.workflow),
     driverStart: driver === undefined ? unsupportedDriver('start') : driver.start.bind(driver),
     driverRead: driver === undefined ? unsupportedDriver('read') : driver.read.bind(driver),
@@ -902,9 +922,17 @@ export function createPlatformCoreRouteBindings(
     readContinuationBrief: platform.runtime.readContinuationBrief === undefined
       ? unsupported('the Host Runtime does not publish the continuation brief read')
       : platform.runtime.readContinuationBrief.bind(platform.runtime),
-    setGoalControl: goalControl === undefined
-      ? unsupported('the Host does not publish the Goal fan-out driver (setGoalControl)')
-      : goalControl.setGoalControl.bind(goalControl),
+    setGoalControl: async (ctx, request) => {
+      if (goalControl === undefined) {
+        return unsupported<GoalControlPort['setGoalControl']>(
+          'the Host does not publish the Goal fan-out driver (setGoalControl)')(ctx, request);
+      }
+      const written = await goalControl.setGoalControl(ctx, request);
+      if (written.status === 'committed' && request.input.control === 'resume') {
+        armMessageRelease?.({ projectId: request.input.goalRef.projectId, workspaceId: ctx.workspaceId ?? '' });
+      }
+      return written;
+    },
     readGoalDisplay: goalControl === undefined
       ? unsupported('the Host does not publish the Goal fan-out driver (readGoalDisplay)')
       : goalControl.readGoalDisplay.bind(goalControl),
@@ -1293,6 +1321,7 @@ export async function dispatchCoreRoute(
       case 'messages/withdraw': return bindings.withdrawMessage(ctx, graphWrite.request as never);
       case 'messages/view': return bindings.readMessageView(ctx, plain.input as never);
       case 'messages/inbox-view': return bindings.readInboxView(ctx, plain.input as never);
+      case 'messages/apply': return bindings.applyMessage(ctx, graphWrite.request as never);
       case 'workspaces/registration': return bindings.readWorkspaceRegistration(ctx, plain.input as never);
       case 'queries/submit': return bindings.submitQueryJob(ctx, graphWrite.request as never);
       case 'queries/read': return bindings.readQueryJob(ctx, plain.input as never);

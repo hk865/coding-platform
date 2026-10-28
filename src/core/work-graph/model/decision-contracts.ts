@@ -14,6 +14,7 @@ import type {
   DecisionApplicationReceiptV1,
   DecisionApplicationV1,
   DecisionHostSenderV1,
+  SendRejectionV1,
   SessionMessageRef,
   UserMessageResponseV1,
 } from '../../../contracts/core/session-message.js';
@@ -29,6 +30,7 @@ import type {
   DecisionSubjectV1,
   GoalAutonomyV1,
   GoalSettingsV1,
+  MessageReleaseBlockV1,
   NoticeCategoryV1,
   NoticePositionV1,
   UserDecisionBodyV1,
@@ -357,6 +359,10 @@ export type DecisionCardV1 = {
   actions: ('answer' | 'ask_secretary' | 'apply' | 'record_application'
     | 'adopt' | 'regenerate' | 'abandon' | 'adopt_architecture'
     | 'adopt_completion_policy')[];
+  /** §3.10 / book :428–:435: present only on the `message_release` card — the message's own live facts, merged on
+   * every read (`deadline` before and after the release, the block, so the three reads cannot disagree). Absent on
+   * every other kind (the `NoticeItemV1.actions?` precedent, `:367`). */
+  messageRelease?: { deadline: string | null; releaseBlock: MessageReleaseBlockV1 | null };
 };
 
 export type NoticeItemV1 = {
@@ -473,7 +479,8 @@ export type ResolveDecisionInputV1 = {
 };
 
 export type ResolveDecisionActionV1 =
-  | WriteResult<{ goals: GoalSnapshot[] }> | NoteDispositionResult | CoreRejection | null;
+  | WriteResult<{ goals: GoalSnapshot[] }> | WriteResult<SessionMessage>
+  | NoteDispositionResult | CoreRejection | null;
 
 export type ResolveDecisionReadV1 = {
   answer: WriteResult<SessionMessage>;
@@ -539,7 +546,7 @@ export type MessageReleaseCandidateV1 = {
   pins: DispatchBasisV1 | null;
   deadline: string | null;
   /** Why this pass cannot release it; `null` means releasable. A stale item is blocked, never a pass failure. */
-  blockedReason: 'stale_pins' | 'goal_not_active' | 'activity_conflict' | null;
+  blockedReason: MessageReleaseBlockV1['blockedReason'] | 'activity_conflict';
 };
 export type MessageReleaseCandidatesPageV1 = {
   items: readonly MessageReleaseCandidateV1[];
@@ -555,7 +562,8 @@ export interface MessageReleaseCandidatesPort {
 
 export interface MessageReleasePort {
   releaseApproved(ctx: CoreCallContext, input: { messageRef: SessionMessageRef; approvalRevision: number }):
-    Promise<WriteResult<SessionMessage>>;
+    Promise<Extract<WriteResult<SessionMessage>, { status: 'committed' }> | SendRejectionV1>;
   applyMessageRelease(ctx: CoreCallContext, input: MessageReleaseApplicationInputV1):
-    Promise<WriteResult<SessionMessage>>;
+    Promise<(Extract<WriteResult<SessionMessage>, { status: 'committed' }> &
+      { receipt: DecisionApplicationReceiptV1 }) | CoreRejection>;
 }

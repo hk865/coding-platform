@@ -11,6 +11,7 @@ import type {
 } from '../../src/contracts/goal-card.js';
 import type { GoalSettingsV1 } from '../../src/contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { CopyInterventionCandidateV1 } from '../../src/contracts/goal-copy-retraction.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import { decideGoalCopy, planReanchorHook } from '../../src/core/work-graph/state/goal-copy.js';
 import { isLegalSettings } from '../../src/core/work-graph/state/goal-settings-machine.js';
@@ -48,9 +49,19 @@ const MESSAGE: SessionMessageRef = {
 const MESSAGE_REORDERED: SessionMessageRef = {
   messageId: 'msg-1', workspaceId: 'w1', projectId: 'p1', aggregateType: 'SessionMessage',
 };
+const MESSAGE_B: SessionMessageRef = {
+  aggregateType: 'SessionMessage', projectId: 'p1', workspaceId: 'w1', messageId: 'msg-2',
+};
+
+/** A not-delivered candidate: selectable and retractable, with neither reason set. */
+const notDelivered = (messageRef: SessionMessageRef): CopyInterventionCandidateV1 => ({
+  messageRef, version: 2, state: 'not_delivered', selectable: true, reason: null,
+  retractable: true, retractReason: null });
+const CANDIDATE_A = notDelivered(MESSAGE);
+const CANDIDATE_B = notDelivered(MESSAGE_B);
 
 function facts(overrides: Partial<GoalCopyFactsV1> = {}): GoalCopyFactsV1 {
-  return { source: SOURCE, understanding: NOTE_PIN, selected: [], intervened: [], ...overrides };
+  return { source: SOURCE, understanding: NOTE_PIN, selected: [], ...overrides };
 }
 
 function confirm(overrides: Partial<GoalCopyConfirmInputV1> = {}): GoalCopyConfirmInputV1 {
@@ -64,6 +75,7 @@ const CREATED = {
   settings: { schemaVersion: 1 as const, autonomy: 'every_step' as const, order: 3, waitForGoalRef: null, parallelRisks: [] },
   continuedFrom: { goal: GOAL, sourceRevision: 7, understanding: { noteId: 'note-1', version: 4 } },
   copiedInterventions: [],
+  retract: [],
 };
 
 describe('rejects: the copy source is not cancelled', () => {
@@ -106,12 +118,8 @@ describe('continuedFrom: understanding is null without a note', () => {
 const UNVERIFIABLE: { name: string; facts: GoalCopyFactsV1; selection: SessionMessageRef[] }[] = [
   { name: 'a non-empty selection with no candidate facts', facts: facts({ selected: [] }), selection: [MESSAGE] },
   { name: 'a candidate that is not selectable', selection: [MESSAGE],
-    facts: facts({
-      selected: [{ messageRef: MESSAGE, version: 2, selectable: false, reason: 'already copied' }],
-    }) },
-  { name: 'a ref already in the intervened set', selection: [MESSAGE_REORDERED],
-    facts: facts({ selected: [{ messageRef: MESSAGE, version: 2, selectable: true, reason: null }],
-      intervened: [MESSAGE_REORDERED] }) },
+    facts: facts({ selected: [{ messageRef: MESSAGE, version: 2, state: 'copied', selectable: false,
+      reason: 'copied', retractable: false, retractReason: 'copied' }] }) },
 ];
 
 describe('rejects: a selection the owner cannot verify', () => {
@@ -122,13 +130,31 @@ describe('rejects: a selection the owner cannot verify', () => {
   });
 });
 
-describe('create: a verified non-empty selection is retraction_pending', () => {
-  it('accepts a selectable, not-yet-intervened candidate by canonical ref equality', () => {
-    const decision = decideGoalCopy(
-      facts({ selected: [{ messageRef: MESSAGE, version: 2, selectable: true, reason: null }] }),
-      confirm({ selectedInterventions: [MESSAGE_REORDERED] }),
-    );
-    expect(decision).toEqual({ ...CREATED, selection: 'retraction_pending' });
+const INVALID: { name: string; facts: GoalCopyFactsV1; selection: SessionMessageRef[]; reason: string }[] = [
+  { name: 'the same ref selected twice in another key order', selection: [MESSAGE, MESSAGE_REORDERED],
+    facts: facts({ selected: [CANDIDATE_A, CANDIDATE_B] }), reason: 'a selected intervention is listed twice' },
+];
+
+describe('rejects: an invalid selection', () => {
+  it.each(INVALID)('refuses $name', ({ facts: caseFacts, selection, reason }) => {
+    expect(decideGoalCopy(caseFacts, confirm({ selectedInterventions: selection })))
+      .toEqual({ outcome: 'refuse', code: 'invalid', reason });
+  });
+});
+
+const VERIFIED: { name: string; selection: SessionMessageRef[]; copied: SessionMessageRef[];
+  retract: SessionMessageRef[]; selectionState: 'selection_only' | 'retraction_pending' }[] = [
+  { name: 'A, written in another key order', selection: [MESSAGE_REORDERED],
+    copied: [MESSAGE], retract: [MESSAGE_B], selectionState: 'retraction_pending' },
+  { name: 'A and B', selection: [MESSAGE, MESSAGE_B],
+    copied: [MESSAGE, MESSAGE_B], retract: [], selectionState: 'selection_only' },
+];
+
+describe('create: a verified selection decides the copied and retracted sets', () => {
+  it.each(VERIFIED)('creates from $name', ({ selection, copied, retract, selectionState }) => {
+    expect(decideGoalCopy(facts({ selected: [CANDIDATE_A, CANDIDATE_B] }),
+      confirm({ selectedInterventions: selection })))
+      .toEqual({ ...CREATED, copiedInterventions: copied, retract, selection: selectionState });
   });
 });
 

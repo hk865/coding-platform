@@ -31,6 +31,7 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type {
@@ -127,6 +128,7 @@ import type {
 } from '../model/evidence-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import { sessionMessageRefProblem } from '../tasks/codec-shape-checks.js';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
 type HostActor = { kind: 'human' | 'system'; id: string };
@@ -673,12 +675,19 @@ function hostContextOf(scope: { projectId: string; workspaceId: string }, actor:
         materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: bound }, signal };
 }
 
-const REVERIFY_INPUT_KEYS: readonly string[] = ['predecessorRoundRef', 'onlyIfSourceChanged', 'newInputRefs', 'reason', 'note'];
+const REVERIFY_INPUT_KEYS: readonly string[] = ['predecessorRoundRef', 'onlyIfSourceChanged', 'newInputRefs', 'reason', 'note',
+    'acknowledgement'];
 
 /** The `ReverifyRoundInput` shape (§9 VD-12); the actor-dependent fields (`note`) are judged by the matrix (step 5). */
 function reverifyInputProblem(input: ReverifyRoundInput, scope: { projectId: string; workspaceId: string }): CoreRejection | null {
     const raw = input as unknown as Record<string, unknown>;
     if (!Object.keys(raw).every(key => REVERIFY_INPUT_KEYS.includes(key))) return invalid('the reverify input carries unknown fields');
+    // 7A §3.5: the acknowledgement is shape-checked only; the owner reads no
+    // message and compares no scope. It joins the fingerprint only when present.
+    if (input.acknowledgement !== undefined) {
+        const acknowledgementProblem = sessionMessageRefProblem(input.acknowledgement, 'reverifyRound acknowledgement');
+        if (acknowledgementProblem !== null) return invalid(acknowledgementProblem);
+    }
     const refProblem = roundRefProblem(raw['predecessorRoundRef']);
     if (refProblem !== null) return invalid(refProblem);
     if (input.predecessorRoundRef.projectId !== scope.projectId || input.predecessorRoundRef.workspaceId !== scope.workspaceId) {
@@ -1617,7 +1626,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     /** Receipt replay: the recorded `VerificationRoundReverified` or `TaskReworkRefused` restores the original value. */
     async function replayReverify(
         receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string,
-    ): Promise<WriteResult<ReverifyOutcomeV1>> {
+        acknowledgement: SessionMessageRef | null,
+    ): Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
         const loaded = await loadReplayEvent(records, receipt);
         if (!loaded.ok) return loaded.rejection;
         const event = loaded.event;
@@ -1639,7 +1649,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (recorded.identityKey !== identity || recorded.fingerprint !== fingerprint) {
             return unavailable('the recorded reverify disagrees with the request identity');
         }
-        return { status: 'committed', value: recorded.value, replayed: true, cursor: receipt.cursor };
+        return { status: 'committed', value: recorded.value, replayed: true, cursor: receipt.cursor,
+            // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+            // when the call carried an acknowledgement; a refusal never returns one.
+            ...(acknowledgement === null || recorded.value.kind !== 'reverified' ? {}
+                : { proofReceipt: { identityKey: identity, fingerprint, cursor: receipt.cursor } }) };
     }
 
     type ReverifyCommit = {
@@ -1667,6 +1681,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
          * metadata only and never changes the chain count or the old public DTO.
          */
         noticeAutomationCap?: number;
+        /** 7A §3.5: the acknowledged message, null when the call carried none (a refusal returns no proof). */
+        acknowledgement: SessionMessageRef | null;
         /** A lost slot claim: the head moved, answered from the chain read again. */
         slotTaken(): Promise<CoreRejection>;
     };
@@ -1679,7 +1695,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      * the record `taskReworkRefusalEffects` builds). A replayed or lost commit
      * restores the original value.
      */
-    async function commitReverify(write: ReverifyCommit): Promise<WriteResult<ReverifyOutcomeV1>> {
+    async function commitReverify(write: ReverifyCommit): Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
         const guards: RecordGuard[] = [];
         const written: EncodedRecord[] = [];
         let claims: UniqueClaimChange[] = [];
@@ -1735,7 +1751,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                     const successor = write.decided.next;
                     event = encodeVerificationRoundEvent({ eventId: deps.newId(), eventType: VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
                         schemaVersion: 1, occurredAt: deps.now(), identityKey: write.identity, roundRef: successor.ref,
-                        actor: write.eventActor, fingerprint: write.fingerprint, result: successor });
+                        actor: write.eventActor, fingerprint: write.fingerprint, result: successor,
+                        // 7A §3.5 rule 3: the effect event carries the key only when the input did.
+                        ...(write.acknowledgement === null ? {} : { acknowledgement: write.acknowledgement }) });
                     value = { kind: 'reverified', round: successor };
                     break;
                 }
@@ -1755,11 +1773,17 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 if (receipt.code === 'unique_conflict') return await write.slotTaken();
                 return mapStoreFailure(receipt);
             }
-            if (receipt.replayed) return await replayReverify(receipt, write.identity, write.fingerprint);
-            return { status: 'committed', value, replayed: false, cursor: receipt.cursor };
+            if (receipt.replayed) return await replayReverify(receipt, write.identity, write.fingerprint, write.acknowledgement);
+            return { status: 'committed', value, replayed: false, cursor: receipt.cursor,
+                // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+                // when the call carried an acknowledgement; a refusal never returns one.
+                ...(write.acknowledgement === null || value.kind !== 'reverified' ? {}
+                    : { proofReceipt: { identityKey: write.identity, fingerprint: write.fingerprint, cursor: receipt.cursor } }) };
         } catch (error) {
             const outcome = await lookupReceipt(records, write.identity, write.fingerprint);
-            if (outcome.status === 'found') return await replayReverify(outcome.receipt, write.identity, write.fingerprint);
+            if (outcome.status === 'found') {
+                return await replayReverify(outcome.receipt, write.identity, write.fingerprint, write.acknowledgement);
+            }
             if (outcome.status === 'failed') return outcome.rejection;
             return unavailable(`the reverify commit result is unknown: ${messageOf(error)}`);
         }
@@ -1789,7 +1813,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      *      `source_unchanged`, the key (`reverifyBasis`);
      *  12. one commit (`commitReverify`).
      */
-    async function reverifyRound(ctx: CoreCallContext, request: GraphWrite<ReverifyRoundInput>): Promise<WriteResult<ReverifyOutcomeV1>> {
+    async function reverifyRound(ctx: CoreCallContext, request: GraphWrite<ReverifyRoundInput>):
+    Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
         const caller = bindReverifyCaller(ctx);
         if ('status' in caller) return caller;
         const { scope, signal } = caller;
@@ -1828,11 +1853,14 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             identity = identityKeyOf('r3e-reverify:', actor, scope.projectId, scope.workspaceId, owned.requestId);
             fingerprint = fingerprintOf({ kind: 'r3e-reverify', predecessorRoundRef: predecessorRef,
                 onlyIfSourceChanged: input.onlyIfSourceChanged ?? false, newInputRefs: input.newInputRefs ?? [],
-                reason: input.reason ?? null, note: input.note ?? null, expected: sortedPins(owned.expected) });
+                reason: input.reason ?? null, note: input.note ?? null, expected: sortedPins(owned.expected),
+                ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) });
         } catch { return invalid('the reverify request is not canonicalizable JSON'); }
         const lookup = await lookupReceipt(records, identity, fingerprint);
         if (lookup.status === 'failed') return lookup.rejection;
-        if (lookup.status === 'found') return await replayReverify(lookup.receipt, identity, fingerprint);
+        if (lookup.status === 'found') {
+            return await replayReverify(lookup.receipt, identity, fingerprint, input.acknowledgement ?? null);
+        }
         const actorClass = reworkActorClassOf(caller.ctx.principal, actor);
         if (actorClass === null) return forbidden('the caller cannot rework this Task');
         let admissionGuards: readonly RecordGuard[] = [];
@@ -1957,7 +1985,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 headPin(again.chain));
         };
         const commitBase = { identity, fingerprint, signal, actor, task, predecessor, run, refusalRef, refusalKey: refusalRead.key,
-            currentRefusal, goalEndedRunsAtRefusal: countEndedGoalRuns(ended.runs), slotTaken };
+            currentRefusal, goalEndedRunsAtRefusal: countEndedGoalRuns(ended.runs), slotTaken,
+            acknowledgement: input.acknowledgement ?? null };
         if (reverifyCapRefusal(predecessor, actorClass, policy.autoReworkLimit) !== null) {
             const capped = decide(null);
             if (!capped.ok) return rejectedWithCurrent(capped.code, capped.detail);

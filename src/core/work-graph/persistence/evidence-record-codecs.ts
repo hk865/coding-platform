@@ -24,7 +24,10 @@ import type {
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
     hasOnlyKeys, invalid, isRecord, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
@@ -110,7 +113,8 @@ export type VerificationRoundEvent =
         result: RoundSnapshot;
     })
     /** VR-14: `roundRef` and `result` are the new successor round (chain ordinal ≥ 2). */
-    | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE; result: RoundSnapshot });
+    | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE; result: RoundSnapshot;
+        acknowledgement?: SessionMessageRef });
 
 export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['eventType'][] = [
     VERIFICATION_ROUND_OPENED_EVENT_TYPE,
@@ -554,6 +558,13 @@ function a2RoundEventProblem(body: UnknownRecord): string | null {
             if (round !== null) return round;
             const chain = (body['result'] as UnknownRecord)['chain'];
             if (!isRecord(chain) || !isSafeInteger(chain['ordinal'], 2)) return 'a reverified round must be a successor round (chain ordinal >= 2)';
+            // 7A §3.5: the reverified arm is the only one carrying the key;
+            // `persistence` may not import `tasks`, so the shared ref field table
+            // checks it. The store runs this check at commit time.
+            if (body['acknowledgement'] !== undefined) {
+                const acknowledgementProblem = checkShape(SessionMessageRefShape, body['acknowledgement'], 'stored');
+                if (acknowledgementProblem !== null) return `the reverified acknowledgement is invalid: ${acknowledgementProblem}`;
+            }
             return null;
         }
         default:

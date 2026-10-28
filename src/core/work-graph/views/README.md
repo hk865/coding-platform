@@ -78,14 +78,15 @@
 | `createGraphContextReader` | `src/core/work-graph/views/graph-context-reader.ts:475` | 上下文事实、图 look/find、注意力图的只读视图；无 Goal 的 look/find 走项目分支 | 上下文组装、图页、注意力扫描、秘书轮的项目视图 |
 | `createGoalPointerFacts` | `src/core/work-graph/views/pointer-facts.ts:23` | 返回 Goal 理解指针及同次读取的水位，缺失保留必须不存在的版本期待 | 组合根向三版本读取器注入指针端口时 |
 | `createContextExtensionsReader` | `src/core/work-graph/views/context-extensions.ts:256` | 图读取的可选 extensions：异常锚点、决定队列提示、记忆材料；无 Goal 的请求只投影项目理解和 norms，其余 Goal 专属行跳过；读失败原样返回 | 组装上下文、需要这些扩展行时 |
-| `createDecisionReadModel` | `src/core/work-graph/views/decision-read-model.ts:203` | 决定队列的唯一聚合器：卡片、请知悉、冲突合成一页，卡片按 `decisionSubjectKey` 排序与过滤；`DecisionWholePageReader` 的 `readWholePage` 是同一装配的整页读（`notices.goalRef` 可为 `null`，项目行是公共部分） | 读决定队列或标记请知悉已看时；主对话要卡片和请知悉时用整页读，不要另写装配 |
-| `cardInScope` | `src/core/work-graph/views/decision-read-model.ts:2139` | 一张卡是否属于某个 Goal（队列的 Goal 过滤用的同一条规则） | 按 Goal 挑卡时；`requests/read` 的卡片也用它 |
+| `createDecisionReadModel` | `src/core/work-graph/views/decision-read-model.ts:210` | 决定队列的唯一聚合器：卡片、请知悉、冲突合成一页，卡片按 `decisionSubjectKey` 排序与过滤；`DecisionWholePageReader` 的 `readWholePage` 是同一装配的整页读（`notices.goalRef` 可为 `null`，项目行是公共部分） | 读决定队列或标记请知悉已看时；主对话要卡片和请知悉时用整页读，不要另写装配 |
+| `cardInScope` | `src/core/work-graph/views/decision-read-model.ts:2292` | 一张卡是否属于某个 Goal（队列的 Goal 过滤用的同一条规则） | 按 Goal 挑卡时；`requests/read` 的卡片也用它 |
 | `createCollectionCardSource` | `src/core/work-graph/views/decision-read-model.ts:302` | 集合型卡片来源的通用适配器：一次/页装配、偏移分页、关闭卡片；规格用 `serves` 声明服务的 subject，`readCollection` 和 `project` 都只收一个 `subject`，装配缓存按来源种类、工作区和 subject 分开；队列只在不按 Goal 过滤的读里枚举一次项目 | 新增卡片来源时只注册读写和投影，不复制分页 |
-| `createGoalCauseCardSource` | `src/core/work-graph/views/decision-read-model.ts:227` | 把 Goal 决策依据读法包成 `goal_cause` 卡片来源 | 装配决定队列、注册来源 |
-| `createPlanningQuestionCardSource` | `src/core/work-graph/views/decision-read-model.ts:248` | 把规划问题读法包成 `planning_question` 卡片来源 | 装配决定队列、注册来源 |
-| `createNoteReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:384` | 注记复核卡片来源（`serves: ['goal', 'project']`），含按 key 直读；项目 subject 的卡是无 Goal 依据的注记卡；直读先按注记自己的 subject 比对（开着、关了都先比），所以别的 subject 的注记不是这张卡 | 装配决定队列、注册来源 |
-| `createUnknownCallReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:480` | 未知调用复核卡片来源，含按 key 直读与历史关闭 | 装配决定队列、注册来源 |
-| `createCommandRerunRequestCardSource` | `src/core/work-graph/views/decision-read-model.ts:611` | 命令重跑请求卡片来源，含修订与 Task 结束检查 | 装配决定队列、注册来源 |
+| `createGoalCauseCardSource` | `src/core/work-graph/views/decision-read-model.ts:234` | 把 Goal 决策依据读法包成 `goal_cause` 卡片来源 | 装配决定队列、注册来源 |
+| `createPlanningQuestionCardSource` | `src/core/work-graph/views/decision-read-model.ts:255` | 把规划问题读法包成 `planning_question` 卡片来源 | 装配决定队列、注册来源 |
+| `createNoteReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:391` | 注记复核卡片来源（`serves: ['goal', 'project']`），含按 key 直读；项目 subject 的卡是无 Goal 依据的注记卡；直读先按注记自己的 subject 比对（开着、关了都先比），所以别的 subject 的注记不是这张卡 | 装配决定队列、注册来源 |
+| `createUnknownCallReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:487` | 未知调用复核卡片来源，含按 key 直读与历史关闭 | 装配决定队列、注册来源 |
+| `createCommandRerunRequestCardSource` | `src/core/work-graph/views/decision-read-model.ts:618` | 命令重跑请求卡片来源，含修订与 Task 结束检查 | 装配决定队列、注册来源 |
+| `createMessageReleaseCardSource` | `src/core/work-graph/views/decision-read-model.ts:798` | 放行卡片来源（`serves: ['goal']`）：按 Goal 读 `awaiting` 与 `approved` 两条索引（撤回的跳过），每项用同一份阻塞投影派生 `releaseBlock`，卡上合并 `deadline` 与块；含按 key 直读 | 装配决定队列、注册来源；不要另写放行卡或阻塞判定 |
 | `createMainSurfaceReadModel` | `src/core/work-graph/views/main-surface-read-model.ts:197` | `main/read` 与 `requests/read` 的读端口：请求根按 Goal 槽有序读、请求视图、一次整页读 | composition 装配主对话读时 |
 | `parseMainReadInput` | `src/core/work-graph/views/main-surface-read-model.ts:215` | `main/read` 的输入：`goalId` 为 Goal id 或 null，`cursor` 为 null 或一页返回的游标形状 | 校验主对话读的输入时 |
 | `mainReadPhases`、`mainReadStart`、`mainPageStep` | `src/core/work-graph/views/main-surface-read-model.ts:103`、`src/core/work-graph/views/main-surface-read-model.ts:116`、`src/core/work-graph/views/main-surface-read-model.ts:123` | 主对话页的段（本 Goal 段，第一个 Goal 再接它之前的无 Goal 段）、游标从哪段续读、一页截到多少和下一页游标 | 改主对话分页时；不要另算段或游标 |

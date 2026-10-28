@@ -30,7 +30,7 @@ import type { SourceSnapshotReads } from '../../core/work-graph/source-authority
 import type { SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
 import type {
   DecisionMessagePort, DecisionReadPort, GoalExecutedFilesPort,
-  GoalSettingsPort, MessageDutiesFactsPort,
+  GoalSettingsPort, MessageDutiesFactsPort, MessageReleaseCandidatesPort, MessageReleasePort,
 } from '../../core/work-graph/model/decision-contracts.js';
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
@@ -146,6 +146,13 @@ export type WorkflowDependencies = {
    * explicitly unsupported.
    */
   messages?: SessionMailboxPort;
+  /**
+   * Book §3.8 item 3 (`book-7a.md:359–:391`): the release owner and the bounded candidate page. L publishes the one
+   * object as `platform.messageRelease`. Optional: without it the release step selects nothing and every old
+   * composition and fixture keeps its historical selection (`:383–:384`). 〔a-01〕 `applyMessageRelease` is not here:
+   * the handed-over answer goes through the one kind chain and G's application row, not through this dependency.
+   */
+  messageRelease?: Pick<MessageReleasePort, 'releaseApproved'> & MessageReleaseCandidatesPort;
   /**
    * Slice 1 §4.2: the trusted close-event reader used to derive the executor
    * archive `finishedAt` from the terminal responsibility close. Optional; the

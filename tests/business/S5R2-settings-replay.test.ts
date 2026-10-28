@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResolveDecisionInputV1, ResolveDecisionReadV1 } from '../../src/business/workflow/contracts.js';
 import type { DecisionSelectionV1 } from '../../src/contracts/goal-decisions.js';
+import type { GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import {
   GOAL_A, GOAL_B, GOAL_C, PLAN_A1, PLAN_A2, PLAN_B1, T, WORKSPACE_SCOPE,
@@ -50,7 +52,7 @@ function appliedReceipts(result: ResolveDecisionReadV1) {
   if (result.action === null || result.action.status !== 'committed' || result.application === null) {
     throw new Error('applied requires all three receipts');
   }
-  return { answer, action: committed(result.action), application: committed(result.application) };
+  return { answer, action: committed(result.action as WriteResult<{ goals: GoalSnapshot[] }>), application: committed(result.application) };
 }
 
 async function firstApplication(x: S5R2C, request: GraphWrite<ResolveDecisionInputV1>) {

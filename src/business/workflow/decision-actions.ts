@@ -36,8 +36,10 @@ import type {
   GoalExecutedFilesPort,
   GoalSettingsPort,
   MessageDutiesFactsPort,
+  MessageReleasePort,
   ResolveDecisionActionV1,
 } from '../../core/work-graph/model/decision-contracts.js';
+import type { MessageReleaseApprovedHookV1 } from '../../core/work-graph/communication/decision-change-proof.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type {
   ResolveDecisionInputV1,
@@ -282,6 +284,36 @@ export function createCommandRerunRequestApplicationAdapter(
       // A committed result's formal DecisionApplicationReceiptV1 is read from
       // the CRR changed event at this cursor by the coordinator's step ③.
       return { status: 'ready', value: { action: result, receipt: null } };
+    },
+  };
+}
+
+/**
+ * The `message_release` step ② adapter. The saved answer alone is the entry's input — the trusted entry derives
+ * the person, the target and the option from it — and the committed record is the authority on the approval, so no
+ * second selection read is made here.
+ */
+export type MessageReleaseApplicationAdapterDependencies = {
+  /** The trusted internal entry L publishes (`decision-change-proof.ts:143`; port `decision-contracts.ts:557–:560`). */
+  applyMessageRelease: MessageReleasePort['applyMessageRelease'];
+  /** The glue's hook type (`MessageReleaseApprovedHookV1`, L1); the value is R's `armMessageRelease(scope)` (L4). */
+  onApproved: MessageReleaseApprovedHookV1;
+};
+
+/** The `message_release` ② row: the answer becomes the release decision through the ONE trusted entry; its
+ * committed result carries that command's formal receipt, which the adapter hands to ③ unchanged. */
+export function createMessageReleaseApplicationAdapter(
+  deps: MessageReleaseApplicationAdapterDependencies,
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answerRef }) {
+      const result = await deps.applyMessageRelease(ctx, { answerRef });
+      // Only a committed approval arms the release queue; a denial or a refusal writes nothing.
+      if (result.status === 'committed' && result.value.release === 'approved' && result.value.goalRef !== null) {
+        deps.onApproved({ messageRef: result.value.ref, goalRef: result.value.goalRef });
+      }
+      return { status: 'ready', value: { action: result,
+        receipt: result.status === 'committed' ? result.receipt : null } };
     },
   };
 }

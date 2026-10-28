@@ -12,7 +12,9 @@ import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
-import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
+import type {
+  GoalDecisionCauseReadV1, MessageReleasePort,
+} from '../../core/work-graph/model/decision-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
@@ -58,7 +60,8 @@ export type {
  */
 export type RedriveAnswerV1 =
   | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef; answerMessageRef: SessionMessageRef }
-  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; answerMessageRef: SessionMessageRef };
+  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; answerMessageRef: SessionMessageRef }
+  | { kind: 'message_release'; answerMessageRef: SessionMessageRef };
 
 /**
  * K3 UR7 rework 1 (answer 7): ONE internal discriminated failed-card ref. The
@@ -139,6 +142,11 @@ export type WorkflowCalls = {
    * exception to the "exact owner method" rule above.
    */
   archive_predecessor: InternalSessionArchivePort['archiveLineInternal'];
+  /**
+   * Book §3.8 item 3 (`book-7a.md:359–:360`, `:380–:381`): the release step's perform. The selection only reads the
+   * bounded candidate page; `perform` calls this one owner method.
+   */
+  release_message: MessageReleasePort['releaseApproved'];
 };
 
 export type WorkflowStepKind = keyof WorkflowCalls;
@@ -234,6 +242,11 @@ export type WorkflowAdvanceInternal = {
    * route never passes.
    */
   failedCardRefs?: FailedCardRefV1[];
+  /**
+   * `book-7a.md:386–:389`: the `sessionMessageRefKey` values of the items THIS pass already found blocked, so the
+   * same selection is not asked for them twice in one pass. Absent for every other Host-driver call.
+   */
+  releaseSkip?: string[];
 };
 
 /** `select_work` is read-only; `perform` names one already-determined step. */
