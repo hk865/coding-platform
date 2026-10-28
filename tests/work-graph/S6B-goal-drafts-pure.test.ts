@@ -4,8 +4,8 @@
  *
  * Screening exists only inside a goal card draft (`null` = not screened,
  * `size: 'unknown'` = screened with an unknown size); a plan answer reads
- * `planDraftIndex` from the text as it reads `goalCardDrafts`, and a plan
- * belongs to no draft when the field is absent.
+ * `planDraftIndex` from the text as it reads `goalCardDrafts`: a plan with
+ * drafts must name one, a plan with no drafts belongs to none.
  *
  * A5: a pure file. It imports no store, platform, Host, Workflow, Runtime or
  * stub port; every expected value is a literal or counted by hand.
@@ -131,7 +131,6 @@ describe('planDraftIndex: the draft a no-goal plan answer belongs to', () => {
   ];
 
   const accepted = [
-    { name: 'absent: the plan belongs to no draft', fields: {}, expected: null },
     { name: '0: the plan belongs to the first draft', fields: { planDraftIndex: 0 }, expected: 0 },
     { name: '1: the plan belongs to the last draft', fields: { planDraftIndex: 1 }, expected: 1 },
   ];
@@ -143,12 +142,21 @@ describe('planDraftIndex: the draft a no-goal plan answer belongs to', () => {
     });
   });
 
+  it('accepts an absent index when the answer has no drafts', () => {
+    const text = JSON.stringify({ ...PLAN, goalCardDrafts: [] });
+    expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({
+      ok: true, body: text, ideas: [], planDraftIndex: null, goalCardDrafts: [],
+    });
+  });
+
   const withDrafts = (fields: Record<string, unknown>, base: Record<string, unknown> = PLAN) =>
     JSON.stringify({ ...base, goalCardDrafts: [DRAFT_ONE, DRAFT_TWO], ...fields });
 
   // A row whose input another check also refuses names its own reason, so it fails without its own check.
   const ANY_REASON = expect.stringMatching(/./);
   const refused = [
+    { name: 'absent on a plan with drafts', text: withDrafts({}), input: COORDINATION_NO_GOAL,
+      reason: 'a plan answer with goal card drafts must name its draft in planDraftIndex' },
     { name: 'a negative index', text: withDrafts({ planDraftIndex: -1 }), input: COORDINATION_NO_GOAL, reason: ANY_REASON },
     { name: 'a non-integer index', text: withDrafts({ planDraftIndex: 0.5 }), input: COORDINATION_NO_GOAL, reason: ANY_REASON },
     { name: 'an index past the last draft', text: withDrafts({ planDraftIndex: 2 }), input: COORDINATION_NO_GOAL, reason: ANY_REASON },

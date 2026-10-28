@@ -230,9 +230,9 @@ describe('initial_coordination: accepted answers', () => {
   });
 
   it('a request without a goal: the top-level drafts are parsed and the body keeps them', () => {
-    const text = JSON.stringify({ ...V2_PLAN, goalCardDrafts: [DRAFT] });
+    const text = JSON.stringify({ ...V2_PLAN, goalCardDrafts: [DRAFT], planDraftIndex: 0 });
     expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({
-      ok: true, body: text, ideas: [], planDraftIndex: null,
+      ok: true, body: text, ideas: [], planDraftIndex: 0,
       goalCardDrafts: [{ objective: 'Split the reader from the writer.',
         completion: ['the reader has its own module', 'all callers compile'], autonomy: 'after_plan_confirmation', screening: null }],
     });

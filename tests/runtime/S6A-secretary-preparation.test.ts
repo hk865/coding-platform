@@ -152,7 +152,9 @@ function goalInputSample(memory: S6AMemory, since: string, text: string): Secret
   const policy = memory.governance.policy;
   return {
     role: { policyRevision: 's6a-secretary-binding@1', tools: ['read'], takesSessionHistory: false },
-    workspace: { workspaceId: memory.workspace.workspaceId, revision: memory.workspace.revision },
+    workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
+      revision: memory.workspace.revision },
+    executionRoles: ['builder'],
     architecture: architecture === null ? null : architectureSample(architecture),
     policy: policy === null ? null : { policyId: policy.policyId, revision: policy.revision },
     goals: memory.goals.map(goal => ({ goalId: goal.goalId, desiredState: goal.desiredState, objective: goal.objective })),
@@ -248,7 +250,9 @@ describe.each(['memory', 'sqlite'] as const)('a no-goal request (%s)', backend =
     if (understanding === null) throw new Error('S6A: the memory fixture wrote no project understanding');
     const sample: SecretaryInputSample = {
       role: { policyRevision: 's6a-secretary-binding@1', tools: ['read'], takesSessionHistory: false },
-      workspace: { workspaceId: memory.workspace.workspaceId, revision: memory.workspace.revision },
+      workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
+        revision: memory.workspace.revision },
+      executionRoles: ['builder'],
       architecture: memory.governance.architecture === null ? null : architectureSample(memory.governance.architecture),
       policy: memory.governance.policy === null ? null : { policyId: memory.governance.policy.policyId,
         revision: memory.governance.policy.revision },

@@ -64,7 +64,8 @@ describe('R-14: the first planning answer is set up through initialization/adopt
       // Card 1's binding is not the plan's card: the adoption stops `invalid` at the proposal and adopts no plan.
       expect(await adoptRoute('r14-card-1', binding(1), answer.answerText, { ref: goalB, revision: 1 })).toMatchObject({
         status: 'pending', stage: 'propose', failure: { code: 'invalid', reason: "the answer's plan is not for this draft" } });
-      // Card 0: binding → propose → adopt in one call; the Goal now runs the adopted plan with the setup's checks.
+      // Card 0: binding → propose → adopt in one call; the Goal now runs the adopted plan with the setup's checks,
+      // and the adopted Goal's collaboration driver starts.
       expect(await adoptRoute('r14-card-0', binding(0), answer.answerText, { ref: goalA, revision: 1 }))
         .toMatchObject({ status: 'committed', replayed: false });
       expect([await plans(goalA), await plans(goalB)]).toEqual([[1], []]);

@@ -27,6 +27,7 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
+import type { ServedRolesPort } from '../model/initialization-adoption-contracts.js';
 import type {
   SecretaryHistoryEntryV1, SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
 } from '../model/secretary-contracts.js';
@@ -49,6 +50,8 @@ import { listWorkspaceGoals, readWatermark } from './goal-conflicts.js';
 export type SecretaryPreparationFactsDependencies = {
   records: Pick<GoalRecordTransactionPort, 'readMany' | 'eventAt'> & RecordLookupPort & RecordOrderedLookupPort;
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
+  /** The roles the in-memory Workflow configuration serves for the request's workspace; read once per read. */
+  roles: ServedRolesPort;
 };
 
 /** A Run in one of these phases has a live attempt and is not part of the batch. */
@@ -385,6 +388,9 @@ async function readSecretaryFactsOnce(
     workspaceId: decodedWorkspace.value.ref.workspaceId,
     revision: decodedWorkspace.value.revision,
   };
+  // The roles this workspace's Workflow bindings serve, read once beside the workspace itself: the same scope,
+  // no second read, and host data rather than a ledger record, so no guard.
+  const executionRoles = deps.roles.readServedRoles({ projectId, workspaceId });
 
   // The two active pointers, then the architecture at the revision the
   // architecture pointer names — never the latest one, which a concurrent
@@ -494,6 +500,7 @@ async function readSecretaryFactsOnce(
         understandingGrants,
       },
       workspace,
+      executionRoles,
       architecture,
       completionPolicy: pointers.value.completionPolicy,
       goals,

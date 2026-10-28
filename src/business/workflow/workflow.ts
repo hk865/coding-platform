@@ -51,6 +51,7 @@ import type { RequestSessionArchiveInput } from '../../contracts/core/session-ar
 import { createSessionMaintenanceService } from './session-maintenance.js';
 import { createDecisionActions, type DecisionActionsPort } from './decision-actions.js';
 import { createActivityBackfill } from './activity-backfill.js';
+import { servingBinding } from './role-bindings.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
 
 /**
@@ -854,9 +855,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
   function bindingForRole(
     config: WorkflowHostConfiguration, projectId: string, workspaceId: string, role: string,
   ): Binding | null {
-    const matches = config.bindings.filter((binding) => binding.workspace.projectId === projectId
-      && binding.workspace.workspaceId === workspaceId && binding.roleBinding.templateId === role);
-    return matches.length === 1 ? matches[0]! : null;
+    return servingBinding(config.bindings, projectId, workspaceId, role);
   }
 
   async function loadWorkspacePin(

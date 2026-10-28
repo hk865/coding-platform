@@ -128,6 +128,7 @@ describe('the platform secretary templates', () => {
             noAnswer: PACK.strings['secretary.noAnswer'],
             notEnded: PACK.strings['secretary.notEnded'],
             initialDrafts: PACK.strings['secretary.initialDrafts'],
+            setupRequired: PACK.strings['secretary.setupRequired'],
         }).toEqual({
             workspaceHeading: '## Workspace',
             goalsHeading: '## Goals',
@@ -146,9 +147,14 @@ describe('the platform secretary templates', () => {
                 + '"conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and '
                 + 'GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", '
                 + 'urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at '
-                + 'most 512 UTF-8 bytes. You MAY also add a top-level "planDraftIndex" integer naming the zero-based '
-                + 'index of the draft this plan is for; omit it when the plan is for no draft. A draft is a proposal '
-                + 'only.',
+                + 'most 512 UTF-8 bytes. A "plan" answer that carries goal card drafts MUST also carry a top-level '
+                + '"planDraftIndex" integer naming the zero-based index of the draft this plan is for. A '
+                + '"needs_decision" answer carries no planDraftIndex. A draft is a proposal only.',
+            setupRequired: 'This project has no adopted architecture or no active completion policy yet (see '
+                + '"architecture:" and "completion policy:" above), so a "plan" answer MUST carry the top-level '
+                + '"setup" object with all three fields (architecture, completionPolicy, checks); for this request '
+                + 'the OPTIONAL and "Omit setup" wording above does not apply. Use the projectId shown above in '
+                + 'every module ref and only the available roles shown above in assignments.',
         });
     });
 

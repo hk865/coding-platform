@@ -22,9 +22,9 @@
  * - role: `## Runtime context`, then today's role payload of a legacy-template secretary whose role is `absent`
  *   (`R/context-fact-text.ts` `rolePayload`), then the stale-files reminder on its own line when the round takes the
  *   Session's history.
- * - goal: `## Goal`, then the workspace block (`## Workspace`, the workspace, architecture and completion policy
- *   lines, the top-level module cards), the goals block (`## Goals`, one line per goal), then the selected goal's
- *   payload (`goalPayload`) or `This request has no goal yet.`; every line joined by `\n`.
+ * - goal: `## Goal`, then the workspace block (`## Workspace`, the project id, the workspace, architecture and
+ *   completion policy lines, the served roles, the top-level module cards), the goals block (`## Goals`, one line per
+ *   goal), then the selected goal's payload (`goalPayload`) or `This request has no goal yet.`; every line joined by `\n`.
  * - notes (omitted when empty): `## Note index`, then the goal's note index (a goal request) or the project
  *   understanding and norms (a no-goal request), one line each.
  * - task (one section of three adjacent slots): `## Accepted task` and `## This round`, the executing round's
@@ -69,7 +69,10 @@ The object has exactly these fields:
 - goalCardDrafts: [] unless this request has no goal and the person asks for new work. Each draft is {"objective", "completion", "autonomy", "screening"}: objective is one sentence; completion is a non-empty array of checkable completion criteria; autonomy is "every_step" or "after_plan_confirmation"; screening is optional: omit it or use null when you did not screen the draft, otherwise give {"modules": [ModuleRef...], "size": "small" | "medium" | "large" | "unknown", "conflictsWith": [GoalRef...], "dependsOn": [GoalRef...], "urgency": "high" | "normal" | "low", "suggestedPosition": null or an integer >= 0, "note": a string of at most 512 UTF-8 bytes}. Use the full ModuleRef and GoalRef objects exactly as the tools show them. A draft is a proposal only; no goal exists until the person confirms it.`;
 
 /** `secretary.initialDrafts`: follows the v2 answer format in a no-goal `initial_coordination` round. */
-export const SECRETARY_INITIAL_DRAFTS = `You MAY add a top-level "goalCardDrafts" array to the JSON object: each {"objective", "completion", "autonomy", "screening"}, objective one sentence, completion a non-empty array of checkable criteria, autonomy "every_step" or "after_plan_confirmation". "screening" is optional: omit it or use null when the draft was not screened, otherwise {"modules", "size", "conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at most 512 UTF-8 bytes. You MAY also add a top-level "planDraftIndex" integer naming the zero-based index of the draft this plan is for; omit it when the plan is for no draft. A draft is a proposal only.`;
+export const SECRETARY_INITIAL_DRAFTS = `You MAY add a top-level "goalCardDrafts" array to the JSON object: each {"objective", "completion", "autonomy", "screening"}, objective one sentence, completion a non-empty array of checkable criteria, autonomy "every_step" or "after_plan_confirmation". "screening" is optional: omit it or use null when the draft was not screened, otherwise {"modules", "size", "conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at most 512 UTF-8 bytes. A "plan" answer that carries goal card drafts MUST also carry a top-level "planDraftIndex" integer naming the zero-based index of the draft this plan is for. A "needs_decision" answer carries no planDraftIndex. A draft is a proposal only.`;
+
+/** `secretary.setupRequired`: follows the v2 answer format in every `initial_coordination` round. */
+export const SECRETARY_SETUP_REQUIRED = `This project has no adopted architecture or no active completion policy yet (see "architecture:" and "completion policy:" above), so a "plan" answer MUST carry the top-level "setup" object with all three fields (architecture, completionPolicy, checks); for this request the OPTIONAL and "Omit setup" wording above does not apply. Use the projectId shown above in every module ref and only the available roles shown above in assignments.`;
 
 /** `SECRETARY_HISTORY_ROUNDS` and `SECRETARY_HISTORY_ANSWER_BYTES`: the latest earlier entries shown, each answer's cut. */
 export const SECRETARY_HISTORY_ROUNDS = 10;
@@ -315,16 +318,20 @@ export function moduleCardLine(module: SampleModule): string {
     + `"projectId":${JSON.stringify(module.projectId)}}},"sources":[],"text":${JSON.stringify(module.responsibility)}}`;
 }
 
-/** `## Workspace`, the three pointer lines and, with an architecture, its top-level module cards. */
+/** `## Workspace`, the project id, the three pointer lines, the served roles and, with an architecture, its top-level
+ *  module cards. */
 export function workspaceBlock(input: {
-  workspaceId: string; workspaceRevision: number; architecture: SampleArchitecture | null; policy: SamplePolicy | null;
+  projectId: string; workspaceId: string; workspaceRevision: number; architecture: SampleArchitecture | null;
+  policy: SamplePolicy | null; executionRoles: readonly string[];
 }): string {
   const { architecture, policy } = input;
   return [
     S['secretary.workspaceHeading'],
+    `projectId: ${input.projectId}`,
     `workspace: ${input.workspaceId}@${String(input.workspaceRevision)}`,
     architecture === null ? `architecture: ${NONE}` : `architecture: ${architecture.baselineId}@${String(architecture.revision)}`,
     policy === null ? `completion policy: ${NONE}` : `completion policy: ${policy.policyId}@${String(policy.revision)}`,
+    `available roles: ${input.executionRoles.length === 0 ? NONE : input.executionRoles.join(', ')}`,
     ...(architecture === null ? [] : architecture.topLevelModules.map(moduleCardLine)),
   ].join('\n');
 }
@@ -490,11 +497,12 @@ export function earlierEntryText(entry: SampleEarlierEntry): string {
     .join('\n');
 }
 
-/** The answer format of a round: the semantic one, or the v2 one (plus the drafts note for a no-goal request). */
+/** The answer format of a round: the semantic one, or the v2 one (plus the setup note, and the drafts note for a no-goal request). */
 export function answerFormatText(input: { executionKind: 'semantic_query' | 'initial_coordination'; noGoal: boolean;
   semanticAnswerFormat?: string }): string {
   if (input.executionKind === 'semantic_query') return input.semanticAnswerFormat ?? SECRETARY_ANSWER_FORMAT_V1;
-  return input.noGoal ? `${INITIAL_PLANNING_ANSWER_V2}\n${SECRETARY_INITIAL_DRAFTS}` : INITIAL_PLANNING_ANSWER_V2;
+  return `${INITIAL_PLANNING_ANSWER_V2}\n${SECRETARY_SETUP_REQUIRED}`
+    + (input.noGoal ? `\n${SECRETARY_INITIAL_DRAFTS}` : '');
 }
 
 /** `task_round`: the task header, `## This round`, the round's material, a blank line, the answer format. */
@@ -530,7 +538,9 @@ export type SecretaryRequestSample =
 
 export type SecretaryInputSample = {
   role: SecretaryRoleSample;
-  workspace: { workspaceId: string; revision: number };
+  workspace: { projectId: string; workspaceId: string; revision: number };
+  /** The roles the in-memory Workflow configuration serves for this workspace. */
+  executionRoles: readonly string[];
   architecture: SampleArchitecture | null;
   policy: SamplePolicy | null;
   goals: readonly SampleGoalListEntry[];
@@ -548,10 +558,11 @@ export type SecretaryInputSample = {
 };
 
 /** The goal slot: `\n\n## Goal\n`, the workspace block, the goals block, the goal payload or the no-goal line. */
-export function secretaryGoalSlot(input: Pick<SecretaryInputSample, 'workspace' | 'architecture' | 'policy' | 'goals' | 'request'>): string {
+export function secretaryGoalSlot(input: Pick<SecretaryInputSample, 'workspace' | 'executionRoles' | 'architecture' | 'policy' | 'goals' | 'request'>): string {
   const lines = [
-    workspaceBlock({ workspaceId: input.workspace.workspaceId, workspaceRevision: input.workspace.revision,
-      architecture: input.architecture, policy: input.policy }),
+    workspaceBlock({ projectId: input.workspace.projectId, workspaceId: input.workspace.workspaceId,
+      workspaceRevision: input.workspace.revision, architecture: input.architecture, policy: input.policy,
+      executionRoles: input.executionRoles }),
     goalsBlock(input.goals),
     input.request.kind === 'goal' ? goalPayloadText(input.workspace, input.request.goal) : S['secretary.noGoal'],
   ];

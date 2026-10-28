@@ -287,6 +287,7 @@ export async function assembleSecretaryContext(
   const policy = secretary.completionPolicy;
   const goalLines = [
     packString(texts, 'secretary.workspaceHeading'),
+    `projectId: ${ctx.projectId}`,
     `workspace: ${workspace.workspaceId}@${String(workspace.revision)}`,
     architecture === null
       ? `architecture: ${packString(texts, 'context.none')}`
@@ -294,6 +295,8 @@ export async function assembleSecretaryContext(
     policy === null
       ? `completion policy: ${packString(texts, 'context.none')}`
       : `completion policy: ${policy.policyId}@${String(policy.revision)}`,
+    `available roles: ${secretary.executionRoles.length === 0
+      ? packString(texts, 'context.none') : secretary.executionRoles.join(', ')}`,
     ...(architecture === null ? [] : topLevelModuleCards(architecture.catalog).map((row) => row.text)),
     packString(texts, 'secretary.goalsHeading'),
     ...(secretary.goals.length === 0
@@ -306,6 +309,7 @@ export async function assembleSecretaryContext(
   const answerFormat = secretary.executionKind === 'semantic_query'
     ? renderTemplate(texts, 'secretary-answer', {}, input.toolNames).text
     : renderTemplate(texts, 'initial-planning-answer', {}, input.toolNames).text
+      + '\n' + packString(texts, 'secretary.setupRequired')
       + (effectiveGoalId === null ? '\n' + packString(texts, 'secretary.initialDrafts') : '');
   // Required handoff material is task material: it goes in front of the round,
   // never in the trimmable notes. One blank line separates it from the round.

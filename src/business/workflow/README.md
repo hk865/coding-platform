@@ -21,6 +21,7 @@
 - `WorkflowPort.sessionHandoff`（`src/business/workflow/ports.ts:256`）— 6B-2 的可选 late-binding 成员；真实组合在 I1 发布，旧窄替身保持类型兼容。
 - `request-intake.ts` — request 命令（submit/route/selectIdea/ask）与未分配 drain：选人、建线或退回 waiting；drain 在每条请求前看调用 signal，已停止就返回已提交的计数。
 - `request-round-queue.ts` — 两条请求队列处理器（`request-rounds` 分派开放轮、`unassigned` 跑未分配 drain）及 `settle()`：分页遍历、按 Session 的先飞集合、退避与唤醒都由端口注入，不读记录库。
+- `role-bindings.ts` — 角色绑定的唯一正本：`servingBinding` 按项目、workspace 与 `roleBinding.templateId` 要求恰好一个受信绑定，`servedRoleIds` 给出一个 scope 下被服务的 distinct role id（UTF-16 code units 排序）；`workflow.ts` 的 `bindingForRole` 只转调前者，名字、签名和位置不变。
 - `session-handoff.ts` / `secretary-handoff.ts` — 交接与手动归档的 Workflow 组合：`startHandoff`/`continueHandoff`/`advance`/`manualArchive`，在两次 advance 之间只调一个子 owner（`ensureLine`、transfer、D 的 append、`archiveLineInternal`），从不写 RecordStore；秘书专属的覆盖/理解/路由步序只在源 duty 是 secretary 时跑。组合入口是 `createSecretaryHandoffWorkflow`，秘书专属子调用只剩 `appendUnderstanding`（经固定系统 principal 追加理解命令），源 Session 的 duty 判断 `isSecretaryDuty` 在 advance owner 里；阶段停在已提交 before 写的窗口里只带已保存的输入，组合用同一份输入再调原 owner；理解旧代由组合在真实轮次结束后关闭，子 owner 的真实拒绝经冻结的 `refusal` 臂记下 `lastRefusal` 后停止，原拒绝仍原样返回，任何 `ready` 都不当作完成；手动归档的最终条件失败只在 `revision_conflict` 且 reason 带 `archive_condition_failed:` 时，用返回 Session 的真实 revision/request ID 经 `releaseArchiveRequest` 在 `archiveContextOf` 下释放仍挂起的登记，释放失败原样返回，父操作保留保存的 GraphWrite 和登记回执并从 `archiveLineInternal` 的回执继续。
 - `session-archive.ts` — 单一 Session 归档组合入口：按不可变归档请求逐步提交，已提交的步骤不撤销；请求里的可信条件原样转发给 Session 生命周期 owner，恢复时沿用存储里的原值。
 - `session-maintenance.ts` — 有界单页 Session 维护：读到期事实并按到期归档，不启动任何东西。
@@ -32,7 +33,7 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkflow` | `src/business/workflow/workflow.ts:776` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
+| `createWorkflow` | `src/business/workflow/workflow.ts:777` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
 | `createSecretaryHandoffWorkflow` | `src/business/workflow/session-handoff.ts:34` | 交接与手动归档的唯一 Workflow 组合：驱动 advance，两次 advance 之间只调一个子 owner（建线、转移、请求路由、归档），每个父写和子调用都用操作保存的 principal，只有归档子步（登记、回执读和最终读）用平台归档自动化身份 `archiveContextOf`；这个归档申请人是共用的（L9：维护、H 和人的手动归档都以 `workflow:session-archive` 申请），所以归档按 `condition.kind`/`mode` 选，不按申请人 | `createWorkflow` 在注入 `sessionHandoff` 时装配；I1 把它发布成 `workflow.sessionHandoff` |
 | `appendUnderstanding` | `src/business/workflow/secretary-handoff.ts:16` | 秘书专属的理解子调用：经固定系统 principal 追加一条已保存的理解命令 | 只由 `createSecretaryHandoffWorkflow` 的步序调用；不要另写系统 principal 或第二条内部命令 |
 | `createTaskGate` | `src/business/workflow/task-gate.ts:71` | `select_work`/`perform` 共用的任务门、自动 requeue/reverify、自动化确认与 gate perform；读 `createWorkflow` 的同一个 `deps` 引用，不复制 | `createWorkflow` 原位装配；不要另写门或确认规则 |
@@ -55,6 +56,7 @@
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:161` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:96` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
 | `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:119`、`src/core/work-graph/tasks/secretary-selection.ts:464` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
+| `servingBinding`、`servedRoleIds` **正本** | `src/business/workflow/role-bindings.ts:8`、`src/business/workflow/role-bindings.ts:17` | 角色绑定的唯一正本：恰好一个受信绑定的判据，以及一个 workspace scope 下被服务的 distinct `roleBinding.templateId`（UTF-16 code units 排序） | Workflow 选角色与可用角色读取；不要另写绑定匹配或第二份角色过滤 |
 | `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1163`、`src/core/work-graph/sessions/session-record-codecs.ts:1157` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
 | `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:464` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
 | `oldestPending`（私有） | `src/business/workflow/request-intake.ts:161` | 把正本结果投影成 `QueryJobRef` 的私有包装 | 本层 intake/drain 使用；不要在这里重写选轮规则 |

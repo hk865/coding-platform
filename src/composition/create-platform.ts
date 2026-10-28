@@ -64,6 +64,7 @@ import type { MessageReleaseApprovedHookV1 } from '../core/work-graph/communicat
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
+import { servedRoleIds } from '../business/workflow/role-bindings.js';
 import { createCommandRerunRequestApplicationAdapter, createMessageReleaseApplicationAdapter } from '../business/workflow/decision-actions.js';
 import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
@@ -172,7 +173,7 @@ import {
   createInitializationAdoptionService, type InitializationAdoptionServiceDependencies,
 } from '../core/work-graph/tasks/initialization-adoption-service.js';
 import type {
-  ChecksConfirmationPort, InitializationAdoptionPort,
+  ChecksConfirmationPort, InitializationAdoptionPort, ServedRolesPort,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
 // The initialization binding reader, the Goal draft confirmation, the Goal copy and the request tail the
 // confirmation prepares with.
@@ -1099,12 +1100,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
     });
     const catalog = createArchitectureCatalogService({ records: backend.records });
+    // The ONE reader of the roles this workspace's trusted bindings serve. It reads the live configuration at call
+    // time: registering a binding may replace the whole object, so a build-time snapshot would miss it.
+    const readServedRoles: ServedRolesPort['readServedRoles'] = (scope) =>
+      servedRoleIds(workflowDependencies.configuration?.bindings ?? [], scope);
     // L8: the secretary facts port the Runtime prepares a request round from.
     // It reads the ONE record store and the ONE catalog; without a trusted
     // Runtime Host binding there is no Query preparation to serve, so it is not
     // built.
     const secretaryFacts = queryExecution === undefined ? undefined : createSecretaryPreparationFacts({
-      records: backend.records, architecture: catalog,
+      records: backend.records, architecture: catalog, roles: { readServedRoles },
     });
     // L8 (book ruling 6): the SAME catalog instance resolves an omitted capture
     // `mappings`, so the automatic/manual capture and the reminder read share
@@ -1575,7 +1580,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const adoptionOperations = createInitializationAdoptionService({ records: backend.records, bindings: bindingReads,
       sources: planService as InitializationAdoptionServiceDependencies['sources'], architecture: catalog,
       policies: bootstrap.completionPolicies as InitializationAdoptionServiceDependencies['policies'],
-      now, eventId: randomUUID });
+      roles: { readServedRoles }, now, eventId: randomUUID });
     const initializationAdoption: InitializationAdoptionPort = {
       accept: (ctx, input) => trackedCall(() => adoptionOperations.accept(ctx, input), unavailable),
       resume: (ctx, input) => trackedCall(() => adoptionOperations.resume(ctx, input), unavailable),

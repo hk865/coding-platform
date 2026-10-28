@@ -46,7 +46,7 @@
 - `goal-card-contracts.ts` — 目标卡片的初始化 binding、理解指针、确认与复制端口：`InitializationBindingReadPort`、`GoalUnderstandingReadPort`、`GoalConfirmPort`、`GoalCopyPort`。
 - `goal-copy-contracts.ts` — 复制取消 Goal 的两个端口：`CopyInterventionReadPort`（分页读可复制干预，失败是拒绝不是空集）与 `CopyInterventionRetractionPort`（撤回一条），以及候选 DTO `CopyInterventionCandidateV1`（从 `src/contracts/goal-copy-retraction.ts` 转出，正本在 C）。
 - `evidence-contracts.ts` — `EvidencePort`：验证轮、检查开始/记录/终止/重验的写入口。
-- `initialization-adoption-contracts.ts` — P11 的采用、检查与设置串行端口：`InitializationAdoptionPort`、`ChecksEntryPort`、`ChecksConfirmationPort`、`StoredChecksStateV1`、`SavedChecksReadPort`、`SettingsSerialGatePort`。
+- `initialization-adoption-contracts.ts` — P11 的采用、检查与设置串行端口：`InitializationAdoptionPort`、`ChecksEntryPort`、`ChecksConfirmationPort`、`ServedRolesPort`、`StoredChecksStateV1`、`SavedChecksReadPort`、`SettingsSerialGatePort`。
 - `plan-contracts.ts` — Plan/Goal 读模型、诊断、`ProposedPlanDraftRequestV1`/`ProposedPlanSourceRequestV1` 两臂及其别名 `ProposedPlanRequestV1`（草稿臂的可选 `acknowledgement`，7A §3.5）、方法类型 `ProposeInitialPlanFromAnswer`（返回 `InitialPlanProposalResult`）/`HostProposePlan`（返回 `EffectWriteResultV1<PlanProposal>`）、`PlanTaskPort` 与 `PlanServicePort`。
 - `unknown-call-review-contracts.ts` — `UnknownCallReview` 的读/写端口与分页输入。
 
@@ -83,12 +83,12 @@
 | `GoalUnderstandingReadPort` | `src/core/work-graph/model/goal-card-contracts.ts:19` | 读 Goal 理解指针与可证明的 head/note；缺指针是 `revision: null`，不是错误 | 目标卡片与 G 的读取 |
 | `GoalConfirmPort` | `src/core/work-graph/model/goal-card-contracts.ts:25` | 确认候选草稿的唯一写入口 | C 的确认提交 |
 | `GoalCopyPort` | `src/core/work-graph/model/goal-card-contracts.ts:29` | 读复制草稿并确认复制 | C/K/G 的复制链路 |
-| `InitializationAdoptionPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:13` | P11 采用的 accept/resume/read/saveBefore/saveAfter；只有 accept 提高代 | J 实现、L 接线 |
-| `ChecksEntryPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:30` | 按采用的来源应用检查配置并保存 | J 的采用阶段 |
-| `ChecksConfirmationPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:38` | 读已安装检查的确认状态 | J 的采用阶段 |
-| `StoredChecksStateV1` | `src/core/work-graph/model/initialization-adoption-contracts.ts:44` | 保存的设置状态：来源、完整检查、保存计数与写入子项 | 采用阶段重开后的比较 |
-| `SavedChecksReadPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:51` | 读设置文件自身的保存状态，不读已安装配置 | J 的采用阶段 |
-| `SettingsSerialGatePort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:56` | J 的设置串行队列，交给 L 使用 | 采用内不得再次调用排队的设置路由 |
+| `InitializationAdoptionPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:14` | P11 采用的 accept/resume/read/saveBefore/saveAfter；只有 accept 提高代 | J 实现、L 接线 |
+| `ChecksEntryPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:31` | 按采用的来源应用检查配置并保存 | J 的采用阶段 |
+| `ChecksConfirmationPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:39` | 读已安装检查的确认状态 | J 的采用阶段 |
+| `StoredChecksStateV1` | `src/core/work-graph/model/initialization-adoption-contracts.ts:49` | 保存的设置状态：来源、完整检查、保存计数与写入子项 | 采用阶段重开后的比较 |
+| `SavedChecksReadPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:56` | 读设置文件自身的保存状态，不读已安装配置 | J 的采用阶段 |
+| `SettingsSerialGatePort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:61` | J 的设置串行队列，交给 L 使用 | 采用内不得再次调用排队的设置路由 |
 | `ExecutionEntryPort` | `src/core/work-graph/model/execution-entry-contracts.ts:109` | 执行授权、开始、进入、结果与恢复的写入口 | Runtime 执行进入 |
 | `ExecutionReadPort` | `src/core/work-graph/model/execution-read-contracts.ts:96` | 精确 Task execution 与按 Goal/Task 的分页读取 | 读执行事实，不再另写读取器 |
 | `EvidencePort` | `src/core/work-graph/model/evidence-contracts.ts:119` | 验证轮与检查生命周期的唯一受信写入口；`ReverifyRoundInput` 有可选 `acknowledgement`，写结果带可选 `proofReceipt` | 证据/验证 owner |
@@ -143,7 +143,7 @@
 | 交接 fence 的前缀 | `src/core/work-graph/model/request-contracts.ts:81` | `SECRETARY_HANDOFF_PREFIX` | 每 Session 的交接 fence 键的前缀；键的函数体 `secretaryHandoffClaimKey` 在 D 的 fence 文件，别处不要另拼 |
 | 思路标题上限 | `src/core/work-graph/model/request-contracts.ts:34` | `IDEA_TITLE_MAX_CODEPOINTS`（120 个码点，一行） | 校验或存储一个回答的 ideas 时，和 `IDEA_DETAIL_MAX_CODEPOINTS` 一起用 |
 | 思路的唯一规则 | `src/core/work-graph/model/request-ideas.ts:12`、`src/core/work-graph/model/request-ideas.ts:17` | `validIdeaCount`（0、2 或 3 个）；`ideasIssues`（数组、条数、每条 title/detail 是字符串、标题一行非空且 ≤120 码点、说明 ≤600 码点，返回问题列表） | 正本：秘书回答检查（`queries/secretary-answer.ts`）、回答 codec 的存储复检（`queries/query-record-codecs.ts`）和选思路入口（`tasks/request-service.ts`）都调它，不另写思路规则 |
-| 秘书准备的读取端口 | `src/core/work-graph/model/secretary-contracts.ts:58` | `SecretaryPreparationFactsPort`：按 QueryRun 读一次请求（含 `briefRef` 与 `understandingGrants`）、工作区、架构、政策、目标列表和执行种类，带 guards 和 watermark | 秘书轮的准备只经这个端口取事实 |
+| 秘书准备的读取端口 | `src/core/work-graph/model/secretary-contracts.ts:59` | `SecretaryPreparationFactsPort`：按 QueryRun 读一次请求（含 `briefRef` 与 `understandingGrants`）、工作区、架构、政策、目标列表和执行种类，带 guards 和 watermark | 秘书轮的准备只经这个端口取事实 |
 | `SecretaryQueryRunPort`、`SecretaryQueryRunV1` | `src/core/work-graph/model/secretary-query-run-contracts.ts:35`、`src/core/work-graph/model/secretary-query-run-contracts.ts:22` | `resolveSecretaryQueryRun(ctx)` 返回一轮运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1`：Session、duty、scope、round、run、准备时冻结的 `effectiveGoalId` 与 Plan（`planRef`）、requestRoot、sessionGeneration 与当前 `request_understanding` 授权集 | 注记 owner 的 `query_run` 准入；7A 的发送准入复用同一端口 |
 | Query/Request 索引名 | `src/core/work-graph/model/request-contracts.ts:55` | `QUERY_BY_REQUEST_INDEX`、`QUERY_OPEN_BY_WORKSPACE_INDEX`、`REQUEST_ROOTS_BY_GOAL_INDEX`、`QUERY_RAN_BY_SESSION_GOAL_INDEX` | 注册或查询这些固定索引时；`unassigned` 读取用 `QUERY_OPEN_BY_WORKSPACE_INDEX` |
 | 请求根索引的槽值 **正本** | `src/core/work-graph/model/request-contracts.ts:191`、`src/core/work-graph/model/request-contracts.ts:194` | `REQUEST_ROOT_MARK`（根轮的 `rootMark`）、`requestGoalSlot`（`g:<goalId>`，无 Goal 是 `no-goal`） | 写 `s6-request-roots-by-goal` 的槽（codec）和按它读（主对话）都用这一份，不另拼字符串 |

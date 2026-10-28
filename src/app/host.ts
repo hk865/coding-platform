@@ -40,7 +40,7 @@ import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
-import type { WorkspaceRef } from '../contracts/ledger.js';
+import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
 import { acquireHostInstanceLease } from './host-instance-lease.js';
@@ -1548,23 +1548,28 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
     })));
   }
+  // The one start both the start-up re-drive and an adopted first plan use: the Goal's own profile ids, the Host
+  // actor's scope context, and a `select_work` advance. A refused start leaves the Goal for the next
+  // `workflow/advance` or `driver-start`.
+  const startGoalDriver = async (scope: CoreScope, goalRef: GoalRef, flowId: string,
+    answers?: StartupReconcileReportV1['redriveGoals'][number]['answers']): Promise<void> => {
+    const profileIds = runtimeProfiles.filter(profile => profile.scope.projectId === scope.projectId
+      && profile.scope.workspaceId === scope.workspaceId).map(profile => profile.id);
+    try {
+      await collaborationDriver.start(hostScopeContext(scope, actor), {
+        advance: { schemaVersion: 1, goalRef, flowId, sessionHint: null, kind: 'select_work',
+          ...(answers === undefined || answers.length === 0 ? {} : { answers }) },
+        queryProfileIds: profileIds,
+      });
+    } catch { /* a refused start leaves the Goal for the next workflow/advance or driver-start */ }
+  };
   // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
   // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup`; every
   // step it takes is judged by the owners, and its rework steps run as the Workflow's automation actor.
   const startRedrive = async (goals: StartupReconcileReportV1['redriveGoals']): Promise<void> => {
     if (!platform.automationPolicy().resumeOnStartup) return;
     for (const goal of goals) {
-      const scope = goal.scope;
-      const profileIds = runtimeProfiles.filter(profile => profile.scope.projectId === scope.projectId
-        && profile.scope.workspaceId === scope.workspaceId).map(profile => profile.id);
-      try {
-        await collaborationDriver.start(hostScopeContext(scope, actor), {
-          advance: { schemaVersion: 1, goalRef: goal.goalRef, flowId: `startup-redrive:${goal.goalRef.goalId}`,
-            sessionHint: null, kind: 'select_work',
-            ...(goal.answers === undefined || goal.answers.length === 0 ? {} : { answers: goal.answers }) },
-          queryProfileIds: profileIds,
-        });
-      } catch { /* a refused start leaves the Goal for the next workflow/advance or driver-start */ }
+      await startGoalDriver(goal.scope, goal.goalRef, `startup-redrive:${goal.goalRef.goalId}`, goal.answers);
     }
   };
   if (reconcileReport !== null) await startRedrive(reconcileReport.redriveGoals);
@@ -2072,9 +2077,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     return written;
   };
+  // An adopted first plan starts its Goal's collaboration driver, replayed commits included (the driver's seed
+  // dedupes them); only a context with a workspace starts. The adoption answer is unchanged.
+  const adoptInitialization: CoreRouteBindings['adoptInitialization'] = async (ctx, input) => {
+    const result = await routeBindings.adoptInitialization(ctx, input);
+    if (result.status === 'committed' && ctx.workspaceId !== undefined) {
+      await startGoalDriver({ projectId: ctx.projectId, workspaceId: ctx.workspaceId },
+        input.expectedGoal.ref, `plan-adopted:${input.expectedGoal.ref.goalId}:${result.receipt.plan.planId}`);
+    }
+    return result;
+  };
   const server: WorkbenchServer = createWorkbenchServer({
     token,
-    bindings: leaseGated({ ...routeBindings, registerWorkspace }),
+    bindings: leaseGated({ ...routeBindings, registerWorkspace, adoptInitialization }),
     actor,
     bootstrap: buildBootstrap,
     changes,

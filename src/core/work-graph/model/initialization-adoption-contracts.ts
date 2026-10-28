@@ -1,6 +1,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type {
   AdoptionContinueInputV1, AdoptionSaveAfterInputV1, AdoptionSaveBeforeInputV1, AdoptionStageWriteResultV1,
   ChecksConfigurationPinV1,
@@ -38,6 +39,10 @@ export interface ChecksEntryPort {
 export interface ChecksConfirmationPort {
   confirmInstalledChecks(ctx: CoreCallContext,
     input: { scope: { projectId: string; workspaceId: string } }): Promise<ReadResult<ChecksConfirmationV1>>;
+}
+/** The roles one workspace serves, from the in-memory Workflow configuration; synchronous, so no `unavailable` arm. */
+export interface ServedRolesPort {
+  readServedRoles(scope: WorkspaceScope): readonly string[];
 }
 /** The saved settings state one adoption stage compares after a reopen: the source, the full checks and the
  *  child that wrote them. `child: null` is a direct Host approval (the persisted field is absent, not null). */

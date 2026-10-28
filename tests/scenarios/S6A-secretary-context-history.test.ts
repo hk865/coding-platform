@@ -93,7 +93,9 @@ Omit<SecretaryInputSample, 'round' | 'batched' | 'earlier'> {
   const policy = memory.governance.policy;
   return {
     role: { policyRevision: 's6a-secretary-binding@1', tools: [...tools], takesSessionHistory },
-    workspace: { workspaceId: memory.workspace.workspaceId, revision: memory.workspace.revision },
+    workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
+      revision: memory.workspace.revision },
+    executionRoles: ['builder'],
     architecture: architecture === null ? null : architectureSample(architecture),
     policy: policy === null ? null : { policyId: policy.policyId, revision: policy.revision },
     goals: memory.goals.map(entry => ({ goalId: entry.goalId, desiredState: entry.desiredState, objective: entry.objective })),

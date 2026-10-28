@@ -47,6 +47,7 @@ export type SecretaryPreparationFactsV1 = {
     understandingGrants: GoalRef[];
   };
   workspace: { workspaceId: string; revision: number };
+  executionRoles: readonly string[];
   architecture: { baselineId: string; revision: number; catalog: AdoptedArchitecture } | null;
   completionPolicy: { policyId: string; revision: number } | null;
   goals: { goalId: string; desiredState: GoalDesiredState; objective: string }[];

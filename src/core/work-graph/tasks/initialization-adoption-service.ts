@@ -32,7 +32,7 @@ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { CompletionPolicyReadPort } from '../model/completion-policy-contracts.js';
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
-import type { InitializationAdoptionPort } from '../model/initialization-adoption-contracts.js';
+import type { InitializationAdoptionPort, ServedRolesPort } from '../model/initialization-adoption-contracts.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import { trustedContext } from '../sessions/trusted-context.js';
 import {
@@ -56,6 +56,8 @@ export type InitializationAdoptionServiceDependencies = {
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   /** The shared completion-policy read: the active pointer plus the immutable policy revision it pins. */
   policies: CompletionPolicyReadPort;
+  /** The roles the in-memory Workflow configuration serves for the workspace an assignment names. */
+  roles: ServedRolesPort;
   now: () => string;
   eventId: () => string;
 };
@@ -265,6 +267,15 @@ export function createInitializationAdoptionService(
       const answerDigest = sha256Hex(facts.answerText);
       if (input.expectedAnswerDigest !== answerDigest) {
         return rejected('source_stale', 'the initial plan answer does not match the expected digest');
+      }
+      const served = deps.roles.readServedRoles({
+        projectId: ctx.projectId, workspaceId: source.answerRef.workspaceId,
+      });
+      for (const assignment of parsed.response.plan.assignments ?? []) {
+        if (!served.includes(assignment.role)) {
+          return rejected('invalid',
+            `the plan assigns role ${assignment.role}, which no execution binding of this workspace serves (served: ${served.length === 0 ? '(none)' : served.join(', ')})`);
+        }
       }
       const setup = parsed.response.setup ?? null;
       if (setup === null) {

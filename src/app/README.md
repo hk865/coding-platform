@@ -3,7 +3,7 @@
 ## 负责什么，不负责什么
 - 外层 Host：依赖方向只允许 `src/composition`、`src/contracts` 和 `src/core`/`src/business` 各模块；`scripts/check-boundaries.mjs` 只按模块 owner 判方向，不细化到端口文件。不能开 store，不能被 core/business 反向 import。
 - 负责进程外壳：CLI、HTTP/SSE 传输、实例锁、启动 reconcile、Host 设置、提示词包、运行期配置，以及注意力、自动捕获、协作、Goal 扇出和请求驱动（唤醒循环加每 workspace 的两条请求队列）。
-- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:1415`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
+- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:1420`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
 - 不写状态：任何状态迁移只经 `src/core/work-graph/state/`（AGENTS 第 9 条）；本层只调用平台公开端口。
 - 请求体永远不提供 principal、root、token 或凭据；这些只来自受信任的 `options`。
 - `src/core`、`src/business` 不得反向 import 本层。
@@ -23,7 +23,7 @@
 - `server.ts` — HTTP/静态外壳：token、同源、JSON/大小限制、SSE，再转发给 `core-routes.ts`。
 - `core-routes.ts` — 固定路由表、请求解析、端口绑定和逐 suffix 显式 dispatch；7A-2 的 `messages/apply` 是 `graph_write`，绑定 apply owner，路由不加人检查：owner 自己比较调用方的 effect；`secretaries/handoff` 与 `secretaries/archive` 是只限人的内部命令：先验人，再经 accept owner，然后驱动 Workflow 的 `advance`/`manualArchive`，公开 key 表不变。6B-3 的四条 `plain` 路由：`goals/confirm-draft` 和 `goals/copy-confirm` 只限人（与注记的两条处置共用一个人的守卫，原因是“only the person may call this route”），`goals/copy-draft` 是读；`initialization/adopt` 也只限人，它的 owner 经 `createPlatformCoreRouteBindings` 可选的第六个参数传入，没传时回答 `unsupported`。
 - `core-http-types.ts` — 从公开端口派生的 HTTP/JSON DTO 与传输常量，含两条秘书生命周期命令的 body/response 和 `SecretaryLifecycleCoreRouteDto`；这两条的 body 从 owner 的 accept 输入派生（只把 `source` 叫 `session`），response 从 Workflow `advance`/`manualArchive` 的返回类型派生，绑定用同一组类型。6B-3 四条路由的 body/response从 `GoalConfirmPort`、`GoalCopyPort` 和 `InitializationAdoptionHostPort` 派生。7A-2 的 `MessagesApplyBody`/`MessagesApplyResponse` 从 `MessageApplyPort['applyMessage']` 派生，`MessagesCoreRouteDto` 收集这两条别名。
-- `initialization-adoption.ts` — `initialization/adopt` 的 Host owner：端口 `InitializationAdoptionHostPort`（`adopt` 一次调用接受或续跑、冻结输入、跑完能完成的阶段，停下回答 `pending`；`read` 是恢复读，生产里还没有调用者）和 P11 组合 `createInitializationAdoptionHost`（`src/app/initialization-adoption.ts:131`）。每个阶段 `read → resume →（打开的前标记 | 新一代替换停下的标记 | saveBefore）→ 子 owner → saveAfter`；记录只由 J 的 `platform.initializationAdoption` 写，本 owner 只给写入输入、按冻结的 actor 调子 owner；四个子 owner 的身份前缀和指纹配方是它们的私有函数，这里照抄并注明出处。不持实例租约时在 accept 前回答 `busy`。Host 没有设置（没有建这个 owner）时，`initialization/adopt` 回答 `unsupported`。
+- `initialization-adoption.ts` — `initialization/adopt` 的 Host owner：端口 `InitializationAdoptionHostPort`（`adopt` 一次调用接受或续跑、冻结输入、跑完能完成的阶段，停下回答 `pending`；`read` 是恢复读，生产里还没有调用者）和 P11 组合 `createInitializationAdoptionHost`（`src/app/initialization-adoption.ts:131`）。每个阶段 `read → resume →（打开的前标记 | 新一代替换停下的标记 | saveBefore）→ 子 owner → saveAfter`；记录只由 J 的 `platform.initializationAdoption` 写，本 owner 只给写入输入、按冻结的 actor 调子 owner；四个子 owner 的身份前缀和指纹配方是它们的私有函数，这里照抄并注明出处。不持实例租约时在 accept 前回答 `busy`。Host 没有设置（没有建这个 owner）时，`initialization/adopt` 回答 `unsupported`。`committed` 之后 Host 用 `startGoalDriver` 启动该 Goal 的 collaboration driver。
 - `change-feed.ts` — 进程内变更通知中心，供 `changes` SSE 与 `Last-Event-ID` 恢复。
 
 ### 驱动与观察
@@ -91,7 +91,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1415`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1420`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。

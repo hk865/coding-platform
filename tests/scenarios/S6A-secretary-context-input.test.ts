@@ -141,7 +141,9 @@ function noGoalSample(memory: S6AMemory, round: SampleRound): Omit<SecretaryInpu
   const policy = governance.policy;
   return {
     role: { policyRevision: 's6a-secretary-binding@1', tools: ['read'], takesSessionHistory: false },
-    workspace: { workspaceId: memory.workspace.workspaceId, revision: memory.workspace.revision },
+    workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
+      revision: memory.workspace.revision },
+    executionRoles: ['builder'],
     architecture: architecture === null ? null : architectureSample(architecture),
     policy: policy === null ? null : { policyId: policy.policyId, revision: policy.revision },
     goals: memory.goals.map(goal => ({ goalId: goal.goalId, desiredState: goal.desiredState,

@@ -7,9 +7,10 @@
  * text is parsed as that object; JSON is never extracted from surrounding text
  * or repaired. An `initial_coordination` round keeps the v2 initial-planning
  * answer, checked by its one parser; a request without a goal may add top-level
- * `goalCardDrafts` and, on a `kind: 'plan'` answer, the `planDraftIndex` naming
- * the draft the plan belongs to. Drafts are proposals only: a request that
- * already has a goal carries none. A draft may carry the model's optional
+ * `goalCardDrafts`, and a `kind: 'plan'` answer with drafts must name its draft
+ * in `planDraftIndex` (a plan with `goalCardDrafts: []` names none). Drafts are
+ * proposals only: a request that already has a goal carries none. A draft may
+ * carry the model's optional
  * `screening`; `null` or an absent field means not screened.
  *
  * Every refusal is `protocol` with a platform reason. An empty or over-long
@@ -87,15 +88,21 @@ function coordinationAnswer(text: string, hasGoal: boolean): SecretaryAnswerChec
 }
 
 /**
- * A no-goal `initial_coordination` answer of `kind: 'plan'` may name
- * the draft its plan belongs to. Absent means the plan belongs to no draft; a
- * goal request, a `needs_decision` answer and an answer with no drafts carry
- * none, and a present index must be one of the answer's own drafts.
+ * A no-goal `initial_coordination` answer of `kind: 'plan'` with drafts must
+ * name the draft its plan belongs to in `planDraftIndex`: adoption goes through
+ * a binding whose draft index must equal it, so a plan that names none could
+ * never be adopted. A plan with no drafts belongs to no draft; a goal request
+ * and a `needs_decision` answer carry none, and a present index must be one of
+ * the answer's own drafts.
  */
 function planDraftIndexOf(
   object: Record<string, unknown>, hasGoal: boolean, draftCount: number,
 ): number | null | string {
-  if (!Object.hasOwn(object, 'planDraftIndex')) return null;
+  if (!Object.hasOwn(object, 'planDraftIndex')) {
+    return object['kind'] === 'plan' && draftCount > 0
+      ? 'a plan answer with goal card drafts must name its draft in planDraftIndex'
+      : null;
+  }
   if (hasGoal) return 'an initial_coordination answer on a request that has a goal carries no planDraftIndex';
   if (object['kind'] === 'needs_decision') return 'a needs_decision answer carries no planDraftIndex';
   if (draftCount === 0) return 'a planDraftIndex needs a goal card draft to name';
