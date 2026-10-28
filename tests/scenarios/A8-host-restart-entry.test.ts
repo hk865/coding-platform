@@ -123,6 +123,8 @@ it('A8-2a, A8-1c (W-05, W-03, RUN-16, RUN-03, I-19): an Entering Run with no Ker
     }
     // The start-up re-drive (the crash restart when on, the later start when off) completes the Goal by itself.
     await waitFor(() => h.goalDisplay(), display => display.phase === 'COMPLETED', 'the start-up re-drive to complete the Goal');
+    // L8: the re-drive's PASS started the Host's automatic capture; the "writes nothing" windows below must not see it.
+    await h.settleAutoCapture();
     await assertInvariants(h, `a8-2a re-driven (${String(resumeOnStartup)})`);
     const done = await execution(h, run2Ref);
     expect((await h.taskRow()).execution, 'the same Run, no new claim').toEqual(run2Ref);

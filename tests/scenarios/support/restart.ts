@@ -145,13 +145,16 @@ async function autoReworkLimitOf(database: string): Promise<number> {
 
 /**
  * §12.10 step 4 on a `HostScenario`. The abandoned Hosts are drained first (draining lets an abandoned
- * Host's Kernel end a Turn it held: new Kernel data, no restart's write); then a crash restart on the same
+ * Host's Kernel end a Turn it held: new Kernel data, no restart's write) and the live Host's automatic
+ * capture settles (a PASS that a background driver finalized, such as the start-up re-drive, starts one
+ * that `advance()` never awaited; the crash below leaves that Host running); then a crash restart on the same
  * data with the start-up re-drive off (step 5: only the reconcile runs) owns the lease, changes no record
  * (every report line `left`) and writes nothing (`counts()` equal: no model call, Kernel Turn or check
  * start). The re-drive stays off afterwards.
  */
 export async function expectQuietHarnessRestart(h: HostScenario, label: string): Promise<HostReconcileReportV1> {
   await h.drainAbandoned();
+  await h.settleAutoCapture();
   const before = h.counts();
   const restarted = await h.restart({ crash: true, automation: { ...h.automationPolicy(), resumeOnStartup: false } });
   expect(restarted, label).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { problems: [] } });

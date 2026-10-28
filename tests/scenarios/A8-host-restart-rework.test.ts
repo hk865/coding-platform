@@ -71,6 +71,8 @@ it('A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim;
       // Q-01 (QRR-01) closes the never-entered QueryRun and frees the Session; the re-drive then claims there.
       expect(report.report?.queries).toEqual([expect.objectContaining({ row: 'Q-01', status: 'reconciled', reason: 'not_entered' })]);
       await waitFor(() => h.goalDisplay(), display => display.phase === 'COMPLETED', 'the start-up re-drive to complete the Goal');
+      // L8: the re-drive's PASS started the Host's automatic capture; the "writes nothing" windows below must not see it.
+      await h.settleAutoCapture();
       await assertInvariants(h, 'a8-r1 re-driven');
     }
     // Exactly one new Run, claimed with the requeueRef in Run 1's reusable Session (W-21), and it passed.
