@@ -388,6 +388,8 @@ export type RuntimeExecutionDependencies = {
    * maintenance treats the close as a definite failure (M1).
    */
   turnClosure?: TurnClosureDependencies;
+  /** (W-11): the closing Host's signal; a live Run pauses at its next safe point, no intent recorded. */
+  hostClosing?: AbortSignal;
   now: () => string;
   newId: () => string;
 };

@@ -6,11 +6,10 @@
  * `body`, `ideas` of 0, 2 or 3 options and `goalCardDrafts`. The whole final
  * text is parsed as that object; JSON is never extracted from surrounding text
  * or repaired. An `initial_coordination` round keeps the v2 initial-planning
- * answer, checked by its one parser; a request without a goal may add top-level
- * `goalCardDrafts`, and a `kind: 'plan'` answer with drafts must name its draft
- * in `planDraftIndex` (a plan with `goalCardDrafts: []` names none). Drafts are
- * proposals only: a request that already has a goal carries none. A draft may
- * carry the model's optional
+ * answer, checked by its one parser. A goal-less plan carries at least one
+ * draft and names it in `planDraftIndex`; a goal request carries no drafts; a
+ * `needs_decision` answer may carry drafts and never carries a `planDraftIndex`.
+ * Drafts are proposals only. A draft may carry the model's optional
  * `screening`; `null` or an absent field means not screened.
  *
  * Every refusal is `protocol` with a platform reason. An empty or over-long
@@ -28,7 +27,7 @@ type SecretaryIdea = { title: string; detail: string };
 type SecretaryAnswerCheck =
   | {
     ok: true; body: string; ideas: SecretaryIdea[]; goalCardDrafts: GoalCardDraftV1[];
-    /** The draft a no-goal plan answer's plan belongs to; null when the plan names none. */
+    /** The draft a no-goal plan answer's plan belongs to; null when the answer names none. */
     planDraftIndex: number | null;
   }
   | { ok: false; detail: 'protocol'; reason: string };
@@ -82,6 +81,9 @@ function coordinationAnswer(text: string, hasGoal: boolean): SecretaryAnswerChec
   if (hasGoal && present) return protocol('an initial_coordination answer on a request that has a goal carries no goalCardDrafts');
   const drafts = present ? draftsOf(object['goalCardDrafts'], hasGoal) : [];
   if (typeof drafts === 'string') return protocol(drafts);
+  if (!hasGoal && object['kind'] === 'plan' && drafts.length === 0) {
+    return protocol('a plan answer on a request without a goal must carry at least one goal card draft');
+  }
   const planDraftIndex = planDraftIndexOf(object, hasGoal, drafts.length);
   if (typeof planDraftIndex === 'string') return protocol(planDraftIndex);
   return { ok: true, body: text, ideas: [], goalCardDrafts: drafts, planDraftIndex };
@@ -91,9 +93,9 @@ function coordinationAnswer(text: string, hasGoal: boolean): SecretaryAnswerChec
  * A no-goal `initial_coordination` answer of `kind: 'plan'` with drafts must
  * name the draft its plan belongs to in `planDraftIndex`: adoption goes through
  * a binding whose draft index must equal it, so a plan that names none could
- * never be adopted. A plan with no drafts belongs to no draft; a goal request
- * and a `needs_decision` answer carry none, and a present index must be one of
- * the answer's own drafts.
+ * never be adopted. A goal-less plan carries at least one draft; a goal request
+ * carries no drafts; a `needs_decision` answer may carry drafts and never
+ * carries a `planDraftIndex`; a present index must be one of the answer's own drafts.
  */
 function planDraftIndexOf(
   object: Record<string, unknown>, hasGoal: boolean, draftCount: number,
@@ -105,7 +107,6 @@ function planDraftIndexOf(
   }
   if (hasGoal) return 'an initial_coordination answer on a request that has a goal carries no planDraftIndex';
   if (object['kind'] === 'needs_decision') return 'a needs_decision answer carries no planDraftIndex';
-  if (draftCount === 0) return 'a planDraftIndex needs a goal card draft to name';
   const value = object['planDraftIndex'];
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > draftCount - 1) {
     return `planDraftIndex must be an index of one of the ${String(draftCount)} goal card drafts`;

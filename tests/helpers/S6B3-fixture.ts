@@ -1216,8 +1216,9 @@ export async function readS6B3Materials(world: S6B3World, input: {
 /**
  * A follow-up on `requestRoot` in the main scope through `requests/submit` (`continues`, no recipient), which must
  * queue. With `answer: true` the same public path answers it: the secretary claim with its published profile →
- * `queries/prepare` → the frozen manifest → one scripted reply with no draft (an `initial_coordination` plan reply
- * carries no `planDraftIndex`) → `queries/start`, which must end answered. Answers the follow-up round.
+ * `queries/prepare` → the frozen manifest → one draft-free scripted `needs_decision` reply with one question (an
+ * `initial_coordination` answer with no goal and no draft carries no `planDraftIndex`) → `queries/start`, which must
+ * end answered. Answers the follow-up round.
  */
 export async function submitS6B3FollowUp(world: S6B3World, input: {
   requestRoot: QueryJobRef;
@@ -1239,7 +1240,7 @@ export async function submitS6B3FollowUp(world: S6B3World, input: {
   const manifest = await readManifest(world, world.mainScope, prepared);
   const summary = `S6B3 follow-up ${id}`;
   world.host.scriptReplies([{ kind: 'text', text: JSON.stringify(manifest.request?.executionKind === 'initial_coordination'
-    ? { schemaVersion: 2, kind: 'plan', summary, plan: PLAN_BODY, goalCardDrafts: [] }
+    ? { schemaVersion: 2, kind: 'needs_decision', summary, questions: [`${summary}: which approach?`] }
     : { schemaVersion: 1, body: summary, ideas: [], goalCardDrafts: [] }) }]);
   const started = await postValue<{ answer: unknown; run: { run: { status: string } } }>(world, 'queries/start',
     plain(world.mainScope, { prepared, consumerId: AG2B_CONSUMER_ID, requestId: `${id}-start` }),

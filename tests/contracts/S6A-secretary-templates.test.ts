@@ -140,14 +140,15 @@ describe('the platform secretary templates', () => {
             answerOmitted: '(answer cut at 2 KiB)',
             noAnswer: '(no answer)',
             notEnded: '(still running or result unknown)',
-            initialDrafts: 'You MAY add a top-level "goalCardDrafts" array to the JSON object: each '
+            initialDrafts: 'This request has no goal yet, so a "plan" answer MUST carry a top-level "goalCardDrafts" '
+                + 'array with at least one draft; a "needs_decision" answer may carry drafts or none. Each draft is '
                 + '{"objective", "completion", "autonomy", "screening"}, objective one sentence, completion a non-empty '
                 + 'array of checkable criteria, autonomy "every_step" or "after_plan_confirmation". "screening" is '
                 + 'optional: omit it or use null when the draft was not screened, otherwise {"modules", "size", '
                 + '"conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and '
                 + 'GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", '
                 + 'urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at '
-                + 'most 512 UTF-8 bytes. A "plan" answer that carries goal card drafts MUST also carry a top-level '
+                + 'most 512 UTF-8 bytes. A "plan" answer MUST also carry a top-level '
                 + '"planDraftIndex" integer naming the zero-based index of the draft this plan is for. A '
                 + '"needs_decision" answer carries no planDraftIndex. A draft is a proposal only.',
             setupRequired: 'This project has no adopted architecture or no active completion policy yet (see '

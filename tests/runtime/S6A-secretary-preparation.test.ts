@@ -371,7 +371,7 @@ describe.each(['memory', 'sqlite'] as const)('the four answer formats of a no-go
       expect(input.endsWith(answerFormatText({ executionKind, noGoal: true })),
         `case ${governanceCase.name} uses ${executionKind}`).toBe(true);
       // S10: the drafts note follows the v2 format only for a no-goal coordination round.
-      const drafts = 'You MAY add a top-level "goalCardDrafts" array';
+      const drafts = 'a "needs_decision" answer may carry drafts or none';
       expect(input.includes(drafts)).toBe(executionKind === 'initial_coordination');
       expect(input.startsWith(QUERY_PRELUDE)).toBe(true);
       expect(memory.governance.architecture === null).toBe(!governanceCase.architecture);
@@ -390,7 +390,7 @@ describe.each(['memory', 'sqlite'] as const)('the four answer formats of a no-go
       expect(input.endsWith(answerFormatText({ executionKind: expected, noGoal: false })),
         `case ${governanceCase.name} uses ${expected}`).toBe(true);
       // The drafts note is the no-goal branch's alone; a goal request never carries it.
-      expect(input.includes('You MAY add a top-level "goalCardDrafts" array')).toBe(false);
+      expect(input.includes('a "needs_decision" answer may carry drafts or none')).toBe(false);
       // The goal card is there in both branches.
       expect(input).toContain(`goal: ${S6A_GOAL_1.goalId}`);
       expect(input).toContain(`- [${since}] ${GOAL_TEXT}`);

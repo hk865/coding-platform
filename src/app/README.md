@@ -3,7 +3,7 @@
 ## 负责什么，不负责什么
 - 外层 Host：依赖方向只允许 `src/composition`、`src/contracts` 和 `src/core`/`src/business` 各模块；`scripts/check-boundaries.mjs` 只按模块 owner 判方向，不细化到端口文件。不能开 store，不能被 core/business 反向 import。
 - 负责进程外壳：CLI、HTTP/SSE 传输、实例锁、启动 reconcile、Host 设置、提示词包、运行期配置，以及注意力、自动捕获、协作、Goal 扇出和请求驱动（唤醒循环加每 workspace 的两条请求队列）。
-- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:1420`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
+- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:1425`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
 - 不写状态：任何状态迁移只经 `src/core/work-graph/state/`（AGENTS 第 9 条）；本层只调用平台公开端口。
 - 请求体永远不提供 principal、root、token 或凭据；这些只来自受信任的 `options`。
 - `src/core`、`src/business` 不得反向 import 本层。
@@ -12,7 +12,7 @@
 
 ### Host 启动与选项
 做 Host 装配、CLI、单实例锁和启动对账的去这组。
-- `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁且 `requestDriver` 不是 `'off'` 时建 `createWakeLoop`、两条请求队列、生命周期队列 `LIFECYCLE_QUEUE` 和释放队列 `MESSAGE_RELEASE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列）。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1163`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1490`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
+- `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁且 `requestDriver` 不是 `'off'` 时建 `createWakeLoop`、两条请求队列、生命周期队列 `LIFECYCLE_QUEUE` 和释放队列 `MESSAGE_RELEASE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列；关闭顺序是关闭信号先于全部 drain（在途 HTTP、协作驱动、Goal 扇出、平台，实例锁最后释放），关闭中的 Host 让在跑的 Work 在下一个安全点暂停、由下一次启动按 W-11 结清）。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1167`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1494`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
 - `main.ts` — CLI：读一份 JSON 配置，启动 loopback Host，只打印不含 token 的地址。
 - `host-instance-lease.ts` — SQLite 旁的单实例锁：存活、陈旧、损坏的判定与 takeover。
 - `startup-reconcile.ts` — 持锁 Host 启动时的一次 reconcile：分类未决 Run/Query/check/control，重驱 Goal 扇出。
@@ -91,7 +91,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1420`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1425`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。

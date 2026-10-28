@@ -39,6 +39,11 @@ export type RuntimeControlCoordinatorDependencies = {
    * the current canonical `controlState` from here; it is never a cache.
    */
   sourceAuthority?: () => SourceSnapshotReads;
+  /**
+   * (W-11): the closing Host's signal. A closing Host pauses every live
+   * Run at its next safe point; the pause records no intent and aborts nothing.
+   */
+  hostClosing?: AbortSignal;
 };
 
 /**
@@ -206,6 +211,9 @@ export function createRuntimeControlCoordinator(
       };
     },
     async decide(ctx: CoreCallContext, runRef: RunRef): Promise<RuntimeControlDecision> {
+      // W-11 (STATE-MACHINES-SPEC.md:4065): a closing Host pauses a live Run at its next
+      // safe point. There is no intent, so none is recorded and no controller is aborted.
+      if (deps.hostClosing?.aborted === true) return { kind: 'pause' };
       const controls = deps.controls;
       const sourceAuthority = deps.sourceAuthority;
       // No trusted control facts: keep the historical no-barrier behavior.

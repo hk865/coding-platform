@@ -17,7 +17,7 @@
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "2e0638cebe323f0e482777c500f264954eafad7996f07a8816ab1222b1083c02"
+    "sha256": "d01e737fa1ea6aec8c5b63aefe4d0767899509b9f8fa7ba455581bf59b2df212"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",

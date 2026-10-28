@@ -4,8 +4,9 @@
  *
  * Screening exists only inside a goal card draft (`null` = not screened,
  * `size: 'unknown'` = screened with an unknown size); a plan answer reads
- * `planDraftIndex` from the text as it reads `goalCardDrafts`: a plan with
- * drafts must name one, a plan with no drafts belongs to none.
+ * `planDraftIndex` from the text as it reads `goalCardDrafts`: a goal-less plan
+ * carries at least one draft; a goal request carries no drafts; a `needs_decision`
+ * answer may carry drafts and never carries a `planDraftIndex`.
  *
  * A5: a pure file. It imports no store, platform, Host, Workflow, Runtime or
  * stub port; every expected value is a literal or counted by hand.
@@ -142,13 +143,6 @@ describe('planDraftIndex: the draft a no-goal plan answer belongs to', () => {
     });
   });
 
-  it('accepts an absent index when the answer has no drafts', () => {
-    const text = JSON.stringify({ ...PLAN, goalCardDrafts: [] });
-    expect(parseSecretaryAnswer(text, COORDINATION_NO_GOAL)).toEqual({
-      ok: true, body: text, ideas: [], planDraftIndex: null, goalCardDrafts: [],
-    });
-  });
-
   const withDrafts = (fields: Record<string, unknown>, base: Record<string, unknown> = PLAN) =>
     JSON.stringify({ ...base, goalCardDrafts: [DRAFT_ONE, DRAFT_TWO], ...fields });
 
@@ -161,8 +155,10 @@ describe('planDraftIndex: the draft a no-goal plan answer belongs to', () => {
     { name: 'a non-integer index', text: withDrafts({ planDraftIndex: 0.5 }), input: COORDINATION_NO_GOAL, reason: ANY_REASON },
     { name: 'an index past the last draft', text: withDrafts({ planDraftIndex: 2 }), input: COORDINATION_NO_GOAL, reason: ANY_REASON },
     { name: 'an index that is a string', text: withDrafts({ planDraftIndex: '0' }), input: COORDINATION_NO_GOAL, reason: ANY_REASON },
-    { name: 'an index with no draft at all', text: JSON.stringify({ ...PLAN, planDraftIndex: 0 }), input: COORDINATION_NO_GOAL,
-      reason: 'a planDraftIndex needs a goal card draft to name' },
+    { name: 'an absent index when the answer has no drafts', text: JSON.stringify(PLAN), input: COORDINATION_NO_GOAL,
+      reason: 'a plan answer on a request without a goal must carry at least one goal card draft' },
+    { name: 'an empty draft list when the answer has no drafts', text: JSON.stringify({ ...PLAN, goalCardDrafts: [] }), input: COORDINATION_NO_GOAL,
+      reason: 'a plan answer on a request without a goal must carry at least one goal card draft' },
     { name: 'an index on a needs_decision answer', text: withDrafts({ planDraftIndex: 0 }, QUESTIONS), input: COORDINATION_NO_GOAL, reason: ANY_REASON },
     { name: 'an index on a request with a goal', text: JSON.stringify({ ...PLAN, planDraftIndex: 0 }), input: COORDINATION_GOAL,
       reason: 'an initial_coordination answer on a request that has a goal carries no planDraftIndex' },

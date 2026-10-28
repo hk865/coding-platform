@@ -574,6 +574,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
   // it the coordinator still exists and `deliverControl` stays unsupported.
   const control = createRuntimeControlCoordinator({
     ...(deps.controls === undefined ? {} : { controls: deps.controls }),
+    ...(deps.hostClosing === undefined ? {} : { hostClosing: deps.hostClosing }),
     sourceAuthority: deps.sourceAuthority,
   });
   // K part A M2: the owner also resolves the injected Kernel `readTurnBounds`

@@ -369,6 +369,11 @@ export type TargetPlatformOptions = {
    */
   hostInstance?: HostInstanceFacts;
   /**
+   * (W-11): the closing Host's signal, trusted startup data; absent means this platform is
+   * never closing. A live Run pauses at its next safe point and the next start settles it.
+   */
+  hostClosing?: AbortSignal;
+  /**
    * Slice 1 (spec §2.8, §3.3): the trusted archive timing policy. It is Host
    * startup data, not a project setting; absent reads as
    * `DEFAULT_SESSION_ARCHIVE_POLICY` (one day / 100 per page).
@@ -1514,6 +1519,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // start-up step 1, under the Host call identity, and never writes health itself.
         turnClosure: { recordSessionHealth: (...args) => sessionHealth.recordSessionHealth(...args),
           lease: hostInstance === undefined ? null : hostInstance.lease },
+        // (W-11): the Host's closing signal reaches the one control coordinator.
+        ...(options.hostClosing === undefined ? {} : { hostClosing: options.hostClosing }),
         graphContext, taskInputs,
         // L8 (book ruling 12): the one reminder read the context assembler takes
         // before the model. It shares `catalog` and `observed`.

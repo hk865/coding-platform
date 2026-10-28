@@ -104,7 +104,7 @@
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:155` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:210` | 一次 fresh QueryRun 驱动；秘书轮按准入多建 `record_note` 组 | 正式 Query 启动 |
 | `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:277` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
-| `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:117` | 安全点 pause/cancel 协调与退出证明 | 投递控制意图 |
+| `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:122` | 安全点 pause/cancel 协调与退出证明；关闭中的 Host 在每个在跑 Run 的下一个安全点暂停（无 intent、不 abort 控制器） | 投递控制意图；Host 关闭时由关闭信号驱动 |
 | `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
 | `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
 | `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:521` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
@@ -120,7 +120,7 @@
 | `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:81` | 列未闭合工具调用 | 判断 Turn 能否完成 |
 | `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:47` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
 | `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:104` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
-| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:905` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
+| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:906` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
 | `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |
 | `reconcileRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:214` | 启动时分类一个 Run 并提交一次对账 | 启动恢复 |

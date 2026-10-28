@@ -1009,6 +1009,8 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       }
     },
     async start(ctx, input) {
+      // the close clears the handles; a start finishing during it must not install a new one.
+      if (closed) return rejected('unavailable', 'the Host is closing');
       if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
         return rejected('forbidden', 'the collaboration driver requires a bound project/workspace context');
       }
@@ -1094,7 +1096,18 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       closed = true;
       const all = [...handles.values()];
       handles.clear();
-      await Promise.all(all.map(handle => stopHandle(handle).catch(() => { /* close still drains */ })));
+      // a Host close is not a person's stop (no cancel pass). The closing signal pauses each
+      // live Run at its next safe point; these drains wait for the Run and for any stop already begun.
+      for (const handle of all) {
+        handle.stopRequested = true;
+        handle.activePumpAbort?.abort('host_closing');
+        admissionWaits.get(handle)?.();
+      }
+      const drains = all.map(handle => handle.stopDrain).filter((drain): drain is Promise<void> => drain !== null);
+      await Promise.all([
+        ...all.map(handle => handle.done.catch(() => { /* the loop stored its own reason */ })),
+        ...drains.map(drain => drain.catch(() => { /* a person's stop records its own reason */ })),
+      ]);
     },
   };
 }

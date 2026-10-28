@@ -670,6 +670,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ? { status: 'rejected' as const, code: 'unavailable' as const, reason: 'the Host duty resolver is not ready' }
       : await hostDutyResolver(role, ctx),
   });
+  // (W-11): one process-local closing signal, trusted option only; not a setting, route or
+  // persisted field. `close()` aborts it first so live Work pauses at its next safe point.
+  const hostClosing = new AbortController();
   let platform: Awaited<ReturnType<typeof createTargetPlatform>>;
   try {
     platform = await createTargetPlatform({
@@ -677,6 +680,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       workspace: bindings,
       commitObserver,
       hostInstance: { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease, takeover: instanceLease.takeover },
+      hostClosing: hostClosing.signal,
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(architectureSource === undefined ? {} : { architectureSource }),
       ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
@@ -2116,6 +2120,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         // close must not start while those drains run; the cancelled capture
         // writes nothing, so its request stays pending for the next start.
         const autoCaptureClosed = autoCapture.close();
+        // the closing signal goes before the HTTP drain (an in-flight `executions/start`
+        // must see it), and the driver's `stopRequested` before its loop reads the unavailable result.
+        hostClosing.abort('host_closing');
+        const collaborationClosed = collaborationDriver.close();
         await server.close();
         const workbenchToolsClosed = workbenchTools.close();
         attentionAbort.abort('host_closing');
@@ -2131,7 +2139,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (wakeLoop !== undefined) await wakeLoop.close();
         if (lifecycleQueue !== undefined) await lifecycleQueue.close();
         if (requestQueues !== undefined) await requestQueues.settle();
-        await collaborationDriver.close();
+        await collaborationClosed;
         await goalFanOut.close();
         await workbenchToolsClosed;
         await autoCaptureClosed;

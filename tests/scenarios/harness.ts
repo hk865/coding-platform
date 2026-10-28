@@ -948,6 +948,8 @@ export type HostRestartOptions = {
   crash?: boolean;
   /** After a clean close, leave a stale lock as a crashed Host would (the next start is HL-03, not HL-01). */
   staleLock?: boolean;
+  /** A reached held reply: start the close, then release it (its reply stays in `script.replies`), then drain. */
+  closeWhileHeld?: HeldReply;
   automation?: TaskAutomationPolicyV1;
   /** The registered check from this start on (startup configuration); another check is a new configuration revision. */
   check?: CheckBehaviour;
@@ -1110,8 +1112,17 @@ export class HostScenario extends ScenarioBase {
       this.abandoned.push(this.current);
       await writeStaleLock(this.database);
     } else {
-      this.models.assertNoOpenHold(this.current.index, 'a clean restart drains the Host');
-      await this.current.host.host.close();
+      if (options.closeWhileHeld !== undefined) {
+        // The signal and the driver drain are set synchronously by `close()`; releasing after that lets the
+        // held Turn reach its next safe point under the close, exactly as a real in-flight reply would.
+        const closing = this.current.host.host.close();
+        options.closeWhileHeld.release();
+        this.models.assertNoOpenHold(this.current.index, 'a clean restart drains the Host');
+        await closing;
+      } else {
+        this.models.assertNoOpenHold(this.current.index, 'a clean restart drains the Host');
+        await this.current.host.host.close();
+      }
       if (options.staleLock === true) await writeStaleLock(this.database);
     }
     await this.closeDirect();
