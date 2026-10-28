@@ -27,8 +27,6 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "anyOf": [
-        {
-          "oneOf": [
             {
               "type": "object",
               "properties": {
@@ -575,9 +573,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
                 "declarationId"
               ],
               "additionalProperties": false
-            }
-          ]
-        },
+            },
         {
           "type": "object",
           "properties": {

@@ -228,7 +228,7 @@ const findGraphSchema = z.object({
   page: pageSchema.optional(),
 }).strict();
 
-const lookGraphSchema: z.ZodType = z.discriminatedUnion('mode', [
+const lookModeSchemas = [
   z.object({
     mode: z.literal('node'),
     target: nodeRefSchema,
@@ -256,15 +256,10 @@ const lookGraphSchema: z.ZodType = z.discriminatedUnion('mode', [
     afterCursor: z.string().min(1).nullable().optional(),
     maxBytes: z.number().int().min(1).max(MAX_INPUT_MAX_BYTES).optional(),
   }).strict(),
-]);
+] as const;
 
-// --------------------------------------------------------------------------
-// L13 memory branch schemas. `look_graph`/`find_graph` are the STRICT UNION of
-// the old graph arguments above and exactly one `{ memory: { v: 1, ... } }`
-// object. The union rejects both branches mixed together, and every branch is
-// strict, so a model-supplied principal/scope/goalRef/workspace is an unknown
-// key and fails before any note owner is reached.
-// --------------------------------------------------------------------------
+// The look and find schemas stay one union of strict objects because the Kernel
+// flattens only such a union into the single top-level object the model API needs.
 
 const memoryLimitSchema = z.number().int().min(1).max(100).optional();
 const memoryCursorSchema = z.string().min(1).nullable().optional();
@@ -329,7 +324,7 @@ const memoryStaleSchema = z.object({
 }).strict();
 const findMemorySchema = z.object({ memory: z.discriminatedUnion('op', [memoryFindSchema, memoryStaleSchema]) }).strict();
 const findSchema: z.ZodType = z.union([findGraphSchema, findMemorySchema]);
-const lookSchema: z.ZodType = z.union([lookGraphSchema, lookMemorySchema]);
+const lookSchema: z.ZodType = z.union([...lookModeSchemas, lookMemorySchema]);
 
 export function createGraphTools(config: GraphToolsConfig): {
   names: readonly string[];
