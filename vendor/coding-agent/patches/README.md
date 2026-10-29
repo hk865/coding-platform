@@ -38,3 +38,11 @@ node scripts/build-kernel-patch.mjs --write
 最终runner源SHA-256为`39f5ce8937ec6e205aa8313e1d77d97162fbc7813498e4d81aec9b43dab46ddb`。实际新行为由原Runner及run/identity-resume/public-resume三处透传提供，没有第二执行循环。平台持久投递、停止确认与恢复接线仍属R4.1/3–5，不能凭Kernel子能力开启平台完整控制capability。
 
 来源/生成物与独立证据见工作区`docs/refactor/reviews/next-r5a-r4-tool-group-2026-09-26.md`及`reviews/evidence/next-b2-2026-09-26/r4-tool-group-final-implementation-import.json`、`r4-tool-group-final-repro.json`。历史基线清单与原Kernel继续只读。
+
+## 2026-10-29 KP 工具参数错误指出字段
+
+新增受管 `tools/dispatcher/tool-dispatcher.ts`：初始内容精确提取自冻结 `dist/tools/dispatcher/tool-dispatcher.js.map` 的 `sourcesContent[0]`（251 行），SHA-256 `f269be617d865b0b19abede111edd8b54ac6dda06e65621a0836e512815baa08`；纳入后 `--check` 为 0，十七个源、68 份产物逐字再生，提取本身不改变行为。
+
+`!parsedArguments.success` 分支把 Zod 的各 issue 按 `字段: 原因` 列出、以 `; ` 连接后附在原文案后；错误码仍为 `invalid_arguments`，其余分支、Zod 的消息文案、平台侧消息均未改，无新增类型、错误码或上限。改后源 SHA-256 为 `c030c3e0d4d36bcfa6e35f47606c20ded79fe0d684dd463a56bab8115ee8bb4f`；四份产物为 `eeb1d3b9d0fd1122de4a42912ef231854503f6b005aac3f25b3e7f7287b56226`（js）、`c5344f3b4afd9596618369e18999097adcb4a05571008cc76cd8a2caa5d2c3ea`（js.map）、`96d4252def7a23e6a4baee5f24589354ea10b7254d5b95a8ffa70e46215ee69b`（d.ts，未变）、`e42edbee9f8a33f1d2717b7fa475f9adeaceab67c49e1f29e54f662304556023`（d.ts.map）。
+
+命令不变：`node scripts/build-kernel-patch.mjs --check`（0）与 `--write`；`--write` 只改 `dist/tools/dispatcher/tool-dispatcher.*`，无其他产物变化。

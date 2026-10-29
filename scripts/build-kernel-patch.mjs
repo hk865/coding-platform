@@ -13,6 +13,8 @@ const vendor = resolve(project, 'vendor/coding-agent');
 const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api.ts', 'app/composition/control-hooks.ts', 'app/composition/composition-contracts.ts',
   'core/runtime/loop/runtime-runner.ts', 'app/composition/composition-root.ts', 'app/composition/resume-composition.ts',
   'core/ports/session_store/session-history.ts',
+  // The dispatcher's argument-schema message names the failing field; the restored source is managed here.
+  'tools/dispatcher/tool-dispatcher.ts',
   // The common orchestration mechanism extends the ONE Kernel Run lifecycle with an
   // explicit yielded terminal boundary; the event/state/reducer seams are compiled
   // from the restored sources and regenerated only through this script.

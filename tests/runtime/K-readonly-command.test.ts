@@ -252,6 +252,7 @@ async function queryPlatform(options: {
   processSandboxOptions?: { readOnlyPaths?: string[]; executablePath?: string };
   /** Install the REAL Host resolution boundary with a switch-off narrowing. */
   realHost?: { switchOff: boolean; tools: string[] };
+  storage?: Parameters<typeof createTargetPlatform>[0]['storage'];
 }): Promise<{ platform: Awaited<ReturnType<typeof createTargetPlatform>>; scripted: ReturnType<typeof createScriptedModel>; state: QueryHostState }> {
   const directory = await mkdtemp(join(tmpdir(), 'next-k-readonly-'));
   directories.push(directory);
@@ -285,7 +286,7 @@ async function queryPlatform(options: {
     switchOff: options.realHost.switchOff,
   });
   const platform = await createTargetPlatform({
-    storage: { kind: 'sqlite' as const, directory },
+    storage: options.storage ?? { kind: 'sqlite' as const, directory },
     workspace: workspaceBindings(state, directory),
     sourcePolicyFor: async () => ({ root: directory, permissionRevision: 'k-read-1', allowsRead: () => true }),
     runtime: host,
@@ -878,6 +879,21 @@ it('KB-10 an out-of-range timeoutMs is invalid_arguments and never starts a comm
     await runQuery(platform, state);
     const delivered = toolMessage(scripted, 'k-map-call');
     expect(delivered?.role === 'tool' && delivered.result.status === 'error' ? delivered.result.error.code : undefined).toBe('invalid_arguments');
+    expect(sandbox.commands).toEqual([]);
+  } finally { await platform.close(); }
+});
+
+it('KB-10 a missing command and a wrong-typed timeoutMs are invalid_arguments naming both fields', async () => {
+  const { platform, scripted, state } = await queryPlatform({ replies: [
+    readonlyCall({ timeoutMs: 'x' }), { kind: 'text', text: 'K map fields answer' }],
+    storage: { kind: 'memory' } });
+  try {
+    await runQuery(platform, state);
+    const delivered = toolMessage(scripted, 'k-map-call');
+    expect(delivered?.role === 'tool' && delivered.result.status === 'error' ? delivered.result.error.code : undefined).toBe('invalid_arguments');
+    if (delivered?.role !== 'tool' || delivered.result.status !== 'error') throw new Error('no invalid_arguments read-only result');
+    expect(delivered.result.error.message).toContain('command');
+    expect(delivered.result.error.message).toContain('timeoutMs');
     expect(sandbox.commands).toEqual([]);
   } finally { await platform.close(); }
 });

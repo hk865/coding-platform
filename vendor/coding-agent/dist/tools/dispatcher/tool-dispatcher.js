@@ -34,7 +34,10 @@ export class ToolDispatcher {
             return this.#error(common.data.callId, "unknown_tool", "工具不可用", NONE);
         const parsedArguments = definition.inputSchema.safeParse(common.data.arguments);
         if (!parsedArguments.success) {
-            return this.#error(common.data.callId, "invalid_arguments", "工具参数不符合 schema", NONE);
+            const where = parsedArguments.error.issues
+                .map((issue) => `${issue.path.map(String).join(".") || "(根)"}: ${issue.message}`)
+                .join("; ");
+            return this.#error(common.data.callId, "invalid_arguments", `工具参数不符合 schema：${where}`, NONE);
         }
         const call = {
             ...common.data,

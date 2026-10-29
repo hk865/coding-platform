@@ -23,3 +23,7 @@ R4c.2b 在本目录保存 `SqliteStores.read` 的[补丁源码](patches/storage/
 最终runner源SHA-256为`39f5ce8937ec6e205aa8313e1d77d97162fbc7813498e4d81aec9b43dab46ddb`。实际新行为由原Runner及run/identity-resume/public-resume三处透传提供，没有第二执行循环。平台持久投递、停止确认与恢复接线仍属R4.1/3–5，不能凭Kernel子能力开启平台完整控制capability。
 
 来源/生成物与独立证据见工作区`docs/refactor/reviews/next-r5a-r4-tool-group-2026-09-26.md`及`reviews/evidence/next-b2-2026-09-26/r4-tool-group-final-implementation-import.json`、`r4-tool-group-final-repro.json`。历史基线清单与原Kernel继续只读。
+
+## 2026-10-29 KP 工具参数错误指出字段
+
+受管源新增[派发器补丁源码](patches/tools/dispatcher/tool-dispatcher.ts)：参数 schema 未命中时消息按 `字段: 原因` 指出各字段，错误码仍为 `invalid_arguments`；来源与四份产物哈希、命令见[补丁维护说明](patches/README.md)。
