@@ -1381,7 +1381,7 @@
       - 冒烟用量小，任何时段都先用网关；网关调不了时，白天换 Ollama、夜里换 DeepSeek 原生 API。冒烟 Host 的配置里有三个模型（`smoke-flash`、`smoke-ollama`、`smoke-deepseek`），开工前探一次选第一个，中途网关断了用 `models/select` 换（lead 笔记 `impl/smoke/srr/smoke-route.sh`、`smoke-switch.sh`）。
       - 已经在跑的会话不换路由。
       - lead 笔记里的 `tools/dsh-route.sh` 按本地钟点选顺序，缓存只在同一时段内有效；`tools/dsh-run.sh` 把失败过的路由记成一个列表，最多换三次。密钥都在用户的 DSH 凭据里（`OLLAMA_API_KEY` 由用户 23:3x 加上）；冒烟 Host 启动时从那里把 Ollama 和 DeepSeek 的密钥读进自己的进程（lead 笔记 `impl/smoke/srr/dsh-keys.sh`），不另存一份。23:3x 探过：DSH 的 Ollama 路线、冒烟的三个模型都能用。
-97. **SMK2、第二轮并行冒烟、SMK3a 和 10-29 的决定（10-29，`576eb1e8`、`5efe3897`）。**
+97. **SMK2、第二轮并行冒烟、SMK3a、SMK3b 和 10-29 的决定（10-29，`576eb1e8`、`5efe3897`、`1089ae04`）。**
     - **97-1 SMK2 合入（10-29 00:36，`576eb1e8`）。**
       - 为什么：10-28 干净重跑的发现 1、2（96-4、96-5）。
       - 改了什么：关 Host 时，在跑的 Work 在下一个安全点暂停、不发取消；下次启动按 W-11 结算这个 Run，在同一个 Session 里重驱。无目标的第一份计划回答至少带一张目标卡草稿（`initialDrafts` 从 MAY 改成 MUST，解析器拒绝没有草稿的，删一个走不到的分支；提示词包和 `runtime-assets` 的哈希重生成）。执行驱动不改。
@@ -1424,7 +1424,7 @@
         - 篇幅：生产 111（预算 75），测试 241（预算 180），超预算；按 10-26 的规矩（超预算的组要 Codex 找不到漏复用、多余防御、性能代价才合入）在 RV1、RV2 之后合入。
         - 检查：全量（bubblewrap，`bc9e93b`）1,013 个文件、12,506 项过、3 项跳过、541 秒；规模批（`bc7ef0c`）13 个文件 40 项、537 秒；收尾改的三个测试文件 103/103 绿，typecheck 0，readme-check 0。
         - 落地 `5efe3897`（本地，未推送；树哈希和测过的树一致）。
-      - SMK3b 的裁定（v2，`sfix/smk3b-ruling.md`；草稿 02:53；Codex RVSsmk3b 03:16 交回 16 条：错 4、缺 7、多 2、不清楚 2、行号 1；lead 用 Opus 读者逐条对着代码核实后改写，又请一个读者专挑能删的，裁定表 `smk3b-rv-rulings.md`；Codex 冻结核对 FCsmk3b 的 4 处都改了；04:15 冻结，DSH `smk3b-fix-1029` 04:18 起施工，限 240 分钟，施工中）：
+      - SMK3b 的裁定（v2，`sfix/smk3b-ruling.md`；草稿 02:53；Codex RVSsmk3b 03:16 交回 16 条：错 4、缺 7、多 2、不清楚 2、行号 1；lead 用 Opus 读者逐条对着代码核实后改写，又请一个读者专挑能删的，裁定表 `smk3b-rv-rulings.md`；Codex 冻结核对 FCsmk3b 的 4 处都改了；04:15 冻结，DSH `smk3b-fix-1029` 04:18 起施工，限 240 分钟，施工中；合入见 97-9）：
         - 设置三档字符串（`auto`/`ask`/`off`，默认 `ask`），类型名和版本不变，不留布尔的旧格式解码（决定 79-1）。
         - 模型服务的三种 Kernel 错误码记成 TD-8 新行 FC-7m（`interrupted`）和判定新行 AV-5m（停下、带 code 和时间），只有人能继续。
         - Host 重启在“问我”和“关”两档给有没做完的必需工作的目标写一条 `GoalInterruption` 记录，目标显示“被中断，等你继续”和卡片；“自动”档直接驱动、不写记录；协作驱动启动时清掉记录。
@@ -1451,7 +1451,7 @@
       - Codex 设计说明 `codex2/egrp/DNsmk3-interrupt.out.md`（Astra）估生产 1,800–2,800、测试 2,400–3,800，和 7B-1 在 Host、启动核对、协作驱动、Workflow 上重叠。
       - 用户 02:39 问“为什么会有这么多行的裁定……因为 Codex 有重复工程化的倾向”；lead 答：不正常，按复用现成的“暂停中断、只有人能继续”那套，估 500–700。
       - lead 给三种排法（先做重启那一半／整个做完再开 7B-1／先开 7B-1），用户选整个做完：SMK3a → SMK3b（重启和断网两半）→ 7B-1 和填表式回答并行。
-      - 下一步：SMK3a 已合入（97-4）；SMK3b 施工 → Codex 审 → 全量和规模批 → 合入 → 核对表按 97-2 改 → 7B-1（重指到 SMK3b 的最终树，用 97-8 的引用重定位工具）和填表式回答（97-3）并行 → 7B-2 → 7B-3 → 7C → 7D1 → 8B-2。
+      - 下一步：SMK3a 已合入（97-4）；SMK3b 施工 → Codex 审 → 全量和规模批 → 合入 → 核对表按 97-2 改 → 7B-1（重指到 SMK3b 的最终树，用 97-8 的引用重定位工具）和填表式回答（97-3）并行 → 7B-2 → 7B-3 → 7C → 7D1 → 8B-2（SMK3b 已合入，见 97-9）。
       - 模型服务出错（含断网）在哪一档都等人点继续，“自动”档下次启动也不自动续；不加在线恢复的定时器（GAP-48）。这是 lead 夜里定的，04:15 冻结的 SMK3b 裁定照此写（AV-5m，只有人能继续；97-4）。
       - 来源：`todo.md` 第 7、9 条；`facts-1029.md` §3 第 5 条、§7、§8。
     - **97-7 用户睡前的交代和 lead 夜里自己定的事（用户 10-29 02:43）。**
@@ -1481,6 +1481,43 @@
       - 拿以前人工重指过的两批核对：1,506 条里 1,502 条一致、4 条对不上行；2,305 条里 2,280 条一致，24 条不一致中 16 条是人工当时指错、4 条两说、4 条工具没把握时保留原数字并标记；2,305 条 18.5 秒。
       - 以后 7B-1 重指用它（替代 `v33-refs.py`、`remap-book.py`）。
       - 来源：`facts-1029.md` §5。
+    - **97-9 SMK3b 合入（10-29，`1089ae04`；最终树 `0cd830a`）。**
+      - 为什么：用户 10-29 01:40“选 2，重启和断网都等我批准”；01:42 平台要知道发生了重启，写成字段，界面以后显示、卡片从它派生；01:44 断网当场知道，进程被杀或重启要到下次启动才知道；02:27 整个 SMK3b 做完再开 7B-1；02:43“你需要注意复用以及小改动”（97-5、97-6、97-7）。
+      - 改了什么：
+        - 设置三档：`automation.resumeOnStartup` 是 `'auto' | 'ask' | 'off'`，默认 `'ask'`；类型名和 `schemaVersion: 1` 不变，没有 V2 类型。设置文件里存的布尔值按决定 79-1 拒绝（Host 启动报 `the private host settings file is invalid`），不做旧格式解码、不迁移；三处校验共用一个列表（`src/contracts/task-requeue.ts:104`；`src/app/host-settings.ts:449`、`:1174`；`src/composition/create-platform.ts:2850`）。`recoverRun` 按档写一句：`auto`“启动时自动续做被中断的目标”，`ask`“启动时列出被中断的目标，等你点继续”，`off`“启动时只核对，不续做、不处理排队”（`create-platform.ts:524-526`）。
+        - 各档在启动时做什么（`src/app/host.ts:1556`、`:1580`、`:1601`；`src/app/startup-reconcile.ts:613-631`）：`auto` 不写记录，原来选出的重驱目标和有没做完必需工作的活动目标都启动驱动（启动重驱放宽了：原来只推待返工、未进入的 Run 和 K3 复核），报告列为 `driven`。`ask` 给每个这样的目标写一条 `GoalInterruption` 记录，报告列为 `recorded`（已有未处理的记录则 `kept`，不再写）；目标显示原因“被中断，等你继续”（`interrupted_pending_resume`，来源 `host_restart`）和一张卡；什么都不跑，直到人启动目标（`workflow/driver-start`）；排队的请求照常处理、抓取照常重试。`off` 和 `ask` 一样写记录、给原因和卡，请求队列不启动、抓取不重试（82-2 的“关”）。
+        - “没做完”的判定（`startup-reconcile.ts:679-706`）：必需且活动的 Task，`effectivePhase` 不是 `satisfied`，裁定不是 GOAL-30 的停止原因；结果未知、调用待复核的 Task 算没做完（重启照样记下，它自己的停止照样挡着）；因上限、没有新依据、人暂停或取消、模型服务中断而停的不算（它们已有自己的原因和卡）。目标要 `active`、有采用的计划、至少一个没做完的 Task；只用 6b 循环里本来就有的一次 `queryTaskGraph` 读。
+        - 记录 `GoalInterruption@1`（`src/contracts/goal-interruption.ts:18-33`）：每个目标一条，按目标定位（`interruptionRefOf`，`src/core/work-graph/state/goal-interruption.ts:17`）；字段 `status`（`pending`/`resumed`）、`close`（`clean`/`unclean`，来自启动时已有的接管证据：没有锁文件 → clean，旧锁 → unclean）、`detectedAt`、`taskIds`（至少 1 个）、`runRefs`（本次启动核对过的该目标的 Run）。只有一个写命令 `writeGoalInterruption`（`src/core/work-graph/tasks/goal-interruption-service.ts:44`），走共用写入执行器；读口和 `readGoalPhase` 共用一个按键读单条记录的函数（`src/core/work-graph/tasks/plan-readers.ts:1984`、`:2033`）；没有路由。
+        - 原因什么时候消失：目标的驱动真正启动时（启动重驱、采用后启动、人的 `workflow/driver-start` 都经 `collaborationDriver.start`），驱动的 `onStarted` 回调（`src/app/collaboration-driver.ts:149`、`:1059`）由 Host 接到 `reconcile.recordGoalInterruption(…, to: 'resumed')`（`host.ts:769-770`）。同一 seed 的重放、被拒的启动不清；写失败记录保持 pending（原因还看得见）。单步推进 `workflow/advance` 不清。
+        - 目标显示和卡（`src/core/work-graph/state/goal-machine.ts:1173-1186`）：记录 pending 时，这条原因列在 Task 停止原因之后；GOAL-30 先取必需 Task 的停止（没有活的 Run、没有待处理的裁定时），否则以这条记录为首要原因，即使还有待处理的裁定或 `starting` 的 Run（记录 pending 期间没有驱动启动过）；目标显示“要决定”（NEEDS_DECISION）。GOAL-17…23 照旧优先；没有新阶段、新行。卡片：原因码进两个白名单（`goal-decision-reader.ts:83`、`goal-cause.ts:21`），pin 记录和它列的 Task；选项为空，动作走现有路由（目标级 `workflow/driver-start`，Task 级 `tasks/requeue`）。新的记录版本是新的卡。
+        - 模型服务出错（运行中）：Kernel 的三个码 `provider_request_failed`（没有 HTTP 状态：连不上、DNS、超时、流中断；400/404/422 也落在这里）、`rate_limited`（429）、`provider_unavailable`（5xx）算“模型服务出问题”。Run 的 crashed 载荷带 `modelService: { code }`；TD-8 新行 FC-7m（类别 `interrupted`，不计数、不比依据），裁定新行 AV-5m 停在 `interrupted_pending_resume`，带来源 `model_service`、码和时间（`src/core/work-graph/state/task-failure.ts:142`、`:272`、`:930-931`）；目标暂停时也不为它出自动返工确认卡：读取器的暂停分支读一次失败的 Run，`modelServiceOf` 成立就跳过（`src/core/work-graph/tasks/goal-decision-reader.ts:377-384`）。没有自动返工，三档都一样，下次 Host 启动也不续（这样的 Task 已有自己的停止和卡，不算没做完）；没有“网络恢复了”的信号，也没有定时器（GAP-48）。只有人能继续：人 `tasks/requeue`（系统和 Agent 被拒 `forbidden`，`task-failure.ts:457-458`），驱动已停时再 `workflow/driver-start`。Task 那一行照旧显示 `failed`，失败类别 `interrupted`。不改 Kernel。
+        - 秘书轮的模型服务出错：轮以 `failed` 结束，`requests/read` 的 `closeMessage` 显示 `<码>: <消息>`（`src/core/agent-runtime/query-observation.ts:564`；用已有的 `boundedCloseMessage` 截断，`src/core/work-graph/state/query-run-recovery.ts:718`、`:743`）。请求上不加目标原因。
+      - 经过和数字：
+        - 04:15 裁定 v2 冻结（Codex RVSsmk3b 16 条：错 4、缺 7、多 2、不清楚 2、行号 1；lead 用 Opus 读者逐条核实；冻结核对 FCsmk3b 的四处都改了）。DSH `smk3b-fix-1029` 04:18 开工；提交 04:34–05:33（`5972871`…`61f39f8`），05:45 交回。生产 694 行（预算 480），新测试 324（预算 480），旧断言 304（预算 200）。
+        - `61f39f8` 上 bubblewrap 全量：1,015 个文件里 12 个红（19 项）；规模批 13 个文件 40 项全过。lead 在临时副本里做三个实验查原因（决定 65）：5 个文件靠旧默认的自动续做；6 个文件唯一的差别是重启新写的中断记录（连同断言已被 DSH 放宽、全量没红的 A8-host-restart-rework 共 7 个）；fuzz 因“自动”推得更宽少了 6 类覆盖。
+        - Codex RV1（`gpt-6.1-sol`）：13 条（错 3、缺 2、多 4、复用 4），可合入：否。DSH 06:21–06:28 先筛（9 条真问题、4 条可能过度），lead 裁定后冻结返工表（`smk3b-r1-table.md`）。
+        - 第一轮返工 06:29–07:25（DSH；提交 06:41–07:18，`a189cad`…`858ad24`）：生产净 −40，测试净 +48。
+        - `858ad24` 上 bubblewrap 全量 07:42–07:51：1,015 个文件、2 项红（A8-2c、C3-R1）、12,518 项过、3 项跳过、496 秒；build、typecheck、check:architecture、kernel-patch 检查都是 0。fuzz 13/13 过，覆盖各类至少 1 次。规模批 07:51–07:59：13 个文件 40 项全过、449.90 秒。
+        - lead 收尾 `6e4adb8`（08:04）：只改那两个测试文件（A8-entry +3/−2、C3 +18/−5），两个文件在 bubblewrap 下 12/12。
+        - Codex RV2（08:18）：错 1、复用 4、不清楚 1，开新一轮 3（两项出在收尾改的 C3 测试上：放行条件太松、新加的读取直接查库；一项是放行规则还剩两份旧副本），可合入：否。
+        - lead 收尾 2 `838c2a0`（08:22）做了 RV2 的 SMK3b-01…05：C3-R1 经公开的 `preparedManifestOf` 读两份输入，只放行多出的一行，并断言它在 Reminders 段、正是这个目标中断卡的待决定行；`harness.test` 和 A8-R2 调共用的 `countsAllowingInterruptions`；`interruptionRefOf` 挪进造记录的状态模块 `state/goal-interruption.ts`，服务和 plan-service 从那里导入；SMK3B-model-service 用 harness 的 `taskRowOf`；两份 README 跟着改。SMK3b-06 是账目说明，下面的篇幅照它记，不改代码。改到的 4 个测试文件和相关的 2 个（SMK3B-interrupted、goal-machine）在 bubblewrap 下 197/197；typecheck、check:architecture 都是 0，readme-check 0 处问题。
+        - Codex RV3（08:36）：错 1、复用 1，开新一轮 1，可合入：否。会出错的一条：裁定 §2 第 6 步为暂停目标写的那行检查（`decision-policy.ts`）永远走不到，`every_step` 目标的工作因模型服务出错停下后人再暂停目标，会多出一张自动返工确认卡，点了也被拒；lead 裁定的前提错了。失败事实认不出这种中断，得读一次 Run。
+        - 第二轮返工 08:39–08:50（DSH；`e3fd09f`…`0cd830a`）：删掉那行走不到的检查；读取器的暂停分支读一次失败的 Run，`modelServiceOf` 成立就不出卡；读取和 `revisionPinOf` 共用拆出来的本地 `readRecordOf`（`goal-decision-reader.ts:138`、`:377-384`）；SMK3B-model-service 加一行（在 `838c2a0` 上红、改后绿、具名变异红）；SMK3B-interrupted 改用 `queueOf`。生产 +17/−5，测试 +30/−5。
+        - Codex RV4：R2-01、R2-02 都闭合，没有新问题，可合入：是（09:17）。
+        - 整组（`smk3b-base` = `3b7fec4` 到 `0cd830a`）：生产 28 个文件 +558/−117（675 行，预算 480，1.41 倍）；README 7 个文件 +39/−30；测试 62 个文件 +647/−211（858 行；新测试至多约 457，预算 480；旧断言改动至少约 401，预算 200）。超预算，按 10-26 的规矩在 Codex RV1–RV4 之后合入。
+        - 检查：`838c2a0` 上 bubblewrap 全量 1,015 个文件、12,520 项过、3 项跳过、491.90 秒，规模批 13 个文件 40 项、503.66 秒；最终树 `0cd830a` 上 bubblewrap 全量 1,015 个文件、12,521 项过、3 项跳过、502.73 秒，规模批 13 个文件 40 项、452.32 秒。
+        - 合入提交：`1089ae04`（本地，等用户推）。
+      - lead 定的事（用户 11:00 后看，可推翻）：97-7 清单的九条照旧（旧设置不迁移、三档的区别、断网在“自动”档也不续、不改 Kernel、不写正常关闭凭据、卡上的继续走现有接口、关机前闲着的目标同样列出、Task 行显示不改、安静重启只放行报告列为“已记录”的记录）。施工和收尾里又定了：
+        - 安静重启那条（规则 E）的范围：`61f39f8` 上查出 7 个文件唯一的差别是这条记录（全量红了其中 6 个；第 7 个 A8-host-restart-rework 的断言 DSH 已越权放宽，见 Codex RV1 SMK3b-09，所以全量没红），其中 A4-duplicate-receipts、A8-host-restart-entry、A8-host-restart-lease、C3-brief-idempotency、A8-host-restart-rework 按规则 E 改，K3-15、K3-18 按规则 F（下一条）。收尾又找到同一条规则的两处后果：执行记录的读游标多走一格（A8-2c，比较时不看这个游标）；重新准备的工作者输入里，提醒段多一行这条记录的待决定（C3-R1），brief 本身不变，测试只放行这一行。
+        - 依赖旧默认自动续做的 5 个旧测试（S2C-K-retired、S2C-K-unknown-outcome、S2C-K2-controls、S7A2-G-recovery、K-R-interrupted-brief）在重启处写 `auto`，断言不改。K3-15、K3-18 先正面断言那张中断卡，再对其余卡照旧断言（规则 F）。
+        - 默认“问我”时，Kernel 丢失的那条线多一张“被中断”的卡，线的注意力显示“要决定”而不是“结果不明”。lead 认为符合注意力表（有卡就是要决定），没改；请用户看。
+        - fuzz：Host 打开和改上限时按 0.5/0.25/0.25 抽 `auto`/`ask`/`off`，重启时按 0/0.5/0.5 抽（“自动”现在推得宽，重启抽到它会把要覆盖的状态推走）；种子、覆盖项、不变量都没动。
+        - 不照 Codex 改的两处：驱动启动后清记录的 try/catch 保留（删了会把已开始的驱动报成失败）；清记录前多读的一次不删（执行器的 CAS 契约，只在重启后每个目标一次）。
+        - 暂停目标上模型服务中断的卡（RV3）：裁定里那行检查走不到，改由读取器在暂停分支读一次失败的 Run 判断；只在目标暂停、Task 是被中断（类别 `interrupted`）的工作 Task 时读，不给失败事实加字段。
+      - 留到以后的小项：驱动先起工作循环、再 await `onStarted` 清记录，所以人点继续后第一次准备的提示词里，偶尔可能带上已经过时的那行“待决定”提醒；不影响结果。提醒段对待决定的渲染是已有的通用格式（原样 JSON），不是 SMK3b 加的。
+      - 读法：82-2（L656，“默认开”）按三档读：`off` 是原来的“关”，启动只核对；`auto` 和 `ask` 启动补抓。96-5、97-1 的“重启按 W-11 在同一个 Session 接着做”现在只在 `auto` 档自动，`ask`/`off` 等人启动目标后才接着做。历史原文不动。
+      - 文档同步：STATE-MACHINES-SPEC、MVP-BEHAVIOR、DESIGN、PRODUCT、UI-WORKBENCH、E3-UI-ITEMS、IMPLEMENTED-CAPABILITIES、CORE-DATA-OPERATIONS、DECISIONS、STATUS、AGENTS。
+      - 来源：`smk3b-ruling.md`、`smk3b-rv-rulings.md`、`smk3b-r1-table.md`；`facts-smk3b.md` §1–§3；`land/msg-smk3b.txt`（提交说明）；`morning-summary.md`；`todo.md` 第 6、7、9 条。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
