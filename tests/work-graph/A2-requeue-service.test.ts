@@ -272,7 +272,7 @@ describe.each(['memory', 'sqlite'] as const)('the requeue owner (%s)', (kind) =>
     + 'a requeue racing a refusal on one afterRun commits exactly once', async () => {
     const f = await open(kind);
     await f.endRunA(await f.b2.enter(), CRASHED);
-    const capZero: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false };
+    const capZero: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' };
     const automation = f.hostCtx({ ...WORKFLOW_AUTOMATION_ACTOR });
     const refused = await f.service({ policy: capZero })(automation, await f.request('cap-1'));
     expect(refused).toMatchObject({ status: 'committed',

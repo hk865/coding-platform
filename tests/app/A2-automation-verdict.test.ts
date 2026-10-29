@@ -89,7 +89,7 @@ async function finalizeRound(host: AG2bHost, flowId: string): Promise<Extract<Wo
   return advance(host, await advanceUntil(host, selectWork(flowId), 'finalize_checks'));
 }
 
-const RESUME_ON_STARTUP_OFF = 'This Host has automation.resumeOnStartup turned off';
+const RESUME_ON_STARTUP_OFF = '启动时只核对，不续做、不处理排队';
 
 it('C8 (§15.2 5.8): the verdict follows the failure facts and the live policy: FAIL → requeue, cap 0 → stopped, requeue → claim_requeued, no new basis → stopped', async () => {
   const host = await startAG2bHost(await publicDirectory(), { replies: [
@@ -117,8 +117,8 @@ it('C8 (§15.2 5.8): the verdict follows the failure facts and the live policy: 
     if (run1Ref === null) throw new Error('Run 1 must be selected');
 
     // `automation/save` (LA-6): cap 0 and no start-up re-drive, installed with no restart.
-    const off: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false };
-    expect(await saveAutomation(host, { autoReworkLimit: 0, resumeOnStartup: false }))
+    const off: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' };
+    expect(await saveAutomation(host, { autoReworkLimit: 0, resumeOnStartup: 'off' }))
       .toMatchObject({ status: 'ready', value: { automation: off } });
     // AV-8: a counted automatic requeue would pass the cap.
     expect(await workRow(host)).toMatchObject({ failure: { automation: { cap: 0,
@@ -128,12 +128,12 @@ it('C8 (§15.2 5.8): the verdict follows the failure facts and the live policy: 
     // The capability report reads the same installed setting (5.7 `resumeOnStartup` sentence).
     expect(await recoverRunReason(host)).toContain(RESUME_ON_STARTUP_OFF);
     // A refused save changes nothing.
-    expect(await saveAutomation(host, { autoReworkLimit: 11, resumeOnStartup: true }))
+    expect(await saveAutomation(host, { autoReworkLimit: 11, resumeOnStartup: 'auto' }))
       .toMatchObject({ status: 'rejected', code: 'invalid' });
     expect(await workRow(host)).toMatchObject({ failure: { automation: { cap: 0 } } });
     // Raising the cap again lifts the stop at once; the stored refusal-free facts are unchanged.
-    expect(await saveAutomation(host, { autoReworkLimit: 3, resumeOnStartup: true }))
-      .toMatchObject({ status: 'ready', value: { automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } } });
+    expect(await saveAutomation(host, { autoReworkLimit: 3, resumeOnStartup: 'auto' }))
+      .toMatchObject({ status: 'ready', value: { automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'auto' } } });
     expect(await workRow(host)).toMatchObject({ failure: { automation: { cap: 3,
       verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
     expect(await recoverRunReason(host)).not.toContain(RESUME_ON_STARTUP_OFF);

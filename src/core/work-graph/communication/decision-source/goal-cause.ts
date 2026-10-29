@@ -18,7 +18,7 @@ const KNOWN_CAUSE_CODES: ReadonlySet<string> = new Set([
   'initial_plan_pending', 'change_pending', 'required_task_deferred',
   'auto_rework_count', 'auto_rework_pending',
   'auto_rework_cap_reached', 'no_new_basis', 'verification_uncovered',
-  'budget_exhausted', 'not_reworkable', 'unknown_outcome',
+  'budget_exhausted', 'not_reworkable', 'unknown_outcome', 'interrupted_pending_resume',
   'automation_confirmation_required',
   'missing_initial_architecture', 'missing_initial_completion_policy',
 ]);

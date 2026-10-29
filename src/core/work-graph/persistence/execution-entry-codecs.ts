@@ -33,6 +33,7 @@ import {
   hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
   isRecord as isJsonObject, isSha256Hex, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
+import { MODEL_SERVICE_FAILURE_CODES } from '../../../contracts/dispatch.js';
 import type { RuntimeEntryRecord, TaskEntryPermit } from '../model/execution-entry-contracts.js';
 import { encodeEventEnvelope } from './event-envelope.js';
 import { controlIntentRefProblem } from './rework-codecs.js';
@@ -365,9 +366,18 @@ export function runtimeEventPayloadProblem(value: unknown): string | null {
         return 'a completed payload requires a safe integer exitCode';
       }
       return null;
-    case 'crashed':
-      if (!hasOnlyKeys(value, ['kind', 'error']) || typeof value['error'] !== 'string') return 'a crashed payload requires an error string';
+    case 'crashed': {
+      if (!hasOnlyKeys(value, ['kind', 'error', 'modelService']) || typeof value['error'] !== 'string') {
+        return 'a crashed payload requires an error string';
+      }
+      const modelService = value['modelService'];
+      if (modelService === undefined) return null;
+      if (!isJsonObject(modelService) || !hasOnlyKeys(modelService, ['code'])
+        || !(MODEL_SERVICE_FAILURE_CODES as readonly string[]).includes(modelService['code'] as string)) {
+        return 'a crashed payload modelService requires a recognized code';
+      }
       return null;
+    }
     case 'cancelled':
       if (!hasOnlyKeys(value, ['kind', 'reason']) || typeof value['reason'] !== 'string') return 'a cancelled payload requires a reason string';
       return null;

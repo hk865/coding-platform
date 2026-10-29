@@ -27,6 +27,7 @@ import {
   stepOfReceipt, type Driven,
 } from './harness.js';
 import { committedOutcomesOf, editThenText, execution } from './support/common.js';
+import { countsAllowingInterruptions } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -65,13 +66,14 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-01',
     report: { runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] } });
   expect(h.invariantLabels.at(-1)).toBe('restart 1');
-  expect(h.counts(), 'the restart called no model and wrote no record').toEqual(afterRun);
+  const afterRestart = countsAllowingInterruptions(afterRun, report.report, 'restart 1');
+  expect(h.counts(), 'the restart called no model and wrote only the Goal interruption').toEqual(afterRestart);
   expect(h.kernelSnapshot(), 'the Kernel store is unchanged, byte for byte').toEqual(kernelAfterRun);
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
   // HL-02: a second live Host on the same files reconciles nothing and writes nothing.
   const peer = await h.startPeer();
   expect(peer.host.reconcile).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null });
-  expect(h.counts()).toEqual(afterRun);
+  expect(h.counts()).toEqual(afterRestart);
   // The composition root on the same files reads the same records.
   const graph = await (await h.direct()).plans.queryTaskGraph(hostCtx(), { goalRef: { aggregateType: 'Goal',
     projectId: AG2B_SCOPE.projectId, goalId: 'ag2b-goal' } });
@@ -94,7 +96,7 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
 }, 120_000);
 
 it('host mode crash: a Host abandoned mid-Turn is taken over (HL-03); the Run ends interrupted (W-11) with no model call during the reconcile; the next Host\'s call is held and released', async () => {
-  const h = await openHostScenario({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false }, check: 'pass',
+  const h = await openHostScenario({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' }, check: 'pass',
     script: { replies: [{ kind: 'calls', calls: [{ callId: 'smoke-read', name: 'read', args: { path: 'src/module.ts' } }] },
       { kind: 'text', text: 'scenario crash: never answered' }, { kind: 'text', text: 'scenario crash: the second Host answers' }] } });
   const held = h.holdReply(1);
@@ -169,7 +171,7 @@ it('platform mode: claim → Run → PASS → satisfied in process; a reopen kee
 }, 120_000);
 
 it('stepOfReceipt: the §11.11 step of each Workflow receipt, its actor and the policy in effect', () => {
-  const policy = { schemaVersion: 1 as const, autoReworkLimit: 2, resumeOnStartup: false };
+  const policy = { schemaVersion: 1 as const, autoReworkLimit: 2, resumeOnStartup: 'off' } as const;
   const stepOf = (kind: string, result: unknown = { status: 'committed', value: {} }) =>
     stepOfReceipt({ kind, result } as unknown as WorkflowStepReceipt, SCENARIO_OPERATOR, policy, kind);
   const operator = { actor: SCENARIO_OPERATOR, automationPolicy: policy };

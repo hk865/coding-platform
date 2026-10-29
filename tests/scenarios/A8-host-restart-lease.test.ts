@@ -39,7 +39,7 @@ import {
 } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, type InvariantTarget } from './harness.js';
 import { NO_REDRIVE, execution, lockLedgerAfter, openWorkRoot, putKernelBack, stepOf } from './support/common.js';
-import { expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf, ledgerEvents } from './support/restart.js';
+import { expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf, ledgerEvents, recordedInterruptions } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -101,7 +101,7 @@ it('A8-Q7 (Q-07, SD-2): a QueryRun interrupted mid-Turn under a host_config prob
       expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
         sessions: [{ row: 'H-03', status: 'left' }],
         queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-07', status: 'left' }], problems: [] } });
-      expect(ledgerEvents(database)).toBe(atCrash);
+      expect(ledgerEvents(database)).toBe(atCrash + recordedInterruptions(second.host.reconcile.report, 'A8-Q7'));
       expect((await readQuery(second, refs.queryJobRef)).run).toEqual(entered.run);
       const card = await post<{ status: string; value: { record: TaskExecutionRecord['session'] } }>(second, 'sessions/read',
         plain(AG2B_SCOPE, session.sessionRef));

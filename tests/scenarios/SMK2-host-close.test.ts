@@ -14,7 +14,7 @@ import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/
 import { readExecution } from '../helpers/A2-restart-fixture.js';
 import { readReady } from '../helpers/S6B3-fixture.js';
 import { cleanupScenarios, openHostScenario, performs, waitFor, type HostScenario } from './harness.js';
-import { readCall } from './support/common.js';
+import { readCall, redrivePolicy } from './support/common.js';
 
 afterEach(async () => {
   await cleanupScenarios();
@@ -22,7 +22,8 @@ afterEach(async () => {
 
 it('SMK2-1: closing the Host while the driver-run Work Turn calls the model pauses it at the next safe point; the report lists W-11 (no cancel control, no task_cancelled/human_cancel) and the start-up re-drive gives a second Run in the same Session', async () => {
   let h!: HostScenario;
-  h = await openHostScenario({ script: { replies: [readCall('smk2-1'), { kind: 'text', text: 'SMK2-1: the second Run answered' }] } });
+  h = await openHostScenario({ automation: redrivePolicy(true),
+    script: { replies: [readCall('smk2-1'), { kind: 'text', text: 'SMK2-1: the second Run answered' }] } });
   const held = h.holdReply(0);
   expect(await h.answer('workflow/driver-start', plain(AG2B_SCOPE, {
     advance: h.select('smk2-1', AG2B_WORK_TASK_ID), queryProfileIds: [] }))).toMatchObject({ status: 'ready' });

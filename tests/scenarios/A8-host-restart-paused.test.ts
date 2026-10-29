@@ -295,7 +295,7 @@ it('A8-3n (closing supported; KA-10, W-11, RUN-19, LA-7, §13.4 #17, LA-6): the 
     { kind: 'text', text: 'restart scenario A8-3n: Run2 continued without the result file' },
     ...editThenText('a8-3n-run3')];
   const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], check: 'pass',
-    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false }, script: { replies,
+    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' }, script: { replies,
       duringReply: async (index) => {
         if (index !== 3 || scenario === undefined) return;
         pauseRef = (await submitControl(scenario.host, await selectedRun(scenario), 'pause', 'restart scenario: pause', 'a8-3n-pause')).intent.ref;
@@ -353,7 +353,7 @@ it('A8-3n (closing supported; KA-10, W-11, RUN-19, LA-7, §13.4 #17, LA-6): the 
 
   // A start with the re-drive on: no workflow/advance; the automation requeues (uncounted, keys not compared) and
   // claims it in S1, available again since the closure (no create_session); Run2 FAILs, the counted rework passes.
-  await h.restart({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } });
+  await h.restart({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'auto' } });
   await waitFor(() => h.goalDisplay(), display => display.phase === 'COMPLETED', 'the start-up re-drive to complete the Goal');
   await assertInvariants(h, 'a8-3n re-driven');
   const requeues = h.lastWorld?.requeues ?? [];
@@ -406,7 +406,7 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L7, deci
     { kind: 'text', text: 'restart scenario A8-3n: Run2 continued without the result file' },
     ...editThenText('a8-3n-run3')];
   const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], check: 'pass',
-    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false }, script: { replies,
+    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' }, script: { replies,
       duringReply: async (index) => {
         if (index !== 3 || scenario === undefined) return;
         pauseRef = (await submitControl(scenario.host, await selectedRun(scenario), 'pause', 'restart scenario: pause', 'a8-3n-pause')).intent.ref;
@@ -470,7 +470,7 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L7, deci
 
   // A start with the re-drive on: no workflow/advance; the automation requeues (uncounted, keys not compared) and the
   // ordinary selection claims it in the idle Session; Run2 FAILs, the counted rework passes.
-  await h.restart({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } });
+  await h.restart({ automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'auto' } });
   await waitFor(() => h.goalDisplay(), display => display.phase === 'COMPLETED', 'the start-up re-drive to complete the Goal');
   await assertInvariants(h, 'a8-3n re-driven');
   const requeues = h.lastWorld?.requeues ?? [];
@@ -519,7 +519,7 @@ it('A8-3q, A8-3o (W-21, W-20, HL-06, HL-01, LA-1, SES-02): a Run paused by a per
   let scenario: HostScenario | undefined;
   let pauseRef: ControlIntentSnapshotV1['ref'] | undefined;
   const h = await openHostScenario({ workIds: [AG2B_WORK_TASK_ID, WORK_B], check: 'pass',
-    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false }, script: {
+    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' }, script: {
       replies: [{ kind: 'calls', calls: [{ callId: 'a8-3q-a-read', name: 'read', args: { path: 'src/module.ts' } }] },
         { kind: 'text', text: 'restart scenario A8-3q: B completes its first Run' }],
       duringReply: async (index) => {
@@ -639,7 +639,7 @@ it('a Run paused at a safe point when its Host stopped ends paused-interrupted a
 
   // A third start: C8 installs the Host setting `automation` (cap 0, no start-up re-drive); the retired Session
   // is probed again (health unavailable) and stays retired while its Kernel Turn is open (SES-13); nothing is written.
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' });
   const third = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-restart') });
   try {
     expect(third.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-01', report: {
@@ -660,12 +660,12 @@ it('a Run paused at a safe point when its Host stopped ends paused-interrupted a
       stopIntentRef: pauseIntentRef, afterRunRef: runRef });
     const requeueRef = continued.value.requeue.ref;
     await assertInvariantsAt(inv, 'A8-3o continued', { kind: 'task_requeued', actor: SCENARIO_OPERATOR,
-      automationPolicy: { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false } });   // A.2 step 6
+      automationPolicy: { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' } });   // A.2 step 6
     // C8: the read model shows the cap the Host installed from its settings.
     expect(await workRow(third)).toMatchObject({ effectivePhase: 'pending', requeueRef, rework: { cap: 0 } });
 
     const done = (await driveChecked(third, inv, selectWork('a2-restart-continue', true),
-      { policy: { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false } })).steps;   // A.2 step 6: checked per step
+      { policy: { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' } })).steps;   // A.2 step 6: checked per step
     expect(done.at(-1), JSON.stringify(done.map(step => [step.state, step.reason, step.receipt?.kind]))).toMatchObject({ state: 'completed' });
     expect(await readFile(join(root, AG2B_RESULT_FILE), 'utf8')).toBe(AG2B_RESULT_TEXT);
     const finished = await workRow(third);

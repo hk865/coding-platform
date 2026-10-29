@@ -242,7 +242,7 @@ it('KA-09 flow half / KA-11 (c) (KE3, L6/L7): the closure is idempotent — on t
       .toMatchObject({ status: 'closed', health: 'available' });
     expect((await readExecution(second, runRef)).session).toMatchObject({ health: 'available', healthConclusion: null });
     await second.host.close();
-    await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+    await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
     third = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-11 after the restart')] });
     const driven = await driveChecked(third, inv, selectWork('kw-ka11-b', true), { stopBefore: 'start' });
     expect(driven.next?.kind === 'perform' ? driven.next.operation.kind : null, 'the drive stops at the restart re-claim').toBe('start');
@@ -298,7 +298,7 @@ it('KA-11 (b) (KE3, L6/L7): the same one-shot read failure, then a Host restart 
   } finally {
     await second.host.close();
   }
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const third = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-11b after the restart')] });
   try {
     expect((await readExecution(third, runRef)).session, 'the start-up reconcile step 1 runs SES-13')

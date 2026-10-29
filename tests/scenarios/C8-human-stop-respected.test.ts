@@ -367,7 +367,7 @@ it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrie
     input: { proposalRef: p2Proposal.value.ref, expectedProposalRevision: p2Proposal.value.revision, decisionRefs: [] } }))
     .toMatchObject({ status: 'committed' });
   await assertInvariantsAt(target, 'P2 adopted', { kind: 'plan_adopted', actor: { ...SCENARIO_OPERATOR },
-    automationPolicy: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } });
+    automationPolicy: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'auto' } });
 
   // The work Task is claimed; the operator cancels its Run before it enters (D-7): a human stop.
   const claimed = await wb.advance({ schemaVersion: 1, goalRef: AG2B_GOAL_REF, flowId: 'la3-work',
@@ -414,7 +414,7 @@ it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrie
   if (adopted.status !== 'committed') throw new Error(`the operator adoption must commit: ${JSON.stringify(adopted)}`);
   expect(adopted.value.obligations.find(obligation => obligation.obligationId === 'ag2b-obligation')?.taskIds).toContain(PARALLEL);
   await assertInvariantsAt(target, 'operator adopts the Agent candidate', { kind: 'plan_adopted', actor: { ...SCENARIO_OPERATOR },
-    automationPolicy: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true } });
+    automationPolicy: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'auto' } });
 }, 120_000);
 
 it('AV-4 (STEP5-FLIPS §14): a pause superseded by the natural completion fences rework only; the round opens, passes and completes the Task', async () => {

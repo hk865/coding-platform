@@ -930,7 +930,7 @@ function task(taskId: string, overrides: Partial<GoalDisplayTaskFactsV1> = {}): 
 }
 function facts(overrides: Partial<GoalDisplayFactsV1> = {}): GoalDisplayFactsV1 {
   return { desiredState: 'active', activePlanRef: P1, completion: { status: 'not_recorded' }, partialAcceptance: null,
-    pendingProposal: null, tasks: [], runsByTaskId: new Map(), runStopInputs: [], ...overrides };
+    pendingProposal: null, tasks: [], runsByTaskId: new Map(), runStopInputs: [], interruption: null, ...overrides };
 }
 const liveRunOf = (taskId: string): RunSnapshot =>
   runOf(`run-${taskId}`, taskId, { status: 'running', outcome: null, exitCode: null, endedAt: null });
@@ -1063,6 +1063,24 @@ describe('§2.1 GOAL-30 NEEDS_DECISION: stop reasons and the headline rule', () 
       failure: failureOf(stopped('unknown_outcome')) })] }));
     expect(display.causes.some((cause) => cause.code === 'unknown_outcome')).toBe(false);
     expect(display.row).not.toBe('GOAL-30');
+  });
+
+  it('a pending Goal interruption heads GOAL-30 with its record while a starting Run and a pending verdict hold', () => {
+    const run = runOf('run-interrupted', 't-run', { status: 'starting', outcome: null, exitCode: null, endedAt: null });
+    const interruption = {
+      ref: { aggregateType: 'GoalInterruption' as const, projectId: PROJECT, goalId: GOAL_ID },
+      revision: 2, status: 'pending' as const, close: 'clean' as const, detectedAt: T0,
+      taskIds: ['t-run'], runRefs: [run.ref],
+    };
+    const input = { tasks: [task('t-run', { failure: failureOf(REQUEUE) })], runsByTaskId: runsOf(['t-run', run]) };
+    expect(reduceGoalDisplay(facts(input)).row, 'without the record the live Run keeps GOAL-27').toBe('GOAL-27');
+    const display = reduceGoalDisplay(facts({ ...input, interruption }));
+    expect(display).toEqual({ phase: 'NEEDS_DECISION', row: 'GOAL-30',
+      cause: { code: 'interrupted_pending_resume', source: 'host_restart',
+        interruption: { ref: interruption.ref, revision: 2 }, close: 'clean', detectedAt: T0,
+        taskIds: ['t-run'], runRefs: [run.ref] },
+      causes: expect.arrayContaining([expect.objectContaining({ code: 'interrupted_pending_resume' })]),
+      runStops: null });
   });
 
   it('the headline cause is the first REQUIRED cause in plan order; earlier optional causes are only listed', () => {

@@ -17,9 +17,9 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { TaskRequeueOutcomeV1 } from '../../src/contracts/task-requeue.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { AG2B_SCOPE, graphWrite, seedAG2bWorkGraph, startAG2bHost, type AG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
-import { post, publicDirectory, readExecution, selectWork, tempDir, workRow, writeStaleLock } from '../helpers/A2-restart-fixture.js';
+import { post, publicDirectory, readExecution, selectWork, tempDir, workRow, writeAutomationSettings, writeStaleLock } from '../helpers/A2-restart-fixture.js';
 import { cleanupScenarios, type InvariantTarget } from './harness.js';
-import { driveChecked, operatorRequeue, readCall, requiredBriefOf, textReply } from './support/common.js';
+import { driveChecked, operatorRequeue, readCall, redrivePolicy, requiredBriefOf, textReply } from './support/common.js';
 
 afterEach(cleanupScenarios);
 
@@ -144,6 +144,7 @@ it('KA-09 (KE3, L6/L9): a Host restart between the close and the claim rebuilds 
     const firstClose = await driveChecked(second, inv, selectWork('kr09r-a', true), { stopBefore: 'claim_task' });
     expect(firstClose.next?.kind === 'perform' ? firstClose.next.operation.kind : null, 'the drive stops before the claim commits').toBe('claim_task');
     await second.host.close();
+    await writeAutomationSettings(database, redrivePolicy(true));
     third = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-09 after the restart')] });
     const restored = await driveChecked(third, inv, selectWork('kr09r-b', true), { stopBefore: 'start' });
     expect(restored.next?.kind === 'perform' ? restored.next.operation.kind : null, 'the drive stops at the restart re-claim').toBe('start');

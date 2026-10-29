@@ -284,7 +284,7 @@ export async function openS3Host(
   });
   const close = async (): Promise<void> => { await platform.close().catch(() => undefined); };
   try {
-    platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+    platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
 
     const host: S3Host = {
       platform, database, work, query, actor,

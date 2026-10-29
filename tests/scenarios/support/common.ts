@@ -105,9 +105,9 @@ export const READ_THEN_TEXT: ScriptedReply[] = [
   { kind: 'calls', calls: [{ callId: 'a2-crash-read', name: 'read', args: { path: 'src/module.ts' } }] },
   { kind: 'text', text: 'A2 crash: never answered on the crashed Host' }];
 
-/** The `{ automation }` Host setting: rework limit 3, the start-up re-drive on or off (§12.10 step 5, LA-6). */
+/** The `{ automation }` Host setting: rework limit 3, the start-up position auto (on) or off (§12.10 step 5, LA-6). */
 export function redrivePolicy(resumeOnStartup: boolean): TaskAutomationPolicyV1 {
-  return { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup };
+  return { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: resumeOnStartup ? 'auto' : 'off' };
 }
 
 /** The start-up re-drive off: the scenario drives every step itself, and a restart writes only the reconcile's records. */

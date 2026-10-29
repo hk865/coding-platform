@@ -371,9 +371,10 @@ function gateStopAdvice(reason: TaskAutomationStopReason): string {
     case 'budget_exhausted':
     case 'task_cancelled':
     case 'task_paused':
-    // K3 AV-2b is a work-Task reason; a gate never reports it, but the closed
-    // union must be handled.
+    // K3 AV-2b and AV-5m are work-Task reasons a gate never reports, but the
+    // closed union must be handled.
     case 'unknown_call_review':
+    case 'interrupted_pending_resume':
       return 'a person decides';
   }
 }

@@ -25,6 +25,7 @@ import { moveKernelAside } from '../helpers/A2-restart-fixture.js';
 import {
   crashedUnknownKernel, lineArchived, lineList, ready, requireLine, runMaintenance,
 } from '../helpers/S2C-K-scenario-support.js';
+import { redrivePolicy } from './support/common.js';
 
 afterEach(cleanupScenarios);
 
@@ -43,7 +44,7 @@ async function damageKernel(database: string): Promise<void> {
 }
 
 it('2C-22 (1) a Run left outcome_unknown by a missing Kernel reads retired (missing) with attention unknown, and maintenance leaves the unknown holder alone', async () => {
-  const h = await openHostScenario({ script: { replies: [
+  const h = await openHostScenario({ automation: redrivePolicy(true), script: { replies: [
     { kind: 'calls', calls: [{ callId: 's2c22-g1', name: 'read', args: { path: 'src/module.ts' } }] },
     { kind: 'text', text: 's2c22: the missing-Kernel Turn is never answered' },
   ] } });
@@ -65,7 +66,7 @@ it('2C-22 (1) a Run left outcome_unknown by a missing Kernel reads retired (miss
 }, 240_000);
 
 it('2C-22 (3) a damaged Kernel at the restart leaves the Run outcome_unknown; the line reads retired (damaged) with attention unknown and maintenance leaves the unknown holder alone', async () => {
-  const h = await openHostScenario({ script: { replies: [
+  const h = await openHostScenario({ automation: redrivePolicy(true), script: { replies: [
     { kind: 'calls', calls: [{ callId: 's2c22c-g1', name: 'read', args: { path: 'src/module.ts' } }] },
     { kind: 'text', text: 's2c22c: the damaged-Kernel Turn is never answered' },
   ] } });

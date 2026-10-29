@@ -382,7 +382,7 @@ describe.each(KINDS)('reverifyRound (%s)', (kind) => {
     const refusalKey = taskReworkRefusalRefKey(refusalRefOf(r1));
 
     // Step 7: an automatic request over the cap writes TaskReworkRefusal@1 and captures nothing.
-    owner.policy.current = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false };
+    owner.policy.current = { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' };
     const capRequest = reverifyRequest(r1, 'r3e-cap-1');
     const capped = await owner.evidence.reverifyRound!(automation, capRequest);
     expect(capped).toMatchObject({ status: 'committed', replayed: false, value: { kind: 'refused', refusal: {

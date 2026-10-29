@@ -37,7 +37,7 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import { compareSourceCheckpoints } from '../../../contracts/continuation-brief.js';
 import type { ControlIntentRef, ControlIntentRequestV1 } from '../../../contracts/control-intent.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { RunRef, RunSnapshot, TaskAttemptRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { ModelServiceFailureCode, RunRef, RunSnapshot, TaskAttemptRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { SourceStampV1 } from '../../../contracts/no-progress.js';
 import type { Disposition } from '../../../contracts/plan.js';
@@ -134,6 +134,16 @@ export function reworkStopOf(pointerIntent: StopIntentV1 | null): ReworkStopV1 {
     : { intentRef: { ...pointerIntent.ref }, requester };
 }
 
+/**
+ * TD-8 FC-7m: the model-service code the selected Run's terminal payload
+ * recorded, or null. This is the ONLY reader of the payload key; every other
+ * caller sees the class row or the AV-5m verdict.
+ */
+export function modelServiceOf(run: Pick<RunSnapshot, 'terminalPayload'>): ModelServiceFailureCode | null {
+  const payload = run.terminalPayload;
+  return payload !== undefined && payload.kind === 'crashed' ? payload.modelService?.code ?? null : null;
+}
+
 /** `reworkFenceOf(selectedRun, pointerIntent)`; see `ReworkFence`. */
 export function reworkFenceOf(
   run: Pick<RunSnapshot, 'outcome' | 'reconciliation'>,
@@ -142,6 +152,16 @@ export function reworkFenceOf(
   const requester = stopRequesterOf(pointerIntent);
   if (isPausedInterrupted(run)) return requester === 'goal_fan_out' ? 'human_or_goal_resume' : 'human_only';
   return requester === 'human' ? 'human_only' : 'none';
+}
+
+/**
+ * The `interruption` the actor × class matrix judges for `d`: an FC-7m class is
+ * a model-service interruption, every other row keeps its derivation's value.
+ */
+export function permissionInterruptionOf(
+  d: Extract<ReworkClassDerivationV1, { kind: 'class' }>,
+): ReworkPermissionInputV1['interruption'] {
+  return d.row === 'FC-7m' ? 'model_service' : d.interruption;
 }
 
 // ------------------------------------------------------------------------ //
@@ -165,7 +185,7 @@ export type ReworkClassDerivationV1 =
     stop: ReworkStopV1;
   }
   | {
-    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-7b' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'S1-FC-ARCHIVE';
+    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-7b' | 'FC-7m' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'S1-FC-ARCHIVE';
     kind: 'class';
     failureClass: ReworkFailureClass;
     interruption: 'executing' | 'paused' | null;
@@ -192,6 +212,7 @@ export type VerifiedArchiveInterruptionV1 =
  * | 5 | `yielded`, other (P5/P14) | no rework (`ready`) |
  * | 6 | `crashed`, `interrupted_clean`, `pausedIntentRef ≠ null` (RUN-24) | `interrupted` / `paused` |
  * | 7 | `crashed`, `interrupted_clean`, `pausedIntentRef = null` (RUN-19) | `interrupted` / `executing` |
+ * | 7m | `crashed`, a model-service code in the terminal payload | `interrupted` / `executing` |
  * | 8 | `cancelled` (D-7, running cancel, RUN-23) | `cancelled` |
  * | 9 | `crashed` (Kernel or `human_attested`) or `failed` | `run_failed` |
  * | 10 | `budget_exhausted` | `run_failed` |
@@ -246,6 +267,9 @@ export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 
       if (observation !== undefined && observation.kind === 'takeover_unresolved') {
         return rework('FC-7b', 'interrupted', 'executing');
       }
+      // FC-7m: a model-service failure interrupted the work; it is not counted,
+      // gets no automatic rework and waits for the person (user 2026-10-29).
+      if (modelServiceOf(run) !== null) return rework('FC-7m', 'interrupted', 'executing');
       return rework('FC-9', 'run_failed');
     }
     case 'cancelled':
@@ -344,8 +368,8 @@ export type ReworkPermissionInputV1 = {
   goalDesiredState: GoalDesiredState;
   /** requeue: TD-8 (`deriveReworkClass`); reverify: `reverifyFailureClass(head)`. */
   failureClass: ReworkFailureClass;
-  /** Class `interrupted` only; `paused` is the "continue" of P19 (TASK-27). */
-  interruption: 'executing' | 'paused' | null;
+  /** Class `interrupted` only; `paused` is the "continue" of P19 (TASK-27), `model_service` is FC-7m. */
+  interruption: 'executing' | 'paused' | 'model_service' | null;
   /** `reworkFenceOf(selectedRun, pointerIntent)`; `none` for a gate. */
   fence: ReworkFence;
   /** `reworkActorClassOf(principal, actor)`. */
@@ -377,7 +401,8 @@ export type ReworkPermissionInputV1 = {
  *    row of the matrix it is `forbidden` (I-12 clause 6), so the `system`
  *    column below means `WORKFLOW_AUTOMATION_ACTOR`;
  * 4. the class matrix: a paused interruption is continued only by a human or
- *    the Goal-resume continuation (`forbidden`); `cancelled` is not for
+ *    the Goal-resume continuation (`forbidden`); a model-service interruption is
+ *    continued only by a human (`forbidden`); `cancelled` is not for
  *    `agent` (`forbidden`, C2); a requeue of `check_incomplete` is only for
  *    `human` (`illegal`/`invalid`, it is reworked by a successor round);
  *    a reverify exists only for `check_failed` / `check_incomplete`
@@ -428,6 +453,9 @@ function requeueClassProblem(input: ReworkPermissionInputV1, human: boolean, goa
     case 'interrupted':
       if (input.interruption === 'paused' && !human && !goalResume) {
         return reject('guard_failed', 'forbidden', 'a paused task can only be continued by an operator');
+      }
+      if (input.interruption === 'model_service' && !human) {
+        return reject('guard_failed', 'forbidden', 'the model service stopped this work; only an operator may continue it');
       }
       return null;
     case 'cancelled':
@@ -756,7 +784,7 @@ export type TaskFailureInputV1 = WorkFailureInputV1 | GateFailureInputV1;
 // ------------------------------------------------------------------------ //
 /** AV-10 has no branch: it only states that AV-8 already covers a stored cap refusal. */
 export type WorkVerdictRow =
-  | 'AV-0' | 'AV-1' | 'AV-2' | 'AV-2b' | 'AV-3' | 'AV-4' | 'AV-4c' | 'AV-5' | 'AV-6'
+  | 'AV-0' | 'AV-1' | 'AV-2' | 'AV-2b' | 'AV-3' | 'AV-4' | 'AV-4c' | 'AV-5' | 'AV-5m' | 'AV-6'
   | 'AV-7a' | 'AV-7b' | 'AV-7c' | 'AV-7d' | 'AV-8' | 'AV-9' | 'AV-11' | 'AV-12';
 export type GateVerdictRow =
   | 'GV-0' | 'GV-1' | 'GV-2' | 'GV-3' | 'GV-3′' | 'GV-4' | 'GV-5' | 'GV-6' | 'GV-7' | 'GV-8' | 'GV-9' | 'GV-10';
@@ -896,6 +924,11 @@ function workVerdict(view: WorkView, limit: number): { row: WorkVerdictRow; verd
   }
   if (isPausedInterrupted(run) && view.fence === 'human_or_goal_resume') {
     return { row: 'AV-5', verdict: stopped('task_paused', { pausedBy: 'goal_fan_out' }) };
+  }
+  // AV-5m: a model-service interruption waits for the person in every position.
+  if (derivation.kind === 'class' && derivation.row === 'FC-7m') {
+    return { row: 'AV-5m', verdict: stopped('interrupted_pending_resume', {
+      source: 'model_service', code: modelServiceOf(run), afterRunRef: { ...run.ref }, detectedAt: run.endedAt }) };
   }
   switch (derivation.kind) {
     case 'no_rework':
@@ -1221,7 +1254,7 @@ function workRequeueActors(view: WorkView): ReworkActorClass[] {
   if (derivation === null || derivation.kind !== 'class' || derivation.row === 'FC-13') return [];
   if (input.satisfied || input.disposition !== 'active' || view.covering !== null) return [];
   return permittedActors({ operation: 'requeue', goalDesiredState: input.goalDesiredState,
-    failureClass: derivation.failureClass, interruption: derivation.interruption, fence: view.fence });
+    failureClass: derivation.failureClass, interruption: permissionInterruptionOf(derivation), fence: view.fence });
 }
 
 /**

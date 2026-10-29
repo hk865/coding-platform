@@ -51,7 +51,7 @@ afterEach(async () => {
 const T = AG2B_WORK_TASK_ID;
 const COORDINATOR = 'ag2b-coordinator';
 const T2 = 'ag2b-work-2';
-const CAP_ONE = { schemaVersion: 1 as const, autoReworkLimit: 1, resumeOnStartup: true };
+const CAP_ONE = { schemaVersion: 1 as const, autoReworkLimit: 1, resumeOnStartup: 'auto' } as const;
 
 it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails to the cap, a coordinator\'s Run proposes T superseded by T2, the Workflow runs T2 and the Goal completes; T keeps its history; I-3, I-21, I-22 hold', async (adopter) => {
   const proposeCall = { callId: 'c7-propose', name: 'propose_future_plan', args: {} as Record<string, unknown> };

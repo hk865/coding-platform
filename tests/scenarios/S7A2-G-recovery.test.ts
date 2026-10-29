@@ -45,6 +45,7 @@ it.each(windows)('G-recovery: $name (SQLite)', async window => {
   const exercise = async (which: typeof window) => {
     const opened = await openS7AQueryWorld({ backend: 'sqlite' });
     worlds.push(opened.world);
+    await opened.world.setResumeOnStartup(true);
     const { goal: seeded } = await seedS7AGoalPlan(opened.world, { pointer: 'recovery' });
     expect(seeded).toEqual(goal);
     await setS7AAutonomy(opened.world, goal, 'every_step');

@@ -23,7 +23,7 @@
  * pending `observed`, `open: 'no'` and the conclusion's evidence text. The
  * two-item owner coverage stays in tests/work-graph/K3-13-two-items-owner.test.ts.
  *
- * The scenario drives every Workflow step itself (`resumeOnStartup: false`); the
+ * The scenario drives every Workflow step itself (`resumeOnStartup: 'off'`); the
  * review root (./support/review-work-root.ts) carries the read-only command
  * grant so `reviewCapability` answers `available`. Scripted model only.
  */

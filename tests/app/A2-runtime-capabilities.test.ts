@@ -14,8 +14,8 @@
  * Step 5.7 reports `recoverRun` as supported: the start-up reconciliation only, never a fresh
  * resume of the original Turn (D-17); a Run paused when its Host stopped ends paused-interrupted and
  * only a person continues it (C4); the start-up re-drive follows the Host setting
- * `automation.resumeOnStartup`, the reason states what turning it off does, and a Host with it
- * off also says so, with or without the instance lease (LA-6, L-10). The §7.7 target boundaries
+ * `automation.resumeOnStartup` (auto / ask / off; default ask), the reason states the position, with or without
+ * the instance lease (LA-6, L-10). The §7.7 target boundaries
  * were added by the substeps that built them: 5.4 the requeue continuation brief (C3); 5.6 the new
  * Session after an open Kernel Turn, the restart rebuild, paused-interrupted, the paused stop and the
  * restart stop; 5.8 the automatic requeue of a clean interruption (RUN-19) and the start-up re-drive
@@ -92,18 +92,19 @@ const RECOVER_RUN_BOUNDARIES = [
   // 5.8, 5.9: re-drive condition (a) for the verdicts the Workflow acts on (reverify since 5.9).
   'a required active Task whose automation verdict is requeue, reverify or claim_requeued',
   'or a Run that never entered and is not paused or cancelled',
-  'follows the Host setting automation.resumeOnStartup (on by default)',
+  'follows the Host setting automation.resumeOnStartup',
   'judged by the Workflow and the owners', 'a paused-interrupted Run is still continued only by a person',
   'there is no periodic scheduler',
-  // LA-6: what turning the setting off does (§7.7 "关闭时重启后不启动驱动…").
-  'When that setting is off, the reconciliation still runs but no driver starts after it',
+  // LA-6: the position sentence is asserted separately; these hold in every position.
   'the automation continues only at workflow/advance, workflow/driver-start or an operator\'s action',
   // L-10.
   'does not hold the instance lease neither reconciles nor starts an execution driver',
   'plain reads and owner writes are served as usual',
 ];
-/** LA-6 (5.7): the sentence the reason adds when this Host's `automation.resumeOnStartup` is off. */
-const RESUME_ON_STARTUP_OFF = 'This Host has automation.resumeOnStartup turned off';
+/** LA-6 (5.7): each position's sentence in the reason; the rest of the reason is the same. */
+const RESUME_ON_STARTUP_AUTO = '启动时自动续做被中断的目标';
+const RESUME_ON_STARTUP_ASK = '启动时列出被中断的目标，等你点继续';
+const RESUME_ON_STARTUP_OFF = '启动时只核对，不续做、不处理排队';
 it('reports continuation, safe-point pause, cancel and start-up reconciliation as supported with their boundaries over the Host route', async () => {
   const paths = {
     publicDir: await directory('a2-capabilities-public-'),
@@ -176,9 +177,9 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     'there is no QueryJob close',
   ]);
   // 5.7 (§7.7, D-15, C4, LA-6): recoverRun is the start-up reconciliation only, with the default
-  // setting (the start-up re-drive on), so the "turned off" sentence is absent.
+  // setting (ask: the interrupted Goals are listed and wait for the person), so the reason states ask.
   expectAllIn(report.recoverRun.reason, RECOVER_RUN_BOUNDARIES);
-  expect(report.recoverRun.reason).not.toContain(RESUME_ON_STARTUP_OFF);
+  expect(report.recoverRun.reason).toContain(RESUME_ON_STARTUP_ASK);
   // 5.6 moved every remaining §7.7 target phrase into the lists above (5.4 moved 'continuation brief').
   expect(report.safePointPause.reason).not.toContain('continuation brief');
   expect(report.cancel.reason).not.toContain('continuation brief');
@@ -195,7 +196,7 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
   expect(await readCapabilities(reopened.origin, reopened.token)).toEqual(report);
 });
 
-it('says in the recoverRun reason that this Host has the setting automation.resumeOnStartup off, with or without the instance lease (LA-6, L-10)', async () => {
+it('states the start-up position (ask, auto, off) in the recoverRun reason, with or without the instance lease (LA-6, L-10)', async () => {
   const paths = {
     publicDir: await directory('a2-capabilities-public-'),
     root: await directory('a2-capabilities-ws-'),
@@ -208,7 +209,7 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
   // Host settings route, close that Host, then start the Host under test.
   const configureOff = await startHost(paths);
   expect((await postSettings(configureOff.origin, configureOff.token, 'automation/save',
-    { autoReworkLimit: 3, resumeOnStartup: false })).status).toBe('ready');
+    { autoReworkLimit: 3, resumeOnStartup: 'off' })).status).toBe('ready');
   await configureOff.host.close();
   const off = await startHost(paths);
   // The start-up reconciliation ran on this Host (it holds the instance lease); the setting only
@@ -226,15 +227,16 @@ it('says in the recoverRun reason that this Host has the setting automation.resu
   await held.host.close();
   await off.host.close();
 
-  // The same ledger with the setting back on: the sentence is gone and nothing else differs.
+  // The same ledger with the setting on auto: only the position sentence changes.
   const configureOn = await startHost(paths);
   expect((await postSettings(configureOn.origin, configureOn.token, 'automation/save',
-    { autoReworkLimit: 3, resumeOnStartup: true })).status).toBe('ready');
+    { autoReworkLimit: 3, resumeOnStartup: 'auto' })).status).toBe('ready');
   await configureOn.host.close();
   const on = await startHost(paths);
   const onReport = await readCapabilities(on.origin, on.token);
   expectAllIn(onReport.recoverRun.reason, RECOVER_RUN_BOUNDARIES);
   expect(onReport.recoverRun.reason).not.toContain(RESUME_ON_STARTUP_OFF);
-  expect(offReport.recoverRun.reason).toBe(`${onReport.recoverRun.reason}. ${RESUME_ON_STARTUP_OFF}`);
+  expect(offReport.recoverRun.reason.replace(RESUME_ON_STARTUP_OFF, RESUME_ON_STARTUP_AUTO))
+    .toBe(onReport.recoverRun.reason);
   expect({ ...offReport, recoverRun: onReport.recoverRun }).toEqual(onReport);
 });

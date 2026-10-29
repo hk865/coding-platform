@@ -184,7 +184,7 @@ it('C6 (W-01 note): an adoption before the prepare and a fresh selection continu
 });
 
 it('C6 variant W-01: the Host restarts between the claim and the authorization, after an unrelated adoption; the reconcile leaves the claim, and 推进 continues it under P2', async () => {
-  const h = await openHostScenario({ check: 'pass', automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false },
+  const h = await openHostScenario({ check: 'pass', automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' },
     script: { replies: [{ kind: 'text', text: 'C6 W-01: the claimed work is done' }] } });
   const phases: PhaseLog = [];
   await assertInvariants(h, 'seeded');
@@ -242,7 +242,7 @@ it('C6 variant W-01: the Host restarts between the claim and the authorization, 
 it('C6 variant RUN-03 (W-05 → W-03, §12.10 A8-1c supplement): an Entering Run revoked at a restart is re-authorized after an unrelated adoption; the relaxed guard passes under P2 (generation 2), the same claim completes', async () => {
   const RUN0 = 'ag2b-work-0';
   const h = await openHostScenario({ check: 'pass', workIds: [RUN0, T1],
-    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false },
+    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' },
     script: { replies: [{ kind: 'text', text: 'C6 RUN-03: Run0 completed its Turn in S1' }, { kind: 'text', text: 'C6 RUN-03: T1 is done' }] } });
   const phases: PhaseLog = [];
   await assertInvariants(h, 'seeded');

@@ -74,6 +74,7 @@ import {
 import {
   OPERATOR_RETRY, eventCount, failCommitOf, kernelRecordsContaining, performOnce, rawAdvance, rawPost, writeStatusOf,
 } from './support/receipts.js';
+import { countsAllowingInterruptions } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -118,11 +119,12 @@ it('A4 (领取、发信、记录结果): every step of a Run, its rounds and the
       }
       if (kind === 'claim_task' || kind === 'complete_goal') {
         // The Host crashes before the answer reaches the driver; the next Host answers the same request.
-        await h.restart({ crash: true });
-        expect(h.counts(), `${kind}: the reconcile after the crash wrote nothing`).toEqual(before);
+        const report = await h.restart({ crash: true });
+        const allowed = countsAllowingInterruptions(before, report.report, `${kind}: the reconcile after the crash`);
+        expect(h.counts(), `${kind}: the reconcile after the crash wrote nothing`).toEqual(allowed);
         const afterCrash = await performOnce(h, input, `a4-steps#${step} ${kind} after a crash`);
         expect(afterCrash, `${kind}: replayed by the next Host`).toEqual({ ...first, receipt: replayOf(first.receipt) });
-        expect(h.counts()).toEqual(before);
+        expect(h.counts()).toEqual(allowed);
       }
       resent.push(kind);
       answer = again;
@@ -186,7 +188,7 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
   // The crash: the next Host has nothing to reconcile (§12.2 W-23 "不需要核对").
   const report = await h.restart({ crash: true });
   expect(report.report).toMatchObject({ runs: [], queries: [], checks: [], controls: [], problems: [] });
-  expect(h.counts()).toEqual(beforeRequeue);
+  expect(h.counts()).toEqual(countsAllowingInterruptions(beforeRequeue, report.report, 'W-23: the crash restart'));
   // The new Host's Workflow derives the same request from the pins, whatever the flow: the same identity.
   const derivedRequeue = await performOnce(h, h.select('a4-requeue-after-crash', W), 'W-23 re-derived');
   expect(operationOf(derivedRequeue.next)).toEqual(operationOf(requeueInput));
@@ -202,9 +204,9 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
   const afterRequeue = h.counts();
   // Its answer is lost: the same request replays on the same Host, and again after a crash.
   expect(await performOnce(h, requeueInput, 'W-23 answer lost')).toEqual({ ...requeued, receipt: replayOf(requeued.receipt) });
-  await h.restart({ crash: true });
+  const second = await h.restart({ crash: true });
   expect(await performOnce(h, requeueInput, 'W-23 after a crash')).toEqual({ ...requeued, receipt: replayOf(requeued.receipt) });
-  expect(h.counts()).toEqual(afterRequeue);
+  expect(h.counts()).toEqual(countsAllowingInterruptions(afterRequeue, second.report, 'W-23: the requeue crash restart'));
 
   // Run 2 claims the requeue and FAILs the same way: the next request is the second automatic requeue.
   const toRefusal = await h.advance(requeued.next!, { stopBefore: performs('requeue_task') });
@@ -221,8 +223,8 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
   expect(h.counts(), 'the rolled-back refusal left nothing').toEqual(beforeRefusal);
   expect(await h.taskRow()).toMatchObject({ failure: { automation: { lastRefusal: null } } });
   await assertInvariants(h, 'W-23: the refusal rolled back');
-  await h.restart({ crash: true });
-  expect(h.counts()).toEqual(beforeRefusal);
+  const third = await h.restart({ crash: true });
+  expect(h.counts()).toEqual(countsAllowingInterruptions(beforeRefusal, third.report, 'W-23: the refusal crash restart'));
   const derivedRefusal = await performOnce(h, h.select('a4-refusal-after-crash', W), 'W-23 refusal re-derived');
   expect(operationOf(derivedRefusal.next)).toEqual(operationOf(refusalInput));
   const refused = await performOnce(h, refusalInput, 'W-23 refusal retry');
@@ -232,9 +234,10 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
   const afterRefusal = h.counts();
   // The committed refusal replays as the same `refused` value, on the same Host and after a crash (§13.3).
   expect(await performOnce(h, refusalInput, 'refusal answer lost')).toEqual({ ...refused, receipt: replayOf(refused.receipt) });
-  await h.restart({ crash: true });
+  const fourth = await h.restart({ crash: true });
+  const afterRefusalAllowed = countsAllowingInterruptions(afterRefusal, fourth.report, 'W-23: the refusal replay restart');
   expect(await performOnce(h, refusalInput, 'refusal after a crash')).toEqual({ ...refused, receipt: replayOf(refused.receipt) });
-  expect(h.counts()).toEqual(afterRefusal);
+  expect(h.counts()).toEqual(afterRefusalAllowed);
 
   // W-23 for a person's request ("人工请求同样按同一身份重试"): the operator's requeue with nothing new is refused
   // too (@2, hard limit 2). Its commit fails inside the transaction and leaves nothing; after the crash the same
@@ -244,20 +247,20 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
   const operatorFailed = await rawPost(h, 'tasks/requeue', operatorBody);
   operatorFault.drop();
   expect(writeStatusOf(operatorFailed), 'no committed receipt').toBe('rejected');
-  expect(h.counts(), 'the rolled-back operator refusal left nothing').toEqual(afterRefusal);
+  expect(h.counts(), 'the rolled-back operator refusal left nothing').toEqual(afterRefusalAllowed);
   expect(await h.taskRow()).toMatchObject({ failure: { automation: { lastRefusal: { revision: 1 } } } });
   await assertInvariants(h, 'W-23: the operator refusal rolled back');
-  await h.restart({ crash: true });
-  expect(h.counts()).toEqual(afterRefusal);
+  const fifth = await h.restart({ crash: true });
+  expect(h.counts()).toEqual(countsAllowingInterruptions(afterRefusalAllowed, fifth.report, 'W-23: the operator crash restart'));
   const operator = await h.answer('tasks/requeue', operatorBody);
   expect(operator).toMatchObject({ status: 'committed', replayed: false, value: { kind: 'refused', refusal: {
     revision: 2, code: 'no_new_basis', afterRunRef: run2Ref, requestedBy: SCENARIO_OPERATOR } } });
   await assertInvariants(h, 'operator refusal', stepOf(h, 'task_rework_refused', 'operator refusal', SCENARIO_OPERATOR));
   const afterOperator = h.counts();
   expect(await h.answer('tasks/requeue', operatorBody), 'its answer lost: the same body replays').toEqual({ ...operator, replayed: true });
-  await h.restart({ crash: true });
+  const sixth = await h.restart({ crash: true });
   expect(await h.answer('tasks/requeue', operatorBody), 'and replays on the next Host').toEqual({ ...operator, replayed: true });
-  expect(h.counts()).toEqual(afterOperator);
+  expect(h.counts()).toEqual(countsAllowingInterruptions(afterOperator, sixth.report, 'W-23: the operator replay restart'));
 
   // One TaskRequeue, two refusals, two Runs: every copy above was answered from the ledger.
   expect(eventCount(h, 'TaskRequeued')).toBe(1);
@@ -290,7 +293,7 @@ it('A4, C-05: an automatic reverify and its committed refusal that fail inside t
   expect(h.lastWorld?.rounds).toHaveLength(1);
   const report = await h.restart({ crash: true });
   expect(report.report).toMatchObject({ runs: [], checks: [], controls: [], problems: [] });
-  expect(h.counts()).toEqual(beforeReverify);
+  expect(h.counts()).toEqual(countsAllowingInterruptions(beforeReverify, report.report, 'C-05: the reverify crash restart'));
   // The requestId is derived from the predecessor and refusal pins: the new Host's Workflow derives the same request.
   const derivedReverify = await performOnce(h, h.select('a4-reverify-after-crash', W), 'C-05 re-derived');
   expect(operationOf(derivedReverify.next)).toEqual(operationOf(reverifyInput));
@@ -302,9 +305,9 @@ it('A4, C-05: an automatic reverify and its committed refusal that fail inside t
   expect(eventCount(h, 'VerificationRoundReverified')).toBe(1);
   const afterReverify = h.counts();
   expect(await performOnce(h, reverifyInput, 'C-05 answer lost')).toEqual({ ...reverified, receipt: replayOf(reverified.receipt) });
-  await h.restart({ crash: true });
+  const reverifyCrash = await h.restart({ crash: true });
   expect(await performOnce(h, reverifyInput, 'C-05 after a crash')).toEqual({ ...reverified, receipt: replayOf(reverified.receipt) });
-  expect(h.counts()).toEqual(afterReverify);
+  expect(h.counts()).toEqual(countsAllowingInterruptions(afterReverify, reverifyCrash.report, 'C-05: the reverify replay restart'));
   expect(h.lastWorld?.rounds).toHaveLength(2);
 
   // The successor's check times out the same way on the same source: the next automatic reverify is the
@@ -318,8 +321,9 @@ it('A4, C-05: an automatic reverify and its committed refusal that fail inside t
   refusalFault.drop();
   expect(refusalFailed).toMatchObject({ state: 'waiting', receipt: { kind: 'reverify_round', result: { status: 'rejected', code: 'unavailable' } } });
   expect(h.counts()).toEqual(beforeRefusal);
-  await h.restart({ crash: true });
-  expect(h.counts(), 'the restart after the rolled-back refusal wrote nothing').toEqual(beforeRefusal);
+  const refusalCrash = await h.restart({ crash: true });
+  expect(h.counts(), 'the restart after the rolled-back refusal wrote nothing')
+    .toEqual(countsAllowingInterruptions(beforeRefusal, refusalCrash.report, 'C-05: the refusal crash restart'));
   // 13.7 / C-05: the refusal's requestId comes from the predecessor and refusal pins, so a new flow derives the same request.
   const derivedRefusal = await performOnce(h, h.select('a4-reverify-refusal-after-crash', W), 'C-05 refusal re-derived');
   expect(operationOf(derivedRefusal.next)).toEqual(operationOf(refusalInput));
@@ -329,9 +333,9 @@ it('A4, C-05: an automatic reverify and its committed refusal that fail inside t
       requestedBy: WORKFLOW_AUTOMATION_ACTOR } } } } });
   const afterRefusal = h.counts();
   expect(await performOnce(h, refusalInput, 'reverify refusal answer lost')).toEqual({ ...refused, receipt: replayOf(refused.receipt) });
-  await h.restart({ crash: true });
+  const refusalReplayCrash = await h.restart({ crash: true });
   expect(await performOnce(h, refusalInput, 'reverify refusal after a crash')).toEqual({ ...refused, receipt: replayOf(refused.receipt) });
-  expect(h.counts()).toEqual(afterRefusal);
+  expect(h.counts()).toEqual(countsAllowingInterruptions(afterRefusal, refusalReplayCrash.report, 'C-05: the refusal replay restart'));
 
   // One successor round, one refusal, two check processes, one Turn and one model call in all.
   expect(eventCount(h, 'VerificationRoundReverified')).toBe(1);
@@ -410,14 +414,15 @@ it('A4 (控制、发信、核对): a steer and an operator message re-sent befor
   // 核对 repeated: that Host crashes right after its reconcile; the fourth Host finds nothing left and writes nothing.
   const repeated = await h.restart({ crash: true });
   expect(repeated.report).toMatchObject({ runs: [], queries: [], checks: [], controls: [], problems: [] });
-  expect(h.counts(), 'the repeated reconcile wrote nothing').toEqual(afterReconcile);
+  const afterRepeated = countsAllowingInterruptions(afterReconcile, repeated.report, 'A4 control: the repeated reconcile restart');
+  expect(h.counts(), 'the repeated reconcile wrote nothing').toEqual(afterRepeated);
   expect(eventCount(h, 'ExecutionRunReconciled')).toBe(1);
   // The `start` whose answer the first crash lost: the fourth Host answers the ended Run; no Turn, no model call.
   const kernel = h.kernelSnapshot();
   const started = await performOnce(h, startInput, 'the lost start sent again');
   expect(started).toMatchObject({ receipt: { kind: 'start', result: { status: 'ready', value: { run: { ref: runRef,
     status: 'ended', outcome: 'crashed' } } } } });
-  expect(h.counts()).toEqual(afterReconcile);
+  expect(h.counts()).toEqual(afterRepeated);
   expect(h.kernelSnapshot()).toEqual(kernel);
   expect(kernelRecordsContaining(h.database, STEER)).toBe(1);
   expect(kernelRecordsContaining(h.database, MESSAGE)).toBe(1);

@@ -29,7 +29,7 @@ import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
 import { mkdirSync } from 'node:fs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
 import { createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
@@ -765,6 +765,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     controls: platform.controls,
     profiles: runtimeConfiguration?.queryProfiles ?? [],
     onChange: changes.driverChanged,
+    // The Goal interruption is resolved only once a driver actually starts: a same-seed replay never reaches here.
+    onStarted: async (ctx, goalRef) => {
+      try { await platform.reconcile.recordGoalInterruption?.(ctx, { goalRef, to: 'resumed' }); }
+      catch { /* a failed resolve leaves the record pending, so the cause stays visible */ }
+    },
   });
   // A.2 step 5.5 (G7): the Goal-control fan-out over the same platform; its
   // commits reach the change feed through the platform's commit observer, and
@@ -985,7 +990,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     };
     loop.register(MESSAGE_RELEASE_QUEUE, releaseHandler, { aggregateTypes: MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES });
     // The explicit arm (`book-7a.md:382–:383`): the person's approval, a Goal resume or an explicit advance. A
-    // commit notice alone never arms it, which is why `resumeOnStartup: false` is respected (`:383–:384`).
+    // commit notice alone never arms it, which is why `resumeOnStartup: 'off'` is respected (`:383–:384`).
     armMessageRelease = scope => loop.wake(scope, MESSAGE_RELEASE_QUEUE, 'release_armed');
     requestDriverCommitted = notice => loop.committed(notice);
     wakeLoop = loop;
@@ -1182,7 +1187,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   };
 
   const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
-    // C8 (A.2 step 5.6): the Host setting `automation` (defaults 3 / true) governs the
+    // C8 (A.2 step 5.6): the Host setting `automation` (defaults 3 / ask) governs the
     // requeue owner, the read model and the start-up re-drive (`resumeOnStartup`).
     platform.registerAutomationPolicy(snapshot.automation);
     // L13: install the effective resource-cap values into the ONE holder. The
@@ -1533,6 +1538,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
       plans: platform.plans, reconcile: platform.reconcile },
     hostInstanceId: instanceLease.hostInstanceId,
+    resumeOnStartup: platform.automationPolicy().resumeOnStartup,
     takeover: instanceLease.takeover,
     scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
     context: reconcileContext,
@@ -1545,9 +1551,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // L8 (book ruling 5): after the workspaces are bound (settings restore included)
   // every pending bound workspace gets a `startup_retry`; detached, and a pending
   // workspace not bound in this Host is simply not passed here. Like the start-up
-  // re-drive below it needs the lease and `automation.resumeOnStartup`: with it off
-  // a start only reconciles (§12.10 step 5) and the next trigger retries.
-  if (leaseOwned && platform.automationPolicy().resumeOnStartup) {
+  // re-drive below it needs the lease and `automation.resumeOnStartup`: only `'off'`
+  // stops the retry, as a start then only reconciles (§12.10 step 5) and the next trigger retries.
+  if (leaseOwned && platform.automationPolicy().resumeOnStartup !== 'off') {
     autoCapture.retryPending(workspaces.map(workspace => ({
       projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
     })));
@@ -1568,15 +1574,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     } catch { /* a refused start leaves the Goal for the next workflow/advance or driver-start */ }
   };
   // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
-  // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup`; every
+  // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup` being `'auto'`; every
   // step it takes is judged by the owners, and its rework steps run as the Workflow's automation actor.
-  const startRedrive = async (goals: StartupReconcileReportV1['redriveGoals']): Promise<void> => {
-    if (!platform.automationPolicy().resumeOnStartup) return;
-    for (const goal of goals) {
+  const startRedrive = async (report: StartupReconcileReportV1): Promise<void> => {
+    if (platform.automationPolicy().resumeOnStartup !== 'auto') return;
+    // The 6b selection keeps its own entries and their answers; a candidate-only Goal is driven once, with no answers.
+    const byGoal = new Map<string, StartupReconcileReportV1['redriveGoals'][number]>();
+    for (const goal of report.redriveGoals) byGoal.set(canonicalKey(goal.goalRef), goal);
+    for (const entry of report.interruptedGoals) {
+      if (byGoal.has(canonicalKey(entry.goalRef))) continue;
+      byGoal.set(canonicalKey(entry.goalRef), { goalRef: entry.goalRef, scope: entry.scope, taskIds: entry.taskIds });
+    }
+    for (const goal of byGoal.values()) {
       await startGoalDriver(goal.scope, goal.goalRef, `startup-redrive:${goal.goalRef.goalId}`, goal.answers);
     }
   };
-  if (reconcileReport !== null) await startRedrive(reconcileReport.redriveGoals);
+  if (reconcileReport !== null) await startRedrive(reconcileReport);
   // The request driver starts only now, after the start-up reconcile and its
   // re-drive: their commits must not wake a pass, and both queues rebuild
   // read-only from the records. With `resumeOnStartup` off each workspace's
@@ -1585,7 +1598,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   if (wakeLoop !== undefined) {
     await wakeLoop.start(workspaces.map(workspace => ({
       projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
-    })), { resumeOnStartup: platform.automationPolicy().resumeOnStartup });
+    })), { resumeOnStartup: platform.automationPolicy().resumeOnStartup !== 'off' });
   }
   // Slice 2B L8/B2: after the start-up reconcile, the leased Host backfills the
   // last 14 days in the background, one batch at a time, until done, a
@@ -1631,8 +1644,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     report.reviews.push(...added.reviews);
     report.fanOut.push(...added.fanOut);
     report.redriveGoals.push(...added.redriveGoals);
+    report.interruptedGoals.push(...added.interruptedGoals);
     report.problems.push(...added.problems);
-    await startRedrive(added.redriveGoals);
+    await startRedrive(added);
   };
 
   // Explicit mechanical attention: the Host scans the configured real sources on

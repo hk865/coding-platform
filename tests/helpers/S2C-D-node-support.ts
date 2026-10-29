@@ -489,7 +489,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
       materials, messages: { async readMessage() { return { status: 'not_found' as const }; } },
       ...(options.autoReworkLimit === undefined ? {}
         : { automationPolicy: () => ({ schemaVersion: 1 as const,
-          autoReworkLimit: options.autoReworkLimit as number, resumeOnStartup: true }) }),
+          autoReworkLimit: options.autoReworkLimit as number, resumeOnStartup: 'auto' }) }),
       now, eventId: () => `s2c-d-requeue-event-${++seq}`,
     });
     const reqActor = options.actor === 'system' ? WORKFLOW_AUTOMATION_ACTOR : actor;

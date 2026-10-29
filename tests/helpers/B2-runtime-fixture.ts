@@ -59,7 +59,8 @@ export const B2_AT = '2026-09-26T00:00:00.000Z';
 
 export type ScriptedReply =
   | { kind: 'text'; text: string }
-  | { kind: 'calls'; calls: ReadonlyArray<{ callId: string; name: string; args: Record<string, unknown> }> };
+  | { kind: 'calls'; calls: ReadonlyArray<{ callId: string; name: string; args: Record<string, unknown> }> }
+  | { kind: 'error'; code: string };
 
 export type ScriptedModel = {
   client: ModelClientPort;
@@ -87,6 +88,11 @@ export function createScriptedModel(replies: readonly ScriptedReply[], beforeRep
       if (reply.kind === 'text') {
         yield { ...base, sequence: ++sequence, type: 'text_delta', delta: reply.text };
         yield { ...base, sequence: ++sequence, type: 'completed', reason: 'final_answer' };
+        return;
+      }
+      if (reply.kind === 'error') {
+        yield { ...base, sequence: ++sequence, type: 'error',
+          error: { code: reply.code, message: `scripted ${reply.code}`, retryable: false } };
         return;
       }
       for (const [ordinal, call] of reply.calls.entries()) {

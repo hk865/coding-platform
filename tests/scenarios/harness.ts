@@ -875,7 +875,7 @@ export async function seedThroughOwners(platform: Platform, actor: WorkbenchActo
   }, workIds);
 }
 
-async function taskRowOf(read: ReadResult<{ tasks: TaskRow[] }>, taskId: string): Promise<TaskRow> {
+export async function taskRowOf(read: ReadResult<{ tasks: TaskRow[] }>, taskId: string): Promise<TaskRow> {
   if (read.status !== 'ready') throw new Error(`the task graph must be readable: ${JSON.stringify(read)}`);
   const row = read.value.tasks.find(candidate => candidate.ref.taskId === taskId);
   if (row === undefined) throw new Error(`the Task ${taskId} must be in the graph`);
@@ -903,7 +903,7 @@ export async function cleanupScenarios(): Promise<void> {
 export type HostScenarioOptions = {
   script?: ScenarioScript;
   check?: CheckBehaviour;
-  /** Written to the private Host settings file before the first start (C8, LA-6); default 3 / resumeOnStartup true. */
+  /** Written to the private Host settings file before the first start (C8, LA-6); default 3 / resumeOnStartup ask. */
   automation?: TaskAutomationPolicyV1;
   /** The Host's startup actor (default `SCENARIO_OPERATOR`). */
   actor?: WorkbenchActor;
@@ -1226,7 +1226,7 @@ export function openHostScenario(options: HostScenarioOptions = {}): Promise<Hos
 export type PlatformScenarioOptions = {
   script?: ScenarioScript;
   check?: CheckBehaviour;
-  /** Installed with `registerAutomationPolicy` (and again after every restart); default 3 / resumeOnStartup true. */
+  /** Installed with `registerAutomationPolicy` (and again after every restart); default 3 / resumeOnStartup ask. */
   automation?: TaskAutomationPolicyV1;
   /** The actor of `ctx()` and the check executor (default `SCENARIO_OPERATOR`). */
   actor?: WorkbenchActor;

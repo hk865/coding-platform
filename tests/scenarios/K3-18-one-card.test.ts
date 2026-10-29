@@ -151,10 +151,16 @@ describe('K3-18 (一) one card in an every_step flow', () => {
     await setEveryStep(h);
     const { originalRunRef, record, card } = await needsDecisionCard(h, 'k3-18-one');
 
-    // Before the answer the one card is the review card; no confirmation cause.
+    // Before the answer the one review card is waiting; the crash restart also listed its one
+    // interrupted-pending-resume record as a Goal card, and no confirmation cause.
     const beforeQueue = await queueOf(h);
-    expect(beforeQueue.waitingAnswer).toHaveLength(1);
-    expect(beforeQueue.waitingAnswer[0]!.source.kind).toBe('unknown_call_review');
+    expect(beforeQueue.waitingAnswer.filter(entry => entry.source.kind === 'goal_cause'
+      && (JSON.parse(entry.source.key) as { code: string }).code === 'interrupted_pending_resume'),
+    'the restart records one interrupted-pending-resume card').toHaveLength(1);
+    const otherCards = beforeQueue.waitingAnswer.filter(entry => entry.source.kind !== 'goal_cause'
+      || (JSON.parse(entry.source.key) as { code: string }).code !== 'interrupted_pending_resume');
+    expect(otherCards).toHaveLength(1);
+    expect(otherCards[0]!.source.kind).toBe('unknown_call_review');
     expect(confirmationCardsOf(beforeQueue)).toEqual([]);
     expect(record.decisionReasons).toEqual(['confirm_each_step']);
 
@@ -185,8 +191,8 @@ describe('K3-18 (一) one card in an every_step flow', () => {
       throw new Error('the confirmed automatic requeue must claim a new continuation Run');
     }
 
-    // The whole flow had exactly ONE card: the review card read before the answer.
-    expect({ waiting: beforeQueue.waitingAnswer.length, answers: beforeQueue.answeredPendingApplication.length })
+    // The whole flow had exactly ONE card besides the restart's interruption record: the review card read before the answer.
+    expect({ waiting: otherCards.length, answers: beforeQueue.answeredPendingApplication.length })
       .toEqual({ waiting: 1, answers: 0 });
     const finalQueue = await queueOf(h);
     expect(finalQueue.waitingAnswer.filter(entry => entry.source.kind === 'unknown_call_review')).toEqual([]);

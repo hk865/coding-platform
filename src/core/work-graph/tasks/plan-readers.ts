@@ -80,6 +80,8 @@ import {
   type NoticeOriginWireV1,
 } from '../persistence/plan-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from './completion-record-codecs.js';
+import type { GoalInterruptionRef, GoalInterruptionV1 } from '../../../contracts/goal-interruption.js';
+import { goalInterruptionCodec } from '../persistence/goal-interruption-codecs.js';
 import { taskPhaseFactsOf } from './task-phase-facts.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
@@ -1974,6 +1976,42 @@ export async function readTaskClosure(
   return { status: 'ready', value: taskClosureOf(plan, factsRead.value, taskId) };
 }
 
+/** One keyed single-record read: the GoalPhase and the Goal interruption share it (`snapshot: null` is a confirmed absence). */
+type GoalKeyedRecordRead<T> =
+  | { status: 'ready'; snapshot: T | null; readThrough: CommitCursor | null; guard: RecordGuard }
+  | CoreRejection;
+
+async function readKeyedGoalRecord<T>(
+  records: GoalRecordTransactionPort,
+  ref: { aggregateType: string; projectId: string; goalId: string },
+  label: string,
+  decode: (record: EncodedRecord) => DecodeResult<T>,
+): Promise<GoalKeyedRecordRead<T>> {
+  const key = canonicalJson(ref as unknown as JsonValue);
+  const read = await readBatch(records, [key]);
+  if (read.status !== 'ready') {
+    // A platform with no registered codec cannot have written this record: that is a confirmed absence for this
+    // lightweight query projection and must never break an ordinary task-graph read. Every other rejection
+    // (damage, unavailability) is preserved.
+    if (read.code === 'incomplete') {
+      return { status: 'ready', snapshot: null, readThrough: null, guard: { refKey: key, expectedRevision: null } };
+    }
+    return read;
+  }
+  const record = read.batch.present.get(key);
+  if (record === undefined) {
+    if (!read.batch.missing.has(key)) {
+      return unavailable(`the ${label} key was neither returned nor reported missing`);
+    }
+    return { status: 'ready', snapshot: null, readThrough: read.batch.readThrough,
+      guard: { refKey: key, expectedRevision: null } };
+  }
+  const decoded = decode(record);
+  if (decoded.status !== 'decoded') return unavailable(`${label} ${ref.goalId} is corrupt: ${decoded.reason}`);
+  return { status: 'ready', snapshot: decoded.value, readThrough: read.batch.readThrough,
+    guard: { refKey: key, expectedRevision: record.revision } };
+}
+
 /**
  * R3e.3 directed GoalPhase read (§9.3). It decodes through the SINGLE
  * `completion-record-codecs.ts` GoalPhase decoder (the one allowed
@@ -1984,37 +2022,19 @@ export async function readTaskClosure(
 export async function readGoalPhase(
   records: GoalRecordTransactionPort,
   ref: GoalPhaseRef,
-): Promise<
-  | { status: 'ready'; snapshot: GoalPhaseSnapshot | null; readThrough: CommitCursor | null; guard: RecordGuard }
-  | CoreRejection
-> {
+): Promise<GoalKeyedRecordRead<GoalPhaseSnapshot>> {
   if (ref.aggregateType !== 'GoalPhase' || !nonEmpty(ref.projectId) || !nonEmpty(ref.goalId)) {
     return { status: 'rejected', code: 'invalid', reason: 'readGoalPhase requires a complete GoalPhaseRef' };
   }
-  const key = canonicalJson(ref as unknown as JsonValue);
-  const read = await readBatch(records, [key]);
-  if (read.status !== 'ready') {
-    // A platform with no registered GoalPhase codec cannot have written a
-    // formal GoalPhase: that is a confirmed absence for this lightweight query
-    // projection and must never break an ordinary task-graph read. Every other
-    // rejection (damage, unavailability) is preserved.
-    if (read.code === 'incomplete') {
-      return { status: 'ready', snapshot: null, readThrough: null, guard: { refKey: key, expectedRevision: null } };
-    }
-    return read;
-  }
-  const record = read.batch.present.get(key);
-  if (record === undefined) {
-    if (!read.batch.missing.has(key)) {
-      return unavailable('the GoalPhase key was neither returned nor reported missing');
-    }
-    return { status: 'ready', snapshot: null, readThrough: read.batch.readThrough,
-      guard: { refKey: key, expectedRevision: null } };
-  }
-  const decoded = decodeGoalPhaseSnapshot(record);
-  if (decoded.status !== 'decoded') return unavailable(`GoalPhase ${ref.goalId} is corrupt: ${decoded.reason}`);
-  return { status: 'ready', snapshot: decoded.value, readThrough: read.batch.readThrough,
-    guard: { refKey: key, expectedRevision: record.revision } };
+  return readKeyedGoalRecord(records, ref, 'GoalPhase', decodeGoalPhaseSnapshot);
+}
+
+/** The Goal interruption record's directed read: the same keyed single-record read and absent/guard shape. */
+export async function readGoalInterruption(
+  records: GoalRecordTransactionPort,
+  ref: GoalInterruptionRef,
+): Promise<GoalKeyedRecordRead<GoalInterruptionV1>> {
+  return readKeyedGoalRecord(records, ref, 'GoalInterruption', goalInterruptionCodec.decode);
 }
 
 // --------------------------------------------------------------------------

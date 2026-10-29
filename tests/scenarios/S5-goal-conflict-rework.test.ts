@@ -38,7 +38,7 @@ it('SC02 two Goals conflicting on module M: no labels before the accepted risk, 
   const h = await openHostScenario({ actor: S5_OPERATOR, check: 'fail', workIds: [S5_WORK_TASK_A, S5_WORK_TASK_A2],
     // The scenario drives every rework explicitly; the start-up re-drive stays off
     // so a restart never consumes a business-model reply on its own.
-    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false },
+    automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' },
     script: { replies: S5_SC02_REPLIES } });
 
   const world = await seedConflictWorld(h);

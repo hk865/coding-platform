@@ -145,6 +145,8 @@ export type CollaborationDriverDependencies = {
   /** Optional Host change feed (task E). Called only when a handle's published
    * projection moved; a notification never changes the driver. */
   onChange?: (change: CollaborationChange) => void;
+  /** Optional Host hook: a NEW Goal-scoped handle started. A replay or a refused start never calls it. */
+  onStarted?: (ctx: CoreCallContext, goalRef: GoalRef) => Promise<unknown>;
 };
 
 const TICK_MS = 500;
@@ -1054,6 +1056,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       // The loop's final transition (completed/failed/waiting) is announced when
       // the loop settles.
       handle.done = runHandle(handle).finally(() => changed(handle));
+      if (taskId === null) await dependencies.onStarted?.(ctx, goalRef);
       return { status: 'ready', value: snapshot(handle) };
     },
     async read(ctx, input) {

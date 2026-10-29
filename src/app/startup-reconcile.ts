@@ -36,7 +36,7 @@ import type { DecisionSourceV1 } from '../contracts/goal-decisions.js';
 import { messageOf } from '../contracts/error-message.js';
 import { decisionSourceKey } from '../contracts/goal-decisions.js';
 import type { SessionRecord } from '../contracts/core/session.js';
-import type { RunSnapshot } from '../contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../contracts/ledger.js';
 import type { RoundSnapshot } from '../contracts/verification.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
@@ -47,7 +47,11 @@ import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.
 import type { DecisionMessagePort } from '../core/work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { SessionHealthResult } from '../core/work-graph/sessions/session-health.js';
-import { isPendingVerdict } from '../core/work-graph/state/goal-machine.js';
+import { isGoalStopCause, isPendingVerdict } from '../core/work-graph/state/goal-machine.js';
+import type { ResumeOnStartupMode } from '../contracts/task-requeue.js';
+import type {
+  GoalInterruptionWriteInputV1, GoalInterruptionWriteStatusV1,
+} from '../core/work-graph/tasks/goal-interruption-service.js';
 import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
@@ -91,6 +95,12 @@ export type StartupReconcilePlatform = {
     reconcileControls(ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; queuedSteers: boolean }):
       Promise<RunReconcileReport>;
     interruptCheck(ctx: CoreCallContext, request: GraphWrite<InterruptCheckInput>): Promise<WriteResult<RoundSnapshot>>;
+    /**
+     * Step 6b: the Goal interruption owner (`goal-interruption-service.ts`), one write per candidate in ask/off.
+     * Optional like `maintainSessions`: a platform that does not publish it records no interruption.
+     */
+    recordGoalInterruption?: (ctx: CoreCallContext, input: GoalInterruptionWriteInputV1)
+      => Promise<{ status: GoalInterruptionWriteStatusV1 } | CoreRejection>;
     /**
      * Slice 1 (spec §4.2): after the Goal fan-out, the Workflow processes at
      * most one maintenance page before the start-up re-drive. The hook is the
@@ -142,6 +152,8 @@ export type StartupReconcilePlatform = {
 export type StartupReconcileDependencies = {
   platform: StartupReconcilePlatform;
   hostInstanceId: string;
+  /** The Host's start-up position: ask/off record the candidates, auto drives them without a record. */
+  resumeOnStartup: ResumeOnStartupMode;
   /**
    * K3 (L2): this Host instance's takeover proof (`HostInstanceFacts.takeover`),
    * copied into every Run classification so a Run-25 candidate can be judged.
@@ -192,6 +204,12 @@ export type StartupReconcileReportV1 = {
    * not-entered Run the same claim re-drives.
    */
   redriveGoals: { goalRef: GoalRef; scope: Scope; taskIds: string[]; answers?: RedriveAnswerV1[] }[];
+  /**
+   * Step 6b: the active Goals with an active Plan and unfinished required work, recorded in ask/off and driven in
+   * auto. `taskIds` are the unfinished required Tasks at detection; `runRefs` the Goal's step-2 Runs.
+   */
+  interruptedGoals: { goalRef: GoalRef; scope: Scope; taskIds: string[]; runRefs: RunRef[];
+    close: 'clean' | 'unclean'; status: 'recorded' | 'kept' | 'driven' }[];
   /** Candidates whose record could not be decoded, and scans that could not complete. */
   problems: string[];
 };
@@ -293,7 +311,7 @@ function answeredCardSource(record: UnknownCallReviewV1): DecisionSourceV1 {
 
 export function emptyStartupReport(hostInstanceId: string): StartupReconcileReportV1 {
   return { hostInstanceId, sessions: [], runs: [], queries: [], checks: [], controls: [], reviews: [], fanOut: [],
-    redriveGoals: [], problems: [] };
+    redriveGoals: [], interruptedGoals: [], problems: [] };
 }
 
 export async function runStartupReconcile(deps: StartupReconcileDependencies): Promise<StartupReconcileReportV1> {
@@ -364,7 +382,14 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     const starting = await listed('starting', platform.reconcile.candidates.listRuns(scope, 'starting', ctx.signal));
     const running = await listed('running', platform.reconcile.candidates.listRuns(scope, 'running', ctx.signal));
     const unknownEnds = await listed('outcome_unknown', platform.reconcile.candidates.listUnknownRuns(scope, ctx.signal));
-    for (const run of [...starting, ...running, ...unknownEnds]) {
+    const stepTwoRuns = [...starting, ...running, ...unknownEnds];
+    const stepTwoRunsByGoal = new Map<string, RunRef[]>();
+    for (const run of stepTwoRuns) {
+      const ofGoal = stepTwoRunsByGoal.get(run.ref.goalId) ?? [];
+      ofGoal.push(run.ref);
+      stepTwoRunsByGoal.set(run.ref.goalId, ofGoal);
+    }
+    for (const run of stepTwoRuns) {
       const entry = startingEntryOf(run);
       if (entry === 'not_entered') continue;   // W-01..W-03: the same claim is re-driven by the Workflow (step 6b).
       const read = await platform.executions.readExecution(ctx, run.ref);
@@ -528,10 +553,12 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     const listUnappliedAnswers = platform.reconcile.reviews?.listUnappliedAnswers;
     const readCommandRerunRequestAnswers = platform.reconcile.reviews?.readCommandRerunRequestAnswers;
     const readMessageReleaseAnswers = platform.reconcile.reviews?.readMessageReleaseAnswers;
+    const writeGoalInterruption = platform.reconcile.recordGoalInterruption;
     for (const goal of goalRecords) {
       if (goal.desiredState !== 'active') continue;
       const goalReviews = openReviews.filter(record => record.ref.goalId === goal.ref.goalId);
-      const taskIds = [...await pendingAutomationTaskIds(ctx, goal, out),
+      const selection = await pendingAutomationTaskIds(ctx, goal, out);
+      const taskIds = [...selection.pending,
         ...notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId),
         ...goalReviews.filter(record => reviewRedriveKindOf(record) !== null).map(record => record.task.taskId)];
       // Kind 3 (L28): a `needs_decision`/`awaiting_approval` record with no
@@ -583,6 +610,26 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
         out.redriveGoals.push({ goalRef: goal.ref, scope: { ...scope }, taskIds: uniqueTaskIds,
           ...(answers.length > 0 ? { answers } : {}) });
       }
+      // The Goal-level interruption: active Goal, active Plan, at least one unfinished required Task. In ask/off
+      // the start records it; auto drives the candidate without a record (the driver starts below).
+      if (selection.unfinished.length === 0) continue;
+      const candidateTaskIds = [...selection.unfinished];
+      const runRefs = stepTwoRunsByGoal.get(goal.ref.goalId) ?? [];
+      const close = deps.takeover?.kind === 'hl03_stale_lock' ? 'unclean' as const : 'clean' as const;
+      if (deps.resumeOnStartup === 'auto') {
+        out.interruptedGoals.push({ goalRef: goal.ref, scope: { ...scope }, taskIds: candidateTaskIds, runRefs,
+          close, status: 'driven' });
+        continue;
+      }
+      if (writeGoalInterruption === undefined) continue;
+      const written = await writeGoalInterruption(ctx, { goalRef: goal.ref, to: 'pending', close,
+        detectedAt: new Date().toISOString(), taskIds: candidateTaskIds, runRefs });
+      if (written.status === 'recorded' || written.status === 'kept') {
+        out.interruptedGoals.push({ goalRef: goal.ref, scope: { ...scope }, taskIds: candidateTaskIds, runRefs,
+          close, status: written.status });
+      } else {
+        out.problems.push(`${goal.ref.goalId}: the Goal interruption was not recorded (${rejectionText(written)})`);
+      }
     }
   }
 
@@ -623,29 +670,40 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
   }
 
   /**
-   * §12.1 step 6b condition (a): the required active Tasks of the Goal's adopted Plan whose automation
-   * verdict is pending (`isPendingVerdict`). An unreadable Task graph is reported and selects nothing.
+   * §12.1 step 6b condition (a) and the Goal interruption's unfinished set, over the SAME one Task-graph read:
+   * `pending` are the required active Tasks whose automation verdict the Workflow acts on (`isPendingVerdict`);
+   * `unfinished` are the required active Tasks whose effective phase is not satisfied and whose verdict is not a
+   * GOAL-30 stop (an `unknown_outcome`/`unknown_call_review` Task stays unfinished). An unreadable Task graph is
+   * reported and selects nothing.
    */
-  async function pendingAutomationTaskIds(ctx: CoreCallContext, goal: GoalSnapshot, out: StartupReconcileReportV1): Promise<string[]> {
-    if (goal.activePlanRevision === null) return [];
+  async function pendingAutomationTaskIds(ctx: CoreCallContext, goal: GoalSnapshot, out: StartupReconcileReportV1):
+  Promise<{ pending: string[]; unfinished: string[] }> {
+    if (goal.activePlanRevision === null) return { pending: [], unfinished: [] };
     let graph: Awaited<ReturnType<PlanTaskPort['queryTaskGraph']>>;
     try {
       graph = await platform.plans.queryTaskGraph(ctx, { goalRef: goal.ref });
     } catch (error) {
       out.problems.push(`${goal.ref.goalId}: the Task facts are not readable for the start-up re-drive (${messageOf(error)})`);
-      return [];
+      return { pending: [], unfinished: [] };
     }
     if (graph.status !== 'ready') {
       out.problems.push(`${goal.ref.goalId}: the Task facts are not readable for the start-up re-drive (${rejectionText(graph)})`);
-      return [];
+      return { pending: [], unfinished: [] };
     }
     const { plan, tasks } = graph.value;
-    return plan.tasks.filter(task => task.requirementLevel === 'required' && task.disposition === 'active')
-      .filter(task => {
-        const verdict = tasks.find(row => row.ref.taskId === task.taskId)?.failure?.automation.verdict;
-        return verdict !== undefined && isPendingVerdict(verdict);
-      })
-      .map(task => task.taskId);
+    const rows = new Map(tasks.map(row => [row.ref.taskId, row]));
+    const requiredActive = plan.tasks.filter(task => task.requirementLevel === 'required' && task.disposition === 'active');
+    const pending = requiredActive.filter(task => {
+      const verdict = rows.get(task.taskId)?.failure?.automation.verdict;
+      return verdict !== undefined && isPendingVerdict(verdict);
+    }).map(task => task.taskId);
+    const unfinished = requiredActive.filter(task => {
+      const row = rows.get(task.taskId)!;
+      if (row.effectivePhase === 'satisfied') return false;
+      const verdict = row.failure?.automation.verdict;
+      return !(verdict?.kind === 'stopped' && isGoalStopCause(verdict.reason));
+    }).map(task => task.taskId);
+    return { pending, unfinished };
   }
 
   /** Whether any of the intents is still queued (a failed read counts as not queued: the Run is reconciled next start). */

@@ -676,7 +676,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
 
     async setResumeOnStartup(on) {
       const snapshot = await settingsValue('snapshot', {});
-      return await settingsValue('automation/save', { autoReworkLimit: snapshot.automation.autoReworkLimit, resumeOnStartup: on });
+      return await settingsValue('automation/save', { autoReworkLimit: snapshot.automation.autoReworkLimit,
+        resumeOnStartup: on ? 'auto' : 'off' });
     },
     settings: settingsCall,
     packs: {

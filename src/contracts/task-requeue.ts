@@ -100,17 +100,20 @@ function sameRunRef(left: RunRef, right: RunRef): boolean {
 // ------------------------------------------------------------------------ //
 // Automation policy (C8; Host setting `automation`)                         //
 // ------------------------------------------------------------------------ //
+/** The three start-up positions: auto re-drives, ask lists and waits, off only reconciles. */
+export const RESUME_ON_STARTUP_MODES = ['auto', 'ask', 'off'] as const;
+export type ResumeOnStartupMode = 'auto' | 'ask' | 'off';
 export type TaskAutomationPolicyV1 = {
   schemaVersion: 1;
   /** Integer 0..MAX_AUTO_REWORK_LIMIT; 0 forbids counted automatic rework. */
   autoReworkLimit: number;
-  /** Re-drive active Goals after start-up reconciliation (LA-6). */
-  resumeOnStartup: boolean;
+  /** What a Host start does with the Goals it interrupted (LA-6). */
+  resumeOnStartup: ResumeOnStartupMode;
 };
 export const DEFAULT_AUTO_REWORK_LIMIT = 3;
 export const MAX_AUTO_REWORK_LIMIT = 10;
 export const DEFAULT_TASK_AUTOMATION_POLICY: Readonly<TaskAutomationPolicyV1> = Object.freeze({
-  schemaVersion: 1, autoReworkLimit: DEFAULT_AUTO_REWORK_LIMIT, resumeOnStartup: true,
+  schemaVersion: 1, autoReworkLimit: DEFAULT_AUTO_REWORK_LIMIT, resumeOnStartup: 'ask',
 });
 
 // ------------------------------------------------------------------------ //

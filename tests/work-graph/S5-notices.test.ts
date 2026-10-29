@@ -81,7 +81,7 @@ async function saveAutomationPolicy(f: S5DecisionFixture,
   let installed: TaskAutomationPolicyV1 | null = null;
   const settings = await createHostSettings({ settingsDirectory: join(f.base.directory, 'host-settings'), assembly },
     { onConfigurationChanged(snapshot) { installed = snapshot.automation; } });
-  const saved = await settings.call('automation/save', { autoReworkLimit, resumeOnStartup: true });
+  const saved = await settings.call('automation/save', { autoReworkLimit, resumeOnStartup: 'auto' });
   if (saved.status !== 'ready') throw new Error(`automation/save was not ready: ${JSON.stringify(saved)}`);
   if (installed === null) throw new Error('automation/save did not install the policy');
   holder.current = installed;

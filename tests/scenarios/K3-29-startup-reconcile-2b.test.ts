@@ -184,7 +184,7 @@ async function reconcile(world: World, goals: readonly GoalSnapshot[], reviews: 
       candidates: { listRuns: nothing, listUnknownRuns: nothing, listQueuedControlRuns: nothing, listOpenRounds: nothing,
         listGoals: async () => ({ status: 'ready', value: { records: [...goals], damaged: [] } }) } },
   };
-  const report = await runStartupReconcile({ platform, hostInstanceId: HOST,
+  const report = await runStartupReconcile({ platform, hostInstanceId: HOST, resumeOnStartup: 'auto',
     scopes: [world.fixture.base.scope], context: () => world.fixture.ctx as CoreCallContext,
     fanOut: async () => { throw new Error('no fan-out pass is expected for an unchanged active Goal'); } });
   return { report, planReads };

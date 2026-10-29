@@ -44,7 +44,7 @@ import {
   authorizeWithoutBegin, codeOf, editThenText, execution, lockLedgerAfter, openWorkRoot, preparedOf, putKernelBack, redrivePolicy,
   removeKernelFiles, requiredBriefOf, sourceDigestOf, startWithKernelAside, stepOf,
 } from './support/common.js';
-import { expectQuietHarnessRestart, kernelTurnOf, RUN1_WITHOUT_FILE, sessionLineRef } from './support/restart.js';
+import { countsAllowingInterruptions, expectQuietHarnessRestart, kernelTurnOf, RUN1_WITHOUT_FILE, sessionLineRef } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -349,10 +349,12 @@ it('A8-2c (W-07, H-03, CI-10, then W-05 with RUN-09): under a host_config probe 
     sessions: [{ ref: sessionLineRef(sessionRef), row: 'H-03', status: 'left' }],
     runs: [{ ref: JSON.stringify(run2Ref), row: 'W-07', status: 'left' }],
     queries: [], checks: [], controls: [], redriveGoals: [], problems: [] } });
-  expect(h.counts(), 'W-07: nothing is written, no model call or Kernel Turn').toEqual(atCrash);
-  // The Run is still Entering at the same revision; CI-10: the cancel stays queued.
+  expect(h.counts(), 'W-07: nothing is written, no model call or Kernel Turn')
+    .toEqual(countsAllowingInterruptions(atCrash, report.report, 'A8-2c'));
+  // The Run is still Entering at the same revision; CI-10: the cancel stays queued. Only the read cursor moved, past
+  // the recorded Goal interruption the counts above allow.
   const left = await execution(h, run2Ref);
-  expect(left).toEqual(queued);
+  expect({ ...left, readThrough: null }).toEqual({ ...queued, readThrough: null });
   expect(left.run.executionAuthorization).toMatchObject({ phase: 'entering', generation: 1 });
   expect(await readControl(h.host, cancelRef)).toEqual(queuedCancel);
 

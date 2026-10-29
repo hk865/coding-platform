@@ -33,7 +33,7 @@ import {
   archivedLineContaining, crashedUnknownKernel, lineArchived, lineConversation, lineList, ready, requireControl,
   requireLine, runMaintenance, sessionCard,
 } from '../helpers/S2C-K-scenario-support.js';
-import { NO_REDRIVE } from './support/common.js';
+import { NO_REDRIVE, redrivePolicy } from './support/common.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { SessionRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { TaskExecutionRecord } from '../../src/app/core-http-types.js';
@@ -217,7 +217,7 @@ async function damageKernel(database: string): Promise<void> {
  */
 function retiredUnknownCase(name: string, kernel: 'missing' | 'damaged'): void {
   it(`2C-21 (2) / 2C-22 (2) / 2C-22 (4) a ${name} Kernel leaves the line retired with an unreadable history; the probe then retires it and maintenance archives it (SES-19a)`, async () => {
-    const h = await openHostScenario({ script: { replies: [
+    const h = await openHostScenario({ automation: redrivePolicy(true), script: { replies: [
       { kind: 'calls', calls: [{ callId: `s2c21${kernel}-g1`, name: 'read', args: { path: 'src/module.ts' } }] },
       { kind: 'text', text: `2C-21 (2): the ${name}-Kernel Turn is never answered` },
     ] } });

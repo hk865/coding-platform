@@ -26,13 +26,15 @@ import {
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { atLeastCursorResult } from '../persistence/read-result-failures.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { decodeRun } from '../persistence/run-record-codecs.js';
 import type { GoalDecisionCauseReadV1 } from '../model/decision-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import { automationConfirmationCause, gateFixInProgress, pausedAutomationAction } from '../state/decision-policy.js';
 import type { GoalDisplayCauseV1 } from '../state/goal-machine.js';
+import { modelServiceOf } from '../state/task-failure.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../state/verification-machine.js';
 import { readInitializationPointers } from './initialization-pointers.js';
 
@@ -78,6 +80,7 @@ const DECISION_CAUSE_CODES: ReadonlySet<string> = new Set([
   'auto_rework_count', 'auto_rework_pending',
   'auto_rework_cap_reached', 'no_new_basis', 'verification_uncovered',
   'budget_exhausted', 'not_reworkable', 'unknown_outcome',
+  'interrupted_pending_resume',
 ]);
 
 type Rej = { status: 'rejected'; code: CoreError; reason: string };
@@ -132,7 +135,7 @@ export function createGoalDecisionCauseReader(
     return { goal: decoded.value, readThrough: read.value.readThrough };
   }
 
-  async function revisionPinOf(ref: unknown): Promise<{ ok: true; pin: VersionPin } | { ok: false; rejection: Rej }> {
+  async function readRecordOf(ref: unknown): Promise<{ ok: true; record: EncodedRecord } | { ok: false; rejection: Rej }> {
     const key = canonicalJson(ref as JsonValue);
     let read: Awaited<ReturnType<GoalDecisionCauseReaderRecords['readMany']>>;
     try {
@@ -145,7 +148,11 @@ export function createGoalDecisionCauseReader(
     }
     const record = read.value.records.find((candidate) => candidate.refKey === key);
     if (record === undefined) return { ok: false, rejection: notFound(`the versioned object ${key} does not exist`) };
-    return { ok: true, pin: { ref: ref as VersionPin['ref'], revision: record.revision } };
+    return { ok: true, record };
+  }
+  async function revisionPinOf(ref: unknown): Promise<{ ok: true; pin: VersionPin } | { ok: false; rejection: Rej }> {
+    const read = await readRecordOf(ref);
+    return read.ok ? { ok: true, pin: { ref: ref as VersionPin['ref'], revision: read.record.revision } } : read;
   }
 
   /**
@@ -299,7 +306,14 @@ export function createGoalDecisionCauseReader(
           // GOAL-27 rework causes and the GOAL-30 stop causes name their active
           // Task; B2 adds the formal failure-Run pin so a later Run of the same
           // Task gets a different `source.key` and an old answer cannot close it.
-          if (!('taskId' in displayCause)) break;
+          if (!('taskId' in displayCause)) {
+            // SMK3b §3.6: the Goal-level interruption pins its record and the Tasks it lists.
+            if ('interruption' in displayCause) {
+              causes.push(cause({ goal, code: displayCause.code, action: null, taskRef: null, runRef: null,
+                affected: [displayCause.interruption, ...displayCause.taskIds.map((taskId) => taskPin(goal, taskId))] }));
+            }
+            break;
+          }
           const failureRun = await failureRunOf(rows, displayCause.taskId);
           if (failureRun !== null && !failureRun.ok) return { ok: false, rejection: failureRun.rejection };
           const affected = [taskPin(goal, displayCause.taskId)];
@@ -360,6 +374,14 @@ export function createGoalDecisionCauseReader(
         action = 'system_requeue';
         countedNext = failure.automation.requeueAutoCount + (failure.failureClass === 'interrupted' ? 0 : 1);
       } else if (verdict.kind === 'none' && goal.desiredState === 'paused') {
+        // A model-service interruption waits for the person: no confirmation card while the Goal is paused.
+        if (failure.subjectKind === 'work' && failure.failureClass === 'interrupted' && failure.runRef !== null) {
+          const read = await readRecordOf(failure.runRef);
+          if (!read.ok) return { ok: false, rejection: read.rejection };
+          const run = decodeRun(read.record);
+          if (!run.ok) return { ok: false, rejection: unavailable(`the failure Run ${failure.runRef.runId} is corrupt: ${run.reason}`) };
+          if (modelServiceOf(run.value) !== null) continue;
+        }
         const paused = pausedAutomationAction({
           taskDispositionActive: row.disposition === 'active', failure,
           ...(row.definition.taskKind === 'gate'

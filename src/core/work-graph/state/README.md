@@ -39,7 +39,7 @@
 做 Task/Goal/Plan、验证轮、决策策略与工作线派生的去这组。
 
 - `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。
-- `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录。
+- `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录、`modelServiceOf` 与 `permissionInterruptionOf`。
 - `goal-confirm.ts` — `goals/confirm-draft` 的纯规则：`decideGoalConfirm` 的拒绝顺序（不是最新已答轮 → `revision_conflict`；草稿下标越界 → `invalid`；同一 `(answerRef, draftIndex)` 已确认 → `revision_conflict`）、确认后的 objective 文本 `confirmObjectiveText`（正文与每条完成标准都经 `normalizeObjective`），以及不可变 `InitializationBinding@1` 的唯一构造 `newInitializationBinding`（ref 指 answer+draft，revision 与 goalRevision 都是 1，顺序和重复原样保留）。无 I/O、无时钟、无 id；服务只编码它并放进自己的一次提交。
 - `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选的候选，同一 ref 勾选两次被 `invalid` 拒绝（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`retract` 非空即 `retraction_pending`）。`planReanchorHook` 是 7D1 填的唯一具名缝（现在只答 `not_implemented`）。
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
@@ -59,6 +59,7 @@
 - `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:31`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
 - `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）。
 - `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
+- `goal-interruption.ts` — 目标中断记录的地址 `interruptionRefOf`（每个目标一条）和两个纯迁移：`pendingGoalInterruption`（缺失/`resumed` → revision+1 的 `pending`，已 `pending` → null 保留）与 `resumedGoalInterruption`（`pending` → `resumed`，缺失/已 `resumed` → null）；返回记录与 `expectedRevision`，不构造 guard。
 - `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
 - `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。
@@ -74,6 +75,7 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `firstDispatch`、`nextDispatch`、`DispatchCounterWriteV1` | `src/core/work-graph/state/dispatch-counter.ts:10`、`src/core/work-graph/state/dispatch-counter.ts:28`、`src/core/work-graph/state/dispatch-counter.ts:4` | 首次与后续派工的计数器记录和版本期待 | 发送 owner 在同一次提交中写计数器并构造 guard 时 |
+| `interruptionRefOf`、`pendingGoalInterruption`、`resumedGoalInterruption`、`GoalInterruptionWriteV1` | `src/core/work-graph/state/goal-interruption.ts:17`、`src/core/work-graph/state/goal-interruption.ts:22`、`src/core/work-graph/state/goal-interruption.ts:38`、`src/core/work-graph/state/goal-interruption.ts:9` | 目标中断记录的地址，pending/resumed 迁移与版本期待（已 pending 保留、已 resumed 不再写） | 启动对账记录候选、驱动开始时结清、显示读记录时；不要另写记录地址，不要绕过状态层写记录 |
 | `decideActivityOutcome` | `src/core/work-graph/state/activity-replacement.ts:23` | 按 L4 判定本次活动写是 created/replaced/unchanged | 回填或 Run 结束要写 Run.activity 时 |
 | `newArchitectureCaptureRequestRecord` | `src/core/work-graph/state/architecture-capture.ts:37` | 建 status=requested 的捕获请求记录（revision/requestSeq 递增） | 接受一次自动捕获触发时 |
 | `architectureAutoCaptureState` | `src/core/work-graph/state/architecture-capture.ts:56` | 自动捕获的公开投影，pending 由 satisfiedRequestSeq 算出 | 判断是否该触发捕获 |
@@ -194,13 +196,13 @@
 | `withHandoffProgress`、`coverageHolds` | `src/core/work-graph/state/session-handoff.ts:189`、`:271` | 推进写唯一的 progress 构造；覆盖规则：每个 Goal 的当前理解文字必须由旧 Session 在最后进入并结束的轮写入，无 Goal 不需要覆盖 | 推进的每一步；不要另写 progress 或第二条覆盖规则 |
 | `consumeHandoffBrief` | `src/core/work-graph/state/session-handoff.ts:242` | entered 确认的消费迁移：写 `brief.consumedBy`、revision 加 1，并给出 pin 住读到的 revision 的 guard；不写事件 | D 在 entered 提交里合并 record+guard；推进只设 `brief.ready`，从不消费 |
 | `briefReady`、`BriefReadyFacts` | `src/core/work-graph/state/session-handoff.ts:277` | 简报就绪：受保护的最终归档提交成功且完整路由集已保存（`closed` 且每根有回执或被明确跳过）；`pending`/`partial` 不是成功 | 推进在归档 after 写里设 `brief.ready`；读取按同一规则判 `waiting` |
-| `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:208` | 失败分类（FC-1..FC-17） | 重排队前 |
-| `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:137` | 人工停止围栏 | 判定谁能重做 |
-| `reworkPermission` | `src/core/work-graph/state/task-failure.ts:390` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
-| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:772` | 按策略给自动化裁决 | 失败后自动处理 |
-| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1009` | 组装失败事实读模型 | 展示失败与重做 |
-| `runErrorOf` | `src/core/work-graph/state/task-failure.ts:667` | 从终态负载与对账取错误与来源 | 统一错误展示 |
-| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1449` | 拒绝重做的 effects | 拒绝记录同一提交 |
+| `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:200` | 失败分类（FC-1..FC-17） | 重排队前 |
+| `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:147` | 人工停止围栏 | 判定谁能重做 |
+| `reworkPermission` | `src/core/work-graph/state/task-failure.ts:414` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
+| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:799` | 按策略给自动化裁决 | 失败后自动处理 |
+| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1041` | 组装失败事实读模型 | 展示失败与重做 |
+| `runErrorOf` | `src/core/work-graph/state/task-failure.ts:694` | 从终态负载与对账取错误与来源 | 统一错误展示 |
+| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1481` | 拒绝重做的 effects | 拒绝记录同一提交 |
 | `controlIntentRecordOf` | `src/core/work-graph/state/control-intent-machine.ts:380` | 由请求与 next 生成意图记录 | 控制提交 |
 | `projectTaskPhase` | `src/core/work-graph/state/task-machine.ts:241` | 相位 + 原因的精简投影 | 展示/守卫 |
 | `taskMachineStateOf` | `src/core/work-graph/state/task-machine.ts:255` | Task 定义的机器状态 | Task 迁移前 |

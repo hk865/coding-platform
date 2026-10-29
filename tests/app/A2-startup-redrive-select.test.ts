@@ -86,7 +86,7 @@ async function reconcile(goals: readonly GoalSnapshot[], graphs: Record<string, 
       listGoals: async () => ({ status: 'ready', value: { records: [...goals], damaged: [] } }),
     } },
   };
-  const report = await runStartupReconcile({ platform, hostInstanceId: 'a2-redrive-host', scopes: [scope], context,
+  const report = await runStartupReconcile({ platform, hostInstanceId: 'a2-redrive-host', resumeOnStartup: 'auto', scopes: [scope], context,
     fanOut: async (_ctx, goalRef) => {
       fanOuts.push(goalRef.goalId);
       return { goalRef, epoch: 2, control: 'pause', runs: [], problem: null } as never;

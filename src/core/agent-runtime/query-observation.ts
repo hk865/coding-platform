@@ -557,7 +557,12 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           observation: {
             kind: 'terminal', occurredAt, outcome, answer,
             reason: outcome === 'gap' ? 'the Query turn produced no bounded answer text'
-              : answerCheck === null ? null : answerCheck.reason,
+              // A failed round shows the Kernel's own code and message; the one
+              // bound on its close message is `boundedCloseMessage` at settle.
+              : outcome === 'failed' && runState.outcome !== null && runState.outcome !== undefined
+                  && runState.outcome.kind === 'failed'
+                ? `${runState.outcome.failure.code}: ${runState.outcome.failure.message}`
+                : answerCheck === null ? null : answerCheck.reason,
             answerCheck,
             activity,
           },

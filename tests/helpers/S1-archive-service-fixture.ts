@@ -51,7 +51,7 @@ import { createScriptedModel } from './B2-runtime-fixture.js';
 
 export const t0 = '2026-10-08T00:00:00.000Z';
 export const t1 = '2026-10-09T00:00:00.000Z';
-export const CAP_THREE: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false };
+export const CAP_THREE: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' };
 export const key = (value: object): string => canonicalJson(value as JsonValue);
 export const CRASHED = { eventType: 'run_crashed', payload: { kind: 'crashed', error: 'ordinary tool failure' } } as const;
 export const COMPLETED = { eventType: 'run_completed', payload: { kind: 'completed', exitCode: 0 } } as const;

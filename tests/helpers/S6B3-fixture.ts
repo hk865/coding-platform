@@ -72,7 +72,9 @@ import { allOf, byIdentityPrefix, commitBarrier, type CommitMatch } from './S6A-
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { claimProfile as claimProfileOf, claimWithSecretaryProfile } from './request-claim-steps.js';
 import { holdS6BRequestRound } from './S6B1-fixture.js';
-import { callPublishedOwnerAsHost, openS6AHostWorld, type S6AGate, type S6AHostWorld } from './S6A-host-fixture.js';
+import {
+  callPublishedOwnerAsHost, openS6AHostWorld, type S6AGate, type S6AHostWorld, type S6AReply,
+} from './S6A-host-fixture.js';
 import {
   OPERATOR, S6A_SCOPE, S6A_SECRETARY_ROLE, type S6ABackend, type S6ASession,
 } from './S6A-request-fixture.js';
@@ -394,7 +396,7 @@ async function holdAnswer(world: S6B3World, input: HeldInput): Promise<S6B3Held>
     const open = deferred<void>();
     let captured: { request: S6B3Held['request']; prepared: PreparedQueryExecution } | null = null;
     const running = holdS6BRequestRound(host, {
-      label: input.label, goalId: input.goalId, replies: manifest => [input.reply(manifest)],
+      label: input.label, goalId: input.goalId, replies: manifest => [input.reply(manifest) as S6AReply],
     }, async round => {
       captured = {
         request: { requestRoot: round.request.requestRoot, round: round.request.round, secretary: round.request.secretary },

@@ -191,6 +191,8 @@ import type {
   GoalConfirmPort, GoalCopyPort, GoalUnderstandingReadPort, InitializationBindingReadPort,
 } from '../core/work-graph/model/goal-card-contracts.js';
 import { DISPATCH_COUNTER_SCHEMAS } from '../core/work-graph/persistence/dispatch-counter-codecs.js';
+import { GOAL_INTERRUPTION_SCHEMAS } from '../core/work-graph/persistence/goal-interruption-codecs.js';
+import { createGoalInterruptionService } from '../core/work-graph/tasks/goal-interruption-service.js';
 // Slice 1 (spec §3.3, §4.4): the Session-facts, responsibility and anomaly owners
 // constructed by this composition root and injected through the narrow ports.
 import { createSessionFactsService } from '../core/work-graph/tasks/session-facts.js';
@@ -282,7 +284,8 @@ import type { QueryRunRef } from '../contracts/query-job.js';
 import { queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
-  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
+  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
+  type ResumeOnStartupMode, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
 // Slice 2C (spec §6): the line/detail read owners, the pin write owner and the
 // Host-assembled conversation, plus the persisted line-pin event schema.
@@ -507,16 +510,20 @@ function sessionArchivePolicyOf(policy: SessionArchivePolicyV1 | undefined): Ses
  * guard, the paused stop, the restart stop and C7; 5.8 added the automatic
  * requeue of an interruption and the start-up re-drive of a Goal whose required
  * Task has the automation verdict requeue or claim_requeued; 5.9 added reverify
- * to that re-drive). The `recoverRun` reason always says what the Host setting
- * `automation.resumeOnStartup` off does (the reconciliation still runs, no
- * driver starts after it; LA-6). `resumeOnStartup` is that setting as
- * installed now: when it is off, the reason also says that this Host has it
- * off, a fact on a Host with or without the instance lease (5.7). Built fresh
- * per read, so a caller cannot change a later report.
+ * to that re-drive). The `recoverRun` reason also states what the Host setting
+ * `automation.resumeOnStartup` decides at a start (auto re-drives, ask lists
+ * the interrupted Goals and waits for the person, off only reconciles; LA-6).
+ * `resumeOnStartup` is that setting as installed now, a fact on a Host with or
+ * without the instance lease (5.7). Built fresh per read, so a caller cannot
+ * change a later report.
  */
 function workspaceRuntimeCapabilities(
-  adapterId: string, kernelSessionApiVersion: RuntimeCapabilities['kernelSessionApiVersion'], resumeOnStartup: boolean,
+  adapterId: string, kernelSessionApiVersion: RuntimeCapabilities['kernelSessionApiVersion'],
+  resumeOnStartup: ResumeOnStartupMode,
 ): RuntimeCapabilities {
+  const position = resumeOnStartup === 'auto' ? '启动时自动续做被中断的目标'
+    : resumeOnStartup === 'ask' ? '启动时列出被中断的目标，等你点继续'
+      : '启动时只核对，不续做、不处理排队';
   return {
     adapterId, kernelSessionApiVersion,
     createSession: { supported: true, reason: 'durable creation and Kernel mapping are configured' },
@@ -556,17 +563,16 @@ function workspaceRuntimeCapabilities(
       + 'that proves nothing leaves the Run as recorded for the next start. The continuation of an interrupted Run '
       + 'is a new Run with a continuation brief: for a Work line, after the platform closes its dangling Kernel '
       + 'Turn as interrupted, in the same Session; when that closure is not possible, in a new Session that '
-      + 'continues the original Session\'s last completed history (see continueHistory). After the reconciliation '
-      + 'the Host starts the existing collaboration driver for each '
+      + 'continues the original Session\'s last completed history (see continueHistory). After the reconciliation, '
+      + 'in auto, the Host starts the existing collaboration driver for each '
       + 'active Goal with work to advance automatically: a required active Task whose automation verdict is '
       + 'requeue, reverify or claim_requeued, or a Run that never entered and is not paused or cancelled, whose '
-      + 'same claim is then driven again; this start-up re-drive follows the Host setting automation.resumeOnStartup (on by '
-      + 'default), every step it takes is judged by the Workflow and the owners, a paused-interrupted Run is still '
-      + 'continued only by a person, and there is no periodic scheduler. When that setting is off, the '
-      + 'reconciliation still runs but no driver starts after it, and the automation continues only at '
-      + 'workflow/advance, workflow/driver-start or an operator\'s action. A Host that does not hold the instance '
-      + 'lease neither reconciles nor starts an execution driver; plain reads and owner writes are served as usual'
-      + (resumeOnStartup ? '' : '. This Host has automation.resumeOnStartup turned off') },
+      + 'same claim is then driven again; this start-up re-drive follows the Host setting automation.resumeOnStartup, '
+      + 'every step it takes is judged by the Workflow and the owners, a paused-interrupted Run is still '
+      + 'continued only by a person, and there is no periodic scheduler. The reconciliation still runs in every '
+      + 'position. In ask and off, the automation continues only at '
+      + 'workflow/advance, workflow/driver-start or an operator\'s action. ' + position + '. A Host that does not hold the instance '
+      + 'lease neither reconciles nor starts an execution driver; plain reads and owner writes are served as usual' },
     safePointPause: { supported: true, reason: 'an entered Work Run pauses through its live handle at the next '
       + 'safe point (before a model call or between tool groups), and a resume re-enters the original Turn only '
       + 'while this Host process still holds the live handle; a Run that has not entered the Kernel is paused and '
@@ -845,6 +851,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
       ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records,
       ...DISPATCH_COUNTER_SCHEMAS.records, ...GOAL_CONFIRM_SCHEMAS.records, ...GOAL_COPY_RECORD_SCHEMAS.records,
+      ...GOAL_INTERRUPTION_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
@@ -859,6 +866,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
       ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events,
       ...DISPATCH_COUNTER_SCHEMAS.events, ...GOAL_CONFIRM_SCHEMAS.events, ...GOAL_COPY_RECORD_SCHEMAS.events,
+      ...GOAL_INTERRUPTION_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
@@ -873,6 +881,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [], ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [],
       ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? [],
       ...DISPATCH_COUNTER_SCHEMAS.lookups ?? [], ...GOAL_CONFIRM_SCHEMAS.lookups ?? [],
+      ...GOAL_INTERRUPTION_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
@@ -1556,6 +1565,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const goalConfirm = createGoalConfirmService({ records: backend.records, tail: requestTail, bindings: bindingReads, now });
     const goalCopy = createGoalCopyService({ records: backend.records, understanding: goalUnderstanding,
       interventions: copyInterventions, retractions: copyInterventions, now, eventId: randomUUID });
+    const goalInterruptions = createGoalInterruptionService({ records: backend.records, now,
+      hostInstanceId: hostInstance?.hostInstanceId ?? 'platform' });
     // The completion methods are published on the SAME Goal service and drained
     // through the one trackedCall/close path; no second service or store exists.
     const goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
@@ -2544,6 +2555,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           () => ({ runRef: input.record.run.ref, row: 'W-*', status: 'failed' as const, reason: 'platform is closing' })),
       interruptCheck: (...args: Parameters<NonNullable<typeof rawEvidence.interruptCheck>>) =>
         trackedCall(() => rawEvidence.interruptCheck!(...args), unavailable),
+      recordGoalInterruption: (...args: Parameters<typeof goalInterruptions.writeGoalInterruption>) =>
+        trackedCall(() => goalInterruptions.writeGoalInterruption(...args), unavailable),
       // Slice 1 (spec §4.2, K5): the start-up reconcile's step 6c runs at most
       // one Workflow maintenance page after the Goal fan-out and before the
       // re-drive selection. It starts no Kernel Turn, check or model call.
@@ -2833,7 +2846,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
        */
       registerAutomationPolicy(policy: TaskAutomationPolicyV1): void {
         if (policy.schemaVersion !== 1 || !Number.isSafeInteger(policy.autoReworkLimit) || policy.autoReworkLimit < 0
-          || policy.autoReworkLimit > MAX_AUTO_REWORK_LIMIT || typeof policy.resumeOnStartup !== 'boolean') {
+          || policy.autoReworkLimit > MAX_AUTO_REWORK_LIMIT
+          || !RESUME_ON_STARTUP_MODES.includes(policy.resumeOnStartup)) {
           throw new Error('the automation policy is malformed');
         }
         automationPolicy = { schemaVersion: 1, autoReworkLimit: policy.autoReworkLimit, resumeOnStartup: policy.resumeOnStartup };

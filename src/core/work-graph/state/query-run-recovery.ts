@@ -715,7 +715,7 @@ export function settleQueryRunRecord(
     ? null
     : settlement.outcome === 'failed' && settlement.answerCheck !== null
       ? { code: 'invalid_answer', message: boundedCloseMessage(settlement.answerCheck.reason), detail: settlement.answerCheck.detail }
-      : { code: settlement.outcome, message: settlement.closeMessage, detail: null };
+      : { code: settlement.outcome, message: boundedCloseMessage(settlement.closeMessage), detail: null };
   const nextJob: QueryJobSnapshot = {
     ...job,
     revision: job.revision + 1,

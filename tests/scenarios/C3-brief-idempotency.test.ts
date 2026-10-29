@@ -42,14 +42,15 @@ import { join } from 'node:path';
 import {
   continuationBriefDigest, continuationBriefMarker, renderContinuationBriefZh, type ContinuationBriefV1,
 } from '../../src/contracts/continuation-brief.js';
-import { AG2B_CONSUMER_ID, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { moveKernelAside, restoreKernel } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, performs, type HostScenario } from './harness.js';
-import { artifactCount, lockKernelStore, manifestOf, notesThenText } from './support/brief.js';
+import { artifactCount, lockKernelStore, manifestOf, notesThenText, preparedManifestOf } from './support/brief.js';
 import {
   NOTES_FILE, NO_REDRIVE, authorizeWithoutBegin, briefOf, codeOf, editThenText, execution, performsAfterRequeues, preparedOf,
   selectedRun, sessionKey, sourceDigestOf, stepOf, turnStarts,
 } from './support/common.js';
+import { countsAllowingInterruptions, recordedInterruptions } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -105,19 +106,41 @@ it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every
   // 2. W-24 (C3-R1): the Host stops before RUN-02. The reconcile leaves Run 2 alone and writes nothing.
   const report = await h.restart({ crash: true });
   expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [], problems: [] } });
-  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call, check or ledger write').toEqual(beforeCrash);
+  const allowed = countsAllowingInterruptions(beforeCrash, report.report, 'C3-R1: the crash restart');
+  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call, check or ledger write').toEqual(allowed);
   expect((await execution(h, run2Ref)).run).toEqual(claimed.run);
-  await h.restart({ crash: true });
-  expect(h.counts(), 'another start on the same data writes nothing').toEqual(beforeCrash);
+  const againRestart = await h.restart({ crash: true });
+  expect(h.counts(), 'another start on the same data writes nothing')
+    .toEqual(countsAllowingInterruptions(allowed, againRestart.report, 'C3-R1: another start'));
 
-  // The Workflow prepares again: the workspace is unchanged, so it is the same manifest (the body put replays).
+  // The Workflow prepares again: the workspace is unchanged, so it is the same brief. The crash restart recorded the
+  // Goal interruption, whose pending decision is one more reminder in the input: the only difference, so the manifest
+  // and input digests move and that one manifest body is stored.
+  expect(recordedInterruptions(report.report, 'C3-R1: the crash restart')).toBe(1);
   const again = await h.advance(h.select('c3-idem-2', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
   expect(again.receipts.map(receipt => receipt.kind)).toEqual(['prepare']);
   const p2 = preparedOf(again.next);
-  expect(p2.inputBinding, 'same brief digest, manifest digest and input digest').toEqual(p1.inputBinding);
+  const digestsAside = (binding: typeof p1.inputBinding) => ({ ...binding, manifestDigest: null, inputDigest: null });
+  expect(digestsAside(p2.inputBinding), 'same brief digest').toEqual(digestsAside(p1.inputBinding));
+  const input1 = (await preparedManifestOf(h, p1.envelope.bundleRef)).input;
+  const input2 = (await preparedManifestOf(h, p2.envelope.bundleRef)).input;
+  const added = input2.split('\n').filter(line => !input1.split('\n').includes(line));
+  expect(added, 'one added line').toHaveLength(1);
+  const line = added[0]!;
+  expect(input2.slice(input2.indexOf('\n## Reminders\n')).split('\n'), 'in the Reminders section').toContain(line);
+  const reminder = JSON.parse(line) as { key: string };
+  expect(reminder, 'the decision line of this Goal\'s interruption').toMatchObject({ node: { kind: 'goal', ref: AG2B_GOAL_REF },
+    sources: expect.arrayContaining([expect.objectContaining({ kind: 'record', revision: 1,
+      ref: { aggregateType: 'GoalInterruption', projectId: AG2B_GOAL_REF.projectId, goalId: AG2B_GOAL_REF.goalId } })]) });
+  expect(JSON.parse(reminder.key.replace(/^decision:/, ''))).toMatchObject({ kind: 'goal_cause',
+    code: 'interrupted_pending_resume', goalRef: AG2B_GOAL_REF });
+  expect(input2.split('\n').filter(other => other !== line).join('\n')).toBe(input1);
   expect(p2.claim).toEqual(p1.claim);
-  expect(p2.envelope.bundleRef).toEqual(p1.envelope.bundleRef);
-  expect(artifactCount(h.database), 'the same content-addressed body: nothing new stored').toBe(artifacts);
+  // The envelope's bundle is that stored body: its digest and size move with it.
+  const bundleAside = (ref: typeof p1.envelope.bundleRef) => ({ ...ref, digest: null, sizeBytes: null });
+  expect(bundleAside(p2.envelope.bundleRef)).toEqual(bundleAside(p1.envelope.bundleRef));
+  const artifactsWithP2 = artifacts + 1;
+  expect(artifactCount(h.database), 'one more stored body').toBe(artifactsWithP2);
   expect((await execution(h, run2Ref)).run, 'Run 2 is still Claimed').toEqual(claimed.run);
 
   // 3. W-02: the re-prepared value is authorized (RUN-02 binds the brief) and the Host stops before the begin.
@@ -137,11 +160,14 @@ it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every
 
   const report2 = await h.restart({ crash: true });
   expect(report2.report).toMatchObject({ runs: [], problems: [] });
-  expect(h.counts()).toEqual(authorizedCounts);
+  const authorizedAfterRestart = countsAllowingInterruptions(authorizedCounts, report2.report, 'C3-R1: the W-02 restart');
+  expect(h.counts()).toEqual(authorizedAfterRestart);
   expect((await execution(h, run2Ref)).run).toEqual(bound.run);
   // §12.10 step 4: another start on the same data writes nothing either.
-  expect((await h.restart({ crash: true })).report).toMatchObject({ runs: [], problems: [] });
-  expect(h.counts(), 'another start on the same data writes nothing').toEqual(authorizedCounts);
+  const thirdRestart = await h.restart({ crash: true });
+  expect(thirdRestart.report).toMatchObject({ runs: [], problems: [] });
+  expect(h.counts(), 'another start on the same data writes nothing')
+    .toEqual(countsAllowingInterruptions(authorizedAfterRestart, thirdRestart.report, 'C3-R1: another start after W-02'));
   expect((await execution(h, run2Ref)).run).toEqual(bound.run);
 
   // The workspace source changes after RUN-02: a prepare that assembled the brief again would capture another
@@ -155,7 +181,7 @@ it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every
   const p3 = preparedOf(rebuilt.next);
   expect(p3).toEqual({ kind: 'task', claim: bound.outbox.claim, envelope: bound.run.envelope, inputBinding: bound.run.inputBinding });
   expect(p3).toEqual(p2);
-  expect(artifactCount(h.database)).toBe(artifacts);
+  expect(artifactCount(h.database)).toBe(artifactsWithP2);
 
   // 4. W-05: the begin commits and the Kernel is never reached (its store is aside during the start).
   const aside = await moveKernelAside(h.database);
@@ -263,13 +289,15 @@ it('C3-R2 (W-25): after a restart the facts Run\'s Kernel store is not registere
   const restarted = await h.restart({ crash: true, noKernelStores: true });
   expect(restarted.report).toMatchObject({ sessions: [{ ref: sessionKey(claimed.session), row: 'H-03', status: 'left' }],
     runs: [], problems: [] });
-  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call, check or ledger write').toEqual(preRestart);
+  const quiet = countsAllowingInterruptions(preRestart, restarted.report, 'C3-R2: the host_config restart');
+  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call, check or ledger write').toEqual(quiet);
   expect((await execution(h, run2Ref)).run).toEqual(claimed.run);
   // Another start on the same data (still without the registration) writes nothing either.
   const again = await h.restart({ crash: true });
   expect(again.report).toMatchObject({ sessions: [{ ref: sessionKey(claimed.session), row: 'H-03', status: 'left' }],
     runs: [], problems: [] });
-  expect(h.counts(), 'another start on the same data writes nothing').toEqual(preRestart);
+  expect(h.counts(), 'another start on the same data writes nothing')
+    .toEqual(countsAllowingInterruptions(quiet, again.report, 'C3-R2: another start'));
   expect((await execution(h, run2Ref)).run).toEqual(claimed.run);
   const before = h.counts();
   const artifacts = artifactCount(h.database);
@@ -318,7 +346,8 @@ it('C3-R2 (W-25) with a transient Kernel read: the Kernel store is held by anoth
     const restarted = await h.restart({ crash: true });
     expect(restarted.report).toMatchObject({ sessions: [{ ref: sessionKey(claimed.session), row: 'H-03', status: 'left' }],
       runs: [], problems: [] });
-    expect(h.ledgerEventTypes(), 'the reconcile writes nothing').toHaveLength(events);
+    const eventsAfterRestart = events + recordedInterruptions(restarted.report, 'C3-R2 transient: the crash restart');
+    expect(h.ledgerEventTypes(), 'the reconcile writes nothing').toHaveLength(eventsAfterRestart);
     for (const flowId of ['c3-r2t-2', 'c3-r2t-3']) {
       // W-25: `prepare` cannot read the facts Run's Turn now: unavailable, no manifest stored, the Run unchanged.
       const waiting = await h.advance(h.select(flowId, AG2B_WORK_TASK_ID));
@@ -326,7 +355,7 @@ it('C3-R2 (W-25) with a transient Kernel read: the Kernel store is held by anoth
       expect(waiting.receipts, flowId).toMatchObject([{ kind: 'prepare', result: { status: 'rejected', code: 'unavailable' } }]);
       expect(waiting.reason, flowId).toMatch(/the previous Turn is not readable now: .*database is locked/);
       expect((await execution(h, run2Ref)).run, `${flowId}: Run 2 is unchanged (Claimed)`).toEqual(claimed.run);
-      expect(h.ledgerEventTypes(), `${flowId}: nothing is written`).toHaveLength(events);
+      expect(h.ledgerEventTypes(), `${flowId}: nothing is written`).toHaveLength(eventsAfterRestart);
       expect(artifactCount(h.database), `${flowId}: no degraded brief is stored`).toBe(artifacts);
     }
     expect(h.modelCalls(), 'only Run 1 called the model').toBe(2);

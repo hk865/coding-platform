@@ -36,7 +36,8 @@ import type { RunRef, RunSnapshot, RuntimeEventV1, TaskTriple } from '../../../s
 import { canonicalJson } from '../../../src/contracts/fingerprint.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from '../../../src/contracts/plan.js';
 import {
-  GOAL_FAN_OUT_ACTOR, WORKFLOW_AUTOMATION_ACTOR, reworkActorClassOf, type TaskAutomationPolicyV1, type TaskRequeueTriggerV1,
+  GOAL_FAN_OUT_ACTOR, WORKFLOW_AUTOMATION_ACTOR, reworkActorClassOf,
+  type ResumeOnStartupMode, type TaskAutomationPolicyV1, type TaskRequeueTriggerV1,
 } from '../../../src/contracts/task-requeue.js';
 import type { CheckProcessObservation, RoundSnapshot } from '../../../src/contracts/verification.js';
 import { createSqliteRecordBackend } from '../../../src/core/record-store/sqlite-record-store.js';
@@ -524,7 +525,8 @@ export class HostFuzz {
     const rng = seededRng(options.seed);
     const replies: MutableReply[] = Array.from({ length: PLACEHOLDER_REPLIES }, () => ({ kind: 'text', text: 'fuzz placeholder', calls: [] }));
     let fuzz: HostFuzz | undefined;
-    const automation: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: rng.int(0, 4), resumeOnStartup: rng.chance(0.5) };
+    const automation: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: rng.int(0, 4),
+      resumeOnStartup: rng.weighted([[0.5, 'auto'], [0.25, 'ask'], [0.25, 'off']] as const) };
     const h = await openHostScenario({
       workIds: BASE_WORK_IDS, check: { command: FUZZ_CHECK_COMMAND }, automation,
       ...(options.systemHostActor === true ? { actor: { kind: 'system', id: 'fuzz-system-host' } } : {}),
@@ -1381,7 +1383,7 @@ export class HostFuzz {
     // With the brief bound the restart and the start-up re-drive always follow (the same draws are made).
     if (this.rng.chance(0.6) || brief) {
       const redrives = this.counts.byKey.get('redrive:started') ?? 0;
-      await this.restart(this.rng.chance(0.5), 'restart after an authorization', undefined, brief ? true : undefined);
+      await this.restart(this.rng.chance(0.5), 'restart after an authorization', undefined, brief ? 'auto' : undefined);
       if (brief) this.counts.add(`brief-sequence:restarted${(this.counts.byKey.get('redrive:started') ?? 0) > redrives ? ':redriven' : ''}`);
     }
   }
@@ -1400,8 +1402,9 @@ export class HostFuzz {
    * `resumeOnStartup` chosen at random (unless given; drawn either way); checks the store after the reconcile, after
    * the abandoned Host is drained, and after the start-up re-drive settled (LA-6).
    */
-  private async restart(crash: boolean, label: string, beforeDrain?: () => Promise<void>, resumeOnStartup?: boolean): Promise<void> {
-    const drawn = this.rng.chance(0.35);
+  private async restart(crash: boolean, label: string, beforeDrain?: () => Promise<void>,
+    resumeOnStartup?: ResumeOnStartupMode): Promise<void> {
+    const drawn = this.rng.weighted([[0, 'auto'], [0.5, 'ask'], [0.5, 'off']] as const);
     const automation: TaskAutomationPolicyV1 = { ...this.policy(), resumeOnStartup: resumeOnStartup ?? drawn };
     await this.closeAgentPlatform();
     this.crashing = crash;
@@ -1437,7 +1440,7 @@ export class HostFuzz {
       this.timings.add('restart:drain', Math.round(performance.now() - draining));
       await this.gate.check(`${label}: abandoned Host drained`);
     }
-    if (automation.resumeOnStartup && (report.report?.redriveGoals.length ?? 0) > 0) {
+    if (automation.resumeOnStartup === 'auto' && (report.report?.redriveGoals.length ?? 0) + (report.report?.interruptedGoals.length ?? 0) > 0) {
       this.counts.add('redrive:started');
       const settling = performance.now();
       await this.settle('the start-up re-drive');
@@ -1785,7 +1788,8 @@ export class HostFuzz {
 
   /** C8: `automation/save` with a random limit (0..10) and re-drive switch; later steps carry the new policy. */
   private async opCap(): Promise<void> {
-    const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: this.rng.int(0, 10), resumeOnStartup: this.rng.chance(0.5) };
+    const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: this.rng.int(0, 10),
+      resumeOnStartup: this.rng.weighted([[0.5, 'auto'], [0.25, 'ask'], [0.25, 'off']] as const) };
     await this.h.saveAutomation(policy);
     if (this.agentPlatformOpen !== null) (await this.agentPlatformOpen).registerAutomationPolicy(policy);
     this.counts.add('cap:saved');
@@ -2145,7 +2149,7 @@ export class AgentFuzz {
     const b2 = r3e.b2;
     this.b2 = b2;
     this.gate = new InvariantGate(b2.base.directory, b2.base.scope.projectId, () => this.replayText());
-    this.policy = { schemaVersion: 1, autoReworkLimit: rng.pick([0, 0, 1, 2, 3]), resumeOnStartup: false };
+    this.policy = { schemaVersion: 1, autoReworkLimit: rng.pick([0, 0, 1, 2, 3]), resumeOnStartup: 'off' };
     this.targetClaim = b2.claim;
     const records = b2.base.records;
     const now = (): string => B2_AT;
@@ -2650,7 +2654,7 @@ export class AgentFuzz {
   }
 
   private opCap(): void {
-    this.policy = { schemaVersion: 1, autoReworkLimit: this.rng.pick([0, 0, 1, 2, 3]), resumeOnStartup: false };
+    this.policy = { schemaVersion: 1, autoReworkLimit: this.rng.pick([0, 0, 1, 2, 3]), resumeOnStartup: 'off' };
     this.counts.add('cap:changed');
     this.record(`cap: autoReworkLimit ${this.policy.autoReworkLimit}`);
   }

@@ -25,6 +25,7 @@ import {
   startHost, waitState, workspaceConfig, workspaceRef,
   type Backend, type CaptureGate, type ObservationStorage, type SharedMemoryBackend,
 } from './support/S8A-L8-host.js';
+import { writeAutomationSettings } from '../helpers/A2-restart-fixture.js';
 
 beforeAll(async () => { await setupPublicDir(); });
 afterAll(async () => { await cleanupTemporary(); });
@@ -137,6 +138,33 @@ describe('L8 real Host close and restart (sqlite)', () => {
       gate.restore();
     }
   }, 120_000);
+
+  it('SMK3B-3c: an off restart retries no pending capture and leaves A and B at requestSeq 1 (sqlite)', async () => {
+    const gate = installCaptureGate([A.workspaceId]);
+    try {
+      const closed = await closeHostWithRunningAndQueued(gate);
+      // §1 off: start only reconciles. The real Host reads this setting beside the
+      // ledger before it decides whether to retry the captures left pending.
+      await writeAutomationSettings(closed.database,
+        { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
+      // A new real Host on the same files, then its awaited close: the close is
+      // the barrier for anything the start's own listen and page fetch detached.
+      const restarted = await startHost({
+        backend: 'sqlite', workspaces: closed.configs, database: closed.database,
+      });
+      await restarted.host.close();
+      const afterRestart = await observationPoint(
+        { backend: 'sqlite', database: closed.database }, closed.configs, [A, B]);
+      expect(afterRestart[A.workspaceId]!.autoCapture).toMatchObject({ requestSeq: 1, pending: true });
+      expect(afterRestart[B.workspaceId]!.autoCapture).toMatchObject({ requestSeq: 1, pending: true });
+      // The gate's real entries stay A ×1 and B ×0: no capture was even attempted.
+      expect(gate.entries.filter(entry => entry.workspaceId === A.workspaceId)).toHaveLength(1);
+      expect(gate.entries.filter(entry => entry.workspaceId === B.workspaceId)).toHaveLength(0);
+    } finally {
+      gate.open();
+      gate.restore();
+    }
+  });
 
   it("T19: a restarted Host that binds only A does not retry B's pending request (sqlite)", async () => {
     const gate = installCaptureGate([A.workspaceId]);

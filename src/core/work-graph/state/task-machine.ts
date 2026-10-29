@@ -61,7 +61,8 @@ import {
   type ClaimRequeueFacts, type ReviewClaimFacts, type RunClaimContext,
 } from './run-machine.js';
 import {
-  deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, requeueHistorySourceOf, reworkFenceOf, reworkPermission,
+  deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, permissionInterruptionOf, requeueHistorySourceOf,
+  reworkFenceOf, reworkPermission,
   type ReworkClassDerivationV1, type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from './task-failure.js';
 import { accept, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
@@ -681,7 +682,7 @@ function requeuePermission(
   request: { trigger: boolean; budget: boolean },
 ): Rejected | null {
   return reworkPermission({ operation: 'requeue', goalDesiredState, failureClass: derivation.failureClass,
-    interruption: derivation.interruption, fence: reworkFenceOf(afterRun, pointerIntent), actorClass,
+    interruption: permissionInterruptionOf(derivation), fence: reworkFenceOf(afterRun, pointerIntent), actorClass,
     goalFanOut: isGoalFanOutActor(requestedBy), trigger: request.trigger, budget: request.budget, note: false });
 }
 

@@ -62,7 +62,7 @@ export async function buildRun24KernelOpen(input: {
 }): Promise<Run24KernelOpen> {
   const inv: InvariantTarget = { database: input.database };
   const paused = await pausedRunOnClosedHostChecked(input.root, input.database, input.publicDir, inv, 'run');
-  await writeAutomationSettings(input.database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(input.database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   let second: AG2bHost | undefined;
   try {
     second = await startAG2bHost(input.publicDir, { root: input.root, database: input.database,

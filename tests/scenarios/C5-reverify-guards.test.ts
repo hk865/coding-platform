@@ -122,12 +122,12 @@ it('(a) verification_uncovered: the automatic re-verification is refused and com
 
 it('(a)/(b) §13.7 / LA-4: the cap and verification_uncovered are committed refusals on TaskRow.failure; a covering configuration makes them stale', async () => {
   const { openEnvironment, inconclusiveHead, reverifyRequest, ctx, taskRow, checksConfiguration, hostActor } = reverifyCase;
-  const CAP_0 = { schemaVersion: 1 as const, autoReworkLimit: 0, resumeOnStartup: false };
+  const CAP_0 = { schemaVersion: 1 as const, autoReworkLimit: 0, resumeOnStartup: 'off' } as const;
   const { platform, scripted, workspaceRoot } = await openEnvironment();
   const r1 = await inconclusiveHead(platform, workspaceRoot);
 
   // The platform automation (the Workflow's actor) is capped: limit 0 refuses before any capture.
-  platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false });
+  platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' });
   expect(await platform.evidence.reverifyRound!(ctx({ ...WORKFLOW_AUTOMATION_ACTOR }), reverifyRequest(r1, 'a2-reverify-cap')))
     .toMatchObject({ status: 'committed', value: { kind: 'refused', refusal: { revision: 1, code: 'auto_rework_cap_reached',
       requestedBy: WORKFLOW_AUTOMATION_ACTOR, configurationRevision: null, source: null } } });

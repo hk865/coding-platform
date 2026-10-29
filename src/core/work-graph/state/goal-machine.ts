@@ -40,6 +40,8 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fin
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalSettingsV1 } from '../../../contracts/goal-decisions.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
+import type { GoalInterruptionV1 } from '../../../contracts/goal-interruption.js';
+import type { VersionPin } from '../../../contracts/core/identity.js';
 import type {
   GoalContinuationV1, GoalDesiredState, GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef,
 } from '../../../contracts/ledger.js';
@@ -888,6 +890,8 @@ export type GoalDisplayFactsV1 = {
   /** `readCanonicalTaskFacts(...).runsByTaskId`: every Run candidate of the Goal. */
   runsByTaskId: ReadonlyMap<string, readonly RunSnapshot[]>;
   runStopInputs: readonly GoalRunStopInputV1[];
+  /** The Goal interruption record in the display window; null without one (or without an adopted Plan). */
+  interruption: GoalInterruptionV1 | null;
 };
 
 /** The eight stop reasons GOAL-30 reports (`unknown_outcome` belongs to GOAL-23). */
@@ -903,6 +907,9 @@ export type GoalDisplayCauseV1 =
   | { code: GoalStopCauseCode; taskId: string; detail: TaskAutomationStopDetailV1 }
   /** GOAL-30: required work deferred with nothing required left to run. */
   | { code: 'required_task_deferred'; taskIds: string[] }
+  /** GOAL-30: the Goal-level interruption a Host restart recorded; the record pins it and the Tasks it lists. */
+  | { code: 'interrupted_pending_resume'; source: 'host_restart'; interruption: VersionPin;
+    close: 'clean' | 'unclean'; detectedAt: string; taskIds: string[]; runRefs: RunRef[] }
   /** GOAL-24 */
   | { code: 'task_failed'; taskId: string }
   /** GOAL-25 (a) */
@@ -1163,8 +1170,21 @@ export function reduceGoalDisplay(facts: GoalDisplayFactsV1): GoalDisplayV1 {
   // GOAL-30: causes always listed; the headline only when nothing automatic is left.
   const stops = stopCauses(tasks);
   causes.push(...stops.map((entry) => entry.cause));
+  const interruption = facts.interruption;
+  const interruptionCause: GoalDisplayCauseV1 | null = interruption === null || interruption.status !== 'pending' ? null
+    : { code: 'interrupted_pending_resume', source: 'host_restart',
+      interruption: { ref: interruption.ref, revision: interruption.revision },
+      close: interruption.close, detectedAt: interruption.detectedAt,
+      taskIds: [...interruption.taskIds], runRefs: interruption.runRefs.map((run) => ({ ...run })) };
+  if (interruptionCause !== null) causes.push(interruptionCause);
   const firstRequiredStop = stops.find((entry) => entry.required);
-  if (firstRequiredStop !== undefined && !liveRun && !requiredPending) hit('GOAL-30', 'NEEDS_DECISION', firstRequiredStop.cause);
+  if (firstRequiredStop !== undefined && !liveRun && !requiredPending) {
+    hit('GOAL-30', 'NEEDS_DECISION', firstRequiredStop.cause);
+  } else if (interruptionCause !== null) {
+    // No driver has started since the start-up that recorded it, so the record itself heads the row even while
+    // a Run it left not entered is still `starting`.
+    hit('GOAL-30', 'NEEDS_DECISION', interruptionCause);
+  }
   // GOAL-24: required active WORK only; a pending or stopped verdict is not a failure headline. While a
   // Run is still starting|running the failure is only a cause and the headline stays RUNNING (§2.1 说明).
   const failed: GoalDisplayCauseV1[] = requiredActive

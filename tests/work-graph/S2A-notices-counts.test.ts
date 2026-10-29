@@ -36,7 +36,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A notice counts and continuation
     }
 
     // 10 real automatic reverifies on one check subject.
-    const chain = openReverifyChain(f, { schemaVersion: 1, autoReworkLimit: 20, resumeOnStartup: false });
+    const chain = openReverifyChain(f, { schemaVersion: 1, autoReworkLimit: 20, resumeOnStartup: 'off' });
     if (chain.evidence.openVerification === undefined || chain.evidence.finalizeChecks === undefined
       || chain.evidence.reverifyRound === undefined) {
       throw new Error('the evidence owner lacks the reverify surface');

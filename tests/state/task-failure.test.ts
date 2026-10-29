@@ -61,7 +61,7 @@ import { reverifyExemption, roundChainHead, type RoundChainHeadV1 } from '../../
 
 /** The FC row names (moved from `task-failure.ts` in A.2 step 4: `ReworkClassDerivationV1` spells its rows inline). */
 type ReworkClassRow =
-  | 'FC-1' | 'FC-2' | 'FC-3' | 'FC-4' | 'FC-5' | 'FC-6' | 'FC-7' | 'FC-8' | 'FC-9'
+  | 'FC-1' | 'FC-2' | 'FC-3' | 'FC-4' | 'FC-5' | 'FC-6' | 'FC-7' | 'FC-7m' | 'FC-8' | 'FC-9'
   | 'FC-10' | 'FC-11' | 'FC-12' | 'FC-13' | 'FC-14' | 'FC-15' | 'FC-16' | 'FC-17';
 
 // ------------------------------------------------------------------------ //
@@ -135,6 +135,10 @@ function reconcileCancelled(runId: string, cancel: ControlIntentSnapshotV1): Run
 const humanAttested = (runId: string): RunSnapshot => ended(runId, 'crashed', {
   reconciliation: reconciliation({ kind: 'human_attested', attestedBy: HUMAN, reason: 'machine lost' }),
   terminalPayload: { kind: 'crashed', error: 'human_attested: machine lost' },
+});
+/** FC-7m: the Kernel ended the Run on a model-service failure and the payload carries its code. */
+const modelServiceFailed = (runId: string): RunSnapshot => ended(runId, 'crashed', {
+  terminalPayload: { kind: 'crashed', error: 'scripted provider_unavailable', modelService: { code: 'provider_unavailable' } },
 });
 /** Two runUnresolvedBlocker cases on a completed Run that carry no quarantined reconciliation (hard limit 1). */
 const authUnknownRun = (runId: string): RunSnapshot => ended(runId, 'completed', { executionAuthorization: { schemaVersion: 2,
@@ -357,6 +361,8 @@ describe('deriveReworkClass: one case per FC row (TD-8)', () => {
     ['FC-6 paused-interrupted (RUN-24)', hostInterrupted('run-1', fanOutPause), fanOutPause, NO_CHAIN, 'FC-6',
       { kind: 'class', failureClass: 'interrupted', interruption: 'paused' }],
     ['FC-7 interrupted while executing (RUN-19)', hostInterrupted('run-1', null), null, NO_CHAIN, 'FC-7',
+      { kind: 'class', failureClass: 'interrupted', interruption: 'executing' }],
+    ['FC-7m model service failed', modelServiceFailed('run-1'), null, NO_CHAIN, 'FC-7m',
       { kind: 'class', failureClass: 'interrupted', interruption: 'executing' }],
     ['FC-8 cancelled', ended('run-1', 'cancelled', pointing(humanCancel)), humanCancel, NO_CHAIN, 'FC-8',
       { kind: 'class', failureClass: 'cancelled', interruption: null }],
@@ -772,6 +778,12 @@ describe('automationVerdict: AV-0..AV-12 (TD-9, work Tasks)', () => {
     // Once a TaskRequeue covers it (GOAL-29 or a human continue), AV-3 wins.
     expect(verdictOf(work(hostInterrupted('run-1', fanOutPause), NO_CHAIN, { pointerIntent: fanOutPause,
       requeues: [requeueOf('run-1', { requestedBy: FAN_OUT })] })).row).toBe('AV-3');
+  });
+
+  it('AV-5m: a model-service interruption stops with interrupted_pending_resume and its code', () => {
+    expect(verdictOf(work(modelServiceFailed('run-1'), NO_CHAIN))).toEqual({ row: 'AV-5m', verdict: {
+      kind: 'stopped', reason: 'interrupted_pending_resume', detail: { source: 'model_service',
+        code: 'provider_unavailable', afterRunRef: runRef('run-1'), detectedAt: time(5) } } });
   });
 
   it('AV-6: nothing to rework, or not reworkable', () => {

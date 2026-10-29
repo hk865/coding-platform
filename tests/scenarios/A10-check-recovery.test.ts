@@ -42,8 +42,8 @@ import {
 // Draining an abandoned Host waits for its sleeping check process (at most 20 s when a test failed before releasing it).
 afterEach(cleanupScenarios, 60_000);
 
-const OFF = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: false };
-const ON = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: true };
+const OFF = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: 'off' } as const;
+const ON = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: 'auto' } as const;
 
 /** The rounds of `taskId` in chain order (ordinal 1 first), from the last invariant read. */
 function chainOf(h: HostScenario, taskId: string): RoundSnapshot[] {
@@ -122,7 +122,7 @@ it('VR-04 (C-01): a check left executing by a crashed Host is interrupted at the
   }
   // The subject is the reconcile itself: since 5.9 the interrupted round's Task has the verdict reverify
   // (FC-13, needsFinalize), which the start-up re-drive would act on at once, so the re-drive is off here.
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const begunBefore = ledgerEvents(database, 'VerificationCheckBegun');   // A.2 step 6
   const second = await startAG2bHost(publicDir, { root, database, checkCommand });
   try {

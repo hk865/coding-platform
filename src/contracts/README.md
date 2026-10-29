@@ -25,13 +25,13 @@
 - `reduction.ts` — `TaskReductionRef`、归因码与完成审计快照。
 - `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定。
 - `task-failure.ts` — 任务失败/自动化停止/返工事实 DTO。
-- `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor、策略默认、`isAutomationActor`、`reworkActorClassOf`。
+- `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor、策略默认、启动三档 `RESUME_ON_STARTUP_MODES`、`isAutomationActor`、`reworkActorClassOf`。
 
 ### 执行与 Run
 做派发、Query、Run 活动/预算、续接简报与控制意图的去这组。
 - `continuation-brief.ts` — 续接简报：`ContinuationBriefV1`、上限、digest/marker、来源比较、中文渲染、结构校验与 `ContinuationBriefCapacityError`。
 - `control-intent.ts` — 暂停/取消/恢复/引导：`ControlIntentRef`、`ControlIntentRequestV1`、`ControlIntentSnapshotV1`。
-- `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`TERMINAL_PAYLOAD_*`。
+- `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`MODEL_SERVICE_FAILURE_CODES`、`TERMINAL_PAYLOAD_*`。
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
 - `query-execution-context.ts` — `QueryExecutionRequest`：持久化的 Query 请求形状。
 - `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`（`understanding` 是唯一的命令存放处）、`GoalScreeningShape`/`GoalScreeningV1`（目标卡草稿的筛选，整体或 null）、`GoalCardDraftV1` 的 `screening`、回答的 `planDraftIndex`、`RequestUnderstandingCommandV1`（`request_understanding` 命令的唯一格式）、`SecretaryRoundMaterialV1.command`（从 `round.job.understanding` 投影一次）、`SecretaryRequestManifestV1` 的 `briefRef`/`understandingGrants`、`RequestCommandReceiptV1` 的 `understanding` 臂、`consultationQueryRefs`、`queryJobRefFor`、`validQueryExecution`。
@@ -78,6 +78,7 @@
 - `command-event.ts` — 命令/事件基线：`CommitCursor`、`CommandFingerprint`、`ActorRef`、`CommandIdentity`、`normalizeObjective`、`commandFingerprint`、`commandIdentityKey`。
 - `data-format.ts` — 字段表格式：字段只写一次的运行时描述（`f` 的封闭字段种类，含 JSON 值 `f.json()`、`defineShape`/`defineRecord`/`defineEvent`），TS 类型由它推导（`InferShape`、`InferRecord`、`InferPending`、`InferEvent`）；描述在构造时校验，坏描述抛 `<what> description is invalid: <detail>`。值检查在 `validation/data-format.ts`，RecordStore 适配在 `src/core/work-graph/persistence/field-table-codec.ts`。
 - `data-format-refs.ts` — 字段表格式可复用的 ref 描述（21 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref（含 `CurrentPointerRef`）与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple`/`ProjectScope`/`WorkspaceScope` 各自一份；7A-1 加 `DispatchCounterRefShape`（`src/contracts/data-format-refs.ts:17`），6B-3 加 `PlanRevisionRefShape`（`src/contracts/data-format-refs.ts:52`）；另导出 `id`，即 ref 内字段的非空字符串描述（按码点计，至少 1）。
+- `goal-interruption.ts` — `GoalInterruption@1` 的字段表 `GoalInterruptionFields`（`src/contracts/goal-interruption.ts:18`）、推导类型 `GoalInterruptionV1`（`src/contracts/goal-interruption.ts:28`）、具名规则与格式 `GoalInterruptionFormat`（`src/contracts/goal-interruption.ts:30`）、ref 形状 `GoalInterruptionRefShape`（`src/contracts/goal-interruption.ts:10`）；一个 Goal 一条记录，`pending`/`resumed` 只由 `state/goal-interruption.ts` 写。
 - `dispatch-counter-format.ts` — `DispatchCounter@1` 的字段表 `DispatchCounterFields`（`src/contracts/dispatch-counter-format.ts:5`）、推导类型 `DispatchCounterV1`（`src/contracts/dispatch-counter-format.ts:14`）、具名规则 `dispatchCounterProblem` 与格式 `DispatchCounterFormat`；规则检查正安全整数、Goal 身份和消息项目一致性。
 - `error-message.ts` — `messageOf`：取 `Error.message`，否则 `String(error)`；转换本身抛错时不吞。
 - `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalKey`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
@@ -101,6 +102,7 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `dispatchCounterProblem`、`DispatchCounterFormat` | `src/contracts/dispatch-counter-format.ts:17`、`src/contracts/dispatch-counter-format.ts:42` | 派工计数器的结构规则与字段表格式 | 计数器校验及字段表 codec 构造 |
+| `GoalInterruptionFields`、`GoalInterruptionFormat`、`GoalInterruptionV1`、`GoalInterruptionRefShape` | `src/contracts/goal-interruption.ts:18`、`src/contracts/goal-interruption.ts:30`、`src/contracts/goal-interruption.ts:28`、`src/contracts/goal-interruption.ts:10` | 目标中断记录的字段表、格式与推导类型（`ref`/`revision`/`status`/`close`/`detectedAt`/`taskIds`/`runRefs`） | 记录 codec、状态构造与目标中断 owner；不要另写字段表 |
 | `canonicalJson` | `src/contracts/fingerprint.ts:24` | RFC 8785/JCS 规范 JSON：键排序、拒绝非 JSON 值。 | 需要稳定字节、摘要或跨进程比较时；身份/指纹只用这一份序列化。 |
 | `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等；不可编码即不相等。**正本**只此一份，别处同名的私有副本已删除，不要再写。 | 比较两个已解析值是否表示同一内容。 |
 | `canonicalKey` **正本** | `src/contracts/fingerprint.ts:59` | 任意值的规范 JSON；不可编码时抛错（与 `canonicalOf` 的 null 相对）。 | 聚合 key 与记录 refKey 的唯一编码，不要另写一份。 |
@@ -194,7 +196,7 @@
 | `ARTIFACT_MAX_SIZE_BYTES` | `src/contracts/artifact.ts:6` | Artifact 正文最大字节数。 | artifact 写入校验。 |
 | `K3_CRR_BY_TASK_ALIAS_INDEX`、`K3_CRR_BY_GOAL_STATE_INDEX`、`K3_CRR_BY_TASK_INDEX` | `src/contracts/command-rerun-request.ts:64` | `CommandRerunRequest` 的三个注册索引名。 | 读写/查询 CRR 时按名引用。 |
 | `CONTINUATION_BRIEF_LIMITS` | `src/contracts/continuation-brief.ts:280` | 简报各项条数/字节上限。 | 组装或渲染简报。 |
-| `TERMINAL_PAYLOAD_TEXT_MAX_CHARS`、`TERMINAL_PAYLOAD_TRUNCATION_SUFFIX` | `src/contracts/dispatch.ts:210`、`src/contracts/dispatch.ts:212` | 终止 payload 文本上限与截断后缀。 | 记录/展示终止原因时截断。 |
+| `TERMINAL_PAYLOAD_TEXT_MAX_CHARS`、`TERMINAL_PAYLOAD_TRUNCATION_SUFFIX` | `src/contracts/dispatch.ts:218`、`src/contracts/dispatch.ts:220` | 终止 payload 文本上限与截断后缀。 | 记录/展示终止原因时截断。 |
 | `EVIDENCE_SUMMARY_MAX_BYTES`、`EVIDENCE_OUTCOMES` | `src/contracts/evidence.ts:55`、`src/contracts/evidence.ts:60` | 证据摘要上限与结局闭集。 | 证据校验与展示。 |
 | `DEFAULT_GOAL_SETTINGS_V1`、`DEFAULT_WORKSPACE_DECISION_SETTINGS_V1` | `src/contracts/goal-decisions.ts:44`、`src/contracts/goal-decisions.ts:64` | Goal/工作区决策默认设置。 | Goal 的那份只是 `goals/create` 的出生值，没有 `settings` 的 Goal 记录被拒绝、不读成默认；工作区的未配置时取默认。不要另抄一份。 |
 | `MANIFEST_CONTENT_TYPE`、`QUERY_MANIFEST_CONTENT_TYPE`、`REPORT_CONTENT_TYPE`、`PLATFORM_GENERATED_CONTENT_TYPES`、`MAX_NEW_BASIS_INPUT_REFS` | `src/contracts/no-progress.ts:21` | 平台生成正文类型与新依据输入上限。 | 判定内容类型/新依据时。 |

@@ -319,7 +319,8 @@ function boundedText(text: string): string {
  */
 export function terminalPayloadOf(payload: RunTerminalPayload): RunTerminalPayload {
   switch (payload.kind) {
-    case 'crashed': return { kind: 'crashed', error: boundedText(payload.error) };
+    case 'crashed': return { kind: 'crashed', error: boundedText(payload.error),
+      ...(payload.modelService === undefined ? {} : { modelService: structuredClone(payload.modelService) }) };
     case 'cancelled': return { kind: 'cancelled', reason: boundedText(payload.reason) };
     case 'completed':
     case 'budget_exhausted':

@@ -14,7 +14,7 @@
  * undone in memory (nothing persisted is touched), and its two writers record
  * what it would submit.
  *
- * C8: the Host-installed automation policy (defaults 3 / true) and the refusal
+ * C8: the Host-installed automation policy (defaults 3 / ask) and the refusal
  * of a malformed one.
  */
 import { afterEach, expect, it } from 'vitest';
@@ -128,23 +128,23 @@ it('the frozen Kernel never yields a Turn with a second waiting send still unset
     terminalPayload: { kind: 'crashed', error: 'tool_group_yield_unsettled:after_group:a2-w10-pair-2' } } } });
 }, 60_000);
 
-it('C8: the platform holds the automation policy the Host installs (defaults 3 / true) and refuses a malformed one', async () => {
+it('C8: the platform holds the automation policy the Host installs (defaults 3 / ask) and refuses a malformed one', async () => {
   const platform = await createTargetPlatform({ storage: { kind: 'memory' }, workspace: {
     async resolveRoot() { return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'no workspace' }; },
     async authorize() { return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'no workspace' }; },
   } });
   platforms.push(platform);
-  expect(platform.automationPolicy()).toEqual({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true });
-  platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false });
-  expect(platform.automationPolicy()).toEqual({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false });
-  for (const malformed of [{ schemaVersion: 2, autoReworkLimit: 1, resumeOnStartup: true },
-    { schemaVersion: 1, autoReworkLimit: -1, resumeOnStartup: true },
-    { schemaVersion: 1, autoReworkLimit: 1.5, resumeOnStartup: true },
+  expect(platform.automationPolicy()).toEqual({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'ask' });
+  platform.registerAutomationPolicy({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' });
+  expect(platform.automationPolicy()).toEqual({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' });
+  for (const malformed of [{ schemaVersion: 2, autoReworkLimit: 1, resumeOnStartup: 'auto' },
+    { schemaVersion: 1, autoReworkLimit: -1, resumeOnStartup: 'auto' },
+    { schemaVersion: 1, autoReworkLimit: 1.5, resumeOnStartup: 'auto' },
     { schemaVersion: 1, autoReworkLimit: 1, resumeOnStartup: 'yes' }]) {
     expect(() => platform.registerAutomationPolicy(malformed as never), JSON.stringify(malformed)).toThrow('the automation policy is malformed');
   }
   // A refused policy leaves the installed one; a caller cannot change it through the returned copy.
   const read = platform.automationPolicy();
   read.autoReworkLimit = 9;
-  expect(platform.automationPolicy()).toEqual({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: false });
+  expect(platform.automationPolicy()).toEqual({ schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' });
 });

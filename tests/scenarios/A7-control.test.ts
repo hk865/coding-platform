@@ -1431,7 +1431,7 @@ it('G-04 and G-06 at a restart: a Goal resumed (and paused and resumed again) on
   // the fan-out pause of an earlier epoch, found by the bounded recomputation (G-06). Since A.2 step 5.8 the
   // start-up re-drive claims that continuation at once (§12.1 step 6b (a), W-21); this test counts the
   // continuations the starts write, so the third and fourth Hosts keep the re-drive off.
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const third = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-g04') });
   try {
     const resumedEpoch = (await readGoal(third)).desiredStateRevision ?? 1;

@@ -23,6 +23,7 @@ import {
   archivedLineContaining, lineArchived, lineList, ready, requireControl, requireLine, runMaintenance,
 } from '../helpers/S2C-K-scenario-support.js';
 import { PAUSE_ON_SECOND_REPLY } from '../helpers/S2C-K2-scenario-support.js';
+import { redrivePolicy } from './support/common.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { ArchiveLineInput } from '../../src/business/workflow/session-archive.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
@@ -44,7 +45,7 @@ function archiveDropBody(session: SessionRecord, taskId: string,
 
 it('2C-34 (1) an outcome-unknown Work line lists attest_unknown on executions/resolve-unknown and the submission is accepted', async () => {
   let h: HostScenario | undefined;
-  h = await openHostScenario({ script: { replies: [
+  h = await openHostScenario({ automation: redrivePolicy(true), script: { replies: [
     { kind: 'calls', calls: [{ callId: 's2c34a-g1', name: 'read', args: { path: 'src/module.ts' } }] },
     { kind: 'text', text: '2C-34: the missing-Kernel Turn is never answered' },
   ] } });

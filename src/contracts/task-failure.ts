@@ -12,7 +12,7 @@ import type { ArtifactRef } from './artifact.js';
 import type { SessionRef } from './core/identity.js';
 import type { ControlIntentRef, ControlIntentRequestV1 } from './control-intent.js';
 import type { SourceChangeVerdictV1 } from './continuation-brief.js';
-import type { RunOutcome, RunRef, TaskAttemptRef, TaskBudgetV1 } from './dispatch.js';
+import type { ModelServiceFailureCode, RunOutcome, RunRef, TaskAttemptRef, TaskBudgetV1 } from './dispatch.js';
 import type { EvidenceOutcome } from './evidence.js';
 import type { NoProgressCheckFactV1, RunFailureOrigin, SourceStampV1 } from './no-progress.js';
 import type {
@@ -90,7 +90,9 @@ export type TaskAutomationStopReason =
   | 'task_paused'
   | 'not_reworkable'
   /** K3 (AV-2b): the selected Run's review record is not resolved (or unreadable). */
-  | 'unknown_call_review';
+  | 'unknown_call_review'
+  /** TD-8 FC-7m (AV-5m): a model-service failure interrupted the work; the person continues it. */
+  | 'interrupted_pending_resume';
 export type TaskAutomationStopDetailV1 = {
   operation?: TaskReworkOperation;
   /** `not_reworkable` only. */
@@ -104,6 +106,11 @@ export type TaskAutomationStopDetailV1 = {
   reviewStatus?: UnknownCallReviewStatusV1 | 'unreadable';
   /** K3 AV-4c: the record is resolved+held ("I'll handle it"). */
   reviewHold?: true;
+  /** AV-5m only: the model-service interruption and the Kernel code it recorded. */
+  source?: 'model_service';
+  code?: ModelServiceFailureCode | null;
+  afterRunRef?: RunRef;
+  detectedAt?: string | null;
 };
 /**
  * Whether the owner would accept one automatic rework now (AV/GV tables). It is

@@ -26,7 +26,8 @@ import type {
   ChecksConfirmationPort, StoredChecksStateV1,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
 import {
-  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, type TaskAutomationPolicyV1,
+  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
+  type ResumeOnStartupMode, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, totalmem } from 'node:os';
@@ -444,14 +445,15 @@ function validChecksPin(value: unknown): value is ChecksConfigurationPinV1 {
 }
 
 function parseStoredAutomation(value: unknown): TaskAutomationPolicyV1 {
-  if (!isRecord(value) || value['schemaVersion'] !== 1 || typeof value['resumeOnStartup'] !== 'boolean') {
+  if (!isRecord(value) || value['schemaVersion'] !== 1
+    || !(RESUME_ON_STARTUP_MODES as readonly unknown[]).includes(value['resumeOnStartup'])) {
     throw new Error('the private host settings file is invalid');
   }
   const limit = value['autoReworkLimit'];
   if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0 || limit > MAX_AUTO_REWORK_LIMIT) {
     throw new Error('the private host settings file is invalid');
   }
-  return { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: value['resumeOnStartup'] };
+  return { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: value['resumeOnStartup'] as ResumeOnStartupMode };
 }
 
 /** SF-2 / L13: a stored `resourceCaps` must be a schema-1 object with `null` or a
@@ -1169,9 +1171,11 @@ export async function createHostSettings(
     if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 0 || limit > MAX_AUTO_REWORK_LIMIT) {
       return invalid(`autoReworkLimit must be an integer from 0 to ${String(MAX_AUTO_REWORK_LIMIT)}`);
     }
-    if (typeof input['resumeOnStartup'] !== 'boolean') return invalid('resumeOnStartup must be a boolean');
+    if (!(RESUME_ON_STARTUP_MODES as readonly unknown[]).includes(input['resumeOnStartup'])) {
+      return invalid(`resumeOnStartup must be one of ${RESUME_ON_STARTUP_MODES.join(', ')}`);
+    }
     const previous = automation;
-    automation = { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: input['resumeOnStartup'] };
+    automation = { schemaVersion: 1, autoReworkLimit: limit, resumeOnStartup: input['resumeOnStartup'] as ResumeOnStartupMode };
     try { await persist(); }
     catch {
       automation = previous;

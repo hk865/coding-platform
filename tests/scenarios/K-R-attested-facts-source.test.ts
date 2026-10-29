@@ -63,7 +63,7 @@ async function resolveAttestedReview(host: AG2bHost, runRef: RunRef, label: stri
     requeue: null });
 }
 
-const NO_REDRIVE = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: false };
+const NO_REDRIVE = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: 'off' } as const;
 
 /**
  * Host 1 pauses a Work Run at its safe point (no check needed; this sandbox has

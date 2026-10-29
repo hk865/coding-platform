@@ -44,7 +44,7 @@ it('KA-13 (KE4, L6/L8): a fallback new Session whose E15 transfer had not commit
   const publicDir = await publicDirectory();
   const inv: InvariantTarget = { database };
   const { runRef, oldSession } = await pausedRunOnClosedHostChecked(root, database, publicDir, inv, 'run');
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const second = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-13 fallback successor')] });
   let successor = '';
   try {
@@ -98,7 +98,7 @@ it('KA-10 (KE3, L7): the successor exclusion holds with closure enabled — a re
   const publicDir = await publicDirectory();
   const inv: InvariantTarget = { database };
   const { runRef, oldSession } = await pausedRunOnClosedHostChecked(root, database, publicDir, inv, 'run');
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const second = await startAG2bHost(publicDir, { root, database, replies: [textReply('KA-10 successor exclusion')] });
   try {
     const continued = await operatorRequeue(second, runRef, 'kw-ka10s-continue', '继续');

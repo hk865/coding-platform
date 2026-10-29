@@ -125,7 +125,7 @@ it('§13.4 #15/#21, AV-8/AV-9, GOAL-27/30: the cap stops the automation, a raise
     { kind: 'text', text: 'A2 cap: Run 4 finds the result file' }] });
   const inv = { database: host.database };
   /** The policy `saveAutomation` installed (the steps' `FuzzStep`). */
-  let policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 1, resumeOnStartup: true };
+  let policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 1, resumeOnStartup: 'auto' };
   const drive = async (input: WorkflowAdvanceInput) => (await driveChecked(host, inv, input, { policy })).steps;
   try {
     await seedAG2bWorkGraph(host, [AG2B_WORK_TASK_ID, WORK_2]);
@@ -154,7 +154,7 @@ it('§13.4 #15/#21, AV-8/AV-9, GOAL-27/30: the cap stops the automation, a raise
 
     // `automation/save` raises the cap: the stop lifts at once (GOAL-27 "等待推进").
     await saveAutomation(host, 3);
-    policy = { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true };
+    policy = { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'auto' };
     expect(await workRow(host)).toMatchObject({ failure: { automation: { cap: 3,
       verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
     expect(await goalDisplay(host)).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27', causes: expect.arrayContaining([
@@ -395,7 +395,7 @@ it('A11 #15: an automatic requeue past the limit is the committed auto_rework_ca
   const request = toSecond.next!;
   expect(request).toMatchObject({ operation: { kind: 'requeue_task', request: { input: { reason: 'auto-rework:check_failed#2' } } } });
   // The limit drops to 1 before that request is performed (a setting changed while another driver held it).
-  h.setAutomation({ schemaVersion: 1, autoReworkLimit: 1, resumeOnStartup: true });
+  h.setAutomation({ schemaVersion: 1, autoReworkLimit: 1, resumeOnStartup: 'auto' });
   expect(await h.taskRow()).toMatchObject({ failure: { automation: { cap: 1,
     verdict: { kind: 'stopped', reason: 'auto_rework_cap_reached' } } } });
   // The owner refuses it by the limit: committed, no key and no source (the cap is checked first, ND-7).

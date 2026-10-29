@@ -77,7 +77,7 @@ vi.mock('../../vendor/coding-agent/dist/public-api.js', async importOriginal => 
 });
 afterEach(() => { kernelClosureCalls.count = 0; });
 
-const NO_REDRIVE = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: false };
+const NO_REDRIVE = { schemaVersion: 1 as const, autoReworkLimit: 3, resumeOnStartup: 'off' } as const;
 
 /**
  * KA-14: the crashed Host left a model request in flight; append a real

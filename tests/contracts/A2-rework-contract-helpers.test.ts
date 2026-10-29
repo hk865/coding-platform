@@ -106,10 +106,10 @@ describe('rework actor classification (C1, TD-6)', () => {
     expect(reworkActorClassOf(null, { kind: 'agent', id: 'a-1', runRef: runRef('r-1') })).toBe('agent');
   });
 
-  it('the automation policy defaults are 3 automatic reworks (max 10) and resume on start-up', () => {
+  it('the automation policy defaults are 3 automatic reworks (max 10) and ask at start-up', () => {
     expect(DEFAULT_AUTO_REWORK_LIMIT).toBe(3);
     expect(MAX_AUTO_REWORK_LIMIT).toBe(10);
-    expect(DEFAULT_TASK_AUTOMATION_POLICY).toEqual({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: true });
+    expect(DEFAULT_TASK_AUTOMATION_POLICY).toEqual({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'ask' });
   });
 });
 

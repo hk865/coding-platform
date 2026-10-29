@@ -72,7 +72,8 @@ import { sessionArchiveChangedEventFromEvent } from '../sessions/lifecycle-recor
 import { noProgressKey } from '../state/no-progress.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
 import {
-  countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, requeueConfirmedByReview, reworkFenceOf, reworkPermission,
+  countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, permissionInterruptionOf, requeueConfirmedByReview,
+  reworkFenceOf, reworkPermission,
   taskReworkRefusalEffects, type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from '../state/task-failure.js';
 import {
@@ -949,7 +950,7 @@ export function createTaskRequeueService(
     if (derivation.kind !== 'class') return reject('invalid', `the selected Run has nothing to rework (${derivation.row})`);
     const goalFanOut = actor.kind === GOAL_FAN_OUT_ACTOR.kind && actor.id === GOAL_FAN_OUT_ACTOR.id;
     const permission = refusalOf(reworkPermission({ operation: 'requeue', goalDesiredState: goal.desiredState,
-      failureClass: derivation.failureClass, interruption: derivation.interruption,
+      failureClass: derivation.failureClass, interruption: permissionInterruptionOf(derivation),
       fence: reworkFenceOf(afterRun, pointerIntent), actorClass, goalFanOut,
       trigger: input.trigger !== undefined, budget: input.budget !== undefined, note: input.note !== undefined }));
     if (permission !== null) return permission;

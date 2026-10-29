@@ -100,7 +100,7 @@
 | `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:121` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
 | `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:306` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
 | `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:309` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
-| `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:237` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
+| `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:247` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:155` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:210` | 一次 fresh QueryRun 驱动；秘书轮按准入多建 `record_note` 组 | 正式 Query 启动 |
 | `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:277` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |

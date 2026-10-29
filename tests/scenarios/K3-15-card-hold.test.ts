@@ -59,10 +59,16 @@ describe('K3-15 (三) handle_myself through the card', () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
     const { originalRunRef, record, card } = await needsDecisionCard(h, 'k3-15-card');
 
-    // The card itself: a real needs_decision review card, no system_requeue card.
+    // The card itself: a real needs_decision review card, no system_requeue card; the crash restart also lists
+    // the one interrupted-pending-resume record as a Goal card.
     expect(card).toMatchObject({ state: 'waiting_answer', readOnly: false, actions: ['answer'],
       options: [{ id: 'rerun_as_is' }, { id: 'safer_method' }, { id: 'skip_as_done' }, { id: 'handle_myself' }] });
-    expect((await queueOf(h)).waitingAnswer.filter(entry => entry.source.kind === 'goal_cause')).toEqual([]);
+    const beforeAnswerQueue = await queueOf(h);
+    expect(beforeAnswerQueue.waitingAnswer.filter(entry => entry.source.kind === 'goal_cause'
+      && (JSON.parse(entry.source.key) as { code: string }).code === 'interrupted_pending_resume'),
+    'the restart records one interrupted-pending-resume card').toHaveLength(1);
+    expect(beforeAnswerQueue.waitingAnswer.filter(entry => entry.source.kind === 'goal_cause'
+      && (JSON.parse(entry.source.key) as { code: string }).code !== 'interrupted_pending_resume'), 'no other Goal card').toEqual([]);
 
     // The card answer goes through the ONE public route, ① answer ② disposition ③ application.
     const applied = await answerCard(h, card, 'handle_myself', 'k3-15-card-answer');
@@ -89,7 +95,8 @@ describe('K3-15 (三) handle_myself through the card', () => {
     // The review card is closed (the record is terminal); no confirmation card appears.
     const afterQueue = await queueOf(h);
     expect(afterQueue.waitingAnswer.filter(entry => entry.source.kind === 'unknown_call_review')).toEqual([]);
-    expect(afterQueue.waitingAnswer.filter(entry => entry.source.kind === 'goal_cause')).toEqual([]);
+    expect(afterQueue.waitingAnswer.filter(entry => entry.source.kind === 'goal_cause'
+      && (JSON.parse(entry.source.key) as { code: string }).code !== 'interrupted_pending_resume'), 'no other Goal card').toEqual([]);
 
     // L11: the human "continue" while held is busy and writes no TaskRequeue.
     const refused = await operatorRequeue(h.host, originalRunRef, 'k3-15-card-requeue', 'continue the stopped work');

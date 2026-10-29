@@ -85,7 +85,7 @@ it('C8 (§13.4 #15, AV-8, GOAL-30): three automatic requeues, then stopped/auto_
   expect(h.counts()).toEqual(atStop);
 
   // The cap goes to 5 (`automation/save`): the stop lifts at once, with no person acting and nothing written.
-  await h.saveAutomation({ schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: true });
+  await h.saveAutomation({ schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: 'auto' });
   expect(await h.taskRow()).toMatchObject({ failure: { automation: { cap: 5, requeueAutoCount: 3,
     verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
   expect(await h.goalDisplay()).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27' });

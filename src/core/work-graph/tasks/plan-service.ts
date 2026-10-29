@@ -132,12 +132,14 @@ import {
   type PlanProposalRecordedEvent,
 } from '../persistence/plan-record-codecs.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { interruptionRefOf } from '../state/goal-interruption.js';
 import {
   confirmActivePlan,
   findPendingProposal,
   readCanonicalTaskFacts,
   readGoal,
   readGoalPlanWindow,
+  readGoalInterruption,
   readGoalPhase,
   readDispositionChangeTaskFacts,
   readFutureChangeTaskFacts,
@@ -2086,7 +2088,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (phaseRead.status !== 'ready') return asReadResult(phaseRead);
       const display = reduceGoalDisplay({ desiredState: goal.desiredState, activePlanRef: null,
         completion: phaseRead.snapshot === null ? { status: 'not_recorded' } : { status: 'recorded', selectedPlanMatches: false },
-        partialAcceptance: null, pendingProposal, tasks: [], runsByTaskId: new Map(), runStopInputs: [] });
+        partialAcceptance: null, pendingProposal, tasks: [], runsByTaskId: new Map(), runStopInputs: [], interruption: null });
       return { status: 'ready', value: { goal, display, liveRuns: [], resumePending: [],
         sourceCursor: laterCursor(pending.readThrough, phaseRead.readThrough) } };
     }
@@ -2101,6 +2103,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const phaseRead = await readGoalPhase(records, phaseRef);
     if (phaseRead.status !== 'ready') return asReadResult(phaseRead);
     watermark = laterCursor(watermark, phaseRead.readThrough);
+    const interruptionRef = interruptionRefOf(goalRef);
+    const interruptionRead = await readGoalInterruption(records, interruptionRef);
+    if (interruptionRead.status !== 'ready') return asReadResult(interruptionRead);
+    watermark = laterCursor(watermark, interruptionRead.readThrough);
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
     const rework = await taskRowReworkOf(records, facts.value, goal, automationPolicy(), deps.configurationFor);
@@ -2148,7 +2154,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const display = reduceGoalDisplay({ desiredState: goal.desiredState, activePlanRef: plan.ref,
       completion: phaseRead.snapshot === null ? { status: 'not_recorded' } : { status: 'recorded',
         selectedPlanMatches: planRevisionRefKey(phaseRead.snapshot.planRef) === planRevisionRefKey(plan.ref) },
-      partialAcceptance: null, pendingProposal, tasks, runsByTaskId: facts.value.runsByTaskId, runStopInputs });
+      partialAcceptance: null, pendingProposal, tasks, runsByTaskId: facts.value.runsByTaskId, runStopInputs,
+      interruption: interruptionRead.snapshot });
     return { status: 'ready', value: { goal, display, liveRuns: liveRuns.map((run) => run.ref), resumePending,
       sourceCursor: watermark } };
   }

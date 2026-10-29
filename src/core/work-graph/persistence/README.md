@@ -12,6 +12,7 @@
 - `commit-compiler.ts` — Goal 创建的纯编译：identity/fingerprint、`GoalCreated` 事件、revision-1 快照与 guard 的 `PreparedCommit`，以及 caller version pins。
 - `control-record-codecs.ts` — `ControlIntentSnapshot@1`、提交/观察事件、控制状态形状检查与注册。
 - `decision-record-codecs.ts` — 决定写事件（`GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`）、notice origin 解码与决定证明校验。
+- `goal-interruption-codecs.ts` — `GoalInterruption@1` 的字段表 codec 与注册：`goalInterruptionCodec`、`GoalInterruptionChanged@1` 事件 codec 和 `GOAL_INTERRUPTION_SCHEMAS`；一条记录、一条事件。
 - `dispatch-counter-codecs.ts` — `DispatchCounter@1` 的字段表 codec 与注册：`dispatchCounterCodec`（check/encode/decode/注册）和 `DISPATCH_COUNTER_SCHEMAS`（一条记录、零事件）；键是完整 ref 的 `canonicalJson`。
 - `event-codec-factory.ts` — 事件 codec 工厂：固定“外层→解析→内外层一致→body”管线。
 - `event-envelope.ts` — 外层事件信封编码。
@@ -81,6 +82,7 @@
 | `initializationBindingCodec` | `src/core/work-graph/persistence/initialization-binding-codecs.ts:8` | 初始化绑定记录的 check/encode/decode/注册/两条 lookup；encode 先按 pending 检查，decode 核对信封后按 stored 检查 | 写或读初始化绑定时；不要手写它的字段校验 |
 | `INITIALIZATION_BINDING_SCHEMAS` | `src/core/work-graph/persistence/initialization-binding-codecs.ts:9` | 绑定格式的两后端注册（一条记录、零事件、两条 lookup） | 组合根注册 schema 时；不要另拼一份 |
 | `DISPATCH_COUNTER_SCHEMAS` | `src/core/work-graph/persistence/dispatch-counter-codecs.ts:9` | `DispatchCounter@1` 的两后端注册（一条记录、零事件）；同一文件的 `dispatchCounterCodec` 是它的 check/encode/decode codec | 组合根注册 schema 时；不要另拼一份 |
+| `GOAL_INTERRUPTION_SCHEMAS`、`goalInterruptionCodec`、`goalInterruptionChangedCodec` | `src/core/work-graph/persistence/goal-interruption-codecs.ts:24`、`src/core/work-graph/persistence/goal-interruption-codecs.ts:12`、`src/core/work-graph/persistence/goal-interruption-codecs.ts:22` | `GoalInterruption@1` 的记录 codec 与一条 `GoalInterruptionChanged@1` 结果事件的注册 | 组合根注册 schema、目标中断 owner 写记录并投影回执时；不要另拼记录或事件 |
 | `encodeEventEnvelope` | `src/core/work-graph/persistence/event-envelope.ts:4` | 编码外层事件信封，body 原样 stringify | 手写事件 codec 时 |
 | `eventEnvelopeProblem` | `src/core/work-graph/persistence/event-validation.ts:6` | 校验外层信封四字段 | 事件解码第一步 |
 | `eventBodyEnvelopeProblem` | `src/core/work-graph/persistence/event-validation.ts:25` | 校验 body 与编码信封在 id/type/version/time 上一致 | 解析 body 后 |

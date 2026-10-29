@@ -204,7 +204,7 @@ export const WORK_2 = 'ag2b-work-2';
 export async function saveAutomationLimit(host: AG2bHost, autoReworkLimit: number): Promise<void> {
   const response = await fetch(new URL(`${SETTINGS_API_PREFIX}automation/save`, host.base), { method: 'POST',
     headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: host.token },
-    body: JSON.stringify({ autoReworkLimit, resumeOnStartup: true }) });
+    body: JSON.stringify({ autoReworkLimit, resumeOnStartup: 'auto' }) });
   expect(await response.json() as SettingsResponse<HostSettingsSnapshot>).toMatchObject({ status: 'ready',
     value: { automation: { autoReworkLimit } } });
 }

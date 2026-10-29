@@ -19,7 +19,10 @@ import type { CoreRejection, ReadResult } from '../../contracts/core/results.js'
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { ControlIntentRef, ControlObservationV1 } from '../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
-import type { ExecutionAuthorizationV2, RunRef, RunSnapshot, RuntimeEventV1 } from '../../contracts/dispatch.js';
+import { MODEL_SERVICE_FAILURE_CODES } from '../../contracts/dispatch.js';
+import type {
+  ExecutionAuthorizationV2, ModelServiceFailureCode, RunRef, RunSnapshot, RuntimeEventV1,
+} from '../../contracts/dispatch.js';
 import { canonicalJson, sameJson as sameRef } from '../../contracts/fingerprint.js';
 import {
   assertTranscriptExchangeIntegrity, projectTerminalTranscript, validateRunStateInvariants,
@@ -123,9 +126,16 @@ export function terminalEventOf(state: RunState, runRef: RunRef, sequence: numbe
     case 'completed':
       return { eventType: 'run_completed', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now, payload: { kind: 'completed', exitCode: 0 } };
     case 'failed': {
-      const message = state.outcome !== null && state.outcome !== undefined && state.outcome.kind === 'failed'
-        ? state.outcome.failure.message : 'the Kernel run failed';
-      return { eventType: 'run_crashed', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now, payload: { kind: 'crashed', error: message } };
+      const failure = state.outcome !== null && state.outcome !== undefined && state.outcome.kind === 'failed'
+        ? state.outcome.failure : null;
+      const message = failure === null ? 'the Kernel run failed' : failure.message;
+      // TD-8 FC-7m: the three provider failures mean the model service stopped
+      // the Run; the one terminal mapping carries the code into the payload.
+      const modelService = failure !== null && failure.category === 'model'
+        && (MODEL_SERVICE_FAILURE_CODES as readonly string[]).includes(failure.code)
+        ? { code: failure.code as ModelServiceFailureCode } : undefined;
+      return { eventType: 'run_crashed', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now,
+        payload: { kind: 'crashed', error: message, ...(modelService === undefined ? {} : { modelService }) } };
     }
     case 'cancelled':
       return { eventType: 'run_cancelled', schemaVersion: 1, eventId, runRef, sequence, occurredAt: now, payload: { kind: 'cancelled', reason: 'the Kernel run was cancelled' } };

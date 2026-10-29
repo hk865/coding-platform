@@ -2,7 +2,7 @@
 import type { CoreScope, BootstrapResponse } from './core-http-types.js';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
-import type { TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
+import type { ResumeOnStartupMode, TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
 import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.js';
 import type {
   PromptPackProblemV1, TemplateSlotTableV1, ToolTextV1,
@@ -35,7 +35,7 @@ export type HostSettingsSnapshot = {
   models: SettingsModel[]; workspaces: SettingsWorkspace[];
   /**
    * C8 automatic-rework policy (Host setting `automation`) as stored: the
-   * saved policy, or the defaults (3 / true) when none was saved. A save
+   * saved policy, or the defaults (3 / ask) when none was saved. A save
    * installs it in the Host at once, unless `automation/save` answered
    * `unavailable` (saved, Host configuration not confirmed); then the Host
    * may still apply the previous policy until a retry of the same save
@@ -68,10 +68,11 @@ export type SaveResourceCapSettings = { memoryMaxMiB: number | null; tasksMax: n
 /**
  * C8 / LA-6 Host setting `automation` (route `automation/save`): the whole
  * policy, `autoReworkLimit` an integer 0..10 (`MAX_AUTO_REWORK_LIMIT`; 0 allows
- * no counted automatic requeue) and `resumeOnStartup` (the start-up re-drive
- * after the reconciliation). The Host installs it at once, without a restart.
+ * no counted automatic requeue) and `resumeOnStartup` (what a start does with
+ * the Goals it interrupted: auto / ask / off). The Host installs it at once,
+ * without a restart.
  */
-export type SaveAutomationSettings = { autoReworkLimit: number; resumeOnStartup: boolean };
+export type SaveAutomationSettings = { autoReworkLimit: number; resumeOnStartup: ResumeOnStartupMode };
 export type DirectoryListing = {
   path: string; parent: string | null;
   directories: { name: string; path: string }[]; truncated: boolean;

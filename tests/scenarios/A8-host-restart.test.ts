@@ -436,7 +436,7 @@ it('§12.1 step 6b (LA-6, W-01): a claimed Run left by a stopped Host is re-driv
     } finally {
       await first.host.close();
     }
-    if (!resumeOnStartup) await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+    await writeAutomationSettings(database, redrivePolicy(resumeOnStartup));
     const second = await startAG2bHost(publicDir, { root, database, replies: [
       { kind: 'calls', calls: [{ callId: 'a2-redrive-edit', name: 'edit', args: { mode: 'create', path: 'src/ag2b-result.txt', newText: 'AG2B_RESULT_FROM_A' } }] },
       { kind: 'text', text: 'A2 re-drive: the same claim completed the Task' }] });
@@ -462,7 +462,7 @@ it('§12.1 step 6b (LA-6, W-01): a claimed Run left by a stopped Host is re-driv
         await assertInvariantsAt(inv, 'W-01 after the reconcile');   // A.2 step 6
         // The next workflow/advance continues the same claim.
         const done = (await driveChecked(second, inv, selectWork('a2-redrive-later', true),
-          { policy: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false } })).steps;   // A.2 step 6: checked per step
+          { policy: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' } })).steps;   // A.2 step 6: checked per step
         expect(done.at(-1)).toMatchObject({ state: 'completed' });
         expect((await workRow(second)).execution?.runId).toBe(claimedRun.runId);
         await assertInvariantsAt(inv, 'W-01 continued by workflow/advance');   // A.2 step 6
@@ -488,7 +488,7 @@ it('W-11 and CTL-08(b), K KA1: a Run interrupted mid-Turn ends crashed at the re
   // Since A.2 step 5.8 the start-up re-drive requeues this interruption automatically (§12.1 step 6b (a));
   // this test reads what the reconcile left, so Host 2 keeps the re-drive off
   // (the moved re-drive case of this file drives the automatic continuation).
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const second = await startAG2bHost(publicDir, { root, database });
   try {
     const { runRef } = crashed;
@@ -748,7 +748,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   // K (decision 51, KA-10, KA-14): the next maintenance after the attestation, Host 5's start-up step 6c (the re-drive
   // off, as in `expectQuietRestart`), closes the attested line's open Kernel Turn and SES-13 returns the Session
   // available; the line is not archived and the platform Run is unchanged (L1).
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' });
   const fifth = await startAG2bHost(publicDir, { root, database });
   try {
     // Step 1 runs before the maintenance: the probe is ready and the Kernel head still names the paused Turn (H-01 left).
@@ -775,7 +775,7 @@ it('§12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1, K KA1: an interrupted Ru
     const publicDir = await publicDirectory();
     const inv: InvariantTarget = { database };   // A.2 step 6
     const crashed = await crashMidTurn(root, database, publicDir, {}, 'a2-redrive-crash', inv);   // A.2 step 6: checked per step
-    if (!resumeOnStartup) await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false });
+    await writeAutomationSettings(database, redrivePolicy(resumeOnStartup));
     const second = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-redrive') });
     try {
       // W-11 at the restart; step 6b selects the Goal by condition (a) (verdict requeue, class interrupted) either way.

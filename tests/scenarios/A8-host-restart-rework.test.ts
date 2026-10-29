@@ -20,7 +20,7 @@ import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, p
 import { claimQueryOn } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, waitFor } from './harness.js';
 import { editThenText, execution, redrivePolicy, replayOf, stepOf } from './support/common.js';
-import { expectQuietHarnessRestart, performedOf, RUN1_WITHOUT_FILE } from './support/restart.js';
+import { countsAllowingInterruptions, expectQuietHarnessRestart, performedOf, RUN1_WITHOUT_FILE } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -56,7 +56,11 @@ it('A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim;
       redriveGoals: [{ goalRef: { goalId: AG2B_GOAL_REF.goalId }, taskIds: [AG2B_WORK_TASK_ID] }] });
     if (!resumeOnStartup) {
       expect(report.report?.queries).toEqual([]);
-      expect(h.counts(), 'the reconcile writes nothing for a TaskRequeue').toEqual(atCrash);
+      const recorded = report.report?.interruptedGoals.filter(entry => entry.status === 'recorded').length ?? 0;
+      expect(report.report?.interruptedGoals.every(entry => entry.status === 'recorded' || entry.status === 'kept'),
+        'the restart leaves only Goal interruption records').toBe(true);
+      expect(h.counts(), 'the reconcile writes only the Goal interruption for the unfinished work')
+        .toEqual({ ...atCrash, ledgerEvents: atCrash.ledgerEvents + recorded });
       expect(await h.taskRow()).toMatchObject({ effectivePhase: 'pending', phaseCause: { code: 'requeued' } });
       expect(h.lastWorld?.runs, 'no Run claims the requeue before a 推进').toHaveLength(1);
       const later = await h.advance(h.select(`${label}-later`));
@@ -113,9 +117,10 @@ it('A8-R2 (W-22, C8, ND-8): a committed no_new_basis refusal survives the restar
 
   const report = await h.restart({ crash: true });
   expect(report.report).toMatchObject({ runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] });
-  expect(h.counts(), 'the reconcile writes nothing; no driver starts').toEqual(atCrash);
+  const atRestart = countsAllowingInterruptions(atCrash, report.report, 'A8-R2');
+  expect(h.counts(), 'the reconcile writes only the Goal interruption; no driver starts').toEqual(atRestart);
   expect(await h.taskRow(), 'no Run ended in the reconcile, so the refusal is not stale').toMatchObject(stopped);
   expect(await h.advance(h.select('a8-r2-after'))).toMatchObject({ state: 'waiting', receipts: [] });
-  expect(h.counts()).toEqual(atCrash);
+  expect(h.counts()).toEqual(atRestart);
   await h.drainAbandoned();
 }, 180_000);

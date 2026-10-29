@@ -70,6 +70,10 @@ export type TaskBudgetV1 = {
 type RuntimeEventType = "run_started" | "run_completed" | "run_crashed" | "run_cancelled" | "run_budget_exhausted" | "run_yielded";
 /** 明确的让出类别；只描述业务等待类别，具体等待/唤醒关联由平台侧建立。 */
 export type YieldReasonV1 = "reply_required" | "external_input_required" | "operator_requested";
+/** The Kernel provider failures that mean the model service is unreachable (TD-8 FC-7m). */
+export type ModelServiceFailureCode = "provider_request_failed" | "rate_limited" | "provider_unavailable";
+/** The one list of `ModelServiceFailureCode`; `execution-observation` fills the payload from it. */
+export const MODEL_SERVICE_FAILURE_CODES = ["provider_request_failed", "rate_limited", "provider_unavailable"] as const;
 export type RuntimeEventV1 = {
     eventType: RuntimeEventType;
     schemaVersion: 1;
@@ -88,6 +92,10 @@ export type RuntimeEventV1 = {
     } | {
         kind: "crashed";
         error: string;
+        /** Present only when the Kernel ended the Run on a model-service failure (TD-8 FC-7m). */
+        modelService?: {
+            code: ModelServiceFailureCode;
+        };
     } | {
         kind: "cancelled";
         reason: string;

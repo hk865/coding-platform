@@ -196,6 +196,9 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/initialization-adoption.ts', name: 'InitializationAdoptionRecordV1', kind: 'record',
     fields: 'all',
     use: 'state/initialization-adoption.ts newInitializationAdoptionRecord, acceptExistingInitializationAdoption, nextAdoptionStage, advanceInitializationAdoption, stopInitializationAdoption, completeInitializationAdoption or committedAdoptionRecord' },
+  // The Goal interruption record: every field is written only by the state layer.
+  { file: 'src/contracts/goal-interruption.ts', name: 'GoalInterruptionV1', kind: 'record', fields: 'all',
+    use: 'state/goal-interruption.ts pendingGoalInterruption or resumedGoalInterruption' },
 ];
 
 // -------------------------------------------------------------------------- //

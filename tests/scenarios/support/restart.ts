@@ -144,6 +144,24 @@ async function autoReworkLimitOf(database: string): Promise<number> {
 }
 
 /**
+ * (E) The only allowance an "another start wrote nothing" comparison makes: a Host start records one Goal
+ * interruption per report entry it lists `recorded` (one `GoalInterruptionChanged` ledger event each); every
+ * other entry is `kept` and writes nothing. Returns how many ledger events that start's report accounts for.
+ */
+export function recordedInterruptions(report: HostReconcileReportV1['report'], label: string): number {
+  const entries = report?.interruptedGoals ?? [];
+  expect(entries.every(entry => entry.status === 'recorded' || entry.status === 'kept'),
+    `${label}: every interruption entry is recorded or kept`).toBe(true);
+  return entries.filter(entry => entry.status === 'recorded').length;
+}
+
+/** `counts` as that same start leaves them: its `recorded` interruptions are the only addition. */
+export function countsAllowingInterruptions<T extends { ledgerEvents: number }>(counts: T,
+  report: HostReconcileReportV1['report'], label: string): T {
+  return { ...counts, ledgerEvents: counts.ledgerEvents + recordedInterruptions(report, label) };
+}
+
+/**
  * §12.10 step 4 on a `HostScenario`. The abandoned Hosts are drained first (draining lets an abandoned
  * Host's Kernel end a Turn it held: new Kernel data, no restart's write) and the live Host's automatic
  * capture settles (a PASS that a background driver finalized, such as the start-up re-drive, starts one
@@ -156,10 +174,11 @@ export async function expectQuietHarnessRestart(h: HostScenario, label: string):
   await h.drainAbandoned();
   await h.settleAutoCapture();
   const before = h.counts();
-  const restarted = await h.restart({ crash: true, automation: { ...h.automationPolicy(), resumeOnStartup: false } });
+  const restarted = await h.restart({ crash: true, automation: { ...h.automationPolicy(), resumeOnStartup: 'off' } });
   expect(restarted, label).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { problems: [] } });
   expect(reportChanges(restarted.report), `${label}: another start reconciles nothing`).toEqual([]);
-  expect(h.counts(), `${label}: another start writes nothing`).toEqual(before);
+  expect(h.counts(), `${label}: another start writes only its Goal interruptions`)
+    .toEqual(countsAllowingInterruptions(before, restarted.report, label));
   return restarted;
 }
 
@@ -176,14 +195,15 @@ export async function expectQuietRestart(database: string, publicDir: string, ro
   whileOpen?: (host: AG2bHost) => Promise<void>;
 } = {}): Promise<HostReconcileReportV1> {
   const label = options.label ?? 'another start';
-  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: await autoReworkLimitOf(database), resumeOnStartup: false });
+  await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: await autoReworkLimitOf(database), resumeOnStartup: 'off' });
   const before = fileCounts(database);
   const host = await startAG2bHost(publicDir, { ...options.start, root, database });
   try {
     const reconcile = host.host.reconcile;
     expect(reconcile, label).toMatchObject({ lease: 'owned', report: { problems: [] } });
     expect(reportChanges(reconcile.report), `${label}: the reconcile changes nothing again`).toEqual([]);
-    expect(fileCounts(database), `${label}: nothing is written`).toEqual(before);
+    expect(fileCounts(database), `${label}: only its Goal interruptions are written`)
+      .toEqual(countsAllowingInterruptions(before, reconcile.report, label));
     expect(host.scripted.calls() + host.queryScripted.calls(), `${label}: no model call`).toBe(0);
     await options.whileOpen?.(host);
     return reconcile;

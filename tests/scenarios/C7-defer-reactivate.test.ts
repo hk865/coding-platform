@@ -482,7 +482,7 @@ it('C7 TASK-19 inside the window of the selected Run\'s control (Host, commit ba
 
 it('C7 TASK-19 against the selected Run\'s pointer ControlIntent moving in its window (§3.6 PLAN-05, Q10\'s reachable form): the restart settles a queued pause left on the ended Run (CTL-08(e)) inside TASK-19\'s read→commit window; TASK-19 is refused revision_conflict and writes nothing; retried, guards 3 and 7 are judged again: the automation is forbidden, the operator defers', async () => {
   const T = AG2B_WORK_TASK_ID;
-  const h: HostScenario = await openHostScenario({ check: 'pass', automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: false } });
+  const h: HostScenario = await openHostScenario({ check: 'pass', automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' } });
   await assertInvariants(h, 'seeded');
   // The selected Run ends completed with a person's pause still queued as its pointer (A8-3h's crash point: a composition
   // root runs the Run, the pause is submitted during the final model call, which no safe point follows, and the ledger is
