@@ -44,6 +44,7 @@ import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type { ObservedModelRunOptions } from './observed-model-run.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
+import { ANSWER_TOOL_NAMES, type AnswerToolKind } from './answer-tools.js';
 
 export type ToolGroup = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
 export type ToolGroupResult<T = ToolGroup> = { ok: true; value: T } | { ok: false; rejection: CoreRejection };
@@ -511,6 +512,12 @@ export type FinalToolListInputV1 = {
   /** `projectSource.mode === 'frozen'`. */
   frozenSource: boolean;
   materialTools: boolean;
+  /**
+   * The submit tools this round's answer shape freezes. It follows the Run,
+   * not `selected`, the way the review tool follows a review Run; absent is
+   * null, so every Work call and every plain Query stays unchanged.
+   */
+  answerTools?: AnswerToolKind | null;
   owners: {
     mailbox: boolean; decisionMessages: boolean; applicationReceipt: boolean;
     sessions: boolean; plans: boolean; graph: boolean; notes: boolean;
@@ -587,10 +594,16 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const readonlyName = input.readOnly && input.readonlyCommand.requested
     && input.readonlyCommand.access === 'all_except_denied' && input.readonlyCommand.allowsReadWholeWorkspace
     ? READONLY_COMMAND_TOOL_NAME : null;
+  const answerNames = input.answerTools === 'secretary'
+    ? ANSWER_TOOL_NAMES.slice(0, 1)
+    : input.answerTools === 'initial'
+      ? ANSWER_TOOL_NAMES.slice(1)
+      : [];
   const extensionNames = [...coordinationNames,
     ...(readonlyName === null ? [] : [readonlyName]),
     ...(reviewToolName === null ? [] : [reviewToolName]),
-    ...(rerun ? [REQUEST_COMMAND_RERUN_TOOL_NAME] : [])];
+    ...(rerun ? [REQUEST_COMMAND_RERUN_TOOL_NAME] : []),
+    ...answerNames];
   // The builtin allowlist is the only part `kernelEnabledToolNames` maps; the
   // coordination/extension names are appended in today's order.
   const allowed = input.selected.filter(name => BUILTIN_TOOL_NAMES.has(name));

@@ -118,7 +118,7 @@ function coordinationAnswer(text: string, hasGoal: boolean): SecretaryAnswerChec
  * carries no drafts; a `needs_decision` answer may carry drafts and never
  * carries a `planDraftIndex`; a present index must be one of the answer's own drafts.
  */
-function planDraftIndexOf(
+export function planDraftIndexOf(
   object: Record<string, unknown>, hasGoal: boolean, draftCount: number,
 ): number | null | string {
   if (!Object.hasOwn(object, 'planDraftIndex')) {
@@ -153,27 +153,32 @@ function draftsOf(value: unknown, hasGoal: boolean): GoalCardDraftV1[] | string 
   if (hasGoal && value.length > 0) return 'a request that has a goal carries no goal card drafts';
   const drafts: GoalCardDraftV1[] = [];
   for (const [index, draft] of value.entries()) {
-    if (!isRecord(draft) || !hasOnlyKeys(draft, DRAFT_FIELDS)) {
-      return `goal card draft ${String(index + 1)} may carry only objective, completion, autonomy and screening`;
-    }
-    const objective = draft['objective'];
-    if (!nonEmpty(objective)) return `goal card draft ${index + 1} needs a non-empty objective`;
-    const completion = draft['completion'];
-    if (!Array.isArray(completion) || completion.length === 0) {
-      return `goal card draft ${index + 1} needs at least one completion criterion`;
-    }
-    if (!completion.every(nonEmpty)) return `goal card draft ${index + 1} has an empty completion criterion`;
-    const autonomy = draft['autonomy'];
-    if (typeof autonomy !== 'string' || !Object.hasOwn(AUTONOMIES, autonomy)) {
-      return `goal card draft ${index + 1} autonomy must be every_step or after_plan_confirmation`;
-    }
-    const screening = screeningOf(draft['screening'], index);
-    if (typeof screening === 'string') return screening;
-    drafts.push({
-      objective, completion: [...completion], autonomy: autonomy as GoalAutonomyV1, screening,
-    });
+    const checked = goalCardDraftCheck(draft, index);
+    if (typeof checked === 'string') return checked;
+    drafts.push(checked);
   }
   return drafts;
+}
+
+/** The one per-draft rule: the parsed draft, or its first problem. `draftsOf` and the submit composer share it. */
+export function goalCardDraftCheck(draft: unknown, index: number): GoalCardDraftV1 | string {
+  if (!isRecord(draft) || !hasOnlyKeys(draft, DRAFT_FIELDS)) {
+    return `goal card draft ${String(index + 1)} may carry only objective, completion, autonomy and screening`;
+  }
+  const objective = draft['objective'];
+  if (!nonEmpty(objective)) return `goal card draft ${index + 1} needs a non-empty objective`;
+  const completion = draft['completion'];
+  if (!Array.isArray(completion) || completion.length === 0) {
+    return `goal card draft ${index + 1} needs at least one completion criterion`;
+  }
+  if (!completion.every(nonEmpty)) return `goal card draft ${index + 1} has an empty completion criterion`;
+  const autonomy = draft['autonomy'];
+  if (typeof autonomy !== 'string' || !Object.hasOwn(AUTONOMIES, autonomy)) {
+    return `goal card draft ${index + 1} autonomy must be every_step or after_plan_confirmation`;
+  }
+  const screening = screeningOf(draft['screening'], index);
+  if (typeof screening === 'string') return screening;
+  return { objective, completion: [...completion], autonomy: autonomy as GoalAutonomyV1, screening };
 }
 
 /** The model's screening is kept as returned; `null` or an absent field means not screened. */

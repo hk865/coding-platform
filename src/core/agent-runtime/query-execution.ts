@@ -38,6 +38,9 @@ import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
+import {
+  answerSubmitNamesIn, answerToolsOf, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
+} from './answer-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsHandle } from './note-tool.js';
 import type { NoteCheckPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
@@ -340,6 +343,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         reviewSource: false,
         frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
         materialTools: false,
+        answerTools: manifest.request === null ? null : answerToolsOf(manifest.request.executionKind),
         owners: {
           mailbox: false, decisionMessages: false, applicationReceipt: false,
           sessions: false, plans: false,
@@ -372,6 +376,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // admission alone never widens the Host grant.
       const grantedGraphNames = GRAPH_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
       const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      // The answer tools follow the frozen request kind, never the Host grant.
+      const submitNames = answerSubmitNamesIn(frozenToolNames);
+      // The round's accepted submit callIds are a closure value: a QueryRun's
+      // Kernel Turn runs once, so nothing is persisted.
+      const acceptedAnswerCallIds = new Set<string>();
       const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined
         ? null
         : { graph: deps.graphContext, inputs: deps.taskInputs };
@@ -379,7 +388,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
       }
       let coordinationTools: ToolGroup | null = null;
-      if (grantedGraphNames.length > 0 || noteAdmission.class === 'secretary') {
+      if (grantedGraphNames.length > 0 || noteAdmission.class === 'secretary' || submitNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
         // uses the ORIGINAL initiator's same-scope Host context for RT8 only.
@@ -449,18 +458,41 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             withdraw: noteAdmission.withdraw,
           });
         }
-        const names = [...grantedGraphNames, ...noteNames];
+        let answerTools: AnswerToolsHandle | null = null;
+        if (submitNames.length > 0) {
+          if (deps.secretaryFacts === undefined) {
+            return rejected('unsupported', 'the secretary answer tools require the secretary facts read');
+          }
+          answerTools = createAnswerTools({
+            context: toolContext,
+            // The submit-time facts read uses the Host context this start holds.
+            hostContext: owned,
+            queryRunRef,
+            kind: manifest.request!.executionKind,
+            hasGoal: manifest.goal !== null,
+            goalLess: manifest.request!.effectiveGoalId === null,
+            secretaryFacts: deps.secretaryFacts,
+            acceptedCallIds: acceptedAnswerCallIds,
+            names: submitNames,
+            texts: toolTexts,
+          });
+        }
+        const names = [...grantedGraphNames, ...noteNames, ...submitNames];
         if (names.length > 0) {
           coordinationTools = {
             names,
             create: (workspace) => [
               ...(graphTools?.create(workspace) ?? []),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
+              ...(answerTools?.create(workspace) ?? []),
             ],
           };
         }
       }
 
+      // A round that froze submit tools ends at the accepted submit: the group
+      // barrier yields after the handler's success result is committed.
+      const answerBarrier = submitNames.length === 0 ? undefined : createAnswerToolBarrier(acceptedAnswerCallIds);
       const kernel: QueryEntryIdentity['kernel'] = {
         adapterId: record.session.kernel.adapterId,
         kernelSessionId: record.session.kernel.kernelSessionId,
@@ -735,6 +767,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ...(coordinationTools === null ? {} : { coordinationTools }),
           ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
           controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
+          ...(answerBarrier === undefined ? {} : { toolGroupBarrier: answerBarrier }),
           // Ruling 22: the frozen base (Host instruction merged), frozen Skills
           // and frozen replay; the Host options no longer exist here.
           prompt: frozenPrompt,

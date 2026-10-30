@@ -20,6 +20,9 @@ import {
   isRequestRound, type QueryJobAnswerV1, type QueryRunRef, type SecretaryRequestManifestV1,
 } from '../../contracts/query-job.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
+import {
+  answerSubmitNamesIn, buildAnswerText, submittedAnswerArgumentsOf,
+} from './answer-tools.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
@@ -44,7 +47,7 @@ export type QueryObservationPort = {
 
 /** Bounded per-call pagination: a Turn is reconstructed page by page, never by an unbounded scan. */
 const MAX_OBSERVATION_PAGES = 64;
-const MAX_ANSWER_BYTES = 16 * 1024;
+export const MAX_ANSWER_BYTES = 16 * 1024;
 const MAX_SOURCES = 64;
 
 type DecodedRecord = { position: number; record: KernelSessionRecord };
@@ -115,12 +118,19 @@ function transcriptHasOutcomeUnknown(transcript: RunState['transcript']): boolea
   return transcript.some(entry => entry.kind === 'tool_result'
     && entry.result.status === 'error' && entry.result.error.code === 'outcome_unknown');
 }
-function mapOutcome(status: string): 'answered' | 'failed' | 'cancelled' | 'timeout' | null {
+export function mapOutcome(status: string, acceptedSubmit = false): 'answered' | 'failed' | 'cancelled' | 'timeout' | null {
+  // A request round's stored answer is the transcript's accepted submit,
+  // whatever terminal the Kernel reached: `yielded` at the barrier, `failed`
+  // when a later declared call made that yield fail, or one of the other
+  // terminals. A cancelled Turn stays cancelled (the person's drop wins), and
+  // without an accepted submit every terminal keeps its old mapping.
+  const answered = acceptedSubmit ? 'answered' as const : null;
   switch (status) {
     case 'completed': return 'answered';
-    case 'failed': return 'failed';
+    case 'failed': return answered ?? 'failed';
     case 'cancelled': return 'cancelled';
-    case 'limit_exceeded': return 'timeout';
+    case 'limit_exceeded': return answered ?? 'timeout';
+    case 'yielded': return answered ?? 'failed';
     // L1: a platform closure of a Work line's dangling Turn; a Query line is not
     // closed by this slice, so encountering it reports and never counts as an answer.
     case 'interrupted': return null;
@@ -434,8 +444,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       return rejected('unavailable', 'the Query input acceptance is saved in Kernel history but its source acknowledgement is not confirmed');
     }
     const runState = collected.value.state;
-    const terminalStatus = mapOutcome(runState.status);
-    if (terminalStatus === null) return { status: 'ready', value: record.value };
+    // The accepted submit is read from the frozen tool list below; a status the
+    // mapper cannot book (interrupted) is still reported before the manifest.
+    if (mapOutcome(runState.status) === null) return { status: 'ready', value: record.value };
     // A terminal status is only evidence when the complete Turn is settled and
     // no result is genuinely unknown. A reducer-proven `abandoned` call is
     // different: it is a declared-but-never-started call with no result, and the
@@ -461,6 +472,11 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     }
     const manifest = await loadPersistedManifest(deps.bodies, state.prepared?.bundleRef);
     if (manifest === null) return rejected('unavailable', 'the persisted Query manifest could not be read for the terminal answer');
+    // Only a request round can hold an accepted submit: the names come from the
+    // list preparation froze, never from the whole submit family.
+    const submitNames = answerSubmitNamesIn(manifest.promptSet.toolNames);
+    const submitted = submitNames.length === 0 ? null : submittedAnswerArgumentsOf(runState, submitNames);
+    const terminalStatus = mapOutcome(runState.status, submitted !== null)!;
     const currentFacts = await deps.queryExecution.readPreparationFacts(owned, queryRunRef);
     if (currentFacts.status !== 'ready') return currentFacts;
     const occurredAt = runState.endedAt ?? deps.now();
@@ -474,7 +490,19 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
         if (manifest.request === null) return rejected('invalid', 'the request round manifest carries no request facts');
         request = { executionKind: manifest.request.executionKind, hasGoal: manifest.goal !== null };
       }
-      const formal = formalAnswerOf(extractAnswer(runState), request);
+      // A request round whose frozen list holds a submit tool takes the answer
+      // from the first successful submit's arguments; no accepted submit keeps
+      // today's final-text reading, and any later assistant text is ignored.
+      let final: FinalText;
+      if (submitted === null) {
+        final = extractAnswer(runState);
+      } else {
+        // Rebuild the exact text the accepted handler built.
+        const text = buildAnswerText(request!.executionKind, submitted,
+          { projectId: queryRunRef.projectId });
+        final = { kind: 'text', text };
+      }
+      const formal = formalAnswerOf(final, request);
       if (formal.kind === 'gap') {
         outcome = 'gap';
       } else if (formal.kind === 'invalid') {

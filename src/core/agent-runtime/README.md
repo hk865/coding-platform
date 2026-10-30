@@ -58,9 +58,10 @@
 
 ### 工具注册与工具实现
 做工具组装配和每个 Kernel 工具实现的去这组。
-- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`WorkToolGroupInput.mailbox` 是完整 `SessionMessageCommandPort`；未绑定的检查在 mailbox/decision 分支内，只选用户决策工具同样要求它。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。
+- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.answerTools` 可为 `null`/`secretary`/`initial`：只有两个 Query 调用按冻结的 `executionKind` 给出，`finalToolNamesOf` 把提交工具名追加在既有扩展名之后，Work 不传、行为不变。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`WorkToolGroupInput.mailbox` 是完整 `SessionMessageCommandPort`；未绑定的检查在 mailbox/decision 分支内，只选用户决策工具同样要求它。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。
 - `exploration-tools.ts` — 源码探索工具组。
-- `graph-tools.ts` — `look_graph`/`find_graph` 只读图工具；`goalRef` 可为 `null`（请求无目标时的项目读分支）。`history` 模式没有可信目标时以 `invalid`“this request has no goal”拒绝，不拿别的目标的历史。
+- `graph-tools.ts` — `look_graph`/`find_graph` 只读图工具，`success`/`rejectedResult` 是各工具共用的结果构造（提交工具也直接用它们）；`goalRef` 可为 `null`（请求无目标时的项目读分支）。`history` 模式没有可信目标时以 `invalid`“this request has no goal”拒绝，不拿别的目标的历史。
+- `answer-tools.ts` — 秘书填表式回答（97-3）的三个提交工具。`ANSWER_TOOL_NAMES` 是名字清单；`createAnswerTools` 按冻结的 manifest 事实每轮建 zod schema（只在无 `effectiveGoalId` 的轮次出现 `goalCardDrafts`/`planDraftIndex`），处理器不写任何东西：`buildAnswerText` 把表单拼成今天的 v1/v2 协议文本并填入版本、`phase: "pending"`、`requireDag` 与每个 ref 的项目号；`answerProblems` 是检查入口；`answerSubmitNamesIn`/`answerToolsOf` 从冻结的工具名和执行种类取名字；`createAnswerToolBarrier` 在收下的提交组后 `yield`；`submittedAnswerArgumentsOf` 按 transcript 找第一条成功的提交调用参数，观察侧用同一 `buildAnswerText` 重建。
 - `note-tool.ts` — `record_note` 工具。`NoteToolsConfig` 的 `kinds`/`withdraw` 决定声明：写入种类枚举正好是 `kinds`，`review` 只在完整 Work 种类集（含 `repair`）下才建，`withdraw` 只在被准可时才建；空 `kinds` 在构造时抛错，不注册一个只能被拒的工具。
 - `whiteboard-tools.ts` — 白板/未来计划工具。
 - `communication-tools.ts` — SessionMailbox 与用户决策工具。`SessionMailboxToolsConfig.mailbox` 是完整 `SessionMessageCommandPort`；`send_session_message` 带 `expected`/`taskRef`/`followupOf`/`deadlineMs`，没有 `goalRef`；`respond_session_message` 是扁平的两臂 `{ messageRef, expectedRevision, text } | { messageRef, expectedRevision, reject: true, reason }`。
@@ -72,7 +73,7 @@
 ### 观察与恢复
 做原历史观察、活动计数、continuation brief 和启动对账的去这组。
 - `execution-observation.ts` — Work 观察：沿 locator 读原历史、归约 Turn、提交唯一终态。
-- `query-observation.ts` — Query 原历史观察与终态提交；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；回答写回时带上解析出的草稿 `screening` 和顶层 `planDraftIndex`（普通 Query 是 `null`）；普通 Query 照旧记 `gap`。终态提交在同一 commit 里写这一 Turn 的活动计数（`tallyTurnActivity`，`bound: 'end_position'`），格式失败的终态也照写。
+- `query-observation.ts` — Query 原历史观察与终态提交；`MAX_ANSWER_BYTES` 是 16 KiB 回答上限；冻结清单含提交工具时，从第一条成功的提交参数经 `submittedAnswerArgumentsOf`/`buildAnswerText` 重建文本再走同一条 `formalAnswerOf`，无提交仍读最后的文本；transcript 有冻结清单里的收下提交时，`yielded`、`completed`、`failed`、`limit_exceeded` 都记为 `answered`，`cancelled` 仍 `cancelled`；无收下提交按各自旧映射；request round 的最终文本按 manifest 冻结的执行种类做秘书回答检查（`parseSecretaryAnswer`），空、超 16 KiB 或格式不符时终态 `failed`、不写回答、带 `answerCheck`；回答写回时带上解析出的草稿 `screening` 和顶层 `planDraftIndex`（普通 Query 是 `null`）；普通 Query 照旧记 `gap`。终态提交在同一 commit 里写这一 Turn 的活动计数（`tallyTurnActivity`，`bound: 'end_position'`），格式失败的终态也照写。
 - `observation-recovery.ts` — 按 Kernel run/turn 过滤的精确原历史读取。
 - `graph-execution-history.ts` — WorkGraph locator 到 RT7 原历史的适配。
 - `continuation-brief-assembly.ts` — continuation brief 的事实读取与纯装配。
@@ -85,7 +86,7 @@
 ### 查询与来源绑定
 做 Query 驱动和源码捕获/来源绑定的去这组。
 - `query-preparation.ts` — Query 有界输入准备与 manifest 绑定；由 Job 冻结的请求根算注记准入（`secretaryNoteAdmission`，`src/core/agent-runtime/query-preparation.ts:315`），并按准入把 `record_note` 冻进工具名清单。请求轮同一份冻结事实里读一次交接材料（SR3 第 6 项、§8.3）：旧秘书的理解轮把那条活命令的 goal 清单（`request.understandingGrants`，即授权所来自的同一份事实、同一条规则）交成 `{kind:'understanding'}`；manifest 带 `briefRef` 的继任轮经注入的 `handoff.readBriefState`（`QueryPreparationDependencies.handoff`）读一次四态——`waiting` 返回可重试的 `incomplete`（这一轮根本不准备）、`ready` 交 `{kind:'brief'}`、`none`/`consumed` 不出模板、读失败 `unavailable`，绝不折成空简报。
-- `query-execution.ts` — 一次 fresh QueryRun 的驱动。角色绑定与预算一律经 `queryExecutionBindingOf`；`callKind: 'secretary'` 的轮次把清单冻结的 `request.effectiveGoalId` 写进 `query_run` 主体的 `goalId` 并作为图工具目标（无目标时为 `null`，图工具读项目），其余 Query 的主体形状不变。注记准入从 manifest 的 `request` 重算一次（`src/core/agent-runtime/query-execution.ts:317`），与冻结的工具名同一次比较；缺注记写/检查 owner 是 `unavailable`，秘书轮在图工具组旁建 `record_note` 组（`src/core/agent-runtime/query-execution.ts:442`），可信调用身份是 `r5b-query-note:` 加 QueryRun 与 Kernel 调用 id/名的 sha256。
+- `query-execution.ts` — 一次 fresh QueryRun 的驱动。角色绑定与预算一律经 `queryExecutionBindingOf`；`callKind: 'secretary'` 的轮次把清单冻结的 `request.effectiveGoalId` 写进 `query_run` 主体的 `goalId` 并作为图工具目标（无目标时为 `null`，图工具读项目），其余 Query 的主体形状不变。注记准入从 manifest 的 `request` 重算一次（`src/core/agent-runtime/query-execution.ts:317`），与冻结的工具名同一次比较；缺注记写/检查 owner 是 `unavailable`，秘书轮在图工具组旁建 `record_note` 组（`createNoteTools`，`src/core/agent-runtime/query-execution.ts:454`），有提交工具的轮次再建 `createAnswerTools` 组并把 `createAnswerToolBarrier` 交给 `runObservedModel`，可信调用身份是 `r5b-query-note:` 加 QueryRun 与 Kernel 调用 id/名的 sha256。
 - `project-source-tool.ts` — `project_source` 查询/捕获工具。
 - `source-capture-access.ts` — 源码捕获访问与 Work/Query 工厂；Query 的主体/权限身份里的角色取 `queryExecutionBindingOf`，`intent.execution` 只留作执行身份校验。
 - `source-tool-ports.ts` — 源码工具端口与 `BoundModel` 类型。
@@ -103,7 +104,8 @@
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:247` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:145` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:210` | 一次 fresh QueryRun 驱动；秘书轮按准入多建 `record_note` 组 | 正式 Query 启动 |
-| `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:277` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
+| `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:287` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
+| `mapOutcome` | `src/core/agent-runtime/query-observation.ts:121` | Kernel 终态到 Query 结局的映射：transcript 有冻结清单里的收下提交时，`yielded`/`completed`/`failed`/`limit_exceeded` 记 `answered`，`cancelled` 仍 `cancelled`；无收下提交按各自旧映射 | Query observer 的终态读取；重启的 Q-03 也走同一函数 |
 | `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:122` | 安全点 pause/cancel 协调与退出证明；关闭中的 Host 在每个在跑 Run 的下一个安全点暂停（无 intent、不 abort 控制器） | 投递控制意图；Host 关闭时由关闭信号驱动 |
 | `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
 | `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
@@ -140,7 +142,7 @@
 | `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
 | `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
 | `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:218` | 按 grant/配置选 Work 工具组 | 驱动装配 |
-| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:531` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具 | 提交工具声明 |
+| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:538` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
 | `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:119` | 图历史读端口的工具代理 | 工具需要图历史 |
 | `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:235` | `project_source` 冻结模式工具 | 源码工具组 |
 | `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |

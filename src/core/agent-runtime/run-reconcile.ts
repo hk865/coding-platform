@@ -555,7 +555,7 @@ export type QueryReconcileClassifierDependencies = {
 
 export type QueryReconcileReport = { queryRunRef: QueryRunRef; row: string; status: 'reconciled' | 'left' | 'failed'; reason: string };
 
-const QUERY_TERMINAL: readonly string[] = ['completed', 'failed', 'cancelled', 'limit_exceeded'];
+const QUERY_TERMINAL: readonly string[] = ['completed', 'failed', 'cancelled', 'limit_exceeded', 'yielded'];
 
 /**
  * Classify and settle one unsettled QueryRun. A mappable Kernel terminal

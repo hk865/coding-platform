@@ -306,9 +306,10 @@ export async function assembleSecretaryContext(
   ];
   const goalSection = [...goalLines, goalPayloadText].join('\n');
 
+  const answerFormatText = renderTemplate(texts, 'secretary-answer', {}, input.toolNames).text;
   const answerFormat = secretary.executionKind === 'semantic_query'
-    ? renderTemplate(texts, 'secretary-answer', {}, input.toolNames).text
-    : renderTemplate(texts, 'initial-planning-answer', {}, input.toolNames).text
+    ? answerFormatText
+    : answerFormatText
       + '\n' + packString(texts, 'secretary.setupRequired')
       + (effectiveGoalId === null ? '\n' + packString(texts, 'secretary.initialDrafts') : '');
   // Required handoff material is task material: it goes in front of the round,

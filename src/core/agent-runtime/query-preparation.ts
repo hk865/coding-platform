@@ -37,6 +37,7 @@ import { createContextAssembler } from './context-assembler.js';
 import { queryPreparedSectionOrder } from './context-rendering.js';
 import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
 import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
+import { answerToolsOf } from './answer-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextQueryHistoryInputV1 } from './context-types.js';
 import {
@@ -329,6 +330,9 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         reviewSource: false,
         frozenSource: builtinTools.includes('read'),
         materialTools: false,
+        // The frozen answer shape follows the request round's own execution
+        // kind, never the Host grant or the Role ceiling.
+        answerTools: secretaryFacts === null ? null : answerToolsOf(secretaryFacts.executionKind),
         // Preparation freezes the CAPABILITY set; the actual owner wiring is
         // re-checked by the same function at start.
         // Query builds graph/read-only tools and secretary-admitted note tools.

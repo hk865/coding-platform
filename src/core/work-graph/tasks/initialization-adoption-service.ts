@@ -62,6 +62,16 @@ export type InitializationAdoptionServiceDependencies = {
   eventId: () => string;
 };
 
+/** The roles `assignments` name that `served` does not serve, in assignment order. `accept` and the submit composer share it. */
+export function unservedRoles(
+  assignments: readonly { role: string }[] | undefined,
+  served: readonly string[],
+): string[] {
+  return (assignments ?? [])
+    .filter(assignment => !served.includes(assignment.role))
+    .map(assignment => assignment.role);
+}
+
 const ACCEPT_OPERATION = 'initialization.adoptAccept';
 const ADVANCE_OPERATION = 'initialization.adoptAdvance';
 
@@ -271,11 +281,11 @@ export function createInitializationAdoptionService(
       const served = deps.roles.readServedRoles({
         projectId: ctx.projectId, workspaceId: source.answerRef.workspaceId,
       });
-      for (const assignment of parsed.response.plan.assignments ?? []) {
-        if (!served.includes(assignment.role)) {
-          return rejected('invalid',
-            `the plan assigns role ${assignment.role}, which no execution binding of this workspace serves (served: ${served.length === 0 ? '(none)' : served.join(', ')})`);
-        }
+      const unserved = unservedRoles(parsed.response.plan.assignments, served);
+      if (unserved.length > 0) {
+        const role = unserved[0]!;
+        return rejected('invalid',
+          `the plan assigns role ${role}, which no execution binding of this workspace serves (served: ${served.length === 0 ? '(none)' : served.join(', ')})`);
       }
       const setup = parsed.response.setup ?? null;
       if (setup === null) {

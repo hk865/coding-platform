@@ -419,7 +419,7 @@ export function anchorKeyOf(anchor: NoteAnchorV1): string {
   }
 }
 
-function moduleRefOf(projectId: string, moduleId: string): ModuleRef {
+export function moduleRefOf(projectId: string, moduleId: string): ModuleRef {
   return { projectId, moduleId };
 }
 

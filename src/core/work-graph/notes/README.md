@@ -43,6 +43,7 @@
 | `foldUpdateDue` | `src/core/work-graph/notes/note-update-due.ts:57` | 纯 fold：trigger 相对 baseline，返回 `updateDue` 与 `latestTriggerCursor` | 需要更新到期判断时；不要另写规则 |
 | `stageContinuityOf` | `src/core/work-graph/notes/note-continuity.ts:18` | 纯 stage 连续性：revision 窗口内缺席即 `retired`，读不到为 `unchecked` | 注记派生字段的 stage 退役判断 |
 | `anchorKeyOf` | `src/core/work-graph/notes/note-anchors.ts:410` | 唯一 anchor key 规则；file key 只含路径、不含 symbol | 任何锚点比较/存储前 |
+| `moduleRefOf` | `src/core/work-graph/notes/note-anchors.ts:422` | 由 `projectId` 和 `moduleId` 组成 `ModuleRef` | 要 `ModuleRef` 时；不要另写构造器 |
 | `topicKeyOf` | `src/core/work-graph/notes/note-anchors.ts:105` | 主题归一化：NFC、空白折叠、ASCII 小写 | 主题比较/查重 |
 | `isSafeRelativePath` | `src/core/work-graph/notes/note-anchors.ts:402` | 安全的 workspace 相对路径（无 `\`、盘符、`.`/`..`） | file 锚点/路径输入 |
 | `normalizePath` | `src/core/work-graph/notes/note-anchors.ts:583` | 去掉前导 `./`；其余由 class-1 提前拒绝 | 锚点 key 归一化 |

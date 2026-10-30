@@ -97,7 +97,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     },
     "handoff-write-understanding-secretary": {
@@ -173,6 +173,9 @@
     "find_related_sessions": "tools/find_related_sessions.json",
     "read_session_card": "tools/read_session_card.json",
     "record_unknown_call_review": "tools/record_unknown_call_review.json",
-    "propose_safer_method": "tools/propose_safer_method.json"
+    "propose_safer_method": "tools/propose_safer_method.json",
+    "submit_secretary_answer": "tools/submit_secretary_answer.json",
+    "submit_initial_plan": "tools/submit_initial_plan.json",
+    "submit_initial_questions": "tools/submit_initial_questions.json"
   }
 }

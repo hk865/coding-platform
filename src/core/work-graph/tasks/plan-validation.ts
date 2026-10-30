@@ -19,9 +19,18 @@ import {
 } from './plan-task-basis.js';
 import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from '../model/task-index.js';
 
+/** One task member as these rules read it: a v2 answer's task carries no `phase` yet, and no reader here needs one. */
+export type PlanTaskView = Pick<RuntimeTask,
+  'taskId' | 'stageId' | 'requirementLevel' | 'taskKind' | 'disposition' | 'scope' | 'executionIntent'>;
+
+/** The plan members the admission rules read, so the answer's `InitialPlanningResponsePlanV2` passes directly. */
+export type PlanDraftView = Pick<PlanRevisionDraft,
+  'stages' | 'assignments' | 'obligations' | 'taskHierarchy' | 'executionDag' | 'taskRelations' | 'inputRequirements'>
+  & { tasks: readonly PlanTaskView[] };
+
 /** Task ids that actually carry an explicit `executionIntent` in this draft.
  * The new exemption branches must key on this, never on a raw legacy count. */
-export function explicitExecutionIntentTaskIds(draft: PlanRevisionDraft): string[] {
+export function explicitExecutionIntentTaskIds(draft: Pick<PlanDraftView, 'tasks'>): string[] {
   return (draft.tasks ?? []).filter((task) => task.executionIntent !== undefined).map((task) => task.taskId);
 }
 
@@ -34,11 +43,21 @@ export function explicitExecutionIntentTaskIds(draft: PlanRevisionDraft): string
  * plan-membership is judged, so a malformed list is skipped (the codec rejects
  * it before persistence) instead of throwing.
  */
-export function validatePlanDraft(draft: PlanRevisionDraft, policy: CompletionPolicyContentV1 | null): PlanValidationError[] {
+export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicyContentV1 | null): PlanValidationError[] {
   const issues: PlanValidationError[] = [];
   const tasks = draft.tasks ?? [];
   const taskById = new Map(tasks.map((task) => [task.taskId, task]));
   const stageIds = new Set((draft.stages ?? []).map((stage) => stage.stageId));
+  // One new plan names each task once: a duplicate would silently overwrite
+  // the earlier definition in every task-keyed read (propose and apply share this rule).
+  const seenTaskIds = new Set<string>();
+  for (const task of tasks) {
+    if (seenTaskIds.has(task.taskId)) {
+      issues.push(planValidationError(`tasks[${task.taskId}].taskId`, 'duplicate_task_id',
+        `task id ${task.taskId} is not unique in this plan`));
+    }
+    seenTaskIds.add(task.taskId);
+  }
   const explicitIntentTaskIds = new Set(explicitExecutionIntentTaskIds(draft));
   // The old "at least one required executable task" gate is count-orthogonal to
   // an explicit v2 intent: an optional/active or required/deferred `plan_only`
@@ -147,7 +166,7 @@ export function validatePlanDraft(draft: PlanRevisionDraft, policy: CompletionPo
         `task ${edge.taskId} depends on itself`));
     }
   });
-  if (hasDirectedCycle(buildTaskAdjacency(draft))) {
+  if (hasDirectedCycle(buildTaskAdjacency({ tasks, executionDag: draft.executionDag }))) {
     issues.push(planValidationError('executionDag', 'dag_cycle', 'RuntimeExecutionDAG must be acyclic'));
   }
   if (hasCycleInEdges(draft.taskHierarchy.parentOf.map((edge) => ({ from: edge.parentTaskId, to: edge.childTaskId })))) {
@@ -200,13 +219,14 @@ export function validatePlanDraft(draft: PlanRevisionDraft, policy: CompletionPo
  * new task is never added without a dispatch entry), and a `gate` task carries
  * none (gate conclusions come from evidence reduction, not implementation runs).
  */
-export function validatePlanAssignments(draft: PlanRevisionDraft): string[] {
+export function validatePlanAssignments(draft: Pick<PlanDraftView, 'tasks' | 'assignments'>): string[] {
   const reasons: string[] = [];
   const assignments = draft.assignments ?? [];
+  const tasks = draft.tasks;
   const counts = new Map<string, number>();
   for (const assignment of assignments) counts.set(assignment.taskId, (counts.get(assignment.taskId) ?? 0) + 1);
-  const taskById = new Map(draft.tasks.map((task) => [task.taskId, task]));
-  for (const task of draft.tasks) {
+  const taskById = new Map(tasks.map((task) => [task.taskId, task]));
+  for (const task of tasks) {
     const count = counts.get(task.taskId) ?? 0;
     if (task.taskKind === 'work') {
       // An explicit plan_only node records intent only and may legitimately
@@ -610,7 +630,7 @@ export type UnknownModuleTaskV1 = { taskId: string; moduleId: string };
 /** L10: every task with `scope.kind === 'module'` whose `moduleRef` is not a `catalog.modules[].ref.moduleId`, in
  * draft task order, whatever its kind, level, disposition or acceptance. Tolerant like `validatePlanDraft` (:34–:36):
  * `draft.tasks ?? []`, a task without an object `scope` is skipped; never throws. (body free) */
-export function unknownModuleTasksOf(draft: PlanRevisionDraft, catalog: AdoptedArchitecture): UnknownModuleTaskV1[] {
+export function unknownModuleTasksOf(draft: Pick<PlanDraftView, 'tasks'>, catalog: AdoptedArchitecture): UnknownModuleTaskV1[] {
   const known = new Set(catalog.modules.map((module) => module.ref.moduleId));
   const unknown: UnknownModuleTaskV1[] = [];
   const tasks = Array.isArray(draft.tasks) ? draft.tasks : [];

@@ -14,7 +14,7 @@
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（18 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 153 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 154 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（15 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（148 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
@@ -94,6 +94,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S5R2-b-support.ts` — round-2 B：真实 S5 owner，不跑 Runtime/模型/check；`tests/business/S5R2-automation-cards.test.ts` 在用。
 - `S5R2-c-support.ts` — round-2 C：共享 S5 fixture 上的 driver（R2C01–R2C08）；`tests/business/S5R2-settings-replay.test.ts` 在用。
 - `S5R2-d-support.ts` — round-2 D：共享 S5 fixture 上的 driver 排序（R2D）；`tests/app/S5R2-driver-safe-point.test.ts` 在用。
+- `FA-forms.ts` — 97-3 的填表式回答：手写的表单（semantic、initial questions、S6B3 的坏/好 initial plan）和它们存入后的期望值（含平台填入的 refs 与版本字段），以及按 queryJobId 从请求读里找轮的结构类型 `roundOf`；不 import `src` 或生产类型；`tests/runtime/FA-answer-tool.test.ts`、`tests/scenarios/FA-answer-restart.test.ts` 在用。
 - `S6A-request-fixture.ts` — 冻结，只能在末尾追加导出；真实 Host + memory/SQLite 的请求世界（三种 runtime binding、query profile、Workflow binding、脚本模型、Kernel store）；`tests/scenarios/S6A-request-concurrency.test.ts` 在用。
 - `S6A-host-fixture.ts` — 冻结；6A-2 的 SE2 世界，在 `openS6ARequestWorld` 上加：按 Session 排队的脚本回复（没排的走世界模型）、按提交身份和 Session 的提交闸门（claim、prepared、start、drop 之前）、Kernel 入口 / 模型请求 / 工具调用闸门（闸门只对设门时那个 Host 生效）、SQLite 上的崩溃和重启（只在旧 Host 的推进都停住时用）、`resumeOnStartup` 开关、设置和提示词包路由；`ensureProjectPointers` 补齐架构和完成策略指针；测试文件要自己装 `S6A-commit-barrier.ts` 的两个 `vi.mock`；另导出共用 helper `callPublishedOwnerAsHost`（`S6A-host-fixture.ts:785`），是 `S6B3-fixture.ts` 和 `S7A2-fixture.ts` 两个 `call...PublishedOwner` 包装的实现，包装各自只转 fixture 前缀。
 - `S6A-history-fixture.ts` — 冻结；只用公开步骤造一条请求的历史：跨 A、B 两个 Session、十轮边界、带选中思路的吸收、drop 结束的轮、长 UTF-8 回答、A 上结果未知的轮、后来的回答；多数构造要等 6A-2 的轮次自己跑起来才能用。

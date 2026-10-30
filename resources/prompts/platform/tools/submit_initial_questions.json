@@ -1,0 +1,8 @@
+{
+  "description": "The only way to give this round's answer when it is questions for the person. Fill the fields and call it; the platform builds and stores the answer from them. Do not write the answer as text.",
+  "parameters": {
+    "summary": "One line summarizing the decision the person must make.",
+    "questions": "A non-empty array of strings; ask only the real product or authorization decisions the request leaves open. Do not invent authorization.",
+    "goalCardDrafts": "Only when this request has no goal: optional drafts; a questions answer may carry drafts or none. Each draft is {objective, completion, autonomy, screening}: objective one sentence; completion a non-empty array of checkable completion criteria; autonomy \"every_step\" or \"after_plan_confirmation\"; screening is optional: omit it or use null when you did not screen the draft, otherwise {modules, size, conflictsWith, dependsOn, urgency, suggestedPosition, note} with bare moduleIds and goalIds for the platform to fill their refs; size is \"small\", \"medium\", \"large\" or \"unknown\", urgency is \"high\", \"normal\" or \"low\", suggestedPosition is null or an integer >= 0, note is at most 512 UTF-8 bytes. A draft is a proposal only."
+  }
+}

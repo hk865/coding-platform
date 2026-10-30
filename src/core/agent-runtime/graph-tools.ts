@@ -535,3 +535,4 @@ export function createGraphTools(config: GraphToolsConfig): {
     create: () => GRAPH_TOOL_NAMES.map(name => definitionFor(name)),
   };
 }
+export { success, rejectedResult };

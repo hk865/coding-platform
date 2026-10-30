@@ -37,19 +37,16 @@ const EXISTING_DIGESTS = {
 } as const;
 
 const secretaryAnswerText = [
-    'Return exactly one JSON object as your entire final answer: no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.',
-    'The object has exactly these fields:',
-    '- schemaVersion: 1.',
-    "- body: your answer to the person, in the person's language. It must not be empty.",
-    '- ideas: [] or 2 to 3 options, each {"title", "detail"}. title is one line of at most 120 characters; detail is at most 600 characters. Give options only when the person has a real choice between different approaches. Never give exactly one option and never more than three.',
-    '- goalCardDrafts: [] unless this request has no goal and the person asks for new work. Each draft is '
-    + '{"objective", "completion", "autonomy", "screening"}: objective is one sentence; completion is a non-empty '
-    + 'array of checkable completion criteria; autonomy is "every_step" or "after_plan_confirmation"; screening is '
-    + 'optional: omit it or use null when you did not screen the draft, otherwise give {"modules": [ModuleRef...], '
-    + '"size": "small" | "medium" | "large" | "unknown", "conflictsWith": [GoalRef...], "dependsOn": [GoalRef...], '
-    + '"urgency": "high" | "normal" | "low", "suggestedPosition": null or an integer >= 0, "note": a string of at '
-    + 'most 512 UTF-8 bytes}. Use the full ModuleRef and GoalRef objects exactly as the tools show them. A draft is '
-    + 'a proposal only; no goal exists until the person confirms it.',
+    '{{#tool:submit_secretary_answer}}Answer only by calling submit_secretary_answer with this round\'s answer, as '
+    + 'the last and only call of this reply; never write the answer as text. If it returns problems, fix every one '
+    + 'and call it again in this round.{{/tool:submit_secretary_answer}}'
+    + '{{#tool:submit_initial_plan}}When this round\'s answer is a plan, answer only by calling submit_initial_plan '
+    + 'with it, as the last and only call of this reply; never write the answer as text. If it returns problems, fix '
+    + 'every one and call it again in this round.',
+    '{{/tool:submit_initial_plan}}{{#tool:submit_initial_questions}}When this round\'s answer is questions for the '
+    + 'person, answer only by calling submit_initial_questions with them, as the last and only call of this reply; '
+    + 'never write the answer as text. If it returns problems, fix every one and call it again in this round.'
+    + '{{/tool:submit_initial_questions}}',
 ].join('\n');
 
 /** The platform `secretary-round` layout, written out: one blank line after the prelude. */
@@ -63,9 +60,9 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 }
 
 describe('the platform secretary templates', () => {
-    it('declares the round at version 1 and the answer at version 2, with their code-owned slots and digests', () => {
+    it('declares the round at version 1 and the answer at version 3, with their code-owned slots and digests', () => {
         const versions = {
-            'secretary-round': 1, 'secretary-answer': 2,
+            'secretary-round': 1, 'secretary-answer': 3,
             'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
         } as const;
         for (const id of [
@@ -98,7 +95,7 @@ describe('the platform secretary templates', () => {
         expect(sha256Hex(PACK.templates['secretary-round']!))
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
-            .toBe('c71ab43139a1b843487e7f41a9bb87ee83fd5d59fee5ffd60815f84a6ee75698');
+            .toBe('5c3e4e0ba48660bf4c95411991769d7945e21ae8830ab08e6226c0b5938d038a');
         expect(sha256Hex(PACK.templates['handoff-write-understanding-secretary']!))
             .toBe('d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6');
         expect(sha256Hex(PACK.templates['handoff-brief-secretary']!))
@@ -140,27 +137,17 @@ describe('the platform secretary templates', () => {
             answerOmitted: '(answer cut at 2 KiB)',
             noAnswer: '(no answer)',
             notEnded: '(still running or result unknown)',
-            initialDrafts: 'This request has no goal yet, so a "plan" answer MUST carry a top-level "goalCardDrafts" '
-                + 'array with at least one draft; a "needs_decision" answer may carry drafts or none. Each draft is '
-                + '{"objective", "completion", "autonomy", "screening"}, objective one sentence, completion a non-empty '
-                + 'array of checkable criteria, autonomy "every_step" or "after_plan_confirmation". "screening" is '
-                + 'optional: omit it or use null when the draft was not screened, otherwise {"modules", "size", '
-                + '"conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and '
-                + 'GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", '
-                + 'urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at '
-                + 'most 512 UTF-8 bytes. A "plan" answer MUST also carry a top-level '
-                + '"planDraftIndex" integer naming the zero-based index of the draft this plan is for. A '
-                + '"needs_decision" answer carries no planDraftIndex. A draft is a proposal only.',
-            setupRequired: 'This project has no adopted architecture or no active completion policy yet (see '
-                + '"architecture:" and "completion policy:" above), so a "plan" answer MUST carry the top-level '
-                + '"setup" object with all three fields (architecture, completionPolicy, checks); for this request '
-                + 'the OPTIONAL and "Omit setup" wording above does not apply. Use the projectId shown above in '
-                + 'every module ref and only the available roles shown above in assignments.',
+            initialDrafts: 'This request has no goal yet, so a plan answer needs at least one "goalCardDrafts" entry '
+                + 'and a "planDraftIndex" naming the draft it is for; a questions answer may carry drafts or none. '
+                + 'A draft is a proposal only.',
+            setupRequired: 'This project has no adopted architecture or no active completion policy yet, so a plan '
+                + 'answer must carry the "setup" field with architecture, completionPolicy and checks; the OPTIONAL '
+                + 'and "Omit setup" wording does not apply in this round.',
         });
     });
 
-    it('renders the answer format as the one whole text, with no slots', () => {
-        expect(renderTemplate(PACK, 'secretary-answer', {}, []).text).toBe(secretaryAnswerText);
+    it('renders no text when no submit tool is frozen, with no slots', () => {
+        expect(renderTemplate(PACK, 'secretary-answer', {}, []).text).toBe('');
     });
 
     it('records the platform order as role, goal, notes, task', () => {

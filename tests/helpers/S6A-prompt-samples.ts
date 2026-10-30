@@ -33,7 +33,12 @@
  * A person's pack may order the sections differently (the role first, the three task slots as one block); `order`
  * takes that order and every slot keeps its own leading `\n\n`.
  */
+import { expect } from 'vitest';
 import type { NoteDraftAnchorV1 } from '../../src/contracts/note.js';
+import type { PromptRecordReadResultV1 } from '../../src/contracts/prompts/prompt-set.js';
+import type { QueryJobRef } from '../../src/contracts/query-job.js';
+import { readQuery } from './A2-restart-fixture.js';
+import type { S6AHostWorld } from './S6A-host-fixture.js';
 
 // ---------------------------------------------------------------------------
 // Literals: the secretary strings and templates
@@ -57,22 +62,32 @@ export const SECRETARY_STRINGS = {
 export const SECRETARY_ROUND_TEMPLATE_V1 =
   '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}';
 
-/** The platform pack's versions of the two secretary templates (neither mentions a tool). */
-export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 1, 'secretary-answer': 2 } as const;
+/** The platform pack's versions of the two secretary templates (the answer mentions no tool at pack level). */
+export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 1, 'secretary-answer': 3 } as const;
 
-/** `secretary-answer.txt`: the answer format of a `semantic_query` round. */
-export const SECRETARY_ANSWER_FORMAT_V1 = `Return exactly one JSON object as your entire final answer: no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.
-The object has exactly these fields:
-- schemaVersion: 1.
-- body: your answer to the person, in the person's language. It must not be empty.
-- ideas: [] or 2 to 3 options, each {"title", "detail"}. title is one line of at most 120 characters; detail is at most 600 characters. Give options only when the person has a real choice between different approaches. Never give exactly one option and never more than three.
-- goalCardDrafts: [] unless this request has no goal and the person asks for new work. Each draft is {"objective", "completion", "autonomy", "screening"}: objective is one sentence; completion is a non-empty array of checkable completion criteria; autonomy is "every_step" or "after_plan_confirmation"; screening is optional: omit it or use null when you did not screen the draft, otherwise give {"modules": [ModuleRef...], "size": "small" | "medium" | "large" | "unknown", "conflictsWith": [GoalRef...], "dependsOn": [GoalRef...], "urgency": "high" | "normal" | "low", "suggestedPosition": null or an integer >= 0, "note": a string of at most 512 UTF-8 bytes}. Use the full ModuleRef and GoalRef objects exactly as the tools show them. A draft is a proposal only; no goal exists until the person confirms it.`;
+/** `secretary-answer.txt` rendered for a `semantic_query` round: its one submit block. */
+export const SECRETARY_ANSWER_FORMAT_V1 =
+  "Answer only by calling submit_secretary_answer with this round's answer, as the last and only call of this reply; "
+  + 'never write the answer as text. If it returns problems, fix every one and call it again in this round.';
 
-/** `secretary.initialDrafts`: follows the v2 answer format in a no-goal `initial_coordination` round. */
-export const SECRETARY_INITIAL_DRAFTS = `This request has no goal yet, so a "plan" answer MUST carry a top-level "goalCardDrafts" array with at least one draft; a "needs_decision" answer may carry drafts or none. Each draft is {"objective", "completion", "autonomy", "screening"}, objective one sentence, completion a non-empty array of checkable criteria, autonomy "every_step" or "after_plan_confirmation". "screening" is optional: omit it or use null when the draft was not screened, otherwise {"modules", "size", "conflictsWith", "dependsOn", "urgency", "suggestedPosition", "note"} with full ModuleRef and GoalRef objects exactly as the tools show them; size is "small", "medium", "large" or "unknown", urgency is "high", "normal" or "low", suggestedPosition is null or an integer >= 0, note is at most 512 UTF-8 bytes. A "plan" answer MUST also carry a top-level "planDraftIndex" integer naming the zero-based index of the draft this plan is for. A "needs_decision" answer carries no planDraftIndex. A draft is a proposal only.`;
+/** `secretary-answer.txt` rendered for an `initial_coordination` round: its plan and questions blocks. */
+export const SECRETARY_INITIAL_ANSWER_FORMAT =
+  "When this round's answer is a plan, answer only by calling submit_initial_plan with it, as the last and only call "
+  + 'of this reply; never write the answer as text. If it returns problems, fix every one and call it again in this '
+  + "round.\nWhen this round's answer is questions for the person, answer only by calling submit_initial_questions "
+  + 'with them, as the last and only call of this reply; never write the answer as text. If it returns problems, fix '
+  + 'every one and call it again in this round.';
 
-/** `secretary.setupRequired`: follows the v2 answer format in every `initial_coordination` round. */
-export const SECRETARY_SETUP_REQUIRED = `This project has no adopted architecture or no active completion policy yet (see "architecture:" and "completion policy:" above), so a "plan" answer MUST carry the top-level "setup" object with all three fields (architecture, completionPolicy, checks); for this request the OPTIONAL and "Omit setup" wording above does not apply. Use the projectId shown above in every module ref and only the available roles shown above in assignments.`;
+/** `secretary.initialDrafts`: the no-goal draft fields in an `initial_coordination` round. */
+export const SECRETARY_INITIAL_DRAFTS =
+  'This request has no goal yet, so a plan answer needs at least one "goalCardDrafts" entry and a "planDraftIndex" '
+  + 'naming the draft it is for; a questions answer may carry drafts or none. A draft is a proposal only.';
+
+/** `secretary.setupRequired`: the required setup field in every `initial_coordination` round. */
+export const SECRETARY_SETUP_REQUIRED =
+  'This project has no adopted architecture or no active completion policy yet, so a plan answer must carry the '
+  + '"setup" field with architecture, completionPolicy and checks; the OPTIONAL and "Omit setup" wording does not '
+  + 'apply in this round.';
 
 /** `SECRETARY_HISTORY_ROUNDS` and `SECRETARY_HISTORY_ANSWER_BYTES`: the latest earlier entries shown, each answer's cut. */
 export const SECRETARY_HISTORY_ROUNDS = 10;
@@ -497,11 +512,11 @@ export function earlierEntryText(entry: SampleEarlierEntry): string {
     .join('\n');
 }
 
-/** The answer format of a round: the semantic one, or the v2 one (plus the setup note, and the drafts note for a no-goal request). */
+/** The answer format of a round: the semantic block, or the two initial blocks (plus the setup note and the drafts note). */
 export function answerFormatText(input: { executionKind: 'semantic_query' | 'initial_coordination'; noGoal: boolean;
   semanticAnswerFormat?: string }): string {
   if (input.executionKind === 'semantic_query') return input.semanticAnswerFormat ?? SECRETARY_ANSWER_FORMAT_V1;
-  return `${INITIAL_PLANNING_ANSWER_V2}\n${SECRETARY_SETUP_REQUIRED}`
+  return `${SECRETARY_INITIAL_ANSWER_FORMAT}\n${SECRETARY_SETUP_REQUIRED}`
     + (input.noGoal ? `\n${SECRETARY_INITIAL_DRAFTS}` : '');
 }
 
@@ -596,4 +611,15 @@ export function secretaryInputText(input: SecretaryInputSample): string {
     task: taskRoundSlot(input.round, answerFormat) + taskBatchedSlot(input.batched ?? []) + taskEarlierSlot(input.earlier ?? []),
   };
   return `${input.prelude ?? QUERY_PRELUDE}\n\n${order.map(name => slots[name]).join('')}`;
+}
+
+/** The round's frozen prompt record, read afresh through the runtime's own read. */
+export async function promptRecordOf(world: S6AHostWorld, round: QueryJobRef): Promise<PromptRecordReadResultV1> {
+  const read = world.platform.runtime.readPromptRecord;
+  if (read === undefined) throw new Error('the Host runtime has no readPromptRecord');
+  const runRef = (await readQuery(world.ag2b, round)).run.ref;
+  const record = await read.call(world.platform.runtime, world.humanContext(), runRef);
+  expect(record.status).toBe('ready');
+  if (record.status !== 'ready') throw new Error(`the prompt record read failed: ${JSON.stringify(record)}`);
+  return record.value;
 }

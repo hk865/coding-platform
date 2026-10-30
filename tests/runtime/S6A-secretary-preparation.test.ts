@@ -371,7 +371,7 @@ describe.each(['memory', 'sqlite'] as const)('the four answer formats of a no-go
       expect(input.endsWith(answerFormatText({ executionKind, noGoal: true })),
         `case ${governanceCase.name} uses ${executionKind}`).toBe(true);
       // S10: the drafts note follows the v2 format only for a no-goal coordination round.
-      const drafts = 'a "needs_decision" answer may carry drafts or none';
+      const drafts = 'This request has no goal yet, so a plan answer needs at least one "goalCardDrafts" entry and a "planDraftIndex" naming the draft it is for; a questions answer may carry drafts or none. A draft is a proposal only.';
       expect(input.includes(drafts)).toBe(executionKind === 'initial_coordination');
       expect(input.startsWith(QUERY_PRELUDE)).toBe(true);
       expect(memory.governance.architecture === null).toBe(!governanceCase.architecture);

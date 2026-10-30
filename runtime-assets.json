@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "d124c0f0836d17055cd6e0c282464019aaa84cd4a2dce78d1cb2ae01f5e379ab"
+    "sha256": "8a04d86765276c0859b3d5a2cde96fac9348ee36f9551ed3f3ecaad70e058e52"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "7e0cda9acee5bbf754fa7635137073bcbb448ca337ffb6fa7f53485a0945d074"
+    "sha256": "f9960f300b762bc71cbc9910629063dcfce7eef7c9c0926660afc518d3543971"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -93,7 +93,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "c71ab43139a1b843487e7f41a9bb87ee83fd5d59fee5ffd60815f84a6ee75698"
+    "sha256": "5c3e4e0ba48660bf4c95411991769d7945e21ae8830ab08e6226c0b5938d038a"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
@@ -250,6 +250,18 @@
   {
     "path": "resources/prompts/platform/tools/propose_safer_method.json",
     "sha256": "e359d6f25b801eb5110b34306a61d441fca662da46fc4ccb12916cbeb6fdf32c"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_secretary_answer.json",
+    "sha256": "ef839b969327b8e80d8bb4f52c5052cdb0e1780852a95a8d4020778afe13f568"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_initial_plan.json",
+    "sha256": "cc96385489ddafab954d8c91333854014c253368c78e3dab72d59c459832a42a"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_initial_questions.json",
+    "sha256": "5dd9daf3528030f5b6cf660c5e34c2d4f18a178c640d8398670a3855f49fc817"
   },
   {
     "path": "scripts/cpp-source-query.py",

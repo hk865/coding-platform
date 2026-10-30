@@ -118,7 +118,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'query-planning-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'query-copy-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'secretary-round': { packId: 'platform', version: 1, mentionsTools: [] },
-            'secretary-answer': { packId: 'platform', version: 2, mentionsTools: [] },
+            'secretary-answer': { packId: 'platform', version: 3, mentionsTools: [] },
             'handoff-write-understanding-secretary': { packId: 'platform', version: 1, mentionsTools: [] },
             'handoff-brief-secretary': { packId: 'platform', version: 1, mentionsTools: [] },
             base: { packId: 'platform', version: 2, mentionsTools: [] },
