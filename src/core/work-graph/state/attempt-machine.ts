@@ -129,7 +129,7 @@ export type AttemptGuardContext = {
 /** How the claim reaches the Lease: first claim, W2 continuation, a TaskRequeue (D-3) or a review round (L10). */
 export type AttemptClaimBasis =
   | { kind: 'first' }
-  | { kind: 'continuation'; consumedWait: ConsumedWaitV1 }
+  | { kind: 'continuation'; consumedWait: ConsumedWaitV1; previousRun: RunRef | null }
   | { kind: 'requeue'; requeueRef: TaskRequeueRef;
       /** K3 (U3, L10): the releasing Run and its purpose, read in the same window. */
       leaseRelease?: { releasedBy: RunRef; releasedByPurpose: RunSnapshot['purpose'] | null } }
@@ -754,7 +754,8 @@ function leaseOnClaimed(
       return reject('guard_failed', 'busy', 'this Task already has a Run and cannot be claimed for the first time');
     case 'continuation':
       // ATT-15: the released holder is the yielded Run whose wait this claim consumes.
-      if (state.holderRunId !== basis.consumedWait.runRef.runId) {
+      // `null` is refused by claim-service before the machines; the optional chain keeps the guard total.
+      if (state.holderRunId !== basis.previousRun?.runId) {
         return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
       }
       return accept(reheldLeaseRecord(state, event.claim));

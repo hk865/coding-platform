@@ -27,7 +27,7 @@ const attemptRef: TaskAttemptRef = { aggregateType: 'TaskAttempt', projectId: P,
 const claim: TaskClaim = {
   task: { projectId: P, goalId: G, taskId: T }, planRef: { aggregateType: 'PlanRevision', projectId: P, planId: 'plan' },
   workspaceId: 'w', sessionRef: { projectId: P, sessionId: 's' }, sessionRevision: 1, generation: 1,
-  runRef: nextRunRef, attemptRef,
+  runRef: nextRunRef, previousRun: null, attemptRef,
   outboxRef: { aggregateType: 'DispatchOutboxEntry', projectId: P, goalId: G, taskId: T, attemptId: 'a-next' },
   claimedAt: '2026-10-16T00:00:00.000Z',
 };
@@ -116,25 +116,25 @@ describe('K3-38 review claim (TASK-03r / RUN-01r)', () => {
 
   it('K3-47 (二) L11: a continuation claim is gated by the review blocker and changes nothing', () => {
     const consumedWait = {
-      runRef: originalRunRef,
+      kind: 'wait_reply' as const, originalRun: originalRunRef,
       messageRef: { aggregateType: 'SessionMessage' as const, projectId: P, workspaceId: 'w', messageId: 'm' },
       responseRef: { kind: 'artifact' as const, contentType: 'text/plain', digest: 'a'.repeat(64), sizeBytes: 1,
         source: { kind: 'workspace' as const, refId: 'w', revision: '1' } },
     };
-    const prior = { node: 'YieldedWait' as const, pointer: 'none' as const, bindingProblem: null,
+    const prior = { kind: 'yielded' as const, node: 'YieldedWait' as const, pointer: 'none' as const, bindingProblem: null,
       leaseReleasedByPrior: true, replyProblem: null };
     const common = { taskHasRun: true, prior, requeue: null, review: null, admission: null } as const;
     // RUN-01: the continuation basis is asked through the same shared gate.
-    expect(claimBasisProblem({ kind: 'continuation', consumedWait }, { ...common, reviewBlocker: 'unreadable' }))
+    expect(claimBasisProblem({ kind: 'continuation', consumedWait, previousRun: null }, { ...common, reviewBlocker: 'unreadable' }))
       .toMatchObject({ reason: 'guard_failed', code: 'unavailable', detail: 'unknown_call_review_unreadable' });
-    expect(claimBasisProblem({ kind: 'continuation', consumedWait }, { ...common, reviewBlocker: 'pending' }))
+    expect(claimBasisProblem({ kind: 'continuation', consumedWait, previousRun: null }, { ...common, reviewBlocker: 'pending' }))
       .toMatchObject({ reason: 'guard_failed', code: 'busy', detail: 'unknown_call_review_pending' });
-    expect(claimBasisProblem({ kind: 'continuation', consumedWait }, { ...common, reviewBlocker: 'held' }))
+    expect(claimBasisProblem({ kind: 'continuation', consumedWait, previousRun: null }, { ...common, reviewBlocker: 'held' }))
       .toMatchObject({ reason: 'guard_failed', code: 'busy', detail: 'unknown_call_review_held' });
     // TASK-02: the task machine asks it too and refuses before any effect.
     const before = { ...p4 };
     const result = transitionTask(before, { kind: 'task_claimed', claim,
-      basis: { kind: 'continuation', consumedWait }, budget: { tokenBudget: 1, deadline: null } },
+      basis: { kind: 'continuation', consumedWait, previousRun: null }, budget: { tokenBudget: 1, deadline: null } },
     { taskId: T, claim: claimFacts({ taskHasRun: true, prior, reviewBlocker: 'unreadable' }),
       completion: null, disposition: null });
     expect(result).toMatchObject({ ok: false, reason: 'guard_failed', code: 'unavailable',

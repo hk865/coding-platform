@@ -55,12 +55,13 @@ import {
 import type { FuzzStep } from '../state/invariants.js';
 import {
   assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, performs, readSqlite, SCENARIO_OPERATOR,
-  stepOfReceipt, type HostScenario, type InvariantTarget,
+  stepOfReceipt, waitFor, type HostScenario, type InvariantTarget,
 } from './harness.js';
 import {
   driveChecked, editThenText, execution, hostGoalDisplay, lockLedger, lockLedgerAfter, openWorkRoot, pausedRunOnClosedHostChecked,
   preparedOf, readMessage, redrivePolicy, requiredBriefOf, sessionKey, stepOf, WORK_TARGET,
 } from './support/common.js';
+import { waitExpiryDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { crashMidTurn, expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf } from './support/restart.js';
 
 afterEach(cleanupScenarios);
@@ -147,7 +148,8 @@ it('A8-3a (W-09, RUN-18, ATT-08, SES-06): the Kernel wrote the Turn\'s terminal 
 }, 180_000);
 
 it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved wait message and the yielded terminal was never booked; the restart rebuilds the continuation from the durable facts and books the yield', async () => {
-  const h = await openHostScenario({ automation: redrivePolicy(false), check: 'pass' });
+  const h = await openHostScenario({ automation: redrivePolicy(false), check: 'pass',
+    script: { replies: [{ kind: 'text', text: 'a8-3b expiry continuation answered' }] } });
   // The wait message's recipient takes part in the work Task (as the W-17 case links it).
   const recipient = (await createAG2bSession(h.host, 'a8-3b-recipient', AG2B_QUERY_ROLE,
     [{ target: WORK_TARGET, relation: 'participates' }])).sessionRef;
@@ -159,7 +161,7 @@ it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved
   // so the Kernel yields in its own store and the observer's yielded-terminal write fails (`database is locked`).
   const lock = lockLedgerAfter(h.database, 'SessionMessageSent');
   const model = createScriptedModel([{ kind: 'calls', calls: [{ callId: 'a8-3b-send', name: 'send_session_message',
-    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3B_QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }]);
+    args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId }, text: A8_3B_QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true, deadlineMs: 0.5 } }] }]);
   const root = await openWorkRoot(h, model, lock.observer);
   let started: unknown;
   try {
@@ -211,6 +213,24 @@ it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved
   expect(yielded.outbox).toMatchObject({ status: 'settled' });
   expect(yielded.session).toMatchObject({ occupancy: null, health: 'available' });
   expect(yielded.session.historyCursor).not.toEqual(running.session.historyCursor);
+  // Window A's expiry recovery, on public reads only: the waiting inquiry's deadline is the Host's injected instant,
+  // so the restarted Host's first heartbeat pass records `expiredAt`; driving the same Task then takes the expiry
+  // continuation on the original Task/Session, and its model request carries the visible expiry prompt.
+  const expired = await waitFor(() => readMessage(h, continuation.messageRef),
+    message => message.expiredAt !== null, 'the restarted Host to record the expiry on the injected clock');
+  expect(expired).toMatchObject({ waitAfterSend: true, deadline: expired.expiredAt });
+  await h.advance(h.select('a8-3b-expiry', AG2B_WORK_TASK_ID), { stopBefore: performs('open_checks') });
+  const successorRow = await h.taskRow();
+  if (successorRow.execution === null) throw new Error('the expiry continuation must select its successor Run');
+  const successor = await execution(h, successorRow.execution);
+  expect(successor.run.consumedWait).toMatchObject({ kind: 'expiry', originalRun: runRef,
+    messageRef: continuation.messageRef });
+  expect((await readMessage(h, continuation.messageRef)).acceptedInputs ?? [])
+    .toEqual([expect.objectContaining({ part: 'expiry' })]);
+  const expiryPrompt = waitExpiryDeliveryText({ messageId: continuation.messageRef.messageId,
+    question: A8_3B_QUESTION, deadline: String(expired['deadline']), expiryCount: 1 });
+  expect(h.modelRequests().map(request => request.messages.map(message => typeof (message as { content?: unknown }).content === 'string' ? String((message as { content: string }).content) : '').join('\n')).join('\n'))
+    .toContain(expiryPrompt);
   // L-5 (several waiting sends → EndedUnknown, no continuation): the frozen Kernel refuses a second waiting send in one
   // Turn (`tool_group_yield_unsettled`), so the state is not reachable; the guarded branch is
   // tests/composition/A2-reconcile-classifier-platform.test.ts:116 (OWED §1 RELATED), not repeated here.

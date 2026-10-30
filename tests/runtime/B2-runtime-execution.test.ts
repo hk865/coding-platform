@@ -25,6 +25,7 @@ import { DEFAULT_RUNTIME_BUDGET, ModelBudget } from '../../src/core/agent-runtim
 import { kernelRunLimits } from '../../src/core/agent-runtime/run-limits.js';
 import type { ExecutionEntryPort } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createB2RuntimeFixture, type B2RuntimeFixture } from '../helpers/B2-runtime-fixture.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 
 const fixtures: B2RuntimeFixture[] = [];
 afterEach(async () => {
@@ -33,7 +34,15 @@ afterEach(async () => {
 });
 
 async function makeFixture(options?: Parameters<typeof createB2RuntimeFixture>[0]): Promise<B2RuntimeFixture> {
-  const fixture = await createB2RuntimeFixture(options);
+  const additional = options?.additionalSchemas;
+  const fixture = await createB2RuntimeFixture({
+    ...options,
+    additionalSchemas: {
+      records: [...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...(additional?.records ?? [])],
+      events: [...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...(additional?.events ?? [])],
+      lookups: [...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []), ...(additional?.lookups ?? [])],
+    },
+  });
   fixtures.push(fixture);
   return fixture;
 }

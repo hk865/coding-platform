@@ -138,6 +138,41 @@ const ATTEMPT_STATUSES: readonly string[] = ['claimed', 'started', 'ended'];
 const RUN_OUTCOMES: readonly string[] = ['completed', 'failed', 'cancelled', 'budget_exhausted', 'crashed', 'outcome_unknown', 'yielded'];
 
 /**
+ * The claim input's three-arm consumed wait (7b1rd-04); base refs come from their one owners.
+ * The claim record has no `consumedWait` field, so this is a pure input check called by the
+ * claim service's shape validation.
+ */
+export function consumedWaitProblem(value: unknown, task: { projectId: unknown; goalId: unknown }): string | null {
+  if (!isRecord(value)) return 'ClaimTask.consumedWait is not an object';
+  const kind = value['kind'];
+  const messageProblem = messageRefProblem(value['messageRef'], 'ClaimTask.consumedWait.messageRef');
+  if (messageProblem !== null) return messageProblem;
+  const messageRef = value['messageRef'] as SessionMessageRef;
+  if (messageRef.projectId !== task.projectId) return 'ClaimTask.consumedWait.messageRef is outside the Task project';
+  if (kind === 'intervention') return null;
+  const originalProblem = runRefProblem(value['originalRun'], 'ClaimTask.consumedWait.originalRun');
+  if (originalProblem !== null) return originalProblem;
+  const originalRun = value['originalRun'] as { projectId: string; goalId: string };
+  if (originalRun.projectId !== task.projectId || originalRun.goalId !== task.goalId) {
+    return 'ClaimTask.consumedWait.originalRun is not a Run of this Task';
+  }
+  if (kind === 'wait_reply') return isRecord(value['responseRef']) ? null : 'the wait_reply arm needs a responseRef';
+  if (kind === 'expiry') return nonEmpty(value['expiryInputId']) ? null : 'the expiry arm needs an expiryInputId';
+  return 'ClaimTask.consumedWait kind is not recognized';
+}
+
+/** Required `previousRun` on the claim: null, or a complete RunRef of the task scope. */
+function claimPreviousRunProblem(value: unknown, task: { projectId: unknown; goalId: unknown }): string | null {
+  if (value === undefined) return 'TaskClaim.previousRun is required';
+  if (value === null) return null;
+  const problem = runRefProblem(value, 'TaskClaim.previousRun');
+  if (problem !== null) return problem;
+  const previousRun = value as { projectId: string; goalId: string };
+  return previousRun.projectId === task.projectId && previousRun.goalId === task.goalId
+    ? null : 'TaskClaim.previousRun is not a Run of the task scope';
+}
+
+/**
  * Pure TaskClaim cross-reference check. `task` is the scope anchor: every
  * project/goal/task field must agree with it, the attempt/outbox must name the
  * same attemptId, the outer outbox ref must equal `claim.outboxRef`, and
@@ -162,9 +197,10 @@ export function taskClaimProblem(value: unknown): string | null {
   if (!isRecord(sessionRef) || sessionRef['projectId'] !== projectId || !nonEmpty(sessionRef['sessionId'])) {
     return 'TaskClaim.sessionRef is not a SessionRef of the task project';
   }
-  const runRef = value['runRef'];
-  if (!isRecord(runRef) || runRef['aggregateType'] !== 'Run' || runRef['projectId'] !== projectId
-    || runRef['goalId'] !== goalId || !nonEmpty(runRef['runId'])) {
+  const runRefValueProblem = runRefProblem(value['runRef'], 'TaskClaim.runRef');
+  if (runRefValueProblem !== null) return runRefValueProblem;
+  const runRef = value['runRef'] as { projectId: string; goalId: string };
+  if (runRef.projectId !== projectId || runRef.goalId !== goalId) {
     return 'TaskClaim.runRef does not match the task scope';
   }
   const attemptRef = value['attemptRef'];
@@ -185,6 +221,8 @@ export function taskClaimProblem(value: unknown): string | null {
     || value['generation'] !== value['sessionRevision']) {
     return 'TaskClaim.generation must equal the new Session revision';
   }
+  const previousRunProblem = claimPreviousRunProblem(value['previousRun'], { projectId, goalId });
+  if (previousRunProblem !== null) return previousRunProblem;
   if (!nonEmpty(value['claimedAt'])) return 'TaskClaim.claimedAt is required';
   return null;
 }

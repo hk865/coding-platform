@@ -451,5 +451,6 @@
   "secretary.setupRequired": "This project has no adopted architecture or no active completion policy yet (see \"architecture:\" and \"completion policy:\" above), so a \"plan\" answer MUST carry the top-level \"setup\" object with all three fields (architecture, completionPolicy, checks); for this request the OPTIONAL and \"Omit setup\" wording above does not apply. Use the projectId shown above in every module ref and only the available roles shown above in assignments.",
   "handoff.understandingInstruction": "For each goal listed below, write one understanding note with these five parts: status (where the goal stands), decided (what is settled), open (what is still open), next (what happens next) and risks (what could go wrong).",
   "handoff.briefHeading": "## Handoff brief",
-  "handoff.briefTools": "细节用这些工具按需读"
+  "handoff.briefTools": "细节用这些工具按需读",
+  "delivery.sender.platform": "平台"
 }

@@ -112,7 +112,7 @@ async function continuationRequest(world: K3ReviewCardWorld, claimA: TaskClaim,
     input: {
       goalRef: GOAL_B, planRef: PLAN_B2, taskId: TASK, sessionRef: claimA.sessionRef,
       roleBinding: base.roleBinding, budget: base.budget,
-      consumedWait: { runRef: claimA.runRef, messageRef, responseRef },
+      consumedWait: { kind: 'wait_reply' as const, originalRun: claimA.runRef, messageRef, responseRef },
     },
     meta: { requestId: 'k3-47-continuation-refused', expected: [
       { ref: GOAL_B, revision: goal.value.goal.revision },

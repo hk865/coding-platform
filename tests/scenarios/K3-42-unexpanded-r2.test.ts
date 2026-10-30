@@ -71,7 +71,7 @@ const MODEL_CRASH_UNLIKELY = '模型写：没看到崩溃痕迹';
  * byte. Tuned so the WORK manifest is under 262,144 while the REVIEW manifest
  * with the expanded item is over it and its floor is not.
  */
-const INSTRUCTION_REPEAT = 243_885;
+const INSTRUCTION_REPEAT = 243_745;
 const LONG_INSTRUCTION = 'K3-42 (二) sized instruction: ' + 'x'.repeat(INSTRUCTION_REPEAT);
 
 afterEach(async () => {

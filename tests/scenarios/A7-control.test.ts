@@ -514,8 +514,15 @@ it('A7 yielded wait: the yielded terminal keeps the queued steer (no terminal_wi
   const successorRef = await selectedRun(scenario);
   expect(successorRef.runId).not.toBe(yieldedRef.runId);
   const successor = await readExecution(scenario.host, successorRef);
-  expect(successor.run.consumedWait).toMatchObject({ runRef: yieldedRef, messageRef: yielded.run.continuation.messageRef });
+  expect(successor.run.consumedWait).toMatchObject({ kind: 'wait_reply', originalRun: yieldedRef, messageRef: yielded.run.continuation.messageRef });
   expect(successor.session.ref.sessionId, 'the continuation claims the yielded Run\'s Session').toBe(yielded.session.ref.sessionId);
+
+  // The successor runs to its end and the Task is satisfied.
+  if (claimed.next === null) throw new Error('the successor start must be next');
+  const done = await scenario.advance(claimed.next);
+  expect(done.state).toBe('completed');
+  expect(await scenario.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
+  expect(scenario.counts(), 'two work calls and one consultation call').toMatchObject({ modelCalls: 3 });
 
   // RD-8: the yielded Run whose continuation the successor consumed takes no control of any kind, and nothing is written.
   const before = scenario.counts();
@@ -525,13 +532,6 @@ it('A7 yielded wait: the yielded terminal keeps the queued steer (no terminal_wi
       reason: 'a successor Run already consumed the yielded wait continuation; no new control intent is accepted' });
   }
   expect(scenario.counts()).toEqual(before);
-
-  // The successor runs to its end and the Task is satisfied.
-  if (claimed.next === null) throw new Error('the successor start must be next');
-  const done = await scenario.advance(claimed.next);
-  expect(done.state).toBe('completed');
-  expect(await scenario.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
-  expect(scenario.counts(), 'two work calls and one consultation call').toMatchObject({ modelCalls: 3 });
 }, 120_000);
 
 // ===========================================================================

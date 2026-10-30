@@ -71,7 +71,9 @@ import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
-import { messageConsumptionProblem, messageFactsOfRecord } from '../core/work-graph/state/message-machine.js';
+import { deliveryEligibility, messageFactsOfRecord,
+  type DeliveryFactsV1, type DeliveryResponseWaitV1 } from '../core/work-graph/state/message-machine.js';
+import { EXPIRY_PAGE, type DueWaitPageInputV1 } from '../core/work-graph/communication/message-expiry.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
@@ -1700,6 +1702,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   async function inputCompleted(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<boolean> {
     return (await inputCompletion(ctx, message)) === 'completed';
   }
+  async function gateFacts(ctx: CoreCallContext,
+    message: import('../core/work-graph/model/communication-contracts.js').SessionMessage,
+    part: { part: 'message'; delivered: boolean } | { part: 'response'; accepted: boolean },
+    wait: DeliveryResponseWaitV1 | null): Promise<DeliveryFactsV1 | null> {
+    const extra = await platform.workflow.readDeliveryEligibilityFacts?.(ctx, { messageRef: message.ref });
+    if (extra === undefined || extra.status !== 'ready') return null;   // the caller keeps it queued
+    const base = { consumption: messageFactsOfRecord(message), ...extra.value };
+    return part.part === 'message' ? { ...base, part: 'message', delivered: part.delivered }
+      : { ...base, part: 'response', accepted: part.accepted, wait: wait ?? { kind: 'none' } };
+  }
   async function consumeIdle(entry: WorkbenchInputConsumer): Promise<void> {
     const ctx = hostContext(entry.scope);
     const profile = runtimeConfiguration?.queryProfiles.find(p => p.id === entry.queryProfileId
@@ -1725,10 +1737,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       for (const message of inbox.value.items) {
         // §3.9: the Host offers only messages the one consumption rule allows; the owner re-checks with the message
         // revision guarded, and the public reads still show every message.
-        if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) continue;
         const inquiry = message.intent === 'inquiry';
         if (message.status === 'responded' || (!inquiry && await inputCompleted(ctx, message))) continue;
         if (!inquiry && (card.value.availability !== 'idle' || card.value.record.occupancy !== null)) continue;
+        const delivered = (message.acceptedInputs ?? []).some(input => input.part === 'message');
+        const facts = await gateFacts(ctx, message, { part: 'message', delivered }, null);
+        if (facts === null || !deliveryEligibility(facts).offerable) continue;
+        const intervention = !inquiry && message.intent !== 'notify' && (message.intent === 'action_request'
+          || (message.sender.kind === 'host' && message.sender.actor.kind === 'human'));
+        if (intervention) {
+          const claimed = await platform.workflow.handleIntervention?.(ctx, { messageRef: message.ref });
+          if (claimed?.status === 'claimed') {
+            await collaborationDriver.start(hostScopeContext(entry.scope, actor), {
+              advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
+                goalRef: { aggregateType: 'Goal', projectId: claimed.claim.task.projectId, goalId: claimed.claim.task.goalId },
+                sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: claimed.claim.task.taskId },
+              queryProfileIds: runtimeProfiles.filter(profile => profile.scope.projectId === entry.scope.projectId
+                && profile.scope.workspaceId === entry.scope.workspaceId).map(profile => profile.id),
+            });
+            return;
+          }
+          continue;
+        }
+        if (!inquiry) continue;
         await platform.workflow.consumeConsultation?.(ctx, {
           schemaVersion: 1, messageRef: message.ref, goalRef: entry.goalRef,
           roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
@@ -1743,12 +1774,21 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const outbox = await platform.messages.readOutbox(ctx, { senderSession: entry.sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
       if (outbox.status !== 'ready') return;
       for (const message of outbox.value.items) {
-        if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) continue;
         if (message.response === null || (message.acceptedInputs ?? []).some(input => input.part === 'response')) continue;
         if (message.sender.kind !== 'work_run') continue;
         const source = await platform.executions.readExecution(ctx, message.sender.runRef);
         if (source.status !== 'ready' || source.value.run.controlState?.desiredState === 'paused'
           || source.value.run.controlState?.desiredState === 'cancelled' || source.value.run.outcome === 'cancelled') continue;
+        const waitRead = await platform.sessionFacts.readWait(ctx, { messageRef: message.ref });
+        let wait: DeliveryResponseWaitV1 = { kind: 'none' };
+        if (waitRead.status === 'ready') {
+          wait = waitRead.value.state.state === 'consumed' ? { kind: 'consumed' }
+            : waitRead.value.state.state === 'withdrawn' ? { kind: 'none' }
+            : { kind: 'unconsumed', boundHere: false };
+        } else if (waitRead.status !== 'not_found') continue;   // 7b1rd-18: only a non-wait is `none`
+        const facts = await gateFacts(ctx, message, { part: 'response',
+          accepted: (message.acceptedInputs ?? []).some(input => input.part === 'response') }, wait);
+        if (facts === null || !deliveryEligibility(facts).offerable) continue;
         await platform.workflow.consumeConsultation?.(ctx, {
           schemaVersion: 1, part: 'response', messageRef: message.ref, goalRef: entry.goalRef,
           roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
@@ -1950,7 +1990,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
 
   // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
-  const attentionDone: Promise<void> = (attentionScopes.length === 0 && inputConsumers.length === 0 && noteScribeTodos === undefined) || !leaseOwned ? Promise.resolve() : (async () => {
+  const attentionDone: Promise<void> = !leaseOwned ? Promise.resolve() : (async () => {
     const scanner = createAttentionScanner({ workspace: platform.workspace, messages: platform.messages,
       readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime) });
     const entries = attentionScopes.map(scope => ({
@@ -1961,7 +2001,32 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const period = Math.max(1, Math.min(...attentionScopes.map(scope => scope.config.heartbeatMs),
       ...inputConsumers.map(entry => entry.heartbeatMs), scribeReminderPeriodMs));
     const lastInputScan = new Map<string, number>();
+    const expiryCursors = new Map<string, DueWaitPageInputV1['after']>();
+    const expireDueWaits = async (): Promise<void> => {
+      for (const workspace of workspaces) {
+        const key = scopeKey(workspace.scope);
+        const ctx = hostContext(workspace.scope);
+        const before = expiryCursors.get(key) ?? null;
+        const due = await platform.messageExpiry.readDueWaits(ctx, {
+          workspace: workspace.scope,
+          page: { limit: EXPIRY_PAGE, after: before } });
+        if (due.status !== 'ready') continue;                       // a failed page is retried next heartbeat, never "no due"
+        let previous = before;
+        let notDue = false;
+        for (const item of due.value.items) {
+          const written = await platform.messageExpiry.recordExpiry(ctx, { messageRef: item.messageRef });
+          if (written.status === 'skipped' && written.reason === 'not_due') {
+            expiryCursors.set(key, previous);                       // the exclusive cursor stays before this item
+            notDue = true;
+            break;
+          }
+          previous = item.after;
+        }
+        if (!notDue) expiryCursors.set(key, due.value.next);
+      }
+    };
     while (!attentionAbort.signal.aborted) {
+      await expireDueWaits();
       for (const entry of inputConsumers) {
         const key = canonicalJson({ scope: entry.scope, sessionRef: entry.sessionRef } as never);
         // The input-consumer throttle stays on the wall clock: the existing Host

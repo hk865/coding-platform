@@ -29,6 +29,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { AG2B_QUERY_ROLE, AG2B_WORK_ROLE, AG2B_WORK_TASK_ID, createAG2bSession } from '../helpers/AG2b-collaboration-fixture.js';
 import { submitControl, TASK } from '../helpers/A2-restart-fixture.js';
+import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, SCENARIO_OPERATOR, type HostScenario } from './harness.js';
 import { acceptedMessageInputs, archiveSession, consult, occurrences } from './support/brief.js';
 import {
@@ -134,7 +135,8 @@ it('C3 (P17, same Session): Run 2 continues in Run 1\'s Session; the reply enter
   // The reply entered once, as the response part of the original message, accepted by Run 2's Turn.
   const run2KernelRunId = run2.run.executionHistory?.kernel.runId;
   expect(acceptedMessageInputs(h.database).filter(input => input.messageId === messageRef.messageId))
-    .toEqual([{ runId: run2KernelRunId, messageId: messageRef.messageId, part: 'response', text: REPLY }]);
+    .toEqual([{ runId: run2KernelRunId, messageId: messageRef.messageId, part: 'response',
+      text: waitReplyDeliveryText({ messageId: messageRef.messageId, question: QUESTION, body: REPLY }) }]);
   expect(await readMessage(h, messageRef)).toMatchObject({ acceptedInputs: [{ part: 'response', executionRef: run2Ref,
     kernel: { runId: run2KernelRunId } }] });
   // So the model sees it once: not a second time from the brief.

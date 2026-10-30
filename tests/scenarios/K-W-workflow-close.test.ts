@@ -28,6 +28,7 @@ import {
   writeAutomationSettings, writeStaleLock,
 } from '../helpers/A2-restart-fixture.js';
 import { startKLegacyReaderHost } from '../helpers/K-legacy-reader-support.js';
+import { interventionDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { cleanupScenarios, type InvariantTarget } from './harness.js';
 import {
   driveChecked, operatorRequeue, pausedRunOnClosedHostChecked, readCall, requiredBriefOf, textReply,
@@ -164,12 +165,13 @@ async function pausedInterrupted(prefix: string): Promise<Paused> {
  * after it. On the continuation it must not be re-delivered as new input; it
  * appears only in the continuation brief.
  */
-async function pausedInterruptedWithAcceptedMessage(prefix: string): Promise<Paused & { acceptedText: string }> {
+async function pausedInterruptedWithAcceptedMessage(prefix: string): Promise<Paused & { acceptedText: string; acceptedMessageId: string }> {
   const root = await tempDir(`${prefix}-ws-`);
   const database = await tempDir(`${prefix}-db-`);
   const publicDir = await publicDirectory();
   const inv: InvariantTarget = { database };
   const acceptedText = `${prefix}: a message the interrupted Turn already accepted`;
+  let acceptedMessageId = '';
   let first: AG2bHost | undefined;
   let pauseSubmitted: WriteResult<SubmittedControl> | undefined;
   first = await startAG2bHost(publicDir, { root, database,
@@ -184,6 +186,7 @@ async function pausedInterruptedWithAcceptedMessage(prefix: string): Promise<Pau
           { recipient: { projectId: session.ref.projectId, sessionId: session.ref.sessionId }, text: acceptedText },
           `${prefix}-accepted`, []));
         expect(sent, 'the accepted message commits while the Turn is open').toMatchObject({ status: 'committed' });
+        if (sent.status === 'committed') acceptedMessageId = sent.value.ref.messageId;
       } else if (index === 1) {
         const run = (await readExecution(first, row.execution)).run;
         pauseSubmitted = await post<WriteResult<SubmittedControl>>(first, 'controls/submit', graphWrite(AG2B_SCOPE,
@@ -209,7 +212,7 @@ async function pausedInterruptedWithAcceptedMessage(prefix: string): Promise<Pau
     await first.host.close();
   }
   await writeStaleLock(database);
-  return { root, database, publicDir, inv, runRef, s1, acceptedText };
+  return { root, database, publicDir, inv, runRef, s1, acceptedText, acceptedMessageId };
 }
 
 /** The person's `继续` (TASK-27) for the paused Run; must commit. */
@@ -513,7 +516,7 @@ it('KA-08 (KE3, L9): a message sent to the original Session while its Turn is st
 }, 180_000);
 
 it('KA-08 (KE3, L9 second clause): a message the interrupted Turn already accepted is not re-delivered to the new Run; only the new message plus the continuation brief reach it', async () => {
-  const { root, database, publicDir, inv, runRef, s1, acceptedText } = await pausedInterruptedWithAcceptedMessage('kw-ka08b');
+  const { root, database, publicDir, inv, runRef, s1, acceptedText, acceptedMessageId } = await pausedInterruptedWithAcceptedMessage('kw-ka08b');
   const newText = 'KA-08: the message that arrives while the Turn is open';
   const second = await startAG2bHost(publicDir, { root, database, checkCommand: 'node -e "process.exit(0)"',
     replies: [textReply('KA-08 second clause answered')] });
@@ -528,7 +531,8 @@ it('KA-08 (KE3, L9 second clause): a message the interrupted Turn already accept
     if (row.execution === null || row.execution.runId === runRef.runId) throw new Error('the continuation Run must be selected');
     const bound = await requiredBriefOf(second, row.execution);
     expect(bound.brief.acceptedInputs.messages.map(entry => entry.excerpt.text),
-      'the brief lists the message the interrupted Turn accepted').toContain(acceptedText);
+      'the brief lists the message the interrupted Turn accepted, as delivered')
+      .toContain(interventionDeliveryText({ messageId: acceptedMessageId, body: acceptedText }));
     const marker = continuationBriefMarker(bound.digest);
     const bodyText = (second.scripted.requests.at(-1)?.messages ?? [])
       .flatMap(message => message.role === 'user' && !message.content.includes(marker) ? [message.content] : []).join('\n');

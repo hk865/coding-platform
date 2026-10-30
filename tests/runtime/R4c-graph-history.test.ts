@@ -42,6 +42,7 @@ import { createExecutionHistoryReader } from '../../src/core/agent-runtime/obser
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import type { SessionHistoryRequest, SessionOperationsPort } from '../../src/core/agent-runtime/session-operations.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
@@ -76,11 +77,11 @@ const runtimeSteps: S2BRuntimeSteps[] = [];
 async function open(kind: ClaimFixtureKind = 'sqlite'): Promise<TaskClaimFixture> {
   const fixture = await createTaskClaimFixture(kind, {
     records: [...CONTROL_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
-      ...MODEL_REQUEST_RECORD_SCHEMAS.records],
+      ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
     events: [...CONTROL_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
-      ...MODEL_REQUEST_RECORD_SCHEMAS.events],
+      ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
     lookups: [...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [],
-      ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []],
+      ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []],
   });
   fixtures.push(fixture);
   return fixture;

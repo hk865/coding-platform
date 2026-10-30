@@ -547,9 +547,10 @@ const counted = (autoCount: number, cap = 3): TaskRequeueSnapshotV1['automation'
 const waitContinuation = (run: RunSnapshot): NonNullable<RunSnapshot['continuation']> => ({ schemaVersion: 1, kind: 'wait_reply', task: run.task,
   sessionRef: { projectId, sessionId: 's' }, messageRef: { aggregateType: 'SessionMessage', projectId, workspaceId, messageId: 'm' } });
 /** A consumed wait (W2): Run r continues `runRef` with a reply. */
-const consumedWait = (runRef: RunRef): NonNullable<RunSnapshot['consumedWait']> => ({ runRef: { ...runRef },
+const consumedWait = (runRef: RunRef): NonNullable<RunSnapshot['consumedWait']> => ({ kind: 'wait_reply', originalRun: { ...runRef },
   messageRef: { aggregateType: 'SessionMessage', projectId, workspaceId, messageId: 'inv-wait' },
-  responseRef: { aggregateType: 'Artifact', digest: sha256Hex('inv-reply'), contentType: 'text/plain; charset=utf-8', sizeBytes: 1 } } as never);
+  responseRef: { kind: 'artifact', contentType: 'text/plain; charset=utf-8', digest: sha256Hex('inv-reply'),
+    sizeBytes: 1, source: { kind: 'workspace', refId: workspaceId, revision: '1' } } });
 
 describe('every checker: a satisfying world and a violating world per clause (exact message lists)', () => {
   it('I-1 checkI1RunningPairing: one open Attempt exactly while the Task runs, paired per D-14', () => {
@@ -1009,7 +1010,7 @@ describe('every checker: a satisfying world and a violating world per clause (ex
     // The prior count is walked back over consumedWait to the first Run with a requeueRef (here Run 2's requeue, autoCount 1).
     const viaWait = (autoCount: number): string[] => system((records, world) => {
       const cont: RunSnapshot = { ...structuredClone(records.run2!), ref: { ...records.run2!.ref, runId: 'inv-cont' },
-        consumedWait: consumedWait(records.run2!.ref) };
+        previousRun: { ...records.run2!.ref }, consumedWait: consumedWait(records.run2!.ref) };
       delete cont.requeueRef;
       world.runs.push(cont);
       world.requeues.push({ ...structuredClone(records.requeue2!), ref: { ...records.requeue2!.ref, afterRunId: 'inv-cont' },

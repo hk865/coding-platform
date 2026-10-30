@@ -51,16 +51,19 @@ vi.mock('../helpers/task-claim-fixture.js', async (importOriginal) => {
   // K3: RUN-25/RUN-22 create an UnknownCallReview in the same commit, so the
   // review snapshot and its `UnknownCallReviewChanged@1` event must be registered.
   const { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } = await import('../../src/core/work-graph/tasks/unknown-call-review-codecs.js');
+  // Session facts read the message sender-wait index, so the canonical message bundle rides along.
+  const { SESSION_MESSAGE_RECORD_SCHEMAS } = await import('../../src/core/work-graph/sessions/message-record-codecs.js');
   const withControls = (
     kind: Parameters<typeof actual.createTaskClaimFixture>[0],
     additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
   ) => actual.createTaskClaimFixture(kind, {
     records: [...additionalSchemas.records, ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
-      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records],
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
     events: [...additionalSchemas.events, ...CONTROL_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events,
-      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events],
+      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
     lookups: [...(additionalSchemas.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
-      ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [])],
+      ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
+      ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
   });
   return { ...actual, createTaskClaimFixture: withControls };
 });

@@ -51,7 +51,7 @@ const sessionRef = { projectId: P, sessionId: 'ses-1' };
 
 const claim: TaskClaim = {
   task: { projectId: P, goalId: G, taskId: T }, planRef, workspaceId: W, sessionRef, sessionRevision: GEN,
-  generation: GEN, runRef: runRef('run-1'), attemptRef: attemptRef('att-1'), outboxRef: outboxRef('att-1'),
+  generation: GEN, runRef: runRef('run-1'), previousRun: null, attemptRef: attemptRef('att-1'), outboxRef: outboxRef('att-1'),
   claimedAt: T_CLAIM,
 };
 const roleBinding: RoleBindingRefV1 = { schemaVersion: 1, bindingId: 'binding-1', templateId: 'worker',

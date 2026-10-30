@@ -78,9 +78,9 @@ function committed<T>(body: unknown, what: string): T {
   if (answer['status'] !== 'committed') throw new Error(`S7A: ${what} did not commit: ${JSON.stringify(body)}`);
   return answer['value'] as T;
 }
-const sameSession = (left: SessionRef, right: SessionRef): boolean =>
+export const sameSession = (left: SessionRef, right: SessionRef): boolean =>
   left.projectId === right.projectId && left.sessionId === right.sessionId;
-const sameRun = (left: RunRef, right: RunRef): boolean =>
+export const sameRun = (left: RunRef, right: RunRef): boolean =>
   left.aggregateType === right.aggregateType && left.projectId === right.projectId
   && left.goalId === right.goalId && left.runId === right.runId;
 const sameQueryRun = (left: QueryRunRef, right: QueryRunRef): boolean =>
@@ -95,7 +95,7 @@ Extract<WorkflowStepReceipt, { kind: K }> | undefined {
   return receipts.find((receipt): receipt is Extract<WorkflowStepReceipt, { kind: K }> => receipt.kind === kind);
 }
 /** This Workflow call's committed claim and its checked `start`; never the Task's current execution. */
-function claimedRunOf(receipts: readonly WorkflowStepReceipt[], what: string): { claim: TaskClaim; run: RunRef } {
+export function claimedRunOf(receipts: readonly WorkflowStepReceipt[], what: string): { claim: TaskClaim; run: RunRef } {
   const claim = receiptOf(receipts, 'claim_task');
   const start = receiptOf(receipts, 'start');
   if (claim === undefined || claim.result.status !== 'committed'
@@ -154,7 +154,7 @@ export const S7A_REPLY_TOOLS: S6AExtraBinding = {
 const worlds = new WeakSet<S6ARequestWorld>();
 
 /** The full Session handle of a line the 6B-1 step created (`sessions/read`). */
-async function sessionOf(world: S6AHostWorld, line: Awaited<ReturnType<typeof createS6BLine>>): Promise<S6ASession> {
+export async function sessionOf(world: S6AHostWorld, line: Awaited<ReturnType<typeof createS6BLine>>): Promise<S6ASession> {
   const card = await world.readSession(line.ref);
   return { label: line.label, ref: line.ref, aggregateRef: card.record.ref,
     role: structuredClone(card.record.role), createdAt: card.record.createdAt };

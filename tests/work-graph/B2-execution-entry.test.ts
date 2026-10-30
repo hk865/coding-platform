@@ -2,11 +2,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { B2_AT, B2_HOST, b2Key, createB2ExecutionFixture, synchronizeB2Commits, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 
 const fixtures: B2ExecutionFixture[] = [];
 async function open(kind: 'memory' | 'sqlite' = 'memory') {
-  const f = await createB2ExecutionFixture(kind); fixtures.push(f); return f;
+  const f = await createB2ExecutionFixture(kind, SESSION_MESSAGE_RECORD_SCHEMAS); fixtures.push(f); return f;
 }
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.close(); });
 

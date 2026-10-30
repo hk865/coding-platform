@@ -32,7 +32,7 @@ import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey as keyOf, canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
-import type { SessionFactsPort, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
+import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import {
   LIVE_ATTEMPT_PHASES, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX, REQUEST_PAGE_SIZE,
@@ -159,7 +159,6 @@ export type RequestSecretaryAdmissionV1 =
   | {
     status: 'admitted';
     session: SessionRecord;
-    wait: SessionWorkWaitV1 | null;
     profile: SecretaryProfileV1;
     /** The Session record guard this read carries. */
     guards: RecordGuard[];
@@ -247,7 +246,7 @@ export async function admitRequestSecretary(
     return { status: 'ready', value: { status: 'refused', code: 'forbidden', reason: 'no_secretary_binding', revision } };
   }
   return { status: 'ready', value: {
-    status: 'admitted', session, wait: facts.value.wait, profile,
+    status: 'admitted', session, profile,
     guards: [{ refKey: sessionAggregateRefKey(session.ref), expectedRevision: session.revision }],
   } };
 }

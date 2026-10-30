@@ -498,8 +498,9 @@ export type RunClaimContext = {
    * `unreadable` refuses `unavailable` (L7 fail-closed). A review claim passes.
    */
   reviewBlocker?: 'pending' | 'held' | 'unreadable';
-  /** Continuation claim: the yielded prior Run the claim consumes; `null` when it is not a Run of this Task. */
+  /** Continuation claim: the prior Run's facts, one arm per what the claim actually consumes. */
   prior: null | {
+    kind: 'yielded';
     node: RunNode;
     pointer: RunPointer;
     /** Wait message, Task and Session binding of the prior continuation (`:596-605`); `null` when they match. */
@@ -507,6 +508,11 @@ export type RunClaimContext = {
     /** The released Lease names the prior Run as holder (`:614-618`). */
     leaseReleasedByPrior: boolean;
     /** The formal saved reply (`:619-636`); `null` when it is consumable. */
+    replyProblem: CoreRejection | null;
+  } | {
+    kind: 'intervention';
+    /** The released Lease's real holder is the claim's `previousRun`; no yielded Run is consumed. */
+    releasedHolder: boolean;
     replyProblem: CoreRejection | null;
   };
   /** Requeue claim (TASK-03, D-3); `null` when the claim's `requeueRef` names no TaskRequeue of this Task. */
@@ -637,7 +643,8 @@ export function reviewBlockerProblem(blocker: 'pending' | 'held' | 'unreadable' 
  */
 export function claimBasisProblem(
   basis: AttemptClaimBasis,
-  facts: Pick<RunClaimContext, 'taskHasRun' | 'prior' | 'requeue' | 'review' | 'admission' | 'reviewBlocker'>,
+  facts: Pick<RunClaimContext, 'taskHasRun' | 'requeue' | 'review' | 'admission' | 'reviewBlocker'>
+    & { prior?: RunClaimContext['prior'] },
 ): Rejected | null {
   const pendingReview = (): Rejected | null => reviewBlockerProblem(facts.reviewBlocker);
   switch (basis.kind) {
@@ -660,7 +667,17 @@ export function claimBasisProblem(
       const pending = pendingReview();
       if (pending !== null) return pending;
       const prior = facts.prior;
+      if (prior === undefined) break;                      // not read yet, like every unread guard
+      if (basis.consumedWait.kind === 'intervention') {
+        if (prior === null || prior.kind !== 'intervention') {
+          return reject('guard_failed', 'busy', 'the intervention claim has no released-holder facts');
+        }
+        if (!prior.releasedHolder) return reject('guard_failed', 'busy', 'the intervention prior Run lease is not released by that Run');
+        if (prior.replyProblem !== null) return rejected(prior.replyProblem);
+        break;
+      }
       if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
+      if (prior.kind !== 'yielded') return reject('guard_failed', 'busy', 'the continuation prior is not a yielded continuation');
       if (prior.node !== 'YieldedWait') {
         return reject('guard_failed', 'busy', 'the continuation prior Run did not yield with a formal continuation');
       }
@@ -843,6 +860,7 @@ export function newRunRecord(input: NewRunInput): RunSnapshot {
     workspaceSnapshot: { workspaceId: claim.workspaceId, revision: input.workspaceRevision },
     status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
+    previousRun: claim.previousRun,
     ...(basis.kind === 'continuation' ? { consumedWait: structuredClone(basis.consumedWait) } : {}),
     ...(basis.kind === 'requeue' ? { requeueRef: basis.requeueRef } : {}),
     ...(basis.kind === 'review' ? { purpose: { kind: 'unknown_call_review' as const,

@@ -712,7 +712,7 @@ function runOf(runId: string, taskId: string, overrides: Partial<RunSnapshot> = 
     attemptId: `${runId}-attempt`, planRef: P1, roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null },
     workspaceSnapshot: { workspaceId: WORKSPACE, revision: 1 }, status: 'ended', outcome: 'completed', exitCode: 0,
     lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`, lastFactEventId: `ev-${runId}`, envelope: null,
-    startedAt: T0, endedAt: T1, ...overrides,
+    startedAt: T0, endedAt: T1, previousRun: null, ...overrides,
   };
 }
 

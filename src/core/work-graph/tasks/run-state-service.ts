@@ -762,11 +762,11 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
       }
     }
     // Run-chain order (oldest first), as `TaskRow.rework.entries`: the chain ending at this Run is
-    // linked by `requeueRef.afterRunId` and `consumedWait.runRef`; a requeue off the chain follows.
+    // linked by `requeueRef.afterRunId` and `previousRun.runId`; a requeue off the chain follows.
     const chain: string[] = [];
     for (let current: RunSnapshot | undefined = run; current !== undefined && !chain.includes(current.ref.runId);) {
       chain.push(current.ref.runId);
-      const previousId: string | undefined = current.requeueRef?.afterRunId ?? current.consumedWait?.runRef.runId;
+      const previousId: string | undefined = current.requeueRef?.afterRunId ?? current.previousRun?.runId;
       current = previousId === undefined ? undefined : runsById.get(previousId);
     }
     const chainIndex = new Map(chain.reverse().map((runId, index) => [runId, index]));

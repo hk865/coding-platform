@@ -140,7 +140,7 @@ describe('L-routes-1: the two view reads', () => {
     expect(Object.keys(record)).not.toContain('disposition');
     const inbox = ready<SessionMessagePage>(await opened.world.post('messages/inbox',
       plain(S6A_SCOPE, { recipient: opened.session.ref, page: { limit: 20 } })), 'the old inbox page');
-    expect(Object.keys(inbox)).toEqual(['items', 'nextCursor', 'sourceCursor']);
+    expect(Object.keys(inbox)).toEqual(['items', 'cursors', 'nextCursor', 'sourceCursor']);
     expect(inbox.items).toHaveLength(1);
     expect(inbox.items[0]).toEqual(opened.sent.message);
   });

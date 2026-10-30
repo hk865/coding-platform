@@ -22,7 +22,7 @@ import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '.
 import type {
   EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordGuard, StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
-import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { LookupValue, RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -37,6 +37,7 @@ import { materialRecordSchemas } from '../../src/core/work-graph/materials/recor
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createContextAssembler, type ContextAssemblerDependencies } from '../../src/core/agent-runtime/context-assembler.js';
 import { createExecutionPreparation, loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
@@ -89,7 +90,7 @@ export type RecordSpy = {
 
 export type MaterialSpy = { openArtifactCalls: number };
 
-export type Records = GoalRecordTransactionPort & RecordLookupPort;
+export type Records = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
 
 export type ClaimConnection = {
   records: Records;
@@ -176,7 +177,7 @@ function uniqueBySchemaId<T>(items: readonly T[], id: (item: T) => string): T[] 
 }
 
 function wrapRecords(target: Records, spy: RecordSpy): Records {
-  return {
+  return withBackendOrderedLookup({
     readMany(refKeys) { spy.readMany.push([...refKeys]); return target.readMany(refKeys); },
     lookupCommit(input) { spy.lookupCommits += 1; return target.lookupCommit(input); },
     commit(input) { spy.commits += 1; return target.commit(input); },
@@ -185,7 +186,7 @@ function wrapRecords(target: Records, spy: RecordSpy): Records {
       spy.lookups.push({ index: request.index, values: [...request.values] });
       return target.lookup(request);
     },
-  };
+  }, target);
 }
 
 /** The real Goal/Plan/Session records plus an accepted plan for two work tasks
@@ -453,7 +454,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
         planRef, roleBinding, budget, workspaceSnapshot: { workspaceId, revision: 1 },
         status, outcome: status === 'ended' ? 'failed' : null, exitCode: null,
         lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-        startedAt: null, endedAt: null };
+        startedAt: null, endedAt: null, previousRun: null };
       const result = await commitRaw([{ refKey: canonicalJson(ref as unknown as JsonValue),
         schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(snapshot) }]);
       if (result.status !== 'committed') throw new Error(`fixture Run seed failed: ${JSON.stringify(result)}`);

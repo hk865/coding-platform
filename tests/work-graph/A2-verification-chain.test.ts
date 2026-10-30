@@ -53,6 +53,7 @@ import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import {
   createR3eEvidenceFixture, R3E_GATE_TASK_ID, R3E_WORK_TASK_ID, type R3eEvidenceFixture,
 } from '../helpers/R3e-evidence-fixture.js';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 
 const KINDS = ['memory', 'sqlite'] as const;
 const fixtures: R3eEvidenceFixture[] = [];
@@ -107,13 +108,13 @@ async function finish(fixture: R3eEvidenceFixture, ref: RoundSnapshot['ref']): P
 
 /** The fixture's records with its candidate lookup replaced; the other ports delegate unchanged. */
 function recordsWithLookup(fixture: R3eEvidenceFixture, lookup: R3eEvidenceFixture['records']['lookup']): R3eEvidenceFixture['records'] {
-  return {
+  return withBackendOrderedLookup({
     commit: (...args) => fixture.records.commit(...args),
     readMany: (...args) => fixture.records.readMany(...args),
     lookupCommit: (...args) => fixture.records.lookupCommit(...args),
     eventAt: (...args) => fixture.records.eventAt(...args),
     lookup,
-  };
+  }, fixture.records);
 }
 
 /** Another evidence owner over the fixture's ledger, with its own records view, source and id sequence. */

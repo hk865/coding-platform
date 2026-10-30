@@ -37,6 +37,7 @@ import { createRunActivityService } from '../../src/core/work-graph/tasks/run-ac
 import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createActivityBackfill } from '../../src/business/workflow/activity-backfill.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
@@ -126,9 +127,12 @@ it('2B-41 (BE3): the automatic backfill bounds A by its own closed Turn, exclude
   const fx = await createS2BRuntimeStoreFixture({
     host: hostProxy,
     additionalSchemas: {
-      records: [...CONTROL_RECORD_SCHEMAS.records, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records],
-      events: [...CONTROL_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events],
-      lookups: [...(CONTROL_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [])],
+      records: [...CONTROL_RECORD_SCHEMAS.records, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
+        ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
+      events: [...CONTROL_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
+        ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
+      lookups: [...(CONTROL_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? []),
+        ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
     },
     scriptedReplies: [
       { kind: 'calls', calls: aReplies },

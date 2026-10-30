@@ -25,6 +25,7 @@ import {
   mutablePromptPacks, openPCQueryFixture, openPCWorkFixture, scriptedModel,
 } from '../helpers/PC-platform-fixture.js';
 import { rlQueryHostCtx } from '../helpers/RL-query-fixture.js';
+import { DELIVERY_SET_IDS } from '../helpers/S7B-delivery-samples.js';
 
 const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const BASE_A = 'PC_BASE_A';
@@ -144,8 +145,8 @@ describe('ruling 14: a Work preparation freezes before the pack await (and rulin
       expect(prepared.texts.strings['context.prelude.work']).toBe('PC_WORK_PRELUDE_A');
       expect(prepared.input.startsWith('PC_WORK_PRELUDE_A')).toBe(true);
       expect(prepared.input).toContain('PC_ROLE_HEADER_A');
-      // Only the templates this preparation really read are frozen, by observation.
-      expect(prepared.set.templates.map(template => template.id)).toEqual(['work-input', 'base']);
+      // Only the templates this preparation really read are frozen, by observation, then the delivery set.
+      expect(prepared.set.templates.map(template => template.id)).toEqual(['work-input', 'base', ...DELIVERY_SET_IDS]);
       // Ruling 18: today's order, projected onto the call kinds Work can produce.
       expect(prepared.set.sectionOrder).toEqual(WORK_ORDER);
     } finally {

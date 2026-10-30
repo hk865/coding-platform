@@ -26,9 +26,10 @@ import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordBackendSchemas, RecordGuard,
   StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
-import type { LookupValue, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { LookupValue, RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import {
   GOAL_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/persistence/record-codecs.js';
@@ -83,7 +84,7 @@ export type GraphRecordSpy = {
   prepared: PreparedCommit[];
 };
 
-export type GraphRecords = GoalRecordTransactionPort & RecordLookupPort;
+export type GraphRecords = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
 
 type GraphAcceptedTask = {
   goalRef: GoalRef;
@@ -170,7 +171,7 @@ function emptySpy(): GraphRecordSpy {
 }
 
 function wrapRecords(target: GraphRecords, spy: GraphRecordSpy): GraphRecords {
-  return {
+  return withBackendOrderedLookup({
     async readMany(refKeys) {
       spy.readMany.push([...refKeys]);
       const result = await target.readMany(refKeys);
@@ -186,7 +187,7 @@ function wrapRecords(target: GraphRecords, spy: GraphRecordSpy): GraphRecords {
       if (result.status === 'ready') spy.lookupRecords += result.value.records.length;
       return result;
     },
-  };
+  }, target);
 }
 
 /** Caller pins, not writer-invented optimistic defaults. Revision zero denotes

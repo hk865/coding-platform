@@ -39,13 +39,16 @@ import {
 vi.mock('../helpers/task-claim-fixture.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../helpers/task-claim-fixture.js')>();
   const { CONTROL_RECORD_SCHEMAS } = await import('../../src/core/work-graph/persistence/control-record-codecs.js');
+  // Session facts read the message sender-wait index, so the canonical message bundle rides along.
+  const { SESSION_MESSAGE_RECORD_SCHEMAS } = await import('../../src/core/work-graph/sessions/message-record-codecs.js');
   const withControls = (
     kind: Parameters<typeof actual.createTaskClaimFixture>[0],
     additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
   ) => actual.createTaskClaimFixture(kind, {
-    records: [...additionalSchemas.records, ...CONTROL_RECORD_SCHEMAS.records],
-    events: [...additionalSchemas.events, ...CONTROL_RECORD_SCHEMAS.events],
-    lookups: [...(additionalSchemas.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? [])],
+    records: [...additionalSchemas.records, ...CONTROL_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
+    events: [...additionalSchemas.events, ...CONTROL_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
+    lookups: [...(additionalSchemas.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
+      ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
   });
   return { ...actual, createTaskClaimFixture: withControls };
 });

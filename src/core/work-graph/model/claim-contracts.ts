@@ -18,7 +18,7 @@ import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueSnapshotV1, TaskR
 import type { ArchiveRequeueOriginV1 } from '../../../contracts/session-anomaly.js';
 import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
@@ -158,7 +158,7 @@ export interface TaskClaimPort {
   ): Promise<ReadResult<TaskRequeueReadV1>>;
 }
 export type TaskClaimDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   roles: RoleBindingFactsPort;
   /**
    * B2: the raw artifact body store, needed by the direct-claim legacy

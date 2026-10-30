@@ -371,37 +371,32 @@ it('delivers a real Host attention change into the original idle Session once', 
     expect(host.queryScripted.calls()).toBe(0);
     await writeFile(join(root, 'src/module.ts'), 'export const ag2bMarker = "ATTENTION_CHANGED";\n');
     let message: SessionMessage | undefined;
-    let answered = false;
     const until = Date.now() + 15_000;
     while (Date.now() < until) {
       const response = await f.corePost(host.base, 'messages/inbox', host.token,
         f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
       const inbox = await response.json() as { status: string; value?: { items: SessionMessage[] } };
-      message = inbox.value?.items.find(item => (item.acceptedInputs ?? []).some(input => input.executionRef.aggregateType === 'QueryRun'));
-      if (message !== undefined) {
-        const accepted = message.acceptedInputs!.find(input => input.executionRef.aggregateType === 'QueryRun')!;
-        const ref = accepted.executionRef;
-        if (ref.aggregateType === 'QueryRun') {
-          const query = await f.corePost(host.base, 'queries/read', host.token, f.plain(f.AG2B_SCOPE,
-            { aggregateType: 'QueryJob', projectId: ref.projectId, workspaceId: ref.workspaceId, queryJobId: ref.queryJobId }));
-          const result = await query.json() as { status: string; value?: { job: { job: { answerRefs: unknown[] } } } };
-          if ((result.value?.job.job.answerRefs.length ?? 0) > 0) { answered = true; break; }
-        }
-      }
+      message = inbox.value?.items.find(item => item.intent === 'notify');
+      if (message !== undefined) break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    expect(answered, 'the accepting original Query has a formal Answer').toBe(true);
-    expect(message?.acceptedInputs?.[0]?.kernel.kernelSessionId).toBeDefined();
+    expect(message, 'the attention change is delivered into the idle inbox').toBeDefined();
+    expect(message?.intent).toBe('notify');
     expect(message?.recipient).toEqual(member.sessionRef);
-    expect(message?.response).toBeNull(); // notify is processed, not a fabricated reply request
-    expect(host.queryScripted.calls()).toBe(1);
+    expect(message?.delivery).toBe('queued');
+    expect(message?.acceptedInputs ?? []).toEqual([]);
+    expect(message?.response).toBeNull(); // a notify is recorded, not a fabricated reply request
+    expect(host.queryScripted.calls()).toBe(0);
     const cards = await f.listSessions(host);
     expect(cards).toHaveLength(1); // ordinary attention did not fork A′
     await new Promise(resolve => setTimeout(resolve, 250));
-    expect(host.queryScripted.calls()).toBe(1);
+    expect(host.queryScripted.calls()).toBe(0);
     const final = await f.corePost(host.base, 'messages/inbox', host.token,
       f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
-    expect((await final.json() as { value: { items: unknown[] } }).value.items).toHaveLength(1);
+    const finalItems = (await final.json() as { value: { items: SessionMessage[] } }).value.items;
+    expect(finalItems).toHaveLength(1);
+    expect(finalItems[0]?.ref).toEqual(message?.ref);
+    expect(finalItems[0]?.delivery).toBe('queued');
   } finally {
     await host?.host.close();
     if (host !== undefined) { await rm(host.root, { recursive: true, force: true }); await rm(host.database, { recursive: true, force: true }); }

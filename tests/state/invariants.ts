@@ -1380,8 +1380,8 @@ function requeuesBefore(index: WorldIndex, run: RunSnapshot): TaskRequeueSnapsho
       if (requeue === undefined) break;
       found.push(requeue);
       current = index.run(requeue.afterRunRef);
-    } else if (current.consumedWait !== undefined) {
-      current = index.run(current.consumedWait.runRef);
+    } else if (current.previousRun !== null) {
+      current = index.run(current.previousRun);
     } else {
       current = undefined;
     }
@@ -1405,7 +1405,7 @@ function priorAutoCount(index: WorldIndex, run: RunSnapshot): { count: number; m
       return requeue === undefined ? { count: 0, missing: { runId: current.ref.runId, afterRunId: current.requeueRef.afterRunId } }
         : { count: requeue.automation.autoCount, missing: null };
     }
-    current = current.consumedWait === undefined ? undefined : index.run(current.consumedWait.runRef);
+    current = current.previousRun === null ? undefined : index.run(current.previousRun);
   }
   return { count: 0, missing: null };
 }
@@ -1603,7 +1603,7 @@ function runMonotoneProblems(before: RunSnapshot, after: RunSnapshot): string[] 
       if (kind !== 'runtime_terminal' && kind !== 'human_attested') problems.push(`Run ${id} left outcome_unknown without RUN-21/22 (${String(kind)})`);
     }
   }
-  for (const field of ['task', 'planRef', 'attemptId', 'requeueRef', 'consumedWait'] as const) {
+  for (const field of ['task', 'planRef', 'attemptId', 'requeueRef', 'consumedWait', 'previousRun'] as const) {
     if (!sameJson(after[field], before[field])) problems.push(`Run ${id} changed its claim field ${field}`);
   }
   if (before.terminalPayload !== undefined && !sameJson(after.terminalPayload, before.terminalPayload)) problems.push(`Run ${id} rewrote its terminalPayload`);

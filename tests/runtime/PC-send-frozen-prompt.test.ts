@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { ResolvedPromptPackV1 } from '../../src/contracts/prompts/prompt-pack.js';
 import { mutablePromptPacks, openPCQueryFixture, openPCWorkFixture, scriptedModel } from '../helpers/PC-platform-fixture.js';
+import { DELIVERY_SET_TEXTS } from '../helpers/S7B-delivery-samples.js';
 
 const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const WORK_BASE = 'PC_SEND_WORK_BASE';
@@ -94,6 +95,7 @@ function literalPack(base: string): ResolvedPromptPackV1 {
     'work-input': WORK_INPUT_TEMPLATE,
     'query-planning-input': QUERY_PLANNING_TEMPLATE,
     'initial-planning-answer': PLAN_GUIDE,
+    ...DELIVERY_SET_TEXTS,
   };
   const ids = Object.keys(templates);
   return {

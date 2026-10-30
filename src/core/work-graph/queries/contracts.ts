@@ -44,7 +44,7 @@ import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
 import type { SecretaryProfileV1 } from '../model/request-contracts.js';
 import type { HandoffBriefPort } from '../model/session-handoff-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
-import type { SessionFactsPort } from '../model/session-facts-contracts.js';
+import type { DeliveryEligibilityFactsPort, SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 
 /** The exact pending pair a submit records: both ids are independent identities. */
@@ -301,4 +301,9 @@ export type QueryJobDependencies = {
    * second mailbox.
    */
   consultations?: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+  /**
+   * Optional read-only seam for the direct consultation admission: the three
+   * non-message delivery facts B produces and L injects; never a second rule.
+   */
+  eligibility?: DeliveryEligibilityFactsPort;
 };

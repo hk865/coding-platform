@@ -28,7 +28,7 @@ import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
-import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { TaskEntryPermit } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { ExecutionEntryPort } from '../../src/core/work-graph/model/execution-entry-contracts.js';
@@ -92,7 +92,7 @@ export type RunSupport = {
 };
 
 export function createRunSupport(base: TaskClaimFixture): RunSupport {
-  const records = base.records as GoalRecordTransactionPort & RecordLookupPort;
+  const records = base.records as GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   let seq = 0;
   const now = () => '2026-09-24T00:00:00.000Z';
   const eventId = () => `s2c-l-run-event-${++seq}`;
@@ -342,7 +342,11 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
       authorizeConfiguration: async () => ({ status: 'rejected', code: 'forbidden', reason: 'S2C-L does not prepare a Query' }) });
     const jobs = createQueryJobService({ records, now, eventId,
       execution: { claimQuery: execution.claimQuery, readQueryAnswer: execution.readQueryAnswer },
-      consultations: { readMessage: mailbox.readMessage, readMessageBody: mailbox.readMessageBody } });
+      consultations: { readMessage: mailbox.readMessage, readMessageBody: mailbox.readMessageBody },
+      // R4-13: the message has no Goal or Task and no recipient Run is outcome_unknown (goal null, taskBlocked false, recipientOutcomeUnknown false).
+      eligibility: { async readDeliveryEligibilityFacts() {
+        return { status: 'ready' as const, value: { goal: null, taskBlocked: false, recipientOutcomeUnknown: false } };
+      } } });
     const goalRef = base.goalRef;
     const goalRead = await base.plans.queryGoal(base.ctx, goalRef);
     if (goalRead.status !== 'ready') throw new Error('S2C-L consultation goal read failed');

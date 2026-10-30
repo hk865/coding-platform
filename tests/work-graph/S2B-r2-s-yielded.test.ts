@@ -69,7 +69,7 @@ describe('S2B-r2 Group S yielded Run and successor', () => {
     const successorRef = await selectedRun(scenario);
     expect(successorRef.runId).not.toBe(yieldedRef.runId);
     const successor = await readExecution(scenario.host, successorRef);
-    expect(successor.run.consumedWait?.runRef).toEqual(yieldedRef);
+    expect(successor.run.consumedWait).toMatchObject({ kind: 'wait_reply', originalRun: yieldedRef });
     expect(successor.session.ref.sessionId).toBe(yielded.session.ref.sessionId);
 
     // 4. The public timeline read on the same files folds the real yielded end.

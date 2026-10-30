@@ -40,6 +40,7 @@ import { VerificationWorkspaceReader } from '../../src/core/workspace/verificati
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import { createR3eEvidenceFixture, R3E_GATE_TASK_ID, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 const KINDS = ['memory', 'sqlite'] as const;
@@ -393,7 +394,7 @@ async function completableGoal(fixture: R3eEvidenceFixture): Promise<void> {
 /** The fixture's records whose NEXT commit first runs `before` (a concurrent writer on the real records). */
 function recordsCommittingFirst(fixture: R3eEvidenceFixture, before: () => Promise<void>): R3eEvidenceFixture['records'] & { fired(): boolean } {
   let armed = true;
-  return {
+  const forwarding = withBackendOrderedLookup({
     async commit(input) {
       if (armed) {
         armed = false;
@@ -405,8 +406,8 @@ function recordsCommittingFirst(fixture: R3eEvidenceFixture, before: () => Promi
     lookupCommit: (...args) => fixture.records.lookupCommit(...args),
     eventAt: (...args) => fixture.records.eventAt(...args),
     lookup: (...args) => fixture.records.lookup(...args),
-    fired: () => !armed,
-  };
+  }, fixture.records);
+  return { ...forwarding, fired: () => !armed };
 }
 
 describe('the GoalPhase CAS of a Goal pause (§2.4: never paused + COMPLETED for the active plan)', () => {

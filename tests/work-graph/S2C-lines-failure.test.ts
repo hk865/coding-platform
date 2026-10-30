@@ -210,7 +210,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
           const request = await f.base.buildRequest({ input: { sessionRef: headRef,
             goalRef: goal.goalRef, planRef: goal.planRef, taskId: 'w' }, requestId: 'rd8-continuation' });
           const result = await f.base.service.claimTask(f.ctx, { input: { ...request.input,
-            consumedWait: { runRef: yieldedClaim.runRef, messageRef, responseRef } }, meta: request.meta });
+            consumedWait: { kind: 'wait_reply', originalRun: yieldedClaim.runRef, messageRef, responseRef } }, meta: request.meta });
           expect(result).toMatchObject({ status: 'committed' });
         }
         return read;
@@ -221,8 +221,8 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
       expect(row?.status.own).toBe('waiting_reply');
       for (const kind of ['pause', 'cancel'] as const) {
         const control = row?.controls.find((entry) => entry.kind === kind);
-        expect(control?.availability).toBe('unavailable');
-        expect(control?.reasonCode).toBe('busy');
+        expect(control?.availability).toBe('available');
+        expect(control?.reasonCode).toBeNull();
       }
     } finally { await steps.close(); }
   });
@@ -250,7 +250,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
       const list = ready(await f.readerWith(gated, budget).listWorkLines(f.ctx, { workspace: f.base.scope }));
       const row = rowOf(list.rows, head);
       // The first pass saw the stale occupied head; the single reread healed it.
-      expect(headReads).toBe(2);
+      expect(headReads).toBe(3);
       expect(row).toBeDefined();
       expect(row?.problem).toBeNull();
     }

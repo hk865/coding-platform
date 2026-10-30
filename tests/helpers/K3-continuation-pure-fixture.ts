@@ -40,7 +40,7 @@ function runOf(taskTriple: TaskTriple, runId: string, over: Partial<RunSnapshot>
     planRef: PLAN, roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null },
     workspaceSnapshot: { workspaceId: W, revision: 3 }, status: 'ended', outcome: 'completed', exitCode: 0,
     lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`, lastFactEventId: `ev-${runId}`, envelope: null,
-    startedAt: at(1), endedAt: at(5), ...over,
+    startedAt: at(1), endedAt: at(5), previousRun: null, ...over,
   };
 }
 const recordOf = (taskTriple: TaskTriple, run: RunSnapshot): TaskExecutionRecord => ({ run,

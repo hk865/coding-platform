@@ -61,8 +61,19 @@ import {
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { lookupCommittedReceipt, type CommittedReceipt, type ReceiptLookup } from '../persistence/receipt-lookup.js';
+import { deriveSessionInputId, type SessionMessage } from '../model/communication-contracts.js';
+import type { DeliveryEligibilityFactsV1 } from '../model/session-facts-contracts.js';
 import { newPendingQueryRecords } from '../state/query-run-recovery.js';
-import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
+import {
+  deliveryEligibility,
+  effectiveReplyHandler,
+  messageFactsOfRecord,
+  waitFactsOfRecord,
+  waitStateOf,
+  type DeliveryBlockReason,
+  type DeliveryFactsV1,
+} from '../state/message-machine.js';
+import { sameRef } from '../state/ref-equality.js';
 import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
 import {
   decodeQueryJobSnapshot,
@@ -570,6 +581,24 @@ function pinsFromCurrent(current: readonly { refKey: string; revision: number | 
   return pins;
 }
 
+function deliveryBlockCode(reason: DeliveryBlockReason): 'invalid' | 'busy' {
+  return reason === 'cancelled' || reason === 'withdrawn' || reason === 'not_released' ? 'invalid' : 'busy';
+}
+
+function consultationFacts(message: SessionMessage, part: 'message' | 'response',
+  extra: DeliveryEligibilityFactsV1, target: SessionRef): DeliveryFactsV1 {
+  const accepted = (id: string) => (message.acceptedInputs ?? []).some((entry) => entry.inputId === id);
+  const base = { consumption: messageFactsOfRecord(message), ...extra };
+  if (part === 'message') return { ...base, part, delivered: accepted(deriveSessionInputId(message.ref, 'message')) };
+  const state = waitStateOf(message, waitFactsOfRecord(message));
+  const handler = effectiveReplyHandler(message);
+  return { ...base, part, accepted: accepted(deriveSessionInputId(message.ref, 'response')),
+    wait: message.intent !== 'inquiry' || message.waitAfterSend !== true ? { kind: 'none' }
+      : state.state === 'consumed' ? { kind: 'consumed' }
+      : handler !== null && sameRef(handler, target) ? { kind: 'unconsumed', boundHere: true }
+      : { kind: 'unconsumed', boundHere: false } };
+}
+
 // --------------------------------------------------------------------------
 // Submit
 // --------------------------------------------------------------------------
@@ -654,8 +683,6 @@ async function submit(
     if (messageRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message is not readable at the required watermark');
     if (messageRead.status !== 'ready') return messageRead;
     const message = messageRead.value;
-    const consumption = messageConsumptionProblem(messageFactsOfRecord(message));
-    if (consumption !== null) return rejectedWithNonEmptyCurrent(consumption.code, consumption.reason);
     const target = draft.consultation.part === 'response'
       ? (message.sender.kind === 'work_run' ? message.sender.sessionRef : null)
       : ('kind' in message.recipient ? null : message.recipient);
@@ -663,6 +690,13 @@ async function submit(
       || target.sessionId !== draft.consultation.recipient.sessionId) {
       return rejectedWithNonEmptyCurrent('forbidden', 'the consultation recipient is not the original message recipient');
     }
+    const extra = await deps.eligibility?.readDeliveryEligibilityFacts(ctx, { messageRef: message.ref });
+    if (extra === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'a consultation submit requires the delivery eligibility facts');
+    if (extra.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the consultation message eligibility facts do not exist');
+    if (extra.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message eligibility facts are not readable at the required watermark');
+    if (extra.status !== 'ready') return extra;                       // already a CoreRejection
+    const eligibility = deliveryEligibility(consultationFacts(message, draft.consultation.part ?? 'message', extra.value, target));
+    if (!eligibility.offerable) return rejectedWithNonEmptyCurrent(deliveryBlockCode(eligibility.reason), eligibility.reason);
     if (draft.consultation.part === 'response' ? message.response === null : message.status === 'responded') {
       return rejectedWithNonEmptyCurrent('invalid', 'the original consultation message already has a response');
     }

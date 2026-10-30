@@ -551,7 +551,7 @@ function endedRun(runId: string, outcome: RunSnapshot['outcome']): RunSnapshot {
   return { ref: runRef(runId), revision: 4, schemaVersion: 1, task, attemptId: `attempt-${runId}`, planRef, roleBinding,
     budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 4 },
     status: 'ended', outcome, exitCode: outcome === 'completed' ? 0 : null, lastEventSeq: 3, lastRuntimeEventId: 'rt-3',
-    lastFactEventId: 'fact-3', envelope: null, startedAt: at, endedAt: at };
+    lastFactEventId: 'fact-3', envelope: null, startedAt: at, endedAt: at, previousRun: null };
 }
 const encodeRun = (run: RunSnapshot): EncodedRecord =>
   ({ refKey: key(run.ref), schemaId: 'RunSnapshot@1', revision: run.revision, json: JSON.stringify(run) });
@@ -724,7 +724,7 @@ describe('other step-1 decoders', () => {
   it('reads the AD-2 not-entered outbox settlement beside the V1 phases', () => {
     const outboxRef = { aggregateType: 'DispatchOutboxEntry' as const, projectId: P, goalId: G, taskId: T, attemptId: 'attempt-2' };
     const claim = { task, planRef, workspaceId: W, sessionRef: { projectId: P, sessionId: 'session-1' }, runRef: runRef('run-2'),
-      attemptRef: attemptRef('attempt-2'), outboxRef, sessionRevision: 2, generation: 2, claimedAt: at };
+      previousRun: null, attemptRef: attemptRef('attempt-2'), outboxRef, sessionRevision: 2, generation: 2, claimedAt: at };
     const settlement = { schemaVersion: 2, phase: 'settled', settlement: 'not_entered', consumerId: null, entryGeneration: null,
       sessionGeneration: 2, eventId: 'ev-settle' };
     const outbox = { ref: outboxRef, revision: 2, schemaVersion: 1, status: 'settled', dispatchState: settlement, claim };

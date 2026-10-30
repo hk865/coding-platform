@@ -9,6 +9,7 @@
  * the part-1 stubs throw `not implemented: …`, which is the expected RED.
  */
 import { describe, expect, it } from 'vitest';
+import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { ActorRef } from '../../src/contracts/command-event.js';
 import type { RoleConfigurationRef, SessionAggregateRef } from '../../src/contracts/core/identity.js';
 import type { CoreError } from '../../src/contracts/core/results.js';
@@ -19,7 +20,8 @@ import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { QueryRunRef } from '../../src/contracts/query-job.js';
 import {
   sessionDispatchAdmissionProblem, sessionMachineStateOf, transitionSession,
-  type SessionDispatchGuardV1, type SessionGuardContext, type SessionWorkWaitStateV1,
+  type SessionConsumedWaitStateV1, type SessionDispatchGuardV1, type SessionGuardContext,
+  type SessionWorkWaitStateV1,
 } from '../../src/core/work-graph/state/session-availability.js';
 import type { Rejected } from '../../src/core/work-graph/state/transition.js';
 
@@ -44,6 +46,15 @@ const MESSAGE_N: SessionMessageRef = { aggregateType: 'SessionMessage', projectI
 const WAIT_M: SessionWorkWaitStateV1 = { runRef: RUN_0, messageRef: MESSAGE_M, task: TASK_A };
 const WAIT_OTHER_TASK: SessionWorkWaitStateV1 = { runRef: RUN_0, messageRef: MESSAGE_M, task: TASK_B };
 const WAIT_OTHER_MESSAGE: SessionWorkWaitStateV1 = { runRef: RUN_0, messageRef: MESSAGE_N, task: TASK_A };
+
+const RESPONSE: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: 'a'.repeat(64), sizeBytes: 1,
+  source: { kind: 'workspace', refId: 'w', revision: '1' } };
+const CONSUMED_M: SessionConsumedWaitStateV1 = { kind: 'wait_reply', originalRun: RUN_0,
+  messageRef: MESSAGE_M, responseRef: RESPONSE, task: TASK_A };
+const CONSUMED_OTHER_TASK: SessionConsumedWaitStateV1 = { kind: 'wait_reply', originalRun: RUN_0,
+  messageRef: MESSAGE_M, responseRef: RESPONSE, task: TASK_B };
+const CONSUMED_OTHER_MESSAGE: SessionConsumedWaitStateV1 = { kind: 'wait_reply', originalRun: RUN_0,
+  messageRef: MESSAGE_N, responseRef: RESPONSE, task: TASK_A };
 
 const PROVENANCE_NEW: SessionProvenanceV1 = { schemaVersion: 1, kind: 'new' };
 const PROVENANCE_COPY: SessionProvenanceV1 = {
@@ -115,7 +126,7 @@ describe('S1-dispatch: the Work/Query claim admission rows (S1-DISPATCH-01/02)',
 
   it('UT29 a claim whose consumedWait is exactly the wait on m is admitted and acquires at revision + 1', () => {
     const record = sessionRecord();
-    const facts = dispatchFacts({ waiting: WAIT_M, consumedWait: WAIT_M });
+    const facts = dispatchFacts({ waiting: WAIT_M, consumedWait: CONSUMED_M });
     expect(sessionDispatchAdmissionProblem(record, facts)).toBeNull();
     expectAcquire(record, RUN_0);
   });
@@ -141,14 +152,14 @@ describe('S1-dispatch: the Work/Query claim admission rows (S1-DISPATCH-01/02)',
 
   it('UT44 a consumedWait with the same message but another Task does not match the real wait and stays busy', () => {
     const record = sessionRecord();
-    const facts = dispatchFacts({ waiting: WAIT_M, consumedWait: WAIT_OTHER_TASK });
+    const facts = dispatchFacts({ waiting: WAIT_M, consumedWait: CONSUMED_OTHER_TASK });
     expectRejection(sessionDispatchAdmissionProblem(record, facts), 'busy');
     expect(record.occupancy).toBeNull();
   });
 
   it('UT45 a consumedWait on the same Task but another message does not match the real wait and stays busy', () => {
     const record = sessionRecord();
-    const facts = dispatchFacts({ waiting: WAIT_M, consumedWait: WAIT_OTHER_MESSAGE });
+    const facts = dispatchFacts({ waiting: WAIT_M, consumedWait: CONSUMED_OTHER_MESSAGE });
     expectRejection(sessionDispatchAdmissionProblem(record, facts), 'busy');
     expect(record.occupancy).toBeNull();
   });

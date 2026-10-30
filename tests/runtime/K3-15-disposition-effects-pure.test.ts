@@ -52,7 +52,7 @@ function runOf(runId: string, over: Partial<RunSnapshot>): RunSnapshot {
     planRef: PLAN, roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null },
     workspaceSnapshot: { workspaceId: 'w', revision: 3 }, status: 'ended', outcome: 'completed', exitCode: 0,
     lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`, lastFactEventId: `ev-${runId}`, envelope: null,
-    startedAt: AT(1), endedAt: AT(5), ...over,
+    startedAt: AT(1), endedAt: AT(5), previousRun: null, ...over,
   };
 }
 const recordOf = (run: RunSnapshot): TaskExecutionRecord => ({ run,

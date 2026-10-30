@@ -26,8 +26,11 @@ import { shellSeam } from '../helpers/K3-tool-seams.js';
 import {
   mutablePromptPacks, openPCK3ReviewFixture, openPCQueryFixture, openPCWorkFixture, scriptedModel,
 } from '../helpers/PC-platform-fixture.js';
+import { DELIVERY_SET_IDS, DELIVERY_SET_TEXTS } from '../helpers/S7B-delivery-samples.js';
 
 const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+/** The delivery-set templates a preparation freezes after the used ones, by the helper's literals. */
+const DELIVERY_SET_TEMPLATES = DELIVERY_SET_IDS.map(id => ({ id, text: DELIVERY_SET_TEXTS[id] }));
 
 const SKILL_ID = 'pc-custom';
 const FROZEN_SKILL = 'PC_CUSTOM_SKILL_V1';
@@ -117,6 +120,7 @@ function literalPack(base: string): ResolvedPromptPackV1 {
     'work-input': WORK_INPUT_TEMPLATE,
     'query-planning-input': QUERY_PLANNING_TEMPLATE,
     'initial-planning-answer': PLAN_GUIDE,
+    ...DELIVERY_SET_TEXTS,
   };
   const ids = Object.keys(templates);
   return {
@@ -189,6 +193,7 @@ describe('J-01 PC-06 joint: the frozen Work system and input survive a changed p
       if (read.status !== 'ready') return;
       expectFrozenTexts(read.value.set, read.value.texts, [
         { id: 'work-input', text: WORK_INPUT_TEMPLATE }, { id: 'base', text: WORK_BASE },
+        ...DELIVERY_SET_TEMPLATES,
       ], WORK_BASE);
     } finally {
       await fixture.close();
@@ -228,6 +233,7 @@ describe('J-01 PC-06 joint: the frozen Query system and input survive a changed 
         { id: 'initial-planning-answer', text: PLAN_GUIDE },
         { id: 'query-planning-input', text: QUERY_PLANNING_TEMPLATE },
         { id: 'base', text: QUERY_BASE },
+        ...DELIVERY_SET_TEMPLATES,
       ], QUERY_BASE);
     } finally {
       await fixture.close();

@@ -12,6 +12,7 @@ import {
   createAG2bSession, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import { installS1ScenarioClock, ready, retireS1Session } from '../helpers/S1-runtime-scenario-fixture.js';
+import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import {
   assertInvariants, cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario, type ScenarioCommit,
 } from './harness.js';
@@ -115,7 +116,8 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
     ({ inputId: a.inputId, executionRef: a.executionRef }))).toEqual([
     { inputId: deriveSessionInputId(line1.messageRef, 'response'), executionRef: dRun }]);
   const accepted = acceptedMessageInputs(h.database).filter(a => a.messageId === line1.messageRef.messageId && a.part === 'response');
-  expect(accepted.map(a => a.text)).toEqual([REPLY]);
+  expect(accepted.map(a => a.text)).toEqual([waitReplyDeliveryText({
+    messageId: line1.messageRef.messageId, question: QUESTION, body: REPLY })]);
   expect({ sender: consumed.sender, recipient: consumed.recipient, bodyRef: consumed.bodyRef,
     intent: consumed.intent, needsReply: consumed.needsReply, waitAfterSend: consumed.waitAfterSend })
     .toEqual({ sender: original.sender, recipient: original.recipient, bodyRef: original.bodyRef,

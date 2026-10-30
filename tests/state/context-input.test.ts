@@ -321,7 +321,7 @@ const outboxRef = { aggregateType: 'DispatchOutboxEntry' as const, projectId: P,
 const claim: TaskClaim = {
   task: TASK, planRef: PLAN, workspaceId: W, sessionRef: { projectId: P, sessionId: 'sB' },
   sessionRevision: GEN, generation: GEN,
-  runRef: { aggregateType: 'Run', projectId: P, goalId: G, runId: 'runB' },
+  runRef: { aggregateType: 'Run', projectId: P, goalId: G, runId: 'runB' }, previousRun: null,
   attemptRef, outboxRef, claimedAt: '2026-10-08T00:00:00.000Z',
 };
 const roleBinding: RoleBindingRefV1 = {

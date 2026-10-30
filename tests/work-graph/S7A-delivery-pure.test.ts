@@ -18,6 +18,7 @@ const acceptedAt = '2026-10-25T01:02:03.000Z';
 const acceptedInput = {
   inputId: 'input-1', part: 'message' as const, executionRef: run, acceptedAt,
   kernel: { adapterId: 'a', kernelSessionId: 'ks', runId: 'kr', turnId: 't', position: 0 },
+  evidence: 'input_accepted' as const, consumesWait: false,
 };
 const queued = {
   delivery: 'queued' as const, deliveredTo: null, evidence: null, undeliveredReason: null,
@@ -48,7 +49,7 @@ type Case = [
 const cases: Case[] = [
   ['accepted message input', facts({ acceptedInputs: [acceptedInput] }), open,
     { delivery: accepted, disposition: { kind: 'delivered', evidence: 'accepted' } }],
-  ['only an accepted response input', facts({ acceptedInputs: [{ ...acceptedInput, part: 'response' }] }), open,
+  ['only an accepted response input', facts({ acceptedInputs: [{ ...acceptedInput, part: 'response', consumesWait: true }] }), open,
     { delivery: queued, disposition: { kind: 'offerable' } }],
   ['pending without acceptance', facts(), open,
     { delivery: queued, disposition: { kind: 'offerable' } }],

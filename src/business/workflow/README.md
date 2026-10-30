@@ -11,14 +11,15 @@
 ## 文件
 
 - `activity-backfill.ts` — 两个活动回填批次（Host 启动的近期窗口与人工区间），Work Run 与 Query 共用一张合并候选；计数分别走 `countRunActivity`/`countQueryActivity`，写回分别走 `recordRunActivity`/`recordQueryActivity`；缺 Query 一侧的依赖只让 Query 分支答 `unsupported`，Work 分支不变。
-- `consultation.ts` — 一条已保存信箱输入 → 一条确定性只读 Query；复用已有 Query/Answer，不重跑发送者的 Work；新的咨询在回复位检查前先过共用消费规则 `messageConsumptionProblem(messageFactsOfRecord(message))`，按 `code`/`reason` 拒绝，已保存的 Query 结果仍先重放，提交时同一条消息 revision 由现有 `consultationMessageGuard` 复核；阶段链交给 `query-stage-driver.ts`。
+- `consultation.ts` — 一条已保存信箱输入 → 一条确定性只读 Query；复用已有 Query/Answer，不重跑发送者的 Work；新的咨询在回复位检查前先过共用的送达规则（注入的 `deliveryFacts` 走 `deliveryEligibility`），按 `code`/`reason` 拒绝，拒绝结果用导出的 `asRejection` 映射、不另写一份；已保存的 Query 结果仍先重放，提交时同一条消息 revision 由现有 `consultationMessageGuard` 复核；阶段链交给 `query-stage-driver.ts`。
 - `query-stage-driver.ts` — 一条 Query attempt 的唯一阶段链：按 `executionState.phase` 认领请求轮、准备并启动、只观察已开始或 `unknown` 的 attempt，并把每个 owner 的结果映射成 `progressed`/`terminal`/`blocked`。
 - `contracts.ts` — Workflow 的调用/步骤/推进/归档/回填 DTO 与 `WorkflowOperation`、`WorkflowAdvanceResult`；交接组合的注入契约 `HandoffWorkflowDependencies`（两个操作 owner、源未完成操作的读口、事实读、子 owner 与 D 的请求端口）也在这里。
 - `decision-actions.ts` — 有限决定协调：先提交答案，再做结构化冲突动作，最后记录应用；另有只读 `orderGoalAdvances`。
 - `index.ts` — 对外 barrel：`createWorkflow` 与 Workflow 端口/调用契约类型。
+- `intervention.ts` — 既有任务的最小干预入口 `createInterventionHandler`（`src/business/workflow/intervention.ts:23`）：读来信与线事实，按消息的 `taskRef` 或该线最近的 Work Task 找未完成任务；Goal 还带着 Host 重启的 `interruption` 因时答 `busy`，没有可认领任务时答 `queued/no_task`；认领经 `workflow.ts` 的 `claimIntervention` 用 `{ kind: 'intervention' }`，不另开规划 Query。
 - `line-creation.ts` — 带稳定 `commandId` 的工作线创建/重放与只读 `findLine`；容量端口。
-- `ports.ts` — `WorkflowPort`、`WorkflowDependencies`、Host 配置、归档策略与职责解析器契约；可选的 `messageRelease` 依赖是释放步的唯一 owner（`releaseApproved` 加候选分页读）。
-- `WorkflowPort.sessionHandoff`（`src/business/workflow/ports.ts:256`）— 6B-2 的可选 late-binding 成员；真实组合在 I1 发布，旧窄替身保持类型兼容。
+- `ports.ts` — `WorkflowPort`、`WorkflowDependencies`、Host 配置、归档策略与职责解析器契约；可选的 `messageRelease` 依赖是释放步的唯一 owner（`releaseApproved` 加候选分页读）；B 另加可选的 `handleIntervention?` 与 `readDeliveryEligibilityFacts?` 两个端口成员。
+- `WorkflowPort.sessionHandoff`（`src/business/workflow/ports.ts:267`）— 6B-2 的可选 late-binding 成员；真实组合在 I1 发布，旧窄替身保持类型兼容。
 - `request-intake.ts` — request 命令（submit/route/selectIdea/ask）与未分配 drain：选人、建线或退回 waiting；drain 在每条请求前看调用 signal，已停止就返回已提交的计数。
 - `request-round-queue.ts` — 两条请求队列处理器（`request-rounds` 分派开放轮、`unassigned` 跑未分配 drain）及 `settle()`：分页遍历、按 Session 的先飞集合、退避与唤醒都由端口注入，不读记录库。
 - `role-bindings.ts` — 角色绑定的唯一正本：`servingBinding` 按项目、workspace 与 `roleBinding.templateId` 要求恰好一个受信绑定，`servedRoleIds` 给出一个 scope 下被服务的 distinct role id（UTF-16 code units 排序）；`workflow.ts` 的 `bindingForRole` 只转调前者，名字、签名和位置不变。
@@ -27,13 +28,13 @@
 - `session-maintenance.ts` — 有界单页 Session 维护：读到期事实并按到期归档，不启动任何东西。
 - `task-gate.ts` — 任务门与自动 requeue/reverify、自动化确认、gate perform；`createTaskGate` 由 `workflow.ts` 原位装配。
 - `task-order.ts` — 按真实 `executionDag.dependsOn` 的稳定 Kahn 软排序，只改选择顺序。
-- `workflow.ts` — `advanceWork` 的选择/推进、`handleGoalInput` 与 Workflow 工厂；`selectNext` 在 Goal 活跃检查之后、无 Plan 返回之前选释放步（有 `messageRelease` 才读候选页并给出 `release_message` perform），`perform` 调 `releaseApproved`；`ownContext` 做可信上下文绑定。
+- `workflow.ts` — `advanceWork` 的选择/推进、`handleGoalInput` 与 Workflow 工厂；`selectNext` 在 Goal 活跃检查之后、无 Plan 返回之前选释放步（有 `messageRelease` 才读候选页并给出 `release_message` perform），`perform` 调 `releaseApproved`；续作选择以 S 的最老未消费等待的 `runRef`（`originalRun`）为原始 Run，而不是该 Task 的最新 Run；既有任务干预经 `claimIntervention` 用同一个 `buildClaimOperation` 认领；送达事实由唯一的 `deliveryFacts` 构造，并经 `readDeliveryEligibilityFacts` 发布给 L 的两道门；`ownContext` 做可信上下文绑定。
 
 ## 可以复用的能力
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkflow` | `src/business/workflow/workflow.ts:777` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
+| `createWorkflow` | `src/business/workflow/workflow.ts:787` | Workflow 唯一组合工厂：发布 `advanceWork`、`handleGoalInput`、咨询、决定、归档、维护与回填 | 组合根建 Workflow 端口 |
 | `createSecretaryHandoffWorkflow` | `src/business/workflow/session-handoff.ts:34` | 交接与手动归档的唯一 Workflow 组合：驱动 advance，两次 advance 之间只调一个子 owner（建线、转移、请求路由、归档），每个父写和子调用都用操作保存的 principal，只有归档子步（登记、回执读和最终读）用平台归档自动化身份 `archiveContextOf`；这个归档申请人是共用的（L9：维护、H 和人的手动归档都以 `workflow:session-archive` 申请），所以归档按 `condition.kind`/`mode` 选，不按申请人 | `createWorkflow` 在注入 `sessionHandoff` 时装配；I1 把它发布成 `workflow.sessionHandoff` |
 | `appendUnderstanding` | `src/business/workflow/secretary-handoff.ts:16` | 秘书专属的理解子调用：经固定系统 principal 追加一条已保存的理解命令 | 只由 `createSecretaryHandoffWorkflow` 的步序调用；不要另写系统 principal 或第二条内部命令 |
 | `createTaskGate` | `src/business/workflow/task-gate.ts:71` | `select_work`/`perform` 共用的任务门、自动 requeue/reverify、自动化确认与 gate perform；读 `createWorkflow` 的同一个 `deps` 引用，不复制 | `createWorkflow` 原位装配；不要另写门或确认规则 |
@@ -49,10 +50,11 @@
 | `createDecisionActions` | `src/business/workflow/decision-actions.ts:320` | `resolveDecision` 的三段有限协调与只读 `orderGoalAdvances` | 决定卡作答与 Host 排序 |
 | `createCommandRerunRequestApplicationAdapter` | `src/business/workflow/decision-actions.ts:249` | `command_rerun_request` 卡的第②步适配器：按答案派生身份提交，重试重放 | 组合根注册 `command_rerun_request` 应用 |
 | `createMessageReleaseApplicationAdapter` | `src/business/workflow/decision-actions.ts:305` | `message_release` 卡的第②步适配器：只把 `answerRef` 交给可信入口，已提交的 `approve` 才调 `onApproved`（其余不调），入口的 committed 结果带着这条命令的正式回执，适配器原样交给第③步 | 组合根注册 `message_release` 应用；不要另写放行释放或再判一次选项 |
-| `createConsultationConsumer` | `src/business/workflow/consultation.ts:100` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
+| `createConsultationConsumer` | `src/business/workflow/consultation.ts:101` | 一条信箱输入 → 一条只读 Query；复用已有答案，必要时归档副本；送达事实由注入的 `deliveryFacts` 提供；阶段链经 `createQueryStageDriver` | Host 处理咨询消息 |
+| `createInterventionHandler` | `src/business/workflow/intervention.ts:23` | 既有任务的最小干预：读来信与线事实，找未完成任务，经 `claimIntervention` 以 `{ kind: 'intervention' }` 认领；Host 重启的 GoalInterruption 未解时答 `busy`，无任务答 `queued/no_task` | `createWorkflow` 装配并发布成 `workflow.handleIntervention`；不要另写干预判断或第二份认领 |
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:112` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |
-| `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:75` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
+| `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:79` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:161` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:96` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
 | `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:119`、`src/core/work-graph/tasks/secretary-selection.ts:464` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |

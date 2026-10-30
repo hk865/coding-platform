@@ -28,6 +28,7 @@ import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js'
 import { cleanupRestart, readExecution } from '../helpers/A2-restart-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
+import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import {
   AG2B_CONSUMER_ID, AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
@@ -168,7 +169,9 @@ describe('K3-08 the wait reply and the review round mailbox fence', () => {
     expect(accepted.value.acceptedInputs).toEqual(expect.arrayContaining([
       expect.objectContaining({ part: 'response', executionRef: prepared.claim.runRef })]));
     expect(acceptedMessageInputs(h.database).filter(input => input.messageId === message.ref.messageId
-      && input.part === 'response').map(input => input.text)).toEqual(['K3-08: the reply']);
+      && input.part === 'response').map(input => input.text)).toEqual([waitReplyDeliveryText({
+      messageId: message.ref.messageId, question: 'K3-08 (一): a question whose wait the crash loses',
+      body: 'K3-08: the reply' })]);
     // The continuation brief carries the afterRun as the crashed Run.
     const brief = await preparedBriefOf(h, prepared.envelope.bundleRef);
     expect(brief.requeueRef?.afterRunId).toBe(runRef.runId);

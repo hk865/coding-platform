@@ -17,7 +17,8 @@ const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: P,
 const claim: TaskClaim = {
   task: { projectId: P, goalId: G, taskId: T }, planRef: { aggregateType: 'PlanRevision', projectId: P, planId: 'plan' },
   workspaceId: W, sessionRef: { projectId: P, sessionId: 's' }, sessionRevision: 1, generation: 1,
-  runRef: runRef('r-original'), attemptRef: { aggregateType: 'TaskAttempt', projectId: P, goalId: G, taskId: T, attemptId: 'a' },
+  runRef: runRef('r-original'), previousRun: null,
+  attemptRef: { aggregateType: 'TaskAttempt', projectId: P, goalId: G, taskId: T, attemptId: 'a' },
   outboxRef: { aggregateType: 'DispatchOutboxEntry', projectId: P, goalId: G, taskId: T, attemptId: 'a' },
   claimedAt: '2026-10-16T00:00:00.000Z',
 };

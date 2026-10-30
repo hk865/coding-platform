@@ -170,6 +170,7 @@ export type MessageSeventhEventV1 = MessageWithdrawnEventV1 | MessageReleaseDeci
   | MessageReleasedEventV1 | MessageAppliedEventV1;
 export type Message7AChangeV1 = MessageWithdrawnChangeV1 | MessageReleaseDecidedChangeV1
   | MessageReleasedChangeV1 | MessageAppliedChangeV1 | MessageRespondedChangeV1;
+export type MessageExpiredEventV1 = { type: 'message_expired' };
 
 export type SessionMessageStatus = 'pending' | 'read' | 'responded';
 
@@ -181,10 +182,14 @@ export type SessionMessageStatus = 'pending' | 'read' | 'responded';
  */
 export type MessageAcceptedInput = {
   inputId: string;
-  part: 'message' | 'response';
+  part: 'message' | 'response' | 'expiry';
   executionRef: RunRef | QueryRunRef;
   kernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string; position: number };
   acceptedAt: string;
+  /** A-08: `input_accepted` for a Work execution, `query_entered` for a secretary's frozen input. */
+  evidence: 'input_accepted' | 'query_entered';
+  /** The acceptance that consumes the wait; a `message` part never does. */
+  consumesWait: boolean;
 };
 
 /**
@@ -305,6 +310,7 @@ export type MessageMachineState =
     release: MessageReleaseV1 | null;
     delivery: MessageDeliveryV1;
     withdrawnAt: string | null;
+    expiredAt: string | null;
     appliedAt: string | null;
     rejectedAt: string | null;
     approvedAt: string | null;
@@ -327,7 +333,7 @@ export type MessageEvent =
   | { type: 'message_read' }
   | { type: 'message_responded'; via: 'text' | 'query_answer';
       rejected?: MessageRespondedRejectFactV1['rejected'] }
-  | { type: 'input_accepted'; part: 'message' | 'response'; inputId: string }
+  | { type: 'input_accepted'; part: 'message' | 'response' | 'expiry'; inputId: string }
   | { type: 'consultation_derived' }
   | { type: 'task_claimed' }
   | { type: 'archive_wait_disposed' }
@@ -339,7 +345,8 @@ export type MessageEvent =
   // The release/withdraw/apply lifecycle. The four events carry no clock and no
   // deadline/pins/proof, so a transition sets only the facts its event names;
   // the owner writes the change's times through `nextSessionMessageRecord`.
-  | MessageSeventhEventV1;
+  | MessageSeventhEventV1
+  | MessageExpiredEventV1;
 
 /**
  * S5-MSG-01 extension (`user_message_sent`) guard facts (spec §3.1 guard column).
@@ -457,7 +464,7 @@ export type MessageGuardContext = {
     inputIdTakenByOtherEvent: boolean;
   };
   /** MSG-10 only. */
-  consumedWait: null | { responseRefMatches: boolean; sameWorkspace: boolean };
+  consumedWait: MessageWaitFactsV1 | null;
   /** Slice 1 §3.5: `archive_wait_disposed` only. */
   archiveWait?: {
     choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef; archiveRequestId: string; now: string;
@@ -493,7 +500,8 @@ export type SessionMessageEventType =
   | 'SessionMessageWithdrawn'
   | 'SessionMessageReleaseDecided'
   | 'SessionMessageReleased'
-  | 'SessionMessageApplied';
+  | 'SessionMessageApplied'
+  | 'SessionMessageExpired';
 
 /**
  * Effects the owner service translates (§10.3 effects column):
@@ -538,6 +546,7 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
     release: message.release,
     delivery: message.delivery,
     withdrawnAt: message.withdrawnAt,
+    expiredAt: message.expiredAt,
     appliedAt: message.appliedAt,
     rejectedAt: message.rejectedAt,
     approvedAt: message.approvedAt,
@@ -728,7 +737,7 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
       return accept<MessageMachineState, MessageEffect>(
         { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
           release: ctx.sendRelease == null ? null : ctx.sendRelease.release, delivery: 'queued',
-          withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+          withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
           approvalRevision: null, pins: ctx.sendRelease == null ? null : ctx.sendRelease.pins },
         [
           { kind: 'store_body', part: 'message', source: 'workspace' },
@@ -967,9 +976,17 @@ function onInputAccepted(
     case 'pending':
     case 'read':
     case 'responded':
-      // Delivery, read and processed are three facts (M3): status and readAt never change here.
+      // Delivery, read and processed are three facts (M3): status and readAt never change here. The part-message
+      // record write (SR11 §11.6.1d) moves the message to `delivered`; the state carries that same field so the
+      // service's record comparison is the accepted state, not the pre-write one.
+      const next: PresentMessageState = {
+        ...state,
+        acceptedInputIds: [...state.acceptedInputIds, event.inputId],
+        revision: state.revision + 1,
+        ...(event.part === 'message' ? { delivery: 'delivered' as const } : {}),
+      };
       return accept<MessageMachineState, MessageEffect>(
-        { ...state, acceptedInputIds: [...state.acceptedInputIds, event.inputId], revision: state.revision + 1 },
+        next,
         [
           { kind: 'write_message', change: 'input_accepted' },
           { kind: 'append_event', eventType: 'SessionMessageInputAccepted' },
@@ -1065,12 +1082,27 @@ export type MessageWaitVerdict =
  * refused with the predicate's own code before the status switch.
  */
 export function messageSatisfiesWait(
-  state: MessageMachineState,
-  consumedWait: { responseRefMatches: boolean; sameWorkspace: boolean },
+  state: MessageMachineState, consumedWait: MessageWaitFactsV1,
 ): MessageWaitVerdict {
   const facts = messageFactsOfState(state);
   const problem = facts === null ? null : messageConsumptionProblem(facts);
   if (problem !== null) return { satisfied: false, code: problem.code, detail: problem.reason };
+  if (consumedWait.kind === 'intervention') return { satisfied: true };
+  if (consumedWait.consumed) {
+    return { satisfied: false, code: 'busy', detail: 'the continuation wait was already consumed' };
+  }
+  if (consumedWait.kind === 'expiry') {
+    if (state.status === 'absent') {
+      return { satisfied: false, code: 'busy', detail: 'the expiry continuation wait message record does not exist' };
+    }
+    if (state.hasResponse) {
+      return { satisfied: false, code: 'busy', detail: 'the expiry continuation is refused because a reply exists (reply_present)' };
+    }
+    if (state.expiredAt === null) {
+      return { satisfied: false, code: 'busy', detail: 'the continuation wait has not expired' };
+    }
+    return { satisfied: true };
+  }
   switch (state.status) {
     case 'absent':
       return { satisfied: false, code: 'busy', detail: 'the continuation wait message record does not exist' };
@@ -1089,6 +1121,122 @@ export function messageSatisfiesWait(
     default:
       return unreachable(state, 'message state');
   }
+}
+
+/** The wait read's consumption fact: a committed `wait-consumed:` claim exists for this message. */
+export type WaitFactsV1 = { consumed: boolean };
+
+/** The fields the wait rule reads; a `SessionMessageRecord` satisfies it. */
+export type WaitMessageFactsV1 =
+  Pick<SessionMessageRecord, 'status' | 'response' | 'expiredAt' | 'withdrawnAt' | 'waitCancelledAt'>;
+
+export type WaitStateV1 = {
+  state: 'open' | 'answered' | 'expired' | 'consumed' | 'withdrawn';
+  reason: 'withdrawn' | 'wait_cancelled' | null;
+};
+
+export function waitStateOf(message: WaitMessageFactsV1, facts: WaitFactsV1): WaitStateV1 {
+  if (facts.consumed) return { state: 'consumed', reason: null };
+  if (message.withdrawnAt !== null) return { state: 'withdrawn', reason: 'withdrawn' };
+  if (message.waitCancelledAt !== null) return { state: 'withdrawn', reason: 'wait_cancelled' };
+  if (message.status === 'responded' && message.response !== null) return { state: 'answered', reason: null };
+  if (message.expiredAt !== null) return { state: 'expired', reason: null };
+  return { state: 'open', reason: null };
+}
+
+export type DeliveryBlockReason =
+  | 'paused' | 'cancelled' | 'awaiting_decision' | 'outcome_unknown'
+  | 'withdrawn' | 'not_released' | 'delivered' | 'not_bound';
+
+/** The gates every delivery part shares, read by the caller. */
+export type DeliveryBaseFactsV1 = {
+  /** `messageFactsOfRecord(message)`; the consumption predicate runs first on it. */
+  consumption: MessageConsumptionFactsV1;
+  /** The message Goal's desired state; `null` when the message has no Goal. */
+  goal: GoalDesiredState | null;
+  /** A blocking decision stands on the message's task: the automation confirmation or the L46 block. */
+  taskBlocked: boolean;
+  /** The recipient's last execution is `unknown`. */
+  recipientOutcomeUnknown: boolean;
+};
+
+export type DeliveryResponseWaitV1 =
+  | { kind: 'none' }                              // the reply answers no wait (an asynchronous reply)
+  | { kind: 'consumed' }                          // the wait was already consumed (a late reply)
+  | { kind: 'unconsumed'; boundHere: boolean };   // bound to this execution, or to the effective handler
+
+export type DeliveryFactsV1 = DeliveryBaseFactsV1 & (
+  | { part: 'message'; delivered: boolean }
+  | { part: 'response'; accepted: boolean; wait: DeliveryResponseWaitV1 }
+  | { part: 'expiry'; waitConsumed: boolean; boundHere: boolean });
+
+export type DeliveryEligibilityV1 = { offerable: true } | { offerable: false; reason: DeliveryBlockReason };
+
+export function deliveryEligibility(facts: DeliveryFactsV1): DeliveryEligibilityV1 {
+  const problem = messageConsumptionProblem(facts.consumption);
+  if (problem !== null) {
+    return problem.code === 'invalid'
+      ? { offerable: false, reason: 'withdrawn' }
+      : { offerable: false, reason: 'not_released' };
+  }
+  if (facts.goal === 'cancelled') return { offerable: false, reason: 'cancelled' };
+  if (facts.goal === 'paused') return { offerable: false, reason: 'paused' };
+  if (facts.taskBlocked) return { offerable: false, reason: 'awaiting_decision' };
+  if (facts.recipientOutcomeUnknown) return { offerable: false, reason: 'outcome_unknown' };
+  if (facts.part === 'message') {
+    return facts.delivered ? { offerable: false, reason: 'delivered' } : { offerable: true };
+  }
+  if (facts.part === 'response') {
+    if (facts.accepted) return { offerable: false, reason: 'delivered' };
+    if (facts.wait.kind === 'unconsumed' && !facts.wait.boundHere) {
+      return { offerable: false, reason: 'not_bound' };
+    }
+    return { offerable: true };
+  }
+  return facts.waitConsumed || !facts.boundHere
+    ? { offerable: false, reason: 'not_bound' }
+    : { offerable: true };
+}
+
+/** The claim's wait facts, one arm per `ConsumedWaitV1` kind (D11); M-rest's `messageSatisfiesWait` takes it. */
+export type MessageWaitFactsV1 =
+  | { kind: 'wait_reply'; responseRefMatches: boolean; sameWorkspace: boolean; consumed: boolean }
+  | { kind: 'expiry'; consumed: boolean }
+  | { kind: 'intervention' };
+
+export function waitFactsOfRecord(
+  message: Pick<SessionMessageRecord, 'acceptedInputs'>,
+): WaitFactsV1 {
+  return { consumed: (message.acceptedInputs ?? []).some((input) => input.consumesWait === true) };
+}
+
+/**
+ * The ONE effective reply handler of a wait: a recorded `replyHandler` wins;
+ * otherwise the original `work_run`/`secretary_round` sender. A Host message has none.
+ */
+export function effectiveReplyHandler(
+  message: Pick<SessionMessageRecord, 'replyHandler' | 'sender'>,
+): SessionRef | null {
+  const handler = message.replyHandler ?? null;
+  if (handler !== null) return handler.sessionRef;
+  return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
+    ? message.sender.sessionRef : null;
+}
+
+export type ExpirySkipReason = 'not_released' | 'no_wait' | 'not_due' | 'not_open';
+export type MessageExpiredChangeV1 = { kind: 'expired'; expiredAt: string };
+
+/** §3.7 item 1: released, a `waitAfterSend` inquiry, the deadline passed, the wait still open, no `expiredAt`. */
+export function decideExpiry(
+  message: WaitMessageFactsV1 & Pick<SessionMessageRecord, 'release' | 'intent' | 'waitAfterSend' | 'deadline'>,
+  facts: WaitFactsV1,
+  at: string,
+): { change: MessageExpiredChangeV1 } | { skip: ExpirySkipReason } {
+  if (message.release !== 'released') return { skip: 'not_released' };
+  if (message.waitAfterSend !== true || message.intent !== 'inquiry') return { skip: 'no_wait' };
+  if (message.deadline === null || Date.parse(message.deadline) > Date.parse(at)) return { skip: 'not_due' };
+  if (waitStateOf(message, facts).state !== 'open') return { skip: 'not_open' };
+  return { change: { kind: 'expired', expiredAt: at } };
 }
 
 /**
@@ -1210,7 +1358,7 @@ function onSyntheticDecisionAnswered(state: MessageMachineState, ctx: MessageGua
   }
   return accept<MessageMachineState, MessageEffect>(
     { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 1,
-      release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+      release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
       approvalRevision: null, pins: null },
     [
       { kind: 'store_body', part: 'message', source: 'workspace' },
@@ -1345,6 +1493,19 @@ function onApplied(state: MessageMachineState): MessageTransition {
   );
 }
 
+function onExpired(state: MessageMachineState): MessageTransition {
+  if (state.status === 'absent') return absentMessage();
+  if (state.expiredAt !== null) return reject('illegal', 'invalid', 'the message already expired');
+  return accept<MessageMachineState, MessageEffect>(
+    { ...state, revision: state.revision + 1 },
+    [
+      { kind: 'write_message', change: 'expired' },
+      { kind: 'append_event', eventType: 'SessionMessageExpired' },
+      { kind: 'guard_message', expectedRevision: state.revision },
+    ],
+  );
+}
+
 export function transitionMessage(state: MessageMachineState, event: MessageEvent, ctx: MessageGuardContext): MessageTransition {
   switch (event.type) {
     case 'message_sent':
@@ -1385,6 +1546,8 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
       return onReleased(state);
     case 'message_applied':
       return onApplied(state);
+    case 'message_expired':
+      return onExpired(state);
     default:
       return unreachable(event, 'message event');
   }
@@ -1559,6 +1722,7 @@ export type SessionMessageChange =
   | { kind: 'read'; readAt: string }
   // The refusal reply plus withdraw/release/apply lifecycle changes.
   | Message7AChangeV1
+  | MessageExpiredChangeV1
   | { kind: 'input_accepted'; input: MessageAcceptedInput }
   | { kind: 'consultation_derived'; derivation: MessageConsultationDerivation }
   | { kind: 'archive_wait_disposed'; choice: ArchiveWaitChoiceV1; archiveSessionRef: SessionRef;
@@ -1621,8 +1785,14 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
         executionRef: { ...change.input.executionRef },
         kernel: { ...change.input.kernel },
         acceptedAt: change.input.acceptedAt,
+        evidence: change.input.evidence,
+        consumesWait: change.input.consumesWait,
       };
-      return { ...message, revision, acceptedInputs: [...existing, entry] };
+      const next: SessionMessageRecord = { ...message, revision, acceptedInputs: [...existing, entry] };
+      return change.input.part === 'message'
+        ? { ...next, delivery: 'delivered',
+            deliveryEvidence: { executionRef: { ...change.input.executionRef }, acceptedAt: change.input.acceptedAt } }
+        : next;
     }
     case 'consultation_derived':
       // MSG-09 (pre-step-3 `:1924-1925`): written once.
@@ -1679,6 +1849,10 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       return { ...message, revision, application: change.application };
     }
     // The withdraw/release/apply lifecycle, each a first-wins slot.
+    case 'expired':
+      if (message.expiredAt !== null) throw new Error('nextSessionMessageRecord: the message already expired');
+      if (message.response !== null) throw new Error('nextSessionMessageRecord: an answered wait cannot expire');
+      return { ...message, revision, expiredAt: change.expiredAt };
     case 'withdrawn':
       if (message.withdrawnAt !== null) throw new Error('nextSessionMessageRecord: the message is already withdrawn');
       if (message.readAt !== null || message.response !== null) {

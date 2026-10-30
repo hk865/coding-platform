@@ -48,7 +48,7 @@ function runOf(runId: string, over: Partial<RunSnapshot> = {}): RunSnapshot {
     ref: runRef(runId), revision: 4, schemaVersion: 1, task: { ...TASK }, attemptId: `${runId}-attempt`, planRef: PLAN,
     roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`,
-    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: T0, endedAt: T0, ...over,
+    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: T0, endedAt: T0, previousRun: null, ...over,
   };
 }
 const ended = (runId: string, outcome: RunOutcome, over: Partial<RunSnapshot> = {}): RunSnapshot =>
@@ -87,13 +87,13 @@ const ANCHOR_REF: SessionAnomalyAnchorRef = { aggregateType: 'SessionAnomalyAnch
 const archiveOf = (run: RunRef, cause: 'archive_cancel' | 'retired_interruption'): VerifiedArchiveInterruptionV1 =>
   ({ kind: 'execution', anchorRef: { ...ANCHOR_REF, runId: run.runId }, runRef: run, cause });
 
-type ChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'consumedWait'>;
+type ChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'previousRun'>;
 const requeueRefOf = (afterRunId: string): TaskRequeueRef =>
   ({ aggregateType: 'TaskRequeue', projectId: P, goalId: G, taskId: T, afterRunId });
 /** The afterRun's chain names one prior requeue whose `autoCount` is the prior count. */
 function priorChain(prior: number): { afterRun: ChainRun; runs: ChainRun[]; requeues: readonly { ref: TaskRequeueRef; automation: { automatic: boolean; counted: boolean; autoCount: number; cap: number | null } }[] } {
   const ref = requeueRefOf('r-prior');
-  const afterRun: ChainRun = { ref: runRef('r0'), requeueRef: ref };
+  const afterRun: ChainRun = { ref: runRef('r0'), requeueRef: ref, previousRun: null };
   return {
     afterRun,
     runs: [afterRun],

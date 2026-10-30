@@ -1,0 +1,2 @@
+请回答这条询问（消息 {{messageId}}，来自 {{sender}}，截止 {{deadline}}）：
+{{body}}

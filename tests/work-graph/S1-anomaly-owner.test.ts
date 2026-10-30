@@ -49,6 +49,7 @@ import {
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
@@ -68,11 +69,11 @@ const t1 = '2026-10-09T00:00:00.000Z';
 /** G2: every bundle the real path writes/reads. */
 const S1_ANOMALY_ADDITIONAL_SCHEMAS: RecordBackendSchemas = {
   records: [...SESSION_LIFECYCLE_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
-    ...COMPLETION_RECORD_SCHEMAS.records],
+    ...COMPLETION_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
   events: [...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
-    ...COMPLETION_RECORD_SCHEMAS.events],
+    ...COMPLETION_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
   lookups: [...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []),
-    ...(COMPLETION_RECORD_SCHEMAS.lookups ?? [])],
+    ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 type ArchiveOverrides = Partial<Omit<RequestSessionArchiveInput, 'sessionRef'>>;

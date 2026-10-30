@@ -62,7 +62,7 @@ export async function seedActivityRun(
     workspaceSnapshot: { workspaceId: f.b2.base.scope.workspaceId, revision: 1 },
     status: input.status, outcome: input.outcome ?? null, exitCode: null, lastEventSeq: 0,
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-    startedAt: input.startedAt, endedAt: input.endedAt,
+    startedAt: input.startedAt, endedAt: input.endedAt, previousRun: null,
     ...(input.authorization === undefined ? {} : { executionAuthorization: input.authorization }),
     ...(input.history === undefined ? {} : { executionHistory: input.history }),
   };

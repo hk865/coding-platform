@@ -42,6 +42,7 @@ import type {
   SessionMailboxPort,
   SessionMessage,
 } from '../core/work-graph/model/communication-contracts.js';
+import { waitStateOf, waitFactsOfRecord } from '../core/work-graph/state/message-machine.js';
 import type {
   ConsultationInput,
   ConsultationResult,
@@ -718,7 +719,11 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
           await tick(handle, signal);
           continue;
         }
-        if (read.status === 'ready' && read.value.status === 'responded' && read.value.response !== null) return true;
+        if (read.status === 'ready') {
+          const wait = waitStateOf(read.value, waitFactsOfRecord(read.value));
+          if (wait.state === 'answered' || wait.state === 'expired') return true;
+          if (wait.state === 'consumed' || wait.state === 'withdrawn') return false;
+        }
         if (read.status === 'rejected' && read.code === 'forbidden') { handle.reason = read.reason; return false; }
         await tick(handle, signal);
       }

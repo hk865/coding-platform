@@ -81,7 +81,7 @@ describe.each(['memory', 'sqlite'] as const)('S1 direct dispatch guards (%s)', k
     const lifecycle = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records,
       sessionFacts: createSessionFactsService({ records: barrier.records }) });
     const claim = await f.base.buildRequest();
-    claim.input.consumedWait = { runRef: f.b2.claim.runRef, messageRef: message.ref, responseRef: message.response.bodyRef };
+    claim.input.consumedWait = { kind: 'wait_reply', originalRun: f.b2.claim.runRef, messageRef: message.ref, responseRef: message.response.bodyRef };
     const archive: GraphWrite<RequestSessionArchiveInput> = {
       input: { sessionRef: f.b2.claim.sessionRef, reason: 'archive racing continuation', tasks: [],
         wait: { kind: 'cancel', runRef: f.b2.claim.runRef, messageRef: message.ref } },

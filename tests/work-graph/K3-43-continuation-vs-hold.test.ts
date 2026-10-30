@@ -31,6 +31,7 @@ import {
 } from '../helpers/K3-review-card-fixture.js';
 import { GOAL_B, PLAN_B2, WORKSPACE, WORKSPACE_REVISION } from '../helpers/S5-decision-fixture.js';
 import { readToolSeam, shellSeam } from '../helpers/K3-tool-seams.js';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 
 // The auto-settled record is a REAL Run whose one read-only call is held by the
 // §5.1 blocking seam; the mock is per test file, so this file owns it.
@@ -152,7 +153,7 @@ async function requeueAfterOrigin(f: Fixture, record: UnknownCallReviewV1): Prom
  */
 function interleaved(records: B2Records, otherSide: () => Promise<void>): B2Records {
   let fired = false;
-  return {
+  return withBackendOrderedLookup({
     readMany: refKeys => records.readMany(refKeys),
     lookupCommit: input => records.lookupCommit(input),
     eventAt: cursor => records.eventAt(cursor),
@@ -164,7 +165,7 @@ function interleaved(records: B2Records, otherSide: () => Promise<void>): B2Reco
       }
       return records.commit(batch);
     },
-  };
+  }, records);
 }
 
 async function runsOf(f: Fixture, record: UnknownCallReviewV1) {

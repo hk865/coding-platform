@@ -126,6 +126,7 @@ describe('archive_wait_disposed (S1-MSG-01/02, §5.2 UT23–UT25)', () => {
       acceptedInputs: [{
         inputId: responseInput, part: 'response', executionRef: RUN_R0, acceptedAt: T0,
         kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-D', runId: 'r1', turnId: 't1', position: 1 },
+        evidence: 'input_accepted', consumesWait: true,
       }],
     };
     const before = JSON.stringify(record);

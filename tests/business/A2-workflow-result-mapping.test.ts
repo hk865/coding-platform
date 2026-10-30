@@ -42,7 +42,7 @@ function runOf(over: Partial<RunSnapshot>): RunSnapshot {
     roleBinding: { schemaVersion: 1, bindingId: 'b', templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'p' },
     budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: 'rt', lastFactEventId: 'ev',
-    envelope: null, startedAt: AT, endedAt: AT, ...over,
+    envelope: null, startedAt: AT, endedAt: AT, previousRun: null, ...over,
   };
 }
 const ended = (outcome: RunOutcome, over: Partial<RunSnapshot> = {}): RunSnapshot =>

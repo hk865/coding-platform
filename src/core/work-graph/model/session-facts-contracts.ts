@@ -11,13 +11,14 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { MessageRecipient, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord, SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { RunRef, RunSnapshot, RunStatus, TaskTriple } from '../../../contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
-import type { QueryExecutionStateV1, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
+import type { QueryExecutionStateV1, QueryJobRef, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
+import type { DeliveryBaseFactsV1, WaitStateV1 } from '../state/message-machine.js';
 import type { SessionPage, SessionPageRequest } from './session-contracts.js';
 
 // ------------------------------------------------------------------------ //
@@ -59,9 +60,30 @@ export const SLICE1_LOOKUP_INDEXES: readonly Slice1LookupIndexV1[] = Object.free
 // ------------------------------------------------------------------------ //
 
 export type SessionWorkWaitV1 = { runRef: RunRef; messageRef: SessionMessageRef; task: TaskTriple };
+export type SessionWaitV1 = {
+  messageRef: SessionMessageRef;
+  /** The wait's own message. `rootRef = messageRef`; no forward walk (D8). */
+  rootRef: SessionMessageRef;
+  waitingSession: SessionRef;
+  originalRun: RunRef | null;
+  requestRoot: QueryJobRef | null;
+  recipient: MessageRecipient;
+  state: WaitStateV1;
+  deadline: string | null;
+  expiredAt: string | null;
+  /** The page budget's verdict: `true` on every returned row; a hit is the read's `incomplete` (D8). */
+  complete: boolean;
+};
+/** The facts a Runtime/Query admission cannot read from the message alone. */
+export type DeliveryEligibilityFactsV1 = Pick<DeliveryBaseFactsV1, 'goal' | 'taskBlocked' | 'recipientOutcomeUnknown'>;
+export interface DeliveryEligibilityFactsPort {
+  readDeliveryEligibilityFacts(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
+    Promise<ReadResult<DeliveryEligibilityFactsV1>>;
+}
 export type SessionFactsV1 = {
   session: SessionRecord; latestWork: TaskClaim | null; wait: SessionWorkWaitV1 | null;
-  predecessor: SessionProvenanceV1 | null; continuations: SessionRef[];
+  /** S's one addition: all open/answered/expired waits of the line, oldest first by the message's `since`. */
+  waits: SessionWaitV1[]; predecessor: SessionProvenanceV1 | null; continuations: SessionRef[];
   sourceCursor: CommitCursor;
 };
 export interface SessionFactsPort {
@@ -72,6 +94,9 @@ export interface SessionFactsPort {
     Promise<ReadResult<SessionPage<QueryRunSnapshot>>>;
   findSessionSuccessors(ctx: CoreCallContext, input: { sessionRef: SessionRef; page: SessionPageRequest }):
     Promise<ReadResult<SessionPage<SessionRecord>>>;
+  /** Required, not optional; 7C's handoff and 7D2's idle check consume it. */
+  readWait(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
+    Promise<ReadResult<SessionWaitV1>>;
 }
 
 // ------------------------------------------------------------------------ //

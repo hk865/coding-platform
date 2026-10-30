@@ -48,7 +48,7 @@ import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../../contrac
 import type {
   CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
 } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
   decodeSessionRecord, decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionRecord,
   plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey, type PendingSessionWorkLink,
@@ -57,7 +57,7 @@ import {
   taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
   type AttemptClaimBasis, type AttemptEvent, type AttemptGuardContext,
 } from '../state/attempt-machine.js';
-import { messageMachineStateOf, messageSatisfiesWait } from '../state/message-machine.js';
+import { messageMachineStateOf, messageSatisfiesWait, waitFactsOfRecord, type MessageWaitFactsV1 } from '../state/message-machine.js';
 import {
   runControlNodeOf, runStateOf, transitionRun, type ClaimRequeueFacts, type ReviewClaimFacts,
   type RunEvent, type RunGuardContext,
@@ -66,7 +66,7 @@ import { lastHolderOf, transitionUnknownCallReview, UNKNOWN_CALL_REVIEW_MAX_ROUN
 import { leaseReleasedForContinuation } from '../state/review-lease.js';
 import {
   occupancyAdmissionProblem, occupySessionRecord, sessionDispatchAdmissionProblem, sessionMachineStateOf,
-  transitionSession, type SessionEffect, type SessionOccupation,
+  transitionSession, type SessionConsumedWaitStateV1, type SessionEffect, type SessionOccupation,
 } from '../state/session-availability.js';
 import {
   taskClaimProblem, taskMachineStateOf, transitionTask,
@@ -74,7 +74,7 @@ import {
 } from '../state/task-machine.js';
 import type { Rejected as Refusal } from '../state/transition.js';
 import {
-  encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
+  consumedWaitProblem, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
   encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
 import { sessionMessageRefProblem } from './codec-shape-checks.js';
@@ -83,7 +83,7 @@ import {
   unknownCallReviewRefKey, UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
 } from './unknown-call-review-codecs.js';
 import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from '../model/claim-contracts.js';
-import type { SessionFactsV1, SessionWorkWaitV1 } from '../model/session-facts-contracts.js';
+import type { SessionFactsV1 } from '../model/session-facts-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { evaluateEligibility } from './eligibility.js';
@@ -107,7 +107,7 @@ const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
 const CLAIM_CONTINUATION_PREFIX = 'claim-continuation:';
 const CLAIM_IDENTITY_PREFIX = 'task-claim:';
 
-type Records = GoalRecordTransactionPort & RecordLookupPort;
+type Records = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -169,7 +169,7 @@ function rejectionOf(refusal: Refusal | null): CoreRejection | null {
  */
 export function workClaimDispatchProblem(
   facts: SessionFactsV1,
-  consumedWait: SessionWorkWaitV1 | null,
+  consumedWait: SessionConsumedWaitStateV1 | null,
 ): CoreRejection | null {
   const refusal = sessionDispatchAdmissionProblem(facts.session, {
     purpose: 'work',
@@ -186,9 +186,6 @@ export function workClaimDispatchProblem(
 
 /** TASK-01..03 subject before the Task is read: every guard on it holds. */
 const UNREAD_TASK: TaskClaimSubject = { taskKind: 'work', disposition: 'active', phase: 'pending' };
-/** A continuation's prior Run before it is read: every guard on it holds. */
-const UNREAD_PRIOR: NonNullable<TaskClaimFacts['prior']> = { node: 'YieldedWait', pointer: 'none', bindingProblem: null,
-  leaseReleasedByPrior: true, replyProblem: null };
 /** A requeue claim's TaskRequeue before it is read: every guard on it holds. */
 const UNREAD_REQUEUE: ClaimRequeueFacts = { coversSelectedRun: true, leaseReleasedByAfterRun: true, budgetPinned: true };
 /**
@@ -206,7 +203,7 @@ const CLAIMING: AttemptGuardContext = { runNode: 'Absent', runLastEventSeq: 0, o
 
 /** First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r, L10). */
 function claimBasisOf(input: ClaimTaskInput, review: UnknownCallReviewV1 | null): AttemptClaimBasis {
-  if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait };
+  if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait, previousRun: null };
   if (input.requeueRef !== undefined) return { kind: 'requeue', requeueRef: input.requeueRef };
   if (input.review !== undefined) {
     if (review === null) throw new Error('the review basis requires its record');
@@ -362,12 +359,15 @@ function continuationBindingProblem(
  */
 function continuationPrior(
   prior: RunSnapshot, lease: TaskLeaseSnapshot | null, consumedWait: ConsumedWaitV1, input: ClaimTaskInput,
+  previousRun: RunRef,
 ): NonNullable<TaskClaimFacts['prior']> {
   return {
+    kind: 'yielded',
     node: runControlNodeOf(prior),
     pointer: runStateOf(prior).pointer,
     bindingProblem: prior.continuation === undefined ? null : continuationBindingProblem(prior.continuation, consumedWait, input),
-    leaseReleasedByPrior: lease !== null && taskLeaseNodeOf(lease) === 'released' && lease.holderRunId === prior.ref.runId,
+    leaseReleasedByPrior: lease !== null && taskLeaseNodeOf(lease) === 'released'
+      && lease.holderRunId === previousRun.runId,
     replyProblem: null,
   };
 }
@@ -407,7 +407,7 @@ function claimRunContext(facts: TaskClaimFacts, actor: Extract<ActorRef, { kind:
     inputsConfirmed: null,
     actor: isAutomationActor(actor) ? 'system' : 'human',
     claim: { sessionOccupied: false, eligibility: null, taskHasRun: facts.taskHasRun,
-      prior: facts.prior, requeue: facts.requeue, review: facts.review ?? null, admission: facts.admission,
+      prior: facts.prior ?? null, requeue: facts.requeue, review: facts.review ?? null, admission: facts.admission,
       ...(facts.reviewBlocker === undefined ? {} : { reviewBlocker: facts.reviewBlocker }) },
   };
 }
@@ -548,6 +548,10 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
   const deadline = budget['deadline'];
   if (!(deadline === null || (typeof deadline === 'string' && deadline.length > 0 && Number.isFinite(Date.parse(deadline))))) {
     return reject('invalid', 'budget.deadline must be null or a legal instant');
+  }
+  if (input.consumedWait !== undefined) {
+    const problem = consumedWaitProblem(input.consumedWait, { projectId: scope.projectId, goalId: goalRef['goalId'] });
+    if (problem !== null) return reject('invalid', problem);
   }
   if (input.requeueRef !== undefined) {
     // TD-3: a requeue claim never consumes a wait, and names a TaskRequeue of this Task.
@@ -749,8 +753,14 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       return { rejection: factsRead };
     }
     const facts = factsRead.value;
-    const consumed: SessionWorkWaitV1 | null = consumedWait === undefined ? null
-      : { runRef: consumedWait.runRef, messageRef: consumedWait.messageRef, task: taskTriple };
+    const consumed: SessionConsumedWaitStateV1 | null = consumedWait === undefined ? null
+      : consumedWait.kind === 'intervention'
+        ? { kind: 'intervention', messageRef: consumedWait.messageRef, task: taskTriple }
+        : consumedWait.kind === 'wait_reply'
+          ? { kind: 'wait_reply', originalRun: consumedWait.originalRun, messageRef: consumedWait.messageRef,
+              responseRef: consumedWait.responseRef, task: taskTriple }
+          : { kind: 'expiry', originalRun: consumedWait.originalRun, messageRef: consumedWait.messageRef,
+              expiryInputId: consumedWait.expiryInputId, task: taskTriple };
     const refusal = workClaimDispatchProblem(facts, consumed);
     return refusal === null ? { guards: [] } : { rejection: refusal };
   }
@@ -768,7 +778,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const consumed = input.consumedWait!;
     const identityKey = CLAIM_CONTINUATION_PREFIX + sha256Hex(canonicalJson({
       kind: 'claim-continuation', projectId: scope.projectId, workspaceId: scope.workspaceId,
-      runRef: consumed.runRef, messageRef: consumed.messageRef,
+      ...(consumed.kind === 'intervention' ? {} : { runRef: consumed.originalRun }),
+      messageRef: consumed.messageRef,
     } as unknown as JsonValue));
     const expectedCanonical = [...expected].map(pin => ({ ref: pin.ref, revision: pin.revision }))
       .sort((left, right) => {
@@ -972,7 +983,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       activePlanMatchesClaim: goal.activePlanRevision !== null
         && refKeyOf(goal.activePlanRevision) === refKeyOf(input.planRef),
       sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: false,
-      prior: basis.kind === 'continuation' ? UNREAD_PRIOR : null,
+      ...(basis.kind === 'continuation' ? {} : { prior: null }),
       requeue: basis.kind === 'requeue' ? UNREAD_REQUEUE : null,
       review: basis.kind === 'review' && reviewRecord !== null ? unreadReview(reviewRecord.ref) : null,
       admission: null,
@@ -1071,16 +1082,35 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     let releasedLease: TaskLeaseSnapshot | null = null;
     let continuationMessageGuard: RecordGuard | null = null;
     let prior: TaskClaimFacts['prior'] = null;
+    let previousRun: RunRef | null = null;
     let requeue: TaskClaimFacts['requeue'] = null;
     const consumedWait = input.consumedWait;
     if (consumedWait !== undefined) {
-      const priorRun = (facts.runsByTaskId.get(input.taskId) ?? []).find(run => sameRef(run.ref, consumedWait.runRef));
       releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
-      prior = priorRun === undefined ? null : continuationPrior(priorRun, releasedLease, consumedWait, input);
+      previousRun = releasedLease?.release?.runRef ?? null;
+      if (previousRun === null) return reject('busy', 'the prior Run lease is not released by that Run');
+      if (consumedWait.kind === 'intervention') {
+        // D11: the intervention has no yielded prior to read. Its own facts are the real released
+        // holder and, filled by the guard below, the message facts. The yielded node/binding/pointer
+        // conditions are skipped because they do not apply to it.
+        prior = {
+          kind: 'intervention',
+          releasedHolder: releasedLease !== null && taskLeaseNodeOf(releasedLease) === 'released'
+            && releasedLease.release?.runRef.runId === releasedLease.holderRunId,
+          replyProblem: null,
+        };
+      } else {
+        const priorRun = (facts.runsByTaskId.get(input.taskId) ?? [])
+          .find(run => sameRef(run.ref, consumedWait.originalRun));
+        prior = priorRun === undefined ? null
+          : continuationPrior(priorRun, releasedLease, consumedWait, input, previousRun);
+      }
+      basis = { kind: 'continuation', consumedWait, previousRun };
     }
     const requeueRef = input.requeueRef;
     if (requeueRef !== undefined) {
       releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      previousRun = releasedLease?.release?.runRef ?? null;
       requeue = requeueClaimFacts(requeueRef, state, facts.requeuesByTaskId.get(input.taskId) ?? [], releasedLease, input,
         facts.runsByTaskId.get(input.taskId) ?? []);
       // K3 (L10, ATT-16): the releasing Run and its purpose, read in this same
@@ -1095,6 +1125,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     let review: ReviewClaimFacts | null = null;
     if (basis.kind === 'review' && reviewRecord !== null && input.review !== undefined && taskState !== null) {
       releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
+      previousRun = releasedLease?.release?.runRef ?? null;
       const covering = state.requeueRef === null ? null
         : (facts.requeuesByTaskId.get(input.taskId) ?? [])
           .find(candidate => sameRef(candidate.ref, state.requeueRef!)) ?? null;
@@ -1159,11 +1190,15 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
         savedMessage = decodedMessage.value;
         continuationMessageGuard = { refKey: messageKey, expectedRevision: messageRecord.revision };
       }
-      const reply = messageSatisfiesWait(messageMachineStateOf(savedMessage), {
-        responseRefMatches: savedMessage !== null && savedMessage.response !== null
-          && sameRef(savedMessage.response.bodyRef, consumedWait.responseRef),
-        sameWorkspace: savedMessage !== null && savedMessage.ref.workspaceId === scope.workspaceId,
-      });
+      const consumed = savedMessage === null ? false : waitFactsOfRecord(savedMessage).consumed;
+      const waitFacts: MessageWaitFactsV1 = consumedWait.kind === 'wait_reply'
+        ? { kind: 'wait_reply',
+            responseRefMatches: savedMessage !== null && savedMessage.response !== null
+              && sameRef(savedMessage.response.bodyRef, consumedWait.responseRef),
+            sameWorkspace: savedMessage !== null && savedMessage.ref.workspaceId === scope.workspaceId,
+            consumed }
+        : consumedWait.kind === 'expiry' ? { kind: 'expiry', consumed } : { kind: 'intervention' };
+      const reply = messageSatisfiesWait(messageMachineStateOf(savedMessage), waitFacts);
       // TASK-02 refused a continuation without a prior Run of this Task above.
       refused = judge({ prior: { ...claimFacts.prior!, replyProblem: reply.satisfied ? null : reject(reply.code, reply.detail) } });
       if (refused !== null) return refused;
@@ -1220,7 +1255,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       : null;
     const claim: TaskClaim = {
       task: taskTriple, planRef: input.planRef, workspaceId: scope.workspaceId, sessionRef: input.sessionRef,
-      sessionRevision: occupation.generation, generation: occupation.generation, runRef, attemptRef, outboxRef, claimedAt,
+      sessionRevision: occupation.generation, generation: occupation.generation, runRef, attemptRef, outboxRef,
+      previousRun, claimedAt,
     };
 
     // TASK-01..03 accept the claim; `claimRecords` writes the records its effects name.

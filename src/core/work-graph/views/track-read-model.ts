@@ -535,7 +535,7 @@ async function runBarWith(
   const priorSameAttempt = index > 0 && taskRuns[index - 1]!.attemptId === run.attemptId;
   const via: TrackRunBarV1['attempt']['via'] = run.requeueRef !== undefined && run.requeueRef !== null
     ? 'requeue'
-    : run.consumedWait !== undefined && run.consumedWait !== null
+    : run.previousRun != null
       ? 'wait_continuation'
       : priorSameAttempt ? 'same_attempt' : 'first';
   const requeue = await requeueInfoOf(records, run, budget);

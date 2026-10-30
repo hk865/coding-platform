@@ -551,7 +551,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
       throw new Error(`the formal reply is absent: ${JSON.stringify(replied)}`);
     }
     const continuationClaim = await claimTask(input.goalRef, input.yieldTaskId, yieldSession, undefined,
-      { runRef: yieldClaim.runRef, messageRef, responseRef: replied.value.response.bodyRef });
+      { kind: 'wait_reply', originalRun: yieldClaim.runRef, messageRef, responseRef: replied.value.response.bodyRef });
     runsForTask.set(input.yieldTaskId, 2);
     const resumeHandle = await steps.start(continuationClaim, { at: input.resumeStartedAt,
       replies: [{ kind: 'text', text: 'the continuation is done' }] });

@@ -90,6 +90,37 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'user-decision-response': {
         bodyJson: { required: true },
     },
+    'action-request-delivery': {
+        messageId: { required: true },
+        sender: { required: true },
+        body: { required: true },
+    },
+    'inquiry-delivery': {
+        messageId: { required: true },
+        sender: { required: true },
+        body: { required: true },
+        deadline: { required: true },
+    },
+    'notify-delivery': {
+        messageId: { required: true },
+        sender: { required: true },
+        body: { required: true },
+    },
+    'wait-reply-delivery': {
+        messageId: { required: true },
+        question: { required: true },
+        body: { required: true },
+    },
+    'wait-expiry-delivery': {
+        messageId: { required: true },
+        question: { required: true },
+        deadline: { required: true },
+        expiryCount: { required: true },
+    },
+    'intervention-delivery': {
+        messageId: { required: true },
+        body: { required: true },
+    },
     'scribe-reminder': {
         marker: { required: true },
         pendingCount: { required: true },

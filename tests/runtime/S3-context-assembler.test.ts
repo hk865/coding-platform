@@ -228,14 +228,14 @@ function taskRecord(input: {
   const claim: TaskClaim = {
     task: input.task, planRef: input.plan.ref, workspaceId: 'w',
     sessionRef: { projectId: 'p', sessionId: input.sessionId }, sessionRevision: 1, generation: 1,
-    runRef, attemptRef, outboxRef, claimedAt: AT,
+    runRef, previousRun: null, attemptRef, outboxRef, claimedAt: AT,
   };
   const outbox: TaskClaimOutbox = { ref: outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim };
   const run: RunSnapshot = {
     ref: runRef, revision: 1, schemaVersion: 1, task: input.task, attemptId: attemptRef.attemptId,
     planRef: input.plan.ref, roleBinding: ROLE_BINDING, budget: TASK_BUDGET,
     workspaceSnapshot: { workspaceId: 'w', revision: 7 }, status: 'starting', outcome: null, exitCode: null,
-    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
+    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null, previousRun: null,
   };
   const attempt: TaskAttemptSnapshot = {
     ref: attemptRef, revision: 1, schemaVersion: 1, runId: input.runId, planRef: input.plan.ref,

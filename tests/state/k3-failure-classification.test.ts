@@ -29,7 +29,7 @@ function crashWithTakeover(runId: string): RunSnapshot {
     ref: ref(runId), revision: 4, schemaVersion: 1, task, status: 'ended', outcome: 'crashed', exitCode: null,
     lastEventSeq: 5, lastRuntimeEventId: event.eventId, lastFactEventId: 'fact-5',
     budget: { tokenBudget: 1000, deadline: null }, startedAt: '2026-10-16T00:00:00.000Z',
-    endedAt: '2026-10-16T00:00:02.000Z',
+    endedAt: '2026-10-16T00:00:02.000Z', previousRun: null,
     reconciliation: { status: 'done', basis: { kind: 'host_instance_takeover', hostInstanceId: 'host-1' },
       recordedAt: '2026-10-16T00:00:03.000Z',
       observation: { kind: 'takeover_unresolved', event, lastPosition: 5, observedThroughPosition: 5,

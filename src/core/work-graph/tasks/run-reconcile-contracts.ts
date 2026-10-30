@@ -11,7 +11,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { WriteResult } from '../../../contracts/core/results.js';
 import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionProbeVerdict } from '../state/session-availability.js';
 import type { RunUnknownCause } from '../state/run-machine.js';
@@ -144,7 +144,7 @@ export interface RunReconcileService extends RunReconcilePort {
 }
 
 export type RunReconcileDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   reads: ExecutionReadPort;
   hostInstance?: HostInstanceFacts;
   now(): string;

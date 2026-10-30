@@ -30,6 +30,7 @@ import type {
   LineSourceRefV1, LineStatusV1, TaskDisplayFactsV1,
 } from '../../../contracts/work-line.js';
 import { controlSubmissionProblem, type ControlPointerIntent } from './control-intent-machine.js';
+import type { WaitStateV1 } from './message-machine.js';
 import { isPausedInterrupted, runControlNodeOf } from './run-machine.js';
 import { taskRequeueStateProblem, type TaskReworkFacts, type TaskState } from './task-machine.js';
 
@@ -97,7 +98,8 @@ export type LineRunFactsV1 = {                        // 控制和状态要用�
   run: RunSnapshot;
   pointer: ControlIntentSnapshotV1 | null;            // controlState.intentRef 指的意图
   pointerFromGoal: boolean;                           // GOAL-29 的那一种：意图是目标扇出的暂停
-  continuationConsumed: boolean;                      // RD-8：YieldedWait 的接续已被后继 Run 用掉
+  /** The oldest unconsumed wait's state; `null` when the line has no wait. */
+  wait: WaitStateV1 | null;
   goalDesiredState: GoalDesiredState;                 // 这次 Run 所属目标
   /** L10 claim-time fallback (from the DispatchOutboxEntry claim); null when not read. */
   claimedAt?: string | null;
@@ -373,10 +375,8 @@ function pausedInterruptedT0(facts: LineFactsV1): LineReasonV1 | null {
 
 function isWaitingReply(facts: LineFactsV1): boolean {
   if (facts.holder !== null || facts.latestWork === null) return false;
-  const run = facts.latestWork.run;
-  if (!isYielded(run) || !hasContinuation(run)) return false;
-  const desired = run.controlState?.desiredState;
-  return desired !== 'cancelled' && desired !== 'paused';
+  const wait = facts.latestWork.wait;
+  return wait !== null && (wait.state === 'open' || wait.state === 'answered');
 }
 
 /** T8 without the evidence: executor, unoccupied, not waiting, no other open responsibility, all terminal. */
@@ -562,7 +562,7 @@ function workControlProblem(kind: 'pause' | 'resume' | 'cancel', facts: LineRunF
     reason: null,
     pointer: facts.run.controlState?.desiredState ?? 'none',
     yielded: node === 'YieldedWait',
-    continuationConsumed: facts.continuationConsumed,
+    continuationConsumed: facts.wait?.state === 'consumed',
     pointerIntent: pointerIntentOf(facts.pointer),
     goal: facts.goalDesiredState,
   });

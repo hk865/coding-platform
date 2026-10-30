@@ -41,7 +41,8 @@ async function acceptedByD(f: ArchiveServiceFixture, message: SessionMessage) {
   const write = acceptWrite(f, message, f.b2.secondClaim, fact);
   const result = committed(await f.mailbox.recordInputAccepted(f.ctx, write));
   const expected = [{ inputId: deriveSessionInputId(message.ref, 'response'), part: 'response',
-    executionRef: f.b2.secondClaim.runRef, kernel: fact.kernel, acceptedAt: f.now() }];
+    executionRef: f.b2.secondClaim.runRef, kernel: fact.kernel, acceptedAt: f.now(),
+    evidence: 'input_accepted', consumesWait: true }];
   expect(result.value.acceptedInputs).toEqual(expected);
   expect(ready(await f.mailbox.readMessage(f.ctx, message.ref)).acceptedInputs).toEqual(expected);
   return { result, write };

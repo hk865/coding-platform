@@ -15,7 +15,7 @@
 做 Session 生命周期、占用、责任交接、请求轮与控制意图的去这组。
 
 - `session-activity.ts` — Session 活动记录的纯规则与记录构造都在这里：`latestActivityAt`（线卡时钟，`src/core/work-graph/state/session-activity.ts:25`；`tasks/line-clock.ts` 只再导出）与 `nextSessionActivity`（`src/core/work-graph/state/session-activity.ts:41`；一次提交事实之后的下一条记录：revision 递增、时刻不回退、迟到的旧事实不改 kind/source）。
-- `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入。
+- `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入；分派准入把已消费等待按消息、原 Run 与任务三元匹配（`SessionConsumedWaitStateV1`），`intervention` 在旁边运行、不消费等待。
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
 - `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写，包含三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）、推进用的 `withHandoffProgress`、纯覆盖规则 `coverageHolds`、简报就绪规则 `briefReady` 和 entered 确认的 `consumeHandoffBrief`。
 - `session-anomaly.ts` — Session 异常锚点的构造/迁移/读取与 Task 归档状态派生。
@@ -47,7 +47,7 @@
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交。
 - `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
 - `decision-policy.ts` — 自主级别动作表、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
-- `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键。
+- `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
 - `initialization-adoption.ts` — 初始化采用操作的纯记录表：出生 `newInitializationAdoptionRecord`、既有操作的再次接受 `acceptExistingInitializationAdoption`、写入前标记 `nextAdoptionStage`，以及三个后写 `advanceInitializationAdoption`/`stopInitializationAdoption`/`completeInitializationAdoption`，再加供服务重建已提交记录的纯投影 `committedAdoptionRecord`（前缀、before/stopped 标记与 `record.result` 只在这里形成；不读时钟、不生成 id、不碰存储）。
 
@@ -57,7 +57,7 @@
 
 - `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
 - `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:31`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
-- `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）。
+- `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。
 - `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
 - `goal-interruption.ts` — 目标中断记录的地址 `interruptionRefOf`（每个目标一条）和两个纯迁移：`pendingGoalInterruption`（缺失/`resumed` → revision+1 的 `pending`，已 `pending` → null 保留）与 `resumedGoalInterruption`（`pending` → `resumed`，缺失/已 `resumed` → null）；返回记录与 `expectedRevision`，不构造 guard。
 - `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
@@ -119,12 +119,18 @@
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
 | `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:741` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
-| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1348` | SessionMessage 主迁移 | 消息读/回/派生 |
-| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1512` | 建新消息记录 | 收到用户或系统消息 |
-| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1575` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
-| `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:1036` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
-| `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1044` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
-| `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:1050` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
+| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1509` | SessionMessage 主迁移 | 消息读/回/派生 |
+| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1675` | 建新消息记录 | 收到用户或系统消息 |
+| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1739` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
+| `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:1041` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
+| `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1061` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
+| `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:1067` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
+| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:1072` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
+| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1207` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
+| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:1138` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
+| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1230`、`:1226`、`:1227` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
+| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:173`、`:485`、`:309`、`:1488` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
+| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1175` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
 | `noProgressKey` | `src/core/work-graph/state/no-progress.ts:175` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
@@ -166,28 +172,28 @@
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
-| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:837` | 建 Run 记录 | claim/开跑 |
-| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1366` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
+| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:855` | 建 Run 记录 | claim/开跑 |
+| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1385` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
 | `runStateOf` | `src/core/work-graph/state/run-machine.ts:148` | Run 快照的机器状态 | Run 迁移前 |
-| `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:529` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
+| `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:537` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
 | `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:208` | 是否 paused/interrupted 的结束 | 重排队与展示 |
 | `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:222` | 未解决工具调用的阻塞原因 | 未知调用审查 |
-| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1099` | claim 时 Session/Lease 的持有检查 | claim 提交 |
-| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1194` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
+| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1118` | claim 时 Session/Lease 的持有检查 | claim 提交 |
+| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1213` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |
-| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:325` | 建 Session 记录 | 新建 Session |
-| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:348` | 在下一代 generation 上取得占用 | 运行开始 |
-| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:372` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
-| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:405` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
-| `transitionSession` | `src/core/work-graph/state/session-availability.ts:604` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
-| `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:289` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
-| `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:246` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
-| `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:230` | 下一次占用代数 | 取占用时 |
-| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:662` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
-| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:680` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
-| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:515` | 分派准入：归档、只读副本、Work 等待 | 选秘书/分派候选 |
+| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:333` | 建 Session 记录 | 新建 Session |
+| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:356` | 在下一代 generation 上取得占用 | 运行开始 |
+| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:380` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
+| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:413` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
+| `transitionSession` | `src/core/work-graph/state/session-availability.ts:619` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
+| `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:297` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
+| `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:254` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
+| `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:238` | 下一次占用代数 | 取占用时 |
+| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:677` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
+| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:695` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
+| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:523` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
 | `transitionResponsibility` | `src/core/work-graph/state/session-responsibility.ts:33` | 责任转移/关闭：关源链接、开目标链接 | 责任交接 |
 | `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:77`、`:100` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |
 | `OperationCallerV1`、`OperationSessionFactV1`、`HandoffAdmissionFactsV1`、`SecretaryArchiveAdmissionFactsV1`、`OperationAdmissionV1` | `src/core/work-graph/state/session-handoff.ts:21`、`:23`、`:26`、`:41`、`:49` | 两张准入表的输入和结果：调用者的分类、公开读到的 Session 事实、交接和秘书归档各自的事实、准入结果（`busy` 带未完成操作的 pin） | owner 读完事实后调 `admitHandoff` 或 `admitSecretaryArchive` |
@@ -242,7 +248,7 @@
 
 - Attempt/Session：`attemptNodeOf`、`taskLeaseNodeOf`、`leaseHeldByClaim`、`isTaskLeaseEvent`、`ownsQuery`、`deriveAvailability`、`openResponsibleLinkOf`、`archiveSessionRecord`、`reactivateSessionRecord`、`observeSessionHealthRecord`、`bindSessionUnavailableCursor`、`requestSessionArchiveRecord`、`releaseSessionArchiveRequestRecord`、`executorArchiveDue`、`INCONCLUSIVE_PROBES`。
 - Goal/Plan：`goalControlTarget`、`nextGoalPointer`、`nextGoalDesiredState`、`buildGoalPhaseSnapshot`、`goalFanOutReason`、`goalResumeContinueRequestId`、`projectGoalRunStop`、`isPendingVerdict`、`isGoalStopCause`、`reduceGoalDisplay`、`buildGoalSettingsRecord`、`goalConflictFacts`、`automationDecisionCause`、`buildWorkspaceDecisionSettingsRecord`、`buildWorkspaceLineSettingsRecord`、`acceptProposalRecord`、`derivePlanProposalStatus`、`samePlanPointer`、`futureChangeTraceProblem`、`tracedDispositionChangeProblem`、`parallelCarrierFactTaskIds`、`parallelCarrierFenceProblem`、`GOAL_CANCELLED_PLAN_DETAIL`、`INITIAL_ADOPTION_STALE_DETAIL`、`SOURCE_PLAN_STALE_DETAIL`、`TARGET_PLAN_NOT_NEW_DETAIL`。
-- Control/Message：`desiredStateOfKind`、`controlSubmitProblem`、`observationStatusFor`、`newControlIntentRequest`、`controlIntentRequestOf`、`notEnteredEntryPhase`、`submissionReadsPointerIntent`、`submissionReadsGoal`、`observedIntentAnswer`、`messagePrincipalProblem`、`messageRecipientProjectProblem`、`messagePinProblem`、`messageSendFlagsProblem`、`inputObserverProblem`、`messageSatisfiesWait`、`createSyntheticDecisionAnswerRecord`、`bindMessageResponseCursor`。
+- Control/Message：`desiredStateOfKind`、`controlSubmitProblem`、`observationStatusFor`、`newControlIntentRequest`、`controlIntentRequestOf`、`notEnteredEntryPhase`、`submissionReadsPointerIntent`、`submissionReadsGoal`、`observedIntentAnswer`、`messagePrincipalProblem`、`messageRecipientProjectProblem`、`messagePinProblem`、`messageSendFlagsProblem`、`inputObserverProblem`、`createSyntheticDecisionAnswerRecord`、`bindMessageResponseCursor`、`effectiveReplyHandler`。
 - Task/Run：`runNodeOf`、`runControlNodeOf`、`runControlFence`、`leaseOwnedByRun`、`terminalOutcomeOf`、`terminalPayloadOf`、`attestedTerminalPayload`、`RUN_UNRESOLVED_TERMINAL_REASON`、`reviewClaimProblem`、`requeueClaimProblem`、`claimPinProblem`、`reviewBlockerProblem`、`claimBasisProblem`、`entryV2Binding`、`reviewEntryProblem`、`controlSubmissionRunEvent`、`stopRequesterOf`、`isGoalFanOutActor`、`reworkStopOf`、`priorRequeueAutoCount`、`nextRequeueAutoCount`、`permitClaimGuard`、`requeueHistorySourceOf`、`countEndedGoalRuns`、`streakOf`、`previousChainRefOf`、`reworkRefusalIsStale`、`requeueConfirmedByReview`、`REWORK_ACTOR_CLASSES`、`newTaskReworkRefusalRecord`、`newTaskReductionRecord`、`taskClaimProblem`、`taskCompletionRoundProblem`、`taskCompletionFoldProblem`、`taskCompletionProjectionProblem`、`requeueBudgetIncreased`、`requeueBasisCompared`。
 - 验证/审查：`roundOrdinalOf`、`rootRoundChain`、`ROUND_SUBJECT_SLOT_PREFIX`、`ROUND_GATE_SLOT_PREFIX`、`roundSlotKey`、`roundSlotSubjectOf`、`roundSlotOwner`、`outcomeFor`、`FROZEN_PERMISSION_CHANGED`、`FROZEN_ROOT_CHANGED`、`FROZEN_SOURCE_CHANGED`、`frozenBindingReason`、`beginRefusalIsPermanent`、`chainEvidenceIds`、`evidenceSupersededByRequeue`、`reverifyFailureClass`、`reverifyExemptionOfFacts`、`successorAutoCount`、`reverifyCapExceeded`、`roundChainFull`、`pendingRoundChecks`、`withCheckPhase`、`buildFinalizedRound`、`nextTaskEvidenceIndex`、`roundReviewerEvidenceProblem`、`roundOpenProblem`、`roundGoalActivityProblem`、`roundSubjectActivityProblem`、`roundActivityProblem`、`roundOpenPointerProblem`、`roundOpenBasisProblem`、`roundOpenSubjectProblem`、`roundOpenChainProblem`、`roundOpenChecksProblem`、`checkEventAdmission`、`frozenBindingProblem`、`reverifyCapRefusal`、`reverifyPolicyRefusal`、`newSessionAnomalyAnchorRecord`、`deriveTaskArchiveState`、`kernelToolNameOf`、`containedByHostStop`、`admitsAutoCleanupTakeover`、`truncateUnknownCallReviewItems`、`lastHolderOf`、`UNKNOWN_CALL_REVIEW_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_CREATION_BUDGET_BYTES`、`UNKNOWN_CALL_REVIEW_MAX_ITEMS`、`UNKNOWN_CALL_DECISION_REASON_ORDER`。
 - 其它纯 helper：`commandActionKey`、`COMMAND_RERUN_REQUEST_MAX_FORMS`、`openRequestForAlias`、`contextAssemblyStructureProblem`、`renderedSectionProblem`、`contextGoalContentProblem`、`gateCoveredTaskIds`、`gateFixInProgress`、`pausedAutomationAction`、`cardLineKeys`、`deriveTaskDisplayFacts`、`archivedLineTag`、`lineSortKey`、`keyCheckFacts`、`newBasisInputDigest`、`noteWriteAuthority`、`actualDispositionTargets`、`pendingUnderstandingOverridden`、`noticeClassOf`、`noteBodyOf`、`newCurrentPointerRecord`、`moveCurrentPointerRecord`、`newArchitectureCaptureFailureRecord`、`classifyTaskAttention`、`runFailureOrigin`、`accept`、`reject`、`failed`、`rejected`、`classifyTaskPhase`、`isRunFinished`。

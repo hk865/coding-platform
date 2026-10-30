@@ -16,6 +16,7 @@
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
+import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ExecutionRef, RoleConfigurationRef, SessionAggregateRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
@@ -122,12 +123,19 @@ export type SessionArchiveGuardV1 = {
 /** Slice 1 §3.5: the facts a Work/Query claim admission needs, all read by the owner. */
 export type SessionDispatchGuardV1 = {
   purpose: 'work' | 'query'; waiting: 'not_read' | SessionWorkWaitStateV1 | null;
-  consumedWait: SessionWorkWaitStateV1 | null; readonlyQueryMatches: boolean;
+  consumedWait: SessionConsumedWaitStateV1 | null; readonlyQueryMatches: boolean;
 };
 /** Structural equivalent of the model's `SessionWorkWaitV1`; state never imports model. */
 export type SessionWorkWaitStateV1 = {
   runRef: RunRef; messageRef: SessionMessageRef; task: TaskTriple;
 };
+/** The claim's `ConsumedWaitV1`, reduced to what the Session admission reads; K passes it (SR6 6.2.3). */
+export type SessionConsumedWaitStateV1 =
+  | { kind: 'wait_reply'; originalRun: RunRef; messageRef: SessionMessageRef;
+      responseRef: ArtifactRef; task: TaskTriple }
+  | { kind: 'expiry'; originalRun: RunRef; messageRef: SessionMessageRef;
+      expiryInputId: string; task: TaskTriple }
+  | { kind: 'intervention'; messageRef: SessionMessageRef; task: TaskTriple };
 export type Slice1SessionEvent =
   | { kind: 'archive_requested'; archive: SessionArchiveRequestV1 }
   | { kind: 'archive_request_released'; archiveRequestId: string };
@@ -525,8 +533,15 @@ export function sessionDispatchAdmissionProblem(session: SessionRecord, facts: S
     return reject('guard_failed', 'incomplete', 'the Session work-wait facts were not read');
   }
   if (facts.waiting !== null) {
-    const consumed = facts.consumedWait !== null && sameRef(facts.waiting, facts.consumedWait);
-    if (facts.purpose !== 'work' || !consumed) {
+    const consumed = facts.consumedWait;
+    const sameWait = consumed !== null && consumed.kind !== 'intervention'
+      && sameRef(consumed.messageRef, facts.waiting.messageRef)
+      && sameRef(consumed.originalRun, facts.waiting.runRef)
+      && sameRef(consumed.task, facts.waiting.task);
+    // An intervention runs beside the open/answered wait and consumes nothing;
+    // its message/task binding is the claim's, checked by K before this state rule.
+    const intervention = consumed !== null && consumed.kind === 'intervention';
+    if (facts.purpose !== 'work' || (!sameWait && !intervention)) {
       return reject('guard_failed', 'busy',
         'archive_wait_disposal_required: the Session is waiting for a continuation reply');
     }

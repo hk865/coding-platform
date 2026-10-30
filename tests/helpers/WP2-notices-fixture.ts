@@ -181,7 +181,11 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       hostTemplate: B2_HOST.hostTemplate, budget };
     const owner = createQueryExecution({ records: withBackendOrderedLookup(records, b2.base.records), roles, bodies: b2.bodies, now: f.now, eventId: f.id,
       hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' }, authorizeConfiguration: async () => ({ status: 'ready', value: host }) });
-    const jobs = createQueryJobService({ records, execution: owner, consultations: f.mailbox, now: f.now, eventId: f.id });
+    const jobs = createQueryJobService({ records, execution: owner, consultations: f.mailbox, now: f.now, eventId: f.id,
+      // R4-13: the send's work Run fixes the message Goal, which is active; it names no Task, and the recipient is a fresh continuation with no execution (taskBlocked false, recipientOutcomeUnknown false).
+      eligibility: { async readDeliveryEligibilityFacts() {
+        return { status: 'ready' as const, value: { goal: 'active' as const, taskBlocked: false, recipientOutcomeUnknown: false } };
+      } } });
     const ids = message ? consultationQueryRefs(message.ref) : (() => { const id = f.id(); return {
       queryJobRef: { aggregateType: 'QueryJob', ...base.scope, queryJobId: id } as QueryJobRef,
       queryRunRef: { aggregateType: 'QueryRun', ...base.scope, queryJobId: id, runId: id + '-run' } as QueryRunRef }; })();

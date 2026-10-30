@@ -24,7 +24,7 @@ import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatc
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
 import { revisionAssignments } from '../../contracts/plan.js';
-import type { PromptPackSourcePort, ResolvedPromptPackV1 } from '../../contracts/prompts/prompt-pack.js';
+import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.js';
 import { decodePromptSetV1, promptSelectionOf, type PromptSetV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
@@ -46,7 +46,8 @@ import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextWorkHistoryInputV1 } from './context-types.js';
 import {
   promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
-  storePromptTexts, trackPromptTexts, type PromptPartsV1,
+  promptTemplatePart, promptTemplateVersion, storePromptTexts, templatesToFreeze,
+  trackPromptTexts, type PromptPartsV1,
 } from './prompt-set-texts.js';
 import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
@@ -608,7 +609,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
           packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
         sectionOrder: workPreparedSectionOrder(tracked.texts),
-        templates: usedTemplates.map(id => promptTemplatePart(pack, id)),
+        templates: templatesToFreeze(usedTemplates).map(id => promptTemplatePart(pack, id)),
         strings: pack.strings,
         base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },
         skills: selectedSkills.value,
@@ -739,17 +740,6 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       return { status: 'ready', value: { kind: 'task', claim, envelope, inputBinding } };
     },
   };
-}
-
-/** One used template's pack identity and exact text (ruling 14 item 6). */
-function promptTemplatePart(pack: ResolvedPromptPackV1, id: string) {
-  const text = pack.templates[id];
-  if (text === undefined) throw new Error(`the resolved prompt pack has no template ${id}`);
-  return { id, version: promptTemplateVersion(pack, id), packId: pack.origins[id]?.packId ?? pack.manifest.packId, text };
-}
-
-function promptTemplateVersion(pack: ResolvedPromptPackV1, id: string): number {
-  return pack.origins[id]?.version ?? pack.manifest.templates[id]?.version ?? 1;
 }
 
 /** Freeze the mutable data fields of a trusted Host configuration into a

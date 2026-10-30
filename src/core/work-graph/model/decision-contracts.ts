@@ -54,7 +54,8 @@ import type { NoteDecisionApplicationInputV1, NoteDispositionResult } from './no
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type {
-  MessageAppliedChangeV1, MessageReleaseDecidedChangeV1, MessageReleasedChangeV1, MessageWithdrawnChangeV1,
+  MessageAppliedChangeV1, MessageExpiredChangeV1, MessageReleaseDecidedChangeV1, MessageReleasedChangeV1,
+  MessageWithdrawnChangeV1,
 } from '../state/message-machine.js';
 
 // ------------------------------------------------------------------------ //
@@ -202,7 +203,8 @@ export type SessionMessageWriteCommandV1 =
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.withdraw'; change: MessageWithdrawnChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.release'; change: MessageReleaseDecidedChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.releaseApproved'; change: MessageReleasedChangeV1 })
-  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.apply'; change: MessageAppliedChangeV1 });
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.apply'; change: MessageAppliedChangeV1 })
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.recordExpiry'; change: MessageExpiredChangeV1 });
 
 /** The fragment's shape, declared in model so the port never imports persistence. */
 export type SessionMessageCommitFragment = {

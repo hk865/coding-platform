@@ -11,6 +11,7 @@ import { PROMPT_TOOL_SPECS_CONTENT_TYPE } from '../../src/contracts/prompts/prom
 import {
   openPCQueryFixture, openPCWorkFixture, scriptedModel,
 } from '../helpers/PC-platform-fixture.js';
+import { DELIVERY_SET_IDS } from '../helpers/S7B-delivery-samples.js';
 
 const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const PER_RESPONSE = 321;
@@ -23,8 +24,8 @@ const QUERY_BASE = 'PC_RECORD_QUERY_BASE';
 const SKILL = 'PC_CUSTOM_SKILL_V1';
 const SKILL_SOURCE = `skill:pc-custom@sha256:${sha(SKILL)}`;
 const TEMPLATE_IDS = {
-  work: ['work-input', 'base'],
-  query: ['initial-planning-answer', 'query-planning-input', 'base'],
+  work: ['work-input', 'base', ...DELIVERY_SET_IDS],
+  query: ['initial-planning-answer', 'query-planning-input', 'base', ...DELIVERY_SET_IDS],
 } as const;
 
 function section(kind: string, id: string, source: string, content: string): string {

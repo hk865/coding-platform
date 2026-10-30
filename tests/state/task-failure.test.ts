@@ -96,7 +96,7 @@ function runOf(runId: string, over: Partial<RunSnapshot> = {}): RunSnapshot {
     ref: runRef(runId), revision: 4, schemaVersion: 1, task: { ...task }, attemptId: `${runId}-attempt`, planRef: PLAN,
     roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`,
-    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: time(1), endedAt: time(5), ...over,
+    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: time(1), endedAt: time(5), previousRun: null, ...over,
   };
 }
 const ended = (runId: string, outcome: RunOutcome, over: Partial<RunSnapshot> = {}): RunSnapshot =>
@@ -613,8 +613,9 @@ describe('priorRequeueAutoCount / nextRequeueAutoCount (C8, I-12 clause 7)', () 
   const rq1 = requeueOf('run-1', { automation: { automatic: true, counted: true, autoCount: 2, cap: 3 } });
   const run1 = ended('run-1', 'completed');
   const run2 = ended('run-2', 'yielded', { requeueRef: rq1.ref, continuation: CONTINUATION('run-2') });
-  const run3 = ended('run-3', 'completed', { consumedWait: { runRef: runRef('run-2'),
-    messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'msg-run-2' }, responseRef: report('reply') } });
+  const run3 = ended('run-3', 'completed', { consumedWait: { kind: 'wait_reply', originalRun: runRef('run-2'),
+    messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'msg-run-2' }, responseRef: report('reply') },
+  previousRun: runRef('run-2') });
   const runs = [run1, run2, run3];
 
   it('walks back through consumedWait to the first requeueRef; 0 without one', () => {
@@ -624,8 +625,11 @@ describe('priorRequeueAutoCount / nextRequeueAutoCount (C8, I-12 clause 7)', () 
     // A Run the owner did not read, a missing record and a cycle end the walk.
     expect(priorRequeueAutoCount(run3, [run3], [rq1])).toBe(0);
     expect(priorRequeueAutoCount(run2, runs, [])).toBe(0);
-    const loopA = ended('run-a', 'completed', { consumedWait: { ...run3.consumedWait!, runRef: runRef('run-b') } });
-    const loopB = ended('run-b', 'yielded', { consumedWait: { ...run3.consumedWait!, runRef: runRef('run-a') } });
+    const loopBase = run3.consumedWait as Extract<NonNullable<RunSnapshot['consumedWait']>, { kind: 'wait_reply' }>;
+    const loopA = ended('run-a', 'completed', { consumedWait: { ...loopBase, originalRun: runRef('run-b') },
+      previousRun: runRef('run-b') });
+    const loopB = ended('run-b', 'yielded', { consumedWait: { ...loopBase, originalRun: runRef('run-a') },
+      previousRun: runRef('run-a') });
     expect(priorRequeueAutoCount(loopA, [loopA, loopB], [rq1])).toBe(0);
   });
 
@@ -1243,8 +1247,9 @@ describe('buildTaskFailureFacts (C1, TaskRow.failure / TaskRow.rework)', () => {
     const run1 = ended('run-1', 'completed');
     const run2 = ended('run-2', 'crashed', { requeueRef: rq1.ref });
     const run3 = ended('run-3', 'yielded', { requeueRef: rq2.ref, continuation: CONTINUATION('run-3') });
-    const run4 = ended('run-4', 'completed', { consumedWait: { runRef: runRef('run-3'),
-      messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'msg-run-3' }, responseRef: report('reply') } });
+    const run4 = ended('run-4', 'completed', { consumedWait: { kind: 'wait_reply', originalRun: runRef('run-3'),
+      messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'msg-run-3' }, responseRef: report('reply') },
+    previousRun: runRef('run-3') });
     const result = facts(work(run4, headOf(FAIL, 'run-4'), { runs: [run4, run2, run1, run3], requeues: [rq4, rq2, rq1] }));
     expect(result.rework).toEqual({
       entries: [

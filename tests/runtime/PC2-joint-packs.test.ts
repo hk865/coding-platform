@@ -16,6 +16,7 @@ import type { ResolvedPromptPackV1 } from '../../src/contracts/prompts/prompt-pa
 import type { PromptPackSourcePort } from '../../src/contracts/prompts/prompt-pack.js';
 import { openPCWorkFixture, scriptedModel } from '../helpers/PC-platform-fixture.js';
 import { pc2PackCases, pc2PackEntry, pc2ResolvedSource } from '../helpers/PC2-pack-fixture.js';
+import { DELIVERY_SET_IDS } from '../helpers/S7B-delivery-samples.js';
 
 const NO_SKILLS = { resourceRoot: '/nonexistent/pc2-joint', enabledIds: [] as string[] };
 const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
@@ -70,11 +71,12 @@ describe('PC-03 a child pack overriding only base keeps every other platform tem
       const set = record.value.set;
       expect(set.packId).toBe('pc2-child');
       expect(set.base).toMatchObject({ templateId: 'base', version: 8 });
-      // The frozen set names each used template's supplier and literal version.
+      // The frozen set names each used template's supplier and literal version, then the delivery set's.
       expect(set.templates.map(entry => ({ id: entry.id, version: entry.version, packId: entry.packId })))
         .toEqual([
           { id: 'work-input', version: 2, packId: 'platform' },
           { id: 'base', version: 8, packId: 'pc2-child' },
+          ...DELIVERY_SET_IDS.map(id => ({ id, version: 1, packId: 'platform' })),
         ]);
       // The whole used template is the platform's text, not the child's.
       const workInput = set.templates.find(entry => entry.id === 'work-input');

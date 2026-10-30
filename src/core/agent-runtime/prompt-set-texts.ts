@@ -3,8 +3,8 @@
  * 15 and 19). The manifest carries only the `PromptSetV1` references and
  * digests; the texts themselves live in the content-addressed body store.
  *
- * `storePromptTexts` writes every used template, the merged string table, the
- * merged base and each Skill content, once per distinct text (F17), then builds
+ * `storePromptTexts` writes every used and every delivery-set template, the
+ * merged string table, merged base and each Skill content once per text (F17), then builds
  * the set from the returned refs. `readPromptTexts` is the reverse: it reads a
  * child body by its ref, verifies it against that ref and never asks whose
  * origin it is (a body may have been written by an earlier run).
@@ -30,6 +30,7 @@ import {
 } from '../../contracts/prompts/prompt-pack.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { PromptRenderError } from '../../contracts/prompts/render-template.js';
+import { DELIVERY_TEMPLATE_IDS } from '../../contracts/prompts/delivery-input.js';
 import type { MaterialOrigin, RawArtifactStorePort } from '../record-store/body-ports.js';
 import { PLATFORM_SKILL_RESOURCE_ROOT } from './platform-skill-root.js';
 
@@ -44,12 +45,12 @@ export type PromptSkillV1 = {
   content: string;
 };
 
-/** One used template: its pack identity and the exact text that was read. */
+/** One frozen template: its pack identity and the exact text that was read. */
 export type PromptTemplatePartV1 = { id: string; version: number; packId: string; text: string };
 
 /**
  * P's input to `storePromptTexts`: the frozen selection, the projected call-kind
- * section order, every template the renderers read (in first-read order), the
+ * section order, the used templates in read order and then the delivery-set ones, the
  * merged string table, the merged base and the selected Skills.
  */
 export type PromptPartsV1 = {
@@ -81,7 +82,7 @@ export type TrackedPromptTextsV1 = {
 /**
  * Wraps a resolved pack as the narrow `PromptTextsV1` every renderer takes and
  * records each template read. Tracking is by observation, never by a code list:
- * a renderer that does not read a template leaves it out of the set.
+ * a template no renderer reads is not in it; the freeze adds the delivery set.
  */
 export function trackPromptTexts(pack: { templates: Readonly<Record<string, string>>; strings: Readonly<Record<string, string>> }): TrackedPromptTextsV1 {
   const used: string[] = [];
@@ -381,3 +382,21 @@ export async function selectPromptSkills(
   }
 }
 
+/** A-10: the delivery set, every input template an execution may render after preparation. */
+export const DELIVERY_SET_TEMPLATE_IDS: readonly string[] = [...DELIVERY_TEMPLATE_IDS, 'user-decision-response'];
+
+/** The used templates in read order, then each delivery-set template not yet used, in DELIVERY_SET_TEMPLATE_IDS order. */
+export function templatesToFreeze(used: readonly string[]): string[] {
+  return [...used, ...DELIVERY_SET_TEMPLATE_IDS.filter(id => !used.includes(id))];
+}
+
+/** One frozen template's pack identity and exact text (ruling 14 item 6). */
+export function promptTemplatePart(pack: ResolvedPromptPackV1, id: string): PromptTemplatePartV1 {
+  const text = pack.templates[id];
+  if (text === undefined) throw new Error(`the resolved prompt pack has no template ${id}`);
+  return { id, version: promptTemplateVersion(pack, id), packId: pack.origins[id]?.packId ?? pack.manifest.packId, text };
+}
+
+export function promptTemplateVersion(pack: ResolvedPromptPackV1, id: string): number {
+  return pack.origins[id]?.version ?? pack.manifest.templates[id]?.version ?? 1;
+}

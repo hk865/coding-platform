@@ -24,6 +24,7 @@ import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import { createExecutionEntryService, readManifestFromEnvelope } from '../core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService, createModelRequestReadPort } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
+import { createMessageExpiryOwner, type MessageExpiryPort } from '../core/work-graph/communication/message-expiry.js';
 import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../core/work-graph/communication/decision-source-facts.js';
 import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
@@ -1077,6 +1078,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
     const messageWrites = createMessageWriteOwner(mailboxDependencies);
+    const messageExpiry = createMessageExpiryOwner({ records: backend.records, writes: messageWrites, now });
     // R's release owner and G's trusted entry share the ONE message writer and the ONE basis read; the copy ports take
     // the mailbox itself. The Workflow gets the raw pair (rd7a2c-03), never the tracked surface.
     const messageReleaseOwner = createMessageReleaseOwner({ records: backend.records, writes: messageWrites,
@@ -1112,6 +1114,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, now, eventId: randomUUID,
       ...(queryExecution === undefined ? {} : { execution: queryExecution }),
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
+      eligibility: { readDeliveryEligibilityFacts: (...args) => rawWorkflow.readDeliveryEligibilityFacts!(...args) },
     });
     const catalog = createArchitectureCatalogService({ records: backend.records });
     // The ONE reader of the roles this workspace's trusted bindings serve. It reads the live configuration at call
@@ -1499,6 +1502,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         modelRequestReads: createModelRequestReadPort(entryDependencies),
         promptPacks: options.promptPacks ?? createPlatformPromptPackSource(),
         roles: roleService, plans: planService, messages: mailbox, sessions: sessionDirectory,
+        expiryCount: (ctx, input) => messageExpiry.readExpiryCount(ctx, input),
         // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
         // the three user tools call the real owners and never fail closed.
         decisionMessages: rawDecisionMessages,
@@ -1773,6 +1777,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readInboxView: (...args) => trackedCall(() => mailbox.readInboxView(...args), unavailable),
       // P's applier: the proof is the caller's, compared in the owner; the route adds nothing.
       applyMessage: (...args) => trackedCall(() => messageApply.applyMessage(...args), unavailable),
+    };
+    const messageExpiryPort: Pick<MessageExpiryPort, 'recordExpiry' | 'readDueWaits'> = {
+      recordExpiry: (...args) => trackedCall(() => messageExpiry.recordExpiry(...args), unavailable),
+      readDueWaits: (...args) => trackedCall(() => messageExpiry.readDueWaits(...args), unavailable),
     };
     // Slice 5 §4.5 platform ports: the same trackedCall drain convention as every
     // other owner, so an in-flight decision write is accounted for before close.
@@ -2378,10 +2386,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The public advancement port drains the complete call before any owned
     // store closes; the in-flight raw workflow keeps the raw owner instances.
     const workflow: WorkflowPort & Required<Pick<WorkflowPort,
-      'consumeConsultation' | 'archiveLine' | 'continueArchiveLine' | 'maintainSessions' | 'sessionHandoff'>> = {
+      'consumeConsultation' | 'handleIntervention' | 'readDeliveryEligibilityFacts'
+      | 'archiveLine' | 'continueArchiveLine' | 'maintainSessions' | 'sessionHandoff'>> = {
       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
+      handleIntervention: (...args) => trackedCall(() => rawWorkflow.handleIntervention!(...args), unavailable),
+      readDeliveryEligibilityFacts: (...args) => trackedCall(() => rawWorkflow.readDeliveryEligibilityFacts!(...args), unavailable),
       // Slice 1 (spec §4.1, §4.2): the composite archive action, its recovery
       // entry and the bounded maintenance step, published by the Workflow. Each
       // is admitted by the Host instance lease before the composition runs.
@@ -2782,6 +2793,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
+      messageExpiry: messageExpiryPort,
       queries,
       // K3 (§2 L7): the read-only UnknownCallReview owner, published for the
       // `unknown-call-reviews/read` route (group 3/4 extend it with writes).
@@ -2911,7 +2923,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
-      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease'] as const) {
+      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageExpiry'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

@@ -267,7 +267,8 @@ export function workHistory(b2: B2ExecutionFixture) {
         ...(continuation === undefined ? {} : { continuation }) },
       meta: { requestId: `fx2-finish-${++seq}`, expected: [await b2.pin(claim)] } }));
   }
-  async function wait(withResponse: boolean, claim = b2.claim, runningResponder?: B2Admitted) {
+  async function wait(withResponse: boolean, claim = b2.claim, runningResponder?: B2Admitted,
+    ending: 'yield' | 'crash' = 'yield') {
     const admitted = await enter(claim);
     let message = committed(await mailbox.sendMessage(workContext(claim), {
       input: { recipient: b2.secondClaim.sessionRef, text: 'm: please reply', intent: 'inquiry', needsReply: true, waitAfterSend: true },
@@ -279,8 +280,12 @@ export function workHistory(b2: B2ExecutionFixture) {
         meta: { requestId: `fx2-response-${++seq}`, expected: [{ ref: message.ref, revision: message.revision }] } })).value;
       if (runningResponder === undefined) await finish(responder);
     }
-    await finish(admitted, { schemaVersion: 1, kind: 'wait_reply', task: claim.task,
-      sessionRef: claim.sessionRef, messageRef: message.ref });
+    if (ending === 'crash') {
+      await crash(admitted);
+    } else {
+      await finish(admitted, { schemaVersion: 1, kind: 'wait_reply', task: claim.task,
+        sessionRef: claim.sessionRef, messageRef: message.ref });
+    }
     return message;
   }
   async function copyMessage(source: SessionRef, child: SessionRef): Promise<SessionMessage> {

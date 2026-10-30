@@ -18,6 +18,7 @@ import type { TaskRequeueOutcomeV1 } from '../../src/contracts/task-requeue.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { AG2B_SCOPE, graphWrite, seedAG2bWorkGraph, startAG2bHost, type AG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
 import { post, publicDirectory, readExecution, selectWork, tempDir, workRow, writeAutomationSettings, writeStaleLock } from '../helpers/A2-restart-fixture.js';
+import { interventionDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { cleanupScenarios, type InvariantTarget } from './harness.js';
 import { driveChecked, operatorRequeue, readCall, redrivePolicy, requiredBriefOf, textReply } from './support/common.js';
 
@@ -122,7 +123,9 @@ it('KA-09 (KE3, L9/M5): the continuation brief of the same-Session continuation 
     expect(brief.stoppedAt.lastAssistant).toBeNull();
     // The accepted message is listed by the id `messages/send` returned.
     expect(brief.acceptedInputs.messages.map((entry) => entry.messageRef.messageId)).toContain(acceptedMessageId);
-    expect(brief.acceptedInputs.messages.map((entry) => entry.excerpt.text)).toContain(acceptedText);
+    // the excerpt is the text the Turn accepted: the message as delivered (7B-1 early T's intervention template).
+    expect(brief.acceptedInputs.messages.map((entry) => entry.excerpt.text))
+      .toContain(interventionDeliveryText({ messageId: acceptedMessageId, body: acceptedText }));
     // The applied steer is listed by the id `controls/submit` returned.
     expect(brief.acceptedInputs.steers.map((entry) => entry.intentRef.intentId)).toContain(steerId);
     // The tool facts of the interrupted Turn name the real read call.

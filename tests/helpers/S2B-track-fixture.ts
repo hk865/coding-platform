@@ -55,6 +55,7 @@ import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/e
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-service.js';
@@ -84,15 +85,17 @@ export const TRACK_WORK_TASK_IDS = ['work-1', 'work-2', 'work-3', 'work-4', 'wor
 const TRACK_SCHEMAS: RecordBackendSchemas = {
   records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
     ...QUERY_JOB_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
-    ...COMPLETION_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records],
+    ...COMPLETION_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
+    ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
     ...QUERY_JOB_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
     ...COMPLETION_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
-    ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
+    ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
     ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? []),
-    ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [])],
+    ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []),
+    ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 export type S2BTrackFixture = {

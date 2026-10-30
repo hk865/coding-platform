@@ -8,37 +8,51 @@
  * internal fact scan is 100/page and at most 25 pages; a scan that does not
  * finish is `incomplete/session_facts_page_limit:` and never a fabricated
  * "not waiting". `latestWork` is the max `claim.generation`, not the last page
- * row. The Work wait is the latest claim's yielded Run with a continuation, no
- * cancel control pointer and no successor consumption; a saved reply that was
- * not consumed yet still waits.
+ * row. `waits` is every open/answered/expired released inquiry this Session
+ * sent, oldest `since` first; `wait` is the first of those whose own Run really
+ * yielded on it (yielded, no cancel control pointer, continuation on the same
+ * message). A saved reply that was not consumed yet still waits.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { QueryRunSnapshot } from '../../../contracts/query-job.js';
+import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { RecordLookupPort, LookupValue } from '../../record-store/lookup-ports.js';
+import type {
+  LookupValue, OrderedLookupRequest, RecordLookupPort, RecordOrderedLookupPort,
+} from '../../record-store/lookup-ports.js';
 import { validateQueryRunSnapshot } from '../materials/record-readers.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
+import type { SessionMessage } from '../model/communication-contracts.js';
 import {
   decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
+import {
+  S7B_WAITS_BY_SENDER_SESSION_LOOKUP, decodeNoticeOrigin, decodeSessionMessageRecord,
+  sessionMessageRefKey,
+} from '../sessions/message-record-codecs.js';
 import { runControlNodeOf } from '../state/run-machine.js';
+import { sameRef } from '../state/ref-equality.js';
+import {
+  messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+} from '../state/message-machine.js';
 import {
   QUERY_RUN_BY_SESSION_LOOKUP, SESSION_BY_PROVENANCE_LOOKUP, WORK_EXECUTION_BY_SESSION_LOOKUP,
-  type SessionFactsPort, type SessionFactsV1, type SessionWorkWaitV1,
+  type SessionFactsPort, type SessionFactsV1, type SessionWaitV1, type SessionWorkWaitV1,
 } from '../model/session-facts-contracts.js';
 import type { SessionPage, SessionPageRequest } from '../model/session-contracts.js';
 import { decodeDispatchOutboxEntry } from './claim-record-codecs.js';
 
 export type SessionFactsStores = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
 };
 
 const INTERNAL_PAGE_SIZE = 100;
@@ -96,6 +110,11 @@ type InternalWindow =
   | { status: 'ready'; records: EncodedRecord[]; readThrough: CommitCursor | null; next: string | null; budgetHit: boolean }
   | { status: 'rejected'; rejection: CoreRejection };
 
+/** The two candidate reads the one bounded sweep pages: an unordered and an ordered index. */
+type WindowRequest =
+  | { kind: 'plain'; index: string; values: readonly LookupValue[] }
+  | { kind: 'ordered'; index: string; values: readonly string[] };
+
 /**
  * One bounded keyset sweep of a candidate index: 100/page, at most 25 pages,
  * every candidate re-read as a canonical record (a candidate index never
@@ -103,28 +122,35 @@ type InternalWindow =
  * is not invented back; the scan reports `incomplete`.
  */
 async function readLookupWindow(
-  records: GoalRecordTransactionPort & RecordLookupPort,
-  index: string,
-  values: readonly LookupValue[],
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort,
+  request: WindowRequest,
 ): Promise<InternalWindow> {
   const collected: EncodedRecord[] = [];
-  let after: string | undefined;
+  let after: string | OrderedLookupRequest['after'] | undefined;
   let watermark: CommitCursor | null = null;
   for (let page = 0; page < INTERNAL_MAX_PAGES; page += 1) {
     let result;
     try {
-      result = await records.lookup(after === undefined
-        ? { index, values, limit: INTERNAL_PAGE_SIZE }
-        : { index, values, after, limit: INTERNAL_PAGE_SIZE });
+      result = request.kind === 'ordered'
+        ? await records.lookupOrdered({
+            index: request.index, values: request.values, direction: 'asc',
+            ...(after === undefined ? {} : { after: after as NonNullable<OrderedLookupRequest['after']> }),
+            limit: INTERNAL_PAGE_SIZE,
+          })
+        : await records.lookup({
+            index: request.index, values: request.values,
+            ...(after === undefined ? {} : { after: after as string }),
+            limit: INTERNAL_PAGE_SIZE,
+          });
     } catch (error) {
       return { status: 'rejected', rejection: unavailable(`the Session facts lookup failed: ${String(error)}`) };
     }
     if (result.status !== 'ready') {
       if (result.code === 'unsupported') {
-        return { status: 'rejected', rejection: incomplete(`session_facts_page_limit: lookup index ${index} is not registered`) };
+        return { status: 'rejected', rejection: incomplete(`session_facts_page_limit: lookup index ${request.index} is not registered`) };
       }
       if (result.code === 'invalid') {
-        return { status: 'rejected', rejection: incomplete(`session_facts_page_limit: lookup index ${index} rejected the request: ${result.reason}`) };
+        return { status: 'rejected', rejection: incomplete(`session_facts_page_limit: lookup index ${request.index} rejected the request: ${result.reason}`) };
       }
       return { status: 'rejected', rejection: unavailable(`${result.code}: ${result.reason}`) };
     }
@@ -156,11 +182,34 @@ async function readLookupWindow(
     }
     after = result.value.next;
   }
-  return { status: 'ready', records: collected, readThrough: watermark, next: after ?? null, budgetHit: true };
+  return { status: 'ready', records: collected, readThrough: watermark,
+    next: typeof after === 'string' ? after : null, budgetHit: true };
 }
 
 function validLimit(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= EXTERNAL_MAX_LIMIT;
+}
+
+/**
+ * The one wait row of a decoded message. `rootRef` is the message itself,
+ * with no forward walk (D8). A Host sender has no Session, so it cannot be the
+ * sender Session the wait index names; such a message is not a wait.
+ */
+function readWaitRow(message: SessionMessage): SessionWaitV1 | null {
+  if (message.intent !== 'inquiry' || message.waitAfterSend !== true) return null;
+  if (message.sender.kind === 'host') return null;
+  return {
+    messageRef: message.ref,
+    rootRef: message.ref,
+    waitingSession: message.sender.sessionRef,
+    originalRun: message.sender.kind === 'work_run' ? message.sender.runRef : null,
+    requestRoot: message.requestRoot,
+    recipient: message.recipient,
+    state: waitStateOf(message, waitFactsOfRecord(message)),
+    deadline: message.deadline,
+    expiredAt: message.expiredAt,
+    complete: true,
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -168,7 +217,7 @@ function validLimit(value: unknown): value is number {
 // --------------------------------------------------------------------------
 
 export function createSessionFactsService(stores: SessionFactsStores): SessionFactsPort {
-  const records: GoalRecordTransactionPort & RecordLookupPort = stores.records;
+  const records = stores.records;
 
   async function readSessionRecord(scope: Scope): Promise<{ status: 'ready'; session: SessionRecord; readThrough: CommitCursor | null }
     | { status: 'rejected'; rejection: CoreRejection }> {
@@ -208,9 +257,12 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     // occupies the Session and sets `lastExecutionRef` in the same commit.
     let latestWork: TaskClaim | null = null;
     let wait: SessionWorkWaitV1 | null = null;
+    let waits: SessionWaitV1[] = [];
     if (session.lastExecutionRef !== null) {
-      const executions = await readLookupWindow(records, WORK_EXECUTION_BY_SESSION_LOOKUP,
-        [scope.projectId, scope.workspaceId, scope.sessionId]);
+      const executions = await readLookupWindow(records, {
+        kind: 'plain', index: WORK_EXECUTION_BY_SESSION_LOOKUP,
+        values: [scope.projectId, scope.workspaceId, scope.sessionId],
+      });
       if (executions.status !== 'ready') return executions.rejection;
       if (executions.budgetHit) {
         return incomplete(`session_facts_page_limit: the Work execution scan of Session ${scope.sessionId} did not finish`);
@@ -226,35 +278,95 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
         }
         if (latestWork === null || claim.generation > latestWork.generation) latestWork = claim;
       }
-      if (latestWork !== null) {
-        const runKey = refKeyOf(latestWork.runRef);
+
+      // Waits: one sender Session's inquiries, oldest `since` first. The ordered
+      // index pages by its own `{order, refKey}`; a page-budget hit is
+      // `incomplete`, never "no wait".
+      const waitWindow = await readLookupWindow(records, {
+        kind: 'ordered', index: S7B_WAITS_BY_SENDER_SESSION_LOOKUP,
+        values: [scope.projectId, scope.workspaceId, scope.sessionId, 'inquiry'],
+      });
+      if (waitWindow.status !== 'ready') return waitWindow.rejection;
+      if (waitWindow.budgetHit) {
+        return incomplete(`session_facts_page_limit: the wait scan of Session ${scope.sessionId} did not finish`);
+      }
+      watermark = laterCursor(watermark, waitWindow.readThrough);
+      const candidates: { row: SessionWaitV1; order: number; refKey: string }[] = [];
+      for (const record of waitWindow.records) {
+        const decoded = decodeSessionMessageRecord(record);
+        if (decoded.status !== 'decoded') {
+          return unavailable(`the wait message ${record.refKey} is damaged: ${decoded.reason}`);
+        }
+        const message = decoded.value;
+        // The index narrows only by `intent`; the remaining residual is in memory.
+        if (message.waitAfterSend !== true) continue;
+        if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) continue;
+        const row = readWaitRow(message);
+        if (row === null) continue;
+        if (row.state.state !== 'open' && row.state.state !== 'answered' && row.state.state !== 'expired') continue;
+        const origin = decodeNoticeOrigin(record);
+        if (origin.status !== 'decoded') {
+          return unavailable(`the wait message ${record.refKey} has no stored creation position`);
+        }
+        candidates.push({
+          row, order: seqOfCommitCursor(origin.value.since!), refKey: sessionMessageRefKey(message.ref),
+        });
+      }
+      candidates.sort((left, right) => left.order === right.order
+        ? (left.refKey < right.refKey ? -1 : left.refKey > right.refKey ? 1 : 0)
+        : left.order - right.order);
+      waits = candidates.map(candidate => candidate.row);
+
+      // `wait` is the first row in that order whose own Run really yielded on
+      // it. One read covers the distinct `originalRun` records; a row whose Run
+      // ended before yielding (W-18) or carries the archive's cancel pointer
+      // stays in `waits` only.
+      const rowByRunKey = new Map<string, SessionWaitV1>();
+      for (const candidate of candidates) {
+        if (candidate.row.originalRun === null) continue;
+        const runKey = refKeyOf(candidate.row.originalRun);
+        if (!rowByRunKey.has(runKey)) rowByRunKey.set(runKey, candidate.row);
+      }
+      const runKeys = [...rowByRunKey.keys()];
+      if (runKeys.length > 0) {
         let runRead;
         try {
-          runRead = await records.readMany([runKey]);
+          runRead = await records.readMany(runKeys);
         } catch (error) {
-          return unavailable(`the latest Work Run read failed: ${String(error)}`);
+          return unavailable(`the wait Run read failed: ${String(error)}`);
         }
         if (runRead.status !== 'ready') {
           // A technical read failure is `unavailable` with the detail; only a
           // confirmed absence below is an incomplete fact window.
-          return unavailable(`the latest Work Run is not readable: ${runRead.code}: ${runRead.reason}`);
+          return unavailable(`the wait Run is not readable: ${runRead.code}: ${runRead.reason}`);
         }
-        const runRecord = runRead.value.records.find(candidate => candidate.refKey === runKey);
-        if (runRecord === undefined) return incomplete('session_facts_page_limit: the latest Work Run is missing');
         watermark = laterCursor(watermark, runRead.value.readThrough);
-        const run = decodeRun(runRecord);
-        if (!run.ok) return unavailable(`the latest Work Run is not readable: ${run.reason}`);
-        if (run.value.task.projectId !== scope.projectId
-          || run.value.ref.goalId !== latestWork.task.goalId
-          || run.value.ref.runId !== latestWork.runRef.runId) {
-          return unavailable('the latest Work Run does not belong to the latest claim');
+        const present = new Map(runRead.value.records.map(record => [record.refKey, record]));
+        const runs = new Map<string, RunSnapshot>();
+        for (const runKey of runKeys) {
+          const runRecord = present.get(runKey);
+          if (runRecord === undefined) return incomplete('session_facts_page_limit: a wait Run is missing');
+          const run = decodeRun(runRecord);
+          if (!run.ok) return unavailable(`the wait Run is not readable: ${run.reason}`);
+          const row = rowByRunKey.get(runKey)!;
+          const originalRun = row.originalRun!;
+          if (run.value.task.projectId !== scope.projectId
+            || run.value.ref.projectId !== originalRun.projectId
+            || run.value.ref.goalId !== originalRun.goalId
+            || run.value.ref.runId !== originalRun.runId) {
+            return unavailable('the wait Run does not belong to the wait message');
+          }
+          runs.set(runKey, run.value);
         }
-        if (runControlNodeOf(run.value) === 'YieldedWait' && run.value.controlState?.desiredState !== 'cancelled') {
-          // The latest claim is the max generation, so no same-Session successor
-          // can consume it; a cross-Session hand-off must commit the old wait
-          // cancel first, which is the `cancelled` pointer read above.
-          const continuation = run.value.continuation!;
-          wait = { runRef: run.value.ref, messageRef: continuation.messageRef, task: continuation.task };
+        for (const candidate of candidates) {
+          const originalRun = candidate.row.originalRun;
+          if (originalRun === null) continue;
+          const run = runs.get(refKeyOf(originalRun))!;
+          if (runControlNodeOf(run) === 'YieldedWait' && run.controlState?.desiredState !== 'cancelled'
+            && sameRef(run.continuation!.messageRef, candidate.row.messageRef)) {
+            wait = { runRef: originalRun, messageRef: candidate.row.messageRef, task: run.continuation!.task };
+            break;
+          }
         }
       }
     }
@@ -262,8 +374,10 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     // Successors (direct line heads): Sessions whose recorded provenance points
     // at this Session. A page-budget hit cannot be reported as "no successor".
     const continuations: SessionRef[] = [];
-    const successors = await readLookupWindow(records, SESSION_BY_PROVENANCE_LOOKUP,
-      [scope.projectId, scope.workspaceId, scope.sessionId]);
+    const successors = await readLookupWindow(records, {
+      kind: 'plain', index: SESSION_BY_PROVENANCE_LOOKUP,
+      values: [scope.projectId, scope.workspaceId, scope.sessionId],
+    });
     if (successors.status !== 'ready') return successors.rejection;
     if (successors.budgetHit) {
       return incomplete(`session_facts_page_limit: the successor scan of Session ${scope.sessionId} did not finish`);
@@ -286,7 +400,7 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     return {
       status: 'ready',
       value: {
-        session, latestWork, wait, predecessor, continuations,
+        session, latestWork, wait, waits, predecessor, continuations,
         sourceCursor: watermark ?? makeCommitCursor(1),
       },
     };
@@ -484,5 +598,29 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     return { status: 'ready', value: { items, nextCursor, sourceCursor: read.value.readThrough ?? makeCommitCursor(1) } };
   }
 
-  return { readSessionFacts, listSessionExecutions, listSessionQueries, findSessionSuccessors };
+  async function readWait(
+    ctx: CoreCallContext,
+    input: { messageRef: SessionMessageRef },
+  ): Promise<ReadResult<SessionWaitV1>> {
+    if (ctx?.signal?.aborted) return { status: 'rejected', code: 'cancelled', reason: 'the wait read was cancelled' };
+    const key = sessionMessageRefKey(input.messageRef);
+    let read;
+    try {
+      read = await records.readMany([key]);
+    } catch (error) {
+      return unavailable(`the wait message read failed: ${String(error)}`);
+    }
+    if (read.status !== 'ready') return unavailable(`${read.code}: ${read.reason}`);
+    const record = read.value.records.find(candidate => candidate.refKey === key);
+    if (record === undefined) return { status: 'not_found' };
+    const decoded = decodeSessionMessageRecord(record);
+    if (decoded.status !== 'decoded') return unavailable(`the wait message ${key} is damaged: ${decoded.reason}`);
+    const row = readWaitRow(decoded.value);
+    // A non-wait (or a Host-sent message, which has no sender Session) is not a
+    // wait: the message is not a wait.
+    if (row === null) return { status: 'not_found' };
+    return { status: 'ready', value: row };
+  }
+
+  return { readSessionFacts, listSessionExecutions, listSessionQueries, findSessionSuccessors, readWait };
 }

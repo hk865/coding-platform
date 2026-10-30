@@ -43,6 +43,7 @@ import {
   type SampleRound, type SecretaryInputSample,
 } from '../helpers/S6A-prompt-samples.js';
 import { S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import { DELIVERY_SET_IDS } from '../helpers/S7B-delivery-samples.js';
 
 // The commit barrier holds the prepared commits the Host gates use; its two
 // backend factories must be wrapped before any world opens, and the barrier is
@@ -129,6 +130,9 @@ async function promptRecordOf(world: S6AHostWorld, round: QueryJobRef): Promise<
 function templateEntries(record: PromptRecordReadResultV1): { id: string; version: number; packId: string }[] {
   return record.set.templates.map(entry => ({ id: entry.id, version: entry.version, packId: entry.packId }));
 }
+
+/** The delivery-set templates a preparation freezes after the ones the round read, from the platform pack. */
+const DELIVERY_SET_ENTRIES = DELIVERY_SET_IDS.map(id => ({ id, version: 1, packId: 'platform' }));
 
 /**
  * The sample's fixed sections: the role the binding prepared, the workspace and
@@ -241,6 +245,7 @@ describe('the whole input of a round that absorbs a queued input after an earlie
       { id: 'secretary-answer', version: SECRETARY_TEMPLATE_VERSIONS['secretary-answer'], packId: 'platform' },
       { id: 'secretary-round', version: SECRETARY_TEMPLATE_VERSIONS['secretary-round'], packId: 'platform' },
       { id: 'base', version: 2, packId: 'platform' },
+      ...DELIVERY_SET_ENTRIES,
     ]);
   }, 240_000);
 });
@@ -285,6 +290,7 @@ describe('a person\'s pack over the secretary templates reaching a real round', 
       { id: 'secretary-answer', version: 3, packId: PACK_ID },
       { id: 'secretary-round', version: 2, packId: PACK_ID },
       { id: 'base', version: 2, packId: 'platform' },
+      ...DELIVERY_SET_ENTRIES,
     ]);
   }, 240_000);
 });
@@ -333,6 +339,7 @@ describe('a pack edit while the round waits at the start gate', () => {
       { id: 'secretary-answer', version: 3, packId: PACK_ID },
       { id: 'secretary-round', version: 2, packId: PACK_ID },
       { id: 'base', version: 2, packId: 'platform' },
+      ...DELIVERY_SET_ENTRIES,
     ]);
   }, 240_000);
 });

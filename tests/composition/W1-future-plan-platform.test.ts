@@ -30,6 +30,7 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
@@ -323,7 +324,7 @@ it('scenario 3: with a commit barrier, a future edit of B and claim(B) are mutua
       const editPromise = editPlans.applyPlanChange(f.ctx, { meta: { requestId: 'w1-race-edit', expected: [] },
         input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] } })
         .finally(resolveEditSettled);
-      const claimPromise = f.makeService(wrapped).claimTask(f.ctx, request).finally(resolveClaimSettled);
+      const claimPromise = f.makeService(withBackendOrderedLookup(wrapped, f.records)).claimTask(f.ctx, request).finally(resolveClaimSettled);
       const [editResult, claimResult] = await Promise.all([editPromise, claimPromise]);
       expect.soft(editArrived).toBe(true);
       expect.soft(claimArrived).toBe(true);

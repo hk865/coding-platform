@@ -10,7 +10,7 @@
  *  - `reworkPermission`: steps 4–5 of the unified order (§4.3 "处理步骤") —
  *    Goal `active`, then the §4.3 "操作者与失败类别" matrix with the fence;
  *  - `priorRequeueAutoCount` / `nextRequeueAutoCount` (C8 counter along the
- *    Run chain, `consumedWait` keeps the chain);
+ *    Run chain, `previousRun` keeps the chain);
  *  - `automationVerdict` (AV-0..AV-12 with AV-7a..AV-7d for work, GV-0..GV-10
  *    with GV-3′ for a gate);
  *  - `buildTaskFailureFacts` (`TaskRow.failure`, `TaskRow.rework`), the only
@@ -491,11 +491,11 @@ function reverifyClassProblem(input: ReworkPermissionInputV1): Rejected | null {
 // ------------------------------------------------------------------------ //
 // Automatic requeue count (C8, I-12 clause 7)                               //
 // ------------------------------------------------------------------------ //
-type ChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'consumedWait'>;
+type ChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'previousRun'>;
 
 /**
  * The `automation.autoCount` of the TaskRequeue that started the Run chain
- * ending at `from`: walk back through `consumedWait` (a yielded continuation
+ * ending at `from`: walk back through `previousRun` (a yielded continuation
  * keeps the chain) to the first Run with a `requeueRef` and take that record's
  * count; 0 without one. A cycle or a Run that was not read ends the walk.
  */
@@ -513,7 +513,7 @@ export function priorRequeueAutoCount(
     if (requeueRef !== undefined) {
       return requeues.find((requeue) => sameRequeueRef(requeue.ref, requeueRef))?.automation.autoCount ?? 0;
     }
-    current = current.consumedWait === undefined ? undefined : byRunId.get(current.consumedWait.runRef.runId);
+    current = current.previousRun === null ? undefined : byRunId.get(current.previousRun.runId);
   }
   return 0;
 }
@@ -595,11 +595,10 @@ export function countEndedGoalRuns(
 /**
  * K3 (L23, U5): the "consecutive" algorithm for the selected Run R, computed at
  * R's review-record creation. Walk back along the task's work chain
- * (`requeueRef.afterRunId`, then `consumedWait.runRef`) until the first reset
+ * (`requeueRef.afterRunId`, then `previousRun.runId`) until the first reset
  * point, exclusive. A reset point is a Run whose terminal the Kernel wrote
  * (`runtime_terminal`, RUN-07/17/18/21, including `yielded`); platform
  * synthetics (RUN-19/23/24/25) and attestation (RUN-22) are not reset points.
- * A review round has no `requeueRef`/`consumedWait`, so it is never on the chain.
  *
  * `priorAutoCleanup` is true when a RUN-25-ended Run lies between the reset
  * point and R. `priorUnknownProcess` is true when any such Run's record has a
@@ -607,7 +606,7 @@ export function countEndedGoalRuns(
  * or null when the walk reached the chain start.
  */
 export function streakOf(
-  run: Pick<RunSnapshot, 'ref' | 'requeueRef' | 'consumedWait'>,
+  run: Pick<RunSnapshot, 'ref' | 'requeueRef' | 'previousRun'>,
   runs: readonly RunSnapshot[],
   reviews?: readonly UnknownCallReviewV1[],
 ): { priorAutoCleanup: boolean; priorUnknownProcess: boolean; resetRunRef: RunRef | null } {
@@ -639,13 +638,13 @@ export function streakOf(
   };
 }
 
-/** K3 L23: the predecessor of one Run on the task's work chain (`requeueRef`/`consumedWait`). */
-export function previousChainRefOf(run: Pick<RunSnapshot, 'requeueRef' | 'consumedWait'>): RunRef | null {
+/** K3 L23: the predecessor of one Run on the task's work chain (`requeueRef`/`previousRun`). */
+export function previousChainRefOf(run: Pick<RunSnapshot, 'requeueRef' | 'previousRun'>): RunRef | null {
   if (run.requeueRef !== undefined) {
     return { aggregateType: 'Run', projectId: run.requeueRef.projectId, goalId: run.requeueRef.goalId,
       runId: run.requeueRef.afterRunId };
   }
-  return run.consumedWait === undefined ? null : run.consumedWait.runRef;
+  return run.previousRun;
 }
 
 /** L23: only a Kernel-written terminal resets "consecutive"; platform terminals do not. */
@@ -1320,14 +1319,14 @@ function reworkSummary(view: WorkView, policy: TaskAutomationPolicyV1): TaskRewo
   return { entries, requeueAutoCount: view.priorAutoCount, cap: policy.autoReworkLimit };
 }
 
-/** The Run chain ending at `from`, oldest first; `requeueRef.afterRunId` and `consumedWait.runRef` link it. */
+/** The Run chain ending at `from`, oldest first; `requeueRef.afterRunId` and `previousRun.runId` link it. */
 function chainRunIds(from: RunSnapshot | null, runs: readonly ChainRun[]): string[] {
   const byRunId = new Map(runs.map((run) => [run.ref.runId, run]));
   const ids: string[] = [];
   let current: ChainRun | undefined = from ?? undefined;
   while (current !== undefined && !ids.includes(current.ref.runId)) {
     ids.push(current.ref.runId);
-    const previousId = current.requeueRef?.afterRunId ?? current.consumedWait?.runRef.runId;
+    const previousId: string | undefined = current.requeueRef?.afterRunId ?? current.previousRun?.runId;
     current = previousId === undefined ? undefined : byRunId.get(previousId);
   }
   return ids.reverse();

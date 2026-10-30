@@ -68,7 +68,7 @@ type ProtectedType = {
 };
 
 const RUN_FIELDS = ['status', 'outcome', 'executionAuthorization', 'controlState', 'controlInputs', 'reconciliation',
-  'continuation', 'consumedWait', 'startedAt', 'endedAt', 'executionHistory', 'lastEventSeq', 'lastRuntimeEventId',
+  'continuation', 'consumedWait', 'previousRun', 'startedAt', 'endedAt', 'executionHistory', 'lastEventSeq', 'lastRuntimeEventId',
   'lastFactEventId', 'requeueRef', 'terminalPayload'] as const;
 const ATTEMPT_USE = 'state/attempt-machine.ts newTaskAttemptRecord or transitionAttempt';
 const OUTBOX_USE = 'state/attempt-machine.ts newDispatchOutboxRecord or transitionDispatchOutbox';

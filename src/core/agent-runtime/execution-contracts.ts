@@ -24,7 +24,7 @@
 import type { BoundModel } from './source-tool-ports.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
+import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { ControlIntentRef } from '../../contracts/control-intent.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
@@ -228,6 +228,9 @@ export type RuntimeExecutionDependencies = {
    * with this dependency absent must fail closed as `unsupported` before the model.
    */
   messages?: SessionMessageCommandPort;
+  /** The expiry chain count, injected beside `messages`; absent fails the expiry input closed. */
+  expiryCount?: (ctx: CoreCallContext, input: { messageRef: SessionMessageRef }) =>
+    Promise<ReadResult<1 | 2 | 'incomplete'>>;
   /**
    * Slice 5 §4.6: the user-decision owner. Optional so an existing composition
    * that never selects a user-decision tool keeps working; a formal grant that

@@ -51,7 +51,7 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createLocalWorkbenchHost` | `src/app/host.ts:433` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
+| `createLocalWorkbenchHost` | `src/app/host.ts:438` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
 | `createWorkbenchServer` | `src/app/server.ts:187` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
 | `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:729` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
 | `dispatchCoreRoute` | `src/app/core-routes.ts:1254` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
@@ -84,6 +84,7 @@
 | `listDiskPromptPacks` | `src/app/prompt-packs.ts:335` | 生成 `prompts/packs/list`：platform 在前，其余按 id | 设置页列出提示词包时 |
 | `parseWorkbenchCliConfig` | `src/app/main.ts:72` | 把可序列化 CLI 文件纯转换成本地 Host 选项 | CLI 与测试复用同一份配置转换 |
 | `runWorkbenchCli` | `src/app/main.ts:196` | 读配置、启动 loopback Host、返回退出码 | `main` 入口；token 不落盘、不打印 |
+| `messageExpiry` | `src/composition/create-platform.ts:2796` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
 
 ## 内部用
 以下导出只供本层（含 Host 内部与测试）使用，不应成为其他层的依赖：`lineDelta`、`validateAttentionConfig`、`withinAttentionScope`、`graphChangedElements`、`graphChanges`、`attentionSignalToJson`、`AUTO_CAPTURE_ACTOR`、`changeKindOf`、`CoreRouteRejectionError`、`CORE_ROUTE_SPECS`、`parseChangeStreamResume`、`SETTINGS_API_PREFIX`、`SETTINGS_ROUTE_SUFFIXES`、`isSettingsRoute`、`validateSettingsBaseUrl`、`HOST_INSTANCE_LOCK_FILE`、`localWorkbenchGrant`、`readonlyCommandsDisabledScopes`、`HOST_RECONCILE_ACTOR`、`emptyStartupReport`、`WORKBENCH_CLI_USAGE`、`loadWorkbenchCliConfig`、`isPromptPackId`、`isPathWithin`、`effectiveTemplateVersionOf`、`effectiveToolTextOf`、`settingsModelSecretVariable`、`runtimeModelId`、`sameRoleConfiguration`、`PLATFORM_TOKEN_HEADER`、`PLATFORM_TOKEN_PLACEHOLDER`、`WORKBENCH_PATH`、`CORE_API_PREFIX`、`BOOTSTRAP_SUFFIX`、`CHANGES_SUFFIX`、`LAST_EVENT_ID_HEADER`、`LOCAL_WORKBENCH_TEMPLATE_ID`、`LOCAL_WORKBENCH_TEMPLATE_REVISION`、`LOCAL_WORKBENCH_GUIDANCE`、`LOCAL_WORKBENCH_ROLE`、`LOCAL_WORKBENCH_ROLE_BINDING`、`LOCAL_WORKBENCH_HOST_TEMPLATE`、`LOCAL_WORKBENCH_BUDGET`、`LIFECYCLE_QUEUE`、`LIFECYCLE_WAKE_AGGREGATE_TYPES`、`createHandoffQueue`。

@@ -268,8 +268,10 @@ export type RunSnapshot = {
     envelope: TaskEnvelopeV1 | null;
     /** Set only by a real yielded terminal observation; absent on every other Run. */
     continuation?: RunContinuationV1;
-    /** Set only on a continuation claim that consumes an earlier yielded wait. */
+    /** Set only on a claim that consumes an earlier wait: `wait_reply`, `expiry`, or `intervention` (none). */
     consumedWait?: ConsumedWaitV1;
+    /** A-07: the Run whose released lease this claim took; null when there is no predecessor. */
+    previousRun: RunRef | null;
     /** Set only by a claim after a TaskRequeue (TASK-03); exclusive with `consumedWait`. */
     requeueRef?: import('./task-requeue.js').TaskRequeueRef;
     /**
@@ -291,19 +293,23 @@ export type RunSnapshot = {
  */
 export type RunContinuationV1 = {
   schemaVersion: 1;
-  kind: 'wait_reply';
+  kind: 'wait_reply' | 'expiry' | 'intervention';
   task: TaskTriple;
   sessionRef: import('./core/identity.js').SessionRef;
   messageRef: import('./core/session-message.js').SessionMessageRef;
 };
 
-/** The exact prior yielded Run and saved wait message a continuing Run consumes. */
-export type ConsumedWaitV1 = {
-  runRef: RunRef;
-  messageRef: import('./core/session-message.js').SessionMessageRef;
-  /** The exact saved reply body artifact consumed as the continuing Run input. */
-  responseRef: import('./artifact.js').ArtifactRef;
-};
+/**
+ * The exact prior yielded Run and saved wait message a continuing Run consumes.
+ * `intervention` consumes no wait and therefore names no prior Run.
+ */
+export type ConsumedWaitV1 =
+  | { kind: 'wait_reply'; originalRun: RunRef;
+      messageRef: import('./core/session-message.js').SessionMessageRef;
+      responseRef: import('./artifact.js').ArtifactRef }
+  | { kind: 'expiry'; originalRun: RunRef;
+      messageRef: import('./core/session-message.js').SessionMessageRef; expiryInputId: string }
+  | { kind: 'intervention'; messageRef: import('./core/session-message.js').SessionMessageRef };
 
 export type RuntimeInputBindingV1 = {
     schemaVersion: 1;

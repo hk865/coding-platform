@@ -3,13 +3,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type {
+  SessionMessageCommandPort, SessionMessageOutboxPageV1,
+} from '../../src/core/work-graph/model/communication-contracts.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
 import { createMailboxInputSupply, deriveInputId } from '../../src/core/agent-runtime/execution-inputs.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { acceptedMessageInputs } from '../scenarios/support/brief.js';
 import { committed, installS1DateClock, openS1RuntimeFixture, ready } from '../helpers/S1-runtime-scenario-fixture.js';
+import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
 
 const QUESTION = 'Which file should the interrupted work write?';
 const REPLY = 'Write src/s1-routed-result.txt.';
@@ -101,7 +106,8 @@ async function sourceInputs(row: Row) {
   const { f, sender } = row;
   const auth = (await f.read(sender)).run.executionAuthorization;
   if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || !auth.kernel) throw new Error('source has no Kernel binding');
-  const supply = createMailboxInputSupply({ messages: f.messages, context: () => workCtx(f, sender), sessionRef: sender.sessionRef, runRef: sender.runRef });
+  const supply = createMailboxInputSupply({ messages: f.messages, context: () => workCtx(f, sender), sessionRef: sender.sessionRef, runRef: sender.runRef,
+    texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
   return supply({ sessionId: auth.kernel.kernelSessionId, runId: auth.kernel.runId, turnId: auth.kernel.turnId,
     afterEventSequence: 0, acceptedInputIds: [] }, { signal: f.base.ctx.signal });
 }
@@ -115,7 +121,7 @@ async function expectAccepted(row: Row, claim: TaskClaim) {
     inputId: input.inputId, executionRef: input.executionRef, part: input.part,
   }))).toEqual([{ inputId: deriveInputId(row.message.ref, 'response'), executionRef: claim.runRef, part: 'response' }]);
   expect(acceptedMessageInputs(row.f.base.directory).filter(input => input.messageId === row.message.ref.messageId && input.part === 'response')
-    .map(input => input.text)).toEqual([REPLY]);
+    .map(input => input.text)).toEqual([waitReplyDeliveryText({ messageId: row.message.ref.messageId, question: QUESTION, body: REPLY })]);
   expect({ bodyRef: saved.bodyRef, sender: saved.sender, recipient: saved.recipient })
     .toEqual({ bodyRef: row.message.bodyRef, sender: row.message.sender, recipient: row.message.recipient });
 }
@@ -148,16 +154,22 @@ describe('S1 routed replies at real before_model boundaries', () => {
     // overlapping copy of the SAME saved reply on each source page. This is
     // an explicit reader-fault seam: strict production keysets do not overlap.
     // The actual records, advancing cursors and acceptance writer stay real.
+    let originalCursor: CommitCursor | undefined;
     const messages: SessionMessageCommandPort = { ...f.messages,
       async readOutbox(_ctx, input) {
         pages.outbox++;
-        const page = ready(await f.messages.readOutbox!(f.base.ctx, { ...input, senderSession: row.sender.sessionRef,
-          page: { ...input.page, limit: 1 } }));
+        const page = ready<SessionMessageOutboxPageV1 & { cursors?: readonly CommitCursor[] }>(
+          await f.messages.readOutbox!(f.base.ctx, { ...input, senderSession: row.sender.sessionRef,
+            page: { ...input.page, limit: 1 } }));
         const original = ready(await f.messages.readMessage(f.base.ctx, row.message.ref));
+        const at = page.items.findIndex(item => item.ref.messageId === original.ref.messageId);
+        if (at >= 0) originalCursor = page.cursors?.[at];
         if (input.page.cursor !== undefined) pages.overlap++;
         const items = [original, ...page.items];
+        const cursors = page.cursors === undefined || originalCursor === undefined
+          ? undefined : [originalCursor, ...page.cursors];
         responsePages.outbox.push(...items.filter(item => item.status === 'responded').map(item => item.ref.messageId));
-        return { status: 'ready', value: { ...page, items } };
+        return { status: 'ready', value: { ...page, items, ...(cursors === undefined ? {} : { cursors }) } };
       },
       async readRoutedReplies(ctx, input) {
         pages.routed++;
@@ -185,7 +197,7 @@ describe('S1 routed replies at real before_model boundaries', () => {
       expect([...new Set(responsePages.routed)]).toEqual([row.message.ref.messageId]);
       const before = await counts(f);
       const supply = createMailboxInputSupply({ messages, context: () => workCtx(f, row.recipientClaim),
-        sessionRef: row.D, runRef: row.recipientClaim.runRef });
+        sessionRef: row.D, runRef: row.recipientClaim.runRef, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
       const auth = (await f.read(row.recipientClaim)).run.executionAuthorization;
       if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || !auth.kernel) throw new Error('D must have its real Kernel identity');
       expect(await supply({ sessionId: auth.kernel.kernelSessionId, runId: auth.kernel.runId, turnId: auth.kernel.turnId,

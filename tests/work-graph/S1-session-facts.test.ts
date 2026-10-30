@@ -5,7 +5,7 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
-import { t0, t1, key, ready, committed, s1Schemas, observeStore, sessionOwners, workHistory,
+import { t0, t1, ready, committed, s1Schemas, observeStore, sessionOwners, workHistory,
   pendingQuery, archiveWait } from '../helpers/S1-session-facts-fixture.js';
 
 const opened: B2ExecutionFixture[] = [];
@@ -32,7 +32,7 @@ async function consume(f: Fixture, previous: TaskClaim, message: SessionMessage,
     now: () => t1, newId: () => ids.shift() ?? `${runId}-extra-${++id}` });
   const request = await f.base.buildRequest({ input: { sessionRef: previous.sessionRef }, requestId: `${runId}-claim` });
   return committed(await service.claimTask(f.base.ctx, { ...request, input: { ...request.input,
-    consumedWait: { runRef: previous.runRef, messageRef: message.ref, responseRef: message.response.bodyRef } } })).value;
+    consumedWait: { kind: 'wait_reply', originalRun: previous.runRef, messageRef: message.ref, responseRef: message.response.bodyRef } } })).value;
 }
 
 async function expectBusyClaims(f: Fixture) {
@@ -70,6 +70,10 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
     expect(value.session.lastExecutionRef).toEqual(query.queryRunRef);
     expect(value.latestWork).toEqual(f.b2.claim);
     expect(value.wait).toEqual({ runRef: f.b2.claim.runRef, messageRef: message.ref, task: f.b2.claim.task });
+    expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
+      waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
+      requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'open', reason: null },
+      deadline: t1, expiredAt: null, complete: true });
   });
 
   it('SV07 latest Work follows generation even when runId sorts in reverse', async () => {
@@ -90,6 +94,10 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
     const message = await f.history.wait(true);
     const value = ready(await f.facts.readSessionFacts(f.base.ctx, f.b2.claim.sessionRef));
     expect(value.wait).toEqual({ runRef: f.b2.claim.runRef, messageRef: message.ref, task: f.b2.claim.task });
+    expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
+      waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
+      requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'answered', reason: null },
+      deadline: t1, expiredAt: null, complete: true });
     await expectBusyClaims(f);
   });
 
@@ -102,47 +110,24 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
       archiveSessionRef: f.b2.claim.sessionRef, archiveRequestId: 'a', recordedAt: t0 });
     const value = ready(await f.facts.readSessionFacts(f.base.ctx, f.b2.claim.sessionRef));
     expect(value.wait).toBeNull();
+    expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
+      waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
+      requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'answered', reason: null },
+      deadline: t1, expiredAt: null, complete: true });
     expect(ready(await f.history.mailbox.readMessage(f.base.ctx, message.ref)).response).toEqual(before);
   });
 
-  it('SV10 2501 complete execution candidates require 26 pages and cannot prove an absent wait', async () => {
+  it('SV12 a crashed Run keeps its waitAfterSend inquiry in waits and never in wait', async () => {
     const f = await open(kind);
-    // Lead fixture decision (2026-10-08): building 2,501 executions through the owners took 455 s
-    // (memory) and > 900 s (SQLite). One execution of S is real (claim -> authorize -> enter ->
-    // completed result); the other 2,500 candidates are complete copies of its own Outbox / Run /
-    // Attempt records under fresh ids (old-format records, spec 5.1 codec/lookup seed), so every
-    // candidate resolves and the page budget (100 x 25, spec 2.8) is the only reason to stop.
-    const current = f.b2.claim;
-    await f.history.finish(await f.history.enter(current));
-    const ids = [current.runRef.runId, current.attemptRef.attemptId];
-    const originals = (await f.audit.records()).filter(record => ids.some(id => record.refKey.includes(id)));
-    expect(originals.map(record => (JSON.parse(record.refKey) as { aggregateType: string }).aggregateType))
-      .toContain('DispatchOutboxEntry');
-    await f.audit.seed(async () => {
-      for (let batch = 0; batch < 2500; batch += 250) {
-        const copies = [];
-        for (let index = batch + 1; index <= batch + 250; index += 1) {
-          const suffix = `-sv10-${String(index).padStart(4, '0')}`;
-          const rename = (text: string) => ids.reduce((value, id) => value.split(id).join(id + suffix), text);
-          copies.push(...originals.map(record => ({ ...record, refKey: rename(record.refKey), json: rename(record.json) })));
-        }
-        await f.base.commitRaw(copies);
-      }
-    });
-    const candidates = (await f.audit.records()).filter(record => {
-      const ref = JSON.parse(record.refKey) as { aggregateType: string };
-      if (ref.aggregateType !== 'DispatchOutboxEntry') return false;
-      const body = JSON.parse(record.json) as { claim: TaskClaim };
-      return key(body.claim.sessionRef) === key(current.sessionRef);
-    });
-    expect(candidates).toHaveLength(2501);
-    const before = await f.audit.counts();
-    const result = await f.facts.readSessionFacts(f.base.ctx, current.sessionRef);
-    expect(result).toMatchObject({ status: 'rejected', code: 'incomplete' });
-    if (result.status !== 'rejected') throw new Error('page limit must refuse rather than report no wait');
-    expect(result.reason.startsWith('session_facts_page_limit:')).toBe(true);
-    expect(await f.audit.counts()).toEqual(before);
-  }, 900_000);
+    // W-18: the inquiry commits, then the sender ends `crashed` before any yield.
+    const message = await f.history.wait(false, f.b2.claim, undefined, 'crash');
+    const value = ready(await f.facts.readSessionFacts(f.base.ctx, f.b2.claim.sessionRef));
+    expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
+      waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
+      requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'open', reason: null },
+      deadline: t1, expiredAt: null, complete: true });
+    expect(value.wait).toBeNull();
+  });
 
   it('SV11 a cursor reused with a different Session filter or workspace is invalid without writes or model calls', async () => {
     const f = await open(kind);

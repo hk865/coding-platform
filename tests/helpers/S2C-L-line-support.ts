@@ -38,7 +38,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import { createRunSupport, runKey, waitContinuation, yieldedEvent, type RunSupport } from './S2C-L-runs-support.js';
+import { createRunSupport, L_HOST, runKey, type RunSupport } from './S2C-L-runs-support.js';
 import { createLineCheckSupport, type LineCheckSupport } from './S2C-L-check-support.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
@@ -62,7 +62,8 @@ import {
 import type { SessionDutyReadPort, WorkLineReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import type { DecisionReadPort, DecisionCardSourcePort } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { TaskClaimFixture } from './task-claim-fixture.js';
-import { createTaskClaimFixture, type ClaimFixtureKind } from './task-claim-fixture.js';
+import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type ClaimFixtureKind } from './task-claim-fixture.js';
+import { createS2BRuntimeSteps, type S2BRuntimeSteps } from './S2B-runtime-steps-fixture.js';
 import {
   createWorkLineReader, type WorkLineReaderDeps, type WorkLineStore,
 } from '../../src/core/work-graph/views/work-line-reader.js';
@@ -120,6 +121,8 @@ export type LineFixture = {
   setPins(add: readonly SessionRef[], remove: readonly SessionRef[]): Promise<WorkspaceSnapshot>;
   workspaceSnapshot(): Promise<WorkspaceSnapshot>;
   taskOf(session: SessionRef, relation: 'responsible'): Promise<TaskTriple[]>;
+  /** The real runtime steps a helper-started Run leaves open; the fixture closes them. */
+  stepRuns: S2BRuntimeSteps[];
   close(): Promise<void>;
 };
 
@@ -209,6 +212,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     sessionRead: base.sessionsPort.readSession, now: () => new Date().toISOString(),
     ...(base.ctx.principal.kind === 'host' ? { operatorActor: base.ctx.principal.actor } : {}) });
   const { ctx, scope } = base;
+  const stepRuns: S2BRuntimeSteps[] = [];
   let seq = 0;
 
   async function readPin(ref: import('../../src/contracts/ledger.js').AggregateRef): Promise<import('../../src/contracts/core/identity.js').VersionPin> {
@@ -505,7 +509,11 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     addCheckableGoal: (goalId, tasks) => addGoal(goalId, tasks, { checkable: true }),
     checks,
     setPins, workspaceSnapshot, taskOf,
-    close: async () => { await checks.close(); await base.close(); },
+    stepRuns,
+    close: async () => {
+      for (const steps of stepRuns.splice(0)) await steps.close();
+      await checks.close(); await base.close();
+    },
   };
 }
 
@@ -617,6 +625,31 @@ const copyProvenance = (from: SessionRef, workspaceId: string, messageId: string
   ({ schemaVersion: 1, kind: 'readonly_copy', from,
     messageRef: { aggregateType: 'SessionMessage' as const, projectId: from.projectId, workspaceId, messageId } } as const);
 
+const MAIL_HOST = { configurationRevision: 's2c-11-mail-host@1',
+  permissions: { policyRevision: 'legacy-template',
+    tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[] },
+  hostTemplate: L_HOST.hostTemplate };
+
+/** A real wait: the head's scripted send with `waitAfterSend` yields its Run on the saved message. */
+export async function waitingRun(f: LineFixture, input: {
+  label: string; goal: LineGoal; head: SessionRef; recipient: SessionRef; taskId?: string;
+}): Promise<{ claim: Awaited<ReturnType<LineFixture['claim']>>; steps: S2BRuntimeSteps }> {
+  const claim = await f.claim(input.taskId ?? 'w', input.head, input.goal);
+  let sequence = 0;
+  const steps = await createS2BRuntimeSteps({ base: f.base, bodies: f.runs.bodies, ctx: f.ctx,
+    directory: f.base.directory, scope: f.base.scope, now: () => CLAIM_FIXTURE_AT, setClock: () => undefined,
+    eventId: () => `s2c-11-event-${input.label}-${++sequence}`, newId: () => `s2c-11-id-${input.label}-${++sequence}`,
+    consumerId: 's2c-11-runtime', withMailbox: true, host: MAIL_HOST });
+  f.stepRuns.push(steps);
+  const started = await steps.start(claim.claim, { at: CLAIM_FIXTURE_AT, tools: ['read', 'send_session_message',
+    'respond_session_message'], replies: [{ kind: 'calls', calls: [{ callId: `s2c-11-send-${input.label}`,
+      name: 'send_session_message', args: { recipient: input.recipient, text: `S2C-11 ${input.label}`,
+        intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }] });
+  started.release();
+  await started.settled;
+  return { claim, steps };
+}
+
 export async function buildD1(f: LineFixture): Promise<D1> {
   const workGoal = await f.addGoal('g14-work', [
     { taskId: 'a', title: 'A task' }, { taskId: 'b', title: 'B task' }, { taskId: 'c', title: 'C task' },
@@ -635,11 +668,8 @@ export async function buildD1(f: LineFixture): Promise<D1> {
 
   // C: yielded waiting reply.
   const c = (await f.createSession('d1-c')).ref;
-  const cClaim = await f.claim('c', c, workGoal);
-  await f.runs.enter(cClaim.claim);
-  await f.runs.recordResult(cClaim.claim, yieldedEvent(cClaim.claim, 'c'),
-    waitContinuation(cClaim.claim, { aggregateType: 'SessionMessage', projectId: c.projectId,
-      workspaceId: f.base.scope.workspaceId, messageId: 'd1-c-wait' }));
+  await waitingRun(f, { label: 'd1-c', goal: workGoal, head: c,
+    recipient: f.base.sessions.second, taskId: 'c' });
 
   // D: done (an open responsible link to a cancelled task).
   const dGoal = await f.addGoal('g14-d', [{ taskId: 'd', title: 'D task', disposition: 'cancelled' }]);

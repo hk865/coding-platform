@@ -62,6 +62,7 @@ export const SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE = 'SessionMessageWithdrawn';
 export const SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE = 'SessionMessageReleaseDecided';
 export const SESSION_MESSAGE_RELEASED_EVENT_TYPE = 'SessionMessageReleased';
 export const SESSION_MESSAGE_APPLIED_EVENT_TYPE = 'SessionMessageApplied';
+export const SESSION_MESSAGE_EXPIRED_EVENT_TYPE = 'SessionMessageExpired';
 export const SESSION_MESSAGE_EVENT_SCHEMA_VERSION = 1;
 /** Slice 1 §2.9: the wait-disposal replay event written by the mailbox owner. */
 export const ARCHIVE_WAIT_DISPOSED_EVENT_TYPE = 'ArchiveWaitDisposed';
@@ -90,6 +91,10 @@ export const S7A2_RELEASE_BY_WORKSPACE_LOOKUP = 's7a2-release-by-workspace';
 export const S7A2_RELEASE_BY_GOAL_LOOKUP = 's7a2-release-by-goal';
 /** One source goal's person interventions in creation order (7a:619). */
 export const S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP = 's7a2-copy-intervention-by-goal';
+/** §3.3 item 3: one sender Session's released/open waits, oldest first. */
+export const S7B_WAITS_BY_SENDER_SESSION_LOOKUP = 's7b-waits-by-sender-session';
+/** §3.7 item 4: due waits of one workspace, earliest deadline first. */
+export const S7B_DUE_WAITS_LOOKUP = 's7b-due-waits';
 
 /**
  * Slice 5 notification origin wire (SPEC §2.5 line 289). The single
@@ -212,6 +217,13 @@ export const S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupInde
     orderBy: { path: 'createdAt', valueType: 'text' } },
 ];
 
+export const S7B_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  { name: S7B_WAITS_BY_SENDER_SESSION_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId', 'intent'], orderBy: { path: 'since', valueType: 'text' } },
+  { name: S7B_DUE_WAITS_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'release', 'intent'], orderBy: { path: 'deadline', valueType: 'text' } },
+];
+
 // --------------------------------------------------------------------------
 // Event bodies (stable replay carriers)
 // --------------------------------------------------------------------------
@@ -230,6 +242,7 @@ export type {
   SessionMessageReleaseDecidedEventV1,
   SessionMessageReleasedEventV1,
   SessionMessageAppliedEventV1,
+  SessionMessageExpiredEventV1,
   SessionMessageEventV1,
 } from '../model/communication-contracts.js';
 import type {
@@ -244,6 +257,7 @@ import type {
   SessionMessageReleaseDecidedEventV1,
   SessionMessageReleasedEventV1,
   SessionMessageAppliedEventV1,
+  SessionMessageExpiredEventV1,
   SessionMessageEventV1,
 } from '../model/communication-contracts.js';
 
@@ -959,12 +973,17 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
   if (acceptedInputs !== undefined) {
     if (!Array.isArray(acceptedInputs)) return 'SessionMessage acceptedInputs must be an array';
     for (const entry of acceptedInputs) {
-      if (!isRecord(entry) || !hasOnlyKeys(entry, ['inputId', 'part', 'executionRef', 'kernel', 'acceptedAt'])) {
+      if (!isRecord(entry) || !hasOnlyKeys(entry, ['inputId', 'part', 'executionRef', 'kernel', 'acceptedAt', 'evidence', 'consumesWait'])) {
         return 'SessionMessage acceptedInputs entry carries unknown fields';
       }
-      if (!nonEmpty(entry['inputId']) || (entry['part'] !== 'message' && entry['part'] !== 'response')) {
+      if (!nonEmpty(entry['inputId'])
+        || (entry['part'] !== 'message' && entry['part'] !== 'response' && entry['part'] !== 'expiry')) {
         return 'SessionMessage acceptedInputs entry identity is invalid';
       }
+      if (entry['evidence'] !== 'input_accepted' && entry['evidence'] !== 'query_entered') {
+        return 'SessionMessage acceptedInputs evidence is invalid';
+      }
+      if (typeof entry['consumesWait'] !== 'boolean') return 'SessionMessage acceptedInputs consumesWait must be boolean';
       const executionRef = entry['executionRef'];
       if (!isRecord(executionRef) || !['Run', 'QueryRun'].includes(String(executionRef['aggregateType']))) {
         return 'SessionMessage acceptedInputs executionRef must be a RunRef or QueryRunRef';
@@ -1334,10 +1353,12 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_RELEASED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_APPLIED_EVENT_TYPE) },
+    { eventType: SESSION_MESSAGE_EXPIRED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+      validate: (event) => validateEvent(event, SESSION_MESSAGE_EXPIRED_EVENT_TYPE) },
   ],
   lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES,
     ...K3_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7A2_RELEASE_CANDIDATE_LOOKUP_INDEXES,
-    ...S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES],
+    ...S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7B_SESSION_MESSAGE_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------
@@ -1397,6 +1418,9 @@ export function encodeSessionMessageReleasedEvent(event: SessionMessageReleasedE
 export function encodeSessionMessageAppliedEvent(event: SessionMessageAppliedEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
+export function encodeSessionMessageExpiredEvent(event: SessionMessageExpiredEventV1): EncodedDomainEvent {
+  return encodeMessageEvent(event);
+}
 
 export function encodeArchiveWaitDisposedEvent(event: ArchiveWaitDisposedEventV1): EncodedDomainEvent {
   return encodeEventEnvelope(event);
@@ -1438,7 +1462,8 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
     && eventType !== SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_RELEASED_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_APPLIED_EVENT_TYPE) {
+    && eventType !== SESSION_MESSAGE_APPLIED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_EXPIRED_EVENT_TYPE) {
     return invalid(`eventType ${String(eventType)} is not a SessionMessage event`);
   }
   const checked = validateEvent(event, eventType);

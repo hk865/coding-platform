@@ -26,6 +26,7 @@ import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js'
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import {
   plainSessionRefToAggregate,
@@ -71,11 +72,11 @@ async function openRuntime(kind: ClaimFixtureKind):
   Promise<{ fixture: TaskClaimFixture; steps: Awaited<ReturnType<typeof createS2BRuntimeSteps>> }> {
   const fixture = await createTaskClaimFixture(kind, {
     records: [...CONTROL_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
-      ...MODEL_REQUEST_RECORD_SCHEMAS.records],
+      ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
     events: [...CONTROL_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
-      ...MODEL_REQUEST_RECORD_SCHEMAS.events],
+      ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
     lookups: [...(CONTROL_RECORD_SCHEMAS.lookups ?? []), ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []),
-      ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [])],
+      ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
   });
   fixtures.push(fixture);
   let sequence = 0;

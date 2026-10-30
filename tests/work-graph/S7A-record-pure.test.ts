@@ -103,7 +103,8 @@ describe('R-record-shape', () => {
   const accepted = nextSessionMessageRecord(pending, { kind: 'input_accepted', input: {
     inputId: 'i-1', part: 'message',
     executionRef: { aggregateType: 'Run', projectId: PROJECT, goalId: 'g', runId: 'r' },
-    kernel: { adapterId: 'a', kernelSessionId: 'k', runId: 'r', turnId: 't', position: 1 }, acceptedAt: AT } });
+    kernel: { adapterId: 'a', kernelSessionId: 'k', runId: 'r', turnId: 't', position: 1 }, acceptedAt: AT,
+    evidence: 'input_accepted', consumesWait: false } });
   it.each([
     ['an accepted message part', accepted, /an accepted message part cannot be withdrawn/],
     ['a denied release', createSessionMessageRecord(s7aRecordInput({ release: 'denied' })),

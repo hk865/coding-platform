@@ -76,6 +76,8 @@ import {
 } from '../state/run-machine.js';
 import type { SessionGuardContext, SessionRelease } from '../state/session-availability.js';
 import type { TransitionRejectReason } from '../state/transition.js';
+import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import {
   bindTrustedContext, checkRunPin, claimEffectRecords, claimLeaseOf, claimSessionOf, isRecord, isolateWrite,
@@ -253,9 +255,22 @@ function readsExecution(run: RunSnapshot, kind: ControlIntentKindV1): boolean {
   return node === 'YieldedWait' || (kind === 'cancel' && notEnteredEntryPhase(node) !== null);
 }
 
-/** RD-8: the successor Run that consumed a yielded wait's continuation re-held the Task Lease (`claim-service.ts:614-618`). */
-function continuationConsumedOf(facts: TaskExecutionRecord): boolean {
-  return runControlNodeOf(facts.run) === 'YieldedWait' && facts.lease !== null && facts.lease.holderRunId !== facts.run.ref.runId;
+/**
+ * RD-8: the yielded wait is consumed only when its original wait message's accepted projection says so.
+ * The Lease holder answers "who", not "whether": after an intervention the holder is the intervention
+ * Run while the original wait is still open; an unreadable fact is never "consumed".
+ */
+async function continuationConsumedOf(records: Records, facts: TaskExecutionRecord): Promise<boolean> {
+  const messageRef = facts.run.continuation?.messageRef;
+  if (runControlNodeOf(facts.run) !== 'YieldedWait' || messageRef === undefined) return false;
+  const key = sessionMessageRefKey(messageRef);
+  const read = await records.readMany([key]).catch(() => null);
+  if (read === null || read.status !== 'ready') return false;   // an unreadable fact is never "consumed"
+  const record = read.value.records.find(candidate => candidate.refKey === key);
+  if (record === undefined) return false;
+  const decoded = decodeSessionMessageRecord(record);
+  if (decoded.status !== 'decoded') return false;
+  return waitStateOf(decoded.value, waitFactsOfRecord(decoded.value)).state === 'consumed';
 }
 
 /**
@@ -655,7 +670,7 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       // D-8), and only a resume reads the Goal.
       const submitted = submissionEventOf(read, intentRef, input, nowIso);
       let controlCtx = controlContext(read, intentRef, { intent: true, run: read?.revision === runPin.revision },
-        facts !== null && continuationConsumedOf(facts));
+        facts !== null && await continuationConsumedOf(records, facts));
       const pointer = read?.controlState;
       let pointerIntent: ControlIntentSnapshotV1 | null = null;
       if (submissionReadsPointerIntent(submitted, controlCtx) && pointer !== undefined) {

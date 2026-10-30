@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMailboxInputSupply } from '../../src/core/agent-runtime/execution-inputs.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
 import { consultationQueryRefs } from '../../src/contracts/query-job.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
@@ -27,6 +28,7 @@ import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
 import { replyS7AMessage, setS7AAutonomy, S7A_REPLY_TOOLS } from '../helpers/S7A-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { interventionDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import {
   S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6AHttpAnswer, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
@@ -65,9 +67,10 @@ describe('SR8 service gates (reachable release: null)', () => {
     if (sent.status !== 'committed') return;
     const supply = createMailboxInputSupply({
       messages: h.mailbox, context: () => h.ctxWork, sessionRef: h.busySession, runRef: h.claim.runRef,
+      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
     });
     expect((await supply(inputPoint(h), { signal: new AbortController().signal })).map(item => item.text))
-      .toEqual(['offerable message']);
+      .toEqual([interventionDeliveryText({ messageId: sent.value.ref.messageId, body: 'offerable message' })]);
   });
 
   it('public mailbox reads show every sent message', async () => {
@@ -84,8 +87,10 @@ describe('SR8 service gates (reachable release: null)', () => {
 
   it('a public read performs zero writes (counted delegating wrapper)', async () => {
     const h = await openHarness();
-    expect(await h.mailbox.sendMessage(h.ctxHost, { input: { recipient: h.busySession, text: 'counted read' },
-      meta: { requestId: 'gates-counted', expected: [] } })).toMatchObject({ status: 'committed' });
+    const counted = await h.mailbox.sendMessage(h.ctxHost, { input: { recipient: h.busySession, text: 'counted read' },
+      meta: { requestId: 'gates-counted', expected: [] } });
+    expect(counted).toMatchObject({ status: 'committed' });
+    if (counted.status !== 'committed') return;
     let writes = 0; let reads = 0;
     const mailbox = h.makeMailbox({ ...h.fixture.records,
       async commit(batch) { writes++; return h.fixture.records.commit(batch); },
@@ -93,9 +98,10 @@ describe('SR8 service gates (reachable release: null)', () => {
     });
     const supply = createMailboxInputSupply({
       messages: mailbox, context: () => h.ctxWork, sessionRef: h.busySession, runRef: h.claim.runRef,
+      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
     });
     expect((await supply(inputPoint(h), { signal: new AbortController().signal })).map(item => item.text))
-      .toEqual(['counted read']);
+      .toEqual([interventionDeliveryText({ messageId: counted.value.ref.messageId, body: 'counted read' })]);
     expect(writes).toBe(0);
     expect(reads).toBeGreaterThan(0);
   });
@@ -325,7 +331,7 @@ async function replyInputs(cell: WaitingCell, label: string): Promise<string[]> 
     principal: { kind: 'work_run', runRef: cell.senderRun, roleBinding: execution.run.roleBinding },
     materialReader: { kind: 'run', requester: cell.senderRun }, signal: new AbortController().signal };
   const supply = createMailboxInputSupply({ messages: cell.world.platform.messages, context: () => ctx,
-    sessionRef: cell.session.ref, runRef: cell.senderRun });
+    sessionRef: cell.session.ref, runRef: cell.senderRun, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
   const items = await supply({ sessionId: cell.session.ref.sessionId, runId: cell.senderRun.runId,
     turnId: `gate-${label}`, afterEventSequence: 0, acceptedInputIds: [] },
   { signal: new AbortController().signal });
@@ -333,13 +339,12 @@ async function replyInputs(cell: WaitingCell, label: string): Promise<string[]> 
 }
 
 /** The Workflow's own continuation claim over the yielded Run and its saved reply. */
-async function continuationClaim(cell: WaitingCell, label: string): Promise<unknown> {
+async function continuationClaim(cell: WaitingCell, label: string) {
   const receipts: WorkflowStepReceipt[] = [];
-  await driveWorkflow(cell.world.ag2b, { schemaVersion: 1, goalRef: S6A_GOAL_1, flowId: `gate-claim-${label}`,
+  const steps = await driveWorkflow(cell.world.ag2b, { schemaVersion: 1, goalRef: S6A_GOAL_1, flowId: `gate-claim-${label}`,
     sessionHint: cell.session.ref, kind: 'select_work', taskId: AG2B_WORK_TASK_ID }, { receipts });
   const claim = receipts.find(receipt => receipt.kind === 'claim_task');
-  if (claim === undefined) throw new Error(`the ${label} Workflow never performed the continuation claim`);
-  return claim.result;
+  return { claim: claim?.result, steps };
 }
 
 /** One state's world, then its cells in order: consume, submit, one saved reply, claim and readResponse. */
@@ -351,12 +356,20 @@ async function runWaitingState(state: OpenState, expectedCode: 'busy' | 'invalid
   // The normal refusals write nothing, so the two can share this state before the one reply is saved.
   if (state === 'awaiting') {
     expect((await cell.world.post('workflow/consultation', consultationBody(cell.message.ref))).body)
-      .toMatchObject({ status: 'rejected', code: expectedCode });
+      .toMatchObject({ status: 'rejected', code: 'invalid', reason: 'delivery_not_released' });
   }
   expect((await cell.world.post('queries/submit', await submitBody(cell.world, cell.message.ref, cell.recipient, state))).body)
     .toMatchObject({ status: 'rejected', code: expectedCode });
   await saveReply(cell, state);
-  expect(await continuationClaim(cell, state)).toMatchObject({ status: 'rejected', code: expectedCode });
+  const continuation = await continuationClaim(cell, state);
+  if (state === 'withdrawn') {
+    expect(continuation.claim).toBeUndefined();
+    expect(continuation.steps.at(-1)).toMatchObject({ state: 'waiting' });
+  } else {
+    expect(continuation.claim).toBeUndefined();
+    expect(continuation.steps.at(-1)).toMatchObject({
+      state: 'waiting', reason: 'the continuation line has no unconsumed Work wait' });
+  }
   expect(await replyInputs(cell, state)).toEqual([]);
 }
 
@@ -368,7 +381,7 @@ const gateCells: readonly GateRow[] = [
   ['approved', 'readMessagePart', 'none'],
   ['denied', 'readMessagePart', 'none'],
   ['withdrawn', 'readMessagePart', 'none'],
-  ['awaiting', 'waiting', 'busy'],
+  ['awaiting', 'waiting', 'invalid'],
   ['withdrawn', 'waiting', 'invalid'],
 ];
 
@@ -380,7 +393,7 @@ it.each(gateCells)('the gate cells at %s (%s): no consumer reads a message the r
   const h = await openHarness();
   const mailbox = await openCellState(h, state);
   const supply = createMailboxInputSupply({ messages: mailbox, context: () => h.ctxHost, sessionRef: h.idleSession,
-    runRef: h.claim.runRef });
+    runRef: h.claim.runRef, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
   // A supplier refuses silently.
   expect((await supply(inputPoint(h), { signal: new AbortController().signal })).map(item => item.text)).toEqual([]);
 });

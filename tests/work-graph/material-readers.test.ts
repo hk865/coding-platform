@@ -62,7 +62,7 @@ function expectedRun(ref: RunRef, taskId: string, attemptId: string, planRef: Pl
   return { ref, revision: 1, schemaVersion: 1,
     task: { projectId: ref.projectId, goalId: ref.goalId, taskId }, attemptId, planRef, roleBinding, budget,
     workspaceSnapshot: { workspaceId, revision: 1 }, status: 'starting', outcome: null, exitCode: null,
-    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null };
+    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null, previousRun: null };
 }
 function expectedQueryRun(ref: QueryRunRef): QueryRunSnapshot {
   return { ref, revision: 1, schemaVersion: 1, run: { schemaVersion: 1,

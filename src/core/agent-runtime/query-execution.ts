@@ -716,7 +716,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           input: manifest.input,
           ...(deps.messages === undefined || intentExecution.kind !== 'semantic_query' || intentExecution.consultation?.derivation !== undefined ? {} : {
             inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
-              sessionRef: state.sessionRef, runRef: queryRunRef }),
+              sessionRef: state.sessionRef, runRef: queryRunRef,
+              texts: promptTexts.value, toolNames: manifest.promptSet.toolNames }),
           }),
           budget: manifest.runtimeBudget,
           readOnly: true,

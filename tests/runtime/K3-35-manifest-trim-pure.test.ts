@@ -155,7 +155,7 @@ const SESSION_ROLE = { kind: 'role_spec' as const, pin: {
 const CLAIM: TaskClaim = {
   task: TASK, planRef: PLAN_REF, workspaceId: WORKSPACE,
   sessionRef: SESSION_REF, sessionRevision: 1, generation: 1,
-  runRef: MANIFEST_RUN_REF, attemptRef: ATTEMPT_REF,
+  runRef: MANIFEST_RUN_REF, previousRun: null, attemptRef: ATTEMPT_REF,
   outboxRef: { aggregateType: 'DispatchOutboxEntry', projectId: PROJECT, goalId: GOAL,
     taskId: TASK_ID, attemptId: ATTEMPT_REF.attemptId },
   claimedAt: AT,

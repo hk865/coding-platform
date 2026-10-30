@@ -1,8 +1,11 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
+import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/identity.js';
+import type { CoreRejection } from '../../contracts/core/results.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
+import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
@@ -14,6 +17,7 @@ import type { SessionDirectoryPort } from '../../core/work-graph/model/session-c
 import type {
   SessionFactsPort, SessionResponsibilityBasisPort,
 } from '../../core/work-graph/model/session-facts-contracts.js';
+import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../../core/work-graph/tasks/session-anomaly-service.js';
@@ -239,6 +243,13 @@ export interface WorkflowPort {
    * behavior and the type-compatible fixtures.
    */
   consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
+  /** One saved person's or agent's message delivered to the line's existing Task (slice-7-SPEC L11). */
+  handleIntervention?(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
+    Promise<HandleInterventionResultV1>;
+  /** S's `DeliveryEligibilityFactsPort['readDeliveryEligibilityFacts']`: the one fact read L injects into the Query
+   *  and Host gates; absent keeps old narrow doubles type-compatible. */
+  readDeliveryEligibilityFacts?(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
+    Promise<ReadResult<DeliveryEligibilityFactsV1>>;
   /**
    * Slice 1 §4.1: the ONE Workflow archive composition entry. Optional so old
    * narrow doubles stay type-compatible; the real composition installs it. An
@@ -277,3 +288,8 @@ export interface WorkflowPort {
   backfillRecentActivity?(ctx: CoreCallContext, input: ActivityBackfillInput): Promise<ReadResult<ActivityBackfillBatchV1>>;
   backfillActivityRange?(ctx: CoreCallContext, input: ActivityBackfillRangeInput): Promise<ReadResult<ActivityBackfillBatchV1>>;
 }
+
+export type HandleInterventionResultV1 =
+  | { status: 'claimed'; branch: 'existing_task'; claim: TaskClaim }
+  | { status: 'queued'; reason: 'no_task' | 'goal_completed' }
+  | CoreRejection;

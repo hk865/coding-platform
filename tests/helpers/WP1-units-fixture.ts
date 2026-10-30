@@ -393,7 +393,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
   };
   const claim: TaskClaim = { task: { projectId: 'p', goalId: 'g', taskId: 't1' }, planRef, workspaceId: 'w',
     sessionRef: { projectId: 'p', sessionId: 's1' }, sessionRevision: 1, generation: 1,
-    runRef: { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'r1' },
+    runRef: { aggregateType: 'Run', projectId: 'p', goalId: 'g', runId: 'r1' }, previousRun: null,
     attemptRef: { aggregateType: 'TaskAttempt', projectId: 'p', goalId: 'g', taskId: 't1', attemptId: 'a1' },
     outboxRef: { aggregateType: 'DispatchOutboxEntry', projectId: 'p', goalId: 'g', taskId: 't1', attemptId: 'a1' }, claimedAt: T0 };
   const execution: TaskExecutionRecord = {
@@ -401,7 +401,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
       roleBinding: { schemaVersion: 1, bindingId: 'cu-builder', templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' },
       budget: { tokenBudget: 4096, deadline: null }, workspaceSnapshot: { workspaceId: 'w', revision: workspace.revision },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '',
-      envelope: null, startedAt: null, endedAt: null },
+      envelope: null, startedAt: null, endedAt: null, previousRun: null },
     attempt: { ref: claim.attemptRef, revision: 1, schemaVersion: 1, runId: 'r1', planRef,
       status: 'claimed', startedAt: null, endedAt: null, endOutcome: null },
     outbox: { ref: claim.outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim }, plan,

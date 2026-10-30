@@ -75,7 +75,7 @@ function recordingMailbox(results: { send?: SendRejectionV1 } = {}) {
     },
     async readMessage() { return { status: 'not_found' }; },
     async readMessageBody() { return { status: 'not_found' }; },
-    async readInbox() { return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: cursor() } }; },
+    async readInbox() { return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: cursor(), cursors: [] } }; },
     async ackMessage(ctx, request) {
       acks.push({ ctx, request: request as unknown as RecordedWrite['request'] });
       return { status: 'committed', value: fakeMessage({ projectId: request.input.messageRef.projectId, sessionId: 'recipient' }, 'ack'), replayed: false, cursor: cursor() };

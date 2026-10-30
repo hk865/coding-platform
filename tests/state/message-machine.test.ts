@@ -83,34 +83,36 @@ const SECRETARY_SENDER: MessageSecretaryRoundSenderRecord = {
 const DISPATCH_PINS: DispatchBasisV1 = { planRevision: 2, pointerRevision: 'none', dispatchSequence: 4 };
 const MESSAGE_INPUT = deriveSessionInputId(MESSAGE_REF, 'message');
 const RESPONSE_INPUT = deriveSessionInputId(MESSAGE_REF, 'response');
+/** The delivery evidence needs a real ISO time; the acceptance and its evidence share it. */
+const ACCEPTED_MESSAGE_AT = '2026-10-04T00:00:01.000Z';
 
 const STATES = {
   absent: { status: 'absent' },
   pending: {
     status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
-    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
     approvalRevision: null, pins: null,
   },
   read: {
     status: 'read', hasReadAt: true, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 2,
-    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
     approvalRevision: null, pins: null,
   },
   responded: {
     status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 3,
-    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
     approvalRevision: null, pins: null,
   },
   /** pending, with the A′ derivation fixed and the message part already delivered. */
   pendingDerivedDelivered: {
     status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [MESSAGE_INPUT], hasDerivation: true, revision: 3,
-    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    release: null, delivery: 'delivered', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
     approvalRevision: null, pins: null,
   },
   /** responded, derivation fixed, both parts delivered. */
   respondedComplete: {
     status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [MESSAGE_INPUT, RESPONSE_INPUT], hasDerivation: true, revision: 6,
-    release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+    release: null, delivery: 'delivered', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
     approvalRevision: null, pins: null,
   },
 } as const satisfies Record<string, MessageMachineState>;
@@ -203,7 +205,7 @@ function happyCtx(event: EventName, state: MessageMachineState): MessageGuardCon
     case 'derived':
       return { ...base, pins: pinFor(state) };
     case 'claimed':
-      return { ...base, consumedWait: { responseRefMatches: true, sameWorkspace: true } };
+      return { ...base, consumedWait: { kind: 'wait_reply', responseRefMatches: true, sameWorkspace: true, consumed: false } };
     case 'archiveDisposed':
       return {
         ...base,
@@ -279,7 +281,7 @@ const EXISTS = no('illegal', 'revision_conflict');
 const TABLE: Record<StateName, Record<EventName, Expected>> = {
   absent: {
     sent: ok({ status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
-        release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
         approvalRevision: null, pins: null }, SEND_HOST), // MSG-01
     read: NOT_FOUND,
     respondText: NOT_FOUND,
@@ -295,7 +297,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     read: ok({ ...S.pending, status: 'read', hasReadAt: true, revision: 2 }, READ_EFFECTS(1)), // MSG-03
     respondText: ok({ ...S.pending, status: 'responded', hasReadAt: true, hasResponse: true, revision: 2 }, TEXT_EFFECTS(1)), // MSG-04
     respondAnswer: ok({ ...S.pending, status: 'responded', hasReadAt: true, hasResponse: true, revision: 2 }, ANSWER_EFFECTS(1)), // MSG-06
-    acceptMessage: ok({ ...S.pending, acceptedInputIds: [MESSAGE_INPUT], revision: 2 }, ACCEPT_EFFECTS(1)), // MSG-07
+    acceptMessage: ok({ ...S.pending, delivery: 'delivered', acceptedInputIds: [MESSAGE_INPUT], revision: 2 }, ACCEPT_EFFECTS(1)), // MSG-07
     acceptResponse: no('guard_failed', 'forbidden'),
     derived: ok({ ...S.pending, hasDerivation: true, revision: 2 }, DERIVE_EFFECTS(1)), // MSG-09
     claimed: no('guard_failed', 'busy'),
@@ -306,7 +308,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     read: no('illegal', 'invalid'),
     respondText: ok({ ...S.read, status: 'responded', hasResponse: true, revision: 3 }, TEXT_EFFECTS(2)), // MSG-05
     respondAnswer: ok({ ...S.read, status: 'responded', hasResponse: true, revision: 3 }, ANSWER_EFFECTS(2)), // MSG-06
-    acceptMessage: ok({ ...S.read, acceptedInputIds: [MESSAGE_INPUT], revision: 3 }, ACCEPT_EFFECTS(2)), // MSG-07
+    acceptMessage: ok({ ...S.read, delivery: 'delivered', acceptedInputIds: [MESSAGE_INPUT], revision: 3 }, ACCEPT_EFFECTS(2)), // MSG-07
     acceptResponse: no('guard_failed', 'forbidden'),
     derived: ok({ ...S.read, hasDerivation: true, revision: 3 }, DERIVE_EFFECTS(2)), // MSG-09
     claimed: no('guard_failed', 'busy'),
@@ -317,7 +319,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     read: no('illegal', 'invalid'),
     respondText: no('illegal', 'invalid'),
     respondAnswer: no('illegal', 'invalid'),
-    acceptMessage: ok({ ...S.responded, acceptedInputIds: [MESSAGE_INPUT], revision: 4 }, ACCEPT_EFFECTS(3)), // MSG-07
+    acceptMessage: ok({ ...S.responded, delivery: 'delivered', acceptedInputIds: [MESSAGE_INPUT], revision: 4 }, ACCEPT_EFFECTS(3)), // MSG-07
     acceptResponse: ok({ ...S.responded, acceptedInputIds: [RESPONSE_INPUT], revision: 4 }, ACCEPT_EFFECTS(3)), // MSG-08
     derived: ok({ ...S.responded, hasDerivation: true, revision: 4 }, DERIVE_EFFECTS(3)), // MSG-09
     claimed: ok(S.responded, []), // MSG-10 (SD-1)
@@ -398,7 +400,7 @@ describe('transitionMessage: every (state, event) pair', () => {
     const ctx = { ...happyCtx('sent', S.absent), principal: 'work_run' as const, workRunAuthorization: 'ok' as const };
     expectResult(transitionMessage(S.absent, EVENTS.sent, ctx), ok(
       { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
-        release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
         approvalRevision: null, pins: null },
       [...SEND_HOST, { kind: 'guard_work_run_facts' }],
     ));
@@ -669,13 +671,13 @@ describe('§10.4 forbidden transitions', () => {
       const released = send({ ...happy, sendRelease: { release: 'released', pins: DISPATCH_PINS } });
       expectResult(released, ok({
         status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
-        release: 'released', delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        release: 'released', delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
         approvalRevision: null, pins: DISPATCH_PINS,
       }, SEND_HOST));
       const awaiting = send({ ...happy, sendRelease: { release: 'awaiting', pins: null } });
       expectResult(awaiting, ok({
         status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
-        release: 'awaiting', delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
+        release: 'awaiting', delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
         approvalRevision: null, pins: null,
       }, SEND_HOST));
     });
@@ -792,27 +794,40 @@ describe('§10.4 forbidden transitions', () => {
     it('only a responded message whose saved reply is the claimed responseRef, in the workspace, satisfies the wait', () => {
       for (const stateName of STATE_NAMES) {
         const state = STATES[stateName];
-        const verdict = messageSatisfiesWait(state, { responseRefMatches: true, sameWorkspace: true });
+        const verdict = messageSatisfiesWait(state, { kind: 'wait_reply', responseRefMatches: true, sameWorkspace: true, consumed: false });
         expect(verdict.satisfied).toBe(state.status === 'responded');
         if (!verdict.satisfied) expect(verdict.code).toBe('busy');
       }
-      expect(messageSatisfiesWait(S.responded, { responseRefMatches: false, sameWorkspace: true }))
+      expect(messageSatisfiesWait(S.responded, { kind: 'wait_reply', responseRefMatches: false, sameWorkspace: true, consumed: false }))
         .toMatchObject({ satisfied: false, code: 'forbidden' });
-      expect(messageSatisfiesWait(S.responded, { responseRefMatches: true, sameWorkspace: false }))
+      expect(messageSatisfiesWait(S.responded, { kind: 'wait_reply', responseRefMatches: true, sameWorkspace: false, consumed: false }))
         .toMatchObject({ satisfied: false, code: 'forbidden' });
       // read state or delivery-only never satisfies the wait, whatever the other facts say.
-      expect(messageSatisfiesWait(S.pendingDerivedDelivered, { responseRefMatches: true, sameWorkspace: true }))
+      expect(messageSatisfiesWait(S.pendingDerivedDelivered, { kind: 'wait_reply', responseRefMatches: true, sameWorkspace: true, consumed: false }))
         .toMatchObject({ satisfied: false, code: 'busy' });
     });
 
     it('maps the predicate to guard_failed with the same code; missing facts are invalid', () => {
       const claim = (state: MessageMachineState, consumedWait: MessageGuardContext['consumedWait']) =>
         transitionMessage(state, EVENTS.claimed, { ...baseCtx(), consumedWait });
-      expectResult(claim(S.responded, { responseRefMatches: false, sameWorkspace: true }), no('guard_failed', 'forbidden'));
-      expectResult(claim(S.respondedComplete, { responseRefMatches: true, sameWorkspace: false }), no('guard_failed', 'forbidden'));
-      expectResult(claim(S.read, { responseRefMatches: false, sameWorkspace: false }), no('guard_failed', 'busy'));
-      expectResult(claim(S.absent, { responseRefMatches: true, sameWorkspace: true }), no('guard_failed', 'busy'));
+      expectResult(claim(S.responded, { kind: 'wait_reply', responseRefMatches: false, sameWorkspace: true, consumed: false }), no('guard_failed', 'forbidden'));
+      expectResult(claim(S.respondedComplete, { kind: 'wait_reply', responseRefMatches: true, sameWorkspace: false, consumed: false }), no('guard_failed', 'forbidden'));
+      expectResult(claim(S.read, { kind: 'wait_reply', responseRefMatches: false, sameWorkspace: false, consumed: false }), no('guard_failed', 'busy'));
+      expectResult(claim(S.absent, { kind: 'wait_reply', responseRefMatches: true, sameWorkspace: true, consumed: false }), no('guard_failed', 'busy'));
       expectResult(claim(S.responded, null), no('guard_failed', 'invalid'));
+    });
+
+    it.each([
+      { name: 'an intervention satisfies the wait once the base consumption gate passes',
+        state: S.pending, facts: { kind: 'intervention' }, expected: { satisfied: true } },
+      { name: 'an expiry wait with an existing reply is refused (reply_present)',
+        state: { ...S.responded, expiredAt: '2026-10-08T00:00:00.000Z' }, facts: { kind: 'expiry', consumed: false },
+        expected: { satisfied: false, code: 'busy', detail: 'the expiry continuation is refused because a reply exists (reply_present)' } },
+      { name: 'an expiry wait with no reply is satisfied',
+        state: { ...S.pending, expiredAt: '2026-10-08T00:00:00.000Z' }, facts: { kind: 'expiry', consumed: false },
+        expected: { satisfied: true } },
+    ] as const)('$name', ({ state, facts, expected }) => {
+      expect(messageSatisfiesWait(state, facts)).toEqual(expected);
     });
   });
 
@@ -1022,6 +1037,7 @@ function accepted(part: 'message' | 'response', acceptedAt: string): MessageAcce
   return {
     inputId: part === 'message' ? MESSAGE_INPUT : RESPONSE_INPUT, part,
     executionRef: part === 'message' ? RESPONDER.runRef : WORK_RUN_SENDER.runRef, kernel: { ...KERNEL }, acceptedAt,
+    evidence: 'input_accepted', consumesWait: part === 'response',
   };
 }
 
@@ -1113,8 +1129,9 @@ describe('record constructors', () => {
 
   it('input_accepted (MSG-07/08): append only, status and readAt untouched; response part needs a response; no duplicate inputId', () => {
     const sent = createSessionMessageRecord(newInput({ sender: WORK_RUN_SENDER, needsReply: true }));
-    const delivered = nextSessionMessageRecord(sent, { kind: 'input_accepted', input: accepted('message', 'T-1') });
-    expect(delivered).toEqual({ ...sent, revision: 2, acceptedInputs: [accepted('message', 'T-1')] });
+    const delivered = nextSessionMessageRecord(sent, { kind: 'input_accepted', input: accepted('message', ACCEPTED_MESSAGE_AT) });
+    expect(delivered).toEqual({ ...sent, revision: 2, acceptedInputs: [accepted('message', ACCEPTED_MESSAGE_AT)],
+      delivery: 'delivered', deliveryEvidence: { executionRef: RESPONDER.runRef, acceptedAt: ACCEPTED_MESSAGE_AT } });
     expect(codecProblem(delivered)).toBeNull();
     expect(() => nextSessionMessageRecord(delivered, { kind: 'input_accepted', input: accepted('message', 'T-2') })).toThrow(/already/);
     expect(() => nextSessionMessageRecord(delivered, { kind: 'input_accepted', input: accepted('response', 'T-2') })).toThrow(/response/);
@@ -1122,7 +1139,7 @@ describe('record constructors', () => {
     const responded = nextSessionMessageRecord(delivered, { kind: 'responded', rejectedAt: null, response: textReply('T-reply') });
     const consumed = nextSessionMessageRecord(responded, { kind: 'input_accepted', input: accepted('response', 'T-3') });
     expect(consumed).toMatchObject({ revision: 4, status: 'responded', readAt: 'T-reply', response: textReply('T-reply') });
-    expect(consumed.acceptedInputs).toEqual([accepted('message', 'T-1'), accepted('response', 'T-3')]);
+    expect(consumed.acceptedInputs).toEqual([accepted('message', ACCEPTED_MESSAGE_AT), accepted('response', 'T-3')]);
     expect(codecProblem(consumed)).toBeNull();
     // The appended entry is a copy, not the caller's object.
     const input = accepted('message', 'T-9');
@@ -1143,7 +1160,7 @@ describe('record constructors', () => {
   it('messageMachineStateOf projects a record (null is absent)', () => {
     expect(messageMachineStateOf(null)).toEqual({ status: 'absent' });
     const sent = createSessionMessageRecord(newInput({ sender: WORK_RUN_SENDER, needsReply: true }));
-    const delivered = nextSessionMessageRecord(sent, { kind: 'input_accepted', input: accepted('message', 'T-1') });
+    const delivered = nextSessionMessageRecord(sent, { kind: 'input_accepted', input: accepted('message', ACCEPTED_MESSAGE_AT) });
     const derived = nextSessionMessageRecord(delivered, { kind: 'consultation_derived', derivation: DERIVATION });
     expect(messageMachineStateOf(derived)).toEqual(S.pendingDerivedDelivered);
   });
@@ -1176,7 +1193,7 @@ function applyToRecord(record: SessionMessageRecord | null, event: EventName, at
     case 'respondAnswer':
       return nextSessionMessageRecord(record!, { kind: 'responded', rejectedAt: null, response: answerReply(at) });
     case 'acceptMessage':
-      return nextSessionMessageRecord(record!, { kind: 'input_accepted', input: accepted('message', at) });
+      return nextSessionMessageRecord(record!, { kind: 'input_accepted', input: accepted('message', ACCEPTED_MESSAGE_AT) });
     case 'acceptResponse':
       return nextSessionMessageRecord(record!, { kind: 'input_accepted', input: accepted('response', at) });
     case 'derived':

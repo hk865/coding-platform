@@ -28,7 +28,7 @@ import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatc
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
 import type { DecisionChangeProofV1, MessageReleaseBlockV1 } from '../../../contracts/goal-decisions.js';
-import { canonicalJson, sha256Hex } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
@@ -66,8 +66,16 @@ export type MessageSender = MessageHostSender | MessageWorkRunSender | MessageSe
 export type MessageSecretaryRoundSender = MessageSecretaryRoundSenderRecord;
 
 /** The stable identity of one persisted source part; shared by Kernel supply and mailbox consumption. */
-export function deriveSessionInputId(messageRef: SessionMessageRef, part: 'message' | 'response'): string {
+export function deriveSessionInputId(
+  messageRef: SessionMessageRef, part: 'message' | 'response' | 'expiry',
+): string {
+  if (part === 'expiry') return 'expiry:' + canonicalKey(messageRef);
   return 'session-input:' + sha256Hex(canonicalJson({ ref: messageRef, part } as never));
+}
+
+/** The one wait-consumed unique slot; the acceptance claim's key and the reader's key are the same. */
+export function waitConsumedClaimKey(messageRef: SessionMessageRef): string {
+  return 'wait-consumed:' + canonicalKey(messageRef);
 }
 
 export type MessageQueryAnswerSender = MessageQueryAnswerSenderRecord;
@@ -194,6 +202,7 @@ export type SessionMessageEventV1 =
   | SessionMessageInputAcceptedEventV1
   | SessionMessageDecisionAnsweredEventV1
   | SessionMessageDecisionAppliedEventV1
+  | SessionMessageExpiredEventV1
   | SessionMessageLifecycleEventV1;
 
 export type SessionMessageWithdrawnEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageWithdrawn' };
@@ -204,6 +213,7 @@ export type SessionMessageReleaseDecidedEventV1 = MessageSessionEventBaseV1 & {
 };
 export type SessionMessageReleasedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageReleased' };
 export type SessionMessageAppliedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageApplied' };
+export type SessionMessageExpiredEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageExpired' };
 export type SessionMessageLifecycleEventV1 =
   | SessionMessageWithdrawnEventV1 | SessionMessageReleaseDecidedEventV1
   | SessionMessageReleasedEventV1 | SessionMessageAppliedEventV1;
@@ -211,6 +221,8 @@ export type SessionMessageLifecycleEventV1 =
 /** One keyset page shared by the inbox and the sender-Run outbox. */
 export type SessionMessagePage = {
   items: SessionMessage[];
+  /** The message's own `since`, aligned with `items` (a response uses the message's `responseSince`). */
+  cursors: readonly CommitCursor[];
   nextCursor: string | null;
   sourceCursor: CommitCursor;
 };
@@ -337,7 +349,7 @@ export interface SessionMailboxPort {
     ctx: CoreCallContext,
     request: GraphWrite<{
       messageRef: SessionMessageRef;
-      part: 'message' | 'response';
+      part: 'message' | 'response' | 'expiry';
       executionRef: RunRef | QueryRunRef;
       executionSessionRef?: SessionRef;
       kernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string; position: number };

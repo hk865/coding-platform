@@ -95,7 +95,9 @@ function driverWith(
     } }) },
     mailbox: {
       readOutbox: async () => ({ status: 'ready', value: { items: [], nextCursor: null } }),
-      readMessage: async () => ({ status: 'ready', value: { status: 'pending', response: null } }),
+      readMessage: async () => ({ status: 'ready', value: {
+        status: 'pending', response: null, withdrawnAt: null, waitCancelledAt: null, expiredAt: null,
+      } }),
     },
     controls: { submitControl: async () => ({ status: 'committed', value: { intent: { ref: { aggregateType: 'ControlIntent' } } } }) },
     profiles: [],

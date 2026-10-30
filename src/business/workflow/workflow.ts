@@ -1,10 +1,12 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionProvenanceV1 } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../contracts/ledger.js';
-import type { PlanRevisionRef, RuntimeTask, TaskScope } from '../../contracts/plan.js';
+import type { PlanRevisionSnapshot, PlanRevisionRef, RuntimeTask, TaskScope } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { TaskReductionRef } from '../../contracts/reduction.js';
 import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
@@ -43,7 +45,7 @@ import type { ConsultationInput, ConsultationResult, FailedCardRefV1, InitialPla
 import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
-import { createConsultationConsumer } from './consultation.js';
+import { createConsultationConsumer, asRejection } from './consultation.js';
 import { createTaskGate } from './task-gate.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
@@ -53,6 +55,13 @@ import { createDecisionActions, type DecisionActionsPort } from './decision-acti
 import { createActivityBackfill } from './activity-backfill.js';
 import { servingBinding } from './role-bindings.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
+import { deriveSessionInputId, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import {
+  effectiveReplyHandler, messageFactsOfRecord, type DeliveryFactsV1, type DeliveryResponseWaitV1,
+} from '../../core/work-graph/state/message-machine.js';
+import { sameRef } from '../../core/work-graph/state/ref-equality.js';
+import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
+import { createInterventionHandler } from './intervention.js';
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -778,7 +787,8 @@ function initialPlanningBase(
 export function createWorkflow(deps: WorkflowDependencies & {
   sessionHandoff?: HandoffWorkflowDependencies;
 }): WorkflowPort
-  & Required<Pick<WorkflowPort, 'consumeConsultation' | 'resolveDecision' | 'orderGoalAdvances'>> {
+  & Required<Pick<WorkflowPort, 'consumeConsultation' | 'resolveDecision' | 'orderGoalAdvances'
+    | 'handleIntervention' | 'readDeliveryEligibilityFacts'>> {
   /**
    * R5b.4 §11.5 finite first-consumer handoff. Each call delegates exactly ONE
    * original owner (`proposeInitialPlanFromAnswer` or `applyPlanChange`) and
@@ -1033,7 +1043,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     task: RuntimeTask, binding: Binding, sessionId: string, sessionRevision: number,
     reusedSession: boolean, consumedWait?: ConsumedWaitV1, requeue?: WorkflowSessionRequeue,
     review?: WorkflowSessionReview,
-  ): Promise<{ operation: WorkflowOperation } | { rejection: CoreRejection }> {
+  ): Promise<{ operation: Extract<WorkflowOperation, { kind: 'claim_task' }> } | { rejection: CoreRejection }> {
     const workspacePin = await loadWorkspacePin(owned, goal.workspaceRef);
     if ('rejection' in workspacePin) return workspacePin;
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId };
@@ -1061,6 +1071,25 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return { operation: { kind: 'claim_task', request: graphWrite(base, 'claim_task', input, expected) } };
   }
 
+  async function claimIntervention(owned: Owned, base: Base, goal: GoalSnapshot, plan: PlanRevisionSnapshot,
+    task: RuntimeTask, row: TaskRow, session: SessionCard, messageRef: SessionMessageRef):
+  Promise<{ claim: TaskClaim } | CoreRejection> {
+    const config = deps.configuration;
+    if (config === undefined) return rejection('unsupported', 'no trusted Workflow configuration is registered for the intervention claim');
+    const assignment = revisionAssignments(plan).find((candidate) => candidate.taskId === task.taskId);
+    if (assignment === undefined) return rejection('invalid', `the intervention Task ${task.taskId} has no role assignment`);
+    const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+    if (binding === null) return rejection('unsupported', `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
+    const built = await buildClaimOperation(owned, base, goal, plan.ref, task, binding,
+      session.record.ref.sessionId, session.record.revision, true, { kind: 'intervention', messageRef });
+    if ('rejection' in built) return built.rejection;
+    const result = await deps.claims.claimTask(owned.ctx, { ...built.operation.request,
+      meta: { ...built.operation.request.meta,
+        requestId: `intervention:${sessionMessageRefKey(messageRef)}:claim` } });
+    if (result.status !== 'committed') return rejection(result.code, result.reason);
+    return { claim: result.value };
+  }
+
   /** Read the exact prior yielded Run continuation and its saved reply ref. */
   async function readContinuation(
     owned: Owned, priorRunRef: RunRef,
@@ -1076,10 +1105,18 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const messageRead = await deps.consultations.messages.readMessage(owned.ctx, continuation.messageRef);
     if (messageRead.status !== 'ready') return { waiting: receiptReason(messageRead, 'the continuation wait message is not readable') };
     const message = messageRead.value;
-    if (message.status !== 'responded' || message.response === null) {
-      return { waiting: 'the continuation wait has not been answered yet' };
+    // The saved reply wins over an expired deadline (one state rule, message-machine.ts:1138).
+    if (message.status === 'responded' && message.response !== null) {
+      return { sessionRef: structuredClone(continuation.sessionRef), value: {
+        kind: 'wait_reply', originalRun: priorRunRef, messageRef: continuation.messageRef,
+        responseRef: structuredClone(message.response.bodyRef) } };
     }
-    return { sessionRef: structuredClone(continuation.sessionRef), value: { runRef: priorRunRef, messageRef: continuation.messageRef, responseRef: structuredClone(message.response.bodyRef) } };
+    if (message.expiredAt !== null) {
+      return { sessionRef: structuredClone(continuation.sessionRef), value: {
+        kind: 'expiry', originalRun: priorRunRef, messageRef: continuation.messageRef,
+        expiryInputId: deriveSessionInputId(continuation.messageRef, 'expiry') } };
+    }
+    return { waiting: 'the continuation wait has not been answered yet' };
   }
 
   /**
@@ -1341,6 +1378,116 @@ export function createWorkflow(deps: WorkflowDependencies & {
     workflow: deps, bindingForRole, isUnadmittedStarting, claimContinuation,
   });
 
+  /** The delivery predicate's `taskBlocked`: the automation card this Task would derive now. The L46 block
+   *  read replaces this source later, on the same field (book `:296–:299`). A failed read is `null`, never false. */
+  async function automationBlockedFor(owned: Owned, base: Base, taskRef: TaskTriple): Promise<boolean | null> {
+    const config = deps.configuration;
+    if (config === undefined) return null;
+    const goal = await deps.plans.queryGoal(owned.ctx, { aggregateType: 'Goal', projectId: taskRef.projectId, goalId: taskRef.goalId });
+    if (goal.status !== 'ready') return null;
+    const graph = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: goal.value.goal.ref });
+    if (graph.status !== 'ready') return null;
+    const task = graph.value.plan.tasks.find((candidate) => candidate.taskId === taskRef.taskId);
+    const row = graph.value.tasks.find((candidate) => candidate.ref.taskId === taskRef.taskId);
+    if (task === undefined || row === undefined) return null;
+    const rework = automaticRequeue(config, owned, base, goal.value.goal, graph.value.plan, task, row)
+      ?? automaticReverify(base, row);
+    if (rework === null) return false;
+    return (await automationConfirmation(base, goal.value.goal, row, rework)) !== null;
+  }
+
+  /** The ONE delivery-fact builder (A-34): the message's consumption, Goal, Task block and recipient outcome. */
+  async function deliveryFacts(owned: Owned, message: SessionMessage, part: 'message' | 'response',
+    goalRef: GoalRef | null, target: SessionRef | null): Promise<DeliveryFactsV1 | CoreRejection> {
+    const goalRead = goalRef === null ? null : await deps.plans.queryGoal(owned.ctx, goalRef);
+    if (goalRead !== null && goalRead.status !== 'ready') return asRejection(goalRead, 'the message Goal');
+    const goal = goalRead === null ? null : goalRead.value.goal.desiredState;
+    let taskBlocked = false;
+    const taskRef = message.taskRef;
+    if (taskRef !== null) {
+      const blocked = await automationBlockedFor(owned, {
+        goalRef: { aggregateType: 'Goal', projectId: taskRef.projectId, goalId: taskRef.goalId },
+        flowId: '', sessionHint: null, actor: owned.actor, taskId: taskRef.taskId,
+        failedCardRefs: [], releaseSkip: new Set<string>(),
+      }, taskRef);
+      if (blocked === null) {
+        return rejection('unavailable', 'the automatic confirmation facts of the message Task are not readable');
+      }
+      taskBlocked = blocked;
+    }
+    let recipientOutcomeUnknown = false;
+    if (!('kind' in message.recipient)) {
+      const card = await deps.sessions.readSession(owned.ctx, message.recipient);
+      if (card.status !== 'ready') return asRejection(card, 'the message recipient');
+      const prior = card.value.record.lastExecutionRef;
+      if (prior !== null && prior !== undefined) {
+        if (prior.aggregateType === 'Run') {
+          const read = await deps.executions.readExecution(owned.ctx, prior);
+          if (read.status !== 'ready') return asRejection(read, 'the recipient last execution');
+          recipientOutcomeUnknown = read.value.run.outcome === 'outcome_unknown';
+        } else {
+          // v2-37: the recipient's last execution may be a real QueryRun; its stage is `executionState.phase`.
+          if (deps.consultations === undefined) {
+            return rejection('unsupported', 'the recipient QueryRun facts need the Query owner');
+          }
+          const read = await deps.consultations.queries.readQueryJob(owned.ctx, {
+            aggregateType: 'QueryJob', projectId: prior.projectId, workspaceId: prior.workspaceId,
+            queryJobId: prior.queryJobId });
+          if (read.status !== 'ready') return asRejection(read, 'the recipient QueryRun');
+          recipientOutcomeUnknown = read.value.run.run.executionState?.phase === 'unknown';
+        }
+      }
+    }
+    const base = { consumption: messageFactsOfRecord(message), goal, taskBlocked, recipientOutcomeUnknown };
+    if (part === 'message') {
+      const delivered = (message.acceptedInputs ?? []).some((entry) => entry.part === 'message');
+      return { ...base, part, delivered };
+    }
+    if (deps.sessionFacts === undefined) {
+      return rejection('unsupported', 'the response delivery facts need the Session facts read');
+    }
+    const waitRead = await deps.sessionFacts.readWait(owned.ctx, { messageRef: message.ref });
+    let wait: DeliveryResponseWaitV1 = { kind: 'none' };
+    if (waitRead.status === 'ready') {
+      // The one reply rule (book `:343–:346`): the original continuation, or — after a transfer — the effective
+      // handler's own execution; an intervention Run never gets the reply. `target` is the response's sender Session.
+      const handler = effectiveReplyHandler(message);
+      let intervention = false;
+      if (message.sender.kind === 'work_run') {
+        const sender = await deps.executions.readExecution(owned.ctx, message.sender.runRef);
+        if (sender.status !== 'ready') return asRejection(sender, 'the response sender Run');
+        intervention = sender.value.run.consumedWait?.kind === 'intervention';
+      }
+      wait = waitRead.value.state.state === 'consumed' ? { kind: 'consumed' }
+        : waitRead.value.state.state === 'withdrawn' ? { kind: 'none' }
+        : { kind: 'unconsumed', boundHere: !intervention && target !== null && handler !== null && sameRef(handler, target) };
+    } else if (waitRead.status !== 'not_found') {
+      return asRejection(waitRead, 'the response wait');
+    }
+    const accepted = (message.acceptedInputs ?? []).some((entry) => entry.part === 'response');
+    return { ...base, part, accepted, wait };
+  }
+
+  /** S's `readDeliveryEligibilityFacts`: the three non-message facts from the one builder. */
+  async function readDeliveryEligibilityFacts(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
+  Promise<ReadResult<DeliveryEligibilityFactsV1>> {
+    const owned = ownContext(ctx);
+    if ('rejection' in owned) return owned.rejection;
+    if (deps.consultations === undefined) {
+      return rejection('unsupported', 'the delivery facts need the consultation mailbox');
+    }
+    const read = await deps.consultations.messages.readMessage(owned.ctx, input.messageRef);
+    if (read.status !== 'ready') return read;
+    const message = read.value;
+    if (message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId) {
+      return rejection('forbidden', 'the message is outside the bound project/workspace');
+    }
+    const facts = await deliveryFacts(owned, message, 'message', message.goalRef, null);
+    if ('status' in facts) return facts;
+    return { status: 'ready', value: { goal: facts.goal, taskBlocked: facts.taskBlocked,
+      recipientOutcomeUnknown: facts.recipientOutcomeUnknown } };
+  }
+
   /**
    * 〔L5〕 Book §3.8 item 3 (`book-7a.md:384–:388`): the first candidate of this Goal that no block reason and no
    * earlier refusal of this pass stops, with its approval identity from the message record itself (`approvalRevision`,
@@ -1532,7 +1679,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
       let chosen: SessionChoice;
       const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
       if (row.execution !== null) {
-        const continuation = await readContinuation(owned, row.execution);
+        // D11: the wait, not the latest Run, names the Run that yielded it. S's `wait` is the oldest
+        // unconsumed Work wait of the line and its `runRef` is that wait's `originalRun`. Without the
+        // Session-facts seam an old narrow double keeps the pre-D11 read.
+        let priorRunRef = row.execution;
+        if (deps.sessionFacts !== undefined) {
+          const selected = await deps.executions.readExecution(owned.ctx, row.execution);
+          if (selected.status !== 'ready') return waiting(null, receiptReason(selected, 'the selected Run is not readable'));
+          const facts = await deps.sessionFacts.readSessionFacts(owned.ctx, selected.value.session.ref);
+          if (facts.status !== 'ready') return waiting(null, receiptReason(facts, 'the continuation line facts are not readable'));
+          const wait = facts.value.wait;
+          if (wait === null) return waiting(null, 'the continuation line has no unconsumed Work wait');
+          priorRunRef = wait.runRef;
+        }
+        const continuation = await readContinuation(owned, priorRunRef);
         if ('rejection' in continuation) return continuation.rejection;
         if ('waiting' in continuation) return waiting(null, continuation.waiting);
         consumedWait = continuation.value;
@@ -2544,8 +2704,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
   // unsupported, so existing Workflow fixtures are never forced to extend.
   const consultation = deps.consultations === undefined ? null : createConsultationConsumer({
     sessions: deps.sessions, plans: deps.plans, runtime: deps.runtime, consultations: deps.consultations,
-    sessionArchive: archiveService,
+    sessionArchive: archiveService, deliveryFacts,
   });
+  const intervention = createInterventionHandler({ workflow: deps, claimIntervention });
   const consumeConsultation = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
     if (consultation === null) {
       return rejection('unsupported', 'the Workflow has no consultation mailbox/Query/Project dependency');
@@ -2622,6 +2783,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
   return {
     handleGoalInput, advanceWork, consumeConsultation, resolveDecision, orderGoalAdvances,
     backfillRecentActivity, backfillActivityRange,
+    handleIntervention: intervention.handleIntervention,
+    readDeliveryEligibilityFacts,
     // Slice 1 §4.1/§4.2: the real archive/maintenance services are published
     // on the port; an outer `ready` never implies archived.
     archiveLine: archiveService.archiveLine,

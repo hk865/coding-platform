@@ -47,7 +47,7 @@ import type {
 import {
   classifyTaskPhase, newTaskReductionRecord, newTaskRequeueRecord, projectTaskPhase, taskClaimProblem,
   taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
-  type NewTaskRequeueInput, type TaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
+  type NewTaskRequeueInput, type TaskClaimFacts as BaseTaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
   type TaskDispositionFacts, type TaskReworkFacts, type TaskRoundEventKind, type TaskState,
 } from '../../src/core/work-graph/state/task-machine.js';
@@ -87,7 +87,7 @@ function run(runId: string, patch: Partial<RunSnapshot> = {}): RunSnapshot {
   return { ref: runRef(runId), revision: 4, schemaVersion: 1, task, attemptId: `att-${runId}`, planRef, roleBinding,
     budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 2 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 5, lastRuntimeEventId: 'rt-5',
-    lastFactEventId: 'fact-5', envelope: null, startedAt: T_START, endedAt: T_END, ...patch };
+    lastFactEventId: 'fact-5', envelope: null, startedAt: T_START, endedAt: T_END, previousRun: null, ...patch };
 }
 const pointer = (desiredState: 'paused' | 'cancelled' | 'running' | 'steered', id = 'i-1'): Pick<RunSnapshot, 'controlState'> =>
   ({ controlState: { intentRef: intentRef(id), desiredState } });
@@ -360,13 +360,14 @@ const isGate = (label: StateLabel): boolean => label.startsWith('gate:');
 // ------------------------------------------------------------------------ //
 
 const CLAIM: TaskClaim = { task, planRef, workspaceId: W, sessionRef, sessionRevision: GEN, generation: GEN,
-  runRef: runRef('run-2'), attemptRef: { aggregateType: 'TaskAttempt', projectId: P, goalId: G, taskId: T, attemptId: 'att-run-2' },
+  runRef: runRef('run-2'), previousRun: null, attemptRef: { aggregateType: 'TaskAttempt', projectId: P, goalId: G, taskId: T, attemptId: 'att-run-2' },
   outboxRef: { aggregateType: 'DispatchOutboxEntry', projectId: P, goalId: G, taskId: T, attemptId: 'att-run-2' },
   claimedAt: T_LATER };
-const consumedWait: ConsumedWaitV1 = { runRef: runRef('run-1'), messageRef,
+const consumedWait: Extract<ConsumedWaitV1, { kind: 'wait_reply' }> = { kind: 'wait_reply', originalRun: runRef('run-1'), messageRef,
   responseRef: { kind: 'artifact', contentType: 'text/plain', digest: sha('a'), sizeBytes: 3,
     source: { kind: 'workspace', refId: W, revision: '1' } } };
-const CONSUMABLE_PRIOR: NonNullable<TaskClaimFacts['prior']> = { node: 'YieldedWait', pointer: 'none', bindingProblem: null,
+type TaskClaimFacts = Omit<BaseTaskClaimFacts, 'prior'> & { prior?: Extract<NonNullable<BaseTaskClaimFacts['prior']>, { kind: 'yielded' }> | null };
+const CONSUMABLE_PRIOR: NonNullable<TaskClaimFacts['prior']> = { kind: 'yielded', node: 'YieldedWait', pointer: 'none', bindingProblem: null,
   leaseReleasedByPrior: true, replyProblem: null };
 const claimFacts = (patch: Partial<TaskClaimFacts> = {}): TaskClaimFacts => ({ goalDesiredState: 'active',
   activePlanMatchesClaim: true, sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: true,
@@ -489,7 +490,7 @@ const EVENTS = {
   'plan:future:blocked': (kind) => ({ kind: 'plan_adopted', adoption: 'future', definition: { ...workDef, phase: 'blocked' },
     facts: post(kind, ROW.P16.facts) }),
   'claim:first': () => ({ kind: 'task_claimed', claim: CLAIM, basis: { kind: 'first' }, budget: { tokenBudget: 1000, deadline: null } }),
-  'claim:continuation': () => ({ kind: 'task_claimed', claim: CLAIM, basis: { kind: 'continuation', consumedWait },
+  'claim:continuation': () => ({ kind: 'task_claimed', claim: CLAIM, basis: { kind: 'continuation', consumedWait, previousRun: runRef('run-1') },
     budget: { tokenBudget: 1000, deadline: null } }),
   'claim:requeue': () => ({ kind: 'task_claimed', claim: CLAIM, basis: { kind: 'requeue', requeueRef },
     budget: { tokenBudget: 1000, deadline: null } }),

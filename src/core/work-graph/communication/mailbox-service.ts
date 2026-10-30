@@ -63,7 +63,7 @@ import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-ex
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isNonNeg as isNonNegativeInt, isPos as isPositiveInt, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
-import type { ExecutionAuthorizationV2, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { ConsumedWaitV1, ExecutionAuthorizationV2, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import {
   ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest,
@@ -73,7 +73,7 @@ import {
 import { consultationQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
-import { deriveMessageDelivery, deriveSessionInputId } from '../model/communication-contracts.js';
+import { deriveMessageDelivery, deriveSessionInputId, waitConsumedClaimKey } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
@@ -113,6 +113,7 @@ import {
   encodeSessionMessageDecisionAnsweredEvent, encodeSessionMessageDecisionAppliedEvent,
   encodeSessionMessageWithdrawnEvent, encodeSessionMessageReleaseDecidedEvent, encodeSessionMessageReleasedEvent,
   encodeSessionMessageAppliedEvent,
+  encodeSessionMessageExpiredEvent,
   type SessionMessageEventV1,
 } from '../sessions/message-record-codecs.js';
 import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
@@ -121,10 +122,11 @@ import {
   decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
 import {
-  bindMessageResponseCursor, createSessionMessageRecord, inputObserverProblem, messageMachineStateOf, messagePinProblem, messagePrincipalProblem,
+  bindMessageResponseCursor, createSessionMessageRecord, effectiveReplyHandler, inputObserverProblem, messageMachineStateOf, messagePinProblem, messagePrincipalProblem,
   messageRecipientProjectProblem, messageSendFlagsProblem, nextSessionMessageRecord, transitionMessage,
   type MessageEffect, type MessageEvent, type MessageGuardContext, type MessageTransition, type QueryAnswerBinding,
   type SessionMessageEventType, type MessageWithdrawnChangeV1, type MessageReleaseDecidedChangeV1,
+  waitFactsOfRecord,
 } from '../state/message-machine.js';
 import { unreachable, type Rejected } from '../state/transition.js';
 import { canSendUserMessage, decisionActionPolicy } from '../state/decision-policy.js';
@@ -365,6 +367,7 @@ function lifecycleEventOf(command: SessionMessageWriteCommandV1, message: Sessio
         proof: command.change.proof });
     case 'message.releaseApproved': return encodeSessionMessageReleasedEvent({ ...base, eventType: 'SessionMessageReleased' });
     case 'message.apply': return encodeSessionMessageAppliedEvent({ ...base, eventType: 'SessionMessageApplied' });
+    case 'message.recordExpiry': return encodeSessionMessageExpiredEvent({ ...base, eventType: 'SessionMessageExpired' });
     default: return unreachable(command, 'message write operation');
   }
 }
@@ -376,6 +379,7 @@ function lifecycleMachineEventOf(command: SessionMessageWriteCommandV1): Message
     case 'message.release': return { type: 'message_release_decided', allow: command.change.allow };
     case 'message.releaseApproved': return { type: 'message_released' };
     case 'message.apply': return { type: 'message_applied' };
+    case 'message.recordExpiry': return { type: 'message_expired' };
     default: return unreachable(command, 'message write operation');
   }
 }
@@ -411,6 +415,8 @@ async function prepareSessionMessage(
     accepted = { ...accepted, withdrawnAt: command.change.withdrawnAt };
   } else if (command.operation === 'message.apply') {
     accepted = { ...accepted, appliedAt: command.change.appliedAt };
+  } else if (command.operation === 'message.recordExpiry') {
+    accepted = { ...accepted, expiredAt: command.change.expiredAt };
   } else if (command.operation === 'message.release' && command.change.allow) {
     // The machine's change carries only the release and the approval revision;
     // the same commit's record also writes the change's approval time.
@@ -1227,6 +1233,7 @@ const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageReleaseDecided: 'release-decided',
   SessionMessageReleased: 'released',
   SessionMessageApplied: 'applied',
+  SessionMessageExpired: 'expired',
 };
 
 export function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
@@ -2364,6 +2371,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     cancelled: string;
     /** Slice 5 read-fact guards (duties, Goal) the user-message row joins to its one commit. */
     extraGuards?: readonly RecordGuard[];
+    /** The acceptance's own `wait-consumed` claim; empty for every other write. */
+    claims?: readonly UniqueClaimChange[];
     /**
      * A refusal reply's `rejectedAt` is the commit's own clock instant, the same
      * fact the change carries; the machine state holds only that the slot is
@@ -2448,7 +2457,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         // Only the null-ness is read by `persist` (create vs update); the CAS
         // itself is the accepted pin below, never this record's revision.
         before: plan.messageRevision === null ? null : message,
-        next: message, event, guards, claims: [],
+        next: message, event, guards, claims: write.claims ?? [],
         ...(companions === undefined ? {} : { companions }),
       },
       meta: {
@@ -2461,18 +2470,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   }
 
   // ---- read authority -----------------------------------------------------
-
-  /**
-   * Slice 1 §2.5: the effective reply handler of a wait. A recorded `replyHandler`
-   * wins; otherwise the original `work_run` or secretary sender Session handles
-   * the reply. A Host-sent message has no effective handler.
-   */
-  function effectiveReplyHandler(message: SessionMessage): SessionRef | null {
-    const handler = message.replyHandler ?? null;
-    if (handler !== null) return handler.sessionRef;
-    return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
-      ? message.sender.sessionRef : null;
-  }
 
   /**
    * The one secretary-round resolution: the resolver runs after a receipt miss
@@ -3039,7 +3036,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   // ---- readInbox ----------------------------------------------------------
 
   type InboxPage = {
-    items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor; recipient: SessionRef;
+    items: SessionMessage[]; cursors: CommitCursor[]; nextCursor: string | null;
+    sourceCursor: CommitCursor; recipient: SessionRef;
   };
 
   /**
@@ -3143,6 +3141,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!progress.ok) return progress.result;
     const readThrough = progress.readThrough;
     const items: SessionMessage[] = [];
+    const cursors: CommitCursor[] = [];
     for (const record of pageResult.value.records) {
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') return reject('unavailable', `an inbox candidate is damaged: ${decoded.reason}`);
@@ -3157,7 +3156,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         || (status !== undefined && message.status !== status)) {
         return reject('unavailable', 'an inbox candidate disagrees with the requested recipient or filter');
       }
+      const since = decodeNoticeOrigin(record);
+      if (since.status !== 'decoded' || since.value.since === undefined) {
+        return reject('unavailable', 'an inbox candidate has no commit origin');
+      }
       items.push(message);
+      cursors.push(since.value.since!);
     }
     const nextCursor = pageResult.value.next === null ? null : encodeInboxCursor({
       v: 1,
@@ -3168,20 +3172,20 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       callerKey,
       after: pageResult.value.next,
     });
-    return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough, recipient } };
+    return { status: 'ready', value: { items, cursors, nextCursor, sourceCursor: readThrough, recipient } };
   }
 
   async function readInbox(ctx: CoreCallContext, input: {
     recipient: SessionRef;
     status?: SessionMessageStatus;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
-  }): Promise<ReadResult<{ items: SessionMessage[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
+  }): Promise<ReadResult<{ items: SessionMessage[]; cursors: CommitCursor[]; nextCursor: string | null; sourceCursor: CommitCursor }>> {
     const owned = ownContext(ctx);
     if (!owned.ok) return owned.rejection;
     const page = await readInboxPage(owned, input);
     if (page.status !== 'ready') return page;
-    const { items, nextCursor, sourceCursor } = page.value;
-    return { status: 'ready', value: { items, nextCursor, sourceCursor } };
+    const { items, cursors, nextCursor, sourceCursor } = page.value;
+    return { status: 'ready', value: { items, cursors, nextCursor, sourceCursor } };
   }
 
   async function readInboxView(ctx: CoreCallContext, input: {
@@ -3282,6 +3286,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       const progress = readProgress(result.value.readThrough, atLeast.atLeast);
       if (!progress.ok) return progress.result;
       const items: SessionMessage[] = [];
+      const cursors: CommitCursor[] = [];
       for (const record of result.value.records) {
         const decoded = decodeSessionMessageRecord(record);
         if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
@@ -3294,7 +3299,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
           || canonicalOf(message.sender.requestRoot) !== canonicalOf(reading.round.requestRoot)) {
           return reject('unavailable', 'an outbox candidate disagrees with the resolved request root');
         }
+        const since = decodeNoticeOrigin(record);
+        if (since.status !== 'decoded' || since.value.since === undefined) {
+          return reject('unavailable', 'an outbox candidate has no commit origin');
+        }
         items.push(message);
+        cursors.push(since.value.since!);
       }
       const nextCursor = result.value.next === null ? null : encodeSecretaryOutboxCursor({
         v: 1, projectId: owned.projectId, workspaceId: owned.workspaceId,
@@ -3306,7 +3316,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         if (block.status !== 'ready') return block;
         releaseBlocks.push(block.value);
       }
-      return { status: 'ready', value: { items, releaseBlocks, nextCursor, sourceCursor: progress.readThrough } };
+      return { status: 'ready', value: { items, releaseBlocks, cursors, nextCursor, sourceCursor: progress.readThrough } };
     }
 
     let decodedCursor: OutboxCursorV1 | null = null;
@@ -3356,17 +3366,22 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (!progress.ok) return progress.result;
     const readThrough = progress.readThrough;
     const items: SessionMessage[] = [];
+    const cursors: CommitCursor[] = [];
     for (const record of pageResult.value.records) {
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
       const message = decoded.value;
       if (sessionMessageRefKey(message.ref) !== record.refKey || message.ref.projectId !== owned.projectId
         || message.ref.workspaceId !== owned.workspaceId) return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
+      const since = decodeNoticeOrigin(record);
+      if (since.status !== 'decoded' || since.value.since === undefined) {
+        return reject('unavailable', 'an outbox candidate has no commit origin');
+      }
       // The person reads the Session's whole outbox, including what its
       // secretary round sent; a work_run keeps only its own work_run messages.
       if (senderRun === undefined && message.sender.kind === 'secretary_round'
         && canonicalOf(message.sender.sessionRef) === canonicalOf(senderSession)) {
-        if (owned.principal.kind === 'host') items.push(message);
+        if (owned.principal.kind === 'host') { items.push(message); cursors.push(since.value.since!); }
         continue;
       }
       if (message.sender.kind !== 'work_run' || (senderRun === undefined
@@ -3375,6 +3390,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
       }
       items.push(message);
+      cursors.push(since.value.since!);
     }
     const nextCursor = pageResult.value.next === null ? null : encodeOutboxCursor({
       v: 1,
@@ -3390,7 +3406,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       if (block.status !== 'ready') return block;
       releaseBlocks.push(block.value);
     }
-    return { status: 'ready', value: { items, releaseBlocks, nextCursor, sourceCursor: readThrough } };
+    return { status: 'ready', value: { items, releaseBlocks, cursors, nextCursor, sourceCursor: readThrough } };
   }
 
   // ---- ackMessage ---------------------------------------------------------
@@ -3677,7 +3693,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     ctx: CoreCallContext,
     request: GraphWrite<{
       messageRef: SessionMessageRef;
-      part: 'message' | 'response';
+      part: 'message' | 'response' | 'expiry';
       executionRef: RunRef | QueryRunRef;
       executionSessionRef?: SessionRef;
       kernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string; position: number };
@@ -3699,7 +3715,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
     if (scopeProblem !== null) return scopeProblem;
     const part = raw['part'];
-    if (part !== 'message' && part !== 'response') return reject('invalid', 'recordInputAccepted part must be message or response');
+    if (part !== 'message' && part !== 'response' && part !== 'expiry')
+      return reject('invalid', 'recordInputAccepted part must be message, response or expiry');
     const executionRef = raw['executionRef'];
     if (!isObject(executionRef) || !['Run', 'QueryRun'].includes(String(executionRef['aggregateType']))) {
       return reject('forbidden', 'the accepted input execution must be a RunRef or QueryRunRef');
@@ -3732,15 +3749,18 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const message = read.message;
     const inputId = deriveSessionInputId(normalized.ref, part);
     let facts: MessageGuardContext['inputAccepted'] = null;
+    let boundHere = false;
     if (message !== null) {
       let actualSession: SessionRef;
       let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
+      let consumedWait: ConsumedWaitV1 | null = null;
       if (executionRef['aggregateType'] === 'Run') {
         const runFacts = await readFreshWorkRunFacts(owned, executionRef as unknown as RunRef);
         if (!runFacts.ok) return runFacts.rejection;
         actualSession = { projectId: runFacts.record.outbox.claim.sessionRef.projectId, sessionId: runFacts.record.outbox.claim.sessionRef.sessionId };
         const authorization = runFacts.record.run.executionAuthorization;
         actualKernel = runFacts.record.run.executionHistory?.kernel ?? authorization?.kernel;
+        consumedWait = runFacts.record.run.consumedWait ?? null;
       } else {
         if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
         const queryFacts = await loadQueryRun(owned, executionRef as unknown as QueryRunRef);
@@ -3754,6 +3774,14 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       // actor/revision: an entry of another executionRef or Kernel position is
       // another event's; this event's own entry is the machine's duplicate.
       const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
+      const intervention = consumedWait !== null && consumedWait.kind === 'intervention';
+      const handlerHere = part === 'response' && !intervention
+        && effectiveReplyHandler(message) !== null
+        && canonicalOf(effectiveReplyHandler(message)) === canonicalOf(actualSession);
+      const waitBoundHere = !intervention && consumedWait !== null
+        && (part === 'expiry' ? consumedWait.kind === 'expiry' : consumedWait.kind === 'wait_reply')
+        && canonicalOf(consumedWait.messageRef) === canonicalOf(message.ref);
+      boundHere = waitBoundHere || handlerHere;
       facts = {
         observerOwnsExecution,
         kernelMatches: actualKernel !== undefined && actualKernel !== null
@@ -3762,13 +3790,17 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         claimedSessionMatches: raw['executionSessionRef'] === undefined
           || canonicalOf(raw['executionSessionRef']) === canonicalOf(actualSession),
         executionSessionMatches: part === 'response'
-          ? effectiveReplyHandler(message) !== null
-            && canonicalOf(effectiveReplyHandler(message)) === canonicalOf(actualSession)
-          : canonicalOf(message.recipient) === canonicalOf(actualSession),
+          ? handlerHere
+          : part === 'expiry'
+            ? message.sender.kind === 'work_run'
+              && canonicalOf(message.sender.sessionRef) === canonicalOf(actualSession)
+            : canonicalOf(message.recipient) === canonicalOf(actualSession),
         inputIdTakenByOtherEvent: accepted !== undefined
           && (canonicalOf(accepted.executionRef) !== canonicalOf(executionRef) || canonicalOf(accepted.kernel) !== canonicalOf(kernel)),
       };
     }
+    const consumesWait = message !== null && part !== 'message' && boundHere
+      && !waitFactsOfRecord(message).consumed;
     const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'input_accepted', part, inputId }, { inputAccepted: facts });
     // Only the inputId uniqueness refusals (`invalid`: another event's entry, or
     // this event's own without its receipt) re-check the receipt first.
@@ -3783,8 +3815,12 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
         input: {
           inputId, part, executionRef: executionRef as RunRef | QueryRunRef,
           kernel: kernel as NonNullable<SessionMessage['acceptedInputs']>[number]['kernel'], acceptedAt,
+          evidence: 'input_accepted', consumesWait,
         },
       }),
+      claims: consumesWait
+        ? [{ claimKey: waitConsumedClaimKey(normalized.ref), expectedOwner: null, nextOwner: inputId }]
+        : [],
     });
   }
 
@@ -4897,6 +4933,7 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       case 'SessionMessageReleaseDecided': return encodeSessionMessageReleaseDecidedEvent(event);
       case 'SessionMessageReleased': return encodeSessionMessageReleasedEvent(event);
       case 'SessionMessageApplied': return encodeSessionMessageAppliedEvent(event);
+      case 'SessionMessageExpired': return encodeSessionMessageExpiredEvent(event);
       default: return unreachable(event, 'message event');
     }
   }
@@ -4954,7 +4991,8 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       if (!isPositiveInt(expectedRevision)) return reject('invalid', 'prepare requires the admitted message revision');
       const operation = raw['operation'];
       if (operation !== 'message.withdraw' && operation !== 'message.release'
-        && operation !== 'message.releaseApproved' && operation !== 'message.apply') {
+        && operation !== 'message.releaseApproved' && operation !== 'message.apply'
+        && operation !== 'message.recordExpiry') {
         return reject('invalid', 'prepare does not know this message write operation');
       }
       const change = raw['change'];

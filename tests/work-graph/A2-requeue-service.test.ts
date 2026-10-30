@@ -42,6 +42,7 @@ import {
   B2_AT, B2_HOST, createB2ExecutionFixture, synchronizeB2Commits, type B2Admitted, type B2ExecutionFixture, type B2Records,
 } from '../helpers/B2-execution-fixture.js';
 import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 
 const GRANT = { ...B2_HOST.permissions, tools: ['read', 'requeue_task'] };
 const SOURCE_DIGEST = 'a'.repeat(64);
@@ -72,7 +73,7 @@ afterEach(async () => {
 });
 
 async function open(kind: ClaimFixtureKind): Promise<Opened> {
-  const b2 = await createB2ExecutionFixture(kind);
+  const b2 = await createB2ExecutionFixture(kind, SESSION_MESSAGE_RECORD_SCHEMAS);
   const base = b2.base;
   const records = base.records;
   let seq = 0;

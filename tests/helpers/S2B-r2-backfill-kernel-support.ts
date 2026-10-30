@@ -33,6 +33,7 @@ import {
   createActivityBackfill, type ActivityBackfillOperations,
 } from '../../src/business/workflow/activity-backfill.js';
 import type { LocalWorkbenchHost } from '../../src/app/host.js';
+import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import {
   createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture,
 } from './S2B-runtime-store-fixture.js';
@@ -79,7 +80,8 @@ export async function openKernelBackfillRuns(
       callId: `s2b-r2-kernel-${String(index)}-${String(call)}`, name: 'read', args: { path: READ_PATH } })) });
     replies.push({ kind: 'text', text: `S2B round-2 kernel Run ${String(index)} done` });
   }
-  const fx = await createS2BRuntimeStoreFixture({ kind: 'sqlite', scriptedReplies: replies });
+  const fx = await createS2BRuntimeStoreFixture({ kind: 'sqlite', scriptedReplies: replies,
+    additionalSchemas: SESSION_MESSAGE_RECORD_SCHEMAS });
   const runs: KernelBackfillFixture['runs'] = [];
   for (const [index, spec] of specs.entries()) {
     const target = index === 0

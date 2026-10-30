@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "57d066e76243c35b326b8d1a3996318ea0a2a98f8b7dac284ec629327703a5f5"
+    "sha256": "d124c0f0836d17055cd6e0c282464019aaa84cd4a2dce78d1cb2ae01f5e379ab"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "d01e737fa1ea6aec8c5b63aefe4d0767899509b9f8fa7ba455581bf59b2df212"
+    "sha256": "7e0cda9acee5bbf754fa7635137073bcbb448ca337ffb6fa7f53485a0945d074"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -30,6 +30,30 @@
   {
     "path": "resources/prompts/platform/templates/user-decision-response.txt",
     "sha256": "71accd8d578f6ae8edbd766ad8b2453b15ef7870d2d126156ed6d742ead89edb"
+  },
+  {
+    "path": "resources/prompts/platform/templates/action-request-delivery.txt",
+    "sha256": "10b584710c7c790063129af35a8558b3e36d420c1821baa3b4a6128c6f75f381"
+  },
+  {
+    "path": "resources/prompts/platform/templates/inquiry-delivery.txt",
+    "sha256": "3d7401621ce4117293c285ca781ecf8b7bd810cae36bb44b948559f4c1f0f17e"
+  },
+  {
+    "path": "resources/prompts/platform/templates/notify-delivery.txt",
+    "sha256": "04e14394a9a5a6a80723347587afe70be2ca93f12bb78ae6d7b6b808b23b4c68"
+  },
+  {
+    "path": "resources/prompts/platform/templates/wait-reply-delivery.txt",
+    "sha256": "fda6f3e6c234eef2f1449a9e907a78dd7fe79af5f41d1e8126a71ce8b7e39152"
+  },
+  {
+    "path": "resources/prompts/platform/templates/wait-expiry-delivery.txt",
+    "sha256": "684512ae9601544d510c7663a18d9d9bff8636f81e8e9db56fd6b915a51e836b"
+  },
+  {
+    "path": "resources/prompts/platform/templates/intervention-delivery.txt",
+    "sha256": "8be8077d9165d555a57c07eb820ecb7805e563a70db35b04f393197d919a2e0a"
   },
   {
     "path": "resources/prompts/platform/templates/scribe-reminder.txt",

@@ -18,6 +18,36 @@
       "version": 1,
       "mentionsTools": []
     },
+    "action-request-delivery": {
+      "file": "templates/action-request-delivery.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "inquiry-delivery": {
+      "file": "templates/inquiry-delivery.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "notify-delivery": {
+      "file": "templates/notify-delivery.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "wait-reply-delivery": {
+      "file": "templates/wait-reply-delivery.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "wait-expiry-delivery": {
+      "file": "templates/wait-expiry-delivery.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "intervention-delivery": {
+      "file": "templates/intervention-delivery.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
       "version": 1,

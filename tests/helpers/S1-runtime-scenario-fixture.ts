@@ -6,13 +6,14 @@ import * as hostFactory from '../../src/app/host.js';
 import * as platformFactory from '../../src/composition/create-platform.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
-import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { checkAllInvariants, invariantStoreOf, readInvariantWorld, type InvariantWorld } from '../state/invariants.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { SessionRef, SessionWorkLinkRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createTaskClaimFixture } from './task-claim-fixture.js';
+import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import { B2_HOST } from './B2-execution-fixture.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
@@ -90,7 +91,7 @@ export function committed<T>(result: WriteResult<T>): T {
 }
 
 /** Every owner mutation is checked against the preceding committed world. */
-export async function checkedRecords(records: GoalRecordTransactionPort & RecordLookupPort,
+export async function checkedRecords(records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort,
   directory: string, projectId: string) {
   let previous: InvariantWorld = await readInvariantWorld(invariantStoreOf(directory), projectId);
   const check = async () => {
@@ -99,7 +100,7 @@ export async function checkedRecords(records: GoalRecordTransactionPort & Record
     previous = world;
     return world;
   };
-  const observed: GoalRecordTransactionPort & RecordLookupPort = {
+  const observed: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort = withBackendOrderedLookup({
     readMany: keys => records.readMany(keys),
     lookup: request => records.lookup(request),
     lookupCommit: request => records.lookupCommit(request),
@@ -109,7 +110,7 @@ export async function checkedRecords(records: GoalRecordTransactionPort & Record
       if (result.status === 'committed') await check();
       return result;
     },
-  };
+  }, records);
   return { records: observed, check };
 }
 

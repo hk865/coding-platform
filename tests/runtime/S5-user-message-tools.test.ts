@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { UserDecisionBodyV1 } from '../../src/contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
 import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -161,9 +162,9 @@ describe('S5 user-decision runtime tools', () => {
     expect(answer).toEqual({ message, body: original });
     const body = ready(await owners.mailbox.readMessageBody(f.ctx, { messageRef: message.ref, part: 'response' }));
     expect(body.text).toBe('');
-    expect(formatDecisionResponseInput(answer.body)).toBe('用户答复\n' + canonicalJson(original));
+    expect(formatDecisionResponseInput(PLATFORM_PROMPT_PACK_V1, answer.body, [])).toBe('用户答复\n' + canonicalJson(original));
     const supply = createMailboxInputSupply({ messages: owners.mailbox, context: () => workContext(f, run),
-      sessionRef: f.claimRB.sessionRef, runRef: run.ref });
+      sessionRef: f.claimRB.sessionRef, runRef: run.ref, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
     const inputs = await supply({ sessionId: f.claimRB.sessionRef.sessionId, runId: run.ref.runId,
       turnId: 'tu-turn', afterEventSequence: 0, acceptedInputIds: [] }, { signal: signal() });
     expect(inputs).toEqual([{ inputId: deriveInputId(message.ref, 'response'),
@@ -181,7 +182,8 @@ describe('S5 user-decision runtime tools', () => {
     const message = await answerFromRun(f, owners, run, body, 'tu05');
     const ref = message.ref;
     const sessionRef = f.claimRB.sessionRef;
-    const supply = createMailboxInputSupply({ messages: owners.mailbox, context: () => workContext(f, run), sessionRef, runRef: run.ref });
+    const supply = createMailboxInputSupply({ messages: owners.mailbox, context: () => workContext(f, run), sessionRef, runRef: run.ref,
+      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
     const point = { sessionId: sessionRef.sessionId, runId: run.ref.runId, turnId: 'tu-turn', afterEventSequence: 0, acceptedInputIds: [] };
     const before = await f.storeSnapshot();
     const first = await supply(point, { signal: signal() });

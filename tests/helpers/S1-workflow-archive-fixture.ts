@@ -448,7 +448,11 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     });
     const queryJobs = createQueryJobService({ records, now, eventId,
       execution: { claimQuery: queryExecution.claimQuery, readQueryAnswer: queryExecution.readQueryAnswer },
-      consultations: { readMessage: mailbox.readMessage, readMessageBody: mailbox.readMessageBody } });
+      consultations: { readMessage: mailbox.readMessage, readMessageBody: mailbox.readMessageBody },
+      // R4-13: the Host send has no Goal or Task and the recipient's last execution is not outcome_unknown (goal null, taskBlocked false, recipientOutcomeUnknown false).
+      eligibility: { async readDeliveryEligibilityFacts() {
+        return { status: 'ready' as const, value: { goal: null, taskBlocked: false, recipientOutcomeUnknown: false } };
+      } } });
 
     const goalRead = await base.plans.queryGoal(base.ctx, goalRef);
     if (goalRead.status !== 'ready') throw new Error(`maintenance copy goal read failed: ${JSON.stringify(goalRead)}`);

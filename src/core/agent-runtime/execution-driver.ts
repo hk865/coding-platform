@@ -68,7 +68,7 @@ import type {
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
-  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'decisionMessages' | 'applicationReceipt'
+  | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
   | 'commandRerunRequests' | 'commandRecognizer'> & {
@@ -1032,9 +1032,12 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               sessionRef,
               runRef,
               controlInputs: controlInputsFor,
-              // A continuation still owns the prior yielded Run's saved reply; the
-              // exact original message identity is read Session-scoped.
-              ...(record.run.consumedWait === undefined ? {} : { consumedWait: { runRef: record.run.consumedWait.runRef, messageRef: record.run.consumedWait.messageRef } }),
+              // The whole continuation: a saved reply, an expiry claim, or an
+              // intervention that carries no reply.
+              ...(record.run.consumedWait === undefined ? {} : { consumedWait: record.run.consumedWait }),
+              ...(deps.expiryCount === undefined ? {} : { expiryCount: deps.expiryCount }),
+              texts: promptTexts.value,
+              toolNames: manifest.promptSet.toolNames,
             });
           await runObservedModel({
             kernel: deps.kernel, bound: hostConfig.model, meter, root: rootResolved.value.root, databasePath: location.databasePath,

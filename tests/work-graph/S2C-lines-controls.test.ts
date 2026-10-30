@@ -14,7 +14,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { LineControlV1, LineRowV1 } from '../../src/contracts/work-line.js';
-import { openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
+import { openLineFixture, rowOf, waitingRun, type LineFixture } from '../helpers/S2C-L-line-support.js';
 import { waitContinuation, yieldedEvent } from '../helpers/S2C-L-runs-support.js';
 
 function ready<T>(result: ReadResult<T>): T {
@@ -252,11 +252,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-17 line controls (%s)', (kind) 
     const goal = await f.addGoal('g17-wait', [{ taskId: 'w', title: 'W task' }]);
     const head = (await f.createSession('s17-wait')).ref;
     await f.link(head, { kind: 'task', ref: goal.tasks['w']! }, 'responsible', true);
-    const claim = await f.claim('w', head, goal);
-    await f.runs.enter(claim.claim);
-    await f.runs.recordResult(claim.claim, yieldedEvent(claim.claim, 'wait'),
-      waitContinuation(claim.claim, { aggregateType: 'SessionMessage', projectId: head.projectId,
-        workspaceId: f.base.scope.workspaceId, messageId: 's17-wait-msg' }));
+    const { claim } = await waitingRun(f, { label: 'wait', goal, head, recipient: f.base.sessions.second });
 
     const row = await rowOfHead(f, head);
     expect(row?.status.own).toBe('waiting_reply');

@@ -29,7 +29,7 @@ function runOf(spec: RunSpec): RunSnapshot {
     ref: ref(spec.runId), status: 'ended',
     ...(spec.from === undefined ? {} : { requeueRef: { aggregateType: 'TaskRequeue', projectId: P, goalId: G,
       taskId: 't', afterRunId: spec.from.runId } }),
-    ...(spec.waitFrom === undefined ? {} : { consumedWait: { runRef: ref(spec.waitFrom) } }),
+    previousRun: spec.waitFrom === undefined ? null : ref(spec.waitFrom),
     ...(reconciliation === undefined ? {} : { reconciliation }),
   } as unknown as RunSnapshot;
 }

@@ -71,11 +71,11 @@ const leaseRef: TaskLeaseRef = { aggregateType: 'TaskLease', projectId: P, goalI
 /** The claim of Run `run-1` / Attempt `att-1` at Session generation 4. */
 const claim: TaskClaim = {
   task: { projectId: P, goalId: G, taskId: T }, planRef, workspaceId: W, sessionRef, sessionRevision: GEN,
-  generation: GEN, runRef: runRef('run-1'), attemptRef: attemptRef('att-1'), outboxRef: outboxRef('att-1'),
+  generation: GEN, runRef: runRef('run-1'), previousRun: null, attemptRef: attemptRef('att-1'), outboxRef: outboxRef('att-1'),
   claimedAt: T_CLAIM,
 };
 const consumedWait: ConsumedWaitV1 = {
-  runRef: runRef('run-0'),
+  kind: 'wait_reply', originalRun: runRef('run-0'),
   messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'msg-1' },
   responseRef: { kind: 'artifact', contentType: 'text/plain', digest: 'a'.repeat(64), sizeBytes: 3,
     source: { kind: 'workspace', refId: W, revision: '1' } },
@@ -138,7 +138,7 @@ const STARTED_EVENT: AttemptEvent = { kind: 'attempt_started', enteredAt: T_ENTE
 
 const EVENTS = {
   'claim:first': { kind: 'attempt_claimed', claim, basis: { kind: 'first' } },
-  'claim:continuation': { kind: 'attempt_claimed', claim, basis: { kind: 'continuation', consumedWait } },
+  'claim:continuation': { kind: 'attempt_claimed', claim, basis: { kind: 'continuation', consumedWait, previousRun: runRef('run-0') } },
   'claim:requeue': { kind: 'attempt_claimed', claim, basis: { kind: 'requeue', requeueRef } },
   'started': STARTED_EVENT,
   'end:terminal_observed:known': ended('terminal_observed', 'completed'),
@@ -607,7 +607,7 @@ describe('TaskLease ownership rows', () => {
   });
   it('ATT-15: a continuation must consume the wait of the Run that released the lease', () => {
     const otherPrior = { kind: 'attempt_claimed', claim,
-      basis: { kind: 'continuation', consumedWait: { ...consumedWait, runRef: runRef('run-x') } } } satisfies AttemptEvent;
+      basis: { kind: 'continuation', consumedWait, previousRun: runRef('run-x') } } satisfies AttemptEvent;
     check(transitionTaskLease(LEASE_RELEASED, otherPrior), GB, LEASE_RELEASED);
   });
   it('ATT-16 (5.4): a requeue whose afterRun did not release the lease is stale; the matching one re-holds it', () => {

@@ -22,7 +22,7 @@ import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
-import type { PromptPackSourcePort, ResolvedPromptPackV1 } from '../../contracts/prompts/prompt-pack.js';
+import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.js';
 import { promptSelectionOf } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
@@ -41,7 +41,8 @@ import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextQueryHistoryInputV1 } from './context-types.js';
 import {
   promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
-  storePromptTexts, trackPromptTexts, type PromptPartsV1,
+  promptTemplatePart, promptTemplateVersion, storePromptTexts, templatesToFreeze,
+  trackPromptTexts, type PromptPartsV1,
 } from './prompt-set-texts.js';
 import type {
   PrepareQueryExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies,
@@ -128,17 +129,6 @@ export function projectQueryConfiguration(input: {
     hostTemplate: input.host.hostTemplate === null ? null : { ...input.host.hostTemplate },
     budget: tightenRuntimeBudget(input.requested, input.host.budget),
   };
-}
-
-/** One used template's pack identity and exact text (ruling 14 item 6). */
-function promptTemplatePart(pack: ResolvedPromptPackV1, id: string) {
-  const text = pack.templates[id];
-  if (text === undefined) throw new Error(`the resolved prompt pack has no template ${id}`);
-  return { id, version: promptTemplateVersion(pack, id), packId: pack.origins[id]?.packId ?? pack.manifest.packId, text };
-}
-
-function promptTemplateVersion(pack: ResolvedPromptPackV1, id: string): number {
-  return pack.origins[id]?.version ?? pack.manifest.templates[id]?.version ?? 1;
 }
 
 export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
@@ -447,7 +437,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
           packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
         sectionOrder: queryPreparedSectionOrder(tracked.texts),
-        templates: usedTemplates.map(id => promptTemplatePart(pack, id)),
+        templates: templatesToFreeze(usedTemplates).map(id => promptTemplatePart(pack, id)),
         strings: pack.strings,
         base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },
         skills: selectedSkills.value,

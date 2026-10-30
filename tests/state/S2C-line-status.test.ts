@@ -16,33 +16,19 @@
 import { describe, expect, it } from 'vitest';
 import type { ControlIntentRef, ControlIntentSnapshotV1, ControlPlatformObservationV1 } from '../../src/contracts/control-intent.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
-import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { RunReconciliationV1, RunRef, RunSnapshot, RuntimeEventV1, TaskTriple } from '../../src/contracts/dispatch.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
-import type { PlanRevisionRef } from '../../src/contracts/plan.js';
-import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
 import {
   cardLineKeys, classifyTaskAttention, deriveLineControls, deriveLineStatus,
-  type LineCardInputV1, type LineDoneEvidenceV1, type LineFactsV1, type LineOwnerIndexV1,
-  type LineRunFactsV1, type LineTaskFactV1,
+  type LineCardInputV1, type LineDoneEvidenceV1, type LineOwnerIndexV1, type LineTaskFactV1,
 } from '../../src/core/work-graph/state/line-status.js';
+import { G, P, SESSION_H, T0, TASK_A, W, facts, runFacts, runOf, sessionRecord } from '../helpers/S2C-line-facts-samples.js';
 
 // --------------------------------------------------------------------------
 // Fixtures
 // --------------------------------------------------------------------------
 
-const P = 'p';
-const G = 'g';
-const W = 'w';
-const T0 = '2026-10-08T00:00:00.000Z';
-
-const TASK_A: TaskTriple = { projectId: P, goalId: G, taskId: 'A' };
 const TASK_B: TaskTriple = { projectId: P, goalId: G, taskId: 'B' };
-const PLAN: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: P, planId: 'plan-1' };
-const ROLE_BINDING: RoleBindingRefV1 = {
-  schemaVersion: 1, bindingId: 'binding-1', templateId: 'worker', templateRevision: 'r1', bindingVersion: 1, policyRevision: 'policy-1',
-};
-const SESSION_H: SessionRef = { projectId: P, sessionId: 'h' };
 const SESSION_A: SessionRef = { projectId: P, sessionId: 'sa' };
 const SESSION_B: SessionRef = { projectId: P, sessionId: 'sb' };
 const INTENT_REF: ControlIntentRef = { aggregateType: 'ControlIntent', projectId: P, workspaceId: W, intentId: 'i-pause' };
@@ -53,27 +39,6 @@ const RUN_R2 = runRef('r2');
 
 const refKey = (ref: unknown): string => canonicalJson(ref as never);
 const taskKey = (task: TaskTriple): string => canonicalJson(task as never);
-
-function sessionRecord(over: Partial<SessionRecord> = {}): SessionRecord {
-  return {
-    ref: { ...SESSION_H, aggregateType: 'Session' }, revision: 3,
-    kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-h' },
-    lifecycle: 'active', health: 'available', healthConclusion: null,
-    role: { kind: 'legacy_template', templateId: 'tpl', templateRevision: 'r1' }, workspaceId: W,
-    lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: T0, archivedAt: null,
-    provenance: { schemaVersion: 1, kind: 'new' }, archiveRequest: null, unavailableSince: null,
-    ...over,
-  };
-}
-
-function runOf(ref: RunRef, over: Partial<RunSnapshot> = {}): RunSnapshot {
-  return {
-    ref, revision: 4, schemaVersion: 1, task: TASK_A, attemptId: `${ref.runId}-attempt`, planRef: PLAN,
-    roleBinding: ROLE_BINDING, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
-    status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${ref.runId}`,
-    lastFactEventId: `ev-${ref.runId}`, envelope: null, startedAt: T0, endedAt: T0, ...over,
-  };
-}
 
 const RUNTIME_CRASH: RuntimeEventV1 = {
   eventType: 'run_crashed', schemaVersion: 1, eventId: 'evt-crash', runRef: RUN_R1, sequence: 3, occurredAt: T0,
@@ -102,27 +67,11 @@ function pauseApplied(): ControlIntentSnapshotV1 {
   };
 }
 
-function runFacts(run: RunSnapshot, over: Partial<LineRunFactsV1> = {}): LineRunFactsV1 {
-  return { run, pointer: null, pointerFromGoal: false, continuationConsumed: false, goalDesiredState: 'active', ...over };
-}
-
 function taskFact(over: Partial<LineTaskFactV1> = {}): LineTaskFactV1 {
   return {
     task: TASK_A, title: '任务 A', planOrder: 1, goalDesiredState: 'active',
     phase: 'blocked', phaseCause: null, disposition: 'active', everRan: true, terminal: false,
     lastRequeue: null, module: null, anomaly: null, anomalyComplete: true, cards: [],
-    ...over,
-  };
-}
-
-function facts(over: Partial<LineFactsV1> = {}): LineFactsV1 {
-  return {
-    head: sessionRecord(), chain: [], omitted: { status: 'exact', value: 0 }, duty: 'executor',
-    holder: null, latestWork: null, responsibleOpen: [], responsibleOpenOther: [],
-    doneEvidence: { status: 'not_applicable' }, pausedTasks: [], lineCards: [],
-    writtenAnchorsPending: { status: 'exact', value: 0 }, copies: [], undelivered: { status: 'not_applicable' },
-    partialParts: [], handoffFrom: null, handoffFromLine: null, handedTo: null,
-    unknownCallReviewsPending: 0, queueComplete: true, pinned: false, lastActivityAt: T0,
     ...over,
   };
 }
@@ -191,14 +140,13 @@ describe('2C-01 deriveLineStatus', () => {
         messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'wait' } } });
     const lineFacts = facts({
       holder: null,
-      latestWork: { ...runFacts(yielded, { continuationConsumed: true }), waitRecipient: null },
+      latestWork: { ...runFacts(yielded, { wait: { state: 'consumed', reason: null } }), waitRecipient: null },
     });
     const status = deriveLineStatus(lineFacts);
-    expect(status.own).toBe('waiting_reply');
+    expect(status.own).toBe('standby');
     for (const kind of ['pause', 'cancel'] as const) {
       const control = deriveLineControls(lineFacts, status).find((entry) => entry.kind === kind);
-      expect(control?.availability).toBe('unavailable');
-      expect(control?.reasonCode).toBe('busy');
+      expect(control).toBeUndefined();
     }
   });
 });

@@ -8,7 +8,7 @@ import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-e
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { GoalAutonomyV1 } from '../../src/contracts/goal-decisions.js';
 import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
-import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
@@ -52,7 +52,7 @@ const systemActor = { kind: 'system' as const, id: 'c1-mailbox-body-system' };
 const key = (ref: object): string => canonicalJson(ref as unknown as JsonValue);
 const signal = () => new AbortController().signal;
 
-type C1Records = GoalRecordTransactionPort & RecordLookupPort;
+type C1Records = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
 type C1Backend = { records: C1Records; close(): Promise<void> };
 
 export type C1Harness = {

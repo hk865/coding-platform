@@ -292,8 +292,8 @@ export type TaskClaimFacts = {
    * refuses `unavailable` (L7 fail-closed).
    */
   reviewBlocker?: 'pending' | 'held' | 'unreadable';
-  /** The continuation prior Run, as RUN-01 reads it (`:590-638`); null when it is not a Run of this Task. */
-  prior: RunClaimContext['prior'];
+  /** The continuation prior Run, as RUN-01 reads it (`:590-638`); absent until the claim reads it. */
+  prior?: RunClaimContext['prior'];
   /** TASK-03: the TaskRequeue the claim's `requeueRef` names; null when it names none of this Task. */
   requeue: ClaimRequeueFacts | null;
   /** TASK-03r (K3): the review-claim facts; null/absent for every other basis. */
@@ -510,7 +510,7 @@ export function newTaskReductionRecord(input: NewTaskReductionInput): TaskReduct
 }
 
 /** The Run-chain facts of the C8 count (`nextRequeueAutoCount`): the Task's Runs and TaskRequeues of the same window. */
-type RequeueChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'consumedWait'>;
+type RequeueChainRun = Pick<RunSnapshot, 'ref' | 'requeueRef' | 'previousRun'>;
 
 /**
  * The inputs of one TaskRequeue@1 (§4.1 field table). The record derives the

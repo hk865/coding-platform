@@ -160,6 +160,33 @@ function runRequeueRefProblem(value: unknown, ref: RunRef, task: UnknownRecord, 
   return null;
 }
 
+/** Optional `consumedWait` (the claim's three-arm union): each arm must be complete and scoped. */
+function consumedWaitShapeProblem(value: unknown, ref: RunRef): string | null {
+  if (value === undefined) return null;
+  if (!isJsonObject(value)) return 'the consumed wait must be an object';
+  const arm = value['kind'];
+  const messageRef = value['messageRef'];
+  if (!isJsonObject(messageRef) || messageRef['aggregateType'] !== 'SessionMessage'
+    || messageRef['projectId'] !== ref.projectId || !isNonEmptyString(messageRef['workspaceId'])
+    || !isNonEmptyString(messageRef['messageId'])) return 'the consumed wait messageRef is incomplete or outside the project';
+  if (arm === 'intervention') return null;
+  const originalRun = value['originalRun'];
+  if (!isRunRef(originalRun) || originalRun.projectId !== ref.projectId || originalRun.goalId !== ref.goalId) {
+    return 'the consumed wait originalRun is not a Run of this Task';
+  }
+  if (arm === 'wait_reply') return isJsonObject(value['responseRef']) ? null : 'the wait_reply arm needs a responseRef';
+  if (arm === 'expiry') return isNonEmptyString(value['expiryInputId']) ? null : 'the expiry arm needs an expiryInputId';
+  return 'the consumed wait kind is not recognized';
+}
+
+/** Required `previousRun` (A-07): null, or a complete RunRef of this Task. */
+function previousRunShapeProblem(value: unknown, ref: RunRef): string | null {
+  if (value === undefined) return 'previousRun is required';
+  if (value === null) return null;
+  return isRunRef(value) && value.projectId === ref.projectId && value.goalId === ref.goalId
+    ? null : 'previousRun is not a Run of this Task';
+}
+
 export function validateRunSnapshot(record: EncodedRecord): DecodeResult<EncodedRecord> {
   if (record.schemaId !== RUN_SNAPSHOT_SCHEMA_ID) {
     return invalid(`expected schemaId ${RUN_SNAPSHOT_SCHEMA_ID}, got ${record.schemaId}`);
@@ -228,6 +255,10 @@ export function validateRunSnapshot(record: EncodedRecord): DecodeResult<Encoded
   // Run; a present value is checked by its one owning helper.
   const requeueProblem = runRequeueRefProblem(body['requeueRef'], ref, task, body['consumedWait']);
   if (requeueProblem !== null) return invalid(`Run requeueRef is malformed: ${requeueProblem}`);
+  const consumedWaitProblem = consumedWaitShapeProblem(body['consumedWait'], ref);
+  if (consumedWaitProblem !== null) return invalid(`Run consumedWait is malformed: ${consumedWaitProblem}`);
+  const previousRunProblem = previousRunShapeProblem(body['previousRun'], ref);
+  if (previousRunProblem !== null) return invalid(`Run previousRun is malformed: ${previousRunProblem}`);
   const terminalProblem = terminalPayloadProblem(body['terminalPayload'], body['status'], body['outcome']);
   if (terminalProblem !== null) return invalid(`Run terminalPayload is malformed: ${terminalProblem}`);
   const reconciliationProblem = runReconciliationProblem(body['reconciliation'], ref as unknown as UnknownRecord);

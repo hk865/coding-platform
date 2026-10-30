@@ -103,6 +103,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   let failNext = false;
   const records: B2Records = {
     readMany: refs => backend.readMany(refs), lookup: request => backend.lookup(request),
+    lookupOrdered: request => backend.lookupOrdered(request),
     lookupCommit: request => backend.lookupCommit(request), eventAt: cursor => backend.eventAt(cursor),
     async commit(batch) {
       if (failNext) { failNext = false; return { status: 'rejected', code: 'unavailable', reason: 'fx1 injected commit failure' }; }

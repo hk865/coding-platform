@@ -14,11 +14,12 @@ import type {
 } from '../../contracts/query-job.js';
 import { consultationQueryRefs } from '../../contracts/query-job.js';
 import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
-import { messageConsumptionProblem, messageFactsOfRecord } from '../../core/work-graph/state/message-machine.js';
+import { deliveryEligibility, type DeliveryFactsV1 } from '../../core/work-graph/state/message-machine.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
@@ -46,7 +47,7 @@ function hashOf(ref: SessionMessageRef): string {
 function rejectionReason(result: { status: string; code?: string; reason?: string }): string {
   return result.status === 'rejected' ? `${result.code}: ${result.reason}` : result.status;
 }
-function asRejection(result: Exclude<ReadResult<unknown>, { status: 'ready' }>, what: string): CoreRejection {
+export function asRejection(result: Exclude<ReadResult<unknown>, { status: 'ready' }>, what: string): CoreRejection {
   if (result.status === 'rejected') return result;
   return reject('incomplete', `${what} is not ready (${result.status})`);
 }
@@ -113,6 +114,8 @@ export function createConsultationConsumer(deps: {
    * stay compatible.
    */
   sessionArchive?: SessionArchivePort & Partial<InternalSessionArchivePort>;
+  deliveryFacts?: (owned: Owned, message: SessionMessage, part: 'message' | 'response',
+    goalRef: GoalRef | null, target: SessionRef | null) => Promise<DeliveryFactsV1 | CoreRejection>;
 }): (ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult> {
   const sessionArchive = deps.sessionArchive;
   const waiting = (message: SessionMessage, query: QueryJobRecord | null,
@@ -129,6 +132,15 @@ export function createConsultationConsumer(deps: {
   const ended = (message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
     ({ status: 'ready', value: { state: 'ended', message, query, answer, reason } });
+
+  async function deliveryProblem(owned: Owned, message: SessionMessage, part: 'message' | 'response',
+    goalRef: GoalRef | null, target: SessionRef | null): Promise<CoreRejection | null> {
+    if (deps.deliveryFacts === undefined) return reject('unsupported', 'the consultation requires the delivery facts');
+    const facts = await deps.deliveryFacts(owned, message, part, goalRef, target);
+    if ('status' in facts) return facts;
+    const eligibility = deliveryEligibility(facts);
+    return eligibility.offerable ? null : reject('invalid', `delivery_${eligibility.reason}`);
+  }
 
   /** Attach the already-saved official answer; never calls a model. */
   async function attach(owned: Owned, message: SessionMessage, query: QueryJobRecord | null,
@@ -278,7 +290,7 @@ export function createConsultationConsumer(deps: {
     // were reported above and are never re-run.
     const phase = run.run.executionState?.phase;
     if (phase === undefined || phase === 'claimed' || phase === 'prepared') {
-      const problem = messageConsumptionProblem(messageFactsOfRecord(message));
+      const problem = await deliveryProblem(owned, message, input.part ?? 'message', message.goalRef, target);
       if (problem !== null) return reject(problem.code, problem.reason);
     }
     const configMatches = job.job.intent.goalId === input.goalRef.goalId
@@ -353,7 +365,8 @@ export function createConsultationConsumer(deps: {
     // The shared consumption rule runs before a NEW consultation is derived, so
     // an unreleased or withdrawn message is never turned into a Query/model run;
     // an already saved Query/Answer still replays above.
-    const consumption = messageConsumptionProblem(messageFactsOfRecord(message));
+    const target = value.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
+    const consumption = await deliveryProblem(owned, message, value.part ?? 'message', message.goalRef, target);
     if (consumption !== null) return reject(consumption.code, consumption.reason);
     if (value.part === 'response' ? (message.response === null || message.sender.kind !== 'work_run') : message.status === 'responded') {
       return reject('invalid', 'the original message already has a response');
@@ -370,7 +383,6 @@ export function createConsultationConsumer(deps: {
     // it, so a source that advanced after a failed submit can never move the child
     // or the boundary. A null throughPosition is the explicit empty baseline,
     // distinct from a non-empty inherited prefix.
-    const target = value.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
     const isolatedInquiry = value.part !== 'response' && message.intent === 'inquiry';
     let derivation = value.part === 'response' ? undefined : message.consultationDerivation;
     if (isolatedInquiry && derivation === undefined) {

@@ -1,0 +1,2 @@
+通知（消息 {{messageId}}，来自 {{sender}}）：
+{{body}}

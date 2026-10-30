@@ -44,13 +44,15 @@ import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/quer
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../model/work-line-contracts.js';
 import type { DecisionCardV1, DecisionReadPort } from '../model/decision-contracts.js';
+import type { SessionWaitV1 } from '../model/session-facts-contracts.js';
 import {
   deriveMessageDelivery, type MessageDeliveryFactsV1, type SessionMailboxPort, type SessionMessage,
 } from '../model/communication-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { decodeDispatchOutboxEntry, S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP } from '../tasks/claim-record-codecs.js';
 import { decodeSessionAnomalyAnchor, sessionAnomalyRefKey, S2C_ANOMALY_BY_SESSION_LOOKUP } from '../tasks/session-anomaly-codecs.js';
-import { RUN_BY_TASK_INDEX, taskRecordRefKey } from '../tasks/plan-readers.js';
+import { createSessionFactsService } from '../tasks/session-facts.js';
+import { RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
 import { readRequeueWindow } from '../tasks/requeue-service.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey, SESSION_MESSAGE_BY_RECIPIENT_LOOKUP } from '../sessions/message-record-codecs.js';
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
@@ -81,6 +83,8 @@ import {
   type LineClosureModeV1, type LineDoneEvidenceV1, type LineFactsV1, type LineOwnerIndexV1,
   type LinePausedTaskFactsV1, type LineRunFactsV1, type LineTaskArchiveNextV1, type LineTaskFactV1,
 } from '../state/line-status.js';
+import type { WaitStateV1 } from '../state/message-machine.js';
+import { sameRef } from '../state/ref-equality.js';
 import { stopRequesterOf } from '../state/task-failure.js';
 
 /**
@@ -496,7 +500,7 @@ async function assembleOneLine(
     return assembleOneLine(deps, ctx, workspace, headRef, fresh, shared, queue, activeCopies, true);
   }
   const latestWork = earlyProblem === null && holder === null
-    ? await readLatestWork(deps.records, workspace, headRecord, lineState) : null;
+    ? await readLatestWork(deps.records, workspace, headRecord, ctx, lineState) : null;
 
   // Titles for the line name come from the same task graph read (shared cost).
   const nameTaskTriples = dedupeTasks([
@@ -1054,7 +1058,7 @@ async function readPausedTaskFacts(
     const window = windowRead.value;
     const afterRunSnapshot = (window.facts.runsByTaskId.get(task.task.taskId) ?? [])
       .find((run) => refKeyOf(run.ref) === refKeyOf(afterRunRef));
-    const afterRun = await readRunByRef(deps.records, workspace, afterRunRef, state);
+    const afterRun = await readRunByRef(deps.records, workspace, afterRunRef, null, state);
     if (afterRun === null || afterRunSnapshot === undefined) continue;
     afterRun.goalDesiredState = window.goal.desiredState;
     const pins: VersionPin[] = [
@@ -1205,17 +1209,28 @@ async function readHolder(records: WorkLineStore, workspace: WorkspaceScope, hea
   // real activity time, its claim time; read the claim the same bounded way.
   const claimedAt = run.startedAt === null && run.endedAt === null
     ? await readClaimedAtForRun(records, workspace, head, run.ref, (failure) => noteProblem(state, failure)) : null;
-  return { kind: 'run', run: lineRunFacts(run, await readPointerOf(records, run, state),
-    await readContinuationConsumed(records, run, state), claimedAt) };
+  return { kind: 'run', run: lineRunFacts(run, await readPointerOf(records, run, state), null, claimedAt) };
 }
 
 async function readLatestWork(records: WorkLineStore, workspace: WorkspaceScope, head: SessionRecord,
-  state: LineReadState): Promise<(LineRunFactsV1 & { waitRecipient: SessionRef | 'user' | null }) | null> {
+  ctx: CoreCallContext, state: LineReadState): Promise<(LineRunFactsV1 & { waitRecipient: SessionRef | 'user' | null }) | null> {
+  // T7: the wait is the Session's oldest unconsumed Work wait, read from the same
+  // Session facts, never from the latest Run's continuation (7b:363–:366).
+  const sessionFacts = createSessionFactsService({ records });
+  const factsRead = await sessionFacts.readSessionFacts(ctx, head.ref);
+  let wait: SessionWaitV1 | null = null;
+  if (factsRead.status === 'ready') {
+    const oldest = factsRead.value.wait;
+    wait = oldest === null ? null
+      : factsRead.value.waits.find(row => sameRef(row.messageRef, oldest.messageRef)) ?? null;
+  } else {
+    noteProblem(state, factsRead as CoreRejection);
+  }
   // L1: no occupancy; lastExecutionRef is a Run when it is one; otherwise the
   // generation-ordered Work-claim index gives the latest claim (L4 index 6).
   if (head.lastExecutionRef !== null && head.lastExecutionRef !== undefined
     && head.lastExecutionRef.aggregateType === 'Run') {
-    const latest = await readRunByRef(records, workspace, head.lastExecutionRef, state);
+    const latest = await readRunByRef(records, workspace, head.lastExecutionRef, wait, state);
     // L10 (review item 4): the usual `lastExecutionRef === Run` path skipped the
     // claim read that supplies `claimedAt`. When the Run has neither start nor
     // end time, read that claim (bounded: the generation-ordered index's top row).
@@ -1235,14 +1250,14 @@ async function readLatestWork(records: WorkLineStore, workspace: WorkspaceScope,
   if (page.value.records.length === 0) return null;
   const decoded = decodeDispatchOutboxEntry(page.value.records[0]!);
   if (decoded.status !== 'decoded') { noteProblem(state, { code: 'unavailable', reason: 'the latest work claim is not decodable' }); return null; }
-  const latest = await readRunByRef(records, workspace, decoded.value.claim.runRef, state);
+  const latest = await readRunByRef(records, workspace, decoded.value.claim.runRef, wait, state);
   // L10: the claim time is the last fallback when the Run has no start/end time.
   if (latest !== null) latest.claimedAt = decoded.value.claim.claimedAt ?? null;
   return latest;
 }
 
 async function readRunByRef(records: WorkLineStore, workspace: WorkspaceScope, ref: RunRef,
-  state: LineReadState): Promise<(LineRunFactsV1 & { waitRecipient: SessionRef | 'user' | null }) | null> {
+  wait: SessionWaitV1 | null, state: LineReadState): Promise<(LineRunFactsV1 & { waitRecipient: SessionRef | 'user' | null }) | null> {
   const key = refKeyOf(ref);
   const read = await records.readMany([key]);
   if (read.status !== 'ready') { noteProblem(state, read); return null; }
@@ -1252,9 +1267,8 @@ async function readRunByRef(records: WorkLineStore, workspace: WorkspaceScope, r
   if (!decoded.ok) { noteProblem(state, { code: 'unavailable', reason: 'the latest work Run is not decodable' }); return null; }
   if (decoded.value.workspaceSnapshot.workspaceId !== workspace.workspaceId) return null;
   const run = decoded.value;
-  const continuationConsumed = await readContinuationConsumed(records, run, state);
-  const waitRecipient = await readWaitRecipient(records, run, state);
-  return { ...lineRunFacts(run, await readPointerOf(records, run, state), continuationConsumed), waitRecipient };
+  return { ...lineRunFacts(run, await readPointerOf(records, run, state), wait?.state ?? null),
+    waitRecipient: wait === null ? null : ('kind' in wait.recipient ? 'user' : wait.recipient) };
 }
 
 /** L1 table: the occupancy Run's own control intent (`controlState.intentRef`), batch-read. */
@@ -1273,48 +1287,9 @@ async function readPointerOf(records: WorkLineStore, run: RunSnapshot,
 }
 
 function lineRunFacts(run: RunSnapshot, pointer: ControlIntentSnapshotV1 | null,
-  continuationConsumed = false, claimedAt: string | null = null): LineRunFactsV1 {
+  wait: WaitStateV1 | null = null, claimedAt: string | null = null): LineRunFactsV1 {
   return { run, pointer, pointerFromGoal: pointer !== null && stopRequesterOf(pointer) === 'goal_fan_out',
-    continuationConsumed, goalDesiredState: 'active', claimedAt };
-}
-
-/**
- * RD-8 (L16): a `YieldedWait` Run's continuation is consumed when the TaskLease
- * names another holder Run (the successor re-held it). Reads the raw lease record
- * the same way `TaskExecutionRecord.lease` does; absent lease = not consumed.
- */
-async function readContinuationConsumed(records: WorkLineStore, run: RunSnapshot,
-  state: LineReadState): Promise<boolean> {
-  if (run.status !== 'ended' || run.outcome !== 'yielded') return false;
-  const goalRef: GoalRef = { aggregateType: 'Goal', projectId: run.ref.projectId, goalId: run.ref.goalId };
-  const key = taskRecordRefKey('TaskLease', goalRef, run.task.taskId);
-  const read = await records.readMany([key]);
-  if (read.status !== 'ready') { noteProblem(state, read); return false; }
-  const record = read.value.records.find((entry) => entry.refKey === key);
-  if (record === undefined) return false;
-  try {
-    const lease = JSON.parse(record.json) as { holderRunId?: unknown };
-    return typeof lease.holderRunId === 'string' && lease.holderRunId !== run.ref.runId;
-  } catch {
-    return false;
-  }
-}
-
-/** L1 table (T7): the continuation message's recipient, the one this line waits for. */
-async function readWaitRecipient(records: WorkLineStore, run: RunSnapshot,
-  state: LineReadState): Promise<SessionRef | 'user' | null> {
-  const messageRef = run.continuation?.messageRef;
-  if (messageRef === undefined || messageRef === null) return null;
-  const key = sessionMessageRefKey(messageRef);
-  const read = await records.readMany([key]);
-  if (read.status !== 'ready') { noteProblem(state, read); return null; }
-  const record = read.value.records.find((entry) => entry.refKey === key);
-  if (record === undefined) return null;
-  const decoded = decodeSessionMessageRecord(record);
-  if (decoded.status !== 'decoded') return null;
-  const recipient = decoded.value.recipient;
-  if ('kind' in recipient) return 'user';
-  return { projectId: recipient.projectId, sessionId: recipient.sessionId };
+    wait, goalDesiredState: 'active', claimedAt };
 }
 
 function needsLatestQuery(duty: LineFactsV1['duty'], holder: LineFactsV1['holder'],

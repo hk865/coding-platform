@@ -20,6 +20,8 @@ export type TaskClaim = {
   sessionRevision: number;
   generation: number;
   runRef: RunRef;
+  /** A-07: the Run whose released lease this claim took; null when there is no predecessor. */
+  previousRun: RunRef | null;
   attemptRef: TaskAttemptRef;
   outboxRef: DispatchOutboxRef;
   claimedAt: string;

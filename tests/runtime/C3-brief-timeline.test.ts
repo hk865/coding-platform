@@ -45,7 +45,7 @@ function runOf(runId: string, over: Partial<RunSnapshot>): RunSnapshot {
     ref: runRef(runId), revision: 4, schemaVersion: 1, task: { ...task }, attemptId: `${runId}-attempt`, planRef: PLAN,
     roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 3 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`,
-    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: at(1), endedAt: RUN1_END, ...over,
+    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: at(1), endedAt: RUN1_END, previousRun: null, ...over,
   };
 }
 /** Only `run`, the attempt ref and the claim Session are read. */

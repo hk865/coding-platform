@@ -77,7 +77,7 @@ const sessionRef = { projectId: P, sessionId: 'ses-1' };
 
 const claim: TaskClaim = {
   task: { projectId: P, goalId: G, taskId: T }, planRef, workspaceId: W, sessionRef, sessionRevision: GEN,
-  generation: GEN, runRef: runRef('run-1'), attemptRef: attemptRef('att-1'), outboxRef: outboxRef('att-1'),
+  generation: GEN, runRef: runRef('run-1'), previousRun: null, attemptRef: attemptRef('att-1'), outboxRef: outboxRef('att-1'),
   claimedAt: T_CLAIM,
 };
 const roleBinding: RoleBindingRefV1 = { schemaVersion: 1, bindingId: 'binding-1', templateId: 'worker',
@@ -108,7 +108,7 @@ const permitAt = (authorizationRevision: number, entryGeneration = 1) =>
 const continuation: RunContinuationV1 = { schemaVersion: 1, kind: 'wait_reply', task: claim.task, sessionRef,
   messageRef: { aggregateType: 'SessionMessage', projectId: P, workspaceId: W, messageId: 'msg-1' } };
 const consumedWait: ConsumedWaitV1 = {
-  runRef: runRef('run-0'), messageRef: continuation.messageRef,
+  kind: 'wait_reply', originalRun: runRef('run-0'), messageRef: continuation.messageRef,
   responseRef: { kind: 'artifact', contentType: 'text/plain', digest: 'a'.repeat(64), sizeBytes: 3,
     source: { kind: 'workspace', refId: W, revision: '1' } },
 };
@@ -463,15 +463,15 @@ describe('RUN-01 claim_committed', () => {
       planRef, roleBinding, budget,
       workspaceSnapshot: { workspaceId: W, revision: 7 },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
-      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null };
+      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null, previousRun: null };
     expectSameRecord(result.next.record, expected);
     expect(result.next).toMatchObject({ node: 'Claimed', pointer: 'none', entryGeneration: null });
   });
 
   it('keeps the consumed wait of a continuation claim and the requeueRef of a requeue record', () => {
-    const prior = { node: 'YieldedWait' as const, pointer: 'none' as const, bindingProblem: null, leaseReleasedByPrior: true,
+    const prior = { kind: 'yielded' as const, node: 'YieldedWait' as const, pointer: 'none' as const, bindingProblem: null, leaseReleasedByPrior: true,
       replyProblem: null };
-    const result = ok(transitionRun(stateOf('Absent'), { ...EV.claim, basis: { kind: 'continuation', consumedWait } },
+    const result = ok(transitionRun(stateOf('Absent'), { ...EV.claim, basis: { kind: 'continuation', consumedWait, previousRun: runRef('run-0') } },
       claimCtx({ taskHasRun: true, prior })));
     expect(result.next.record?.consumedWait).toEqual(consumedWait);
     expect(result.next.record?.requeueRef).toBeUndefined();
@@ -499,8 +499,8 @@ describe('RUN-01 claim_committed', () => {
   });
 
   it('checks the yielded prior Run of a continuation claim (`claim-service.ts:590-636`)', () => {
-    const event: RunEvent = { ...EV.claim, basis: { kind: 'continuation', consumedWait } };
-    const good = { node: 'YieldedWait' as const, pointer: 'none' as const, bindingProblem: null, leaseReleasedByPrior: true,
+    const event: RunEvent = { ...EV.claim, basis: { kind: 'continuation', consumedWait, previousRun: runRef('run-0') } };
+    const good = { kind: 'yielded' as const, node: 'YieldedWait' as const, pointer: 'none' as const, bindingProblem: null, leaseReleasedByPrior: true,
       replyProblem: null };
     const at = (prior: NonNullable<RunGuardContext['claim']>['prior']) =>
       transitionRun(stateOf('Absent'), event, claimCtx({ taskHasRun: true, prior }));
