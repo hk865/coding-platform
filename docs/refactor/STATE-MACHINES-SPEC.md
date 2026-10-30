@@ -935,7 +935,7 @@ Task 没有可写的存储 phase（D-1）。`effectivePhase` 是对 Run（含控
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TASK-25 | ∅ | `plan_adopted`（初次采用 W15，或 future-only 新增任务 W16） | taskId 首次出现在活动 Plan 中；W16 要求草案 phase 为 `pending`（`plan-validation.ts:472-477`） | `pending`（P16），与草案 phase 无关 | 无。PlanRevision、Goal 指针由 §3、§2 负责 | 由 `applyPlanChange` 的回执幂等保证 | T1、G4 | 已有 `plan-commit-compiler.ts:59-95`（W15）、`:253-292`（W16）；投影 `plan-readers.ts:1154` |
 | TASK-01 | `pending`（无 Run） | `task_claimed`（首次领取） | Goal 为 `active`，且 Plan 是活动 Plan；Task 为 `work`/`active`；资格通过；`taskHasRun=false`；Session 为 `active`/`available` 且无占用；角色、期限有效 | `running` | `create_attempt(claimed)`、`create_run(starting)`、`create_outbox(pending)`、`hold_lease(@1)`、`occupy_session(gen=rev+1)` | 同身份同内容：重放原回执；同身份异内容：`idempotency_conflict` | T2 | 已有 `claim-service.ts:473-749` |
-| TASK-02 | `ready`（P5） | `task_claimed`（带 `consumedWait`） | 前一 Run 为 `yielded` 且有 continuation；消息已 `responded`，responseRef 一致；前一 Run 的指针 `desiredState` 不是 paused/cancelled（不论 intent 状态）；租约由该 Run 释放 | `running` | 同 TASK-01，但租约改为 `hold_lease(@k→@k+1，去掉 release)`；新 Run 记录 `consumedWait`。续接领取不带接续说明（C3）：前一 Turn 以 `yielded` 正常结束，历史已完整；§6 RUN-02 对它要求 `continuationBrief=absent_ok` | 身份 = (前一 Run, 消息)，与 actor 无关（`claim-service.ts:381-405`） | T2、续接 | 已有 `claim-service.ts:590-638`（指针 `:606-611`）、`:693-697` |
+| TASK-02 | `ready`（P5） | `task_claimed`（带 `consumedWait`） | 前一 Run 为 `yielded` 且有 continuation（`wait_reply` 或 `expiry`）；按 `consumedWait.kind`：`wait_reply` 要求消息已 `responded`、responseRef 一致、尚未消费；`expiry` 要求 `expiredAt` 已设、没有回复（有回复时 `busy/reply_present`）、尚未消费；`intervention` 不要求前一 Run 让出，只要释放的租约持有者与 `release.runRef` 一致，不消费等待。前一 Run 的指针 `desiredState` 不是 paused/cancelled（不论 intent 状态）；租约由该 Run 释放 | `running` | 同 TASK-01，但租约改为 `hold_lease(@k→@k+1，去掉 release)`；新 Run 记录 `consumedWait` 与 `previousRun`（释放租约的持有者，src/contracts/dispatch.ts:274）。续接领取不带接续说明（C3）：前一 Turn 以 `yielded` 正常结束，历史已完整；§6 RUN-02 对它要求 `continuationBrief=absent_ok` | 身份 = (前一 Run, 消息)，与 actor 无关（`claim-service.ts:381-405`） | T2、续接 | 已有 `claim-service.ts:590-638`（指针 `:606-611`）、`:693-697` |
 | TASK-03 | `pending`（P4） | `task_claimed`（带 `requeueRef`） | `requeueRef` 是覆盖选定 Run 的那条 TaskRequeue；租约 `release.runRef` 等于 `afterRunRef`；Task disposition 为 `active`（否则 `invalid`，`task_not_active`，重入队之后可能已经 TASK-19 延后）；`requeue.budget ≠ null` 时领取的 `budget` 必须与它规范相等（否则 `invalid`“the requeue pins the claim budget”，C1）；其余同 TASK-01。原 Session 只要仍为 `active`/`available` 且无占用就可以再次被选；Kernel Turn 未结束的类别（`interrupted`、RUN-23，以及人工认定时 Kernel Turn 未结束或 Kernel 不可读的 RUN-22）原 Session 已是 `unavailable/kernel_turn_open`，SES 守卫拒绝它；Workflow 先返回 `close_open_turn`（K 片 L7），关闭成功则 Session 回到 available、在原 Session 领取，关闭不可用才新建 Session（TD-7；用户决定 51、54，K 片 cfe35550；lead 决定 LA-1（2026-10-03）的退路部分，§8） | `running` | 同 TASK-01，但租约为 `hold_lease(@k→@k+1，去掉 release)`；新 Run 和 Attempt 记录 `requeueRef`；守卫 TaskRequeue@1。领取提交本身不写接续说明；新 Run 首次 RUN-02 必须绑定接续说明（§6 RUN-02 `continuationBrief=bound`，C3） | 同 TASK-01（身份绑定 actor）；并发第二次领取因租约 CAS 失败 | T7、D-3、TD-3、C1、C3 | 改造 `claim-service.ts:639-641`（替换一刀切的 busy）、`:693-697`、`:703` |
 | TASK-04 | `running` | `run_ended`（`yielded`，有 continuation） | 结束的是选定 Run；其指针不是 paused/cancelled | `ready` | 无。Run、Attempt、Lease、Session 的写入由 §6、§5、§8 负责 | 重投影是纯函数，结果相同 | T5、R5 | 已有 `plan-readers.ts:1148-1152` |
 | TASK-21 | `running` | `run_ended`（`yielded`，有 continuation） | 结束的是选定 Run；其指针为 paused 或 cancelled（运行中提交、未被活句柄消费） | 按 P17/P18：cancelled → `failed`（`continuation_cancelled`）；paused → `blocked`（`continuation_paused`） | 无 | 同上 | T5、R1、R2、TD-5 | 新增（今日投影 `ready` 而领取 `busy`：`claim-service.ts:606-611`） |
@@ -1633,7 +1633,7 @@ TaskAttempt、DispatchOutbox、TaskLease、Session 占用和 ControlIntent 的�
 | 事件水位 | `lastEventSeq`、`lastRuntimeEventId`、`lastFactEventId`（`dispatch.ts:177-181`） | 非负整数、字符串 | 平台事件排序守卫的依据（不证明 Kernel 新事实，见 RD-4） |
 | 不可变输入 | `envelope`（`dispatch.ts:183`）、`inputBinding`（`:157-158`，注释为 Immutable） | `TaskEnvelopeV1` 或 `null`；`RuntimeInputBindingV1` | 由 RUN-02 写入一次；RUN-03 不改写。新增可选的 `inputBinding.continuationBriefDigest`（C3；requeue Run 必有，RUN-02 写一次，§11 I-19），见 6.1 契约 (e) |
 | 终态细节 | `terminalPayload`（新增可选字段，`dispatch.ts:146-192`） | `RuntimeEventV1['payload']`（有界） | 今天没有：`terminalFact` 校验 `run_crashed.payload.error` 后只返回 `{outcome, exitCode}`（`execution-entry-service.ts:1632-1671`），Run 上不留错误文本。C1 起与已知 outcome 同提交写一次，见 6.1 契约 (f) |
-| 等待接续 | `continuation`（`dispatch.ts:185`）、`consumedWait`（`:187`） | `RunContinuationV1`、`ConsumedWaitV1` | `continuation` 只由真实 yielded 终态写入（进程内取自句柄，重启时按 RD-3 重建） |
+| 等待接续 | `continuation`（`dispatch.ts:270`）、`consumedWait`（`:272`）、`previousRun`（`:274`） | `RunContinuationV1 = {schemaVersion:1, kind:'wait_reply' \| 'expiry' \| 'intervention', task, sessionRef, messageRef}`（`:294-301`）；`ConsumedWaitV1` 三臂：`wait_reply{originalRun, messageRef, responseRef}`、`expiry{originalRun, messageRef, expiryInputId}`、`intervention{messageRef}`（`:306-312`）；`previousRun` 为释放租约的持有者（intervention 也要求它） | `continuation` 只由真实 yielded 终态写入，kind 只写 `wait_reply`（进程内取自句柄，重启时按 RD-3 重建）；`expiry`、`intervention` 只出现在领取的 `consumedWait` 上（§10.7） |
 | 核对记录 | `RunSnapshot.reconciliation`（`dispatch.ts:149`，类型 `:134-145`） | `status: done/cancelled/quarantined`；`observation: runtime_terminal/unresolved` | 今天没有写入者，也没有校验（`record-readers.ts:251-334` 不检查这个字段）。读取者有两处：`completion-policy.ts:71-75`（`quarantined` 或 `unresolved` 阻塞完成）和 `workflow.ts:216-217`（`normalEnd` 要求 status 为 `done`）。D-4..D-6 起由核对写入：除 `unresolved` 写 `quarantined` 外，新写入一律 `status:'done'`，包括 `runtime_terminal`、`not_entered`、`interrupted_clean`（带 `kernelPaused`、`pausedIntentRef`；RUN-19/23/24，C4）、`human_attested`。`cancelled` 仍无写入者。扩展见下 |
 | 历史定位 | `executionHistory`（`dispatch.ts:148`） | `RunExecutionHistoryV1` | 只追加、只增长；end 只写一次 |
 
@@ -2399,7 +2399,7 @@ Query 只在崩溃恢复和 Session 释放范围内进入本规格（D-11），�
   - (b) 有 Turn、没有可入账的终态、没有在途工具：收束为 closed，outcome 为 `failed`。
   - (c) 有在途工具：phase 记为 `unknown`，占用保留。
   - (d) `unknown` 的人工出口沿用 `resolveUnknownRun`，扩展为接受 QueryRunRef；与 Run 一样只在持实例租约的 Host 上受理（L-1）。
-  - (e) Kernel 状态无法映射为 Query 终态时（`mapOutcome` 返回 null：`created`、`running`、`paused`、`yielded`，见 `query-observation.ts:123-131`），按“没有可入账的终态”处理：全部工具有结果走 (b)，否则走 (c)。
+  - (e) Kernel 状态无法映射为 Query 终态时（`mapOutcome` 返回 null：`created`、`running`、`paused`、`interrupted`，见 `query-observation.ts:121-137`），按“没有可入账的终态”处理：全部工具有结果走 (b)，否则走 (c)。FA（2026-10-30）起 `yielded` 有映射：有已接受提交 → `answered`，走 QRR-03；没有 → `failed`（§8.3 表外说明）。
   - 取值：未进入使用新增值 `not_entered`（`QueryRunV1.outcome`，`query-job.ts:72`；`QueryJobV1.closeReason.code`，`:294`）；(b)(d) 使用已有值 `failed`。
 - **SD-5 无 Kernel 终态来源的释放（覆盖 `docs/refactor/modules/core/work-graph.md:590` 末句）。** 该句规定“实际进入后的terminal缺来源不能据此释放未知占用”。本节以下几行在实际进入后、没有可入账的 Kernel 终态来源时释放占用：
   - SES-06 的 `reconcile_interrupted_clean`（RUN-19，以及指针为 paused 时的 RUN-24，C4）；依据是 D-6（实例租约接管，加上没有在途工具）。
@@ -2526,7 +2526,7 @@ type QueryRecoveryGuardContext = {
   probe: SessionProbeVerdict | null;
   kernel: null | {                                  // Runtime 读 Kernel Store 后的分类（agent-runtime/run-reconcile.ts）
     turn: 'absent' | 'present';
-    mappedOutcome: 'answered' | 'failed' | 'cancelled' | 'timeout' | null; // mapOutcome（query-observation.ts:123-131）
+    mappedOutcome: 'answered' | 'failed' | 'cancelled' | 'timeout' | null; // mapOutcome(status, acceptedSubmit)（query-observation.ts:121-137）；请求轮有已接受提交时 yielded/failed 映射为 answered
     boundaryComplete: boolean;
     unresolvedToolCallIds: readonly string[];
   };
@@ -2653,8 +2653,8 @@ reconcile 不扫描全部 idle Session，所以经探针的 available → unavai
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | QRR-01 | `claimed` 或 `prepared`（pending/pending） | `query_reconcile_not_entered` | `caller=reconcile`，`hostLease=owned`；这两个 phase 下没有 Kernel Turn，因为 begin 先提交 entering 再启动 Kernel（`agent-runtime/query-execution.ts:218-232`）；不需要探针结论 | `settled`（closed/closed） | QueryRun：status closed、outcome `not_entered`、endedAt=now、phase settled；QueryJob：status closed、closeReason `{code:'not_entered', message:'host_restart_before_entry'}`、updatedAt；Session 经 SES-09 释放 | 身份 hash(queryRunRef, hostInstanceId)；同一实例重复执行时回放 | S8、D-11 | 新增（缺口 SG-6） |
 | QRR-02 | `entering`（running/running） | `query_reconcile_not_entered` | `caller=reconcile`，`hostLease=owned`；探针结论 `ready`；Kernel Store 中没有固定 (kernelSessionId, runId, turnId) 的 Turn（D-5 类比） | `settled`（closed/closed） | 同 QRR-01；不重新进入（SD-4(a)）；`history` 保持原值（null） | 同 QRR-01 | S8、D-5、D-11 | 新增（缺口 SG-6） |
-| QRR-03 | `entering`、`entered` 或 `unknown`（running/running） | `query_terminal_observed`（K）或 `query_reconcile_terminal`（R） | entry 身份一致（`query-execution.ts:1310`）；`mappedOutcome≠null`；完整结束边界（`:1370-1372`）；没有缺结果或 outcome_unknown 的工具；`inputsConfirmed=true`；R 来源另需 reconcile 与实例租约 | `settled`（answered 或 closed） | QueryRun：status、outcome、endedAt、phase settled、history；QueryJob：status、answerRefs、closeReason；answered 时写 Answer@1；Session 经 SES-08 释放 | 按 Kernel 位置身份重放（`:1296`）：进程内与重启观察同一终态时得到同一回执 | R5、S8、D-11 | 已有 `query-execution.ts:1358-1440`（今天已接受从 `unknown` 出发） |
-| QRR-04 | `entering` 或 `entered`（running/running） | `query_reconcile_interrupted_clean` | `caller=reconcile`，`hostLease=owned`；探针 `ready`；Turn 存在；`mappedOutcome=null`（Kernel 状态为 created/running/paused/yielded，SD-4(e)）；没有缺结果或 outcome_unknown 的工具；`inputsConfirmed=true` | `settled`（closed/closed） | QueryRun：status closed、outcome `failed`、endedAt、phase settled、history 取 Kernel 读到的历史；QueryJob closed，closeReason `{code:'failed', message:'host_interrupted'}`，Kernel 状态为 paused/yielded 时 message 为 `kernel_status:<状态>`；Session 经 SES-09 释放（Kernel 状态为 created/running/paused 时同提交记为 `kernel_turn_open`，yielded 是 Kernel 终态，不记，SD-2） | 同 QRR-01 | S8、D-6、D-11 | 新增（缺口 SG-6）；`kernel_turn_open` 新增（与 lead 决定 LA-1（2026-10-03）同一 Kernel 约束） |
+| QRR-03 | `entering`、`entered` 或 `unknown`（running/running） | `query_terminal_observed`（K）或 `query_reconcile_terminal`（R） | entry 身份一致（`query-execution.ts:1310`）；`mappedOutcome≠null`（`yielded` 有已接受提交时映射为 `answered`、没有时为 `failed`，见本节表外说明）；完整结束边界（`:1370-1372`）；没有缺结果或 outcome_unknown 的工具；`inputsConfirmed=true`；R 来源另需 reconcile 与实例租约 | `settled`（answered 或 closed） | QueryRun：status、outcome、endedAt、phase settled、history；QueryJob：status、answerRefs、closeReason；answered 时写 Answer@1（请求轮的文本从第一个已接受提交的实参重建，`query-observation.ts:477-503`；没有已接受提交才退回最后的助手文字）；Session 经 SES-08 释放 | 按 Kernel 位置身份重放（`:1296`）：进程内与重启观察同一终态时得到同一回执 | R5、S8、D-11 | 已有 `query-execution.ts:1358-1440`（今天已接受从 `unknown` 出发） |
+| QRR-04 | `entering` 或 `entered`（running/running） | `query_reconcile_interrupted_clean` | `caller=reconcile`，`hostLease=owned`；探针 `ready`；Turn 存在；`mappedOutcome=null`（Kernel 状态为 created/running/paused/interrupted，SD-4(e)）；没有缺结果或 outcome_unknown 的工具；`inputsConfirmed=true` | `settled`（closed/closed） | QueryRun：status closed、outcome `failed`、endedAt、phase settled、history 取 Kernel 读到的历史；QueryJob closed，closeReason `{code:'failed', message:'host_interrupted'}`，Kernel 状态为 paused/yielded 时 message 为 `kernel_status:<状态>`；Session 经 SES-09 释放（Kernel 状态为 created/running/paused 时同提交记为 `kernel_turn_open`，yielded 是 Kernel 终态，不记，SD-2） | 同 QRR-01 | S8、D-6、D-11 | 新增（缺口 SG-6）；`kernel_turn_open` 新增（与 lead 决定 LA-1（2026-10-03）同一 Kernel 约束） |
 | QRR-05 | `entering` 或 `entered`（running/running） | `query_reconcile_unknown` | `caller=reconcile`，`hostLease=owned`；满足其一：(i) 探针 `ready`、Turn 存在、有工具调用缺结果或为 outcome_unknown（不论 Kernel 状态能否映射）；(ii) 探针 `missing`/`damaged`（SD-3） | `unknown`（status 不变） | phase 改为 `unknown`；`history`：Kernel 可读时取读到的历史，否则保持原值（可能为 null）；记录原因（未结算工具 id 或探针结论码）；Session 不写 | 身份 hash(queryRunRef, hostInstanceId)。不能沿用 `query-execution.ts:1294-1295` 由 Kernel 位置构造的身份，SD-3 时没有位置 | S8、D-6、D-4、D-11 | 新增（缺口 SG-8；`:1340-1357` 的 owner 分支要求 entry 身份与 `observation.history`，重启路径需新写口） |
 | QRR-06 | `unknown`（running/running） | `query_unknown_attested` | `caller=host_entry`（`resolveUnknownRun` 接受 QueryRunRef）；actor=human；reason 非空；QueryRun 版本钉一致；`hostLease=owned`，未持有时 `busy`（L-1）；Kernel 可读时 `inputsConfirmed=true` | `settled`（closed/closed） | QueryRun：status closed、outcome `failed`、endedAt、phase settled；QueryJob closed，closeReason `{code:'failed', message:理由}`；事件 actor 为该人类；Session 经 SES-10 释放（Turn 没有 Kernel 终态或 Kernel 不可读时同提交记为 `kernel_turn_open`，SD-2） | 同请求身份重放；指纹只含请求本身（QueryRun、理由、pin），不含 Host 入口读到的 Kernel 事实（`kernelTurnOpen`、`inputsConfirmed`）；Host 入口在租约检查之后、准入与 Kernel 读取之前按身份查回执（A.2 第 6 步同步，lead 决定 LA-8（2026-10-07）） | D-4(b) 类比、D-11 | 新增（U-4 按原推荐，2026-10-03）；`kernel_turn_open` 新增（与 lead 决定 LA-1（2026-10-03）同一 Kernel 约束） |
 
@@ -2663,7 +2663,13 @@ QRR 表外说明：
 - **收束一致性。** 每个收束到 settled 的行都同时写 phase=settled、status、outcome、endedAt（QueryRun）以及 status、closeReason、updatedAt（QueryJob），由 state/ 的记录构造函数 `settleQueryRunRecord` 产出（§14）。不能只改 status 或只改 phase。
 - **咨询 Query 收束后不会自动重来。** 咨询 Query 的身份由消息确定（`consultationQueryRefs`，`src/contracts/query-job.ts:30-38`；领取时核对，`query-execution.ts:736-738`）。QRR-01/02/04/06 把它收束为 closed 后，咨询消费者把“已关闭且没有 Answer”的 Query 投影为 `ended`（`business/workflow/consultation.ts:114-122`、`:253-254`），同一身份不会再次提交。要重新咨询，需要新的消息或新的请求。
 - **`unknown` 不因接管变为已知。** 与 §6 RD-4 相同：某次启动时 QueryRun 已是 `unknown`，即使 Kernel 可读且没有在途工具，也不走 QRR-01/02/04，出口只有 QRR-03 和 QRR-06。
-- **进程内的 paused/yielded Query 仍要等重启。** 进程内观察者遇到无法映射的 Kernel 状态时不写任何东西（`query-observation.ts:395-396`），占用一直保留到下次 Host 启动，由 QRR-04/05 处理（缺口 SG-13）。
+- **进程内的 paused Query 仍要等重启。**（`yielded` 自 FA 起有映射，见下条。） 进程内观察者遇到无法映射的 Kernel 状态时不写任何东西（`query-observation.ts:395-396`），占用一直保留到下次 Host 启动，由 QRR-04/05 处理（缺口 SG-13）。
+- **请求轮的 `yielded` 与 Query 结果映射（97-3 FA，2026-10-30）。** `mapOutcome(status, acceptedSubmit)`（`query-observation.ts:121-137`）：
+  - 请求轮 = manifest 有 `request`，且冻结工具表里有提交工具（`answerSubmitNamesIn`，`answer-tools.ts:65`）。有已接受提交时：`yielded`、`failed`、`limit_exceeded` 都映射 `answered`；`completed` 照旧 `answered`；`cancelled` 仍是 `cancelled`。没有已接受提交时：`yielded` → `failed`，其余按旧映射；`interrupted` 仍是 null（走 QRR-04）。
+  - 接受处的屏障在 `after_group` 看到已接受提交就 `{kind:'yield', reason:'external_input_required'}` 结束 Turn（`answer-tools.ts:528-539`、`query-execution.ts:770`），不再请求一次模型。
+  - 答案从第一个成功提交的实参重建：`buildAnswerText(kind, form, {projectId})` → `formalAnswerOf`（`query-observation.ts:477-503`）；没有已接受提交才退回旧读法（`extractAnswer` + `formalAnswerOf`，代码框的权宜保留）。
+  - `QUERY_TERMINAL` 含 `yielded`（`run-reconcile.ts:558`）：Host 在 Kernel 终态和提交之间停掉时，同一观察者按 QRR-03 入账。
+  - 存储的回答（`QueryJobAnswerV1`）、编解码、16 KiB 上限、`answerId`、提交和 QRR-03 的写入都不变。
 
 ### 8.4 明确禁止的迁移
 
@@ -3285,7 +3291,7 @@ stateDiagram-v2
 
 ## 10. Message
 
-消息是收件 Session 收到的一条陈述，不是任务义务。收件人忙或已归档都照常收信；收信不会唤醒执行、不会抢占，也不会建立任务依赖（`src/core/work-graph/model/communication-contracts.ts:6-11`）。本节把邮箱的六个写入点（state-writes-other §2，M-a…M-f）转写为单调状态机。消息状态只有 `pending/read/responded`。“已交付”“等待”“已落实”都用其他事实表达，不新增消息状态（ORCHESTRATION §0.2“确认层次”、§2 消息行）。
+消息是收件 Session 收到的一条陈述，不是任务义务。收件人忙或已归档都照常收信；收信不会唤醒执行、不会抢占，也不会建立任务依赖（`src/core/work-graph/model/communication-contracts.ts:6-11`）。本节把邮箱的写入点（state-writes-other §2 的 M-a…M-f，加 7B-1 的接受与到期，见 §10.7）转写为单调状态机。消息状态只有 `pending/read/responded`。“已交付”“等待”“已到期”“已落实”都用其他事实表达，不新增消息状态（ORCHESTRATION §0.2“确认层次”、§2 消息行）。
 
 本节依赖的决定（2026-10-03 已确认，D-6、D-4(b) 按原推荐）：D-17（不做“让出前即持久化的等待关联”）、D-6（重启补账，U-6）、D-4(b)（人工认定，Kernel 可能不可读；属 U-4；只经持实例租约的 Host 入口，lead 决定 L-1），以及 §6 的 RD-3（重启时 Kernel 终态为 yielded：由持久事实重建 continuation 后按原结果入账；只在本 Turn 恰好一条等待发信时重建，否则记为未知，lead 决定 L-5）。
 
@@ -3297,11 +3303,13 @@ stateDiagram-v2
 | `readAt` | `:105` | `null \| string` | ack 时写入；回复时若仍为空则回填 |
 | `response` | `:106`，类型 `MessageResponse` 在 `:81-86` | `null \| {sender: work_run \| query_run, bodyRef, sourceRef, respondedAt}` | 单槽，只写一次 |
 | `replyMode`、`intent`、`needsReply`、`waitAfterSend`（2026-10-20 补注：`replyMode` 已由 T 轮删除，TP-031） | `:113-119`；意图类型见 `src/contracts/core/session-message.ts:22`、`:25-29` | `'wait'`；`notify/inquiry/action_request`；boolean | 发送时固定，之后不变 |
-| `acceptedInputs[]` | `:132-138` | `{inputId, part: message \| response, executionRef, kernel{…position}, acceptedAt}` | 只追加 |
+| `acceptedInputs[]` | `state/message-machine.ts:250`，条目类型 `MessageAcceptedInput` 在 `:183-193` | `{inputId, part: message \| response \| expiry, executionRef, kernel{…position}, acceptedAt, evidence: input_accepted \| query_entered, consumesWait}`；`consumesWait:true` 的条目同时持有 `wait-consumed:<消息键>` | 只追加 |
+| `expiredAt` | `:278` | `null \| string` | 只写一次（`message.recordExpiry`，§10.7）；到期不改 `status` |
+| `delivery`、`deliveryEvidence` | `:276-277` | `queued \| delivered`；`{executionRef, acceptedAt}` | `part:'message'` 的接受在同一提交写 `delivered`/`accepted`，之后不变（7B-1） |
 | `consultationDerivation` | `:139-144` | `{childSessionRef, sourceSessionRef, sourceKernel, throughPosition}` | 只写一次，先写者胜 |
 | `sender`、`recipient`、`bodyRef`、`sourceRef`、`createdAt` | `:99-103` | sender 为 `host`（`:36-39`）或 `work_run`（`:46-52`） | 不可变 |
 
-- 状态机输入状态：`MessageMachineState = absent | { status, hasReadAt, hasResponse, acceptedInputIds, hasDerivation, revision }`。
+- 状态机输入状态：`MessageMachineState = absent | { status, hasReadAt, hasResponse, acceptedInputIds, hasDerivation, revision, release, delivery, withdrawnAt, expiredAt, appliedAt, rejectedAt, approvedAt, approvalRevision, pins }`（`state/message-machine.ts:301-319`；投影 `messageMachineStateOf` 在 `:537-556`）。
 - 守卫上下文（IO 留在服务，服务把读取和授权结果填进来）：
 
 ```ts
@@ -3326,7 +3334,7 @@ type MessageGuardContext = {
     executionSessionMatches: boolean;                  // part=message：收件人；part=response：原发信 Session
     inputIdTakenByOtherEvent: boolean;
   };
-  consumedWait: null | { responseRefMatches: boolean; sameWorkspace: boolean }; // 只用于 MSG-10
+  consumedWait: MessageWaitFactsV1 | null;   // 只用于 MSG-10；三臂见 §10.7（state/message-machine.ts:1202-1205）
 };
 ```
 
@@ -3349,8 +3357,8 @@ type MessageGuardContext = {
 
 1. **发送时的意图。**（2026-10-20 补注：T 轮删了 `replyMode`（TP-031）。代码里的 `sendFlags` 已经没有它（`message-machine.ts:302`）；上面的类型示例和下面的行号是当时的写法，现在归一化在 `mailbox-service.ts:2065-2069`，codec 的拒绝在 `message-record-codecs.ts:787-789`。下面的规则对其余两个照旧。）`needsReply`、`waitAfterSend`、`replyMode` 在发送时归一化（`mailbox-service.ts:1072-1077`）后固定。`waitAfterSend` 与 `needsReply=false` 不能同时出现，服务（`:1075-1077`）和 codec（`message-record-codecs.ts:325-327`）都会拒绝。
 2. **执行中的等待登记只在内存。** 登记链路是 `communication-tools.ts:243-247` → `execution-driver.ts:328-331`（`handle.waitMessage`）。工具组屏障在 `after_group` 时让出（`execution-driver.ts:678-680`）。
-3. **只有 yielded 终态会把等待写入持久记录。** `execution-control.ts:220-232` 构造 `RunContinuationV1{kind:'wait_reply', messageRef}`，经 `execution-observation.ts:647`、`:658` 交给 `recordRunResult`，写入 `Run.continuation`。yielded 终态必须带 continuation，否则 `recordRunResult` 拒绝（`execution-entry-service.ts:1373-1378`）。
-4. **等待何时算满足。** 条件是消息为 `responded`，且 `response.bodyRef` 等于后继领取中 `consumedWait.responseRef`。后继领取写 `Run.consumedWait`，并在同一提交里守卫消息 revision（`claim-service.ts:590-638`、`:703`、`:731`）。`read` 状态或 `acceptedInputs` 都不满足等待（M3：“读取/接收确认不能解除等待”）。
+3. **只有 yielded 终态会把等待写入持久记录。** `execution-control.ts:188-200` 构造 `RunContinuationV1{kind:'wait_reply', messageRef}`，经 `execution-observation.ts:647`、`:658` 交给 `recordRunResult`，写入 `Run.continuation`。yielded 终态必须带 continuation，否则 `recordRunResult` 拒绝（`execution-entry-service.ts:1373-1378`）。7B-1 起 `RunContinuationV1.kind` 有三种（`wait_reply`、`expiry`、`intervention`，`dispatch.ts:294-301`），但 yield 只写 `wait_reply`；`expiry` 和 `intervention` 是领取时的选择，只写在领取的 `ConsumedWaitV1` 上（§10.7）。
+4. **等待何时算满足。** 只有一个谓词 `messageSatisfiesWait`（`message-machine.ts:1084-1124`），按领取的 `consumedWait.kind` 分三臂（§10.7）：`wait_reply` 要求消息为 `responded`、`response.bodyRef` 等于领取的 `responseRef`、同一工作区；`expiry` 要求消息已设 `expiredAt`、没有回复（有回复时为 `busy/reply_present`）、尚未被消费；`intervention` 直接满足，不消费任何东西。已消费（`acceptedInputs` 里有 `consumesWait:true` 的条目）一律 `busy`。后继领取写 `Run.consumedWait` 和 `previousRun`，并在同一提交里守卫消息 revision（`claim-service.ts:1178-1210`、`:1191`、`:1310`）。`read` 状态或只有 `acceptedInputs` 不满足 `wait_reply`（M3：“读取/接收确认不能解除等待”）。
 5. **缺口（state-writes-other §7 #21，D-17 不做）。**
    - Host 若在发信成功后、yielded 终态提交前崩溃，进程内的等待登记会丢失：消息仍带 `waitAfterSend:true`，但 Run 上没有 continuation。
    - 重启补账分两种情况：
@@ -3358,7 +3366,7 @@ type MessageGuardContext = {
      - (b) Kernel 尚未 yield（D-17 真正的缺口，§12 W-18）：没有 yielded 终态，Run 按 RUN-19 记为 `crashed` 或按 RUN-20 记为未知，等待关联丢失。
    - 这条等待消息本身不变：仍是原来的 `pending`/`read`/`responded`，`waitAfterSend:true` 保留。情况 (b) 下之后到达的回复照常写入单槽（MSG-04..06），但没有 Run 的 continuation 指向它，所以不会触发接续领取，MSG-10 不会被调用。Task 按 §4 投影为 failed（RUN-19）或 blocked（RUN-20）。RUN-19（以及 Kernel Turn 未结束时的 RUN-22）之后原 Session 为 `unavailable/kernel_turn_open`，经 D-3 重新入队的新 Run 先关闭悬空 Turn、留在原 Session；关闭不可用才在新 Session 中运行（用户决定 51、54，K 片 cfe35550；lead 决定 LA-1（2026-10-03）的退路部分，§16 GAP-50）。留在原 Session 时，之后到达的回复照常投递给这个 Session（K 片 KE3、KA-08）；只有退到新 Session 时，输入供给才不提供发给原 Session 的这条回复，只有 requeue 把它列入 `newInputRefs` 时，接续说明才内联其正文（C3，§16 GAP-04）。
    - RD-3 不按 outbox 查找等待消息：该 Run 可能发出多条 `waitAfterSend` 消息，只有 Kernel 历史中的工具结果位置能指出是哪一条。进程内的取法也不唯一：`waitRegistered` 只记第一条（`execution-driver.ts:329`），continuation 取的 `waitHandle.waitMessage` 每次被覆盖（`:330`）。因此按 lead 决定 L-5，只在本 Turn 恰好一条等待发信时重建；多条时不猜，按重建失败经 §6 RUN-20(iii) 记为 `outcome_unknown`，保留占用和 Lease，出口为人工认定（RUN-22，须在持实例租约的 Host 上，L-1）。这些等待消息本身不变；认定之后与情形 (b) 相同：没有 continuation 指向回复，回复不触发接续领取。
-   - 本节不新增消息侧的等待状态。
+   - 本节不新增消息侧的等待状态：等待是 `waitStateOf` 从消息记录和 `wait-consumed` claim 导出的五值（`open`/`answered`/`expired`/`consumed`/`withdrawn`，`state/message-machine.ts:1138-1145`），见 §10.7。
 
 ### 10.2 事件
 
@@ -3367,11 +3375,12 @@ type MessageGuardContext = {
 | `message_sent` | U（Host 操作者或 Host 注意力递送，`src/app/host.ts:958-961`）、P（work_run 通信工具） | `recipient`、正文（先存成 `bodyRef`）、`intent/needsReply/waitAfterSend/replyMode`、发信 principal | M1 |
 | `message_read` | P（work_run 工具 `ackMessage`） | `messageRef`，恰好一个消息版本钉 | M3 |
 | `message_responded` | P（work_run 文本回复）；P（Host 关联正式 Query Answer） | `messageRef`、版本钉，以及 `text` 或 `answerRef` | M3、§0.1 A′ |
-| `input_accepted` | K（Kernel `run.input_accepted`，由 Runtime 观察者提交，`agent-runtime/execution-inputs.ts:151-174`） | `messageRef`、`part`、`executionRef`、`kernel{adapterId, kernelSessionId, runId, turnId, position}` | M3（接收确认与响应分别记录）、§0.2 确认层次 |
+| `input_accepted` | K（Kernel `run.input_accepted`，由 Runtime 观察者提交，`agent-runtime/execution-inputs.ts:358-381`） | `messageRef`、`part: message \| response \| expiry`、`executionRef`、`kernel{adapterId, kernelSessionId, runId, turnId, position}`；接受同时决定 `consumesWait`（§10.7） | M3（接收确认与响应分别记录）、§0.2 确认层次 |
 | `consultation_derived` | P（Host 咨询消费者，`business/workflow/consultation.ts:368-379`） | `messageRef`、版本钉、`derivation` | §0.1 A′ |
-| `task_claimed`（Task 投影事件，此处只读） | P | 接续领取中的 `consumedWait{runRef, messageRef, responseRef}` | M3（推进适用等待） |
+| `task_claimed`（Task 投影事件，此处只读） | P | 接续领取中的 `consumedWait{kind, originalRun?, messageRef, responseRef? \| expiryInputId?}`（三臂，§10.7）与 `previousRun` | M3（推进适用等待） |
+| `message_expired` | X（Host 到期扫描的 owner，`communication/message-expiry.ts:55`） | `messageRef`、`expiredAt`；命令 id 为 `expiry:<消息键>` | W-01…W-03、§10.7 |
 
-- 没有 T（超时）来源的事件：M5 超时、失联、重定向目前没有写入者。
+- 没有 T（超时）来源的消息状态事件：M5 超时、失联、重定向仍没有写入者；等待到期是 `message_expired`，只写 `expiredAt`，不改 status（§10.7）。
 - 没有 R（重启）专用事件：reconcile 只会以同一身份重放 `input_accepted`（见 10.3 表后说明）。
 - 实例租约被另一个存活的 Host 持有（或锁文件不可读）时，该 Host 不运行 reconcile，也不启动注意力递送等执行驱动，因此不会产生注意力递送的 `message_sent`（`src/app/host.ts:958-961`）。Host 操作者经 HTTP 的发信（MSG-01）和各读操作照常，由 RecordStore CAS 保护（lead 决定 L-10）。
 
@@ -3385,10 +3394,11 @@ type MessageGuardContext = {
 | MSG-04 | `pending` | `message_responded`（work_run） | 同 MSG-03；正文有界 | `responded` | 提交前先存回复正文；写 `response{sender: work_run}`；`readAt ??= respondedAt`；rev+1；事件 `SessionMessageResponded` | 同身份重放；单槽只写一次 | M3 | 已有 `mailbox-service.ts:1629-1713` |
 | MSG-05 | `read` | `message_responded`（work_run） | 同 MSG-04 | `responded` | 同 MSG-04（`readAt` 保持原值） | 同 MSG-04 | M3 | 已有 `mailbox-service.ts:1691-1697` |
 | MSG-06 | `pending` 或 `read` | `message_responded`（query_run，由 Host 关联正式 Answer） | Host principal；咨询绑定与本消息、原收件人及 derivation 来源一致；QueryJob 为 answered 且列有该 Answer；QueryRun 已 settled 且 outcome 为 answered；作答 Session 是领取 Session；正文有界 | `responded` | `response{sender: query_run, generation}`；正文沿用 Answer 的原始来源；`readAt ??=`；只守卫消息版本钉 | 同身份重放（`:1838-1840`）；与 MSG-04/05 抢同一单槽时先到者胜 | M3、§0.1 A′ | 已有 `mailbox-service.ts:1726-1880` |
-| MSG-07 | 任一 s | `input_accepted`（part=message） | principal 为 work_run（只能确认自己的 Run）或 Host；Kernel 身份等于执行记录中持久的身份；执行 Session 是收件人；该 inputId 尚未被接受 | s（不变） | 向 `acceptedInputs` 追加一条，rev+1；事件 `SessionMessageInputAccepted`；按读取到的 revision 守卫消息 | 身份键为 (messageRef, part, executionRef, kernel)，与观察者是谁无关（`:1996-1998`），重复即重放 | M3、§0.2 | 已有 `mailbox-service.ts:1947-2064` |
-| MSG-08 | `responded` | `input_accepted`（part=response） | 同 MSG-07，但要求 `response≠null`，原发信人为 work_run，且执行 Session 是原发信 Session | `responded` | 同 MSG-07 | 同 MSG-07 | M3（回复关联原请求） | 已有 `mailbox-service.ts:2030-2033`、`:2045-2047` |
+| MSG-07 | 任一 s | `input_accepted`（part=message \| response \| expiry） | principal 为 work_run（只能确认自己的 Run）或 Host；Kernel 身份等于执行记录中持久的身份；该 inputId 尚未被接受；执行 Session：part=message 是收件人，part=response 是有效回复处理者（`replyHandler`，否则原 work_run/secretary_round 发信 Session），part=expiry 是让出等待的 work_run 发信 Session | s（不变），part=message 另写交付事实 | 向 `acceptedInputs` 追加一条，rev+1；事件 `SessionMessageInputAccepted`；按读取到的 revision 守卫消息；part=message 同提交写 `delivery:'delivered'`、`deliveryEvidence`；part=response/expiry 若是对这条消息的接续接受，条目记 `consumesWait:true` 并取 `wait-consumed:<消息键>` claim（owner 为空，nextOwner 为 inputId） | 身份键为 (messageRef, part, executionRef, kernel)，与观察者是谁无关（`:1996-1998`），重复即重放；claim 已被占用时仍记接受，条目 `consumesWait:false`，不取 claim | M3、§0.2 | 已有 `mailbox-service.ts:3692-3825` |
+| MSG-08 | `responded` | `input_accepted`（part=response） | 同 MSG-07，但要求 `response≠null`，原发信人为 work_run 或 secretary_round，且执行 Session 是有效回复处理者（转移后为接手 Session） | `responded` | 同 MSG-07（包括消费领取） | 同 MSG-07 | M3（回复关联原请求） | 已有 `mailbox-service.ts:3792-3825` |
 | MSG-09 | 任一 s | `consultation_derived` | Host principal；derivation 为对象，形状由 codec 在提交时校验；此前没有 derivation；恰好一个版本钉 | s（不变） | 写 `consultationDerivation`，rev+1；事件 `SessionMessageConsultationDerived`；只守卫消息版本钉 | 同身份重放（`:1912-1914`）；先写者胜 | §0.1 A′ | 已有 `mailbox-service.ts:1885-1942` |
-| MSG-10 | `responded` | `task_claimed`（接续领取读取等待是否满足） | `status==='responded'` 且 `response≠null`；`response.bodyRef` 等于 `consumedWait.responseRef`；同一工作区 | `responded`（只读） | 领取提交守卫消息 revision；回复后再追加 `acceptedInputs` 会让并发领取得到 CAS 冲突 | 随领取回执重放 | M3（推进适用等待） | 已有 `claim-service.ts:619-638` |
+| MSG-10 | 任一 s（`pending`/`read`/`responded`） | `task_claimed`（接续领取读取等待是否满足） | 先过消费规则（撤回 `invalid`、未释放 `busy`）；再按 `consumedWait.kind`：`wait_reply` 要求 `responded` 且 `response≠null`、`response.bodyRef` 等于 `consumedWait.responseRef`、同一工作区；`expiry` 要求 `expiredAt` 已设、`response==null`（有回复时 `busy/reply_present`）；`intervention` 直接满足。已消费的等待一律 `busy` | s（只读；`wait_reply`/`expiry` 都是 `responded`，`intervention` 不变） | 领取提交守卫消息 revision；回复后再追加 `acceptedInputs` 会让并发领取得到 CAS 冲突 | 随领取回执重放 | M3（推进适用等待） | 已有 `claim-service.ts:1178-1210`、`state/message-machine.ts:1084-1124` |
+| MSG-11 | 任一 s（`pending`/`read`/`responded`），消息存在 | `message_expired` | owner 的 `decideExpiry` 已判：已释放、`waitAfterSend` 的 `inquiry`、`deadline` 已过、等待 `open`、`expiredAt=null`；机器只要求消息存在且尚未到期 | s（不变），`expiredAt` 写入，rev+1 | 写 `expiredAt`；事件 `SessionMessageExpired`；只守卫消息 revision；不取 `wait-consumed` claim | 同命令身份（消息 ref）重放得到原回执；已到期 → `invalid`，owner 在提交前按 `not_open` 跳过 | W-01…W-03、§10.7 | 已有 `message-expiry.ts:55-106`、`state/message-machine.ts:1496-1507` |
 
 表外说明：
 
@@ -3423,12 +3433,12 @@ type MessageGuardContext = {
 | 任一 | work_run 为别的执行确认 `input_accepted` | guard_failed | `forbidden` | `:1981-1983` |
 | 任一 | `input_accepted` 改变 `status` 或 `readAt` | illegal | 无 | 交付、已读、处理是三件事（M3）；该事件只追加 |
 | 已有 derivation | `consultation_derived` | illegal | `invalid` | `:1918-1921`；先写者胜 |
-| `pending` 或 `read` | 把 `message_read` 或 `input_accepted` 当作等待已满足 | guard_failed | `busy`（接续领取） | `claim-service.ts:630-632`：只有 responded 满足等待 |
-| absent | `task_claimed`：接续领取引用的等待消息不存在 | guard_failed | `busy` | `claim-service.ts:626` |
+| `pending` 或 `read` | 把 `message_read` 或 `part:'message'` 的 `input_accepted` 当作 `wait_reply` 已满足 | guard_failed | `busy`（接续领取） | `state/message-machine.ts:1084-1124`：`wait_reply` 只有 responded 满足；`expiry` 由 `expiredAt` 满足，`intervention` 不消费等待 |
+| absent | `task_claimed`（`wait_reply`/`expiry`）：接续领取引用的等待消息不存在 | guard_failed | `busy` | `state/message-machine.ts:1095-1097、1107-1108`；`intervention` 不读等待内容，消息记录不存在也照常领取（`:1090`） |
 | `responded` | `task_claimed`：`consumedWait.responseRef` ≠ `response.bodyRef` | guard_failed | `forbidden` | `claim-service.ts:633-635`；不信任调用方给的 responseRef |
 | `responded` | `task_claimed`：等待消息不在绑定工作区 | guard_failed | `forbidden` | `claim-service.ts:636` |
 | 任一 | 读操作（`readInbox`、`readMessage`、`readMessageBody`、`readOutbox`）改变 status | illegal | 无 | `model/communication-contracts.ts:167-171` |
-| 任一 | 因超时或失联自动改变消息状态或取消等待 | illegal | 无 | M5 只允许确定性提醒和显式处置；本规格不提供写入者 |
+| 任一 | 因超时或失联自动改变消息状态或取消等待 | illegal | 无 | M5 只允许确定性提醒和显式处置。唯一例外是等待到期：`message.recordExpiry` 只写 `expiredAt`，不改 status、不取消等待（§10.7、MSG-11） |
 
 **守卫缺口与处置（只修状态机必需的部分）**
 
@@ -3444,7 +3454,7 @@ type MessageGuardContext = {
 | #20 子 Session 与 derivation 分两次提交 | 列为已知缺口 | 确定性 requestId 让重试复用同一子 Session（`consultation.ts:358-379`） |
 | #21 等待关联只经 yielded 终态持久化 | 列为已知缺口（D-17） | 见 10.1；本规格不新增消息等待状态 |
 | G11 正式 wait/subscription 与调度唤醒 | 列为已知缺口 | `IMPLEMENTED-CAPABILITIES.md:162`、`:252` |
-| M5 超时、失联、重定向 | 列为已知缺口 | 没有路由或等待处置记录 |
+| M5 超时、失联、重定向（用户决定消息） | 仍为已知缺口 | 等待类询问的到期已有 `message.recordExpiry`（§10.7）；决定消息的超时、失联、重定向仍没有路由或处置记录 |
 | 正文在事务外先存 | 保持 | 孤儿正文不会被发布（`C1-session-mailbox.test.ts:417`） |
 
 ### 10.5 状态图
@@ -3473,12 +3483,116 @@ stateDiagram-v2
 | MSG-03 | `transitionMessage`（message_read）、`nextSessionMessageRecord` | `mailbox-service.ts` `ackMessage` | `C1-session-mailbox.test.ts:90`、`:188`、`:333` | read 或 responded 再 ack 得到 `invalid`；同身份重放 |
 | MSG-04、MSG-05 | `transitionMessage`（message_responded） | `mailbox-service.ts` `respondMessage` | `C1-session-mailbox.test.ts:188`、`:376` | pending 直接 responded 时回填 `readAt`（I-8） |
 | MSG-06 | 同上 | `mailbox-service.ts` `respondFromQueryAnswer`（经 `business/workflow/consultation.ts`） | `tests/app/AG2-consultation.test.ts:330`、`:518` | Answer 关联与 work_run 回复竞争，先到者胜 |
-| MSG-07、MSG-08 | `transitionMessage`（input_accepted） | `mailbox-service.ts` `recordInputAccepted`（由 `agent-runtime/execution-inputs.ts:151-174` 调用） | `tests/app/orchestration-mechanism.test.ts:331`、`:402` | 任一 status 下追加都不改 status；同 inputId 来自另一事件得到 `invalid`；重启补账重放不追加重复条目 |
+| MSG-07、MSG-08 | `transitionMessage`（input_accepted） | `mailbox-service.ts` `recordInputAccepted`（由 `agent-runtime/execution-inputs.ts:358-381` 调用） | `tests/app/orchestration-mechanism.test.ts:331`、`:402`；`tests/work-graph/S7B-X-accept.test.ts` | 任一 status 下追加都不改 status；同 inputId 来自另一事件得到 `invalid`；重启补账重放不追加重复条目；`part:'message'` 另写 `delivery`/`deliveryEvidence`；接续的回复或到期输入记 `consumesWait:true` 并取 claim |
 | MSG-09 | `transitionMessage`（consultation_derived） | `mailbox-service.ts` `recordConsultationDerivation` | `tests/app/orchestration-mechanism.test.ts:402`（断言在 `:470-471`） | 第二个不同 derivation 被拒（先写者胜）；work_run 调用得到 `forbidden` |
-| MSG-10 | `messageSatisfiesWait`（只读谓词） | `tasks/claim-service.ts:619-638` | `tests/app/AG2b-collaboration.test.ts:150` | read 状态或只有 `acceptedInputs` 时不满足等待（`busy`） |
+| MSG-10 | `messageSatisfiesWait`（只读谓词，三臂） | `tasks/claim-service.ts:1178-1210`、`state/message-machine.ts:1084-1124` | `tests/app/AG2b-collaboration.test.ts:150`；`tests/state/S7B-continuation-claim.test.ts` | `wait_reply`：read 状态或只有 `acceptedInputs` 时不满足（`busy`）；`expiry`：没有 `expiredAt` 或已有回复时不满足；`intervention`：直接满足，已消费的等待仍拒绝 |
 | 全部 | 单调性与 I-8 检查 | — | `C1-session-mailbox.test.ts:188` | 对所有事件序列做属性测试：状态不倒退；responded ⇒ `readAt≠null` 且 `response≠null` |
 
 §14 的写入限制要求：`mailbox-service.ts` 中写 `status`、`readAt`、`response` 的对象字面量（`:1149-1165`、`:1608`、`:1691-1697`、`:1857-1863`）改为调用 `state/message-machine.ts` 的记录构造函数。`acceptedInputs` 和 `consultationDerivation` 不是状态字段，但为保持单一构造点，也一并迁入。`message-record-codecs.ts` 的解码函数在豁免名单内。
+
+### 10.7 等待、接受与到期（7B-1，2026-10-30）
+
+7B-1（`bef7513b`）给等待加了读出、给接受加了消费领取、给到期加了一个 owner。消息状态仍是三个；等待是导出值，不新增状态。
+
+**等待状态（纯函数）。** `waitStateOf(message, facts)`（`state/message-machine.ts:1138-1145`）按下列顺序取第一个匹配：已消费（`acceptedInputs` 里有 `consumesWait:true` 的条目，`waitFactsOfRecord`，`:1207-1210`）→ `consumed`；`withdrawnAt≠null` → `withdrawn`，原因 `withdrawn`；`waitCancelledAt≠null` → `withdrawn`，原因 `wait_cancelled`；`status='responded'` 且有 `response` → `answered`；`expiredAt≠null` → `expired`；否则 `open`。回答胜过到期：`expiredAt` 之后、消费之前到达的回复读作 `answered`。
+
+| state | 含义 | 谁写 |
+| --- | --- | --- |
+| `open` | 还没有回答、没有到期、没有被消费 | 发送（`waitAfterSend:true`） |
+| `answered` | 单槽回复已写 | MSG-04/05/06 |
+| `expired` | 只写了 `expiredAt`，没有回复 | `message.recordExpiry`（MSG-11） |
+| `consumed` | 有 `consumesWait:true` 的接受条目（`wait-consumed:` claim 的持有者） | 接受提交（MSG-07/08） |
+| `withdrawn` | 撤回（`withdrawn`）或归档时取消等待（`wait_cancelled`） | 7A 的撤回、S1-MSG-02 |
+
+**等待的种类（三臂）。** `ConsumedWaitV1`（`src/contracts/dispatch.ts:306-312`）只有三臂；`RunContinuationV1.kind` 是同一组名字（`:294-301`），但只有 yield 写 `wait_reply`。
+
+| kind | 谁写 | 消费什么 | 领取守卫 |
+| --- | --- | --- | --- |
+| `wait_reply` | 让出的 Run 的 `continuation`；Workflow 在消息已回复时选它（`business/workflow/workflow.ts:1108-1113`） | 保存的正式回复 | 消息 `responded`、`response.bodyRef` 等于 `responseRef`、同一工作区、尚未消费 |
+| `expiry` | 只有领取（Workflow 在 `expiredAt` 已设且没有回复时选它，`:1114-1117`） | `expiry` 输入（id `expiry:<消息键>`） | `expiredAt` 已设、没有回复（有回复时 `busy/reply_present`，`message-machine.ts:1097-1103`）、尚未消费 |
+| `intervention` | 只有领取（Host 领到的干预） | 不消费任何东西 | 人的消息（或已释放的 agent `action_request`）在这条任务线上、消息存在时未撤回、已释放；不要求前一 Run 让出 |
+
+- 领取的 `previousRun` 是释放租约的持有者（`claim-service.ts:1085-1090`），链的走读用它；`originalRun` 仍是“让出等待的那个 Run”，`intervention` 没有 `originalRun`。
+- `wait_reply`/`expiry` 的前一 Run 必须真的是 `YieldedWait`、指针不是 paused/cancelled、continuation 指向这条消息、租约由它释放（`claim-service.ts:336-374`）。`intervention` 只要求释放的租约持有者与 `release.runRef` 一致（`:1092-1103`）。
+- 领取身份 = (前一 Run, 消息)，与 actor 无关；`intervention` 的身份只用消息（`claim-service.ts:778-786`）。
+- 领取只写 `Run.consumedWait`、`Run.previousRun` 和 `TaskClaim.previousRun`（`src/contracts/core/task-claim.ts:24`），并在同一提交守卫消息 revision（`claim-service.ts:1191`、`:1310`）。
+
+**接受（唯一的交付写入）。** `recordInputAccepted`（`communication/mailbox-service.ts:3692-3825`）仍是唯一写 `acceptedInputs` 的地方。`part:'message'` 的提交同事务写 `delivery:'delivered'`、`deliveryEvidence:{executionRef, acceptedAt}`（`state/message-machine.ts:1792-1795`）；offer 之后 Goal 才暂停也照实记录（Kernel 确实接受了）。重启时 `confirmMailboxInputs`（`agent-runtime/execution-inputs.ts:358-381`）按同一身份 `input-accepted:<sha>` 重放，不重复写。
+
+- `part:'response'` 的“执行 Session 匹配”是有效回复处理者：记录里的 `replyHandler` 优先，否则原 `work_run`/`secretary_round` 发信 Session（`message-machine.ts:1217-1224`）。
+- `part:'expiry'` 的执行 Session 是让出这个等待的 `work_run` 发信 Session（`mailbox-service.ts:3792-3797`）；秘书的到期输入不在 7B-1。
+
+**消费领取（consuming claim）。** 只在接受提交里取一次：键 `wait-consumed:` + `canonicalKey(messageRef)`（`model/communication-contracts.ts:77-79`），`UniqueClaimChange`，`expectedOwner:null`，`nextOwner:inputId`（`mailbox-service.ts:3821-3823`）。
+
+- 取 claim 的条件：接受的是 `part:'response'`，且它是对这条消息的 `wait_reply` 接续执行，或由这条消息的有效回复处理者接受（转移后是接手 Session）；或接受的是这条消息的 `expiry` 输入。取到时那条条目记 `consumesWait:true`。
+- 普通迟到回复记 `consumesWait:false`，不取 claim。
+- claim 已被占用时仍记下这次接受（Kernel 确实接受了），条目 `consumesWait:false`，不取 claim、不改别的。
+- 到期 owner 从不取 claim（它只写 `expiredAt`）。
+
+**到期 owner。** 新命令 `message.recordExpiry`（`communication/message-expiry.ts:55-106`），判定只用纯函数 `decideExpiry`（`state/message-machine.ts:1230-1240`）。按顺序：`release='released'`；`waitAfterSend:true` 且 `intent='inquiry'`；`deadline` 已过（注入时钟）；等待状态是 `open`（未回答、未撤回、未取消、未消费）；`expiredAt=null` → 写 `expiredAt`＝检查时刻。否则不写，返回 `skipped` 加下表中的原因。
+
+| skip 原因 | 条件 |
+| --- | --- |
+| `not_released` | `release` 不是 `released` |
+| `no_wait` | 不是 `waitAfterSend:true` 的 `inquiry` |
+| `not_due` | `deadline` 为空，或 `Date.parse(deadline) > Date.parse(at)` |
+| `not_open` | 等待状态不是 `open`（answered、expired、consumed、withdrawn） |
+
+- 到期不改 `status`、`readAt`、`response`，也不取消等待：只写 `expiredAt`，追加 `SessionMessageExpired`（MSG-11）。
+- 命令 id 是 `expiry:<消息键>`，指纹只含消息 ref（`message-expiry.ts:62`、`:69`）；崩溃后重试查回执。消息 CAS 冲突在 R2 的界内重试：重读看到 `answered` 就跳过。
+- 回复胜过到期：t1 写回复、t2 做检查 → 检查读到 `answered`，跳过，不写 `expiredAt`。`expiredAt` 之后、消费之前的回复读作 `answered`，领取选 `wait_reply`；到期已被接受之后的回复是普通迟到输入。
+- 同一毫秒重扫不写记录：`expiredAt` 已设 → `not_open`，不提交（`tests/app/S7B-L-expiry-host.test.ts:44` 的用例名固定这一点）。
+
+**到期读与 Host 心跳。**
+
+- 到期索引 `S7B_DUE_WAITS_LOOKUP`：项目、工作区、`release`、`intent` 等值，按 `deadline` 升序（`sessions/message-record-codecs.ts:223-224`）；读到的候选再在内存里滤掉没有等待、没有 `deadline`、已经到期的（`message-expiry.ts:128-137`）。
+- `readDueWaits` 一个工作区一页，`EXPIRY_PAGE = 50`（`message-expiry.ts:45`）；游标只在内存（`src/app/host.ts:2004`）。写顺序是最早的期限先（R4-14 第 3 条）。
+- Host 每次心跳开头、持实例租约时对每个配置的工作区跑一次（`host.ts:1993`、`:2003-2029`）。读页失败就下一次心跳重试，不当作“没有到期”（`:2013`）；遇到 `skipped/not_due` 就停止本页、游标停在该项之前，下一次再试（`:2017-2021`）。
+- `deadline` 比较用注入时钟（`options.now`，`host.ts:663`、`create-platform.ts:1081`）；墙钟只用于节流。
+- 到期只记事实，不唤醒任何东西；唤醒循环（7B-2）按 `SessionMessage` 提交再唤醒目标。秘书的过期提问被记下、可读，它的 `expiry` 轮在 7B-2（没有假生产者）。
+
+**到期次数。** `readExpiryCount`（`message-expiry.ts:141-161`）沿 `followupOf` 往回走，一条总预算 4 页 × 25 次链读：当前消息算 1，链上只要还有一条 `expiredAt` 已设就返回 2（2 是上限，不是链上到期消息的总数），走完没有返回 1，超预算返回 `incomplete`。`wait-expiry-delivery` 把它写成“第 {{expiryCount}} 次到期”（`resources/prompts/platform/templates/wait-expiry-delivery.txt:1`），所以可见文字只会是“第 1 次”或“第 2 次”。同一毫秒重扫没有新记录，计数不会自己长。`incomplete` 分支没有走公共链测过（要造一条超过 100 次链读的追问链）。
+
+**等待的两个读。**
+
+- `SessionFactsV1.waits: SessionWaitV1[]`（`tasks/session-facts.ts:198-212`、`:282-330`）：一个发送方 Session 的全部 `open`/`answered`/`expired` 等待，按消息记录的创建游标（`since`）升序；`wait` 是同序里第一个“本 Run 真的让出在它上面”的等待（`YieldedWait`、没有 cancel 指针、continuation 指向它）。只有消息、没有让出的行（W-18）只留在 `waits` 里。
+- `readWait({messageRef})`（`tasks/session-facts.ts:601-620`）：读一条记录；不是等待（或 Host 发的消息）返回 `not_found`，读失败是 `unavailable`。
+- 返回行的 `complete` 恒为 true；页预算命中是整个 `readSessionFacts` 的 `incomplete`，读法必须当作“不能证明没有等待”（`session-facts.ts:285-292`）。
+- 转发链在 7B-1 不跟：`rootRef` 等于消息本身（D8）。秘书的等待 `originalRun=null`、`requestRoot` 非空，不占 Query Session。
+
+### 10.8 Runtime 的输入顺序（7B-1，2026-10-30）
+
+一次供给 `createMailboxInputSupply`（`agent-runtime/execution-inputs.ts:128`）按下列冻结顺序给出候选，先算出的先给：
+
+1. **人先。** 收件箱里 `sender.kind='host'` 且 `sender.actor.kind='human'` 的消息，按提交游标、同一游标按消息 ref 排（`:219-245`）。等待为 `answered` 时人仍先给：人的插话永远在接续输入之前，也不把等待的回复抢走。
+2. **本次执行自己的接续输入。** `wait_reply` 给保存的正式回复（渲染 `wait-reply-delivery`）；`expiry` 给到期输入（渲染 `wait-expiry-delivery`，带 `expiryCount`）（`:247-286`）。
+3. **其余。** agent 消息、本 Session 的发件箱回复、按有效处理者路由的回复合并后按提交游标排；回复用 `responseSince` 作游标，不用原问题的 `since`（`:288-335`）。
+4. **控制输入最后。** steer 照旧（`:337-340`）。
+
+- 绑定 `wait_reply` 的回复只给接续 Run 或转移后的有效处理者（`:153-157`、`:255-258`）；`intervention` 执行永远拿不到它（D-04）。等待被到期消费之后，回复是普通迟到输入，按提交顺序给。
+- `intervention` 执行不提供 agent 的 `action_request`（`:332`）；agent 的 `notify`/`inquiry` 照常给，`inquiry` 不作为普通 Work 输入（`:174`）。
+- 已被 Kernel 在本 Run 更早边界接受的 inputId 从 `point.acceptedInputIds` 起就排除（`:212`）；来源记录已接受的也排除（`alreadyAcceptedBySource`，`:82-84`）。
+- 供给不写任何事实（offer 不是交付）；接受由 Kernel 的 `run.input_accepted` 观察后经 MSG-07/08 确认。
+
+### 10.9 Host 的门与到期心跳（7B-1，R4-17）
+
+**收件箱门。** `consumeIdle`（`src/app/host.ts:1715`）对一个输入消费者 Session 逐条读收件箱，按下面的顺序跳过（`continue` 下一条，`:1738-1767`）：
+
+- 已 `responded`，或非提问且已完成输入接受（`inputCompleted`）→ 跳过（`:1741`）。
+- 非提问且 Session 不空闲或已被占用 → 跳过（`:1742`）。
+- 可达性：`readDeliveryEligibilityFacts` + `deliveryEligibility`（`gateFacts`，`:1705-1713`）；不可投递 → 跳过（`:1745`）。
+- `notify` 永远不开轮：`intervention = !inquiry && message.intent !== 'notify' && (...)`（`:1746-1747`）。Host 用人做 actor 发的通知（attention `:2103`、书记提醒 `:1988`）不是人的干预。
+- 是干预且领到（`handleIntervention` 返回 `claimed`）→ 启动驱动，结束本次扫描（`:1749-1758`）。干预但没领到 → `continue`（`:1760`）。
+- 是提问 → `consumeConsultation`，结束本次扫描（`:1762-1767`）。
+- 其余（`notify` 等不开轮的消息）→ `continue`（`:1762`），留在队列，不挡住后面的提问和发件箱；未释放、撤回或不可投递的消息在 `:1745` 已经跳过。
+
+一次扫描最多开一个轮（领到的干预或咨询 `return`）；其余消息留在队列，下一次心跳或安全点再给。
+
+**发件箱门。** 同一 `deliveryEligibility` 的 `part:'response'` 分支：`readWait` 读出等待状态，`consumed` → `{kind:'consumed'}`、`withdrawn` → `{kind:'none'}`、其余 → `{kind:'unconsumed', boundHere:false}`；只有 `not_found` 才是“没有等待”（`:1778-1795`）。
+
+**直接 Query 准入。** 咨询提交读同一组事实（`query-job-service.ts:693-699`）：没有注入 `eligibility` → `unsupported`；不可投递 → `deliveryBlockCode(reason)`（cancelled/withdrawn/not_released → `invalid`，其余 → `busy`，`:584-586`）。
+
+**到期心跳。** 持实例租约时，每次心跳开头先跑到期（`host.ts:1993`、`:2003-2029`），见 §10.7。
 
 
 ## 11. 跨状态机不变量
@@ -4107,7 +4221,7 @@ Goal 层面的对应规则在 §2 GOAL-05：人暂停的 Goal 只能由人恢复
 | Q-01 | 领取或准备之后、begin 之前 | phase `claimed` 或 `prepared`；QueryJob、QueryRun 为 `pending` | QRR-01：收束为 closed，outcome `not_entered`，closeReason `not_entered` | `settled`（closed） | 是（SES-09） | begin 先提交 `entering` 再启动 Kernel（`agent-runtime/query-execution.ts:218-232`）；不需要探针 | A8-Q1 |
 | Q-02 | begin 之后，Kernel 无 Turn | phase `entering`；探针 `ready`；没有固定 Turn | QRR-02：收束为 closed，不重新进入（entry generation 固定为 1） | `settled`（closed） | 是（SES-09） | D-5 类比 | A8-Q2 |
 | Q-03 | Kernel 已有终态 | phase `entering`、`entered` 或 `unknown`；Kernel 终态可映射；边界完整；输入可确认 | QRR-03（R 来源）：按原结果入账，answered 时写 Answer | `settled`（answered 或 closed） | 是（SES-08） | D-6 类比 | A8-Q3 |
-| Q-04 | 没有可入账终态，工具全部有结果 | phase `entering` 或 `entered`；Kernel 状态为 created、running、paused 或 yielded | QRR-04：closed，outcome `failed` | `settled`（closed） | 是（SES-09；Kernel 状态为 created、running、paused 时同提交把 Session 记为 `unavailable/kernel_turn_open`，§8 SD-2） | SD-4(b)(e) | A8-Q4 |
+| Q-04 | 没有可入账终态，工具全部有结果 | phase `entering` 或 `entered`；Kernel 状态为 created、running、paused 或 interrupted（`yielded` 自 FA 起映射为 `answered` 或 `failed`） | QRR-04：closed，outcome `failed` | `settled`（closed） | 是（SES-09；Kernel 状态为 created、running、paused 时同提交把 Session 记为 `unavailable/kernel_turn_open`，§8 SD-2） | SD-4(b)(e) | A8-Q4 |
 | Q-05 | 有在途工具，或 Kernel 数据确定性不可读 | 工具缺结果；或探针 `missing`/`damaged` | QRR-05：phase 记为 `unknown` | `unknown` | 否 | SD-3、SD-4(c) | A8-Q5 |
 | Q-06 | 此前已为 `unknown` | phase `unknown` | 只有 QRR-03（新终态）能离开，或由人经 QRR-06 认定；不走 QRR-01/02/04 | `unknown` 或 `settled` | 只在离开时释放 | RD-4 类比 | A8-Q6 |
 | Q-07 | 任意 | 探针 `host_config`、`transient` 或 `cancelled` | 不迁移，写入核对报告 | 原状 | 否 | SD-2 | A8-Q7 |

@@ -2,7 +2,7 @@
 
 ```yaml
 status: target-design-for-implementation
-updated: 2026-09-23
+updated: 2026-10-30
 scope: 从用户的数据结构方案确定核心对象、操作和一致性规则；不以旧 13 个模块反推边界
 implementation: 分项标记现有实现、需重组和新增；接口表是目标契约，不表示全部已交付
 ```
@@ -288,7 +288,7 @@ type PlatformMaterialOrigin = {
 | `proposePlan` | 原 planRef（初次可无）、已知 tasks/assignments/obligations/edges、理由 | 计划候选、变化与校验问题；规划未完整是可见诊断 | dangling reference、重复身份、采用的硬依赖 cycle；已有义务不得被静默削弱 |
 | `applyPlanChange` | proposalRef/规范化 plan draft、expected goal/plan、适用决定 | 新 PlanRevision、状态衔接、受影响任务集合 | 不静默删除已执行任务/义务；取消/替换显式处置 |
 | `applyPlanChange`：有痕 Task 只改处置（2026-10-08 补注：可靠性批次 A.2 5.10，规格 §4 TASK-19、§3 PLAN-05；规格 GAP-45 要求补上这一行） | 未来修订候选（W16，路由 `plans/apply`）里，有执行痕迹（有 Run、TaskLease 或 TaskReduction）的 Task 只改 `disposition`（active/deferred/cancelled/superseded）和 `replacedByTaskId`，执行定义不变；候选的 `reason.affectedTaskIds` 必须列出它；expected 同上一行 | 新 PlanRevision 里该 Task 是原定义加新处置，basis 继承；同一提交写 `dispositionRecord`（每个 Task 一条 `TaskDispositionChangeV1`：from/to、是否有痕、采用的版本和候选、原因、采用者）并移动 Goal 指针。phase 不变；不是 active 以后不能领取、重新入队、重新检查。旧 Run、Attempt、轮次、证据、TaskRequeue 都留在该 Task 上；读模型 `TaskRow.dispositionChange` 显示最近一次。不写 Run、Lease、Session、轮次或证据 | Goal 已取消 → invalid（Goal 暂停时允许）；有 Run 没结束、结果未知或未核对、让出等待没处理、TaskLease 没释放 → busy；已完成（有 Reduction）→ invalid；`affectedTaskIds` 没列它 → invalid；执行定义也改了 → revision_conflict（仍按有痕不可改）；Run 被人暂停或取消过时，只有人能改（forbidden，硬限制 3）。开着的检查轮次不阻止 |
-| `claimTask` | taskRef、planRef、所选 role/sessionRef、请求身份与预期版本 | attemptRef/runRef、任务占用、Session 占用和派发意图 | dependency_blocked、busy、版本冲突、不可用能力 |
+| `claimTask`（续作领取，2026-10-30 补注，7B-1） | 在 `claimTask` 的输入上加 `consumedWait`：`wait_reply`（`originalRun`、`messageRef`、`responseRef`）、`expiry`（`originalRun`、`messageRef`、`expiryInputId`）、`intervention`（只 `messageRef`）；领取和 Run 另带 `previousRun` | 通过时写新的 Attempt/Run，`previousRun` 是被释放租约的 Run，`originalRun` 仍指让出等待的 Run；`wait_reply` 要有真回复和未消费的等待，`expiry` 要有 `expiredAt`、未消费且没有回复（有回复回 `busy`/`reply_present`），`intervention` 用于人发的或已放行的 agent `action_request` 消息（发送方由 Host 门筛选）、不消费等待。链上的读改读 `previousRun`。**没有路由**（平台 `claims.claimTask`，Workflow 选下一步时调用） | 等待消息已撤回 → invalid；放出还没放行 → busy；等待已被消费 → busy；没有回复的 `wait_reply`、没有到期的 `expiry` → busy；等待消息读不到或坏了 → busy/unavailable；Goal 不是 active → busy；版本冲突 → revision_conflict |
 | `releaseTaskClaim` | claim/attemptRef、理由与实际运行状态 | 释放未执行占用，或受理停止后的清理 | 已进入执行时先走停止/核对，不直接放出第二执行者 |
 | `requeueTask`（2026-10-08 按可靠性批次 A.2 5.4 核对改写：原行写的是“taskRef、当前失败/检查引用、返工理由、expected → 保留原义务及失败，按既有返工处置建立再次领取的条件”；实现在 `TaskClaimPort` 上，路由 `tasks/requeue`） | `RequeueTaskInput`：taskRef、afterRunRef（Task 当前选定、已结束的 Run）、reason（非空，最多 2000 字符，不算新依据）；可选 newInputRefs（已回复的消息或已存的 Artifact，ND-9）、budget（Agent 不能给；给了以后领取的预算必须正好是它）、note（只收人工，存成 Artifact 并入 newInputRefs）、trigger（只给 Goal 恢复时的扇出用）；expected：Goal 和 afterRun 两个 pin 必填，另可带这项操作的拒绝记录 pin，不能多带。操作者类别从调用方推出；Agent 经委托写入准入（`requeue_task`），现在没有生产角色授予它（GAP-46） | 两种结果只写其一，返回值不是 TaskRow：`requeued` 写不可变的 TaskRequeue@1，Task 投影为 `pending/requeued`，下一次领取必须带它的 `requeueRef`（TASK-03），开新 Attempt；原 Run、失败事实、轮次和证据都留着。`refused` 提交一条政策拒绝 TaskReworkRefusal（`budget_not_increased`、`auto_rework_cap_reached`、`no_new_basis`）。自动上限来自 Host 设置 `automation.autoReworkLimit`（§8） | 下列都不写入：gate 不重新入队，它走自己链上的后继轮次（invalid）；afterRun 不是选定 Run、或已有 TaskRequeue → revision_conflict；Run 没结束、结果未知或未核对 → busy（未核对副作用不重跑，硬限制 1）；轮次还开着或正在检查 → busy；链无效 → incomplete；处置不是 active → invalid；Goal 不是 active → busy；Run 被人暂停或取消过时只有人能重新入队（forbidden，硬限制 3）。（2026-10-29 补注，SMK3b：模型服务出错中断的 Run（TD-8 FC-7m）也只有人能重新入队，Workflow 自动化和 Agent → forbidden。）范围或验收要改仍经 applyPlanChange。完整顺序见规格 §4.3、§13.2 |
 | `completeTask` | taskRef、planRef、verification round/证据引用、expected | 完成归约、受影响后继及事件 | 检查缺失/失败、来源过期、仍有未解义务 |
@@ -390,7 +390,7 @@ Run 结束不等于 Task 完成；暂停请求不等于暂停成功；一次工�
 
 ## 9. D6：Agent 协作图与邮箱
 
-继续复用 `DirectedRequest/Delivery/WaitCondition/WorkParticipation`。当前 WorkContext 是持久责任地址：更换执行 Session 后未处理请求仍可找到负责人。不为了邮箱再给每条消息创造一个 Work；平台可以展示 Session 地址，但工具内部解析到现有责任地址及参与关系。（2026-10-07 补注：本仓库从没存过 DirectedRequest、Delivery、WaitCondition，这几个从原产品搬来的 ref 已按决定 34 删除，只留下 Agent 归因用的 `WorkParticipationRef`。现在的消息走 Session 消息。）
+继续复用 `DirectedRequest/Delivery/WaitCondition/WorkParticipation`。当前 WorkContext 是持久责任地址：更换执行 Session 后未处理请求仍可找到负责人。不为了邮箱再给每条消息创造一个 Work；平台可以展示 Session 地址，但工具内部解析到现有责任地址及参与关系。（2026-10-07 补注：本仓库从没存过 DirectedRequest、Delivery、WaitCondition，这几个从原产品搬来的 ref 已按决定 34 删除，只留下 Agent 归因用的 `WorkParticipationRef`。现在的消息走 Session 消息。）（2026-10-30 补注（7B-1）：等待不再另存 `WaitCondition`，从消息和 `acceptedInputs` 派生；`wait-consumed:` 是唯一的消费槽，接受时取；续作领取的 `consumedWait` 分 `wait_reply`/`expiry`/`intervention` 三支。`waitFor`/`cancelWait` 仍没有同名入口。）
 
 | 操作 | 输入 | 输出/效果 |
 | --- | --- | --- |
@@ -398,7 +398,13 @@ Run 结束不等于 Task 完成；暂停请求不等于暂停成功；一次工�
 | `readInbox` | 当前调用者范围、状态筛选、cursor | Delivery/请求/响应页及正文引用 |
 | `ackMessage` | deliveryRef、处理标记及 expected | 仅表示已接收/读取，不等同于回答完成或任务完成 |
 | `respondMessage` | requestRef、正文/结果引用、expected | 正式响应、相关等待的确定性推进 |
-| `waitFor` / `cancelWait` | 已有类型化条件引用、owner work、expected | 持久等待及满足/取消记录；等待满足至多受理一次后继 |
+| `waitFor` / `cancelWait` | 已有类型化条件引用、owner work、expected | 持久等待及满足/取消记录；等待满足至多受理一次后继（2026-10-30 补注（7B-1）：已实现的是从消息读出的等待和 `wait-consumed:` claim；这条目标行里的 `waitFor`/`cancelWait` 仍没有同名入口，等待满足由续作领取和接受推进，见 §6 的续作领取和下面的接受、到期行。） |
+| `recordInputAccepted`（接受，2026-10-30 补注，7B-1） | 消息 ref、`part`（`message`/`response`/`expiry`）、执行 ref（Run 或 QueryRun）、可选的执行 Session、Kernel 身份（adapter、session、run、turn、position） | 消息记录加一条 `acceptedInputs`（`consumesWait` 按是否绑定这次续作）；`part: 'message'` 同次写 `delivery: 'delivered'` 和 `deliveryEvidence`（执行 ref、接受时间）；`part: 'response'`/`'expiry'` 绑定这次续作（或转移后的有效 handler）时写 `consumesWait: true` 并取 `wait-consumed:<message key>` 唯一 claim，普通迟到回复写 `false`、不取；claim 已被占时仍记接受（`false`）并回 `committed`；重放按 Kernel 输入身份不重复。**没有路由**（平台 `messages.recordInputAccepted`，观察器/观察确认调用）。拒绝：消息不在项目/工作区、执行不归观察者、Kernel 身份不符、消息 revision 或输入 id 已被别的接受占用 → invalid/forbidden/busy/revision_conflict；读失败 → unavailable |
+| `recordExpiry`（到期，2026-10-30 补注，7B-1） | 消息 ref | 已放行、`waitAfterSend` 的 inquiry、注入时钟过了 `deadline`、等待仍 `open`、没有 `expiredAt` → 写 `expiredAt`（`SessionMessageExpired`）；否则 `skipped` 带 `not_released`/`no_wait`/`not_due`/`not_open`。命令身份和输入 id 都由消息推出（`expiry:<message key>`，主身份是 Host 系统），`deadline` 只在判定里读；不取 `wait-consumed` 的 claim，不唤醒。**没有路由**（平台 `messageExpiry.recordExpiry` 的不可枚举 owner，Host 心跳调用）。拒绝：读失败 → unavailable；消息 revision 在读到和提交之间变了 → 冲突重试，重读到 `answered` 就跳过；不满足条件 → 不写，回 `skipped` 和原因 |
+| `readDueWaits`（到期读口，2026-10-30 补注，7B-1） | 工作区 scope、一页（`limit`、`after` 游标） | 按 `deadline` 升序的到期候选页：每条带 `messageRef`、`deadline` 和下一页的 `after`；只收已放行、`waitAfterSend`、`expiredAt` 为 null 的 inquiry；读失败原样是失败，不当“没有到期”。**没有路由**（平台 `messageExpiry.readDueWaits`，Host 心跳每次给每个工作区读一页，页宽 `EXPIRY_PAGE = 50`）。拒绝：记录坏了 → unavailable；页读失败 → unavailable，下一次心跳重试 |
+| `readExpiryCount`（到期计数读口，2026-10-30 补注，7B-1） | 消息 ref | `1`、`2` 或 `incomplete`：从这条消息沿 `followupOf` 往回走，数链上 `expiredAt` 已设的消息，这条算第一条；每页 25 条、最多 4 页，走不完回 `incomplete`，不当成 1。**没有路由**（不发布在 platform 上，只作为 Runtime 输入的 `expiryCount` 依赖，见 `execution-inputs.ts`）。拒绝：消息或链上的记录读不到/坏了 → unavailable |
+| `readDeliveryEligibilityFacts`（送达事实读口，2026-10-30 补注，7B-1） | 消息 ref | 三个非消息事实：消息 Goal 的期望状态（`null` 表示没有 Goal）、`taskBlocked`（自动化确认或 L46 阻塞）、`recipientOutcomeUnknown`；消息必须在调用范围的项目/工作区里。Host 门和 Query 的咨询提交把它和消费规则、part 的检查合成 `deliveryEligibility`。**没有路由**（Workflow 端口，组合根注入 Host 门和 Query 提交；Host 的 `gateFacts` 读不到时把消息留在队列）。拒绝：没有装 consultation mailbox → unsupported；消息不在范围 → forbidden；读不到/坏了 → unavailable |
+| `readSessionFacts` / `readWait`（等待读口，2026-10-30 补注，7B-1） | `readSessionFacts`：SessionRef；`readWait`：消息 ref | `SessionFactsV1.waits` 是这条 Session 发出的所有 open/answered/expired 的已放行 inquiry（按 `since`，最早的在前），`wait` 是第一条自己的 Run 真让出过的等待；`readWait` 按消息读一条等待。发送方 Session 的查找走 `S7B_WAITS_BY_SENDER_SESSION_LOOKUP`（等值 project、workspace、sender Session、intent，按 `since` 排序），预算读完是 `incomplete`，不当“没有等待”。`sessions/facts` 是 `readSessionFacts` 的路由；`readWait` 没有路由（Host 发件箱门和 Workflow 回复事实用）。拒绝：消息或 Run 读不到/坏了 → unavailable；翻页预算读完 → incomplete |
 
 协作边允许往返；硬任务依赖仍保持 DAG。消息时间线以每次收发事件记录，不把双方互相回复认作历史因果环。策略决定沟通内容和是否需要等待；工具负责路由、幂等、可恢复投递和责任换手。
 
@@ -456,7 +462,7 @@ Artifact 保留 contentType/digest/sizeBytes/source；引用记录保留对应 T
 | 接收 Run 终态 | 精确 Run 结果、对应占用清理、结果/来源引用 | 历史检索、协作视图；终态未确认不提前释放 |
 | 完成任务 | 检查/义务版本核对、正式完成记录及事件 | 后继展示；领取仍用共同准入规则 |
 | 修改源码 | 文件变更实际结果不能和 DB 假装同事务；登记精确观测 | 受影响源码索引、反向依赖、架构差异；标明 capture/version |
-| 发送/响应消息 | 请求/响应受理与必要等待状态 | 分页投递和收件索引使用既有 intent；重复推进不重复后继 |
+| 接受输入 / 记到期（2026-10-30 补注，7B-1） | 消息的 `acceptedInputs`（`consumesWait`）、`part: 'message'` 的 `delivery: 'delivered'` 和 `deliveryEvidence`、`wait-consumed:` claim 同一提交；`message.recordExpiry` 的 `expiredAt` 和 `SessionMessageExpired` 同一提交 | 页游标、到期候选页和收件索引；Host 心跳读页失败下次重试，不当“没有到期” |
 | 归档/重组 Session | 目录、责任/关联变更与交接记录 | 卡片/搜索索引；Kernel 操作结果确认后才登记实际状态 |
 
 索引异常时保留正式记录和推进位置，只重试受影响的页/对象；不能让图修改成功而索引落后看起来像数据丢失。无需所有读取等待整个系统投影追平，只保证它请求的数据和版本。

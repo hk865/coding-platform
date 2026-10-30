@@ -1,6 +1,7 @@
 # 第 6、7 片补充规格：提示词和上下文（决定 83）
 
 **状态：已冻结（lead，2026-10-21）。** 经 Codex 两轮完整审查（第一轮 23 条、第二轮复核加 9 条新问题）和一次快速核对（7 条），都已照改，处理见 证据（已归档：`docs/refactor/reviews/evidence/prompts-context-d83-2026-10-21/handling.md`）；你 10-21 定了五件事（§0.1），并确认了测试入口（§3.1）。施工顺序：结构一轮（含 D3）→ PC-1、PC-2 → 6A（§5）。
+**后注（7B-1、FA、KP 落地，lead 2026-10-30）：** 六个送达模板已随平台包发布：`inquiry-delivery`、`action-request-delivery`、`intervention-delivery`、`notify-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`（`pack.json` 的 `templates`，各 version 1）；`wait-expiry-delivery` 的 `expiryCount` 是必填槽，取 1 或 2，文字写“第 {{expiryCount}} 次到期”（`slot-tables.ts:118`）。秘书的正式回答改由三个提交工具生成协议文本：`submit_secretary_answer`、`submit_initial_plan`、`submit_initial_questions`，平台包多了三份 `tools/submit_*.json`；`secretary-answer` 从 6A-2 的 version 1 升到 version 3（两个互斥的工具块、`mentionsTools: []`、没有 JSON 形状样例和“回一个 JSON”的句子），6A-2 后注里“各 version 1”按这条改读。`secretary.setupRequired`、`secretary.initialDrafts` 改成说工具字段。KP（`7760a0c5`）另改 Kernel 分派器的参数错误文字，不属于平台包。
 
 **后注（6A-3 合入，lead 2026-10-24）：** 6A-3 合入 lead 分支（`b4aef8f6`，10-24）。正文原样保留；6A-3 只定了一处提示词的读法：
 - **卡片在秘书上下文里的读法（裁定 U6）：** 一轮的材料有引用卡片时，在 `task` 段里、选中的思路之后，用新加的 `secretary.cardsHeading`（`## Cards`）作标题，每条引用一行。这是 `task` 段里的第二个标题，不是新段：§2 的段序和 F7 的合法段、P6 的三个 task 槽都不变，渲染器仍只回文字和段范围，卡片行不算段。`secretary.cardsHeading` 加在 `strings.json` 里（§3 的 S15：每段带今天渲染器给的标题），生成的平台包和 `runtime-assets.json` 一起重出；`secretary-round` 仍是 version 1，两份模板的文字不动。

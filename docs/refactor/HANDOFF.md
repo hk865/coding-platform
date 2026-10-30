@@ -1518,6 +1518,61 @@
       - 读法：82-2（L656，“默认开”）按三档读：`off` 是原来的“关”，启动只核对；`auto` 和 `ask` 启动补抓。96-5、97-1 的“重启按 W-11 在同一个 Session 接着做”现在只在 `auto` 档自动，`ask`/`off` 等人启动目标后才接着做。历史原文不动。
       - 文档同步：STATE-MACHINES-SPEC、MVP-BEHAVIOR、DESIGN、PRODUCT、UI-WORKBENCH、E3-UI-ITEMS、IMPLEMENTED-CAPABILITIES、CORE-DATA-OPERATIONS、DECISIONS、STATUS、AGENTS。
       - 来源：`smk3b-ruling.md`、`smk3b-rv-rulings.md`、`smk3b-r1-table.md`；`facts-smk3b.md` §1–§3；`land/msg-smk3b.txt`（提交说明）；`morning-summary.md`；`todo.md` 第 6、7、9 条。
+98. **KP、FA、7B-1 和 R4-17（10-29 晚到 10-30 上午，`7760a0c5`、`bef7513b`、`5089a998`）。**
+    - **98-1 KP 合入（10-29 晚，`7760a0c5`）。**
+      - 为什么：用户 10-29 晚（“可以打”）定了 FA 清单 B 里的可选项。以前所有工具参数不符合 schema（类型错、缺必填、枚举外）都只报“工具参数不符合 schema”，不说哪个字段；任何工具、任何处理函数运行之前都一样。
+      - 改了什么：
+        - 从冻结的 `.js.map` 的 sourcesContent 还原 `vendor/coding-agent/patches/tools/dispatcher/tool-dispatcher.ts`，加进 `scripts/build-kernel-patch.mjs` 的受管源；`--check` 在任何编辑前重新生成、逐字节相同。
+        - 只改 `!parsedArguments.success` 一支：`工具参数不符合 schema：<路径>: <消息>; …`，按 Zod 的顺序逐条列，根写“(根)”；码仍是 `invalid_arguments`，别的分支不变。`--write` 只改了分派器的 `.js`、`.js.map`、`.d.ts.map`（`.d.ts` 逐字节相同）。
+        - 测试：`tests/runtime/K-readonly-command.test.ts:886` 的 KB-10 一行（memory，`queryPlatform` 收可选的 storage，旧行仍用 SQLite）：`{ timeoutMs: 'x' }` 报 `invalid_arguments`、点名 `command` 和 `timeoutMs`、什么都不启动；在固定文字上是红的，改后绿。
+        - 两份 README（`patches/README.md`、`vendor/coding-agent/README.md`）各加一段带来源和生成物哈希。
+      - 经过和数字：DSH 施工（`kp-build`）+ 一轮返工（`kp-r1`，Codex RV1kp 的 KP-01：这一行用 memory，`tests/RULES.md` S3）；lead 判返工 diff 就是 Codex 的伪代码，不再审。全量 bubblewrap（`78ec67e`）1,015 个文件、12,522 项过、3 项跳过、507.69 秒；规模批 13 个文件 40 项、499.24 秒。
+      - 读法：码和以前一样是 `invalid_arguments`；变的只是文字，逐条带路径和消息，按 Zod 的顺序，根是“(根)”。FA 清单 B 的“参数错误不带字段”按落地读，不再开着。
+      - 来源：`kp/kp-ruling.md`；`land/msg-kp.txt`（提交说明）；`facts-land1030.md` §1。
+    - **98-2 FA 合入（10-30，`5089a998`；决定 97-3 落地）。**
+      - 为什么：97-3。用户 10-29 01:13 原话：“要工具支持解析填写，即填写的时候要像填参数一样填，具体的格式交给工具，而不是依靠严格规范的提示词。另外工具需要可以报错。”01:15：“由工具生成格式。”下午定了三条：轮在被接受的提交处结束，不再请求一次模型（“合理”）；模型写文字、不调提交工具时退回旧读法（“应该尽量让它使用这个工具，不过应该退回旧读法”）；复用、小改动。第二轮冒烟的三个阻塞都由模型造成，都在这里：回答格式（代码框、引导句、多余括号 → `invalid_answer/protocol`）、内容到采用时才被拒、计划没有目标门。
+      - 改了什么：
+        - 三个提交工具：`submit_secretary_answer`（请求轮 `semantic_query`）、`submit_initial_plan`、`submit_initial_questions`（`initial_coordination`）。新文件 `src/core/agent-runtime/answer-tools.ts`，每个工具一个 zod schema（三个名字在 `:56`，工具按冻结的执行种类接上）。
+        - 提交前查五层里的前三层（表单结构由 Kernel 的 zod 查；回答自身按采用的规则；对着当前状态），所有问题一次列出（带路径）；模型改完在同一轮再调（`answer-tools.ts:399` 的 `answerProblems`）。第四层（提交后会变的事实）在采用时照旧再查，第五层（判断）不归表单。
+        - 接受后工具生成今天的协议文本（v1 秘书对象或 v2 信封，`answer-tools.ts:151` 的 `buildAnswerText`），观察器照今天的链路处理；存的回答（`QueryJobAnswerV1`）、编解码、16 KiB 上限、`answerId`、提交和 QRR-03 不变。让出屏障在接受处结束 Turn（`answer-tools.ts:528`；`src/core/agent-runtime/query-execution.ts:495` 构造、`:770` 接进入口）；没有 Kernel 结束 Turn 的补丁、没有新的恢复入口、没有显示 schema。结果映射和“从被接受的提交取回答”按裁定改（`query-observation.ts:121`、`:477`）。
+        - 模型写文字、不调提交工具：按旧读法（`query-observation.ts:187` 的 `formalAnswerOf`，代码框权宜保留）；文字坏了照旧算这轮失败。普通 Query 和普通 Work 不变；FA 之前准备的轮在开始时回答一次 `forbidden`。
+        - 唯一接受的偏离：提交工具的 `requiredCapabilities` 是 `['workspace_read']`（裁定写 `[]`，`answer-tools.ts:609`）；Kernel 权限策略只让注册的只读工具在恰好带 `workspace_read` 时通过（`permission-policy.js:73`），否则 `unknown_operation`（`:83`）。效果类仍是 `read_only`。
+      - 经过和数字：DSH 17:37–19:09 施工（`d2cec17`，6 个提交）；Codex RV1（错 3、缺 1、多 5、复用 5）全收 + FA-15（两个旧测试）；返工 r1 → `268db96`；RV2（错 2、缺 1、复用 2；重开 2）；r2 → `b3a672f`；RV3：前两轮都关了，剩一处测试侧复用；r3 → `a0475e7`（`fa-final`）。大小（`7b1-l..7b1-land` 去掉 KP）：src 13 个文件 +844/−51；测试 11 个文件 +637/−76；提示词包、README 和其他 12 个文件 +90/−24；生产超裁定的 700，按 10-26 的规矩在 Codex 复审后合入。
+      - 读法：97-3 的“模型只填内容、工具报错、同一轮里改了再交”照旧。这条定下三处：轮在被接受的提交处结束、不再请求一次模型（不是把这一轮跑完再收尾）；模型写文字、不调工具时退回旧读法（不按整轮失败处理）；保存的格式由提交工具生成（模型不写协议 JSON，工具造 v1 对象或 v2 信封，观察器照旧）。97-3 的过渡办法（剥一层代码框）只服务旧读法，代码框权宜保留。
+      - 来源：`fa/fa-ruling.md`（§0–§4、§6 末尾、Landing notes）、`fa/fa-rv-rulings.md`、`fa/fa-r1-table.md`…`fa-r3-table.md`；`land/msg-fa.txt`（提交说明）；`facts-land1030.md` §2。
+    - **98-3 7B-1 合入（10-30，`bef7513b`）。**
+      - 为什么：7B 的第一轮（书 §2.4）。开工裁定 v3.3 10-28 夜冻结（决定 96-8），之后是 lead 的裁定 R4-01…R4-17。
+      - 改了什么：
+        - 等待从消息读出：`waitStateOf`、`waitFactsOfRecord`（`src/core/work-graph/state/message-machine.ts:1138`、`:1207`），`SessionWaitV1` 和 `SessionFactsV1.waits`（`src/core/work-graph/model/session-facts-contracts.ts:63`、`:86`），发送方 Session 的等待 lookup 跨页。
+        - 续作的三种（`wait_reply`、`expiry`、`intervention`）和领取（`src/core/work-graph/tasks/claim-service.ts:755-763`）；接受和它的消费领取（`wait-consumed` claim 与 `consumesWait`）。
+        - 到期 owner：`recordExpiry`、`readDueWaits`、`readExpiryCount`（`src/core/work-graph/communication/message-expiry.ts:55`、`:108`、`:141`，`EXPIRY_PAGE = 50`）。Host 每次心跳开头按注入时钟跑到期，最早的期限先；读页失败下次心跳重试，不当成“没有到期”（`src/app/host.ts:2005`、`:2029`）。
+        - Runtime 的输入顺序和送达模板：等待 `answered` 时人先，回复只作续作接受一次，response 按 `responseSince` 排（`src/core/agent-runtime/execution-inputs.ts:165`、`:182`、`:278`、`:289-316`）；六个送达模板进平台包（`resources/prompts/platform/pack.json`）。
+        - Workflow 的续作选择（`src/business/workflow/workflow.ts:1108`：已回复选 `wait_reply`，`expiredAt` 已设选 `expiry`）；人对既有 Task 的干预入口是 `handleIntervention`（`src/business/workflow/intervention.ts:26`）；咨询入口用消息的 Goal；Host 收件箱和发件箱的门用完整的 `deliveryEligibility`；直接 Query 准入读同一组事实（R4-13）。
+      - 单独结束时：过期的 Work 等待由现有目标驱动处理（协作驱动的等待轮询得知“不再开放”）；秘书过期的提问被记下、可读，它的 `expiry` 轮在 7B-2（不造假生产者）。
+      - 可见：第二次到期的提示写“第 2 次”（`readExpiryCount`；模板 `resources/prompts/platform/templates/wait-expiry-delivery.txt:1` 写“第 {{expiryCount}} 次到期”）。
+      - 旧测试按冻结规则改：S7A-gates 等待中的提交格是 `invalid`（SR6 §6.2.9 的 `deliveryBlockCode`）；三个手搭 QueryJob 的 helper 接上资格端口、给该世界的真实事实；`orchestration-mechanism` 的 attention 用例按书改（见 98-4）；可达白名单删 16 行。
+      - 经过和数字：10-29 晚 v3.4（R4-01…R4-04）；夹具 A/B/C 由 lead 在用它的组之前冻结；K、M-rest、X、S、I-rest 并行 → 联合三轮（`7b1gu-green` = `78bdf79`，1,027 个文件全绿）→ M-lookups → B（`8518f30`，1,029 个文件全绿）→ 夹具 C → L（`10113da`：全量 13 个文件红，Codex RV1 12 条全收，R4-17；返工 r1 `3fa931c` + lead 收尾 `1442376`：1,032 个文件、12,624 项过、3 项跳过、598 秒）。落地树 `2f97237` 上 10:30–10:41 bubblewrap 1,035 个文件、12,639 项过、3 项跳过、629.39 秒；规模批 10:41–10:49 13 个文件 40 项、556.20 秒；合入 `bef7513b`。大小（`0cd830a..7b1-l`）：src 45 个文件 +1,717/−348；测试 120 个文件 +3,264/−390；其他 26 个文件 +188/−96。
+      - 读法：等待不再看“最近一次领取”，从消息读（`open`/`answered`/`expired`/`consumed`/`withdrawn`）；接受是唯一的送达写，并在接受处拿消费领取；到期只写 `expiredAt`、不消费等待、也不唤醒；`notify` 永不开模型轮，不开轮的消息留在队列、跳过（后半由 98-4 收口）；回复只作续作接受一次，迟到的回复是普通输入。
+      - 来源：`7b1/book-7b.md` §2.4、§3.1–§3.8；`7b1/changes-v34.md` R4-01…R4-13、`7b1/lead-rulings-1030.md` R4-13…R4-17、`7b1/l-r1-table.md`、`7b1/status-1029-pm.md`；`land/msg-7b1.txt`（提交说明）；`facts-land1030.md` §3。
+    - **98-4 R4-17：Host 收件箱分派（10-30）。**
+      - 为什么：全量通过 `orchestration-mechanism` 查出 SR9 L3 冻结分派的两个缺陷。1）Host 用人做 actor 发的 `notify`（attention `src/app/host.ts:2103`，书记提醒 `:1988`）被当成人的干预，有未完成 Task 的线上会开一次模型轮；书说 `notify` 永远不开轮。2）不开轮的分支用 `return` 结束整次扫描，空闲收件箱最前面的一条 notify 或领不到的人消息会永远挡住后面的提问和发件箱；书说这种消息留在队列、跳过。
+      - 改了什么：`src/app/host.ts` +4/−3。干预判断加 `message.intent !== 'notify'`（`:1746`）；没领到的干预分支（`:1760`）和 `if (!inquiry)`（`:1762`）用 `continue`；领到的干预（`:1758`）和咨询（`:1767`）照旧结束本次扫描。
+      - 证明：`orchestration-mechanism` 的 attention 用例改成书的行为（一条留在队列的 notify、不开 Query、一张卡）；`tests/app/S7B-L-host-gates.test.ts:160` 加一个用例和两个具名变异（删 `message.intent !== 'notify'` → 红；`continue` 改回 `return` → 红）。
+      - 依据：冻结的书 `book-7b-frozen.md:66`（`notify` 永不开轮）、`:475–:479`（留在队列、跳过）；`slice-7-SPEC.md:96`、`:626`。
+      - 来源：`7b1/lead-rulings-1030.md` R4-17；`7b1/l-r1-table.md` L-14；`facts-land1030.md` §4。
+    - **98-5 留给后面的（10-30）。**
+      - 两个 `incomplete` 分支没测：Session 事实的等待窗口超过 2,500 个候选时（R4-15：唯一的公共路径造 2,501 条要 45 分钟以上），和 `readExpiryCount` 沿 `followupOf` 超过 4 页 × 25 次读时。
+      - 一条线的消息历史长时每个 Run 的成本超线性（约 100 条 0.9 秒/Run、500 条 2.7 秒/Run），待测量。
+      - “退役发送方”只证到健康 `unavailable`，归档模式 `retired` 没跑。
+      - `taskBlocked: true` 没走公共链证明（用暂停的 Goal 证明“被挡住”）。
+      - D-54：归档线断开通知的位置。
+      - R 里 `isRecordValue` 的副本（D-56；`continuation-brief-assembly.ts` 不在 7B-2 R 的白名单里，进清理清单）。
+      - `tests/README.md` 补 `S7B-wait-lookups` 一行。
+      - 裁定文档补 SR11 §11.5 的 B-continuation 行。
+      - `execution-inputs` 把 Host 用人做 actor 的 notify 当“人的输入”排序（保留）。
+      - B-intervention 丢了 `branch: 'existing_task'` 字面断言（`tests/runtime/S7B-input-order.test.ts:193` 仍断言它）。
+      - 来源：`facts-land1030.md` §5；`7b1/lead-rulings-1030.md` R4-15、R4-16。
+    - 文档同步：STATE-MACHINES-SPEC（§4 TASK-02、§6.1、§8.1、§8.3 QRR-03/04、§10 开头和 10.1–10.6、新增 §10.7–10.9、§12.3，30 处）、MVP-BEHAVIOR（秘书回答、等待和到期、第 2 次到期的提示、notify 不开轮，3 处）、DESIGN（9 处）、E3-UI-ITEMS（到期提示、等待状态、干预，3 处）、slice-6-SPEC（L7 `formalAnswerOf`）、slice-7-SPEC（顶部后注，引 `:96`、`:626`）、slice-6-7-PROMPTS-SPEC（六个送达模板和三个提交工具）、IMPLEMENTED-CAPABILITIES（15 处）、CORE-DATA-OPERATIONS（11 处）、DECISIONS（97-3 的状态、98 五行、表头）、STATUS（标题、已完成、下一步、缺口、E3 清单）、AGENTS.md（开头一段，含末句的“决定 1–97”，和第 1 条约束的一处“决定 1–97”）、HANDOFF（本段）。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

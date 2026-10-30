@@ -203,6 +203,7 @@
   - **秘书名字**：项目里按秘书 Session 的创建顺序，叫“秘书 1”“秘书 2”……（2C 的线名照这个读，第一轮审查第 10 条）。你开秘书时起了名字的，用你起的名字（7D1 的 `SessionRoleFactsV1.name`）；没起名的照这个序号叫（决定 60-2；审查二第 18 条）。
 - **L7 回答和思路（R22、R23）。**【lead 定，待审】
   - 秘书一轮的正式回答：正文，加 0 个或 2–3 个思路，**思路存在回答里**（`QueryJobAnswerV1.ideas: { title; detail }[]`，每个思路一行标题加不超过 600 个码点的说明）；1 个或 4 个以上退回。回答保持 `revision: 1`、不可改。
+  - **填表式回答（FA，决定 97-3）。** 请求轮的正式回答由 `submit_secretary_answer`、`submit_initial_plan` 或 `submit_initial_questions` 生成协议文本；有收下的提交时，观察器从提交参数重建文本并走 `formalAnswerOf`（`src/core/agent-runtime/query-observation.ts:187`）；没有提交时读最后的文本（旧的 `extractAnswer`，代码框权宜保留），文字坏了照旧算这轮失败。接受处结束这一轮，不再请求一次模型。
   - 你选一个思路（`requests/select-idea`，只认人）：**选择写在它派生的那一轮上**（新 `followup` 轮的 `selectedIdea: { round: 回答轮, index: n }`），并排这个同请求的 `followup` 轮，输入写明“你选了第 n 个”；秘书据此出完整计划（6C）。选择不直接采用任何东西，也不改回答。
   - 每轮修改的“改了什么”：同一请求前后两个候选的结构差异（`deriveFuturePlanDelta`，F8）加秘书在回答里写的说明（6C）。
 - **L8 秘书的准备路径（含没有目标时）。**【lead 定，待审，第一轮审查第 5 条】
