@@ -8,11 +8,11 @@ import type { TemplateSlotTableV1 } from './prompt-pack.js';
  * may therefore receive text whose business source was empty, as long as the
  * formatting supplies a heading or separator.
  *
- * The input templates (`work-input`, `query-planning-input`, `query-copy-input`
- * and `secretary-round`) are rendered by a context recipe; their own slot order
- * is the section order, so their tables are frozen here with the format and
- * renderer. In `secretary-round` the three `task_*` slots are one `task`
- * section and stay adjacent in their declared order.
+ * The input templates (`work-input`, `query-planning-input`, `query-copy-input`,
+ * `intervention-planning` and `secretary-round`) are rendered by a context
+ * recipe; their own slot order is the section order, so their tables are frozen
+ * here with the format and renderer. In `secretary-round` the three `task_*`
+ * slots are one `task` section and stay adjacent in their declared order.
  */
 export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'work-input': {
@@ -39,6 +39,15 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         prelude: { required: false },
         goal: { required: false },
         task: { required: false },
+    },
+    // The intervention-planning Query carries the goal, the current plan (the
+    // `task` binding section) and the person's message as its own slot.
+    'intervention-planning': {
+        role: { required: true },
+        prelude: { required: false },
+        goal: { required: true },
+        plan: { required: false },
+        message: { required: true },
     },
     // The secretary's task section is one section made of three adjacent slots
     // in this internal order; `task_round` is the required one.

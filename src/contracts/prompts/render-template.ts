@@ -52,12 +52,14 @@ const SECRETARY_TASK_SLOT_SET: ReadonlySet<string> = new Set(SECRETARY_TASK_SLOT
 /** The section a template slot belongs to, or `null` for a non-section slot. */
 export function contextSectionOfSlot(name: string): string | null {
     if (SECRETARY_TASK_SLOT_SET.has(name)) return 'task';
+    // The intervention-planning template's `plan` slot IS its `task` section.
+    if (name === 'plan') return 'task';
     return SECTION_NAMES.has(name) ? name : null;
 }
 
 /** The input templates whose text also fixes the section order (ruling 9). */
 const INPUT_TEMPLATES: ReadonlySet<string> = new Set([
-    'work-input', 'query-planning-input', 'query-copy-input', 'secretary-round',
+    'work-input', 'query-planning-input', 'query-copy-input', 'secretary-round', 'intervention-planning',
 ]);
 
 type RenderState = {

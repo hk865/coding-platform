@@ -25,7 +25,7 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
-import { cleanupRestart, readExecution } from '../helpers/A2-restart-fixture.js';
+import { cleanupRestart, deferred, readExecution, type Deferred } from '../helpers/A2-restart-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
@@ -56,6 +56,32 @@ vi.mock('../../vendor/coding-agent/dist/tools/builtin/shell/shell-tool.js', asyn
   };
 });
 seams.shell = shellSeam;
+
+/**
+ * A delegating gate on the real C factory: while installed, every
+ * `readConsumableSessions` waits for the one deferred until the explicit
+ * `workflow/consultation`, so H cannot auto-answer the inquiry before this
+ * test's own `pending` read. The module wrapper is the `S7B-L-host-gates`
+ * pattern; the gate itself is the shared `deferred`.
+ */
+const consumeGate = vi.hoisted(() => ({ gate: undefined as Deferred | undefined }));
+vi.mock('../../src/core/work-graph/views/consumable-sessions.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/work-graph/views/consumable-sessions.js')>();
+  return {
+    ...actual,
+    createConsumableSessions: (deps: Parameters<typeof actual.createConsumableSessions>[0]) => {
+      const real = actual.createConsumableSessions(deps);
+      const gate = consumeGate.gate;
+      if (gate === undefined) return real;
+      return {
+        readConsumableSessions: async (...args: Parameters<typeof real.readConsumableSessions>) => {
+          await gate.promise;
+          return await real.readConsumableSessions(...args);
+        },
+      };
+    },
+  };
+});
 
 afterEach(async () => {
   shellSeam.release();
@@ -113,68 +139,78 @@ async function recipientParticipant(h: HostScenario, label: string): Promise<{ p
 
 describe('K3-08 the wait reply and the review round mailbox fence', () => {
   it('K3-08 (一): a wait send in flight is observed done, the wait relation is gone, and the continuation receives the reply', async () => {
-    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
-      script: { replies: [{ kind: 'text', text: 'K3-08 (一): the continuation received the reply' }],
-        queryReplies: [{ kind: 'text', text: 'K3-08: the reply' }] } });
-    const recipient = await recipientParticipant(h, 'k3-08-one-recipient');
-    const crashed = await crashOnWaitSend(h, 'k3-08-one', [{ callId: 'k3-08-one-send', name: 'send_session_message',
-      args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-        text: 'K3-08 (一): a question whose wait the crash loses', intent: 'inquiry', needsReply: true, waitAfterSend: true } }]);
-    const { runRef, sessionRef, report } = crashed;
+    // The gate is installed before the Host opens and stays through the restart
+    // below; only the explicit consult at the end may release it.
+    const gate = deferred();
+    consumeGate.gate = gate;
+    try {
+      const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
+        script: { replies: [{ kind: 'text', text: 'K3-08 (一): the continuation received the reply' }],
+          queryReplies: [{ kind: 'text', text: 'K3-08: the reply' }] } });
+      const recipient = await recipientParticipant(h, 'k3-08-one-recipient');
+      const crashed = await crashOnWaitSend(h, 'k3-08-one', [{ callId: 'k3-08-one-send', name: 'send_session_message',
+        args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
+          text: 'K3-08 (一): a question whose wait the crash loses', intent: 'inquiry', needsReply: true, waitAfterSend: true } }]);
+      const { runRef, sessionRef, report } = crashed;
 
-    // RUN-25 applies (a git workspace, the contained send, a readable Kernel).
-    expect(report.report?.runs.find(row => row.ref === JSON.stringify(runRef)))
-      .toMatchObject({ row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
-        autoCleanup: { applied: true } });
-    const original = await readExecution(h.host, runRef);
-    expect(original.run).toMatchObject({ status: 'ended', outcome: 'crashed',
-      reconciliation: { observation: { kind: 'takeover_unresolved',
-        unresolvedToolCallIds: ['k3-08-one-send'] } } });
-    // A8-3j: the wait association is lost with the crash.
-    expect(original.run.continuation, 'the wait relation is gone').toBeUndefined();
+      // RUN-25 applies (a git workspace, the contained send, a readable Kernel).
+      expect(report.report?.runs.find(row => row.ref === JSON.stringify(runRef)))
+        .toMatchObject({ row: 'W-26', status: 'reconciled', reason: 'takeover_unresolved',
+          autoCleanup: { applied: true } });
+      const original = await readExecution(h.host, runRef);
+      expect(original.run).toMatchObject({ status: 'ended', outcome: 'crashed',
+        reconciliation: { observation: { kind: 'takeover_unresolved',
+          unresolvedToolCallIds: ['k3-08-one-send'] } } });
+      // A8-3j: the wait association is lost with the crash.
+      expect(original.run.continuation, 'the wait relation is gone').toBeUndefined();
 
-    // The one review record: the send is `done` (the message committed), the
-    // inventory is complete, so the record settles `resolved` at creation.
-    expect(await reviewOf(h, runRef)).toMatchObject({ status: 'ready', value: {
-      inventory: 'complete', inventoryProblem: null, status: 'resolved', decisionReasons: [],
-      items: [{ alias: 1, callId: 'k3-08-one-send', toolName: 'send_session_message', kind: 'platform',
-        observed: { verdict: 'done', by: 'platform', evidence: { kind: 'receipt' } } }],
-    } });
-    const message = await messageOf(h, sessionRef);
-    expect(message).toMatchObject({ status: 'pending', waitAfterSend: true,
-      recipient: { sessionId: recipient.sessionId } });
+      // The one review record: the send is `done` (the message committed), the
+      // inventory is complete, so the record settles `resolved` at creation.
+      expect(await reviewOf(h, runRef)).toMatchObject({ status: 'ready', value: {
+        inventory: 'complete', inventoryProblem: null, status: 'resolved', decisionReasons: [],
+        items: [{ alias: 1, callId: 'k3-08-one-send', toolName: 'send_session_message', kind: 'platform',
+          observed: { verdict: 'done', by: 'platform', evidence: { kind: 'receipt' } } }],
+      } });
+      const message = await messageOf(h, sessionRef);
+      expect(message).toMatchObject({ status: 'pending', waitAfterSend: true,
+        recipient: { sessionId: recipient.sessionId } });
 
-    // Start-up maintenance already closed the crashed Turn (the review record
-    // no longer owes a claim): the original Session is available again and
-    // still points at the original Run.
-    const maintained = await readExecution(h.host, runRef);
-    expect(maintained.session.health).toBe('available');
-    expect(maintained.session.lastExecutionRef?.runId).toBe(runRef.runId);
+      // Start-up maintenance already closed the crashed Turn (the review record
+      // no longer owes a claim): the original Session is available again and
+      // still points at the original Run.
+      const maintained = await readExecution(h.host, runRef);
+      expect(maintained.session.health).toBe('available');
+      expect(maintained.session.lastExecutionRef?.runId).toBe(runRef.runId);
 
-    // The Workflow claims the continuation in the ORIGINAL Session (the review
-    // record is resolved, so no review round).
-    const toContinue = await h.advance(h.select('k3-08-one-continue', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
-    if (toContinue.next === null) throw new Error('the continuation start must be planned');
-    const prepared = preparedOf(toContinue.next);
-    expect(prepared.claim.sessionRef).toEqual(sessionRef);
-    expect(prepared.claim.runRef.runId).not.toBe(runRef.runId);
+      // The Workflow claims the continuation in the ORIGINAL Session (the review
+      // record is resolved, so no review round).
+      const toContinue = await h.advance(h.select('k3-08-one-continue', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
+      if (toContinue.next === null) throw new Error('the continuation start must be planned');
+      const prepared = preparedOf(toContinue.next);
+      expect(prepared.claim.sessionRef).toEqual(sessionRef);
+      expect(prepared.claim.runRef.runId).not.toBe(runRef.runId);
 
-    // The reply is delivered to the original Session, then the continuation
-    // starts; its safe point (the before-model input boundary) accepts it.
-    expect(await consult(h, message.ref)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
-    const driven = await h.advance(toContinue.next, { stopBefore: performs('open_checks') });
-    expect(driven.state).toBe('stopped');
-    const accepted = await h.post<ReadResult<SessionMessage>>('messages/read', plain(AG2B_SCOPE, message.ref));
-    if (accepted.status !== 'ready') throw new Error(JSON.stringify(accepted));
-    expect(accepted.value.acceptedInputs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ part: 'response', executionRef: prepared.claim.runRef })]));
-    expect(acceptedMessageInputs(h.database).filter(input => input.messageId === message.ref.messageId
-      && input.part === 'response').map(input => input.text)).toEqual([waitReplyDeliveryText({
-      messageId: message.ref.messageId, question: 'K3-08 (一): a question whose wait the crash loses',
-      body: 'K3-08: the reply' })]);
-    // The continuation brief carries the afterRun as the crashed Run.
-    const brief = await preparedBriefOf(h, prepared.envelope.bundleRef);
-    expect(brief.requeueRef?.afterRunId).toBe(runRef.runId);
+      // The reply is delivered to the original Session, then the continuation
+      // starts; its safe point (the before-model input boundary) accepts it.
+      expect(await consult(h, message.ref)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+      gate.resolve();
+      const driven = await h.advance(toContinue.next, { stopBefore: performs('open_checks') });
+      expect(driven.state).toBe('stopped');
+      const accepted = await h.post<ReadResult<SessionMessage>>('messages/read', plain(AG2B_SCOPE, message.ref));
+      if (accepted.status !== 'ready') throw new Error(JSON.stringify(accepted));
+      expect(accepted.value.acceptedInputs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ part: 'response', executionRef: prepared.claim.runRef })]));
+      expect(acceptedMessageInputs(h.database).filter(input => input.messageId === message.ref.messageId
+        && input.part === 'response').map(input => input.text)).toEqual([waitReplyDeliveryText({
+        messageId: message.ref.messageId, question: 'K3-08 (一): a question whose wait the crash loses',
+        body: 'K3-08: the reply' })]);
+      // The continuation brief carries the afterRun as the crashed Run.
+      const brief = await preparedBriefOf(h, prepared.envelope.bundleRef);
+      expect(brief.requeueRef?.afterRunId).toBe(runRef.runId);
+    } finally {
+      gate.resolve();
+      consumeGate.gate = undefined;
+    }
   }, 240_000);
 
 

@@ -188,6 +188,35 @@ export function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRej
 }
 
 /**
+ * The recipient line's three read-time facts (R7A1-09): `archived` is the lifecycle, `retired` the unavailable
+ * health and `archiving` a pending archive request. A user recipient has no line; an absent or unreadable one is the
+ * read's failure. One body: the mailbox's two call sites and the forward owner.
+ */
+export async function recipientLineFacts(deps: { sessions: Pick<SessionMailboxDependencies['sessions'], 'readSession'> },
+  ctx: CoreCallContext, recipient: MessageRecipient): Promise<
+  { ok: true; value: { archived: boolean; retired: boolean; archiving: boolean } } | { ok: false; rejection: CoreRejection }> {
+  if (isUserRecipient(recipient)) return { ok: true, value: { archived: false, retired: false, archiving: false } };
+  if (ctx.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the recipient Session read was cancelled') };
+  let read: ReadResult<SessionCard>;
+  try {
+    read = await deps.sessions.readSession(ctx, {
+      projectId: recipient.projectId, sessionId: recipient.sessionId,
+    });
+  } catch {
+    return { ok: false, rejection: reject('unavailable', 'the recipient Session could not be read') };
+  }
+  if (read.status === 'not_found') {
+    return { ok: false, rejection: reject('not_found', 'the recipient Session does not exist') };
+  }
+  if (read.status !== 'ready') return { ok: false, rejection: mapReadResult(read) as CoreRejection };
+  return { ok: true, value: {
+    archived: read.value.record.lifecycle === 'archived',
+    retired: read.value.record.health === 'unavailable',
+    archiving: read.value.record.archiveRequest != null,
+  } };
+}
+
+/**
  * The one read of a single message by its ref. A read cancelled before the store read, a thrown read, a store
  * failure, a record the store neither returned nor reported missing, and a damaged record each give their own
  * rejection; `not_found` only when the store reports the key missing.
@@ -220,7 +249,7 @@ export async function readSessionMessageRecord(
  * re-binds it. Every current writer binds `since` at creation, so a record
  * without one is damaged, never silently re-encoded without a position.
  */
-async function preservedNoticeOrigin(records: SessionMailboxDependencies['records'], refKey: string): Promise<
+export async function preservedNoticeOrigin(records: SessionMailboxDependencies['records'], refKey: string): Promise<
   { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
   let read: StoreResult<RecordBatchRead>;
   try {
@@ -368,6 +397,8 @@ function lifecycleEventOf(command: SessionMessageWriteCommandV1, message: Sessio
     case 'message.releaseApproved': return encodeSessionMessageReleasedEvent({ ...base, eventType: 'SessionMessageReleased' });
     case 'message.apply': return encodeSessionMessageAppliedEvent({ ...base, eventType: 'SessionMessageApplied' });
     case 'message.recordExpiry': return encodeSessionMessageExpiredEvent({ ...base, eventType: 'SessionMessageExpired' });
+    case 'message.inputAccepted':
+      return encodeSessionMessageInputAcceptedEvent({ ...base, eventType: 'SessionMessageInputAccepted' });
     default: return unreachable(command, 'message write operation');
   }
 }
@@ -380,6 +411,8 @@ function lifecycleMachineEventOf(command: SessionMessageWriteCommandV1): Message
     case 'message.releaseApproved': return { type: 'message_released' };
     case 'message.apply': return { type: 'message_applied' };
     case 'message.recordExpiry': return { type: 'message_expired' };
+    case 'message.inputAccepted':
+      return { type: 'input_accepted', part: command.change.input.part, inputId: command.change.input.inputId };
     default: return unreachable(command, 'message write operation');
   }
 }
@@ -408,7 +441,9 @@ async function prepareSessionMessage(
   } catch {
     return reject('revision_conflict', 'the message changed since this command read it');
   }
-  const { decided } = judge(owned.principal, command.before, lifecycleMachineEventOf(command), {});
+  const facts = command.operation === 'message.inputAccepted'
+    ? { inputAccepted: command.inputAccepted } : {};
+  const { decided } = judge(owned.principal, command.before, lifecycleMachineEventOf(command), facts);
   if (!decided.ok) return reject('revision_conflict', 'the message state no longer accepts this command');
   let accepted = decided.next as Record<string, unknown>;
   if (command.operation === 'message.withdraw') {
@@ -776,18 +811,18 @@ function normalizeArchiveStep(raw: unknown): { ok: true; step: ArchiveStepRefV1 
 }
 
 /**
- * Slice 1 §4.5 step 7: the wait choice a step records. `reply_handler` is the
- * transfer's first step; `wait_cancel` records a cancel for BOTH a transfer and
- * a cancel request (it cancels the original yielded wait, keeping any handler).
+ * Slice 1 §4.5 step 7, 7B §3.9 item 6: the step names its own choice and nothing else. `reply_handler` is the
+ * transfer's step; `wait_cancel` is the cancel's. Any other step is the existing `null` mapping, never written as a
+ * cancel for a transfer, so the wait a transfer moves stays open/answered and the handler consumes it.
  */
 function waitChoiceForStep(wait: ArchiveWaitChoiceV1 | null, step: ArchiveStepRefV1): ArchiveWaitChoiceV1 | null {
   if (wait === null) return null;
   if (step.step === 'reply_handler') return wait.kind === 'transfer' ? wait : null;
-  return { kind: 'cancel', runRef: wait.runRef, messageRef: wait.messageRef };
+  return wait.kind === 'cancel' ? wait : null;
 }
 
 /** Slice 1 S1-MSG-01: the target Session is same-workspace, active, not retired/archiving and not a readonly copy. */
-function replyTargetEligible(owned: Owned, target: SessionRecord): boolean {
+export function replyTargetEligible(owned: Owned, target: SessionRecord): boolean {
   const provenance = target.provenance ?? null;
   return target.workspaceId === owned.workspaceId
     && target.lifecycle === 'active'
@@ -1022,7 +1057,7 @@ export function readProgress(
 }
 
 /** The Session a message's sender is, when its sender kind names one. */
-function messageSenderSessionOf(message: SessionMessage): SessionRef | null {
+export function messageSenderSessionOf(message: SessionMessage): SessionRef | null {
   if (message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round') {
     return { projectId: message.sender.sessionRef.projectId, sessionId: message.sender.sessionRef.sessionId };
   }
@@ -1234,6 +1269,8 @@ const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageReleased: 'released',
   SessionMessageApplied: 'applied',
   SessionMessageExpired: 'expired',
+  SessionMessageForwarded: 'forwarded',
+  SessionMessageWaitDisposed: 'wait-disposed',
 };
 
 export function eventIdOf(identityKey: string, eventType: SessionMessageEventType): string {
@@ -1875,34 +1912,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (loaded.status === 'ready') return { ok: true, message: loaded.value };
     if (loaded.status === 'not_found') return { ok: true, message: null };
     return { ok: false, rejection: mapReadResult(loaded) as CoreRejection };
-  }
-
-  /**
-   * The recipient line's two read-time facts (R7A1-09): `archived` is the
-   * Session's lifecycle and `retired` its unavailable health. A `{kind:'user'}`
-   * recipient has no Session line; an absent or unreadable one is the read's
-   * failure, never a pair of false values.
-   */
-  async function recipientLineFacts(owned: Owned, recipient: MessageRecipient): Promise<
-    { ok: true; value: { archived: boolean; retired: boolean } } | { ok: false; rejection: CoreRejection }> {
-    if (isUserRecipient(recipient)) return { ok: true, value: { archived: false, retired: false } };
-    if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the recipient Session read was cancelled') };
-    let read: ReadResult<SessionCard>;
-    try {
-      read = await deps.sessions.readSession(internalHostContext(owned), {
-        projectId: recipient.projectId, sessionId: recipient.sessionId,
-      });
-    } catch {
-      return { ok: false, rejection: reject('unavailable', 'the recipient Session could not be read') };
-    }
-    if (read.status === 'not_found') {
-      return { ok: false, rejection: reject('not_found', 'the recipient Session does not exist') };
-    }
-    if (read.status !== 'ready') return { ok: false, rejection: mapReadResult(read) as CoreRejection };
-    return { ok: true, value: {
-      archived: read.value.record.lifecycle === 'archived',
-      retired: read.value.record.health === 'unavailable',
-    } };
   }
 
   async function readWorkspaceSource(owned: Owned): Promise<{ ok: true; value: ArtifactRef['source'] } | { ok: false; rejection: CoreRejection }> {
@@ -3023,9 +3032,17 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (opened.status === 'not_found') return reject('unavailable', 'the message body is missing');
     if (opened.status !== 'ready') return mapReadResult(opened) as CoreRejection;
+    // A forward copies the original body and bodyRef (§3.2.8 step 6), so the stored
+    // message-part envelope names the original message; decode it against that record.
+    let bodyMessage = message;
+    while (part === 'message' && bodyMessage.originalRef !== null) {
+      const original = await loadMessage(owned, bodyMessage.originalRef);
+      if (original.status !== 'ready') return original;
+      bodyMessage = original.value;
+    }
     const decoded = isUserDecisionAnswerPart(message, part)
       ? decodeStoredUserDecisionBody(message, part, opened.value)
-      : decodeStoredMessageBody(message, part, opened.value);
+      : decodeStoredMessageBody(bodyMessage, part, opened.value);
     if ('reason' in decoded) return reject('unavailable', decoded.reason);
     return {
       status: 'ready',
@@ -3199,7 +3216,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (page.status !== 'ready') return page;
     const { items, nextCursor, sourceCursor, recipient } = page.value;
     if (items.length === 0) return { status: 'ready', value: { items: [], nextCursor, sourceCursor } };
-    const line = await recipientLineFacts(owned, recipient);
+    const line = await recipientLineFacts(deps, internalHostContext(owned), recipient);
     if (!line.ok) return line.rejection;
     return { status: 'ready', value: {
       items: items.map((message) => ({ message, ...deriveMessageDelivery(message, line.value), releaseBlock: null })),
@@ -4876,7 +4893,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (loaded.status !== 'ready') return loaded;
     const right = await messageReadRight(owned, loaded.value, secretary);
     if (right !== null) return right;
-    const line = await recipientLineFacts(owned, loaded.value.recipient);
+    const line = await recipientLineFacts(deps, internalHostContext(owned), loaded.value.recipient);
     if (!line.ok) return line.rejection;
     const block = await releaseBlockOf(owned, loaded.value);
     if (block.status !== 'ready') return block;
@@ -4992,7 +5009,7 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       const operation = raw['operation'];
       if (operation !== 'message.withdraw' && operation !== 'message.release'
         && operation !== 'message.releaseApproved' && operation !== 'message.apply'
-        && operation !== 'message.recordExpiry') {
+        && operation !== 'message.recordExpiry' && operation !== 'message.inputAccepted') {
         return reject('invalid', 'prepare does not know this message write operation');
       }
       const change = raw['change'];

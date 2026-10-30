@@ -21,9 +21,9 @@
 import { afterEach, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
-import { cleanupScenarios, openHostScenario, performs, type HostScenario } from './harness.js';
+import { cleanupScenarios, openHostScenario, performs, waitFor, type HostScenario } from './harness.js';
 import {
-  AG2B_SCOPE, claimBusyQuery, createAG2bSession, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost,
+  AG2B_GOAL_REF, AG2B_SCOPE, claimBusyQuery, createAG2bSession, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost,
   startBusyQuery, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
@@ -238,6 +238,13 @@ function retiredUnknownCase(name: string, kernel: 'missing' | 'damaged'): void {
     expect(segment?.kind).toBe('segment');
     if (segment?.kind !== 'segment') throw new Error('the conversation must start with its segment header');
     expect(segment.segment.history).toBe('not_readable');
+
+    await h.answer('workflow/driver-stop', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF }));
+    await waitFor(() => h.answer('workflow/driver-read', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF })),
+      read => {
+        const state = (read['value'] as { state?: string } | undefined)?.state;
+        return state === 'stopped' || state === undefined;
+      }, 'the goal driver to stop before the attestation');
 
     const unknown = await readExecution(h.host, runRef);
     const attested = await h.post<ReadResult<unknown>>('executions/resolve-unknown', graphWrite(AG2B_SCOPE,

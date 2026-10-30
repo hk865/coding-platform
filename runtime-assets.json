@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "8a04d86765276c0859b3d5a2cde96fac9348ee36f9551ed3f3ecaad70e058e52"
+    "sha256": "cf90ecca9241232b87db3105b38237ac3f71a9f0cf747fa418945a370c82dc7d"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "f9960f300b762bc71cbc9910629063dcfce7eef7c9c0926660afc518d3543971"
+    "sha256": "8a47a8a7adb2aa8ab75f97aa60e4b63e2f6408e7fba422fef641d2bc66258305"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -54,6 +54,10 @@
   {
     "path": "resources/prompts/platform/templates/intervention-delivery.txt",
     "sha256": "8be8077d9165d555a57c07eb820ecb7805e563a70db35b04f393197d919a2e0a"
+  },
+  {
+    "path": "resources/prompts/platform/templates/intervention-planning.txt",
+    "sha256": "bda67890b5173c7ea7d542e1396e371496205d2f2c190b0033d694298895ba40"
   },
   {
     "path": "resources/prompts/platform/templates/scribe-reminder.txt",
@@ -149,7 +153,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/project_source.json",
-    "sha256": "06168eb317332f3220a5e6bbaed8d8fe606c9f8ef2ee9f7f7166a490800fbd9d"
+    "sha256": "a60c4d5049756e231fc44a12e0756eab52456237cfb8b1bc69aa61a5e929d637"
   },
   {
     "path": "resources/prompts/platform/tools/read_source.json",

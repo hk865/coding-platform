@@ -6,6 +6,7 @@
  * preconditions and commits the result (rule 4: state transitions live here).
  */
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
 import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -40,7 +41,7 @@ export type NewRequestRoundInput = {
   runId: string;
   scope: WorkspaceScope;
   intent: QueryJobIntentV1;
-  kind: 'request' | 'followup';
+  kind: 'request' | 'followup' | 'reply' | 'expiry';
   /** `null` = the round is its request's root, so it points at itself. */
   requestRoot: QueryJobRef | null;
   requestGoalId: string | null;
@@ -48,6 +49,8 @@ export type NewRequestRoundInput = {
   intakeSession: SessionRef | null;
   selectedIdea: QueryJobV1['selectedIdea'];
   relatedCardRefs: VersionedRef[];
+  /** The message a reply/expiry round answers; `null` on request, follow-up, routing and understanding rounds. */
+  relatedMessageRef: SessionMessageRef | null;
   receipt: RequestCommandReceiptV1;
   submission: QuerySubmissionBindingV1;
   submittedAt: string;
@@ -82,6 +85,7 @@ export function newRequestRound(input: NewRequestRoundInput): PendingQueryLifecy
       intakeSession: cloneSession(input.intakeSession),
       selectedIdea: cloneSelectedIdea(input.selectedIdea),
       relatedCardRefs: structuredClone(input.relatedCardRefs),
+      relatedMessageRef: input.relatedMessageRef === null ? null : structuredClone(input.relatedMessageRef),
       receipt: structuredClone(input.receipt),
       understanding: input.understanding === null ? null : structuredClone(input.understanding),
     },

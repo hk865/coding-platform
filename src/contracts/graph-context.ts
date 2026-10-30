@@ -20,7 +20,17 @@ import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 export type { PlatformDutyV1 };
 
 export type ContextCallKindV1 = 'work' | 'continuation' | 'handoff' | 'review'
-  | 'secretary' | 'copy' | 'planning' | 'attention';
+  | 'secretary' | 'copy' | 'planning' | 'attention' | 'intervention_planning';
+
+/**
+ * The ONE runtime list of call kinds (90-8). The same list was hand-copied in
+ * `W/state/context-input.ts`, `C/prompts/prompt-set.ts` and
+ * `R/context-rendering.ts`; the two decoder lists import this, while each
+ * module keeps its own section table (semantics, not the list).
+ */
+export const CONTEXT_CALL_KINDS: readonly ContextCallKindV1[] = [
+  'work', 'continuation', 'handoff', 'review', 'secretary', 'copy', 'planning', 'attention', 'intervention_planning',
+];
 export type ContextSectionNameV1 = 'role' | 'goal' | 'task' | 'footprint'
   | 'notes' | 'reminders' | 'inputs' | 'continuation' | 'unknown_call_review';
 export type GraphNodeRefV1 =

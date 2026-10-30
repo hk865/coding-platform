@@ -15,20 +15,29 @@ async function open(kind: 'memory' | 'sqlite', deferYield = false) {
   await f.enter(f.b2.secondClaim);
   return { f, message };
 }
+async function registerTransfer(f: ArchiveServiceFixture, message: SessionMessage) {
+  return f.register({ wait: { kind: 'transfer', runRef: f.b2.claim.runRef, messageRef: message.ref, to: f.D } });
+}
 async function transfer(f: ArchiveServiceFixture, message: SessionMessage) {
-  const request = await f.register({ wait: { kind: 'transfer', runRef: f.b2.claim.runRef, messageRef: message.ref, to: f.D } });
+  const request = await registerTransfer(f, message);
   const receipt = committed(await f.mailbox.disposeArchiveWait(f.ctx, f.step(request, 'reply_handler', message.ref)));
   return { request, receipt };
 }
 async function closeWait(f: ArchiveServiceFixture, request: SessionArchiveRequestV1) {
-  const step = f.step(request, 'wait_cancel', f.b2.claim.runRef);
-  const receipt = committed(await f.mailbox.disposeArchiveWait(f.ctx, step));
+  // SR3 §3.2.6: a transfer submits only `reply_handler`; the wait stays open/answered and is never
+  // written as a cancel, so the archive's close here is the old Run's cancel alone.
   const control = await f.cancel(request);
   const run = (await f.execution()).run;
   expect(run.outcome).toBe('yielded');
   expect(run.controlState).toEqual({ intentRef: control.value.intent.ref, desiredState: 'cancelled' });
-  expect(ready(await f.sessionFacts.readSessionFacts(f.ctx, f.S)).wait).toBeNull();
-  return { step, receipt, control };
+  if (request.wait?.kind === 'transfer') {
+    const wait = ready(await f.sessionFacts.readWait(f.ctx, { messageRef: request.wait.messageRef }));
+    expect(wait.state.state === 'open' || wait.state.state === 'answered').toBe(true);
+    const message = ready(await f.mailbox.readMessage(f.ctx, request.wait.messageRef));
+    expect(message.waitCancelledAt).toBeNull();
+    expect(message.archiveWaitDisposition).toMatchObject({ kind: 'transfer' });
+  }
+  return { control };
 }
 function acceptWrite(f: ArchiveServiceFixture, message: SessionMessage, claim: TaskClaim,
   fact: Awaited<ReturnType<ArchiveServiceFixture['kernelAccept']>>) {
@@ -71,7 +80,7 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
     expect(receipt.value.response).toBeNull();
     expect(receipt.value.replyHandler).toEqual({ sessionRef: f.D, archiveSessionRef: f.S,
       archiveRequestId: request.requestId, changedAt: f.now() });
-    const cancelled = await closeWait(f, request);
+    await closeWait(f, request);
     const replied = await f.respond(message);
     const { result, write } = await acceptedByD(f, message);
     expect(result.value.bodyRef).toEqual(message.bodyRef);
@@ -80,21 +89,20 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
     expect(await f.mailbox.recordInputAccepted(f.ctx, write)).toEqual({ ...result, replayed: true });
     expect(await f.mailbox.disposeArchiveWait(f.ctx, f.step(request, 'reply_handler', message.ref)))
       .toEqual({ ...receipt, replayed: true });
-    expect(await f.mailbox.disposeArchiveWait(f.ctx, cancelled.step)).toEqual({ ...cancelled.receipt, replayed: true });
     expect(f.snapshot()).toEqual(before);
     expect(controlSubmissions(f)).toHaveLength(1);
     await f.invariants();
   });
 
-  it('SV31 retries the failed wait_cancel on the same store and replays the original transfer and cancellation receipts', async () => {
+  it('SV31 retries the failed transfer step on the same store and replays its receipt', async () => {
     const { f, message } = await open(kind);
-    const { request, receipt: transferReceipt } = await transfer(f, message);
-    const cancelStep = f.step(request, 'wait_cancel', f.b2.claim.runRef);
+    const request = await registerTransfer(f, message);
+    const transferStep = f.step(request, 'reply_handler', message.ref);
     const sourceBefore = (await f.session()).record;
     const messageBefore = await f.encoded(message.ref);
     const before = f.snapshot();
     f.failNextCommit();
-    const failed = await f.mailbox.disposeArchiveWait(f.ctx, cancelStep);
+    const failed = await f.mailbox.disposeArchiveWait(f.ctx, transferStep);
     expect(failed.status).toBe('rejected');
     if (failed.status !== 'rejected') throw new Error(JSON.stringify(failed));
     expect(failed.code).toBe('unavailable');
@@ -104,20 +112,19 @@ describe.each(['memory', 'sqlite'] as const)('wait disposal (%s)', kind => {
     expect(await f.encoded(message.ref)).toEqual(messageBefore);
     expect((await f.session()).record).toEqual(sourceBefore);
     await f.reopen();
-    const retry = committed(await f.mailbox.disposeArchiveWait(f.ctx, cancelStep));
+    const retry = committed(await f.mailbox.disposeArchiveWait(f.ctx, transferStep));
     expect(retry.replayed).toBe(false);
     const control = await f.cancel(request);
     expect((await f.execution()).run.controlState).toEqual({ intentRef: control.value.intent.ref, desiredState: 'cancelled' });
-    expect(ready(await f.sessionFacts.readSessionFacts(f.ctx, f.S)).wait).toBeNull();
+    expect(ready(await f.sessionFacts.readWait(f.ctx, { messageRef: message.ref })).state.state)
+      .toBe('open');
     const afterRecovery = f.snapshot();
-    expect(await f.mailbox.disposeArchiveWait(f.ctx, f.step(request, 'reply_handler', message.ref)))
-      .toEqual({ ...transferReceipt, replayed: true });
-    expect(await f.mailbox.disposeArchiveWait(f.ctx, cancelStep)).toEqual({ ...retry, replayed: true });
+    expect(await f.mailbox.disposeArchiveWait(f.ctx, transferStep)).toEqual({ ...retry, replayed: true });
     expect(await f.controls.submitControl(f.ctx, f.cancelRequest(request, f.b2.claim.runRef)))
       .toEqual({ ...control, replayed: true });
     expect(f.snapshot()).toEqual(afterRecovery);
     expect(dispositions(f, 'reply_handler')).toHaveLength(1);
-    expect(dispositions(f, 'wait_cancel')).toHaveLength(1);
+    expect(dispositions(f, 'wait_cancel')).toHaveLength(0);
     expect(controlSubmissions(f)).toHaveLength(1);
     await f.invariants();
   });

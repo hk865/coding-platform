@@ -39,7 +39,7 @@ import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-fac
 import type { ArchiveLineResultV1 } from '../../src/business/workflow/session-archive.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
-import * as toolGroupAssembly from '../../src/core/agent-runtime/tool-group-assembly.js';
+import * as answerTools from '../../src/core/agent-runtime/answer-tools.js';
 import { AG2B_RUNTIME_BUDGET, ag2bPlanDraft, graphWrite, permissionRevision, plain } from './AG2b-collaboration-fixture.js';
 import { driveWorkflow, advanceUntil } from './A2-restart-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
@@ -414,19 +414,18 @@ export async function seedS7ASenders(world: S6AHostWorld) {
 }
 
 /**
- * One held request round: the real `createQueryGraphToolGroup` is wrapped (its group is returned unchanged) so the
+ * One held request round: the real `createAnswerTools` is wrapped (its handle is returned unchanged) so the
  * Runtime's own context for this round's QueryRun is the one `use` receives. The wrapper is restored on every path;
  * the round's own model gate stays with `holdS6BRequestRound`.
  */
 export async function holdS7AQueryRound<T>(world: S6AHostWorld,
   input: { label: string; goalId: string | null },
   use: (context: CoreCallContext, round: S6BHeldRound) => Promise<T>): Promise<T> {
-  const original = toolGroupAssembly.createQueryGraphToolGroup;
+  const original = answerTools.createAnswerTools;
   const contexts: CoreCallContext[] = [];
-  const spy = vi.spyOn(toolGroupAssembly, 'createQueryGraphToolGroup').mockImplementation(group => {
-    const real = original(group);
-    contexts.push(group.context);
-    return real;
+  const spy = vi.spyOn(answerTools, 'createAnswerTools').mockImplementation(config => {
+    contexts.push(config.context);
+    return original(config);
   });
   try {
     const held = await holdS6BRequestRound(world, { label: input.label, goalId: input.goalId }, async round => {

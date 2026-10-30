@@ -33,7 +33,7 @@
 ## 内部用
 
 - 本文件夹的两个值导出（`createEvidenceService`、`compileVerificationPlan`）都在上表，其余导出是类型。
-- `lookupReceipt` 是本层的私有包装（`src/core/work-graph/evidence/evidence-service.ts:465`），只在提交前/提交抛错后经 `GoalRecordTransactionPort.lookupCommit` 查回执；它不是 `src/core/record-store/ports.ts` 的导出。同类私有包装还在 `src/core/work-graph/queries/query-job-service.ts:426`、`src/core/work-graph/tasks/completion.ts:174`，按各 owner 的代码使用，收拢前不要编造共享端口。
+- `lookupReceipt` 是本层的私有包装（`src/core/work-graph/evidence/evidence-service.ts:465`），只在提交前/提交抛错后经 `GoalRecordTransactionPort.lookupCommit` 查回执；它不是 `src/core/record-store/ports.ts` 的导出。同类私有包装还在 `src/core/work-graph/queries/query-job-service.ts:418`、`src/core/work-graph/tasks/completion.ts:174`，按各 owner 的代码使用，收拢前不要编造共享端口。
 
 ## 不要做
 

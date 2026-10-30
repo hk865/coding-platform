@@ -335,7 +335,7 @@ async function inboxOf(started: RealScribe): Promise<SessionMessage[]> {
 // --------------------------------------------------------------------------
 
 type BackendControls = {
-  /** The next `readMany` naming this Run refKey answers `unavailable` once. */
+  /** The published `platform.executions.readExecution` answers this Run refKey `unavailable` once. */
   failRunRefKeyOnce: string | null;
   /** Arm `failRunRefKeyOnce` only when the recipient inbox page returns this
    * reminder, so the disposition's completion read — never a startup read — is
@@ -355,21 +355,10 @@ async function installSqliteBackendWrapper(controls: BackendControls): Promise<(
   const spy = vi.spyOn(sqliteBackend, 'createSqliteRecordBackend').mockImplementation(optionsIn => {
     const backend = original(optionsIn);
     const records = (backend as unknown as {
-      records: {
-        readMany(refKeys: readonly string[]): Promise<WrappableBatch>;
-        lookup(request: RecordLookupRequest): Promise<WrappableBatch>;
-      };
+      records: { lookup(request: RecordLookupRequest): Promise<WrappableBatch> };
     }).records;
     const wrapped = {
       ...(records as object),
-      async readMany(refKeys: readonly string[]): Promise<WrappableBatch> {
-        if (controls.failRunRefKeyOnce !== null && refKeys.includes(controls.failRunRefKeyOnce)) {
-          controls.failRunRefKeyOnce = null;
-          controls.failedRunReads += 1;
-          return { status: 'rejected', code: 'unavailable', reason: 'injected Run read failure' };
-        }
-        return records.readMany(refKeys);
-      },
       async lookup(request: RecordLookupRequest): Promise<WrappableBatch> {
         if (controls.failInboxPage2Once && request.index === 'session-message-by-recipient' && request.after !== null) {
           controls.failInboxPage2Once = false;
@@ -388,6 +377,30 @@ async function installSqliteBackendWrapper(controls: BackendControls): Promise<(
       },
     };
     return { ...(backend as object), records: wrapped } as never;
+  });
+  return () => { spy.mockRestore(); };
+}
+
+/**
+ * The one-shot Run failure lives on the PUBLISHED `platform.executions.readExecution`
+ * the reminder's completion check calls, so the every-Session view's raw reader
+ * stays real and cannot consume it first.
+ */
+async function installPublishedExecutionWrapper(controls: BackendControls): Promise<() => void> {
+  const platformComposition = await import('../../src/composition/create-platform.js');
+  const original = platformComposition.createTargetPlatform;
+  const spy = vi.spyOn(platformComposition, 'createTargetPlatform').mockImplementation(async options => {
+    const platform = await original(options);
+    const read = platform.executions.readExecution;
+    platform.executions.readExecution = async (ctx, ref) => {
+      if (controls.failRunRefKeyOnce !== null && canonicalJson(ref as never) === controls.failRunRefKeyOnce) {
+        controls.failRunRefKeyOnce = null;
+        controls.failedRunReads += 1;
+        return { status: 'rejected', code: 'unavailable', reason: 'injected Run read failure' };
+      }
+      return await read(ctx, ref);
+    };
+    return platform;
   });
   return () => { spy.mockRestore(); };
 }
@@ -510,6 +523,7 @@ it('S4C2 D-03 sends the literal requestId, then re-owner to the remaining scribe
 it('S4C2 item 2: a public completion + one new pending note, one failed Run read blocks a period', async () => {
   const controls = freshBackendControls();
   const restore = await installSqliteBackendWrapper(controls);
+  const restorePublished = await installPublishedExecutionWrapper(controls);
   let fixtureRef: S4ANoteFixture | undefined;
   const runtime = item2RuntimeHost(() => ({
     projectId: fixtureRef!.scope.projectId, workspaceId: fixtureRef!.scope.workspaceId }));
@@ -572,9 +586,10 @@ it('S4C2 item 2: a public completion + one new pending note, one failed Run read
     const extra = await f.write(writer, general(f.goalRef.goalId, 'item2-new-pending'), f.goalRef.goalId);
     expect(extra.status).toBe('pending_review');
 
-    // Host B: exactly ONE real Run read fails once, on the disposition's
+    // Host B: exactly ONE published Run read fails once, on the disposition's
     // completion read triggered by the reminder's inbox page; later reads are
-    // real. This is fault injection only (no record body is rewritten).
+    // real. This is fault injection only (no record body is rewritten), and the
+    // every-Session view's raw reader is untouched, so it cannot consume it first.
     controls.armRunFailOnReminder = { reminderRefKey: canonicalJson(reminder.ref as never),
       runRefKey: canonicalJson(runRef as never) };
     second = await startHostOn(f, scribeRef, { clock: { ms: HOST_CLOCK_START + 60_000 } });
@@ -602,6 +617,7 @@ it('S4C2 item 2: a public completion + one new pending note, one failed Run read
     if (first !== undefined) await first.host.close();
     if (second !== undefined) await second.host.close();
     if (fixtureRef !== undefined) await fixtureRef.close();
+    restorePublished();
     restore();
   }
 }, 60_000);

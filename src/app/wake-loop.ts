@@ -44,9 +44,7 @@
 import type { RecordCommitNotice } from '../composition/commit-observer.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../contracts/core/identity.js';
-import {
-  REQUEST_BACKOFF_INITIAL_MS, REQUEST_BACKOFF_MAX_MS,
-} from '../core/work-graph/model/request-contracts.js';
+import { backoffMsFor } from '../core/work-graph/model/request-contracts.js';
 
 export type WakeSource = 'request_command' | 'commit' | 'advance_settled' | 'line_registered' | 'start'
   | 'release_armed';
@@ -81,6 +79,8 @@ export const MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.fr
 export type WakeQueueOptionsV1 = {
   /** The aggregate types whose commit wakes this queue; absent → the loop's default set (QueryJob, QueryRun, Session). */
   aggregateTypes?: readonly string[];
+  /** This queue's page budget; absent → the loop's `deps.maxItems ?? 1` (the other queues keep their budgets). */
+  maxItems?: number;
 };
 
 /** The loop's one handler shape; the Host's queues implement it. */
@@ -88,6 +88,8 @@ export type QueueHandler = {
   rebuild(scope: WorkspaceScope): Promise<void>;
   drain(scope: WorkspaceScope, input: { maxItems: number; continuation: string | null; signal: AbortSignal }):
     Promise<{ progressed: number; more: boolean; continuation: string | null; wrapped: boolean; blocked: number }>;
+  /** Called once per committed, non-replayed notice, BEFORE the queue is woken; synchronous, never throws out. */
+  onCommitted?(notice: RecordCommitNotice): void;
 };
 
 type DrainResult = Awaited<ReturnType<QueueHandler['drain']>>;
@@ -213,18 +215,17 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise<void>((resolvePromise) => { setImmediate(resolvePromise); });
 }
 
-/** The back-off after `failures` consecutive failures: 1 s, 2 s, 4 s, … 60 s. */
-function backoffMsFor(failures: number): number {
-  return Math.min(REQUEST_BACKOFF_INITIAL_MS * 2 ** (failures - 1), REQUEST_BACKOFF_MAX_MS);
-}
-
 export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
   const delay = deps.delay ?? defaultDelay;
   const now = deps.now ?? ((): number => Date.now());
   const maxItems = deps.maxItems ?? 1;
   const controller = new AbortController();
-  /** Each queue's handler and the aggregate types it subscribes to. */
-  const handlers = new Map<string, { handler: QueueHandler; aggregateTypes: ReadonlySet<string> }>();
+  /** Each queue's handler, the aggregate types it subscribes to and its own page budget. */
+  const handlers = new Map<string, {
+    handler: QueueHandler;
+    aggregateTypes: ReadonlySet<string>;
+    maxItems: number | undefined;
+  }>();
   const workspaces = new Map<string, WorkspaceState>();
   const queues = new Map<string, QueueState>();
   const chains = new Set<Promise<void>>();
@@ -299,7 +300,7 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
         let result: DrainResult;
         try {
           result = await registration.handler.drain(scope, {
-            maxItems, continuation: entry.continuation, signal: controller.signal,
+            maxItems: registration.maxItems ?? maxItems, continuation: entry.continuation, signal: controller.signal,
           });
         } catch {
           // A read failure is not "nothing to do": stay dirty and back off.
@@ -369,7 +370,9 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     register(queueKey, handler, options) {
       if (closed) return;
       const subscribed = options?.aggregateTypes ?? WAKE_AGGREGATE_TYPES;
-      handlers.set(queueKey, { handler, aggregateTypes: new Set(subscribed) });
+      handlers.set(queueKey, {
+        handler, aggregateTypes: new Set(subscribed), maxItems: options?.maxItems,
+      });
       registerLater(queueKey);
     },
 
@@ -378,6 +381,9 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     committed(notice) {
       try {
         if (closed) return;
+        // The commit consumers advance their own cursor before any queue is woken;
+        // a handler's failure is isolated by the loop's outer catch.
+        for (const registration of handlers.values()) registration.handler.onCommitted?.(notice);
         for (const workspace of workspaces.values()) {
           for (const [queueKey, registration] of handlers) {
             // Each queue judges the notice against its OWN set; an optionless

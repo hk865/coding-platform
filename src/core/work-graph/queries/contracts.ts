@@ -41,6 +41,7 @@ import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
+import type { MessageCommandWritePort } from '../model/decision-contracts.js';
 import type { SecretaryProfileV1 } from '../model/request-contracts.js';
 import type { HandoffBriefPort } from '../model/session-handoff-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
@@ -250,6 +251,10 @@ export type QueryExecutionDependencies = {
    * frozen briefRef without this port is unavailable, never "no brief".
    */
   brief?: HandoffBriefPort;
+  /** Re-read a related message before prepare. */
+  messages?: Pick<SessionMailboxPort, 'readMessage'>;
+  /** The one non-committing message writer. */
+  messageWrites?: MessageCommandWritePort;
 };
 
 /**

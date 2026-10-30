@@ -39,9 +39,12 @@ import type { MaterialPort } from './material-contracts.js';
 import type { SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { SecretaryQueryRunPort } from './secretary-query-run-contracts.js';
-import type { RecipientExecutionsPort } from './session-facts-contracts.js';
+import type { RecipientExecutionsPort, DeliveryEligibilityFactsV1 } from './session-facts-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
+import { effectiveReplyHandler, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  type DeliveryFactsV1 } from '../state/message-machine.js';
+import { sameRef } from '../state/ref-equality.js';
 import type {
   MessageAcceptedInput, MessageQueryAnswerSenderRecord, MessageSecretaryRoundSenderRecord, MessageWorkRunSenderRecord,
   SessionMessageRecord, SessionMessageStatus as SessionMessageStatusRecord,
@@ -71,6 +74,25 @@ export function deriveSessionInputId(
 ): string {
   if (part === 'expiry') return 'expiry:' + canonicalKey(messageRef);
   return 'session-input:' + sha256Hex(canonicalJson({ ref: messageRef, part } as never));
+}
+
+/**
+ * The ONE conversion to the delivery predicate's facts: the consumption facts of the record, the caller's
+ * eligibility facts, and the part's own delivery/wait facts. Query admission and the consumable-Sessions view call
+ * this one copy; no caller restates the delivered/accepted or wait rules.
+ */
+export function consultationFacts(message: SessionMessage, part: 'message' | 'response',
+  extra: DeliveryEligibilityFactsV1, target: SessionRef): DeliveryFactsV1 {
+  const accepted = (id: string) => (message.acceptedInputs ?? []).some((entry) => entry.inputId === id);
+  const base = { consumption: messageFactsOfRecord(message), ...extra };
+  if (part === 'message') return { ...base, part, delivered: accepted(deriveSessionInputId(message.ref, 'message')) };
+  const state = waitStateOf(message, waitFactsOfRecord(message));
+  const handler = effectiveReplyHandler(message);
+  return { ...base, part, accepted: accepted(deriveSessionInputId(message.ref, 'response')),
+    wait: message.intent !== 'inquiry' || message.waitAfterSend !== true ? { kind: 'none' }
+      : state.state === 'consumed' ? { kind: 'consumed' }
+      : handler !== null && sameRef(handler, target) ? { kind: 'unconsumed', boundHere: true }
+      : { kind: 'unconsumed', boundHere: false } };
 }
 
 /** The one wait-consumed unique slot; the acceptance claim's key and the reader's key are the same. */

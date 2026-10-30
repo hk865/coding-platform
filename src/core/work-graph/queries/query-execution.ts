@@ -44,7 +44,8 @@ import type {
 } from '../../../contracts/query-job.js';
 import type { RawArtifactRecord } from '../../record-store/body-ports.js';
 import type {
-  EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt, UniqueClaimChange,
+  EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt,
+  UniqueClaimChange,
 } from '../../record-store/ports.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
@@ -60,6 +61,7 @@ import { handoffFenceGuard, readHandoffFence } from '../sessions/session-handoff
 import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
+import { deriveSessionInputId } from '../model/communication-contracts.js';
 import {
   MAX_ATTESTATION_REASON_CHARS, advanceQueryExecutionRecord, markQueryRunUnknownRecord, queryRecoveryStateOf,
   settleQueryRunRecord, transitionQueryRunRecovery, type QueryAnswerCheck, type QueryRecoveryEffect, type QueryRecoveryEvent,
@@ -71,8 +73,8 @@ import { mergeGuards } from '../persistence/record-guards.js';
 import { SECRETARY_TAIL_RETRIES, type SecretaryProfileV1 } from '../model/request-contracts.js';
 import { readRequestRounds, type RequestRoundsFactsV1 } from './request-rounds-read.js';
 import {
-  coveredByDrop, requestAbandon, requestDroppedEnd, requestRetry, requestStartCheck, requestStartPass,
-  type RequestStartPlan,
+  coveredByDrop, enteredConsumptionCommands, requestAbandon, requestDroppedEnd, requestRetry, requestStartCheck,
+  requestStartPass, type EnteredConsumptionInputV1, type RequestStartPlan,
 } from './request-round-claims.js';
 import { contextAssemblyProblem, frozenSectionOrderProblem } from '../state/context-input.js';
 import {
@@ -92,6 +94,7 @@ import type {
 } from './contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { SessionFactsV1 } from '../model/session-facts-contracts.js';
+import type { SessionMessageCommitFragment } from '../model/decision-contracts.js';
 
 /** Exact manifest content type (declared once in contracts, ND-9); the writer re-reads the body and requires this. */
 export { QUERY_MANIFEST_CONTENT_TYPE };
@@ -136,6 +139,8 @@ function expectedQueryDuty(manifest: PreparedQueryManifestV1): PlatformDutyV1 | 
  */
 function expectedQueryCallKinds(job: QueryJobSnapshot): readonly ContextCallKindV1[] {
   if (isRequestRound(job)) return ['secretary'];
+  // The planning Query's binding call kind is its own; the start check reads the same table.
+  if (job.job.intent.execution.kind === 'intervention_planning') return ['intervention_planning'];
   return job.job.intent.execution.kind === 'initial_coordination' ? ['planning', 'copy'] : ['copy'];
 }
 /**
@@ -170,12 +175,6 @@ function enteredJob(job: QueryJobSnapshot, run: QueryRunSnapshot): QueryJobSnaps
   const state = run.run.executionState;
   if (state === undefined) throw new Error('an entered QueryRun always carries its execution state');
   return recordEntered(job, { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId });
-}
-function mapRead(result: ReadResult<unknown>): CoreRejection {
-  if (result.status === 'ready') return rejectedWithNonEmptyCurrent('unavailable', 'a must-fail read unexpectedly returned a value');
-  if (result.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the required Query fact was not found');
-  if (result.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the required Query fact is not readable at the required watermark');
-  return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
 }
 function toRejection(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'ready') return rejectedWithNonEmptyCurrent('unavailable', 'a must-fail read unexpectedly returned a value');
@@ -502,7 +501,9 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, ctx: CoreC
   // freezes its goal's active Plan too, when there is one, so a secretary's
   // stage anchor takes the version the round was prepared under.
   let focusPlan: PlanRevisionSnapshot | null = null;
-  const freezesGoalPlan = isRequestRound(record.value.job) && goal.activePlanRevision !== null;
+  const freezesGoalPlan = (isRequestRound(record.value.job)
+    || record.value.job.job.intent.execution.kind === 'intervention_planning')
+    && goal.activePlanRevision !== null;
   if (record.value.job.job.intent.focusTaskRefs.length > 0 || freezesGoalPlan) {
     const activePlan = goal.activePlanRevision;
     if (activePlan === null) return rejectedWithNonEmptyCurrent('invalid', 'the Query focus is not provable without an active Plan');
@@ -1394,7 +1395,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     } catch (error) {
       return rejectedWithNonEmptyCurrent('unavailable', `Role resolution failed: ${messageOf(error)}`);
     }
-    if (roleFacts.result.status !== 'ready') return mapRead(roleFacts.result);
+    if (roleFacts.result.status !== 'ready') return toRejection(roleFacts.result);
     const roleResolution = roleFacts.result.value;
     if (roleResolution.status === 'inadmissible') return rejectedWithNonEmptyCurrent('forbidden', 'the Role binding is inadmissible');
     if (roleResolution.status === 'resolved') {
@@ -2190,6 +2191,81 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     };
   }
 
+  /**
+   * §2.3/§2.5: the one entered consumption a reply/expiry round's commit joins.
+   * The ports are optional: absent, the entry consumes nothing (it never fails
+   * closed). Present, every reply/expiry material of the frozen
+   * `[round, ...batch]` is re-read with its own real envelope, the pure plan
+   * builds one command for each input not already accepted, and the mailbox's
+   * `prepare` encodes the record and event once per command. The caller merges
+   * the parts beside its own (the brief's shape), never as a second effect.
+   */
+  async function enteredConsumption(input: {
+    owned: CoreCallContext; run: QueryRunSnapshot; queryRunRef: QueryRunRef;
+    requestId: string; actor: HostActor; occurredAt: string; position: number;
+  }): Promise<SessionMessageCommitFragment | null | CoreRejection> {
+    const messages = deps.messages;
+    const writes = deps.messageWrites;
+    if (messages === undefined || writes === undefined) return null;
+    const state = input.run.run.executionState;
+    if (state === undefined || state.entry === null || state.prepared === null) return null;
+    const entry = state.entry;
+    const loaded = await loadQueryManifest(deps.bodies, {
+      queryRunRef: input.queryRunRef, bundleRef: state.prepared.bundleRef, inputDigest: state.prepared.inputDigest,
+    });
+    if (loaded.status !== 'ready') return toRejection(loaded);
+    const request = loaded.value.manifest.request;
+    if (request === null) return null;
+    const kernel = entry.kernel;
+    const records: EncodedRecord[] = [];
+    const events: EncodedDomainEvent[] = [];
+    const guards: RecordGuard[] = [];
+    const claims: UniqueClaimChange[] = [];
+    for (const material of [request.round, ...request.batch]) {
+      const relatedMessageRef = material.relatedMessageRef;
+      const delivery = material.delivery;
+      if (relatedMessageRef === null || delivery === null) continue;
+      const read = await messages.readMessage(input.owned, relatedMessageRef);
+      if (read.status !== 'ready') return toRejection(read);
+      const message = read.value;
+      const part: 'response' | 'expiry' = 'body' in delivery ? 'response' : 'expiry';
+      const inputId = deriveSessionInputId(message.ref, part);
+      const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
+      const plan = enteredConsumptionCommands({
+        executionRef: input.queryRunRef,
+        kernel: { ...kernel },
+        position: input.position,
+        acceptedAt: input.occurredAt,
+        event: {
+          eventId: deps.eventId(), occurredAt: input.occurredAt, requestId: input.requestId,
+          projectId: input.queryRunRef.projectId, workspaceId: input.queryRunRef.workspaceId,
+          actor: { kind: 'host', actor: input.actor },
+        },
+        messages: [{
+          message, part,
+          inputAccepted: {
+            observerOwnsExecution: true,
+            kernelMatches: sameRef(kernel, entry.kernel),
+            claimedSessionMatches: true,
+            executionSessionMatches: sameRef(loaded.value.manifest.sessionRef, state.sessionRef),
+            inputIdTakenByOtherEvent: accepted !== undefined
+              && (!sameRef(accepted.executionRef, input.queryRunRef)
+                || !sameRef(accepted.kernel, { ...kernel, position: input.position })),
+          },
+        }],
+      });
+      for (const planned of plan) {
+        const prepared = await writes.prepare(input.owned, planned.command, planned.companions);
+        if ('status' in prepared) return prepared;
+        records.push(...prepared.records);
+        events.push(...prepared.events);
+        guards.push(...prepared.guards);
+        claims.push(...prepared.claims);
+      }
+    }
+    return { records, events, guards, claims };
+  }
+
   async function recordObservation(
     ctx: CoreCallContext,
     request: GraphWrite<QueryHistoryObservation>,
@@ -2277,10 +2353,17 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         briefRecords.push(consumed.value.record);
         briefGuards.push(consumed.value.guard);
       }
+      // §2.3/§2.5: a reply/expiry round's wait is consumed beside the brief in
+      // this same commit. The fragment is the caller's, not a second effect.
+      const consumption = await enteredConsumption({
+        owned, run, queryRunRef, requestId, actor, occurredAt, position: observation.history.startPosition,
+      });
+      if (consumption !== null && 'status' in consumption) return consumption;
       const merged = mergeGuards([
         ...guards,
         ...(jobWritten ? [{ refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision }] : []),
         ...briefGuards,
+        ...(consumption?.guards ?? []),
       ]);
       if (!merged.ok) return merged.rejection;
       const event = buildRecordedEvent({
@@ -2291,9 +2374,10 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         deps, identityKey, fingerprint,
         guards: merged.guards,
         records: jobWritten
-          ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob), ...briefRecords]
-          : [encodeQueryRunSnapshotRecord(nextRun), ...briefRecords],
-        events: [encodeQueryExecutionRecordedEvent(event)],
+          ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob), ...briefRecords, ...(consumption?.records ?? [])]
+          : [encodeQueryRunSnapshotRecord(nextRun), ...briefRecords, ...(consumption?.records ?? [])],
+        events: [encodeQueryExecutionRecordedEvent(event), ...(consumption?.events ?? [])],
+        ...(consumption === null ? {} : { claims: consumption.claims }),
         value: nextRecord, operation: 'entered',
       });
     }
@@ -2334,6 +2418,15 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const occurredAt = deps.now();
     const next = settledRecords({ job, run, session }, state.phase, settled.effects, occurredAt);
     if ('status' in next) return next;
+    // §2.5: the terminal commit that produced `record_entered` joins the same
+    // entered consumption at the same position; the already-accepted input is
+    // a replay and adds nothing.
+    const consumption = settled.effects.some(effect => effect.kind === 'record_entered')
+      ? await enteredConsumption({
+        owned, run, queryRunRef, requestId, actor, occurredAt, position: observation.history.startPosition,
+      })
+      : null;
+    if (consumption !== null && 'status' in consumption) return consumption;
     // an entered request round consumes the carriers it used and writes
     // `round_ended` in this same closing commit. The executing Job is folded in
     // and encoded once; a plain Query has neither.
@@ -2357,8 +2450,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (next.session !== null) records.push(encodeSessionRecord(next.session));
     records.push(...activityPlan.records);
     records.push(...ending.records);
+    records.push(...(consumption?.records ?? []));
     // The Answer's event first, then the settled Run's, which carries the result a replay restores.
-    const events: import('../../record-store/ports.js').EncodedDomainEvent[] = [];
+    const events: EncodedDomainEvent[] = [];
     if (next.answer !== null) {
       events.push(encodeQueryJobAnsweredEvent({
         eventId: deps.eventId(), eventType: 'QueryJobAnswered', schemaVersion: 1,
@@ -2369,6 +2463,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       }));
     }
     events.push(encodeQueryExecutionRecordedEvent(event));
+    events.push(...(consumption?.events ?? []));
     const terminalGuards: RecordGuard[] = [
       ...guards,
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
@@ -2377,8 +2472,11 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (next.answer !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(next.answer.ref), expectedRevision: null });
     terminalGuards.push(...activityPlan.guards);
     terminalGuards.push(...ending.guards);
+    terminalGuards.push(...(consumption?.guards ?? []));
     return commitOperation({
-      deps, identityKey, fingerprint, guards: terminalGuards, records, events, value: nextRecord, operation: 'observed',
+      deps, identityKey, fingerprint, guards: terminalGuards, records, events,
+      ...(consumption === null ? {} : { claims: consumption.claims }),
+      value: nextRecord, operation: 'observed',
     });
   }
 
@@ -2503,6 +2601,16 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       }
     }
     if (entered) nextJob = enteredJob(nextJob, run);
+    // §2.5: the reconcile/attestation commit that set `entered` joins the same
+    // consumption at the fixed Turn's real start position (QRR-04, QRR-05 with
+    // unresolved tools; QRR-06 attestation carries no `record_entered`).
+    const turnHistory = nextRun.run.executionState?.history ?? null;
+    const consumption = entered && turnHistory !== null
+      ? await enteredConsumption({
+        owned: ctx, run, queryRunRef, requestId, actor, occurredAt, position: turnHistory.startPosition,
+      })
+      : null;
+    if (consumption !== null && 'status' in consumption) return consumption;
     // L16: only the two rows whose QueryRun entered the Kernel carry a tally;
     // QRR-01/02 wrote none and QRR-05 marks the Run unknown.
     let activityPlan: { records: EncodedRecord[]; guards: RecordGuard[] } = { records: [], guards: [] };
@@ -2533,6 +2641,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (nextSession !== null) records.push(encodeSessionRecord(nextSession));
     records.push(...activityPlan.records);
     records.push(...ending.records);
+    records.push(...(consumption?.records ?? []));
     const guards = mergeGuards([
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
       { refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision },
@@ -2540,10 +2649,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       ...requestGuards,
       ...activityPlan.guards,
       ...ending.guards,
+      ...(consumption?.guards ?? []),
     ]);
     if (!guards.ok) return guards.rejection;
-    return commitOperation({ deps, identityKey, fingerprint, guards: guards.guards, records, claims,
-      events, value: nextRecord, operation: 'observed' });
+    const allClaims = consumption === null ? claims : [...claims, ...consumption.claims];
+    const allEvents = consumption === null ? events : [...events, ...consumption.events];
+    return commitOperation({ deps, identityKey, fingerprint, guards: guards.guards, records, claims: allClaims,
+      events: allEvents, value: nextRecord, operation: 'observed' });
   }
 
   async function reconcileQuery(ctx: CoreCallContext, request: GraphWrite<QueryReconcileInput>): Promise<WriteResult<QueryExecutionRecord>> {

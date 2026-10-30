@@ -110,10 +110,7 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
       archiveSessionRef: f.b2.claim.sessionRef, archiveRequestId: 'a', recordedAt: t0 });
     const value = ready(await f.facts.readSessionFacts(f.base.ctx, f.b2.claim.sessionRef));
     expect(value.wait).toBeNull();
-    expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
-      waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
-      requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'answered', reason: null },
-      deadline: t1, expiredAt: null, complete: true });
+    expect(value.waits).toEqual([]);
     expect(ready(await f.history.mailbox.readMessage(f.base.ctx, message.ref)).response).toEqual(before);
   });
 

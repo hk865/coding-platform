@@ -20,11 +20,19 @@ import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalKey as keyOf, sameJson } from '../../../contracts/fingerprint.js';
 import type {
-  QueryJobRef, QueryJobSnapshot, QueryRunSnapshot, SecretaryRoundMaterialV1,
+  QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot, SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
 import type { RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
+import {
+  deriveSessionInputId, waitConsumedClaimKey, type SessionMessage,
+} from '../model/communication-contracts.js';
+import type {
+  SessionMessageCommitCompanions, SessionMessageWriteCommandV1, SessionMessageWriteEnvelopeV1,
+} from '../model/decision-contracts.js';
+import type { KernelExecutionBinding } from '../model/execution-entry-contracts.js';
 import { requestTailKey, secretaryIntakeKey } from '../model/request-contracts.js';
 import { mergeGuards } from '../persistence/record-guards.js';
+import { waitFactsOfRecord, type MessageGuardContext } from '../state/message-machine.js';
 import type { QueryLifecycleRecords } from '../state/query-run-recovery.js';
 import {
   absorbRound, endUnstartedRound, newAttempt, recordAbsorbedRounds, setIntake,
@@ -195,6 +203,86 @@ export function requestDroppedEnd(input: {
   if (roundOf(input.facts, input.records.job.ref) === undefined) return invalid('the round is not a round of its request');
   const ended = endUnstartedRound(input.records, { detail: 'dropped', message: 'request_dropped', occurredAt: input.occurredAt });
   return { ...ended, claims: [noopTailClaim(input.facts)], guards: [...input.facts.guards] };
+}
+
+// ------------------------------------------------------------------------ //
+// Entered consumption                                                      //
+// ------------------------------------------------------------------------ //
+
+/**
+ * §2.3: one related message as the Query entry re-read it. `part` is the
+ * round's frozen kind (`reply` → `response`, `expiry` → `expiry`), and
+ * `inputAccepted` carries the guard facts the machine's `input_accepted` arm
+ * checks (`message-machine.ts:455-:465`).
+ */
+export type EnteredConsumptionMessageV1 = {
+  /** The CURRENT record, re-read through `deps.messages.readMessage`. */
+  message: SessionMessage;
+  part: 'response' | 'expiry';
+  /** The entry's real facts, never `{}` (`message-machine.ts:952`). */
+  inputAccepted: NonNullable<MessageGuardContext['inputAccepted']>;
+};
+
+/** §2.3: the real facts one entered Query commit freezes into the wait's acceptance. */
+export type EnteredConsumptionInputV1 = {
+  executionRef: QueryRunRef;
+  /** The fixed entry's Kernel binding; the command adds the Turn's `position`. */
+  kernel: KernelExecutionBinding;
+  /** The real entered/terminal record's position. */
+  position: number;
+  acceptedAt: string;
+  /** The caller's real commit envelope (`decision-contracts.ts:191`). */
+  event: SessionMessageWriteEnvelopeV1['event'];
+  messages: readonly EnteredConsumptionMessageV1[];
+};
+
+/**
+ * §2.3: the pure plan of the one non-committing message fragment an entered
+ * request round commits beside its own. Per message, `deriveSessionInputId`
+ * names the input; one already in `acceptedInputs` is a replay and is skipped.
+ * Otherwise one `message.inputAccepted` command and its `wait-consumed` claim
+ * (`expectedOwner: null`, `nextOwner: inputId`, like the acceptance's own,
+ * `mailbox-service.ts:3802-3823`). The plan commits nothing, calls no store or
+ * clock, and is safe to call again on a retry; the mailbox's `prepare` is the
+ * only builder/encoder of the record and its event.
+ */
+export function enteredConsumptionCommands(input: EnteredConsumptionInputV1): readonly {
+  command: SessionMessageWriteCommandV1;
+  companions: SessionMessageCommitCompanions;
+}[] {
+  const plan: { command: SessionMessageWriteCommandV1; companions: SessionMessageCommitCompanions }[] = [];
+  for (const entry of input.messages) {
+    const inputId = deriveSessionInputId(entry.message.ref, entry.part);
+    if ((entry.message.acceptedInputs ?? []).some(accepted => accepted.inputId === inputId)) continue;
+    // A wait already consumed by another part (an accepted expiry, then a late
+    // reply) is an ordinary late input: no second consumption, no claim.
+    const consumesWait = !waitFactsOfRecord(entry.message).consumed;
+    plan.push({
+      command: {
+        operation: 'message.inputAccepted',
+        messageRef: entry.message.ref,
+        before: entry.message,
+        expectedRevision: entry.message.revision,
+        event: input.event,
+        change: {
+          kind: 'input_accepted',
+          input: {
+            inputId, part: entry.part, executionRef: input.executionRef,
+            kernel: { ...input.kernel, position: input.position },
+            acceptedAt: input.acceptedAt, evidence: 'query_entered', consumesWait,
+          },
+        },
+        inputAccepted: entry.inputAccepted,
+      },
+      companions: {
+        records: [], events: [], guards: [],
+        claims: consumesWait
+          ? [{ claimKey: waitConsumedClaimKey(entry.message.ref), expectedOwner: null, nextOwner: inputId }]
+          : [],
+      },
+    });
+  }
+  return plan;
 }
 
 // ------------------------------------------------------------------------ //

@@ -376,7 +376,7 @@ const OPERATION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'workspaceId', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
 ];
 const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'parentOperation', 'workspace', 'kernelStore', 'role',
-  'recommendedRefs', 'initialLinks', 'provenance', 'creation'];
+  'recommendedRefs', 'initialLinks', 'provenance', 'creation', 'consultation'];
 const OPERATION_PHASES = ['accepted', 'running', 'completed', 'failed', 'unknown'] as const;
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',

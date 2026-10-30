@@ -1,5 +1,5 @@
 import type { RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
-import type { GoalSnapshot } from '../../contracts/ledger.js';
+import type { AggregateRef, GoalSnapshot } from '../../contracts/ledger.js';
 import { revisionAssignments, type PlanRevisionRef, type PlanRevisionSnapshot, type RuntimeTask } from '../../contracts/plan.js';
 import type { VersionPin } from '../../contracts/core/identity.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
@@ -14,7 +14,9 @@ import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js
 import { automationConfirmationCause } from '../../core/work-graph/state/decision-policy.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../../core/work-graph/state/verification-machine.js';
 import { isUnenteredReviewRoundForCancellation, reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.js';
-import type { WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview } from './contracts.js';
+import type {
+  GoalWaitBasisV1, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview,
+} from './contracts.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration } from './ports.js';
 import {
   cancelReviewRoundStep, graphWrite, prepareStep, readyValue, requeueTaskStep, reverifyRoundStep, settleReviewStep, waiting,
@@ -38,7 +40,8 @@ export type TaskGate =
   | { kind: 'pass' }
   | { kind: 'skip'; source: TaskGateSource;
       /** K3 UR6/ruling 6: the review card's formal source when one is blocked on. */
-      decisionSource?: DecisionSourceV1 }
+      decisionSource?: DecisionSourceV1;
+      waitBasis?: GoalWaitBasisV1 }
   | { kind: 'review'; step: WorkflowOperation };
 /** The internal UR1 Session-selection outcome (not part of the finite gate union). */
 export type ReviewGate =
@@ -67,6 +70,11 @@ export type TaskGateFunctions = {
     operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null>;
   gatePerform(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null>;
 };
+
+export function goalWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[],
+  recordKinds: readonly AggregateRef['aggregateType'][]): GoalWaitBasisV1 {
+  return { projectId: goal.ref.projectId, goalId: goal.ref.goalId, recordKinds, reasons };
+}
 
 export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
   const deps = gate.workflow;
@@ -290,7 +298,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null> {
     const failure = row.failure;
     if (failure === undefined) return null;
-    // Lead (accept review, known #7): a requeue already covering this failure means the action was committed;
+    // a requeue already covering this failure means the action was committed;
     // the owner's original receipt decides, never a new card under a changed autonomy.
     if (operation.kind === 'requeue_task' && failure.automation.coveringRequeue !== null) return null;
     let action: 'system_requeue' | 'auto_reverify';
@@ -307,7 +315,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     } else {
       return null;
     }
-    // Lead (rebase, A11 #15 / ND-7): past the automatic cap the existing fence
+    // past the automatic cap the existing fence
     // stays — the requeue/reverify owner commits its cap refusal and the Goal
     // shows that cause; the gate adds only the autonomy rule (spec §3.2
     // "countedNext>cap ... existing fences stay").
@@ -327,7 +335,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       // probe and the final derivation must agree.
       requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
     }) === null) return null;
-    // §3.3 line 629 / defect-1: a Run is a STORED aggregate, so its pin must be
+    // §3.3 line 629: a Run is a STORED aggregate, so its pin must be
     // its formal revision, never a fabricated 0 (the §3.3 pin check would then
     // reject the card with `revision_conflict`). The failure facts of a gate
     // whose anchored producer Run was not in the read window carry a `runRef`
@@ -376,6 +384,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     return readyValue({
       state: 'waiting', receipt: null, next: null,
       reason: `automation_confirmation_required:${cause.action}`,
+      waitBasis: goalWaitBasisOf(goal, [`automation_confirmation:${action}`], ['UserDecision', 'Goal']),
       decisionCause: {
         source: {
           kind: 'goal_cause',
@@ -394,7 +403,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
   async function gatePerform(owned: Owned, base: Base,
     operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null> {
     if (operation.kind !== 'requeue_task' && operation.kind !== 'reverify_round') return null;
-    // Lead (rebase, A2-workflow-auto-rework): a malformed perform request is
+    // a malformed perform request is
     // judged by the existing step (owner presence, input checks), never here.
     const requestInput: unknown = (operation.request as { input?: unknown } | undefined)?.input;
     if (!isRecord(requestInput)) return null;
@@ -413,17 +422,21 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     if (operation.kind === 'requeue_task' && row.execution !== null && deps.unknownCallReviews !== undefined) {
       let read;
       try { read = await deps.unknownCallReviews.readReview(owned.ctx, { runRef: row.execution }); }
-      catch { return waiting(null, 'unknown_call_review_unreadable: the review record read failed; the requeue writes nothing'); }
+      catch { return waiting(null, 'unknown_call_review_unreadable: the review record read failed; the requeue writes nothing',
+        undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:unreadable'], ['UnknownCallReview', 'Goal'])); }
       if (read.status === 'ready') {
         const record = read.value;
         if ((record.disposition?.hold ?? null) === 'held') {
-          return waiting(null, 'unknown_call_review_held: the selected Run\'s review record blocks this requeue');
+          return waiting(null, 'unknown_call_review_held: the selected Run\'s review record blocks this requeue',
+            undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:held'], ['UnknownCallReview', 'Goal']));
         }
         if (record.status !== 'resolved') {
-          return waiting(null, 'unknown_call_review_pending: the selected Run\'s review record blocks this requeue');
+          return waiting(null, 'unknown_call_review_pending: the selected Run\'s review record blocks this requeue',
+            undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:pending'], ['UnknownCallReview', 'Goal']));
         }
       } else if (read.status !== 'not_found') {
-        return waiting(null, 'unknown_call_review_unreadable: the selected Run\'s review record blocks this requeue');
+        return waiting(null, 'unknown_call_review_unreadable: the selected Run\'s review record blocks this requeue',
+          undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:unreadable'], ['UnknownCallReview', 'Goal']));
       }
     }
     return await automationConfirmation(base, goalRead.value.goal, row, operation);

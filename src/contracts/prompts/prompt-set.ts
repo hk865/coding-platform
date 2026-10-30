@@ -6,7 +6,7 @@
  */
 import type { ArtifactRef } from '../artifact.js';
 import type { ReadResult } from '../core/results.js';
-import type { ContextCallKindV1, ContextSectionNameV1 } from '../graph-context.js';
+import { CONTEXT_CALL_KINDS, type ContextCallKindV1, type ContextSectionNameV1 } from '../graph-context.js';
 import { sha256Hex } from '../fingerprint.js';
 import { isRecord } from '../validation/common.js';
 import type { ToolTextV1 } from './prompt-pack.js';
@@ -130,9 +130,6 @@ export function promptSelectionOf(model: {
  * manifest loaders use it.
  */
 export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
-    const CALL_KINDS: ReadonlySet<string> = new Set([
-        'work', 'continuation', 'handoff', 'review', 'secretary', 'copy', 'planning', 'attention',
-    ]);
     const SECTION_NAMES: ReadonlySet<string> = new Set([
         'role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation', 'unknown_call_review',
     ]);
@@ -185,7 +182,7 @@ export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
     const sectionOrder = value['sectionOrder'];
     if (!isRecord(sectionOrder)) return null;
     for (const [kind, sections] of Object.entries(sectionOrder)) {
-        if (!CALL_KINDS.has(kind) || !Array.isArray(sections)) return null;
+        if (!CONTEXT_CALL_KINDS.includes(kind as ContextCallKindV1) || !Array.isArray(sections)) return null;
         if (!sections.every(section => isString(section) && SECTION_NAMES.has(section))) return null;
     }
 

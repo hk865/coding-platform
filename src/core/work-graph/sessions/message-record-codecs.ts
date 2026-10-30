@@ -17,13 +17,16 @@
  *   - the two recipient lookup indexes are registered with the record codec;
  *     no hand-written SQL table or second index exists.
  */
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { SessionRef } from '../../../contracts/core/identity.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
+import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { DecisionSubjectShape } from '../../../contracts/goal-decisions.js';
 import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
 import {
-  QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape,
+  QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionMessageRefShape, TaskTripleShape,
 } from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
@@ -44,6 +47,7 @@ import type { SessionMessage } from '../model/communication-contracts.js';
 import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { createEventCodec } from '../persistence/event-codec-factory.js';
 
 /** Encoding selector for the persisted message record. */
 export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';
@@ -269,6 +273,19 @@ export type ArchiveWaitDisposedEventV1 = Slice1EventHeaderV1 & {
   source: SessionRecord; archiveStep: ArchiveStepRefV1;
 };
 
+/** §3.9 item 2: the old message's `transferredTo` update; the new message is in the same commit's Sent event. */
+export const SESSION_MESSAGE_FORWARDED_EVENT_TYPE = 'SessionMessageForwarded';
+/** §3.9 item 5: the person's `waits/dispose` record update (cancel or transfer). */
+export const SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE = 'SessionMessageWaitDisposed';
+
+export type SessionMessageForwardedEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'SessionMessageForwarded'; message: SessionMessage; originalRef: SessionMessageRef;
+};
+export type SessionMessageWaitDisposedEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'SessionMessageWaitDisposed'; message: SessionMessage;
+  disposition: { mode: 'cancel' | 'transfer'; to: SessionRef | null };
+};
+
 // --------------------------------------------------------------------------
 // Pure shape helpers
 // --------------------------------------------------------------------------
@@ -298,7 +315,7 @@ export const SessionMessageFieldsShape = defineShape({ name: 'SessionMessageFiel
   expiredAt: f.nullable(f.isoTime()),
   withdrawnAt: f.nullable(f.isoTime()),
   waitCancelledAt: f.nullable(f.isoTime()),
-  transferredTo: f.nullable(f.ref(SessionRefShape)),
+  transferredTo: f.nullable(f.ref(SessionMessageRefShape)),
   originalRef: f.nullable(f.ref(SessionMessageRefShape)),
   appliedAt: f.nullable(f.isoTime()),
   rejectedAt: f.nullable(f.isoTime()),
@@ -909,16 +926,22 @@ const MESSAGE_KEYS: readonly string[] = [
   'appliedAt', 'rejectedAt', 'approvedAt', 'approvalRevision', 'applicationProof', 'pins',
 ];
 
-/** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. */
+/** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. A person's transfer carries no archive pair. */
 function checkReplyHandler(value: unknown, path: string): Problem {
   if (!isRecord(value) || !hasOnlyKeys(value, ['sessionRef', 'archiveSessionRef', 'archiveRequestId', 'changedAt'])) {
     return `${path} carries unknown fields`;
   }
   const session = checkPlainSessionRef(value['sessionRef']);
   if (session !== null) return `${path}.sessionRef: ${session}`;
-  const archiveSession = checkPlainSessionRef(value['archiveSessionRef']);
-  if (archiveSession !== null) return `${path}.archiveSessionRef: ${archiveSession}`;
-  if (!nonEmpty(value['archiveRequestId'])) return `${path}.archiveRequestId is required`;
+  const archiveSession = value['archiveSessionRef'];
+  if (archiveSession !== undefined) {
+    const problem = checkPlainSessionRef(archiveSession);
+    if (problem !== null) return `${path}.archiveSessionRef: ${problem}`;
+  }
+  const archiveRequestId = value['archiveRequestId'];
+  if (archiveRequestId !== undefined && !nonEmpty(archiveRequestId)) {
+    return `${path}.archiveRequestId is required when present`;
+  }
   if (!nonEmpty(value['changedAt'])) return `${path}.changedAt is required`;
   return null;
 }
@@ -1220,17 +1243,9 @@ function checkArchiveStep(value: unknown): Problem {
 
 function checkArchiveWaitDisposedBody(body: UnknownRecord): Problem {
   if (!hasOnlyKeys(body, ARCHIVE_WAIT_DISPOSED_EVENT_KEYS)) return 'ArchiveWaitDisposed carries unknown fields';
-  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
-    return 'ArchiveWaitDisposed requires projectId and workspaceId';
-  }
-  const message = body['message'];
-  if (!isRecord(message)) return 'ArchiveWaitDisposed requires the changed message';
-  const messageProblem = checkSessionMessageBody(message);
-  if (messageProblem !== null) return `ArchiveWaitDisposed message: ${messageProblem}`;
-  if (!isRecord(message['ref']) || message['ref']['projectId'] !== body['projectId']
-    || message['ref']['workspaceId'] !== body['workspaceId']) {
-    return 'ArchiveWaitDisposed message scope disagrees with the event scope';
-  }
+  const messageProblem = eventMessageProblem(body, 'ArchiveWaitDisposed');
+  if (messageProblem !== null) return messageProblem;
+  const message = body['message'] as UnknownRecord;
   const source = body['source'];
   if (!isRecord(source)) return 'ArchiveWaitDisposed requires the changed source SessionRecord';
   const sourceProblem = checkSessionBody(source);
@@ -1266,10 +1281,82 @@ function checkArchiveWaitDisposedBody(body: UnknownRecord): Problem {
   return null;
 }
 
-function validateArchiveWaitDisposedEvent(event: EncodedDomainEvent): DecodeResult<EncodedDomainEvent> {
-  const decoded = archiveWaitDisposedEventFromEvent(event);
-  return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
+const SESSION_MESSAGE_FORWARDED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'message', 'originalRef',
+];
+const SESSION_MESSAGE_WAIT_DISPOSED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'message', 'disposition',
+];
+
+/** The event's changed message: full record body, and its scope agrees with the event's. */
+function eventMessageProblem(body: UnknownRecord, eventType: string): Problem {
+  if (!nonEmpty(body['projectId']) || !nonEmpty(body['workspaceId'])) {
+    return `${eventType} requires projectId and workspaceId`;
+  }
+  const message = body['message'];
+  if (!isRecord(message)) return `${eventType} requires the changed message`;
+  const messageProblem = checkSessionMessageBody(message);
+  if (messageProblem !== null) return `${eventType} message: ${messageProblem}`;
+  if (!isRecord(message['ref']) || message['ref']['projectId'] !== body['projectId']
+    || message['ref']['workspaceId'] !== body['workspaceId']) {
+    return `${eventType} message scope disagrees with the event scope`;
+  }
+  return null;
 }
+
+function checkSessionMessageForwardedBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, SESSION_MESSAGE_FORWARDED_EVENT_KEYS)) return 'SessionMessageForwarded carries unknown fields';
+  const messageProblem = eventMessageProblem(body, 'SessionMessageForwarded');
+  if (messageProblem !== null) return messageProblem;
+  const originalRef = body['originalRef'];
+  const refProblem = checkSessionMessageRef(originalRef);
+  if (refProblem !== null) return `SessionMessageForwarded originalRef: ${refProblem}`;
+  const message = body['message'] as UnknownRecord;
+  if (canonicalOf(originalRef) !== canonicalOf(message['ref'])) {
+    return 'SessionMessageForwarded originalRef is not the changed message';
+  }
+  return null;
+}
+
+function checkSessionMessageWaitDisposedBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, SESSION_MESSAGE_WAIT_DISPOSED_EVENT_KEYS)) return 'SessionMessageWaitDisposed carries unknown fields';
+  const messageProblem = eventMessageProblem(body, 'SessionMessageWaitDisposed');
+  if (messageProblem !== null) return messageProblem;
+  const disposition = body['disposition'];
+  if (!isRecord(disposition) || !hasOnlyKeys(disposition, ['mode', 'to'])) {
+    return 'SessionMessageWaitDisposed disposition must carry mode and to';
+  }
+  if (disposition['mode'] !== 'cancel' && disposition['mode'] !== 'transfer') {
+    return 'SessionMessageWaitDisposed disposition.mode is not recognized';
+  }
+  if (disposition['mode'] === 'cancel' && disposition['to'] !== null) {
+    return 'SessionMessageWaitDisposed cancel must not name a handler';
+  }
+  if (disposition['mode'] === 'transfer') {
+    const toProblem = checkPlainSessionRef(disposition['to']);
+    if (toProblem !== null) return `SessionMessageWaitDisposed disposition.to: ${toProblem}`;
+  }
+  return null;
+}
+
+const archiveWaitDisposedCodec = createEventCodec<ArchiveWaitDisposedEventV1>({
+  eventType: ARCHIVE_WAIT_DISPOSED_EVENT_TYPE,
+  schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'ArchiveWaitDisposed event',
+  bodyProblem: (value) => checkArchiveWaitDisposedBody(value as UnknownRecord),
+});
+const sessionMessageForwardedCodec = createEventCodec<SessionMessageForwardedEventV1>({
+  eventType: SESSION_MESSAGE_FORWARDED_EVENT_TYPE,
+  schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'SessionMessageForwarded event',
+  bodyProblem: (value) => checkSessionMessageForwardedBody(value as UnknownRecord),
+});
+const sessionMessageWaitDisposedCodec = createEventCodec<SessionMessageWaitDisposedEventV1>({
+  eventType: SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE,
+  schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'SessionMessageWaitDisposed event',
+  bodyProblem: (value) => checkSessionMessageWaitDisposedBody(value as UnknownRecord),
+});
 
 // --------------------------------------------------------------------------
 // Registered validators
@@ -1339,8 +1426,9 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DERIVATION_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE) },
-    { eventType: ARCHIVE_WAIT_DISPOSED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
-      validate: validateArchiveWaitDisposedEvent },
+    archiveWaitDisposedCodec.registration,
+    sessionMessageForwardedCodec.registration,
+    sessionMessageWaitDisposedCodec.registration,
     { eventType: SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
@@ -1368,6 +1456,15 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
 /** Full canonical key of a SessionMessage aggregate (never a bare messageId). */
 export function sessionMessageRefKey(ref: SessionMessageRef): string {
   return canonicalJson(ref as unknown as JsonValue);
+}
+
+/** One merged-candidate order: cursor sequence, then message ref key; the ref key breaks ties, so it is stable. */
+export function compareSessionInputCandidates(
+  left: { message: SessionMessage; cursor: () => CommitCursor },
+  right: { message: SessionMessage; cursor: () => CommitCursor },
+): number {
+  return seqOfCommitCursor(left.cursor()) - seqOfCommitCursor(right.cursor())
+    || sessionMessageRefKey(left.message.ref).localeCompare(sessionMessageRefKey(right.message.ref));
 }
 
 export function encodeSessionMessageRecord(message: SessionMessage, origin?: NoticeOriginWireV1): EncodedRecord {
@@ -1423,7 +1520,15 @@ export function encodeSessionMessageExpiredEvent(event: SessionMessageExpiredEve
 }
 
 export function encodeArchiveWaitDisposedEvent(event: ArchiveWaitDisposedEventV1): EncodedDomainEvent {
-  return encodeEventEnvelope(event);
+  return archiveWaitDisposedCodec.encode(event);
+}
+
+export function encodeSessionMessageForwardedEvent(event: SessionMessageForwardedEventV1): EncodedDomainEvent {
+  return sessionMessageForwardedCodec.encode(event);
+}
+
+export function encodeSessionMessageWaitDisposedEvent(event: SessionMessageWaitDisposedEventV1): EncodedDomainEvent {
+  return sessionMessageWaitDisposedCodec.encode(event);
 }
 
 // --------------------------------------------------------------------------
@@ -1463,8 +1568,19 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
     && eventType !== SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_RELEASED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_APPLIED_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_EXPIRED_EVENT_TYPE) {
+    && eventType !== SESSION_MESSAGE_EXPIRED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_FORWARDED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE) {
     return invalid(`eventType ${String(eventType)} is not a SessionMessage event`);
+  }
+  // §3.9 items 2 and 5: the two forward-owner events carry the changed message under their own payload shape.
+  if (eventType === SESSION_MESSAGE_FORWARDED_EVENT_TYPE) {
+    const decoded = sessionMessageForwardedEventFromEvent(event);
+    return decoded.status === 'decoded' ? { status: 'decoded', value: decoded.value.message } : decoded;
+  }
+  if (eventType === SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE) {
+    const decoded = sessionMessageWaitDisposedEventFromEvent(event);
+    return decoded.status === 'decoded' ? { status: 'decoded', value: decoded.value.message } : decoded;
   }
   const checked = validateEvent(event, eventType);
   if (checked.status !== 'decoded') return checked;
@@ -1493,22 +1609,27 @@ export function sessionMessageReleaseDecidedEventFromEvent(
 export function archiveWaitDisposedEventFromEvent(
   event: EncodedDomainEvent,
 ): DecodeResult<ArchiveWaitDisposedEventV1> {
-  if (event.eventType !== ARCHIVE_WAIT_DISPOSED_EVENT_TYPE) {
-    return invalid(`expected eventType ArchiveWaitDisposed, got ${event.eventType}`);
-  }
-  if (event.schemaVersion !== SESSION_MESSAGE_EVENT_SCHEMA_VERSION) {
-    return invalid(`expected schemaVersion ${String(SESSION_MESSAGE_EVENT_SCHEMA_VERSION)}, got ${String(event.schemaVersion)}`);
-  }
-  if (!nonEmpty(event.eventId) || !nonEmpty(event.occurredAt)) return invalid('ArchiveWaitDisposed envelope is incomplete');
-  const parsed = parseJsonObject(event.json);
-  if (parsed.status === 'invalid') return invalid(`ArchiveWaitDisposed event json is not an object: ${parsed.reason}`);
-  const body = parsed.value;
-  if (body['eventId'] !== event.eventId || body['eventType'] !== event.eventType
-    || body['schemaVersion'] !== event.schemaVersion || body['occurredAt'] !== event.occurredAt) {
-    return invalid('ArchiveWaitDisposed event envelope disagrees with the event json');
-  }
-  const problem = checkArchiveWaitDisposedBody(body);
-  if (problem !== null) return invalid(`ArchiveWaitDisposed event payload is invalid: ${problem}`);
-  return { status: 'decoded', value: body as unknown as ArchiveWaitDisposedEventV1 };
+  const decoded = archiveWaitDisposedCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as ArchiveWaitDisposedEventV1 }
+    : decoded;
+}
+
+export function sessionMessageForwardedEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionMessageForwardedEventV1> {
+  const decoded = sessionMessageForwardedCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as SessionMessageForwardedEventV1 }
+    : decoded;
+}
+
+export function sessionMessageWaitDisposedEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionMessageWaitDisposedEventV1> {
+  const decoded = sessionMessageWaitDisposedCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as SessionMessageWaitDisposedEventV1 }
+    : decoded;
 }
 

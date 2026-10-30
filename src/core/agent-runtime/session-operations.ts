@@ -12,8 +12,8 @@ import {
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type {
-  SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
-  SessionOperationRecord,
+  ConsultationCreateV1, SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1, SessionCreationResult,
+  SessionDirectoryPort, SessionOperationRecord,
 } from '../work-graph/model/session-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
 import { StoreError, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
@@ -43,6 +43,8 @@ export type CreateSessionRequest = {
   creation?: SessionCreationIntentV1 | null;
   /** The handoff operation this creation answers; absent is a creation without a parent. */
   parentOperation?: OperationRef | null;
+  /** §3.15 item 3: the frozen consultation payload, present only on a consultation copy. */
+  consultation?: ConsultationCreateV1 | null;
 };
 /** Trusted locator from the task graph; positions are inclusive. */
 export type SessionHistoryRange = {
@@ -128,6 +130,7 @@ function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionReq
     ...(raw.provenance === undefined ? {} : { provenance: raw.provenance }),
     ...(raw.creation === undefined ? {} : { creation: raw.creation }),
     ...(raw.parentOperation === undefined ? {} : { parentOperation: raw.parentOperation }),
+    ...(raw.consultation === undefined ? {} : { consultation: raw.consultation }),
     meta: raw.meta,
   };
   try {
@@ -597,6 +600,7 @@ export function createSessionOperations(deps: {
             ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
             ...(value.creation === undefined ? {} : { creation: value.creation }),
             ...(value.parentOperation === undefined ? {} : { parentOperation: value.parentOperation }),
+            ...(value.consultation === undefined ? {} : { consultation: value.consultation }),
           },
           meta: value.meta,
         });

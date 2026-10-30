@@ -45,8 +45,8 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import {
-  AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain, seedAG2bWorkGraph,
-  startAG2bHost, type AG2bHost,
+  AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_TASK_ID,
+  createAG2bSession, graphWrite, plain, seedAG2bWorkGraph, startAG2bHost, type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   answer, moveKernelAside, post, publicDirectory, readControl, readExecution, restoreKernel, selectWork, submitControl, tempDir, workRow,
@@ -151,7 +151,7 @@ it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved
   const h = await openHostScenario({ automation: redrivePolicy(false), check: 'pass',
     script: { replies: [{ kind: 'text', text: 'a8-3b expiry continuation answered' }] } });
   // The wait message's recipient takes part in the work Task (as the W-17 case links it).
-  const recipient = (await createAG2bSession(h.host, 'a8-3b-recipient', AG2B_QUERY_ROLE,
+  const recipient = (await createAG2bSession(h.host, 'a8-3b-recipient', AG2B_WORK_ROLE,
     [{ target: WORK_TARGET, relation: 'participates' }])).sessionRef;
   await assertInvariants(h, 'a8-3b recipient', stepOf(h, 'other', 'a8-3b recipient'));
   const toStart = await h.advance(h.select('a8-3b', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
@@ -239,7 +239,7 @@ it('A8-3b (W-10, RD-3, L-5, RUN-18, contract (f)): the Kernel yielded on a saved
 
 it('A8-3j (W-18, D-17, W-13, RUN-20(i)): the wait message was saved and the Host stopped before the Kernel recorded the send; the restart ends the Run outcome_unknown on the send still in flight; the message stays as saved and no continuation waits for its reply', async () => {
   const h = await openHostScenario({ automation: redrivePolicy(false), check: 'pass' });
-  const recipient = (await createAG2bSession(h.host, 'a8-3j-recipient', AG2B_QUERY_ROLE,
+  const recipient = (await createAG2bSession(h.host, 'a8-3j-recipient', AG2B_WORK_ROLE,
     [{ target: WORK_TARGET, relation: 'participates' }])).sessionRef;
   await assertInvariants(h, 'a8-3j recipient', stepOf(h, 'other', 'a8-3j recipient'));
   const toStart = await h.advance(h.select('a8-3j', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
@@ -602,7 +602,7 @@ it('§12.1 step 5, W-17 (CI-09): a yielded wait keeps a queued control as its co
   let pauseRef: ControlIntentSnapshotV1['ref'];
   try {
     const { workTarget } = await seedAG2bWorkGraph(first);
-    recipient = (await createAG2bSession(first, 'a2-fence-recipient', AG2B_QUERY_ROLE,
+    recipient = (await createAG2bSession(first, 'a2-fence-recipient', AG2B_WORK_ROLE,
       [{ target: workTarget, relation: 'participates' }])).sessionRef;
     expect((await driveChecked(first, inv, selectWork('a2-fence'))).steps.at(-1)).toMatchObject({ state: 'waiting', next: null });   // A.2 step 6: checked per step
     const selected = (await workRow(first)).execution;

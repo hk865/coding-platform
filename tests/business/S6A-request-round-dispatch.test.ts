@@ -137,6 +137,7 @@ function queuesOf(world: S6AHostWorld, driver: QueryStageDriver, rootsPerPage?: 
       open: (ctx, scope, input) => world.platform.requestRounds.open(ctx, scope,
         rootsPerPage === undefined ? input : { ...input, limit: rootsPerPage }),
       append: (ctx, input) => world.platform.requestRounds.append(ctx, input),
+      sources: async () => ({ status: 'ready', value: { sources: [], continuation: null, wrapped: true } }),
     },
     facts: {
       readFacts: (ctx, input) => world.platform.requestFacts.readFacts(ctx, input),

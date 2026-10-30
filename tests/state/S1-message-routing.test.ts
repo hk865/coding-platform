@@ -150,6 +150,8 @@ describe('archive_wait_disposed (S1-MSG-01/02, §5.2 UT23–UT25)', () => {
     expect(next.response).toBeNull();
     expect(next.status).toBe(READ.status);
     expect(next.revision).toBe(READ.revision + 1);
+    // SR3 §3.2.2: the cancel arm writes the disposition and the message's `waitCancelledAt`.
+    expect(next.waitCancelledAt).toBe(T0);
     // A cancel keeps the original handler (here: none).
     expect(next.replyHandler ?? null).toBeNull();
   });

@@ -45,7 +45,7 @@ export type ProjectSourceToolInput =
   | { action: 'capture'; provider?: 'typescript' | 'text'; configPath?: string; prefix?: string; previous?: SourceCaptureRef }
   | { action: 'query'; capture: SourceCaptureRef; query: SourceQuerySupported; cursor: string | null; limit: number }
   | { action: 'read'; path: string; maxBytes: number; version: ModelReadVersion }
-  | { action: 'compare'; before: ModelCompareVersion; after: ModelCompareVersion; prefix?: string }
+  | { action: 'compare'; before: ModelCompareVersion; after: ModelCompareVersion; prefix?: string; duplicates?: true }
   | { action: 'verify'; capture: SourceCaptureRef }
   | { action: 'release'; capture: SourceCaptureRef };
 
@@ -116,7 +116,8 @@ const readVersionSchema = z.discriminatedUnion('kind', [
   gitVersionSchema,
 ]);
 const compareOption = z.object({
-  action: z.literal('compare'), before: compareVersionSchema, after: compareVersionSchema, prefix: relativePath.optional(),
+  action: z.literal('compare'), before: compareVersionSchema, after: compareVersionSchema,
+  prefix: relativePath.optional(), duplicates: z.literal(true).optional(),
 }).strict();
 export const projectSourceInputSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('capture'), provider: z.enum(['typescript', 'text']).optional(), configPath: relativePath.optional(), prefix: relativePath.optional(), previous: captureRefSchema.optional() }).strict(),
@@ -222,11 +223,13 @@ async function dispatch(
       const before = input.before as GitWorkspaceVersion | WorkingTreeWorkspaceVersion;
       const after = input.after as GitWorkspaceVersion | WorkingTreeWorkspaceVersion;
       return { action: 'compare', result: await access.port.compareWorkspace(ctx, { workspace: access.workspace,
-        before, after, ...(input.prefix !== undefined ? { prefix: input.prefix } : {}) }) };
+        before, after, ...(input.prefix !== undefined ? { prefix: input.prefix } : {}),
+        ...(input.duplicates === true ? { duplicates: true as const } : {}) }) };
     }
     const before = input.before as SourceCaptureRef, after = input.after as SourceCaptureRef;
     return { action: 'compare', result: await access.port.compareWorkspace(ctx, { workspace: access.workspace,
-      before: { kind: 'capture', capture: before }, after: { kind: 'capture', capture: after } }) };
+      before: { kind: 'capture', capture: before }, after: { kind: 'capture', capture: after },
+      ...(input.duplicates === true ? { duplicates: true as const } : {}) }) };
   }
   if (input.action === 'verify') return { action: 'verify', result: await access.port.verifyCapture(ctx, input.capture) };
   return { action: 'release', result: await access.port.releaseCapture(ctx, input.capture) };
@@ -306,7 +309,24 @@ export function createProjectSourceTool(options: ProjectSourceToolOptions): Tool
           if (outcome.action === 'capture' && outcome.result.status === 'ready') undisclosed = outcome.result.value.ref;
           await options.assertCurrent?.();
           if (signal.aborted) { await releaseUndisclosed(); return cancelled(call.callId); }
-          const value: unknown = outcome.result;
+          let value: unknown = outcome.result;
+          // The report's own 32 KiB cap sits inside the tool's 60 KiB value budget. When the whole
+          // value is still too large, drop candidates from the end only; changes and coverage stay.
+          if (outcome.action === 'compare' && outcome.result.status === 'ready') {
+            const comparison = outcome.result.value;
+            const duplicates = comparison.duplicates;
+            if (duplicates !== undefined) {
+              const candidates = duplicates.candidates.slice();
+              const fitted = (truncated: boolean): WorkspaceResult<WorkspaceComparison> => ({
+                status: 'ready', value: { ...comparison, duplicates: { ...duplicates, candidates, truncated } },
+              });
+              if (candidates.length > 0 && Buffer.byteLength(JSON.stringify(fitted(duplicates.truncated))) > MODEL_OUTPUT_LIMIT_BYTES) {
+                do candidates.pop();
+                while (candidates.length > 0 && Buffer.byteLength(JSON.stringify(fitted(true))) > MODEL_OUTPUT_LIMIT_BYTES);
+                value = fitted(true);
+              }
+            }
+          }
           if (Buffer.byteLength(JSON.stringify(value)) > MODEL_OUTPUT_LIMIT_BYTES)
             throw Error('Project source output is too large for the model; narrow the query, lower the limit or shrink the capture scope');
           // Delivered to the model: from here on the capture belongs to the caller's lifecycle.

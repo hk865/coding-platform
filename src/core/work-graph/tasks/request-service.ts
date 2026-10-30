@@ -26,6 +26,7 @@ import {
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -60,6 +61,7 @@ import {
 } from '../queries/query-record-codecs.js';
 import { queryTextProblem, lookupCommittedReceipt } from '../queries/query-job-service.js';
 import { buildRecordedEvent } from '../queries/query-execution.js';
+import { S5_MESSAGE_BY_WORKSPACE_STATUS, decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
 import {
   decodeSessionOperationRecord, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate,
   sessionAggregateRefKey,
@@ -102,6 +104,7 @@ export type RequestPublicCommandV1 =
   | { kind: 'ask'; commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string };
 
 export type RequestInternalCommandV1 =
+  | { kind: 'reply' | 'expiry'; operationId: string; requestRoot: QueryJobRef; messageRef: SessionMessageRef }
   | { kind: 'assigned'; operationId: string; requestRoot: QueryJobRef; to: SessionRef; guard: VersionedRef }
   | { kind: 'end_unbound'; operationId: string; round: QueryJobRef }
   | InternalRouteCommandV1
@@ -113,6 +116,9 @@ export type RequestPlanV1 = {
   /** True only when Workflow's `ensureLine` answered `capacity_blocked`; a no-pick plan is not a blocked pick. */
   capacityBlocked: boolean;
 };
+
+/** A row that reads no plan (the owner row decides from the facts alone) passes this one. */
+const NO_PLAN: RequestPlanV1 = { assignTo: null, createdLine: false, capacityBlocked: false };
 
 export type RequestRejectionV1 = {
   status: 'rejected';
@@ -161,6 +167,19 @@ export interface RequestRoundPort {
   open(ctx: CoreCallContext, scope: WorkspaceScope,
     input: { status: 'pending' | 'running'; limit: number; continuation: string | null }):
     Promise<ReadResult<{ requests: QueryJobRef[]; continuation: string | null; wrapped: boolean }>>;
+  /**
+   * One page of the workspace messages that name a request root and carry a
+   * response (`responded`) or an expiry (`pending`), each with the kind of round
+   * it makes. The queue's reply/expiry driver reads every page; it is a named
+   * read like `unassigned`/`open`, not a new store dependency.
+   */
+  sources(ctx: CoreCallContext, scope: WorkspaceScope,
+    input: { status: 'pending' | 'responded'; limit: number; continuation: string | null }):
+  Promise<ReadResult<{
+    sources: { requestRoot: QueryJobRef; messageRef: SessionMessageRef; kind: 'reply' | 'expiry' }[];
+    continuation: string | null;
+    wrapped: boolean;
+  }>>;
 }
 
 // ------------------------------------------------------------------------ //
@@ -987,6 +1006,18 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       return withTailRetries(() => prepareInternalRoute(ctx, command, identityKey, fingerprint),
         (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
+    if (command.kind === 'reply' || command.kind === 'expiry') {
+      const identityKey = commandIdentity({ operation: `request.${command.kind}`,
+        scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+        principal: principalIdentity(principal), commandId: command.operationId });
+      // The delivery text is not part of the identity: the message ref is.
+      const fingerprint = sha256Hex(canonicalJson({ kind: command.kind,
+        requestRoot: command.requestRoot, messageRef: command.messageRef } as unknown as JsonValue));
+      const replayed = await replayInternal(identityKey, fingerprint, null);
+      if (replayed !== null) return replayed;
+      return withTailRetries(() => prepareReplyOrExpiry(ctx, principal, command, identityKey, fingerprint),
+        (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+    }
     if (command.kind !== 'assigned' && command.kind !== 'end_unbound') {
       return unavailable(`the ${command.kind} operation has no producer on this platform`);
     }
@@ -1057,7 +1088,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       queryJobId, runId: `run-${queryJobId}`, scope, intent, kind: 'followup',
       requestRoot: command.requestRoot, requestGoalId: rootJob.job.requestGoalId,
       assignedSession: { ...source }, intakeSession: null, selectedIdea: null, relatedCardRefs: [],
-      receipt, submission: requestTailSubmissionOf(identityKey, fingerprint, eventId), submittedAt: occurredAt,
+      relatedMessageRef: null, receipt, submission: requestTailSubmissionOf(identityKey, fingerprint, eventId),
+      submittedAt: occurredAt,
       understanding: command,
     });
     const guards = preparedGuards([
@@ -1080,6 +1112,31 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
         conflict: { source: 'none', sessionRefKeys: [], intakeKey: null },
       },
     };
+  }
+
+  /**
+   * A reply or expiry round on the request its message names: the request's
+   * current secretary (the successor after a handoff) through the one owner
+   * row, then the one round builder. The message body is not read here: the
+   * round's preparation freezes it from the stored message.
+   */
+  async function prepareReplyOrExpiry(ctx: CoreCallContext, principal: HostPrincipal,
+    command: Extract<RequestInternalCommandV1, { kind: 'reply' | 'expiry' }>,
+    identityKey: string, fingerprint: string,
+  ): Promise<PreparedOutcome> {
+    const read = await readRequestFacts(deps, ctx, command.requestRoot);
+    if (read.status !== 'ready') return read;
+    const { facts } = read;
+    const root = facts.rounds.find((round) => sameJson(round.ref, command.requestRoot));
+    const assignment = await resolveAssignment(ctx, facts, NO_PLAN, 'follow_owner', null);
+    if (assignment.status !== 'ready') return assignment;
+    return buildRound({
+      ctx, principal, commandId: command.operationId, identityKey, fingerprint, occurredAt: deps.now(),
+      requestRoot: { ...command.requestRoot }, kind: command.kind, requestGoalId: facts.requestGoalId,
+      text: root!.job.intent.question, selectedIdea: null, relatedCardRefs: [],
+      relatedMessageRef: { ...command.messageRef }, createdLine: false, receiptKind: command.kind,
+      facts, goalGuard: null, assignment: assignment.value,
+    });
   }
 
   /** Re-read and re-commit on every tail conflict, up to SECRETARY_TAIL_RETRIES, then `busy`. */
@@ -1146,8 +1203,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot: command.continues, kind: command.continues === null ? 'request' : 'followup',
       requestGoalId: command.continues === null ? command.goalId : facts!.requestGoalId,
-      text: command.text, selectedIdea: null, relatedCardRefs: [], createdLine: plan.createdLine,
-      receiptKind: 'submit', facts, goalGuard, assignment: assignment.value,
+      text: command.text, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null,
+      createdLine: plan.createdLine, receiptKind: 'submit', facts, goalGuard, assignment: assignment.value,
     });
   }
 
@@ -1215,13 +1272,15 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   type BuildRoundInput = {
     ctx: CoreCallContext; principal: HostPrincipal; commandId: string; identityKey: string; fingerprint: string;
     occurredAt: string;
-    requestRoot: QueryJobRef | null; kind: 'request' | 'followup'; requestGoalId: string | null;
+    requestRoot: QueryJobRef | null; kind: 'request' | 'followup' | 'reply' | 'expiry'; requestGoalId: string | null;
     text: string; selectedIdea: { round: QueryJobRef; index: number } | null; relatedCardRefs: VersionedRef[];
-    createdLine: boolean; receiptKind: 'submit' | 'select_idea' | 'ask';
+    createdLine: boolean; receiptKind: 'submit' | 'select_idea' | 'ask' | 'reply' | 'expiry';
+    /** The message a reply/expiry round answers: the round's own and its receipt's `relatedMessageRef`. */
+    relatedMessageRef: SessionMessageRef | null;
     facts: RequestRoundsFactsV1 | null; goalGuard: RecordGuard | null; assignment: Assignment;
   };
 
-  /** The one round builder: submit and both follow-up commands build through it. */
+  /** The one round builder: the person's commands, the reply/expiry rounds and the understanding round build through it. */
   async function buildRound(input: BuildRoundInput): Promise<PreparedOutcome> {
     const scope = workspaceOf(input.ctx);
     const queryJobId = deps.operationId();
@@ -1231,15 +1290,21 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     const intent = intentOf({ scope, queryJobId, goalId: input.requestGoalId, text: input.text,
       profile: assignment.profile, correlationId: input.commandId });
     const secretary = assignment.assignedSession === null ? null : { ...assignment.assignedSession };
-    const receipt: RequestCommandReceiptV1 = input.receiptKind === 'submit'
-      ? (secretary === null
-          ? { kind: 'submit', requestRoot: { ...requestRoot }, round: { ...roundRef }, assignment: 'unassigned',
-              secretary: null, created: false }
-          : { kind: 'submit', requestRoot: { ...requestRoot }, round: { ...roundRef }, assignment: 'assigned',
-              secretary, created: input.createdLine })
-      : input.receiptKind === 'select_idea'
-        ? { kind: 'select_idea', followupRound: { ...roundRef }, secretary }
-        : { kind: 'ask', followupRound: { ...roundRef }, secretary };
+    let receipt: RequestCommandReceiptV1;
+    if (input.receiptKind === 'reply' || input.receiptKind === 'expiry') {
+      receipt = { kind: input.receiptKind, round: { ...roundRef },
+        relatedMessageRef: { ...input.relatedMessageRef! }, secretary: { ...secretary! } };
+    } else if (input.receiptKind === 'submit') {
+      receipt = secretary === null
+        ? { kind: 'submit', requestRoot: { ...requestRoot }, round: { ...roundRef }, assignment: 'unassigned',
+            secretary: null, created: false }
+        : { kind: 'submit', requestRoot: { ...requestRoot }, round: { ...roundRef }, assignment: 'assigned',
+            secretary, created: input.createdLine };
+    } else if (input.receiptKind === 'select_idea') {
+      receipt = { kind: 'select_idea', followupRound: { ...roundRef }, secretary };
+    } else {
+      receipt = { kind: 'ask', followupRound: { ...roundRef }, secretary };
+    }
     const eventId = deps.operationId();
     const pair = newRequestRound({
       queryJobId, runId: `run-${queryJobId}`, scope, intent, kind: input.kind, requestRoot: input.requestRoot,
@@ -1247,7 +1312,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       // A new pick takes S's intake on THIS round; a waiting round and an owner
       // follow-up take none.
       intakeSession: assignment.takesIntake && assignment.assignedSession !== null ? assignment.assignedSession : null,
-      selectedIdea: input.selectedIdea, relatedCardRefs: input.relatedCardRefs, receipt,
+      selectedIdea: input.selectedIdea, relatedCardRefs: input.relatedCardRefs,
+      relatedMessageRef: input.relatedMessageRef, receipt,
       submission: requestTailSubmissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
       understanding: null,
     });
@@ -1469,7 +1535,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot, kind: 'followup', requestGoalId: facts.requestGoalId, text, selectedIdea,
       relatedCardRefs: command.kind === 'ask' ? command.cardRefs.map((ref) => structuredClone(ref)) : [],
-      createdLine: plan.createdLine, receiptKind: command.kind, facts, goalGuard: null,
+      relatedMessageRef: null, createdLine: plan.createdLine, receiptKind: command.kind, facts, goalGuard: null,
       assignment: assignment.value,
     });
   }
@@ -1924,5 +1990,63 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     return { status: 'ready', value: { requests, continuation, wrapped } };
   }
 
-  return { precheck, append, closeUnderstanding, readRequestCommandReceipt, unassigned, open };
+  // ---------------------------------------------------------------------- //
+  // The ONE workspace message discovery: the reply/expiry source rows        //
+  // ---------------------------------------------------------------------- //
+
+  /**
+   * One page of the workspace messages in one status partition that name a
+   * request root and carry a response or an expiry. Every record is decoded: a
+   * damaged one is the whole read's `unavailable`, never a skipped row. The
+   * caller owns the page budget, exactly like `open`.
+   */
+  async function sources(ctx: CoreCallContext, scope: WorkspaceScope,
+    input: { status: 'pending' | 'responded'; limit: number; continuation: string | null },
+  ): Promise<ReadResult<{
+    sources: { requestRoot: QueryJobRef; messageRef: SessionMessageRef; kind: 'reply' | 'expiry' }[];
+    continuation: string | null;
+    wrapped: boolean;
+  }>> {
+    let page: Awaited<ReturnType<RequestServiceStore['lookup']>>;
+    try {
+      page = await deps.records.lookup({
+        index: S5_MESSAGE_BY_WORKSPACE_STATUS,
+        values: [scope.projectId, scope.workspaceId, input.status],
+        limit: input.limit,
+        ...(input.continuation === null ? {} : { after: input.continuation }),
+      });
+    } catch (error) {
+      return { status: 'rejected', code: 'unavailable',
+        reason: `the workspace message read failed: ${messageOf(error)}` };
+    }
+    if (page.status !== 'ready') {
+      return { status: 'rejected', code: 'unavailable',
+        reason: `the workspace message read failed: ${page.code}: ${page.reason}` };
+    }
+    const found: { requestRoot: QueryJobRef; messageRef: SessionMessageRef; kind: 'reply' | 'expiry' }[] = [];
+    for (const record of page.value.records) {
+      let decoded: ReturnType<typeof decodeSessionMessageRecord>;
+      try {
+        decoded = decodeSessionMessageRecord(record);
+      } catch (error) {
+        return { status: 'rejected', code: 'unavailable',
+          reason: `a workspace message is damaged: ${messageOf(error)}` };
+      }
+      if (decoded.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable',
+          reason: `a workspace message is damaged: ${decoded.reason}` };
+      }
+      const message = decoded.value;
+      if (message.requestRoot === null) continue;
+      const kind = message.status === 'responded' ? 'reply'
+        : message.status === 'pending' && message.expiredAt !== null ? 'expiry' : null;
+      if (kind === null) continue;
+      found.push({ requestRoot: { ...message.requestRoot }, messageRef: { ...message.ref }, kind });
+    }
+    return { status: 'ready', value: {
+      sources: found, continuation: page.value.next, wrapped: page.value.next === null,
+    } };
+  }
+
+  return { precheck, append, closeUnderstanding, readRequestCommandReceipt, unassigned, open, sources };
 }

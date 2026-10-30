@@ -746,11 +746,20 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           databasePath: location.databasePath,
           sessionId: record.session.kernel.kernelSessionId,
           input: manifest.input,
-          ...(deps.messages === undefined || intentExecution.kind !== 'semantic_query' || intentExecution.consultation?.derivation !== undefined ? {} : {
-            inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
-              sessionRef: state.sessionRef, runRef: queryRunRef,
-              texts: promptTexts.value, toolNames: manifest.promptSet.toolNames }),
-          }),
+          // A request round (all request kinds) takes the notify-only supply; it
+          // takes precedence over today's ordinary semantic-Query branch, and a
+          // consultation (a derivation, request === null) still gets none.
+          ...(manifest.request !== null
+            ? (deps.messages === undefined ? {} : {
+                inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
+                  sessionRef: state.sessionRef, runRef: queryRunRef,
+                  texts: promptTexts.value, toolNames: manifest.promptSet.toolNames, only: 'notify' }),
+              })
+            : (deps.messages === undefined || intentExecution.kind !== 'semantic_query' || intentExecution.consultation?.derivation !== undefined ? {} : {
+                inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
+                  sessionRef: state.sessionRef, runRef: queryRunRef,
+                  texts: promptTexts.value, toolNames: manifest.promptSet.toolNames }),
+              })),
           budget: manifest.runtimeBudget,
           readOnly: true,
           // Null removes only the cumulative token cap; the explicit deadline

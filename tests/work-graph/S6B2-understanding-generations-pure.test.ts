@@ -54,6 +54,8 @@ function material(queryJobId: string, carried: RequestUnderstandingCommandV1 | n
     selectedIdea: null,
     relatedCards: [],
     command: carried,
+    relatedMessageRef: null,
+    delivery: null,
   };
 }
 

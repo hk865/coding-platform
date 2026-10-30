@@ -53,8 +53,8 @@ import {
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
-  SessionCard, SessionCreateOperationRecord, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult,
-  SessionDirectoryPort, SessionOperationRecord, SessionPage,
+  ConsultationCreateV1, SessionCard, SessionCreateOperationRecord, SessionCreationInput, SessionCreationIntentV1,
+  SessionCreationResult, SessionDirectoryPort, SessionOperationRecord, SessionPage,
 } from '../model/session-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
@@ -239,6 +239,7 @@ type NormalizedCreation = {
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
   creation: SessionCreationIntentV1 | null;
   parentOperation: OperationRef | null;
+  consultation: ConsultationCreateV1 | null;
 };
 type NormalizeOutcome<T> = { ok: true; value: T } | { ok: false; code: CoreError; reason: string };
 
@@ -329,6 +330,8 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
       initialLinks: links as { target: WorkLinkTarget; relation: WorkLinkRelation }[],
       creation,
       parentOperation,
+      // §3.15 item 3: carried as given (absent is null); CS adds the payload check with its writer.
+      consultation: (raw['consultation'] ?? null) as ConsultationCreateV1 | null,
     },
   };
 }
@@ -773,6 +776,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       provenance: createdProvenance,
       ...(input.creation === null ? {} : { creation: input.creation }),
       ...(input.parentOperation === null ? {} : { parentOperation: input.parentOperation }),
+      ...(input.consultation === null ? {} : { consultation: input.consultation }),
     } as unknown as JsonValue));
 
     const existing = await records.lookupCommit({ identityKey, fingerprint });
@@ -836,6 +840,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         initialLinks: input.initialLinks,
         provenance: createdProvenance,
         creation: input.creation,
+        consultation: input.consultation,
       },
       phase: 'accepted',
       requestedAt: now,
@@ -1551,9 +1556,13 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
 
     // Non-target directory query keeps its existing workspace/lifecycle/role
     // candidate scan and directory cursor semantics unchanged.
+    const rawAfterSessionKey = pageInput['afterSessionKey'];
     let after: string | undefined;
     let cursorSource: CommitCursor | null = null;
-    if (rawCursor !== undefined) {
+    if (rawAfterSessionKey !== undefined) {
+      if (!nonEmpty(rawAfterSessionKey)) return reject('invalid', 'findSessions afterSessionKey must be a non-empty string');
+      after = rawAfterSessionKey;
+    } else if (rawCursor !== undefined) {
       if (!nonEmpty(rawCursor)) return reject('invalid', 'findSessions cursor must be a non-empty string');
       const decodedCursor = decodeDirectoryCursor(rawCursor);
       if (decodedCursor === null) return reject('invalid', 'findSessions cursor is not a valid directory cursor');

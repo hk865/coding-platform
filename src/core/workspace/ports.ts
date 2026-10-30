@@ -104,6 +104,8 @@ export type WorkspaceComparisonRequest = {
   after: WorkspaceVersion;
   /** Git/working-tree scope selector; a capture/capture comparison rejects it as invalid. */
   prefix?: string;
+  /** `duplicates: true` asks for the candidate report; absent means the value and its bytes are exactly as today. */
+  duplicates?: true;
 };
 export type WorkspaceChange =
   | { kind: 'added'; path: string; digest: string }
@@ -121,6 +123,7 @@ export type CapturedWorkspaceComparison = {
   scope: CaptureContentScope;
   comparison: 'captured_content_only'; complete: true;
   changes: WorkspaceChange[];
+  duplicates?: DuplicateReportV1;
 };
 
 /** Git blob identity: the object id is a Git blob OID, explicitly not the content SHA-256. */
@@ -138,6 +141,7 @@ export type GitWorkspaceComparison = {
     prefix: string | null };
   comparison: 'git_tree_content_and_mode'; complete: true;
   changes: GitWorkspaceChange[];
+  duplicates?: DuplicateReportV1;
 };
 /** The current working tree as one compare side. */
 export type WorkingTreeWorkspaceVersion = Extract<WorkspaceVersion, { kind: 'working_tree' }>;
@@ -164,8 +168,21 @@ export type GitWorkingTreeComparison = GitWorkingTreePair & {
   comparison: 'git_worktree_raw_content_and_mode'; complete: true;
   observedAt: string; currentness: 'not_rechecked';
   changes: GitWorkingTreeChange[];
+  duplicates?: DuplicateReportV1;
 };
 export type WorkspaceComparison = CapturedWorkspaceComparison | GitWorkspaceComparison | GitWorkingTreeComparison;
+
+export type DuplicateLocationV1 = { path: string; line: number };
+export type DuplicateCandidateV1 =
+  | { kind: 'definition'; name: string; first: DuplicateLocationV1; second: DuplicateLocationV1 }
+  | { kind: 'literal'; preview: string; length: number; digest: string;
+      first: DuplicateLocationV1; second: DuplicateLocationV1 };
+export type DuplicateReportV1 = { candidates: DuplicateCandidateV1[]; coverage: { scanned: number; skipped: number };
+  truncated: boolean };
+export type ComparedMaterialV1 = { files: { path: string; text: string }[]; skipped: number };
+
+/** The compare owner fills these from the four DUP_* constants; no caller supplies other values. */
+export type DuplicateLimitsV1 = { minStringChars: number; limit: number; literalPreviewChars: number; maxReportBytes: number };
 
 export interface WorkspaceCapturePort {
   captureSourceChanges(ctx: CoreCallContext, input: CaptureSourceRequest):

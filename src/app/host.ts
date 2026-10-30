@@ -30,6 +30,12 @@ import { mkdirSync } from 'node:fs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import type { CommitCursor } from '../contracts/command-event.js';
+import { makeCommitCursor, seqOfCommitCursor, type GoalRef, type WorkspaceRef } from '../contracts/ledger.js';
+import {
+  createGoalWaitQueue, createGoalWaitWakes, GOAL_WAITS_QUEUE, GOAL_WAIT_WAKE_AGGREGATE_TYPES, WAKE_LIMIT,
+  createGoalWaitRebuild, type GoalWaitRegistries, type GoalWaitWakes,
+} from './goal-wait-wakes.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
 import { createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
@@ -40,7 +46,6 @@ import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
-import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
 import { acquireHostInstanceLease } from './host-instance-lease.js';
@@ -71,8 +76,6 @@ import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
-import { deliveryEligibility, messageFactsOfRecord,
-  type DeliveryFactsV1, type DeliveryResponseWaitV1 } from '../core/work-graph/state/message-machine.js';
 import { EXPIRY_PAGE, type DueWaitPageInputV1 } from '../core/work-graph/communication/message-expiry.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { ReadResult } from '../contracts/core/results.js';
@@ -143,6 +146,11 @@ export type WorkbenchInputConsumer = {
   queryProfileId: string;
   heartbeatMs: number;
 };
+
+/** The heartbeat opens at most this many Sessions. */
+const CONSUME_BATCH = 8;
+/** The Host's consumer status: the last heartbeat's skips; one write per heartbeat, never persisted. */
+export type HostConsumeSkipV1 = { sessionRef: SessionRef; reason: 'no_profile' | 'no_goal' };
 
 export type LocalWorkbenchHostOptions = {
   storage: TargetPlatformOptions['storage'];
@@ -222,6 +230,10 @@ export type LocalWorkbenchHost = {
   close(): Promise<void>;
   /** A.2 step 5.6 (§12.8, §12.1 step 7): the instance lease and the start-up reconcile report (null without the lease). */
   readonly reconcile: HostReconcileReportV1;
+  /** the last heartbeat's skips, in Session-key order; replaced each pass, never persisted, no route. */
+  readonly consumeStatus: readonly HostConsumeSkipV1[];
+  /** Resolves after the next real `consumeIdle` pass settles; it observes that pass and changes nothing. */
+  consumeBarrier(): Promise<void>;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -745,6 +757,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     autoCapture.workspaceRegistered({ projectId: scope.projectId, workspaceId: scope.workspaceId });
   };
 
+  // The Host's one goal-wait registry per start workspace scope, in start order. The
+  // goal-waits queue adapter and the collaboration driver's resolver share these instances;
+  // neither ever owns or forks a registry of its own.
+  const goalWaitRegistries: { scope: WorkspaceScope; waits: GoalWaitWakes }[] = workspaces.map(workspace => ({
+    scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
+    waits: createGoalWaitWakes(),
+  }));
+  const goalWaitWakesOf = (scope: WorkspaceScope): GoalWaitWakes =>
+    goalWaitRegistries.find(candidate => candidate.scope.projectId === scope.projectId
+      && candidate.scope.workspaceId === scope.workspaceId)!.waits;
+  /** `ChangeFeed.head()` is the feed's already-typed commit cursor, but its public type erases the brand; the one
+   *  ledger codec turns it back into the cursor the driver registers with. A null head stays null (nothing seen yet). */
+  const observedCursor = (): CommitCursor | null => {
+    const head = changes.head();
+    return head === null ? null : makeCommitCursor(seqOfCommitCursor(head as CommitCursor));
+  };
   // The AG2b collaboration driver is a Host-layer handle over the ONE platform
   // above. Newly opened scopes append their trusted profiles at runtime.
   const workbenchTools = createWorkbenchTools({
@@ -766,6 +794,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     mailbox: platform.messages,
     controls: platform.controls,
     profiles: runtimeConfiguration?.queryProfiles ?? [],
+    // The same per-scope registries the goal-waits queue drains: one instance per scope,
+    // shared with the adapter, and the Host's observed head stamped before the fact read.
+    goalWaits: goalWaitWakesOf,
+    observedCursor,
     onChange: changes.driverChanged,
     // The Goal interruption is resolved only once a driver actually starts: a same-seed replay never reaches here.
     onStarted: async (ctx, goalRef) => {
@@ -784,18 +816,37 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     driving: () => leaseOwned });
   goalFanOutCommitted = notice => goalFanOut.committed(notice);
 
-  // The request driver: ONE wake loop and the two request queues, over the
-  // platform's published request owners. It exists only under the instance
-  // lease (a Host without it writes nothing) and only while the start option
-  // leaves it on; with it off no loop and no queue exist, so a submitted round
-  // waits where the command left it.
+  // The one wake loop exists whenever the Host owns the instance lease. The goal-waits
+  // queue is registered on it in every case; the two request queues, the lifecycle and
+  // release queues and their sinks stay inside the request-driver switch, so with it off
+  // a submitted round waits where the command left it but a goal wait still wakes.
   let wakeLoop: WakeLoop | undefined;
   let requestQueues: ReturnType<typeof createRequestRoundQueues> | undefined;
   let lifecycleQueue: ReturnType<typeof createHandoffQueue> | undefined;
-  if (leaseOwned && options.requestDriver !== 'off') {
+  if (leaseOwned) {
     const loop = createWakeLoop({ driving: () => leaseOwned });
-    // The automatic entry after a secretary round: the published Workflow's own two entries.
-    const handoffOwner = platform.workflow.sessionHandoff;
+    // The queue must see a commit even when the request driver is off, or a goal parked
+    // on a registration would never be woken by the Host's own consume turns.
+    requestDriverCommitted = notice => loop.committed(notice);
+    const goalWaitRegistriesV1: GoalWaitRegistries = { all: () => goalWaitRegistries };
+    const goalWaitQueue = createGoalWaitQueue({
+      registries: goalWaitRegistriesV1,
+      // BW's one Workflow advance for the goal; the same host context every consume pass uses.
+      wake: (scope, goalRef) => collaborationDriver.wake(hostContext(scope), goalRef),
+      rebuild: createGoalWaitRebuild({ ctx: scope => hostScopeContext(scope, actor), sessions: platform.sessions, facts: platform.sessionFacts, released: platform.messageRelease,
+        held: async (ctx, goalRef) => {
+          if (platform.automationPolicy().resumeOnStartup === 'auto') return false;
+          const read = await goalFanOut.readGoalDisplay(ctx, { goalRef });
+          if (read.status !== 'ready') throw notReady('the Goal interruption read', read);
+          return read.value.display.causes.some(cause => 'interruption' in cause);
+        } }),
+    });
+    loop.register(GOAL_WAITS_QUEUE, goalWaitQueue, {
+      aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
+    });
+    if (options.requestDriver !== 'off') {
+      // The automatic entry after a secretary round: the published Workflow's own two entries.
+      const handoffOwner = platform.workflow.sessionHandoff;
     // The round-end sources waiting for their basis read and start. Memory only: a crash between a round end and
     // its read loses one check until that line's next round end, which records it again.
     const pendingRoundEnds = new Map<string, Map<string, SessionRef>>();
@@ -832,7 +883,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // Both queues are registered once per loop: a handler takes the scope, so
     // every workspace the loop covers runs the same two. The loop covers the
     // start-up workspaces in `start` and a later one in `addWorkspace`.
-    loop.register(REQUEST_ROUNDS_QUEUE, queues.rounds);
+    loop.register(REQUEST_ROUNDS_QUEUE, queues.rounds,
+      { aggregateTypes: ['QueryJob', 'QueryRun', 'Session', 'SessionMessage'] });
     loop.register(REQUEST_UNASSIGNED_QUEUE, queues.unassigned);
     // A request command's commit reaches every queue of its workspace: the round it appended needs a claim or a
     // drain, a waiting request needs the unassigned pass, and an arming command reaches the lifecycle work at once.
@@ -994,10 +1046,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // The explicit arm (`book-7a.md:382–:383`): the person's approval, a Goal resume or an explicit advance. A
     // commit notice alone never arms it, which is why `resumeOnStartup: 'off'` is respected (`:383–:384`).
     armMessageRelease = scope => loop.wake(scope, MESSAGE_RELEASE_QUEUE, 'release_armed');
-    requestDriverCommitted = notice => loop.committed(notice);
-    wakeLoop = loop;
     requestQueues = queues;
     lifecycleQueue = lifecycle;
+    }
+    wakeLoop = loop;
   }
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
@@ -1309,6 +1361,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       },
     });
     workflowScopes.push({ projectId: config.scope.projectId, workspaceId: config.scope.workspaceId });
+    goalWaitRegistries.push({ scope: config.scope, waits: createGoalWaitWakes() });
     if (reconcileAddedScope !== null) await reconcileAddedScope(config.scope);
     // A workspace opened later joins the request driver only after its
     // reconcile, in the same order the start takes, so the reconcile's own
@@ -1669,6 +1722,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   }
   const inputJobs = new Map<string, Promise<void>>();
+  const consumeBarrierWaiters: Array<() => void> = [];
+  /** Per workspace: the Session-key continuation C's view returned last, null at a wrapped end. */
+  const consumeCursors = new Map<string, string | null>();
+  /** The last heartbeat's skips, replaced by every ready pass; memory only, no record and no route. */
+  let lastConsumeSkips: HostConsumeSkipV1[] = [];
   const hostContext = (scope: CoreScope): CoreCallContext => ({
     ...scope, principal: { kind: 'host', actor: { ...actor } },
     materialReader: { kind: 'host', ...scope, actor: { ...actor } }, signal: attentionAbort.signal,
@@ -1702,101 +1760,65 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   async function inputCompleted(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<boolean> {
     return (await inputCompletion(ctx, message)) === 'completed';
   }
-  async function gateFacts(ctx: CoreCallContext,
-    message: import('../core/work-graph/model/communication-contracts.js').SessionMessage,
-    part: { part: 'message'; delivered: boolean } | { part: 'response'; accepted: boolean },
-    wait: DeliveryResponseWaitV1 | null): Promise<DeliveryFactsV1 | null> {
-    const extra = await platform.workflow.readDeliveryEligibilityFacts?.(ctx, { messageRef: message.ref });
-    if (extra === undefined || extra.status !== 'ready') return null;   // the caller keeps it queued
-    const base = { consumption: messageFactsOfRecord(message), ...extra.value };
-    return part.part === 'message' ? { ...base, part: 'message', delivered: part.delivered }
-      : { ...base, part: 'response', accepted: part.accepted, wait: wait ?? { kind: 'none' } };
-  }
-  async function consumeIdle(entry: WorkbenchInputConsumer): Promise<void> {
-    const ctx = hostContext(entry.scope);
-    const profile = runtimeConfiguration?.queryProfiles.find(p => p.id === entry.queryProfileId
-      && p.scope.projectId === entry.scope.projectId && p.scope.workspaceId === entry.scope.workspaceId);
-    if (profile === undefined) return;
-    const card = await platform.sessions.readSession(ctx, entry.sessionRef);
-    if (card.status !== 'ready' || card.value.record.lifecycle !== 'active' || canonicalJson(card.value.record.role as never) !== canonicalJson(profile.sessionRole as never)) return;
-    const prior = card.value.record.lastExecutionRef;
-    if (prior?.aggregateType === 'Run') {
-      const read = await platform.executions.readExecution(ctx, prior);
-      if (read.status !== 'ready') return;
-      const desired = read.value.run.controlState?.desiredState;
-      if (desired === 'paused' || desired === 'cancelled' || read.value.run.outcome === 'cancelled') return;
-    }
-    if (prior?.aggregateType === 'QueryRun') {
-      const read = await platform.queries.readQueryJob(ctx, { aggregateType: 'QueryJob', projectId: prior.projectId, workspaceId: prior.workspaceId, queryJobId: prior.queryJobId });
-      if (read.status !== 'ready' || read.value.run.run.outcome === 'cancelled') return;
-    }
-    let cursor: string | undefined;
-    do {
-      const inbox = await platform.messages.readInbox(ctx, { recipient: entry.sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
-      if (inbox.status !== 'ready') return;
-      for (const message of inbox.value.items) {
-        // §3.9: the Host offers only messages the one consumption rule allows; the owner re-checks with the message
-        // revision guarded, and the public reads still show every message.
-        const inquiry = message.intent === 'inquiry';
-        if (message.status === 'responded' || (!inquiry && await inputCompleted(ctx, message))) continue;
-        if (!inquiry && (card.value.availability !== 'idle' || card.value.record.occupancy !== null)) continue;
-        const delivered = (message.acceptedInputs ?? []).some(input => input.part === 'message');
-        const facts = await gateFacts(ctx, message, { part: 'message', delivered }, null);
-        if (facts === null || !deliveryEligibility(facts).offerable) continue;
-        const intervention = !inquiry && message.intent !== 'notify' && (message.intent === 'action_request'
-          || (message.sender.kind === 'host' && message.sender.actor.kind === 'human'));
-        if (intervention) {
-          const claimed = await platform.workflow.handleIntervention?.(ctx, { messageRef: message.ref });
-          if (claimed?.status === 'claimed') {
-            await collaborationDriver.start(hostScopeContext(entry.scope, actor), {
-              advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
-                goalRef: { aggregateType: 'Goal', projectId: claimed.claim.task.projectId, goalId: claimed.claim.task.goalId },
-                sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: claimed.claim.task.taskId },
-              queryProfileIds: runtimeProfiles.filter(profile => profile.scope.projectId === entry.scope.projectId
-                && profile.scope.workspaceId === entry.scope.workspaceId).map(profile => profile.id),
-            });
-            return;
-          }
-          continue;
+  /**
+   * One workspace's consume batch over C's published view: up to `CONSUME_BATCH` candidate Sessions in
+   * Session-key order, each at most one turn, and the next continuation key. A Session with no matching
+   * profile or no Goal is skipped with its reason and stays queued; `notify` never reaches this loop because
+   * C's `nextMessage` is never a notify. A non-ready page returns the same `after` so the next heartbeat
+   * retries it, never "nothing to do".
+   */
+  async function consumeIdle(scope: WorkspaceScope, after: string | null): Promise<string | null> {
+    const ctx = hostContext(scope);
+    const page = await platform.consumableSessions.readConsumableSessions(ctx,
+      { workspace: scope, after, limit: CONSUME_BATCH });
+    if (page.status !== 'ready') return after;
+    const skips: HostConsumeSkipV1[] = [];
+    for (const candidate of page.value.items) {
+      // notify-only (and every other no-offer candidate): no turn, zero model calls.
+      const offer = candidate.nextMessage;
+      if (offer === null) continue;
+      // Never guess the model: the first configured profile whose scope and sessionRole match this Session.
+      const profile = runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
+        && entry.scope.workspaceId === scope.workspaceId
+        && canonicalJson(entry.sessionRole as never) === canonicalJson(candidate.role as never));
+      if (profile === undefined) {
+        skips.push({ sessionRef: candidate.session, reason: 'no_profile' });
+        continue;
+      }
+      const read = await platform.messages.readMessage(ctx, offer.messageRef);
+      if (read.status !== 'ready') continue;                       // the next heartbeat re-reads
+      const goalRef = read.value.goalRef
+        ?? (read.value.taskRef === null ? null : { aggregateType: 'Goal' as const,
+          projectId: read.value.taskRef.projectId, goalId: read.value.taskRef.goalId });
+      if (offer.kind === 'person_message' || offer.kind === 'action_request') {
+        // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
+        // other message of the Session stays queued for a later safe point.
+        const claimed = await platform.workflow.handleIntervention?.(ctx, { messageRef: offer.messageRef });
+        if (claimed?.status === 'claimed') {
+          const addressed = claimed.claim.task;
+          await collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
+            workspaceId: read.value.ref.workspaceId }, actor), {
+            advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
+              goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
+              sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },
+            queryProfileIds: [profile.id],
+          });
+        } else if (goalRef === null) {
+          skips.push({ sessionRef: candidate.session, reason: 'no_goal' });
         }
-        if (!inquiry) continue;
-        await platform.workflow.consumeConsultation?.(ctx, {
-          schemaVersion: 1, messageRef: message.ref, goalRef: entry.goalRef,
-          roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
-        });
-        return;
+        continue;
       }
-      cursor = inbox.value.nextCursor ?? undefined;
-    } while (cursor !== undefined && !attentionAbort.signal.aborted);
-    if (card.value.availability !== 'idle' || card.value.record.occupancy !== null) return;
-    cursor = undefined;
-    do {
-      const outbox = await platform.messages.readOutbox(ctx, { senderSession: entry.sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
-      if (outbox.status !== 'ready') return;
-      for (const message of outbox.value.items) {
-        if (message.response === null || (message.acceptedInputs ?? []).some(input => input.part === 'response')) continue;
-        if (message.sender.kind !== 'work_run') continue;
-        const source = await platform.executions.readExecution(ctx, message.sender.runRef);
-        if (source.status !== 'ready' || source.value.run.controlState?.desiredState === 'paused'
-          || source.value.run.controlState?.desiredState === 'cancelled' || source.value.run.outcome === 'cancelled') continue;
-        const waitRead = await platform.sessionFacts.readWait(ctx, { messageRef: message.ref });
-        let wait: DeliveryResponseWaitV1 = { kind: 'none' };
-        if (waitRead.status === 'ready') {
-          wait = waitRead.value.state.state === 'consumed' ? { kind: 'consumed' }
-            : waitRead.value.state.state === 'withdrawn' ? { kind: 'none' }
-            : { kind: 'unconsumed', boundHere: false };
-        } else if (waitRead.status !== 'not_found') continue;   // 7b1rd-18: only a non-wait is `none`
-        const facts = await gateFacts(ctx, message, { part: 'response',
-          accepted: (message.acceptedInputs ?? []).some(input => input.part === 'response') }, wait);
-        if (facts === null || !deliveryEligibility(facts).offerable) continue;
-        await platform.workflow.consumeConsultation?.(ctx, {
-          schemaVersion: 1, part: 'response', messageRef: message.ref, goalRef: entry.goalRef,
-          roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
-        });
-        return;
-      }
-      cursor = outbox.value.nextCursor ?? undefined;
-    } while (cursor !== undefined && !attentionAbort.signal.aborted);
+      if (goalRef === null) { skips.push({ sessionRef: candidate.session, reason: 'no_goal' }); continue; }
+      // An ordinary late reply is the existing consultation's response input; an inquiry keeps no part.
+      const part = offer.kind === 'late_reply' ? 'response' as const : undefined;
+      await platform.workflow.consumeConsultation?.(ctx, {
+        schemaVersion: 1, ...(part === undefined ? {} : { part }), messageRef: offer.messageRef, goalRef,
+        roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget,
+        consumerId: profile.consumerId });
+      continue;                                                     // a consultation ends this Session's scan
+    }
+    lastConsumeSkips = skips;
+    return page.value.next;
   }
   // Slice 4C-2 §11.5/U-10: the scribe reminder shell. One check per configured
   // workspace per heartbeat; the to-do port and the recipient resolver are the
@@ -2027,17 +2049,21 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     };
     while (!attentionAbort.signal.aborted) {
       await expireDueWaits();
-      for (const entry of inputConsumers) {
-        const key = canonicalJson({ scope: entry.scope, sessionRef: entry.sessionRef } as never);
-        // The input-consumer throttle stays on the wall clock: the existing Host
-        // fixtures inject a FIXED `now`, and gating these scans on it would stop
-        // an idle Session from ever re-scanning. Only the attention observer's
-        // timestamp below uses the injected clock (NE6).
-        if (!inputJobs.has(key) && Date.now() - (lastInputScan.get(key) ?? 0) >= entry.heartbeatMs) {
-          lastInputScan.set(key, Date.now());
-          const job = consumeIdle(entry).catch(() => { /* original facts remain retryable */ }).finally(() => inputJobs.delete(key));
-          inputJobs.set(key, job);
-        }
+      // One consume batch per workspace, the same list the expiry pass walks. The throttle
+      // stays on the wall clock: the fixtures inject a FIXED `now`, and gating this scan on
+      // it would stop an idle Session from ever re-scanning. One `inputJobs` key per
+      // workspace keeps a slow pass from overlapping the next heartbeat.
+      for (const workspace of workspaces) {
+        const key = scopeKey(workspace.scope);
+        if (inputJobs.has(key) || Date.now() - (lastInputScan.get(key) ?? 0) < period) continue;
+        lastInputScan.set(key, Date.now());
+        const after = consumeCursors.get(key) ?? null;
+        const job = consumeIdle(workspace.scope, after)
+          .then(next => { consumeCursors.set(key, next); })
+          .catch(() => { /* original facts remain retryable */ })
+          .finally(() => inputJobs.delete(key))
+          .finally(() => { for (const resolve of consumeBarrierWaiters.splice(0)) resolve(); });
+        inputJobs.set(key, job);
       }
       for (const entry of entries) {
         if (attentionAbort.signal.aborted) break;
@@ -2187,6 +2213,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   return {
     get reconcile(): HostReconcileReportV1 { return structuredClone(hostReconcile); },
+    get consumeStatus(): readonly HostConsumeSkipV1[] { return lastConsumeSkips; },
+    consumeBarrier(): Promise<void> {
+      return new Promise<void>(resolve => { consumeBarrierWaiters.push(() => resolve()); });
+    },
     listen(port?: number): Promise<WorkbenchAddress> {
       if (closePromise !== undefined) return Promise.reject(new Error('the workbench Host is closed'));
       listenPromise ??= server.listen(port ?? options.port ?? 0);

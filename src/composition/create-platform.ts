@@ -56,7 +56,7 @@ import { createNoticeDisplayToken } from '../core/work-graph/views/notice-displa
 import type {
   DecisionMessagePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
   RequestCandidatePort, WorkspaceDecisionSettingsPort,
-  MessageReleaseCandidatesPort, MessageReleasePort,
+  MessageReleaseCandidatesPort, MessageReleasePort, MessageReleasedActionsPort,
 } from '../core/work-graph/model/decision-contracts.js';
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
@@ -141,6 +141,8 @@ import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
+import { createConsumableSessions, type ConsumableSessionsPort }
+  from '../core/work-graph/views/consumable-sessions.js';
 import { createSessionHandoffService, type SessionHandoffPort } from '../core/work-graph/sessions/session-handoff-service.js';
 // The secretary lifecycle: the advance and manual-archive owners, the brief consumer, the one fence read and the
 // handoff facts view.
@@ -1089,10 +1091,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const copyInterventions = createCopyInterventionPorts({ records: backend.records, mailbox });
     const messageApply = createMessageApplyOwner({ records: backend.records, messageWrites, now });
     /** R's two-branch release and candidate read, G's trusted entry: one owner group, every member drained. */
-    const messageRelease: MessageReleasePort & MessageReleaseCandidatesPort = {
+    const messageRelease: MessageReleasePort & MessageReleaseCandidatesPort & MessageReleasedActionsPort = {
       releaseApproved: (...args) => trackedCall(() => messageReleaseOwner.releaseApproved(...args), unavailable),
       readReleaseCandidates: (...args) =>
         trackedCall(() => messageReleaseOwner.readReleaseCandidates(...args), unavailable),
+      readReleasedActions: (...args) => trackedCall(() => messageReleaseOwner.readReleasedActions(...args), unavailable),
       applyMessageRelease: (...args) =>
         trackedCall(() => messageReleaseApplication.applyMessageRelease(...args), unavailable),
     };
@@ -1104,7 +1107,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const queryExecution = options.runtime === undefined ? undefined : createQueryExecution({
       records: backend.records, roles: roleService, bodies,
       authorizeConfiguration: createAuthorizeQueryConfiguration(options.runtime),
-      now, eventId: randomUUID, sessionFacts,
+      now, eventId: randomUUID, sessionFacts, messages: mailbox, messageWrites,
       // The entered confirmation consumes a frozen handoff brief through the one owner read; without this port a
       // non-null briefRef would be `unavailable`, never "no brief".
       brief: createHandoffBriefPort({ operations: sessionDirectory }),
@@ -1127,6 +1130,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // built.
     const secretaryFacts = queryExecution === undefined ? undefined : createSecretaryPreparationFacts({
       records: backend.records, architecture: catalog, roles: { readServedRoles },
+      messages: mailbox,
+      expiryCount: (ctx, input) => messageExpiry.readExpiryCount(ctx, input),
     });
     // L8 (book ruling 6): the SAME catalog instance resolves an omitted capture
     // `mappings`, so the automatic/manual capture and the reminder read share
@@ -2426,6 +2431,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           ?? await rawWorkflow.sessionHandoff!.manualArchive(...args), unavailable),
       },
     };
+    const consumableSessionsOwner = createConsumableSessions({
+      directory: sessionDirectory, executions: executionReader, queries: queryJobs,
+      messages: mailbox,
+      eligibility: { readDeliveryEligibilityFacts: (...args) => rawWorkflow.readDeliveryEligibilityFacts!(...args) },
+    });
+    const consumableSessions: Pick<ConsumableSessionsPort, 'readConsumableSessions'> = {
+      readConsumableSessions: (...args) =>
+        trackedCall(() => consumableSessionsOwner.readConsumableSessions(...args), unavailable),
+    };
     // A.2 step 5.6 (§12.1): the start-up reconcile's internal seam. Only the Host
     // that holds the instance lease calls it, before any execution driver starts;
     // every write is judged by its owner machine (R events need `owned`).
@@ -2770,6 +2784,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The open-rounds read the Host's request queue traverses; it reads one
       // partition page per call and writes nothing.
       open: (ctx, scope, input) => trackedCall(() => rawRequestRounds.open(ctx, scope, input), requestClosed),
+      sources: (ctx, scope, input) => trackedCall(() => rawRequestRounds.sources(ctx, scope, input), requestClosed),
       // The understanding command's close and its receipt read (D); the hand-off owner calls them.
       closeUnderstanding: (ctx, input) =>
         trackedCall(() => rawRequestRounds.closeUnderstanding(ctx, input), requestClosed),
@@ -2794,6 +2809,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       messageExpiry: messageExpiryPort,
+      consumableSessions,
       queries,
       // K3 (§2 L7): the read-only UnknownCallReview owner, published for the
       // `unknown-call-reviews/read` route (group 3/4 extend it with writes).
@@ -2923,7 +2939,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
-      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageExpiry'] as const) {
+      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageExpiry',
+      'consumableSessions'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

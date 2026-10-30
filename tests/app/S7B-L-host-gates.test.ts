@@ -18,11 +18,21 @@ import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.
 import {
   committed, pauseS7AGoal, ready, replyS7AMessage, resumeS7AGoal, sessionOf,
 } from '../helpers/S7A-fixture.js';
+import { listed } from '../helpers/S7B-fixture.js';
 import { interventionDeliveryText } from '../helpers/S7B-delivery-samples.js';
-import { requestText } from '../helpers/WP2-platform-support.js';
 import { waitFor } from '../scenarios/harness.js';
 
-const shared = vi.hoisted(() => ({ backend: undefined as unknown, bodies: undefined as unknown }));
+const shared = vi.hoisted(() => ({ backend: undefined as unknown, bodies: undefined as unknown, factsRead: [] as string[] }));
+vi.mock('../../src/core/work-graph/views/consumable-sessions.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/work-graph/views/consumable-sessions.js')>();
+  return { ...actual, createConsumableSessions: (deps: Parameters<typeof actual.createConsumableSessions>[0]) =>
+    actual.createConsumableSessions({ ...deps, eligibility: {
+      readDeliveryEligibilityFacts: async (ctx, input) => {
+        shared.factsRead.push(input.messageRef.messageId);
+        return await deps.eligibility.readDeliveryEligibilityFacts(ctx, input);
+      },
+    } }) };
+});
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/core/record-store/in-memory-record-store.js')>();
   return { ...actual, createInMemoryRecordBackend: (options: Parameters<typeof actual.createInMemoryRecordBackend>[0]) => {
@@ -39,10 +49,6 @@ vi.mock('../../src/core/record-store/body-store.js', async (importOriginal) => {
 
 const worlds: S6AHostWorld[] = [];
 afterEach(async () => { await Promise.all(worlds.splice(0).map(world => world.close())); });
-const listed = async (world: S6AHostWorld, suffix: 'inbox' | 'outbox', session: S6ASession): Promise<SessionMessage[]> =>
-  ready<{ items: SessionMessage[] }>(await world.post(`messages/${suffix}`, plain(S6A_SCOPE, suffix === 'inbox'
-    ? { recipient: session.ref, page: { limit: 20 } } : { senderSession: session.ref, page: { limit: 20 } })),
-  suffix).items;
 const queued = async (world: S6AHostWorld, session: S6ASession, ref: SessionMessage['ref']): Promise<SessionMessage> => {
   const item = (await listed(world, 'inbox', session)).find(entry => entry.ref.messageId === ref.messageId)
     ?? (await listed(world, 'outbox', session)).find(entry => entry.ref.messageId === ref.messageId);
@@ -65,6 +71,7 @@ async function sendRun(world: S6AHostWorld, input: { goal: GoalRef; session: S6A
 }
 
 it('a paused Goal keeps both gates queued, resume consumes the inquiry and reply, and a claimed intervention drives select_work', async () => {
+  shared.factsRead.length = 0;
   const world = await openS6AHostWorld({ backend: 'memory', secretaryWork: true,
     secretaryTools: ['read', 'send_session_message', 'respond_session_message'] });
   worlds.push(world);
@@ -101,21 +108,15 @@ it('a paused Goal keeps both gates queued, resume consumes the inquiry and reply
   const workflow = world.platform.workflow as unknown as {
     consumeConsultation?: (ctx: never, input: never) => Promise<unknown>;
     handleIntervention?: (ctx: never, input: never) => Promise<{ status: string }>;
-    readDeliveryEligibilityFacts?: (ctx: never, input: never) => Promise<unknown>;
   };
-  if (workflow.readDeliveryEligibilityFacts === undefined || workflow.handleIntervention === undefined) {
-    throw new Error('the Host gates need platform.workflow.readDeliveryEligibilityFacts and handleIntervention');
+  if (workflow.handleIntervention === undefined) {
+    throw new Error('the Host gates need platform.workflow.handleIntervention');
   }
-  const factsRead: string[] = [];
+  const factsRead = shared.factsRead;
   const consumed: Array<{ id: string; part: string | undefined }> = [];
   const handled: Array<{ id: string; status: string }> = [];
-  const realFacts = workflow.readDeliveryEligibilityFacts;
   const realConsume = workflow.consumeConsultation!;
   const realHandle = workflow.handleIntervention;
-  workflow.readDeliveryEligibilityFacts = async (ctx, input) => {
-    factsRead.push((input as { messageRef: { messageId: string } }).messageRef.messageId);
-    return await realFacts(ctx, input);
-  };
   workflow.consumeConsultation = async (ctx, input) => {
     const body = input as { messageRef: { messageId: string }; part?: string };
     const result = await realConsume(ctx, input);
@@ -153,8 +154,10 @@ it('a paused Goal keeps both gates queued, resume consumes the inquiry and reply
   facts => facts.latestWork !== null && facts.latestWork.runRef.runId !== (wait.sender.kind === 'work_run' ? wait.sender.runRef.runId : ''),
   'the claimed intervention Run');
   const expected = interventionDeliveryText({ messageId: intervention.ref.messageId, body: 'S7B gates intervention' });
-  await waitFor(async () => world.model.calls(), calls => calls > 0 && requestText(world.model).includes(expected),
-    'the intervention prepare/start model request');
+  // Any request, not the last: a later consultation turn may follow the intervention Run's request.
+  await waitFor(async () => [...world.model.requests], requests => requests.some(request => request.messages
+    .some(message => message.role === 'user' && String(message.content).includes(expected))),
+  'the intervention prepare/start model request');
 }, 120_000);
 
 it('a queued notify opens no turn and is skipped before the inquiry behind it', async () => {

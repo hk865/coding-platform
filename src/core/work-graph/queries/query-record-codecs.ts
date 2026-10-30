@@ -54,6 +54,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { CurrentPointerRef } from '../../../contracts/note.js';
 import {
   CurrentPointerRefShape, GoalRefShape, OperationRefShape, QueryJobRefShape, QueryRunRefShape,
+  SessionMessageRefShape,
 } from '../../../contracts/data-format-refs.js';
 import type {
   DecodeResult,
@@ -476,6 +477,17 @@ function receiptIssues(value: unknown): string[] {
   if (kind === 'understanding') {
     return queryJobRefFromValue(value['round']) === null
       ? ['job.receipt.round is not a complete QueryJobRef'] : [];
+  }
+  if (kind === 'reply' || kind === 'expiry') {
+    const issues: string[] = [];
+    if (queryJobRefFromValue(value['round']) === null) issues.push('job.receipt.round is not a complete QueryJobRef');
+    if (checkShape(SessionMessageRefShape, value['relatedMessageRef'], 'stored') !== null) {
+      issues.push('job.receipt.relatedMessageRef is not a complete SessionMessageRef');
+    }
+    if (sessionRefProblem(value['secretary'], 'SessionRef') !== null) {
+      issues.push('job.receipt.secretary must be a SessionRef');
+    }
+    return issues;
   }
   return ['job.receipt.kind is not a legal receipt kind'];
 }

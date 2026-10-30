@@ -4,20 +4,21 @@ import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
-import { captureObservationSource, captureProjectSource, isProjectInputPath, projectSnapshotOf, ProjectSourceFailure, SOURCE_ENGINE, type ObservedProjectSource, type ProjectSourceAccess, type ProjectSourceSnapshot } from './project-source-snapshot.js';
+import { captureObservationSource, captureProjectSource, isProjectInputPath, isSourcePath, projectSnapshotOf, ProjectSourceFailure, SOURCE_ENGINE, type ObservedProjectSource, type ProjectSourceAccess, type ProjectSourceSnapshot } from './project-source-snapshot.js';
 import { TypeScriptSourceAnalyzer } from './typescript-source-query.js';
 import { createCppLanguageProvider, languageOfPath, type ArchitectureLanguageProviderV1, type ProjectFileGraphNodeV1, type ProjectFileGraphV1 } from './architecture-language-provider.js';
 import { COVERAGE_ISSUES_MAX, type LanguageCoverageV1 } from '../../contracts/architecture-inspection.js';
 import { scanTypeScript, type LightScanFault, type LightScanResult } from './typescript-light-scan.js';
 import { captureTextSource, TEXT_ENGINE, type TextSourceFile } from './text-source-snapshot.js';
 import { mapArchitectureSource, type ArchitectureSourceMaterial } from './architecture-source.js';
-import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWorkingTreeFile, summaryChanges } from './workspace-read.js';
+import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWorkingTreeFile, scopeContains, summaryChanges } from './workspace-read.js';
 import { compareGitWorkspaceTrees, compareGitWorkingTree, isCompleteCommitOid, readGitWorkspaceFile } from './git-read.js';
+import { duplicateCandidates, DUPLICATE_LIMITS } from './duplicate-candidates.js';
 import { querySource, toSourceDiagnostic, toSourceFileEntry, toSourceRelation } from './source-query.js';
 import { deepFreeze } from './ports.js';
 import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 import type { WorkspaceAccessFactory, WorkspaceReadAccess } from './access.js';
-import type { CaptureContentScope, CaptureSourceRequest, CaptureSummary, GitWorkspaceVersion, GitWorkingTreePair, ReadWorkspaceRequest, SourceCaptureMaterial, SourceCoverage, SourceDiagnostic, SourceFileEntry, SourceHit, SourcePage, SourcePageRequest, SourceRelation, WorkspaceCaptureLimits, WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceError, WorkspaceFile, WorkspaceResult, WorkspaceVersion } from './ports.js';
+import type { CaptureContentScope, CaptureSourceRequest, CaptureSummary, ComparedMaterialV1, GitWorkspaceVersion, GitWorkingTreePair, ReadWorkspaceRequest, SourceCaptureMaterial, SourceCoverage, SourceDiagnostic, SourceFileEntry, SourceHit, SourcePage, SourcePageRequest, SourceRelation, WorkspaceCaptureLimits, WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceError, WorkspaceFile, WorkspaceResult, WorkspaceVersion } from './ports.js';
 
 /** One opaque page cursor: bound to capture, subject, permission revision, query and ordering. */
 export type CursorRecord = {
@@ -83,6 +84,18 @@ const DEFAULT_FILE_GRAPH_LIMITS = { maxNodes: 20000, maxEdges: 100000 };
 export type WorkspaceFileGraphLimits = { maxNodes: number; maxEdges: number };
 const nonBlankLineCount = (content: string) => content.split('\n').filter(line => /\S/.test(line)).length;
 const byPath = <T extends { path: string }>(left: T, right: T) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+
+/** The duplicate pool of one retained capture: its frozen text, source paths only, in scope. */
+const comparedMaterialOf = (entry: CaptureEntry): ComparedMaterialV1 => {
+  if (entry.material.provider === 'text') {
+    return { files: [...entry.material.text.values()].filter(file => isSourcePath(file.path) && scopeContains(entry.scope, file.path))
+      .map(file => ({ path: file.path, text: file.content })), skipped: 0 };
+  }
+  const files = entry.material.observed?.files ?? entry.material.snapshot.files;
+  const skipped = entry.material.observed?.skipped.filter(skip => isSourcePath(skip.path)).length ?? 0;
+  return { files: [...files.values()].filter(file => isSourcePath(file.path) && scopeContains(entry.scope, file.path))
+    .map(file => ({ path: file.path, text: file.content })), skipped };
+};
 
 /** The TS provider's declared scope is constant; its query prefix never changes the captured set. */
 const TS_SCOPE: CaptureContentScope = deepFreeze({ kind: 'typescript_project_inputs', selectionVersion: 'ts-js-json-v1', prefix: null, digestBasis: 'decoded_utf8' });
@@ -187,6 +200,8 @@ export class CaptureRegistry {
   compare(ctx: CoreCallContext, input: WorkspaceComparisonRequest): Promise<WorkspaceResult<WorkspaceComparison>> {
     return this.track(ctx, async signal => {
       if (!input || typeof input !== 'object' || !input.workspace || input.workspace.aggregateType !== 'Workspace') return rejected('invalid', 'workspace scope required');
+      // The option is a strict boolean switch; validate it before any branch opens an access or a pair.
+      if (input.duplicates !== undefined && input.duplicates !== true) return rejected('invalid', 'duplicates must be true when present');
       // Widen for runtime validation: JS callers may send a version outside the declared union.
       const before = input.before as WorkspaceVersion, after = input.after as WorkspaceVersion;
       if (!before || !after) return rejected('invalid', 'two versions are required');
@@ -204,7 +219,7 @@ export class CaptureRegistry {
           ? { before: { kind: 'git', commit: git.commit }, after: { kind: 'working_tree' } }
           : { before: { kind: 'working_tree' }, after: { kind: 'git', commit: git.commit } };
         return this.withAccess(ctx, input.workspace, signal, access =>
-          compareGitWorkingTree(access, { ...pair, prefix }, signal, this.limits, this.deps.now));
+          compareGitWorkingTree(access, { ...pair, prefix, duplicates: input.duplicates === true }, signal, this.limits, this.deps.now));
       }
       if (before.kind === 'working_tree' || after.kind === 'working_tree') return rejected('invalid', 'compare requires two non-working-tree versions');
       if (before.kind === 'git' || after.kind === 'git') {
@@ -218,7 +233,7 @@ export class CaptureRegistry {
         if (!isCompleteCommitOid(before.commit) || !isCompleteCommitOid(after.commit)) return rejected('invalid', 'git comparison requires full lowercase commit ids');
         const beforeCommit = before.commit, afterCommit = after.commit, prefix = input.prefix ?? null;
         return this.withAccess(ctx, input.workspace, signal, access =>
-          compareGitWorkspaceTrees(access, beforeCommit, afterCommit, prefix, this.limits));
+          compareGitWorkspaceTrees(access, beforeCommit, afterCommit, prefix, this.limits, input.duplicates === true, this.deps.now));
       }
       if (input.prefix !== undefined) return rejected('invalid', 'prefix is only valid for git comparisons');
       if (before.kind !== 'capture' || after.kind !== 'capture') return rejected('invalid', 'compare requires two capture versions');
@@ -226,8 +241,13 @@ export class CaptureRegistry {
       if (workspace.projectId !== before.capture.projectId || workspace.workspaceId !== before.capture.workspaceId ||
           workspace.projectId !== after.capture.projectId || workspace.workspaceId !== after.capture.workspaceId)
         return rejected('forbidden', 'call context scope does not match both captures');
-      return this.withPair(ctx, before.capture, after.capture, signal, async (beforeEntry, afterEntry) =>
-        compareCapturedFiles(beforeEntry, afterEntry, this.limits));
+      return this.withPair(ctx, before.capture, after.capture, signal, async (beforeEntry, afterEntry) => {
+        const result = compareCapturedFiles(beforeEntry, afterEntry, this.limits);
+        if (result.status !== 'ready' || input.duplicates !== true) return result;
+        const report = await duplicateCandidates(
+          { before: comparedMaterialOf(beforeEntry), after: comparedMaterialOf(afterEntry) }, DUPLICATE_LIMITS);
+        return { status: 'ready', value: { ...result.value, duplicates: report } };
+      });
     });
   }
   exportMaterial(ctx: CoreCallContext, ref: SourceCaptureRef): Promise<WorkspaceResult<SourceCaptureMaterial>> {

@@ -112,17 +112,22 @@ function messageApplication(h: HostScenario, ref: SessionMessage['ref']): Promis
   return h.post<ReadResult<SessionMessage>>('messages/read', plain(AG2B_SCOPE, ref));
 }
 
+type FlowState = {
+  state?: string;
+  last?: { value?: { state?: string; waitBasis?: unknown } } | null;
+};
+
 /**
- * Wait until the start-up answer re-drive has stopped driving (its handle is
- * neither running nor waiting for a reply), so a last restart cannot race a
- * flow that is still taking steps.
+ * Wait until the start-up answer re-drive has stopped driving, by each case's
+ * own done-condition. (一)'s flow parks on the frozen registered wait; (三)'s
+ * continuation has already completed, so its flow just has to be neither
+ * running nor waiting for a reply.
  */
-async function waitForFlowToStop(h: HostScenario, label: string): Promise<void> {
+async function waitForFlowToStop(
+  h: HostScenario, label: string, done: (value: FlowState | undefined) => boolean,
+): Promise<void> {
   await waitFor(() => h.answer('workflow/driver-read', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF })),
-    read => {
-      const state = (read['value'] as { state?: string } | undefined)?.state;
-      return state !== 'running' && state !== 'waiting_for_reply';
-    }, `${label}: the flow to stop`);
+    read => done(read['value'] as FlowState | undefined), `${label}: the flow to stop`);
 }
 
 describe('K3-44 (一): ② applied, ③ failed, then a direct hold; 6b kind 4 hands the answer by its reviewRef', () => {
@@ -168,7 +173,8 @@ describe('K3-44 (一): ② applied, ③ failed, then a direct hold; 6b kind 4 ha
 
     // The direct hold and UR7b ③ are the end: the Task is held/stopped, so the
     // flow has settled. A last quiet restart must not hand the answer over again.
-    await waitForFlowToStop(h, 'K3-44 (一)');
+    await waitForFlowToStop(h, 'K3-44 (一)', value => value?.state === 'waiting_for_reply'
+      && value.last?.value?.state === 'waiting' && value.last.value.waitBasis !== undefined);
     const restarted = await expectQuietHarnessRestart(h, 'K3-44 (一): a final restart');
     expect(restarted.report?.redriveGoals).toEqual([]);
   }, 300_000);
@@ -237,7 +243,8 @@ describe('K3-44 (三): ② applied, ③ failed, then the continuation claimed; 6
     // start-up re-drive to stop, then walk that same selection once more. The
     // Task is already satisfied, so it must claim/start no Run and must leave
     // no next step (the continuation's Run has already ended).
-    await waitForFlowToStop(h, 'K3-44 (三)');
+    await waitForFlowToStop(h, 'K3-44 (三)', value => value?.state !== 'running'
+      && value?.state !== 'waiting_for_reply');
     const settled = await h.advance(h.select('k3-44c-finish', AG2B_WORK_TASK_ID));
     expect(settled.state).toBe('completed');
     expect(settled.reason).toBe('the Goal is formally COMPLETED');

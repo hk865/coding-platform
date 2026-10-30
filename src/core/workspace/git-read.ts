@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpath, stat, type FileHandle } from 'node:fs/promises';
-import type { GitFileIdentity, GitWorkspaceChange, GitWorkspaceComparison, GitWorkingTreeChange, GitWorkingTreeComparison, GitWorkingTreePair, WorkspaceCaptureLimits, WorkspaceContentModeIdentity, WorkspaceError, WorkspaceFile, WorkspaceResult } from './ports.js';
+import type { CaptureContentScope, ComparedMaterialV1, GitFileIdentity, GitWorkspaceChange, GitWorkspaceComparison, GitWorkingTreeChange, GitWorkingTreeComparison, GitWorkingTreePair, WorkspaceCaptureLimits, WorkspaceContentModeIdentity, WorkspaceError, WorkspaceFile, WorkspaceResult } from './ports.js';
 import type { WorkspaceGitReadAccess, WorkspaceReadAccess } from './access.js';
-import { MAX_COMPARISON_BYTES } from './workspace-read.js';
-import { OBSERVATION_INVENTORY_CAPACITY, isSafeSourcePath, ProjectSourceFailure } from './project-source-snapshot.js';
+import { MAX_COMPARISON_BYTES, scopeContains } from './workspace-read.js';
+import { OBSERVATION_INVENTORY_CAPACITY, isSafeSourcePath, isSourcePath, ProjectSourceFailure } from './project-source-snapshot.js';
 import { captureTextSource, type TextSourceSnapshot } from './text-source-snapshot.js';
+import { duplicateCandidates, DUPLICATE_LIMITS } from './duplicate-candidates.js';
 
 /**
  * Trusted binding for one already-authorized WorkspaceReadAccess. The root-handle getter is
@@ -538,7 +539,9 @@ export async function compareGitWorkspaceTrees(
   beforeCommit: string,
   afterCommit: string,
   prefix: string | null,
-  limits: { maxInventoryFiles: number; maxQueryResults: number },
+  limits: { maxInventoryFiles: number; maxQueryResults: number; maxFileBytes: number },
+  duplicates: boolean,
+  now: () => string,
 ): Promise<WorkspaceResult<GitWorkspaceComparison>> {
   const git = access.git;
   if (!git) return unsupported('git comparisons are not available for this workspace access');
@@ -558,16 +561,47 @@ export async function compareGitWorkspaceTrees(
   }
   for (const [path, file] of beforeFiles) if (!afterFiles.has(path)) changes.push({ kind: 'deleted', path, before: identityOf(file) });
   changes.sort((left, right) => left.path.localeCompare(right.path));
+  // The after side is the pool. The before side comes from the same one tree listing: an
+  // unmodified path takes the after text, a modified path reads its old blob, an added path has
+  // no before. A source path whose text cannot be completed is skipped once and omitted from both.
+  let materials: { before: ComparedMaterialV1; after: ComparedMaterialV1 } | undefined;
+  if (duplicates) {
+    const beforeMaterial: ComparedMaterialV1['files'] = [], afterMaterial: ComparedMaterialV1['files'] = [];
+    let skipped = 0;
+    for (const [path, file] of afterFiles) {
+      if (!isSourcePath(path)) continue;
+      const afterRead = await readGitWorkspaceFile(access, { commit: afterCommit, path, maxBytes: limits.maxFileBytes }, now);
+      if (afterRead.status !== 'ready') {
+        if (afterRead.code === 'unsupported' || afterRead.code === 'capacity') { skipped++; continue; }
+        return afterRead;
+      }
+      const prior = beforeFiles.get(path);
+      let beforeText: string | null = null;
+      if (prior && (prior.objectId !== file.objectId || prior.mode !== file.mode)) {
+        const beforeRead = await readGitWorkspaceFile(access, { commit: beforeCommit, path, maxBytes: limits.maxFileBytes }, now);
+        if (beforeRead.status !== 'ready') {
+          if (beforeRead.code === 'unsupported' || beforeRead.code === 'capacity') { skipped++; continue; }
+          return beforeRead;
+        }
+        beforeText = beforeRead.value.content;
+      } else if (prior) beforeText = afterRead.value.content;
+      afterMaterial.push({ path, text: afterRead.value.content });
+      if (beforeText !== null) beforeMaterial.push({ path, text: beforeText });
+    }
+    materials = { before: { files: beforeMaterial, skipped }, after: { files: afterMaterial, skipped } };
+  }
   if (changes.length > limits.maxQueryResults) return rejected('capacity', 'the Git comparison exceeds the configured change capacity; choose a narrower prefix');
   let bytes = 0;
   for (const change of changes) {
     bytes += Buffer.byteLength(JSON.stringify(change));
     if (bytes > MAX_COMPARISON_BYTES) return rejected('capacity', 'the Git comparison exceeds the bounded serialized size; choose a narrower prefix');
   }
+  const report = materials === undefined ? undefined : await duplicateCandidates(materials, DUPLICATE_LIMITS);
   return { status: 'ready', value: {
     before: { kind: 'git', commit: beforeCommit }, after: { kind: 'git', commit: afterCommit },
     scope: { kind: 'git_regular_files', selectionVersion: 'authorized-regular-blob-v1', prefix },
     comparison: 'git_tree_content_and_mode', complete: true, changes,
+    ...(report === undefined ? {} : { duplicates: report }),
   } };
 }
 
@@ -582,7 +616,7 @@ export async function compareGitWorkspaceTrees(
  */
 export async function compareGitWorkingTree(
   access: WorkspaceReadAccess,
-  input: GitWorkingTreePair & { prefix: string | null },
+  input: GitWorkingTreePair & { prefix: string | null; duplicates: boolean },
   signal: AbortSignal,
   limits: Pick<WorkspaceCaptureLimits, 'maxFileBytes' | 'maxCaptureBytes' | 'maxInventoryFiles' | 'maxQueryResults'>,
   now: () => string,
@@ -605,6 +639,8 @@ export async function compareGitWorkingTree(
   const tree = await git.readTree({ commit, prefix, maxEntries: limits.maxInventoryFiles, maxBytes: GIT_TREE_OUTPUT_LIMIT_BYTES });
   if (tree.status !== 'ready') return tree;
   const gitFiles = new Map<string, WorkspaceContentModeIdentity>();
+  // The same read's decoded text is kept only for the optional duplicate material.
+  const gitTexts = new Map<string, string>();
   let gitBytes = 0;
   for (const entry of tree.value.files) {
     const file = await readGitWorkspaceFile(access, { commit, path: entry.path, maxBytes: limits.maxFileBytes }, now);
@@ -613,6 +649,7 @@ export async function compareGitWorkingTree(
     if (gitBytes > limits.maxCaptureBytes)
       return rejected('capacity', 'the historical side exceeds the configured content capacity; choose a narrower prefix');
     gitFiles.set(entry.path, { digest: file.value.digest, digestBasis: 'raw_bytes', sizeBytes: file.value.sizeBytes, mode: entry.mode });
+    if (input.duplicates) gitTexts.set(entry.path, file.value.content);
   }
 
   // Current side: exactly one bounded text observation through the same trusted access. The local
@@ -665,11 +702,23 @@ export async function compareGitWorkingTree(
     if (bytes > MAX_COMPARISON_BYTES) return rejected('capacity', 'the mixed comparison exceeds the bounded serialized size; choose a narrower prefix');
   }
 
+  let report: Awaited<ReturnType<typeof duplicateCandidates>> | undefined;
+  if (input.duplicates) {
+    const scope: CaptureContentScope = { kind: 'text_files', selectionVersion: 'readable-regular-utf8-no-nul-v1', prefix, digestBasis: 'raw_bytes' };
+    const gitMaterial: ComparedMaterialV1 = { files: [...gitTexts.entries()]
+      .filter(([path]) => isSourcePath(path) && scopeContains(scope, path)).map(([path, text]) => ({ path, text })), skipped: 0 };
+    const workMaterial: ComparedMaterialV1 = { files: [...observed.files.values()]
+      .filter(file => isSourcePath(file.path) && scopeContains(scope, file.path)).map(file => ({ path: file.path, text: file.content })), skipped: 0 };
+    const materials = beforeIsGit ? { before: gitMaterial, after: workMaterial } : { before: workMaterial, after: gitMaterial };
+    report = await duplicateCandidates(materials, DUPLICATE_LIMITS);
+  }
+
   return { status: 'ready', value: {
     ...pair,
     scope: { kind: 'text_files', selectionVersion: 'readable-regular-utf8-no-nul-v1', prefix, digestBasis: 'raw_bytes' },
     comparison: 'git_worktree_raw_content_and_mode', complete: true, observedAt: now(), currentness: 'not_rechecked',
     changes,
+    ...(report === undefined ? {} : { duplicates: report }),
   } };
 }
 

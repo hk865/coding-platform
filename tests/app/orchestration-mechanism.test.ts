@@ -450,8 +450,9 @@ it('automatically answers an inquiry without making its sender wait', async () =
     host = await f.startAG2bHost(publicDir, { root, database, builderQueryProfile: true,
       replies: [{ kind: 'text', text: 'Read the late answer in my original context; no Work restart.' }],
       queryReplies: [{ kind: 'text', text: 'The saved context was inspected without changing the source.' }],
+      // One consumer is the heartbeat period only; the all-Session walk reaches both lines.
       hostOptions: { inputConsumers: [{ scope: f.AG2B_SCOPE, sessionRef: member.sessionRef,
-        goalRef: f.AG2B_GOAL_REF, queryProfileId: f.AG2B_QUERY_PROFILE_ID, heartbeatMs: 25 }, { scope: f.AG2B_SCOPE, sessionRef: sender.sessionRef, goalRef: f.AG2B_GOAL_REF, queryProfileId: 'ag2b-builder-query', heartbeatMs: 25 }] },
+        goalRef: f.AG2B_GOAL_REF, queryProfileId: f.AG2B_QUERY_PROFILE_ID, heartbeatMs: 25 }] },
     });
     let message: SessionMessage | undefined;
     const until = Date.now() + 15_000;

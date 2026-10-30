@@ -88,6 +88,7 @@ import type {
   GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
 import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import { limitHold } from './hold-limit.js';
 
 type InMemoryModule = typeof import('../../src/core/record-store/in-memory-record-store.js');
 type SqliteModule = typeof import('../../src/core/record-store/sqlite-record-store.js');
@@ -147,7 +148,8 @@ export class CommitBarrier {
     const entry: HoldEntry = { label: label ?? `hold #${this.created}`, match, afterCommit, matched: false,
       released: false, resolveReached, gate, open };
     this.entries.push(entry);
-    return { reached, release: () => { entry.released = true; entry.open(); } };
+    return { reached: limitHold(reached, `S6A commit barrier: hold '${entry.label}'`),
+      release: () => { entry.released = true; entry.open(); } };
   }
 
   /**

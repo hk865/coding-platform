@@ -20,6 +20,7 @@ import {
   CONTEXT_FORMAT_VERSION, queryContextPrelude, renderQueryContext, sectionOrderFor,
 } from './context-rendering.js';
 import { packString } from '../../contracts/prompts/pack-string.js';
+import { consultationFactsLines } from './consultation-facts-text.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
 import { assembleSecretaryContext } from './context-secretary-recipe.js';
 import { sortedSources } from './context-support.js';
@@ -46,6 +47,8 @@ export async function assembleQueryContext(
     secretaryFacts?: SecretaryPreparationFactsV1;
     /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
     handoff?: NonNullable<Parameters<ContextAssembler['assembleQuery']>[1]['handoff']>;
+    /** §3.15 item 5: the frozen platform facts preparation read and resolved once. */
+    consultationFacts?: NonNullable<Parameters<ContextAssembler['assembleQuery']>[1]['consultationFacts']>;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
@@ -95,13 +98,21 @@ export async function assembleQueryContext(
     facts = read.value;
   }
   const queryKind = input.facts.record?.job?.job?.intent?.execution?.kind;
-  const planning = facts !== null && queryKind === 'initial_coordination';
+  const intervention = queryKind === 'intervention_planning';
+  const planning = intervention || (facts !== null && queryKind === 'initial_coordination');
   const extensions = facts?.extensions ?? notImplementedExtensions();
-  const goalSection = `${goalPayload(facts?.goal ?? goal, workspace.revision, extensions, texts)}\n${S('context.questionHeading')}\n${input.question}`;
-  const taskSection = planning && input.facts.focusPlan !== null
-    ? queryPlanSummary(input.facts.focusPlan, texts)
-    : planning ? null : queryFocusLines(input.facts, facts?.graph ?? null, texts);
-  const footprintRows = planning ? topLevelModuleCards(facts?.architecture ?? null) : [];
+  const goalText = goalPayload(facts?.goal ?? goal, workspace.revision, extensions, texts);
+  const consultationText = input.consultationFacts === undefined ? null
+    : consultationFactsLines(input.consultationFacts.facts, input.consultationFacts.resolved, texts);
+  // The intervention template has its own `message` slot, so the question leaves the goal section
+  // (otherwise it would render twice); every other kind keeps today's goal+questionHeading+question text.
+  const goalSection = intervention ? goalText
+    : `${goalText}\n${consultationText === null ? '' : consultationText + '\n'}${S('context.questionHeading')}\n${input.question}`;
+  const taskSection = intervention ? null
+    : planning && input.facts.focusPlan !== null
+      ? queryPlanSummary(input.facts.focusPlan, texts)
+      : planning ? null : queryFocusLines(input.facts, facts?.graph ?? null, texts);
+  const footprintRows = planning && !intervention ? topLevelModuleCards(facts?.architecture ?? null) : [];
   // Ruling 14: the ONE pure mode rule. A Query with a formal basis follows it
   // and reads no boundary (C7); without one it follows the stored cursor.
   const history = input.history;
@@ -110,13 +121,16 @@ export async function assembleQueryContext(
     sessionBasis: history.sessionBasis,
     hasCompletedCursor: history.sessionBasis === undefined && history.hasCompletedCursor,
   });
-  const templateId = planning ? 'query-planning-input' as const : 'query-copy-input' as const;
-  const sectionOrder = sectionOrderFor(planning ? 'planning' : 'copy', templateId, texts);
+  const callKind = intervention ? 'intervention_planning' as const : planning ? 'planning' as const : 'copy' as const;
+  const templateId = intervention ? 'intervention-planning' as const
+    : planning ? 'query-planning-input' as const : 'query-copy-input' as const;
+  const sectionOrder = sectionOrderFor(callKind, templateId, texts);
   const rendered = renderQueryContext({
     templateId,
     prelude: queryContextPrelude(texts),
     required: { role: roleSection, goal: goalSection, task: taskSection },
-    optional: planning ? { footprint: footprintRows } : {},
+    ...(intervention ? { plan: input.facts.focusPlan === null ? null : queryPlanSummary(input.facts.focusPlan, texts), message: input.question } : {}),
+    optional: planning && !intervention ? { footprint: footprintRows } : {},
     residentBudgetBytes,
     sectionOrder,
     toolNames: input.toolNames,
@@ -126,7 +140,7 @@ export async function assembleQueryContext(
   const binding: ContextAssemblyBindingV1 = {
     schemaVersion: 1,
     formatVersion: CONTEXT_FORMAT_VERSION,
-    callKind: planning ? 'planning' : 'copy',
+    callKind,
     sectionOrder,
     duty,
     residentBudgetBytes,

@@ -86,7 +86,9 @@ async function transfer(row: Row) {
   const moved = committed(await dispose(f.base.ctx, { sessionRef: sender.sessionRef, archiveRequestId: request.requestId,
     requestReceipt: request.receipt, step: 'reply_handler', subjectKey: canonicalJson(message.ref as unknown as JsonValue) }));
   expect(moved.replyHandler?.sessionRef).toEqual(D);
-  // The old wait closes by the real control owner; no fabricated ConsumedWait.
+  expect(moved.archiveWaitDisposition).toMatchObject({ kind: 'transfer' });
+  // The transfer leaves the old wait open; only the old Run is cancelled by the real control owner,
+  // and no fabricated ConsumedWait is written.
   const stop = committed(await f.controls.submitControl(f.base.ctx, { input: {
     runRef: sender.runRef, kind: 'cancel', reason: request.reason },
     meta: { requestId: 's1-archive-control:' + sha256Hex(canonicalJson({ requestReceipt: request.receipt,

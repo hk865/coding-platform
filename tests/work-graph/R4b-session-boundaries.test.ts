@@ -192,7 +192,7 @@ describe.each(['memory', 'sqlite'] as const)('R4b %s scope and identity boundari
         revision: 1, workspaceId,
         action: { kind: 'create', plannedSessionRef: { projectId, sessionId: 'schema-source-session' }, parentOperation: null,
           workspace, kernelStore: { adapterId: 'workspace-kernel', storeKey: 'workspace-key' }, role,
-          recommendedRefs: [], initialLinks: [], creation: null },
+          recommendedRefs: [], initialLinks: [], creation: null, consultation: null },
         phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null,
       };
       const mismatches = [

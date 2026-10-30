@@ -190,25 +190,58 @@ function validLimit(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= EXTERNAL_MAX_LIMIT;
 }
 
+/** Book §3.3 item 2: follow `transferredTo` for at most 8 hops; `start` is the chain's root. */
+const FORWARD_HOPS = 8;
+export async function liveWaitMessage(
+  read: (ref: SessionMessageRef) => Promise<ReadResult<SessionMessage>>, start: SessionMessage,
+): Promise<{ status: 'ready'; root: SessionMessage; tail: SessionMessage; complete: boolean } | CoreRejection> {
+  let tail = start; const root = start;
+  for (let hop = 0; hop < FORWARD_HOPS; hop += 1) {
+    const nextRef = tail.transferredTo;
+    if (nextRef === null) return { status: 'ready', root, tail, complete: true };
+    const next = await read(nextRef);
+    if (next.status === 'not_found') return { status: 'rejected', code: 'not_found', reason: 'the forwarded wait message does not exist' };
+    if (next.status === 'not_ready') return { status: 'rejected', code: 'incomplete', reason: 'the forwarded wait message is not ready' };
+    if (next.status !== 'ready') return next;
+    tail = next.value;
+  }
+  return { status: 'ready', root, tail, complete: tail.transferredTo === null };
+}
+
+/** The one-message read this file and K's claim use; the records port, the canonical codec. */
+export async function readWaitMessage(records: SessionFactsStores['records'], signal: AbortSignal,
+  ref: SessionMessageRef): Promise<ReadResult<SessionMessage>> {
+  if (signal.aborted) return { status: 'rejected', code: 'cancelled', reason: 'the wait message read was cancelled' };
+  const key = sessionMessageRefKey(ref);
+  let read;
+  try { read = await records.readMany([key]); } catch (error) { return unavailable(`the wait message read failed: ${String(error)}`); }
+  if (read.status !== 'ready') return unavailable(`${read.code}: ${read.reason}`);
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) return { status: 'not_found' };
+  const decoded = decodeSessionMessageRecord(record);
+  if (decoded.status !== 'decoded') return unavailable(`the wait message ${key} is damaged: ${decoded.reason}`);
+  return { status: 'ready', value: decoded.value };
+}
+
 /**
- * The one wait row of a decoded message. `rootRef` is the message itself,
- * with no forward walk (D8). A Host sender has no Session, so it cannot be the
- * sender Session the wait index names; such a message is not a wait.
+ * The one wait row of a walked chain: `rootRef` is the chain's root and the
+ * tail supplies the live message. A Host sender has no Session, so it cannot be
+ * the sender Session the wait index names; such a message is not a wait.
  */
-function readWaitRow(message: SessionMessage): SessionWaitV1 | null {
-  if (message.intent !== 'inquiry' || message.waitAfterSend !== true) return null;
-  if (message.sender.kind === 'host') return null;
+function readWaitRow(root: SessionMessage, tail: SessionMessage, complete: boolean): SessionWaitV1 | null {
+  if (tail.intent !== 'inquiry' || tail.waitAfterSend !== true) return null;
+  if (tail.sender.kind === 'host') return null;
   return {
-    messageRef: message.ref,
-    rootRef: message.ref,
-    waitingSession: message.sender.sessionRef,
-    originalRun: message.sender.kind === 'work_run' ? message.sender.runRef : null,
-    requestRoot: message.requestRoot,
-    recipient: message.recipient,
-    state: waitStateOf(message, waitFactsOfRecord(message)),
-    deadline: message.deadline,
-    expiredAt: message.expiredAt,
-    complete: true,
+    messageRef: tail.ref,
+    rootRef: root.ref,
+    waitingSession: tail.sender.sessionRef,
+    originalRun: tail.sender.kind === 'work_run' ? tail.sender.runRef : null,
+    requestRoot: tail.requestRoot,
+    recipient: tail.recipient,
+    state: waitStateOf(tail, waitFactsOfRecord(tail)),
+    deadline: tail.deadline,
+    expiredAt: tail.expiredAt,
+    complete,
   };
 }
 
@@ -291,18 +324,32 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
         return incomplete(`session_facts_page_limit: the wait scan of Session ${scope.sessionId} did not finish`);
       }
       watermark = laterCursor(watermark, waitWindow.readThrough);
-      const candidates: { row: SessionWaitV1; order: number; refKey: string }[] = [];
+      const decodedWaits: { message: SessionMessage; record: EncodedRecord }[] = [];
       for (const record of waitWindow.records) {
         const decoded = decodeSessionMessageRecord(record);
         if (decoded.status !== 'decoded') {
           return unavailable(`the wait message ${record.refKey} is damaged: ${decoded.reason}`);
         }
-        const message = decoded.value;
-        // The index narrows only by `intent`; the remaining residual is in memory.
-        if (message.waitAfterSend !== true) continue;
-        if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) continue;
-        const row = readWaitRow(message);
+        decodedWaits.push({ message: decoded.value, record });
+      }
+      // A forwarded tail is not a second root: every ref some candidate names as
+      // `transferredTo` is reached by walking its own root, not started again.
+      const transferredRefs = new Set<string>();
+      for (const { message } of decodedWaits) {
+        if (message.transferredTo !== null) transferredRefs.add(sessionMessageRefKey(message.transferredTo));
+      }
+      const candidates: { row: SessionWaitV1; order: number; refKey: string }[] = [];
+      for (const { message, record } of decodedWaits) {
+        // A forward record names its original; it is never a root either.
+        if (message.originalRef !== null) continue;
+        if (transferredRefs.has(sessionMessageRefKey(message.ref))) continue;
+        const chain = await liveWaitMessage((ref) => readWaitMessage(records, ctx.signal, ref), message);
+        if (chain.status !== 'ready') return chain;
+        // The index narrows only by `intent`; the remaining residual is judged on
+        // the live tail after the walk, and `waits` keeps one row per root.
+        const row = readWaitRow(chain.root, chain.tail, chain.complete);
         if (row === null) continue;
+        if (messageConsumptionProblem(messageFactsOfRecord(chain.tail)) !== null) continue;
         if (row.state.state !== 'open' && row.state.state !== 'answered' && row.state.state !== 'expired') continue;
         const origin = decodeNoticeOrigin(record);
         if (origin.status !== 'decoded') {
@@ -363,7 +410,7 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
           if (originalRun === null) continue;
           const run = runs.get(refKeyOf(originalRun))!;
           if (runControlNodeOf(run) === 'YieldedWait' && run.controlState?.desiredState !== 'cancelled'
-            && sameRef(run.continuation!.messageRef, candidate.row.messageRef)) {
+            && sameRef(run.continuation!.messageRef, candidate.row.rootRef)) {
             wait = { runRef: originalRun, messageRef: candidate.row.messageRef, task: run.continuation!.task };
             break;
           }
@@ -603,19 +650,11 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
     input: { messageRef: SessionMessageRef },
   ): Promise<ReadResult<SessionWaitV1>> {
     if (ctx?.signal?.aborted) return { status: 'rejected', code: 'cancelled', reason: 'the wait read was cancelled' };
-    const key = sessionMessageRefKey(input.messageRef);
-    let read;
-    try {
-      read = await records.readMany([key]);
-    } catch (error) {
-      return unavailable(`the wait message read failed: ${String(error)}`);
-    }
-    if (read.status !== 'ready') return unavailable(`${read.code}: ${read.reason}`);
-    const record = read.value.records.find(candidate => candidate.refKey === key);
-    if (record === undefined) return { status: 'not_found' };
-    const decoded = decodeSessionMessageRecord(record);
-    if (decoded.status !== 'decoded') return unavailable(`the wait message ${key} is damaged: ${decoded.reason}`);
-    const row = readWaitRow(decoded.value);
+    const rootRead = await readWaitMessage(records, ctx.signal, input.messageRef);
+    if (rootRead.status !== 'ready') return rootRead;
+    const chain = await liveWaitMessage((ref) => readWaitMessage(records, ctx.signal, ref), rootRead.value);
+    if (chain.status !== 'ready') return chain;
+    const row = readWaitRow(chain.root, chain.tail, chain.complete);
     // A non-wait (or a Host-sent message, which has no sender Session) is not a
     // wait: the message is not a wait.
     if (row === null) return { status: 'not_found' };

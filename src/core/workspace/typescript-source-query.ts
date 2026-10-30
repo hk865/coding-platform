@@ -1,6 +1,8 @@
 import * as ts from 'typescript';
 import { posix } from 'node:path';
 import { isSafeSourcePath, isSourcePath, ProjectSourceFailure, sha256Text, SOURCE_ROOT, type CapturedProjectFile, type ProjectSourceSnapshot } from './project-source-snapshot.js';
+import { scopeContains } from './workspace-read.js';
+import type { ComparedMaterialV1, WorkspaceResult } from './ports.js';
 
 /**
  * WorkspaceTools — frozen TS/JS project analysis.
@@ -300,4 +302,60 @@ export class TypeScriptSourceAnalyzer {
     }
     return resolvedConfigPath;
   }
+}
+
+/** The thin reads carry only an optional prefix; the declared-scope rule itself is `scopeContains`. */
+const materialScopeContains = (prefix: string | undefined, path: string): boolean =>
+  scopeContains({ kind: 'text_files', selectionVersion: 'readable-regular-utf8-no-nul-v1', prefix: prefix ?? null, digestBasis: 'raw_bytes' }, path);
+
+/**
+ * Top-level declarations only, syntax-only over one comparison side's text. The navigation tree
+ * used by `symbols` walks nested declarations, so this read walks `sourceFile.statements` alone.
+ */
+export type TopLevelDeclarationV1 = { name: string; kind: string; path: string; line: number };
+export type StringLiteralSiteV1 = { path: string; line: number; preview: string; length: number; digest: string };
+export async function readTopLevelDeclarations(material: ComparedMaterialV1, scope: { prefix?: string }):
+  Promise<WorkspaceResult<TopLevelDeclarationV1[]>> {
+  const declarations: TopLevelDeclarationV1[] = [];
+  for (const file of material.files) {
+    if (!materialScopeContains(scope.prefix, file.path)) continue;
+    const sourceFile = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.ESNext, true);
+    const kindOf = (node: ts.Node) => ts.SyntaxKind[node.kind];
+    const lineOfNode = (node: ts.Node) => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+    for (const statement of sourceFile.statements) {
+      // A top-level variable lives in a VariableStatement; each binding identifier is one entry.
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations)
+          if (ts.isIdentifier(declaration.name))
+            declarations.push({ name: declaration.name.text, kind: kindOf(declaration), path: file.path, line: lineOfNode(declaration.name) });
+        continue;
+      }
+      if (!(ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isInterfaceDeclaration(statement)
+        || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement))) continue;
+      const name = statement.name;
+      if (!name) continue;
+      declarations.push({ name: name.text, kind: kindOf(statement), path: file.path, line: lineOfNode(name) });
+    }
+  }
+  return { status: 'ready', value: declarations };
+}
+
+/** Every string-literal node with its decoded value; template literals are not string literals. */
+export async function readStringLiterals(material: ComparedMaterialV1, scope: { prefix?: string }):
+  Promise<WorkspaceResult<StringLiteralSiteV1[]>> {
+  const sites: StringLiteralSiteV1[] = [];
+  for (const file of material.files) {
+    if (!materialScopeContains(scope.prefix, file.path)) continue;
+    const sourceFile = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.ESNext, true);
+    const visitStringLiterals = (node: ts.Node): void => {
+      if (ts.isStringLiteral(node)) {
+        const value = node.text;
+        sites.push({ path: file.path, line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+          preview: value, length: Array.from(value).length, digest: sha256Text(value) });
+      }
+      ts.forEachChild(node, visitStringLiterals);
+    };
+    ts.forEachChild(sourceFile, visitStringLiterals);
+  }
+  return { status: 'ready', value: sites };
 }

@@ -23,7 +23,9 @@ import type { DispatchBasisFactsPort, DispatchBasisFactsV1 } from '../model/disp
 import type { MessageSender, SessionMessage } from '../model/communication-contracts.js';
 import type {
   MessageCommandWritePort, MessageReleaseCandidateV1, MessageReleaseCandidatesInputV1,
-  MessageReleaseCandidatesPageV1, MessageReleaseCandidatesPort, MessageReleasePort, SessionMessageWriteCommandV1,
+  MessageReleaseCandidatesPageV1, MessageReleaseCandidatesPort, MessageReleasePort,
+  MessageReleasedActionsInputV1, MessageReleasedActionsPageV1, MessageReleasedActionsPort,
+  SessionMessageWriteCommandV1,
 } from '../model/decision-contracts.js';
 import { executeWriteCommand, type WriteCommand } from '../persistence/command-executor.js';
 import { canonicalRefKey } from '../persistence/record-codecs.js';
@@ -83,7 +85,7 @@ function decideReleaseApproved(owned: Owned, facts: ReleaseApprovedFacts):
 
 /** Book §3.8 items 2–3: the two-branch release and the bounded candidate read. L publishes both. */
 export function createMessageReleaseOwner(deps: MessageReleaseOwnerDependencies):
-  Pick<MessageReleasePort, 'releaseApproved'> & MessageReleaseCandidatesPort {
+  Pick<MessageReleasePort, 'releaseApproved'> & MessageReleaseCandidatesPort & MessageReleasedActionsPort {
   const records = deps.records;
 
   async function releaseApproved(ctx: CoreCallContext,
@@ -286,7 +288,48 @@ export function createMessageReleaseOwner(deps: MessageReleaseOwnerDependencies)
     } };
   }
 
-  return { releaseApproved, readReleaseCandidates };
+  async function readReleasedActions(ctx: CoreCallContext, input: MessageReleasedActionsInputV1):
+    Promise<ReadResult<MessageReleasedActionsPageV1>> {
+    const scope = { projectId: input.scope.projectId, workspaceId: input.scope.workspaceId };
+    const checked = releaseCandidatePageInput({ goalRef: null, after: input.after, limit: input.limit });
+    if (!checked.ok) return checked.rejection;
+    let page: Awaited<ReturnType<typeof records.lookupOrdered>>;
+    try {
+      page = await records.lookupOrdered({
+        index: S7A2_RELEASE_BY_WORKSPACE_LOOKUP,
+        values: [scope.projectId, scope.workspaceId, 'released'],
+        direction: 'asc',
+        ...(checked.after === null ? {} : { after: checked.after }),
+        limit: input.limit,
+      });
+    } catch {
+      return reject('unavailable', 'the released-action lookup failed');
+    }
+    if (page.status !== 'ready') return ownerReadStoreFailureToRejection(page);
+    const progress = readProgress(page.value.readThrough, undefined);
+    if (!progress.ok) return progress.result;
+    const goals: GoalRef[] = [];
+    for (const record of page.value.records) {
+      const decoded = decodeSessionMessageRecord(record);
+      if (decoded.status !== 'decoded') {
+        return reject('unavailable', `the message record is damaged: ${decoded.reason}`);
+      }
+      const message = decoded.value;
+      if (message.withdrawnAt !== null) continue;
+      if (message.intent !== 'action_request') continue;
+      if (message.status === 'responded') continue;
+      // Unprocessed: no turn has accepted the message. An accepted input is being processed (or finished).
+      if ((message.acceptedInputs ?? []).some(accepted => accepted.part === 'message')) continue;
+      goals.push(message.goalRef!);
+    }
+    return { status: 'ready', value: {
+      goals,
+      readThrough: progress.readThrough,
+      nextCursor: page.value.next === null ? null : encodeKeysetCursor(null, page.value.next),
+    } };
+  }
+
+  return { releaseApproved, readReleaseCandidates, readReleasedActions };
 }
 
 /**

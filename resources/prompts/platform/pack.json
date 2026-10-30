@@ -48,6 +48,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "intervention-planning": {
+      "file": "templates/intervention-planning.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
       "version": 1,

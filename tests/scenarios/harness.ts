@@ -75,6 +75,7 @@ import type { GoalDisplayRead, TaskRow } from '../../src/core/work-graph/model/p
 import type { SecretaryProfilePort } from '../../src/core/work-graph/model/request-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
+import { limitHold } from '../helpers/hold-limit.js';
 import {
   AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION,
   AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain,
@@ -503,7 +504,7 @@ class ScriptState {
     if (this.holds.has(index)) throw new Error(`model call ${index} is already held`);
     const entry: Hold = { reached: deferred<ModelRequest>(), gate: deferred(), settled: false, reachedBy: null };
     this.holds.set(index, entry);
-    return { reached: entry.reached.promise,
+    return { reached: limitHold(entry.reached.promise, `scenario: held model call ${index}`),
       release: () => { entry.settled = true; entry.gate.resolve(); },
       fail: (reason = `scenario: model call ${index} never answers`) => { entry.settled = true; entry.gate.reject(new Error(reason)); } };
   }

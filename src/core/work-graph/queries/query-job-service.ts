@@ -61,19 +61,12 @@ import {
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { lookupCommittedReceipt, type CommittedReceipt, type ReceiptLookup } from '../persistence/receipt-lookup.js';
-import { deriveSessionInputId, type SessionMessage } from '../model/communication-contracts.js';
-import type { DeliveryEligibilityFactsV1 } from '../model/session-facts-contracts.js';
+import { consultationFacts } from '../model/communication-contracts.js';
 import { newPendingQueryRecords } from '../state/query-run-recovery.js';
 import {
   deliveryEligibility,
-  effectiveReplyHandler,
-  messageFactsOfRecord,
-  waitFactsOfRecord,
-  waitStateOf,
   type DeliveryBlockReason,
-  type DeliveryFactsV1,
 } from '../state/message-machine.js';
-import { sameRef } from '../state/ref-equality.js';
 import type { QueryJobDependencies, QueryJobPort } from './contracts.js';
 import {
   decodeQueryJobSnapshot,
@@ -583,20 +576,6 @@ function pinsFromCurrent(current: readonly { refKey: string; revision: number | 
 
 function deliveryBlockCode(reason: DeliveryBlockReason): 'invalid' | 'busy' {
   return reason === 'cancelled' || reason === 'withdrawn' || reason === 'not_released' ? 'invalid' : 'busy';
-}
-
-function consultationFacts(message: SessionMessage, part: 'message' | 'response',
-  extra: DeliveryEligibilityFactsV1, target: SessionRef): DeliveryFactsV1 {
-  const accepted = (id: string) => (message.acceptedInputs ?? []).some((entry) => entry.inputId === id);
-  const base = { consumption: messageFactsOfRecord(message), ...extra };
-  if (part === 'message') return { ...base, part, delivered: accepted(deriveSessionInputId(message.ref, 'message')) };
-  const state = waitStateOf(message, waitFactsOfRecord(message));
-  const handler = effectiveReplyHandler(message);
-  return { ...base, part, accepted: accepted(deriveSessionInputId(message.ref, 'response')),
-    wait: message.intent !== 'inquiry' || message.waitAfterSend !== true ? { kind: 'none' }
-      : state.state === 'consumed' ? { kind: 'consumed' }
-      : handler !== null && sameRef(handler, target) ? { kind: 'unconsumed', boundHere: true }
-      : { kind: 'unconsumed', boundHere: false } };
 }
 
 // --------------------------------------------------------------------------

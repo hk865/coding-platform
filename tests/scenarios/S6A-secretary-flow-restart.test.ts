@@ -20,13 +20,12 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
-import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { readQuery } from '../helpers/A2-restart-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
+import { claimWithSecretaryProfile, prepareAttempt } from '../helpers/request-claim-steps.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { initializeProject, secretaryAnswer, submitRound } from '../helpers/S6A-history-fixture.js';
@@ -46,15 +45,6 @@ afterEach(async () => {
   await Promise.allSettled(open.map(world => world.close()));
   expect(left).toEqual([]);
 });
-
-/** `queries/prepare` of the round's current Run; a refusal fails the row. */
-async function prepareAttempt(world: S6AHostWorld, round: QueryJobRef, requestId: string): Promise<PreparedQueryExecution> {
-  const answer = (await world.post('queries/prepare', plain(S6A_SCOPE, {
-    queryRunRef: (await readQuery(world.ag2b, round)).run.ref, requestId,
-  }))).body as ReadResult<PreparedQueryExecution>;
-  if (answer.status !== 'ready') throw new Error(`S6A: the preparation was refused: ${JSON.stringify(answer)}`);
-  return answer.value;
-}
 
 /** `queries/start` of the prepared round, not awaited: a held Kernel entry answers only after its release. */
 function start(world: S6AHostWorld, prepared: PreparedQueryExecution, requestId: string): Promise<unknown> {

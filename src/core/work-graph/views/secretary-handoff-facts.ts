@@ -278,7 +278,7 @@ export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
     return { status: 'ready', value: goals };
   }
 
-  async function ownedRoots(ctx: CoreCallContext, source: SessionRef):
+  async function ownedRoots(ctx: CoreCallContext, source: SessionRef, processingOnly: boolean):
     Promise<{ status: 'ready'; roots: { requestRoot: QueryJobRef; owner: SessionRef; effectiveGoalId: string | null }[];
       horizon: CommitCursor | null } | CoreRejection> {
     const opened = await openRequestRoots(reads, ctx);
@@ -294,9 +294,10 @@ export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
       if (view.status === 'not_found') continue;
       if (view.status === 'not_ready') return unavailable(`the request ${root.queryJobId} read is not ready`);
       if (view.status !== 'ready') return unavailable(`the request ${root.queryJobId} read failed: ${view.reason}`);
-      if (!view.value.processing || view.value.owner === null) continue;
-      if (canonicalKey(view.value.owner) !== canonicalKey(source)) continue;
-      roots.push({ requestRoot: root, owner: view.value.owner, effectiveGoalId: view.value.effectiveGoalId });
+      const owner = view.value.owner;
+      if (owner === null || (processingOnly && !view.value.processing)) continue;
+      if (canonicalKey(owner) !== canonicalKey(source)) continue;
+      roots.push({ requestRoot: root, owner, effectiveGoalId: view.value.effectiveGoalId });
     }
     return { status: 'ready', roots, horizon: opened.horizon };
   }
@@ -337,7 +338,7 @@ export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
       const activity = await readSourceActivity(reads, source);
       if (activity.status !== 'ready') return activity;
       // The core predicate: no request the source still owns is processing.
-      const owned = await ownedRoots(ctx, source);
+      const owned = await ownedRoots(ctx, source, true);
       if (owned.status !== 'ready') return owned;
       if (owned.roots.length > 0) {
         return { status: 'ready', value: { ok: false,
@@ -379,7 +380,7 @@ export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
       if (activity.status !== 'ready') return activity;
       const last = await lastEnteredEndedRun(reads, ctx, source);
       if (last.status !== 'ready') return last;
-      const owned = await ownedRoots(ctx, source);
+      const owned = await ownedRoots(ctx, source, true);
       if (owned.status !== 'ready') return owned;
       const goalIds = new Map<string, string>();
       for (const root of owned.roots) {
@@ -468,7 +469,7 @@ export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
     async readRoutingSet(ctx, input): Promise<ReadResult<RoutingSetFactsV1>> {
       const raw = input?.source as unknown;
       if (typeof raw !== 'object' || raw === null) return rejected('invalid', 'readRoutingSet requires a SessionRef');
-      const owned = await ownedRoots(ctx, input.source);
+      const owned = await ownedRoots(ctx, input.source, false);
       if (owned.status !== 'ready') return owned;
       const roots: RoutingRootV1[] = owned.roots.map(root => ({ ...root }));
       return { status: 'ready', value: { roots, closed: true, horizon: owned.horizon } };

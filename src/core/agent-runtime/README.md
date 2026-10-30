@@ -23,7 +23,7 @@
 ### 执行准备与输入
 做 Work 准备、输入通道、模型预算、注册检查和 Role profile 的去这组。
 - `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线。
-- `execution-inputs.ts` — 统一输入通道：邮件、答复、到期（expiry）、steer 和 attention 的候选与 accepted 排除。
+- `execution-inputs.ts` — 统一输入通道：邮件、答复、到期（expiry）、steer 和 attention 的候选与 accepted 排除。`only: 'notify'` 是秘书请求轮的供给：跳过 person 列表、续接与答复邮件，只把 `intent` 缺省或 `notify` 的收件箱邮件经 `readMessagePart` 供出（`notify-delivery`）。
 - `check-execution.ts` — 可信 Host 注册检查执行器。
 - `model-budget.ts` — 模型预算、token 计量与超限错误。
 - `model-call-access.ts` — 一次性模型调用许可：绑定校验、durable permit。
@@ -42,13 +42,14 @@
 - `context-assembler.ts` — 上下文装配入口与依赖接线。
 - `context-types.ts` — 装配器类型、模板 id（含 `secretary-round`）、节序与历史判定词汇；`RuntimeExecutionDependencies.secretaryFacts?` 是同一准备端口的注入点（装配器只接收准备读好的值）；请求轮的准备在最终工具名单之前读一次，装配输入 `secretaryFacts` 带着同一个值。
 - `context-work-recipe.ts` — Work 上下文装配配方。
-- `context-query-recipe.ts` — Query 上下文装配配方；请求轮先按 `isRequestRound` 转到秘书配方。
+- `context-query-recipe.ts` — Query 上下文装配配方；请求轮先按 `isRequestRound` 转到秘书配方。`intervention_planning` 走自己的 `intervention-planning` 模板：`plan` 槽是 `task` 段、`message` 槽放问题，`callKind` 记 `intervention_planning`，不渲染 footprint。
 - `context-secretary-recipe.ts` — 秘书轮上下文装配：用准备读好并传入的 `secretaryFacts` 值（配方不再读端口），`memoryMaterial` 仍按声明依赖读，由共享渲染器写 `secretary-round` 的三个 task 槽与 notes 预算。`roundMaterial` 渲染一轮的材料：输入行、选中的思路，再是 `ask` 带的卡片引用（`## Cards` 下每个引用一行，写钉住的版本；对象动过加 `(now @当前版本)`，不存在加 `(not found)`）。可选输入 `handoff: SecretaryHandoffPromptFactsV1`（旧秘书的 understanding 目标清单，或继任者的一份交接 brief）经两个交接模板渲染后加在 task 段开头；所需交接材料属于 task 材料，不放进可截断的 notes。
 - `context-review-recipe.ts` — review 轮上下文装配。
 - `context-continuation-recipe.ts` — continuation 段的 blocked commands 与 brief 事实。
 - `context-history-facts.ts` — Session 历史模式/基线判定与 Kernel 命令事实。
 - `context-fact-text.ts` — 各段 payload/文本构造（Role、Goal、Task、Query、notes 等）；`withNoteVersion` 与 `understandingLine` 是共用的注记行规则。
-- `context-rendering.ts` — 纯渲染：节序、字节预算、模板渲染、attention；固定字符串读取用 `packString`（`src/contracts/prompts/pack-string.ts:4`）；`templateSectionOrder` 把 `secretary-round` 的三个 `task_*` 槽投影成一个 `task` 段，`sectionOrderFor`/`queryPreparedSectionOrder` 也覆盖 `secretary`，`renderQueryContext` 同时渲染秘书轮。
+- `consultation-facts-text.ts` — 平台事实的唯一渲染器：`consultationFactLine` 把一条已解析事实渲染成正文行或 `- unreadable: <定位符>` 行，`consultationFactsLines` 依次渲染免责声明、已解析事实、omitted 与 unreadable 列表；不读端口、不重采集。
+- `context-rendering.ts` — 纯渲染：节序、字节预算、模板渲染、attention；固定字符串读取用 `packString`（`src/contracts/prompts/pack-string.ts:4`）；`templateSectionOrder` 把 `secretary-round` 的三个 `task_*` 槽投影成一个 `task` 段，`sectionOrderFor`/`queryPreparedSectionOrder` 也覆盖 `secretary`，`renderQueryContext` 同时渲染秘书轮。`intervention-planning` 的 `plan` 槽同样投影成 `task` 段（`message` 不是段），`sectionOrderFor`/`queryPreparedSectionOrder` 覆盖 `intervention_planning`，该模板没有可选段。
 - `context-review-input.ts` — unknown-call review 输入构造与命令字节上限。
 - `context-workspace-facts.ts` — brief/review 用的工作区事实与 diff。
 - `context-support.ts` — 本层小工具（排序、拒绝结果映射与文本投影）。
@@ -85,8 +86,8 @@
 
 ### 查询与来源绑定
 做 Query 驱动和源码捕获/来源绑定的去这组。
-- `query-preparation.ts` — Query 有界输入准备与 manifest 绑定；由 Job 冻结的请求根算注记准入（`secretaryNoteAdmission`，`src/core/agent-runtime/query-preparation.ts:315`），并按准入把 `record_note` 冻进工具名清单。请求轮同一份冻结事实里读一次交接材料（SR3 第 6 项、§8.3）：旧秘书的理解轮把那条活命令的 goal 清单（`request.understandingGrants`，即授权所来自的同一份事实、同一条规则）交成 `{kind:'understanding'}`；manifest 带 `briefRef` 的继任轮经注入的 `handoff.readBriefState`（`QueryPreparationDependencies.handoff`）读一次四态——`waiting` 返回可重试的 `incomplete`（这一轮根本不准备）、`ready` 交 `{kind:'brief'}`、`none`/`consumed` 不出模板、读失败 `unavailable`，绝不折成空简报。
-- `query-execution.ts` — 一次 fresh QueryRun 的驱动。角色绑定与预算一律经 `queryExecutionBindingOf`；`callKind: 'secretary'` 的轮次把清单冻结的 `request.effectiveGoalId` 写进 `query_run` 主体的 `goalId` 并作为图工具目标（无目标时为 `null`，图工具读项目），其余 Query 的主体形状不变。注记准入从 manifest 的 `request` 重算一次（`src/core/agent-runtime/query-execution.ts:317`），与冻结的工具名同一次比较；缺注记写/检查 owner 是 `unavailable`，秘书轮在图工具组旁建 `record_note` 组（`createNoteTools`，`src/core/agent-runtime/query-execution.ts:454`），有提交工具的轮次再建 `createAnswerTools` 组并把 `createAnswerToolBarrier` 交给 `runObservedModel`，可信调用身份是 `r5b-query-note:` 加 QueryRun 与 Kernel 调用 id/名的 sha256。
+- `query-preparation.ts` — Query 有界输入准备与 manifest 绑定；由 Job 冻结的请求根算注记准入（`secretaryNoteAdmission`，`src/core/agent-runtime/query-preparation.ts:322`），并按准入把 `record_note` 冻进工具名清单。请求轮同一份冻结事实里读一次交接材料（SR3 第 6 项、§8.3）：旧秘书的理解轮把那条活命令的 goal 清单（`request.understandingGrants`，即授权所来自的同一份事实、同一条规则）交成 `{kind:'understanding'}`；manifest 带 `briefRef` 的继任轮经注入的 `handoff.readBriefState`（`QueryPreparationDependencies.handoff`）读一次四态——`waiting` 返回可重试的 `incomplete`（这一轮根本不准备）、`ready` 交 `{kind:'brief'}`、`none`/`consumed` 不出模板、读失败 `unavailable`，绝不折成空简报。`semantic_query` 的 consultation 带 `operation` 时经 `readConsultationCreate`（`src/core/work-graph/queries/platform-facts.ts:8`）读一次创建载荷；`platform_facts` 模式把每个冻结事实解析成正文（`record` 的正文、`body` 经材料端口打开、`task` 取冻结 PlanRevision 的定义），交给装配器的 `consultationFacts`，且不取 Session 历史。
+- `query-execution.ts` — 一次 fresh QueryRun 的驱动。角色绑定与预算一律经 `queryExecutionBindingOf`；`callKind: 'secretary'` 的轮次把清单冻结的 `request.effectiveGoalId` 写进 `query_run` 主体的 `goalId` 并作为图工具目标（无目标时为 `null`，图工具读项目），其余 Query 的主体形状不变。注记准入从 manifest 的 `request` 重算一次（`src/core/agent-runtime/query-execution.ts:317`），与冻结的工具名同一次比较；缺注记写/检查 owner 是 `unavailable`，秘书轮在图工具组旁建 `record_note` 组（`createNoteTools`，`src/core/agent-runtime/query-execution.ts:454`），有提交工具的轮次再建 `createAnswerTools` 组并把 `createAnswerToolBarrier` 交给 `runObservedModel`，可信调用身份是 `r5b-query-note:` 加 QueryRun 与 Kernel 调用 id/名的 sha256。邮件供给只有一处：请求轮（`manifest.request !== null`）传 `only: 'notify'` 并优先于普通 `semantic_query` 分支，派生咨询仍不供。
 - `project-source-tool.ts` — `project_source` 查询/捕获工具。
 - `source-capture-access.ts` — 源码捕获访问与 Work/Query 工厂；Query 的主体/权限身份里的角色取 `queryExecutionBindingOf`，`intent.execution` 只留作执行身份校验。
 - `source-tool-ports.ts` — 源码工具端口与 `BoundModel` 类型。
@@ -97,12 +98,12 @@
 | --- | --- | --- | --- |
 | `createAgentRuntime` | `src/core/agent-runtime/runtime.ts:560` | 装配并发布整套执行端口；无依赖时只给显式 unsupported/unavailable，不伪造能力 | 组合根构造 Runtime 的唯一入口 |
 | `createContextAssembler` | `src/core/agent-runtime/context-assembler.ts:27` | 按调用种类装配一次上下文 | prepare 需要正式上下文时，别自己拼 |
-| `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:179` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定；可选的 `handoff` 材料渲染后加在 task 段开头 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
-| `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:121` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
+| `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:193` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定；可选的 `handoff` 材料渲染后加在 task 段开头 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
+| `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:135` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
 | `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:306` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
 | `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:309` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:247` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
-| `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:145` | Query 有界输入准备 | Query claim 之后 |
+| `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:150` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:210` | 一次 fresh QueryRun 驱动；秘书轮按准入多建 `record_note` 组 | 正式 Query 启动 |
 | `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:287` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
 | `mapOutcome` | `src/core/agent-runtime/query-observation.ts:121` | Kernel 终态到 Query 结局的映射：transcript 有冻结清单里的收下提交时，`yielded`/`completed`/`failed`/`limit_exceeded` 记 `answered`，`cancelled` 仍 `cancelled`；无收下提交按各自旧映射 | Query observer 的终态读取；重启的 Q-03 也走同一函数 |
@@ -110,7 +111,7 @@
 | `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
 | `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
 | `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:521` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
-| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:883` | 完成轮边界、cursor 与 turn bounds 读取 | 需要 completed boundary |
+| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:887` | 完成轮边界、cursor 与 turn bounds 读取 | 需要 completed boundary |
 | `createKernelStoreRegistry` | `src/core/agent-runtime/kernel-store-locator.ts:46` | Session 到 Kernel store 的固定映射 | 组合根构造 Kernel reader |
 | `createRegisteredCheckRunner` | `src/core/agent-runtime/check-execution.ts:78` | 执行注册检查并记录真实观察 | verification 检查 |
 | `createGraphExecutionHistoryReader` | `src/core/agent-runtime/graph-execution-history.ts:170` | 图 locator 到原始历史的分页读取 | 读某 Run 的 Kernel 历史 |
@@ -131,10 +132,11 @@
 | `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:653` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
 | `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:742` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
 | `readUnknownCallReviewDraft` | `src/core/agent-runtime/unknown-call-draft.ts:169` | 读完整 review 草稿 | review 候选与 attestation |
-| `renderContext` | `src/core/agent-runtime/context-rendering.ts:391` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
-| `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:425` | 渲染 Query 输入 | prepare Query |
-| `rerenderContextV1` | `src/core/agent-runtime/context-rendering.ts:467` | 只替换 review 槽重渲染 | 准备 review 指令 |
-| `renderAttentionChanges` | `src/core/agent-runtime/context-rendering.ts:509` | 渲染 attention 段 | attention 扫描 |
+| `renderContext` | `src/core/agent-runtime/context-rendering.ts:418` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
+| `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:452` | 渲染 Query 输入 | prepare Query |
+| `consultationFactsLines` | `src/core/agent-runtime/consultation-facts-text.ts:31` | 平台事实段的完整文本：免责声明、已解析事实、omitted 与 unreadable 列表 | 装配带 `platform_facts` 创建载荷的咨询 Query 上下文时；不要另写渲染 |
+| `rerenderContextV1` | `src/core/agent-runtime/context-rendering.ts:501` | 只替换 review 槽重渲染 | 准备 review 指令 |
+| `renderAttentionChanges` | `src/core/agent-runtime/context-rendering.ts:543` | 渲染 attention 段 | attention 扫描 |
 | `storePromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:168` | 每种文本只存一次，返回冻结 `PromptSetV1` | prepare 冻结提示词 |
 | `readPromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:243` | 按 ref 读文本并校验内容 | 读冻结提示词 |
 | `resolvePromptPack` | `src/core/agent-runtime/prompt-set-texts.ts:140` | 经 `PromptPackSourcePort` 解析指定 pack | prepare 选包 |
@@ -144,19 +146,20 @@
 | `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:218` | 按 grant/配置选 Work 工具组 | 驱动装配 |
 | `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:538` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
 | `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:119` | 图历史读端口的工具代理 | 工具需要图历史 |
-| `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:235` | `project_source` 冻结模式工具 | 源码工具组 |
+| `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:238` | `project_source` 冻结模式工具 | 源码工具组 |
+| `duplicates`（`project_source` 的 compare 选项） | `src/core/agent-runtime/project-source-tool.ts:120` | `duplicates: true` 让同一次 compare 在 after 材料上列出重复候选；缺省时结果与字节不变 | 模型要在一次比较里同时拿重复候选时 |
 | `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |
 | `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:467` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
 | `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
 | `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
 | `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |
-| `projectQueryConfiguration` | `src/core/agent-runtime/query-preparation.ts:110` | 解析并校验 Query 的 Host 配置 | 组合根构造 Query 配置 |
+| `projectQueryConfiguration` | `src/core/agent-runtime/query-preparation.ts:116` | 解析并校验 Query 的 Host 配置 | 组合根构造 Query 配置 |
 | `readKernelCommandFacts` | `src/core/agent-runtime/context-history-facts.ts:221` | 读原 Run 的完整 command/cwd 事实 | review/blocked command |
 | `rejected` | `src/contracts/core/rejections.ts:5` | **正本**：带 code/reason 的拒绝结果形状 | 拒绝输入或读失败时；本层只调本正本 |
 
 ### 同名能力
 - `messageOf` 正本在 `src/contracts/error-message.ts`；本层 `runtime.ts:66`、`:67` 的 `messageOf`/`rejected` 只是这两个正本的本地常量别名（签名不变，因为生产可达性白名单记着这两个节点），新代码直接 import 正本。`isRecord`/`nonEmpty`/`utf8Bytes` 用 `src/contracts/validation/common.ts`，`rejected` 用 `src/contracts/core/rejections.ts`。
-- 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:100`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
+- 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:92`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
 
 ## 内部用
 - 上下文事实与 payload：`assembleWorkContext`、`assembleQueryContext`、`assembleReviewForContext`、`assembleBriefForContext`、`readTaskBlockedCommands`、`takesSessionHistoryOf`、`sessionHistoryDecision`、`sessionBasisForContext`、`reviewSessionBasis`、`archiveOriginSkipsHistorySeed`、`runEnteredKernel`、`effectiveDuty`、`rolePayload`、`goalPayload`、`declarationsForTask`、`taskPayload`、`missingInputReminder`、`optionalRowsFromExtensions`、`annotations`、`queryFocusLines`、`queryPlanSummary`、`topLevelModuleCards`、`notImplementedExtensions`、`noteSourcesOf`、`briefWorkspaceFactsFor`、`readReviewCaptureChanges`、`unknownCallReviewFilesFor`。

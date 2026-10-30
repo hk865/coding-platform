@@ -93,14 +93,14 @@ import {
 } from './plan-readers.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
-import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { pinsFromStoreCurrent } from '../persistence/read-result-failures.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isNonNeg as isSafeRevision, isPos as isPositiveBudget, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 import { taskPhaseFactsOf } from './task-phase-facts.js';
-import { createSessionFactsService } from './session-facts.js';
+import { createSessionFactsService, liveWaitMessage, readWaitMessage } from './session-facts.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
@@ -171,9 +171,14 @@ export function workClaimDispatchProblem(
   facts: SessionFactsV1,
   consumedWait: SessionConsumedWaitStateV1 | null,
 ): CoreRejection | null {
+  // The continuation names the chain's root; the singular wait names its live tail. The dispatch
+  // exception is the same wait, so the gate compares the root the continuation names.
+  const waiting = facts.wait === null ? null : { ...facts.wait,
+    messageRef: facts.waits.find(row => sameRef(row.messageRef, facts.wait!.messageRef))?.rootRef
+      ?? facts.wait.messageRef };
   const refusal = sessionDispatchAdmissionProblem(facts.session, {
     purpose: 'work',
-    waiting: facts.wait,
+    waiting,
     consumedWait,
     readonlyQueryMatches: false,
   });
@@ -1178,17 +1183,18 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (consumedWait !== undefined) {
       // MSG-10: read the FORMAL saved reply from the same records transaction
       // instead of trusting the caller's responseRef: a pending message or an
-      // arbitrary artifact must never be claimable, and the exact message revision is guarded.
+      // arbitrary artifact must never be claimable. The continuation's root is
+      // resolved to the live tail through the one forward walk; the guard stays
+      // on the root's exact revision.
       const messageKey = sessionMessageRefKey(consumedWait.messageRef);
-      const messageRead = await records.readMany([messageKey]);
-      if (messageRead.status !== 'ready') return busy('the continuation wait message is not readable');
-      const messageRecord = messageRead.value.records.find(record => record.refKey === messageKey);
+      const rootRead = await readWaitMessage(records, scopeCtx.signal, consumedWait.messageRef);
+      if (rootRead.status === 'rejected') return rootRead;
       let savedMessage: SessionMessage | null = null;
-      if (messageRecord !== undefined) {
-        const decodedMessage = decodeSessionMessageRecord(messageRecord);
-        if (decodedMessage.status !== 'decoded') return unavailable(`the continuation wait message is damaged: ${decodedMessage.reason}`);
-        savedMessage = decodedMessage.value;
-        continuationMessageGuard = { refKey: messageKey, expectedRevision: messageRecord.revision };
+      if (rootRead.status === 'ready') {
+        const chain = await liveWaitMessage((ref) => readWaitMessage(records, scopeCtx.signal, ref), rootRead.value);
+        if (chain.status !== 'ready') return chain;
+        savedMessage = chain.tail;
+        continuationMessageGuard = { refKey: messageKey, expectedRevision: rootRead.value.revision };
       }
       const consumed = savedMessage === null ? false : waitFactsOfRecord(savedMessage).consumed;
       const waitFacts: MessageWaitFactsV1 = consumedWait.kind === 'wait_reply'

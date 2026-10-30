@@ -1,6 +1,6 @@
 /**
- * L-host-gates (book §5): `consumeIdle`'s INBOX and OUTBOX reads with three real `inputConsumers` (the sending Work
- * line and two secretary recipients). The table has one row per cell:
+ * L-host-gates: `consumeIdle`'s INBOX and OUTBOX reads with one real `inputConsumers` period; the all-Session
+ * walk reaches the sending Work line and the two secretary recipients. The table has one row per cell:
  *
  * | cell | send | state before the Host reads |
  * |------|------|-----------------------------|
@@ -26,6 +26,7 @@ import {
 } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import { committed, ready, replyS7AMessage, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { listed } from '../helpers/S7B-fixture.js';
 
 // A4: one real in-memory records backend and one real body store, shared by every Host start; the backend's `close`
 // leaves it open (the body store has none), so `world.reopen({ sharedMemoryStore: true })` is a real same-store reopen.
@@ -52,16 +53,23 @@ vi.mock('../../src/core/record-store/body-store.js', async (importOriginal) => {
 const worlds: S6AHostWorld[] = [];
 afterEach(async () => { await Promise.all(worlds.splice(0).map(world => world.close())); });
 
-const inboxOf = async (world: S6AHostWorld, session: S6ASession): Promise<SessionMessage[]> =>
-  ready<{ items: SessionMessage[] }>(await world.post('messages/inbox',
-    plain(S6A_SCOPE, { recipient: session.ref, page: { limit: 20 } })), 'inbox').items;
-const outboxOf = async (world: S6AHostWorld, session: S6ASession): Promise<SessionMessage[]> =>
-  ready<{ items: SessionMessage[] }>(await world.post('messages/outbox',
-    plain(S6A_SCOPE, { senderSession: session.ref, page: { limit: 20 } })), 'outbox').items;
+/** Walk the all-Session batch until the named real consume completes: each beat is one real pass. */
+async function pumpUntil(world: S6AHostWorld, reached: Promise<void>, beats = 12): Promise<void> {
+  let done = false;
+  void reached.then(() => { done = true; });
+  for (let beat = 0; beat < beats && !done; beat += 1) {
+    const settled = world.consumeBarrier();
+    world.clock.advance(25);
+    await settled;
+    await Promise.resolve();
+  }
+  await reached;
+}
 /** The person's own send: `release: null`, the only release a public owner writes. */
 const sendAsPerson = async (world: S6AHostWorld, recipient: S6ASession, label: string,
   text: string): Promise<SessionMessage> => committed<SessionMessage>(await world.post('messages/send',
-  graphWrite(S6A_SCOPE, { recipient: recipient.ref, text, intent: 'inquiry', needsReply: true }, label)),
+  graphWrite(S6A_SCOPE, { recipient: recipient.ref, text, intent: 'inquiry', needsReply: true,
+    goalRef: world.goals.first }, label)),
 'control');
 const withdrawAsPerson = async (world: S6AHostWorld, messageRef: SessionMessage['ref'], label: string):
 Promise<SessionMessage> => committed<SessionMessage>(await world.dispatch('messages/withdraw', world.humanContext(),
@@ -118,6 +126,8 @@ it('the Host skips the awaiting and withdrawn cells and consumes only the releas
     role: structuredClone(senderCard.record.role), createdAt: senderCard.record.createdAt };
   const awaiting = await world.createSecretary('s7a-gate-awaiting');
   const withdrawn = await world.createSecretary('s7a-gate-withdrawn');
+  const scan1 = await world.createSecretary('s7a-gate-scan-1');
+  const scan2 = await world.createSecretary('s7a-gate-scan-2');
   const basis = (await world.dispatch('goals/dispatch-basis', world.humanContext(),
     plain(S6A_SCOPE, { goalRef: goal })) as { status: string; value?: Record<string, unknown> }).value;
   // Two outbox cells in one table, one loop: the Work Run's action_request left awaiting by `every_step`, and an
@@ -135,7 +145,7 @@ it('the Host skips the awaiting and withdrawn cells and consumes only the releas
     await setS7AAutonomy(world, goal, cell.autonomy);
     await sendRun(world, sender, cell.task, cell.label, [{ callId: `s7a-gate-${cell.label}`,
       name: 'send_session_message', args: { recipient: cell.recipient.ref, text: cell.text, ...cell.args } }]);
-    const message = (await inboxOf(world, cell.recipient)).find(item => item.sender.kind === 'work_run');
+    const message = (await listed(world, 'inbox', cell.recipient)).find(item => item.sender.kind === 'work_run');
     if (message === undefined) throw new Error(`S7A: the Work Run sent no ${cell.label} cell`);
     expect(message).toMatchObject({ release: cell.release, withdrawnAt: null });
     if (cell.pinned) expect(message.pins).not.toBeNull();
@@ -165,12 +175,13 @@ it('the Host skips the awaiting and withdrawn cells and consumes only the releas
   expect(ready<{ run: { status: string } }>(await world.post('executions/read', plain(S6A_SCOPE, lastRun)),
     'the last Run')).toMatchObject({ run: { status: 'ended' } });
   // A4: a real same-store reopen — the same records, bodies and directory; the consumers are a start option.
-  await world.reopen({ sharedMemoryStore: true, extraHostOptions: { inputConsumers: [sender, awaiting, withdrawn].map((session, index) => ({
-    scope: S6A_SCOPE, sessionRef: session.ref, goalRef: goal, queryProfileId: S6A_SECRETARY_PROFILE_ID,
-    heartbeatMs: 25 * (index + 1) })) } });
+  // One 25 ms consumer is the period only: the all-Session walk reaches every gate cell, not three named lines.
+  await world.reopen({ sharedMemoryStore: true, extraHostOptions: { inputConsumers: [{
+    scope: S6A_SCOPE, sessionRef: awaiting.ref, goalRef: goal, queryProfileId: S6A_SECRETARY_PROFILE_ID,
+    heartbeatMs: 25 }] } });
   // The reopened Host's own startup scans left the three saved forbidden cells alone: a public read of both inboxes
   // shows no accepted input on any of them (the ids are listed in the order the Host would scan them).
-  const reopenedInbox = [...await inboxOf(world, awaiting), ...await inboxOf(world, withdrawn)];
+  const reopenedInbox = [...await listed(world, 'inbox', awaiting), ...await listed(world, 'inbox', withdrawn)];
   const forbiddenIds = [awaitingSent.ref.messageId, withdrawnSent.ref.messageId, inboxWithdrawn.ref.messageId];
   const savedCells = forbiddenIds.map(id => reopenedInbox.find(item => item.ref.messageId === id));
   if (savedCells.some(cell => cell === undefined)) throw new Error('S7A: a reopened read lost a saved cell');
@@ -181,16 +192,15 @@ it('the Host skips the awaiting and withdrawn cells and consumes only the releas
     .toBe('S7A gate awaiting');
   world.scriptReplies(Array.from({ length: 8 }, () => ({ kind: 'text', text: 'S7A gate consultation answer' })));
   const { consumed, waitFor } = consumptionBarrier(world.platform.workflow);
-  // The startup scans skip the saved awaiting/withdrawn cells: a sentinel's real consume proves a scan happened,
-  // so the clock can stay frozen (the throttle is on `Date.now()`); no sleep or poll is needed.
-  const sentinels: SessionMessage[] = [];
-  for (const label of ['s7a-gate-quiesce-1', 's7a-gate-quiesce-2']) {
-    const sentinel = await sendAsPerson(world, awaiting, label, `S7A gate ${label}`);
-    sentinels.push(sentinel);
-    const reached = waitFor([sentinel.ref.messageId]);
-    world.clock.advance(100);
-    await reached;
-  }
+  // The startup scans skip the saved awaiting/withdrawn cells: each sentinel's real consume proves its own scan;
+  // each beat below is one real barrier-terminated pass, never a sleep or a wall-clock poll.
+  const sentinel1 = await sendAsPerson(world, scan1, 's7a-gate-quiesce-1', 'S7A gate quiesce 1');
+  await pumpUntil(world, waitFor([sentinel1.ref.messageId]));
+  // A later message on the same line: the first inquiry is answered, so it must not stay that line's first offer.
+  const sameLine = await sendAsPerson(world, scan1, 's7a-gate-quiesce-1b', 'S7A gate quiesce 1b');
+  const sentinel2 = await sendAsPerson(world, scan2, 's7a-gate-quiesce-2', 'S7A gate quiesce 2');
+  await pumpUntil(world, waitFor([sentinel2.ref.messageId]));
+  const sentinels: SessionMessage[] = [sentinel1, sameLine, sentinel2];
   // A gate that is deleted lets the Host consume one of the three refused cells: `refused` resolves and the
   // consumption-set assertions below fail as a real assertion in normal time, not as a 120-second timeout.
   const refused = Promise.race([waitFor([awaitingSent.ref.messageId]), waitFor([withdrawnSent.ref.messageId]),
@@ -199,30 +209,28 @@ it('the Host skips the awaiting and withdrawn cells and consumes only the releas
   const awaitingControl = await sendAsPerson(world, awaiting, 's7a-gate-awaiting-control', 'S7A gate awaiting control');
   const withdrawnControl = await sendAsPerson(world, withdrawn, 's7a-gate-withdrawn-control', 'S7A gate withdrawn control');
   const controlsDone = waitFor([awaitingControl.ref.messageId, withdrawnControl.ref.messageId]);
-  world.clock.advance(100);
-  await Promise.race([controlsDone, refused]);
+  await Promise.race([pumpUntil(world, controlsDone), refused]);
   const senderControl = await sendAsPerson(world, sender, 's7a-gate-sender-settle', 'S7A gate sender settle');
   const settled = waitFor([senderControl.ref.messageId]);
-  world.clock.advance(100);
-  await Promise.race([settled, refused]);
+  await Promise.race([pumpUntil(world, settled), refused]);
   // The outbox cells were never consumed as responses and are still listed with their real replies. The one
   // consumption set is the person's released sends; no awaiting/withdrawn ref was consumed at all.
   expect(consumed.filter(entry => entry.part === 'response')).toEqual([]);
   expect([...new Set(consumed.map(entry => entry.messageId))].sort()).toEqual(
     [...sentinels, awaitingControl, withdrawnControl, senderControl].map(message => message.ref.messageId).sort());
-  const outbox = await outboxOf(world, sender);
+  const outbox = await listed(world, 'outbox', sender);
   for (const sent of [awaitingSent, withdrawnSent]) {
-    const listed = outbox.find(item => item.ref.messageId === sent.ref.messageId);
-    expect(listed).toMatchObject({ ref: sent.ref });
-    expect(listed?.response).not.toBeNull();
+    const entry = outbox.find(item => item.ref.messageId === sent.ref.messageId);
+    expect(entry).toMatchObject({ ref: sent.ref });
+    expect(entry?.response).not.toBeNull();
   }
   expect(outbox.find(item => item.ref.messageId === withdrawnSent.ref.messageId))
     .toMatchObject({ release: 'released', withdrawnAt: expect.any(String), response: expect.anything() });
   for (const [session, refs] of [[awaiting, [awaitingSent.ref, awaitingControl.ref]],
     [withdrawn, [withdrawnSent.ref, inboxWithdrawn.ref, withdrawnControl.ref]]] as const) {
-    expect((await inboxOf(world, session)).map(item => item.ref.messageId)).toEqual(expect.arrayContaining(
+    expect((await listed(world, 'inbox', session)).map(item => item.ref.messageId)).toEqual(expect.arrayContaining(
       refs.map(ref => ref.messageId)));
   }
-  expect((await inboxOf(world, withdrawn)).find(item => item.ref.messageId === inboxWithdrawn.ref.messageId))
+  expect((await listed(world, 'inbox', withdrawn)).find(item => item.ref.messageId === inboxWithdrawn.ref.messageId))
     .toMatchObject({ release: null, withdrawnAt: expect.any(String) });
 }, 120_000);

@@ -20,12 +20,15 @@ import { isRequestRound, queryExecutionBindingOf } from '../../contracts/query-j
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
-import { sha256Hex } from '../../contracts/fingerprint.js';
+import { sha256Hex, canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.js';
 import { promptSelectionOf } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
+import { readConsultationCreate } from '../work-graph/queries/platform-facts.js';
+import type { ConsultationCreateV1, ConsultationFactsV1 } from '../work-graph/model/session-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
@@ -36,6 +39,7 @@ import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
 import { queryPreparedSectionOrder } from './context-rendering.js';
 import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
+import type { ConsultationResolvedFactV1 } from './consultation-facts-text.js';
 import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
 import { answerToolsOf } from './answer-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
@@ -146,6 +150,8 @@ export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
 export function createQueryPreparation(deps: QueryPreparationDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
   // §4.2/G5.7: a missing second argument constructs the same one assembler once.
   const assembler = contextAssembler ?? createContextAssembler(deps);
+  // §3.15 item 5: the ONE read of a create operation's frozen consultation payload.
+  const consultationCreate = readConsultationCreate(deps.sessions);
   return {
     async prepare(ctx: CoreCallContext, request: PrepareQueryExecutionRequest): Promise<ReadResult<PreparedQueryExecution>> {
       if (deps.queryExecution === undefined) {
@@ -356,7 +362,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // A secretary round renders its own answer format in the input, so the
       // guide is never appended a second time there.
       let question = record.job.job.intent.question;
-      if (!requestRound && execution.kind === 'initial_coordination') {
+      if (!requestRound && (execution.kind === 'initial_coordination' || execution.kind === 'intervention_planning')) {
         if (tracked.texts.templates['initial-planning-answer'] === undefined) {
           return rejected('invalid', 'the resolved prompt pack has no initial-planning-answer template');
         }
@@ -370,15 +376,73 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         }
         question = `${question}\n\n${planningGuide}`;
       }
+      // §3.15 item 5: read the frozen consultation payload ONCE from the create
+      // operation; a `platform_facts` copy never re-collects mode or facts.
+      let consultationMode: ConsultationCreateV1['mode'] | null = null;
+      let frozenFacts: ConsultationFactsV1 | null = null;
+      if (execution.kind === 'semantic_query' && execution.consultation?.operation !== undefined) {
+        let create;
+        try {
+          create = await consultationCreate.readConsultationCreate(owned, {
+            operationRef: execution.consultation.operation,
+          });
+        } catch (error) {
+          return rejected('unavailable', `the consultation create read failed: ${messageOf(error)}`);
+        }
+        if (create.status !== 'ready') return mapRead(create);
+        consultationMode = create.value.mode;
+        frozenFacts = create.value.mode === 'platform_facts' ? create.value.facts : null;
+      }
+      // Resolve every fact's body once: a `record` carries its frozen text, a
+      // `body` is opened with the existing material port, and a `task` is the
+      // definition of the frozen PlanRevision record's own task. No Goal, plan,
+      // Run, history or inbox read happens here.
+      let consultationFacts: Parameters<ContextAssembler['assembleQuery']>[1]['consultationFacts'];
+      if (consultationMode === 'platform_facts') {
+        const facts = frozenFacts!;
+        const planTasks = new Map<string, RuntimeTask[]>();
+        for (const fact of facts.facts) {
+          if (fact.kind !== 'record' || fact.sourceRef.ref.aggregateType !== 'PlanRevision') continue;
+          const frozenPlan = JSON.parse(fact.body) as PlanRevisionSnapshot;
+          planTasks.set(canonicalJson(fact.sourceRef.ref as unknown as JsonValue), frozenPlan.tasks);
+        }
+        const resolved: ConsultationResolvedFactV1[] = [];
+        for (const fact of facts.facts) {
+          let body: string | null = null;
+          if (fact.kind === 'record') {
+            body = fact.body;
+          } else if (fact.kind === 'body') {
+            try {
+              const opened = await deps.materials.openArtifact(owned, {
+                ref: fact.ref, usage: 'historical_explanation',
+              });
+              body = opened.status === 'ready' ? opened.value.body : null;
+            } catch {
+              // A failed open leaves this one fact bodyless; the renderer prints its unreadable line.
+              body = null;
+            }
+          } else if (fact.kind === 'task') {
+            const task = planTasks.get(canonicalJson(fact.planRevision as unknown as JsonValue))
+              ?.find(candidate => candidate.taskId === fact.taskId);
+            body = task === undefined ? null : canonicalJson(task as unknown as JsonValue);
+          }
+          resolved.push({ fact, body });
+        }
+        consultationFacts = { facts, resolved };
+      }
       // Ruling 14: the formal isolated derivation decides the Kernel session
       // basis; without one preparation passes the stored cursor's presence (C7).
-      const consultationDerivation = execution.kind === 'semantic_query' ? execution.consultation?.derivation : undefined;
+      // A `platform_facts` copy takes no Session history, decided by the mode.
+      const consultationDerivation = consultationMode === 'platform_facts' ? undefined
+        : execution.kind === 'semantic_query' ? execution.consultation?.derivation : undefined;
       const sessionBasis = consultationDerivation === undefined ? undefined : {
         sourceKernelSessionId: consultationDerivation.sourceKernel.kernelSessionId,
         throughPosition: consultationDerivation.throughPosition,
       };
       let history: ContextQueryHistoryInputV1;
-      if (sessionBasis !== undefined) {
+      if (consultationMode === 'platform_facts') {
+        history = { callKind: 'query', hasCompletedCursor: false };
+      } else if (sessionBasis !== undefined) {
         history = { callKind: 'query', sessionBasis };
       } else {
         history = { callKind: 'query', hasCompletedCursor: record.session.historyCursor !== null };
@@ -397,6 +461,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         texts: tracked.texts, toolNames, history,
         ...(secretaryFacts === null ? {} : { secretaryFacts }),
         ...(handoff === undefined ? {} : { handoff }),
+        ...(consultationFacts === undefined ? {} : { consultationFacts }),
       };
       let assembled;
       try {

@@ -379,6 +379,8 @@ export type S6AHostWorld = S6ARequestWorld & {
   /** SQLite: abandon the running Host (stale lock) and start a new one on the same directory. `keepLease: true`
    *  keeps the abandoned Host's live lock, so the new Host starts `held_by_other` instead of taking the lease over. */
   crash(options?: S6AReopenOptions & { keepLease?: true }): Promise<void>;
+  /** The Host's consume barrier (SR9 §2.4): resolves after the next real `consumeIdle` pass settles. */
+  consumeBarrier(): Promise<void>;
   /** The Host's `automation.resumeOnStartup` through `automation/save` (used by the next start). */
   setResumeOnStartup(on: boolean): Promise<HostSettingsSnapshot>;
   /** Any Host settings route (`/api/real/settings/<route>`) as the Host's page; answers the route's result. */
@@ -523,6 +525,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       if (instance.keepsLease !== true) await writeStaleLock(database);
     },
     get reconcile() { return real.reconcile; },
+    get consumeStatus() { return real.consumeStatus; },
+    consumeBarrier: () => real.consumeBarrier(),
   });
 
   /** Runs `start` with the Host factory spy installed; host-world starts are serialized. */
@@ -671,6 +675,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       await hostStart(() => base.reopen(reopen));
     },
     reopen: reopenOptions => hostStart(() => base.reopen(reopenOptions)),
+    consumeBarrier: () => world.host.consumeBarrier(),
     makeUnavailableSecretary: (label, unavailableOptions) =>
       hostStart(() => base.makeUnavailableSecretary(label, unavailableOptions)),
 

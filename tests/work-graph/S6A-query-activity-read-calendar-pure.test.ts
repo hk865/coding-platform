@@ -78,7 +78,7 @@ function bound(records: PendingQueryLifecycleRecords): QueryLifecycleRecords {
 function requestRoundOn(goalId: string | null): QueryLifecycleRecords {
   return bound(newRequestRound({ queryJobId: 'qj-1', runId: 'qr-1', scope: { projectId: 'p1', workspaceId: 'w1' },
     intent: intent(goalId), kind: 'request', requestRoot: null, requestGoalId: goalId, assignedSession: SESSION,
-    intakeSession: SESSION, selectedIdea: null, relatedCardRefs: [],
+    intakeSession: SESSION, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null,
     receipt: { kind: 'submit', requestRoot: JOB_REF, round: JOB_REF, assignment: 'assigned', secretary: SESSION, created: true },
     submission: SUBMISSION, submittedAt: AT, understanding: null }));
 }

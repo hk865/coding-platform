@@ -2,7 +2,7 @@ import type { CommitCursor } from '../../contracts/command-event.js';
 import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
-import type { GoalRef } from '../../contracts/ledger.js';
+import type { AggregateRef, GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
@@ -296,6 +296,7 @@ export type WorkflowAdvanceResult = CoreRejection | {
      * exactly that card. Absent/null keeps the historical reason-only result.
      */
     source?: DecisionSourceV1 | null;
+    waitBasis?: GoalWaitBasisV1;
   };
 };
 
@@ -459,4 +460,11 @@ export type HandoffCompositeDependencies = HandoffWorkflowDependencies & {
   /** The operation read and the final-archive Session read the advance owner and the composite share. */
   operations: Pick<SessionDirectoryPort, 'getSessionOperation' | 'readSession'>;
   releaseArchiveRequest: SessionLifecyclePort['releaseSessionArchiveRequest']; // the manual archive's release
+};
+
+export type GoalWaitBasisV1 = {
+  projectId: string;
+  goalId: string;
+  recordKinds: readonly AggregateRef['aggregateType'][];
+  reasons: readonly string[];
 };

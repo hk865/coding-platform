@@ -224,6 +224,7 @@ describe('the whole input of a round that absorbs a queued input after an earlie
       planning: ['role', 'goal', 'task', 'footprint'],
       copy: ['role', 'goal', 'task'],
       secretary: ['role', 'goal', 'notes', 'task'],
+      intervention_planning: ['role', 'goal', 'task'],
     });
     expect(record.set.toolNames).toEqual([
       'read', 'list_files', 'search', 'symbols', 'code_index', 'project_source', 'python_index', 'cpp_index',

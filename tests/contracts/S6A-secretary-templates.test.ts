@@ -157,6 +157,7 @@ describe('the platform secretary templates', () => {
             planning: ['role', 'goal', 'task', 'footprint'],
             copy: ['role', 'goal', 'task'],
             secretary: ['role', 'goal', 'notes', 'task'],
+            intervention_planning: ['role', 'goal', 'task'],
         });
     });
 

@@ -988,6 +988,8 @@ it.each(['memory', 'sqlite'] as const)('F13 [%s] the real responsible link and w
   const transferred = await f.platform.messages.readMessage(f.ctx, messageRef);
   if (transferred.status !== 'ready') throw new Error(`F13 transferred read: ${JSON.stringify(transferred)}`);
   expect(transferred.value.replyHandler?.sessionRef).toEqual(dSession);
+  expect(transferred.value.archiveWaitDisposition).toMatchObject({ kind: 'transfer' });
+  expect(transferred.value.waitCancelledAt).toBeNull();
 
   // A successor execution in D consumes the reply as the real handler; the
   // Runtime observer records the acceptance through the Kernel's own position,

@@ -23,6 +23,7 @@ describe('ruling 18: the projected section order', () => {
       planning: ['role', 'goal', 'task', 'footprint'],
       copy: ['role', 'goal', 'task'],
       secretary: ['role', 'goal', 'notes', 'task'],
+      intervention_planning: ['role', 'goal', 'task'],
     });
     expect(sectionOrderFor('planning', 'query-copy-input')).toEqual(['role', 'goal', 'task']);
     expect(sectionOrderFor('copy', 'query-planning-input')).toEqual(['role', 'goal', 'task']);

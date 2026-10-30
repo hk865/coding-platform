@@ -123,6 +123,8 @@ export type MailboxInputSupplyDependencies = {
   texts: PromptTextsV1;
   /** The execution's frozen final tool list (`PromptSetV1.toolNames`), passed to every render. */
   toolNames: readonly string[];
+  /** A secretary round's supply: only queued/default `notify` mail. Its reply/expiry is frozen in the round. */
+  only?: 'notify';
 };
 
 export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): InputSupply {
@@ -212,6 +214,9 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     const seen = new Set<string>(point.acceptedInputIds);
     const wait = deps.consumedWait;
     const intervention = wait?.kind === 'intervention';
+    // A request round supplies only queued/default notify mail; it skips the
+    // person pass, the whole continuation and the merged reply mail.
+    const notifyOnly = deps.only === 'notify';
 
     // (a) The inbox is read once, to its end. A person's message is the
     //     intervention input; every execution supplies it before the continuation
@@ -225,6 +230,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       const page = read.value;
       for (const [index, message] of page.items.entries()) {
         if (message.intent === 'inquiry') continue;
+        if (notifyOnly && message.intent !== undefined && message.intent !== 'notify') continue;
         const candidate = {
           message,
           // The page's cursors are required and aligned with its items.
@@ -238,15 +244,17 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       if (next === inboxCursor) throw new Error('input cursor did not advance');
       inboxCursor = next;
     }
-    person.sort(compareInputCandidates);
-    for (const candidate of person) {
-      if (signal.aborted) return results;
-      await readMessagePart(ctx, candidate.message, seen, results);
+    if (!notifyOnly) {
+      person.sort(compareInputCandidates);
+      for (const candidate of person) {
+        if (signal.aborted) return results;
+        await readMessagePart(ctx, candidate.message, seen, results);
+      }
     }
 
     // (b) The continuation. A wait's reply belongs to the original continuation
     //     or the effective handler execution, never to an intervention.
-    if (wait !== undefined) {
+    if (!notifyOnly && wait !== undefined) {
       if (wait.kind === 'wait_reply') {
         const read = await deps.messages.readMessage(ctx, wait.messageRef);
         if (read.status !== 'ready') throw new Error(`saved wait message unavailable: ${read.status}`);
@@ -290,7 +298,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     const merged: { message: SessionMessage; cursor: () => CommitCursor; response: boolean }[] =
       agent.map(candidate => ({ ...candidate, response: false }));
     const readOutbox = deps.messages.readOutbox;
-    if (readOutbox !== undefined) {
+    if (!notifyOnly && readOutbox !== undefined) {
       let cursor: string | undefined;
       while (!signal.aborted) {
         const read = await readOutbox(ctx, { senderSession: sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
@@ -306,7 +314,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       }
     }
     const readRoutedReplies = deps.messages.readRoutedReplies;
-    if (readRoutedReplies !== undefined) {
+    if (!notifyOnly && readRoutedReplies !== undefined) {
       let cursor: string | undefined;
       while (!signal.aborted) {
         const read = await readRoutedReplies(ctx, { handler: sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });

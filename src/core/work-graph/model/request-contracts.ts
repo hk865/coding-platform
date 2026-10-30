@@ -48,6 +48,10 @@ export const REQUEST_DRAINED_PER_PASS = 20;
 export const REQUEST_BACKOFF_INITIAL_MS = 1_000;
 export const REQUEST_BACKOFF_MAX_MS = 60_000;
 
+export function backoffMsFor(failures: number): number {
+  return Math.min(REQUEST_BACKOFF_INITIAL_MS * 2 ** (failures - 1), REQUEST_BACKOFF_MAX_MS);
+}
+
 // ------------------------------------------------------------------------ //
 // The request index names                                                   //
 // ------------------------------------------------------------------------ //

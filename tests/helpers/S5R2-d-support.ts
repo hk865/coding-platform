@@ -129,7 +129,7 @@ export async function orderedDriver(f: S5DecisionFixture, script: AdvanceScript,
   };
 }
 
-export async function waitForDriverState(f: S5DecisionFixture, driver: CollaborationDriver,
+export async function waitForDriverState(f: Pick<S5DecisionFixture, 'ctx'>, driver: CollaborationDriver,
   goalRef: GoalRef, wanted: CollaborationState): Promise<void> {
   const deadline = Date.now() + 3_000;
   for (;;) {

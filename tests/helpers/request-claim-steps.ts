@@ -11,9 +11,12 @@
  * Every value it sends is read from a public route or given by the row; the
  * rows keep their own expected values. Not frozen.
  */
+import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
+import type { ReadResult } from '../../src/contracts/core/results.js';
 import { readQuery } from './A2-restart-fixture.js';
-import { graphWrite } from './AG2b-collaboration-fixture.js';
+import { graphWrite, plain } from './AG2b-collaboration-fixture.js';
+import type { S6AHostWorld } from './S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ARequestWorld, type S6ASession } from './S6A-request-fixture.js';
 
 /** The published query profile `id` as a claim takes it; fails when the Host does not publish it. */
@@ -45,4 +48,19 @@ export async function claimQuery(world: S6ARequestWorld, ref: QueryJobRef, sessi
 export async function claimWithSecretaryProfile(world: S6ARequestWorld, ref: QueryJobRef, session: S6ASession,
   requestId: string): Promise<Record<string, unknown>> {
   return await claimQuery(world, ref, session, await claimProfile(world, S6A_SECRETARY_PROFILE_ID), requestId);
+}
+
+/** `queries/prepare` of the Query's current Run; a refusal fails the row. */
+export async function prepareAttempt(world: S6AHostWorld, ref: QueryJobRef, requestId: string): Promise<PreparedQueryExecution> {
+  const answer = (await world.post('queries/prepare', plain(S6A_SCOPE, {
+    queryRunRef: (await readQuery(world.ag2b, ref)).run.ref, requestId,
+  }))).body as ReadResult<PreparedQueryExecution>;
+  if (answer.status !== 'ready') throw new Error(`S6A: the preparation was refused: ${JSON.stringify(answer)}`);
+  return answer.value;
+}
+
+/** `queries/start` of a prepared attempt; answers the route's body. */
+export async function start(world: S6AHostWorld, prepared: PreparedQueryExecution, requestId: string): Promise<Record<string, unknown>> {
+  return (await world.post('queries/start', plain(S6A_SCOPE, { prepared, consumerId: 'ag2b-consumer', requestId }))).body as
+    Record<string, unknown>;
 }

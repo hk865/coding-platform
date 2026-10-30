@@ -68,6 +68,7 @@
   "context.omissions.nameSeparator": ": ",
   "context.none": "(none)",
   "context.notImplemented": "(not_implemented)",
+  "context.consultation.platformFactsDisclaimer": "These facts were frozen from the consulted line when the copy was created; they may already be out of date.",
   "context.role.bindingHeading": "## Runtime binding",
   "context.role.binding": "roleBinding: ",
   "context.role.tools": "tools: ",

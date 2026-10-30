@@ -41,7 +41,7 @@ const cases: Array<[string, FactsInput, Expected | null]> = [
   ['applied, not delivered', { message: { appliedAt: at } }, disposed('applied')],
   ['rejected and responded, so delivered', { message: { rejectedAt: at }, delivered: true }, disposed('rejected')],
   ['copied elsewhere and delivered', { copiedElsewhere: true, delivered: true }, copied],
-  ['transferred to another line, not delivered', { message: { transferredTo: { projectId, sessionId: 's1' } } }, copied],
+  ['transferred to another line, not delivered', { message: { transferredTo: { aggregateType: 'SessionMessage', projectId, workspaceId: 'W', messageId: 'm2' } } }, copied],
   ['copied elsewhere and withdrawn', { copiedElsewhere: true, message: { withdrawnAt: at } }, disposed('withdrawn')],
   ['delivered', { delivered: true }, { state: 'delivered', selectable: true, reason: null, retractable: false, retractReason: 'delivered' }],
   ['not delivered', {}, { state: 'not_delivered', selectable: true, reason: null, retractable: true, retractReason: null }],

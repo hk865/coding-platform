@@ -52,6 +52,11 @@ export const PLATFORM_PROMPT_PACK_V1 = {
         "version": 1,
         "mentionsTools": [] as [],
       },
+      "intervention-planning": {
+        "file": "templates/intervention-planning.txt",
+        "version": 1,
+        "mentionsTools": [] as [],
+      },
       "scribe-reminder": {
         "file": "templates/scribe-reminder.txt",
         "version": 1,
@@ -191,6 +196,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "wait-reply-delivery": "你的问题有了回复（消息 {{messageId}}）。\n你的问题：\n{{question}}\n回复：\n{{body}}",
     "wait-expiry-delivery": "你的问题到截止时间还没有回复（消息 {{messageId}}，截止 {{deadline}}，第 {{expiryCount}} 次到期）。\n你的问题：\n{{question}}",
     "intervention-delivery": "用户插话（消息 {{messageId}}）：\n{{body}}",
+    "intervention-planning": "{{prelude}}\n\n{{role}}{{goal}}{{plan}}{{message}}",
     "scribe-reminder": "{{marker}}待审 {{pendingCount}} 条，该更新 {{updateDueCount}} 条。锚点：{{anchors}}",
     "continuation-brief": "## 接续说明\n{{marker}}{{body}}{{blockedOmission}}{{bodyOmission}}{{anomalies}}{{review}}{{blocked}}\n\n### 继续之前\n- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。\n- “没有执行”的工具调用没有产生结果，需要时重新发起。\n- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。",
     "stale-files-reminder": "- 文件可能已经变化，编辑前先重新读取。",
@@ -280,6 +286,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "context.omissions.nameSeparator": ": ",
     "context.none": "(none)",
     "context.notImplemented": "(not_implemented)",
+    "context.consultation.platformFactsDisclaimer": "These facts were frozen from the consulted line when the copy was created; they may already be out of date.",
     "context.role.bindingHeading": "## Runtime binding",
     "context.role.binding": "roleBinding: ",
     "context.role.tools": "tools: ",
@@ -702,7 +709,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "parameters": {},
     },
     "project_source": {
-      "description": "Read exact source materials through the frozen capture protocol. Actions: capture (one bounded capture; provider defaults to typescript, or text for a strict readable regular UTF-8/no-NUL text scope selected by prefix; optional configPath/prefix and optional previous capture for explicit changes; the trusted workspace root/revision/identity always come from the host, never from arguments), query (page a frozen capture with an opaque cursor: null on the first page, then the returned nextCursor; limit 1-200, default 100; paths lists only the files this capture retained, text is a literal line search with original line/UTF-16 columns and complete excerpts; semantic kinds are available only for a typescript capture), read (one exact file, at most 8192 bytes, either version working_tree for the current file, version capture for the exact frozen content of a retained capture, or version git with a full 40/64 lowercase commit id for one exact historical blob; a file outside the declared scope is refused rather than reported absent), compare (same-scope content diff of two captures: added/deleted/modified plus renamed only when one digest occurs exactly once in each complete manifest, marked identical_content and never a business identity claim; or two full Git commit ids with an optional prefix, compared by authorized regular-file blob id and mode; or one full Git commit id against one bounded current-working-tree observation of authorized regular UTF-8/no-NUL text, compared by raw-byte digest and owner-executable mode in either direction with an optional prefix and currentness not_rechecked; never by a ref or shell expression), verify (re-read the real scope now and confirm whether the capture still matches; a point-in-time answer, not a future guarantee), release (drop the capture when done). Coverage and change lists are returned as exact counts with at most five preview items of at most 160 code points each and an explicit truncated flag; the complete internal material is retained untrimmed. Pages are marked captured_source/not_rechecked unless verify says otherwise; captures cover only their declared scope (not the whole worktree) and a successful capture is not acceptance of the code.",
+      "description": "Read exact source materials through the frozen capture protocol. Actions: capture (one bounded capture; provider defaults to typescript, or text for a strict readable regular UTF-8/no-NUL text scope selected by prefix; optional configPath/prefix and optional previous capture for explicit changes; the trusted workspace root/revision/identity always come from the host, never from arguments), query (page a frozen capture with an opaque cursor: null on the first page, then the returned nextCursor; limit 1-200, default 100; paths lists only the files this capture retained, text is a literal line search with original line/UTF-16 columns and complete excerpts; semantic kinds are available only for a typescript capture), read (one exact file, at most 8192 bytes, either version working_tree for the current file, version capture for the exact frozen content of a retained capture, or version git with a full 40/64 lowercase commit id for one exact historical blob; a file outside the declared scope is refused rather than reported absent), compare (same-scope content diff of two captures: added/deleted/modified plus renamed only when one digest occurs exactly once in each complete manifest, marked identical_content and never a business identity claim; or two full Git commit ids with an optional prefix, compared by authorized regular-file blob id and mode; or one full Git commit id against one bounded current-working-tree observation of authorized regular UTF-8/no-NUL text, compared by raw-byte digest and owner-executable mode in either direction with an optional prefix and currentness not_rechecked; add duplicates: true to list candidates from that same call's after-side material — a new top-level definition, or a new string literal of at least 40 code points, that occurs elsewhere in the after pool — with two locations each and exact scanned/skipped counts reported apart from truncation (candidates only; the tool never judges whether two pieces are one rule); never by a ref or shell expression), verify (re-read the real scope now and confirm whether the capture still matches; a point-in-time answer, not a future guarantee), release (drop the capture when done). Coverage and change lists are returned as exact counts with at most five preview items of at most 160 code points each and an explicit truncated flag; the complete internal material is retained untrimmed. Pages are marked captured_source/not_rechecked unless verify says otherwise; captures cover only their declared scope (not the whole worktree) and a successful capture is not acceptance of the code.",
       "parameters": {},
     },
     "read_source": {
@@ -921,6 +928,11 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "mentionsTools": [],
     },
     "intervention-delivery": {
+      "packId": "platform",
+      "version": 1,
+      "mentionsTools": [],
+    },
+    "intervention-planning": {
       "packId": "platform",
       "version": 1,
       "mentionsTools": [],

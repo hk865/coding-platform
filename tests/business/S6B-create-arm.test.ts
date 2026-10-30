@@ -17,7 +17,8 @@ describe('S6B the create arm and the operation read', () => {
     await governS6B(world, ws, world.goals);
     const lines = await seedS6BHandoffLines(ws, world.goals.first);
     const creation = { status: 'ready', value: { ref: lines.target.operation, revision: 2, workspaceId: S6A_SCOPE.workspaceId,
-      phase: 'completed', action: { kind: 'create', parentOperation: null, workspace: S6A_SCOPE, role: S6A_WORK_ROLE } } };
+      phase: 'completed', action: { kind: 'create', parentOperation: null, workspace: S6A_SCOPE, role: S6A_WORK_ROLE,
+        consultation: null } } };
     expect(await ws.route('sessions/operation', lines.target.operation)).toMatchObject(creation);
 
     const accepted = await world.platform.sessionHandoff.acceptHandoff(world.humanContext(), { commandId: 's6b-arm',

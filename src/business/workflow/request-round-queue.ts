@@ -47,7 +47,7 @@ import { canonicalJson, canonicalKey as keyOf, sameJson, sha256Hex, type JsonVal
 import { messageOf } from '../../contracts/error-message.js';
 import { isRecord } from '../../contracts/validation/common.js';
 import {
-  LIVE_ATTEMPT_PHASES, REQUEST_ADVANCES_PER_PASS, REQUEST_BACKOFF_INITIAL_MS, REQUEST_BACKOFF_MAX_MS,
+  backoffMsFor, LIVE_ATTEMPT_PHASES, REQUEST_ADVANCES_PER_PASS,
   REQUEST_DRAINED_PER_PASS, REQUEST_PAGE_SIZE, REQUEST_PASS_PAGES,
   type SecretaryProfilePort, type SecretaryProfileV1,
 } from '../../core/work-graph/model/request-contracts.js';
@@ -295,7 +295,7 @@ function keepOldest(traversal: RoundTraversalV1, fresh: Candidate): void {
 }
 
 export function createRequestRoundQueues(deps: {
-  rounds: Pick<RequestRoundPort, 'open' | 'append'>;
+  rounds: Pick<RequestRoundPort, 'open' | 'append' | 'sources'>;
   facts: RequestFactsReader;
   sessions: Pick<SessionFactsPort, 'readSessionFacts'>;
   profiles: Pick<SecretaryProfilePort, 'forSession'>;
@@ -344,7 +344,7 @@ export function createRequestRoundQueues(deps: {
     const failures = (state.failures.get(key) ?? 0) + 1;
     state.failures.set(key, failures);
     if (closed || signal.aborted) return;
-    const delay = Math.min(REQUEST_BACKOFF_INITIAL_MS * 2 ** (failures - 1), REQUEST_BACKOFF_MAX_MS);
+    const delay = backoffMsFor(failures);
     const timer = new Promise<void>((resolve) => {
       const endWait = (wake: boolean): void => {
         clearTimeout(handle);
@@ -474,6 +474,56 @@ export function createRequestRoundQueues(deps: {
   }
 
   /**
+   * The ONE workspace message discovery of the reply/expiry driver: every page
+   * of both status partitions, each source appended through the one request
+   * append with its own `wait-round:` identity. The same identity makes a retry
+   * a replay, an ended request is skipped, and any failed read or append is the
+   * pass's failure, so the loop's own back-off retries it. Returns how many
+   * rounds were actually written, so a traversal that had already read all its
+   * pages is restarted and finds them in this same pass.
+   */
+  async function discoverSources(ctx: CoreCallContext, scope: WorkspaceScope): Promise<number> {
+    let written = 0;
+    for (const status of ['pending', 'responded'] as const) {
+      let continuation: string | null = null;
+      for (;;) {
+        if (closed || ctx.signal.aborted) return written;
+        let read: Awaited<ReturnType<RequestRoundPort['sources']>>;
+        try {
+          read = await deps.rounds.sources(ctx, scope, { status, limit: REQUEST_PAGE_SIZE, continuation });
+        } catch (error) {
+          throw new Error(`the ${status} workspace messages could not be read: ${messageOf(error)}`);
+        }
+        if (read.status !== 'ready') {
+          throw new Error(`the ${status} workspace messages could not be read: ${
+            read.status === 'rejected' ? `${read.code}: ${read.reason}` : read.status}`);
+        }
+        for (const source of read.value.sources) {
+          if (closed || ctx.signal.aborted) return written;
+          let appended: Awaited<ReturnType<RequestRoundPort['append']>>;
+          try {
+            appended = await deps.rounds.append(ctx, { command: {
+              kind: source.kind,
+              operationId: `wait-round:${keyOf(source.messageRef)}:${source.kind}`,
+              requestRoot: { ...source.requestRoot },
+              messageRef: { ...source.messageRef },
+            } });
+          } catch (error) {
+            throw new Error(`the ${source.kind} round append failed: ${messageOf(error)}`);
+          }
+          // `appended` and its replay continue; an `ended` request is skipped.
+          if (appended.status === 'appended' && !appended.replayed) written += 1;
+        }
+        const next = read.value.continuation;
+        // A wrapped page (or one with no next cursor) ends the partition.
+        if (read.value.wrapped || next === null) break;
+        continuation = next;
+      }
+    }
+    return written;
+  }
+
+  /**
    * One pass of `request-rounds`.
    *
    * The traversal is bounded per partition (at most REQUEST_PASS_PAGES pages)
@@ -496,6 +546,17 @@ export function createRequestRoundQueues(deps: {
     const ctx = deps.context(scope, input.signal);
     const state = stateOf(scope);
     let blocked = 0;
+
+    // The reply/expiry producer runs before the open traversal and the oldest
+    // round selection: the rounds it appends must be found by this same pass.
+    // A round that was really written restarts a traversal that had already
+    // read all its pages, so this pass reads it instead of leaving it for a
+    // wake the append does not send.
+    if (await discoverSources(ctx, scope) > 0) {
+      traversal.cursors = { pending: null, running: null };
+      traversal.done = { pending: false, running: false };
+      traversal.candidates = [];
+    }
 
     /** The requests this pass read, so a request is read once per pass and nothing launches from an older read. */
     const works = new Map<string, RequestWork>();

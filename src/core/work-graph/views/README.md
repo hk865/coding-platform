@@ -20,6 +20,12 @@
 - `pointer-facts.ts` — `createGoalPointerFacts`：一次读取 Goal 理解指针的版本、CAS 地址与同次读取水位；缺失为 `'none'`/null 版本期待，失败不当缺失。
 - `track-read-model.ts` — 轨道条读模型：Run、验收轮、Query 区间的有界分页。Query 条带带各自的 `QueryActivity` 视图。每个选中 Session 自己的 Query 先按它的 provenance 定画法（`queryOwnScanOf`）：普通 Session 画自己的 turn（按轨道 Goal 过滤）；只读副本画成从来源被问的 consultation，不按 Goal 过滤；来源也被选中时由来源的副本流画，副本自己不画——与 `sessionRefs` 顺序无关。`dedupeQueryBarsByRunRef` 只是按完整 `QueryRunRef` 的身份防重；`queryBarAskedOf` 优先取记录的正式被问 Session、否则取副本来源。
 
+### 可消费 Session
+
+做 Host 心跳挑可打开 Session 的去这组。
+
+- `consumable-sessions.ts` — 所有 Session 的可消费视图：一次有界的 Session 目录走查，按候选给出可用性、busy 原因与可提供的输入种类；只读已发布事实、不写。目录扫描归 Session owner，投递判定用 `deliveryEligibility`，提供顺序用 `compareSessionInputCandidates`；`after`/`next` 是 Session 键（`plainSessionRefKey`），不是目录游标。
+
 ### 活动与时间
 
 做活动日历、活动稳定窗口与任务时间条的去这组。
@@ -47,7 +53,7 @@
 
 做请求轮的秘书准备事实读取的去这组。
 
-- `secretary-handoff-facts.ts` — 交接的只读事实：`checkArchiveCondition` 按核心谓词（源仍拥有且处理中的请求为零）+ 源/`SessionActivity` guard + 操作持有者的 fence（手工归档为 `null`）+ 首读 horizon 给出可合并片段；`readCoverage` 读源仍拥有且处理中的请求根、它们的有效 Goal、每个 Goal 的当前理解指针/版本/最后文字写入者、最后进入并结束的轮、活动 revision 和一次完整读的首个 horizon；`readRoutingSet` 在同一完整读上返回源仍拥有且处理中的根，`closed` 表示这次读到末尾；`readBriefState` 按五个 phase 找后继是本 Session 的交接操作（含 `existing` 目标与已完成操作），给出 `none`/`waiting`/`ready`/`consumed` 四态，`ready` 只在受保护的最终归档成功且完整路由集保存之后，材料从操作自己的事实和请求/注记读来时读，不存两份（当前理解的正文由同一次 pointer→head→version 读解码一次，written 与 current 同一版本时不再重读）；`readBriefGoalRefs` 是给推进用的窄读口：每个被覆盖的 Goal 给出 written/current 两个引用，推进只存引用，Session 层不读 Note。失败或损坏一律 `unavailable`，不折成空覆盖/空集合，也不把 `waiting` 读成 `none`。
+- `secretary-handoff-facts.ts` — 交接的只读事实：`checkArchiveCondition` 按核心谓词（源仍拥有且处理中的请求为零）+ 源/`SessionActivity` guard + 操作持有者的 fence（手工归档为 `null`）+ 首读 horizon 给出可合并片段；`readCoverage` 读源仍拥有且处理中的请求根、它们的有效 Goal、每个 Goal 的当前理解指针/版本/最后文字写入者、最后进入并结束的轮、活动 revision 和一次完整读的首个 horizon；`readRoutingSet` 在同一完整读上返回源仍拥有的根（含已回答/已关闭；归档条件与 coverage 仍只数处理中的），`closed` 表示这次读到末尾；`readBriefState` 按五个 phase 找后继是本 Session 的交接操作（含 `existing` 目标与已完成操作），给出 `none`/`waiting`/`ready`/`consumed` 四态，`ready` 只在受保护的最终归档成功且完整路由集保存之后，材料从操作自己的事实和请求/注记读来时读，不存两份（当前理解的正文由同一次 pointer→head→version 读解码一次，written 与 current 同一版本时不再重读）；`readBriefGoalRefs` 是给推进用的窄读口：每个被覆盖的 Goal 给出 written/current 两个引用，推进只存引用，Session 层不读 Note。失败或损坏一律 `unavailable`，不折成空覆盖/空集合，也不把 `waiting` 读成 `none`。
 - `secretary-preparation-facts.ts` — `SecretaryPreparationFactsPort` 的唯一实现：一次读齐执行轮的 Job/Run 材料（材料里的 `command` 从存的 `round.job.understanding` 投影，批轮与早先轮走同一投影）、待吸收批、早先 Session 的历史、workspace、当前架构、两个治理指针与 workspace Goals，以及 `ask` 轮卡片引用对象的当前版本（一次 `readMany`，不存在记 null）；还读齐冻结材料里每个理解命令的 operation 记录（缺失/失败/损坏为 `unavailable`，每条进 guards），产出唯一的 `understandingGrants`，并按五个 phase 找后继 Session 的交接 operation 作为 `briefRef`（多个取 revision 最大者，同样进 guards；这条 operation 的简报已被消费时 `briefRef` 为 null、不进 guards，OP-F1）；任何失败原样返回，不折成空事实。
 
 ### 注记与通知
@@ -68,7 +74,8 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3024` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
-| `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:98` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
+| `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:128` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
+| `createConsumableSessions` | `src/core/work-graph/views/consumable-sessions.ts:66` | 所有 Session 的可消费视图：一次有界的目录走查，按候选给出可用性、busy 原因与可提供的输入种类；`after`/`next` 是 Session 键 | Host 心跳挑要打开的 Session；不要另写 busy/offer 规则 |
 | `assembleLineBriefs` | `src/core/work-graph/views/work-line-reader.ts:239` | 把线头批量投影成 `LineBriefV1`，与 `lines/list` 同一路径 | 其他读要线摘要、且必须与列表逐字节一致时 |
 | `resolveContinuationLine` | `src/core/work-graph/views/work-line-reader.ts:1406` | 沿 continuation 后继找线头；分支返回全部头，环返回成员，最多 32 步 | 从线中任一 Session 找头时；不要另写遍历 |
 | `secretaryOrdinals` | `src/core/work-graph/views/work-line-reader.ts:275` | 秘书线名“秘书 N”的 N：本工作区秘书 Session 按 `createdAt`、同刻按 Session 键排，从 1 数（纯函数；一次读只算一回，归档的也算，只读副本不算；有 Session 的职责读不到、或 RoleSpec 角色的职责为 unknown 时整张编号读不到，秘书线名只给“秘书”并带问题；旧模板角色为 unknown 的肯定不是秘书，跳过） |
@@ -107,7 +114,7 @@
 | `mapExecutedFilesToModules` | `src/core/work-graph/views/goal-conflicts.ts:440` | 已执行路径按架构目录做最长合法段匹配；无唯一主人保持 `unmapped` | 需要把文件映射到 `ModuleRef` 时；不要按名字猜 |
 | `createSecretaryHandoffFacts` **正本** | `src/core/work-graph/views/secretary-handoff-facts.ts:264` | 覆盖、路由集、简报状态与简报引用的唯一读取：完整分页打开请求、每根走 owner 读、每个 Goal 读 CurrentPointer/NoteHead/NoteVersion（正文一次解码），返回一个首读 horizon；路由集 `closed:true` 只在本次读完整时给出；`readBriefState` 只在归档成功且路由集完整后给 `ready`，否则 `waiting`；`readBriefGoalRefs` 给推进返回每 Goal 的 saved 引用 | 推进的 coverage/fence/recheck/routing 扫描、brief 引用与后继轮的准备；不要另写覆盖、路由或简报读 |
 | `createHandoffNoticeSource`、`noticePositionOf` | `src/core/work-graph/views/handoff-notices.ts:168`、`:53` | `handoff` 请知悉来源与单条位置读：每个操作一项，位置是原通知写的提交；身份只用操作保存的 actor/workspace/键/generation 重建 | I1 注入 `createDecisionReadModel` 的 `noticeSources`；只读，不写记录或事件 |
-| `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:514` | 秘书请求轮准备事实的唯一读取：请求轮材料（含执行轮与批轮各自的理解命令投影）与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals、唯一的 `briefRef`/`understandingGrants` 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史、治理指针或重算授权集 |
+| `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:549` | 秘书请求轮准备事实的唯一读取：请求轮材料（含执行轮与批轮各自的理解命令投影）与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals、唯一的 `briefRef`/`understandingGrants` 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史、治理指针或重算授权集 |
 | `workspaceScopeProblem` | `src/core/work-graph/views/goal-conflicts.ts:94` | 在任何记录读之前比较显式 workspace 与 `ctx` 范围 | 每个显式 workspace 输入的读 |
 | `listWorkspaceGoals` | `src/core/work-graph/views/goal-conflicts.ts:121` | 读完一个 workspace 的 Goal 集合，带 watermark 与 truncated | 需要 Goal 全集的读 |
 | `readGoalTerminalState` | `src/core/work-graph/views/goal-conflicts.ts:165` | 判断 Goal 是否 cancelled 或由 GoalPhase 证明 completed；读失败不当“未终止” | 冲突卡片是否需要关闭时 |

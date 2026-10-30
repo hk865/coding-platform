@@ -1204,7 +1204,7 @@ function applyToRecord(record: SessionMessageRecord | null, event: EventName, at
       return nextSessionMessageRecord(record!, {
         kind: 'archive_wait_disposed',
         choice: { kind: 'cancel', runRef: WORK_RUN_SENDER.runRef, messageRef: MESSAGE_REF },
-        archiveSessionRef: SENDER_SESSION, archiveRequestId: 'a', now: at,
+        archiveSessionRef: SENDER_SESSION, archiveRequestId: 'a', now: '2026-10-08T00:00:00.000Z',
       });
   }
 }

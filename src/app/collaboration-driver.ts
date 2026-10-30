@@ -26,9 +26,10 @@
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
+import type { CommitCursor } from '../contracts/command-event.js';
 import type { RunContinuationV1, RunRef } from '../contracts/dispatch.js';
 import type { GoalRef } from '../contracts/ledger.js';
-import type { SessionRef } from '../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { MessageRecipient } from '../contracts/core/session-message.js';
 import { messageOf } from '../contracts/error-message.js';
 import { rejected } from '../contracts/core/rejections.js';
@@ -53,6 +54,7 @@ import type {
 } from '../business/workflow/contracts.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { WorkbenchQueryProfile } from './runtime-configuration.js';
+import type { GoalWaitWakes } from './goal-wait-wakes.js';
 
 /** The frozen closed set of states. `waiting_for_reply` stays active. */
 export type CollaborationState =
@@ -105,6 +107,8 @@ export interface CollaborationDriverPort {
   start(ctx: CoreCallContext, input: CollaborationStartInput): Promise<ReadResult<CollaborationSnapshot>>;
   read(ctx: CoreCallContext, input: CollaborationReadInput): Promise<ReadResult<CollaborationSnapshot>>;
   stop(ctx: CoreCallContext, input: CollaborationStopInput): Promise<ReadResult<CollaborationSnapshot>>;
+  /** BW: resume the Goal's parked handle, or start one; one Workflow advance, no model call. */
+  wake(ctx: CoreCallContext, goalRef: GoalRef): Promise<void>;
 }
 
 /** The Host owns the handle lifetime; `close` stops and drains every handle. */
@@ -148,6 +152,11 @@ export type CollaborationDriverDependencies = {
   onChange?: (change: CollaborationChange) => void;
   /** Optional Host hook: a NEW Goal-scoped handle started. A replay or a refused start never calls it. */
   onStarted?: (ctx: CoreCallContext, goalRef: GoalRef) => Promise<unknown>;
+  /** H's resolver over the Host's one `GoalWaitWakes` per workspace scope; absent keeps today's exact-message poll. */
+  goalWaits?: (scope: WorkspaceScope) => Pick<GoalWaitWakes, 'register' | 'leave'>;
+  /** The Host's observed commit head, sampled immediately BEFORE the advance that can return `waiting`;
+   * absent keeps today's poll. */
+  observedCursor?: () => CommitCursor | null;
 };
 
 const TICK_MS = 500;
@@ -279,6 +288,8 @@ type Handle = {
   stopReason: string | null;
   /** True while the handle is genuinely parked on a yielded continuation wait. */
   wakeWaiting: boolean;
+  /** The one parked-wake signal; `wake` resolves it exactly once. */
+  wakeGate: (() => void) | null;
   /** The driver's own lifetime signal; never aborted (stop aborts `activePumpAbort`). */
   abort: AbortController;
   /** The live consultation pump signal; aborted on stop/close/run end. */
@@ -780,8 +791,13 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
   return structuredClone(run['continuation']) as unknown as RunContinuationV1;
 }
 
-  async function runHandle(handle: Handle): Promise<void> {
+  async function runHandle(handle: Handle, once = false): Promise<void> {
     let openAdmission: AdvanceAdmission | null = null;
+    // A bounded entry (`wake`) advances through the re-check's own step and then
+    // stops before following a successor that would start a Run; that successor
+    // is preserved for the next wake.
+    let bounded = once;
+    let successor: WorkflowAdvanceInput | null = null;
     try {
       let input = handle.current;
       // The `select_work` the Workflow returns after `complete_task`, pinned to
@@ -803,10 +819,17 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           if (openAdmission === null) return;
         }
         const startRun = startRunRefOf(input);
+        if (bounded && startRun !== null) {
+          successor = input;
+          return;
+        }
         // K3 UR7 rework 1: the failed-card set travels ONLY through this internal
         // third argument, never inside the public request.
         const internal: WorkflowAdvanceInternal = handle.failedCardRefs.length === 0
           ? {} : { failedCardRefs: handle.failedCardRefs };
+        // The read's own watermark, sampled immediately before the fact read; a
+        // commit that lands after it is strictly past it and queues the goal.
+        const cursorAtRead = dependencies.observedCursor?.() ?? null;
         const result = startRun === null
           ? await advanceWorkNow(handle, input, internal, openAdmission)
           : await runWithPump(handle, startRun, input, internal, openAdmission);
@@ -842,6 +865,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
               schemaVersion: 1, goalRef: handle.goalRef, flowId: handle.flowId,
               sessionHint: input.sessionHint, kind: 'select_work',
             };
+            if (bounded) { successor = next; return; }
             handle.current = next;
             input = next;
             // This Goal-scope selection may claim/create other work of the Goal,
@@ -851,6 +875,39 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           handle.state = 'completed'; handle.reason = value.reason; return;
         }
         if (value.state === 'waiting') {
+          // A waiting result's basis names the facts a wake must re-read. The
+          // registered wait is the parked signal: the outbox pump and the
+          // exact-message poll stay only on the yielded-receipt path below.
+          const waitBasis = value.waitBasis;
+          const waits = waitBasis !== undefined && cursorAtRead !== null
+            ? dependencies.goalWaits?.({ projectId: waitBasis.projectId, workspaceId: handle.workspaceId })
+            : undefined;
+          if (waitBasis !== undefined && cursorAtRead !== null && waits !== undefined) {
+            handle.state = 'waiting_for_reply';
+            handle.reason = value.reason;
+            handle.wakeWaiting = true;
+            // The stamp is the one this fact read observed, never a fresh sample
+            // taken here: a commit that landed after the read must stay past it.
+            waits.register(waitBasis, cursorAtRead);
+            let resolveGate!: () => void;
+            const gate = new Promise<void>((resolvePromise) => { resolveGate = resolvePromise; });
+            handle.wakeGate = resolveGate;
+            await gate;
+            handle.wakeGate = null;
+            bounded = true;
+            handle.wakeWaiting = false;
+            waits.leave(handle.goalRef);
+            if (handle.stopRequested) return;
+            // One re-check of the same Goal scope; the wake itself is the read.
+            const wakeInput: WorkflowAdvanceInput = {
+              schemaVersion: 1, goalRef: handle.goalRef, flowId: handle.flowId,
+              sessionHint: null,
+              ...(handle.taskId === null ? {} : { taskId: handle.taskId }),
+              kind: 'select_work',
+            };
+            input = wakeInput;
+            continue;
+          }
           // A yielded Run keeps the original Task/Session and saved wait. Wait for
           // the real reply, then re-advance the SAME Goal/Session; no model is
           // called while the reply is absent and no second Run is started.
@@ -890,6 +947,13 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           handle.state = 'waiting'; handle.reason = value.reason; return;
         }
         if (value.next === null) { handle.state = 'waiting'; handle.reason = 'the Workflow returned no next step'; return; }
+        // A bounded entry follows the re-check's own perform (a claim) until it
+        // yields a receipt, then parks that successor; it never follows an input
+        // that would start a Run.
+        if (bounded && (value.receipt !== null || startRunRefOf(value.next) !== null)) {
+          successor = value.next;
+          return;
+        }
         handle.current = value.next;
         input = value.next;
         observingCompletedStep = value.receipt?.kind === 'complete_task'
@@ -904,7 +968,9 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       // A safe point that never reached its Workflow call must still release the
       // advances ordered behind it; `proceed` is idempotent.
       openAdmission?.proceed();
-      handle.current = null;
+      // A bounded exit keeps the input it refused to follow, so the next wake
+      // resumes exactly that step; an unbounded exit clears as before.
+      handle.current = bounded ? successor : null;
       handle.failedCardRefs = [];
       // A stop drain owns the final `stopped` transition; never claim it here.
       if (!handle.stopRequested && (handle.state === 'running' || handle.state === 'waiting_for_reply')) {
@@ -984,6 +1050,17 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     }
   }
 
+  /**
+   * Drop this handle's goal-wait registration and release its parked gate, so a
+   * stop/close drains the parked entry instead of waiting for a commit.
+   */
+  function leaveGoalWait(handle: Handle): void {
+    dependencies.goalWaits?.({ projectId: handle.projectId, workspaceId: handle.workspaceId })
+      ?.leave(handle.goalRef);
+    const resolve = handle.wakeGate;
+    if (resolve !== null) { handle.wakeGate = null; resolve(); }
+  }
+
   function stopHandle(handle: Handle): Promise<void> {
     if (handle.stopDrain !== null) return handle.stopDrain;
     if (isTerminal(handle.state)) return Promise.resolve();
@@ -991,6 +1068,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     handle.stopReason ??= 'the collaboration driver was asked to stop';
     handle.state = 'stopping';
     changed(handle);
+    leaveGoalWait(handle);
     handle.activePumpAbort?.abort('driver_stopped');
     admissionWaits.get(handle)?.();
     handle.stopDrain = (async () => {
@@ -1006,6 +1084,99 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     return handle.stopDrain;
   }
 
+  /**
+   * The one start entry: the port's `start` runs unbounded; `wake` enters it
+   * bounded to one advance. A replay returns the original snapshot unchanged.
+   */
+  async function startHandle(
+    ctx: CoreCallContext, input: CollaborationStartInput, once: boolean,
+  ): Promise<ReadResult<CollaborationSnapshot>> {
+    // the close clears the handles; a start finishing during it must not install a new one.
+    if (closed) return rejected('unavailable', 'the Host is closing');
+    if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
+      return rejected('forbidden', 'the collaboration driver requires a bound project/workspace context');
+    }
+    const advance = (() => { try { return structuredClone(input?.advance); } catch { return null; } })();
+    if (!isRecord(advance) || !isGoalRef(advance['goalRef'])) {
+      return rejected('invalid', 'driver start requires a complete WorkflowAdvanceInput');
+    }
+    const goalRef = advance['goalRef'];
+    if (goalRef.projectId !== ctx.projectId) return rejected('forbidden', 'the driver Goal is outside the bound project');
+    const requested = Array.isArray(input?.queryProfileIds) ? input.queryProfileIds.filter(nonEmpty) : [];
+    const profiles = selectProfiles(ctx.projectId, ctx.workspaceId!, requested);
+    const typedAdvance = advance as unknown as WorkflowAdvanceInput;
+    const seedMaterial = { advance: typedAdvance, queryProfileIds: [...requested].sort() };
+    const seed = canonicalOf(seedMaterial) ?? sha256Hex(canonicalJson(seedMaterial as unknown as JsonValue));
+    const taskId = nonEmpty(advance['taskId']) ? advance['taskId'] : null;
+    const key = handleKey(ctx.projectId, ctx.workspaceId!, goalRef.goalId, taskId);
+    // §4.5 line 890 safe point: the busy check and `handles.set` stay in one
+    // synchronous block (no second concurrent start can slip between them).
+    // The handle always advances its OWN request; ordering among the advances
+    // pending together at the claim/create point is enforced by
+    // `awaitAdvanceAdmission` inside the loop, never by a discarded call here.
+    const existing = handles.get(key);
+    let superseded: Handle | null = null;
+    if (existing !== undefined) {
+      // Same seed always replays the ORIGINAL snapshot without a model call,
+      // even after the owner returned `waiting`.
+      if (existing.seed === seed) return { status: 'ready', value: snapshot(existing) };
+      // A parked handle on a plain `waiting` result carries no yielded
+      // continuation, so it owns no live Run: the new seed takes its slot and
+      // starts once the old run drains. A real yielded wait stays `busy`.
+      if (existing.wakeGate !== null && existing.last !== null
+        && existing.last.status === 'ready' && existing.last.value.state === 'waiting'
+        && yieldedContinuationOf(existing.last) === null) {
+        existing.stopRequested = true;
+        leaveGoalWait(existing);
+        superseded = existing;
+      } else if (isActive(existing.state) || existing.wakeWaiting) {
+        return rejected('busy', 'another collaboration advancement is already active for this Task');
+      }
+    }
+    const handle: Handle = {
+      key, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
+      goalRef: structuredClone(goalRef), flowId: typedAdvance.flowId, taskId, seed, profiles,
+      context: snapshotContext(ctx),
+      state: 'running', current: structuredClone(typedAdvance), last: null,
+      failedCardRefs: [], reason: null,
+      messages: [], messageKeys: new Set(), currentRun: null,
+      stopRequested: false, stopReason: null, wakeWaiting: false, wakeGate: null,
+      abort: new AbortController(),
+      activePumpAbort: null, stopDrain: null, done: Promise.resolve(), announced: null,
+    };
+    handles.set(key, handle);
+    changed(handle);
+    // The loop's final transition (completed/failed/waiting) is announced when
+    // the loop settles. A superseded handle starts only after the old run
+    // drains, so the old `leave` cannot drop the new wait registration.
+    handle.done = (superseded === null
+      ? runHandle(handle, once)
+      : superseded.done.then(() => runHandle(handle, once))).finally(() => changed(handle));
+    if (taskId === null) await dependencies.onStarted?.(ctx, goalRef);
+    return { status: 'ready', value: snapshot(handle) };
+  }
+
+  /** BW: resume the Goal's parked handle, or start one; one Workflow advance, no model call. */
+  async function wake(ctx: CoreCallContext, goalRef: GoalRef): Promise<void> {
+    const workspaceId = ctx.workspaceId ?? '';
+    const parked = goalHandles(ctx.projectId, workspaceId, goalRef.goalId);
+    if (parked.length > 0) {
+      for (const handle of parked) {
+        const resolve = handle.wakeGate;
+        if (resolve !== null) { handle.wakeGate = null; resolve(); continue; }
+        // No gate: resume the same one-advance entry from `handle.current`
+        // (the preserved successor); never skip a parked handle.
+        await runHandle(handle, true);
+      }
+      return;
+    }
+    const queryProfileIds = trustedProfiles
+      .filter(profile => profile.scope.projectId === ctx.projectId && profile.scope.workspaceId === workspaceId)
+      .map(profile => profile.id);
+    await startHandle(ctx, { advance: { schemaVersion: 1, goalRef, flowId: `goal-wait:${goalRef.goalId}`,
+      sessionHint: null, kind: 'select_work' }, queryProfileIds }, true);
+  }
+
   return {
     addProfiles(profiles) {
       for (const profile of profiles) {
@@ -1016,53 +1187,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       }
     },
     async start(ctx, input) {
-      // the close clears the handles; a start finishing during it must not install a new one.
-      if (closed) return rejected('unavailable', 'the Host is closing');
-      if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
-        return rejected('forbidden', 'the collaboration driver requires a bound project/workspace context');
-      }
-      const advance = (() => { try { return structuredClone(input?.advance); } catch { return null; } })();
-      if (!isRecord(advance) || !isGoalRef(advance['goalRef'])) {
-        return rejected('invalid', 'driver start requires a complete WorkflowAdvanceInput');
-      }
-      const goalRef = advance['goalRef'];
-      if (goalRef.projectId !== ctx.projectId) return rejected('forbidden', 'the driver Goal is outside the bound project');
-      const requested = Array.isArray(input?.queryProfileIds) ? input.queryProfileIds.filter(nonEmpty) : [];
-      const profiles = selectProfiles(ctx.projectId, ctx.workspaceId!, requested);
-      const typedAdvance = advance as unknown as WorkflowAdvanceInput;
-      const seedMaterial = { advance: typedAdvance, queryProfileIds: [...requested].sort() };
-      const seed = canonicalOf(seedMaterial) ?? sha256Hex(canonicalJson(seedMaterial as unknown as JsonValue));
-      const taskId = nonEmpty(advance['taskId']) ? advance['taskId'] : null;
-      const key = handleKey(ctx.projectId, ctx.workspaceId!, goalRef.goalId, taskId);
-      // §4.5 line 890 safe point: the busy check and `handles.set` stay in one
-      // synchronous block (no second concurrent start can slip between them).
-      // The handle always advances its OWN request; ordering among the advances
-      // pending together at the claim/create point is enforced by
-      // `awaitAdvanceAdmission` inside the loop, never by a discarded call here.
-      const existing = handles.get(key);
-      if (existing !== undefined) {
-        // Same seed always replays the ORIGINAL snapshot without a model call,
-        // even after the owner returned `waiting`.
-        if (existing.seed === seed) return { status: 'ready', value: snapshot(existing) };
-        if (isActive(existing.state) || existing.wakeWaiting) return rejected('busy', 'another collaboration advancement is already active for this Task');
-      }
-      const handle: Handle = {
-        key, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
-        goalRef: structuredClone(goalRef), flowId: typedAdvance.flowId, taskId, seed, profiles,
-        context: snapshotContext(ctx),
-        state: 'running', current: structuredClone(typedAdvance), last: null,
-        failedCardRefs: [], reason: null,
-        messages: [], messageKeys: new Set(), currentRun: null,
-        stopRequested: false, stopReason: null, wakeWaiting: false, abort: new AbortController(),
-        activePumpAbort: null, stopDrain: null, done: Promise.resolve(), announced: null,
-      };
-      handles.set(key, handle);
-      changed(handle);
-      // The loop's final transition (completed/failed/waiting) is announced when
-      // the loop settles.
-      handle.done = runHandle(handle).finally(() => changed(handle));
-      if (taskId === null) await dependencies.onStarted?.(ctx, goalRef);
-      return { status: 'ready', value: snapshot(handle) };
+      return startHandle(ctx, input, false);
     },
     async read(ctx, input) {
       if (!nonEmpty(ctx.projectId) || !nonEmpty(ctx.workspaceId)) {
@@ -1100,6 +1225,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       // original-promise drain settle in the background and become `stopped`.
       return { status: 'ready', value: snapshot(targets[0]!) };
     },
+    wake: (ctx, goalRef) => wake(ctx, goalRef),
     async close() {
       closed = true;
       const all = [...handles.values()];
@@ -1108,6 +1234,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       // live Run at its next safe point; these drains wait for the Run and for any stop already begun.
       for (const handle of all) {
         handle.stopRequested = true;
+        leaveGoalWait(handle);
         handle.activePumpAbort?.abort('host_closing');
         admissionWaits.get(handle)?.();
       }

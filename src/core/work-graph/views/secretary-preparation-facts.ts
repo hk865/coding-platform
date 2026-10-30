@@ -27,6 +27,8 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
+import type { MessageExpiryPort } from '../communication/message-expiry.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { ServedRolesPort } from '../model/initialization-adoption-contracts.js';
 import type {
   SecretaryHistoryEntryV1, SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
@@ -52,6 +54,10 @@ export type SecretaryPreparationFactsDependencies = {
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   /** The roles the in-memory Workflow configuration serves for the request's workspace; read once per read. */
   roles: ServedRolesPort;
+  /** The one message read a reply/expiry round freezes its delivery slots from. */
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+  /** The expiry chain count of an expiry round's stored message (`MessageExpiryPort.readExpiryCount`). */
+  expiryCount: MessageExpiryPort['readExpiryCount'];
 };
 
 /** A Run in one of these phases has a live attempt and is not part of the batch. */
@@ -240,7 +246,7 @@ async function readSecretaryFactsOnce(
     }
   }
 
-  const materialOf = (round: QueryJobSnapshot): ReadResult<SecretaryRoundMaterialV1> => {
+  const materialOf = async (round: QueryJobSnapshot): Promise<ReadResult<SecretaryRoundMaterialV1>> => {
     if (round.job.roundKind === 'routing') {
       return rejected('unavailable', 'a routing round has no Query material');
     }
@@ -281,6 +287,33 @@ async function readSecretaryFactsOnce(
       }
       relatedCards.push({ ref: pin, current });
     }
+    // The round's delivery is frozen here, once, from the stored message: the
+    // question is the original message body; a reply's body is the response,
+    // an expiry's deadline and count come from the stored message. Both fields
+    // stay null on every round that is not a reply/expiry; a read failure is
+    // the facts' rejection, never a partial delivery.
+    let relatedMessageRef: SecretaryRoundMaterialV1['relatedMessageRef'] = null;
+    let delivery: SecretaryRoundMaterialV1['delivery'] = null;
+    if (round.job.roundKind === 'reply' || round.job.roundKind === 'expiry') {
+      const relatedRef = round.job.relatedMessageRef!;
+      const question = await deps.messages.readMessageBody(ctx, { messageRef: relatedRef, part: 'message' });
+      if (question.status !== 'ready') return question;
+      relatedMessageRef = { ...relatedRef };
+      if (round.job.roundKind === 'reply') {
+        const body = await deps.messages.readMessageBody(ctx, { messageRef: relatedRef, part: 'response' });
+        if (body.status !== 'ready') return body;
+        delivery = { question: question.value.text, body: body.value.text };
+      } else {
+        const message = await deps.messages.readMessage(ctx, relatedRef);
+        if (message.status !== 'ready') return message;
+        const count = await deps.expiryCount(ctx, { messageRef: relatedRef });
+        if (count.status !== 'ready') return count;
+        if (count.value === 'incomplete') {
+          return rejected('incomplete', `the expiry chain of ${relatedRef.messageId} is still open`);
+        }
+        delivery = { question: question.value.text, deadline: message.value.deadline!, expiryCount: count.value };
+      }
+    }
     return {
       status: 'ready',
       value: {
@@ -293,15 +326,17 @@ async function readSecretaryFactsOnce(
         selectedIdea,
         relatedCards,
         command: round.job.understanding,
+        relatedMessageRef,
+        delivery,
       },
     };
   };
 
-  const roundMaterial = materialOf(executingRound);
+  const roundMaterial = await materialOf(executingRound);
   if (roundMaterial.status !== 'ready') return roundMaterial;
   const batch: SecretaryRoundMaterialV1[] = [];
   for (const round of batchRounds) {
-    const material = materialOf(round);
+    const material = await materialOf(round);
     if (material.status !== 'ready') return material;
     batch.push(material.value);
   }
@@ -329,7 +364,7 @@ async function readSecretaryFactsOnce(
 
   const earlier: SecretaryHistoryEntryV1[] = [];
   for (const candidate of earlierRounds) {
-    const material = materialOf(candidate.round);
+    const material = await materialOf(candidate.round);
     if (material.status !== 'ready') return material;
     const absorbed: SecretaryRoundMaterialV1[] = [];
     for (const absorbedRef of candidate.round.job.absorbedRounds) {
@@ -337,7 +372,7 @@ async function readSecretaryFactsOnce(
       if (absorbedRound === undefined) {
         return rejected('unavailable', `the earlier round absorbed a round outside its request: ${absorbedRef.queryJobId}`);
       }
-      const absorbedMaterial = materialOf(absorbedRound);
+      const absorbedMaterial = await materialOf(absorbedRound);
       if (absorbedMaterial.status !== 'ready') return absorbedMaterial;
       absorbed.push(absorbedMaterial.value);
     }
@@ -550,9 +585,22 @@ export function createSecretaryPreparationFacts(
           ? before.value === after.value
           : compareCursors(before.value, after.value) === 0;
         if (stable) {
-          return result.status === 'ready'
-            ? { status: 'ready', value: { ...result.value, watermark: after.value } }
-            : result;
+          if (result.status !== 'ready') return result;
+          // Reply beats expiry at the handling point (book-7b.md:538): one batch
+          // that carries both materials for the same message hands over only the
+          // response. The expiry material keeps its round, reference and absorbed
+          // history; its `delivery` becomes null, and the existing null-delivery
+          // skip drops the input.
+          const { round, batch } = result.value.request;
+          for (const material of [round, ...batch]) {
+            if (material.delivery === null || material.relatedMessageRef === null
+              || 'body' in material.delivery) continue;
+            const answered = [round, ...batch].some(other => other !== material && other.delivery !== null
+              && 'body' in other.delivery && other.relatedMessageRef !== null
+              && sameJson(other.relatedMessageRef, material.relatedMessageRef));
+            if (answered) material.delivery = null;
+          }
+          return { status: 'ready', value: { ...result.value, watermark: after.value } };
         }
       }
       return rejected('unavailable', 'the secretary facts kept moving while they were read');

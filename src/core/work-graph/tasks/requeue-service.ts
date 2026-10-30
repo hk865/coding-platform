@@ -763,9 +763,10 @@ export function createTaskRequeueService(
     }
     const request = sessionDecoded.value.archiveRequest ?? null;
     const waitChoice = request?.wait ?? null;
-    // §4.1 step 7: an ordinary cancel request, or a transfer whose following
-    // wait_cancel step records the cancel disposition on the message, both
-    // authorize this wait-origin requeue.
+    // §4.1 step 7: an ordinary cancel request records a cancel disposition on
+    // the message; a transfer records its handler instead, and is never written
+    // as a cancel, so each request kind authorizes this wait-origin requeue only
+    // through its own disposal.
     if (request === null || request.requestId !== origin.archiveRequestId
       || waitChoice === null
       || !sameRef(waitChoice.runRef, origin.runRef) || !sameRef(waitChoice.messageRef, origin.messageRef)) {
@@ -781,9 +782,21 @@ export function createTaskRequeueService(
       return { ok: false, rejection: reject('unavailable', `the archive wait message is damaged: ${messageDecoded.reason}`) };
     }
     const disposition = messageDecoded.value.archiveWaitDisposition ?? null;
-    if (disposition === null || disposition.kind !== 'cancel' || !sameRef(disposition.runRef, origin.runRef)
-      || disposition.archiveRequestId !== request.requestId
-      || !sameRef(disposition.archiveSessionRef, originSession)) {
+    const dispositionMatches = disposition !== null
+      && sameRef(disposition.runRef, origin.runRef)
+      && disposition.archiveRequestId === request.requestId
+      && sameRef(disposition.archiveSessionRef, originSession);
+    if (disposition === null || !dispositionMatches) {
+      return { ok: false, rejection: reject('forbidden', 'the archive wait message carries no matching disposal') };
+    }
+    if (waitChoice.kind === 'transfer') {
+      // B-04: a transfer is never written as a cancel; the recorded handler must be the request's own target.
+      if (disposition.kind !== 'transfer' || messageDecoded.value.replyHandler === null
+        || messageDecoded.value.replyHandler === undefined
+        || !sameRef(messageDecoded.value.replyHandler.sessionRef, waitChoice.to)) {
+        return { ok: false, rejection: reject('forbidden', 'the archive wait message carries no matching transfer') };
+      }
+    } else if (disposition.kind !== 'cancel') {
       return { ok: false, rejection: reject('forbidden', 'the archive wait message carries no matching disposal') };
     }
     // §3.4/rule 10: the exemption needs the wait cancel of THIS request — the

@@ -61,8 +61,9 @@ export const SLICE1_LOOKUP_INDEXES: readonly Slice1LookupIndexV1[] = Object.free
 
 export type SessionWorkWaitV1 = { runRef: RunRef; messageRef: SessionMessageRef; task: TaskTriple };
 export type SessionWaitV1 = {
+  /** The live message: the tail of the `transferredTo` chain (the root when no forward). */
   messageRef: SessionMessageRef;
-  /** The wait's own message. `rootRef = messageRef`; no forward walk (D8). */
+  /** The chain's original message; a reply to `messageRef` satisfies this wait. */
   rootRef: SessionMessageRef;
   waitingSession: SessionRef;
   originalRun: RunRef | null;
@@ -71,7 +72,7 @@ export type SessionWaitV1 = {
   state: WaitStateV1;
   deadline: string | null;
   expiredAt: string | null;
-  /** The page budget's verdict: `true` on every returned row; a hit is the read's `incomplete` (D8). */
+  /** The walk's verdict: `false` only when 8 hops did not reach a tail (`incomplete`); not the page budget's. */
   complete: boolean;
 };
 /** The facts a Runtime/Query admission cannot read from the message alone. */

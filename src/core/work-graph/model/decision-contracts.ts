@@ -54,8 +54,8 @@ import type { NoteDecisionApplicationInputV1, NoteDispositionResult } from './no
 import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type {
-  MessageAppliedChangeV1, MessageExpiredChangeV1, MessageReleaseDecidedChangeV1, MessageReleasedChangeV1,
-  MessageWithdrawnChangeV1,
+  MessageAppliedChangeV1, MessageExpiredChangeV1, MessageGuardContext, MessageReleaseDecidedChangeV1,
+  MessageReleasedChangeV1, MessageWithdrawnChangeV1, SessionMessageChange,
 } from '../state/message-machine.js';
 
 // ------------------------------------------------------------------------ //
@@ -204,7 +204,14 @@ export type SessionMessageWriteCommandV1 =
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.release'; change: MessageReleaseDecidedChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.releaseApproved'; change: MessageReleasedChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.apply'; change: MessageAppliedChangeV1 })
-  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.recordExpiry'; change: MessageExpiredChangeV1 });
+  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.recordExpiry'; change: MessageExpiredChangeV1 })
+  | (SessionMessageWriteEnvelopeV1 & {
+      operation: 'message.inputAccepted';
+      /** The machine's own `input_accepted` change (`message-machine.ts:1726`). */
+      change: Extract<SessionMessageChange, { kind: 'input_accepted' }>;
+      /** The real execution facts `judge` needs; the machine refuses empty facts (`message-machine.ts:952`). */
+      inputAccepted: NonNullable<MessageGuardContext['inputAccepted']>;
+    });
 
 /** The fragment's shape, declared in model so the port never imports persistence. */
 export type SessionMessageCommitFragment = {
@@ -560,6 +567,27 @@ export interface MessageReleaseCandidatesPort {
   /** A read failure is the failure, never an empty page; a cross-goal ref is refused. */
   readReleaseCandidates(ctx: CoreCallContext, input: MessageReleaseCandidatesInputV1):
     Promise<ReadResult<MessageReleaseCandidatesPageV1>>;
+}
+
+export type MessageReleasedActionsInputV1 = {
+  /** The one workspace whose released, unprocessed action requests are read. */
+  scope: WorkspaceScope;
+  /** The declared index's opaque keyset cursor; `null` on the first page. */
+  after: string | null;
+  /** 1–100; any other value is `invalid`. */
+  limit: number;
+};
+export type MessageReleasedActionsPageV1 = {
+  /** The released, unprocessed `action_request` goals, in approval order; a repeated goal is left to `register`'s merge. */
+  goals: readonly GoalRef[];
+  /** The page's own consistent watermark; the restart registration's `cursorAtRead`. */
+  readThrough: CommitCursor;
+  nextCursor: string | null;
+};
+export interface MessageReleasedActionsPort {
+  /** A read failure is the failure, never an empty page. */
+  readReleasedActions(ctx: CoreCallContext, input: MessageReleasedActionsInputV1):
+    Promise<ReadResult<MessageReleasedActionsPageV1>>;
 }
 
 export interface MessageReleasePort {

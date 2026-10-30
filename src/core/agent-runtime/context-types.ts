@@ -16,12 +16,14 @@ import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { CommandRerunRequestReadPort } from '../work-graph/model/command-rerun-request-contracts.js';
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
+import type { ConsultationFactsV1 } from '../work-graph/model/session-contracts.js';
 import type { NoteMemoryMaterialPort } from '../work-graph/model/note-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
 import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
+import type { ConsultationResolvedFactV1 } from './consultation-facts-text.js';
 
 /**
  * L8 (book ruling 12; interface §8): the one reminder read the assembler takes
@@ -49,7 +51,8 @@ export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
  * The one template id vocabulary. The material carries it so a re-render never
  * guesses which input template produced the text.
  */
-export type ContextTemplateId = 'work-input' | 'query-planning-input' | 'query-copy-input' | 'secretary-round';
+export type ContextTemplateId = 'work-input' | 'query-planning-input' | 'query-copy-input' | 'secretary-round'
+  | 'intervention-planning';
 
 /** One section's frozen omission state; `wholeOmitted` means the range is null. */
 export type ContextSectionPlanV1 = {
@@ -157,6 +160,12 @@ export interface ContextAssembler {
     secretaryFacts?: SecretaryPreparationFactsV1;
     /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
     handoff?: SecretaryHandoffPromptFactsV1;
+    /**
+     * §3.15 item 5: the frozen platform facts preparation read once and resolved
+     * (a `task` fact's definition, an opened `body`); the recipe renders them and
+     * re-collects nothing.
+     */
+    consultationFacts?: { facts: ConsultationFactsV1; resolved: readonly ConsultationResolvedFactV1[] };
   }): Promise<ReadResult<AssembledContextV1>>;
   readAttentionGraph(ctx: CoreCallContext, request: AttentionGraphReadRequestV1): Promise<ReadResult<GraphAttentionFactsV1>>;
 }

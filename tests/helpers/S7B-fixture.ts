@@ -129,9 +129,9 @@ export async function acceptS7BReply(world: S6AHostWorld, input: {
 }
 
 /**
- * Step 5. The expiry owner on the injected clock: `platform.messageExpiry.recordExpiry` reads the message, calls the
- * one `decideExpiry` rule and commits `expiredAt` only; the reads back are `messages/read` and `sessions/facts`.
- * L publishes the member; until then the last statement is SR11 §11.5's `X-expiry` named-error helper (below).
+ * Step 5. The expiry owner on the injected clock: the published `platform.messageExpiry.recordExpiry` (7B-1 L) reads
+ * the message, calls the one `decideExpiry` rule and commits `expiredAt` only; the reads back are `messages/read` and
+ * `sessions/facts`.
  */
 export async function expireS7BWait(world: S6AHostWorld, input: {
   messageRef: SessionMessage['ref'];
@@ -214,10 +214,8 @@ export async function openS7BLookupWorld(world: S6AHostWorld, input: { count: nu
 
 /**
  * Step 8. The minimal existing-task intervention: a real wait on the line (step 2), then a person's message on the
- * same task and line through `messages/send`. The Host's message turn dispatches `workflow.handleIntervention`; L
- * publishes the member. Until then the step's last statement is the existing named-error helper (SR11 §11.5's
- * `B-intervention`; the stable rejection text is the literal below); after release it returns the wait, the
- * intervention Run and the claim.
+ * same task and line through `messages/send`. The published `workflow.handleIntervention` (7B-1 L) claims it, the
+ * Workflow drives the claimed Run, and the step returns the wait, the intervention Run and the claim.
  */
 export async function openS7BInterventionWorld(world: S6AHostWorld, input: { label: string }): Promise<{
   wait: SessionWaitV1; run: RunRef; claim: TaskClaim;
@@ -331,4 +329,15 @@ export async function retireS7BSender(world: S6AHostWorld, input: {
   const { moveKernelAside } = await import('./A2-restart-fixture.js');
   await moveKernelAside(world.database);
   await world.crash();
+}
+
+/**
+ * Step 13. The one mailbox read (H-05): the S6A world's public `messages/inbox` or `messages/outbox` page of one
+ * Session. S7A, S7B-L and H-consume share this; it is the body S7B-L kept locally.
+ */
+export async function listed(world: S6AHostWorld, suffix: 'inbox' | 'outbox',
+  session: S6ASession): Promise<SessionMessage[]> {
+  return ready<{ items: SessionMessage[] }>(await world.post(`messages/${suffix}`, plain(S6A_SCOPE,
+    suffix === 'inbox' ? { recipient: session.ref, page: { limit: 20 } }
+      : { senderSession: session.ref, page: { limit: 20 } })), suffix).items;
 }

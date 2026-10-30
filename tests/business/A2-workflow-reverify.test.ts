@@ -280,7 +280,10 @@ it.each([
 ] as const)('a gate stopped with %s waits with what a person can do about it', async (reason, detail, advice) => {
   const { workflow, calls } = workflowWith([SATISFIED_WORK, gateRowOf({ kind: 'stopped', reason, detail })]);
   expect(await workflow.advanceWork(ctx, selectWork())).toEqual({ status: 'ready', value: { state: 'waiting', next: null,
-    receipt: null, reason: `${reason}: the goal gate gate-1 is not re-verified automatically; ${advice}` } });
+    receipt: null, reason: `${reason}: the goal gate gate-1 is not re-verified automatically; ${advice}`,
+    waitBasis: { projectId: P, goalId: G,
+      recordKinds: ['VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'Run', 'Goal', 'PlanRevision'],
+      reasons: ['formal_check', 'evidence', 'goal_gate'] } } });
   expect(calls).toHaveLength(0);
 });
 

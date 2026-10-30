@@ -55,8 +55,8 @@ function requestRound(overrides: Partial<Parameters<typeof newRequestRound>[0]> 
   return newRequestRound({
     queryJobId: 'qj-root', runId: 'qr-root', scope: SCOPE, intent: INTENT, kind: 'request', requestRoot: null,
     requestGoalId: 'g1', assignedSession: SESSION_A, intakeSession: SESSION_A, selectedIdea: null,
-    relatedCardRefs: [CARD_REF], receipt: RECEIPT, submission: SUBMISSION, submittedAt: SUBMITTED_AT,
-    understanding: null, ...overrides,
+    relatedCardRefs: [CARD_REF], relatedMessageRef: null, receipt: RECEIPT, submission: SUBMISSION,
+    submittedAt: SUBMITTED_AT, understanding: null, ...overrides,
   });
 }
 

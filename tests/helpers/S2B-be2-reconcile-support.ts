@@ -191,7 +191,7 @@ export function refusingEntry(fx: S2BRuntimeStoreFixture, reason: string): Execu
 type Be2KernelGet = { sessionId: string; index: number };
 /** The public coordinates of one Kernel-store `read`. */
 type Be2KernelRead = { sessionId: string; after: number; limit: number; index: number };
-type Be2KernelFaultDecision = 'pass' | 'corrupt';
+type Be2KernelFaultDecision = 'pass' | 'corrupt' | 'transient' | 'missing';
 
 /**
  * The Kernel-store probe/read fault seam (spec §7 "Kernel storage-boundary fault
@@ -200,7 +200,8 @@ type Be2KernelFaultDecision = 'pass' | 'corrupt';
  * `KernelSessionReader.get`) and `store.read`. Returning `'corrupt'` throws an
  * explicit `StoreError('corrupt')`, which the probe maps to `damaged` (a `read`
  * failure is mapped to a rejected/unavailable history read) — never success,
- * zero or empty.
+ * zero or empty. On `read` only, `'transient'` throws a plain `Error` and
+ * `'missing'` throws `StoreError('not_found')` (7B-3 Q2).
  */
 export function withBe2KernelStoreFaults(
   base: RuntimeExecutionDependencies['kernelStores'],
@@ -229,6 +230,8 @@ export function withBe2KernelStoreFaults(
                 const coordinates: Be2KernelRead = {
                   sessionId: String(args[0]), after: Number(args[1]), limit: Number(args[2]), index: reads++,
                 };
+                if (decide.read?.(coordinates) === 'missing') throw new StoreError('not_found', 'S7B3 missing read');
+                if (decide.read?.(coordinates) === 'transient') throw new Error('S7B3 transient read');
                 if (decide.read?.(coordinates) === 'corrupt') {
                   throw new StoreError('corrupt', `S2B BE2 injected read failure (#${String(coordinates.index)})`);
                 }

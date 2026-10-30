@@ -22,6 +22,7 @@ import type {
   ContextAssemblyBindingV1, ContextExtensionsV1, NoteIndexRowV1, PlatformDutyV1,
 } from '../../contracts/graph-context.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
+import { renderDeliveryInput } from '../../contracts/prompts/delivery-input.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
@@ -74,12 +75,24 @@ function relatedCardLine(card: SecretaryRoundMaterialV1['relatedCards'][number])
 }
 
 /**
- * `- [<since>] <input>`, then the selected idea when there is one, then the
- * card refs the round carries (an `ask`) under their heading. A round with
- * none of these renders its input line alone.
+ * `- [<since>] <input>`, then the frozen delivery of a reply/expiry round when
+ * it has one, then the selected idea when there is one, then the card refs the
+ * round carries (an `ask`) under their heading. A round with none of these
+ * renders its input line alone.
  */
-export function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptTextsV1): string {
+export function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptTextsV1,
+  toolNames: readonly string[] = []): string {
   const lines = [`- [${round.since}] ${round.text}`];
+  if (round.delivery !== null && round.relatedMessageRef !== null) {
+    // The frozen slots are the canonical delivery input minus the template and
+    // message id: an expiry carries `expiryCount` and takes the expiry
+    // template; every other frozen delivery is the reply template.
+    const delivery = round.delivery;
+    const messageId = round.relatedMessageRef.messageId;
+    lines.push('expiryCount' in delivery
+      ? renderDeliveryInput(texts, { template: 'wait-expiry-delivery', messageId, ...delivery }, toolNames)
+      : renderDeliveryInput(texts, { template: 'wait-reply-delivery', messageId, ...delivery }, toolNames));
+  }
   if (round.selectedIdea !== null) {
     lines.push(packString(texts, 'secretary.selectedIdea'), `${round.selectedIdea.title}: ${round.selectedIdea.detail}`);
   }
@@ -90,9 +103,10 @@ export function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptText
 }
 
 /** One earlier round on another Session: its material, absorbed rounds, then its result line. */
-function earlierEntryText(entry: SecretaryHistoryEntryV1, texts: PromptTextsV1): string {
-  const parts = [roundMaterial(entry.round, texts)];
-  for (const absorbed of entry.absorbed) parts.push(roundMaterial(absorbed, texts));
+function earlierEntryText(entry: SecretaryHistoryEntryV1, texts: PromptTextsV1,
+  toolNames: readonly string[]): string {
+  const parts = [roundMaterial(entry.round, texts, toolNames)];
+  for (const absorbed of entry.absorbed) parts.push(roundMaterial(absorbed, texts, toolNames));
   let result: string;
   switch (entry.result.kind) {
     case 'answer': {
@@ -319,15 +333,15 @@ export async function assembleSecretaryContext(
     : handoffPromptText(input.handoff, texts, input.toolNames);
   const taskRoundSection = `${handoffSection === null ? '' : `${handoffSection}\n\n`}`
     + `${packString(texts, 'secretary.roundHeading')}\n`
-    + `${roundMaterial(secretary.request.round, texts)}\n\n${answerFormat}`;
+    + `${roundMaterial(secretary.request.round, texts, input.toolNames)}\n\n${answerFormat}`;
   const taskBatchedSection = secretary.request.batch.length === 0
     ? null
     : `${packString(texts, 'secretary.batchedHeading')}\n`
-      + secretary.request.batch.map((round) => roundMaterial(round, texts)).join('\n');
+      + secretary.request.batch.map((round) => roundMaterial(round, texts, input.toolNames)).join('\n');
   const taskEarlierSection = secretary.request.earlier.length === 0
     ? null
     : `${packString(texts, 'secretary.earlierHeading')}\n`
-      + secretary.request.earlier.map((entry) => earlierEntryText(entry, texts)).join('\n\n');
+      + secretary.request.earlier.map((entry) => earlierEntryText(entry, texts, input.toolNames)).join('\n\n');
 
   const sectionOrder = sectionOrderFor('secretary', 'secretary-round', texts);
   const rendered = renderQueryContext({

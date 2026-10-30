@@ -28,16 +28,13 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { isNonNeg, isRecord, utf8Bytes } from '../../../contracts/validation/common.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
-import type {
-  ContextAssemblyBindingV1, ContextCallKindV1, ContextSectionNameV1, InputDeclarationV1,
-  InputSelectionV1, PlatformDutyV1, SelectedInputSourceV1,
+import {
+  CONTEXT_CALL_KINDS,
+  type ContextAssemblyBindingV1, type ContextCallKindV1, type ContextSectionNameV1, type InputDeclarationV1,
+  type InputSelectionV1, type PlatformDutyV1, type SelectedInputSourceV1,
 } from '../../../contracts/graph-context.js';
 
 const CONTEXT_FORMAT_VERSION: ContextAssemblyBindingV1['formatVersion'] = 's3-context-v1';
-
-const CALL_KINDS: readonly ContextCallKindV1[] = [
-  'work', 'continuation', 'handoff', 'review', 'secretary', 'copy', 'planning', 'attention',
-];
 
 /** The four budgeted optional sections that may be omitted as a whole (§4.3 T2). */
 const BUDGET_SECTIONS: ReadonlySet<ContextSectionNameV1> = new Set(['footprint', 'notes', 'reminders', 'inputs']);
@@ -71,6 +68,7 @@ const CALL_KIND_SECTIONS: Readonly<Record<ContextCallKindV1, ReadonlySet<Context
   secretary: new Set(['role', 'goal', 'task', 'notes', 'reminders']),
   copy: new Set(['role', 'goal', 'task']),
   planning: new Set(['role', 'goal', 'task', 'footprint']),
+  intervention_planning: new Set(['role', 'goal', 'task']),
   attention: new Set(['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation']),
 };
 
@@ -288,7 +286,7 @@ export function contextAssemblyProblem(input: ContextAssemblyProblemInput): Core
   if (!isRecord(binding)) return invalid('the context assembly binding is not an object');
   if (binding.schemaVersion !== 1) return invalid('the context assembly binding schemaVersion must be 1');
   if (binding.formatVersion !== CONTEXT_FORMAT_VERSION) return invalid('the context assembly formatVersion is not s3-context-v1');
-  if (!CALL_KINDS.includes(binding.callKind)) return invalid('the context assembly callKind is not recognized');
+  if (!CONTEXT_CALL_KINDS.includes(binding.callKind)) return invalid('the context assembly callKind is not recognized');
   if (!PLATFORM_DUTIES.includes(binding.duty)) return invalid('the context assembly duty is not recognized');
   if (!isNonNeg(binding.residentBudgetBytes)) return invalid('residentBudgetBytes must be a non-negative safe integer');
   if (!isNonNeg(binding.residentBytes)) return invalid('residentBytes must be a non-negative safe integer');

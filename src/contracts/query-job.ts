@@ -2,6 +2,7 @@ import type { ArtifactRef } from "./artifact.js";
 import type { PreparedQueryManifestV1 } from "./core/prepared-execution.js";
 import type { InitializationBindingRef } from "./initialization-binding.js";
 import type { InitializationSourceV1 } from "./initial-planning.js";
+import type { DeliveryInputV1 } from "./prompts/delivery-input.js";
 export type QueryJobRef = {
     aggregateType: "QueryJob";
     projectId: string;
@@ -23,6 +24,9 @@ export type QueryRunRef = {
  * with the card's current revision (`null` when the card is gone), read in the
  * same preparation.
  */
+export type SecretaryRoundDeliveryV1 =
+  | Omit<Extract<DeliveryInputV1, { template: 'wait-reply-delivery' }>, 'template' | 'messageId'>
+  | Omit<Extract<DeliveryInputV1, { template: 'wait-expiry-delivery' }>, 'template' | 'messageId'>;
 export type SecretaryRoundMaterialV1 = {
     ref: QueryJobRef;
     revision: number;
@@ -34,6 +38,8 @@ export type SecretaryRoundMaterialV1 = {
     relatedCards: { ref: VersionedRef; current: number | null }[];
     /** The round's stored understanding command, projected from `round.job.understanding`. */
     command: RequestUnderstandingCommandV1 | null;
+    relatedMessageRef: SessionMessageRef | null;
+    delivery: SecretaryRoundDeliveryV1 | null;
 };
 /** The request facts frozen into a request round's prepared manifest. */
 export type SecretaryRequestManifestV1 = {
@@ -88,6 +94,20 @@ export function consultationQueryRefs(messageRef: SessionMessageRef, part: 'mess
         queryJobRef: { aggregateType: "QueryJob", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId, queryJobId },
         queryRunRef: { aggregateType: "QueryRun", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId,
             queryJobId, runId: `consultation-run-${hash}` },
+    };
+}
+/**
+ * The frozen deterministic identity of the ONE intervention-planning Query bound
+ * to a real source message: the canonical SHA-256 of the message ref decides the
+ * QueryJob and QueryRun ids, so a retry addresses the same persisted pair.
+ */
+export function interventionPlanningQueryRefs(messageRef: SessionMessageRef): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
+    const hash = sha256Hex(canonicalJson(messageRef as unknown as JsonValue));
+    const queryJobId = `intervention-planning-${hash}`;
+    return {
+        queryJobRef: queryJobRefFor(messageRef.projectId, messageRef.workspaceId, queryJobId),
+        queryRunRef: { aggregateType: "QueryRun", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId,
+            queryJobId, runId: `intervention-planning-run-${hash}` },
     };
 }
 type QueryRunStatus = "pending" | "running" | "answered" | "closed";
@@ -177,6 +197,7 @@ import type { CommitCursor } from './command-event.js';
 import type { GoalRef, VersionedRef } from './ledger.js';
 import type { CurrentPointerRef } from './note.js';
 import { validMaterialSourcePin } from './material-access.js';
+import { isRecord } from './validation/common.js';
 export type QueryTaskRef = {
     aggregateType: "Task";
     projectId: string;
@@ -212,7 +233,8 @@ export type RequestCommandReceiptV1 =
   | { kind: 'submit'; requestRoot: QueryJobRef; round: QueryJobRef; assignment: 'unassigned'; secretary: null; created: false }
   | { kind: 'route'; routingRound: QueryJobRef }
   | { kind: 'select_idea' | 'ask'; followupRound: QueryJobRef; secretary: SessionRef | null }
-  | { kind: 'understanding'; round: QueryJobRef };
+  | { kind: 'understanding'; round: QueryJobRef }
+  | { kind: 'reply' | 'expiry'; round: QueryJobRef; relatedMessageRef: SessionMessageRef; secretary: SessionRef };
 // ------------------------------------------------------------------------ //
 // Value types                                                                 //
 // ------------------------------------------------------------------------ //
@@ -234,7 +256,7 @@ export type QueryJobIntentV1 = {
     correlationId: string;
     /** The real read-only role work every current Query carries. */
     execution: {
-        kind: 'semantic_query' | 'initial_coordination' | 'execution_coordination';
+        kind: 'semantic_query' | 'initial_coordination' | 'execution_coordination' | 'intervention_planning';
         responsePurpose?: import('./memory.js').MemoryPurpose;
         feedback?: import('./execution-feedback.js').FeedbackSource;
         roleBinding: RoleBindingRefV1;
@@ -248,6 +270,8 @@ export type QueryJobIntentV1 = {
             messageRef: SessionMessageRef;
             part?: 'response';
             recipient: SessionRef;
+            /** 7B-3: the create operation of a consultation copy; CS's writer sets it, Q reads the frozen payload by it. */
+            operation?: OperationRef;
             /**
              * Formal isolated A′ derivation. When present the Query runs in
              * `childSessionRef` with the fixed completed prefix of `sourceSessionRef`
@@ -263,6 +287,8 @@ export type QueryJobIntentV1 = {
                 throughPosition: number | null;
             };
         };
+        /** L11: the planning Query starts from a real message; required on `intervention_planning`, absent on every other kind. */
+        sourceMessageRef?: SessionMessageRef;
         implementationAuthorization?: {
             requestId: string;
             writeScope: [
@@ -274,11 +300,8 @@ export type QueryJobIntentV1 = {
     };
 };
 type QueryJobStatus = "pending" | "running" | "answered" | "closed";
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function validSessionMessageRef(value: unknown): boolean {
-    if (!isRecordValue(value))
+    if (!isRecord(value))
         return false;
     const keys = Object.keys(value);
     return keys.length === 4 && keys.every(key => ['aggregateType', 'projectId', 'workspaceId', 'messageId'].includes(key)) &&
@@ -288,7 +311,7 @@ function validSessionMessageRef(value: unknown): boolean {
         typeof value['messageId'] === 'string' && value['messageId'].length > 0;
 }
 function validPlainSessionRef(value: unknown): boolean {
-    if (!isRecordValue(value))
+    if (!isRecord(value))
         return false;
     if (Object.keys(value).some(key => key !== 'aggregateType' && key !== 'projectId' && key !== 'sessionId'))
         return false;
@@ -296,12 +319,12 @@ function validPlainSessionRef(value: unknown): boolean {
         typeof value['sessionId'] === 'string' && value['sessionId'].length > 0;
 }
 function validConsultationBinding(value: unknown): boolean {
-    if (!isRecordValue(value))
+    if (!isRecord(value))
         return false;
     const keys = Object.keys(value);
-    if (!(keys.length >= 2 && keys.length <= 4) || !keys.includes('messageRef') || !keys.includes('recipient'))
+    if (!(keys.length >= 2 && keys.length <= 5) || !keys.includes('messageRef') || !keys.includes('recipient'))
         return false;
-    if (keys.some(key => !['messageRef', 'recipient', 'derivation', 'part'].includes(key)))
+    if (keys.some(key => !['messageRef', 'recipient', 'derivation', 'part', 'operation'].includes(key)))
         return false;
     if (!validSessionMessageRef(value['messageRef']))
         return false;
@@ -311,14 +334,14 @@ function validConsultationBinding(value: unknown): boolean {
     if (value['part'] === 'response' && value['derivation'] !== undefined) return false;
     const derivation = value['derivation'];
     if (derivation !== undefined) {
-        if (!isRecordValue(derivation))
+        if (!isRecord(derivation))
             return false;
         if (Object.keys(derivation).some(key => !['childSessionRef', 'sourceSessionRef', 'sourceKernel', 'throughPosition'].includes(key)))
             return false;
         if (!validPlainSessionRef(derivation['childSessionRef']) || !validPlainSessionRef(derivation['sourceSessionRef']))
             return false;
         const sourceKernel = derivation['sourceKernel'];
-        if (!isRecordValue(sourceKernel)
+        if (!isRecord(sourceKernel)
             || typeof sourceKernel['adapterId'] !== 'string' || sourceKernel['adapterId'].length === 0
             || typeof sourceKernel['kernelSessionId'] !== 'string' || sourceKernel['kernelSessionId'].length === 0)
             return false;
@@ -331,7 +354,13 @@ function validConsultationBinding(value: unknown): boolean {
 export function validQueryExecution(value: QueryJobIntentV1['execution']): boolean {
     if (value === undefined)
         return true;
-    if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination'].includes(value.kind))
+    if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination', 'intervention_planning'].includes(value.kind))
+        return false;
+    // §3.17: the planning kind carries its source message; no other kind may carry one.
+    if (value.kind === 'intervention_planning') {
+        if (value.sourceMessageRef === undefined || !validSessionMessageRef(value.sourceMessageRef))
+            return false;
+    } else if (value.sourceMessageRef !== undefined)
         return false;
     if (value.consultation !== undefined && (value.kind !== 'semantic_query' || !validConsultationBinding(value.consultation)))
         return false;

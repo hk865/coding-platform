@@ -44,13 +44,12 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
-import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { RequestSubmitResultV1 } from '../../src/business/workflow/request-intake.js';
 import * as promptTexts from '../../src/core/agent-runtime/prompt-set-texts.js';
 import { deferred, readQuery } from '../helpers/A2-restart-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { claimQuery, claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
+import { claimQuery, claimWithSecretaryProfile, prepareAttempt, start } from '../helpers/request-claim-steps.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { submitRound } from '../helpers/S6A-history-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
@@ -74,21 +73,6 @@ async function openHostWorld(backend: 'memory' | 'sqlite'): Promise<S6AHostWorld
   const world = await openS6AHostWorld({ backend });
   worlds.push(world);
   return world;
-}
-
-/** `queries/prepare` of the Query's current Run; a refusal fails the row. */
-async function prepareAttempt(world: S6AHostWorld, ref: QueryJobRef, requestId: string): Promise<PreparedQueryExecution> {
-  const answer = (await world.post('queries/prepare', plain(S6A_SCOPE, {
-    queryRunRef: (await readQuery(world.ag2b, ref)).run.ref, requestId,
-  }))).body as ReadResult<PreparedQueryExecution>;
-  if (answer.status !== 'ready') throw new Error(`S6A: the preparation was refused: ${JSON.stringify(answer)}`);
-  return answer.value;
-}
-
-/** `queries/start` of a prepared attempt; answers the route's body. */
-async function start(world: S6AHostWorld, prepared: PreparedQueryExecution, requestId: string): Promise<Record<string, unknown>> {
-  return (await world.post('queries/start', plain(S6A_SCOPE, { prepared, consumerId: 'ag2b-consumer', requestId }))).body as
-    Record<string, unknown>;
 }
 
 /** Claimed with the profile and prepared on the Session; answers the prepared value. */

@@ -64,6 +64,8 @@ const CALL_KIND_SECTIONS: Readonly<Partial<Record<ContextCallKindV1, readonly Co
   continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
   planning: ['role', 'goal', 'task', 'footprint'],
   copy: ['role', 'goal', 'task'],
+  // The intervention template's `plan` slot is its `task` binding section.
+  intervention_planning: ['role', 'goal', 'task'],
   // The secretary's three task slots project onto the one `task` section.
   secretary: ['role', 'goal', 'task', 'notes', 'reminders'],
 };
@@ -93,7 +95,7 @@ export function templateSectionOrder(texts: PromptTextsV1, templateId: ContextTe
  * sections. A person's pack that declares another legal order is followed.
  */
 export function sectionOrderFor(
-  callKind: 'work' | 'continuation' | 'planning' | 'copy' | 'secretary',
+  callKind: 'work' | 'continuation' | 'planning' | 'copy' | 'secretary' | 'intervention_planning',
   templateId: ContextTemplateId,
   texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): ContextSectionNameV1[] {
@@ -121,6 +123,10 @@ export function queryPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS):
     order.copy = sectionOrderFor('copy', 'query-copy-input', texts);
   if (texts.templates['secretary-round'] !== undefined)
     order.secretary = sectionOrderFor('secretary', 'secretary-round', texts);
+  // A pack without the template freezes no order for the kind; the start check
+  // then rejects instead of falling back to another template's order.
+  if (texts.templates['intervention-planning'] !== undefined)
+    order.intervention_planning = sectionOrderFor('intervention_planning', 'intervention-planning', texts);
   return order;
 }
 
@@ -156,6 +162,9 @@ const TEMPLATE_OPTIONAL_SECTIONS: Readonly<Record<ContextTemplateId, readonly Op
   'work-input': OPTIONAL_SECTIONS,
   'query-planning-input': ['footprint'],
   'query-copy-input': [],
+  // The `plan` slot is the required `task` section and `message` is not a
+  // section, so this template has no optional section slot.
+  'intervention-planning': [],
   // The secretary's task block is part of the required task section; only the
   // note index is a section-level optional slot.
   'secretary-round': ['notes'],
@@ -178,6 +187,9 @@ type RenderInput = {
    * three slots adjacent. `required.task` is null when this is present.
    */
   taskSlots?: { round: string; batched: string | null; earlier: string | null };
+  /** The intervention template's plan summary (the `task` section) and the person's message slot. */
+  plan?: string | null;
+  message?: string | null;
   optional: Partial<Record<OptionalSectionName, OptionalRow[]>>;
   continuationSuffix: string | null;
   reviewSuffix: string | null;
@@ -246,7 +258,10 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     goal: goal === null ? undefined : '\n\n' + headers.goal + '\n' + goal,
   };
   if (input.taskSlots === undefined) {
-    slots.task = task === null ? undefined : '\n\n' + headers.task + '\n' + task;
+    // The intervention template writes this section through its `plan` slot.
+    if (input.templateId !== 'intervention-planning') {
+      slots.task = task === null ? undefined : '\n\n' + headers.task + '\n' + task;
+    }
   } else {
     slots.task_round = '\n\n' + headers.task + '\n' + input.taskSlots.round;
     slots.task_batched = input.taskSlots.batched === null ? undefined : '\n\n' + input.taskSlots.batched;
@@ -263,6 +278,12 @@ function renderWithTemplate(input: RenderInput): RenderResult {
     slots.unknown_call_review = input.reviewSuffix === null ? undefined : '\n\n' + input.reviewSuffix;
   }
   if (input.templateId === 'query-planning-input') slots.footprint = undefined;
+  if (input.templateId === 'intervention-planning') {
+    // The `plan` slot carries its own leading blank line and its `plan:`/`stages:`/`tasks:` text; the
+    // `message` slot carries the separator, the question heading and the person's text.
+    slots.plan = input.plan == null ? undefined : '\n\n' + input.plan;
+    slots.message = '\n\n' + packString(texts, 'context.questionHeading') + '\n' + (input.message ?? '');
+  }
 
   const omittedRows = new Map<ContextSectionNameV1, number>();
   const whollyOmitted = new Set<ContextSectionNameV1>();
@@ -324,9 +345,13 @@ function renderWithTemplate(input: RenderInput): RenderResult {
   // every wholly omitted one appears, in that order.
   const sections: ContextAssemblyBindingV1['sections'] = [];
   const budgetSections = new Set<string>(OPTIONAL_SECTIONS);
+  // `renderTemplate` keys ranges by slot, while this loop walks section names;
+  // the intervention template's `task` section is written by its `plan` slot.
+  const slotOf = (name: string): string =>
+    input.templateId === 'intervention-planning' && name === 'task' ? 'plan' : name;
   for (const name of input.sectionOrder) {
     if (name === 'role') {
-      const range = rangeOf('role');
+      const range = rangeOf(slotOf('role'));
       sections.push({ name: 'role', startByte: range.startByte, endByte: range.endByte, omitted: 0 });
       continue;
     }
@@ -338,13 +363,16 @@ function renderWithTemplate(input: RenderInput): RenderResult {
         sections.push({ name, startByte: null, endByte: null, omitted });
         continue;
       }
-      const range = rangeOf(name);
+      const range = rangeOf(slotOf(name));
       sections.push({ name, startByte: range.startByte + 2, endByte: range.endByte, omitted });
       continue;
     }
     if (name === 'goal' && goal === null) continue;
     if (name === 'task') {
-      if (input.taskSlots !== undefined) {
+      if (input.templateId === 'intervention-planning') {
+        // The optional `plan` slot is this section; no plan, no task section.
+        if (input.plan == null) continue;
+      } else if (input.taskSlots !== undefined) {
         // The three slots are one section: it starts at `task_round` and ends
         // at the last adjacent slot this round rendered.
         const first = rangeOf('task_round');
@@ -355,12 +383,11 @@ function renderWithTemplate(input: RenderInput): RenderResult {
         }
         sections.push({ name: 'task', startByte: first.startByte + 2, endByte, omitted: 0 });
         continue;
-      }
-      if (task === null) continue;
+      } else if (task === null) continue;
     }
     if (name === 'continuation' && input.continuationSuffix === null) continue;
     if (name === 'unknown_call_review' && input.reviewSuffix === null) continue;
-    const range = rangeOf(name);
+    const range = rangeOf(slotOf(name));
     sections.push({ name, startByte: range.startByte + 2, endByte: range.endByte, omitted: 0 });
   }
 
@@ -423,11 +450,15 @@ export function renderContext(input: {
 }
 
 export function renderQueryContext(input: {
-  templateId: 'query-planning-input' | 'query-copy-input' | 'secretary-round';
+  templateId: 'query-planning-input' | 'query-copy-input' | 'secretary-round' | 'intervention-planning';
   prelude: string;
   required: { role: string; goal: string | null; task: string | null };
   /** The secretary's three task slots; present only for `secretary-round`. */
   taskSlots?: { round: string; batched: string | null; earlier: string | null };
+  /** The intervention template's plan summary; present only for `intervention-planning`. */
+  plan?: string | null;
+  /** The intervention template's person message; present only for `intervention-planning`. */
+  message?: string | null;
   optional: Partial<Record<'footprint' | 'notes', OptionalRow[]>>;
   residentBudgetBytes: number;
   /** Ruling 10: the frozen tool list; absent renders every tool block (direct call). */
@@ -441,13 +472,16 @@ export function renderQueryContext(input: {
 }): RenderResult {
   const texts = input.texts ?? DEFAULT_TEXTS;
   const callKind = input.templateId === 'query-planning-input' ? 'planning'
-    : input.templateId === 'query-copy-input' ? 'copy' : 'secretary';
+    : input.templateId === 'query-copy-input' ? 'copy'
+    : input.templateId === 'intervention-planning' ? 'intervention_planning' : 'secretary';
   return renderWithTemplate({
     templateId: input.templateId,
     sectionOrder: input.sectionOrder ?? sectionOrderFor(callKind, input.templateId, texts),
     prelude: input.prelude,
     required: input.required,
     ...(input.taskSlots === undefined ? {} : { taskSlots: input.taskSlots }),
+    ...(input.plan === undefined ? {} : { plan: input.plan }),
+    ...(input.message === undefined ? {} : { message: input.message }),
     optional: input.optional,
     continuationSuffix: null,
     reviewSuffix: null,

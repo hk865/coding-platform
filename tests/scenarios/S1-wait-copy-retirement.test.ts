@@ -101,6 +101,9 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   const answered = await message(h, line1.messageRef);
   expect((answered.acceptedInputs ?? []).filter(a => a.part === 'response')).toEqual([]);
   expect(answered.replyHandler?.sessionRef).toEqual(D);
+  // SR3 §3.2.6: the transfer's one step records the handler and never writes a cancel.
+  expect(answered.archiveWaitDisposition).toMatchObject({ kind: 'transfer' });
+  expect(answered.waitCancelledAt).toBeNull();
 
   // Claim/start D through ordinary dispatch. Stop before checks so no unrelated
   // task is advanced. The real before_model boundary supplies and confirms m.

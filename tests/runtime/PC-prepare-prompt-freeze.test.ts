@@ -41,6 +41,7 @@ const QUERY_ORDER = {
   copy: ['role', 'goal', 'task'],
   // The platform pack also declares the secretary round, a Query call kind with its own template.
   secretary: ['role', 'goal', 'notes', 'task'],
+  intervention_planning: ['role', 'goal', 'task'],
 };
 
 /** A source that publishes where it pauses and how many times it was asked to resolve. */

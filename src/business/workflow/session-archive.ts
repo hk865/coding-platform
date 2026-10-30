@@ -590,8 +590,10 @@ export function createSessionArchiveService(
       if (mailbox?.disposeArchiveWait === undefined) {
         return partial(fallbackSession, receipts, reject('unsupported', 'the mailbox wait-disposal owner is not installed'), requeueRefusals);
       }
+      // §3.9 item 6: a transfer records the handler and submits no `wait_cancel`
+      // step, so it is never written as a cancel; only a cancel request cancels.
       const steps: ArchiveStepRefV1[] = R.wait.kind === 'transfer'
-        ? [stepFor(sessionRef, R, 'reply_handler', canonical(R.wait.messageRef) ?? ''), stepFor(sessionRef, R, 'wait_cancel', canonical(R.wait.runRef) ?? '')]
+        ? [stepFor(sessionRef, R, 'reply_handler', canonical(R.wait.messageRef) ?? '')]
         : [stepFor(sessionRef, R, 'wait_cancel', canonical(R.wait.runRef) ?? '')];
       for (const step of steps) {
         try {
