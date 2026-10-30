@@ -3291,7 +3291,7 @@ stateDiagram-v2
 
 ## 10. Message
 
-消息是收件 Session 收到的一条陈述，不是任务义务。收件人忙或已归档都照常收信；收信不会唤醒执行、不会抢占，也不会建立任务依赖（`src/core/work-graph/model/communication-contracts.ts:6-11`）。本节把邮箱的写入点（state-writes-other §2 的 M-a…M-f，加 7B-1 的接受与到期，见 §10.7）转写为单调状态机。消息状态只有 `pending/read/responded`。“已交付”“等待”“已到期”“已落实”都用其他事实表达，不新增消息状态（ORCHESTRATION §0.2“确认层次”、§2 消息行）。
+消息是收件 Session 收到的一条陈述，不是任务义务。收件人忙或已归档都照常收信；收信不会唤醒执行、不会抢占，也不会建立任务依赖（`src/core/work-graph/model/communication-contracts.ts:6-11`）。本节把邮箱的写入点（state-writes-other §2 的 M-a…M-f，加 7B-1 的接受与到期、7B-2 的请求轮与只带 notify 的供给，见 §10.7、§10.10，以及 7B-3 F 的转发与等待处置，见 §10.11）转写为单调状态机。转发和等待处置都不新增消息状态。消息状态只有 `pending/read/responded`。“已交付”“等待”“已到期”“已落实”都用其他事实表达，不新增消息状态（ORCHESTRATION §0.2“确认层次”、§2 消息行）。
 
 本节依赖的决定（2026-10-03 已确认，D-6、D-4(b) 按原推荐）：D-17（不做“让出前即持久化的等待关联”）、D-6（重启补账，U-6）、D-4(b)（人工认定，Kernel 可能不可读；属 U-4；只经持实例租约的 Host 入口，lead 决定 L-1），以及 §6 的 RD-3（重启时 Kernel 终态为 yielded：由持久事实重建 continuation 后按原结果入账；只在本 Turn 恰好一条等待发信时重建，否则记为未知，lead 决定 L-5）。
 
@@ -3520,7 +3520,7 @@ stateDiagram-v2
 **接受（唯一的交付写入）。** `recordInputAccepted`（`communication/mailbox-service.ts:3692-3825`）仍是唯一写 `acceptedInputs` 的地方。`part:'message'` 的提交同事务写 `delivery:'delivered'`、`deliveryEvidence:{executionRef, acceptedAt}`（`state/message-machine.ts:1792-1795`）；offer 之后 Goal 才暂停也照实记录（Kernel 确实接受了）。重启时 `confirmMailboxInputs`（`agent-runtime/execution-inputs.ts:358-381`）按同一身份 `input-accepted:<sha>` 重放，不重复写。
 
 - `part:'response'` 的“执行 Session 匹配”是有效回复处理者：记录里的 `replyHandler` 优先，否则原 `work_run`/`secretary_round` 发信 Session（`message-machine.ts:1217-1224`）。
-- `part:'expiry'` 的执行 Session 是让出这个等待的 `work_run` 发信 Session（`mailbox-service.ts:3792-3797`）；秘书的到期输入不在 7B-1。
+- `part:'expiry'` 的执行 Session 是让出这个等待的 `work_run` 发信 Session（`mailbox-service.ts:3811-3814`）；7B-2 的秘书到期轮由请求轮在 `entered` 提交里消费，见 §10.10。
 
 **消费领取（consuming claim）。** 只在接受提交里取一次：键 `wait-consumed:` + `canonicalKey(messageRef)`（`model/communication-contracts.ts:77-79`），`UniqueClaimChange`，`expectedOwner:null`，`nextOwner:inputId`（`mailbox-service.ts:3821-3823`）。
 
@@ -3549,7 +3549,7 @@ stateDiagram-v2
 - `readDueWaits` 一个工作区一页，`EXPIRY_PAGE = 50`（`message-expiry.ts:45`）；游标只在内存（`src/app/host.ts:2004`）。写顺序是最早的期限先（R4-14 第 3 条）。
 - Host 每次心跳开头、持实例租约时对每个配置的工作区跑一次（`host.ts:1993`、`:2003-2029`）。读页失败就下一次心跳重试，不当作“没有到期”（`:2013`）；遇到 `skipped/not_due` 就停止本页、游标停在该项之前，下一次再试（`:2017-2021`）。
 - `deadline` 比较用注入时钟（`options.now`，`host.ts:663`、`create-platform.ts:1081`）；墙钟只用于节流。
-- 到期只记事实，不唤醒任何东西；唤醒循环（7B-2）按 `SessionMessage` 提交再唤醒目标。秘书的过期提问被记下、可读，它的 `expiry` 轮在 7B-2（没有假生产者）。
+- 到期只记事实，不唤醒任何东西；`SessionMessage` 的提交由两个队列按各自的聚合类型订阅：`goal_waits` 唤醒目标，请求轮队列按同一种提交排空（`host.ts:844-846`、`:887`）。秘书的过期提问被记下、可读，它的 `expiry` 轮由请求驱动从工作区消息里发现并追加（`request-service.ts:2003-2048`），没有假生产者。
 
 **到期次数。** `readExpiryCount`（`message-expiry.ts:141-161`）沿 `followupOf` 往回走，一条总预算 4 页 × 25 次链读：当前消息算 1，链上只要还有一条 `expiredAt` 已设就返回 2（2 是上限，不是链上到期消息的总数），走完没有返回 1，超预算返回 `incomplete`。`wait-expiry-delivery` 把它写成“第 {{expiryCount}} 次到期”（`resources/prompts/platform/templates/wait-expiry-delivery.txt:1`），所以可见文字只会是“第 1 次”或“第 2 次”。同一毫秒重扫没有新记录，计数不会自己长。`incomplete` 分支没有走公共链测过（要造一条超过 100 次链读的追问链）。
 
@@ -3558,7 +3558,7 @@ stateDiagram-v2
 - `SessionFactsV1.waits: SessionWaitV1[]`（`tasks/session-facts.ts:198-212`、`:282-330`）：一个发送方 Session 的全部 `open`/`answered`/`expired` 等待，按消息记录的创建游标（`since`）升序；`wait` 是同序里第一个“本 Run 真的让出在它上面”的等待（`YieldedWait`、没有 cancel 指针、continuation 指向它）。只有消息、没有让出的行（W-18）只留在 `waits` 里。
 - `readWait({messageRef})`（`tasks/session-facts.ts:601-620`）：读一条记录；不是等待（或 Host 发的消息）返回 `not_found`，读失败是 `unavailable`。
 - 返回行的 `complete` 恒为 true；页预算命中是整个 `readSessionFacts` 的 `incomplete`，读法必须当作“不能证明没有等待”（`session-facts.ts:285-292`）。
-- 转发链在 7B-1 不跟：`rootRef` 等于消息本身（D8）。秘书的等待 `originalRun=null`、`requestRoot` 非空，不占 Query Session。
+- 转发链最多跟 8 跳：`transferredTo` 从原消息走到尾，超过 8 跳读作 `incomplete`；`rootRef` 取链根的消息键，所以回给转发后的消息仍满足原等待（`session-facts.ts:193-208`；书 §3.3 第 2 条）。秘书的等待 `originalRun=null`、`requestRoot` 非空，不占 Query Session。
 
 ### 10.8 Runtime 的输入顺序（7B-1，2026-10-30）
 
@@ -3574,25 +3574,54 @@ stateDiagram-v2
 - 已被 Kernel 在本 Run 更早边界接受的 inputId 从 `point.acceptedInputIds` 起就排除（`:212`）；来源记录已接受的也排除（`alreadyAcceptedBySource`，`:82-84`）。
 - 供给不写任何事实（offer 不是交付）；接受由 Kernel 的 `run.input_accepted` 观察后经 MSG-07/08 确认。
 
-### 10.9 Host 的门与到期心跳（7B-1，R4-17）
+### 10.9 Host 的消费批次、提交唤醒与到期心跳（7B-1、7B-2，2026-10-31）
 
-**收件箱门。** `consumeIdle`（`src/app/host.ts:1715`）对一个输入消费者 Session 逐条读收件箱，按下面的顺序跳过（`continue` 下一条，`:1738-1767`）：
+**消费批次。** `consumeIdle`（`src/app/host.ts:1770`）对一个工作区的一页可消费 Session 逐个处理：`readConsumableSessions`（`src/core/work-graph/views/consumable-sessions.ts:195-235`）按稳定的 Session 键续读，每页最多 `CONSUME_BATCH = 8` 个候选（`host.ts:151`、`:1773`）；下一页的 `after` 留在内存，`null` 表示下一次心跳从头开始（`:1727`）。每个工作区一个 `inputJobs` 键，慢的一遍不叠下一遍（`:2056-2068`）。`consumeBarrier()` 只等下一遍真实消费跑完，不改变事实（`:2217-2219`）。
 
-- 已 `responded`，或非提问且已完成输入接受（`inputCompleted`）→ 跳过（`:1741`）。
-- 非提问且 Session 不空闲或已被占用 → 跳过（`:1742`）。
-- 可达性：`readDeliveryEligibilityFacts` + `deliveryEligibility`（`gateFacts`，`:1705-1713`）；不可投递 → 跳过（`:1745`）。
-- `notify` 永远不开轮：`intervention = !inquiry && message.intent !== 'notify' && (...)`（`:1746-1747`）。Host 用人做 actor 发的通知（attention `:2103`、书记提醒 `:1988`）不是人的干预。
-- 是干预且领到（`handleIntervention` 返回 `claimed`）→ 启动驱动，结束本次扫描（`:1749-1758`）。干预但没领到 → `continue`（`:1760`）。
-- 是提问 → `consumeConsultation`，结束本次扫描（`:1762-1767`）。
-- 其余（`notify` 等不开轮的消息）→ `continue`（`:1762`），留在队列，不挡住后面的提问和发件箱；未释放、撤回或不可投递的消息在 `:1745` 已经跳过。
+- **按 profile 匹配。** 只看 scope 与 `sessionRole` 都匹配的第一个已配置 profile（`host.ts:1781-1785`）；没有就是 `no_profile`，消息留在队列，不猜模型（`:1786-1789`）。跳过的 Session 记进 `consumeStatus`（内存，每次心跳替换，没有路由；`host.ts:234`、`:1820`）。
+- **种类。** C 的视图只有 `person_message`、`action_request`、`inquiry`、`late_reply`、`notify` 五种（`consumable-sessions.ts:25-27`）；`nextMessage` 是第一个非 `notify` 的供给，只有 `notify` 的 Session 为 `null`（`:44-45`、`:186-190`）。Host 收到 `null` 就跳过，不开轮、不调模型（`host.ts:1777-1779`）。`person_message`/`action_request` 走 `handleIntervention`，领到后启动驱动（`:1790-1807`）；没有 Goal 记 `no_goal`（`:1809-1810`）。`inquiry` 走咨询；`late_reply` 带 `part:'response'` 走咨询；一个 Session 一遍最多开一个轮（`:1812-1819`）。
+- **人先。** 供给顺序由 C 排：人先，其余按提交游标（`consumable-sessions.ts:179-190`）。Host 不重排。
+- **notify 不开轮。** 只带 notify 的 Session 没有 `nextMessage`，不进上面的分支；人不因一条 notify 被叫起，Host 用人做 actor 发的通知（attention、书记提醒）也不是人的干预（`consumable-sessions.ts:81-83`）。请求轮只带 notify 的供给见 §10.10。
+- **发件箱门。** 仍由 C 的 `offerOf` 走 `deliveryEligibility`：`part:'response'` 的等待已消费或不存在才是 `late_reply`，未消费的等待留给 Goal 的唤醒（`consumable-sessions.ts:121-134`）。
+- **租约上的唤醒循环。** `createWakeLoop` 在 `leaseOwned` 时就建，不再要求 `requestDriver !== 'off'`（`host.ts:823-831`）；`goal_waits` 队列用 `GOAL_WAIT_WAKE_AGGREGATE_TYPES` 和 `WAKE_LIMIT = 16` 注册（`host.ts:844-846`）。请求队列、生命周期队列和释放队列仍在 `requestDriver !== 'off'` 分支里。`requestDriverCommitted` 在循环存在时就设，否则 `goal_waits` 看不到提交（`:831`）。
+- **到期心跳。** 持实例租约时，每次心跳开头先跑 `expireDueWaits`（`host.ts:2028-2051`），见 §10.7。
+- **直接 Query 准入。** 咨询提交读同一组事实（`query-job-service.ts:672-678`）：没有注入 `eligibility` → `unsupported`；不可投递 → `deliveryBlockCode(reason)`（cancelled/withdrawn/not_released → `invalid`，其余 → `busy`，`:577-579`）。
 
-一次扫描最多开一个轮（领到的干预或咨询 `return`）；其余消息留在队列，下一次心跳或安全点再给。
+### 10.10 7B-2 的请求轮、只带 notify 的供给、等待依据与目标等待登记表（2026-10-31）
 
-**发件箱门。** 同一 `deliveryEligibility` 的 `part:'response'` 分支：`readWait` 读出等待状态，`consumed` → `{kind:'consumed'}`、`withdrawn` → `{kind:'none'}`、其余 → `{kind:'unconsumed', boundHere:false}`；只有 `not_found` 才是“没有等待”（`:1778-1795`）。
+**请求轮（reply / expiry）。** 请求驱动按工作区的消息发现两种轮：带 `requestRoot` 且 `status='responded'` 的消息作 `reply`，`status='pending'` 且 `expiredAt≠null` 的作 `expiry`（`src/core/work-graph/tasks/request-service.ts:2003-2048`）。每条来源用 `wait-round:<消息键>:<kind>` 作 `operationId` 追加一轮；同身份重放，已结束的请求跳过（`src/business/workflow/request-round-queue.ts:485-527`、`:555-560`）。轮挂到请求当前秘书：`resolveAssignment(..., 'follow_owner')`，交接后就是接手者（`request-service.ts:1123-1134`）。追加拿请求尾的 claim，轮持有当前秘书的 `intakeSession`（`request-service.ts:1314-1321`；`queries/request-round-claims.ts:316-325`）。
 
-**直接 Query 准入。** 咨询提交读同一组事实（`query-job-service.ts:693-699`）：没有注入 `eligibility` → `unsupported`；不可投递 → `deliveryBlockCode(reason)`（cancelled/withdrawn/not_released → `invalid`，其余 → `busy`，`:584-586`）。
+- **冻结。** `reply` 轮冻结原问题正文和回复正文；`expiry` 轮冻结问题正文、`deadline`、`expiryCount`；两者都记 `relatedMessageRef`（`src/core/work-graph/views/secretary-preparation-facts.ts:290-330`）。同一批里同一消息同时有回复和到期时，准备把到期材料的 `delivery` 置空，只交回复；到期轮保留自己的记录、引用和吸收历史（`:590-601`，R-18）。
+- **`entered` 消费。** `entered` 提交（以及产生 `record_entered` 的 terminal/recovery 提交）对 `[round, ...batch]` 的每个相关消息合并一条 `message.inputAccepted`：`evidence:'query_entered'`，等待未消费时 `consumesWait:true` 并取 `wait-consumed:` claim；已接受的 inputId 跳过（`src/core/work-graph/queries/query-execution.ts:2224-2256`、`:2424-2428`；`request-round-claims.ts:249-286`）。`beginEntry` 不写接受。
+- **按轮的 manifest Session。** 消费守卫的 `executionSessionMatches` 取 `manifest.sessionRef` 与本轮执行 Session 相等（`query-execution.ts:2250`）。轮的 manifest 在准备时按当前秘书冻结，交接后的接手者用自己的新轮作答，因此能通过（R-13）。
+- **迟到的回复。** 等待已被到期消费后再到的回复照常记接受，但 `consumesWait:false`、不取 claim（R-17；`request-round-claims.ts:257-259`）。
+- **交接的根。** 交接的路由集读源 Session 拥有的全部开放请求根，不只处理中的根（`src/core/work-graph/views/secretary-handoff-facts.ts:472` → `ownedRoots(..., false)`；`:281-302`）。
 
-**到期心跳。** 持实例租约时，每次心跳开头先跑到期（`host.ts:1993`、`:2003-2029`），见 §10.7。
+**只带 notify 的供给。** 请求轮（`manifest.request !== null`）调 `createMailboxInputSupply` 时传 `only:'notify'`（`src/core/agent-runtime/query-execution.ts:752-756`），该分支优先于普通 `semantic_query`；咨询仍不给供给，普通非派生 `semantic_query` 仍拿完整供给。该供给跳过人先、接续输入、发件箱和按处理者路由的回复（`execution-inputs.ts:219`、`:247`、`:257`、`:301`、`:317`），只从收件箱给出 `intent` 为空或 `notify` 的消息（`:233`；agent 或系统的 notify 在这里，人的消息不进这一列，R-19；人发的 notify 留在人先列表，不由这里发出）。秘书只有 notify 时不开轮；下一个真实请求轮带上它，接受时标为已送达。
+
+**等待依据与驱动。** Workflow 的 `waiting` 结果可带 `waitBasis: {projectId, goalId, recordKinds, reasons}`（`src/business/workflow/contracts.ts:465-470`、`:486-490`；`workflow.ts:512-517`、`task-gate.ts:74-76`）。有依据的等待由驱动登记后停住；没有依据时不登记：有 yielded continuation 时退回 `awaitWake`，否则停在 `waiting`（`collaboration-driver.ts:912-946`）。`awaitWake` 仍是唯一后备轮询（`:703`）。BW-02：评审门的等待分支不带依据（`workflow.ts:1614`），它的等待是 Session 等待，`['UnknownCallReview','Goal']` 不会唤醒它；勘误表 E3 改 SR8 表行。驱动在会返回 `waiting` 的 advance 之前采一次提交头，收到 `waitBasis` 时把 `(basis, cursorAtRead)` 登记到工作区的同一份表，停在 `wakeGate`；被唤醒时先 `leave`，再用一次 `select_work` 重入（`:881-931`）。
+
+**登记表。** 每个工作区一份 `GoalWaitWakes`，每个目标一条注册；记录种类取并集、读游标取较早者。按 `(project, 聚合种类)` 维护已见提交的高水位，提交通知只标记记录种类匹配且读游标落后的目标（`src/app/goal-wait-wakes.ts:53-112`）。排空按目标键顺序一页最多 `WAKE_LIMIT = 16` 个，每个目标调一次驱动的 `wake(goalRef)`；该调用恢复已停的句柄或起一个，只走一次 Workflow advance，不调模型（`:26-28`、`:114-122`、`:210-247`；`src/app/collaboration-driver.ts:1160-1183`）。
+
+**启动重建。** `wakeLoop.start` 对每个工作区只读重建：`goal_waits` 的 `rebuild` 用 `findSessions`（含归档，页大小 200，`afterSessionKey` 用 `plainSessionRefKey` 的稳定 Session 键）逐页读每个 Session 的 `readSessionFacts.waits`，登记每个等待的 `originalRun.goalId`（没有 Work Run 的秘书等待跳过），再按页读 `readReleasedActions` 的已放行、未处理 `action_request`，登记每页的目标；两半可能登记同一个目标，`register` 合并，只唤醒一次（`goal-wait-wakes.ts:157-198`；`src/app/host.ts:836-843`）。任一读不是 `ready` 就抛错，不当作空结果（`:167`、`:171`、`:188`）。
+
+**有待处理重启中断的 Goal 不唤醒。** `held` 在 `ask`/`off` 下读 Goal 显示（`goalFanOut.readGoalDisplay`），原因里有 `interruption` 就扣住；`auto` 直接返回不扣（`host.ts:838-842`；`goal-wait-wakes.ts:175`、`:190`）。判断读的是显示，不是报告的 `interruptedGoals`（WKR2-01）。
+
+**三档与重跑。** `resumeOnStartup` 是 `'auto' | 'ask' | 'off'`，默认 `'ask'`（`src/contracts/task-requeue.ts:104-116`）。`wakeLoop.start` 收到 `resumeOnStartup: mode !== 'off'`（`host.ts:1653-1656`）：`off` 只重建、只登记，队列不武装、不排空，等第一次请求命令；`auto`/`ask` 重建后按 `start` 唤醒各队列（`wake-loop.ts:400-414`），其中 `ask` 仍扣住有待处理中断的 Goal。重建抛错时队列保持 dirty，按退避重排；队列的 `drain` 在 `unbuilt` 里也会先重建，所以失败在下一次排空重跑（`wake-loop.ts:343-358`；`goal-wait-wakes.ts:220-233`）。
+
+### 10.11 消息转发与等待处置（7B-3 F，2026-10-31）
+
+**入口。** `createMessageForwardingOwner`（`src/core/work-graph/communication/message-forwarding.ts:129`）给出两个 R2 命令：`message.forward`（person 的 `messages/forward`，复制 owner 的 `forwardCopiedIntervention` 只走复制臂）和 `message.disposeWait`（person 的 `waits/dispose`）。person 检查在读之前（`:255-260`、`:390-392`）。
+
+**目的地读。** 先比项目：别的项目的 Session 直接 `not_found`，不读记录（`:140-143`）；再读 Session 记录，归档、`unavailable` 或有归档请求就是 `invalid/destination_gone`（`:155-158`）；跨工作区按记录的真实 `workspaceId` 判，回 `invalid/cross_workspace_forward`（`:159`、`state/message-machine.ts:1237-1241`）；职责表：`notify` 任意、`inquiry` 任意可回复职责、`action_request` 只给 executor/adviser/scribe（`:88-93`、`:162-175`）。
+
+**转发一次提交。** 新消息由 `createSessionMessageRecord` 建，带 `originalRef`、复制臂的新 Goal、`taskRef:null`，并原样带 `intent/needsReply/waitAfterSend/deadlineMs/deadline/release`；旧消息写 `transferredTo`，claim `forwarded:<消息键>` 记目的地；同 `commandId` 重放原回执，同目的地的第二条命令回 `existing`，别的目的地 `busy`，已接受的原消息 `busy`（`:290-358`；`state/message-machine.ts:1264-1303`）。
+
+**等待处置。** `transfer` 只写 `replyHandler`，不建新消息，等待仍 open/answered，由接手者接受时消费；`cancel` 写 `waitCancelledAt`，不写 `expiredAt`。已接受回复 `busy`；不是等待或已到期/撤回 `invalid`；未交付要先转发；`transfer` 只在等待的发信线归档、归档中或退役时允许，否则 `invalid/waiting_line_live`（`state/message-machine.ts:1305-1330`；`message-forwarding.ts:387-478`）。
+
+**归档和重新排队。** 归档的转移只提交 `reply_handler` 一步，不提交 `wait_cancel`；`waitChoiceForStep` 按步骤选等待自己的 kind，别的步骤不写成取消，所以转移的等待保持 open/answered（`src/business/workflow/session-archive.ts:593-600`；`communication/mailbox-service.ts:818-822`）。`wait` 来源的重新排队读请求里记录的转移或取消，以及旧 Run 的归档取消意图；转移必须和记录里的 `replyHandler` 对上，不会被当成取消（`tasks/requeue-service.ts:754-810`）。
+
+**编解码。** `SessionMessageForwarded`、`SessionMessageWaitDisposed` 两个事件由 `sessions/message-record-codecs.ts:277-279` 声明，编码在 `:1526-1530`，解码/校验在 `:1572-1584`；记录仍由消息机器的构造器写（`state/message-machine.ts:1770`、`:1851`）。
 
 
 ## 11. 跨状态机不变量

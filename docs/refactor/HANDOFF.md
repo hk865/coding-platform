@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 10-31 的决定（20–99）
+## 2026-10-06 原型获批，以及 10-05 晚到 10-31 的决定（20–100）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1621,6 +1621,53 @@
         - Codex 只读核对这一节和代码对不对得上。不动代码、不跑测试。
         - 写下来如果发现规则互相矛盾或说不清，再开上面那个 DRV 改代码；如果一致也不复杂，只留规格，等哪一片要改驱动时再一起收进代码。
         - 上面三条“怎么做”改成 DRV 的备选，不是已定的施工。
+
+100. **7B-2 合入和 7B-3 第一波（10-31，`8e55756c`）。**
+    - **100-1 7B-2 合入（10-31，`8e55756c`）。**
+      - 为什么：7B 的第二轮（书 §2.5）：Host 消费每个 Session 的邮件、等待按依据叫醒目标、秘书的回复轮和到期轮、重复候选、Workflow 的等待结果带依据。开工裁定 v2.2 10-30 冻结，夹具规格和探针接缝同版。
+      - 改了什么：
+        - PT（第 0 波接口）：`GoalWaitBasisV1`（`src/business/workflow/contracts.ts:465`）、已放行动作的读 `readReleasedActions`（`src/core/work-graph/communication/message-release.ts:291`）、`backoffMsFor`（`src/core/work-graph/model/request-contracts.ts:51`）、Query 的两个依赖（`src/core/work-graph/queries/contracts.ts:255`、`:257`）、回执分支的校验 `receiptIssues`（`src/core/work-graph/queries/query-record-codecs.ts:446`）；消息的 `input_accepted` 分支走现有的 `prepare`。
+        - D：重复候选（`src/core/workspace/duplicate-candidates.ts`，三种比较）和 `project_source` 的 `duplicates` 选项（`src/core/agent-runtime/project-source-tool.ts:120`）；平台提示词包里工具的说明句重新生成（`resources/prompts/platform/tools/project_source.json`）。
+        - C：可消费 Session 视图（`src/core/work-graph/views/consumable-sessions.ts`，按 Session 键续读；人先、忙和提供的规则）；L(2) 发布为 `platform.consumableSessions`（`src/composition/create-platform.ts:2439`）。
+        - WK：唤醒队列的每队列预算和 `onCommitted`（`src/app/wake-loop.ts`）；目标等待登记表和队列（`src/app/goal-wait-wakes.ts`）。
+        - WK-restart：`wakeLoop.start` 时从每个 Session 的等待和已放行未处理的动作只读重建登记表（`src/app/goal-wait-wakes.ts:157`；Host 的 `rebuild:` 在 `src/app/host.ts:836`）。有待处理重启中断的 Goal 不唤醒（97-9：只有人启动 Goal 才清掉中断；`resumeOnStartup` 为 `auto` 时不扣）；判断读 Goal 的显示，和 B-36 是同一条（`src/app/host.ts:838`–`:842`）。重建失败，下次排空时重跑；Session 翻页用稳定的 Session 键。
+        - BW：Workflow 的等待结果带等待依据（门的等待分支、续作出口），驱动的 `wake(goalRef)`（`src/app/collaboration-driver.ts:1160`）。评审门的等待分支不带依据（BW-02）：没有依据就不登记，有让出的续作时退回 `awaitWake`，否则停在 `waiting`。
+        - R：秘书的回复轮和到期轮（种类在 `src/core/work-graph/state/request-rounds.ts:44`，构造和生产者在 `src/core/work-graph/tasks/request-service.ts`）；只带 notify 的供给（`src/core/agent-runtime/execution-inputs.ts:126`，人的消息不在这一列）；`entered` 的消费按轮的 manifest Session 判（`src/core/work-graph/queries/request-round-claims.ts:249`），交接后的接手者也能答；交接路由走开着的根；到期的等待唤醒请求轮队列。
+        - H：Host 每次心跳按 C 的视图分批消费每个 Session 的邮件（`src/app/host.ts:1770`，`CONSUME_BATCH` 在 `:151`）；`notify` 不开轮；人再次启动 Goal 时，释放停着的普通等待句柄（`src/app/collaboration-driver.ts:1057`）；测试用的 `consumeBarrier`（`src/app/host.ts:236`）。
+        - L：L-R04（秘书只有 notify 时不开轮，下一个真实请求轮带上它并标为已送达；`tests/app/S7B2-L-R04.test.ts`）。§6.2.9 的基线 0 行。
+      - 测试：C `tests/work-graph/S7B2-consumable-sessions.test.ts`；D `tests/data/S7B2-duplicate-candidates.test.ts`；WK `tests/app/S7B2-WK-registry.test.ts`、`S7B2-WK-drain.test.ts`；WK-restart `tests/app/S7B2-WK-restart.test.ts`；BW `tests/business/S7B2-BW-wait-basis.test.ts`；R `tests/work-graph/S7B2-R-reply-round.test.ts`、`S7B2-R-entry-consumption.test.ts`、`S7B2-R-notify-supply.test.ts`；H `tests/app/S7B2-H-consume.test.ts`。
+      - 经过和数字：每组由 DSH 施工，Codex 只读审，lead 冻结返工表；返工轮数和每轮的裁定在 `7b2/status-1030.md` 和 `7b2/*-table.md`。WK-restart 的第一版在 `ask` 下会被唤醒推进有待处理中断的 Goal（全量里 `S7B1-B-intervention` 的重启用例红），第 1、2 轮返工改成按 Goal 的显示扣住。lead 在联合线上另有：PR-4 的旧注释、`S7B-L-host-gates` 改成等任一个带干预文字的请求、两个钉住 `project_source` 说明的 PC 基线（14,993 → 15,411、46,048 → 46,466）、`tests/README.md` 的 helper 行和计数（165）、README 锚点和可达白名单行。落地树 `4dee745` 上 bubblewrap 全量 04:37–04:49：build、typecheck、check:architecture、kernel-patch 检查都是 0；1,051 个文件、12,759 项过、3 项跳过、653.60 秒。规模批 04:21–04:37：13 个文件 40 项全过、946.81 秒（和它同时跑的第一次全量因为两边共用一个临时目录而作废，重跑）。大小（`7b1-land..7b2-land`，含 100-2）：src 58 个文件 +3,246/−571；测试 76 个文件 +3,805/−239；README、提示词包和其他 22 个文件 +206/−164。本地提交，等用户推送；比对的树哈希和测过的树相同。
+      - 文档同步：STATE-MACHINES-SPEC、MVP-BEHAVIOR、DESIGN、E3-UI-ITEMS、slice-7-SPEC 顶部后注、提示词规格后注、PRODUCT（`project_source` 的比较）、IMPLEMENTED-CAPABILITIES（WG66 补注、WG127 起的新行）、CORE-DATA-OPERATIONS、STATUS、DECISIONS、AGENTS。
+      - 来源：`docs-land1031/facts-land1031.md` §1；`7b2/land/msg-7b2.txt`（提交说明）；`7b2/status-1030.md`；`book-7b.md` §2.5；`7b2-start-rulings-v22.md`；`7b2/*-table.md`。
+    - **100-2 7B-3 第一波：F、接口提交、Q（同一条联合线，7B-2 L 之前并入）。**
+      - 为什么：用户 10-30 晚说“能并行的要并行”；lead 裁定 7B-3 的接口提交、Q、N、P 在 R 验收后就在联合线上开（只碰 R 已定稿的文件）。
+      - 改了什么：
+        - F：消息转发和等待处置（`src/core/work-graph/communication/message-forwarding.ts`，`forwardMessage`、`disposeWait`）。目的地读带项目过滤；邮箱按步骤选等待；消息机器和编解码；Session 归档和重新排队。
+        - 接口提交（lead，`fc3b55e`）：咨询的创建载荷和它唯一的读 `ConsultationCreateReadPort`（`src/core/work-graph/model/session-contracts.ts:78`）。
+        - Q：`intervention_planning` 和 `platform_facts` 的 Query 配方（`src/core/agent-runtime/context-query-recipe.ts`、`query-preparation.ts`；咨询事实文本 `consultation-facts-text.ts`）。缺正文时用同一个定位写法；准备时冻结的事实只读一次。规划世界和损坏世界两个夹具（`tests/helpers/S7B3-planning-world.ts`、`S7B3-damaged-world.ts`）和存储接缝的 `transient`/`missing` 决定也已落地，用它们的 CS 还没并入。
+      - 经过和数字：大小和全量记在 100-1 的合计里，没有单独拆。
+      - 还没合入 lead 分支：N、P（已并入联合线）、V、CS、G、7B-3 L。
+      - 来源：`docs-land1031/facts-land1031.md` §2；`7b2/land/msg-7b2.txt`；`7b2/status-1030.md` 19:xx、22:0x–22:4x；`7b3-start-rulings-v22.md`。
+    - **100-3 lead 改掉冻结文字的裁定（10-30 至 10-31）。**
+      - 书和冻结的裁定有几处写反或没写全，lead 按书和 97-9 改了，后来的文档以裁定和勘误为准：
+        - R-17：消费过的到期之后来的迟到回复照样记下（`consumesWait: false`、不领取，照书）；
+        - R-18：同一批里同一条消息的回复和到期，回复优先；
+        - R-19：只带 notify 的供给不收人的消息；
+        - BW-02：评审门的等待分支不带依据；
+        - WKR-07、WKR2-01：重启时有待处理中断的 Goal 不唤醒，判断读 Goal 的显示。97-9 已经定了，没有再问用户。
+      - 勘误清单在 lead 笔记 `7b2/errata-7b23.md`（E1–E24；标 (7B-3) 的是还没落地的组），裁定文档不在仓库。
+      - 来源：`docs-land1031/facts-land1031.md` §3；`7b2/status-1030.md` 17:42、20:37、02:1x、03:2x。
+    - **100-4 测试的 hold 时限（10-30 22:1x 用户批准）。**
+      - 为什么：一个永远不触发的 hold 会一直等到单个测试的时限（120–600 秒），DSH 在基线上跑新测试因此很慢：R 的 entry-consumption 在 HEAD 21.6 秒、在基线 1,162 秒。
+      - 做法：`tests/helpers/hold-limit.ts` 的 `limitHold`；`tests/helpers/S6A-commit-barrier.ts` 的 `hold`、`holdAfter` 和 `tests/scenarios/harness.ts` 的 `holdReply` 用它。只有设了 `TEST_HOLD_LIMIT_MS` 才限；DSH 的单行跑和跑后测试的基线跑设 30000；全量不设，行为不变。
+      - 来源：`docs-land1031/facts-land1031.md` §4；`7b2/status-1030.md` 21:5x、22:1x。
+    - **100-5 留给后面的（10-31）。**
+      - Host 层面的重启排空（一个不被扣住的等待“立刻重建并排队”）没有在 Host 世界里跑：那个世界的每个 Goal 都有没做完的必需工作，在 `ask`/`off` 里被中断、在 `auto` 里被重驱。重建和 `queueAll` 在服务层由 `S7B2-WK-registry`（含重建失败重跑的用例）和 WK-drain 证明。Codex 提过用只有可选 Task 的 Goal，没加（测试已 2.74 倍）。
+      - BW-01 的有界入口边界、F 的领取变异由 CAS 挡住，行没证明到（已接受）。
+      - R-04 的“Q-05 不开始”和 memory 的两版本竞争没有公开接缝，只有代码读法。
+      - `K3-08 (一)` 只在全量负载下偶发（隔离 6/6、4/4 绿）。
+      - 秘书 Session 只有人发的 `notify` 时，它不进只带 notify 的供给（R-19）；L-R04 用系统上下文发送，书没有限定发送者。
+      - 来源：`docs-land1031/facts-land1031.md` §5；`7b2/land/msg-7b2.txt` 的 Known limits。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

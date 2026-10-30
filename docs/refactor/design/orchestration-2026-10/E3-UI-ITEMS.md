@@ -368,3 +368,13 @@
 | D90-4 | 秘书的名字：成员卡和请求页显示「秘书 N」，按这个工作区里秘书 Session 的创建顺序编；归档的保留号，只读副本不算。 | 6A-3 的 V2（裁定 U5）：每次读算一次，按 `(createdAt, canonical key)` 排；产品一个项目一个工作区，等于规格里的“项目里” | [决定 90 · 90-5](../../HANDOFF.md) |
 | D90-5 | 活动日历里的查询：进行中的 Query 也出现在日历上，格子带 `inProgressQueries`，这时 `complete` 不是 true；逐 Query 读和轨道横条显示查询的步数和归属（副本按被问的那条线归属，收起来算在那条线上）。 | 6A-3 的 K：路由 `activity/queries` 的日历、逐 Query 读和轨道；日历格子 `ActivityCellV1` 的 `uncountedQueries`、`inProgressQueries` 和 `complete`（`src/core/work-graph/views/activity-read-model.ts:106-111`）；D64-1 的横条和副本分支此时有真实数据 | [决定 90 · 90-5](../../HANDOFF.md) |
 | D90-6 | 普通 Query 的 profile 选择不列本地工作台的秘书 profile：平台秘书那份 binding 只给秘书请求用（本地 profile 仍排第一，取第一个 profile 的调用方不变）。 | 6A-3 的 B2（裁定 U11）；B2 裁定的审查点 1 定了：普通 Query 的 profile 选择不列秘书 profile，启动和请求端口仍用它，界面在 E3 | [决定 90 · 90-5](../../HANDOFF.md) |
+
+## 决定 100 加的（2026-10-31）
+
+7B-2、7B-3 第一波的读口已在，界面仍待 E3。下面只列这几处后端已经给出、界面以后要显示的事实。
+
+| 编号 | 界面项 | 后端与读取依据 | 决定出处 |
+| --- | --- | --- | --- |
+| D100-1 | 转发的消息显示去向：旧消息标“已转交”并指到新消息，新消息指回原消息；对转发出去的消息的回复满足原来的等待。只有未送达、收件线已归档或退役的消息能转，复制目标时勾过的干预例外；7D1 之前，跨工作区的目的地拒绝，原因 `cross_workspace_forward`。 | 7B-3 第一波 F：`messages/read` 的 `originalRef`、`transferredTo`（`src/core/work-graph/state/message-machine.ts:284-285`）；转发写入两处引用和 `forwarded:` 认领（`src/core/work-graph/communication/message-forwarding.ts:316`、`:343`）；拒绝 `{ code: 'invalid', reason: 'cross_workspace_forward' }`（`src/core/work-graph/state/message-machine.ts:1241`） | [决定 100 · 100-2](../../HANDOFF.md)；书 §3.9 |
+| D100-2 | 重复候选：`project_source` 的 `compare` 带 `duplicates: true`（`files/compare` 的同一输入也透传）时，列出两类候选：新加的顶层定义、新加的达到 `DUP_MIN_STRING_CHARS` 的字符串字面量；每条带两处文件位置。扫描数、跳过数和输出截断分开显示；只显示候选，不显示“是不是同一条规则”的判断。两份捕获、两个 Git 提交、一个提交对当前工作树三种比较都适用。 | 7B-2 D：`WorkspaceComparisonRequest.duplicates`（`src/core/workspace/ports.ts:107`）和 `DuplicateReportV1`（`:180`）；`project_source` 的 compare 参数（`src/core/agent-runtime/project-source-tool.ts:48`）；`files/compare` 透传（`src/app/core-routes.ts:521`，请求/响应类型 `src/app/core-http-types.ts:700`） | [决定 100 · 100-1](../../HANDOFF.md)；决定 89 |
+| D100-3 | 等待依据：目标停在等待时，显示它在等哪几类记录和原因。依据随 `workflow/advance` 的 `waiting` 结果给出，不单独存；重启后重新算。 | 7B-2 BW：`WorkflowAdvanceResult` 的 `waiting.waitBasis`（`GoalWaitBasisV1{ projectId, goalId, recordKinds, reasons }`，`src/business/workflow/contracts.ts:299`、`:465`），由 `goalWaitBasisOf` 生成（`src/business/workflow/task-gate.ts:75`）；驱动据此登记（`src/app/collaboration-driver.ts:881`）。`waitBasis` 只在 `workflow/advance` 的回执里，今天没有单独的读路由 | [决定 100 · 100-1](../../HANDOFF.md)；书 §3.8、§3.13 |
