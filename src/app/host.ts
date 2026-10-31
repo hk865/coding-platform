@@ -95,6 +95,9 @@ import {
 import type {
   ChecksAdoptionEntryPort, HostSettingsPort, OpenSettingsWorkspace, SettingsResponse,
 } from './host-settings-types.js';
+import {
+  DEFAULT_WORK_RUN_TOKEN_BUDGET,
+} from './host-settings-types.js';
 import { createInitializationAdoptionHost, type InitializationAdoptionDependencies } from './initialization-adoption.js';
 import {
   createWorkbenchRuntimeHostBindings,
@@ -571,6 +574,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     tasksMax: capDefaults.tasksMax,
   };
   const resourceCaps: ResourceCapSource = { current: () => ({ ...resourceCapsRequest }) };
+  /** The effective Work Run token budget. It is Host state, not part of a
+   * runtime configuration version: an already claimed Run keeps its budget and
+   * the next Work Run's trusted binding reads this value. */
+  let workRunTokenBudget = DEFAULT_WORK_RUN_TOKEN_BUDGET;
   /** Each immutable runtime version captures its OWN fixed secret map: the saved
    * settings keys plus a snapshot of the env values its bindings reference. A
    * later settings change never re-keys an older version that has not yet built
@@ -602,7 +609,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     : (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
-          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current() })), runtimeNarrowing));
+          automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
+          workRunTokenBudget })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -1269,6 +1277,25 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // already-built platform, Runtime and workbench page read `current()` live,
     // so the next command of an already-running execution uses the new values.
     resourceCapsRequest = { memoryMaxBytes: snapshot.resourceCaps.memoryMaxBytes, tasksMax: snapshot.resourceCaps.tasksMax };
+    // The Work Run token budget is installed here, on the first settings push and
+    // every later one. The platform's Workflow configuration reads the binding
+    // live, so re-registering each scope with the new budget makes the next Work
+    // Run use it without a restart; an already claimed Run keeps the budget in its
+    // own record. An existing binding keeps its role and deadline; a scope with
+    // no startup binding uses the local workbench role and no deadline.
+    workRunTokenBudget = snapshot.workRunTokenBudget;
+    for (const scope of workflowScopes) {
+      const original = workflow?.bindings.find(binding => scopeKey(binding.workspace) === scopeKey(scope));
+      platform.registerWorkflowBinding({
+        consumerId: workflowConsumerId,
+        binding: original === undefined ? {
+          workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId },
+          sessionRole: structuredClone(LOCAL_WORKBENCH_ROLE),
+          roleBinding: structuredClone(LOCAL_WORKBENCH_ROLE_BINDING),
+          budget: { tokenBudget: workRunTokenBudget, deadline: null },
+        } : { ...original, budget: { ...original.budget, tokenBudget: workRunTokenBudget } },
+      });
+    }
     // R6 cold-start: restore/refresh the trusted check configuration for every
     // scope whose saved checks were explicitly approved. It replaces only the
     // per-scope registration; an already-open round keeps its frozen config.
@@ -1378,7 +1405,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         roleBinding: structuredClone(LOCAL_WORKBENCH_ROLE_BINDING),
         // A Work reuses the investigation/planning Session. Its cumulative
         // budget must admit that normal history before the first model call.
-        budget: { tokenBudget: 1_000_000, deadline: null },
+        budget: { tokenBudget: workRunTokenBudget, deadline: null },
       },
     });
     workflowScopes.push({ projectId: config.scope.projectId, workspaceId: config.scope.workspaceId });

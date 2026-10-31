@@ -38,6 +38,7 @@ import {
 } from '../../src/contracts/continuation-brief.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
+import { DEFAULT_WORK_RUN_TOKEN_BUDGET } from '../../src/app/host-settings-types.js';
 import { AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
 import { readExecution } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, checkRevisionOf, cleanupScenarios, openHostScenario, performs } from './harness.js';
@@ -121,8 +122,8 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
   const requeueRef = (requeued as { value: { requeue: { ref: unknown; afterRunRef: RunRef } } }).value.requeue.ref;
   expect((requeued as { value: { requeue: { afterRunRef: RunRef } } }).value.requeue.afterRunRef).toEqual(run1Ref);
   // TASK-03: the requeue pins no budget, so the claim with its requeueRef carries the binding's.
-  expect(claimInputsOf(steps)).toMatchObject([{ budget: { tokenBudget: 1_000_000, deadline: null } },
-    { requeueRef, budget: { tokenBudget: 1_000_000, deadline: null } }]);
+  expect(claimInputsOf(steps)).toMatchObject([{ budget: { tokenBudget: DEFAULT_WORK_RUN_TOKEN_BUDGET, deadline: null } },
+    { requeueRef, budget: { tokenBudget: DEFAULT_WORK_RUN_TOKEN_BUDGET, deadline: null } }]);
   expect(claimInputsOf(steps)[0]).not.toHaveProperty('requeueRef');
 
   const done = await h.taskRow();

@@ -33,7 +33,7 @@ import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 
 import { homedir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
-import { isNonNeg, isRecord, isSha256Hex, nonEmpty } from '../contracts/validation/common.js';
+import { isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../contracts/validation/common.js';
 import {
   checksConfigurationPinProblem,
 } from '../contracts/validation/initialization-adoption.js';
@@ -78,11 +78,12 @@ import type {
   PromptTemplateReadV1,
   PromptToolReadV1,
 } from './host-settings-types.js';
+import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host-settings-types.js';
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
-  'resource-caps/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
+  'resource-caps/save', 'run-budget/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save',
 ] as const satisfies readonly SettingsRoute[];
 
@@ -175,6 +176,11 @@ export type HostSettingsPrivateSnapshot = {
    * installs them into its holder from `resourceCaps/save`; they never enter the
    * runtime configuration version. */
   resourceCaps: { memoryMaxBytes: number; tasksMax: number };
+  /** The effective Work Run token budget. The Host installs it from
+   * `run-budget/save` and re-registers the trusted Workflow bindings; it never
+   * enters the runtime configuration version, so a Run already claimed keeps
+   * the budget it started with. */
+  workRunTokenBudget: number;
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -377,6 +383,10 @@ type PersistedSettingsV1 = {
   /** L13 Host setting `resourceCaps`. Absent in files written before RL and
    * stays absent on the next save of another setting. */
   resourceCaps?: ResourceCapSettingsV1;
+  /** The Work Run token budget. Absent in old files and in a file whose value
+   * was cleared; it stays absent on the next save of another setting and reads
+   * as `DEFAULT_WORK_RUN_TOKEN_BUDGET`. */
+  workRunTokenBudget?: number;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -480,6 +490,16 @@ function parseStoredResourceCaps(value: unknown): ResourceCapSettingsV1 {
   return { schemaVersion: 1, memoryMaxMiB, tasksMax };
 }
 
+/** The stored Work Run token budget is one integer 1..`MAX_WORK_RUN_TOKEN_BUDGET`;
+ * an absent field is the default, exactly like `resourceCaps`. A present value
+ * outside that range fails Host start-up with the existing invalid-file wording. */
+function parseStoredWorkRunTokenBudget(value: unknown): number {
+  if (!isPos(value) || value > MAX_WORK_RUN_TOKEN_BUDGET) {
+    throw new Error('the private host settings file is invalid');
+  }
+  return value;
+}
+
 type SettingsRejection = Extract<SettingsResponse<never>, { status: 'rejected' }>;
 const invalid = (reason: string): SettingsRejection => ({ status: 'rejected', code: 'invalid', reason });
 const notFound = (reason: string): SettingsRejection => ({ status: 'rejected', code: 'not_found', reason });
@@ -541,7 +561,9 @@ function parsePersisted(text: string): PersistedSettingsV1 {
   });
   return { schemaVersion: 1, models, selection, workspaces,
     ...(raw['automation'] === undefined ? {} : { automation: parseStoredAutomation(raw['automation']) }),
-    ...(raw['resourceCaps'] === undefined ? {} : { resourceCaps: parseStoredResourceCaps(raw['resourceCaps']) }) };
+    ...(raw['resourceCaps'] === undefined ? {} : { resourceCaps: parseStoredResourceCaps(raw['resourceCaps']) }),
+    ...(raw['workRunTokenBudget'] === undefined
+      ? {} : { workRunTokenBudget: parseStoredWorkRunTokenBudget(raw['workRunTokenBudget']) }) };
 }
 
 function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredModel {
@@ -593,6 +615,10 @@ export async function createHostSettings(
   let automation: TaskAutomationPolicyV1 | undefined = persisted.automation;
   /** L13: kept exactly as stored (absent stays absent) until `resource-caps/save`. */
   let resourceCapSetting: ResourceCapSettingsV1 | undefined = persisted.resourceCaps;
+  /** The Work Run token budget as stored (absent is the default) until
+   * `run-budget/save` writes it; `null` on that route clears it again. */
+  let workRunTokenBudget: number | undefined = persisted.workRunTokenBudget;
+  const effectiveWorkRunTokenBudget = (): number => workRunTokenBudget ?? DEFAULT_WORK_RUN_TOKEN_BUDGET;
   const totalMemoryBytes = totalmem();
   const capDefaults = defaultResourceCapSettings(totalMemoryBytes);
   const memoryUpperMiB = Math.floor(totalMemoryBytes / MIB);
@@ -628,12 +654,14 @@ export async function createHostSettings(
       memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
       tasksMax: effectiveResourceCaps().tasksMax,
     },
+    workRunTokenBudget: effectiveWorkRunTokenBudget(),
   });
 
   const persist = async (): Promise<void> => {
     const payload: PersistedSettingsV1 = { schemaVersion: 1, models, selection, workspaces,
       ...(automation === undefined ? {} : { automation }),
-      ...(resourceCapSetting === undefined ? {} : { resourceCaps: resourceCapSetting }) };
+      ...(resourceCapSetting === undefined ? {} : { resourceCaps: resourceCapSetting }),
+      ...(workRunTokenBudget === undefined ? {} : { workRunTokenBudget }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });
@@ -744,6 +772,11 @@ export async function createHostSettings(
       defaults: { ...capDefaults },
       effective: effectiveResourceCaps(),
       machine: resourceCapStatusOf(),
+    },
+    workRunTokenBudget: {
+      saved: workRunTokenBudget ?? null,
+      effective: effectiveWorkRunTokenBudget(),
+      max: MAX_WORK_RUN_TOKEN_BUDGET,
     },
   });
 
@@ -1224,6 +1257,35 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  /**
+   * `run-budget/save`: the Work Run token budget. `null` removes the stored key
+   * and restores the default. The write is validated, persisted and pushed
+   * exactly like `resource-caps/save`; the Host re-registers the trusted Workflow
+   * bindings from the effective value, so the next Work Run uses it without a
+   * restart while an already claimed Run keeps its old budget.
+   */
+  async function saveRunBudgetRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input)) return invalid('run-budget/save requires an object body');
+    const value = input['workRunTokenBudget'];
+    let next: number | undefined;
+    if (value !== null) {
+      try { next = parseStoredWorkRunTokenBudget(value); }
+      catch { return invalid(`workRunTokenBudget must be null or an integer from 1 to ${String(MAX_WORK_RUN_TOKEN_BUDGET)}`); }
+    }
+    const previous = workRunTokenBudget;
+    workRunTokenBudget = next;
+    try { await persist(); }
+    catch {
+      workRunTokenBudget = previous;
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the work run token budget was saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
   // -------------------------------------------------------------------------
   // Prompt-pack editing routes. They read the disk tree at
   // `<settings directory>/prompts`, validate the whole resulting chain before
@@ -1498,6 +1560,7 @@ export async function createHostSettings(
       case 'checks/approve': return await approveChecksRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);
+      case 'run-budget/save': return await saveRunBudgetRoute(input);
       case 'prompts/packs/list': return await packsListRoute();
       case 'prompts/packs/create': return await packsCreateRoute(input);
       case 'prompts/templates/read': return await templateReadRoute(input);

@@ -64,7 +64,8 @@ describe('Host setting automation (C8)', () => {
     // RL L13: resourceCaps is always published; its content is RL-40's.
     expect(await settings.call('snapshot', {})).toEqual({ status: 'ready', value: { models: [], workspaces: [],
       automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'ask' }, resourceCaps:
-      expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }) } });
+      expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
+      workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 } } });
   });
 
   it('a Host without a settings file reads the defaults', async () => {
@@ -143,7 +144,8 @@ describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
       const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: 'off' };
       // RL L13: resourceCaps is always published; its content is RL-40's.
       expect(saved).toEqual({ status: 'ready', value: { models: expectedModels, workspaces: [], automation: policy,
-        resourceCaps: expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }) } });
+        resourceCaps: expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
+        workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 } } });
       expect(pushed).toHaveLength(before + 1);
       expect(pushed.at(-1)?.automation).toEqual(policy);
       expect((await storedFile(dir))['automation']).toEqual(policy);

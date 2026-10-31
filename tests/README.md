@@ -6,7 +6,7 @@
 
 ## tests/ 下的直接子文件夹
 
-- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（99 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`。
+- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（104 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`、`RC-work-run-budget.test.ts`。
 - `tests/architecture/` — 依赖方向、生产代码可达性和状态写入边界（4 个），入口 `boundaries.test.ts`；`production-reach.ts` 是它自己的扫描器。
 - `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（36 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。

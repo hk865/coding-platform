@@ -12,6 +12,10 @@ import type {
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
 
 export const SETTINGS_API_PREFIX = '/api/real/settings/';
+/** The Work Run token budget a Host uses until `run-budget/save` stores one. */
+export const DEFAULT_WORK_RUN_TOKEN_BUDGET = 400_000_000;
+/** The largest Work Run token budget a save may store. */
+export const MAX_WORK_RUN_TOKEN_BUDGET = 600_000_000;
 export type SettingsProvider = 'deepseek' | 'openai';
 export type SettingsModel = {
   id: string; label: string; provider: SettingsProvider; model: string; baseUrl: string;
@@ -48,6 +52,13 @@ export type HostSettingsSnapshot = {
    * The backend publishes it since `resource-caps/save`.
    */
   resourceCaps: SettingsResourceCaps;
+  /**
+   * The Work Run token budget as stored (`saved: null` means no value was
+   * saved), the effective budget (`saved ?? DEFAULT_WORK_RUN_TOKEN_BUDGET`)
+   * and the largest value a save accepts. A save installs it in the Host at
+   * once and the next Work Run uses it; a Run already claimed keeps its budget.
+   */
+  workRunTokenBudget: { saved: number | null; effective: number; max: number };
 };
 /**
  * L13: the resource-cap setting projection. `memoryMaxMiB`/`tasksMax` are the
@@ -65,6 +76,12 @@ export type SettingsResourceCaps = {
 };
 /** L13: the whole `resourceCaps` setting; both fields are required, `null` is the default. */
 export type SaveResourceCapSettings = { memoryMaxMiB: number | null; tasksMax: number | null };
+/**
+ * `run-budget/save`: the whole Work Run token budget setting. `null` clears the
+ * stored value and restores `DEFAULT_WORK_RUN_TOKEN_BUDGET`; any other value
+ * must be an integer 1..`MAX_WORK_RUN_TOKEN_BUDGET`.
+ */
+export type SaveWorkRunTokenBudgetSettings = { workRunTokenBudget: number | null };
 /**
  * C8 / LA-6 Host setting `automation` (route `automation/save`): the whole
  * policy, `autoReworkLimit` an integer 0..10 (`MAX_AUTO_REWORK_LIMIT`; 0 allows
@@ -154,6 +171,7 @@ export type SettingsRoutes = {
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
+  'run-budget/save': { input: SaveWorkRunTokenBudgetSettings; value: HostSettingsSnapshot };
   'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };
   'prompts/packs/create': { input: { packId: string }; value: PromptPackCreateV1 };
   'prompts/templates/read': { input: { packId: string; templateId: string }; value: PromptTemplateReadV1 };
