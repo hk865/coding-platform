@@ -379,6 +379,13 @@
 | D100-2 | 重复候选：`project_source` 的 `compare` 带 `duplicates: true`（`files/compare` 的同一输入也透传）时，列出两类候选：新加的顶层定义、新加的达到 `DUP_MIN_STRING_CHARS` 的字符串字面量；每条带两处文件位置。扫描数、跳过数和输出截断分开显示；只显示候选，不显示“是不是同一条规则”的判断。两份捕获、两个 Git 提交、一个提交对当前工作树三种比较都适用。 | 7B-2 D：`WorkspaceComparisonRequest.duplicates`（`src/core/workspace/ports.ts:107`）和 `DuplicateReportV1`（`:180`）；`project_source` 的 compare 参数（`src/core/agent-runtime/project-source-tool.ts:48`）；`files/compare` 透传（`src/app/core-routes.ts:521`，请求/响应类型 `src/app/core-http-types.ts:700`） | [决定 100 · 100-1](../../HANDOFF.md)；决定 89 |
 | D100-3 | 等待依据：目标停在等待时，显示它在等哪几类记录和原因。依据随 `workflow/advance` 的 `waiting` 结果给出，不单独存；重启后重新算。 | 7B-2 BW：`WorkflowAdvanceResult` 的 `waiting.waitBasis`（`GoalWaitBasisV1{ projectId, goalId, recordKinds, reasons }`，`src/business/workflow/contracts.ts:299`、`:465`），由 `goalWaitBasisOf` 生成（`src/business/workflow/task-gate.ts:75`）；驱动据此登记（`src/app/collaboration-driver.ts:881`）。`waitBasis` 只在 `workflow/advance` 的回执里，今天没有单独的读路由 | [决定 100 · 100-1](../../HANDOFF.md)；书 §3.8、§3.13 |
 
+## 决定 103 加的（2026-10-31）
+
+| 编号 | 界面项 | 后端与读取依据 | 决定出处 |
+| --- | --- | --- | --- |
+| D103-1 | 卡的输入框：`member_creation`、`rework_request`、`handoff_approval`、`adviser_creation` 这四种卡，只写话、不选选项时，界面送 `requests/ask`（`round` 是这张卡所在的请求，`cardRefs` 带这张卡），不送 `decisions/answer`；卡继续开着，秘书的回答照常显示。 | `decisions/answer` 对这四种只写话的答复拒绝（`OPTION_REQUIRED_SOURCE_KINDS`）；`requests/ask` 已在。 | 决定 103-3 |
+| D103-2 | 卡的时间：卡片和队列显示 `openedAt`；`null` 时不显示。处理完的卡在历史里。 | `DecisionCardV1.openedAt`，经 `main/read` 和队列读出。 | 决定 103-2 |
+
 ## 决定 101 加的（2026-10-31）
 
 7B-3 的读口和两条人用路由已在，界面仍待 E3。下面只列后端已经给出、界面以后要显示的事实。
