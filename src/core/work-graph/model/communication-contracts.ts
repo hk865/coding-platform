@@ -85,7 +85,11 @@ export function consultationFacts(message: SessionMessage, part: 'message' | 're
   extra: DeliveryEligibilityFactsV1, target: SessionRef): DeliveryFactsV1 {
   const accepted = (id: string) => (message.acceptedInputs ?? []).some((entry) => entry.inputId === id);
   const base = { consumption: messageFactsOfRecord(message), ...extra };
-  if (part === 'message') return { ...base, part, delivered: accepted(deriveSessionInputId(message.ref, 'message')) };
+  // A saved reply is the message's consumption fact too: an answered message stops being offered even when the
+  // recipient's execution never recorded `input_accepted` (the association is the formal reply, not a delivery).
+  if (part === 'message') {
+    return { ...base, part, delivered: message.response !== null || accepted(deriveSessionInputId(message.ref, 'message')) };
+  }
   const state = waitStateOf(message, waitFactsOfRecord(message));
   const handler = effectiveReplyHandler(message);
   return { ...base, part, accepted: accepted(deriveSessionInputId(message.ref, 'response')),

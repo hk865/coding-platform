@@ -129,8 +129,8 @@
 | `reconcileRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:214` | 启动时分类一个 Run 并提交一次对账 | 启动恢复 |
 | `reconcileQueryRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:567` | QueryRun 启动对账 | Query 恢复 |
 | `reconcileRunControlsAtStartup` | `src/core/agent-runtime/run-reconcile.ts:518` | 启动时结清排队控制与已接受的 steer | 控制意图恢复 |
-| `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:653` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
-| `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:742` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
+| `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:661` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
+| `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:750` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
 | `readUnknownCallReviewDraft` | `src/core/agent-runtime/unknown-call-draft.ts:169` | 读完整 review 草稿 | review 候选与 attestation |
 | `renderContext` | `src/core/agent-runtime/context-rendering.ts:418` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
 | `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:452` | 渲染 Query 输入 | prepare Query |

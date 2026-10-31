@@ -1135,9 +1135,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
       const sourceMessageRef = input.sourceMessageRef;
       if (sourceMessageRef !== null) {
-        if (factsRead.value.interventionSource === null
-          || sessionMessageRefKey(sourceMessageRef) !== sessionMessageRefKey(factsRead.value.interventionSource)
-          || (factsRead.value.root && factsRead.value.initiatedByOperator)) {
+        if (!isInterventionSource(sourceMessageRef, factsRead.value)) {
           return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
         }
       } else {
@@ -2394,7 +2392,12 @@ export function createRequestCandidateService(deps: PlanServiceDependencies): Re
       if (requestRef !== null) {
         const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef, goalRef: proposal.goalRef });
         if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
-        if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+        const sourceMessageRef = proposal.sourceMessageRef;
+        if (sourceMessageRef === null) {
+          if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+        } else if (!isInterventionSource(sourceMessageRef, factsRead.value)) {
+          return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
+        }
         requestGuards = factsRead.value.guards;
       }
       const goalNotCancelled = scoped.scope.goal.desiredState !== 'cancelled';
@@ -2703,6 +2706,19 @@ function adoptionCommitOf(commit: PlanCommit): PlanAdoptionCommit {
   const { proposal, nextGoal, plan, dispositionChanges, guards } = commit;
   if (nextGoal === null || plan === null) throw new Error('a plan adoption moves the Goal pointer and writes its PlanRevision');
   return { proposal, nextGoal, plan, dispositionChanges, guards };
+}
+
+/**
+ * The narrow intervention-source rule the proposal entry and abandonment share:
+ * the request's one source must be this exact message and must not also be an
+ * operator-initiated request root. `sourceMessageRef` is the candidate's own
+ * proposal source and `facts` the one candidate-request read.
+ */
+function isInterventionSource(sourceMessageRef: SessionMessageRef,
+  facts: { interventionSource: SessionMessageRef | null; root: boolean; initiatedByOperator: boolean }): boolean {
+  return facts.interventionSource !== null
+    && sessionMessageRefKey(sourceMessageRef) === sessionMessageRefKey(facts.interventionSource)
+    && !(facts.root && facts.initiatedByOperator);
 }
 
 /** Slice 5 §2.4: a complete `PlanRequestCandidateFacts` with every unused fact neutral. */
@@ -3300,9 +3316,7 @@ async function proposePlanAsAgent(
       if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
       const sourceMessageRef = input.sourceMessageRef ?? null;
       if (sourceMessageRef !== null) {
-        if (factsRead.value.interventionSource === null
-          || sessionMessageRefKey(sourceMessageRef) !== sessionMessageRefKey(factsRead.value.interventionSource)
-          || (factsRead.value.root && factsRead.value.initiatedByOperator)) {
+        if (!isInterventionSource(sourceMessageRef, factsRead.value)) {
           return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
         }
       } else {

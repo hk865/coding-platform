@@ -26,6 +26,8 @@ import {
   type PlanningQuestionIdentityV1,
 } from '../../../contracts/goal-decisions.js';
 import type { InitializationBindingRef, InitializationBindingV1 } from '../../../contracts/initialization-binding.js';
+import type { InterventionAnswerSourceV1 } from '../../../contracts/initial-planning.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { InitialPlanAnswerFacts, QueryJobAnswerRef, QueryJobSnapshot } from '../../../contracts/query-job.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -243,16 +245,28 @@ export function createPlanningQuestionReader(
           }
           const job = decoded.value;
           if (job.job.status !== 'answered') continue;
-          // A planning-question read consumes only initial_coordination jobs. For
-          // any other intent `readInitialPlanAnswerFacts` answers `invalid` ("not
-          // an initial_coordination request"), which is a selection mismatch, not
-          // a read failure: skip the job instead of returning it as a rejection.
-          if (job.job.intent.execution.kind !== 'initial_coordination') continue;
+          // The plain arm consumes an initial_coordination job. An intervention planning Query is the other
+          // producer of a v2 planning answer, and its saved answer is read through its own explicit source,
+          // never by pretending to be an initial coordination. Every other intent is a selection mismatch, not
+          // a read failure: skip it instead of returning it as a rejection.
+          const execution = job.job.intent.execution;
+          let source: InterventionAnswerSourceV1 | undefined;
+          if (execution.kind === 'intervention_planning') {
+            // The QueryJob codec requires `sourceMessageRef` on every `intervention_planning` intent.
+            source = { kind: 'intervention', messageRef: execution.sourceMessageRef as SessionMessageRef };
+          } else if (execution.kind !== 'initial_coordination') continue;
           for (const answerRef of job.job.answerRefs) {
-            const facts = await reader.call(plans, ctx, answerRef);
+            const facts = await reader.call(plans, ctx, answerRef, source);
             const failure = answerFailure(facts);
             if (failure !== null) return failure;
             if (facts.status !== 'ready') continue;
+            // The explicit source names one Goal; an answer that resolves another Goal is not this page's.
+            if (source !== undefined && (facts.value.resolution.kind !== 'intervention'
+              || facts.value.resolution.goal.projectId !== input.goalRef.projectId
+              || facts.value.resolution.goal.goalId !== input.goalRef.goalId)) {
+              return { status: 'rejected', code: 'unavailable',
+                reason: 'the intervention planning answer resolves another Goal' };
+            }
             cards.push(...questionCards({ answerRef, answerText: facts.value.answerText, job: facts.value.job, goal }));
           }
         }

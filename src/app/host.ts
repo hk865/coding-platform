@@ -49,7 +49,7 @@ import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
 import { acquireHostInstanceLease } from './host-instance-lease.js';
-import { announceDisconnect, announceInterruption, systemNotifyRequest } from './host-notices.js';
+import { announceDisconnect, announceInterruption, interventionClosingNoticeRequest, systemNotifyRequest } from './host-notices.js';
 import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
@@ -1841,10 +1841,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (offer.kind === 'person_message' || offer.kind === 'action_request') {
         // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
         // other message of the Session stays queued for a later safe point.
-        const claimed = await platform.workflow.handleIntervention?.(ctx, {
+        const interventionInput = {
           messageRef: offer.messageRef, roleBinding: profile.roleBinding,
           runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
-        });
+        };
+        const claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
         if (claimed?.status === 'claimed') {
           const addressed = claimed.claim.task;
           await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, hostNotices, {
@@ -1859,6 +1860,28 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
               sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },
             queryProfileIds: [profile.id],
           });
+        } else if (claimed?.status === 'answer_ready') {
+          // The closing's one notice is committed BEFORE the reply; a failed notice leaves the next pass to retry,
+          // never a reply without its explanation. `questions` sends no notice: the cards carry the questions.
+          if (claimed.reason !== 'questions') {
+            const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
+              recipient: candidate.session, messageRef: offer.messageRef, reason: claimed.reason,
+              goalRef: read.value.goalRef,
+            }));
+            if (notice.status !== 'committed') continue;
+          }
+          await platform.workflow.handleIntervention?.(ctx, { ...interventionInput, completion: 'associate_answer' });
+        } else if (claimed?.status === 'no_answer') {
+          // The third ending is a real termination: the fixed notice, then the source withdrawal. Both carry the
+          // fixed identities, so a crash between them replays the one already committed and finishes the other.
+          const key = sessionMessageRefKey(offer.messageRef);
+          const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
+            recipient: candidate.session, messageRef: offer.messageRef, reason: 'no_answer',
+            goalRef: read.value.goalRef,
+          }));
+          if (notice.status !== 'committed') continue;
+          await platform.messages.withdrawMessage(ctx, { input: { messageRef: offer.messageRef },
+            meta: { requestId: `intervention:${key}:withdraw`, expected: [] } });
         } else if (goalRef === null) {
           skips.push({ sessionRef: candidate.session, reason: 'no_goal' });
         }

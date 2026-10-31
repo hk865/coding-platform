@@ -588,7 +588,15 @@ export async function reconcileQueryRunAtStartup(
       ? `unknown (${unknown.kind === 'unresolved_tools' ? `tool calls without a result: ${unknown.toolCallIds.join(', ')}`
         : `Kernel ${unknown.verdict}`})` : result.kind };
   };
-  if (state.phase === 'claimed' || state.phase === 'prepared') return submit('Q-01', { kind: 'not_entered' }, true);
+  if (state.phase === 'claimed' || state.phase === 'prepared') {
+    // A saved intervention planning pair is a source message's own Query: the restart keeps the pair and its
+    // claim and the Host's intervention handler continues from the first missing stage (MVP-BEHAVIOR B10;
+    // book-7b §3.10 item 7). Closing it as `not_entered` would discard a durable source-message plan.
+    if (record.job.job.intent.execution.kind === 'intervention_planning') {
+      return left('Q-01', 'the intervention planning Query keeps its saved claim for the Host to continue');
+    }
+    return submit('Q-01', { kind: 'not_entered' }, true);
+  }
   if (probe.verdict === 'host_config' || probe.verdict === 'transient' || probe.verdict === 'cancelled') {
     return left('Q-07', `a ${probe.verdict} probe proves nothing: ${probe.reason}`);
   }

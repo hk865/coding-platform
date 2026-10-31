@@ -31,7 +31,7 @@ export function parseInitialPlanningResponseV2(
   if (typeof summary !== 'string') return rejected('invalid', 'the initial-planning answer must carry a summary string');
   if (parsed['kind'] === 'needs_decision') {
     const questions = parsed['questions'];
-    if (!Array.isArray(questions) || !questions.every(nonEmpty)) {
+    if (!Array.isArray(questions) || questions.length === 0 || !questions.every(nonEmpty)) {
       return rejected('invalid', 'a needs_decision answer must carry a non-empty questions array');
     }
     return { status: 'parsed', response: {

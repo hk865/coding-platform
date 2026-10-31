@@ -23,10 +23,10 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createSessionMailbox` | `src/core/work-graph/communication/mailbox-service.ts:1571` | 完整的 `SessionMessageCommandPort`：发信、回复、撤回、释放（allow 两臂）、两个视图读，加读消息/正文、收件箱/发件箱、ack、consultation、input、wait 处置、未送达/已路由回复与工具回执查询；消息读/发件箱带一页同序的派生释放块（`releaseBlockOf`），收件箱为 `null` | 组合根装配 `platform.messages` 时；不要另写发信或分页 |
-| `createMessageWriteOwner` | `src/core/work-graph/communication/mailbox-service.ts:4936` | `storeBody` + `persist` + `prepare`：唯一正文存储、消息提交与准备片段路径（replay、CAS、event、claim 同一套） | 任何要写 SessionMessage 的 owner；不要绕过它直接 commit |
+| `createSessionMailbox` | `src/core/work-graph/communication/mailbox-service.ts:1585` | 完整的 `SessionMessageCommandPort`：发信、回复、撤回、释放（allow 两臂）、两个视图读，加读消息/正文、收件箱/发件箱、ack、consultation、input、wait 处置、未送达/已路由回复与工具回执查询；消息读/发件箱带一页同序的派生释放块（`releaseBlockOf`），收件箱为 `null` | 组合根装配 `platform.messages` 时；不要另写发信或分页 |
+| `createMessageWriteOwner` | `src/core/work-graph/communication/mailbox-service.ts:4986` | `storeBody` + `persist` + `prepare`：唯一正文存储、消息提交与准备片段路径（replay、CAS、event、claim 同一套） | 任何要写 SessionMessage 的 owner；不要绕过它直接 commit |
 | `createMessageReleaseOwner` | `src/core/work-graph/communication/message-release.ts:85` | 放行 owner：`releaseApproved` 走 R2 命令 `message.releaseApproved`（`action_request`/`inquiry` 两臂（后者承接 `decision_request`）、Goal 必须 active、`action_request` 的 pins 与依据、与 send 相同的释放伴随记录），加 `readReleaseCandidates` 的有界页（批准时间升序、撤回跳过、`readThrough` 是页自己的水位） | 7A-2 L 把它发布成 `messageRelease`；内部放行与候选读只用它，不要另写提交或分页 |
-| `mapReadResult` | `src/core/work-graph/communication/mailbox-service.ts:180` | 读结果到 `CoreRejection` 的映射（`not_found` / `not_ready`；`ready`/`rejected` 原样）；`message-release.ts` 的放行与候选读复用 | 读记录后要把失败转成写拒绝时；不要另写私有副本 |
+| `mapReadResult` | `src/core/work-graph/communication/mailbox-service.ts:184` | 读结果到 `CoreRejection` 的映射（`not_found` / `not_ready`；`ready`/`rejected` 原样）；`message-release.ts` 的放行与候选读复用 | 读记录后要把失败转成写拒绝时；不要另写私有副本 |
 | `releaseCandidatePageInput`、`releaseCandidateBlockedReason` | `src/core/work-graph/communication/message-release.ts:299`、`:313` | 候选页输入的唯一检查（`limit` 1–100，光标按 `goalId` 解码，跨 Goal 是 `invalid`）与单项阻塞原因的纯投影（Goal 非 active 是 `goal_not_active`，`action_request` 的 pins 不符是 `stale_pins`，其余 `null`；从不是 `activity_conflict`） | 候选读内部，以及消息读/发件箱/卡片的同一份阻塞投影；不要另写页输入检查或阻塞判定 |
 | `createRecipientExecutions` | `src/core/work-graph/sessions/recipient-executions.ts:66` | 读收件方的未结束执行与账本 horizon，供撤回的开放执行窗口判定；读失败原样返回 | 撤回 owner 判定能否撤回时；不要另读执行或自己拼 horizon |
 | `createDecisionMessageService` | `src/core/work-graph/communication/decision-service.ts:198` | 答复决定、记录决定应用、读回答复、读消息 pin、应用回放、工具提交查询；项目卡答复的 `readSource.goal` 与消息 `goalRef` 都是 `null` | 组合根装配 `platform.decisionMessages` 或工具适配时 |

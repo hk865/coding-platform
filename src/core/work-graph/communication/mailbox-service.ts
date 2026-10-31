@@ -70,7 +70,7 @@ import {
   toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
   type SessionMessageSendInput, type SendUserMessageInput,
 } from '../model/tool-commit-arguments.js';
-import { consultationQueryRefs } from '../../../contracts/query-job.js';
+import { consultationQueryRefs, interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
 import { deriveMessageDelivery, deriveSessionInputId, waitConsumedClaimKey } from '../model/communication-contracts.js';
@@ -1094,6 +1094,20 @@ function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, mes
   binding: QueryAnswerBinding; answererSession: SessionRef | null;
 } {
   const execution = job.job.intent.execution;
+  // The intervention planning Query is the second Host-only answer association: it must name exactly this source
+  // message and exactly its own deterministic Job/Run pair. It is never dressed up as a consultation; the caller
+  // line, the settled Answer and the claimed Session generation stay with the shared guards below.
+  if (execution.kind === 'intervention_planning') {
+    const source = execution.sourceMessageRef as SessionMessageRef;
+    if (canonicalOf(source) !== canonicalOf(messageRef)) {
+      return { binding: 'other_message', answererSession: null };
+    }
+    const refs = interventionPlanningQueryRefs(source);
+    if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
+      return { binding: 'other_query_identity', answererSession: null };
+    }
+    return { binding: 'matches', answererSession: recipient };
+  }
   const consultation = execution.consultation;
   if (execution.kind !== 'semantic_query' || consultation === undefined) {
     return { binding: 'other_message', answererSession: null };
@@ -4647,6 +4661,37 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
    * consistent open-execution read. The message's own state refusal is the
    * machine's, decided by `decideWithdraw`.
    */
+  /**
+   * The ONE narrow system-Host withdraw exception: the message must be the exact source of a formally ended
+   * `intervention_planning` Query with no Answer, claimed on the very line the message is addressed to. Every
+   * read failure is returned; a not-found or mismatched fact is not an exception.
+   */
+  async function interventionSourceFormallyEnded(owned: Owned, message: SessionMessage):
+  Promise<{ ok: true } | { ok: false; rejection?: CoreRejection }> {
+    if (isUserRecipient(message.recipient)) return { ok: false };
+    const refs = interventionPlanningQueryRefs(message.ref);
+    const jobRead = await loadQueryJob(owned, refs.queryJobRef);
+    if (jobRead.status === 'not_found') return { ok: false };
+    if (jobRead.status !== 'ready') return { ok: false, rejection: mapReadResult(jobRead) as CoreRejection };
+    const job = jobRead.value;
+    const execution = job.job.intent.execution;
+    if (execution.kind !== 'intervention_planning'
+      || canonicalOf(execution.sourceMessageRef) !== canonicalOf(message.ref)) return { ok: false };
+    // The formal Answer is the whole point: a settled ended run with no answer, never an answered one.
+    if (job.job.answerRefs.length > 0) return { ok: false };
+    const runRead = await loadQueryRun(owned, refs.queryRunRef);
+    if (runRead.status === 'not_found') return { ok: false };
+    if (runRead.status !== 'ready') return { ok: false, rejection: mapReadResult(runRead) as CoreRejection };
+    const run = runRead.value;
+    if (canonicalOf(run.run.queryJobRef) !== canonicalOf(job.ref)) return { ok: false };
+    const state = run.run.executionState;
+    if (state === undefined || state.phase !== 'settled') return { ok: false };
+    const recipient = message.recipient;
+    if (state.sessionRef.projectId !== recipient.projectId
+      || state.sessionRef.sessionId !== recipient.sessionId) return { ok: false };
+    return { ok: true };
+  }
+
   async function readWithdrawFacts(owned: Owned, ref: SessionMessageRef):
   Promise<{ status: 'ready'; facts: WithdrawFacts } | CoreRejection> {
     const loaded = await loadMessage(owned, ref);
@@ -4660,10 +4705,15 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (owned.principal.kind === 'host') {
       actor = { kind: 'host', actor: { ...owned.principal.actor } };
       // A Host system sender may withdraw only a message it sent itself; a
-      // person may withdraw any message of this workspace.
+      // person may withdraw any message of this workspace. The one exception is
+      // a formally ended, no-answer intervention source on this exact line: the
+      // person's planning turn produced nothing to reply, so the stale source is
+      // retired (the guards above prove every fact again, never a caller claim).
       if (owned.principal.actor.kind === 'system'
         && (message.sender.kind !== 'host' || !sameActor(message.sender.actor, owned.principal.actor))) {
-        return reject('forbidden', 'a Host system sender may withdraw only its own message');
+        const ended = await interventionSourceFormallyEnded(owned, message);
+        if ('rejection' in ended) return ended.rejection;
+        if (!ended.ok) return reject('forbidden', 'a Host system sender may withdraw only its own message');
       }
     } else if (owned.principal.kind === 'query_run') {
       // The secretary withdraws only a message of the same resolved round.

@@ -56,7 +56,7 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `createLocalWorkbenchHost` | `src/app/host.ts:454` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
-| `consumeStatus` | `src/app/host.ts:2268` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
+| `consumeStatus` | `src/app/host.ts:238` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
 | `createWorkbenchServer` | `src/app/server.ts:187` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
 | `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:737` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
 | `dispatchCoreRoute` | `src/app/core-routes.ts:1268` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
@@ -74,8 +74,9 @@
 | `createHostRuntimeResolverRegistry` | `src/app/host-settings.ts:311` | 保存当前 `RuntimeHostBindings` 并安装新的不可变版本 | 设置变更要热替换运行期版本时 |
 | `createAttentionObserver` | `src/app/attention-observer.ts:428` | 机械注意力观察器：真实文本 diff、合流、重复抑制与 processed 确认 | Host 注意力循环；不要按语义预筛或调模型 |
 | `createAttentionScanner` | `src/app/attention-observer.ts:616` | 把工作区与图状态扫成一份 `AttentionSnapshot` | 注意力心跳读取当前事实时 |
-| `announceDisconnect` / `announceInterruption` | `src/app/host-notices.ts:35` / `:56` | Host 的两条系统通知构建器：断开事实的两侧、中断时打开的等待两侧加秘书/顾问线；确定性 `requestId`，只调用已发布的 `sendMessage` | L 的 Host 钩子调用；不要另写通知文本或第二写入者 |
-| `systemNotifyRequest` | `src/app/host-notices.ts:15` | 唯一的 `notify` 发送请求：接收方、文本、确定性 `requestId`、空 expected | 上面两条构建器构造发送时 |
+| `announceDisconnect` / `announceInterruption` | `src/app/host-notices.ts:56` / `:77` | Host 的两条系统通知构建器：断开事实的两侧、中断时打开的等待两侧加秘书/顾问线；确定性 `requestId`，只调用已发布的 `sendMessage` | L 的 Host 钩子调用；不要另写通知文本或第二写入者 |
+| `systemNotifyRequest` | `src/app/host-notices.ts:16` | 唯一的 `notify` 发送请求：接收方、文本、确定性 `requestId`、空 expected | 上面两条构建器构造发送时 |
+| `INTERVENTION_CLOSING_NOTICE_TEXTS` / `interventionClosingNoticeRequest` | `src/app/host-notices.ts:28` / `:37` | 干预收尾的固定通知文本（每个 reason 一句，`questions` 不发）与确定性 `requestId` 的发送请求；系统 Host 先提交通知，再关联回复或撤回 | Host 的 `consumeIdle` 收尾分支；不要另写通知文本 |
 | `createAutoCaptureDriver` | `src/app/auto-capture-driver.ts:81` | 每 Host 一个自动捕获驱动：一次一个 workspace，请求记录先写 | Host 启动自动捕获时；失败写 failAutoCapture，取消不写 |
 | `createChangeFeed` | `src/app/change-feed.ts:87` | 汇总 commit 与 Host 句柄变更，保留窗口并回答 SSE 恢复 | `changes` 长连接；notice 只带粗粒度类型与 project |
 | `createCollaborationDriver` | `src/app/collaboration-driver.ts:357` | 持续协作的 Goal 驱动与 Run 看守：每个目标一条决定循环、每个任务一个 `Lane`；`wake` 只置 `recheck` 或重开交回过依据的看守并立即返回，推进由决定循环做；可选 `onStarted` 在每次接受 Goal 范围启动时触发 | Host 的持续通信；不拥有 store，只组合既有 owner |

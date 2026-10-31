@@ -6,8 +6,9 @@ import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
-import type { QueryJobIntentV1 } from '../../contracts/query-job.js';
+import type { QueryJobAnswerRef, QueryJobIntentV1 } from '../../contracts/query-job.js';
 import { interventionPlanningQueryRefs } from '../../contracts/query-job.js';
+import { sameJson } from '../../contracts/fingerprint.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { PlanProposalRef, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
@@ -66,6 +67,9 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       if (message.withdrawnAt !== null) {
         return { status: 'rejected', code: 'source_stale', reason: 'the intervention message is withdrawn' };
       }
+      // The Host's second step of a closing: the notice is already committed, so only the formal Answer's
+      // association with this message is missing. The same deterministic Query and its last Answer are re-derived.
+      if (input.completion === 'associate_answer') return associateAnswer(owned, message);
       // The line is the recipient Session; the named Task wins over the line's newest Work Task. A message
       // without `taskRef` is allowed: its effective line is the Session below (book `:445`; 7b1rd-07). The
       // allowed sender is L's dispatch gate (person or `action_request`, SR9 L3); this handler does not restate it.
@@ -127,6 +131,33 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         { messageRef: input.messageRef, part: 'message' });
       if (body.status !== 'ready') return asRejection(body, 'the intervention message body');
       return planOnIdleLine(owned, input, message, goal, body.value.text);
+
+      /** The closing's association step: the formal Answer becomes this message's one reply. */
+      async function associateAnswer(owned: Owned, message: SessionMessage): Promise<HandleInterventionResultV1> {
+        const refs = interventionPlanningQueryRefs(message.ref);
+        const read = await queryOwner.readQueryJob(owned.ctx, refs.queryJobRef);
+        if (read.status !== 'ready') return asRejection(read, 'the intervention planning Query');
+        // The only production caller runs after `answer_ready`, so the settled Query has its formal Answer.
+        const answerRef: QueryJobAnswerRef = read.value.job.job.answerRefs.at(-1)!;
+        // Re-read the current message: the reply is first-wins and the pin is its own revision.
+        const current = await mailbox.readMessage(owned.ctx, message.ref);
+        if (current.status !== 'ready') return asRejection(current, 'the intervention message');
+        const existing = current.value.response;
+        if (existing !== null) {
+          const same = existing.sender.kind === 'query_run'
+            && sameJson(existing.sender.answerRef, answerRef);
+          return same
+            ? { status: 'responded', branch: 'no_task', answerRef: { ...answerRef } }
+            : { status: 'rejected', code: 'source_stale', reason: 'the intervention message already has another reply' };
+        }
+        const associated = await mailbox.respondFromQueryAnswer(owned.ctx, {
+          input: { messageRef: { ...message.ref }, answerRef: { ...answerRef } },
+          meta: { requestId: `intervention:${sessionMessageRefKey(message.ref)}:respond`,
+            expected: [{ ref: current.value.ref, revision: current.value.revision }] },
+        });
+        if (associated.status !== 'committed') return associated;
+        return { status: 'responded', branch: 'no_task', answerRef: { ...answerRef } };
+      }
 
       /** No unfinished task on a completed Goal: the separate internal command (book `:700`-`:706`). */
       async function requestNewGoal(owned: Owned, message: SessionMessage, goal: GoalSnapshot, text: string):
@@ -227,7 +258,9 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         }
         // Stage 9: the answer through the narrow intervention source.
         const answerRef = record.job.job.answerRefs.at(-1);
-        if (answerRef === undefined) return { status: 'queued', reason: 'no_task' };
+        // A formally ended Query with no saved Answer is the third ending: the Host sends the one fixed notice
+        // and withdraws the stale source. Only this proven end reaches it; every read/version failure above returned.
+        if (answerRef === undefined) return { status: 'no_answer', branch: 'no_task' };
         const readFacts = plans.readInitialPlanAnswerFacts;
         if (readFacts === undefined) {
           return { status: 'rejected', code: 'unsupported',
@@ -237,12 +270,18 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           { kind: 'intervention', messageRef: { ...message.ref } });
         if (facts.status !== 'ready') return asRejection(facts, 'the intervention planning answer');
         const parsed = parseInitialPlanningResponseV2(facts.value.answerText);
-        if (parsed.status !== 'parsed') return parsed;
+        // An answer that cannot form an adoptable plan is the second ending: the original answer stays the formal
+        // Answer and becomes the reply; the Host adds the one fixed notice. No proposal is written.
+        if (parsed.status !== 'parsed') {
+          return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'invalid_plan' };
+        }
         const normalized = normalizeInitialPlanningResponseV2(parsed.response, facts.value);
-        if (normalized.status === 'rejected') return normalized;
+        if (normalized.status === 'rejected') {
+          return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'invalid_plan' };
+        }
         if (normalized.status === 'needs_decision') {
-          return { status: 'needs_decision', branch: 'no_task', answerRef: { ...answerRef },
-            questions: [...normalized.questions] };
+          // The answer and its question cards are the end of this turn; answering a card saves the answer only.
+          return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'questions' };
         }
         // Stage 10: the proposal is read first; its receipt identity makes a re-run return the same candidate.
         const proposalRead = await plans.readPlanProposal(owned.ctx, proposalRef);
@@ -270,6 +309,11 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           return { status: 'progressed', branch: 'no_task', stage: 'proposal' };
         }
         const proposal = proposalRead.value;
+        // The fourth ending: a proposal the person did not adopt replies the original answer, whether it was
+        // abandoned or replaced. A replacement is never followed; the person's decision closed this turn.
+        if (proposal.status === 'not_adopted') {
+          return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'declined' };
+        }
         if (proposal.status !== 'accepted') {
           // Stage 11: the first plan is the person's; a later refinement follows the autonomy level.
           const first = goal.activePlanRevision === null;

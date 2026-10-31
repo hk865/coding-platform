@@ -8,6 +8,7 @@ import type {
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { NodeDetailReadPort } from '../core/work-graph/model/work-line-contracts.js';
 import { canonicalKey } from '../contracts/fingerprint.js';
+import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
 import { readDisconnectFacts,
   type DisconnectNoticeSourceDependencies } from '../core/work-graph/views/disconnect-notices.js';
 
@@ -20,6 +21,26 @@ export function systemNotifyRequest(input: {
       ...(input.goalRef === undefined || input.goalRef === null ? {} : { goalRef: input.goalRef }) },
     meta: { requestId: input.requestId, expected: [] },
   };
+}
+
+
+/** The lead's fixed closing sentences: exactly one per reason, and `questions` sends none (the cards say it). */
+export const INTERVENTION_CLOSING_NOTICE_TEXTS = {
+  invalid_plan: '这次规划没有形成可采用的计划，模型的原回答在回复里。可以补充要求后重新发送。',
+  declined: '这次规划的方案没有采用，原回答在回复里。可以补充要求后重新发送。',
+  no_answer: '这次规划已结束，没有留下可用的回答，这条消息已撤回。请补充要求后重新发送。',
+} as const;
+
+export type InterventionClosingReasonV1 = keyof typeof INTERVENTION_CLOSING_NOTICE_TEXTS;
+
+/** The ONE Host closing notice of an intervention: the fixed text, the original line and the fixed request id. */
+export function interventionClosingNoticeRequest(input: {
+  recipient: SessionRef; messageRef: SessionMessageRef; reason: InterventionClosingReasonV1;
+  goalRef?: GoalRef | null;
+}): SessionMessageSendInputV1 {
+  return systemNotifyRequest({ recipient: input.recipient, text: INTERVENTION_CLOSING_NOTICE_TEXTS[input.reason],
+    requestId: `intervention:${sessionMessageRefKey(input.messageRef)}:notice:${input.reason}`,
+    ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }) });
 }
 
 export type HostNoticeDependencies = {

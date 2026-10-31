@@ -194,6 +194,8 @@ async function personSend(world: S6AHostWorld, to: S6ASession, requestId: string
  * The scenario's own Host input (H-06): the frozen S6A fixture cannot add a Work profile through
  * `extraHostOptions`/`extraBindings`, so this wraps `createLocalWorkbenchHost` the way its `hostStart` does
  * (`S6A-host-fixture.ts:533`/`:539`), adding the Work role's Query profile before the real factory runs.
+ * The wrapper stays installed until the world closes (or its open fails), so a SQLite `crash()`/reopen starts
+ * the replacement Host with the same profile instead of losing it when the first start returns.
  */
 async function openConsumeHostWorld(options: S6AHostWorldOptions): Promise<S6AHostWorld> {
   const original = hostModule.createLocalWorkbenchHost;
@@ -209,10 +211,25 @@ async function openConsumeHostWorld(options: S6AHostWorldOptions): Promise<S6AHo
     return await original(hostOptions);
   };
   Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: wrapper, configurable: true, writable: true });
+  let world: S6AHostWorld;
   try {
-    return await openS6AHostWorld(options);
-  } finally {
-    Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true });
+    world = await openS6AHostWorld(options);
+  } catch (error) {
+    restoreWrapper();
+    throw error;
+  }
+  const close = world.close.bind(world);
+  world.close = async () => {
+    try { await close(); } finally { restoreWrapper(); }
+  };
+  return world;
+
+  function restoreWrapper(): void {
+    // A later world owns the export; only the world whose wrapper is still installed restores the original.
+    if (hostModule.createLocalWorkbenchHost === wrapper) {
+      Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
+        { value: original, configurable: true, writable: true });
+    }
   }
 }
 export async function openS7B2ConsumeWorld(): Promise<S7B2ConsumeWorld> {

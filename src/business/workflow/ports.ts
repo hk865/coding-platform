@@ -315,6 +315,9 @@ export type InterventionInput = {
   runtimeBudget: RuntimeBudget;
   budget: QueryJobIntentV1['budget'];
   consumerId: string;
+  /** The Host's second step of a closing: the notice is committed and the formal Answer is associated as the
+   *  message's one reply. Absent on every ordinary pass, so the handler's planning stages are unchanged. */
+  completion?: 'associate_answer';
 };
 /** The stage one handler call reached; the next call continues from the first missing fact. */
 export type InterventionPlanningStage = 'query' | 'proposal' | 'adoption';
@@ -322,7 +325,14 @@ export type HandleInterventionResultV1 =
   | { status: 'claimed'; branch: 'existing_task' | 'no_task'; claim: TaskClaim }
   | { status: 'progressed'; branch: 'no_task'; stage: InterventionPlanningStage }
   | { status: 'awaiting_decision'; branch: 'no_task'; proposalRef: PlanProposalRef }
-  | { status: 'needs_decision'; branch: 'no_task'; answerRef: QueryJobAnswerRef; questions: string[] }
+  /** The closing's reply step: `reason` names the one fixed Host notice (`questions` sends none) and the original
+   *  formal Answer becomes the message's reply. */
+  | { status: 'answer_ready'; branch: 'no_task'; answerRef: QueryJobAnswerRef;
+    reason: 'invalid_plan' | 'declined' | 'questions' }
+  /** The closing's withdraw step: the Query is formally ended without an Answer. */
+  | { status: 'no_answer'; branch: 'no_task' }
+  /** The association step of an `answer_ready` closing: the formal Answer is this message's reply. */
+  | { status: 'responded'; branch: 'no_task'; answerRef: QueryJobAnswerRef }
   | { status: 'requested'; branch: 'goal_completed'; requestRef: QueryJobRef }
   | { status: 'queued'; reason: 'no_task' }
   | CoreRejection;
