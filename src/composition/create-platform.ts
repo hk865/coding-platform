@@ -41,6 +41,7 @@ import { createPlanningQuestionReader } from '../core/work-graph/tasks/planning-
 import { createDecisionSettingsService } from '../core/work-graph/configuration/decision-settings-service.js';
 import { createMessageDutiesFactsAdapter } from '../core/work-graph/configuration/message-duties-adapter.js';
 import { createUndeliveredReplyNoticeSource } from '../core/work-graph/views/undelivered-reply-notices.js';
+import { createDisconnectNoticeSource } from '../core/work-graph/views/disconnect-notices.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
   createCommandRerunRequestCardSource, createDecisionReadModel, createGoalCauseCardSource,
@@ -61,6 +62,7 @@ import type {
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
+import type { MessageForwardingPort } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageReleaseApprovedHookV1 } from '../core/work-graph/communication/decision-change-proof.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
@@ -183,8 +185,10 @@ import type {
 import {
   GOAL_CONFIRM_SCHEMAS, createGoalConfirmService, createInitializationBindingReader,
 } from '../core/work-graph/tasks/goal-confirm-service.js';
-import { GOAL_COPY_RECORD_SCHEMAS, createGoalCopyService } from '../core/work-graph/tasks/goal-copy-service.js';
+import { GOAL_COPY_RECORD_SCHEMAS, createCopiedInterventionForwarding,
+  createGoalCopyService } from '../core/work-graph/tasks/goal-copy-service.js';
 import { createCopyInterventionPorts } from '../core/work-graph/communication/copy-retraction.js';
+import { createMessageForwardingOwner } from '../core/work-graph/communication/message-forwarding.js';
 import { createMessageReleaseApplication } from '../core/work-graph/communication/decision-change-proof.js';
 import { createMessageReleaseOwner } from '../core/work-graph/communication/message-release.js';
 import { createMessageApplyOwner, type MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
@@ -262,6 +266,7 @@ import type {
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import type { AuthorizeQueryConfiguration, QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../core/work-graph/queries/query-record-codecs.js';
+import { createConsultationFactsReader } from '../core/work-graph/queries/platform-facts.js';
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
 import { createArchitectureCatalogService } from '../core/work-graph/architecture/catalog-service.js';
@@ -1079,6 +1084,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis,
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
+    // G's L46 upstream read and P's copy-forward trigger share the ONE mailbox, records and duties owner; no second
+    // records/mailbox/forwarding instance is built here.
+    const messageForwardingOwner = createMessageForwardingOwner({
+      records: backend.records, sessions: sessionDirectory,
+      duties: messageDuties, now,
+    });
+    const copiedInterventionForwarding = createCopiedInterventionForwarding({
+      records: backend.records, mailbox,
+      forwardCopiedIntervention: messageForwardingOwner.forwardCopiedIntervention,
+    });
     const messageWrites = createMessageWriteOwner(mailboxDependencies);
     const messageExpiry = createMessageExpiryOwner({ records: backend.records, writes: messageWrites, now });
     // R's release owner and G's trusted entry share the ONE message writer and the ONE basis read; the copy ports take
@@ -1276,7 +1291,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records,
       cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
         commandRerunRequestCards, messageReleaseCards],
-      noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices],
+      noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices,
+        createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts })],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
@@ -2304,6 +2320,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Book §3.8 item 3: the release owner, the bounded candidate page and the trusted answer entry. R's Host and the
       // approval hook arm the same queue; the Workflow only selects and performs.
       messageRelease: rawMessageRelease,
+      // G's L46 pre-pass reads the legacy exact artifacts through the ONE context-input owner; P's copy forwarder is
+      // the copy owner built above (one port shape: `Promise<CoreRejection | null>`).
+      taskInputs: taskInputsOwner,
+      copyForwarding: copiedInterventionForwarding.forwardCopiedInterventions,
+      // §3.15 items 2–4: the one consultation mode decision and bounded collection over the SAME plan, execution,
+      // mailbox and history owners the rest of the platform reads.
+      consultationFacts: createConsultationFactsReader({
+        plans: planService, executions: executionReader, messages: mailbox, history: historyOwner,
+      }),
       // Slice 1 (spec §4.2): the exact close-event reader maintenance uses to
       // derive an executor's `finishedAt` from the terminal responsibility close.
       // The RecordStore's own result is translated to the Workflow's read shape;
@@ -2752,6 +2777,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Without a Host sink nothing consumes it and the round waits on record.
       ...(options.requestWake === undefined ? {} : { wake: options.requestWake }),
     });
+    // The intervention handler's completed-goal branch appends the internal goal-less request through this
+    // same owner. The request group is built after `createWorkflow` on this tree and the Workflow holds the
+    // dependency bag by reference, so the raw object is installed before the platform is published.
+    workflowDependencies.requestIntake = rawRequestIntake;
     // The published request owners drain through the same `trackedCall` set as
     // every other owner: `close()` waits for an in-flight request.
     const requestClosed = () =>
@@ -2796,6 +2825,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       route: (ctx, input) => trackedCall(() => rawRequestIntake.route(ctx, input), requestClosed),
       selectIdea: (ctx, input) => trackedCall(() => rawRequestIntake.selectIdea(ctx, input), requestClosed),
       ask: (ctx, input) => trackedCall(() => rawRequestIntake.ask(ctx, input), requestClosed),
+      submitInterventionGoal: (ctx, input) =>
+        trackedCall(() => rawRequestIntake.submitInterventionGoal(ctx, input), requestClosed),
       drainUnassigned: (ctx, scope, input) =>
         trackedCall(() => rawRequestIntake.drainUnassigned(ctx, scope, input), requestClosed),
     };
@@ -2805,10 +2836,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const handoffFence: HandoffFencePort = {
       read: (ctx, session) => trackedCall(() => readHandoffFenceOf(backend.records, ctx, session), unavailable),
     };
+    const messageForwarding: Pick<MessageForwardingPort, 'forwardMessage' | 'disposeWait'> = {
+      forwardMessage: (...args) => trackedCall(() => messageForwardingOwner.forwardMessage(...args), unavailable),
+      disposeWait: (...args) => trackedCall(() => messageForwardingOwner.disposeWait(...args), unavailable),
+    };
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       messageExpiry: messageExpiryPort,
+      messageForwarding, disconnect: { records: backend.records, sessions: sessionFacts },
       consumableSessions,
       queries,
       // K3 (§2 L7): the read-only UnknownCallReview owner, published for the
@@ -2939,7 +2975,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
-      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageExpiry',
+      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }

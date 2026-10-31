@@ -97,7 +97,8 @@ const DRAFT: PlanRevisionDraft = {
 };
 const PROPOSAL: PlanProposal = { kind: 'candidate_v2', ref: PROPOSAL_REF, revision: 1,
   schemaVersion: 2, goalRef: GOAL_REF, basedOn: PLAN_REF, draft: DRAFT,
-  reason: { text: 'split the remaining future task', sources: [] }, status: 'candidate', issues: [], catalogPin: null };
+  reason: { text: 'split the remaining future task', sources: [] }, status: 'candidate', issues: [], catalogPin: null,
+  sourceMessageRef: null };
 const PLAN: PlanRevisionSnapshot = { ...DRAFT, ref: { ...PLAN_REF, planId: DRAFT.planId },
   revision: 1, goalRef: GOAL_REF, acceptedAt: '2026-09-26T00:00:00.000Z',
   effectiveCompletionPolicy: { ref: { aggregateType: 'CompletionPolicyRevision', projectId: PROJECT_ID,

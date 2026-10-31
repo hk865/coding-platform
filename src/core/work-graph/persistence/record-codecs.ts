@@ -232,6 +232,7 @@ function validateWorkspaceSnapshot(record: EncodedRecord): DecodeResult<EncodedR
 const NOTICE_CATEGORIES: readonly string[] = [
   "member_notice", "second_expiry", "handoff", "note_review",
   "undelivered_reply", "automatic_rework", "continuation",
+  "disconnect",
 ];
 
 /**

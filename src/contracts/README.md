@@ -18,7 +18,7 @@
 - `goal-change.ts` — `UserDecisionV1`/`UserDecisionSnapshot`：有界的 Goal 决定记录。
 - `goal-copy-retraction.ts` — 复制取消的候选契约：`CopyInterventionStateV1`（候选状态闭集）与 `CopyInterventionCandidateV1`（消息 ref、版本、状态、可选/可撤回及各自原因）。
 - `goal-phase.ts` — `GoalPhaseRef`/`GoalPhaseSnapshot`：Goal 终止相位。
-- `initial-planning.ts` — `InitialPlanAssignment`、`InitialPlanOrigin`、`InitializationSourceShape`/`InitializationSourceV1`（初始化计划读哪一份回答：绑定的草稿或已备好的 Goal）、初始规划响应/设置。
+- `initial-planning.ts` — `InitialPlanAssignment`、`InitialPlanOrigin`、`InitialPlanOriginSourceV1`（`binding`/`prepared_goal`/`plain`/`intervention` 四臂）与 `InterventionAnswerSourceV1`（`{ kind: 'intervention', messageRef }`，干预 Plan 答案的唯一来源选择器）、`InitializationSourceShape`/`InitializationSourceV1`（初始化计划读哪一份回答：绑定的草稿或已备好的 Goal）、初始规划响应/设置。
 - `initial-planning-parse.ts` — `parseInitialPlanningResponseV2`：初始规划 v2 回答外层协议的唯一纯解析；WorkGraph `tasks/` 的 Plan owner 和 `queries/` 的秘书回答检查共用（`queries` 不能 import `tasks`）。
 - `input-declaration-id.ts` — `edgeDeclarationId`/`legacyDeclarationId`：输入声明 id。
 - `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`。
@@ -34,7 +34,7 @@
 - `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`MODEL_SERVICE_FAILURE_CODES`、`TERMINAL_PAYLOAD_*`。
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
 - `query-execution-context.ts` — `QueryExecutionRequest`：持久化的 Query 请求形状。
-- `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`（`understanding` 是唯一的命令存放处）、`GoalScreeningShape`/`GoalScreeningV1`（目标卡草稿的筛选，整体或 null）、`GoalCardDraftV1` 的 `screening`、回答的 `planDraftIndex`、`RequestUnderstandingCommandV1`（`request_understanding` 命令的唯一格式）、`SecretaryRoundMaterialV1.command`（从 `round.job.understanding` 投影一次）、`SecretaryRequestManifestV1` 的 `briefRef`/`understandingGrants`、`RequestCommandReceiptV1` 的 `understanding` 臂、`consultationQueryRefs`、`interventionPlanningQueryRefs`（由真实来源消息派生计划 Query 的固定身份）、`queryJobRefFor`、`validQueryExecution`（执行种类含 `intervention_planning`；该种类必带 `sourceMessageRef`，其他种类不得带）。
+- `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`（`understanding` 是唯一的命令存放处）、`GoalScreeningShape`/`GoalScreeningV1`（目标卡草稿的筛选，整体或 null）、`GoalCardDraftV1` 的 `screening`、回答的 `planDraftIndex`、`RequestUnderstandingCommandV1`（`request_understanding` 命令的唯一格式）、`SecretaryRoundMaterialV1.command`（从 `round.job.understanding` 投影一次）、`SecretaryRequestManifestV1` 的 `briefRef`/`understandingGrants`、`RequestCommandReceiptV1` 的 `understanding` 臂、`consultationQueryRefs`、`interventionPlanningQueryRefs`（由真实来源消息派生计划 Query 的固定身份）、`queryJobRefFor`、`validQueryExecution`（执行种类含 `intervention_planning`；该种类必带 `sourceMessageRef`，其他种类不得带）、`InitialPlanSourceResolutionV1`（plain/binding/prepared_goal/`intervention` 四臂，干预臂带 `InterventionAnswerSourceV1`）。
 - `initialization-binding.ts` — 初始化绑定记录（字段表格式 `InitializationBinding@1`，`revision`/`goalRevision` 固定为 1）：`InitializationBindingRefShape`、`InitializationBindingFormat`、两个查找名；两条规则要求 ref 指向同一份回答和草稿，且回答、请求、Goal 同一项目、回答与请求同一工作区；记录没有事件，键是完整 ref 的 `canonicalJson`。
 - `initialization-adoption.ts` — P11 初始化采用的共享数据（唯一正本）：`InitializationAdoptionRefShape`/`InitializationAdoptionRef`、`INITIALIZATION_ADOPT_STAGES`/`InitializationAdoptStageV1`、pin/progress/result/record 类型，以及操作定位 `initializationAdoptionOperationId`；阶段/进度检查是 J 的 `validation/initialization-adoption.ts`（P-3 不写它）。
 - `run-activity.ts` — Run/Query 活动读数：规则版本、各项上限、`RunActivitySnapshot`、`QueryActivitySnapshot`、带 `querySince` 的 `ActivityRecordingSnapshot`、显式 unknown 的唯一构造 `unknownFacts` 与 `provenNotEnteredKernel`。
@@ -119,7 +119,9 @@
 | `InitializationAdoptionRefShape`、`InitializationAdoptionRef` | `src/contracts/initialization-adoption.ts:13` | P11 初始化采用的聚合 ref（`aggregateType: 'InitializationAdoption'`、`projectId`、`operationId`）和推导出的 ref 类型；也是 `AggregateRef` 的联合成员。 | 写/读采用记录、操作进度和 `Ledger` 的 ref 时；不要另写只查 `aggregateType` 的 ref 检查。 |
 | `INITIALIZATION_ADOPT_STAGES`、`InitializationAdoptStageV1` | `src/contracts/initialization-adoption.ts:35` | 八个采用阶段的唯一有序列表（`admission`…`apply`）和阶段字面量类型。 | 记录进度、判断完成前缀和恢复读时；不要另写阶段数组。 |
 | `initializationAdoptionOperationId` | `src/contracts/initialization-adoption.ts:21` | 采用操作定位：scope、source 与 expected Goal 的 ref 的规范 JSON 的 SHA-256；不含 `commandId`、generation 或单独的 `goalId`。 | `accept` 与新一次授权提交找同一操作；不要另写定位配方。 |
-| `InitializationSourceShape`、`InitializationSourceV1` | `src/contracts/initial-planning.ts:33`、`src/contracts/initial-planning.ts:39` | 初始化计划的来源：`binding`（回答 + 草稿号）或 `prepared_goal`（回答）。 | 读取/采用初始化计划时指定来源；不要从回答文本猜来源。 |
+| `InitializationSourceShape`、`InitializationSourceV1` | `src/contracts/initial-planning.ts:38`、`src/contracts/initial-planning.ts:44` | 初始化计划的来源：`binding`（回答 + 草稿号）或 `prepared_goal`（回答）。 | 读取/采用初始化计划时指定来源；不要从回答文本猜来源。 |
+| `InitialPlanOriginSourceV1`、`InterventionAnswerSourceV1` | `src/contracts/initial-planning.ts:14`、`src/contracts/initial-planning.ts:21` | 初始 Plan 的 origin 来源选择：`binding`/`prepared_goal`/`plain`/`intervention` 四臂，以及干预臂的 `{ kind: 'intervention', messageRef }`。 | 规范化写 origin、读取/采用重核时；干预选择器只校验完整消息 ref，不比较 `answerRef`。 |
+| `InitialPlanSourceResolutionV1`、`InitialPlanAnswerFacts` | `src/contracts/query-job.ts:636`、`src/contracts/query-job.ts:644` | 来源与 Goal 只解析一次的产物：plain/binding/prepared_goal/`intervention` 四臂，`bindingRef`、Goal 与 `goalRevision`；干预臂带回 `InterventionAnswerSourceV1`。 | 初始 Plan 的规范化、提案与采用重核；不要另写来源解析。 |
 | `GoalContinuationV1` | `src/contracts/ledger.ts:74` | 接续来源：被接续的 Goal、它当时的 revision 和可选的理解注记版本。 | Goal 的 `continuedFrom`；不接续时为 null。 |
 | `CanonicalJsonError` | `src/contracts/fingerprint.ts:18` | 规范 JSON 编码失败的错误类型。 | 需要捕获并区分不可编码值时。 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 把 unknown 错误转成可读文本：`Error.message`，否则 `String(error)`；转换抛错不吞。 | 统一错误文本；不要再另写一份副本。 |

@@ -10,7 +10,7 @@ import type { TaskTriple } from '../../../contracts/dispatch.js';
 import type {
   InputSelectionV1, TaskInputPageRequestV1, TaskInputPageV1,
 } from '../../../contracts/graph-context.js';
-import type { AggregateRef } from '../../../contracts/ledger.js';
+import type { AggregateRef, GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -26,6 +26,26 @@ export interface TaskContextInputPort {
   readTaskInputPage(ctx: CoreCallContext, request: TaskInputPageRequestV1)
     : Promise<ReadResult<TaskInputPageV1>>;
 }
+
+/** L46 (§3.13 item 2): one exact v2 declaration resolved to the Task whose Run produced its artifact. */
+export type TaskInputUpstreamV1 = {
+  consumerTaskId: string;
+  upstream: TaskTriple;
+};
+
+/** The thin read's value: only declarations that resolve to a Task, at one Plan revision (the read basis). */
+export type TaskInputUpstreamsV1 = {
+  planRef: PlanRevisionRef;
+  upstreams: readonly TaskInputUpstreamV1[];
+};
+
+/** The upstream read the Workflow's L46 pre-pass uses; the context-input owner publishes it beside the two input
+ *  reads. A declaration whose body/provenance cannot be read is a rejection, never "no dependency" (§3.13 item 2). */
+export type TaskInputUpstreamPort = {
+  readInputUpstreams(ctx: CoreCallContext, input: { goalRef: GoalRef; planRef: PlanRevisionRef }):
+    Promise<ReadResult<TaskInputUpstreamsV1>>;
+};
+
 export type TaskContextInputDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   materials: MaterialPort;

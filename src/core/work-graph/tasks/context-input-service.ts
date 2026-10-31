@@ -49,7 +49,8 @@ import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/me
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import { roundOrdinalOf } from '../state/verification-machine.js';
 import { declaredInputProblem } from '../state/context-input.js';
-import type { TaskContextInputDependencies, TaskContextInputPort } from '../model/context-input-contracts.js';
+import type { TaskContextInputDependencies, TaskContextInputPort,
+  TaskInputUpstreamPort, TaskInputUpstreamV1, TaskInputUpstreamsV1 } from '../model/context-input-contracts.js';
 import { readEntryPlanVerdict } from './entry-plan-reader.js';
 import { isBasisUnsupported, planTaskFacts } from './plan-task-basis.js';
 import {
@@ -58,6 +59,7 @@ import {
 
 export type { TaskContextInputPort } from '../model/context-input-contracts.js';
 export type { TaskContextInputDependencies } from '../model/context-input-contracts.js';
+export type { TaskInputUpstreamPort, TaskInputUpstreamV1, TaskInputUpstreamsV1 } from '../model/context-input-contracts.js';
 
 // --------------------------------------------------------------------------
 // Local shapes
@@ -945,7 +947,9 @@ function sourceSummary(source: SelectedInputSourceV1): string {
 // Factory
 // --------------------------------------------------------------------------
 
-export function createTaskContextInputService(deps: TaskContextInputDependencies): TaskContextInputPort {
+export function createTaskContextInputService(
+  deps: TaskContextInputDependencies,
+): TaskContextInputPort & TaskInputUpstreamPort {
   const authority: MaterialAuthorityReads = createMaterialRecordReaders(deps.records).authority;
 
   async function readTaskInputs(
@@ -1143,5 +1147,47 @@ export function createTaskContextInputService(deps: TaskContextInputDependencies
     return { status: 'ready', value: { selection, body: slice.body, nextCursor, selectedTaskInputs } };
   }
 
-  return { readTaskInputs, readTaskInputPage };
+  async function readInputUpstreams(
+    ctx: CoreCallContext, input: { goalRef: GoalRef; planRef: PlanRevisionRef },
+  ): Promise<ReadResult<TaskInputUpstreamsV1>> {
+    const localCtx = cloneContext(ctx);
+    const goalRef = structuredClone(input.goalRef);
+    const planRef = structuredClone(input.planRef);
+    if (localCtx.signal.aborted) return cancelledRejection();
+    if (goalRef.projectId !== localCtx.projectId || planRef.projectId !== localCtx.projectId) {
+      return rejection('forbidden', 'the upstream read scope does not match the trusted call context');
+    }
+    const goalScope = await readGoalScope(deps.records, goalRef);
+    if (goalScope.status !== 'ready') return goalScope;
+    if (localCtx.workspaceId !== undefined && goalScope.goal.workspaceRef.workspaceId !== localCtx.workspaceId) {
+      return rejection('forbidden', 'the Goal workspace does not match the call scope');
+    }
+    const planRead = await readPlan(deps.records, planRef);
+    if (planRead.status !== 'ready') return planRead;
+    const plan = planRead.plan;
+    const caches = newCaches();
+    const upstreams: TaskInputUpstreamV1[] = [];
+    for (const task of plan.tasks) {
+      const consumer: TaskTriple = { projectId: plan.goalRef.projectId, goalId: plan.goalRef.goalId,
+        taskId: task.taskId };
+      for (const declaration of declarationsFor(plan, consumer)) {
+        // The DAG edges are already on TaskRow.legacyDependencies; only the legacy exact artifact needs provenance.
+        if (declaration.legacyArtifactRef === null) continue;
+        const resolved = await resolveLegacy(deps, authority, localCtx, declaration, caches);
+        if (resolved.status !== 'ready') return resolved;
+        const selection = resolved.value.selection;
+        if (selection.state === 'unavailable') {
+          if (selection.errorCode === 'not_found') continue;   // E28: named before it is stored; no provenance yet, prepare reports it when consumed
+          return rejection(selection.errorCode ?? 'unavailable',
+            selection.reason ?? `the input ${declaration.declarationId} is not readable`);
+        }
+        const upstream = selection.declaration.upstream;
+        if (upstream === null) continue;   // a platform operation or a QueryRun is not a Task branch edge
+        upstreams.push({ consumerTaskId: declaration.consumer.taskId, upstream });
+      }
+    }
+    return { status: 'ready', value: { planRef: plan.ref, upstreams } };
+  }
+
+  return { readTaskInputs, readTaskInputPage, readInputUpstreams };
 }

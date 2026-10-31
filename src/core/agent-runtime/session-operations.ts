@@ -15,6 +15,9 @@ import type {
   ConsultationCreateV1, SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1, SessionCreationResult,
   SessionDirectoryPort, SessionOperationRecord,
 } from '../work-graph/model/session-contracts.js';
+import type {
+  ConsultationHistoryFailureV1, ConsultationHistoryReadV1, ConsultationHistoryRecordV1,
+} from '../work-graph/queries/platform-facts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
 import { StoreError, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type {
@@ -344,6 +347,19 @@ function mapHistoryFailure(error: unknown, signal: unknown): CoreRejection {
   }
   const message = error instanceof Error ? error.message : String(error);
   return rejected('unavailable', `the mapped Kernel Session history could not be read: ${message}`);
+}
+
+/** §7.2.3: recover the structured class before `mapHistoryFailure` flattens it into a core code. */
+function consultationHistoryFailureOf(error: unknown, signal: unknown): ConsultationHistoryFailureV1 {
+  if (signalAborted(signal)) return 'cancelled';
+  if (error instanceof StoreError) {
+    if (error.code === 'not_found') return 'missing';
+    if (error.code === 'corrupt' || error.code === 'invalid_record' || error.code === 'version_unsupported') {
+      return 'corrupt';
+    }
+    if (error.code === 'cancelled') return 'cancelled';
+  }
+  return 'transient';
 }
 
 function toHistoryEntry(
@@ -838,7 +854,7 @@ export type CompletedHistoryBoundaryRequest = {
 };
 export type CompletedHistoryBoundary =
   | { status: 'resolved'; cursor: string | null; upper: number; position: number }
-  | CoreRejection;
+  | (CoreRejection & { failure?: ConsultationHistoryFailureV1 });
 export type RuntimeHistoryWindowRequest = {
   session: SessionRecord;
   /** Exclusive consumed position; never derived by decoding a public caller token. */
@@ -875,7 +891,12 @@ export type SessionMappingProbe = {
 };
 export interface SessionHistoryCursorOwner {
   completedBoundary(request: CompletedHistoryBoundaryRequest): Promise<CompletedHistoryBoundary>;
-  readPositionWindow(request: RuntimeHistoryWindowRequest): Promise<ReadResult<RuntimeHistoryWindow>>;
+  /** On a rejection the structured class is carried beside it; existing callers read only `status`/`code`/`reason`. */
+  readPositionWindow(request: RuntimeHistoryWindowRequest):
+    Promise<ReadResult<RuntimeHistoryWindow> & { failure?: ConsultationHistoryFailureV1 }>;
+  /** §3.15 item 2: the ONE bounded, structured read of a source line's inherited prefix (B-12). */
+  readConsultationHistory(ctx: CoreCallContext, input: { session: SessionRecord; throughPosition: number }):
+    Promise<ConsultationHistoryReadV1>;
   probe(request: { session: SessionRecord; signal: AbortSignal }): Promise<SessionMappingProbe>;
   /**
    * K slice L9 (M2): read one Turn's exact bounds by Kernel identity through
@@ -898,13 +919,19 @@ export function createSessionHistoryCursorOwner(deps: {
     session: SessionRecord,
     signal: AbortSignal,
     use: (reader: KernelSessionReader) => Promise<T>,
-  ): Promise<{ ok: true; value: T } | { ok: false; rejection: CoreRejection }> {
+  ): Promise<{ ok: true; value: T }
+    | { ok: false; rejection: CoreRejection; failure: ConsultationHistoryFailureV1 }> {
     const location = kernelStores.byAdapterId(session.kernel.adapterId);
-    if (!location) return { ok: false, rejection: rejected('unavailable', 'the mapped Kernel adapter is not registered') };
+    if (!location) {
+      return { ok: false, rejection: rejected('unavailable', 'the mapped Kernel adapter is not registered'),
+        failure: 'transient' };
+    }
     try {
       return { ok: true, value: await kernelStores.withStore(session.kernel.adapterId, use) };
     } catch (error) {
-      return { ok: false, rejection: mapHistoryFailure(error, signal) };
+      // Recover the structured class before the shared mapper flattens it into a core code.
+      const failure = consultationHistoryFailureOf(error, signal);
+      return { ok: false, rejection: mapHistoryFailure(error, signal), failure };
     }
   }
 
@@ -937,11 +964,12 @@ export function createSessionHistoryCursorOwner(deps: {
         }
         return { upper: decoded.upper, position: decoded.position };
       });
-      if (!verified.ok) return verified.rejection;
+      if (!verified.ok) return { ...verified.rejection, failure: verified.failure };
       return { status: 'resolved', cursor: session.historyCursor, upper: verified.value.upper, position: verified.value.position };
     },
 
-    async readPositionWindow(request: RuntimeHistoryWindowRequest): Promise<ReadResult<RuntimeHistoryWindow>> {
+    async readPositionWindow(request: RuntimeHistoryWindowRequest):
+      Promise<ReadResult<RuntimeHistoryWindow> & { failure?: ConsultationHistoryFailureV1 }> {
       const { session, signal } = request;
       if (signalAborted(signal)) return rejected('cancelled', 'the bounded history window read was cancelled');
       if (!Number.isSafeInteger(request.afterPosition) || request.afterPosition < 0) {
@@ -995,8 +1023,38 @@ export function createSessionHistoryCursorOwner(deps: {
         return { entries, throughPosition: frozenThrough, nextPosition,
           hasMore: records.length > 0 && nextPosition < frozenThrough };
       });
-      if (!read.ok) return read.rejection;
+      if (!read.ok) return { ...read.rejection, failure: read.failure };
       return { status: 'ready', value: read.value };
+    },
+
+    async readConsultationHistory(ctx, input): Promise<ConsultationHistoryReadV1> {
+      const records: ConsultationHistoryRecordV1[] = [];
+      let afterPosition = 0;
+      for (;;) {
+        const window = await this.readPositionWindow({
+          session: input.session, afterPosition, throughPosition: input.throughPosition,
+          limit: MAX_HISTORY_LIMIT, signal: ctx.signal,
+        });
+        if (window.status !== 'ready') {
+          // `readPositionWindow` answers only ready or rejected; narrow away ReadResult's other members.
+          const rejection = window as CoreRejection & { failure?: ConsultationHistoryFailureV1 };
+          // The class was recovered before `mapHistoryFailure`; never re-derive it from the flattened reason.
+          const failure = rejection.failure
+            ?? (rejection.code === 'not_found' ? 'missing' : rejection.code === 'cancelled' ? 'cancelled' : 'transient');
+          if (failure === 'cancelled') return { status: 'cancelled' };
+          if (failure === 'missing' || failure === 'corrupt') {
+            return { status: failure, reason: rejection.reason, records };
+          }
+          return { status: 'transient', reason: rejection.reason };
+        }
+        for (const entry of window.value.entries) {
+          // The bounded window is written by `toHistoryEntry`, whose body is always the frozen Kernel record JSON.
+          records.push({ position: entry.source.position, body: (entry.body as { text: string }).text });
+        }
+        if (!window.value.hasMore) break;
+        afterPosition = window.value.nextPosition;
+      }
+      return records.length === 0 ? { status: 'empty' } : { status: 'readable', records };
     },
 
     async readTurnBounds(request): Promise<KernelTurnBoundsRead> {

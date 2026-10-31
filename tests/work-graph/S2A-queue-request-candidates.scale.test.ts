@@ -63,6 +63,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A request candidates (%s)', (kin
         revision: live ? 1 : 2, schemaVersion: 2, goalRef: GOAL_B, basedOn: PLAN_B1, draft: structuredClone(draft),
         reason: { text: `Seeded candidate ${String(index)}`, sources: [] },
         status: live ? 'candidate' : 'not_adopted', issues: [], catalogPin: f.catalogPin, requestRef: REQUEST_Q1,
+        sourceMessageRef: null,
         ...(live ? {} : { notAdopted: { reason: 'replaced', requestedBy: { ...OPERATOR }, at: T,
           replacedBy: proposalRef(index + 1) } }),
       } as PlanProposal;

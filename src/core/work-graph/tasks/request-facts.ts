@@ -17,6 +17,7 @@
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { sameActorKindAndId as sameActor } from '../../../contracts/actor-equality.js';
@@ -40,6 +41,7 @@ import {
   compareRequestRounds, deriveCoveredByDrop, deriveEffectiveGoalId, readRequestRounds,
   type RequestRoundsFactsV1, type RequestRoundsStore,
 } from '../queries/request-rounds-read.js';
+import { proveInterventionSource } from './initial-plan-answer.js';
 import { readRequestCandidateHead } from './plan-readers.js';
 import { readOwnerRecord } from './owner-record-read.js';
 
@@ -437,6 +439,19 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
       if (decoded.status !== 'decoded') return unavailable(`the request QueryJob is corrupt: ${decoded.reason}`);
       const job = decoded.value;
       const rootGuard: RecordGuard = { refKey: record.refKey, expectedRevision: record.revision };
+      // The narrow branch's one proof: an `intervention_planning` Query must prove
+      // its source message, this Goal and the message's state together.
+      let interventionSource: SessionMessageRef | null = null;
+      let interventionGuards: readonly RecordGuard[] = [rootGuard];
+      if (job.job.intent.execution.kind === 'intervention_planning') {
+        const proof = await proveInterventionSource({ records: deps.records, signal: ctx.signal, query: job,
+          goalRef: input.goalRef, selector: null });
+        if (proof.status !== 'ready') return proof;
+        if (proof.value !== null) {
+          interventionSource = proof.value.sourceMessageRef;
+          interventionGuards = proof.value.guards;
+        }
+      }
 
       // A QueryJob that does not name itself as the request root is not a
       // request: no creation event and no round set are read for it.
@@ -445,7 +460,8 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
       if (!isOwnRoot) {
         return {
           status: 'ready',
-          value: { root: false, initiatedByOperator: false, currentSecretary: null, guards: [rootGuard] },
+          value: { root: false, initiatedByOperator: false, currentSecretary: null, guards: interventionGuards,
+            interventionSource },
         };
       }
       const store = storeOrNullFor(deps);
@@ -466,7 +482,9 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
           root,
           initiatedByOperator,
           currentSecretary: facts.value.owner === null ? null : { ...facts.value.owner },
-          guards: facts.value.guards,
+          guards: interventionSource === null ? facts.value.guards
+            : [...facts.value.guards, ...interventionGuards],
+          interventionSource,
         },
       };
     },

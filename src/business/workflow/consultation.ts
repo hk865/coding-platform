@@ -24,9 +24,12 @@ import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js'
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
+import type { ConsultationFactsPort } from '../../core/work-graph/queries/platform-facts.js';
+import { stableSessionCreationIdentity } from '../../core/work-graph/sessions/session-directory.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { ConsultationInput, ConsultationResult } from './contracts.js';
 import { createQueryStageDriver, queryRunEndedWithoutAnswer } from './query-stage-driver.js';
+import { consultationCreateOf } from './consultation-facts.js';
 import type { ConsultationConsumerDependencies } from './ports.js';
 import type { InternalSessionArchivePort, SessionArchivePort } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
@@ -41,7 +44,7 @@ import { ownContext, type Owned } from './workflow.js';
 function reject(code: CoreRejection['code'], reason: string): CoreRejection {
   return { status: 'rejected', code, reason };
 }
-function hashOf(ref: SessionMessageRef): string {
+export function hashOf(ref: SessionMessageRef): string {
   return sha256Hex(canonicalJson(ref as unknown as JsonValue));
 }
 function rejectionReason(result: { status: string; code?: string; reason?: string }): string {
@@ -98,12 +101,17 @@ function isolateInput(input: unknown): IsolatedInput {
 // The consumer
 // --------------------------------------------------------------------------
 
-export function createConsultationConsumer(deps: {
+export type ConsultationConsumerDeps = {
   sessions: SessionDirectoryPort;
   plans: PlanTaskPort;
   runtime: Pick<RuntimeExecutionPort,
     'createSession' | 'readCompletedBoundary' | 'prepareQuery' | 'startQuery' | 'observeQuery'>;
   consultations: ConsultationConsumerDependencies;
+  /**
+   * §3.15 items 2–4: the one mode decision and bounded collection; absent keeps
+   * today's boundary-only behavior, so old compositions and narrow doubles work.
+   */
+  consultationFacts?: ConsultationFactsPort;
   /**
    * Slice 1 §4.2/E9: when present, a copy whose formal Answer has been
    * associated with the original message runs the final archive; a failed
@@ -116,7 +124,9 @@ export function createConsultationConsumer(deps: {
   sessionArchive?: SessionArchivePort & Partial<InternalSessionArchivePort>;
   deliveryFacts?: (owned: Owned, message: SessionMessage, part: 'message' | 'response',
     goalRef: GoalRef | null, target: SessionRef | null) => Promise<DeliveryFactsV1 | CoreRejection>;
-}): (ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult> {
+};
+export function createConsultationConsumer(deps: ConsultationConsumerDeps):
+  (ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult> {
   const sessionArchive = deps.sessionArchive;
   const waiting = (message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
@@ -385,6 +395,10 @@ export function createConsultationConsumer(deps: {
     // distinct from a non-empty inherited prefix.
     const isolatedInquiry = value.part !== 'response' && message.intent === 'inquiry';
     let derivation = value.part === 'response' ? undefined : message.consultationDerivation;
+    // §3.15 item 3: the create operation's stable identity is also the Query's
+    // pointer to the frozen payload; both sides derive it with this one formula.
+    const stable = stableSessionCreationIdentity(owned.actor, owned.projectId,
+      `consultation-child:${hashOf(messageRef)}`);
     if (isolatedInquiry && derivation === undefined) {
       const recordDerivation = deps.consultations.messages.recordConsultationDerivation;
       if (recordDerivation === undefined) {
@@ -395,17 +409,27 @@ export function createConsultationConsumer(deps: {
         return waiting(message, null, null, asRejection(recipientRead, 'the recipient Session').reason);
       }
       const card = recipientRead.value;
-      if (card.record.lifecycle !== 'active') {
-        return waiting(message, null, null, 'the recipient Session is archived');
+      // §3.15 items 1–2: archived and retired sources are admitted; the mode is decided once, with the facts.
+      const frozen = await consultationCreateOf(owned, deps, message, messageRef, card);
+      if ('rejection' in frozen) {
+        // A transient/unreadable source keeps today's wait; every other rejection keeps its own code.
+        return frozen.rejection.code === 'incomplete'
+          ? waiting(message, null, null, frozen.rejection.reason)
+          : frozen.rejection;
       }
-      if (deps.runtime.readCompletedBoundary === undefined) {
-        return waiting(message, null, null, 'the Runtime does not expose the Kernel completed-boundary reader required for an isolated derivation');
+      let boundaryPin: { cursor: string | null; position: number } | null = frozen.value?.boundary ?? null;
+      if (frozen.value === null) {
+        // No injected collector: today's boundary read still decides the fixed prefix.
+        if (deps.runtime.readCompletedBoundary === undefined) {
+          return waiting(message, null, null, 'the Runtime does not expose the Kernel completed-boundary reader required for an isolated derivation');
+        }
+        const boundary = await deps.runtime.readCompletedBoundary(owned.ctx, { sessionRef: sessionRecipient });
+        if (boundary.status !== 'ready') {
+          return waiting(message, null, null, asRejection(boundary, 'the recipient completed boundary').reason);
+        }
+        boundaryPin = boundary.value;
       }
-      const boundary = await deps.runtime.readCompletedBoundary(owned.ctx, { sessionRef: sessionRecipient });
-      if (boundary.status !== 'ready') {
-        return waiting(message, null, null, asRejection(boundary, 'the recipient completed boundary').reason);
-      }
-      const hasCompletedPrefix = boundary.value.cursor !== null && boundary.value.position >= 1;
+      const hasCompletedPrefix = boundaryPin !== null && boundaryPin.cursor !== null && boundaryPin.position >= 1;
       const child = await deps.runtime.createSession(owned.ctx, {
         workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId },
         role: structuredClone(card.record.role),
@@ -417,6 +441,7 @@ export function createConsultationConsumer(deps: {
           from: { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId },
           messageRef: { ...messageRef } },
         meta: { requestId: `consultation-child:${hashOf(messageRef)}`, expected: [] },
+        ...(frozen.value === null ? {} : { consultation: frozen.value }),
       });
       if (child.status !== 'completed') {
         return waiting(message, null, null, `creating the isolated A′ Session failed: ${rejectionReason(child)}`);
@@ -428,7 +453,7 @@ export function createConsultationConsumer(deps: {
             childSessionRef: { projectId: owned.projectId, sessionId: child.value.ref.sessionId },
             sourceSessionRef: { projectId: sessionRecipient.projectId, sessionId: sessionRecipient.sessionId },
             sourceKernel: { adapterId: card.record.kernel.adapterId, kernelSessionId: card.record.kernel.kernelSessionId },
-            throughPosition: hasCompletedPrefix ? boundary.value.position : null,
+            throughPosition: boundaryPin !== null && hasCompletedPrefix ? boundaryPin.position : null,
           },
         },
         meta: { requestId: `consultation-derivation:${hashOf(messageRef)}`, expected: [{ ref: messageRef, revision: message.revision }] },
@@ -478,6 +503,8 @@ export function createConsultationConsumer(deps: {
           messageRef: { ...messageRef },
           ...(value.part === undefined ? {} : { part: value.part }),
           recipient: { projectId: target.projectId, sessionId: target.sessionId },
+          // §3.15 item 3/L24: Q reads the frozen payload from the create operation.
+          ...(isolatedInquiry && deps.consultationFacts !== undefined ? { operation: stable.operationRef } : {}),
           ...(fixedDerivation === undefined ? {} : { derivation: fixedDerivation }),
         },
       },

@@ -5,14 +5,17 @@ import type { SessionMessageRef } from '../../contracts/core/session-message.js'
 import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
-import type { QueryRunRef } from '../../contracts/query-job.js';
+import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../contracts/query-job.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
-import type { PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
+import type { PlanProposalRef, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type {
   SessionFactsPort, SessionResponsibilityBasisPort,
@@ -43,9 +46,11 @@ import type { SessionHandoffWorkflowPort } from '../../core/work-graph/model/ses
 import type { SessionMaintenancePort } from './session-maintenance.js';
 import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
+import type { RequestSubmitPort } from './request-intake.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
   ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
+import type { ConsultationFactsPort } from '../../core/work-graph/queries/platform-facts.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -150,6 +155,8 @@ export type WorkflowDependencies = {
    * explicitly unsupported.
    */
   messages?: SessionMailboxPort;
+  /** The internal goal-less request the completed-goal branch appends. */
+  requestIntake?: Pick<RequestSubmitPort, 'submitInterventionGoal'>;
   /**
    * Book §3.8 item 3 (`book-7a.md:359–:391`): the release owner and the bounded candidate page. L publishes the one
    * object as `platform.messageRelease`. Optional: without it the release step selects nothing and every old
@@ -157,6 +164,18 @@ export type WorkflowDependencies = {
    * the handed-over answer goes through the one kind chain and G's application row, not through this dependency.
    */
   messageRelease?: Pick<MessageReleasePort, 'releaseApproved'> & MessageReleaseCandidatesPort;
+  /** §3.13 item 2: the one L46 upstream read. Absent keeps the block table to the Plan's own DAG edges, so every old
+   *  composition and narrow double behaves as today (the legacy exact-artifact branch is the only one it feeds). */
+  taskInputs?: TaskInputUpstreamPort;
+  /** §3.14 item 2: P's copy forwarder, the one P port shape (`Promise<CoreRejection | null>`); a non-null result
+   *  blocks the selection. Absent skips the trigger (the original no-trigger behavior). */
+  copyForwarding?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+    Promise<CoreRejection | null>;
+  /**
+   * §3.15 items 2–4: the one mode decision and bounded collection for a consulted line. Optional so every old
+   * composition and narrow double keeps today's boundary-only behavior; CS's composition injects it.
+   */
+  consultationFacts?: ConsultationFactsPort;
   /**
    * Slice 1 §4.2: the trusted close-event reader used to derive the executor
    * archive `finishedAt` from the terminal responsibility close. Optional; the
@@ -244,8 +263,7 @@ export interface WorkflowPort {
    */
   consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
   /** One saved person's or agent's message delivered to the line's existing Task (slice-7-SPEC L11). */
-  handleIntervention?(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
-    Promise<HandleInterventionResultV1>;
+  handleIntervention?(ctx: CoreCallContext, input: InterventionInput): Promise<HandleInterventionResultV1>;
   /** S's `DeliveryEligibilityFactsPort['readDeliveryEligibilityFacts']`: the one fact read L injects into the Query
    *  and Host gates; absent keeps old narrow doubles type-compatible. */
   readDeliveryEligibilityFacts?(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
@@ -289,7 +307,22 @@ export interface WorkflowPort {
   backfillActivityRange?(ctx: CoreCallContext, input: ActivityBackfillRangeInput): Promise<ReadResult<ActivityBackfillBatchV1>>;
 }
 
+// The frozen entry. The planning branch runs one read-only Query on the line, so the input carries the same
+// profile a consultation takes.
+export type InterventionInput = {
+  messageRef: SessionMessageRef;
+  roleBinding: RoleBindingRefV1;
+  runtimeBudget: RuntimeBudget;
+  budget: QueryJobIntentV1['budget'];
+  consumerId: string;
+};
+/** The stage one handler call reached; the next call continues from the first missing fact. */
+export type InterventionPlanningStage = 'query' | 'proposal' | 'adoption';
 export type HandleInterventionResultV1 =
-  | { status: 'claimed'; branch: 'existing_task'; claim: TaskClaim }
-  | { status: 'queued'; reason: 'no_task' | 'goal_completed' }
+  | { status: 'claimed'; branch: 'existing_task' | 'no_task'; claim: TaskClaim }
+  | { status: 'progressed'; branch: 'no_task'; stage: InterventionPlanningStage }
+  | { status: 'awaiting_decision'; branch: 'no_task'; proposalRef: PlanProposalRef }
+  | { status: 'needs_decision'; branch: 'no_task'; answerRef: QueryJobAnswerRef; questions: string[] }
+  | { status: 'requested'; branch: 'goal_completed'; requestRef: QueryJobRef }
+  | { status: 'queued'; reason: 'no_task' }
   | CoreRejection;

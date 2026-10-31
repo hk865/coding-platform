@@ -276,7 +276,7 @@ it('consumes one real v2 answer into the same Plan owner candidate, then adopts 
       goalRef: { aggregateType: 'Goal', projectId, goalId: 'r5b-guide-example-goal' },
       basedOn: null, draft: exampleDraft,
       reason: { text: 'Shape-check the example the response guide shows the model', sources: [] },
-      status: 'candidate', issues: [], catalogPin: null,
+      status: 'candidate', issues: [], catalogPin: null, sourceMessageRef: null,
     };
     const decodedExample = decodePlanProposalRecord(encodePlanProposal(exampleProposal));
     expect(decodedExample,

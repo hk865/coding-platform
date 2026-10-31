@@ -296,7 +296,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
       emptyCardSource('planning_question'), emptyCardSource('message_release'),
       emptyCardSource('command_rerun_request')],
     noticeSources: (['second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
-      'continuation'] as const).map(emptyNoticeSource),
+      'continuation', 'disconnect'] as const).map(emptyNoticeSource),
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(),

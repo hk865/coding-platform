@@ -13,6 +13,7 @@
  */
 import type { CommitCursor, CreateGoalCommand } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { SessionRef } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -32,9 +33,12 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
   EncodedDomainEvent, GoalRecordTransactionPort, RecordBackendSchemas,
 } from '../../record-store/ports.js';
+import type { SessionMessageCommandPort } from '../model/communication-contracts.js';
 import type { CopyInterventionReadPort, CopyInterventionRetractionPort } from '../model/goal-copy-contracts.js';
 import type { GoalCopyPort, GoalUnderstandingReadPort } from '../model/goal-card-contracts.js';
 import { ActorRefField } from '../model/session-operation-arms.js';
+import type { MessageForwardingPort } from '../model/communication-contracts.js';
+import { FORWARD_DESTINATION_GONE } from '../state/message-machine.js';
 import { compileGoalCreate } from '../persistence/commit-compiler.js';
 import {
   commandIdentity, executeWriteCommand, type CommandResult, type Keys,
@@ -494,4 +498,55 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
   }
 
   return { readDraft, confirm };
+}
+
+/** L13/W-08: after the new Goal's first Plan is adopted, forward every ticked intervention to the line it was
+ *  originally addressed to (even if alive), with `copyGoalRef` (`book-7b.md:816`–`:826`). One deterministic command
+ *  id per (Goal, message): a repeat is F's receipt replay — no scan, no progress record (90-8; `:819`–`:822`). */
+export type CopiedInterventionForwardingPort = {
+  forwardCopiedInterventions(
+    ctx: CoreCallContext,
+    input: { goalRef: GoalRef },
+  ): Promise<CoreRejection | null>;      // null = the pass finished; per-item outcomes are F's records and N's read
+};
+
+export type CopiedInterventionForwardingDependencies = {
+  /** The Goal owner's read (`plan-readers.ts:392`), not a second record decode. */
+  records: GoalRecordTransactionPort;
+  /** The one message view (`mailbox-service.ts:4879`; `SessionMessageCommandPort.readMessageView`
+   *  `communication-contracts.ts:410`): the recipient only; delivery stays F's and the copy owner's. */
+  mailbox: Pick<SessionMessageCommandPort, 'readMessageView'>;
+  /** F's one trusted entry (`book-7b.md:983`; `10-f.md:76`): the ordinary person entry refuses a non-Host principal,
+   *  and the trusted entry is the copy branch. P reads only the arm it classifies. */
+  forwardCopiedIntervention: MessageForwardingPort['forwardCopiedIntervention'];
+};
+
+export function createCopiedInterventionForwarding(
+  deps: CopiedInterventionForwardingDependencies,
+): CopiedInterventionForwardingPort {
+  const forwardCopiedInterventions: CopiedInterventionForwardingPort['forwardCopiedInterventions'] =
+    async (ctx, input) => {
+      const read = await readGoal(deps.records, input.goalRef);
+      if (read.status !== 'ready') return read;              // Rejected is a CoreRejection
+      const goal = read.goal;
+      if (goal.continuedFrom === null) return null;          // not born as a copy (`ledger.ts:100`–`:103`)
+      if (goal.activePlanRevision === null) return null;     // first adoption not committed yet (`ledger.ts:95`)
+      for (const messageRef of goal.copiedInterventions) {   // the frozen ticked set; never re-derived
+        const view = await deps.mailbox.readMessageView(ctx, messageRef);
+        if (view.status !== 'ready') return asWriteRejection(view, 'the copied intervention could not be read');
+        // Every person-send input types `recipient: SessionRef` (`communication-contracts.ts:263`), so a
+        // copy candidate always has a line; no user-addressed branch exists.
+        const to = view.value.message.recipient as SessionRef;
+        const result = await deps.forwardCopiedIntervention(ctx, {
+          commandId: `copy-forward:${canonicalRefKey(goal.ref)}:${canonicalRefKey(messageRef)}`,
+          messageRef, to, copyGoalRef: goal.ref,
+        });
+        if (result.status === 'forwarded' || result.status === 'existing') continue;         // first send or its replay
+        if (result.code === 'invalid' && result.reason === FORWARD_DESTINATION_GONE) continue;  // stays unforwarded
+        if (result.code === 'busy') continue;                                              // the person's forward won
+        return result;
+      }
+      return null;
+    };
+  return { forwardCopiedInterventions };
 }

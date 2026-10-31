@@ -7,7 +7,6 @@
  * The ordinary entry is the person's; the trusted entry is the copy owner's and admits the copy branch only. Both
  * paths judge the same pure table (`forwardMessageProblem`) and the transfer shares `destinationProblem` with it.
  */
-import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
@@ -22,7 +21,9 @@ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { MessageDutiesFactsPort } from '../model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../model/session-contracts.js';
-import type { SessionMessage } from '../model/communication-contracts.js';
+import type {
+  DisposeWaitInputV1, ForwardMessageInputV1, ForwardMessageResultV1, MessageForwardingPort, SessionMessage,
+} from '../model/communication-contracts.js';
 import { deriveMessageDelivery } from '../model/communication-contracts.js';
 import type { SessionMessageRecord } from '../state/message-machine.js';
 import {
@@ -51,31 +52,6 @@ import {
 } from '../persistence/command-executor.js';
 
 export { FORWARD_DESTINATION_GONE } from '../state/message-machine.js';
-
-/** `messages/forward` (L(3), `book-7b.md:942`); `copyGoalRef` is the copy branch (§3.9 item 1, B-03). */
-export type ForwardMessageInputV1 = {
-  commandId: string; messageRef: SessionMessageRef; to: SessionRef; copyGoalRef?: GoalRef | null;
-};
-/** `waits/dispose` (§3.9 item 5); `to` is required exactly for `transfer`. */
-export type DisposeWaitInputV1 = {
-  commandId: string; messageRef: SessionMessageRef; mode: 'cancel' | 'transfer'; to?: SessionRef;
-};
-/**
- * `forwarded` is the one commit; `existing` is the same-destination second command (§3.9 item 2: "the existing
- * result") and carries no cursor because it wrote nothing. A refusal is a CoreRejection.
- */
-export type ForwardMessageResultV1 =
-  | { status: 'forwarded'; message: SessionMessage; replayed: boolean; cursor: CommitCursor }
-  | { status: 'existing'; message: SessionMessage }
-  | CoreRejection;
-
-export interface MessageForwardingPort {
-  forwardMessage(ctx: CoreCallContext, input: ForwardMessageInputV1): Promise<ForwardMessageResultV1>;
-  /** P's trusted entry: no person check, the copy branch only. */
-  forwardCopiedIntervention(ctx: CoreCallContext,
-    input: ForwardMessageInputV1 & { copyGoalRef: GoalRef }): Promise<ForwardMessageResultV1>;
-  disposeWait(ctx: CoreCallContext, input: DisposeWaitInputV1): Promise<WriteResult<SessionMessage>>;
-}
 
 export type MessageForwardingDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
@@ -254,9 +230,6 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
     if (!owned.ok) return owned.rejection;
     if (owned.principal.kind !== 'host') {
       return reject('forbidden', 'a forward requires the trusted Host principal');
-    }
-    if (!copyOnly && owned.principal.actor.kind !== 'human') {
-      return reject('forbidden', 'messages/forward is person-only');
     }
     const copyGoalRef = copyGoalOf(input);
     if (copyOnly && copyGoalRef === null) {

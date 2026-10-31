@@ -851,7 +851,8 @@ describe('other step-1 decoders', () => {
     const proposalRef = { aggregateType: 'PlanProposal', projectId: P, workspaceId: W, proposalId: 'proposal-1' };
     const proposal = { kind: 'candidate_v2', ref: proposalRef, revision: 1, schemaVersion: 2,
       goalRef: { aggregateType: 'Goal', projectId: P, goalId: G }, basedOn: planRef, draft,
-      reason: { text: 'split the module', sources: [] }, status: 'candidate', issues: [], catalogPin: null };
+      reason: { text: 'split the module', sources: [] }, status: 'candidate', issues: [], catalogPin: null,
+      sourceMessageRef: null };
     const status = (value: unknown) => validate(asRecord(proposalRef, 'PlanProposal@2', value)).status;
     expect(status(proposal)).toBe('decoded');
     expect(status({ ...proposal, draft: { ...draft, dispositionRecord: { schemaVersion: 1, entries: [] } } })).toBe('invalid');

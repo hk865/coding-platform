@@ -44,11 +44,12 @@ import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
-import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
+import type { SessionMailboxPort, SessionMessageSendInputV1 } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
 import { acquireHostInstanceLease } from './host-instance-lease.js';
+import { announceDisconnect, announceInterruption, systemNotifyRequest } from './host-notices.js';
 import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
@@ -816,6 +817,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     driving: () => leaseOwned });
   goalFanOutCommitted = notice => goalFanOut.committed(notice);
 
+  // The Host's one system-notice bag: the published send/fact/line-detail ports and the same `{records, sessions}` bag
+  // the disconnect projection reads. Declared before the wake loop, so every drain sees it initialized.
+  const hostNotices = { messages: platform.messages, facts: platform.sessionFacts, nodeDetail: platform.nodeDetail, disconnect: platform.disconnect };
+
   // The one wake loop exists whenever the Host owns the instance lease. The goal-waits
   // queue is registered on it in every case; the two request queues, the lifecycle and
   // release queues and their sinks stay inside the request-driver switch, so with it off
@@ -985,7 +990,23 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       async rebuild() {},
       async drain(scope, input) {
         const ctx: CoreCallContext = { ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal: input.signal };
+        const announceDisconnections = async (): Promise<void> => {
+          let cursor: string | null = null;
+          do {
+            const page = await platform.sessions.findSessions(ctx, { workspace: scope, includeArchived: true,
+              page: { limit: 200, ...(cursor === null ? {} : { cursor }) } });
+            if (page.status !== 'ready') return;                       // the next Session commit / start retries
+            for (const card of page.value.items) {
+              if (card.availability !== 'unavailable') continue;       // the one derived gone test
+              await announceDisconnect(ctx, hostNotices, { scope,
+                sessionRef: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId } });
+            }
+            cursor = page.value.nextCursor;
+          } while (cursor !== null);
+        };
         const pass = await lifecycle.run(ctx);
+        // The third step, after `continueUnfinished`: `scope` is `drain`'s own, and N's request ids make a repeat a no-op.
+        await announceDisconnections();
         return { progressed: pass.continued, more: false, continuation: null, wrapped: true, blocked: pass.blocked };
       },
     };
@@ -1793,9 +1814,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (offer.kind === 'person_message' || offer.kind === 'action_request') {
         // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
         // other message of the Session stays queued for a later safe point.
-        const claimed = await platform.workflow.handleIntervention?.(ctx, { messageRef: offer.messageRef });
+        const claimed = await platform.workflow.handleIntervention?.(ctx, {
+          messageRef: offer.messageRef, roleBinding: profile.roleBinding,
+          runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
+        });
         if (claimed?.status === 'claimed') {
           const addressed = claimed.claim.task;
+          await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, hostNotices, {
+            scope: { projectId: addressed.projectId, workspaceId: read.value.ref.workspaceId },
+            sessionRef: candidate.session,
+            personMessageRef: offer.messageRef,
+          });
           await collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
             workspaceId: read.value.ref.workspaceId }, actor), {
             advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
@@ -1852,7 +1881,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     lastCheckAtMs: number;
     /** `undefined` = no check computed yet; otherwise the cursor of the last check. */
     computedAtCursor: string | null | undefined;
-    pendingSend: { requestId: string; input: { recipient: SessionRef; text: string; intent: 'notify' } } | null;
+    pendingSend: SessionMessageSendInputV1 | null;
     sentRequestId: string | null;
     recipients: Map<string, ScribeRecipientMemory>;
   };
@@ -1930,12 +1959,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const pending = state.pendingSend;
     if (pending === null) return;
     try {
-      const sent = await sendScribeReminder(ctx, {
-        input: { ...pending.input }, meta: { requestId: pending.requestId, expected: [] },
-      });
+      const sent = await sendScribeReminder(ctx, pending);
       if (sent.status === 'committed') {
         state.pendingSend = null;
-        state.sentRequestId = pending.requestId;
+        state.sentRequestId = pending.meta.requestId;
         recipientMemory(state, pending.input.recipient).ref = sent.value.ref;
       }
     } catch { /* a failed send stays pending for the next period */ }
@@ -2007,7 +2034,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       updateDueCount: String(updateDueCount),
       anchors: [...anchorNames].slice(0, 20).join('、'),
     }, []).text;
-    state.pendingSend = { requestId, input: { recipient: recipientRef, text, intent: 'notify' } };
+    state.pendingSend = systemNotifyRequest({ recipient: recipientRef, text, requestId });
     await sendPendingScribeReminder(ctx, state);
   }
 
@@ -2125,10 +2152,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           signals: delivery.signals.map(attentionSignalToJson),
         } as never));
         try {
-          const sent = await platform.messages.sendMessage(hostCtx, {
-            input: { recipient: entry.scope.targetSession, text, intent: 'notify' },
-            meta: { requestId, expected: [] },
-          });
+          const sent = await platform.messages.sendMessage(hostCtx,
+            systemNotifyRequest({ recipient: entry.scope.targetSession, text, requestId }));
           if (sent.status === 'committed') {
             entry.observer.markDelivered(snapshot, delivery.signals);
             entry.pending.push({ signals: delivery.signals, sequence: ++entry.nextSequence, messageRef: sent.value.ref, snapshot });

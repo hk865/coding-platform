@@ -41,6 +41,7 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
 import type { PlanWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskLeaseSnapshot } from '../../../contracts/dispatch.js';
@@ -102,6 +103,8 @@ export type CandidatePlanProposal = {
   notAdopted?: CandidateRequestExtensionV1['notAdopted'];
   /** W2 Agent branch only; absent on every legacy/Host candidate. */
   submittedBy?: PlanWriteProvenanceV1;
+  /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
+  sourceMessageRef: SessionMessageRef | null;
 };
 
 /** `PlanProposal` (`plan-contracts.ts:36-47`). */
@@ -125,10 +128,12 @@ export function newCandidateProposal(input: {
   issues: PlanValidationError[];
   catalogPin: ArchitectureCatalogPinV1 | null;
   submittedBy: PlanWriteProvenanceV1 | null;
+  sourceMessageRef: SessionMessageRef | null;
 }): CandidatePlanProposal {
   const candidate: CandidatePlanProposal = { kind: 'candidate_v2', ref: input.ref, revision: 1, schemaVersion: 2,
     goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft, reason: input.reason,
-    status: 'candidate', issues: input.issues, catalogPin: input.catalogPin };
+    status: 'candidate', issues: input.issues, catalogPin: input.catalogPin,
+    sourceMessageRef: input.sourceMessageRef };
   return input.submittedBy === null ? candidate : { ...candidate, submittedBy: input.submittedBy };
 }
 
@@ -262,6 +267,8 @@ export type PlanProposalEvent =
     issues: PlanValidationError[];
     catalogPin: ArchitectureCatalogPinV1 | null;
     submittedBy: PlanWriteProvenanceV1 | null;
+    /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
+    sourceMessageRef: SessionMessageRef | null;
     /**
      * S5-PLAN-01 request association (spec §2.4): the first user-initiated
      * request this candidate belongs to, and the head it replaces. Both are
@@ -298,6 +305,8 @@ export type PlanProposalEvent =
     issues: PlanValidationError[];
     catalogPin: ArchitectureCatalogPinV1 | null;
     submittedBy: PlanWriteProvenanceV1 | null;
+    /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
+    sourceMessageRef: SessionMessageRef | null;
     expectedHeadRevision: number;
     /**
      * [lead S5-T3-D2] Who replaced the head and when: the old head's
@@ -1023,7 +1032,7 @@ function recordedStep(
     if (event.catalogPin === undefined) return UNREAD;
     const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
       draft: event.draft, reason: event.reason, issues: [], catalogPin: event.catalogPin,
-      submittedBy: event.submittedBy }), event.requestRef);
+      submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef }), event.requestRef);
     return sameRecordedCandidate(state, candidate)
       ? reject('duplicate', 'revision_conflict',
         `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
@@ -1107,7 +1116,7 @@ function onProposalRecorded(
   if (problem !== null) return problem;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
-    submittedBy: event.submittedBy }), event.requestRef);
+    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef }), event.requestRef);
   /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
   let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
   switch (event.writer) {
@@ -1495,7 +1504,11 @@ function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): Plan
         { kind: 'move_goal_pointer', from: null, to: admitted.target },
         { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
       ];
-      if (proposal.draft.origin !== undefined) effects.push(guard({ target: 'origin_sources' }));
+      // `origin_sources` carries both the verified model origin and the intervention-source proof: a source-bearing
+      // draft persists the proof's guards whether or not it carries an `origin`.
+      if (proposal.draft.origin !== undefined || proposal.sourceMessageRef !== null) {
+        effects.push(guard({ target: 'origin_sources' }));
+      }
       effects.push(
         guard({ target: 'project' }), guard({ target: 'workspace' }), guard({ target: 'goal' }),
         guard({ target: 'proposal', expectedRevision: proposal.revision }),
@@ -1639,7 +1652,7 @@ function onProposalReplaced(
   if (modules !== null) return modules;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
-    submittedBy: event.submittedBy }), event.requestRef);
+    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef }), event.requestRef);
   const replaced: CandidatePlanProposal = { ...state, revision: state.revision + 1, status: 'not_adopted',
     notAdopted: { reason: 'replaced', requestedBy: event.requestedBy, at: event.at, replacedBy: candidate.ref } };
   const effects: PlanProposalEffect[] = [

@@ -10,7 +10,7 @@ import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility 
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { AdoptionGovernancePinsV1 } from '../../../contracts/initialization-adoption.js';
-import type { InitializationSourceV1 } from '../../../contracts/initial-planning.js';
+import type { InitializationSourceV1, InterventionAnswerSourceV1 } from '../../../contracts/initial-planning.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../../contracts/query-job.js';
 import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, PlanRevisionRef,
   PlanRevisionSnapshot, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
@@ -43,6 +43,8 @@ export type ProposedPlanDraftRequestV1 = {
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null; source?: undefined;
   /** 7A §3.5 item 2: the message this proposal acknowledges; part of the fingerprint only when present. */
   acknowledgement?: SessionMessageRef;
+  /** The intervention message this proposal came from; present-only in the fingerprint. */
+  sourceMessageRef?: SessionMessageRef | null;
 };
 export type ProposedPlanSourceRequestV1 = {
   goalRef?: undefined; basedOn: null; draft?: undefined; reason: PlanChangeReason;
@@ -269,7 +271,7 @@ export interface PlanTaskPort {
    * as the other read-only seams; the real Plan service publishes it.
    */
   readInitialPlanAnswerFacts?(ctx: CoreCallContext, answerRef: QueryJobAnswerRef,
-    source?: InitializationSourceV1): Promise<ReadResult<InitialPlanAnswerFacts>>;
+    source?: InitializationSourceV1 | InterventionAnswerSourceV1): Promise<ReadResult<InitialPlanAnswerFacts>>;
   queryTaskGraph(ctx: CoreCallContext, input: { goalRef: GoalRef; planRef?: PlanRevisionRef;
     atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskGraph>>;
   queryReadyTasks(ctx: CoreCallContext, input: { goalRef: GoalRef; roleIds?: string[];

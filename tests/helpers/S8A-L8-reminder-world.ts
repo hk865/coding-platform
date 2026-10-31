@@ -238,8 +238,8 @@ function faultedGraphReader(real: GraphContextReadPort, fault: GraphFault,
 
 /** A2/A3 wrapper over the composition root's real task-input owner: the first
  * page read runs for real, then its answer is replaced or held. */
-function faultedInputPageReader(real: TaskContextInputPort, fault: InputPageFault,
-  gate: GateState): TaskContextInputPort {
+function faultedInputPageReader<T extends TaskContextInputPort>(real: T, fault: InputPageFault,
+  gate: GateState): T {
   let used = false;
   return {
     ...real,

@@ -627,3 +627,4 @@ export async function cancelS7AGoal(world: S6AHostWorld, goal: GoalRef) {
   }, `s7a-control-cancel-${goal.goalId}`, await goalControlPins(world, goal))), 'the cancel control');
   return { goal: value.goal };
 }
+export { checkConfiguration };

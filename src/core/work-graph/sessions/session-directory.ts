@@ -320,6 +320,29 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
       return { ok: false, code: 'forbidden', reason: 'session parentOperation belongs to another project' };
     }
   }
+  // §3.15 item 3: a present consultation payload freezes one mode; the create
+  // codec checks the whole shape, these three rules refuse a wrong mode early.
+  const rawConsultation = raw['consultation'];
+  let consultation: ConsultationCreateV1 | null = null;
+  if (rawConsultation !== undefined && rawConsultation !== null) {
+    if (!isObject(rawConsultation)) {
+      return { ok: false, code: 'invalid', reason: 'session consultation must be an object or null' };
+    }
+    const mode = rawConsultation['mode'];
+    const facts = rawConsultation['facts'];
+    if (mode !== 'kernel' && mode !== 'platform_facts') {
+      return { ok: false, code: 'invalid', reason: 'session consultation mode is not recognized' };
+    }
+    if ((facts === null) !== (mode === 'kernel')) {
+      return { ok: false, code: 'invalid', reason: 'session consultation facts must be null exactly in kernel mode' };
+    }
+    if (mode === 'platform_facts'
+      && (!isObject(facts) || !Array.isArray(facts['facts']) || !Array.isArray(facts['omitted'])
+        || !Array.isArray(facts['unreadable']))) {
+      return { ok: false, code: 'invalid', reason: 'session consultation platform_facts requires its three lists' };
+    }
+    consultation = rawConsultation as ConsultationCreateV1;
+  }
   return {
     ok: true,
     value: {
@@ -330,8 +353,7 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
       initialLinks: links as { target: WorkLinkTarget; relation: WorkLinkRelation }[],
       creation,
       parentOperation,
-      // §3.15 item 3: carried as given (absent is null); CS adds the payload check with its writer.
-      consultation: (raw['consultation'] ?? null) as ConsultationCreateV1 | null,
+      consultation,
     },
   };
 }

@@ -44,7 +44,7 @@
 - `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选的候选，同一 ref 勾选两次被 `invalid` 拒绝（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`retract` 非空即 `retraction_pending`）。`planReanchorHook` 是 7D1 填的唯一具名缝（现在只答 `not_implemented`）。
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实。
-- `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交。
+- `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
 - `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
 - `decision-policy.ts` — 自主级别动作表、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）。
@@ -143,13 +143,13 @@
 | `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:131`、`src/core/work-graph/state/note-machine.ts:102` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
 | `secretaryNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:31` | 纯：一轮 Query 的注记准入——没有请求根（普通 Query、副本）是 `none`；秘书请求轮是 `secretary`，写入种类正好是六个通用种类加 `understanding`（`review` 不是写入种类，`repair` 被拒），带 `withdraw: true` 和只含 Goal id 的授权集 | 准备与开始检查都只经这条规则定类；工具声明和注记工具组只消费这个值，调用方不要各自判类 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
-| `newCandidateProposal` | `src/core/work-graph/state/plan-machine.ts:119` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较） | 提交计划草案 |
-| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:186` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
-| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:208` | adopted/superseded 派生，不落库 | 读计划修订 |
-| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:220` | 由提案与草稿算目标修订 ref | 采纳提案前 |
-| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1735` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
-| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:872` | 提案事件的前置检查 | 提案迁移前 |
-| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1543` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
+| `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:122`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
+| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:191` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
+| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:213` | adopted/superseded 派生，不落库 | 读计划修订 |
+| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:225` | 由提案与草稿算目标修订 ref | 采纳提案前 |
+| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1748` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
+| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:881` | 提案事件的前置检查 | 提案迁移前 |
+| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1556` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
 | `newPendingQueryRecords` | `src/core/work-graph/state/query-run-recovery.ts:533` | 建 pending 的 QueryJob/QueryRun 对 | 新 Query 请求 |
 | `advanceQueryExecutionRecord` | `src/core/work-graph/state/query-run-recovery.ts:608` | 推进 claimed/prepared/entering/entered | Query 进入执行 |
 | `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:681` | 记录 unknown（Job 保持 running） | 结果未知 |

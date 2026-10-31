@@ -23,6 +23,7 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { PromptRecordReadV1 } from '../../contracts/prompts/prompt-set.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
 import type { RunActivityRead } from './run-activity-reader.js';
+import type { ConsultationHistoryFailureV1 } from '../work-graph/queries/platform-facts.js';
 
 /**
  * Formal AgentRuntime execution port (B2).
@@ -43,8 +44,11 @@ export interface RuntimeExecutionPort {
    * The Kernel-backed last completed-turn boundary of one Session. A derived
    * isolated Query uses it as its fixed source prefix; absence of a completed
    * turn is the explicit empty baseline (`position: 0`).
+   *
+   * A rejection may carry the structured history failure class beside its core
+   * code; existing callers read only `status`/`code`/`reason`.
    */
-  readCompletedBoundary?(ctx: CoreCallContext, request: { sessionRef: import('../../contracts/core/identity.js').SessionRef }): Promise<ReadResult<{ cursor: string | null; position: number }>>;
+  readCompletedBoundary?(ctx: CoreCallContext, request: { sessionRef: import('../../contracts/core/identity.js').SessionRef }): Promise<ReadResult<{ cursor: string | null; position: number }> & { failure?: ConsultationHistoryFailureV1 }>;
   readExecutionHistory(ctx: CoreCallContext, request: ExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>>;
   readTaskExecutionHistory(ctx: CoreCallContext, request: TaskExecutionHistoryRequest): Promise<ReadResult<ExecutionHistoryPage>>;
   prepareExecution(ctx: CoreCallContext, request: PrepareTaskExecutionRequest): Promise<ReadResult<PreparedTaskExecution>>;

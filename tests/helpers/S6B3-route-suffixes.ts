@@ -56,6 +56,9 @@ export const EXPECTED_ROUTE_ROWS = {
   'goals/copy-draft': { kind: 'plain', binding: 'readGoalCopyDraft', owner: 'goals.readGoalCopyDraft' },
   'goals/copy-confirm': { kind: 'plain', binding: 'confirmGoalCopy', owner: 'goals.confirmGoalCopy' },
   'initialization/adopt': { kind: 'plain', binding: 'adoptInitialization', owner: 'initialization.adopt' },
+  // The two person commands on F's forwarding owner.
+  'messages/forward': { kind: 'plain', binding: 'forwardMessage', owner: 'messages.forwardMessage' },
+  'waits/dispose': { kind: 'plain', binding: 'disposeWait', owner: 'waits.disposeWait' },
 } as const;
 
 /** The eleven slice-1 suffixes, in the order `tests/app/S1-session-routes.test.ts` checks them. */

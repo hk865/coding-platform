@@ -53,6 +53,7 @@ import type {
   WorkspaceDecisionSettingsPort,
 } from '../core/work-graph/model/decision-contracts.js';
 import type { MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
+import type { MessageForwardingPort } from '../core/work-graph/model/communication-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { PlanRevisionDraft } from '../contracts/plan.js';
@@ -197,6 +198,8 @@ export type CoreRouteSuffix =
   | 'messages/view'
   | 'messages/inbox-view'
   | 'messages/apply'
+  | 'messages/forward'
+  | 'waits/dispose'
   | 'workspaces/registration'
   | 'queries/submit'
   | 'queries/read'
@@ -433,6 +436,12 @@ export type MessagesInboxViewResponse = RouteResponse<SessionMessageCommandPort[
 /** `messages/apply` derives from the apply owner's one method, never a second shape. */
 export type MessagesApplyBody = GraphWriteBody<MessageApplyPort['applyMessage']>;
 export type MessagesApplyResponse = RouteResponse<MessageApplyPort['applyMessage']>;
+/** L9: `messages/forward` is F's person entry; `copyGoalRef` selects the copy branch (book `:942`, B-03, finding 05). */
+export type MessagesForwardBody = PlainBody<MessageForwardingPort['forwardMessage']>;
+export type MessagesForwardResponse = RouteResponse<MessageForwardingPort['forwardMessage']>;
+/** L9: `waits/dispose` — cancel or transfer; person only, like `messages/forward`. */
+export type WaitsDisposeBody = PlainBody<MessageForwardingPort['disposeWait']>;
+export type WaitsDisposeResponse = RouteResponse<MessageForwardingPort['disposeWait']>;
 
 /** The message routes' DTO assembly: the production-reach anchor for the ten aliases above. */
 export type MessagesCoreRouteDto = {
@@ -441,6 +450,10 @@ export type MessagesCoreRouteDto = {
   'messages/view': { body: MessagesViewBody; response: MessagesViewResponse };
   'messages/inbox-view': { body: MessagesInboxViewBody; response: MessagesInboxViewResponse };
   'messages/apply': { body: MessagesApplyBody; response: MessagesApplyResponse };
+  'messages/forward': { body: MessagesForwardBody; response: MessagesForwardResponse };
+};
+export type WaitsCoreRouteDto = {
+  'waits/dispose': { body: WaitsDisposeBody; response: WaitsDisposeResponse };
 };
 
 // ---------------------------------------------------------------------------

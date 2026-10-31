@@ -10,7 +10,9 @@ import type { PreparedQueryManifestV1 } from '../../../contracts/core/prepared-e
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { InitializationSourceV1 } from '../../../contracts/initial-planning.js';
+import type { InitializationSourceV1, InterventionAnswerSourceV1 } from '../../../contracts/initial-planning.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type {
   InitialPlanAnswerFacts,
   InitialPlanSourceResolutionV1,
@@ -25,17 +27,22 @@ import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
+import { sessionMessageRefFromValue } from '../persistence/plan-record-codecs.js';
 import {
   decodeQueryJobAnswerSnapshot,
   decodeQueryJobSnapshot,
   decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../queries/query-execution.js';
+import { appendGuardFirstWins } from '../queries/request-rounds-read.js';
+import { messageConsumptionProblem } from '../state/message-machine.js';
+import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import {
   normalizeInitialPlanningResponseV2,
   parseInitialPlanningResponseV2,
 } from './initial-plan.js';
 import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } from './plan-result-helpers.js';
+import { readWaitMessage } from './session-facts.js';
 
 type InitialPlanAnswerDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
@@ -46,8 +53,75 @@ type InitialPlanAnswerDependencies = {
   bindings?: InitializationBindingReadPort;
 };
 
-/** The Answer/Job/Run revisions the read saw, plus a binding source's record (revision 1): the provenance guards every proposal and adoption takes. */
-export function sourceFactsGuards(facts: InitialPlanAnswerFacts): RecordGuard[] {
+/** The answer read plus the intervention source proof's own version guards. */
+type InitialPlanAnswerReadFacts = InitialPlanAnswerFacts & {
+  /** The QueryJob and SessionMessage revisions the intervention-source proof read; absent for every other source. */
+  sourceGuards?: readonly RecordGuard[];
+};
+
+/** The proven intervention source and the exact QueryJob/SessionMessage revisions it read. */
+export type InterventionSourceProof = {
+  sourceMessageRef: SessionMessageRef;
+  guards: readonly RecordGuard[];
+};
+
+/**
+ * The ONE intervention-source proof shared by the candidate reader, the answer
+ * reader and the future adoption. `null` means the Query does not prove a source
+ * for this Goal (the caller keeps its own refusal code); `selector` is the
+ * message a proposal claims, or null while the Query's own source is discovered.
+ */
+export async function proveInterventionSource(input: {
+  records: GoalRecordTransactionPort & RecordLookupPort;
+  signal: AbortSignal;
+  query: QueryJobSnapshot;
+  goalRef: GoalRef;
+  selector: SessionMessageRef | null;
+}): Promise<ReadResult<InterventionSourceProof | null>> {
+  const execution = input.query.job.intent.execution;
+  if (execution.kind !== 'intervention_planning') {
+    return { status: 'ready', value: null };
+  }
+  // The QueryJob codec requires `sourceMessageRef` on every `intervention_planning` intent.
+  const source = execution.sourceMessageRef as SessionMessageRef;
+  if (input.selector !== null && sessionMessageRefKey(input.selector) !== sessionMessageRefKey(source)) {
+    return { status: 'ready', value: null };
+  }
+  // The Query, the message it names and the Goal this caller proves are one Goal.
+  if (source.projectId !== input.goalRef.projectId || source.workspaceId !== input.query.ref.workspaceId
+    || input.query.job.projectId !== input.goalRef.projectId || input.query.job.goalId !== input.goalRef.goalId) {
+    return { status: 'ready', value: null };
+  }
+  const read = await readWaitMessage(input.records as Parameters<typeof readWaitMessage>[0], input.signal, source);
+  if (read.status === 'not_found') return { status: 'ready', value: null };
+  if (read.status !== 'ready') return read;
+  const message = read.value;
+  if (message.goalRef === null
+    || canonicalJson(message.goalRef as unknown as JsonValue) !== canonicalJson(input.goalRef as unknown as JsonValue)) {
+    return { status: 'ready', value: null };
+  }
+  // A withdrawn or unreleased message is never an admitted source.
+  if (messageConsumptionProblem(message) !== null) return { status: 'ready', value: null };
+  // Book §3.10 item 6: a person, or an authorized agent's released `action_request`.
+  const person = message.sender.kind === 'host' && message.sender.actor.kind === 'human';
+  const releasedRequest = (message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round')
+    && message.intent === 'action_request' && message.release === 'released';
+  if (!person && !releasedRequest) return { status: 'ready', value: null };
+  return { status: 'ready', value: {
+    sourceMessageRef: { ...source },
+    guards: [
+      { refKey: canonicalJson(input.query.ref as unknown as JsonValue), expectedRevision: input.query.revision },
+      { refKey: sessionMessageRefKey(message.ref), expectedRevision: message.revision },
+    ],
+  } };
+}
+
+/**
+ * The Answer/Job/Run revisions the read saw, plus a binding source's record
+ * (revision 1) and an intervention source's exact message revision: the
+ * provenance guards every proposal and adoption takes.
+ */
+export function sourceFactsGuards(facts: InitialPlanAnswerReadFacts): RecordGuard[] {
   const guards: RecordGuard[] = [
     { refKey: canonicalJson(facts.answerRef as unknown as JsonValue), expectedRevision: 1 },
     { refKey: canonicalJson(facts.job.ref as unknown as JsonValue), expectedRevision: facts.job.revision },
@@ -56,6 +130,7 @@ export function sourceFactsGuards(facts: InitialPlanAnswerFacts): RecordGuard[] 
   if (facts.resolution.kind === 'binding') {
     guards.push({ refKey: canonicalJson(facts.resolution.bindingRef as unknown as JsonValue), expectedRevision: 1 });
   }
+  for (const guard of facts.sourceGuards ?? []) appendGuardFirstWins(guards, guard);
   return guards;
 }
 
@@ -74,8 +149,8 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
   async function readInitialPlanAnswerFacts(
     ctx: CoreCallContext,
     answerRef: QueryJobAnswerRef,
-    source?: InitializationSourceV1,
-  ): Promise<ReadResult<InitialPlanAnswerFacts>> {
+    source?: InitializationSourceV1 | InterventionAnswerSourceV1,
+  ): Promise<ReadResult<InitialPlanAnswerReadFacts>> {
     const materials = deps.materials;
     const bodies = deps.initialPlanning?.bodies;
     if (materials === undefined || bodies === undefined) {
@@ -89,11 +164,16 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     const wanted = answerRef as QueryJobAnswerRef;
     const answerKey = canonicalJson(wanted as unknown as JsonValue);
     // An explicit source is a selector only: it must name the answer being read, never a second answer's facts.
-    if (source !== undefined && (!isRecord(source)
-      || (source.kind !== 'binding' && source.kind !== 'prepared_goal')
-      || !isRecord(source.answerRef)
-      || canonicalJson(source.answerRef as unknown as JsonValue) !== answerKey)) {
-      return rejected('source_stale', 'the initial-plan source does not name the requested answer');
+    if (source !== undefined) {
+      if (source.kind === 'intervention') {
+        if (sessionMessageRefFromValue(source.messageRef) === null) {
+          return rejected('source_stale', 'the initial-plan intervention source is not a complete message ref');
+        }
+      } else if ((source.kind !== 'binding' && source.kind !== 'prepared_goal')
+        || !isRecord(source.answerRef)
+        || canonicalJson(source.answerRef as unknown as JsonValue) !== answerKey) {
+        return rejected('source_stale', 'the initial-plan source does not name the requested answer');
+      }
     }
     let answerRead;
     try { answerRead = await records.readMany([answerKey]); }
@@ -251,12 +331,30 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
         return rejected('source_stale', 'the frozen request is not an initial_coordination preparation');
       }
     }
+    let sourceGuards: readonly RecordGuard[] = [];
     let resolution: InitialPlanSourceResolutionV1;
     if (source === undefined) {
       // The plain admission above refused a Job that names no Goal, so the resolved Goal is that Job's own Goal.
       resolution = { kind: 'plain', source: null, bindingRef: null,
         goal: { aggregateType: 'Goal', projectId: wanted.projectId, goalId: jobGoalId as string },
         goalRevision: (manifest.goal as { revision: number }).revision };
+    } else if (source.kind === 'intervention') {
+      if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
+        || manifest.goal.ref.projectId !== wanted.projectId || !nonEmpty(manifest.goal.ref.goalId)
+        || job.job.intent.execution.kind !== 'intervention_planning') {
+        return rejected('source_stale', 'the frozen manifest is not an intervention-planning preparation');
+      }
+      const interventionGoal = manifest.goal as { ref: { aggregateType: 'Goal'; projectId: string; goalId: string };
+        revision: number };
+      const proof = await proveInterventionSource({ records, signal: ctx.signal, query: job,
+        goalRef: interventionGoal.ref, selector: source.messageRef });
+      if (proof.status !== 'ready') return proof;
+      if (proof.value === null) {
+        return rejected('source_stale', 'the intervention source message does not prove this Query and Goal');
+      }
+      sourceGuards = proof.value.guards;
+      resolution = { kind: 'intervention', source, bindingRef: null,
+        goal: { ...interventionGoal.ref }, goalRevision: interventionGoal.revision };
     } else if (source.kind === 'prepared_goal') {
       const manifestGoal = manifest.goal as { ref: { aggregateType: 'Goal'; projectId: string; goalId: string };
         revision: number };
@@ -290,7 +388,8 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     }
     return { status: 'ready', value: {
       answer: answer.answer, answerRef: { ...answer.ref }, job, run, manifest,
-      answerText: answer.answer.answer, resolution } };
+      answerText: answer.answer.answer, resolution,
+      ...(sourceGuards.length === 0 ? {} : { sourceGuards }) } };
   }
 
   /**

@@ -603,7 +603,8 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     if (read.status !== 'ready') return read;
     const boundary = await historyCursorOwner.completedBoundary({ session: read.value.record, signal: ctx.signal });
     if (boundary.status !== 'resolved') {
-      return { status: 'rejected', code: boundary.code, reason: boundary.reason };
+      // Keep the owner's rejection whole: its structured `failure` class is part of the read.
+      return boundary;
     }
     return { status: 'ready', value: { cursor: boundary.cursor, position: boundary.position } };
   };

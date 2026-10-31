@@ -19,7 +19,7 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SendRejectionV1,
   SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef,
   DecisionHostSenderV1 } from '../../../contracts/core/session-message.js';
@@ -468,3 +468,28 @@ export type SessionMailboxDependencies = {
    *  `action_request` is `unsupported`; every other path is unchanged and never reads it. */
   dispatchBasis?: DispatchBasisFactsPort;
 };
+
+/** `messages/forward` (L(3), `book-7b.md:942`); `copyGoalRef` is the copy branch (§3.9 item 1, B-03). */
+export type ForwardMessageInputV1 = {
+  commandId: string; messageRef: SessionMessageRef; to: SessionRef; copyGoalRef?: GoalRef | null;
+};
+/** `waits/dispose` (§3.9 item 5); `to` is required exactly for `transfer`. */
+export type DisposeWaitInputV1 = {
+  commandId: string; messageRef: SessionMessageRef; mode: 'cancel' | 'transfer'; to?: SessionRef;
+};
+/**
+ * `forwarded` is the one commit; `existing` is the same-destination second command (§3.9 item 2: "the existing
+ * result") and carries no cursor because it wrote nothing. A refusal is a CoreRejection.
+ */
+export type ForwardMessageResultV1 =
+  | { status: 'forwarded'; message: SessionMessage; replayed: boolean; cursor: CommitCursor }
+  | { status: 'existing'; message: SessionMessage }
+  | CoreRejection;
+
+export interface MessageForwardingPort {
+  forwardMessage(ctx: CoreCallContext, input: ForwardMessageInputV1): Promise<ForwardMessageResultV1>;
+  /** P's trusted entry: no person check, the copy branch only. */
+  forwardCopiedIntervention(ctx: CoreCallContext,
+    input: ForwardMessageInputV1 & { copyGoalRef: GoalRef }): Promise<ForwardMessageResultV1>;
+  disposeWait(ctx: CoreCallContext, input: DisposeWaitInputV1): Promise<WriteResult<SessionMessage>>;
+}

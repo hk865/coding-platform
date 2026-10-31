@@ -81,6 +81,8 @@ import type {
 } from '../../record-store/ports.js';
 import { catalogPinOf, readCurrentCatalogWindow, readRevisionByRef } from '../architecture/catalog-service.js';
 import { cloneActorRef, decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { sessionMessageRefFromValue } from '../persistence/plan-record-codecs.js';
+import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { goalRefFor, projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
 import { evaluateEligibility } from './eligibility.js';
@@ -120,7 +122,7 @@ import {
   parseInitialPlanningResponseV2,
   sourceProposeFingerprint,
 } from './initial-plan.js';
-import { createInitialPlanAnswerReader, sourceFactsGuards } from './initial-plan-answer.js';
+import { createInitialPlanAnswerReader, proveInterventionSource, sourceFactsGuards } from './initial-plan-answer.js';
 import {
   decodePlanProposalRecordedEvent,
   decodePlanRevisionAcceptedEvent,
@@ -331,13 +333,6 @@ function planProposalRefFromUnknown(value: unknown): PlanProposalRef | null {
   return { aggregateType: 'PlanProposal', projectId: value['projectId'],
     workspaceId: value['workspaceId'], proposalId: value['proposalId'] };
 }
-function sessionMessageRefFromUnknown(value: unknown): SessionMessageRef | null {
-  if (!isRecord(value)) return null;
-  if (value['aggregateType'] !== 'SessionMessage' || !nonEmpty(value['projectId'])
-    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) return null;
-  return { aggregateType: 'SessionMessage', projectId: value['projectId'],
-    workspaceId: value['workspaceId'], messageId: value['messageId'] };
-}
 const DECISION_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = ['message', 'goal_cause', 'candidate', 'note_review',
   'planning_question', 'goal_conflict', 'message_release'];
 function decisionSourceFromUnknown(value: unknown): DecisionSourceV1 | null {
@@ -398,7 +393,7 @@ function deriveCommandIds(identity: { projectId: string; actor: ActorRef; idempo
   const digest = canonicalJson(identity as unknown as JsonValue);
   return { commandId: `${kind}-command:${digest}`, correlationId: `${kind}-request:${digest}` };
 }
-function planProposalIdFor(input: { projectId: string; workspaceId: string; goalId: string; requestId: string }): string {
+export function planProposalIdFor(input: { projectId: string; workspaceId: string; goalId: string; requestId: string }): string {
   return PLAN_PROPOSAL_ID_PREFIX + sha256Hex(canonicalJson(input as unknown as JsonValue)).slice(0, 32);
 }
 /**
@@ -419,14 +414,16 @@ function proposeFingerprint(input: {
   requestRef?: QueryJobRef | null;
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
   acknowledgement?: SessionMessageRef;
+  sourceMessageRef?: SessionMessageRef | null;
 }): string {
   // rd7a2b-12: `canonicalJson` is the recursive JCS encoder, not `JSON.stringify` — it takes `Object.keys` of the
   // value and so refuses a `undefined` member (`contracts/fingerprint.ts:24–:45`). An absent key is therefore never
   // resident: the material is expanded present-only, exactly as `applyFingerprint` does (`:414–:429`), and an old call
   // keeps its fingerprint byte for byte.
-  const { acknowledgement, ...base } = input;
+  const { acknowledgement, sourceMessageRef, ...base } = input;
   return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...base,
     ...(acknowledgement === undefined ? {} : { acknowledgement }),
+    ...(sourceMessageRef === undefined ? {} : { sourceMessageRef }),
   } as unknown as JsonValue));
 }
 function applyFingerprint(input: {
@@ -1136,6 +1133,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     expectedGoalRevision?: number;
     /** 7A §3.5 item 2: the message this proposal acknowledges; written and receipted only when present. */
     acknowledgement?: SessionMessageRef;
+    /** The intervention message this proposal came from; `null` for every other propose. */
+    sourceMessageRef: SessionMessageRef | null;
   }): Promise<EffectWriteResultV1<PlanProposal>> {
     const { goalRef, workspaceId, requestRef, replaces } = input;
     const ctx = input.ctx;
@@ -1175,9 +1174,18 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (requestRef !== null) {
       const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef, goalRef });
       if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
-      if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
-      if (!factsRead.value.initiatedByOperator) {
-        return rejected('unsupported', 'the requestRef is not a user-initiated first-round QueryJob');
+      const sourceMessageRef = input.sourceMessageRef;
+      if (sourceMessageRef !== null) {
+        if (factsRead.value.interventionSource === null
+          || sessionMessageRefKey(sourceMessageRef) !== sessionMessageRefKey(factsRead.value.interventionSource)
+          || (factsRead.value.root && factsRead.value.initiatedByOperator)) {
+          return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
+        }
+      } else {
+        if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+        if (!factsRead.value.initiatedByOperator) {
+          return rejected('unsupported', 'the requestRef is not a user-initiated first-round QueryJob');
+        }
       }
       requestGuards = factsRead.value.guards;
       const headRead = await readRequestCandidateHead(records, { goalRef, requestRef });
@@ -1218,7 +1226,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft);
       const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
-        issues, catalogPin: catalog.catalogPin, submittedBy: null, expectedHeadRevision: replaces.revision,
+        issues, catalogPin: catalog.catalogPin, submittedBy: null, sourceMessageRef: input.sourceMessageRef,
+        expectedHeadRevision: replaces.revision,
         requestedBy: input.actor, at: deps.now(), head: { proposalRef: replaces.proposalRef, revision: replaces.revision },
         replaces, requestRef: requestRef! };
       const guardCtx: PlanProposalGuardContext = { ...scoped.facts, agentAdmission: null, source: null,
@@ -1236,6 +1245,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       // read: its absence is the commit's CAS ∅ guard (state ∅).
       const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null,
+        sourceMessageRef: input.sourceMessageRef,
         ...(requestRef === null ? {} : { requestRef }) };
       // L10: the early ask has no module fact yet, so it stops before it; the catalog is read only after it holds.
       const readFacts = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
@@ -1260,6 +1270,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       projectId: goalRef.projectId, workspaceId, aggregateType: 'PlanProposal', aggregateId: proposal.ref.proposalId,
       aggregateRevision: proposal.revision, causationId: derived.commandId, correlationId: derived.correlationId,
       idempotencyKey: input.requestId, actor: input.actor, occurredAt: deps.now(), payload: { proposal },
+      sourceMessageRef: proposal.sourceMessageRef,
       ...(acknowledgement === undefined ? {} : { acknowledgement }),
     });
     // The replaced record's event goes FIRST and the candidate LAST, so the
@@ -1362,9 +1373,25 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const acknowledgementRaw = rawInput['acknowledgement'];
     let acknowledgement: SessionMessageRef | undefined;
     if (acknowledgementRaw !== undefined) {
-      const parsed = sessionMessageRefFromUnknown(acknowledgementRaw);
+      const parsed = sessionMessageRefFromValue(acknowledgementRaw);
       if (parsed === null) return rejected('invalid', 'proposePlan acknowledgement must be a complete SessionMessageRef');
       acknowledgement = parsed;
+    }
+    // V: the intervention source message, present-only in the fingerprint. Absent keeps every old propose byte-identical.
+    const sourceMessageRefRaw = rawInput['sourceMessageRef'];
+    let sourceMessageRef: SessionMessageRef | null = null;
+    if (sourceMessageRefRaw !== undefined) {
+      if (sourceMessageRefRaw !== null) {
+        const parsed = sessionMessageRefFromValue(sourceMessageRefRaw);
+        if (parsed === null) return rejected('invalid', 'proposePlan sourceMessageRef must be null or a complete SessionMessageRef');
+        sourceMessageRef = parsed;
+      }
+    }
+    const sourceMessageRefArg = sourceMessageRefRaw === undefined ? {} : { sourceMessageRef };
+    // A source is only provable through its intervention Query: the shared entry refuses the pair that would
+    // otherwise skip the proof on both the Host and the Agent path.
+    if (sourceMessageRef !== null && requestRef === null) {
+      return rejected('invalid', 'a proposal sourceMessageRef requires the intervention requestRef');
     }
     // W2 Agent branch is recognized first and never falls through to the Host-only binding.
     if (isWorkRunCaller(ctx)) {
@@ -1372,7 +1399,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
       return proposePlanAsAgent(deps, records, ownedContext.value, {
         goalRef, basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], workspaceId,
-        requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
+        requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg,
       });
     }
     const bound = boundWriteActor(ctx, goalRef.projectId, workspaceId);
@@ -1384,12 +1411,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const proposalId = planProposalIdFor({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId, requestId });
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: goalRef.projectId, workspaceId, proposalId };
     const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw,
-      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }) });
+      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg });
 
     return commitHostPlanProposal({
       ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
       basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
       requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
+      sourceMessageRef,
     });
   }
 
@@ -1459,7 +1487,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return commitHostPlanProposal({ ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey,
       fingerprint, proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
       expected: rawMeta['expected'], extraGuards: sourceFactsGuards(facts), expectedGoalRevision: facts.resolution.goalRevision,
-      requestRef: null, replaces: null });
+      requestRef: null, replaces: null, sourceMessageRef: null });
   }
 
   async function applyPlanChange(
@@ -1494,7 +1522,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       }
     }
     // Slice 5 §2.8 D8: attribution and proof data only, never authorization.
-    const acknowledgementRef = sessionMessageRefFromUnknown(rawInput['acknowledgementRef']);
+    const acknowledgementRef = sessionMessageRefFromValue(rawInput['acknowledgementRef']);
     if (rawInput['acknowledgementRef'] !== undefined && rawInput['acknowledgementRef'] !== null
       && acknowledgementRef === null) {
       return rejected('invalid', 'acknowledgementRef must be a complete SessionMessageRef');
@@ -1573,11 +1601,15 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         decisionProof = { acknowledgementRef, decisionApplication: proof.proof };
       }
       if (candidate.basedOn !== null) {
+        // V-01: a future adoption re-proves the intervention source before the
+        // source revision is read; the proof's guards join this CAS.
+        const sourceProof = await proveFutureAdoptionSource(records, ctx.signal, candidate);
+        if ('status' in sourceProof) return sourceProof;
         // The Host principal as `boundWriteActor` bound it (its actor is the principal's own).
         return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
           principal: { kind: 'host', actor: bound.actor as Extract<CorePrincipal, { kind: 'host' }>['actor'] },
           operatorActor: deps.operatorActor,
-          extraGuards: [], preCommitSignal: null, eventId: deps.eventId, now: deps.now, decisionProof });
+          extraGuards: sourceProof.guards, preCommitSignal: null, eventId: deps.eventId, now: deps.now, decisionProof });
       }
 
       // S5-PLAN-03: a request-associated initial candidate releases its slot in
@@ -1617,6 +1649,15 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
           scope.goal.revision);
         if ('rejection' in verified) origin = verified.rejection;
         else originGuards = verified.guards;
+      }
+      // A source-bearing initial adoption proves the same intervention source as a future adoption, whether or
+      // not the draft carries an `origin`; its guards join the one origin-sources commit.
+      if (candidate.sourceMessageRef !== null) {
+        const sourceProof = await proveFutureAdoptionSource(records, ctx.signal, candidate);
+        if ('status' in sourceProof) return sourceProof;
+        const mergedOrigin = mergeGuards([...originGuards, ...sourceProof.guards]);
+        if (!mergedOrigin.ok) return mergedOrigin.rejection;
+        originGuards = mergedOrigin.guards;
       }
       const ask = adoptionAsk<InitialAdoptionFacts>(candidate, adoption, (initial) => ({ ...adoptionScope, initial }));
       let refused = ask({ origin });
@@ -1807,7 +1848,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const goalRef = facts.resolution.goal;
     return commitHostPlanProposal({ ctx, writer: 'initial_answer', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
       proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
-      expected, extraGuards: sourceFactsGuards(facts), requestRef: null, replaces: null,
+      expected, extraGuards: sourceFactsGuards(facts), requestRef: null, replaces: null, sourceMessageRef: null,
       // Only the explicit source froze a Goal revision; the ordinary plain entry keeps today's behavior.
       ...(facts.resolution.kind === 'plain' ? {} : { expectedGoalRevision: facts.resolution.goalRevision }) });
   }
@@ -2434,6 +2475,7 @@ export function createRequestCandidateService(deps: PlanServiceDependencies): Re
         aggregateId: proposalRef.proposalId, aggregateRevision: abandoned.revision,
         causationId: derived.commandId, correlationId: derived.correlationId, idempotencyKey: requestId,
         actor, occurredAt: deps.now(), payload: { proposal: abandoned },
+        sourceMessageRef: abandoned.sourceMessageRef,
       };
       const merged = mergeGuards([...commit.guards, ...requestGuards]);
       if (!merged.ok) return merged.rejection;
@@ -2880,6 +2922,37 @@ type ApplyReceipt = { identityKey: string; fingerprint: string; projectId: strin
   idempotencyKey: string; actor: ActorRef };
 
 /**
+ * V-01: a future adoption re-proves the intervention source before the source
+ * revision is read. A candidate with no `sourceMessageRef` has no source to
+ * prove; the proof's QueryJob/message revisions join the caller's CAS guards.
+ */
+async function proveFutureAdoptionSource(
+  records: GoalRecordTransactionPort & RecordLookupPort,
+  signal: AbortSignal,
+  candidate: PlanCommit['proposal'],
+): Promise<{ guards: readonly RecordGuard[] } | CoreRejection> {
+  if (candidate.sourceMessageRef === null) return { guards: [] };
+  // The shared proposal entry admits a non-null source only together with its intervention Query.
+  const requestRef = candidate.requestRef as QueryJobRef;
+  const requestKey = canonicalJson(requestRef as unknown as JsonValue);
+  const queryRead = await records.readMany([requestKey]);
+  if (queryRead.status !== 'ready') return rejected('source_stale', 'the intervention Query is not readable');
+  const queryRecord = queryRead.value.records.find((row) => row.refKey === requestKey);
+  if (queryRecord === undefined) return rejected('source_stale', 'the intervention Query does not exist');
+  const decodedQuery = decodeQueryJobSnapshot(queryRecord);
+  if (decodedQuery.status !== 'decoded') {
+    return rejected('source_stale', `the intervention Query is not decodable: ${decodedQuery.reason}`);
+  }
+  const proof = await proveInterventionSource({ records, signal, query: decodedQuery.value,
+    goalRef: candidate.goalRef, selector: candidate.sourceMessageRef });
+  if (proof.status !== 'ready') return asWriteRejection(proof, 'the intervention source proof is not readable');
+  if (proof.value === null) {
+    return rejected('source_stale', 'the intervention source no longer proves this Query and Goal');
+  }
+  return { guards: proof.value.guards };
+}
+
+/**
  * The ONE future-adoption orchestration shared by the Host and Agent apply
  * paths (PLAN-05 + GOAL-03). The caller has read the proposal and the scope
  * (`readAdoption`); this reads the real source, the target, the pinned policy
@@ -3066,8 +3139,8 @@ async function applyFutureRevision(input: {
       goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass }) });
   if (commit.status !== 'ready') return commit;
   if (commit.requestSlot !== null) requestSlot = { requestRef, claim: requestSlotClaim(commit.requestSlot) };
-  // mergeGuards keeps first occurrences in order, so the target Plan ∅ guard stays last.
-  const merged = mergeGuards(commit.guards);
+  // Extras first: mergeGuards keeps first occurrences (same-version duplicates drop) and the target Plan ∅ guard stays last.
+  const merged = mergeGuards([...input.extraGuards, ...commit.guards]);
   if (!merged.ok) return merged.rejection;
   if (input.preCommitSignal !== null && input.preCommitSignal.aborted) {
     return rejected('cancelled', 'the plan adoption was cancelled before commit');
@@ -3207,7 +3280,9 @@ async function proposePlanAsAgent(
     /** Slice 5 §2.4: the current request head this candidate replaces, or null. */
     replaces: { proposalRef: PlanProposalRef; revision: number } | null;
     /** 7A §3.5 item 2: the acknowledged message, present-only. */
-    acknowledgement?: SessionMessageRef },
+    acknowledgement?: SessionMessageRef;
+    /** The intervention message this proposal came from; absent keeps every old fingerprint byte-identical. */
+    sourceMessageRef?: SessionMessageRef | null },
 ): Promise<EffectWriteResultV1<PlanProposal>> {
   const delegated = deps.delegatedWrites;
   if (delegated === undefined) {
@@ -3238,7 +3313,8 @@ async function proposePlanAsAgent(
     projectId: scope.projectId, workspaceId: input.workspaceId, goalRef: input.goalRef,
     basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected,
     requestRef: input.requestRef, replaces: input.replaces,
-    ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) });
+    ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
+    ...(input.sourceMessageRef === undefined ? {} : { sourceMessageRef: input.sourceMessageRef }) });
   // rd7a2b-11: this path's `input` carries no `identityKey`/`fingerprint` — they are the two locals beside it — so the
   // ONE material `proofReceiptOf` reads is built here and every exit below reads it.
   const receiptExpected = { identityKey, fingerprint, projectId: scope.projectId,
@@ -3261,7 +3337,8 @@ async function proposePlanAsAgent(
   // shares with a first record; the replacement transition re-checks them.
   const admissionRecorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
     basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
-    submittedBy: freshAdmission === null ? null : freshAdmission.provenance };
+    submittedBy: freshAdmission === null ? null : freshAdmission.provenance,
+    sourceMessageRef: input.sourceMessageRef ?? null };
   // PLAN-02: the fresh admission first; a refused write re-reads the same-identity receipt.
   const refusedAdmission = planProposalProblem(null, admissionRecorded, { agentAdmission: freshAdmission === null
     ? asWriteRejection(authorized, 'the Agent plan write is not authorized') : 'ok' });
@@ -3288,9 +3365,18 @@ async function proposePlanAsAgent(
     if (input.requestRef !== null) {
       const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef: input.requestRef, goalRef: input.goalRef });
       if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
-      if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
-      if (!factsRead.value.initiatedByOperator) {
-        return rejected('unsupported', 'the requestRef is not a user-initiated first-round QueryJob');
+      const sourceMessageRef = input.sourceMessageRef ?? null;
+      if (sourceMessageRef !== null) {
+        if (factsRead.value.interventionSource === null
+          || sessionMessageRefKey(sourceMessageRef) !== sessionMessageRefKey(factsRead.value.interventionSource)
+          || (factsRead.value.root && factsRead.value.initiatedByOperator)) {
+          return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
+        }
+      } else {
+        if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
+        if (!factsRead.value.initiatedByOperator) {
+          return rejected('unsupported', 'the requestRef is not a user-initiated first-round QueryJob');
+        }
       }
       requestGuards = factsRead.value.guards;
       const headRead = await readRequestCandidateHead(records, { goalRef: input.goalRef, requestRef: input.requestRef });
@@ -3321,7 +3407,7 @@ async function proposePlanAsAgent(
     // the draft schema and basedOn before the source read, then the source.
     const recorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
       basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
-      submittedBy: admission.provenance };
+      submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null };
     // N4 (lead): a replacement is an Agent future revision too; the scoped
     // check (scope, schema, basedOn) runs before the source read for both.
     {
@@ -3352,7 +3438,7 @@ async function proposePlanAsAgent(
       : transitionPlanProposal(oldHead, { type: 'proposal_replaced' as const, writer: 'agent' as const, ref,
         goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft,
         reason: input.reason as unknown as PlanChangeReason, issues, catalogPin: catalog.catalogPin,
-        submittedBy: admission.provenance,
+        submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null,
         expectedHeadRevision: input.replaces!.revision, requestedBy: writer.actor, at: deps.now(),
         head: { proposalRef: input.replaces!.proposalRef, revision: input.replaces!.revision },
         replaces: input.replaces!, requestRef: input.requestRef! }, ctxFacts);
@@ -3367,6 +3453,7 @@ async function proposePlanAsAgent(
       aggregateId: proposal.ref.proposalId, aggregateRevision: proposal.revision, causationId: derived.commandId,
       correlationId: derived.correlationId, idempotencyKey: input.requestId, actor: writer.actor,
       occurredAt: deps.now(), payload: { proposal },
+      sourceMessageRef: proposal.sourceMessageRef,
       ...(acknowledgement === undefined ? {} : { acknowledgement }) });
     // The replaced record's event goes FIRST and the candidate LAST, exactly as
     // the Host path orders them; the commit cursor's event is always the candidate.
@@ -3493,9 +3580,13 @@ async function applyPlanChangeAsAgent(
       if ('status' in proof) return proof;
       decisionProof = { acknowledgementRef: input.acknowledgementRef, decisionApplication: proof.proof };
     }
+    // V-01: the Agent's future adoption re-proves the same intervention source; the
+    // proof's QueryJob and message guards join the fresh admission's guards.
+    const sourceProof = await proveFutureAdoptionSource(records, ctx.signal, read.candidate);
+    if ('status' in sourceProof) return sourceProof;
     return applyFutureRevision({ records, read, adoption, receipt: receiptExpected, principal: ctx.principal,
       operatorActor: deps.operatorActor,
-      extraGuards: admission.guards, preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now,
+      extraGuards: [...admission.guards, ...sourceProof.guards], preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now,
       decisionProof });
   };
 

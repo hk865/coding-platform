@@ -37,7 +37,8 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
-import type { VersionedRef } from '../../contracts/ledger.js';
+import type { SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { GoalRef, VersionedRef } from '../../contracts/ledger.js';
 import type { QueryJobRef } from '../../contracts/query-job.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import { messageOf } from '../../contracts/error-message.js';
@@ -102,6 +103,13 @@ export interface RequestSubmitPort {
   ask(ctx: CoreCallContext, input: {
     commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string;
   }): Promise<RequestAskResultV1>;
+  /**
+   * The completed-goal intervention's goal-less new request. It is an internal command: the public
+   * `submitRequest`'s precheck admits only a person, and this branch runs under the platform automation actor.
+   */
+  submitInterventionGoal(ctx: CoreCallContext, input: {
+    operationId: string; sourceMessageRef: SessionMessageRef; goalRef: GoalRef; text: string;
+  }): Promise<RequestSubmitResultV1>;
 }
 
 export type DrainReadResultV1 = ReadResult<DrainUnassignedResultV1>;
@@ -373,6 +381,17 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
     return result;
   }
 
+  /**
+   * The internal goal-less command. Its fixed operation id is the replay identity (`request-service.ts`'s receipt
+   * lookup), so a retried intervention returns the first request and never writes a second one.
+   */
+  async function submitInterventionGoal(ctx: CoreCallContext, input: {
+    operationId: string; sourceMessageRef: SessionMessageRef; goalRef: GoalRef; text: string;
+  }): Promise<RequestSubmitResultV1> {
+    const appended = await deps.rounds.append(ctx, { command: { kind: 'intervention_new_goal', ...input } });
+    return submitResultOf(appended);
+  }
+
   function submitResultOf(result: RequestAppendResultV1): RequestSubmitResultV1 {
     if (result.status === 'rejected') return result;
     if (result.status !== 'appended') return unavailable('the submit did not append a round');
@@ -583,5 +602,5 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
     return { status: 'ready', plan: pickPlanOf(first) };
   }
 
-  return { submitRequest, route, selectIdea, ask, drainUnassigned };
+  return { submitRequest, submitInterventionGoal, route, selectIdea, ask, drainUnassigned };
 }

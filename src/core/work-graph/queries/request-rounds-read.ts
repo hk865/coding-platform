@@ -175,7 +175,7 @@ export function deriveRequestOwner(
 }
 
 // In-place read-window guard: the first duplicate refKey wins and a duplicate is not rejected.
-function appendGuardFirstWins(guards: RecordGuard[], guard: RecordGuard): void {
+export function appendGuardFirstWins(guards: RecordGuard[], guard: RecordGuard): void {
   if (!guards.some((existing) => existing.refKey === guard.refKey)) guards.push(guard);
 }
 

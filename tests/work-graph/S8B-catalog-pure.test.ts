@@ -154,7 +154,7 @@ type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
 
 function recordedHost(overrides: Partial<RecordedEvent> = {}): RecordedEvent {
   return { type: 'proposal_recorded', writer: 'host', ref: PROPOSAL, goalRef: GOAL, basedOn: null, draft: MODULE_DRAFT,
-    reason: REASON, issues: [], catalogPin: pin, submittedBy: null, ...overrides };
+    reason: REASON, issues: [], catalogPin: pin, submittedBy: null, sourceMessageRef: null, ...overrides };
 }
 function recordedAgent(overrides: Partial<RecordedEvent> = {}): RecordedEvent {
   return recordedHost({ writer: 'agent', basedOn: PLAN_1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE, ...overrides });
@@ -163,7 +163,7 @@ const ACCEPT_HOST: AcceptedEvent = { type: 'proposal_accepted', adopter: 'host',
   expectedProposalRevision: 1, decisionRefs: [], agentWriter: null };
 const REPLACED: PlanProposalEvent = { type: 'proposal_replaced', writer: 'host', ref: NEW_PROPOSAL, goalRef: GOAL,
   basedOn: null, draft: MODULE_DRAFT, reason: REASON, issues: [], catalogPin: pin2, submittedBy: null,
-  expectedHeadRevision: 1, requestedBy: OPERATOR, at: T, head: { proposalRef: PROPOSAL, revision: 1 },
+  sourceMessageRef: null, expectedHeadRevision: 1, requestedBy: OPERATOR, at: T, head: { proposalRef: PROPOSAL, revision: 1 },
   replaces: { proposalRef: PROPOSAL, revision: 1 }, requestRef: REQUEST };
 
 function requestFacts(overrides: Partial<PlanRequestCandidateFacts> = {}): PlanRequestCandidateFacts {
@@ -190,7 +190,7 @@ function futureFacts(overrides: Partial<FutureAdoptionFacts> = {}): FutureAdopti
 }
 function candidateOf(draft: PlanRevisionDraft, basedOn: PlanRevisionRef | null): CandidatePlanProposal {
   return newCandidateProposal({ ref: PROPOSAL, goalRef: GOAL, basedOn, draft, reason: REASON, issues: [],
-    catalogPin: pin, submittedBy: null });
+    catalogPin: pin, submittedBy: null, sourceMessageRef: null });
 }
 
 describe('K-machine-order: the module ask follows the earlier refusals and the pin follows the record', () => {
@@ -248,7 +248,7 @@ describe('K-machine-order: the module ask follows the earlier refusals and the p
     expect(result.next.catalogPin).toBe(pin);
     const wire = JSON.stringify({ kind: 'candidate_v2', ref: PROPOSAL, revision: 1,
       schemaVersion: 2, goalRef: GOAL, basedOn: PLAN_1, draft: FUTURE_DRAFT, reason: REASON, status: 'candidate',
-      issues: [], catalogPin: pin, submittedBy: PROVENANCE, requestRef: REQUEST });
+      issues: [], catalogPin: pin, sourceMessageRef: null, submittedBy: PROVENANCE, requestRef: REQUEST });
     expect(JSON.stringify(result.next)).toBe(wire);
   });
 

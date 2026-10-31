@@ -1,7 +1,7 @@
 import type { ArtifactRef } from "./artifact.js";
 import type { PreparedQueryManifestV1 } from "./core/prepared-execution.js";
 import type { InitializationBindingRef } from "./initialization-binding.js";
-import type { InitializationSourceV1 } from "./initial-planning.js";
+import type { InitializationSourceV1, InterventionAnswerSourceV1 } from "./initial-planning.js";
 import type { DeliveryInputV1 } from "./prompts/delivery-input.js";
 export type QueryJobRef = {
     aggregateType: "QueryJob";
@@ -638,6 +638,8 @@ export type InitialPlanSourceResolutionV1 =
     | { kind: 'binding'; source: InitializationSourceV1; bindingRef: InitializationBindingRef;
         goal: GoalRef; goalRevision: 1 }
     | { kind: 'prepared_goal'; source: InitializationSourceV1; bindingRef: null;
+        goal: GoalRef; goalRevision: number }
+    | { kind: 'intervention'; source: InterventionAnswerSourceV1; bindingRef: null;
         goal: GoalRef; goalRevision: number };
 export type InitialPlanAnswerFacts = {
     answer: QueryJobAnswerV1;

@@ -320,7 +320,8 @@ describe('the candidate pin in the PlanProposal codec (OQ9 a)', () => {
   const candidateWithPin = (catalogPin: ArchitectureCatalogPinV1 | null | undefined) => ({ kind: 'candidate_v2' as const,
     ref: { aggregateType: 'PlanProposal' as const, projectId: 'p', workspaceId: 'w', proposalId: 'c' }, revision: 1,
     schemaVersion: 2 as const, goalRef, basedOn: null, draft: scopedDraft(goalRef, ['core']),
-    reason: { text: 'codec', sources: [] }, status: 'candidate' as const, issues: [], catalogPin }) as PlanProposal;
+    reason: { text: 'codec', sources: [] }, status: 'candidate' as const, issues: [], catalogPin,
+    sourceMessageRef: null }) as PlanProposal;
   it.each([
     { name: 'a pin of this project', pin: pinOf('p'), problem: null },
     { name: 'no active catalog (null)', pin: null, problem: null },

@@ -65,6 +65,7 @@
 - `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮。
 - `handoff-notices.ts` — `handoff` 请知悉来源：每个走到通知写的交接操作一项；位置由 `noticePositionOf` 从操作保存的 Host principal、workspace、通知键和 `advanceGeneration` 重建原写身份并读回执与事件，缺回执或校验不符为 `unavailable`，绝不给无位置条目。
 - `undelivered-reply-notices.ts` — `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复。
+- `disconnect-notices.ts` — `disconnect` 请知悉来源：未消费等待的两侧与发往已归档/已停用线的消息各一项；`readDisconnectFacts` 是同一条纯事实读，Host 的断开通知构建器也用它。归档线的位置是原消息的 `since`，停用线的位置是绑定的 `unavailableSince`，时间只取该位置事件的 `occurredAt`；不存通知、不写、不取时钟。导出 `DISCONNECT_PAGE_LIMIT`、`disconnectOperationKeyOf`、`disconnectItemKey`；前两个只用于本来源的页宽和操作键，item key 由操作键、消息和被断开的一侧组成。
 - `notice-display-token.ts` — 请知悉展示页的 HMAC token；密钥由 composition 注入。
 - `notice-grouping.ts` — 请知悉分组的唯一纯函数与 seenThrough 推进；折行与筛选都按带标记的 `decisionSubjectKey`（一个 Goal 或一个项目各折各的），主对话把每个 subject 的自动返工折成一行，`noticePage` 放指定 subject 的行；推进仍按全部显示行的连续前缀算，别的 subject 的行挡住就不越过。
 - `notice-position.ts` — `NoticePositionV1` 的唯一排序与分页合并点。
@@ -101,6 +102,8 @@
 | `createAutomaticReworkNoticeSource` | `src/core/work-graph/views/automatic-rework-notices.ts:70` | `automatic_rework` 请知悉来源：返工与复核轮只留系统/Agent 返工 | 装配请知悉来源时 |
 | `createNoteReviewNoticeSource` | `src/core/work-graph/views/note-review-notices.ts:51` | `note_review` 请知悉来源：三类版本流，按已看位置增量读；`goalId: null` 的版本是项目 subject 的行，Goal 过滤页不收 | 装配请知悉来源时 |
 | `createUndeliveredReplyNoticeSource` | `src/core/work-graph/views/undelivered-reply-notices.ts:62` | `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复 | 装配请知悉来源时 |
+| `createDisconnectNoticeSource` | `src/core/work-graph/views/disconnect-notices.ts:172` | `disconnect` 请知悉来源：等待两侧或发往已归档/停用线的消息，按已看位置增量读；Goal 过滤页只收该 Goal 的行 | 装配请知悉来源时 |
+| `readDisconnectFacts` | `src/core/work-graph/views/disconnect-notices.ts:77` | 唯一的断开事实读：一次消息窗口、一次后继读，返回两侧与停用时间；不写、不取时钟 | 请知悉来源与 Host 的断开通知构建器共用，不要另扫 wait |
 | `readOrderedToEnd` | `src/core/work-graph/views/automatic-rework-notices.ts:93` | 从保存的提交位置把有序索引读到尾（可选下界，分页） | 请知悉来源要按提交位置做增量读时 |
 | `createNoticePositionComparator` | `src/core/work-graph/views/notice-position.ts:37` | 把唯一顺序注入决定读模型 | 组装决定读模型时 |
 | `compareNoticePositions` | `src/core/work-graph/views/notice-position.ts:42` | 按 ledger 游标再按 `itemKey` 比较两个位置 | 任何需要通知顺序时；唯一允许解析 ledger 游标的位置 |

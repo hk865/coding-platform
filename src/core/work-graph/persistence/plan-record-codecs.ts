@@ -83,6 +83,8 @@ export type PlanProposalRecordedEvent = {
   payload: { proposal: PlanProposal };
   /** 7A §3.5: the acknowledged message; written only when the proposal carried one. */
   acknowledgement?: SessionMessageRef;
+  /** The intervention message the proposal came from; required and null for every other proposal. */
+  sourceMessageRef: SessionMessageRef | null;
 };
 
 // --------------------------------------------------------------------------
@@ -174,7 +176,7 @@ function queryJobRefFromValue(value: unknown, projectId: string, workspaceId: st
   };
 }
 
-function sessionMessageRefFromValue(value: unknown): SessionMessageRef | null {
+export function sessionMessageRefFromValue(value: unknown): SessionMessageRef | null {
   if (!isRecord(value)) return null;
   if (value['aggregateType'] !== 'SessionMessage') return null;
   if (!nonEmpty(value['projectId']) || !nonEmpty(value['workspaceId'])
@@ -795,6 +797,11 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
     else if (catalogPin !== null && (catalogPin as ArchitectureCatalogPinV1).catalogRef.projectId !== ref.projectId) {
       issues.push('candidate_v2.catalogPin must name a catalog of this project');
     }
+    const sourceMessage = value['sourceMessageRef'];
+    if (sourceMessage !== null && sessionMessageRefFromValue(sourceMessage) === null) {
+      issues.push('candidate_v2.sourceMessageRef must be null or a complete SessionMessageRef');
+    }
+    if (!('sourceMessageRef' in value)) issues.push('candidate_v2.sourceMessageRef is required (null when absent)');
     return issues;
   }
   issues.push('PlanProposal.kind must be candidate_v2');
@@ -918,6 +925,13 @@ function validatePlanProposalRecordedEvent(event: EncodedDomainEvent): DecodeRes
     if (acknowledgementProblem !== null) {
       issues.push(`PlanProposalRecorded acknowledgement is invalid: ${acknowledgementProblem}`);
     }
+  }
+  const sourceMessage = parsed['sourceMessageRef'];
+  if (sourceMessage !== null && sessionMessageRefFromValue(sourceMessage) === null) {
+    issues.push('PlanProposalRecorded sourceMessageRef must be null or a complete SessionMessageRef');
+  }
+  if (!('sourceMessageRef' in parsed)) {
+    issues.push('PlanProposalRecorded sourceMessageRef is required (null when absent)');
   }
   const payload = parsed['payload'];
   if (!isRecord(payload)) issues.push('PlanProposalRecorded payload must be an object');

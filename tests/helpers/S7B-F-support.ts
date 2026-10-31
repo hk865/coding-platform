@@ -6,10 +6,8 @@
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMessageDutiesFactsAdapter } from '../../src/core/work-graph/configuration/message-duties-adapter.js';
-import {
-  createMessageForwardingOwner, type MessageForwardingPort,
-} from '../../src/core/work-graph/communication/message-forwarding.js';
-import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import { createMessageForwardingOwner } from '../../src/core/work-graph/communication/message-forwarding.js';
+import type { MessageForwardingPort, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionWaitV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
 import { plain } from './AG2b-collaboration-fixture.js';
 import type { S6AHostWorld } from './S6A-host-fixture.js';

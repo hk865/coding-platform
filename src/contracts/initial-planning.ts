@@ -3,6 +3,7 @@ import { QueryJobAnswerRefShape } from './data-format-refs.js';
 import type { InitializationBindingRef } from './initialization-binding.js';
 import type { PlanRevisionDraft } from './plan.js';
 import type { QueryJobAnswerRef } from './query-job.js';
+import type { SessionMessageRef } from './core/session-message.js';
 
 export type InitialPlanAssignment = {
     taskId: string;
@@ -13,7 +14,11 @@ export type InitialPlanAssignment = {
 export type InitialPlanOriginSourceV1 =
     | { kind: 'binding'; selector: InitializationSourceV1; bindingRef: InitializationBindingRef }
     | { kind: 'prepared_goal'; selector: InitializationSourceV1 }
-    | { kind: 'plain' };
+    | { kind: 'plain' }
+    | { kind: 'intervention'; selector: InterventionAnswerSourceV1 };
+
+/** The narrow intervention source: the exact message an `intervention_planning` answer was read for. */
+export type InterventionAnswerSourceV1 = { kind: 'intervention'; messageRef: SessionMessageRef };
 
 // Completed-capability migration: selected original declarations, no legacy service port.
 export type InitialPlanOrigin = {

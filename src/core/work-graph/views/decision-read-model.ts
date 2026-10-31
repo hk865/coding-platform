@@ -156,6 +156,7 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework', 'continuation',
+  'disconnect',
 ];
 const CARD_ACTIONS: readonly CardAction[] = ['answer', 'ask_secretary', 'apply', 'record_application',
   'adopt', 'regenerate', 'abandon', 'adopt_architecture', 'adopt_completion_policy'];

@@ -1,15 +1,16 @@
-import type { RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { AggregateRef, GoalSnapshot } from '../../contracts/ledger.js';
-import { revisionAssignments, type PlanRevisionRef, type PlanRevisionSnapshot, type RuntimeTask } from '../../contracts/plan.js';
+import { revisionAssignments, type DependencyRequirement, type PlanRevisionRef, type PlanRevisionSnapshot, type RuntimeTask } from '../../contracts/plan.js';
 import type { VersionPin } from '../../contracts/core/identity.js';
-import type { CoreRejection } from '../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import { canonicalJson, sameJson as sameCanonical, type JsonValue } from '../../contracts/fingerprint.js';
 import { rejected as rejection } from '../../contracts/core/rejections.js';
 import { isRecord } from '../../contracts/validation/common.js';
 import { decisionSourceKey, type DecisionSourceV1, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
-import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
+import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
+import type { TaskInputUpstreamV1, TaskInputUpstreamsV1 } from '../../core/work-graph/model/context-input-contracts.js';
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
 import { automationConfirmationCause } from '../../core/work-graph/state/decision-policy.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../../core/work-graph/state/verification-machine.js';
@@ -53,7 +54,8 @@ export type TaskGateDependencies = {
   /** createWorkflow's own deps object, the same reference (never spread or copied): the bodies read
    *  `deps.<port>` at call time, and the composition may set a field later (X/create-platform.ts:2446). */
   workflow: Pick<WorkflowDependencies,
-    'unknownCallReviews' | 'sourceAuthority' | 'decisionMessages' | 'runtime' | 'claims' | 'evidence' | 'plans'>;
+    'unknownCallReviews' | 'sourceAuthority' | 'decisionMessages' | 'runtime' | 'claims' | 'evidence' | 'plans'
+    | 'taskInputs' | 'decisionReads'>;
   bindingForRole(config: WorkflowHostConfiguration, projectId: string, workspaceId: string, role: string): Binding | null;
   isUnadmittedStarting(owned: Owned, runRef: RunRef): Promise<boolean>;
   claimContinuation(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask,
@@ -68,8 +70,108 @@ export type TaskGateFunctions = {
   automaticReverify(base: Base, row: TaskRow): WorkflowOperation | null;
   automationConfirmation(base: Base, goal: GoalSnapshot, row: TaskRow,
     operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null>;
+  taskBlocks(owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
+    graph: TaskGraph, ordered: readonly RuntimeTask[]): Promise<ReadResult<TaskBlocksV1>>;
   gatePerform(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null>;
 };
+
+/**
+ * One L46 block (§3.13 item 1): the card that holds one Task's own automatic rework.
+ */
+export type L46BlockV1 = {
+  /** The Task the card stands on (the branch root). */
+  task: TaskTriple;
+  /** The ready `waiting` result the existing gate returns for this Task, verbatim (reason + `decisionCause`). */
+  gate: Extract<WorkflowAdvanceResult, { status: 'ready' }>;
+  /** What the driver registers (§3.8 item 2): the card's source kinds plus `Goal`. */
+  wakeBasis: GoalWaitBasisV1;
+  /** The rework the card gates; the all-blocked reason names it. */
+  action: 'system_requeue' | 'auto_reverify';
+};
+
+/** One Task waiting behind a block, directly or through the exact-input closure. */
+export type L46WaitV1 = {
+  block: L46BlockV1;
+  /** The waiting Task itself (equal to `block.task` for the block's own Task). */
+  task: TaskTriple;
+  /** A named dependent's reason; the root returns `block.gate` verbatim. */
+  reason: string;
+};
+
+export type TaskBlocksV1 = {
+  blocks: readonly L46BlockV1[];
+  waiting: ReadonlyMap<string, L46WaitV1>;
+};
+
+/** One formal dependency edge (§3.13 item 2). `environment-revision` is never one: it is a workspace input. */
+export type FormalDependencyEdgeV1 = {
+  consumerTaskId: string; upstreamTaskId: string;
+  kind: 'output-contract' | 'artifact' | 'decision' | 'gate-result';
+};
+
+const FORMAL_DEPENDENCY_KINDS: ReadonlySet<DependencyRequirement['kind']> =
+  new Set(['output-contract', 'artifact', 'decision', 'gate-result']);
+
+/** The ONE table (row G-L46-rules): every formal kind, the workspace exclusion, the legacy exact artifact, the
+ *  soft relations never read. Pure; no business scenario re-proves it. */
+export function formalDependencies(rows: readonly TaskRow[],
+  upstreams: TaskInputUpstreamsV1 | null): FormalDependencyEdgeV1[] {
+  const seen = new Set<string>();
+  const edges: FormalDependencyEdgeV1[] = [];
+  const add = (consumerTaskId: string, upstreamTaskId: string,
+    kind: FormalDependencyEdgeV1['kind']): void => {
+    const key = `${consumerTaskId}\n${upstreamTaskId}`;
+    if (seen.has(key) || consumerTaskId === upstreamTaskId) return;
+    seen.add(key);
+    edges.push({ consumerTaskId, upstreamTaskId, kind });
+  };
+  const goalOf = new Map(rows.map(row => [row.ref.taskId, row.ref.goalId] as const));
+  for (const row of rows) {
+    for (const edge of row.legacyDependencies) {
+      if (!FORMAL_DEPENDENCY_KINDS.has(edge.requires.kind)) continue;
+      add(row.ref.taskId, edge.dependsOnId, edge.requires.kind as FormalDependencyEdgeV1['kind']);
+    }
+    // `row.relations` (`coordination`, `expected_dependency`) is deliberately never read: advisory, never a gate.
+  }
+  for (const entry of upstreams?.upstreams ?? []) {
+    if (goalOf.get(entry.consumerTaskId) !== entry.upstream.goalId) continue;
+    add(entry.consumerTaskId, entry.upstream.taskId, 'artifact');
+  }
+  return edges;
+}
+
+/** The transitive closure over the table: every Task reachable from a block is one wait row. Pure. */
+export function closeBranches(edges: readonly FormalDependencyEdgeV1[], blocks: readonly L46BlockV1[],
+  taskOf: (taskId: string) => TaskTriple | undefined): Map<string, L46WaitV1> {
+  const consumers = new Map<string, string[]>();
+  for (const edge of edges) {
+    const list = consumers.get(edge.upstreamTaskId);
+    if (list === undefined) consumers.set(edge.upstreamTaskId, [edge.consumerTaskId]);
+    else if (!list.includes(edge.consumerTaskId)) list.push(edge.consumerTaskId);
+  }
+  const waiting = new Map<string, L46WaitV1>();
+  for (const block of blocks) {
+    waiting.set(block.task.taskId,
+      { block, task: block.task, reason: block.gate.value.reason ?? 'automation_confirmation_required' });
+  }
+  let frontier = [...waiting.keys()];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const upstreamTaskId of frontier) {
+      const cause = waiting.get(upstreamTaskId)!;
+      for (const consumerTaskId of consumers.get(upstreamTaskId) ?? []) {
+        if (waiting.has(consumerTaskId)) continue;
+        const task = taskOf(consumerTaskId);
+        if (task === undefined) continue;
+        waiting.set(consumerTaskId, { block: cause.block, task,
+          reason: `l46_dependency_blocked: the Task ${consumerTaskId} waits on ${cause.block.task.taskId}` });
+        next.push(consumerTaskId);
+      }
+    }
+    frontier = next;
+  }
+  return waiting;
+}
 
 export function goalWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[],
   recordKinds: readonly AggregateRef['aggregateType'][]): GoalWaitBasisV1 {
@@ -399,6 +501,52 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     });
   }
 
+  /** §3.13 items 1–2: one pass over the candidates; the direct block is the SAME `automationConfirmation` result the
+   *  loop used to return, and the closure is over the one table. A read failure is a failure. */
+  async function taskBlocks(owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
+    graph: TaskGraph, ordered: readonly RuntimeTask[]): Promise<ReadResult<TaskBlocksV1>> {
+    let upstreams: TaskInputUpstreamsV1 | null = null;
+    if (deps.taskInputs !== undefined && graph.tasks.some(row => row.inputRequirements.length > 0)) {
+      const read = await deps.taskInputs.readInputUpstreams(owned.ctx, { goalRef: goal.ref, planRef: graph.plan.ref });
+      if (read.status !== 'ready') return read;
+      upstreams = read.value;
+    }
+    const blocks: L46BlockV1[] = [];
+    for (const task of ordered) {
+      if (task.taskKind !== 'work' || task.disposition !== 'active' || task.executionIntent === 'plan_only') continue;
+      const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
+      if (row === undefined) continue;
+      const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row) ?? automaticReverify(base, row);
+      if (rework === null) continue;
+      const gated = await automationConfirmation(base, goal, row, rework);
+      if (gated === null) continue;
+      if (gated.status !== 'ready') return gated;
+      // §3.13 item 4 (book :805–:807): the card's own terminal state releases the block in this same pass —
+      // applied, rejected (`answered_no_application`) or closed because its source became invalid. A waiting card
+      // and a formal answer not yet applied still block. `readDecisionCard` is the one card read; the source is the
+      // gate's own (`automationConfirmation`'s `decisionCause.source`).
+      const source = gated.value.decisionCause?.source;
+      if (deps.decisionReads !== undefined && source !== undefined) {
+        const card = await deps.decisionReads.readDecisionCard(owned.ctx, { source });
+        if (card.status === 'not_found') continue;
+        if (card.status === 'rejected') return card;
+        if (card.status !== 'ready') {
+          return rejection('incomplete', 'the block card is not ready at the required watermark');
+        }
+        if (card.value.state === 'applied' || card.value.state === 'answered_no_application'
+          || card.value.state === 'closed') continue;
+      }
+      blocks.push({ task: row.ref, gate: gated,
+        action: rework.kind === 'requeue_task' ? 'system_requeue' : 'auto_reverify',
+        // The gate already composed this basis; take it as-is.
+        wakeBasis: gated.value.waitBasis! });
+    }
+    const table = formalDependencies(graph.tasks, upstreams);
+    const waiting = closeBranches(table, blocks,
+      (taskId) => graph.tasks.find(candidate => candidate.ref.taskId === taskId)?.ref);
+    return { status: 'ready', value: { blocks, waiting } };
+  }
+
   /** The `perform` half of the shared policy: recover the row by Task or round. */
   async function gatePerform(owned: Owned, base: Base,
     operation: WorkflowOperation): Promise<WorkflowAdvanceResult | null> {
@@ -442,5 +590,5 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     return await automationConfirmation(base, goalRead.value.goal, row, operation);
   }
 
-  return { reviewGate, automaticRequeue, automaticReverify, automationConfirmation, gatePerform };
+  return { reviewGate, automaticRequeue, automaticReverify, automationConfirmation, taskBlocks, gatePerform };
 }

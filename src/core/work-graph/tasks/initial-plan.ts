@@ -104,7 +104,9 @@ export function normalizeInitialPlanningResponseV2(
     ? { kind: 'plain' }
     : resolution.kind === 'binding'
       ? { kind: 'binding', selector: { ...resolution.source }, bindingRef: { ...resolution.bindingRef } }
-      : { kind: 'prepared_goal', selector: { ...resolution.source } };
+      : resolution.kind === 'intervention'
+        ? { kind: 'intervention', selector: { ...resolution.source } }
+        : { kind: 'prepared_goal', selector: { ...resolution.source } };
   const assignments: InitialPlanAssignment[] = (response.plan.assignments ?? [])
     .map((assignment) => ({ ...assignment }));
   const origin: InitialPlanOrigin = {

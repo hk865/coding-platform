@@ -15,7 +15,8 @@ import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { GoalDisplayHostReadV1 } from '../../src/app/goal-fan-out-driver.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
-import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_WORK_ROLE_BINDING,
+  graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { callPublishedOwnerAsHost, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { committed, ready } from '../helpers/S7A-fixture.js';
@@ -46,7 +47,7 @@ describe('B-intervention (memory)', () => {
     expect(started.run.consumedWait).toMatchObject({ kind: 'intervention', messageRef: sent.ref });
   }, 120_000);
 
-  it('answers queued/no_task for a line with no unfinished Task', async () => {
+  it('starts the intervention planning Query for a line with no unfinished Task', async () => {
     const { world } = await openS7BWorld({ backend: 'memory' });
     worlds.push(world);
     const wait = await runS7BWait(world, { label: 'intervention-no-task' });
@@ -61,7 +62,9 @@ describe('B-intervention (memory)', () => {
     expect(await callPublishedOwnerAsHost(world, 'S7B', {
       owner: 'workflow.handleIntervention', wave: '7B-1 L',
       scope: { projectId: world.scope.projectId, workspaceId: world.scope.workspaceId },
-    }, { messageRef: sent.ref })).toMatchObject({ status: 'queued', reason: 'no_task' });
+    }, { messageRef: sent.ref, roleBinding: AG2B_WORK_ROLE_BINDING,
+      runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID }))
+      .toMatchObject({ status: 'progressed', branch: 'no_task', stage: 'query' });
   }, 120_000);
 });
 
@@ -86,7 +89,9 @@ describe('B-intervention (SQLite only: the Host restart)', () => {
     expect(await callPublishedOwnerAsHost(world, 'S7B', {
       owner: 'workflow.handleIntervention', wave: '7B-1 L',
       scope: { projectId: world.scope.projectId, workspaceId: world.scope.workspaceId },
-    }, { messageRef: sent.ref })).toMatchObject({ status: 'rejected', code: 'busy' });
+    }, { messageRef: sent.ref, roleBinding: AG2B_WORK_ROLE_BINDING,
+      runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID }))
+      .toMatchObject({ status: 'rejected', code: 'busy' });
     const saved = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, sent.ref)),
       'the undelivered post-restart intervention message');
     expect(saved.delivery).toBe('queued');

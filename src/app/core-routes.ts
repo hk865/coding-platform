@@ -26,7 +26,7 @@ import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
 import type {
-  SessionMailboxPort, SessionMessageCommandPort,
+  MessageForwardingPort, SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
 import type {
@@ -94,6 +94,7 @@ import {
   type CoreScope,
   type K3CoreRouteDto,
   type MessagesCoreRouteDto,
+  type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
@@ -157,6 +158,8 @@ export type CoreRouteBindings = {
   readMessageView: SessionMessageCommandPort['readMessageView'];
   readInboxView: SessionMessageCommandPort['readInboxView'];
   applyMessage: MessageApplyPort['applyMessage'];
+  forwardMessage: MessageForwardingPort['forwardMessage'];
+  disposeWait: MessageForwardingPort['disposeWait'];
   // R6 execution-entry routes: one named binding per new suffix.
   readWorkspaceRegistration: ProjectRegistrationPort['readWorkspaceRegistration'];
   submitQueryJob: QueryJobPort['submitQueryJob'];
@@ -349,6 +352,8 @@ export type CoreRoutePlatform = {
     & Pick<SessionMailboxPort, 'readUndeliveredReplies'>
     & Pick<SessionMessageCommandPort, 'releaseMessage' | 'withdrawMessage' | 'readMessageView' | 'readInboxView'>
     & Pick<MessageApplyPort, 'applyMessage'>;
+  /** F's person entries; `unsupported` when a narrow platform does not publish the owner. */
+  messageForwarding?: Pick<MessageForwardingPort, 'forwardMessage' | 'disposeWait'>;
   queries: QueryJobPort;
   materials: Pick<MaterialPort, 'openArtifact'>;
   /** Slice 5 §4.5 decision owners: Goal settings/order, the workspace notice
@@ -443,7 +448,7 @@ export type CoreRouteSpec = {
 export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
   | keyof MessagesCoreRouteDto
-  | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto,
+  | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -495,6 +500,9 @@ export const CORE_ROUTE_SPECS: Record<
   'messages/inbox-view': { kind: 'plain', binding: 'readInboxView', owner: 'messages.readInboxView' },
   // The applier's one route: its owner compares the caller's effect, so the route adds no check.
   'messages/apply': { kind: 'graph_write', binding: 'applyMessage', owner: 'messages.applyMessage' },
+  // L9: the two person commands. Each calls F's exact owner method; no route-level rule and no option.
+  'messages/forward': { kind: 'plain', binding: 'forwardMessage', owner: 'messages.forwardMessage' },
+  'waits/dispose': { kind: 'plain', binding: 'disposeWait', owner: 'waits.disposeWait' },
   'workspaces/registration': { kind: 'plain', binding: 'readWorkspaceRegistration', owner: 'projects.readWorkspaceRegistration' },
   'queries/submit': { kind: 'graph_write', binding: 'submitQueryJob', owner: 'queries.submitQueryJob' },
   'queries/read': { kind: 'plain', binding: 'readQueryJob', owner: 'queries.readQueryJob' },
@@ -873,6 +881,12 @@ export function createPlatformCoreRouteBindings(
     readMessageView: platform.messages.readMessageView.bind(platform.messages),
     readInboxView: platform.messages.readInboxView.bind(platform.messages),
     applyMessage: platform.messages.applyMessage.bind(platform.messages),
+    forwardMessage: platform.messageForwarding === undefined
+      ? unsupported('the platform does not publish messageForwarding.forwardMessage')
+      : personEntry(platform.messageForwarding.forwardMessage.bind(platform.messageForwarding)),
+    disposeWait: platform.messageForwarding === undefined
+      ? unsupported('the platform does not publish messageForwarding.disposeWait')
+      : personEntry(platform.messageForwarding.disposeWait.bind(platform.messageForwarding)),
     readWorkspaceRegistration: platform.projects.readWorkspaceRegistration.bind(platform.projects),
     submitQueryJob: platform.queries.submitQueryJob.bind(platform.queries),
     readQueryJob: platform.queries.readQueryJob.bind(platform.queries),
@@ -1322,6 +1336,8 @@ export async function dispatchCoreRoute(
       case 'messages/view': return bindings.readMessageView(ctx, plain.input as never);
       case 'messages/inbox-view': return bindings.readInboxView(ctx, plain.input as never);
       case 'messages/apply': return bindings.applyMessage(ctx, graphWrite.request as never);
+      case 'messages/forward': return bindings.forwardMessage(ctx, plain.input as never);
+      case 'waits/dispose': return bindings.disposeWait(ctx, plain.input as never);
       case 'workspaces/registration': return bindings.readWorkspaceRegistration(ctx, plain.input as never);
       case 'queries/submit': return bindings.submitQueryJob(ctx, graphWrite.request as never);
       case 'queries/read': return bindings.readQueryJob(ctx, plain.input as never);

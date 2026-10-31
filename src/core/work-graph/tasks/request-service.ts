@@ -28,6 +28,7 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
@@ -107,6 +108,8 @@ export type RequestInternalCommandV1 =
   | { kind: 'reply' | 'expiry'; operationId: string; requestRoot: QueryJobRef; messageRef: SessionMessageRef }
   | { kind: 'assigned'; operationId: string; requestRoot: QueryJobRef; to: SessionRef; guard: VersionedRef }
   | { kind: 'end_unbound'; operationId: string; round: QueryJobRef }
+  | { kind: 'intervention_new_goal'; operationId: string; sourceMessageRef: SessionMessageRef;
+      goalRef: GoalRef; text: string }
   | InternalRouteCommandV1
   | (RequestUnderstandingCommandV1 & { kind: 'request_understanding' });
 
@@ -1018,6 +1021,16 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       return withTailRetries(() => prepareReplyOrExpiry(ctx, principal, command, identityKey, fingerprint),
         (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
+    if (command.kind === 'intervention_new_goal') {
+      const { identityKey, fingerprint } = receiptKeysOf(ctx, command)!;
+      const replayed = await replayInternal(identityKey, fingerprint, null);
+      if (replayed !== null) return replayed;
+      return withTailRetries(() => prepareSubmit(ctx, principal, {
+        kind: 'submit', commandId: command.operationId, goalId: null, text: command.text,
+        continues: null, recipient: null,
+      }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint),
+      (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+    }
     if (command.kind !== 'assigned' && command.kind !== 'end_unbound') {
       return unavailable(`the ${command.kind} operation has no producer on this platform`);
     }
@@ -1792,6 +1805,16 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
         fingerprint: sha256Hex(canonicalJson({ kind: command.kind, commandId: command.commandId,
           operation: command.operation, generation: command.generation, requestRoot: command.requestRoot,
           goals: command.goals, checkedRound: command.checkedRound } as unknown as JsonValue)),
+      };
+    }
+    if (command.kind === 'intervention_new_goal') {
+      return {
+        identityKey: commandIdentity({ operation: 'request.intervention_new_goal',
+          scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+          principal: principalIdentity({ kind: 'host', actor: WORKFLOW_AUTOMATION_ACTOR }),
+          commandId: command.operationId }),
+        fingerprint: sha256Hex(canonicalJson({ kind: command.kind, operationId: command.operationId,
+          sourceMessageRef: command.sourceMessageRef, goalRef: command.goalRef, text: command.text } as unknown as JsonValue)),
       };
     }
     if (command.kind === 'handoff' || command.kind === 'archived') {

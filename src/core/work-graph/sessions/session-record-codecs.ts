@@ -20,7 +20,9 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import {
   defineEvent, f, type EventFormat, type Fields, type InferEvent,
 } from '../../../contracts/data-format.js';
-import { id, OperationRefShape } from '../../../contracts/data-format-refs.js';
+import {
+  id, OperationRefShape, PlanRevisionRefShape, SessionMessageRefShape,
+} from '../../../contracts/data-format-refs.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
@@ -44,6 +46,7 @@ import {
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { createEventCodec as createEnvelopeEventCodec } from '../persistence/event-codec-factory.js';
 import { createEventCodec, type EventCodec } from '../persistence/field-table-codec.js';
+import { versionPinProblem } from '../persistence/decision-record-codecs.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
 
 // --------------------------------------------------------------------------
@@ -437,13 +440,11 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
       }
       const predecessor = from();
       if (predecessor !== null) return predecessor;
-      const message = value['messageRef'];
-      if (!isRecord(message) || !hasOnlyKeys(message, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])
-        || message['aggregateType'] !== 'SessionMessage' || !nonEmpty(message['projectId'])
-        || !nonEmpty(message['workspaceId']) || !nonEmpty(message['messageId'])) {
-        return 'readonly_copy provenance messageRef must be a complete SessionMessageRef';
+      const messageProblem = checkShape(SessionMessageRefShape, value['messageRef'], 'stored');
+      if (messageProblem !== null) return `readonly_copy provenance messageRef: ${messageProblem}`;
+      if ((value['messageRef'] as UnknownRecord)['projectId'] !== ownProjectId) {
+        return 'readonly_copy provenance message belongs to another project';
       }
-      if (message['projectId'] !== ownProjectId) return 'readonly_copy provenance message belongs to another project';
       return null;
     }
     default:
@@ -757,6 +758,80 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
   return null;
 }
 
+/**
+ * §3.15 item 3: the whole frozen consultation payload on a create operation.
+ */
+function checkConsultationCreate(value: unknown): Problem {
+  if (value === null) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, ['messageRef', 'mode', 'facts', 'reason', 'sourceRef', 'boundary'])) {
+    return 'consultation must be null or {messageRef,mode,facts,reason,sourceRef,boundary}';
+  }
+  const messageProblem = checkShape(SessionMessageRefShape, value['messageRef'], 'stored');
+  if (messageProblem !== null) return `consultation messageRef: ${messageProblem}`;
+  const sourceProblem = checkPlainSessionRef(value['sourceRef']);
+  if (sourceProblem !== null) return `consultation sourceRef: ${sourceProblem}`;
+  const boundary = value['boundary'];
+  if (boundary !== null && (!isRecord(boundary) || !hasOnlyKeys(boundary, ['cursor', 'position'])
+    || !(boundary['cursor'] === null || typeof boundary['cursor'] === 'string') || !isNonNeg(boundary['position']))) {
+    return 'consultation boundary must be null or {cursor,position}';
+  }
+  const mode = value['mode'];
+  if (mode !== 'kernel' && mode !== 'platform_facts') return 'consultation mode is not recognized';
+  if (mode === 'kernel') {
+    return value['facts'] === null && value['reason'] === null ? null
+      : 'consultation kernel mode requires null facts and reason';
+  }
+  if (!nonEmpty(value['reason'])) return 'consultation platform_facts mode requires a non-empty reason';
+  const facts = value['facts'];
+  if (!isRecord(facts) || !hasOnlyKeys(facts, ['facts', 'omitted', 'unreadable'])
+    || !Array.isArray(facts['facts']) || !Array.isArray(facts['omitted']) || !Array.isArray(facts['unreadable'])) {
+    return 'consultation platform_facts must carry the three lists';
+  }
+  const consultationFactProblem = (fact: unknown): string | null => {
+    if (!isRecord(fact)) return 'a consultation fact must be an object';
+    if (fact['kind'] === 'task') {
+      if (!hasOnlyKeys(fact, ['kind', 'planRevision', 'taskId'])) return 'a task fact carries unknown fields';
+      const planProblem = checkShape(PlanRevisionRefShape, fact['planRevision'], 'stored');
+      if (planProblem !== null) return `a task fact planRevision: ${planProblem}`;
+      return nonEmpty(fact['taskId']) ? null : 'a task fact requires taskId';
+    }
+    if (fact['kind'] === 'event') {
+      if (!hasOnlyKeys(fact, ['kind', 'eventId', 'ref'])) return 'an event fact carries unknown fields';
+      if (!nonEmpty(fact['eventId'])) return 'an event fact requires eventId';
+      return versionPinProblem(fact['ref'], true);
+    }
+    if (fact['kind'] === 'body') {
+      if (!hasOnlyKeys(fact, ['kind', 'ref', 'sourceRef'])) return 'a body fact carries unknown fields';
+      const refProblem = checkArtifactRef(fact['ref']);
+      return refProblem !== null ? `a body fact ref: ${refProblem}` : versionPinProblem(fact['sourceRef'], true);
+    }
+    if (fact['kind'] === 'record') {
+      if (!hasOnlyKeys(fact, ['kind', 'sourceRef', 'body'])) return 'a record fact carries unknown fields';
+      if (typeof fact['body'] !== 'string') return 'a record fact body must be a string';
+      return versionPinProblem(fact['sourceRef'], true);
+    }
+    return 'a consultation fact kind is not recognized';
+  };
+  for (const fact of facts['facts']) {
+    const problem = consultationFactProblem(fact);
+    if (problem !== null) return `consultation fact: ${problem}`;
+  }
+  for (const omission of facts['omitted']) {
+    if (!isRecord(omission) || !hasOnlyKeys(omission, ['section', 'count'])
+      || !['records', 'tasks', 'messages'].includes(String(omission['section'])) || !isNonNeg(omission['count'])) {
+      return 'consultation omitted entry is not recognized';
+    }
+  }
+  for (const unreadable of facts['unreadable']) {
+    if (!isRecord(unreadable) || !hasOnlyKeys(unreadable, ['fact', 'reason'])
+      || (unreadable['reason'] !== 'missing' && unreadable['reason'] !== 'unreadable')
+      || !(unreadable['fact'] === null || consultationFactProblem(unreadable['fact']) === null)) {
+      return 'consultation unreadable entry is not recognized';
+    }
+  }
+  return null;
+}
+
 /** The create arm, by hand; `parentOperation` is the handoff a successor is created under, or `null`. */
 function checkCreateAction(body: UnknownRecord, action: UnknownRecord): Problem {
   if (!hasOnlyKeys(action, ACTION_KEYS)) return 'operation action must be a create action';
@@ -790,6 +865,8 @@ function checkCreateAction(body: UnknownRecord, action: UnknownRecord): Problem 
       plannedValue['sessionId'] as string);
     if (provenance !== null) return `operation provenance: ${provenance}`;
   }
+  const consultationProblem = checkConsultationCreate(action['consultation']);
+  if (consultationProblem !== null) return `operation consultation: ${consultationProblem}`;
   // Slice 6A §3.4.7: the current format always records the line intent, `null`
   // for a creation that opens no line.
   const creationProblem = checkSessionCreationIntent(action['creation']);

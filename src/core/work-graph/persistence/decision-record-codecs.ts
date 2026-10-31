@@ -235,7 +235,7 @@ function sessionWorkLinkPinProblem(value: UnknownRecord): string | null {
  * pin allowed to be 0 is a change proof's `changes[].before`, the named absence
  * pin the Store translates to `expectedRevision: null` (`allowAbsence`).
  */
-function versionPinProblem(value: unknown, allowAbsence = false): string | null {
+export function versionPinProblem(value: unknown, allowAbsence = false): string | null {
   if (!isRecord(value) || !hasOnlyKeys(value, ['ref', 'revision'])) return 'a version pin must carry ref and revision';
   const refProblem = aggregateRefProblem(value['ref']);
   if (refProblem !== null) return refProblem;

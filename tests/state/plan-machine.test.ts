@@ -110,7 +110,8 @@ const SOURCE: PlanSourceFacts = { ref: P1, goalRef: GOAL, planId: 'plan-1', plan
 function candidate(input: { basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
   catalogPin: ArchitectureCatalogPinV1 | null; submittedBy?: PlanWriteProvenanceV1 | null; reason?: PlanChangeReason }): CandidatePlanProposal {
   return newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: input.basedOn, draft: input.draft,
-    reason: input.reason ?? REASON, issues: [], catalogPin: input.catalogPin, submittedBy: input.submittedBy ?? null });
+    reason: input.reason ?? REASON, issues: [], catalogPin: input.catalogPin, submittedBy: input.submittedBy ?? null,
+    sourceMessageRef: null });
 }
 
 const CANDIDATE_INITIAL = candidate({ basedOn: null, draft: INITIAL_DRAFT, catalogPin: PIN });
@@ -149,7 +150,8 @@ type RecordedEvent = Extract<PlanProposalEvent, { type: 'proposal_recorded' }>;
 type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
 
 const RECORD_HOST: RecordedEvent = { type: 'proposal_recorded', writer: 'host', ref: PROPOSAL_REF, goalRef: GOAL,
-  basedOn: null, draft: INITIAL_DRAFT, reason: REASON, issues: [], catalogPin: PIN, submittedBy: null };
+  basedOn: null, draft: INITIAL_DRAFT, reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
+  sourceMessageRef: null };
 const RECORD_ANSWER: RecordedEvent = { ...RECORD_HOST, writer: 'initial_answer' };
 const RECORD_AGENT: RecordedEvent = { ...RECORD_HOST, writer: 'agent', basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE };
 const ACCEPT_HOST: AcceptedEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef: PROPOSAL_REF,
@@ -301,19 +303,20 @@ describe('§14.1 PlanProposal record constructors', () => {
 
   it('newCandidateProposal writes candidate@1 with today\'s key order (plan-service.ts:965-967)', () => {
     const host = newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: null, draft: INITIAL_DRAFT, reason: REASON,
-      issues: [], catalogPin: PIN, submittedBy: null });
+      issues: [], catalogPin: PIN, submittedBy: null, sourceMessageRef: null });
     expect(JSON.stringify(host)).toBe(JSON.stringify({ kind: 'candidate_v2', ref: PROPOSAL_REF, revision: 1, schemaVersion: 2,
-      goalRef: GOAL, basedOn: null, draft: INITIAL_DRAFT, reason: REASON, status: 'candidate', issues: [], catalogPin: PIN }));
+      goalRef: GOAL, basedOn: null, draft: INITIAL_DRAFT, reason: REASON, status: 'candidate', issues: [], catalogPin: PIN,
+      sourceMessageRef: null }));
     expect('submittedBy' in host).toBe(false);
   });
 
   it('an Agent candidate carries submittedBy last (plan-service.ts:1974-1977)', () => {
     const issues: PlanValidationError[] = [{ path: 'tasks[0]', code: 'missing_task_assignment', message: 'no assignment' }];
     const agent = newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: P1, draft: FUTURE_DRAFT, reason: REASON,
-      issues, catalogPin: PIN, submittedBy: PROVENANCE });
+      issues, catalogPin: PIN, submittedBy: PROVENANCE, sourceMessageRef: null });
     expect(JSON.stringify(agent)).toBe(JSON.stringify({ kind: 'candidate_v2', ref: PROPOSAL_REF, revision: 1, schemaVersion: 2,
       goalRef: GOAL, basedOn: P1, draft: FUTURE_DRAFT, reason: REASON, status: 'candidate', issues, catalogPin: PIN,
-      submittedBy: PROVENANCE }));
+      sourceMessageRef: null, submittedBy: PROVENANCE }));
   });
 
   it('acceptProposalRecord bumps the revision and sets accepted without touching the input (plan-commit-compiler.ts:145-149)', () => {

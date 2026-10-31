@@ -89,6 +89,8 @@ export interface CandidateRequestFactsPort {
   }): Promise<ReadResult<{
     root: boolean; initiatedByOperator: boolean;
     currentSecretary: SessionRef | null; guards: readonly RecordGuard[];
+    /** The narrow branch's proof: the admitted `intervention_planning` Query's source message, or null. */
+    interventionSource: SessionMessageRef | null;
   }>>;
 }
 

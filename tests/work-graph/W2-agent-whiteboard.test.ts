@@ -86,6 +86,7 @@ function codecCandidate(overrides: { submittedBy?: unknown } = {}): PlanProposal
     goalRef: { aggregateType: 'Goal' as const, projectId: CODEC_PROJECT, goalId: 'w2-codec-goal' },
     basedOn: { aggregateType: 'PlanRevision' as const, projectId: CODEC_PROJECT, planId: 'w2-codec-plan' },
     draft: codecDraft, reason: { text: 'codec', sources: [] }, status: 'candidate' as const, issues: [], catalogPin: null,
+    sourceMessageRef: null,
   };
   if (overrides.submittedBy === undefined) return base;
   return { ...base, submittedBy: overrides.submittedBy } as unknown as PlanProposal;

@@ -284,3 +284,4 @@ export async function openS7B2ConsumeWorld(): Promise<S7B2ConsumeWorld> {
   world.clock.set(new Date(Date.parse(S6A_AT) + 10_000).toISOString());
   return { world, eligible, notify, unmatchedRole, goalLess, replies: [noWaitSender, waitSender] };
 }
+export { openConsumeHostWorld };

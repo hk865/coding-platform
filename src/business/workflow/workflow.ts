@@ -662,7 +662,7 @@ export function ownContext(ctx: CoreCallContext): Owned | { rejection: CoreRejec
  * owner derives the actor class `system`: the step is counted, capped and
  * fenced by a person's stop like any automatic rework, never as the operator.
  */
-function automationContext(owned: Owned): CoreCallContext {
+export function automationContext(owned: Owned): CoreCallContext {
   const actor = { ...WORKFLOW_AUTOMATION_ACTOR };
   return { projectId: owned.projectId, workspaceId: owned.workspaceId, principal: { kind: 'host', actor },
     materialReader: { kind: 'host', projectId: owned.projectId, workspaceId: owned.workspaceId, actor: { ...actor } },
@@ -1083,8 +1083,11 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (assignment === undefined) return rejection('invalid', `the intervention Task ${task.taskId} has no role assignment`);
     const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
     if (binding === null) return rejection('unsupported', `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
+    // The consumed-wait arm is the continuation basis, which needs a prior Run; an intervention's post-adoption
+    // claim targets a Task with no Run yet, so it is an ordinary first claim.
     const built = await buildClaimOperation(owned, base, goal, plan.ref, task, binding,
-      session.record.ref.sessionId, session.record.revision, true, { kind: 'intervention', messageRef });
+      session.record.ref.sessionId, session.record.revision, true,
+      row.execution === null ? undefined : { kind: 'intervention', messageRef });
     if ('rejection' in built) return built.rejection;
     const result = await deps.claims.claimTask(owned.ctx, { ...built.operation.request,
       meta: { ...built.operation.request.meta,
@@ -1389,12 +1392,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
     } catch { return runRef; }
   }
 
-  const { reviewGate, automaticRequeue, automaticReverify, automationConfirmation, gatePerform } = createTaskGate({
+  const { reviewGate, automaticRequeue, automaticReverify, automationConfirmation, taskBlocks, gatePerform } = createTaskGate({
     workflow: deps, bindingForRole, isUnadmittedStarting, claimContinuation,
   });
 
-  /** The delivery predicate's `taskBlocked`: the automation card this Task would derive now. The L46 block
-   *  read replaces this source later, on the same field (book `:296–:299`). A failed read is `null`, never false. */
+  /** The delivery predicate's `taskBlocked`: the L46 block read, on the same field (book `:296–:299`). A failed read
+   *  is `null`, never false. The goal/graph reads and the `config === undefined → null` stay as they were; only the
+   *  derivation is replaced, so there is ONE automation source. */
   async function automationBlockedFor(owned: Owned, base: Base, taskRef: TaskTriple): Promise<boolean | null> {
     const config = deps.configuration;
     if (config === undefined) return null;
@@ -1402,13 +1406,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (goal.status !== 'ready') return null;
     const graph = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: goal.value.goal.ref });
     if (graph.status !== 'ready') return null;
-    const task = graph.value.plan.tasks.find((candidate) => candidate.taskId === taskRef.taskId);
-    const row = graph.value.tasks.find((candidate) => candidate.ref.taskId === taskRef.taskId);
-    if (task === undefined || row === undefined) return null;
-    const rework = automaticRequeue(config, owned, base, goal.value.goal, graph.value.plan, task, row)
-      ?? automaticReverify(base, row);
-    if (rework === null) return false;
-    return (await automationConfirmation(base, goal.value.goal, row, rework)) !== null;
+    const ordered = orderTasks(graph.value.plan.tasks, graph.value.plan.executionDag?.dependsOn ?? []);
+    const read = await taskBlocks(owned, base, config, goal.value.goal, graph.value, ordered);
+    if (read.status !== 'ready') return null;
+    return read.value.waiting.has(taskRef.taskId);
   }
 
   /** The ONE delivery-fact builder (A-34): the message's consumption, Goal, Task block and recipient outcome. */
@@ -1564,6 +1565,14 @@ export function createWorkflow(deps: WorkflowDependencies & {
       return waiting(null, 'the Goal has no adopted Plan; no work was selected',
         undefined, goalWaitBasisOf(goal, ['plan_adoption'], ['PlanRevision', 'PlanProposal']));
     }
+    // P's trigger (§3.14 item 2): a continued Goal whose first Plan is adopted forwards its copied interventions once,
+    // before task selection; the `forwarded:` claim makes a repeat a no-op. A composition without the owner skips the
+    // trigger — the original no-trigger behavior.
+    const forward = deps.copyForwarding;
+    if (goal.continuedFrom !== null && forward !== undefined) {
+      const forwarded = await forward(owned.ctx, { goalRef: goal.ref });
+      if (forwarded !== null) return forwarded;
+    }
     const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
     if (graphRead.status !== 'ready') return readRejection(graphRead);
     const graph = graphRead.value;
@@ -1592,12 +1601,23 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
     // 1. The first eligible active ordinary work in required-first / plan order.
     const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
+    // L46 §3.13 item 1: one pass after the ordering and before the loop; a failed read is the advance's failure.
+    const blockRead = await taskBlocks(owned, base, config, goal, graph, ordered);
+    if (blockRead.status !== 'ready') return readRejection(blockRead);
+    const { blocks, waiting: branch } = blockRead.value;
     const roundWaitBasis = goalWaitBasisOf(goal, ['formal_check', 'evidence', 'goal_gate'],
       ['VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'Run', 'Goal', 'PlanRevision']);
     for (const task of ordered) {
       if (base.taskId !== null && task.taskId !== base.taskId) continue;
       const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
       if (row === undefined) continue;
+      const held = branch.get(task.taskId);
+      // A named non-work Task can still be a block's dependent (a gate after its producer); work Tasks keep K3's
+      // review skip first, so their held check sits after it below.
+      if (held !== undefined && base.taskId !== null && task.taskKind !== 'work') {
+        return waiting(null, held.reason, held.block.gate.value.decisionCause?.source ?? undefined,
+          held.block.wakeBasis);
+      }
       if (task.taskKind !== 'work' || task.disposition !== 'active') continue;
       if (task.executionIntent === 'plan_only') continue;
       // C8 (§4.3 "Workflow", §15.2 5.8, 5.9): the Task's automation verdict first. A `requeue`
@@ -1619,6 +1639,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
           return waiting(null, `unknown_call_review_${gate.source}: the selected Run's review record blocks this Task`,
             gate.decisionSource, gate.waitBasis ?? goalWaitBasisOf(goal,
               [`unknown_call_review:${gate.source}`], ['UnknownCallReview', 'Goal']));
+        }
+        continue;
+      }
+      // L46 §3.13 item 3: a blocked Task — or one waiting behind a block — is skipped at Goal scope and continues
+      // with the next Task; a named Task waits with the card's source, exactly as K3's review gate does above.
+      if (held !== undefined) {
+        if (base.taskId !== null) {
+          return held.task.taskId === held.block.task.taskId ? held.block.gate
+            : waiting(null, held.reason, held.block.gate.value.decisionCause?.source ?? undefined,
+              held.block.wakeBasis);
         }
         continue;
       }
@@ -1765,6 +1795,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
         goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
           ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
             'Evidence', 'TaskEvidenceIndex']));
+    }
+    // L46 §3.13 item 3: every candidate this pass could start is inside a block → the Goal waits with all bases.
+    const candidates = ordered.filter(task => {
+      if (task.taskKind !== 'work' || task.disposition !== 'active'
+        || task.executionIntent === 'plan_only') return false;
+      const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
+      return row !== undefined && row.effectivePhase !== 'satisfied';
+    });
+    if (blocks.length > 0 && candidates.length > 0 && candidates.every(task => branch.has(task.taskId))) {
+      const recordKinds = [...new Set(blocks.flatMap(block => block.wakeBasis.recordKinds))];
+      const reasons = [...new Set(blocks.flatMap(block => block.wakeBasis.reasons))];
+      // The union of the blocks' bases; the Goal identity is this Goal's.
+      return waiting(null, `l46_blocked: ${blocks.map(block => block.task.taskId).join(', ')}`, undefined,
+        { projectId: goal.ref.projectId, goalId: goal.ref.goalId, recordKinds, reasons });
     }
     // 2. While any required ordinary work is still unsatisfied (including a
     //    required plan_only future node) the real gap stays; the Goal gate is
@@ -2751,6 +2795,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
   const consultation = deps.consultations === undefined ? null : createConsultationConsumer({
     sessions: deps.sessions, plans: deps.plans, runtime: deps.runtime, consultations: deps.consultations,
     sessionArchive: archiveService, deliveryFacts,
+    ...(deps.consultationFacts === undefined ? {} : { consultationFacts: deps.consultationFacts }),
   });
   const intervention = createInterventionHandler({ workflow: deps, claimIntervention });
   const consumeConsultation = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {

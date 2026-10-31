@@ -93,7 +93,8 @@ function expectedCandidate(
 ): CandidatePlanProposal {
   return { kind: 'candidate_v2', schemaVersion: 2, ref, revision: 1,
     goalRef: GOAL_B, basedOn, draft: draftOf(planId, planRevision), reason: REASON,
-    issues: [], catalogPin: PIN, status: 'candidate', ...(requestRef === null ? {} : { requestRef }) };
+    issues: [], catalogPin: PIN, status: 'candidate', sourceMessageRef: null,
+    ...(requestRef === null ? {} : { requestRef }) };
 }
 
 const guard = (value: PlanCommitGuard): PlanProposalEffect => ({ kind: 'guard', guard: value });
@@ -184,7 +185,7 @@ function recordedEvent(
   expect(issues).toEqual([]);
   return {
     type: 'proposal_recorded', writer: 'host', ref, goalRef: GOAL_B, basedOn,
-    draft, reason: REASON, issues, catalogPin: PIN, submittedBy: null,
+    draft, reason: REASON, issues, catalogPin: PIN, submittedBy: null, sourceMessageRef: null,
     ...association,
   };
 }
@@ -229,7 +230,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const event: ReplacedEvent = {
       type: 'proposal_replaced', writer: 'host', ref: U3, goalRef: GOAL_B, basedOn: PB1,
       draft: draftOf('u3-plan', 2), reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
-      expectedHeadRevision: 1, head: { proposalRef: U1, revision: 1 },
+      sourceMessageRef: null, expectedHeadRevision: 1, head: { proposalRef: U1, revision: 1 },
       replaces: { proposalRef: U1, revision: 1 }, requestRef: Q1,
       requestedBy: OPERATOR, at: T,
     };
@@ -258,7 +259,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const event: ReplacedEvent = {
       type: 'proposal_replaced', writer: 'host', ref: U3, goalRef: GOAL_B, basedOn: PB1,
       draft: draftOf('u3-plan', 2), reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
-      expectedHeadRevision: 0, head: { proposalRef: U1, revision: 1 },
+      sourceMessageRef: null, expectedHeadRevision: 0, head: { proposalRef: U1, revision: 1 },
       replaces: { proposalRef: U1, revision: 1 }, requestRef: Q1,
       requestedBy: OPERATOR, at: T,
     };
@@ -278,7 +279,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const event: ReplacedEvent = {
       type: 'proposal_replaced', writer: 'host', ref: U3, goalRef: GOAL_B, basedOn: PB1,
       draft: draftOf('u3-plan', 2), reason: REASON, issues: [], catalogPin: PIN, submittedBy: null,
-      expectedHeadRevision: 1, head: { proposalRef: U1, revision: 1 },
+      sourceMessageRef: null, expectedHeadRevision: 1, head: { proposalRef: U1, revision: 1 },
       replaces: { proposalRef: other.ref, revision: other.revision }, requestRef: Q1,
       requestedBy: OPERATOR, at: T,
     };

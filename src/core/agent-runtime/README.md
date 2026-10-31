@@ -35,7 +35,7 @@
 - `observed-model-run.ts` — 唯一的 Kernel 模型/工具循环。
 - `kernel-turn-facts.ts` — Kernel SessionRecord 解码与单个 Turn 归约。
 - `kernel-store-locator.ts` — Session 到 Kernel store 的固定映射注册表。
-- `session-operations.ts` — Session 创建、原历史分页、cursor owner 与 Kernel DB 状态。
+- `session-operations.ts` — Session 创建、原历史分页、cursor owner 与 Kernel DB 状态；`readConsultationHistory` 用同一个 `readPositionWindow` 有界读完冻结前缀，并在 `mapHistoryFailure` 展平之前保留 missing/corrupt/transient/cancelled 分类。
 
 ### 上下文与提示词渲染
 做上下文装配、各调用配方、事实文本、渲染和提示词冻结的去这组。
@@ -86,7 +86,7 @@
 
 ### 查询与来源绑定
 做 Query 驱动和源码捕获/来源绑定的去这组。
-- `query-preparation.ts` — Query 有界输入准备与 manifest 绑定；由 Job 冻结的请求根算注记准入（`secretaryNoteAdmission`，`src/core/agent-runtime/query-preparation.ts:322`），并按准入把 `record_note` 冻进工具名清单。请求轮同一份冻结事实里读一次交接材料（SR3 第 6 项、§8.3）：旧秘书的理解轮把那条活命令的 goal 清单（`request.understandingGrants`，即授权所来自的同一份事实、同一条规则）交成 `{kind:'understanding'}`；manifest 带 `briefRef` 的继任轮经注入的 `handoff.readBriefState`（`QueryPreparationDependencies.handoff`）读一次四态——`waiting` 返回可重试的 `incomplete`（这一轮根本不准备）、`ready` 交 `{kind:'brief'}`、`none`/`consumed` 不出模板、读失败 `unavailable`，绝不折成空简报。`semantic_query` 的 consultation 带 `operation` 时经 `readConsultationCreate`（`src/core/work-graph/queries/platform-facts.ts:8`）读一次创建载荷；`platform_facts` 模式把每个冻结事实解析成正文（`record` 的正文、`body` 经材料端口打开、`task` 取冻结 PlanRevision 的定义），交给装配器的 `consultationFacts`，且不取 Session 历史。
+- `query-preparation.ts` — Query 有界输入准备与 manifest 绑定；由 Job 冻结的请求根算注记准入（`secretaryNoteAdmission`，`src/core/agent-runtime/query-preparation.ts:322`），并按准入把 `record_note` 冻进工具名清单。请求轮同一份冻结事实里读一次交接材料（SR3 第 6 项、§8.3）：旧秘书的理解轮把那条活命令的 goal 清单（`request.understandingGrants`，即授权所来自的同一份事实、同一条规则）交成 `{kind:'understanding'}`；manifest 带 `briefRef` 的继任轮经注入的 `handoff.readBriefState`（`QueryPreparationDependencies.handoff`）读一次四态——`waiting` 返回可重试的 `incomplete`（这一轮根本不准备）、`ready` 交 `{kind:'brief'}`、`none`/`consumed` 不出模板、读失败 `unavailable`，绝不折成空简报。`semantic_query` 的 consultation 带 `operation` 时经 `readConsultationCreate`（`src/core/work-graph/queries/platform-facts.ts:38`）读一次创建载荷；`platform_facts` 模式把每个冻结事实解析成正文（`record` 的正文、`body` 经材料端口打开、`task` 取冻结 PlanRevision 的定义），交给装配器的 `consultationFacts`，且不取 Session 历史。
 - `query-execution.ts` — 一次 fresh QueryRun 的驱动。角色绑定与预算一律经 `queryExecutionBindingOf`；`callKind: 'secretary'` 的轮次把清单冻结的 `request.effectiveGoalId` 写进 `query_run` 主体的 `goalId` 并作为图工具目标（无目标时为 `null`，图工具读项目），其余 Query 的主体形状不变。注记准入从 manifest 的 `request` 重算一次（`src/core/agent-runtime/query-execution.ts:317`），与冻结的工具名同一次比较；缺注记写/检查 owner 是 `unavailable`，秘书轮在图工具组旁建 `record_note` 组（`createNoteTools`，`src/core/agent-runtime/query-execution.ts:454`），有提交工具的轮次再建 `createAnswerTools` 组并把 `createAnswerToolBarrier` 交给 `runObservedModel`，可信调用身份是 `r5b-query-note:` 加 QueryRun 与 Kernel 调用 id/名的 sha256。邮件供给只有一处：请求轮（`manifest.request !== null`）传 `only: 'notify'` 并优先于普通 `semantic_query` 分支，派生咨询仍不供。
 - `project-source-tool.ts` — `project_source` 查询/捕获工具。
 - `source-capture-access.ts` — 源码捕获访问与 Work/Query 工厂；Query 的主体/权限身份里的角色取 `queryExecutionBindingOf`，`intent.execution` 只留作执行身份校验。
@@ -110,8 +110,8 @@
 | `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:122` | 安全点 pause/cancel 协调与退出证明；关闭中的 Host 在每个在跑 Run 的下一个安全点暂停（无 intent、不 abort 控制器） | 投递控制意图；Host 关闭时由关闭信号驱动 |
 | `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
 | `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
-| `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:521` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
-| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:887` | 完成轮边界、cursor 与 turn bounds 读取 | 需要 completed boundary |
+| `createSessionOperations` | `src/core/agent-runtime/session-operations.ts:540` | Session 创建、原历史分页与创建恢复 | 组合根创建/读 Session |
+| `createSessionHistoryCursorOwner` | `src/core/agent-runtime/session-operations.ts:908` | 完成轮边界、cursor、turn bounds 与 `readConsultationHistory`（有界读完冻结前缀，保留 missing/corrupt/transient/cancelled 分类） | 需要 completed boundary 或咨询的历史分类 |
 | `createKernelStoreRegistry` | `src/core/agent-runtime/kernel-store-locator.ts:46` | Session 到 Kernel store 的固定映射 | 组合根构造 Kernel reader |
 | `createRegisteredCheckRunner` | `src/core/agent-runtime/check-execution.ts:78` | 执行注册检查并记录真实观察 | verification 检查 |
 | `createGraphExecutionHistoryReader` | `src/core/agent-runtime/graph-execution-history.ts:170` | 图 locator 到原始历史的分页读取 | 读某 Run 的 Kernel 历史 |
