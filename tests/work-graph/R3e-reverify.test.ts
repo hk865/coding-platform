@@ -34,7 +34,7 @@
  *   configured executor whoever requests; a Workspace write between the
  *   capture and the commit writes nothing.
  * - Agent (VR-14 step 2, TD-6): an entered Agent of the same Goal with the
- *   `reverify_round` grant opens a successor (`actorClass:'agent'`, the event
+ *   `request_recheck` grant opens a successor (`actorClass:'agent'`, the event
  *   actor is the Host executor); another Goal's Agent, an Agent without the
  *   admission seam and an Agent note are refused; an Agent Run that ends
  *   between the admission and the commit writes nothing.
@@ -84,7 +84,7 @@ import {
 } from '../helpers/R3e-evidence-fixture.js';
 
 const KINDS = ['memory', 'sqlite'] as const;
-const GRANT = { ...B2_HOST.permissions, tools: ['read', 'reverify_round'] };
+const GRANT = { ...B2_HOST.permissions, tools: ['read', 'request_recheck'] };
 const key = (ref: object): string => canonicalJson(ref as JsonValue);
 const fixtures: R3eEvidenceFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });

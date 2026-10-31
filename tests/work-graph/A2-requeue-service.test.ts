@@ -11,7 +11,7 @@
  * capture (counted, so a policy refusal is shown to capture nothing) and the
  * Host configuration recheck of the delegated-write admission.
  *
- * - TD-6: an entered Agent of the same Goal with the `requeue_task` grant
+ * - TD-6: an entered Agent of the same Goal with the `request_rework` grant
  *   requeues a failed Task (requestedBy agent, counted); another Goal, an
  *   agent budget or a refused Host recheck write nothing.
  * - G-BUDGET (TASK-28) and the TASK-03 budget pin.
@@ -44,7 +44,7 @@ import {
 import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 
-const GRANT = { ...B2_HOST.permissions, tools: ['read', 'requeue_task'] };
+const GRANT = { ...B2_HOST.permissions, tools: ['read', 'request_rework'] };
 const SOURCE_DIGEST = 'a'.repeat(64);
 const key = (ref: object) => canonicalJson(ref as JsonValue);
 
@@ -82,7 +82,7 @@ async function open(kind: ClaimFixtureKind): Promise<Opened> {
   const reads = createRunStateReader({ records });
   const roles = createRoleConfigurationService({ records, now, eventId });
   const host = { enabled: true };
-  // The Host's current grant for the exact pinned configuration: the fixture's tools, or those plus `requeue_task`.
+  // The Host's current grant for the exact pinned configuration: the fixture's tools, or those plus `request_rework`.
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
     if (!host.enabled || ctx.projectId !== base.scope.projectId || ctx.workspaceId !== base.scope.workspaceId
       || input.configurationRevision !== B2_HOST.configurationRevision
@@ -188,7 +188,7 @@ describe.each(['memory', 'sqlite'] as const)('the requeue owner (%s)', (kind) =>
     const f = await open(kind);
     const base = f.b2.base;
     await f.endRunA(await f.b2.enter(), CRASHED);
-    // Run B: the same Goal's implement-b in the second Session, entered under the requeue_task grant.
+    // Run B: the same Goal's implement-b in the second Session, entered under the request_rework grant.
     const claimedB = await base.service.claimTask(base.ctx, await base.buildRequest({
       input: { taskId: base.tasks.second.taskId, sessionRef: base.sessions.second } }));
     if (claimedB.status !== 'committed') throw new Error(`claim B failed: ${JSON.stringify(claimedB)}`);

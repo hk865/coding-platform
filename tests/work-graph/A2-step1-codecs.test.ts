@@ -551,7 +551,7 @@ function endedRun(runId: string, outcome: RunSnapshot['outcome']): RunSnapshot {
   return { ref: runRef(runId), revision: 4, schemaVersion: 1, task, attemptId: `attempt-${runId}`, planRef, roleBinding,
     budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 4 },
     status: 'ended', outcome, exitCode: outcome === 'completed' ? 0 : null, lastEventSeq: 3, lastRuntimeEventId: 'rt-3',
-    lastFactEventId: 'fact-3', envelope: null, startedAt: at, endedAt: at, previousRun: null };
+    lastFactEventId: 'fact-3', envelope: null, startedAt: at, startedSince: null, endedAt: at, previousRun: null };
 }
 const encodeRun = (run: RunSnapshot): EncodedRecord =>
   ({ refKey: key(run.ref), schemaId: 'RunSnapshot@1', revision: run.revision, json: JSON.stringify(run) });

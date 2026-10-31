@@ -153,6 +153,7 @@ type CardAction = DecisionCardV1['actions'][number];
 const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
   'unknown_call_review', 'command_rerun_request',
+  'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework', 'continuation',
@@ -286,7 +287,7 @@ export type CardCollectionSourceSpec<T> = {
   /** `null` = the item is still open; a reason closes it. A missing reader means always open. */
   closedReasonOf?(item: T): DecisionCardV1['closedReason'];
   readByKey(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
-    Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason'] } | null>>;
+    Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason']; openedAt: string | null } | null>>;
   /** The maximum items one OFFSET page serves (1..200, default SOURCE_PAGE_LIMIT). */
   pageLimit?: number;
 };
@@ -344,7 +345,7 @@ export function createCollectionCardSource<T>(
           const closedReason = spec.closedReasonOf === undefined ? null : spec.closedReasonOf(item);
           if (closedReason === null || spec.keyOf === undefined) return spec.project(item, subject, goal);
           const card = spec.project(item, subject, goal);
-          return closedCollectionCard({ ...card.source, key: spec.keyOf(item) }, closedReason);
+          return closedCollectionCard({ ...card.source, key: spec.keyOf(item) }, closedReason, card.openedAt);
         });
         cache?.set(cacheKey, assembled);
       }
@@ -363,7 +364,8 @@ export function createCollectionCardSource<T>(
       if (read.status !== 'ready') return read;
       if (read.value === null) return { status: 'ready', value: null };
       if ('closed' in read.value) {
-        return { status: 'ready', value: closedCollectionCard(input.source, read.value.closed) };
+        return { status: 'ready',
+          value: closedCollectionCard(input.source, read.value.closed, read.value.openedAt) };
       }
       // The card carries the source's own subject; a subject the spec does not
       // serve is no card, and a project subject reads no Goal record.
@@ -417,7 +419,7 @@ export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencie
       }
       if (read.value.card === null) {
         return read.value.closedReason === null ? { status: 'ready', value: null }
-          : { status: 'ready', value: { closed: read.value.closedReason } };
+          : { status: 'ready', value: { closed: read.value.closedReason, openedAt: read.value.openedAt } };
       }
       return { status: 'ready', value: { item: read.value.card } };
     },
@@ -435,7 +437,8 @@ function noteCard(card: NoteDecisionCardFactsV1, subject: DecisionSubjectV1,
     state: 'waiting_answer', subject: structuredClone(subject),
     senderSessionRef: null, requestRef: null,
     objects: card.objects, options: card.options, answerMessageRef: null, answer: null, application: null,
-    candidateStatus: null, staleReason: null, closedReason: null, readOnly: false, actions: ['answer'],
+    candidateStatus: null, staleReason: null, closedReason: null, openedAt: card.openedAt,
+    readOnly: false, actions: ['answer'],
   };
 }
 
@@ -586,7 +589,9 @@ export function createUnknownCallReviewCardSource(
         unknownCallReviewTargetPaths(record).slice(0, UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX));
       const facts = unknownCallReviewCardFacts({ record, goal: window.goal, run: decoded.value,
         taskActive: !closure.value.closed, fileDigests });
-      if (facts.closedReason !== null) return { status: 'ready', value: { closed: facts.closedReason } };
+      if (facts.closedReason !== null) {
+        return { status: 'ready', value: { closed: facts.closedReason, openedAt: facts.openedAt } };
+      }
       return { status: 'ready', value: { item: facts } };
     },
   }, (goalRef) => readGoalForBasis(deps.records, goalRef));
@@ -773,10 +778,14 @@ export function createCommandRerunRequestCardSource(
       const request = read.value;
       // A moved request is a stale source key, not the current card.
       if (request.revision !== identity.revision) return { status: 'ready', value: null };
-      if (request.state !== 'pending') return { status: 'ready', value: { closed: 'source_resolved' } };
+      if (request.state !== 'pending') {
+        return { status: 'ready', value: { closed: 'source_resolved', openedAt: request.createdAt } };
+      }
       const built = await cardOf(ctx, request, undefined);
       if (built.status !== 'ready') return built;
-      if (built.value.closedReason !== null) return { status: 'ready', value: { closed: built.value.closedReason } };
+      if (built.value.closedReason !== null) {
+        return { status: 'ready', value: { closed: built.value.closedReason, openedAt: built.value.openedAt } };
+      }
       return { status: 'ready', value: { item: built.value } };
     },
   }, (goalRef) => readGoalForBasis(deps.records, goalRef));
@@ -894,6 +903,7 @@ function commandRerunRequestCard(facts: CommandRerunRequestCardFactsV1, subject:
     senderSessionRef: null, requestRef: null,
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
+    openedAt: facts.openedAt,
     readOnly: false, actions: ['answer'],
   };
 }
@@ -905,18 +915,20 @@ function unknownCallReviewCard(facts: UnknownCallReviewCardFactsV1, subject: Dec
     senderSessionRef: null, requestRef: null,
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
+    openedAt: facts.openedAt,
     readOnly: false, actions: ['answer'],
   };
 }
 
 /** The one closed-card shape of a collection source (no live options/actions). */
-function closedCollectionCard(source: DecisionSourceV1, closedReason: DecisionCardV1['closedReason']): DecisionCardV1 {
+function closedCollectionCard(source: DecisionSourceV1, closedReason: DecisionCardV1['closedReason'],
+  openedAt: string | null): DecisionCardV1 {
   return {
     cardKey: source.key,
     source: { ...source, pins: source.pins.map((pin) => structuredClone(pin)) },
     state: 'closed', subject: source.subject, senderSessionRef: null, requestRef: null,
     objects: [], options: [], answerMessageRef: null, answer: null, application: null,
-    candidateStatus: null, staleReason: null, closedReason, readOnly: true, actions: [],
+    candidateStatus: null, staleReason: null, closedReason, openedAt, readOnly: true, actions: [],
   };
 }
 
@@ -958,7 +970,7 @@ function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 | null {
     subject: { kind: 'goal', goalRef },
     senderSessionRef: null, requestRef: null, objects: cause.objects, options: [],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
-    closedReason: null, readOnly: false, actions: goalCauseActions(cause),
+    closedReason: null, openedAt: null, readOnly: false, actions: goalCauseActions(cause),
   };
 }
 
@@ -1470,6 +1482,16 @@ async function readDecisionCard(
         if (byKey.status === 'not_found') return { status: 'not_found' };
         if (byKey.status !== 'ready') return byKey;
         projectCard = byKey.value;
+      } else {
+        try {
+          const live = await provider.readByKey(ctx, { workspace, source });
+          if (live.status === 'ready' && live.value !== null) {
+            // The real source's stored time wins over the synthetic answer's; the answer result stays.
+            projectCard = { ...projectCard, openedAt: live.value.openedAt ?? projectCard.openedAt };
+          }
+        } catch {
+          // A failed source read keeps the saved answer's card.
+        }
       }
       if (projectCard === null) return { status: 'not_found' };
       const refreshed = await refreshSourcePins(deps.records, projectCard.source);
@@ -1514,7 +1536,17 @@ async function readDecisionCard(
       const answerMessage = await findAnswerMessage(deps.records, boundWorkspace, source);
       const answered = answerMessage === null ? null : syntheticAnswerCard(answerMessage);
       if (source.kind !== 'message_release') {
-        card = answered === null ? await deriveOpenCard(deps, ctx, source, goal) : answered;
+        if (answered === null) {
+          card = await deriveOpenCard(deps, ctx, source, goal);
+        } else {
+          card = answered;
+          try {
+            const live = await deriveOpenCard(deps, ctx, source, goal);
+            if (live !== null) card = { ...answered, openedAt: live.openedAt ?? answered.openedAt };
+          } catch {
+            // A failed source read keeps the saved answer's card.
+          }
+        }
       } else {
         const live = await deriveOpenCard(deps, ctx, source, goal);
         card = answered === null ? live : live === null ? answered : mergeCards(answered, live);
@@ -1627,6 +1659,14 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
       return identity.reviewRef.projectId !== ctx.projectId ? forbidden : null;
     case 'command_rerun_request':
       return identity.requestRef.projectId !== ctx.projectId ? forbidden : null;
+    // The four new sources carry the same project/workspace ids in their own refs.
+    case 'member_creation':
+    case 'handoff_approval':
+      return foreignRef(identity.operationRef) ? forbidden : null;
+    case 'rework_request':
+      return foreignRef(identity.requestRef) ? forbidden : null;
+    case 'adviser_creation':
+      return foreignRef(identity.trigger.ref) ? forbidden : null;
     default: {
       const unknown: never = identity;
       void unknown;
@@ -1758,7 +1798,8 @@ function messageCard(source: DecisionSourceV1, message: SessionMessage): Decisio
     answerMessageRef: answered ? message.ref : null,
     answer: answered ? message.response as UserMessageResponseV1 : null,
     application: message.application ?? null,
-    candidateStatus: null, staleReason: null, closedReason: null, readOnly: false,
+    candidateStatus: null, staleReason: null, closedReason: null, openedAt: message.createdAt,
+    readOnly: false,
     actions: answered ? [] : ['answer'],
   };
 }
@@ -1775,7 +1816,8 @@ function syntheticAnswerCard(message: SessionMessage): DecisionCardV1 | null {
     requestRef: null,
     objects: message.decision?.objects ?? [], options: message.decision?.options ?? [],
     answerMessageRef: message.ref, answer: response, application: message.application ?? null,
-    candidateStatus: null, staleReason: null, closedReason: null, readOnly: false, actions: [],
+    candidateStatus: null, staleReason: null, closedReason: null, openedAt: message.createdAt,
+    readOnly: false, actions: [],
   };
 }
 
@@ -1810,7 +1852,7 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
     objects: pins.map(pin => ({ kind: 'aggregate' as const, pin: structuredClone(pin), label: 'candidate' })), options: [],
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: closed ? null : stale ? 'stale' : 'candidate', staleReason: stale ? 'basedOn is not the active Plan pointer' : null,
-    closedReason: closed ? 'source_resolved' : null, readOnly: closed, actions,
+    closedReason: closed ? 'source_resolved' : null, openedAt: null, readOnly: closed, actions,
   };
 }
 
@@ -1889,7 +1931,7 @@ function messageReleaseCard(
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: stale ? 'stale' : null,
     staleReason: stale ? 'stale_pins' : null,
-    closedReason: facts.closedReason, readOnly: facts.closedReason !== null,
+    closedReason: facts.closedReason, openedAt: facts.openedAt, readOnly: facts.closedReason !== null,
     actions: facts.closedReason === null ? ['answer'] : [],
     messageRelease: { deadline: facts.deadline, releaseBlock: facts.releaseBlock },
   };
@@ -1907,6 +1949,8 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     candidateStatus: existing.candidateStatus ?? incoming.candidateStatus,
     staleReason: existing.staleReason ?? incoming.staleReason,
     closedReason: existing.closedReason ?? incoming.closedReason,
+    // The real source card's stored time wins over the synthetic answer's; the answer result stays.
+    openedAt: incoming.openedAt ?? existing.openedAt,
     // The message's live facts win over the answer's projection, and every other kind (neither side carries the
     // field) is unchanged.
     ...(existing.messageRelease === undefined && incoming.messageRelease === undefined

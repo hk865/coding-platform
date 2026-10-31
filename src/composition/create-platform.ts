@@ -142,7 +142,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
-import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js';
+import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
 import { createSessionHandoffService, type SessionHandoffPort } from '../core/work-graph/sessions/session-handoff-service.js';
@@ -2226,26 +2226,26 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }
       return { status: 'ready', value: goalIds };
     };
-    const resolveScribeRecipient = async (ctx: CoreCallContext): Promise<ReadResult<SessionRef | null>> => {
-      const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
-      const scribes: SessionRef[] = [];
-      let cursor: string | undefined;
-      for (;;) {
-        const page = await sessionDirectory.findSessions(ctx, { workspace, includeArchived: false,
-          page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) } });
-        if (page.status !== 'ready') return page;
-        for (const card of page.value.items) {
-          if (card.record.lifecycle !== 'active') continue;
-          const duty = await sessionDutyResolver(card.record.role, ctx);
-          if (duty.status === 'ready' && duty.value === 'scribe') scribes.push(card.record.ref);
-        }
-        if (page.value.nextCursor === null) break;
-        cursor = page.value.nextCursor;
-      }
-      if (scribes.length === 0) return { status: 'ready', value: null };
-      scribes.sort((left, right) => left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0);
-      return { status: 'ready', value: scribes[0]! };
-    };
+    // §3.11: the one duty recipient resolver. Its scribe arm is the old closure
+    // exactly: it pages the directory to its end, keeps active cards whose fixed
+    // duty is `scribe`, sorts by `sessionId` and returns the first, with no
+    // health filter. `notes.resolveScribeRecipient` keeps the same public shape
+    // and result; there is no second copy of the scan (LD-04). A failed page is
+    // returned unchanged, as the old closure did. The adviser/secretary arms
+    // answer `unavailable` when a card's duty cannot be read, never "no
+    // recipient"; the scribe arm skips such a card, byte-identical to the old
+    // closure.
+    // The public surface is unchanged: one function of the caller context; the
+    // resolver is built once here, not per call.
+    const dutyRecipient = createDutyRecipient({
+      findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input),
+      dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx),
+    });
+    const resolveScribeRecipient = (ctx: CoreCallContext): Promise<ReadResult<SessionRef | null>> =>
+      dutyRecipient.resolveDutyRecipient(ctx, {
+        workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
+        duty: 'scribe',
+      });
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
       & NoteListReadPort & typeof noteVersions & {
         readScribeTodos: NoteScribeTodoPort['readScribeTodos'];

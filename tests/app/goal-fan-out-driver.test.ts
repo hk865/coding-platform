@@ -287,7 +287,7 @@ function resumeWorld(goalState: { desiredState: 'active' | 'paused'; epoch: numb
   const resumed = goalState.desiredState === 'active';
   const pause = fanOutIntent(2, 'pause', 'queued');
   const intents = new Map<string, ControlIntentSnapshotV1>(resumed ? [[pause.ref.intentId, pause]] : []);
-  let run = { ref: RUN_REF, revision: 5, status: 'running', controlState: resumed
+  let run = { ref: RUN_REF, revision: 5, status: 'running', startedSince: null, controlState: resumed
     ? { desiredState: 'paused', intentRef: pause.ref } : undefined,
   envelope: { kind: 'drv-envelope' }, inputBinding: { kind: 'drv-binding' },
   executionAuthorization: { schemaVersion: 2, phase: 'entered', consumerId: 'drv-consumer' } } as unknown as RunSnapshot;

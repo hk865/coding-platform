@@ -48,7 +48,7 @@ function runOf(runId: string, over: Partial<RunSnapshot> = {}): RunSnapshot {
     ref: runRef(runId), revision: 4, schemaVersion: 1, task: { ...TASK }, attemptId: `${runId}-attempt`, planRef: PLAN,
     roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`,
-    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: T0, endedAt: T0, previousRun: null, ...over,
+    lastFactEventId: `ev-${runId}`, envelope: null, startedAt: T0, startedSince: null, endedAt: T0, previousRun: null, ...over,
   };
 }
 const ended = (runId: string, outcome: RunOutcome, over: Partial<RunSnapshot> = {}): RunSnapshot =>

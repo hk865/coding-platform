@@ -222,7 +222,7 @@ it('§4.3 "stopped": a stopped Task is skipped and the next Task of the Goal is 
 function completedRunReads(taskId: string): { executions: WorkflowDependencies['executions']; reads: RunRef[] } {
   const reads: RunRef[] = [];
   const run = { ref: runRefOf(taskId), task: { projectId: P, goalId: G, taskId }, revision: 5, status: 'ended',
-    outcome: 'completed' } as unknown as RunSnapshot;
+    outcome: 'completed', startedSince: null } as unknown as RunSnapshot;
   return { reads, executions: { ...untouched<WorkflowDependencies['executions']>('executions'),
     readExecution: async (_callCtx, runRef) => {
       reads.push(runRef);

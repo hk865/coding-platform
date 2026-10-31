@@ -213,7 +213,7 @@ const FULL_BYTES = 147;
 
 function world(range: { startByte: number; endByte: number }): InvariantWorld {
   const run = {
-    ref: RUN, revision: 1, schemaVersion: 1, task: TASK_TRIPLE, attemptId: 'pc2g-attempt',
+    ref: RUN, revision: 1, schemaVersion: 1, task: TASK_TRIPLE, attemptId: 'pc2g-attempt', startedSince: null,
     requeueRef: brief.requeueRef, inputBinding: { continuationBriefDigest: DIGEST },
   } as unknown as RunSnapshot;
   const outbox = {

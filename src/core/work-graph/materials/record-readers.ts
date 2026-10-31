@@ -69,6 +69,7 @@ export function validateQueryRunSnapshot(record: EncodedRecord): DecodeResult<En
 const RUN_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: RUN_SNAPSHOT_SCHEMA_ID,
   aggregateType: 'Run',
+  commitCursorFields: ['startedSince'],
   validate: validateRunSnapshot,
 };
 

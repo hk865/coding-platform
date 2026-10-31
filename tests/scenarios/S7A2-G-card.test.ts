@@ -51,13 +51,19 @@ it('G-card: identity, approve/deny, M-05, the direct release and the one stale b
     const view = async (ref: SessionMessage['ref']) => ready<SessionMessage>(
       await opened.world.post('messages/read', plain(S6A_SCOPE, ref)), 'the message read');
 
+    const cards = s6aCardsWorkspace(opened.world, S6A_SCOPE);
     const request = await send('g-card-request', 'inquiry');
+    const requestedAt = request.createdAt;
     const releaseCard = await readS7A2Card(opened.world, m05);
     // The card became `awaiting` at creation, whose revision is 1; that revision, not the CAS one, is identity.
     const expectedKey = decisionSourceKey({ kind: 'message_release', messageRef: request.ref, revision: 1 });
     expect(releaseCard.card.source.key).toBe(expectedKey);
     expect(releaseCard.card.messageRelease?.deadline).toBeNull();
+    expect(releaseCard.card.openedAt).toBe(requestedAt);
+    const releasePage = await cards.route('main/read', { goalId: m05.goalId, cursor: null }) as { value: { cards: DecisionCardV1[] } };
+    expect(releasePage.value.cards.find(entry => entry.source.key === expectedKey)?.openedAt).toBe(requestedAt);
 
+    opened.world.clock.advance(1_000);
     const approved = await answerS7A2Card(opened.world,
       { source: releaseCard.source, optionId: 'approve', label: 'g-card-approve' });
     expect(committed<SessionMessage>(approved.action, 'the approve action').release).toBe('approved');
@@ -68,6 +74,8 @@ it('G-card: identity, approve/deny, M-05, the direct release and the one stale b
     const afterApproveCard = await readS7A2Card(opened.world, m05);
     expect(afterApproveCard.card.source.key).toBe(expectedKey);
     expect(afterApproveCard.card.messageRelease?.deadline).toBeNull();
+    // The real message's saved time wins over the synthetic answer written at the later clock.
+    expect(afterApproveCard.card.openedAt).toBe(requestedAt);
 
     const replayed = await answerS7A2Card(opened.world,
       { source: releaseCard.source, optionId: 'approve', label: 'g-card-approve' });
@@ -90,7 +98,6 @@ it('G-card: identity, approve/deny, M-05, the direct release and the one stale b
     expect(releasedAt).toBe(releaseAt);
     expect(releasedDeadline).toBe(new Date(Date.parse(releasedAt) + DAY_MS).toISOString());
     // The single card, re-read through the public route with the queue's own returned source.
-    const cards = s6aCardsWorkspace(opened.world, S6A_SCOPE);
     const releasedCard = ready<DecisionCardV1>(
       await cards.route('decisions/card', { source: releaseCard.source }), 'the released release card');
     expect(releasedCard.messageRelease?.deadline).toBe(releasedDeadline);
@@ -99,6 +106,7 @@ it('G-card: identity, approve/deny, M-05, the direct release and the one stale b
     expect(releasedCard.state).toBe('closed');
     expect(releasedCard.closedReason).toBe('source_resolved');
     expect(releasedCard.readOnly).toBe(true);
+    expect(releasedCard.openedAt).toBe(requestedAt);
     expect(released.basis.dispatchSequence).toBe(counterBefore.dispatchSequence);
 
     const deniedRequest = await send('g-card-deny', 'action_request');

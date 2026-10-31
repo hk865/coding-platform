@@ -1,0 +1,10 @@
+{
+  "description": "Withdraw a Session message you sent, before its recipient acts on it. A Work Run may withdraw only a message of its own Session, and only where send_session_message is granted; a secretary may withdraw a message of its own resolved request round. Give the message's full ref; do not send a revision, because the owner checks the sender and the current state itself and a message already answered is refused rather than withdrawn. A refusal is returned as the tool's result and does not mean the message was withdrawn.",
+  "parameters": {
+    "messageRef": "The full ref of the message to withdraw.",
+    "messageRef.aggregateType": "Always \"SessionMessage\".",
+    "messageRef.projectId": "The message's project id.",
+    "messageRef.workspaceId": "The message's workspace id.",
+    "messageRef.messageId": "The message id."
+  }
+}

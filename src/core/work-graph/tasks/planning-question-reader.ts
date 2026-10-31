@@ -187,6 +187,7 @@ export function createPlanningQuestionReader(
         candidateStatus: null,
         staleReason: null,
         closedReason: null,
+        openedAt: input.job.job.submittedAt,
         readOnly: false,
         actions: ['answer'],
       });

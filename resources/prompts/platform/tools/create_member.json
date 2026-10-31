@@ -1,0 +1,13 @@
+{
+  "description": "Create one executor line (a member Session) for a task. Call it from a Run whose accepted envelope lists create_member and whose Host binding sets createMember, or from the secretary's request round; the task must belong to your Goal's adopted plan. The platform first looks for a suitable existing line and answers reused when one fits; under every-step confirmation it answers needs_decision with a member-creation card instead of creating; while a creation is still being applied it answers pending. Parameters: duty is always executor, scope names the task, and reason says why a new line is needed (1-2000 UTF-8 bytes).",
+  "parameters": {
+    "duty": "Always \"executor\". This tool creates executor lines only; adviser, scribe and secretary lines are not created here.",
+    "scope": "The member's scope; only the task arm is accepted.",
+    "scope.kind": "Always \"task\".",
+    "scope.task": "The task the new executor line is responsible for.",
+    "scope.task.projectId": "The task's project id.",
+    "scope.task.goalId": "The task's goal id; the member belongs to this Goal.",
+    "scope.task.taskId": "The task id.",
+    "reason": "Why a new executor line is needed; 1-2000 UTF-8 bytes."
+  }
+}

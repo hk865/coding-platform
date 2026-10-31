@@ -117,6 +117,8 @@ export type S2BRuntimeStepsOptions = {
    * caller uses it to replay the request the Runtime really committed.
    */
   observeResult?: (request: GraphWrite<TaskResultObservation>, result: WriteResult<RunSnapshot>) => void;
+  /** Observe each real `recordExecutionEntered` result unchanged (same form as `observeResult`). */
+  observeEntered?: (request: Parameters<ExecutionEntryPort['recordExecutionEntered']>[1], result: WriteResult<RunSnapshot>) => void;
   /**
    * W2b-21: the real user-decision owner the Runtime binds for a Run whose Host
    * grant selects the user-decision tools (`execution-driver.ts:259` refuses such
@@ -301,7 +303,9 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
     authorizeConfiguration, now, eventId, newId });
   const beforeBegin = options.beforeBegin;
   const observeResult = options.observeResult;
-  const entry: ExecutionEntryPort = beforeBegin === undefined && observeResult === undefined ? entryOwner : {
+  const observeEntered = options.observeEntered;
+  const entry: ExecutionEntryPort = beforeBegin === undefined && observeResult === undefined
+    && observeEntered === undefined ? entryOwner : {
     ...entryOwner,
     ...(beforeBegin === undefined ? {} : {
       async beginRuntimeEntry(callCtx, request) {
@@ -313,6 +317,13 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
       async recordRunResult(callCtx, request) {
         const result = await entryOwner.recordRunResult(callCtx, request);
         observeResult(request, result);
+        return result;
+      },
+    }),
+    ...(observeEntered === undefined ? {} : {
+      async recordExecutionEntered(callCtx, request) {
+        const result = await entryOwner.recordExecutionEntered(callCtx, request);
+        observeEntered(request, result);
         return result;
       },
     }),

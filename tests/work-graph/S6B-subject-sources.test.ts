@@ -42,6 +42,7 @@ import type { NoteItemV1 } from '../../src/core/work-graph/model/note-contracts.
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { WorkflowDependencies } from '../../src/business/workflow/ports.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
+import { noteHeadRefKey } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_WORKSPACE_REF, graphWrite, startBusyQuery,
@@ -51,7 +52,7 @@ import { openK3ReviewCardWorld, type K3ReviewCardWorld } from '../helpers/K3-rev
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import { noteCardKey } from '../helpers/S4C2-note-card-fixture.js';
 import { owners } from '../helpers/S5-application-support.js';
-import { openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { openS5DecisionFixture, T, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
 import { openS6ANoticesWorld, s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { openS6AHostWorld } from '../helpers/S6A-host-fixture.js';
@@ -208,7 +209,11 @@ async function reviewStatus(world: K3ReviewCardWorld, ref: Awaited<ReturnType<ty
 // ---------------------------------------------------------------------------
 
 async function messageCard() {
-  return subjects(only(await s5Waiting(await s5World()), card => card.source.kind === 'message'));
+  const world = await s5World();
+  const card = only(await s5Waiting(world), entry => entry.source.kind === 'message');
+  const byKey = await world.o.reads.readDecisionCard(world.f.ctx, { source: card.source });
+  expect(byKey).toMatchObject({ status: 'ready', value: { openedAt: T } });
+  return subjects(card);
 }
 
 async function goalCauseCard() {
@@ -238,6 +243,7 @@ async function planningQuestionCard() {
     question: 'Which acceptance tradeoff should the first plan use?', focusTaskRefs: [], budget: AG2B_QUERY_BUDGET,
     multiTurn: { maxRounds: 1 }, correlationId: 'row9-planning',
     execution: { kind: 'initial_coordination', roleBinding: S6A_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET } };
+  const submittedAt = world.clock.now();
   const submitted = await world.post('queries/submit', graphWrite(S6A_SCOPE, { queryJobId: queryJobRef.queryJobId,
     runId: queryRunRef.runId, intent }, 'row9-planning-submit', [{ ref: AG2B_PROJECT_REF, revision: 1 },
     { ref: AG2B_WORKSPACE_REF, revision: 1 }, { ref: PLANNING_GOAL, revision: read.value.goal.revision },
@@ -252,19 +258,31 @@ async function planningQuestionCard() {
     questions: ['Should acceptance favour latency or throughput?'] }) }]);
   const ended = await startBusyQuery(world.ag2b, { queryJobRef, queryRunRef }, 'row9-planning');
   expect(ended.job.job.status).toBe('answered');
-  return subjects(only(await main.readCards(PLANNING_GOAL), entry => entry.source.kind === 'planning_question'));
+  const planningCard = only(await main.readCards(PLANNING_GOAL), entry => entry.source.kind === 'planning_question');
+  const page = await main.route('main/read', { goalId: PLANNING_GOAL.goalId, cursor: null }) as { value: { cards: DecisionCardV1[] } };
+  expect(page.value.cards.find(entry => entry.source.key === planningCard.source.key)?.openedAt).toBe(submittedAt);
+  const byKey = await main.route('decisions/card', { source: planningCard.source }) as { value: DecisionCardV1 };
+  expect(byKey.value.openedAt).toBe(submittedAt);
+  return subjects(planningCard);
 }
 
 async function reviewCard() {
   const world = await k3World();
-  return subjects(await reviewCardOf(world, await world.createRecord('k3-20-a')));
+  const record = await world.createRecord('k3-20-a');
+  const card = await reviewCardOf(world, record);
+  const byKey = await world.readModel.readDecisionCard(world.fixture.ctx, { source: card.source });
+  expect(byKey).toMatchObject({ status: 'ready', value: { openedAt: record.createdAt } });
+  return subjects(card);
 }
 
 async function rerunRequestCard() {
   const world = await k3World({ realKernelCommandFacts: true });
   const record = await blockedRecord(world, 'k3-20-b', 'row9-crr', [{ callId: 'row9-crr-call', command: CRR_COMMAND }]);
-  await requestRerunOf(world, record, 'row9-crr-request');
-  return subjects(await crrCardOf(world));
+  const request = await requestRerunOf(world, record, 'row9-crr-request');
+  const card = await crrCardOf(world);
+  const byKey = await world.readModel.readDecisionCard(world.fixture.ctx, { source: card.source });
+  expect(byKey).toMatchObject({ status: 'ready', value: { openedAt: request.createdAt } });
+  return subjects(card);
 }
 
 /** The Workflow's select step on a Task whose review waits for the person: it waits with the card's source. */
@@ -308,6 +326,7 @@ async function noteReviewCard() {
   const { main, scribe } = opened;
   const goalRef: GoalRef = { ...scribe.goal };
   const subject = goal(goalRef);
+  const notedAt = opened.world.clock.now();
   const written = await scribeUnderstanding(opened.world, scribe, { label: 'row9-goal', structural: true,
     anchor: { kind: 'goal', goalId: goalRef.goalId } });
   expect(written.note.storedState).toBe('pending_review');
@@ -320,9 +339,12 @@ async function noteReviewCard() {
   expect(card.source.subject).toEqual(subject);
   expect(card.subject).toEqual(subject);
   expect(card.source.key).toBe(key);
+  const page = await main.route('main/read', { goalId: goalRef.goalId, cursor: null }) as { value: { cards: DecisionCardV1[] } };
+  expect(page.value.cards.find(entry => entry.source.key === key)?.openedAt).toBe(notedAt);
   const { card: read, resolution } = await resolveS6BProjectNote(main, {
     noteId: written.note.noteId, optionId: 'accept', label: 'row9-goal' });
   expect(read.source.key).toBe(key);
+  expect(read.openedAt).toBe(notedAt);
   expect(read.source.subject).toEqual(subject);
   expect(resolution).toMatchObject({ status: 'ready', value: {
     answer: { status: 'committed' },
@@ -371,6 +393,57 @@ async function projectNoteCard() {
     main: await cardsOf(main),
     goalless: await cardsOf(goalless),
   };
+}
+
+/**
+ * A pending note answered after the world clock moved keeps the note's own stored time: the project and the Goal note
+ * take the two by-key branches (project `readByKey`, Goal `deriveOpenCard`). The answers are saved through the decision
+ * message owner alone, so no application has removed the live source yet.
+ */
+async function answeredNoteCardTime() {
+  const opened = await openS6BProjectWorld({ backend: 'memory' });
+  closers.push(() => opened.close());
+  const { main, scribe } = opened;
+  const goalRef: GoalRef = { ...scribe.goal };
+  const projectNotedAt = opened.world.clock.now();
+  const projectNote = await scribeUnderstanding(opened.world, scribe, { label: 'row9-time-project', structural: true });
+  const goalNotedAt = opened.world.clock.now();
+  const goalNote = await scribeUnderstanding(opened.world, scribe, { label: 'row9-time-goal', structural: true,
+    anchor: { kind: 'goal', goalId: goalRef.goalId } });
+  const projectKey = noteCardKey(main.scope.projectId, projectNote.note.noteId, projectNote.note.version);
+  const goalKey = noteCardKey(main.scope.projectId, goalNote.note.noteId, goalNote.note.version);
+  const projectCard = (await main.readCards()).find(card => card.source.key === projectKey);
+  const goalCard = (await main.readCards(goalRef)).find(card => card.source.key === goalKey);
+  expect(projectCard?.state).toBe('waiting_answer');
+  expect(goalCard?.state).toBe('waiting_answer');
+  opened.world.clock.advance(1_000);
+  const answeredAt = opened.world.clock.now();
+  for (const [label, card] of [['project', projectCard!], ['goal', goalCard!]] as const) {
+    const answer = await opened.world.platform.decisionMessages.answerDecision(opened.world.humanContext(), {
+      input: { source: card.source, selection: { kind: 'option', optionId: 'accept' }, text: '', annotations: [] },
+      meta: { requestId: `row9-note-time-${label}`, expected: card.source.pins },
+    });
+    expect(answer.status).toBe('committed');
+  }
+  const readOf = async (source: DecisionSourceV1) => {
+    const read = await main.route('decisions/card', { source }) as { status: string; value: DecisionCardV1 };
+    expect(read.status).toBe('ready');
+    return read.value;
+  };
+  const projectRead = await readOf(projectCard!.source);
+  const goalRead = await readOf(goalCard!.source);
+  expect([projectRead.openedAt, goalRead.openedAt]).toEqual([projectNotedAt, goalNotedAt]);
+  expect([projectRead.state, goalRead.state]).toEqual(['answered_pending_application', 'answered_pending_application']);
+  const projectFault = commitBarrier.failReads(noteHeadRefKey({ aggregateType: 'NoteHead',
+    projectId: main.scope.projectId, noteId: projectNote.note.noteId }), 'throw-always');
+  const goalFault = commitBarrier.failReads(noteHeadRefKey({ aggregateType: 'NoteHead',
+    projectId: main.scope.projectId, noteId: goalNote.note.noteId }), 'throw-always');
+  const [projectAgain, goalAgain] = [await readOf(projectCard!.source), await readOf(goalCard!.source)];
+  projectFault.release();
+  goalFault.release();
+  expect([projectAgain.openedAt, projectAgain.state, goalAgain.openedAt, goalAgain.state])
+    .toEqual([answeredAt, 'answered_pending_application', answeredAt, 'answered_pending_application']);
+  return { project: subjects(projectRead), goal: subjects(goalRead) };
 }
 
 /** Source facts read a goal subject: the answer commits and captures the goal subject. */
@@ -443,6 +516,10 @@ describe('row 9: every source construction and subject comparison keeps its subj
         note: [{ goalId: null, version: 2, storedState: 'accepted' }],
         main: [{ state: 'applied', card: HOST_PROJECT_SUBJECT, source: HOST_PROJECT_SUBJECT }],
         goalless: [] } },
+    { entry: 'note cards answered after the world clock moved keep the note\'s stored time',
+      observe: answeredNoteCardTime,
+      expected: { project: { card: HOST_PROJECT_SUBJECT, source: HOST_PROJECT_SUBJECT },
+        goal: { card: HOST_1, source: HOST_1 } } },
     { entry: 'source facts read a goal subject', observe: sourceFactsGoal, expected: { source: S5_B } },
     { entry: 'source facts rebuild a goal subject from the Goal read', observe: sourceFactsOtherGoalSubject,
       expected: { source: S5_B, message: S5_GOAL_B, card: { card: S5_B, source: S5_B } } },

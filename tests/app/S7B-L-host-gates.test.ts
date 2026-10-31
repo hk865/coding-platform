@@ -188,5 +188,7 @@ it('a queued notify opens no turn and is skipped before the inquiry behind it', 
   await waitFor(async () => queued(world, line, inquiry.ref),
     message => message.response !== null, 'the inquiry behind the notify to take its turn');
   const still = await queued(world, line, notify.ref);
-  expect([still.delivery, still.acceptedInputs ?? []]).toEqual(['queued', []]); expect(handled).toEqual([]);
+  // DRV D-F2: the woken successor Run really starts and takes the notify as ordinary input; the notify opened no turn.
+  expect((still.acceptedInputs ?? []).filter(input => input.executionRef.aggregateType !== 'Run')).toEqual([]);
+  expect(handled).toEqual([]);
 }, 120_000);

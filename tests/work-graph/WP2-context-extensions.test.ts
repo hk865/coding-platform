@@ -189,6 +189,7 @@ function decisionCard(options: {
     candidateStatus: null,
     staleReason: null,
     closedReason: null,
+    openedAt: null,
     readOnly: false,
     actions: ['answer'],
   };

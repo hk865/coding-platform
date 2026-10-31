@@ -785,6 +785,9 @@ function runSnapshotProblem(value: unknown): string | null {
   if (runRefProblem(value['ref'], 'recorded run ref') !== null) return 'recorded run ref is incomplete';
   if (!isPositiveSafeInteger(value['revision'])) return 'recorded run revision must be a positive safe integer';
   if (typeof value['status'] !== 'string') return 'recorded run status is required';
+  if (!(value['startedSince'] === null || typeof value['startedSince'] === 'string')) {
+    return 'recorded run startedSince must be a commit cursor or null';
+  }
   return null;
 }
 

@@ -33,6 +33,7 @@ const RUN: RunSnapshot = {
   lastFactEventId: '',
   envelope: null,
   startedAt: null,
+  startedSince: null,
   endedAt: null,
   previousRun: null,
   executionAuthorization: {

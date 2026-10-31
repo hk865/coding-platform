@@ -199,7 +199,7 @@ it('FC-13 (needsFinalize): the open head with only interrupted checks is finaliz
     subject: { projectId: P, goalId: G, taskId: 'work-1' },
     checks: [{ checkId: 'lint', phase: 'finished', outcome: 'PASS' }, { checkId: 'unit', phase: 'interrupted', outcome: null }] };
   const run = { ref: runRefOf('work-1'), task: { projectId: P, goalId: G, taskId: 'work-1' }, revision: 5, status: 'ended',
-    outcome: 'completed' } as unknown as RunSnapshot;
+    outcome: 'completed', startedSince: null } as unknown as RunSnapshot;
   const executions = { ...untouched<WorkflowDependencies['executions']>('executions'),
     readExecution: async () => ({ status: 'ready', value: { run } }) as never };
   const row = rowOf('work-1', failureOf('work-1', reverifyOf('work-1', { needsFinalize: true }), { head: { ...headOf('work-1'),

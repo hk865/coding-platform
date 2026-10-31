@@ -21,15 +21,20 @@
 - `initial-planning.ts` — `InitialPlanAssignment`、`InitialPlanOrigin`、`InitialPlanOriginSourceV1`（`binding`/`prepared_goal`/`plain`/`intervention` 四臂）与 `InterventionAnswerSourceV1`（`{ kind: 'intervention', messageRef }`，干预 Plan 答案的唯一来源选择器）、`InitializationSourceShape`/`InitializationSourceV1`（初始化计划读哪一份回答：绑定的草稿或已备好的 Goal）、初始规划响应/设置。
 - `initial-planning-parse.ts` — `parseInitialPlanningResponseV2`：初始规划 v2 回答外层协议的唯一纯解析；WorkGraph `tasks/` 的 Plan owner 和 `queries/` 的秘书回答检查共用（`queries` 不能 import `tasks`）。
 - `input-declaration-id.ts` — `edgeDeclarationId`/`legacyDeclarationId`：输入声明 id。
+- `module-overlap-gate.ts` — `ModuleOverlapGateRef`：模块重叠闸门（记录 4）的 ref；值类型和唯一的字段表在 `core/work-graph/persistence/module-overlap-gate-codecs.ts`。
+- `pick-basis.ts` — `PickBasisV1`：推进结果的依据（`rank`、`incomplete`、`candidates`），只在返回值里，不存记录；`rank` 没有 `hint`。
 - `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`。
 - `reduction.ts` — `TaskReductionRef`、归因码与完成审计快照。
+- `rework-request.ts` — `ReworkRequestRef`：返工请求（记录 3）的 ref；记录的值类型和字段表在 `core/work-graph/persistence/rework-request-codecs.ts`。
 - `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定。
 - `task-failure.ts` — 任务失败/自动化停止/返工事实 DTO。
 - `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor、策略默认、启动三档 `RESUME_ON_STARTUP_MODES`、`isAutomationActor`、`reworkActorClassOf`。
 
 ### 执行与 Run
 做派发、Query、Run 活动/预算、续接简报与控制意图的去这组。
-- `continuation-brief.ts` — 续接简报：`ContinuationBriefV1`、上限、digest/marker、来源比较、中文渲染、结构校验与 `ContinuationBriefCapacityError`。
+- `continuation-brief.ts` — 续接简报：`ContinuationBriefV1` 等形状、digest、来源比较与结构校验；转出下面两个文件的上限、marker 与渲染，现有的 import 路径都不变。
+- `continuation-brief-base.ts` — 简报的上限 `CONTINUATION_BRIEF_LIMITS` 与第二行标记 `continuationBriefMarker`：不 import 任何文件的叶子，渲染和结构校验都从这里取上限。
+- `continuation-brief-render.ts` — 简报的中文渲染：`renderContinuationBriefZh`、`approvedMethodLinesZh`、`templateToolNames` 与 `ContinuationBriefCapacityError`；包里的固定文字、模板渲染和字节预算的私有 helper（`briefTexts`、`renderBriefTemplateZh`、`clip`、`boundedZh`、`listZh`）也在这里，别的简报渲染写进本文件复用它们。简报类型只用 `import type` 从 `continuation-brief.ts` 取，不反向 value import（那会形成加载环）。
 - `control-intent.ts` — 暂停/取消/恢复/引导：`ControlIntentRef`、`ControlIntentRequestV1`、`ControlIntentSnapshotV1`。
 - `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`MODEL_SERVICE_FAILURE_CODES`、`TERMINAL_PAYLOAD_*`。
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
@@ -77,12 +82,12 @@
 - `actor-equality.ts` — actor 身份比较：`sameActorIdentity`（两个 unknown，只比 `kind`/`id`，不算 `runRef`）与 `sameActorKindAndId`（typed actor，只比 `kind`/`id`）。
 - `command-event.ts` — 命令/事件基线：`CommitCursor`、`CommandFingerprint`、`ActorRef`、`CommandIdentity`、`normalizeObjective`、`commandFingerprint`、`commandIdentityKey`。
 - `data-format.ts` — 字段表格式：字段只写一次的运行时描述（`f` 的封闭字段种类，含 JSON 值 `f.json()`、`defineShape`/`defineRecord`/`defineEvent`），TS 类型由它推导（`InferShape`、`InferRecord`、`InferPending`、`InferEvent`）；描述在构造时校验，坏描述抛 `<what> description is invalid: <detail>`。值检查在 `validation/data-format.ts`，RecordStore 适配在 `src/core/work-graph/persistence/field-table-codec.ts`。
-- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（21 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref（含 `CurrentPointerRef`）与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple`/`ProjectScope`/`WorkspaceScope` 各自一份；7A-1 加 `DispatchCounterRefShape`（`src/contracts/data-format-refs.ts:17`），6B-3 加 `PlanRevisionRefShape`（`src/contracts/data-format-refs.ts:52`）；另导出 `id`，即 ref 内字段的非空字符串描述（按码点计，至少 1）。
+- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（23 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref（含 `CurrentPointerRef`）与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple`/`ProjectScope`/`WorkspaceScope` 各自一份；7A-1 加 `DispatchCounterRefShape`（`src/contracts/data-format-refs.ts:17`），6B-3 加 `PlanRevisionRefShape`（`src/contracts/data-format-refs.ts:52`），7C-1 加 `ReworkRequestRefShape`/`ModuleOverlapGateRefShape`（`src/contracts/data-format-refs.ts:66`、`:69`）；另导出 `id`，即 ref 内字段的非空字符串描述（按码点计，至少 1）。
 - `goal-interruption.ts` — `GoalInterruption@1` 的字段表 `GoalInterruptionFields`（`src/contracts/goal-interruption.ts:18`）、推导类型 `GoalInterruptionV1`（`src/contracts/goal-interruption.ts:28`）、具名规则与格式 `GoalInterruptionFormat`（`src/contracts/goal-interruption.ts:30`）、ref 形状 `GoalInterruptionRefShape`（`src/contracts/goal-interruption.ts:10`）；一个 Goal 一条记录，`pending`/`resumed` 只由 `state/goal-interruption.ts` 写。
 - `dispatch-counter-format.ts` — `DispatchCounter@1` 的字段表 `DispatchCounterFields`（`src/contracts/dispatch-counter-format.ts:5`）、推导类型 `DispatchCounterV1`（`src/contracts/dispatch-counter-format.ts:14`）、具名规则 `dispatchCounterProblem` 与格式 `DispatchCounterFormat`；规则检查正安全整数、Goal 身份和消息项目一致性。
 - `error-message.ts` — `messageOf`：取 `Error.message`，否则 `String(error)`；转换本身抛错时不吞。
 - `fingerprint.ts` — JCS/SHA-256 原语：`canonicalJson`、`sameJson`、`canonicalKey`、`canonicalOf`、`sha256Hex`、`CanonicalJsonError`。
-- `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量；来源/卡片/请知悉的 subject 只有 `DecisionSubjectShape`/`DecisionSubjectV1` 一份（Goal 或 project 的带标签联合），身份键 `decisionSubjectKey`、取 Goal 的 `decisionSubjectGoalRef`；7A-1 加 `message_release` 卡片的条目 `MessageReleaseCardItemV1`（`src/contracts/goal-decisions.ts:160`）与它的派生字段 `releaseBlock`；7A-2 加那张卡的两个选项 id `MESSAGE_RELEASE_OPTIONS`（`src/contracts/goal-decisions.ts:157`）与派生块 `MessageReleaseBlockV1`（`src/contracts/goal-decisions.ts:178`，`blockedReason` 与三个当前值，`tasks/` 不许 import `communication/`，所以正本在 C）。
+- `goal-decisions.ts` — Goal/工作区决策设置、对象/选项/来源与 `decisionSourceKey`、默认设置常量；来源/卡片/请知悉的 subject 只有 `DecisionSubjectShape`/`DecisionSubjectV1` 一份（Goal 或 project 的带标签联合），身份键 `decisionSubjectKey`、取 Goal 的 `decisionSubjectGoalRef`；7A-1 加 `message_release` 卡片的条目 `MessageReleaseCardItemV1`（`src/contracts/goal-decisions.ts:167`）与它的派生字段 `releaseBlock`；7A-2 加那张卡的两个选项 id `MESSAGE_RELEASE_OPTIONS`（`src/contracts/goal-decisions.ts:164`）与派生块 `MessageReleaseBlockV1`（`src/contracts/goal-decisions.ts:185`，`blockedReason` 与三个当前值，`tasks/` 不许 import `communication/`，所以正本在 C）；7C-1 的 `DecisionSourceV1.kind`、`DecisionSourceIdentityV1` 和 `decisionSourceKey` 各加 `member_creation`/`rework_request`/`handoff_approval`/`adviser_creation` 四臂（`adviser_creation` 的键是 trigger 的规范 JSON），`DecisionActionV1` 加 `create_member`/`role_line_add`，`NoticeCategoryV1` 加 `member_created`。
 - `governance.ts` — 完成策略/架构基线的 revision、pin 与 `completionPolicyContentDigest`。
 - `graph-context.ts` — 上下文装配/图读模型/注意力/任务输入页 DTO，调用种类闭集 `ContextCallKindV1` 与唯一列表 `CONTEXT_CALL_KINDS`（含 `intervention_planning`），以及 `goalContextContentV1`、`goalContextDigestV1`。
 - `human-role-collaboration.ts` — 协作策略 revision/active 与 `coordinationPolicyContentDigest`。
@@ -109,8 +114,8 @@
 | `sha256Hex` | `src/contracts/fingerprint.ts:72` | UTF-8 文本的 SHA-256 小写十六进制。 | 所有内容寻址与摘要的哈希原语。 |
 | `f` | `src/contracts/data-format.ts:132` | 字段表的封闭字段种类：字符串（字节/码点上限）、sha256、整数、有限数、revision、字面量（字符串、安全整数或布尔）、枚举、布尔、JSON 值、ref、游标、可绑定游标、ISO 时间、optional/nullable、数组、精确对象、判别联合。 | 新记录、事件或嵌套形状写字段表时；不在此列的是具名规则（`rules`）或留手写。 |
 | `defineShape`、`defineRecord`、`defineEvent` | `src/contracts/data-format.ts:250`、`src/contracts/data-format.ts:314`、`src/contracts/data-format.ts:346` | 构造并校验嵌套形状、存储记录（`ref` 是本 `aggregateType` 的完整带标签 ref，`revision` 是 `f.revision` 或 `f.literal(1)`，可带 lookup）和事件（字段不含四个信封键）。 | 新格式只写这一份字段表；类型用 `InferRecord`/`InferPending`/`InferEvent` 推导，不再手写一份。 |
-| `ProjectRefShape` 等 18 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`DispatchCounterRefShape`、`SessionRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`PlanRevisionRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
-| `ProjectScopeShape`、`WorkspaceScopeShape`、`CurrentPointerRefShape` | `src/contracts/data-format-refs.ts:66`、`src/contracts/data-format-refs.ts:67`、`src/contracts/data-format-refs.ts:68` | 不带标签的 `{ projectId }`、`{ projectId, workspaceId }` 范围和带标签的 `CurrentPointerRef`（ref 描述共 21 个）。 | 字段表里写范围或注记当前指针时；不要另写一份。 |
+| `ProjectRefShape` 等 20 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`DispatchCounterRefShape`、`SessionRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`PlanRevisionRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`、`ReworkRequestRefShape`、`ModuleOverlapGateRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
+| `ProjectScopeShape`、`WorkspaceScopeShape`、`CurrentPointerRefShape` | `src/contracts/data-format-refs.ts:72`、`src/contracts/data-format-refs.ts:73`、`src/contracts/data-format-refs.ts:74` | 不带标签的 `{ projectId }`、`{ projectId, workspaceId }` 范围和带标签的 `CurrentPointerRef`（ref 描述共 23 个）。 | 字段表里写范围或注记当前指针时；不要另写一份。 |
 | `id` | `src/contracts/data-format-refs.ts:10` | ref 内字段的非空字符串描述（`min: 1`，按码点计）。 | 写 ref 的字段表时复用；不要另写 `f.string({ min: 1 })`。 |
 | `SessionActivityFormat`、`SessionActivityRefShape` | `src/contracts/session-activity.ts:40`、`src/contracts/session-activity.ts:37` | Session 活动记录的字段表和它的 ref；两条规则：`session` 与 ref 同一个 Session、`source` 在同一项目且种类对得上。 | 写或读 Session 的最后活动；类型用 `SessionActivityV1`，不要手写。 |
 | `SessionActivityRef`、`SessionActivityV1`、`SessionActivityKindV1`、`SessionActivitySourceV1` | `src/contracts/session-activity.ts:60`、`src/contracts/session-activity.ts:61`、`src/contracts/session-activity.ts:62`、`src/contracts/session-activity.ts:64` | 由字段表推导的活动引用、记录、类别和来源类型。 | 供活动状态、codec 和读取使用。 |
@@ -141,10 +146,10 @@
 | `isRequestRound` | `src/contracts/query-job.ts:492` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18` | 初始规划 v2 回答的外层协议：一个 JSON 对象、`schemaVersion` 2、`plan` 或 `needs_decision` 的外形；不修补模型的计划，计划内容由 Plan 校验器判断。 | 读初始规划回答或秘书 `initial_coordination` 回答；不要另写 v2 JSON 解析。 |
 | `queryExecutionBindingOf` | `src/contracts/query-job.ts:503` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
-| `decisionSourceKey` | `src/contracts/goal-decisions.ts:245` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
-| `DecisionSubjectShape`、`DecisionSubjectV1` | `src/contracts/goal-decisions.ts:89`、`src/contracts/goal-decisions.ts:95` | 决定来源/卡片/请知悉的 subject 字段表与推导类型：`{ kind: 'goal', goalRef }` 或 `{ kind: 'project', projectRef }`，旁边不再有第二个 `goalRef` 字段。 | 构造或读 `subject`；不要另写一份只认 Goal 的 subject 形状。 |
-| `decisionSubjectKey` | `src/contracts/goal-decisions.ts:97` | subject 的带标签规范键。 | 读侧按 subject 分组/排序；不要手拼字符串。 |
-| `decisionSubjectGoalRef` | `src/contracts/goal-decisions.ts:110` | 对已校验的 subject 收窄（来源、卡片、请知悉）：goal 返回 `goalRef`，project 或缺失返回 `null`；不代替输入形状校验。 | 每个来源/卡片分支只经这一处收窄；不要自己再写一份 `goalRefOf`。 |
+| `decisionSourceKey` | `src/contracts/goal-decisions.ts:257` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
+| `DecisionSubjectShape`、`DecisionSubjectV1` | `src/contracts/goal-decisions.ts:94`、`src/contracts/goal-decisions.ts:100` | 决定来源/卡片/请知悉的 subject 字段表与推导类型：`{ kind: 'goal', goalRef }` 或 `{ kind: 'project', projectRef }`，旁边不再有第二个 `goalRef` 字段。 | 构造或读 `subject`；不要另写一份只认 Goal 的 subject 形状。 |
+| `decisionSubjectKey` | `src/contracts/goal-decisions.ts:102` | subject 的带标签规范键。 | 读侧按 subject 分组/排序；不要手拼字符串。 |
+| `decisionSubjectGoalRef` | `src/contracts/goal-decisions.ts:116` | 对已校验的 subject 收窄（来源、卡片、请知悉）：goal 返回 `goalRef`，project 或缺失返回 `null`；不代替输入形状校验。 | 每个来源/卡片分支只经这一处收窄；不要自己再写一份 `goalRefOf`。 |
 | `requirementKeyOf` | `src/contracts/evidence.ts:130` | 由 obligationId 与 requirementId 生成键。 | 证据覆盖与需求查找。 |
 | `edgeDeclarationId` | `src/contracts/input-declaration-id.ts:5` | 内容派生的执行 DAG 边 `edge:` 声明 id。 | 计划输入声明。 |
 | `legacyDeclarationId` | `src/contracts/input-declaration-id.ts:14` | `inputRequirements` 条目的 `legacy:` 声明 id。 | 兼容旧计划输入时。 |
@@ -176,13 +181,13 @@
 | `reviewHostLayerOneAccess` | `src/contracts/review-admission.ts:96` | Host 第一层工具与只读命令访问判定。 | 准入与审查能力查询共用同一判据。 |
 | `reviewRoundAdmissionProblem` | `src/contracts/review-admission.ts:127` | 审查轮固定工具集、空写范围、角色与 Host 准入。 | 审查 Run 启动与执行前复核。 |
 | `newBasisInputProblem` | `src/contracts/no-progress.ts:56` | 判断输入能否作为新依据。 | requeue/reverify 两个所有者共用；平台生成正文与未回应消息不算。 |
-| `continuationBriefDigest` | `src/contracts/continuation-brief.ts:302` | 简报摘要 `sha256Hex(canonicalJson(brief))`。 | 固定 `inputBinding.continuationBriefDigest`。 |
-| `continuationBriefMarker` | `src/contracts/continuation-brief.ts:306` | 简报第二行的标记文本。 | 重渲染后逐字比对。 |
-| `compareSourceCheckpoints` | `src/contracts/continuation-brief.ts:316` | 比较两个持久化来源戳，无法判定即 `unknown`。 | 判断工作区是否变化。 |
-| `renderContinuationBriefZh` | `src/contracts/continuation-brief.ts:530` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
-| `approvedMethodLinesZh` | `src/contracts/continuation-brief.ts:1039` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
-| `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:1298` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
-| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief.ts:1120` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
+| `continuationBriefDigest` | `src/contracts/continuation-brief.ts:293` | 简报摘要 `sha256Hex(canonicalJson(brief))`。 | 固定 `inputBinding.continuationBriefDigest`。 |
+| `continuationBriefMarker` | `src/contracts/continuation-brief-base.ts:28` | 简报第二行的标记文本。 | 重渲染后逐字比对。 |
+| `compareSourceCheckpoints` | `src/contracts/continuation-brief.ts:303` | 比较两个持久化来源戳，无法判定即 `unknown`。 | 判断工作区是否变化。 |
+| `renderContinuationBriefZh` | `src/contracts/continuation-brief-render.ts:224` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
+| `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:733` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
+| `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
+| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:814` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
 | `renderNoteHeader` | `src/contracts/note.ts:115` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
 | `planValidationError` | `src/contracts/plan.ts:303` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:309` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
@@ -199,10 +204,10 @@
 | `SNAPSHOT_UNRESOLVED_MAX_LINES`、`SNAPSHOT_UNRESOLVED_MAX_BYTES` | `src/contracts/architecture-source.ts:32`、`src/contracts/architecture-source.ts:33` | 未解析行的行数/字节上限。 | 保存快照前截断。 |
 | `ARTIFACT_MAX_SIZE_BYTES` | `src/contracts/artifact.ts:6` | Artifact 正文最大字节数。 | artifact 写入校验。 |
 | `K3_CRR_BY_TASK_ALIAS_INDEX`、`K3_CRR_BY_GOAL_STATE_INDEX`、`K3_CRR_BY_TASK_INDEX` | `src/contracts/command-rerun-request.ts:64` | `CommandRerunRequest` 的三个注册索引名。 | 读写/查询 CRR 时按名引用。 |
-| `CONTINUATION_BRIEF_LIMITS` | `src/contracts/continuation-brief.ts:280` | 简报各项条数/字节上限。 | 组装或渲染简报。 |
+| `CONTINUATION_BRIEF_LIMITS` | `src/contracts/continuation-brief-base.ts:9` | 简报各项条数/字节上限。 | 组装或渲染简报。 |
 | `TERMINAL_PAYLOAD_TEXT_MAX_CHARS`、`TERMINAL_PAYLOAD_TRUNCATION_SUFFIX` | `src/contracts/dispatch.ts:218`、`src/contracts/dispatch.ts:220` | 终止 payload 文本上限与截断后缀。 | 记录/展示终止原因时截断。 |
 | `EVIDENCE_SUMMARY_MAX_BYTES`、`EVIDENCE_OUTCOMES` | `src/contracts/evidence.ts:55`、`src/contracts/evidence.ts:60` | 证据摘要上限与结局闭集。 | 证据校验与展示。 |
-| `DEFAULT_GOAL_SETTINGS_V1`、`DEFAULT_WORKSPACE_DECISION_SETTINGS_V1` | `src/contracts/goal-decisions.ts:44`、`src/contracts/goal-decisions.ts:64` | Goal/工作区决策默认设置。 | Goal 的那份只是 `goals/create` 的出生值，没有 `settings` 的 Goal 记录被拒绝、不读成默认；工作区的未配置时取默认。不要另抄一份。 |
+| `DEFAULT_GOAL_SETTINGS_V1`、`DEFAULT_WORKSPACE_DECISION_SETTINGS_V1` | `src/contracts/goal-decisions.ts:48`、`src/contracts/goal-decisions.ts:69` | Goal/工作区决策默认设置。 | Goal 的那份只是 `goals/create` 的出生值，没有 `settings` 的 Goal 记录被拒绝、不读成默认；工作区的未配置时取默认。不要另抄一份。 |
 | `MANIFEST_CONTENT_TYPE`、`QUERY_MANIFEST_CONTENT_TYPE`、`REPORT_CONTENT_TYPE`、`PLATFORM_GENERATED_CONTENT_TYPES`、`MAX_NEW_BASIS_INPUT_REFS` | `src/contracts/no-progress.ts:21` | 平台生成正文类型与新依据输入上限。 | 判定内容类型/新依据时。 |
 | `NOTE_GENERAL_KINDS` | `src/contracts/note.ts:50` | 通用注记种类闭集。 | 校验/分组注记。 |
 | `PLATFORM_DUTIES` **正本** | `src/contracts/platform-duty.ts:13` | 五种平台职责的唯一运行时列表，顺序同 `PlatformDutyV1`；它由以 `PlatformDutyV1` 为键的表取键，少一个职责就编译不过。 | 运行时校验职责或按职责遍历；不要再另写一份职责列表。 |

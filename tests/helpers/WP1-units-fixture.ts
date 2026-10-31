@@ -401,7 +401,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
       roleBinding: { schemaVersion: 1, bindingId: 'cu-builder', templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' },
       budget: { tokenBudget: 4096, deadline: null }, workspaceSnapshot: { workspaceId: 'w', revision: workspace.revision },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '',
-      envelope: null, startedAt: null, endedAt: null, previousRun: null },
+      envelope: null, startedAt: null, startedSince: null, endedAt: null, previousRun: null },
     attempt: { ref: claim.attemptRef, revision: 1, schemaVersion: 1, runId: 'r1', planRef,
       status: 'claimed', startedAt: null, endedAt: null, endOutcome: null },
     outbox: { ref: claim.outboxRef, revision: 1, schemaVersion: 1, status: 'pending', claim }, plan,

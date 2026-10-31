@@ -46,7 +46,7 @@
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
 - `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
-- `decision-policy.ts` — 自主级别动作表、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
+- `decision-policy.ts` — 自主级别动作表（含 `create_member` 的两档值与两档都为 `needs_decision` 的 `role_line_add`）、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
 - `initialization-adoption.ts` — 初始化采用操作的纯记录表：出生 `newInitializationAdoptionRecord`、既有操作的再次接受 `acceptExistingInitializationAdoption`、写入前标记 `nextAdoptionStage`，以及三个后写 `advanceInitializationAdoption`/`stopInitializationAdoption`/`completeInitializationAdoption`，再加供服务重建已提交记录的纯投影 `committedAdoptionRecord`（前缀、before/stopped 标记与 `record.result` 只在这里形成；不读时钟、不生成 id、不碰存储）。
@@ -98,8 +98,8 @@
 | `controlIntentStateOf` | `src/core/work-graph/state/control-intent-machine.ts:333` | 意图快照的机器状态 | 迁移前 |
 | `transitionControlIntent` | `src/core/work-graph/state/control-intent-machine.ts:886` | 意图主迁移（Queued→Applied/Superseded/OutcomeUnknown） | 控制请求提交与观测 |
 | `decisionActionPolicy` | `src/core/work-graph/state/decision-policy.ts:31` | 自主级别 × 动作的唯四值表 | owner、工具、Workflow、路由都查它 |
-| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:71` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
-| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:118` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
+| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:76` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
+| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:123` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
 | `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:24` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里，同一 ref 勾选两次也是 `invalid`；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`selection_only`/`retraction_pending`，`retract` 非空即后者） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
 | `planReanchorHook` | `src/core/work-graph/state/goal-copy.ts:12` | 7D1 要填的具名 seam：把目标参谋/书记的负责关系挪到新 Goal；现在只返回 `not_implemented`，不写事实、不给回执 | 复制确认里预留的负责关系迁移点；不要另开一条迁移路径 |
 | `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:97` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
@@ -174,13 +174,14 @@
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
 | `newRunRecord` | `src/core/work-graph/state/run-machine.ts:855` | 建 Run 记录 | claim/开跑 |
-| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1385` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
+| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:877` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
+| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1395` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
 | `runStateOf` | `src/core/work-graph/state/run-machine.ts:148` | Run 快照的机器状态 | Run 迁移前 |
 | `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:544` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
 | `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:208` | 是否 paused/interrupted 的结束 | 重排队与展示 |
 | `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:222` | 未解决工具调用的阻塞原因 | 未知调用审查 |
-| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1118` | claim 时 Session/Lease 的持有检查 | claim 提交 |
-| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1213` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
+| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1128` | claim 时 Session/Lease 的持有检查 | claim 提交 |
+| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1223` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |

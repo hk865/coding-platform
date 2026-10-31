@@ -25,6 +25,7 @@
 - `command-recognition-contracts.ts` — 阻塞命令识别结果 `BlockedCommandMatchV1` 与共享的 `CommandRecognizer` 类型。
 - `communication-contracts.ts` — Session 收件箱的 DTO/端口、消息事件类型与 `deriveSessionInputId`；投递与读 `disposition` 的唯一纯推导 `deriveMessageDelivery`（输入 `MessageDeliveryFactsV1`、结果 `MessageDeliveryDerivationV1`），并再导出 C 的 `MessageDeliveryStateV1`/`MessageReadDispositionV1`；完整命令端口（`SessionMessageCommandPort`，扩展窄的 `SessionMailboxPort`）、发送结果、两个视图读、四个生命周期事件、请求 owner 读端口和信箱依赖的五个可选注入。7A-2：`SessionMessageReadV1` 带派生块 `releaseBlock`（`MessageReleaseBlockV1 | null`），发件箱页是 `SessionMessageOutboxPageV1`（`SessionMessagePage` 加同样顺序的 `releaseBlocks`），`readOutbox` 返回它；没有新的依赖成员，块读用已有的 `dispatchBasis`。
 - `message-payload.ts` — send/respond 工具参数的唯一载荷模型：`SendMessageV1`、`RespondMessageV1` 与两个纯规范化函数；工具 schema、请求构造和只读查找共用它，同样的参数得到同样的 owner 输入和指纹。
+- `pick-ports.ts` — 挑选注入的两个端口：只读的 Session 复用判定 `SessionReuseVerdictV1`/`SessionReusePortV1`（实现在 B 的 `session-chooser.ts`，组合根注入 M）与领取前授权 `PreClaimAuthorizationVerdictV1`/`PreClaimAuthorizationPortV1`（M 实现，P 调用）。
 - `request-contracts.ts` — request round 视图（含 `GoalCardDraftViewV1` / `GoalCardDraftRowsV1`：每张草稿的 `index`、`draft` 与已确认的 `confirmedGoalRef`，未确认为 `null`）、秘书选择端口、队列预算常量、活尝试阶段集合（`LIVE_ATTEMPT_PHASES`，队列与秘书选择共用）、Query/Request 索引名、请求根索引的槽值；交接要用的请求侧条目：固定的 Host system 主体 `HANDOFF_SYSTEM_PRINCIPAL`、`InternalRouteCommandV1`、`RequestCommandReceiptReadV1`、`HandoffRequestCommandV1` 与 `HandoffRequestReceiptReadPort`（`tasks/request-service.ts` 再导出前三个），sessions 和 state 的交接文件从这里取，不 import tasks。
 - `request-ideas.ts` — 回答思路的唯一规则：`validIdeaCount` 与 `ideasIssues`（纯函数）。
 - `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`（请求事实带 `briefRef` 与唯一一份 `understandingGrants`）、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
@@ -66,6 +67,7 @@
 | `GraphWrite` **正本** | `src/core/work-graph/model/task-contracts.ts:28` | 写请求信封 `{input, meta}`。`session-contracts.ts:14`、`src/core/work-graph/architecture/contracts.ts:16` 只是转出，不是副本 | 所有 GraphWrite 端口的请求参数 |
 | `TaskClaimPort` | `src/core/work-graph/model/claim-contracts.ts:132` | 认领、重新入队、审查认领的写入口；`ClaimTaskInput`/`RequeueTaskInput` 各有可选 `acknowledgement`，写结果带可选 `proofReceipt` | Task claim owner 注入时 |
 | `SessionDirectoryPort` | `src/core/work-graph/model/session-contracts.ts:117` | Session 创建、读取与分页目录 | Session 目录消费者 |
+| `SessionReusePortV1`、`PreClaimAuthorizationPortV1` | `src/core/work-graph/model/pick-ports.ts:18`、`src/core/work-graph/model/pick-ports.ts:27` | 挑选的两个注入端口：只读复用判定与领取前授权；W 只声明，B（P 的 chooser）与 M 各自实现，组合根注入 | 挑 Secretary/成员或领取前判授权；不要另立平行端口 |
 | `SessionOperationRecordOf`、`SessionOperationRecord`、`SessionCreateOperationRecord` | `src/core/work-graph/model/session-contracts.ts:84`、`:63`、`:64` | `CoreOperation` 记录：按分支取类型；`admitSessionCreation` 只返回创建分支 | 读操作记录先判 `action.kind`，非创建分支在创建身份上答 `unavailable` |
 | `SessionCreateActionV1`、`SessionOperationActionV1` | `src/core/work-graph/model/session-contracts.ts:45`、`:83` | 创建分支的动作（带 `parentOperation`）与必填 `consultation`（`ConsultationCreateV1` 或 null）；`CoreOperation` 三个分支的动作联合 | 只处理创建分支的读者用前者；读通用操作记录的 `action` 先判 `kind` |
 | `ConsultationFactRefV1`、`ConsultationFactsV1` | `src/core/work-graph/model/session-contracts.ts:51`、`:61` | 一条冻结事实（`task`/`event`/`body`/`record`，`event` 在 7B-3 无生产者）与三个列表 `{facts, omitted, unreadable}` | 采集器写、Q 渲染与 codec 检查共用；不要另立定位符替身或第四种列表 |
@@ -99,11 +101,11 @@
 | `MaterialPort` | `src/core/work-graph/model/material-contracts.ts:11` | 存 artifact、按引用打开并区分历史用途 | 材料读写 |
 | `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:315` | 消息发送、读取、ack、回复；读不改状态 | 收件箱与决定消息 |
 | `ForwardMessageInputV1`、`DisposeWaitInputV1`、`ForwardMessageResultV1`、`MessageForwardingPort` | `src/core/work-graph/model/communication-contracts.ts:473` | 转发 owner 的输入/结果 DTO 与端口：`forwarded` 是一次提交，`existing` 是第二次同目标命令且不带游标；P 的复制转发只经 `forwardCopiedIntervention` | 组合根装配转发 owner、P 的复制 owner 与 F 的行时；不要另写转发输入/结果或端口 |
-| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:428` | 决定队列、来源页与冲突读取 | 决定读模型 |
+| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:434` | 决定队列、来源页与冲突读取 | 决定读模型 |
 | `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:241` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
 | `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:261` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
-| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:447` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
-| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:467` | notice 项的读取与排序 | notice 来源适配 |
+| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:453` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
+| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:473` | notice 项的读取与排序 | notice 来源适配 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:17`、`src/core/work-graph/model/goal-copy-contracts.ts:22`、`src/core/work-graph/model/goal-copy-contracts.ts:15` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（C 的正本再导出；失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:89` | 注记写入、审核、撤回 | 注记写 owner |
 | `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:317` | 注记按引用/列表/版本读取 | 注记读模型 |

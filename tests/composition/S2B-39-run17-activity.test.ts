@@ -40,7 +40,7 @@ function beforeEntering(record: TaskExecutionRecord, historyCursor: SessionRecor
   }
   const { executionHistory: _history, ...rest } = run;
   const starting: RunSnapshot = { ...rest, status: 'starting', outcome: null, exitCode: null,
-    startedAt: null, endedAt: null, executionAuthorization: { ...auth, phase: 'entering' } };
+    startedAt: null, startedSince: null, endedAt: null, executionAuthorization: { ...auth, phase: 'entering' } };
   return { ...record, run: starting, session: { ...record.session, historyCursor } };
 }
 

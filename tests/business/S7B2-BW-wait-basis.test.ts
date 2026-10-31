@@ -8,15 +8,15 @@
  * reply through W-F1's real `answerS7BWait`. No store, record or `CoreCallContext` is built.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { TaskGraph } from '../../src/core/work-graph/model/plan-contracts.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { ready, sameRun } from '../helpers/S7A-fixture.js';
 import { answerS7BWait } from '../helpers/S7B-fixture.js';
-import {
-  openS7B2BasisGoal, startS7B2BasisDriver, wakeS7B2BasisGoal,
-} from '../helpers/S7B2-wake-basis.js';
+import { openS7B2BasisGoal, startS7B2BasisDriver, wakeS7B2BasisGoal } from '../helpers/S7B2-wake-basis.js';
 
 const worlds: S6AHostWorld[] = [];
 afterEach(async () => { for (const world of worlds.splice(0)) await world.close().catch(() => undefined); });
@@ -63,18 +63,26 @@ describe('BW-basis (memory)', () => {
       await answerS7BWait(basis.world, { goal: basis.goal, recipient: basis.recipient,
         message: basis.message, task: replyTask, label: 's7b2-bw' });
 
-      const advanced = await wakeS7B2BasisGoal(basis, started, 'waiting');
-      const last = advanced.last;
-      if (last === null || last.status !== 'ready') {
-        throw new Error(`S7B2: the answered wake returned no ready result: ${JSON.stringify(last)}`);
-      }
-      const receipt = last.value.receipt;
-      if (receipt?.kind !== 'claim_task' || receipt.result.status !== 'committed') {
-        throw new Error(`S7B2: the answered wake is not one committed claim: ${JSON.stringify(last.value)}`);
-      }
-      expect(last.value.state).toBe('advance');
-      expect(sameRun(receipt.result.value.runRef, basis.run)).toBe(false);
-      expect(last.value.next).not.toBeNull();
-      expect(advanced.current).toEqual(last.value.next);
+      // The wake is only a re-check: the task's watch continues the chain and
+      // starts the successor Run itself, so the reply is consumed by a NEW Run
+      // on the same Task/Session rather than parked as a successor input.
+      await started.driver.wake(basis.world.humanContext(), basis.goal);
+      let saved: SessionMessage | undefined;
+      await expect.poll(async () => {
+        const read = ready<SessionMessage>(
+          await basis.world.post('messages/read', plain(S6A_SCOPE, basis.message)), 'the answer read');
+        saved = read;
+        return (read.acceptedInputs ?? []).filter(entry => entry.part === 'response').length;
+      }, { interval: 50 }).toBe(1);
+      if (saved === undefined) throw new Error('S7B2: the answered wait was not read back');
+      const accepted = (saved.acceptedInputs ?? []).find(entry => entry.part === 'response')!;
+      if (accepted.executionRef.aggregateType !== 'Run') throw new Error('S7B2: the accepted input is not a Work Run');
+      expect(sameRun(accepted.executionRef, basis.run)).toBe(false);
+      const successor = ready<TaskExecutionRecord>(
+        await basis.world.post('executions/read', plain(S6A_SCOPE, accepted.executionRef)),
+        'the successor Run');
+      expect(successor.run.task).toEqual(basis.task);
+      expect(sameRun(successor.run.previousRun!, basis.run)).toBe(true);
+      await started.driver.stop(basis.world.humanContext(), { goalRef: basis.goal, taskId: basis.task.taskId });
     }, 120_000);
 });

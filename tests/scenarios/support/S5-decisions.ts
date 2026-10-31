@@ -121,7 +121,7 @@ export const s5QueryRun = (queryJobId: string, runId: string): QueryRunRef =>
   ({ aggregateType: 'QueryRun', ...S5_SCOPE, queryJobId, runId });
 
 export const S5_WORK_TASK_A = AG2B_WORK_TASK_ID;
-/** Auxiliary Task of Goal A, admitted through the owners with a requeue_task grant. */
+/** Auxiliary Task of Goal A, admitted through the owners with a request_rework grant. */
 export const S5_WORK_TASK_A2 = 's5-a-work-2';
 export const S5_WORK_TASK_B = 's5-b-work';
 const S5_STAGE = 's5-stage-m';
@@ -545,7 +545,7 @@ export function acceptParallelRisk(platform: Platform, ctx: CoreCallContext, inp
  * Owner-seeded Agent admission, NOT a model-driven tool call. The Host harness
  * deliberately omits Runtime from direct(), so its delegated requeue cannot
  * admit an Agent. Use the same SQLite ledger/body store and production owners,
- * granting requeue_task in the initial manifest (A2-requeue-service pattern).
+ * granting request_rework in the initial manifest (A2-requeue-service pattern).
  * The auxiliary Run is settled before returning and before any Host restart.
  */
 export async function s5AgentRequeue(h: HostScenario, afterRunRef: RunRef) {
@@ -568,7 +568,7 @@ export async function s5AgentRequeue(h: HostScenario, afterRunRef: RunRef) {
   const bodies = createSqliteRawArtifactStore(join(h.database, 'artifacts.sqlite'));
   const now = () => '2026-10-08T00:00:00.000Z';
   const permissions: TaskEnvelopeV1['permissions'] = {
-    policyRevision: 'legacy-template', tools: ['read', 'requeue_task'], writeScope: [],
+    policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [],
   };
   const hostTemplate = { templateId: AG2B_WORK_ROLE.templateId, revision: AG2B_WORK_ROLE.templateRevision,
     digest: artifactBodyDigest('S5 auxiliary requeue admission') };

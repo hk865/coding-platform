@@ -12,7 +12,11 @@
  * the same records port. The next card/answer lanes import this one copy.
  */
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
+import * as bodyStore from '../../src/core/record-store/body-store.js';
+import * as inMemoryRecordStore from '../../src/core/record-store/in-memory-record-store.js';
+import { createTargetPlatform, type TargetPlatformOptions } from '../../src/composition/create-platform.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { PreparedCommit, EncodedDomainEvent, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
@@ -97,6 +101,13 @@ export type K3ReviewCardWorld = {
    */
   goalSettings: ReturnType<typeof createGoalSettingsService>;
   /**
+   * DRV §5.1 D-F3b: the world's ONE real platform, opened lazily over the SAME
+   * records and body backend (the accepted A4 backend seam). D-F3b is its only
+   * reader; every other world never opens it and pays nothing. It closes in
+   * this world's own `close`.
+   */
+  openPlatform(): Promise<ReviewCardPlatform>;
+  /**
    * A real review record for `taskId`. Default: the real blocked Run plus the
    * real `settleReview{review_unavailable}` -> `needs_decision`; `autoSettled`:
    * the real read-only Run that settles `resolved` at creation.
@@ -104,6 +115,34 @@ export type K3ReviewCardWorld = {
   createRecord(taskId: string, options?: { autoSettled?: boolean }): Promise<UnknownCallReviewV1>;
   close(): Promise<void>;
 };
+
+/** The real platform type the lazy world opens (the production composition root). */
+type ReviewCardPlatform = Awaited<ReturnType<typeof createTargetPlatform>>;
+
+/**
+ * Open a memory platform over the caller's OWN records and artifact-body
+ * backends. A new memory platform would build fresh empty stores, so the
+ * accepted A4 seam wraps the factory for exactly the synchronous call that
+ * builds them; both wraps stay active until the whole factory resolves.
+ */
+export async function openMemoryPlatform(
+  records: S5DecisionFixture['records'],
+  bodies: S5DecisionFixture['bodies'],
+  options: Omit<TargetPlatformOptions, 'storage'>,
+): Promise<ReviewCardPlatform> {
+  const spy = vi.spyOn(inMemoryRecordStore, 'createInMemoryRecordBackend').mockReturnValue({
+    records, close: async () => undefined,
+  } as never);
+  const bodiesSpy = vi.spyOn(bodyStore, 'RawArtifactBodyStore').mockImplementation(
+    class ReturningWorldBodies { constructor() { return bodies as never; } } as never,
+  );
+  try {
+    return await createTargetPlatform({ ...options, storage: { kind: 'memory' } });
+  } finally {
+    bodiesSpy.mockRestore();
+    spy.mockRestore();
+  }
+}
 
 function workTask(taskId: string): RuntimeTask {
   return { taskId, title: `K3 review work ${taskId}`, requirementLevel: 'required', taskKind: 'work',
@@ -267,11 +306,13 @@ export async function openK3ReviewCardWorld(
   const materials = createMaterialService({ bodies: fixture.bodies, authority: materialReaders.authority, now: () => T });
   let decisionSequence = 0;
   const nextDecisionId = (): string => `k3-review-card-decision-${String(++decisionSequence)}`;
+  // The ONE real Session directory this world's mailbox and the DRV platform share.
+  const sessions = createSessionDirectory({ records: decisionRecords, lookups: fixture.records });
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records: decisionRecords, materials, now: () => T, newId: nextDecisionId,
     systemActor: fixture.operatorActor,
-    sessions: createSessionDirectory({ records: decisionRecords, lookups: fixture.records }),
+    sessions: sessions,
     executions: createRunStateReader({ records: decisionRecords }),
     roles: createRoleConfigurationService({ records: decisionRecords, now: () => T, eventId: nextDecisionId }),
     duties: {
@@ -345,16 +386,59 @@ export async function openK3ReviewCardWorld(
     hostInstance: { hostInstanceId: 'k3-review-card-host', lease: 'owned', takeover: { kind: 'hl01_no_lock' } },
     now: () => T, eventId: () => `k3-review-card-event-${String(nextSequence())}` });
 
+  // The ONE real platform over the SAME records/body backend, opened only when a
+  // row (D-F3b) asks for it. A memory platform would build a NEW empty backend,
+  // so the accepted A4 `openMemoryPlatform` shares the world's backend; a SQLite
+  // platform opens the same directory's ledger/body/Kernel store.
+  const platformOptions = {
+    now: () => T,
+    hostInstance: { hostInstanceId: 'k3-review-card-host', lease: 'owned' as const },
+    kernelStores: { entries: [{ adapterId: 's5-kernel', storeKey: 's5-kernel-store',
+      workspace: WORKSPACE_SCOPE, databasePath: join(fixture.base.directory, 's5-kernel.sqlite') }] },
+    workspace: {
+      async resolveRoot() {
+        return { status: 'ready' as const, value: { root: fixture.base.directory, workspaceRevision: 1 } };
+      },
+      async authorize() {
+        return { status: 'ready' as const, value: { subjectKey: 'k3-review-card-host',
+          permissionRevision: 'k3-review-card-host@1', allowsRead: () => true } };
+      },
+    },
+    // The trusted Host input (S5R2-b's own shape): one builder binding for the
+    // world's workspace, from the fixture's real Run role binding and budget.
+    workflow: { consumerId: 'k3-review-card-drv', bindings: [{ workspace: WORKSPACE_SCOPE,
+      sessionRole: { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' },
+      roleBinding: fixture.runRA.roleBinding, budget: fixture.runRA.budget }] },
+  };
+  let platformPromise: Promise<ReviewCardPlatform> | undefined;
+  const openPlatform = async (): Promise<ReviewCardPlatform> => {
+    platformPromise ??= (async () => {
+      if (kind === 'sqlite') {
+        return await createTargetPlatform({ ...platformOptions,
+          storage: { kind: 'sqlite', directory: fixture.base.directory } });
+      }
+      return await openMemoryPlatform(records, fixture.bodies, platformOptions);
+    })();
+    return platformPromise;
+  };
+
   const world: K3ReviewCardWorld = {
     kind, fixture, records, tasks: K3_REVIEW_TASKS, reviews, commandRerun, kernelCommands,
-    cardSources, decisions, mailbox, decisionActions, goalSettings,
+    cardSources, decisions, mailbox, decisionActions, goalSettings, openPlatform,
     applicationReceipt, cardSource, commandRerunCardSource, readModel,
     failNextApplicationCommit: (reason?: string) => {
       faults.applicationCommit.push(reason ?? 'injected ③ commit failure');
     },
     failNextApplicationRead: () => { faults.applicationRead += 1; },
     createRecord: (taskId, recordOptions) => createK3NeedsDecisionRecord(world, taskId, recordOptions),
-    close: () => fixture.close(),
+    close: async () => {
+      const opened = platformPromise;
+      platformPromise = undefined;
+      if (opened !== undefined) {
+        try { await (await opened).close(); } catch { /* best effort; never mask the fixture close */ }
+      }
+      await fixture.close();
+    },
   };
   return world;
 }

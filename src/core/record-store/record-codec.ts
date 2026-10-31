@@ -115,11 +115,11 @@ function registrationError(message: string): never {
 function validateCommitCursorFields(
   schemaId: string,
   raw: unknown,
-): readonly ("since" | "until" | "unavailableSince" | "responseSince")[] | undefined {
+): readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) registrationError(`record schema ${schemaId} commitCursorFields must be an array`);
   const seen = new Set<string>();
-  const fields: ("since" | "until" | "unavailableSince" | "responseSince")[] = [];
+  const fields: ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] = [];
   for (const field of raw) {
     if (!(COMMIT_CURSOR_FIELDS as readonly unknown[]).includes(field)) {
       registrationError(`record schema ${schemaId} commitCursorFields may only contain ${COMMIT_CURSOR_FIELDS.join(", ")}`);
@@ -699,7 +699,7 @@ export function bindPreparedRecords(
   registry: RecordSchemaRegistry,
 ): DecodeResult<readonly DecodedRecordEnvelope[]> {
   if (bindings.length === 0) return { status: "decoded", value: records };
-  const allowedFields = (schemaId: string): readonly ("since" | "until" | "unavailableSince" | "responseSince")[] =>
+  const allowedFields = (schemaId: string): readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] =>
     registry.recordBySchemaId(schemaId)?.commitCursorFields ?? [];
   const bound = bindCommitCursor(
     records.map((entry) => entry.record),

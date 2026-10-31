@@ -56,10 +56,7 @@
  */
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { vi } from 'vitest';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
-import * as bodyStore from '../../src/core/record-store/body-store.js';
-import * as inMemoryRecordStore from '../../src/core/record-store/in-memory-record-store.js';
 import type { HostTakeoverProofV1, UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import type { ContinuationUnknownCallReviewV1 } from '../../src/contracts/continuation-brief.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskTriple } from '../../src/contracts/dispatch.js';
@@ -111,6 +108,7 @@ import {
   openK3ReviewCardWorld, readK3Review, runK3ReviewRound, settleK3Review, writeK3Proposal,
   type K3ReviewCardWorld,
 } from './K3-proposal-round.js';
+import { openMemoryPlatform } from './K3-review-card-fixture.js';
 
 import { APPROVED_COMMAND, at, P, W } from './K3-continuation-pure-fixture.js';
 
@@ -568,38 +566,15 @@ export async function openRealRunHarness(
   /**
    * The platform's memory backend would be a NEW empty store, not the S5
    * fixture's one in-memory backend, so recognition would see no Run at all.
-   * Share the world's ONE backend by wrapping the accepted factory for exactly
-   * the synchronous call that builds it (the same test-only pattern the S4A
-   * fault fixture and the scenario harness use); the platform then commits and
-   * reads the world's own facts, and its `close` leaves the world's store open.
+   * Share the world's ONE backend through the shared opener; the platform then
+   * commits and reads the world's own facts, and its `close` leaves the world's
+   * store open.
    */
-  const openMemoryPlatform = async (): Promise<PlatformHost> => {
-    const spy = vi.spyOn(inMemoryRecordStore, 'createInMemoryRecordBackend').mockReturnValue({
-      records: world.records, close: async () => undefined,
-    } as never);
-    // RUN-25 reads the prepared baseline from the bundle body and stores the
-    // capture Artifact; a second empty in-memory body store would lose the
-    // world's real prepared manifest (baselineKnown false). Share the world's
-    // ONE artifact-body store too, like the records backend above. The platform
-    // builds its body store after `observeRecordCommits` awaits, so both wraps
-    // must stay active until the whole factory resolves.
-    const bodiesSpy = vi.spyOn(bodyStore, 'RawArtifactBodyStore').mockImplementation(
-      // Vitest requires a `class` for a constructor mock: return the world's ONE
-      // artifact-body store instead of a fresh empty one.
-      class ReturningWorldBodies { constructor() { return world.fixture.bodies as never; } } as never,
-    );
-    try {
-      return await createTargetPlatform({ ...platformOptions, storage: { kind: 'memory' } });
-    } finally {
-      spy.mockRestore();
-      bodiesSpy.mockRestore();
-    }
-  };
   let platformHost: Promise<PlatformHost> | undefined;
   const hostPlatform = (): Promise<PlatformHost> => {
     platformHost ??= world.kind === 'sqlite'
       ? createTargetPlatform({ ...platformOptions, storage: { kind: 'sqlite', directory } })
-      : openMemoryPlatform();
+      : openMemoryPlatform(world.records, world.fixture.bodies, platformOptions);
     return platformHost;
   };
 

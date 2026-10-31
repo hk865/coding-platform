@@ -268,6 +268,8 @@ export type NoteDecisionCardFactsV1 = NoteDecisionCardV1 & {
    * subject may answer it.
    */
   goalId: string | null;
+  /** The note facts already read the head; carry its time to the card. */
+  openedAt: string;
   pins: VersionPin[]; objects: DecisionObjectV1[]; options: DecisionOptionV1[] };
 export type NoteDecisionClosedReasonV1 = 'goal_cancelled' | 'source_resolved';
 export interface NoteDecisionSourcePort {
@@ -281,7 +283,7 @@ export interface NoteDecisionSourcePort {
    */
   readNoteDecision(ctx: CoreCallContext, input: { pin: { noteId: string; version: number } }):
     Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null;
-      subject: DecisionSubjectV1 | null }>>;
+      subject: DecisionSubjectV1 | null; openedAt: string | null }>>;
   applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1): Promise<NoteDispositionResult>;
 }
 
@@ -366,6 +368,8 @@ export type DecisionCardV1 = {
   candidateStatus: 'candidate' | 'stale' | null;
   staleReason: string | null;
   closedReason: 'goal_cancelled' | 'source_resolved' | null;
+  /** The card's own stored fact time; null when the source has none. */
+  openedAt: string | null;
   readOnly: boolean;
   actions: ('answer' | 'ask_secretary' | 'apply' | 'record_application'
     | 'adopt' | 'regenerate' | 'abandon' | 'adopt_architecture'

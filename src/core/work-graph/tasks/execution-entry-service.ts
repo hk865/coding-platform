@@ -93,6 +93,7 @@ import {
 } from '../state/attempt-machine.js';
 import {
   claimHoldGuard, entryPermitGuard, entryV2Binding, leaseOwnedByRun, permitClaimGuard, runControlFence, runStateOf, transitionRun,
+  withBoundStart,
   type RunEffect, type RunEvent, type RunGuardContext, type RunState, type RunTransition,
 } from '../state/run-machine.js';
 import {
@@ -1830,6 +1831,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         { kind: 'entered_observed', permit, kernelSource, history, enteredAt }, runCtx);
       if (!entered.ok) return runRefusal(entered);
       const nextRun = nextRunOf(entered.next);
+      const bindsStart = nextRun.startedSince === null && nextRun.startedAt !== null;   // first entry only
       const runRecord = encodeRun(nextRun);
       const eventId = deps.eventId();
       if (!nonEmpty(eventId)) return reject('unsupported', 'the injected id source produced an empty event id');
@@ -1849,12 +1851,14 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       const preparedCommit: PreparedCommit = {
         identityKey: identity, fingerprint, guards, records: [runRecord, ...written.records], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeExecutionEntryEnteredEvent(event)],
+        ...(bindsStart ? { commitCursorBindings: [{ refKey: runRecord.refKey, field: 'startedSince' as const }] } : {}),
       };
       if (signal.aborted) return reject('cancelled', 'the entered write was cancelled before commit');
       const receipt = await records.commit(preparedCommit);
       if (receipt.status !== 'committed') return mapStoreFailure(receipt);
       if (receipt.replayed) return await replayEntered(receipt, identity, fingerprint, actor, permit);
-      return { status: 'committed', value: nextRun, replayed: false, cursor: receipt.cursor };
+      return { status: 'committed', value: withBoundStart(nextRun, bindsStart ? receipt.cursor : undefined),
+        replayed: false, cursor: receipt.cursor };
     } catch (error) {
       return unavailable(`the entered write failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1872,7 +1876,9 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
     if (event.identityKey !== identity || event.fingerprint !== fingerprint) return unavailable('the recorded entered fact disagrees with the request identity');
     if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) return unavailable('the recorded entered fact belongs to another actor');
     if (!sameJson(event.permit, permit)) return unavailable('the recorded entered fact disagrees with the request permit');
-    return { status: 'committed', value: event.run, replayed: true, cursor: receipt.cursor };
+    const bindsStart = event.run.startedSince === null && event.run.startedAt !== null;
+    return { status: 'committed', value: withBoundStart(event.run, bindsStart ? receipt.cursor : undefined),
+      replayed: true, cursor: receipt.cursor };
   }
 
   // ---- result ------------------------------------------------------------
@@ -2003,6 +2009,7 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       const ended = transitionRun(state, runEvent, runCtx);
       if (!ended.ok) return runRefusal(ended);
       const nextRun = nextRunOf(ended.next);
+      const bindsStart = nextRun.startedSince === null && nextRun.startedAt !== null;   // first entry only
       const runRecord = encodeRun(nextRun);
       const outcome = nextRun.outcome;
       if (outcome === null) throw new Error('a terminal ends the Run with an outcome');
@@ -2054,12 +2061,14 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
         records: [runRecord, ...written.records, ...intentWrites.records,
           ...(activityRecord === null ? [] : [activityRecord])], claims: [],
         indexGuards: [], indexChanges: [], events: [encodeExecutionRunResultRecordedEvent(event)],
+        ...(bindsStart ? { commitCursorBindings: [{ refKey: runRecord.refKey, field: 'startedSince' as const }] } : {}),
       };
       if (signal.aborted) return reject('cancelled', 'the result write was cancelled before commit');
       const receipt = await records.commit(preparedCommit);
       if (receipt.status !== 'committed') return mapStoreFailure(receipt);
       if (receipt.replayed) return await replayResult(receipt, identity, fingerprint, actor, claim, observation);
-      return { status: 'committed', value: nextRun, replayed: false, cursor: receipt.cursor };
+      return { status: 'committed', value: withBoundStart(nextRun, bindsStart ? receipt.cursor : undefined),
+        replayed: false, cursor: receipt.cursor };
     } catch (error) {
       return unavailable(`the result write failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -2081,7 +2090,9 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       || event.entry.entryGeneration !== observation.entry.entryGeneration) {
       return unavailable('the recorded result disagrees with the request content');
     }
-    return { status: 'committed', value: event.run, replayed: true, cursor: receipt.cursor };
+    const bindsStart = event.run.startedSince === null && event.run.startedAt !== null;
+    return { status: 'committed', value: withBoundStart(event.run, bindsStart ? receipt.cursor : undefined),
+      replayed: true, cursor: receipt.cursor };
   }
 
   return { authorizeRuntimeEntry, beginRuntimeEntry, recordExecutionEntered, recordRunResult };

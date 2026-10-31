@@ -125,7 +125,7 @@ function runningRun(overrides: {
     status: overrides.status ?? 'running', outcome: overrides.outcome ?? null, exitCode: null,
     lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '',
     envelope: overrides.envelope === undefined ? validEnvelope() : overrides.envelope,
-    startedAt: at, endedAt: null, previousRun: null,
+    startedAt: at, startedSince: null, endedAt: null, previousRun: null,
   };
 }
 

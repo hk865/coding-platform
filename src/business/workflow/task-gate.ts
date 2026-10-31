@@ -486,7 +486,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     return readyValue({
       state: 'waiting', receipt: null, next: null,
       reason: `automation_confirmation_required:${cause.action}`,
-      waitBasis: goalWaitBasisOf(goal, [`automation_confirmation:${action}`], ['UserDecision', 'Goal']),
+      waitBasis: goalWaitBasisOf(goal, [`automation_confirmation:${action}`], ['SessionMessage', 'TaskRequeue', 'Goal']),
       decisionCause: {
         source: {
           kind: 'goal_cause',

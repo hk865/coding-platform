@@ -1,0 +1,16 @@
+{
+  "description": "Ask the owner to run a failed or blocked task of your Goal again. Call it from your Run's tool context when your grant includes request_rework and the task's failure should be reworked; the owner runs the same fences as an automatic requeue and does not run the task itself. Under every-step confirmation the call returns a rework-request card instead of performing the rework, and the person's approval applies it as an agent; a committed automatic request is counted in the shared cap. Parameters name the task, the Run whose result the rework follows, and the reason; acknowledgement is set only when this request answers a Session message.",
+  "parameters": {
+    "taskRef": "The task to rework.",
+    "taskRef.projectId": "The task's project id.",
+    "taskRef.goalId": "The task's goal id; it must be your Goal.",
+    "taskRef.taskId": "The task id.",
+    "afterRunRef": "The Run whose failure or result precedes this rework.",
+    "afterRunRef.aggregateType": "Always \"Run\".",
+    "afterRunRef.projectId": "The Run's project id.",
+    "afterRunRef.goalId": "The Run's goal id.",
+    "afterRunRef.runId": "The Run id.",
+    "reason": "Why the task should run again; the owner's reason text.",
+    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise."
+  }
+}

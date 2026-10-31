@@ -278,6 +278,9 @@ export function validateRunSnapshot(record: EncodedRecord): DecodeResult<Encoded
   if (!(body['startedAt'] === null || typeof body['startedAt'] === 'string')) {
     return invalid('Run snapshot startedAt must be a string or null');
   }
+  if (!(body['startedSince'] === null || typeof body['startedSince'] === 'string')) {
+    return invalid('Run snapshot startedSince must be a commit cursor or null');
+  }
   if (!(body['endedAt'] === null || typeof body['endedAt'] === 'string')) {
     return invalid('Run snapshot endedAt must be a string or null');
   }

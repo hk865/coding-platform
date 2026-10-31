@@ -62,6 +62,11 @@ export function decisionActionPolicy(input: {
     case 'long_handoff':
     case 'change_duty':
       return 'needs_decision';
+    case 'create_member':
+      return everyStep ? 'needs_decision' : 'automatic_notice';
+    case 'role_line_add':
+      // B2-01: the card always waits for the person; both autonomy levels are `needs_decision`.
+      return 'needs_decision';
     default:
       return unreachable(input.action, 'decision action');
   }

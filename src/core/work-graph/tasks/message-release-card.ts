@@ -17,6 +17,8 @@ export type MessageReleaseCardFactsV1 = Omit<MessageReleaseCardItemV1, 'releaseB
   source: DecisionSourceV1;
   objects: DecisionObjectV1[];
   options: DecisionOptionV1[];
+  /** The message's own creation time. */
+  openedAt: string;
   /** `null` = the card is open; a reason closes it (a released, denied or withdrawn message, or a cancelled Goal). */
   closedReason: 'goal_cancelled' | 'source_resolved' | null;
 };
@@ -69,6 +71,7 @@ export function messageReleaseCardFacts(input: {
     release: message.release as MessageReleaseCardFactsV1['release'],
     pins: message.pins,
     deadline: message.deadline,
+    openedAt: message.createdAt,
     source, objects, options, closedReason,
   };
 }

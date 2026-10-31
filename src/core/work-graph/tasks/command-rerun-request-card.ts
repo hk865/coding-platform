@@ -58,6 +58,8 @@ export type CommandRerunRequestCardFactsV1 = {
   objects: DecisionObjectV1[];
   options: DecisionOptionV1[];
   summary: string;
+  /** The request's own creation time. */
+  openedAt: string;
   closedReason: 'goal_cancelled' | 'source_resolved' | null;
 };
 
@@ -211,7 +213,7 @@ export function commandRerunRequestCardFacts(
         : null;
   return {
     source, goalRef: { ...goal.ref }, requestRef: request.ref, revision: request.revision,
-    taskActive, objects, options: commandRerunRequestOptions(), summary, closedReason,
+    taskActive, objects, options: commandRerunRequestOptions(), summary, openedAt: request.createdAt, closedReason,
   };
 }
 

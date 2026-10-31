@@ -53,7 +53,7 @@ function project(item: FakeItem, subject: DecisionSubjectV1): DecisionCardV1 {
     state: 'waiting_answer', subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
     objects: [], options: [],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
-    closedReason: null, readOnly: false, actions: ['answer'],
+    closedReason: null, openedAt: null, readOnly: false, actions: ['answer'],
   };
 }
 
@@ -81,7 +81,7 @@ function harness(): Harness {
       byKeyCalls += 1;
       const item = collection.find((candidate) => cardKeyOf(candidate.id) === source.key);
       if (item === undefined) return { status: 'ready', value: null };
-      if (item.closed) return { status: 'ready', value: { closed: 'source_resolved' } };
+      if (item.closed) return { status: 'ready', value: { closed: 'source_resolved', openedAt: null } };
       return { status: 'ready', value: { item } };
     },
   };

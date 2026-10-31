@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "cf90ecca9241232b87db3105b38237ac3f71a9f0cf747fa418945a370c82dc7d"
+    "sha256": "36409e82993fbb945aff7a1e5527590b5a6f6df2bd170cd486618ff9545aea24"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "8a47a8a7adb2aa8ab75f97aa60e4b63e2f6408e7fba422fef641d2bc66258305"
+    "sha256": "0cbcf9b599f04cf17d3a7a4de1463ff58f20637f795b2f2c2975b437f16a8a5a"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -146,6 +146,22 @@
   {
     "path": "resources/prompts/platform/tools/apply_future_plan.json",
     "sha256": "93d34c4663e70715fc2edb07d7028d160b820417b8e82a1f75c1d4fd9a24292a"
+  },
+  {
+    "path": "resources/prompts/platform/tools/create_member.json",
+    "sha256": "62c0c9d45ffd2a281df2acf5f8b5fb69e414127ec878322d5edac5c618290b8e"
+  },
+  {
+    "path": "resources/prompts/platform/tools/withdraw_session_message.json",
+    "sha256": "febb24dffb552328da0fcf125b469c9a5c6a00e2c3515f70111c7f97f6bf96a0"
+  },
+  {
+    "path": "resources/prompts/platform/tools/request_rework.json",
+    "sha256": "93fe21b9a3d9d6e7b6b447036ca892c07f3bf34cfa01ee3355ad24e4b7bf432d"
+  },
+  {
+    "path": "resources/prompts/platform/tools/request_recheck.json",
+    "sha256": "2ac19989ef6f3ba6bfc7f87edea10e0473e13d47bf1218ca0de8059e1a1fb01f"
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",

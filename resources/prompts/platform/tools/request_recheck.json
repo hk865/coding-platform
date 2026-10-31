@@ -1,0 +1,16 @@
+{
+  "description": "Ask the owner to open a successor VerificationRound after a finalized round of your Goal. Call it from your Run's tool context when your grant includes request_recheck and the round's result should be examined again; the owner applies the same admission and shared cap as an automatic recheck and does not run the check itself. Under every-step confirmation the call returns a rework-request card instead of opening the round, and the person's approval applies it as an agent. Parameters name the predecessor round and the reason; onlyIfSourceChanged narrows admission to a source that changed, and acknowledgement is set only when this request answers a Session message.",
+  "parameters": {
+    "predecessorRoundRef": "The finalized round whose successor should run.",
+    "predecessorRoundRef.aggregateType": "Always \"VerificationRound\".",
+    "predecessorRoundRef.projectId": "The round's project id.",
+    "predecessorRoundRef.workspaceId": "The round's workspace id.",
+    "predecessorRoundRef.goalId": "The round's goal id; it must be your Goal.",
+    "predecessorRoundRef.taskId": "The round's task id.",
+    "predecessorRoundRef.runId": "The Run id the round belongs to.",
+    "predecessorRoundRef.roundId": "The round id.",
+    "onlyIfSourceChanged": "When true, the owner opens a successor only if the source changed since the predecessor; omit for the owner's default.",
+    "reason": "Why the result should be examined again; the owner's reason text.",
+    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise."
+  }
+}

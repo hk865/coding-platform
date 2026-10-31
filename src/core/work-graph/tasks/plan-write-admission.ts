@@ -63,7 +63,7 @@ export type PlanDelegatedWriteDependencies = Pick<ExecutionEntryDependencies,
  * the current Host/Role grant (`manifest.permissions.tools`); no production Role
  * grants the rework names before their Agent tools exist (GAP-46).
  */
-export type DelegatedWriteOperation = 'propose_future_plan' | 'apply_future_plan' | 'requeue_task' | 'reverify_round';
+export type DelegatedWriteOperation = 'propose_future_plan' | 'apply_future_plan' | 'request_rework' | 'request_recheck';
 /** The plan-write subset (the two whiteboard write tools). */
 export type PlanWriteOperation = Extract<DelegatedWriteOperation, 'propose_future_plan' | 'apply_future_plan'>;
 

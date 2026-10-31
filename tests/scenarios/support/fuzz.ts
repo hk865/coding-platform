@@ -8,7 +8,7 @@
  *   fills in while each model call is made (`duringReply`), from the same PRNG, so a seed replays the same sequence
  *   (the world's Run, round and message lists are put in commit order first: their ids are random).
  * - `AgentFuzz`, the agent-grant world: the R3e evidence fixture (it holds the B2 execution fixture) on SQLite with
- *   Agent Runs entered under `AGENT_GRANT` (`requeue_task`, `reverify_round` and the plan-write tools; GAP-46: no
+ *   Agent Runs entered under `AGENT_GRANT` (`request_rework`, `request_recheck` and the plan-write tools; GAP-46: no
  *   Runtime starts with them), the production requeue, plan, control and evidence owners over its records, and
  *   two-writer races in one read window (`commitBarrier`).
  *
@@ -365,7 +365,7 @@ export function forbiddenKind(answer: unknown): string {
   if (/only Tasks of its own Goal/.test(reason)) return 'other-goal';
   if (/cancelled task is requeued only/.test(reason)) return 'cancelled-class';
   if (/not in the entered phase|no formal V2 entry authorization/.test(reason)) return 'writer-not-entered';
-  if (/requeue_task|reverify_round|grant|admit/i.test(reason)) return 'grant';
+  if (/request_rework|request_recheck|grant|admit/i.test(reason)) return 'grant';
   return 'other';
 }
 
@@ -1688,7 +1688,7 @@ export class HostFuzz {
 
   /**
    * An Agent's requeue: the Run `writer` (the entered one inside a Turn) asks through the delegated-write admission of a
-   * composition root with the Host's Runtime grant. That grant has no `requeue_task` (GAP-46), so the answer is a refusal
+   * composition root with the Host's Runtime grant. That grant has no `request_rework` (GAP-46), so the answer is a refusal
    * with nothing written; the committed Agent requeue is the agent-grant world's (tests/state/invariants-fuzz.test.ts).
    */
   private async agentRequeue(writer: RunRef, indent: string, explicit: RunSnapshot | null = null): Promise<void> {
@@ -2073,7 +2073,7 @@ export function addCarrier(draft: DraftV2, taskId: string): void {
 
 /**
  * The composition root an Agent caller asks through: it has the Host's Runtime grant, so the Agent reaches
- * `authorizeDelegatedWrite`, which refuses `requeue_task` for want of the grant (GAP-46). Its model is never called.
+ * `authorizeDelegatedWrite`, which refuses `request_rework` for want of the grant (GAP-46). Its model is never called.
  */
 async function openAgentPlatform(h: HostScenario, policy: TaskAutomationPolicyV1): Promise<Platform> {
   const platform = await openWorkRoot(h);
@@ -2086,12 +2086,12 @@ async function openAgentPlatform(h: HostScenario, policy: TaskAutomationPolicyV1
 // ---------------------------------------------------------------------------
 
 /**
- * The grant of the Agent writers (§11.11 "经 W2 夹具授予 requeue_task … 然后直接调用 WorkGraph 所有者"): the B2 Host
- * permissions plus the rework and plan-write tools. No Runtime starts with `requeue_task` or `reverify_round`
+ * The grant of the Agent writers (§11.11 "经 W2 夹具授予 request_rework … 然后直接调用 WorkGraph 所有者"): the B2 Host
+ * permissions plus the rework and plan-write tools. No Runtime starts with `request_rework` or `request_recheck`
  * (GAP-46), so the Agent Runs are entered through the formal entry writers with the fixture's explicit Kernel
  * binding, as the W2 fixture does.
  */
-export const AGENT_GRANT = { ...B2_HOST.permissions, tools: ['read', 'requeue_task', 'reverify_round', 'propose_future_plan', 'apply_future_plan'] };
+export const AGENT_GRANT = { ...B2_HOST.permissions, tools: ['read', 'request_rework', 'request_recheck', 'propose_future_plan', 'apply_future_plan'] };
 
 /** The R3e Goal's optional work Task whose Run is that Goal's Agent writer. */
 const R3E_AGENT_TASK_ID = 'fuzz-r3e-agent-work';
@@ -2869,7 +2869,7 @@ export class AgentFuzz {
 
   /**
    * VR-14 by the three classes (§11.11 "work 链与 gate 链，三类操作者"): a reverify of a finalized non-PASS head, the
-   * target's or the R3e subject's, by the Agent of the head's Goal (`reverify_round` granted: on the R3e chain it opens
+   * target's or the R3e subject's, by the Agent of the head's Goal (`request_recheck` granted: on the R3e chain it opens
    * a successor; on G1's the requirement stays uncovered, so it ends in a policy refusal), an Agent of another Goal
    * (`forbidden`), a person or the automation, with or without `onlyIfSourceChanged` and a note. The human-stop fence is
    * judged on the answer (`fenceProblem`): on a Run a person paused before it completed, a system or agent reverify

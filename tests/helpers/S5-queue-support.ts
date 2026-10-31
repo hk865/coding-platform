@@ -353,7 +353,7 @@ export async function noticeWork(f: S5DecisionFixture) {
     async resolveRoot() { return { status: 'ready' as const, value: { root: f.base.directory, workspaceRevision: (await workspaceSnapshot(f)).revision } }; },
     async authorize() { return { status: 'ready' as const, value: { subjectKey: 's5-notice-host', permissionRevision: 's5-notice-permission', allowsRead: () => true } }; },
   };
-  const grant = { policyRevision: 'legacy-template', tools: ['read', 'requeue_task'], writeScope: [] as string[] };
+  const grant = { policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [] as string[] };
   const template = { templateId: 'builder', revision: '1', digest: sha256Hex('S5 notice controller') };
   const authorizeConfiguration: AuthorizeConfiguration = async (_ctx, input) => input.configurationRevision === 's5-notice-controller'
     && key(input.permissions) === key(grant) && key({ value: input.hostTemplate }) === key({ value: template })

@@ -98,10 +98,10 @@ it('C3/C4: a Run a person paused, with a steer the Kernel never accepted, ends p
   // An Agent's 继续: the other Task's running Run asks for the requeue; it is forbidden and writes nothing.
   const other = await scenario.advance(scenario.select('c3-agent', OTHER_TASK_ID));
   expect(other.state).toBe('completed');
-  // The refusal is the Agent rules' first layer, the delegated-write admission (no `requeue_task` grant, GAP-46),
+  // The refusal is the Agent rules' first layer, the delegated-write admission (no `request_rework` grant, GAP-46),
   // not a platform that admits no Agent; the human fence of the paused class stays behind it as the second layer.
   expect(agentContinue).toMatchObject({ status: 'rejected', code: 'forbidden',
-    reason: 'the current Host/Role grant does not include requeue_task' });
+    reason: 'the current Host/Role grant does not include request_rework' });
   expect(scenario.lastWorld?.requeues, 'no TaskRequeue, so no continuation brief').toEqual([]);
   expect(scenario.lastWorld?.runs.filter(run => run.task.taskId === AG2B_WORK_TASK_ID).map(run => run.ref), 'no new Run')
     .toEqual([run1]);

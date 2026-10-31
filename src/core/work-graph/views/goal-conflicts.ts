@@ -342,6 +342,7 @@ function conflictCard(left: GoalSnapshot, right: GoalSnapshot, terminal: GoalTer
     senderSessionRef: null, requestRef: null, objects: [], options: closed ? [] : [...CONFLICT_OPTIONS],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
     closedReason: closed ? (terminal.cancelled ? 'goal_cancelled' : 'source_resolved') : null,
+    openedAt: null,
     readOnly: closed, actions: closed ? [] : ['answer'],
   };
 }

@@ -37,6 +37,7 @@ function card(cardKey: string, goalId: string, requestRef: QueryJobRef | null): 
     state: 'waiting_answer', subject: { kind: 'goal', goalRef: goal(goalId) }, senderSessionRef: null, requestRef,
     objects: [], options: [], answerMessageRef: null,
     answer: null, application: null, candidateStatus: 'candidate', staleReason: null, closedReason: null,
+    openedAt: null,
     readOnly: false, actions: ['answer', 'adopt', 'abandon'],
   };
 }

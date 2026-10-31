@@ -1,3 +1,4 @@
+import type { CommitCursor } from "./command-event.js";
 import type { PlanRevisionRef } from "./plan.js";
 import type { ModelRequestPromptFactsV1 } from "./prompts/prompt-set.js";
 import type { TaskEnvelopeV1 } from "./task-envelope.js";
@@ -283,6 +284,8 @@ export type RunSnapshot = {
     /** Durable directional inputs; independent of pause/cancel fencing. */
     controlInputs?: import("./control-intent.js").ControlIntentRef[];
     startedAt: string | null;
+    /** The commit cursor of the commit that first recorded this Run's entry; null until then, never replaced. */
+    startedSince: CommitCursor | null;
     endedAt: string | null;
 };
 /**

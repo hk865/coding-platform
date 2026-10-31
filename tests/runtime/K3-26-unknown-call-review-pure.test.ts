@@ -114,7 +114,7 @@ const GOAL_SNAPSHOT: GoalSnapshot = {
   continuedFrom: null, copiedInterventions: [],
   since: 'c0000000001' as GoalSnapshot['since'],
 };
-const RUN = { ref: RUN_REF, revision: 3 } as unknown as RunSnapshot;
+const RUN = { ref: RUN_REF, revision: 3, startedSince: null } as unknown as RunSnapshot;
 
 function listed512Item(): UnknownCallReviewItemV1 {
   const base = processItem(1);

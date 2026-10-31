@@ -87,7 +87,7 @@ function run(runId: string, patch: Partial<RunSnapshot> = {}): RunSnapshot {
   return { ref: runRef(runId), revision: 4, schemaVersion: 1, task, attemptId: `att-${runId}`, planRef, roleBinding,
     budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 2 },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 5, lastRuntimeEventId: 'rt-5',
-    lastFactEventId: 'fact-5', envelope: null, startedAt: T_START, endedAt: T_END, previousRun: null, ...patch };
+    lastFactEventId: 'fact-5', envelope: null, startedAt: T_START, startedSince: null, endedAt: T_END, previousRun: null, ...patch };
 }
 const pointer = (desiredState: 'paused' | 'cancelled' | 'running' | 'steered', id = 'i-1'): Pick<RunSnapshot, 'controlState'> =>
   ({ controlState: { intentRef: intentRef(id), desiredState } });

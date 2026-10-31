@@ -18,8 +18,8 @@ import { isRecord as isObject } from "../../contracts/validation/common.js";
 export type ClaimConflict = { claimKey: string; owner: string | null };
 
 /** The only top-level fields a commit cursor may ever be bound to. */
-export const COMMIT_CURSOR_FIELDS: readonly ("since" | "until" | "unavailableSince" | "responseSince")[] =
-  Object.freeze(["since", "until", "unavailableSince", "responseSince"]);
+export const COMMIT_CURSOR_FIELDS: readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] =
+  Object.freeze(["since", "until", "unavailableSince", "responseSince", "startedSince"]);
 
 /**
  * Thrown by a backend INSIDE its write transaction when a mechanically valid
@@ -111,7 +111,7 @@ export function bindCommitCursor(
   records: readonly EncodedRecord[],
   bindings: readonly CommitCursorBinding[],
   cursor: CommitCursor,
-  allowedFields: (schemaId: string) => readonly ("since" | "until" | "unavailableSince" | "responseSince")[],
+  allowedFields: (schemaId: string) => readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[],
 ): DecodeResult<readonly EncodedRecord[]> {
   if (!Array.isArray(records)) return { status: "invalid", reason: "records must be an array" };
   if (!Array.isArray(bindings)) return { status: "invalid", reason: "commitCursorBindings must be an array" };
@@ -130,7 +130,7 @@ export function bindCommitCursor(
   }
 
   const seen = new Set<string>();
-  const fieldsByRefKey = new Map<string, ("since" | "until" | "unavailableSince" | "responseSince")[]>();
+  const fieldsByRefKey = new Map<string, ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[]>();
   for (const raw of bindings) {
     if (!isObject(raw)) return { status: "invalid", reason: "every CommitCursorBinding must be an object" };
     const refKey = raw["refKey"];

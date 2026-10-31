@@ -64,7 +64,7 @@ function run25(): TaskExecutionRecord {
       roleBinding: { schemaVersion: 1, bindingId: 'b', templateId: 't', templateRevision: '1', bindingVersion: 1, policyRevision: 'p' },
       budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
       status: 'ended', outcome: 'crashed', exitCode: null, lastEventSeq: 3, lastRuntimeEventId: 'rt', lastFactEventId: 'ev',
-      envelope: null, startedAt: K_AT, endedAt: K_AT,
+      envelope: null, startedAt: K_AT, startedSince: null, endedAt: K_AT,
       executionHistory: { schemaVersion: 1, sessionRef, kernel: { adapterId: ADAPTER, kernelSessionId: SESSION_ID, runId: 'run-A', turnId: 'turn-A' },
         startPosition: 2, observedThroughPosition: 3, endPosition: null },
       reconciliation: { status: 'done', observation: { kind: 'takeover_unresolved', event: {} as never, lastPosition: 3,

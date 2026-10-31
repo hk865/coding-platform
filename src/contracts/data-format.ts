@@ -25,9 +25,9 @@ export type Lookup = {
   text?: readonly string[];
 };
 
-/** The four top-level fields the Store may fill with the commit cursor (the closed `commitCursorFields` set). */
-type BoundCursorName = 'since' | 'until' | 'unavailableSince' | 'responseSince';
-const BOUND_CURSOR_NAMES: readonly string[] = ['since', 'until', 'unavailableSince', 'responseSince'];
+/** The five top-level fields the Store may fill with the commit cursor (the closed `commitCursorFields` set). */
+type BoundCursorName = 'since' | 'until' | 'unavailableSince' | 'responseSince' | 'startedSince';
+const BOUND_CURSOR_NAMES: readonly string[] = ['since', 'until', 'unavailableSince', 'responseSince', 'startedSince'];
 /** The four envelope keys every event carries outside its own fields. */
 const ENVELOPE_KEYS: readonly string[] = ['eventId', 'eventType', 'schemaVersion', 'occurredAt'];
 

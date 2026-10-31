@@ -13,7 +13,7 @@
  * The unified order (§4.3, §13.2 point 3), each step before the next IO:
  *   1. receipt lookup (a replay restores the original `requeued`/`refused`);
  *   2. principal admission and the actor class (`reworkActorClassOf`); an
- *      Agent through `authorizeDelegatedWrite(…, 'requeue_task')` (no
+ *      Agent through `authorizeDelegatedWrite(…, 'request_rework')` (no
  *      production Role grants the tool before its Agent entry, GAP-46);
  *   3. one directed read window (Goal, active Plan, `readCanonicalTaskFacts`
  *      for this Task with its TaskRequeues and refusals, the selected Run's
@@ -865,10 +865,10 @@ export function createTaskRequeueService(
     let admissionGuards: readonly RecordGuard[] = [];
     if (caller.kind === 'agent') {
       // TD-6: the same Goal, then the current delegated-write admission (Run entered and running, Session,
-      // Lease, the manifest's `requeue_task` grant, Host/Role recheck).
+      // Lease, the manifest's `request_rework` grant, Host/Role recheck).
       if (caller.writer.goalRef.goalId !== task.goalId) return reject('forbidden', 'an Agent reworks only Tasks of its own Goal');
       const admitted = await authorizeDelegatedWrite(deps.delegatedWrites as PlanDelegatedWriteDependencies, owned.ctx,
-        { writer: caller.writer, operation: 'requeue_task' });
+        { writer: caller.writer, operation: 'request_rework' });
       if (admitted.status !== 'ready') {
         return admitted.status === 'rejected' ? admitted : reject('forbidden', 'the Agent requeue admission is not readable');
       }

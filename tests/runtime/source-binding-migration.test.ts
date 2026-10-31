@@ -113,7 +113,7 @@ async function workFixture() {
     ref: runRef, revision: 1, schemaVersion: 1, task: { projectId: workspace.projectId, goalId: 'goal-a', taskId: 'task-a' },
     attemptId: attemptRef.attemptId, planRef: envelope.planRef, roleBinding, budget: envelope.budget,
     workspaceSnapshot: envelope.workspaceSnapshot, status: 'running', outcome: null, exitCode: null,
-    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope, startedAt: at, endedAt: null,
+    lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope, startedAt: at, startedSince: null, endedAt: null,
   } as RunSnapshot;
   const state = facts([{ ref: workspace, revision: 1 }, run]);
   const hostStop = new AbortController();

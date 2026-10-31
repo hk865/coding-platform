@@ -392,14 +392,14 @@ it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrie
   expect(coordinated.next).not.toBeNull();
   expect(wb.scripted.calls()).toBe(3);
   // The platform refuses an Agent's requeue at its grant before the fence: no production Role may hold
-  // `requeue_task` while the Agent tool does not exist (GAP-46; the Runtime refuses unknown tool names,
+  // `request_rework` while the Agent tool does not exist (GAP-46; the Runtime refuses unknown tool names,
   // src/core/agent-runtime/execution-driver.ts:118, and the admission refuses a manifest without it,
   // src/core/work-graph/tasks/plan-write-admission.ts:353). This is NOT the hard-limit-3 coverage for agents:
   // the fence's own agent refusal is proved at the machine seam, tests/state/task-failure.test.ts:488-511
   // (the reworkPermission matrix rows 'cancelled by an operator (human_only)' and '... under an operator
   // fence', agent `forbidden`). When GAP-46 lands this assertion must change to the fence reason (HUMAN_STOP).
   expect(seen.agentRequeue, 'an Agent requeue of human-cancelled work').toMatchObject({ status: 'rejected', code: 'forbidden',
-    reason: 'the current Host/Role grant does not include requeue_task' });
+    reason: 'the current Host/Role grant does not include request_rework' });
   expect(seen.propose).toMatchObject({ status: 'committed', value: { ref: { aggregateType: 'PlanProposal' } } });
   expect(seen.apply, 'guard 9').toMatchObject({ status: 'rejected', code: 'forbidden',
     reason: `obligation ag2b-obligation: a human stopped this work; only an operator may add the parallel carrier ${PARALLEL}` });

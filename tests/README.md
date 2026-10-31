@@ -30,6 +30,7 @@
 
 - `AG2b-collaboration-fixture.ts` — 真实启动文件 + SQLite ledger/Kernel store + 受控 Kernel provider 起 Host，经公共 HTTP 路由建 Project/Workspace/Goal/Plan/Session 和 AG1 工作线；`tests/scenarios/S2C-K2-paused-transfer.test.ts` 在用。
 - `C2-runtime-platform-fixture.ts` — 真实 TaskClaim + SQLite 配 `createTargetPlatform`，RoleSpec 经真实 writer 安装激活，两个 Session 走真实生命周期并 claim；`tests/state/invariants.test.ts` 在用。
+- `DRV-fixture.ts` — 不冻结；DRV §5.1 的测试共用体：`runsOf`（`executions/list`）、`driverRead`（Goal/Task 的 `workflow/driver-read`）、`parkedOnBasis`（驱动末次结果带等待依据）、`startGoalDriver`/`startTaskDriver`（`workflow/driver-start`）、薄包 `harness.ts` 的 `waitFor` 的 `waitDriver`，以及 D-P5/D-P6 的 `world.platform` 驱动装配 `buildDrvDriver`；`tests/scenarios/DRV-goal-driver*.test.ts` 在用。
 - `K3-07-host-child.mjs` — 子进程用编译后的 `dist/` 起真实 Host，并在子进程内注入很小的 ModelClientPort；`tests/scenarios/K3-07-real-host-kill.test.ts` 在用。
 - `K3-07-support.ts` — 父进程侧：写子进程读的启动 JSON、起/杀子进程并收结果；`tests/scenarios/K3-07-real-host-kill.test.ts` 在用。
 - `K-legacy-reader-support.ts` — 同一 ledger 上只注册当前 workspace 的 Kernel store、不注册前任 adapter，给出「前任历史读被拒」的前置；`tests/scenarios/K-W-workflow-close.test.ts` 在用。

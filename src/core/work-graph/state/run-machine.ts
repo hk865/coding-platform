@@ -26,6 +26,7 @@
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
+import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentKindV1, ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-history.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
@@ -859,13 +860,22 @@ export function newRunRecord(input: NewRunInput): RunSnapshot {
     planRef: claim.planRef, roleBinding: input.roleBinding, budget: input.budget,
     workspaceSnapshot: { workspaceId: claim.workspaceId, revision: input.workspaceRevision },
     status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
-    lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null,
+    lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null,
     previousRun: claim.previousRun,
     ...(basis.kind === 'continuation' ? { consumedWait: structuredClone(basis.consumedWait) } : {}),
     ...(basis.kind === 'requeue' ? { requeueRef: basis.requeueRef } : {}),
     ...(basis.kind === 'review' ? { purpose: { kind: 'unknown_call_review' as const,
       reviewRef: structuredClone(basis.reviewRef), phase: basis.phase, round: basis.round } } : {}),
   };
+}
+
+/**
+ * The returned Run of a commit that first records entry: the stored record
+ * gets the commit's cursor, the event body keeps the unbound Run, and the
+ * in-memory next Run is restored from the same commit (never a later cursor).
+ */
+export function withBoundStart(run: RunSnapshot, cursor?: CommitCursor): RunSnapshot {
+  return run.startedSince === null && cursor !== undefined ? { ...run, startedSince: cursor } : run;
 }
 
 /** RUN-02 (`execution-entry-service.ts:986-992`): the immutable input and the V2 binding at gen 1, rev 1. */

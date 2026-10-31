@@ -27,6 +27,7 @@ function runOf(spec: RunSpec): RunSnapshot {
   } as unknown as RunReconciliationV1;
   return {
     ref: ref(spec.runId), status: 'ended',
+    startedSince: null,
     ...(spec.from === undefined ? {} : { requeueRef: { aggregateType: 'TaskRequeue', projectId: P, goalId: G,
       taskId: 't', afterRunId: spec.from.runId } }),
     previousRun: spec.waitFrom === undefined ? null : ref(spec.waitFrom),

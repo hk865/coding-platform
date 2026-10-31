@@ -13,6 +13,10 @@ import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
 import type { UnknownCallReviewRef } from './unknown-call-review.js';
 import type { CommandRerunRequestRef } from './command-rerun-request.js';
+import type { OperationRef } from './core/operations.js';
+import type { ReworkRequestRef } from './rework-request.js';
+import type { TaskRequeueRef } from './task-requeue.js';
+import type { VerificationRoundRef } from './verification.js';
 import { defineShape, f, type InferShape } from './data-format.js';
 import { GoalRefShape, ProjectScopeShape } from './data-format-refs.js';
 import { canonicalJson, canonicalKey } from './fingerprint.js';
@@ -51,7 +55,8 @@ export const DEFAULT_GOAL_SETTINGS_V1: GoalSettingsV1 = {
 
 export type NoticeCategoryV1 =
   | 'member_notice' | 'second_expiry' | 'handoff' | 'note_review'
-  | 'undelivered_reply' | 'automatic_rework' | 'continuation' | 'disconnect';
+  | 'undelivered_reply' | 'automatic_rework' | 'continuation' | 'disconnect'
+  | 'member_created';
 
 export type NoticePositionV1 = { kind: 'commit'; cursor: CommitCursor; itemKey: string };
 
@@ -99,7 +104,8 @@ export function decisionSubjectKey(subject: DecisionSubjectV1): string { return 
 export type DecisionSourceV1 = {
   kind: 'message' | 'goal_cause' | 'candidate' | 'note_review'
     | 'planning_question' | 'goal_conflict' | 'message_release'
-    | 'unknown_call_review' | 'command_rerun_request';
+    | 'unknown_call_review' | 'command_rerun_request'
+    | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation';
   key: string; subject: DecisionSubjectV1; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
@@ -132,7 +138,8 @@ export type DecisionActionV1 =
   | 'refine_future' | 'system_requeue' | 'agent_requeue' | 'auto_reverify'
   | 'minor_semantic_patch' | 'structural_patch' | 'change_goal'
   | 'exceed_budget' | 'escalate' | 'secretary_action' | 'secretary_inquiry'
-  | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty';
+  | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty'
+  | 'create_member' | 'role_line_add';
 
 // ------------------------------------------------------------------------ //
 // Exact content bases, control rebases, footprints and change proofs (§2.8) //
@@ -222,7 +229,12 @@ export type DecisionSourceIdentityV1 =
       { goalRef: GoalRef; activePlanRef: PlanRevisionRef | null },
     ] }
   | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef; revision: number }
-  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; revision: number };
+  | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; revision: number }
+  | { kind: 'member_creation'; operationRef: OperationRef }
+  | { kind: 'rework_request'; requestRef: ReworkRequestRef }
+  | { kind: 'handoff_approval'; operationRef: OperationRef }
+  | { kind: 'adviser_creation'; trigger:
+      { kind: 'requeue'; ref: TaskRequeueRef } | { kind: 'round'; ref: VerificationRoundRef } };
 
 const goalKey = (goalRef: GoalRef): string => canonicalJson(goalRef as never);
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -276,6 +288,15 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
       return canonicalJson({
         kind: 'command_rerun_request', requestRef: identity.requestRef, revision: identity.revision,
       } as never);
+    case 'member_creation':
+      return canonicalJson({ kind: 'member_creation', operationRef: identity.operationRef } as never);
+    case 'rework_request':
+      return canonicalJson({ kind: 'rework_request', requestRef: identity.requestRef } as never);
+    case 'handoff_approval':
+      return canonicalJson({ kind: 'handoff_approval', operationRef: identity.operationRef } as never);
+    case 'adviser_creation':
+      // No adviser-operation ref exists: its key is the triggering requeue/round arm's canonical JSON (§3.9 item 3).
+      return canonicalJson(identity.trigger as never);
     default: {
       const unknownKind: never = identity;
       throw new Error(`unknown decision source identity ${JSON.stringify(unknownKind)}`);

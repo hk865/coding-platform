@@ -520,6 +520,8 @@ it('A8-2d (W-08, W-11, RUN-19, ATT-31..34, LA-1): the begin committed and the Ke
     terminalPayload: { kind: 'crashed' },
     reconciliation: { status: 'done', basis: { kind: 'host_instance_takeover', hostInstanceId },
       observation: { kind: 'interrupted_clean', pausedIntentRef: null } } });
+  // RUN-19 first records entry: the commit that books the entry binds the Run's start cursor.
+  expect(typeof ended.run.startedSince).toBe('string');
   expect(ended.attempt).toMatchObject({ status: 'ended', endOutcome: 'crashed', startedAt: turn.recordedAt });
   expect(ended.outbox).toMatchObject({ status: 'settled' });
   // LA-1: at the restart the Turn had no Kernel terminal, so the Session was released and retired; K (KA1, L5): the start-up

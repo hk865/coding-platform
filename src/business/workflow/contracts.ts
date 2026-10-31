@@ -247,6 +247,12 @@ export type WorkflowAdvanceInternal = {
    * same selection is not asked for them twice in one pass. Absent for every other Host-driver call.
    */
   releaseSkip?: string[];
+  /**
+   * The Tasks some Run watch of this Goal is already advancing. The Goal-level
+   * selection skips them; a selection pinned to one `taskId` ignores it. Host
+   * driver only, never a public advance input.
+   */
+  activeTaskIds?: string[];
 };
 
 /** `select_work` is read-only; `perform` names one already-determined step. */

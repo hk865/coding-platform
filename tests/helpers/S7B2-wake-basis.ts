@@ -12,11 +12,11 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type {
   CollaborationDriver, CollaborationSnapshot, CollaborationState,
 } from '../../src/app/collaboration-driver.js';
-import { createCollaborationDriver } from '../../src/app/collaboration-driver.js';
 import { createGoalWaitWakes, type GoalWaitWakes } from '../../src/app/goal-wait-wakes.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { TaskGraph } from '../../src/core/work-graph/model/plan-contracts.js';
 import { plain } from './AG2b-collaboration-fixture.js';
+import { buildDrvDriver } from './DRV-fixture.js';
 import { S6A_SCOPE, type S6ASession } from './S6A-request-fixture.js';
 import { waitForDriverState } from './S5R2-d-support.js';
 import { ready } from './S7A-fixture.js';
@@ -59,17 +59,7 @@ type BasisDriver = {
 /** Step 7. The driver over the world's real ports, with this fixture's one registry and its read's cursor. */
 export function startS7B2BasisDriver(basis: BasisGoal): BasisDriver {
   const waits = createGoalWaitWakes();
-  const driver = createCollaborationDriver({
-    workflow: basis.world.platform.workflow,
-    runtime: basis.world.platform.runtime,
-    sessions: basis.world.platform.sessions,
-    executions: basis.world.platform.executions,
-    mailbox: basis.world.platform.messages,
-    controls: basis.world.platform.controls,
-    profiles: [],
-    goalWaits: () => waits,
-    observedCursor: () => basis.cursorAtRead,
-  });
+  const driver = buildDrvDriver(basis.world, waits, () => basis.cursorAtRead);
   const read = async (): Promise<CollaborationSnapshot> => ready(
     await driver.read(basis.world.humanContext(), { goalRef: basis.goal }), 'the BW basis driver read');
   const start = async (wanted: CollaborationState = 'waiting_for_reply'): Promise<CollaborationSnapshot> => {

@@ -454,7 +454,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
         planRef, roleBinding, budget, workspaceSnapshot: { workspaceId, revision: 1 },
         status, outcome: status === 'ended' ? 'failed' : null, exitCode: null,
         lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
-        startedAt: null, endedAt: null, previousRun: null };
+        startedAt: null, startedSince: null, endedAt: null, previousRun: null };
       const result = await commitRaw([{ refKey: canonicalJson(ref as unknown as JsonValue),
         schemaId: 'RunSnapshot@1', revision: 1, json: JSON.stringify(snapshot) }]);
       if (result.status !== 'committed') throw new Error(`fixture Run seed failed: ${JSON.stringify(result)}`);

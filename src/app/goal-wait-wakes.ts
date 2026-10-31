@@ -30,7 +30,7 @@ export const WAKE_LIMIT = 16;
 /** The aggregate types whose commit can change a goal's wait. */
 export const GOAL_WAIT_WAKE_AGGREGATE_TYPES: readonly AggregateRef['aggregateType'][] = Object.freeze([
   'SessionMessage', 'VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'PlanRevision', 'PlanProposal',
-  'TaskLease', 'DispatchOutboxEntry', 'Run', 'Goal', 'Session',
+  'TaskLease', 'DispatchOutboxEntry', 'Run', 'Goal', 'Session', 'TaskRequeue', 'UnknownCallReview',
 ]);
 
 type GoalWaitRegistrationV1 = {

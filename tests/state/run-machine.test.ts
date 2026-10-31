@@ -463,7 +463,7 @@ describe('RUN-01 claim_committed', () => {
       planRef, roleBinding, budget,
       workspaceSnapshot: { workspaceId: W, revision: 7 },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
-      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, endedAt: null, previousRun: null };
+      lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null, previousRun: null };
     expectSameRecord(result.next.record, expected);
     expect(result.next).toMatchObject({ node: 'Claimed', pointer: 'none', entryGeneration: null });
   });

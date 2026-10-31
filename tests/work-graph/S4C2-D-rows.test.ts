@@ -202,6 +202,7 @@ describe('S4C2 D rows: card gate over the real fixture', () => {
     expect(await f.waitingCards({ goalRef: f.goalRef })).toEqual([]);
     // Cancelling the Goal changes no note head.
     expect(await noteOf(f, agentId)).toMatchObject({ storedState: 'pending_review', version: 1 });
+    expect((await cardState(f, agentId))!.openedAt).toBe('2026-10-15T00:00:20.000Z');
   });
 
   it.each(KINDS)('D-12 %s: a newer current understanding closes the pending one\u2019s card as source_resolved and keeps the scribe todo', async kind => {

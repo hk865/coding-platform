@@ -105,6 +105,7 @@ function cardFactsOf(projectId: string, head: NoteHeadSnapshot, pointer: Pointer
   return {
     cardId: decisionSourceKey({ kind: 'note_review', note: headPin }),
     source: 'note_review', noteId: head.noteId, version: head.version, kind: head.kind, goalId: head.goalId,
+    openedAt: head.createdAt,
     optionIds, summary: renderNoteHeader(head),
     pointer: isUnderstanding ? { noteId: pointer.noteId, revision: pointer.revision } : null,
     pins, objects, options,
@@ -192,21 +193,22 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
     },
 
     async readNoteDecision(ctx, input): Promise<ReadResult<{ card: NoteDecisionCardFactsV1 | null;
-      closedReason: NoteDecisionClosedReasonV1 | null; subject: DecisionSubjectV1 | null }>> {
+      closedReason: NoteDecisionClosedReasonV1 | null; subject: DecisionSubjectV1 | null;
+      openedAt: string | null }>> {
       const headRead = await readHeadBatch(deps.records, ctx.projectId, [input.pin.noteId]);
       if (!headRead.ok) return rejected('unavailable', headRead.reason);
       const head = headRead.value.get(input.pin.noteId) ?? null;
       // A missing head, a moved version or a non-pending head is the
       // `source_stale` signal (null card, null closed reason, null subject).
       if (head === null || head.version !== input.pin.version || head.state !== 'pending_review') {
-        return ready({ card: null, closedReason: null, subject: null });
+        return ready({ card: null, closedReason: null, subject: null, openedAt: null });
       }
       if (head.goalId === null) {
         // The project card: no Goal window and no cancelled reason.
         const subject: DecisionSubjectV1 = { kind: 'project', projectRef: { projectId: ctx.projectId } };
         const carded = await cardFor(ctx, head, null);
         if (!carded.ok) return rejected('unavailable', carded.reason);
-        return ready({ card: carded.card, closedReason: carded.closedReason, subject });
+        return ready({ card: carded.card, closedReason: carded.closedReason, subject, openedAt: head.createdAt });
       }
       const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId: head.goalId };
       // The head's own subject travels with every answer, the closed ones too.
@@ -214,11 +216,11 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
       const window = await readGoalPlanWindow(deps.records, goalRef);
       if (window.status !== 'ready') return rejected('unavailable', window.reason);
       if (window.goal.desiredState === 'cancelled') {
-        return ready({ card: null, closedReason: 'goal_cancelled', subject });
+        return ready({ card: null, closedReason: 'goal_cancelled', subject, openedAt: head.createdAt });
       }
       const carded = await cardFor(ctx, head, { goalId: goalRef.goalId, window });
       if (!carded.ok) return rejected('unavailable', carded.reason);
-      return ready({ card: carded.card, closedReason: carded.closedReason, subject });
+      return ready({ card: carded.card, closedReason: carded.closedReason, subject, openedAt: head.createdAt });
     },
 
     async applyNoteDecision(ctx: CoreCallContext, input: NoteDecisionApplicationInputV1) {

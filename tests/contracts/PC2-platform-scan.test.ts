@@ -42,6 +42,9 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     ...REQUEST_COMMAND_RERUN_TOOL_NAMES,
     ...ANSWER_TOOL_NAMES,
     READONLY_COMMAND_TOOL_NAME,
+    // Frozen F1 declarations, before Runtime registration: when L1 registers them, replace these literals
+    // with its export and delete the +4 in the size expectation below.
+    'create_member', 'withdraw_session_message', 'request_rework', 'request_recheck',
 ]);
 
 type ExemptionV1 = { templateId: string; word: string; line: number; reason: string };
@@ -100,7 +103,7 @@ describe('PC-19 platform tool-name scan (ruling 18)', () => {
             + USER_DECISION_TOOL_NAMES.length + WHITEBOARD_TOOL_NAMES.length + SESSION_DISCOVERY_TOOL_NAMES.length
             + GRAPH_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
-            + ANSWER_TOOL_NAMES.length + 1);
+            + ANSWER_TOOL_NAMES.length + 1 + 4);
         for (const name of Object.keys(PACK.manifest.tools)) expect(EVERY_TOOL_NAME.has(name)).toBe(true);
     });
 

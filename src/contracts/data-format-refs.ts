@@ -63,6 +63,12 @@ export const VerificationRoundRefShape = defineShape({
     roundId: id,
   },
 });
+export const ReworkRequestRefShape = defineShape({ name: 'ReworkRequestRef', fields: {
+  aggregateType: f.literal('ReworkRequest'), projectId: id, goalId: id, taskId: id, requestId: id,
+} });
+export const ModuleOverlapGateRefShape = defineShape({ name: 'ModuleOverlapGateRef', fields: {
+  aggregateType: f.literal('ModuleOverlapGate'), projectId: id, goalId: id, taskId: id, moduleId: id,
+} });
 export const ProjectScopeShape = defineShape({ name: 'ProjectScope', fields: { projectId: id } });
 export const WorkspaceScopeShape = defineShape({ name: 'WorkspaceScope', fields: { projectId: id, workspaceId: id } });
 export const CurrentPointerRefShape = defineShape({

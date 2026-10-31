@@ -1797,7 +1797,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      *   1. the receipt (a `reverified` and a `refused` value both replay);
      *   2. the caller and its class: a Host operator `human`, a platform
      *      automation actor `system`, an Agent `agent` of the same Goal through
-     *      `authorizeDelegatedWrite(…, 'reverify_round')` (no production Role
+     *      `authorizeDelegatedWrite(…, 'request_recheck')` (no production Role
      *      grants it before its Agent tool, GAP-46);
      *   3. the predecessor, its chain, the Goal and its current adopted Plan,
      *      the subject Run (gate: the anchored producer), work: its TaskRequeue
@@ -1867,7 +1867,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (agentWriter !== null) {
             if (agentWriter.goalRef.goalId !== task.goalId) return forbidden('an Agent reworks only Tasks of its own Goal');
             const admitted = await authorizeDelegatedWrite(deps.delegatedWrites!, caller.ctx,
-                { writer: agentWriter, operation: 'reverify_round' });
+                { writer: agentWriter, operation: 'request_recheck' });
             if (admitted.status !== 'ready') {
                 return admitted.status === 'rejected' ? admitted : forbidden('the Agent reverify admission is not readable');
             }

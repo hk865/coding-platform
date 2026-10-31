@@ -94,7 +94,7 @@ export type CommitCursorBinding = {
    * The closed set of bindable top-level cursor fields (spec §2.3):
    * the two notice positions extend the original `since`/`until` pair.
    */
-  field: "since" | "until" | "unavailableSince" | "responseSince";
+  field: "since" | "until" | "unavailableSince" | "responseSince" | "startedSince";
 };
 
 export type StoredVersion = { refKey: string; revision: number };
@@ -155,7 +155,7 @@ export type EncodedRecordSchema = {
   readonly schemaId: string;
   readonly aggregateType: string;
   /** Explicit top-level fields eligible for commit cursor binding. */
-  readonly commitCursorFields?: readonly ("since" | "until" | "unavailableSince" | "responseSince")[];
+  readonly commitCursorFields?: readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[];
   validate(record: EncodedRecord): DecodeResult<EncodedRecord>;
 };
 

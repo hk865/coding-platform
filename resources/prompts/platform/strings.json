@@ -453,5 +453,6 @@
   "handoff.understandingInstruction": "For each goal listed below, write one understanding note with these five parts: status (where the goal stands), decided (what is settled), open (what is still open), next (what happens next) and risks (what could go wrong).",
   "handoff.briefHeading": "## Handoff brief",
   "handoff.briefTools": "细节用这些工具按需读",
+  "overlap.noteRequest": "模块被占用，请为这个模块写一条接口注记：",
   "delivery.sender.platform": "平台"
 }

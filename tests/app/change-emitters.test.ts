@@ -234,7 +234,7 @@ describe('collaboration driver change notices', () => {
       workflow: { consumeConsultation: async () => { throw new Error('not reached: the card read is rejected'); } },
       // A fresh start of this Goal's Run, so the consultation pump runs beside the advance.
       executions: { readExecution: async () => ({ status: 'ready', value: {
-        run: { ref: runRef, task: { goalId: goalRef.goalId }, status: 'running', outcome: null },
+        run: { ref: runRef, task: { goalId: goalRef.goalId }, status: 'running', outcome: null, startedSince: null },
         session: { workspaceId: scope.workspaceId },
       } }) },
       mailbox: {

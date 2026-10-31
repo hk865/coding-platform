@@ -201,12 +201,12 @@ async function waitingCrrCard(h: HostScenario, label: string): Promise<{
   return { command, ...request };
 }
 
-/** Wait until the start-up answer re-drive has stopped driving. */
+/** Wait until the start-up answer re-drive has stopped driving: it ended, or it is parked on its wait basis. */
 async function waitForFlowToStop(h: HostScenario, label: string): Promise<void> {
   await waitFor(() => h.answer('workflow/driver-read', plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF })),
     read => {
       const state = (read['value'] as { state?: string } | undefined)?.state;
-      return state !== 'running' && state !== 'waiting_for_reply';
+      return state !== 'running';
     }, `${label}: the start-up re-drive to stop`);
 }
 

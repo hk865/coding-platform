@@ -56,6 +56,8 @@ export type UnknownCallReviewCardFactsV1 = {
   options: DecisionOptionV1[];
   /** The card's one visible summary (the record object's label). */
   summary: string;
+  /** The review record's own creation time. */
+  openedAt: string;
   closedReason: 'goal_cancelled' | 'source_resolved' | null;
 };
 
@@ -182,6 +184,6 @@ export function unknownCallReviewCardFacts(input: UnknownCallReviewCardInputV1):
   return {
     source, goalRef: { ...goal.ref }, reviewRef: record.ref, revision: record.revision,
     runRef: record.runRef, runRevision: run.revision, taskActive,
-    objects, options: unknownCallReviewOptions(record), summary, closedReason,
+    objects, options: unknownCallReviewOptions(record), summary, openedAt: record.createdAt, closedReason,
   };
 }

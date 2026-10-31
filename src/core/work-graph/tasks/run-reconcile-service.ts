@@ -39,8 +39,8 @@ import {
 import { attemptEventFromRunEvent, type AttemptEvent, type AttemptGuardContext } from '../state/attempt-machine.js';
 import { MAX_ATTESTATION_REASON_CHARS } from '../state/query-run-recovery.js';
 import {
-  runStateOf, transitionRun, type AutoCleanupCandidateV1 as StateAutoCleanupCandidate, type RunEffect, type RunEvent,
-  type RunGuardContext, type RunNode, type RunTransition,
+  runStateOf, transitionRun, withBoundStart, type AutoCleanupCandidateV1 as StateAutoCleanupCandidate, type RunEffect,
+  type RunEvent, type RunGuardContext, type RunNode, type RunTransition,
 } from '../state/run-machine.js';
 import { newUnknownCallReview } from '../state/unknown-call-review.js';
 import { unknownCallKindOf } from '../state/unknown-call-kinds.js';
@@ -665,7 +665,12 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       return unavailable('the recorded reconcile disagrees with the request identity');
     }
     if (event.actor.kind !== actor.kind || event.actor.id !== actor.id) return unavailable('the recorded reconcile belongs to another actor');
-    return { status: 'committed', value: event.run, replayed: true, cursor: receipt.cursor };
+    // RUN-19's first entry: the event body keeps the unbound Run, so the
+    // returned Run is restored from the cursor of the commit that first
+    // recorded entry. An existing value is never replaced.
+    const bindsStart = event.run.startedSince === null && event.run.startedAt !== null;
+    return { status: 'committed', value: withBoundStart(event.run, bindsStart ? receipt.cursor : undefined),
+      replayed: true, cursor: receipt.cursor };
   }
 
   /**
@@ -694,7 +699,12 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
   }): Promise<WriteResult<RunSnapshot>> {
     const { facts, decided } = input;
     const nextRun = decided.next.record ?? facts.run;
-    const written: EncodedRecord[] = nextRun === facts.run ? [] : [encodeRun(nextRun)];
+    const runRecord = nextRun === facts.run ? null : encodeRun(nextRun);
+    // RUN-19's reconcile commit can first record entry from real Kernel
+    // evidence (an end reconciled from `Entering`, or RUN-21 late evidence).
+    // That first entry binds the Run's start cursor in this same commit.
+    const bindsStart = runRecord !== null && nextRun.startedSince === null && nextRun.startedAt !== null;
+    const written: EncodedRecord[] = runRecord === null ? [] : [runRecord];
     const claimEffects = decided.effects.filter(effect => effect.kind !== 'intent' && effect.kind !== 'create_review_record');
     if (claimEffects.length > 0) {
       if (input.claim === null) throw new Error('a reconcile end with claim effects names its §5 event');
@@ -749,6 +759,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       fingerprint: input.fingerprint, actor: { kind: input.actor.kind, id: input.actor.id }, requestId: input.requestId,
       change: 'created', review }));
     const bindings = sessionCursorBindings(written);
+    if (bindsStart && runRecord !== null) bindings.push({ refKey: runRecord.refKey, field: 'startedSince' });
     const prepared: PreparedCommit = { identityKey: input.identity, fingerprint: input.fingerprint, guards: merged.guards,
       records: written, claims: [], indexGuards: [], indexChanges: [],
       // The reconcile event stays last: the receipt cursor names it, which is
@@ -759,7 +770,8 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
     const receipt = await records.commit(prepared);
     if (receipt.status !== 'committed') return mapStoreFailure(receipt);
     if (receipt.replayed) return await replay(receipt, input.identity, input.fingerprint, input.actor, input.operation);
-    return { status: 'committed', value: nextRun, replayed: false, cursor: receipt.cursor };
+    return { status: 'committed', value: withBoundStart(nextRun, bindsStart ? receipt.cursor : undefined),
+      replayed: false, cursor: receipt.cursor };
   }
 
   /**
