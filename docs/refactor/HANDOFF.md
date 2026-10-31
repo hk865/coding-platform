@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–106）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–107）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1770,6 +1770,51 @@
         - 来源：`docs-land1101/facts-land1101.md` §4；`docs/refactor/design/orchestration-2026-10/slices/slice-DRV-SPEC.md` §5.1 的 D-P4（L297）；lead 笔记 `impl/goal-layering-and-superagent-1101.md`。
       - **106-5 下一步。** 7C-1 第二波（D、M、N、P、R）→ Q → L1 → 7C-2（F2 → H ∥ T → L2）→ 7D1 → 8B-2 → 8C → 8E → 7D2 → 6C → 第 9 片 → E3。8C、8E 的逐行审和开工裁定按 104-2；§6 选项 b 另开一片；冒烟核对表按 97-2 重做，下一轮真实模型冒烟前补上 7B-1…7B-3 和 DRV 的行为；远端推送等用户。
         - 来源：`docs-land1101/facts-land1101.md` §5；决定 104-2、97-2。
+
+    - **107 W2a、RC、M、IV2 合入，干预的四种收尾，计划闭环，这批的做法问题（11-01）。**
+      - **107-1 W2a、RC、M、IV2 合入。** 四个提交都在本地、都在 11-01 落地，最后的并集是 `ea78d1d`（`7c1w2c-t3`，底是 7C-0、F1、DRV 的 `7c1w1`）。
+        - **W2a。** 提交 `bf54754b`。D、P、R、N 和干预修复（`iv-fix`）一起落地：只有 Host 采用计划，`apply_future_plan` 和所有 agent 采用路径删除，死参数和分支一起删；选线的六键证据、用同一过滤和键出的负责卡、400 条读的上限和未读完标记；`ReworkRequest@1` 和它的编解码、纯迁移、可信的应用和关闭服务、两个 owner 的请求和应用分支、一个共用关闭体，关闭结果从已提交事件投影；模块重叠门（记录 4）和注记的当前版本读，打开、注记、释放都按回执先重放，只有已满足的门拒绝释放；人的消息在闲置线上能过领取，线被 `intervention_planning` 的 `claimed`/`prepared` Query 占着时给出来源消息，不走队头。src 26 个文件 +2,580/−610、测试 71 个文件 +2,884/−987、其他 17 个文件 +48/−55，63 个提交。
+        - **RC。** 提交 `b95c8ba4`。Work Run 的 token 上限从 `host.ts` 的 1,000,000 字面量搬进 Host 设置：默认 4 亿，可存 1 到 6 亿的整数，`null` 清回默认，缺字段读默认；新路由 `run-budget/save` 先持久化，Host 不确认时回原来的重试消息；快照给已存、生效和上限；保存后重登记每个打开工作区的 binding，已领取的 Run 保留领取时的预算；评审轮的 20 万和 Query 预算不变；没有设置页和超支卡（E3、PL-2）。src 3 个文件 +114/−6、测试 3 个文件 +112/−4、README 2 个文件。
+        - **M。** 提交 `610c9392`。建成员，不含 L1 的接线：一个 Run 或秘书经 `requestMember` 要新成员，按自治决定出卡或直接建并写一条通知；`member_create` 是一个带阶段的 `SessionOperation`，经共用命令执行器写，每次写入一个键，重放读投影；子线的 Session 注册提交后崩溃，由 owner 在同一子线上恢复；Session 和 `MemberCreated` 证明一起提交；任务信封加 `createMember`，Host 授予、创建者的上限和 `secretaryCreated` 只能收窄；`hostRolePermissionsAdmitted` 是唯一的 Host/Role 判断，审查用途的 Run 只跳过这个新交集；成员卡进决定读模型，已解决的操作答完留在历史。src 25 个文件 +2,335/−48、测试 42 个文件 +1,093/−47、README 16 个文件 +81/−63。
+        - **IV2。** 提交 `9a8a662d`。干预的四种收尾见 107-2；`delivered` 把已有回复算作送达；MSG-06 加一个窄的 `intervention_planning` 分支；规划读按来源读干预的回答；Host 先写通知（固定 requestId），再写回复或撤回；`questions: []` 拒绝；没有新记录、状态、索引、Workflow 循环或重试次数，正式 Answer 的正文不变。有一处偏离设计说明：`platform.messages` 不发布 `respondFromQueryAnswer`，Host 用第二个窄的 `handleIntervention` 步骤（`completion: 'associate_answer'`）关联回复。src 10 个文件 +217/−29、测试 3 个文件 +432/−22（1.85 倍，lead 接受）、README 7 个文件 +19/−18。
+        - **检查。** W2a 在 `0885b93`（bubblewrap）全量 1,086 个文件、12,884 项过、3 项跳过、918.99 秒，5 条按名字红，加 `production-reach`（允许清单修好，47 条留给 L1、13 条现在达到，reach 文件 4/4）；规模批 42 项、877.88 秒。RC 在 `dc9e6f1` 全量 1,087 个文件、12,895 项过、3 项跳过、648.28 秒，5 条按名字红；规模批没跑。M 在 `77bc182` 全量 1,094 个文件、12,940 项过、3 项跳过、692.68 秒，9 条按名字红；规模批在 `ea2b0ba` 是 42 项、1,089.43 秒（之后 lead 改了一个判断和测试，没重跑）。IV2 在 `ea78d1d` 全量 1,094 个文件、12,947 项过、3 项跳过、648.98 秒，同样 9 条红；规模批没跑，下一次落地一起跑。
+        - **九条红和排队。** 九条都是 `S7C1-DEFERRED`，L1 负责变绿：`R-REQUEST-02`、`R-HISTORY-01`、`R-APPLY-ROW-01`、`R-CLOSED-ANSWER-01`、P 的 refused-authorization，M 的 ceiling 两条、autopilot、reuse。Q 已验收（`f2ad3b7`），还没落地，和 L1 一起落；L1 在施工。都没推送，远端 `feat/orchestration-slices` 不动，`next-main` 不动。
+        - **文档改稿。** `STATE-MACHINES-SPEC.md` 2 处（`delivered` + 新增 §19，spec-sm 合计 3 处，含 `slice-7-SPEC.md` 后注 1 段）；`MVP-BEHAVIOR.md` 7 处；`DESIGN.md` 12 处；`E3-UI-ITEMS.md` 新增“决定 107”一节 3 条；`MODEL.md`、`DIAGRAMS.md` 各 1 处；`PRODUCT.md` 没动；`IMPLEMENTED-CAPABILITIES.md` 新增 WG148–WG154 七行、RT17 1 处；`CORE-DATA-OPERATIONS.md` 9 处。
+        - 来源：`docs-land1101b/facts-land1101b.md` §1；`7c/land2/msg-w2a.txt:1-31`、`7c/land3/msg-rc.txt:1-14`、`7c/land3/msg-m.txt:1-24`、`7c/land3/msg-iv2.txt:1-32`；`7c/status-7c.md:310`、`:338`、`:362-366`、`:378`、`:386`。
+      - **107-2 干预的四种收尾和一个已知限制。** 用户 D10（分叉会话转来）：“合理，还是得交互的”。回答作为对这条消息的回复，反问出卡。
+        - **模型反问。** 问题出卡，不发通知，回答作为回复。
+        - **回答不合法。** 一条通知加回复，没有提案；`questions: []` 算不合法。
+        - **Query 没答就结束。** 含崩溃重开，一条通知，消息撤回；按同一个 Job 和 Query 对。
+        - **人放弃或替代。** 方案 `not_adopted`，一条通知加回复，不沿 `replacedBy` 追。
+        - **方案待决。** `candidate` 的消息留着，采用后 `claimFirstReady` 不变。
+        - **通知文字固定。** 三条分别是 `invalid_plan`、`declined`、`no_answer`；`questions` 不发通知。文字见 `7c/run-iv2.md` 的裁定第 4 条。
+        - **另修。** `abandonPlanProposal` 只认 request 根，干预候选人放弃不了；现在和提案入口用同一条来源规则 `isInterventionSource`，按候选自己的 `sourceMessageRef`；根路径不变。
+        - **已知限制（lead 定的，用户还没看）。** 人答问题卡只保存答案，不自动开下一轮；要继续就再发一条消息。计划闭环的 `planresume:` 系统轮之后替掉它。
+        - 来源：`docs-land1101b/facts-land1101b.md` §2；`7c/land3/msg-iv2.txt:1-21`；`7c/run-iv2.md:14-27`、`:29`；`7c/status-7c.md:318`、`:326`、`:342`。
+      - **107-3 计划闭环：设计、用户的答复、位置。** 设计 v4 在 lead 笔记 `impl/sgl/plan-loop-design.md`，Codex 三轮（15、4、5 条）。用户的答复经分叉会话转来（`local_004c0a5e`），不是在这个会话里说的；原话在设计第 18 节。这批文档只记决定和位置，不写规格。
+        - **D1 Run 上限。** 4 亿，可配到 6 亿（RC 已落地）。
+        - **D2、D3、D4。** 阶段超线只提醒，阶段线 2,000 行或累计 0.6B token、可配；行数进 MVP，任务书里预估，触发时报告；阶段结束请知悉。
+        - **D6、D7。** 不做硬刹车，告诉人和参谋；任务书放进计划，自动导出 Markdown 到工作区外。
+        - **D8。** 所有 agent 候选都审，审过才自动采用。用户说“有道理，可能是需要 A”，不算定稿，改 `PRODUCT.md` 前再确认。
+        - **D9。** 审阅线在 7D2 做：`role_line_add` 加审阅者，`role-lines/open` 不改，底下走 6A 的共用建线入口，上限算进执行者组，出卡按 L36。
+        - **D11–D13。** 第 13 节的位置；第 11 节八条都算 MVP 门槛；候选审阅返修上限 3 次。
+        - **D14。** 不单独出卡：自动采用，人知悉、可干预，参谋觉得重大就问人；改目标、验收、范围、加预算仍要人。带来一处新放开：平台可以取消让出的 Run，只限候选明确替代这个任务且等待的消息是候选的来源，人已停的不走这条。
+        - **D15。** 工作区已有代码时首个方案审一次，结论写在卡上，不挡人，进 MVP，6C L7；空工程不审。
+        - **位置。** PL 算第 7 片新增的一段；PL-1 在 7C-2 之后、和 7D1 并行，共享文件串行落地；PL-2 在 PL-1 之后；端到端依赖 7D2 的 `role_line_add`；6C 只带骨架提示词。v4 冻结成规格之前，7D2、6C、第 9 片不开旧范围的书。
+        - **唯一承担者。** Run 结束后的任务如果是某项必需义务的唯一承担者，不能设延后，只能暂停整个目标或改计划，不加新机制（lead 定，第三轮 PL3-01）。
+        - 来源：`docs-land1101b/facts-land1101b.md` §3；`7c/status-7c.md:314`、`:318`、`:322`、`:350`。
+      - **107-4 这批查出来的做法问题。**
+        - **M 的 post-run 和全量。** M 的 post-run 限 80 个文件，没跑到 `S5R2-agent-application`、`PC2-joint-shrink-entry`、`K3-42`；全量才查出来。M 的规则写得过宽（`finalizeCard` 把所有已关闭来源的答案挪进历史），隐藏了普通候选采用后的待记录应用。以后动共用读模型或信封的组，第一轮表之前先跑全量。
+        - **M 的第一个回退。** 审查 Run 启动被拒，`K3-21` 卡 120 秒；lead 先当成负载，重跑才查明。
+        - **IV2 第一次开在旧目录。** launcher 只判目录在不在；改成目录已存在就停。
+        - **演练有用。** L1 的 Codex 演练和 DSH 试走查出 pin 的来源、回执查找、第二个闭合名字集、五条桩体不在白名单，开工前定了。
+        - **提问上限。** 开工前演练每轮 3 问，让两条问题没到 lead，写进报告后由裁定补上。
+        - 来源：`docs-land1101b/facts-land1101b.md` §4；`7c/land3/msg-m.txt:13-21`；`7c/status-7c.md:330`、`:362-366`、`:370`。
+      - **107-5 已知限制和下一步。** 目标分层已并入计划闭环（决定 106-4 的后续）。
+        - **下一步。** Q 和 L1 落地 → 7C-2（F2 → H ∥ T → L2）→ 7D1 ∥ PL-1 → 8B-2 → 8C → 8E → PL-2 → 7D2 → 6C → 第 9 片 → E3。K2 不是 MVP 门槛。
+        - **演练。** H、T、L2 的开工前演练等 L1 落地再开；F2 的演练已做，裁定 `frozen/7c2/7c2-f2-drill-rulings.md`。
+        - **审和核对。** 8C、8E 的逐行审和开工裁定按 104-2；§6 选项 b 另开一片；真实模型冒烟前按 97-2 重做核对表，补 7B-1…7B-3、DRV、M、IV2 的行为。
+        - 来源：`docs-land1101b/facts-land1101b.md` §5；`7c/status-7c.md:358`、`:386`。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

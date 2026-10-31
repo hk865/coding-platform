@@ -232,7 +232,7 @@ stateDiagram-v2
 
 MODEL R59 仍保留“放弃后存成什么未定”的旧说明，与 DESIGN §1.1（决定 42）及 `state/plan-machine.ts:onProposalAbandoned` 不同；本图按后两者画为 `not_adopted / abandoned`，不另造已放弃状态。首方案仍只由用户采用；后续采用走正式 owner 的权限和自治规则，不把成功答复当作已采用（决定 47、48）。
 
-另有尚未对齐的权限表述：DESIGN §2.7、MODEL R26 写 agent 只提议、不采用；代码仍有受委托权限约束的 `apply_future_plan / applyPlanChangeAsAgent`，决定 47、48 的第 5 片收尾还补了其决定出处和重放。本页的自动采用时序沿 DESIGN/MODEL 画用户或 Workflow，不据此改权限或宣称代码已删除该入口。
+另有尚未对齐的权限表述：DESIGN §2.7、MODEL R26 写 agent 只提议、不采用；代码仍有受委托权限约束的 `apply_future_plan / applyPlanChangeAsAgent`，决定 47、48 的第 5 片收尾还补了其决定出处和重放。本页的自动采用时序沿 DESIGN/MODEL 画用户或 Workflow，不据此改权限或宣称代码已删除该入口。〔2026-11-01 补注，W2a 已落地〕现行结论：`apply_future_plan` 和 Agent 采用路径已删除，采用只由 Host 做；上面这段只保留历史说明，旧分歧已关闭。
 
 ## DecisionCard
 

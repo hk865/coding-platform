@@ -1303,7 +1303,7 @@ type Rule = { id: string; scope: Scope; version: number; actions: GateAction[]; 
 
 依据：DESIGN §1.1 L113、119–121；§2.7 L435。状态：已定（Q16、决定 15）；提议 §9.1 #23。片：5。
 
-〔2026-10-13 lead 核，和代码不一致，待第 6、7 片定〕下面写“agent 不能采用”。但代码里 Runtime 有白板工具 `apply_future_plan`（`src/core/agent-runtime/whiteboard-tools.ts`）：获授权的 agent 可以采用自己为当前 Goal 提出的 W2 候选；用户答过这张候选的卡时带上那次答复，由计划 owner 重新读正式答复。状态机里记为 agent 发起（`state/plan-machine.ts` 的 `applyPlanChangeAsAgent`），第 5 片决定 48 那一轮补了“谁采纳的”记录。这条路早于本设计（9-28 的 W2），设计书没有写它。第 6 片（秘书、采用）或第 7 片（agent 动作的授权）冻结前要定：保留为受自治级别约束的 agent 采用，还是收回到用户或 Workflow。定之前不扩大它的用途。
+〔2026-10-13 lead 核，和代码不一致，待第 6、7 片定〕下面写“agent 不能采用”。但代码里 Runtime 有白板工具 `apply_future_plan`（`src/core/agent-runtime/whiteboard-tools.ts`）：获授权的 agent 可以采用自己为当前 Goal 提出的 W2 候选；用户答过这张候选的卡时带上那次答复，由计划 owner 重新读正式答复。状态机里记为 agent 发起（`state/plan-machine.ts` 的 `applyPlanChangeAsAgent`），第 5 片决定 48 那一轮补了“谁采纳的”记录。这条路早于本设计（9-28 的 W2），设计书没有写它。第 6 片（秘书、采用）或第 7 片（agent 动作的授权）冻结前要定：保留为受自治级别约束的 agent 采用，还是收回到用户或 Workflow。定之前不扩大它的用途。〔2026-11-01 补注，W2a 已落地〕现行结论：`apply_future_plan` 和 Agent 采用路径已删除，采用只由 Host 的 `applyPlanChange` 做；上面这段只保留历史说明，旧分歧已关闭。
 
 触发：收到 `adoptCandidate` 动作或该规则对应的正式观察。执行者：用户/Workflow。
 

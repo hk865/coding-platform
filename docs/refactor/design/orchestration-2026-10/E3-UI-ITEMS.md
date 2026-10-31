@@ -404,3 +404,13 @@
 | 编号 | 界面项 | 后端与读取依据 | 决定出处 |
 | --- | --- | --- | --- |
 | D106-1 | 目标驱动的停等：一个目标一个决定循环，每个在跑的任务一个看守；同一目标里可以有几个任务同时推进。Goal 快照按第一个成立的状态显示：`waiting_for_reply` 且没有在跑的 Lane 时读作 `waiting_for_reply`，排在 `running` 之前；`running` 行含 `driver.state === 'running'`。 | DRV §4.2：`driverStateForRead`（`src/app/collaboration-driver.ts:442`）；`GoalDriver`/`Lane`（`:320`、`:308`）；`siblings` 列同一目标的其他看守（`:432`）。 | [决定 106 · 106-1](../../HANDOFF.md)；DRV 规格 §4.2 |
+
+## 决定 107 加的（2026-11-01）
+
+7C-1 W2a、RC、M、IV2 已在（`bf54754b`、`610c9392`、`b95c8ba4`、`9a8a662d`，本地，11-01），界面仍待 E3。下面三项是待办。
+
+| 编号 | 界面项 | 后端与读取依据 | 决定出处 |
+| --- | --- | --- | --- |
+| D107-1 | Run 上限设置：显示已存、实际和最大值（默认 4 亿，最大 6 亿）；输入 1 到 6 亿的整数，或清空回默认；保存成功后下一次领取生效，已在跑的 Run 不变。 | `run-budget/save` 和 Host 快照的 `workRunTokenBudget: { saved, effective, max }`（`src/app/host-settings.ts:776`、`:1267`；类型 `src/app/host-settings-types.ts:61`）。还没有设置页。 | 决定 107；RC 提交说明 |
+| D107-2 | 干预收尾的通知：模型反问只出问题卡、不发通知；回答不合法、Query 没答就结束、人放弃或替代方案各显示一条固定通知（后两种同时显示回复或“消息已撤回”）；通知先于回复或撤回，文字固定。 | `INTERVENTION_CLOSING_NOTICE_TEXTS`（`src/app/host-notices.ts:28`–`:31`）；通知请求号 `intervention:<消息>:notice:<原因>`（`:42`）；四种结果由 `src/business/workflow/intervention.ts:263`、`:276`、`:284`、`:315` 给出。 | 决定 107；事实单 §2（用户裁定 D10） |
+| D107-3 | 候选计划卡：候选卡带诊断、审阅结论和请知悉，字段在计划闭环规格里定；现在只显示候选和卡的基本事实，D8 未定稿前不改 PRODUCT。 | 待设计：候选读 `src/core/work-graph/tasks/plan-readers.ts:555` 的 `findPendingProposal` 和卡来源；没有专门的后端读字段。 | 决定 107；事实单 §3 |
