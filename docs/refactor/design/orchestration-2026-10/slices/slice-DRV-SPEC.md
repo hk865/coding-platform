@@ -2,7 +2,7 @@
 
 lead，2026-10-31。代码、测试的行号按 `8fae469`（= lead 分支 `b1008be5` 的 src、tests）；文档的行号按 lead 分支 `b1008be5`（`8fae469` 的 docs 比它旧）。
 
-状态：**已冻结（2026-10-31）**。Codex 完整审过一遍（26 条）、冻结核对一遍（12 条），都已改；lead 逐行审过（见文末“lead 审稿的改动”）；两轮实跑（§7）的结果已回写。下一步：DSH 施工。
+状态：**已落地（2026-11-01，合入 `23173b6c`）**。Codex 完整审过一遍（26 条）、冻结核对一遍（12 条），都已改；lead 逐行审过（见文末“lead 审稿的改动”）；冻结前两轮实跑（§7）的结果已回写。DSH 三轮返工后由 Opus 子任务收尾测试（`0584428`）：RV1 18 条、RV2 6 条、RV3 3 条、RV4 5 条，RV5 未关 0、改坏 0。生产 964 行（预算 775），测试约 1,698 行（是生产的 1.76 倍，预算 700），按 10-26 的规矩在 Codex 复审后合入。
 
 ---
 
@@ -79,7 +79,7 @@ lead，2026-10-31。代码、测试的行号按 `8fae469`（= lead 分支 `b1008
 - 结果：卡答了、阻塞解除，或者 Host 重启后等的东西到了，登记唤醒留下的后继都只被领走（占着租约）；没有另外一次被接受的无界 start 就没人启动，要等 Host 重启（`auto` 档）或人手动推一下。首次计划采用不在此列：它自己会开一次无界 start（见上一条）。
 - 来历：7B 书 §3.8 第 4 条规定唤醒只做“one Workflow advance, no model call”（`D:/cc-lead-notes/impl/s7b/book-7b-frozen.md:579-583`）。原因是旧驱动会在唤醒里把整个 Run 跑完，堵住唤醒队列。§18.7 的 N1 把“留下的后继没有自己的唤醒”判为“不是问题”，那是只看状态机的结论；按需求看，这是 bug。本规格改掉它（§3.4）。
 
-> **实跑结论（2026-10-31，详见 §7）：** F1-a、F1-b 成立——按住模型调用时，`advanceWork` 没有返回，目标循环也没有继续派下一个任务；F1-c（第一个 Run 结束后第二个接着开）因为实跑副本没有 `/usr/bin/bwrap` 没法跑，施工时在有 bwrap 的 post-run 里证。F2a 成立——后继只做到 `claim_task`，Run 停在 `starting`，三个心跳后没有启动者；F2c 成立——让出的 `start` 不带等待依据，回复后同一句柄起了新的后继 Run 并完成。F2b 不成立——L46 世界经 Host 的 `goal_waits` 两次 drain 都是 `progressed:0`，见下面的 D-F3。
+> **实跑结论（2026-10-31，详见 §7）：** F1-a、F1-b 成立——按住模型调用时，`advanceWork` 没有返回，目标循环也没有继续派下一个任务；F1-c（第一个 Run 结束后第二个接着开）因为实跑副本没有 `/usr/bin/bwrap` 没法跑，落地后的全量在有 bwrap 的环境里跑过，D-F1 不依赖这一条。F2a 成立——后继只做到 `claim_task`，Run 停在 `starting`，三个心跳后没有启动者；F2c 成立——让出的 `start` 不带等待依据，回复后同一句柄起了新的后继 Run 并完成。F2b 不成立——L46 世界经 Host 的 `goal_waits` 两次 drain 都是 `progressed:0`，见下面的 D-F3。
 
 **D-F3 自动确认的等待不会被它自己的提交唤醒。**
 - 自动确认的等待（直接阻塞和 L46 阻塞用同一个结果，`src/business/workflow/task-gate.ts:489`）把等待依据的种类写成 `['UserDecision', 'Goal']`；但人答卡提交的是 `SessionMessage`（`src/core/work-graph/communication/decision-service.ts:754-758`），重新排队提交的是 `TaskRequeue`（`src/core/work-graph/state/task-machine.ts:733`），`UserDecision` 从不作为提交的聚合出现。
@@ -148,20 +148,21 @@ lead，2026-10-31。代码、测试的行号按 `8fae469`（= lead 分支 `b1008
 3. 走 `select_work`（不带 `taskId`）：可能来自上一步的 `next`，也可能是交出一个长步骤后回到目标范围时新发的一次。它照旧经过跨目标的排序安全点（`awaitAdvanceAdmission`，`collaboration-driver.ts:518`，§4.5 line 890，不改）。这一次调用带上 `activeTaskIds`（正由看守推进的任务）和当前连续选择的 `failedCardRefs`；两者都只走 `WorkflowAdvanceInternal`（`contracts.ts:238-249`），Goal 范围的选择跳过 `activeTaskIds` 里的任务。
 4. 跟着 Workflow 的 `next` 往前走，**直到下一步是长步骤**。长步骤指 `perform` 的 `start`（会跑模型）和 `run_check`（会跑检查命令）。领取、建 Session、准备、完成任务这类短步骤都在决定循环里做完。**不能靠“领取后 Workflow 会跳过同一任务”**：选择会先重新准备未入场的 `starting` Run、继续已结束 Run 的验证链，然后才到 running/ended 跳过（`workflow.ts:1697-1717`）；所以推进归属由 `activeTaskIds` 明确交给选择。
 5. 下一步是长步骤时：先把回执或下一步里的 Run 记在自己的 `currentRun` 上（今天用 `receiptRunRefOf(result) ?? startRunRefOf(result.value.next)`，先记真实回执和 Run 再检查 stop，`collaboration-driver.ts:847-851`），把这一步连同任务和 `failedCardRefs` 交给这个任务的新看守（§3.3），交给看守后才清掉暂存的 `currentRun`，**不等它**，然后回到第 3 步，再问一次 `select_work`。这样同一个目标可以开出几个看守，并行受 Workflow 的选择规则约束（L46，以及 7C 的 L16 重叠闸门；规则都在 Workflow 里，驱动不判断）。
-6. Workflow 返回：
-   - `waiting` 且带等待依据：把依据并进这个目标的唯一一条登记（`register` 本来就是合并语义，`goal-wait-wakes.ts:83-94`），结束这一趟；
-   - `waiting` 且没有依据，或 `next === null`：结束这一趟；
-   - `completed`：目标完成，驱动状态写 `completed`；
+6. Workflow 返回（按这个顺序判）：
+   - `waiting` 且 `yieldedContinuationOf(result) !== null`：先走 yielded 续作——写 `waiting_for_reply`、等那条消息，回复到了用 continuation 的同一 Session、同一任务继续这一趟，不登记、不结束；等待结束或被停才结束这一趟；
+   - `waiting` 且带等待依据、游标可读：把依据并进这个目标的唯一一条登记（`register` 本来就是合并语义，`goal-wait-wakes.ts:83-94`），写 `waiting_for_reply`，结束这一趟；
+   - `waiting` 且既没有续作也没有依据，或 `next === null`：写 `waiting`，结束这一趟；
+   - `completed`：Goal 入口钉着 `input.taskId`（被唤醒的那个 Task 完成）时，造一个 Goal 范围、不带 `taskId` 的 `select_work` 继续这一趟，不写状态；否则目标完成，驱动状态写 `completed`，结束；
    - 拒绝或异常：这一趟结束，原因写进 `reason`，驱动状态写 `failed`；看守照常收尾。
 7. 这一趟结束时如果 `recheck` 为真，清掉它，马上再来一趟。
 
 登记的失效和重建：每一趟决定开始时，先 `leave` 掉这个目标的旧登记；旧登记不清掉，重新登记仍会被同一个已见提交再次标记。`observedCursor` 在事实读之前取（今天的位置是 `collaboration-driver.ts:830-832`），不能在读完后再取新游标。Workflow 返回 `waiting` 后，用这个游标登记这一趟仍成立的依据。看守交回的是 `{ basis, cursorAtRead }`，`cursorAtRead` 是它自己那次 Workflow 读之前采的游标（不是交回时再取），目标驱动用它登记；多个依据合并时，`register` 保留较早的游标（`goal-wait-wakes.ts:83-94`），所以同一批提交不会被重复标记。
 
-**“再看一次”的来源**，全部只是把 `recheck` 置真；循环空闲就启动一趟，循环忙就等这一趟结束后再来：
+**“再看一次”的来源**，前三条只是把 `recheck` 置真；循环空闲就启动一趟，循环忙就等这一趟结束后再来：
 - 唤醒队列的 `wake(goalRef)`（§3.4）；
-- 某个看守结束（任务链回到目标范围，或者等待、失败、完成），且已有目标范围的驱动（§3.1）；
+- 某个看守结束，且已有目标范围的驱动（§3.1）：任务链回到目标范围（不带 `taskId` 的 `select_work`）、完成、失败这三种出口置 `recheck`。**带依据的等待出口只登记、不置 `recheck`**，以 §3.3 的逐出口规则为准；否则 `run_check` 的 `waiting` 会在唤醒和登记之间自旋（DRV-02 不做；AG2b 的教训）。失败的看守结束、且目标已接受、未停止时也要再看一次（rw2-01）；
 - 带 `taskId` 的 `start`（人干预、路由）开出看守之后，且已有目标范围的驱动（§3.1）；
-- 目标范围的 `start` 碰到已有的驱动（§4.1）。
+- 目标范围的 `start` 碰到已有的驱动（§4.1）：同种子回放；忙则拒绝；接受新种子时装入本次输入、清 `recheck`，再 `kickDriver`，不是只置 `recheck`。
 
 ### 3.3 Run 看守
 
@@ -174,15 +175,15 @@ lead，2026-10-31。代码、测试的行号按 `8fae469`（= lead 分支 `b1008
 
 每次推进返回后，按这个顺序判：
 1. 有让出续作（`yieldedContinuationOf`，`:781-791`）：走原来的 `pump` + `awaitWake`，回复到了用同一个 Session、同一个任务继续（`:936-945`）。这是不带依据的 `waiting`，不能当成“结束看守”。
-2. 没有让出续作、`waiting` 带依据：把 `{ basis, cursorAtRead }` 交给目标驱动去登记（看守自己不登记、也不 `leave`），然后结束。
+2. 没有让出续作、`waiting` 带依据：把 `{ basis, cursorAtRead }` 登记到目标的共享等待表（`waits.register`），置 `driver.registered`、保存 `handedBack=basis`；看守自己不 `leave`、也不置 `recheck`，然后结束。这是带依据的等待出口，只看这一次；再看一次由新提交的唤醒负责（§3.2）。
 3. `waiting` 不带依据、`next === null`：看守结束，写清原因。
 4. `completed`：看守结束。已接受目标范围启动的驱动：把结果交回目标驱动并置 `recheck`，由决定循环写目标状态；今天目标句柄在这个结果后会转回目标范围的 `select_work`（`:858-873`），改后这段交还由决定循环做。只有任务看守的驱动：看守写 `completed`，不交还（今天显式任务句柄的规则）。
-5. 拒绝或异常：看守结束，写清原因。
+5. 拒绝或异常：看守结束，写清原因。目标已接受启动、且没有请求停止时，置 `recheck`（rw2-01，`src/app/collaboration-driver.ts` 的 Lane finally）。只有任务看守的驱动和正在停止的驱动不置。
 6. `next` 是不带 `taskId` 的 `select_work`：看守不跟着它去领取别的任务；已接受目标范围启动时置目标的 `recheck`，否则不置；然后结束。带 `taskId` 的后继继续沿原链处理。不能只等 `state === 'completed'`：`complete_task`、失败返工等路径会返回无任务限定的 `select_work`（`workflow.ts:453-459`、`:2441-2445`、`:2524-2526`），都走这一条。
 7. 其余 `next` 继续跟着这条任务的链走。
 8. 被停（§3.5）。
 
-同一个任务同时只有一个看守；看守结束时只从目标的 `activeTaskIds` 里去掉自己，看守表保留它的末次快照和启动身份（种子、`flowId`、`taskId`、上下文、profiles），直到同任务的新看守替换；看守自己不登记、不 `leave` 目标的等待。带 `taskId` 的 `start` 碰到这个任务已有在跑的看守，返回 `busy`，和今天按任务的句柄一致（`:1132-1134`）。
+同一个任务同时只有一个看守；看守结束时只从目标的 `activeTaskIds` 里去掉自己，看守表保留它的末次快照和启动身份（种子、`flowId`、`taskId`、上下文、profiles），直到同任务的新看守替换；看守保存 `handedBack` 并登记到目标的共享等待表，不 `leave` 目标的等待。带 `taskId` 的 `start` 碰到这个任务已有在跑的看守，返回 `busy`，和今天按任务的句柄一致（`:1132-1134`）。
 
 ### 3.4 唤醒
 
@@ -213,7 +214,7 @@ lead，2026-10-31。代码、测试的行号按 `8fae469`（= lead 分支 `b1008
 - 置 `stopRequested`，离开这个目标的登记；
 - 中止每个看守的 pump，放行安全点等待；
 - 对每个看守的 Run 走今天的取消（`requestCancel`，`:983-1051`，两遍：开始一遍，看守收完后一遍）；决定循环交接前暂存的 `currentRun` 由末次取消一并处理，复用同一个实现；
-- **公开调用不等排空**：照今天立即返回第一个目标的快照，状态是 `stopping`（`:1207-1226`）；后台的 stop 排空等决定循环和所有看守的 `done` 都结束，**最后由排空写一次 `stopped`**。
+- **公开调用不等排空**：立即返回首个公开对象当时的快照（`publicTargetOf`，`:419-431`；`:1555-1560`），不保证它的状态一定是 `stopping`——首个对象可能是已结束的 Lane，保留它的终态；后台的 stop 排空等决定循环和所有看守的 `done` 都结束，**最后由排空写一次 `stopped`**（Goal 的 Lane 集在 `:1376` 一起写 `stopped`）。
 
 `stop({ goalRef, taskId })`：
 - 只停这一个看守，走同样的取消和排空；
@@ -246,9 +247,8 @@ P1 的修法：等待登记只在目标驱动上，一个目标一条；停一�
 | 不带 `taskId`，没有驱动 | 建目标句柄，跑 | 建目标驱动，跑一趟 |
 | 不带 `taskId`，驱动只有任务看守 | 另建目标句柄，跑 | 同一个驱动装入启动状态，跑一趟；在跑的看守不动 |
 | 不带 `taskId`，同种子 | 回放原快照 | 不变 |
-| 不带 `taskId`，不同种子，驱动在跑 | `busy` | 不变（`busy`） |
-| 不带 `taskId`，不同种子，驱动停在等待 | 新句柄顶替旧句柄（`:1126-1131`） | 同一个驱动，装入本次输入，置 `recheck`，返回它的快照；不新建 |
-| 不带 `taskId`，不同种子，原驱动已 `stopped`/`completed`/`failed` | 新种子替换终态对象；同种子仍回放（`:1119-1147`） | 同种子回放；仍在推进或排空返回 `busy`；否则装入新的启动状态 |
+| 不带 `taskId`，不同种子，驱动 `stopping`，或已接受且 `deciding !== null` 或有忙的看守 | `busy` | 不变（`busy`） |
+| 不带 `taskId`，不同种子，其余已存在的驱动（`waiting_for_reply`、`waiting`、`completed`、`failed`、`stopped`） | 新句柄顶替旧句柄（停等对象），或新种子替换终态对象（`:1119-1147`） | 同一个驱动，装入本次输入、清 `recheck`，再 `kickDriver`，返回它的快照；不新建 |
 | 带 `taskId`，这个任务没有在跑的看守 | 建任务句柄，跑 | 在目标驱动上开这个任务的看守（没有驱动就先建，不跑目标范围的决定），返回看守的快照 |
 | 带 `taskId`，同种子 | 回放 | 不变 |
 | 带 `taskId`，已有在跑的看守 | `busy` | 不变 |
@@ -294,32 +294,34 @@ P1 的修法：等待登记只在目标驱动上，一个目标一条；停一�
 | D-P1 | 目标里 A、B 两个任务都在等；停 B | A 等的回复到了以后，A 照样往下走 | stop 时 `leave` 掉目标的登记 |
 | D-P2 | 一个 `start` 的发件箱页在 stop 的 abort 之前返回；在真实 outbox 页的延迟返回处释放，stop 后读 `{ goalRef, taskId: A }` 的快照并记下状态通知序列 | 被停任务的快照只有 `stopping` → `stopped`，通知序列里没有 `waiting_for_reply` | 让 pump 在 stop 后仍写状态 |
 | D-P3 | 模型闸门按住 A 的同一 `perform:start`，一次唤醒命中目标 | 这个相同输入的调用次数仍是 1，A 不出现第二个循环；claim、prepare 等正常步骤不计 | 让 `wake` 给没在等的看守再起循环 |
-| D-P4 | 唤醒后的一趟又停在等待；先 hold 住真实推进，再调 `drain` | `drain` 立刻返回；同一工作区里另一个目标的唤醒照常送到；之后才释放被 hold 的推进 | 让 `wake` 等推进做完 |
-| D-P5 | 唤醒起的一趟正在领取时，人停驱动 | `stopped` 出现在领取结果记录之后；新的不同种子 `start` 拿到 `busy`，直到 stop 收尾 | 让 stop 不等决定循环 |
-| D-P6 | 等待中读执行记录抛异常，释放故障后同一任务用新种子再 `start` | 新种子不是 `busy`，并进入真实推进；`stop` 能停 | 删掉异常出口的推进占用清理 |
+| D-P4 | 两个真实 Goal 各用 task-only 驱动停在登记等待；真实回复使第一个 Goal 的看守走到 `prepare`，按住这次 `advanceWork`；用 `queueAll` 把登记标进 drain 批，再调 `drain` | `drain` 在 `prepare` 仍被按住时返回（各处都用 `limitHold`）；同一工作区另一个 Goal 的唤醒照常推进；释放后第一个 Goal 出现一条不同于原 Run 的后继记录（`runsOf` 过滤原 Run，计数为 1；是否已不再是 `starting` 由 D-F2 证明） | task-only 分支在 `reopenHandedBack` 后等待重开的 Lane 的 `done`（`src/app/collaboration-driver.ts:1505-1506`） |
+| D-P5 | 已接受 Goal 启动的真实驱动被真实唤醒，一趟决定正在领取时人 `stop({goalRef})`；同一排空窗口里再用新种子做 Goal `start` 和 Task `start` | `stopped` 出现在领取结果记录之后；排空窗口里两个新种子都是 `busy`；`stopped` 后 Task `start` 被接受、下一次 Goal `stop` 能停掉这条新 Lane；之后新的 Goal 种子被装入 | 删掉 `stopDriver` 排空里的 `driver.done`（`src/app/collaboration-driver.ts:1374`） |
+| D-P6 | 两个入口各一条 `it.each`：Task 入口在真实询问上停到 `waiting_for_reply`，Goal-observe 入口在真实让出等待上；各让执行读失败一次，释放故障后同一任务/同一目标用新种子再 `start` | 新种子不是 `busy`，并进入真实推进；`stop` 能停 | Task 项删异常出口的 `lane.state='failed'`（`src/app/collaboration-driver.ts:1248`）；Goal-observe 项删 `runDriver` 异常出口的 `driver.state='failed'`（`:1150`） |
+| D-P6b | 真实 yielded 等待里，看守的执行读失败一次；目标已接受启动；读公开 Goal 快照，等 `last.waitBasis` 出现 `wait_reply` 和 `SessionMessage`，再发真实回复 | 目标再选一次：`last.waitBasis.reasons` 含 `wait_reply`、`recordKinds` 含 `SessionMessage`；真实回复后同一任务的后继 Run 启动（状态不是 `starting`） | 删掉 Lane finally 里 `lane.state === 'failed' && driver.accepted && !driver.stopRequested` 的 `recheck` 分支（`src/app/collaboration-driver.ts:1261-1264`） |
 | D-F1 | 目标里两个互不依赖、模块不重叠的任务 | 两个 Run 都进入了，然后才有一个结束 | 让决定循环等看守 |
-| D-F2 | 目标停在登记的等待上：用 BW 世界，驱动在 Run 已让出之后才启动，和 Host 重启后的情形一样。回复到了，经 Host 的唤醒队列 | 后继 Run 被启动（不只领取），不需要人推 | 恢复 `bounded` 的后继停放 |
+| D-F2 | 目标停在登记的等待上：用 BW 世界，按住回复方的模型调用，经 Host 路由启动驱动，和 Host 重启后的情形一样；等真实 `last.waitBasis.reasons` 出现 `wait_reply` 再释放。回复经 Host 自己的唤醒队列 | 后继 Run 被启动（`runsOf` 里出现不是原 Run 的记录，且 `run.status !== 'starting'`），不需要人推 | 恢复 `bounded` 的后继停放 |
 | D-F3 | L46 世界：真实的答卡 `SessionMessage` 和重新排队 `TaskRequeue` 提交经真实 `createGoalWaitQueue` + `createWakeLoop`（接线同 `host.ts:832-851`），不手调 `wake` | 目标被唤醒，后继 Run 进入（和 D-F2 一起才完整） | 把 `task-gate.ts:489` 的依据改回 `['UserDecision', 'Goal']` |
-| D-F3b | 未知调用复核的等待：真实复核提交 `UnknownCallReview` 经同一接线，不手调 `wake` | 目标被唤醒 | 从订阅里删掉 `UnknownCallReview` |
+| D-F3b | 未知调用复核的等待：真实 K3 待复核世界（真实入场 `openRealRunHarness` + `prepareAndStart`、真实 `createTargetPlatform`、`createGoalWaitRebuild`）；驱动停在真实复核等待后，发真实的 review-only `UnknownCallReview` 提交，经同一 `createGoalWaitQueue` + `createWakeLoop` 接线，不手调 `wake` | 依据的 `recordKinds` 含 `UnknownCallReview`、`Goal`；目标被唤醒并真的再推进一次（`advanceWork` 计数增加） | 从订阅里删掉 `UnknownCallReview` |
+| D-G | Goal 范围的选择：计划里 WORK 已结束、GATE 只开了 gate round（一条 pending 静态检查，还没有 Run）；同一选择先带 `[WORK]`，再带 `[WORK, GATE]` | 带 `[WORK]` 时返回 gate 的 `run_check`（`roundRef.taskId==='ag2b-gate'`）；带 `[WORK, GATE]` 时 `state==='waiting'`、`next===null` | 去掉 `advanceGate` 前的 `activeTaskIds` 判断（`src/business/workflow/workflow.ts:1783`） |
 | D-R1 | A 在跑时采用一份加了任务 B 的新计划 | B 不等 A 结束就被启动 | 同 D-F1 |
 | D-R2 | A 在跑时，人干预空闲线上的 B（经 Host 的消费） | B 的那一轮被推进；A 的推进不受影响；目标只有一个驱动（`read` 不带 `taskId` 的主快照加 `siblings` 列出 A、B 两个看守） | 恢复干预派发另起目标外的句柄 |
 | D-T | 目标没有目标范围的驱动，人按 `taskId` 启动 A；A 在带依据的等待上结束，等的提交到了，经 Host 的唤醒队列；A 做完时 B 已可开工 | A 继续并做完；B 没有 Run，驱动快照里没有 B 的看守 | 让看守结束和唤醒都走目标范围的决定 |
 | D-I | 模型服务出错把 Goal 记成 `interrupted`，驱动还在；人先真实 `tasks/requeue`，再用新种子不带 `taskId` 的 `driver-start` | 中断原因消失，目标继续（第二个 Run） | `onStarted` 只在驱动第一次启动时调 |
 
-D-P1…D-P6 的事件序列照 §18.7 表里的“例子”一列写。每行的世界和入口如下（Codex 核过；代码行号按本树）。业务版本用 memory，只有实际重启的版本才用 SQLite。Host 触发的行为要经 Host 测（7B 的教训）。
+D-P1…D-P6 的事件序列按下面的世界和入口写（Codex 核过；代码行号按本树）。业务版本用 memory，只有实际重启的版本才用 SQLite。Host 触发的行为要经 Host 测（7B 的教训）。
 
 | 行 | 复用的真实世界和入口 |
 |---|---|
 | D-P1 | `openS7BWorld`、`adoptS6BPlan`、`sendS7BWaitingInquiry` 搭同一个 Goal 的两个登记等待；由真实提交触发 Host 唤醒，不手调 `wake`（`tests/helpers/S7B-fixture.ts:38-43`、`:277-297`，`tests/helpers/S6B1-fixture.ts:71-84`） |
 | D-P2 | 真实平台端口装配驱动，透传包装 outbox 读取并延迟真实结果（`src/app/collaboration-driver.ts:624-643`） |
 | D-P3 | Host 的模型闸门（`tests/helpers/S6A-host-fixture.ts:373`） |
-| D-P4 | 两个真实 Goal 加真实推进闸门（`deferred` 按住 `advanceWork`）；用 `queueAll`（`src/app/goal-wait-wakes.ts:124-126`）把登记标进 drain 批，不手调 `wake`；不用 WK 夹具手写的 G01–G20 当业务 Goal（`tests/helpers/S7B2-WK-wake-world.ts:53-59`）。改坏点是 `src/app/collaboration-driver.ts:1167-1169` 那样的 `await` |
+| D-P4 | 两个真实 Goal（各用 task-only 驱动）加真实推进闸门：`deferred` 按住第一个 Goal 的看守的 `prepare` `advanceWork`，`limitHold` 分别按住这次推进和 `drain`；用 `queueAll`（`src/app/goal-wait-wakes.ts:124-126`）把登记标进 drain 批，不手调 `wake`（`tests/scenarios/DRV-goal-driver-r.test.ts:72-145`）。改坏点：`wake` 的 task-only 分支在 `reopenHandedBack`（`:1505-1506`）后等待重开的 Lane 的 `done`。不设 `TEST_HOLD_LIMIT_MS` 时上界是本行自己的 120 秒超时 |
 | D-P5 | 真实 claim 的提交回答闸门，`CommitBarrier.holdAfter`，经驱动的 `stop`/`read` 查排空顺序，不读 store（`tests/helpers/S6A-commit-barrier.ts:137-152`） |
-| D-P6 | 真实让出的等待，在执行读取处用 `failReads` 注入抛错，再释放（`tests/helpers/S6A-commit-barrier.ts:155-162`、`src/core/work-graph/tasks/plan-readers.ts:370-374`） |
+| D-P6 / D-P6b | 真实让出的等待：Task 项在执行读取处用 `failReads` 注入抛错再释放（`tests/helpers/S6A-commit-barrier.ts:155-162`）；Goal-observe 项和新加的失败看守项各自包装 `executions.readExecution`，只对 yielded Run 失败一次，回复走真实 `respond_session_message` 和 Host 的 `goal_waits` 队列（`tests/scenarios/DRV-goal-driver-r.test.ts:183`、`:212`、`:239-263`、`:265-322`） |
 | D-F1 | `openS7BWorld` 里采用两个工作任务、建两条线，分别按住模型请求；第二个请求先到、第一个没放就是并行的证据，不靠墙钟（`tests/helpers/S6B1-fixture.ts:71-90`、`tests/helpers/S6A-host-fixture.ts:373`） |
 | D-F2 | 用 `openS7B2BasisGoal` 的前置，经 **Host 路由**启动；不用 `startS7B2BasisDriver`，它另建注册表、没接 Host 队列（`tests/helpers/S7B2-wake-basis.ts:39-47`、`:60-72`） |
 | D-F3 | `openS7BL46World`、`applyL46Card`（`tests/helpers/S7B-L46-fixture.ts:68-113`、`:144-164`），经 Host 自己的 `goal_waits` 队列 |
-| D-F3b | `openK3ReviewCardWorld`（`tests/helpers/K3-review-card-fixture.ts:141`），带 `shellSeam`（`tests/helpers/K3-tool-seams.ts:107`，否则 `createRecord` 搭不起）；K3 夹具不暴露提交观察，用 `observeRecordCommits`（`src/composition/commit-observer.ts:68`）取真实提交通知；接线同 `host.ts:832-851`：`createGoalWaitWakes`（`src/app/goal-wait-wakes.ts:53`）、`createGoalWaitQueue`（`:210`）、`GOAL_WAITS_QUEUE`（`:26`）、`createWakeLoop`（`src/app/wake-loop.ts:218`） |
+| D-F3b | `openK3ReviewCardWorld`（`tests/helpers/K3-review-card-fixture.ts:180`）、`createK3PendingReview`（`tests/helpers/K3-proposal-round.ts:262`）、`shellSeam`（`tests/helpers/K3-tool-seams.ts:107`，否则 `createRecord` 搭不起）；真实入场用 `openRealRunHarness` + `prepareAndStart`（`tests/helpers/K3-35-continuation-fixture.ts:357`、`:468`），重建接 `createGoalWaitRebuild`（`src/app/goal-wait-wakes.ts:157`）；`observeRecordCommits`（`src/composition/commit-observer.ts:68`）转发全部真实提交通知，触发验收的那次提交是 review-only；接线同 `host.ts:832-851`：`createGoalWaitWakes`（`:53`）、`createGoalWaitQueue`（`:210`）、`GOAL_WAITS_QUEUE`（`:26`）、`createWakeLoop`（`src/app/wake-loop.ts:218`） |
 | D-R1 | 保留 A 的任务定义，用 `refinementPlan`（`tests/helpers/S7B-V-fixture.ts:115-117`）走真实 `plans/propose` → `plans/apply` 加 B；不用只采用首份计划的 `adoptS6BPlan`（另见 `tests/helpers/S7A-fixture.ts:324-336`）。这一行还覆盖计划提交触发，不和 D-F1 重复 |
 | D-R2 | `openS7B2ConsumeWorld`（`tests/helpers/S7B2-consumable-sessions.ts:218-287`，含 `:238-244` 的两次 `consumeBarrier` 预热和真实 consumer 期），由真实消费派发 B；只用 `openConsumeHostWorld` 不够（实跑：消费批没有把 B 交给干预派发），只调 `handleIntervention` 不覆盖 Host 接线（`tests/helpers/S6A-host-fixture.ts:382-383`） |
 | D-T | `openS7BWorld`，经路由带 `taskId` 启动；唤醒用真实提交 |
@@ -332,6 +334,11 @@ D-P1…D-P6 的事件序列照 §18.7 表里的“例子”一列写。每行的
 | 文件:行 | 今天断言 | 改后 | 依据 |
 |---|---|---|---|
 | `tests/business/S7B2-BW-wait-basis.test.ts:66-78` | committed claim 后停在 `current`：等 `'waiting'`、要求最后回执是 claim、后继停在 `current` | 后继 Run 被启动；不再断言这三项 | F2 |
+| `tests/scenarios/K3-44-crr-kind4.test.ts:209` | 等待启动重驱停下：`state !== 'running' && state !== 'waiting_for_reply'` | `state !== 'running'`：新 Goal 决定完成后可以停在登记的等待上 | 决定循环登记等待（DRV-02、§3.3） |
+| `tests/app/S7B-L-host-gates.test.ts:191-193` | notify 始终 queued、没有任何接受 | 新 Work Run 启动后，notify 可以当普通输入：只断言没有非 `Run` 的接受，干预派发仍为空 | F2（后继真的启动） |
+| `tests/scenarios/DRV-goal-driver.test.ts:97` | 全候选被 L46 挡住时 `parked.reason` 含 `l46_blocked: s7b3-a` | 不变：Goal 范围的选择不改变 L46 的合并等待（`tests/business/S7B-L46.test.ts:139` 的既有语义） | 恢复既有 L46 语义，不是回归 |
+
+D1 台账：5 行删除的旧断言，全部是历轮批准行——`tests/app/S7B-L-host-gates.test.ts:191`（1 行、2 个 expect，DRV-18 补录）、`tests/business/S7B2-BW-wait-basis.test.ts:75-78`（4 行，本表 F2 行）；另有 `tests/scenarios/K3-44-crr-kind4.test.ts:209` 的等待谓词放宽（本表 K3-44 行）。0 个删除测试文件，没有 `skip`/`todo`/`only`，没有减少后端。
 
 除了这张表上的，所有老测试都必须原样通过，一行不改。直接或经一个现成 helper 用到驱动的测试文件（`grep` 结果，21 个；`wc -l` 逐个核过，共 7,471 行）：
 
@@ -375,7 +382,7 @@ helpers（5 个，共 1,580 行）: AG2b-collaboration-fixture.ts, K-readonly-ho
 
 上下限怎么来：下限按“只改决定点、其余原样复用”取每处的最小改法；上限按“循环拆成两层、启动/停止各多一段终态分支和注释”取。两处 Workflow 的上下限差在等待依据的收集/合并要不要抽一段小函数；不新增同名 helper，只按控制流计。
 
-生产合计 **640–775 行**（逐项 640–774，取整）。
+生产合计 **640–775 行**（逐项 640–774，取整）。落地后实际：生产 964（预算 775），测试约 1,698（是生产的 1.76 倍，预算 700）。
 
 测试（加删合计）：
 
@@ -421,7 +428,7 @@ lead 建议 b。“目标改了快速转向”是你定的需求，而采用本�
 
 ## 7. 冻结前实跑核对（已跑，2026-10-31）
 
-实跑报告：`./.dsh-ref/probe/drv-probe.md`。副本 `/tmp/drvp-probe` 从本树（HEAD `8fae469`）复制，2026-10-31 13:45–14:12 CST；书、源码、仓库测试均未改。10 条接缝：8 条成立、1 条不成立（F2b 的 Host 唤醒这一步）、1 条没法跑（F1-c，环境）。
+实跑报告见 lead 笔记。副本 `/tmp/drvp-probe` 从本树（HEAD `8fae469`）复制，2026-10-31 13:45–14:12 CST；书、源码、仓库测试均未改。10 条接缝：8 条成立、1 条不成立（F2b 的 Host 唤醒这一步）、1 条没法跑（F1-c，环境）。
 
 1. **F1-a、F1-b 成立。** 经真实 Host 的 `workflow/driver-start`（不带 `taskId`）起一个有两个独立任务的目标，按住第一个模型调用：第二个任务没有 Run，目标句柄仍停在 `perform:start`；`advanceWork` 那时还没返回（`last` 仍是 `prepare` 回执，`src/app/collaboration-driver.ts:762`），释放后第一个 Run 才 `ended/completed`。这里只记正常新执行下看到的事实，不推广成“返回时 Run 一定已经结束或让出”。
 2. **F2 分三种世界。**
@@ -430,7 +437,7 @@ lead 建议 b。“目标改了快速转向”是你定的需求，而采用本�
    - F2c 成立：Run 自己让出的 `start` 结果不带 `waitBasis`，走轮询；回复到了以后同一句柄启动了一个不同的后继 Run 并跑完。
 3. **§5.2 第二行没有老断言。** 全仓没有测试断言不带 `taskId` 的第二次 `start` 顶替停着的目标句柄；`tests/app/AG2b-collaboration.test.ts:295-297` 是同种子回放，`tests/app/S5R2-driver-safe-point.test.ts:62-63` 是两个不同目标。§5.2 按裁定删掉这一行，见 §5.2。
 4. **今天的 Run 数上限：没有。** 资源上限片只给每条命令套内存和进程上限（`src/contracts/resource-caps.ts:12-35`、`src/app/host.ts:568-573`）；D-F1 的两个 Run 不会被挡；不新加上限，也不为不存在的上限加守卫或测试（见 §9 列表 B）。7D2 才计划同时运行上限（`slice-7-SPEC.md:42`、`:271`）。
-5. **F1-c 没法跑（环境）。** 副本没有 `/usr/bin/bwrap`，第一个 Task 的登记检查返回 `rejected/unsupported`，看不到第二个任务接着开。这不是书或代码的结论。D-F1 的断言是第二个 Run 在第一个放开之前进入，不需要第一个跑完，所以不受这条影响；第一个跑完后第二个接着开，施工时在有 bwrap 的 post-run 里顺带看。
+5. **F1-c 没法跑（环境）。** 副本没有 `/usr/bin/bwrap`，第一个 Task 的登记检查返回 `rejected/unsupported`，看不到第二个任务接着开。这不是书或代码的结论。D-F1 的断言是第二个 Run 在第一个放开之前进入，不需要第一个跑完，所以不受这条影响；第一个跑完后第二个接着开的接续由落地树的全量覆盖，本行不单独断言。
 6. **7C 的顺序。** 7C-1 也在 `selectNext` 里改（L15/L16）；DRV 要在 7C-1 改 `selectNext` 的组开工前合入，7C-1 的开工裁定在 DRV 合入后按新树重指，见 §8。
 7. **§5.1 各行的世界组合（第二轮实跑，`drv-probe2.md`，15:11–15:42）。** 十四行全部搭到触发之前再触发一次：12 行世界成立；D-R2、D-I 各改一处（已回写 §5.1：D-R2 要 `openS7B2ConsumeWorld`，D-I 要先 `tasks/requeue`）；0 行搭不出来。178 处 `file:line` 里只有 `workflow.ts:442-453` 指错，已改。D-F2 这一轮是 Host 路由加 Host 队列的真世界，补上了第一轮另装驱动的缺口。
 

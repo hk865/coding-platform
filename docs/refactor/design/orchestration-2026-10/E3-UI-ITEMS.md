@@ -384,7 +384,7 @@
 | 编号 | 界面项 | 后端与读取依据 | 决定出处 |
 | --- | --- | --- | --- |
 | D103-1 | 卡的输入框：`member_creation`、`rework_request`、`handoff_approval`、`adviser_creation` 这四种卡，只写话、不选选项时，界面送 `requests/ask`（`round` 是这张卡所在的请求，`cardRefs` 带这张卡），不送 `decisions/answer`；卡继续开着，秘书的回答照常显示。 | `decisions/answer` 对这四种只写话的答复拒绝（`OPTION_REQUIRED_SOURCE_KINDS`）；`requests/ask` 已在。 | 决定 103-3 |
-| D103-2 | 卡的时间：卡片和队列显示 `openedAt`；`null` 时不显示。处理完的卡在历史里。 | `DecisionCardV1.openedAt`，经 `main/read` 和队列读出。 | 决定 103-2 |
+| D103-2 | 卡的时间：卡片和队列显示 `openedAt`；`null` 时不显示。处理完的卡在历史里。 | `DecisionCardV1.openedAt`，经 `main/read` 和队列读出。F1（2026-11-01）：从卡的来源读，来源有存的时间时用它；候选卡、`goal_cause`、`goal_conflict` 没有存的事实，是 `null`；已答的卡补读来源时间失败时保留原回答和时间，不变成拒绝。 | 决定 103-2；7C-1 F1 |
 
 ## 决定 101 加的（2026-10-31）
 
@@ -396,3 +396,11 @@
 | D101-2 | 转发和处置的操作：`messages/forward` 只认人，转发未送达或复制目标勾过的消息，`copyGoalRef` 选复制分支；`waits/dispose` 只认人，取消或转交；复制目标的目的地没了显示“待你指定收件线”。 | 7B-3 F/L：路由表（`src/app/core-routes.ts:504`–`:505`）；请求/响应类型（`src/app/core-http-types.ts:439`–`:456`）；目的地没了（`src/core/work-graph/communication/message-forwarding.ts:133`；`FORWARD_DESTINATION_GONE`，`src/core/work-graph/state/message-machine.ts:1237`）；复制转发停在待指定（`src/core/work-graph/tasks/goal-copy-service.ts:545`）。 | [决定 101 · 101-1](../../HANDOFF.md)；书 §3.9、§3.14 |
 | D101-3 | 被挡住的 Task 和原因：Task 行显示 `l46_dependency_blocked: the Task C waits on A`；Goal 全挡住时显示 `l46_blocked: <被挡的根 Task>` 和合并的等待依据。Task 自己的状态不变，每次推进重算；`expected_dependency`、`coordination` 不挡。 | 7B-3 G：`taskBlocks`（`src/business/workflow/task-gate.ts:506`）；依赖原因（`:167`）；全挡住（`src/business/workflow/workflow.ts:1810`）；上游读（`src/core/work-graph/tasks/context-input-service.ts:1150`）。 | [决定 101 · 101-1](../../HANDOFF.md)；书 §3.13 |
 | D101-4 | 卡状态（决定 101-3）：人回答自动返工卡、再对 A 覆盖重排后，卡仍读 `answered_pending_application`，“需要你决定”队列里继续挂着；要不要在覆盖重排时关卡以后定。 | 决定 101-3：`decision-read-model.ts:1839` 的 `answered_pending_application` 读法；`tests/business/S7B-L46.test.ts:113`–`:115` 的断言。 | [决定 101 · 101-3](../../HANDOFF.md) |
+
+## 决定 106 加的（2026-11-01）
+
+7C-1 F1 和 DRV 已在（`23173b6c`，本地，11-01），界面仍待 E3。下面只列后端已经给出、界面以后要显示的事实。
+
+| 编号 | 界面项 | 后端与读取依据 | 决定出处 |
+| --- | --- | --- | --- |
+| D106-1 | 目标驱动的停等：一个目标一个决定循环，每个在跑的任务一个看守；同一目标里可以有几个任务同时推进。Goal 快照按第一个成立的状态显示：`waiting_for_reply` 且没有在跑的 Lane 时读作 `waiting_for_reply`，排在 `running` 之前；`running` 行含 `driver.state === 'running'`。 | DRV §4.2：`driverStateForRead`（`src/app/collaboration-driver.ts:442`）；`GoalDriver`/`Lane`（`:320`、`:308`）；`siblings` 列同一目标的其他看守（`:432`）。 | [决定 106 · 106-1](../../HANDOFF.md)；DRV 规格 §4.2 |

@@ -4782,7 +4782,7 @@ A.2 第 2 项要求“服务只通过状态机改状态”，并且能被自动�
 
 | 记录类型 | 声明位置 | 受保护字段 | `state/` 中的构造函数（各节已定） |
 | --- | --- | --- | --- |
-| `RunSnapshot` | `src/contracts/dispatch.ts:146` | `status`（:172）、`outcome`（:173）、`executionAuthorization`（:151）、`controlState`（:153）、`controlInputs`（:189）、`reconciliation`（:149；含新增的观察 `interrupted_clean{event, lastPosition, kernelPaused, pausedIntentRef}`，C4）、`continuation`（:185）、`consumedWait`（:187）、`startedAt`/`endedAt`（:190-191）、`executionHistory`（:148，RUN-06）、事件水位 `lastEventSeq`/`lastRuntimeEventId`/`lastFactEventId`、新增 `requeueRef`、新增 `terminalPayload`（C1：结构化的结束细节，与已知 outcome 同一提交只写一次，§6.1 契约 (f)） | `run-machine.ts`：`transitionRun`（§6.6）。三个 Run 结束写操作都经它得到记录，自己不写字段：<br>• `recordRunResult`：RUN-07、RUN-17、RUN-18、RUN-21 的 `terminalPayload`（今天的字面量在 `execution-entry-service.ts:1400-1404`）；<br>• `reconcileRun`（`tasks/run-reconcile-service.ts`）：RUN-19、RUN-23、RUN-24 的 `terminalPayload` 与 `interrupted_clean`；<br>• `resolveUnknownRun`：RUN-22 的 `terminalPayload`。<br>RUN-08、RUN-20（结束为 outcome_unknown）和 RUN-09（未进入取消）不写 `terminalPayload` |
+| `RunSnapshot` | `src/contracts/dispatch.ts:222` | `status`（:258）、`outcome`（:259）、`executionAuthorization`（:227）、`controlState`（:239）、`controlInputs`（:285）、`reconciliation`（:225；含新增的观察 `interrupted_clean{event, lastPosition, kernelPaused, pausedIntentRef}`，C4）、`continuation`（:271）、`consumedWait`（:273）、`startedAt`/`endedAt`（:286、:289）、新增 `startedSince`（:288；F1：首次记录这个 Run 进入的提交游标，`null` 直到首次进入提交绑定，之后不再替换；持久记录由同一提交的 `commitCursorBindings` 绑定，`withBoundStart` 只把这次提交的游标恢复给首次成功和重放的返回值，`state/run-machine.ts:877`）、`executionHistory`（:224，RUN-06）、事件水位 `lastEventSeq`/`lastRuntimeEventId`/`lastFactEventId`（:263-267）、新增 `requeueRef`（:277）、新增 `terminalPayload`（:283；C1：结构化的结束细节，与已知 outcome 同一提交只写一次，§6.1 契约 (f)） | `run-machine.ts`：`transitionRun`（§6.6）与 `withBoundStart`（`:877`）。三个 Run 结束写操作都经它得到记录，自己不写字段：<br>• `recordRunResult`：RUN-07、RUN-17、RUN-18、RUN-21 的 `terminalPayload`（构造在 `state/run-machine.ts:926`）；<br>• `reconcileRun`（`tasks/run-reconcile-service.ts`）：RUN-19、RUN-23、RUN-24 的 `terminalPayload` 与 `interrupted_clean`；<br>• `resolveUnknownRun`：RUN-22 的 `terminalPayload`。<br>`startedSince` 的持久绑定在首次进入的两条提交路径（`execution-entry-service.ts:1854`、`:2064` 的 `commitCursorBindings`）和路径 (b) 的 `commitDecided`（`tasks/run-reconcile-service.ts:762`，F1 的第三个写入点）各自的同一提交里完成；`withBoundStart` 只恢复返回值。RUN-08、RUN-20（结束为 outcome_unknown）和 RUN-09（未进入取消）不写 `terminalPayload` |
 | `TaskAttemptSnapshot` | `dispatch.ts:365` | `status`（:372）、`startedAt`（:373）、`endedAt`（:374）、`endOutcome`（:375）、新增 `requeueRef` | `attempt-machine.ts`（§5.6） |
 | `TaskLeaseSnapshot` | `dispatch.ts:354` | `holderRunId`（:358）、`attemptId`、`release`（:363） | `attempt-machine.ts` |
 | `TaskClaimOutbox`（DispatchOutboxEntry） | `src/core/work-graph/model/claim-contracts.ts:78` | `status`（:82）、`dispatchState`（:88） | `attempt-machine.ts` |
@@ -5587,299 +5587,364 @@ D-17 原列表六项为 GAP-03…08；lead 决定 L-7 把 GAP-41 补入这一列
 
 ## 18. 目标驱动（内存状态，2026-10-31）
 
-本节只写 `src/app/collaboration-driver.ts` 里 `Handle` 的内存状态。它不是一个 `src/core/work-graph/state/` 里的纯状态机：没有 `transition*` 函数、没有事件联合类型、也没有穷尽检查；状态由多处直接赋值（§1.1 的形态不适用于本节，§1.4 的表格约定仍照用）。Host 循环、唤醒循环、扇出驱动、启动恢复只在 18.2 作为事件来源出现，本节不给它们写状态机。所有 `file:行` 按 7B-3 联合线 `7b3-w3cs`（`24be34c`：7B-2 落地之后并入了 7B-3 的 N、P、CS）的代码；`collaboration-driver.ts` 与仓库的 7B-2 落地提交 `8e55756c` 相同，其它文件的行号在 7B-3 合入时一起重指。
+本节写 `src/app/collaboration-driver.ts` 里两种内存对象的状态：每个 Goal 一个决定驱动 `GoalDriver`，每个在跑的任务一个看守 `Lane`（`Lane` 复用 `Handle` 的字段）。两者都不是 `src/core/work-graph/state/` 里的纯状态机：没有 `transition*` 函数、没有事件联合类型、也没有穷尽检查；状态由多处直接赋值（§1.1 的形态不适用于本节，§1.4 的表格约定仍照用）。Host 循环、唤醒循环、扇出驱动、启动恢复只在 18.2 作为事件来源出现，本节不给它们写状态机。所有 `file:行` 按落地树 `7c1w1`（`f0c6987`）；对应规格是已落地的 [slice-DRV-SPEC](design/orchestration-2026-10/slices/slice-DRV-SPEC.md)。
 
 ### 18.1 状态的位置和枚举
 
-状态在 `Handle.state`（`src/app/collaboration-driver.ts:274`），类型是 `CollaborationState`（`:59-67`）。`Handle` 是每个驱动句柄一个对象，存在 `handles: Map<string, Handle>`（`:328`）；新句柄在 `startHandle` 里以 `state: 'running'` 初始化（`:1140`）。同一个对象还被投影到 `CollaborationSnapshot.state`（`:385`）和 `siblings[].state`（`:80`、`:375`），这两个投影不持久化。
+状态在 `Handle.state`（`src/app/collaboration-driver.ts:275`），类型是 `CollaborationState`（`:61-68`）。`Handle` 是每个句柄一个对象（`:265-301`），存在 `handles: Map<string, Handle>`（`:358`）；`makeHandle` 以 `state: 'running'` 初始化（`:905`）。`GoalDriver`（`:320-332`）是 `taskId: null` 的 `Handle`，多存 `lanes`（`:322`）、`activeTaskIds`（`:323`）、`recheck`（`:325`）、`deciding`（`:327`）、`accepted`（`:329`）、`registered`（`:331`）；`Lane`（`:308-313`）是 `Handle` 加 `driver` 和 `handedBack`。公开投影里只有 `GoalDriver` 走 `driverStateForRead`（`:442-458`）；`Lane` 的 `state` 原样进 `siblings[].state`（`:432-440`）和带 `taskId` 的 `snapshot`（`:459-471`）。
 
-句柄不是“每个 Goal 恰好一个”：`handleKey` 把 `taskId` 放进键（`taskId ?? '*'`，`:215-217`），`startHandle` 用 `advance.taskId` 取键（`:1110-1111`）。因此一个 Goal 可以同时有：一个 Goal 级句柄（`taskId=null`，键尾为 `*`）、以及每个显式 Task 一个句柄；`snapshot.siblings` 就是同一 Goal 的其它句柄（`:369-378`）。第 `:105` 行接口注释写 "One active handle per Goal"，与 `handleKey` 带 `taskId`、`siblings` 的代码不一致。生产里同一个 Goal 会同时有两个句柄：Host 的干预派发用 `taskId` 起 Task 句柄（`src/app/host.ts:1799-1805`），Goal 级句柄可能同时在（人启动、启动重驱、采用后启动）。
+一个 Goal 可以同时有一个 `GoalDriver`（键尾 `taskId=null`）和每个任务一个 `Lane`：`handleKey` 把 `taskId ?? '*'` 放进键（`:216-218`），`installDriver`/`installLane` 都按这个键写 `handles`（`:915-945`）。`GoalDriver` 第一次接受 Goal 范围启动才进入公开顺序（`enterPublicOrder`，`:426-431`）；在那之前 `read`/`stop` 的首个对象由 `publicTargetOf` 跳过它（`:419-424`），先开的 Task 看守排在前面（§4.2:263，W4）。`:106` 的接口注释仍写 “One active handle per Goal”，与 `handleKey`/`lanes` 不一致；选择规则本身已按 W4 改。
+
+**A. `GoalDriver` 公开读出的状态（`driverStateForRead`，`:442-458`，按顺序取第一个成立）。**
+
+| 顺序 | 条件 | 读出 |
+|---|---|---|
+| 1 | `driver.state === 'stopped'` | `stopped` |
+| 2 | `driver.state === 'stopping'` 或 `driver.stopRequested` | `stopping` |
+| 3 | `driver.state === 'completed'` | `completed` |
+| 4 | `driver.state === 'failed'`，且没有在 `running` 的看守 | `failed` |
+| 5 | `driver.state === 'waiting_for_reply'`，且没有在 `running` 的看守 | `waiting_for_reply` |
+| 6 | `driver.state === 'running'`，或 `driver.deciding !== null`，或有在 `running` 的看守 | `running` |
+| 7 | 有看守在 `waiting_for_reply`，或 `driver.registered` | `waiting_for_reply` |
+| 8 | 其他 | `waiting` |
+
+第 5 行先于第 6 行：一趟决定停在 Goal 入口的让出等待时，公开的是“等回复”，不是 `running`（rw1-02）。第 6 行含 `driver.state === 'running'`：循环在第一次 `changed()` 之前就写 `running`，而 `deciding` 在那次同步进入返回之后才赋值（`:974-991`），只靠 `deciding` 会漏掉第一次通知。
+
+**B. 对象自己的 `state`（`Handle.state`，闭集 `:61-68`；`GoalDriver` 和 `Lane` 共用）。**
 
 | 状态 | 一句话 | 写它的地方 | `isActive` / `isTerminal` | 读出来的含义 |
 | --- | --- | --- | --- | --- |
-| `running` | 句柄刚建好，或 `pump` 把 `waiting_for_reply` 清掉；不表示此刻一定在主循环里。 | 初始化 `:1140`；`pump` `:670` | 活动 / 否 | 新句柄的初始态；或一次运行中的 Workflow 调用已经没有待回复的发送。 |
-| `waiting_for_reply` | 等回复。代码里有三种用法：`pump` 在运行中的 Run 上看到 `waitAfterSend`（`:673`）；Workflow 的 `waiting` 带 `waitBasis`，登记后停在 `wakeGate`（`:886`）；yielded Run 的 continuation 等待，`pump` + `awaitWake` 轮询（`:916`）。 | `:673`、`:886`、`:916` | 活动 / 否 | 不是“已停”：`isActive` 把它当活动（`:210`），`start` 会 `busy`（`:1132-1133`）。只有后两种（`waitBasis` 登记和 yielded）会置 `wakeWaiting`（`:888`、`:918`），`pump` 那种不会。 |
-| `waiting` | Workflow 返回了 `waiting`，但驱动没有可登记的等待依据、也没有 yielded continuation；或者 `next` 为 `null`；或者主循环退出时的兜底。 | `:947`、`:949`、`:977` | 非活动 / 否 | 句柄不再占着 Goal（`isActive` 为假），但也不是终态；`handle.current` 在 bounded 退出时可能留着下一个输入（`:973`），普通退出时为 `null`。 |
-| `stopping` | 已收到 `stop`，`stopRequested=true`，正在取消 Run、等循环排空。 | `:1069` | 活动 / 否 | 只由 `stopHandle` 进入；正常出口只有 `stopped`（`:1081`）。 |
-| `stopped` | 停止排空完成。 | `:1081` | 非活动 / 是 | 终态；`stop` 不再处理（`:1066`、`:1222`）。 |
-| `completed` | Workflow 的 advance 返回 `value.state === 'completed'`，且不是 `handle.taskId === null && input.taskId !== undefined` 的例外（`:863`）；那个例外不写状态，回到 Goal 范围重选。结束的是这个句柄，不等于 Goal 完成（`:859-875`）。 | `:875` | 非活动 / 是 | 终态；同一 seed 的 `start` 仍重放旧快照（`:1122`），不会重新启动。 |
-| `failed` | advance 返回非 `ready`（`:853`），或 `runHandle` 里任一操作抛出且没有在停止中（`:964`）。 | `:853`、`:964` | 非活动 / 是 | 终态；`reason` 带 Workflow 的拒绝原因或异常文本。 |
+| `running` | 决定循环的一趟开始、看守刚开、`pump` 清掉等回复，或 `wake` 重开交回的看守。 | `makeHandle :905`；`runDriver :1044`；`pump :755`；`reopenHandedBack :958`；`startHandle :1441` | 活动 / 否 | 新对象的初始态；或一个在跑的循环当前没有待回复的发送。 |
+| `waiting_for_reply` | 等回复。三个用法：yielded continuation（`awaitYielded :1004`）；Workflow `waiting` 带 `waitBasis`（`runDriver :1126`、`runLane :1215`）；`pump` 看到 `waitAfterSend`（`:758`）。 | 同左 | 活动 / 否 | 不是“已停”：`isActive` 把它当活动（`:210-212`）。看守交回依据后停在 `waiting_for_reply`、但 `handedBack !== null` 时，`laneBusy` 判它不忙（`:948-950`）。 |
+| `waiting` | 没有可登记的等待、没有 yielded continuation，或 `next === null`；不是接受过 Goal 启动的容器初始化也写它。 | `installDriver :925`；`runDriver :1128`、`:1131`、`:1137`；`runLane :1227`、`:1230`、`:1234` | 非活动 / 否 | 句柄不再占着 Goal，但也不是终态。 |
+| `stopping` | 已收到 `stop`，正在取消 Run、等循环和看守排空。 | `stopAdvance :1364` | 活动 / 否 | 只由 `stopAdvance` 进入；正常出口只有 `stopped`（`:1377`）。 |
+| `stopped` | 停止排空完成。 | `stopAdvance :1377`（Goal 的 Lane 集在 `:1376` 一起写） | 非活动 / 是 | 终态。 |
+| `completed` | Workflow 返回 `completed`，且不是“Goal 入口还钉着 `input.taskId`”的例外（`:1107-1113`）。 | `runDriver :1114`；`runLane :1203` | 非活动 / 是 | 结束的是这个驱动或看守，不等于 Goal 完成。 |
+| `failed` | advance 返回非 `ready`，或循环里的操作抛出且没有在停止中。 | `runDriver :1099`、`:1150`；`runLane :1199`、`:1248` | 非活动 / 是 | 终态；`reason` 带拒绝原因或异常文本。 |
 
 **和持久事实的关系，只列代码真正读/写的地方。**
 
-- **Goal 显示。** 驱动不读 Goal 显示；读它的是 Host 的 `held` 回调（`src/app/host.ts:837-842`），回调把结果交给等待登记表的重建（`src/app/goal-wait-wakes.ts:157-199`，见下）。驱动的状态不会根据 Goal 显示归约；`completed` 也不等于 §2 GOAL-17…30 的目标显示。
-- **`GoalInterruption`。** 驱动从不读这条记录。它只在 `startHandle` 里、且只在 `taskId === null` 时，调用 Host 注入的 `onStarted`（`:1155`）；Host 的回调把它写成 `resumed`（`host.ts:803-806`）。同一 seed 的重放（`:1122`）和被拒绝的启动在调用之前就返回，所以不清；带 `taskId` 的启动（显式 Task）不走 `onStarted`。`startHandle` 先挂 `handle.done = runHandle(...)`（`:1152-1154`），再 `await onStarted`（`:1155`），中间有一个窗口：驱动已是 `running`，Goal 显示仍按 pending 记录给 `NEEDS_DECISION/interrupted_pending_resume`；97-9 已把“先起循环、再清记录”列为留到以后的小项（18.7 W5）。`GoalInterruption` 的 pending 记录在 §2 GOAL-30 里成为 `NEEDS_DECISION` 的 headline 原因 `interrupted_pending_resume`（`STATE-MACHINES-SPEC.md:268`；GOAL-17…23 仍优先）。
-- **等待登记表。** Workflow 的 `waiting` 结果带 `waitBasis` 时驱动登记：`waits.register(waitBasis, cursorAtRead)`（`:891`），其中 `cursorAtRead` 是在会返回 `waiting` 的 advance 之前采的提交头（`:832`）；被唤醒或停止时 `leave`（`:899`、`:1057-1062`）。驱动不保存 `waitBasis` 到 `Handle` 上，也不读登记表的内容；登记表怎么合并、怎么标记，见 §10.10（`STATE-MACHINES-SPEC.md:3602`）和 `goal-wait-wakes.ts:53-122`。
-- **Workflow 的等待结果。** 驱动只看 `WorkflowAdvanceResult`：`status`、`value.state`、`value.next`、`value.receipt`、`value.reason`、`value.waitBasis`（`:839-959`），以及 `yieldedContinuationOf(result)` 从 `receipt.result.value.run.outcome/continuation` 里认出的 yielded continuation（`:780-792`、`:914`）。`decisionCause`、`source`、`maintenanceFailures` 这些字段驱动不读。
-- **Goal 的 `desiredState`。** 驱动不读；`start`/`wake` 不会因为 Goal 是 `paused`/`cancelled` 在驱动层被拒。驱动照常进 `running`，由 Workflow 的 owner 守卫决定返回 `waiting` 还是别的结果。
+- **Goal 显示。** 驱动不读 Goal 显示；读它的是 Host 的 `held` 回调（`src/app/host.ts:842-847`），结果交给等待登记表的重建（`src/app/goal-wait-wakes.ts:157-199`）。驱动状态不根据 Goal 显示归约；`completed` 也不等于 §2 GOAL-17…30 的目标显示。
+- **`GoalInterruption`。** 驱动从不读这条记录。只有接受 Goal 范围启动的两条路调用 Host 注入的 `onStarted`（`:1446`、`:1451`）；Host 的回调把它写成 `resumed`（`host.ts:804-806`）。同 seed 重放（`:1417`）和 `busy` 在调用之前就返回，所以不清；带 `taskId` 的启动不走 `onStarted`。`startHandle` 先 `kickDriver` 再 `await onStarted`，中间有一个窗口：驱动已是 `running`，Goal 显示仍按 pending 记录给 `NEEDS_DECISION/interrupted_pending_resume`；97-9 已把“先起循环、再清记录”列为留到以后的小项（18.7 W5）。
+- **等待登记表。** 一个 Goal 只有一条登记，在 `GoalDriver` 上：Workflow 的 `waiting` 带 `waitBasis` 时 `waits.register(waitBasis, cursorAtRead)`（`:1124`），`cursorAtRead` 在会返回 `waiting` 的推进之前采（`:1082`）；每一趟决定开始时先 `leave`（`:1043`），`stop` 也 `leave`（`:1366`）。只有任务看守的驱动也登记（`:1222`），但登记由驱动持有。登记表怎么合并、怎么标记，见 §10.10（`STATE-MACHINES-SPEC.md:3614`）和 `goal-wait-wakes.ts:53-122`。
+- **Workflow 的等待结果。** 驱动和看守都只看 `WorkflowAdvanceResult`：`status`、`value.state`、`value.next`、`value.receipt`、`value.reason`、`value.waitBasis`（驱动 `:1084-1134`、看守 `:1184-1240`），以及 `yieldedContinuationOf(result)` 认出的 yielded continuation（`:866-878`、`:1117`、`:1211`）。`decisionCause`、`source`、`maintenanceFailures` 不读。
+- **Goal 的 `desiredState`。** 驱动不读；`start`/`wake` 不会因为 Goal 是 `paused`/`cancelled` 在驱动层被拒。驱动照常进 `running`，由 Workflow 的 owner 守卫决定返回什么。
 
 **状态之外、会影响行为的内存标志。**
 
 | 标志 | 位置 | 写 / 读 | 是不是状态的一部分 |
 | --- | --- | --- | --- |
-| `stopRequested` | `Handle.stopRequested` `:287` | 写：`:1067`（`stop`）、`:1129`（新 seed 顶掉 parked plain wait）、`:1236`（`close`）；从不复位。读：主循环 `:807`、admission `:519`、`:563`、`pump` `:654`、`:675`、`awaitWake` `:705`、结果处理前 `:851`、parked 醒来 `:900`、`:915`、`:935`、catch `:963`、finally `:976`。 | 否。它是“已请求停止”，不是 `stopping` 的同义词：`stop` 会先置它再写 `stopping`；被新 seed 顶掉的旧句柄只置它，不写 `stopping`。 |
-| `wakeWaiting` | `:290` | 写：`:888`、`:918` 置真；`:898`、`:934` 置假；初始化 `:1143`。读：`:1132`（`start` 的 busy 判断）。 | 否。表示句柄“真的在 parked 等待”；`pump` 那条 `waiting_for_reply` 不置它。 |
-| `wakeGate` | `:292` | 写：`:894` 置 `resolve`；`:896`、`:1061`、`:1166` 清空；初始化 `:1143`。读：`:1060`、`:1126`、`:1165`。 | 否。只有登记表 parked 那条路径会置；`yielded` 路径没有 gate，靠 `awaitWake` 轮询。 |
-| `stopReason` | `:288` | `:1068` 用 `??=` 写默认文本；读：`:1001` 作为 cancel 的 reason。 | 否。 |
-| `stopDrain` | `:298` | `:1074` 写一次性 drain promise；读：`:1065`、`:1084`、`:1241`。 | 否。防重复排空。 |
-| `activePumpAbort` | `:296` | 写：`:754`、`:923`，清空 `:769`、`:932`；初始化 `:1145`；读：`:1072`、`:1238` 用来 abort。 | 否。 |
-| `currentRun` | `:286` | 写：`:749`（`runWithPump` 开始）、`:849`（从 receipt/next 认出 Run）、`:1142`；读：`:708`（`awaitWake` 轮询的原 Run）、`:924`（yielded pump 的 sender Run）、`:984`（`requestCancel`）。 | 否。 |
-| `current` | `:275` | 写：`:869`、`:943`、`:957`、`:973`、`:1140`；读：`:802`（`runHandle` 的下一个输入；`wake` 无 gate 时也是经它读）、`:386`（snapshot）。 | 否。它决定“下一次 `runHandle` 从哪一步开始”，不是状态。 |
-| `last` | `:276` | 写：`:839`；读：`:1126-1128`（判断能否顶掉 parked plain wait）、`:387`（snapshot）。 | 否。 |
-| `failedCardRefs` | `:282` | 写：`:843`、`:845`、`:974`；读：`:828`。 | 否。 |
-| `reason` | `:283` | 多处写；读：`:351`（digest）、`:389`（snapshot）。 | 否。显示原因，不是枚举。 |
-| `messages` / `messageKeys` | `:284-285` | `project`（`:397-409`）写；snapshot/digest 读。 | 否。最多 50 条的显示投影。 |
-| `announced` | `:301` | `changed`（`:346-362`）写/读。 | 否。变更通知的去重摘要。 |
-| `closed` | 驱动级 `:339` | 写：`:1230`；读：`:348`、`:1095`。 | 否。不是任何句柄的状态；`close` 之后 `start` 返回 `unavailable`。 |
+| `stopRequested` | `Handle.stopRequested` `:288` | 写：`:1362`（`stop`）、`:1438`（新 seed 装入时复位）、`:1571`（`close`）；读：主循环 `:1039`、`:1050`、`:1065`、`:1097`；看守 `:1170`、`:1197`、`:1213`；`pump :739`、`:755`、`:757`。 | 否。“已请求停止”，不是 `stopping` 的同义词。 |
+| `wakeWaiting` | `:291` | 写：`awaitYielded` 置真（`:1006`）、清假（`:1021`）；`makeHandle :909`。读：`hasStopResidual :1348`。 | 否。表示句柄真的停在 yielded 等待；清理由这条等待自己的 `finally` 做（P6）。 |
+| `stopReason` | `:289` | `:1363` 用 `??=` 写默认文本；读：`requestCancel`。 | 否。 |
+| `stopDrain` | `:297` | 写：`:1369`；读：`:1359`、`:1440`、`:1472`、`:1576`。 | 否。防重复排空。 |
+| `activePumpAbort` | `:295` | 写：`runWithPump` 开始（`:839`）、`awaitYielded :1008`，清空 `:854`、`:1017`；读：`:1367`、close。 | 否。 |
+| `currentRun` | `:287` | 写：`runWithPump` 开始、`:1064`、`:1095`（驱动）、`:938-939`、`:1195`（看守）；读：`awaitWake :793`、`awaitYielded :1009`、`requestCancel :1279`。 | 否。 |
+| `current` | `:276` | 写：`:1055`、`:1110`、`:1154`、`:1433`（驱动）、`:1183`、`:1241`（看守）；读：`:1046`、`:1168`。 | 否。下一次循环的入口输入。 |
+| `last` | `:277` | 写：`:1087`、`:1187`；读：`awaitYielded :1001`、`snapshot`。 | 否。 |
+| `failedCardRefs` | `:283` | 写：`:1089`、`:1091`、`:1188`、`:1191`；读：`:1079`、`:1180`。 | 否。 |
+| `reason` | `:284` | 多处写；读：`announceHandle`、`snapshot`。 | 否。显示原因，不是枚举。 |
+| `messages` / `messageKeys` | `:285-286` | `project`（`:477-494`）写；snapshot/digest 读。 | 否。最多 50 条的显示投影。 |
+| `announced` | `:300` | `announceHandle`（`:376-398`）写/读。 | 否。 |
+| `closed` | 驱动级 `:369` | 写：`close`；读：`:378`、`:1396`。 | 否。`close` 之后 `start` 返回 `unavailable`。 |
+| `accepted` | `GoalDriver.accepted` `:329` | 写：`enterPublicOrder :428`、`installDriver :921-924`；读：`:421`、`:1424`、`:1476`、`:1204`、`:1235`、`:1261`。 | 否。只有接受过 Goal 范围启动的驱动才跑决定循环、置 `recheck`、调 `onStarted`。 |
+| `deciding` | `:327` | 写：`kickDriver :977`、settle `:983`；读：`:975`、`:1424`。 | 否。同一时刻最多一趟决定。 |
+| `recheck` | `:325` | 写：`runDriver` 清（`:1040`）、`wake :1501`、任务启动 `:1477`、看守完成/失败/回目标范围 `:1205`、`:1236`、`:1262`；读：`:989`、`:1143`。 | 否。只有决定循环清它。 |
+| `registered` | `:331` | 写：`:1125`、`:1223`；清：`leaveGoalWait :1273`、`:1443`；读：`:456`。 | 否。这个 Goal 当前有一条登记。 |
+| `activeTaskIds` | `:323` | 写：`installLane :943`、`reopenHandedBack :961`、finally `:1257`；读：`:1080`。 | 否。正由看守推进的任务。 |
+| `handedBack` | `Lane.handedBack` `:312` | 写：`:1216`；清：`reopenHandedBack :955`；读：`:949`、`:954`。 | 否。看守交回的依据，决定它是不是“停着的等待”。 |
 
-驱动里没有“正在维护”标志。维护是 Workflow 在一次 `select_work` 里执行的 `runMaintenancePage`（`src/business/workflow/workflow.ts:2710-2712`）；驱动只看到 `advanceWork` 的结果，因此不能从 `Handle` 上读出“是否正在维护”。也没有“正在扇出”“正在启动恢复”的句柄标志；那些是 §18.2 的事件来源。
+驱动里没有“正在维护”标志。维护是 Workflow 在一次 `select_work` 里执行的 `runMaintenancePage`（`src/business/workflow/workflow.ts:2705`）；驱动只看到 `advanceWork` 的结果，因此不能从 `Handle` 上读出“是否正在维护”。也没有“正在扇出”“正在启动恢复”的句柄标志；那些是 §18.2 的事件来源。
 
 ### 18.2 事件
 
-代码里没有事件常量或事件联合类型；下表的事件名是本节记号，括号里是产生它的代码。外部入口 `start`/`stop`/`read`/`wake` 都带 `CoreCallContext`（`ctx`）；`start` 另带 `CollaborationStartInput`（`advance`、`queryProfileIds`，`:97-100`），`stop`/`read` 带 `{goalRef, taskId?}`（`:102-103`），`wake` 只带 `goalRef`（`:111`）。`advance_*`、`pump_*`、`reply_observed` 等是同一调用内部的结果，不再额外带 `ctx`。
+代码里没有事件常量或事件联合类型；下表的事件名是本节记号，括号里是产生它的代码。外部入口 `start`/`stop`/`read`/`wake` 都带 `CoreCallContext`（`ctx`）；`start` 另带 `CollaborationStartInput`（`advance`、`queryProfileIds`，`:98-101`），`stop`/`read` 带 `{goalRef, taskId?}`（`:103-104`），`wake` 只带 `goalRef`（`:112`）。`decision_*`、`lane_*`、`pump_*` 等是同一调用内部的结果，不再额外带 `ctx`。`recheck` 只由决定循环和新种子 Goal `start` 清，其余来源只置它。
 
-| 事件（本节记号） | 来源 / 谁调用（`file:行`） | 参数 | 对驱动的效果 |
+| 事件（本节记号） | 来源 / 谁调用（`file:行`） | 参数 | 对驱动或看守的效果 |
 | --- | --- | --- | --- |
-| `driver_start`（人启动目标） | HTTP `workflow/driver-start`（`src/app/core-routes.ts:510`、`:1337`；绑定 `:894`）→ `CollaborationDriverPort.start` → `startHandle(ctx, input, false)`（`:1189-1190`） | `ctx`、`{advance, queryProfileIds}` | 驱动的浅层准入检查：作用域、`advance` 可否克隆、包含完整 GoalRef、Goal 项目匹配（`:1095-1104`）；完整 Workflow 输入校验在 `workflow.ts:708-745`，通过准入的句柄之后仍可能被 Workflow 拒绝。算 seed、取 key（`:1105-1111`）；同 key 已存在时按 18.3/18.4 重放、顶掉或 `busy`；否则建新句柄并起无界循环（`:1136-1156`）。`taskId === null` 时 `onStarted` 清中断记录（`:1155`）。 |
-| `startup_redrive`（Host 启动重驱） | Host 启动核对之后 `startRedrive` → `startGoalDriver` → `collaborationDriver.start`（`src/app/host.ts:1619-1630`、`:1634-1647`）；只在 `resumeOnStartup === 'auto'` 时（`:1635`）；只在持实例租约的 Host（`:1603`） | Host 上下文（`hostScopeContext`，`:1570-1575`）；`advance` 为 `select_work`、`flowId=startup-redrive:<goalId>`、`sessionHint:null`，可能带 `answers`；`queryProfileIds` 为该 scope 的全部可信 profile | 同 `driver_start`，但是无界（`once=false`）。`auto` 档不写 `GoalInterruption`，`onStarted` 仍会被调用；owner 读到没有 pending 记录时对 `resumed` 返回 `kept`、不写（`src/core/work-graph/tasks/goal-interruption-service.ts:50-53`）。 |
-| `intervention_start`（人/行动请求领到后启动） | Host 消费批次 `consumeIdle` 里 `handleIntervention` 领到 claim 后 → `collaborationDriver.start`（`src/app/host.ts:1793-1805`） | Host 上下文；`advance` 为 `select_work`、`flowId=intervention:<runId>`、`sessionHint=claim.sessionRef`、`taskId=claim.task.taskId` | 同 `driver_start`；因为带 `taskId`，不调用 `onStarted`，不清 Goal 的中断记录；产生的是显式 Task 句柄。 |
-| `adoption_start`（采用首份计划后启动） | `adoptInitialization` 成功后 `startGoalDriver`（`src/app/host.ts:2192-2195`） | Host 上下文；`flowId=plan-adopted:<goalId>:<planId>`；`select_work`、`sessionHint:null` | 同 `startup_redrive`（无界、Goal 级）。采用要实例租约：`adoptInitialization` 的 owner 在采用前检查 `deps.leaseOwned`，不持租约直接返回 `busy`（`src/app/initialization-adoption.ts:135`）；路由把它接到这个 owner（`src/app/core-routes.ts:1154-1156`），Host 的启动分支只在 `result.status === 'committed'` 后 `startGoalDriver`（`host.ts:2192-2195`）。 |
-| `goal_wait_wake`（等待登记表唤醒） | `goal_waits` 队列 `drain` → `deps.wake(scope, goal)`（`src/app/goal-wait-wakes.ts:232-237`）→ Host 的 `wake: collaborationDriver.wake(hostContext(scope), goalRef)`（`src/app/host.ts:832-846`）→ `wake`（`:1160-1178`） | `ctx`（Host 上下文）、`goalRef` | 有同 Goal 句柄时：有 `wakeGate` 的，清 gate 并 resolve，原 parked 循环继续；没有 gate 的，调 `runHandle(handle, true)`（一次有界进入，可以先后调用 Workflow 多次，例如选择后领取）。无 gate 的 `waiting` 不会被先改成 `running`；`runHandle` 直接从 `handle.current` 开始（`:794-807`、`:1169`）。没有句柄时，用合成的 `select_work`（`flowId=goal-wait:<goalId>`、`sessionHint:null`）和该 scope 全部 profile 调 `startHandle(..., true)`（`:1173-1177`）。同 Goal 其它没有 gate 的句柄（运行中、`pump` 等待、yielded 等待、`waiting`）也会被 `runHandle(true)` 再起一个循环；18.7 P3。 |
-| `wake_new_handle`（无句柄的唤醒） | 上一条的 `:1173-1177`；当前唯一的调用方是 `goal_waits` 队列 | 同上 | 新建 `running` 句柄，`once=true`；结果被忽略（`wake` 返回 `void`）。`taskId=null`，所以会走 `onStarted`。 |
-| `advance_completed`（Workflow 宣布完成） | `runHandle` 内 `dependencies.workflow.advanceWork` 或 `runWithPump` 返回 `status:'ready'`、`value.state:'completed'`（`:833-835`、`:857-875`） | 结果对象；`value.reason` | 显式 Task 句柄直接 `completed`；Goal 级句柄只有在 `handle.taskId === null && input.taskId !== undefined` 时改成一个不带 `taskId` 的 `select_work` 继续（有界时留作 successor 返回，`:863-873`），这一支不写状态；其余 Goal 级句柄写 `completed`。 |
-| `advance_waiting_registered`（带依据的等待） | 同上，`value.state:'waiting'` 且 `value.waitBasis !== undefined`、`cursorAtRead !== null`、`goalWaits` 可解析（`:877-885`） | `waitBasis`、`cursorAtRead` | `waiting_for_reply`；`wakeWaiting=true`；`wakeGate`；`waits.register`；await gate；醒来后 `leave`、`bounded=true`、一次有界进入的 `select_work` 重入（`:886-909`），这次进入可以继续领取，因而可能再调 Workflow。 |
-| `advance_waiting_yielded`（yielded 等待） | 同上，`value.state:'waiting'`，且 `yieldedContinuationOf(result) !== null`（`:911-915`） | `RunContinuationV1` | `waiting_for_reply`；`wakeWaiting=true`；`pump` + `awaitWake` 在同一 signal 上；回复到达后按 continuation 的 `sessionRef`/`taskId` 重入（`:916-945`）。 |
-| `advance_waiting_plain`（没有可登记依据的等待） | 同上，`value.state:'waiting'`，既没有登记条件也没有 continuation（`:946-947`） | `value.reason` | `waiting`，写 `reason`，返回；不清 `current` 之外的登记（没有登记）。 |
-| `advance_next`（Workflow 给下一步） | 同上，`value.state:'advance'`、`value.next !== null`（`:949-960`） | `value.next`、`receipt`、`failedCardRefs`、`bounded` | 无界进入把 `next` 写进 `current` 并继续循环（`:957-960`）；有界进入若结果带 receipt 或 `next` 会启动 Run，就把 `next` 留作 successor 并返回（`:953-955`），循环入口本身也拒绝启动 Run 的输入（`:821-825`）。`value.receipt.kind==='complete_task'` 且 `next` 是带 `taskId` 的 `select_work` 时置 `observingCompletedStep`（`:959-960`），下一步不进 ordering safe point（`:817`）。 |
-| `advance_failed`（Workflow 拒绝） | 同上，`result.status !== 'ready'`（`:852-856`） | `CoreRejection` | `failed`，`reason = result.reason`；返回。 |
-| `loop_threw`（循环里的操作抛出） | `runHandle` 的 `catch`（`:962-966`），覆盖整个 `runHandle` 体（`:801-966`） | 异常 | 未停止时 `failed`，`reason` 为异常文本；停止中不写状态。`awaitWake` 或 `advanceWork` 等循环内操作抛出都走这里；返回的读失败（`:711-713`）只是写 `reason` 后 `tick` 重试，不进这条。 |
-| `pump_no_reply`（发件箱没有待回复） | `pump` 的 `readAllOutbox` 返回，`needsReply.length === 0`（`:663-670`） | `manageState` | 只有 `manageState=true` 且当前正好是 `waiting_for_reply` 时写 `running`（`:670`）。`manageState` 在 `runWithPump` 的泵里为真（`:756`），在 yielded 等待的泵里为假（`:925`）。 |
-| `pump_waits_reply`（发件箱有待回复） | 同上，`needsReply.length > 0`（`:671-691`） | `manageState`、消息 | `manageState=true` 且满足 `waitAfterSend === true` 或收件人是工作区用户时写 `waiting_for_reply`（`:672-673`）；对 Session 收件人的每条等待调用 `consultOne` → `consumeConsultation`（`:674-691`），把结果 message 投影进 `messages`，写 `reason`；咨询消费本身不写状态。 |
-| `reply_observed`（yielded 等待看到回复） | `awaitWake` 读 `readMessage`，`waitStateOf` 为 `answered`/`expired`（`:733-735`） | `RunContinuationV1`、消息 | 返回 `true`；`runHandle` 结束泵、清 `wakeWaiting`，按 continuation 重入同 Task（`:927-945`）。 |
-| `wait_closed`（等待已被消费/撤回/取消） | `awaitWake` 的 `consumed`/`withdrawn`（`:736`）、Run 的 `cancelled`（`:716-719`），或 `readMessage` 返回 `forbidden`（`:738`） | — | 返回 `false`；`runHandle` 返回；归到 DRV-10 的收尾：finally 在未停止时把 `waiting_for_reply` 改成 `waiting`（`:976-977`）。 |
-| `run_paused`（原 Run 暂停） | `awaitWake` 读 execution，`desiredState === 'paused'`（`:720-723`） | — | 不迁移；写 `reason`，`tick` 500 ms 后重读（`:722`）。 |
-| `stop`（人停下） | HTTP `workflow/driver-stop`（`core-routes.ts:512`、`:1339`；绑定 `:896`）→ `driver.stop`（`:1207-1227`） | `ctx`、`{goalRef, taskId?}` | 无 taskId 时取该 Goal 的全部句柄，有 taskId 时取一个（`:1216-1219`）；对每个非终态句柄 `void stopHandle`（`:1222`）；立即返回第一个目标的 snapshot（`:1224-1226`），取消和排空在后台。同一句柄第二次 `stop` 在 `:1065` 直接返回已有的 `stopDrain`，不再写状态。 |
-| `close`（关 Host） | Host `close` → `collaborationDriver.close()`（`src/app/host.ts:2234-2235`、`:2251`） | — | `closed=true`；清空 `handles`；对每个句柄置 `stopRequested`、`leaveGoalWait`、abort pump、释放 admission（`:1229-1240`）；等所有 `done` 和已有 `stopDrain`（`:1241-1245`）。不写 `state`；没有 `stop` 的取消 pass。 |
-| `tick`（500 ms 心跳） | `TICK_MS=500`（`:162`）；`tick`（`:364-367`） | `AbortSignal` | `changed` 后 `sleep`；`pump` 每轮末尾（`:698`）和 `awaitWake` 每次重读后（`:713`、`:722`、`:730`、`:739`）调用。它本身不迁移，只让读取/轮询继续。 |
-| `read`（读投影） | HTTP `workflow/driver-read`（`core-routes.ts:511`、`:1338`；绑定 `:895`）→ `driver.read`（`:1192-1206`） | `ctx`、`{goalRef, taskId?}` | 不是迁移。无 taskId 时取 `goalHandles(...)[0]`（`:1201-1202`），有 taskId 时取精确键（`:1203`）；找不到 `not_found`，否则返回 `snapshot`。 |
+| `driver_start`（人启动 Goal） | HTTP `workflow/driver-start`（`src/app/core-routes.ts:518`、`:1353`）→ `CollaborationDriverPort.start` → `startHandle(ctx, input)`（`:1393-1481`） | `ctx`、`{advance, queryProfileIds}` | 浅层准入：`closed`、scope、`advance` 可否克隆、完整 GoalRef、Goal 项目匹配（`:1396-1405`）；算 seed、取 key（`:1407-1412`）。同 key 已存在时按 18.3/18.4 重放、装入或 `busy`；否则 `installDriver(accepted=true)`、`kickDriver`、`await onStarted`（`:1449-1452`）。 |
+| `task_start`（人/路由/干预按任务启动） | 同上入口，`advance.taskId` 非空；Host 的干预派发（`src/app/host.ts:1828-1834`） | 同上，`advance.taskId` | 没有驱动时先 `installDriver(accepted=false)`（容器，`state='waiting'`，`:925`），再 `installLane`（`:930-945`）；不跑 Goal 范围的决定、不调 `onStarted`。已有驱动时装入或 `busy`（`:1455-1480`）。 |
+| `startup_redrive`（Host 启动重驱） | `startRedrive` → `startGoalDriver` → `collaborationDriver.start`（`host.ts:1640-1667`）；只在 `resumeOnStartup === 'auto'`（`:1656`） | Host 上下文；`select_work`、`flowId=startup-redrive:<goalId>`、可能带 `answers` | 同 `driver_start`（Goal 范围）。 |
+| `adoption_start`（采用首份计划后启动） | `adoptInitialization` 成功后 `startGoalDriver`（`host.ts:2219`） | Host 上下文；`flowId=plan-adopted:<goalId>:<planId>`、`select_work` | 同 `driver_start`（Goal 范围）。 |
+| `goal_wait_wake`（等待登记表唤醒） | `goal_waits` 队列 `drain` → `deps.wake(scope, goal)`（`src/app/goal-wait-wakes.ts:232-237`）→ Host 的 `wake: collaborationDriver.wake(...)`（`host.ts:840`）→ `wake`（`:1488-1507`） | `ctx`、`goalRef` | 有驱动时：请求停止就返回；接受过 Goal 启动就置 `recheck` + `kickDriver`，马上返回（`:1500-1503`）；只有任务看守时先 `leaveGoalWait` 再 `reopenHandedBack`（`:1505-1506`）。 |
+| `wake_new_driver`（无驱动的唤醒） | 上一条的 `:1491-1497` | 同上 | 用合成的 `select_work`（`flowId=goal-wait:<goalId>`）调 `startHandle`，算一次接受的目标范围启动，建 `running` 驱动。 |
+| `decision_pass`（一趟决定开始） | `kickDriver`（`:974-992`）→ `runDriver`（`:1037-1158`） | — | 清 `recheck`（`:1040`）、`leaveGoalWait`（`:1043`）、写 `running`（`:1044`）、`changed`（`:1045`）。 |
+| `decision_long_step`（交长步骤给看守） | `runDriver` 读到 `longStepTaskIdOf(input)` 非空（`:1059-1071`） | `input` | 先把真实回执/Run 记到 `currentRun`（`:1063-1064`），再检查 `stopRequested`；`installLane`（`:1066`）、清 `currentRun`、`startLaneLoop`，不等看守，回到 `select_work`。 |
+| `decision_completed` | `runDriver` 的 `value.state === 'completed'`（`:1104-1114`） | 结果 | Goal 入口还钉着 `input.taskId` 时造一个 Goal 范围 `select_work` 继续，不写状态；否则写 `completed`。 |
+| `decision_waiting_registered` | `value.state === 'waiting'`、`waitBasis !== undefined`、`cursorAtRead !== null`、`goalWaits` 可解析（`:1116-1126`） | `waitBasis`、`cursorAtRead` | `waits.register`、`registered=true`、写 `waiting_for_reply`；退出这一趟。醒来靠新的 `wake`，不在这一趟里等。 |
+| `decision_waiting_yielded` | 同一 `waiting`，`yieldedContinuationOf(result) !== null`（`:1117`） | continuation | `awaitYielded`（`:1000-1029`）：写 `waiting_for_reply`、`wakeWaiting=true`、`pump` + `awaitWake`；回复到了把 continuation 的 `select_work` 作为下一输入继续。 |
+| `decision_waiting_plain` | `waiting` 既没有依据也没有 continuation，或 `next === null`（`:1126-1137`） | `value.reason` | 写 `waiting`，退出这一趟。 |
+| `decision_next` | `value.next !== null`（`:1139-1141`） | `value.next`、`receipt` | 不写状态；`input=value.next` 继续循环；`complete_task` 的 `select_work` 置 `observingCompletedStep`。 |
+| `decision_failed` / `decision_threw` | `result.status !== 'ready'`（`:1098-1101`）；`runDriver` 的 `catch`（`:1145-1152`） | 拒绝或异常 | 未停止时写 `failed` 和 `reason`；finally 清 `current`/`failedCardRefs` 并 `changed`。 |
+| `decision_recheck`（这一趟结束后再来一趟） | `runDriver` 末尾 `driver.recheck`（`:1143`） | — | 未停止且 `recheck` 为真就不退出 `while`，马上再跑一趟；`recheck` 在下趟开头清。 |
+| `lane_pass`（看守推进一次） | `startLaneLoop` → `runLane`（`:1165-1267`） | `lane` | 每次推进前 `changed(lane)`（`:1171`）；`select_work` 走排序安全点（`:1174-1178`）。 |
+| `lane_completed` | `value.state === 'completed'`（`:1202-1208`） | 结果 | 写 `completed`；目标已接受且未停止时置 `recheck` + `kickDriver`，否则只收尾。 |
+| `lane_waiting_registered` | `waiting`、`waitBasis !== undefined`、`cursorAtRead !== null`（`:1210-1226`） | `waitBasis` | 写 `waiting_for_reply`，`handedBack=waitBasis`；`waits.register` 并由驱动持有；**不置 `recheck`**（§3.3），结束。 |
+| `lane_waiting_yielded` | 同一 `waiting`，`yieldedContinuationOf(result) !== null`（`:1211`） | continuation | `awaitYielded`：同一个 Session、同一个任务继续（`:1212`）。 |
+| `lane_waiting_plain` | `waiting` 无依据、无 continuation，或 `next === null`（`:1227-1230`） | `reason` | 写 `waiting`，结束。 |
+| `lane_goal_select`（看守拿到 Goal 范围选择） | `value.next.kind === 'select_work' && value.next.taskId === undefined`（`:1232-1239`） | `reason` | 写 `waiting`；已接受 Goal 启动时置 `recheck` + `kickDriver`；结束。不跟去领取别的任务。 |
+| `lane_failed` / `lane_threw` | `result.status !== 'ready'`（`:1198-1199`）；`runLane` 的 `catch`（`:1246-1250`） | 拒绝或异常 | 写 `failed` 和 `reason`。finally（`:1251-1266`）清 `current`、`failedCardRefs`、`activeTaskIds`，并在 `lane.state === 'failed' && driver.accepted && !driver.stopRequested` 时置 `recheck` + `kickDriver`（rw2-01）。 |
+| `pump_no_reply` / `pump_waits_reply` | `pump`（`:733-785`） | `manageState`、消息 | `manageState` 且未停止时：没有待回复把 `waiting_for_reply` 写回 `running`（`:755`）；有待回复且 `waitAfterSend` 或收件人不是 Session 时写 `waiting_for_reply`（`:758`）。 |
+| `reply_observed` / `wait_closed` / `run_paused` / `read_failed` | `awaitWake`（`:788-830`） | continuation、消息 | 回复到了（`answered`/`expired`）返回 `true`，`runLane` 按 continuation 重入；等待被消费/撤回（`consumed`/`withdrawn`）、原 Run 取消，或消息读 `forbidden` 返回 `false`；消息读抛错、execution 非 `ready` 都写 `reason` 后继续轮询；execution 读取抛错向外传播，进入失败出口；原 Run 暂停只写 `reason` 后 `tick`。 |
+| `stop`（人停下） | HTTP `workflow/driver-stop`（`core-routes.ts:520`、`:1355`）→ `stop`（`:1539-1561`） | `ctx`、`{goalRef, taskId?}` | 带 `taskId` 只停这个 Lane（`:1549-1553`）；不带时 `stopDriver` 停整个驱动和全部 Lane（`:1555-1560`），立即返回首个公开对象的快照，取消和排空在后台。 |
+| `close`（关 Host） | Host `close` → `collaborationDriver.close()`（`:1563-1582`） | — | `closed=true`；清空 `handles`；每个对象置 `stopRequested`、Goal `leaveGoalWait`、abort pump、释放 admission；等全部 `done` 和已有 `stopDrain`。不写 `state`，没有取消 pass。 |
+| `read`（读投影） | HTTP `workflow/driver-read`（`core-routes.ts:519`、`:1354`）→ `read`（`:1521-1538`） | `ctx`、`{goalRef, taskId?}` | 不是迁移。有 `taskId` 取那个 Lane；没有时 `publicTargetOf` 取首个公开对象（`:1535-1537`），返回 `snapshot`。 |
+| `tick`（500 ms 心跳） | `tick`（`:405-408`） | `AbortSignal` | `changed` 后 `sleep`；不写枚举。 |
 
-读取失败、`not_ready`、原 Run `paused`、admission 释放等不改变 `state`：`pump` 写 `reason` 后 `tick`（`:694-696`），`awaitWake` 写 `reason` 后 `tick`（`:713`、`:722`、`:730`、`:739`），`awaitAdvanceAdmission` 只放行 Workflow 调用（`:518-572`）。其中 `awaitWake` 返回的读失败（`:711-713`）只是重试；只有抛出的异常才进 DRV-09。
+**三档 `resumeOnStartup` 在启动时具体走哪条。** 这里只写和驱动有关的差别；选择规则和记录格式见 §12.1 第 6b 步（`STATE-MACHINES-SPEC.md:4215`）和 §12.1 “启动重驱”（`:4220-4230`）。
 
-**三档 `resumeOnStartup` 在启动时具体走哪条。** 这里只写和驱动有关的差别；选择规则和记录格式见 §12.1 第 6b 步（`STATE-MACHINES-SPEC.md:4177`）和 §12.1 “启动重驱”（`:4182-4192`）。
-
-- `auto`：核对第 6b 步不写 `GoalInterruption`，把候选列为 `driven`（`src/app/startup-reconcile.ts:619-623`）；第 7 步放行后 `startRedrive` 为 `redriveGoals ∪ interruptedGoals` 的每个 Goal 调一次 `startGoalDriver`（`host.ts:1634-1647`），即无界 `driver_start`。
-- `ask`：第 6b 步写或保留 pending 的 `GoalInterruption`（`startup-reconcile.ts:624-633`）；`startRedrive` 在 `:1635` 直接返回，不启动驱动。唤醒循环照常启动（`host.ts:1653-1656`，`resumeOnStartup !== 'off'`），但等待登记表重建时 `held` 读到 Goal 显示里的 `interruption` 原因，就不登记这个 Goal（`host.ts:837-842`；`goal-wait-wakes.ts:175`、`:190`），所以 `wake` 也不会到它。人 `workflow/driver-start` 后，`onStarted` 把记录改成 `resumed`（`host.ts:803-806`；驱动 `:1155`）。请求队列照常启动、抓取照常重试。
-- `off`：记录、报告、原因和卡同 `ask`；`startRedrive` 同样不启动；`wakeLoop.start` 收到 `resumeOnStartup: false`（`host.ts:1656`），所以队列不武装、不排空（`wake-loop.ts:400-410`），抓取也不重试（`host.ts:1611`），等第一条请求命令。人 `workflow/driver-start` 仍可直接启动驱动。
+- `auto`：核对第 6b 步不写 `GoalInterruption`，把候选列为 `driven`（`src/app/startup-reconcile.ts:619-623`）；`startRedrive` 为 `redriveGoals ∪ interruptedGoals` 的每个 Goal 调一次 `startGoalDriver`（`host.ts:1660-1667`），即 Goal 范围 `start`。
+- `ask`：第 6b 步写或保留 pending 的 `GoalInterruption`（`startup-reconcile.ts:624-633`）；`startRedrive` 在 `:1656` 直接返回，不启动驱动。唤醒循环照常启动，但等待登记表重建时 `held` 读到 Goal 显示里的 `interruption` 原因，就不登记这个 Goal（`host.ts:842-847`；`goal-wait-wakes.ts:175`、`:190`），所以 `wake` 也不会到它。人 `workflow/driver-start` 后，`onStarted` 把记录改成 `resumed`（`host.ts:804-806`；驱动 `:1446`、`:1451`）。请求队列照常启动、抓取照常重试。
+- `off`：记录、报告、原因和卡同 `ask`；`startRedrive` 同样不启动；`wakeLoop.start` 收到 `resumeOnStartup: false`（`host.ts:1675` 一带），所以队列不武装、不排空，抓取也不重试，等第一条请求命令。人 `workflow/driver-start` 仍可直接启动驱动。
 
 ### 18.3 迁移表
 
-列照 §1.4 的约定改一处：本节没有持久 effects，改成“做了什么（调用了什么）”；`原文编号` 不适用，换成 `备注`。`#` 是本节稳定 id，不表示顺序。`from` 为 `∅` 表示还没有句柄。表中的 `—` 表示不写状态（不是迁移）。
+列照 §1.4 的约定改一处：本节没有持久 effects，改成“做了什么（调用了什么）”；`原文编号` 不适用，换成 `备注`。`#` 是本节稳定 id，不表示顺序。`from` 为 `∅` 表示还没有对象。表中的 `—` 表示不写状态（不是迁移）。A 组是 `GoalDriver`，B 组是 `Lane`。
+
+**A. `GoalDriver`。**
 
 | # | from | event | guard | to | 做了什么（调用了什么） | `file:行` | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| DRV-01 | `∅` | `driver_start` / `startup_redrive` / `intervention_start` / `adoption_start` / `wake_new_handle` | `closed` 为假；驱动的浅层准入检查通过（scope、`advance` 可否克隆、完整 GoalRef、Goal 项目匹配，`:1095-1104`） | `running` | `selectProfiles`、算 seed、取 key；无冲突时建 `Handle`、`handles.set`、`changed`、`handle.done = runHandle(handle, once)`；`taskId===null` 时 `await onStarted`；返回 snapshot | `:1091-1156`（初始化 `:1140`，set `:1147`，done `:1152-1154`，onStarted `:1155`） | `once` 只有 `wake` 传 `true`；其余入口传 `false`。完整 Workflow 输入校验在 `workflow.ts:708-745`；通过准入的句柄之后仍可能被 Workflow 拒绝（DRV-08）。 |
-| DRV-02 | `running` / `waiting_for_reply` / `waiting` | `advance_completed`，显式 Task 或 Goal 级但不满足 DRV-03 的条件 | `result.status==='ready'`、`value.state==='completed'`，且不满足 `handle.taskId===null && input.taskId!==undefined` | `completed` | `handle.last=result`；清/更新 `failedCardRefs`、`currentRun`；写 `reason`；返回 | `:839-850`、`:857-875`（写 `:875`） | 这里的“完成”是这个句柄的 Workflow 步骤完成，不是 Goal 完成（`:859-862`）。 |
-| DRV-03 | `running` / `waiting_for_reply` / `waiting` | `advance_completed`，Goal 级且 `handle.taskId===null`、`input.taskId!==undefined` | 同上 | 不变（不写状态） | 造一个不带 `taskId` 的 `select_work`：`handle.current=next`，继续循环；有界时改为 `successor=next; return` | `:863-873` | 这一支不写状态，旧状态可以是 `running` 或 `waiting`；显式 Task 句柄不走这里，它拿到 `completed` 就结束。 |
-| DRV-04 | `running` / `waiting_for_reply` / `waiting` | `advance_waiting_registered` | `waitBasis!==undefined`、`cursorAtRead!==null`、`deps.goalWaits` 返回了对象 | `waiting_for_reply` | `reason`；`wakeWaiting=true`；`waits.register(waitBasis, cursorAtRead)`；建 `wakeGate`；`await gate`；醒来清 gate、`bounded=true`、`wakeWaiting=false`、`waits.leave(goalRef)`；未停止则用 `select_work`（`sessionHint:null`，带 `taskId`）继续 | `:877-909`（写 `:886`，register `:891`，gate `:894`，leave `:899`，recheck `:902-909`） | 醒来的重入是一次有界进入，不是一次 Workflow 调用：它可以先 `select_work`、再领取返回的 `perform`，所以可能连续调用 Workflow 多次。 |
-| DRV-05 | `running` / `waiting_for_reply` / `waiting` | `advance_waiting_yielded` | `value.state==='waiting'`；DRV-04 的条件不成立；`yieldedContinuationOf(result)!==null`；未停止 | `waiting_for_reply` | `reason`；`wakeWaiting=true`；用 `handle.currentRun` 起 `pump(manageState=false)`；`awaitWake` 等精确消息；结束后 abort pump、等 pump、清 `wakeWaiting`；`woken` 且未停止则按 continuation 的 `sessionRef`/`taskId` 造 `select_work`，`handle.current=...`，继续 | `:911-945`（写 `:916`，pump `:925`，awaitWake `:928`，清 `:934`，重入 `:936-944`） | `awaitWake` 是后备轮询，不是登记表。 |
-| DRV-06 | `running` / `waiting_for_reply` / `waiting` | `advance_waiting_plain` | `value.state==='waiting'`；DRV-04/05 都不成立 | `waiting` | 写 `reason`；返回 | `:946-947` | 不登记；之后没有自动唤醒来源（§12.1 `:4192`、GAP-48 `STATE-MACHINES-SPEC.md:5375`）。 |
-| DRV-07 | `running` / `waiting_for_reply` / `waiting` | `advance` 的 `value.next===null` | `result.status==='ready'`、`value.state!=='completed'/'waiting'` | `waiting` | 写 `reason='the Workflow returned no next step'`；返回 | `:949` | 契约说 `waiting`/`completed` 的 `next` 为 `null`（`src/business/workflow/contracts.ts:260-263`）；这条是防御分支。 |
-| DRV-08 | `running` / `waiting_for_reply` / `waiting` | `advance_failed` | `result.status!=='ready'`；`stopRequested` 为假（为真时 `:851` 已 break） | `failed` | 写 `reason=result.reason`；返回 | `:852-856`（写 `:853`） | 拒绝不重试；驱动没有重试状态。 |
-| DRV-09 | `running` / `waiting_for_reply` / `waiting` | `loop_threw` | `catch` 且 `stopRequested` 为假；覆盖整个 `runHandle` 体（`:801-966`） | `failed` | 写 `reason='the Workflow advancement failed: …'` | `:962-966`（写 `:964`） | 停止中抛出被吞掉，不写 `failed`；返回的读失败只重试，不算这条。 |
-| DRV-10 | `running` / `waiting_for_reply` | 循环退出（`input` 为 `null`、有界返回、waiting/completed/failed 已提前 return、`wait_closed`） | `finally`；`!stopRequested`；当前状态仍是 `running` 或 `waiting_for_reply` | `waiting` | `openAdmission?.proceed()`；`handle.current = bounded ? successor : null`；`failedCardRefs=[]`；写 `waiting` | `:967-978`（`current` `:973`，写 `:976-977`） | 这是“主循环结束”的兜底；`wait_closed` 没有单独的迁移，统一落到这里；`stopping` 的最终 `stopped` 由 `stopHandle` 的 drain 写（`:1081`），不在这里。 |
-| DRV-11 | `running` / `waiting_for_reply` | `pump_no_reply` | `manageState` 为真；当前是 `waiting_for_reply` | `running` | 什么都不调用；只写状态 | `:669-670` | 只在 `runWithPump` 的泵里 `manageState=true`（`:756`）；yielded 泵 `manageState=false`（`:925`），不会走这条。 |
-| DRV-12 | `running` / `waiting_for_reply` | `pump_waits_reply` | `manageState` 为真；`needsReply` 里有一条 `waitAfterSend===true`，或收件人不是 Session | `waiting_for_reply` | 写状态；对 `waiting` 里的每条 Session 等待调 `consultOne` → `consumeConsultation`；投影结果 message；写 `reason` | `:671-691`（写 `:672-673`，consult `:674-691`） | 这条可以在 `advanceWork` 还没返回时发生；Workflow 返回后由 `runHandle` 再决定终态。 |
-| DRV-13 | `running` / `waiting_for_reply` / `waiting` | `stop` | `!isTerminal(handle.state)`；`stopDrain===null` | `stopping` | `stopRequested=true`；`stopReason ??= ...`；`changed`；`leaveGoalWait`；abort `activePumpAbort`；释放 admission wait；建 `stopDrain`：`requestCancel`、`await handle.done`、再 `requestCancel`、未终态则 `stopped`、`changed` | `:1064-1085`（写 `stopping` `:1069`，写 `stopped` `:1081`） | `stop` 路由不 await，立即返回第一个目标的 snapshot（`:1220-1226`）。 |
-| DRV-14 | `stopping` | drain 完成 | `!isTerminal(handle.state)` | `stopped` | 见 DRV-13 的后半段；两次 `requestCancel` 覆盖“停止过程中才被 loop 记录下来的晚到 Run”（`:1075-1080`） | `:1074-1083`（写 `:1081`） | 正常情况 `stopping → stopped` 是唯一出口；DRV-15 是例外。 |
-| DRV-15 | `stopping` | `pump_waits_reply` 在 stop 之后落地 | `manageState` 为真；`pump` 的 `readAllOutbox` 在 abort 前已返回且读到 `waitAfterSend`/用户收件人 | `waiting_for_reply` | 写状态；没有检查 `stopRequested` 或当前状态 | `:671-673` 与 `:1067-1072` | 这是违反 DRV-14 唯一出口的竞态；18.7 P2。 |
-| DRV-16 | `waiting_for_reply`（有 `wakeGate`） | `goal_wait_wake` | gate 非空 | `waiting_for_reply`（不写状态） | `wakeGate=null`、`resolve()`；原 `runHandle` 从 `await gate` 醒来，走 DRV-04 的 `:896-909`，再做一次 `select_work` | `:1162-1171`（resolve `:1166`）与 `:895-909` | 这就是 H-12 的路径：读起来是 `waiting_for_reply`，实际会跑一次 `select_work`；`select_work` 通常先跑维护页（`workflow.ts:2710-2712`），拒绝的输入和已交回的回答会在维护页之前返回（`workflow.ts:2699-2708`）。 |
-| DRV-17 | `waiting_for_reply`（yielded，无 gate） | `reply_observed` | `awaitWake` 返回 `true` | `waiting_for_reply`（不写状态） | abort pump、等 pump、清 `wakeWaiting`；未停止则按 continuation 重入一次 | `:927-945` | 这是已有循环内的回复事件。同 Goal 另一个句柄有登记时，`wake` 还会对这个无 gate 的 yielded 句柄再起一个 `runHandle`（DRV-26、18.7 P3）。 |
-| DRV-18 | `waiting_for_reply`（有 gate，`last` 是 ready `waiting` 且没有 continuation） | `driver_start`（新 seed） | `existing.wakeGate!==null`、`existing.last` ready `waiting`、`yieldedContinuationOf(last)===null` | 旧句柄仍是 `waiting_for_reply`（不写状态）；新句柄 `running` | 旧句柄 `stopRequested=true`、`leaveGoalWait(existing)`；`superseded=existing`；新 `Handle` 立即 `handles.set`，`done` 链在旧 `done` 之后；`onStarted` 照样可能调用 | `:1117-1135`（旧 `stopRequested`/leave `:1129-1130`；新 `:1136-1156`） | 旧句柄不写 `stopping`/`stopped`；这条是“顶掉”不是“停止”。 |
-| DRV-19 | `running` / `waiting_for_reply`（gate 或 yielded） / `stopping` | `driver_start`（新 seed） | 不满足 DRV-18，且 `isActive(existing.state)` 或 `existing.wakeWaiting` | 拒绝 `busy`（不迁移） | 返回 `rejected('busy', …)` | `:1132-1133` | `running`、`waiting_for_reply`、`stopping` 都在 `isActive` 里（`:210`），不同 seed 一律 busy；显式 Task 的 yielded 等待也 busy。 |
-| DRV-20 | 任意已有句柄 | `driver_start`（同 seed） | `existing.seed===seed` | 不变 | 直接返回原 snapshot；不调 `runHandle`、不调 `onStarted` | `:1122` | 即使旧句柄已 `completed`/`failed`/`stopped` 也重放旧快照；`closed` 检查在此之前（`:1095`）。 |
-| DRV-21 | `waiting` | `driver_start`（新 seed） | 不满足 DRV-18/19；`waiting` 不是活动状态，`wakeWaiting` 为假 | 新句柄 `running`；旧句柄被 `handles.set` 覆盖 | 新建 `Handle`、覆盖同 key；旧 `handle.current`（可能是有界退出留下的 successor）被丢弃 | `:1117-1147`（覆盖 `:1147`） | 旧句柄的枚举保持 `waiting`；`handles.set` 只换 map 项。旧句柄的 `done` 已结束，不再有人引用；不会调用 `leaveGoalWait`（`waiting` 没有 gate）。 |
-| DRV-22 | `completed` / `failed` / `stopped` | `stop` | `isTerminal` | 不变 | `stop` 的循环 `if (!isTerminal) void stopHandle` 跳过；`stopHandle` 自己也有同样的 guard | `:1066`、`:1222` | 终态不能再停。 |
-| DRV-23 | `completed` / `failed` / `stopped` | `wake` | 有同 Goal 句柄；`wakeGate` 为 `null` | 不变 | `wake` 仍会调 `runHandle(handle, true)`；`handle.current` 在终态路径的 finally 里已被清成 `null`（`:973`），所以循环不执行；`stopped` 还受 `stopRequested` 挡（`:807`） | `:1163-1170`、`:973`、`:807` | 没有在 `runHandle` 入口显式查 `isTerminal`，靠 `current`/`stopRequested` 挡住。 |
-| DRV-24 | `completed` / `failed` / `stopped` | `driver_start`（新 seed） | `existing.seed!==seed`；不满足 DRV-18/19 | 新句柄 `running` | 同 DRV-21：新 `Handle`、覆盖同 key | `:1117-1147` | 终态句柄可以被新 seed 替换；同 seed 只能重放（DRV-20）。旧句柄的枚举保持原终态，新句柄在 `:1140` 初始化 `running`。 |
-| DRV-25 | 任意 | `close` | `closed` 置真 | 不写状态 | 清空 `handles`；每个句柄置 `stopRequested`、`leaveGoalWait`、abort pump、释放 admission；等 `done` 和已有 `stopDrain` | `:1229-1246` | 没有 `stop` 的取消 pass；`running` 句柄的 `state` 保持 `running`，但对象已从 map 移除。已有 `stopDrain` 的 `stopping` 句柄仍会走 DRV-14 写 `stopped`。 |
-| DRV-26 | `waiting` / `waiting_for_reply`（无 gate）/ `running`（无 gate） | `wake` | 同 Goal 另一个句柄有登记，因此 `goal_waits` 调了 `wake`；当前句柄的 `wakeGate===null` | 不变，或由并发的新循环写（竞态） | `runHandle(handle, true)`；`current` 为空时循环直接跳过；`current` 非空时对同一句柄再起一个循环，和已有的 `runHandle` 并发 | `:1163-1170`、`:802`、`:807`、`:973`、`:976` | 当前来源可达：同一个 Goal 可以有多个句柄（`:215-217`），`wake` 会遍历所有句柄。一个句柄两个循环是 18.7 P3。 |
-| DRV-27 | `running` | `stop` 在 advance 返回前到达 | `stopRequested` 为真 | 走 DRV-13/14 | 结果返回后 `:851` 先 break，不处理 `completed`/`waiting`/`failed`；`stopDrain` 再写 `stopped` | `:851`、`:1067-1083` | 停止中的 Workflow 结果被丢弃；晚到的 Run 由第二次 `requestCancel` 处理。 |
-| DRV-28 | 任意 | `read` | 句柄存在 | 不变 | 返回 `snapshot`（`state`、`current`、`last`、`messages`、`reason`、`siblings`） | `:1192-1206`、`:379-391` | 读不是迁移；无 taskId 时取 `[0]`，即第一个匹配句柄加兄弟摘要（18.7 W4）。 |
-| DRV-29 | `running` | `advance_next`（无界进入） | `result.status==='ready'`、`value.state` 不是 `completed`/`waiting`、`value.next!==null`；`bounded` 为假 | 不变（继续循环） | 更新 `failedCardRefs`；`handle.current=value.next`；`input=value.next`；`complete_task` 的 `select_work` 置 `observingCompletedStep` | `:957-960` | 只改 `current`，不写 `state`。 |
-| DRV-30 | `running` / `waiting`（有界进入） | 循环入口读到启动 Run 的 `input` | `bounded` 为真；`startRunRefOf(input)!==null` | 不变 | `successor=input`；返回；finally 把 `handle.current` 写成 successor | `:821-825`、`:973` | 有界进入不启动 Run；留下的输入是 successor。 |
-| DRV-31 | `running` / `waiting`（有界进入） | `advance_next`（有界停在 receipt 或启动 Run 的 `next`） | `bounded` 为真；`value.receipt!==null` 或 `startRunRefOf(value.next)!==null` | 不变 | `successor=value.next`；返回；finally 把 `handle.current` 写成 successor（此前的 `last`/`failedCardRefs`/`currentRun` 更新已发生） | `:953-955`、`:973` | 一次有界进入可以先后调用 Workflow 多次（如选择后领取）；停在这里不等于“一次调用”。 |
-| DRV-32 | `stopping` | `stop` | `stopDrain!==null` | 不变 | 返回同一个 `stopDrain`；不再写状态、不再取消 | `:1065` | 重复 `stop` 不重排空。 |
-| DRV-33 | `waiting_for_reply`（yielded） | `run_paused` | `awaitWake` 读到 `desiredState==='paused'` | 不变 | 写 `reason`；`tick` 500 ms 后重读 | `:720-723`（`tick` `:722`） | 不迁移。 |
-| DRV-34 | `running` / `waiting_for_reply` | `tick` | — | 不变 | `changed`；`sleep(500)`；不写枚举 | `:364-366` | 心跳只让读取/轮询继续。 |
-| DRV-35 | `running` / `waiting_for_reply`（pump 所在） | `pump_consults` | 发件箱里有可咨询的 Session inquiry | 不变 | `consultOne` → `consumeConsultation`；投影 message；写 `reason` | `:674-691`、`:477-478` | 泵消费咨询，不写状态；yielded 泵（`manageState=false`）也走这条。 |
+| DG-01 | `∅` | `driver_start` / `startup_redrive` / `adoption_start` / `wake_new_driver` | 准入通过；同 key 没有驱动 | `running` | `installDriver(accepted=true)`、`handles.set`、`kickDriver`、`await onStarted`；返回 snapshot | `:1393-1452`（install `:1449`，kick `:1450`，onStarted `:1451`） | 进入公开顺序。 |
+| DG-02 | `∅` | `task_start`，没有驱动 | 准入通过 | `waiting` | `installDriver(accepted=false)` 建容器（`:925`），再 `installLane`；不跑 Goal 决定、不调 `onStarted` | `:1455`、`:915-928` | 容器第一次接受 Goal 启动才进公开顺序（DG-11）。 |
+| DG-03 | 任意（未请求停止） | 新一趟决定 | `kickDriver` 发现 `closed`/`stopRequested`/`deciding` 都为假（`:975`） | `running` | 清 `recheck`，`leaveGoalWait`，写 `running`，`changed`，从 `current` 或合成 `select_work` 开始（`:1040-1055`） | `:1039-1055` | 两个来源：新启动和 `recheck`。 |
+| DG-04 | `running` | `decision_completed`，Goal 范围（`input.taskId === undefined`） | `value.state === 'completed'` | `completed` | 写 `reason`；退出 | `:1104-1114` | Goal 完成。 |
+| DG-05 | `running` | `decision_completed`，Goal 入口还钉着 `input.taskId` | 同上，且 `input.taskId !== undefined` | 不变 | 造 Goal 范围 `select_work` 继续；不写状态 | `:1107-1113` | 完成的是被唤醒的那个 Task，不是 Goal。 |
+| DG-06 | `running` | `decision_waiting_registered` | `waitBasis !== undefined`、`cursorAtRead !== null`、`goalWaits` 可解析 | `waiting_for_reply` | `waits.register`、`registered=true`、写 `reason`；退出这一趟 | `:1120-1134` | 登记由驱动持有；唤醒走 DG-17。 |
+| DG-07 | `running` | `decision_waiting_plain` / `next === null` | 无依据或无登记表；或 `value.next === null` | `waiting` | 写 `reason`；退出 | `:1126-1137` | 没有自动唤醒来源。 |
+| DG-08 | `running` | `decision_failed` / `decision_threw` | 未停止 | `failed` | 写 `reason`；finally 清 `current`、`failedCardRefs` | `:1098-1101`、`:1145-1156` | 拒绝不重试。 |
+| DG-09 | 任意（`GoalDriver`） | `stop`（Goal 范围） | `stopDrain === null` | `stopping` | `stopRequested=true`、`stopReason ??=`、`changed`、`leaveGoalWait`、abort pump、释放 admission；建 drain：`requestCancel`、等 `done` + 全部 Lane、再 `requestCancel`、写 `stopped`（Lane 集批量写 `stopped`） | `:1358-1380`（写 `stopping` `:1364`，写 `stopped` `:1377`，Lane 集 `:1376`） | 公开 `stop` 立即返回首个对象快照。 |
+| DG-10 | `stopping` | drain 完成 | — | `stopped` | 见 DG-09 后半段 | `:1369-1378` | 唯一正常出口。 |
+| DG-11 | `waiting_for_reply` / `waiting` / `completed` / `failed` / `stopped`（`stopping` 除外） | Goal 范围 `start`（新 seed） | 不是 `stopping`；`accepted` 时 `deciding === null` 且没有忙的 Lane（`:1423-1428`） | `running` | 替换 seed、flowId、context、profiles；清 `last`/`failedCardRefs`/`reason`/`currentRun`/`stopRequested`/`stopDrain`/`registered`/`recheck`；`enterPublicOrder`、`kickDriver`、`onStarted` | `:1429-1447`（写 `running` `:1441`） | 复用同一个对象，不新建。 |
+| DG-12 | 任意 | 同 seed 的 Goal `start` | `existingDriver.seed === seed` | 不变 | 返回原 snapshot | `:1417` | 终态也重放。 |
+| DG-13 | 任意（`stopping`，或有忙的 Lane / 在跑的决定） | Goal `start`（新 seed） | `state === 'stopping'`，或 `accepted` 且（`deciding !== null` 或 `laneBusy`） | 拒绝 `busy` | — | `:1423-1428` | 排空窗口和忙窗口都拒；from 不限。 |
+| DG-14 | 任意 | `task_start` | 同 key 的 Lane 同 seed | 不变 | 返回 Lane 的 snapshot | `:1459` | 重放。 |
+| DG-15 | 任意 | `task_start`（新 seed） | Lane 忙；或驱动 `state === 'stopping'` | 拒绝 `busy` | — | `:1460-1471` | 排空窗里不装新 Lane。 |
+| DG-16 | `stopped` | `task_start` | — | 不变 | `stopDrain = null`，再装 Lane；下一次 Goal stop 重新取 Lane 集 | `:1472-1480` | 见 rw1-01。 |
+| DG-17 | 任意（已接受、未停止） | `goal_wait_wake`，已接受 Goal 启动 | 未请求停止 | 不变 | `recheck=true`、`kickDriver`，马上返回；循环空闲时 `runDriver` 随后写 `running`（DG-03）。实际来源是 `running`/`waiting`/`waiting_for_reply`；`failed` 本身不挡 `wake`，决定循环失败后仍在推进的 Lane 可以登记等待，随后真实提交仍能唤醒目标 | `:1500-1503` | 不碰 Lane、不 `await` 推进。 |
+| DG-18 | `waiting` / `running`（只有 Task 看守） | `goal_wait_wake`，未接受 Goal 启动 | 未请求停止 | 不变 | `leaveGoalWait`，再 `reopenHandedBack`：把交回过依据的 Lane 用各自的 seed/flow/task 重开一次 `select_work`，并把任务重新加入 `activeTaskIds` | `:1505-1506`、`:952-964` | 不跑 Goal 范围决定。 |
+| DG-19 | 任意 | `close` | — | 不写状态 | 清空 `handles`；置 `stopRequested`、Goal `leaveGoalWait`、abort pump、释放 admission；等 `done` 和 `stopDrain` | `:1563-1582` | 不是人的 stop，不取消。 |
+| DG-20 | `running` | `decision_waiting_yielded`（Goal 入口自己的 yielded 等待） | `yieldedContinuationOf(result) !== null`；未请求停止 | `waiting_for_reply` | `awaitYielded`：写状态、`wakeWaiting=true`、`pump` + `awaitWake`；回复到了用 continuation 的同一 Session、同一任务继续这一趟 | `:1116-1118`、`:1000-1029` | 只有 Goal 入口接受的那次 advance 起了 Run 才会出现；不带依据，不是登记等待。 |
 
-**`running` 的步数。** 主循环没有步数上限：`while (input !== null && !handle.stopRequested)`（`:807`）只靠结果里的 `next`/`waiting`/`completed`/`failed` 或 `stopRequested` 退出。§13 的 ND-8 已经指出，一个零写入、反复返回 `advance` 的 `select_work` 会让驱动热循环（`STATE-MACHINES-SPEC.md:4470`）；本节不另加状态或计数。
+**B. `Lane`。**
+
+| # | from | event | guard | to | 做了什么（调用了什么） | `file:行` | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| DL-01 | `∅` | `decision_long_step` / `task_start` | 驱动不是 `stopping`；同任务没有忙的 Lane | `running` | `installLane`：`makeHandle`（`running`）、记 `currentRun`、`handles.set`、`driver.lanes.set`、`activeTaskIds.add`；`startLaneLoop` | `:930-945`、`:966-968` | 一个任务一个 Lane。 |
+| DL-02 | `running` | `lane_completed` | `value.state === 'completed'` | `completed` | 写 `reason`；已接受且未停止时置 `recheck` + `kickDriver`；返回 | `:1202-1208` | 结束的是这个任务链。 |
+| DL-03 | `running` | `lane_waiting_yielded` | `yieldedContinuationOf(result) !== null` | `waiting_for_reply` | `awaitYielded`：写状态、`wakeWaiting=true`、`pump` + `awaitWake`；回复到了同一 Session/任务继续 | `:1000-1029`、`:1211-1212` | 不带依据的等待。 |
+| DL-04 | `running` | `lane_waiting_registered` | `waitBasis !== undefined`、`cursorAtRead !== null` | `waiting_for_reply` | 写状态、`handedBack=waitBasis`；`waits.register` 由驱动持有；**不置 `recheck`**；返回 | `:1214-1226` | 带依据的出口只登记（DRV-02）。 |
+| DL-05 | `running` | `lane_waiting_plain` / `next === null` | 无依据、无 continuation；或 `next === null` | `waiting` | 写 `reason`；返回 | `:1227-1230` | — |
+| DL-06 | `running` | `lane_goal_select` | `value.next.kind === 'select_work'` 且 `taskId === undefined` | `waiting` | 写 `reason`；已接受时 `recheck` + `kickDriver`；返回 | `:1232-1239` | 不跟去别的任务。 |
+| DL-07 | `running` | `lane_failed` / `lane_threw` | 未停止 | `failed` | 写 `reason`；finally 清 `current`/`failedCardRefs`、`activeTaskIds.delete`；`failed && accepted && !stopRequested` 时 `recheck` + `kickDriver` | `:1198-1199`、`:1246-1266` | rw2-01。 |
+| DL-08 | 任意非终态，或有停止残留的终态 | `stop({taskId})` | `stopDrain === null`；不是“终态且无残留”（`:1360`、`:1347-1349`） | `stopping` | 同 DG-09 的停止协议，`lanes` 为空；drain 写 `stopped` | `:1358-1380` | 只停这一个 Lane；有残留的终态 Lane 也要排空。 |
+| DL-09 | `stopping` | drain 完成 | — | `stopped` | 写 `stopped`、`changed` | `:1377` | — |
+| DL-10 | `waiting_for_reply`（`handedBack !== null`） | `goal_wait_wake`，只有 Task 看守 | 未请求停止 | `running` | `reopenHandedBack`：清 `handedBack`/`last`/`reason`，写 `running`，装该任务的 `select_work`，`activeTaskIds.add`，重开 | `:952-964` | 交回的依据仍成立，重开一次该任务的 `select_work`，由它重新采游标和依据。 |
+| DL-11 | `waiting` / `waiting_for_reply`（`handedBack !== null`）/ `completed` / `failed` / `stopped` | `task_start`（新 seed） | 不是 `stopping`；同任务没有忙的 Lane | `running`（新 Lane） | `installLane` 覆盖同 key；旧 Lane 的枚举不变 | `:1455-1480`、`:930-945` | `laneBusy` 只按活动状态和 `handedBack` 判（`:948-950`）。 |
+| DL-12 | 任意 | 同 seed 的 `task_start` | `existingLane.seed === seed` | 不变 | 返回原 snapshot | `:1459` | — |
+| DL-13 | 任意 | `close` | — | 不写状态 | 同 DG-19：置 `stopRequested`、abort pump、释放 admission；等 `done` | `:1563-1582` | 对象已从 `handles` 移除。 |
+| DL-14 | `waiting_for_reply` | `pump_no_reply` | `manageState` 为真；未停止；本次读出没有待回复 | `running` | 只写状态 | `:755` | 等回复被消费后同一轮清掉；yielded 泵的 `manageState=false`，不走这条。 |
+| DL-15 | `running` / `waiting_for_reply` | `pump_waits_reply` | `manageState` 为真；未停止；有待回复，且 `waitAfterSend` 或收件人不是 Session | `waiting_for_reply` | 写状态；对 Session 收件人的每条等待 `consultOne` → `consumeConsultation`，投影消息、写 `reason` | `:758`、`:761-779` | 可以在 `advanceWork` 还没返回时发生。 |
+
+**步数。** 决定循环的 `while`（`:1039`）只靠 `stopRequested` 和 `recheck` 退出；看守的 `while`（`:1170`）只靠输入为空或 `stopRequested` 退出。两者都没有步数上限；§13 的 ND-8 已指出零写入、反复返回 `advance` 的 `select_work` 会让循环热转（`:4508`，ND-8 从 `:4504` 起），本节不另加状态或计数。
 
 ### 18.4 不允许的转换
 
 | from | event | 结果 | 为什么（代码怎么挡 / 为什么走不到） |
 | --- | --- | --- | --- |
-| `completed` / `failed` / `stopped` | `stop` | 忽略 | `stop` 只对 `!isTerminal` 的句柄调 `stopHandle`（`:1222`）；`stopHandle` 自己也在 `:1066` 返回。 |
-| `stopped` | `wake` | 不做事 | `wake` 会找到这个句柄（stop 不从 `handles` 删除），但没有 gate，于是 `runHandle(handle, true)`（`:1167-1169`）；`stopRequested` 在 `:807` 挡住循环。 |
-| `completed` / `failed` | `wake` | 不做事（靠 `current` 为空） | `runHandle` 入口没有 `isTerminal` 检查；终态的 `finally` 已把 `current` 写成 `null`（`:973`），所以 `:802` 的 `input` 为 `null`，循环不执行。这是“靠字段空”而不是显式 guard；若将来有路径在终态留下非空 `current`，`wake` 会再调 Workflow。 |
-| `stopping` | `wake` | 不做事 | `stopHandle` 在 `:1071` 先 `leaveGoalWait`（gate 清空），`stopRequested` 在 `:807` 挡住循环；`wake` 的 `runHandle` 入口没有别的事可做。 |
-| `stopping` | advance 的 `completed` / `waiting` / `failed` | 忽略结果 | 结果返回后先 `if (handle.stopRequested) break;`（`:851`），在 `:852` 之前退出；只有 `stopDrain` 写 `stopped`（`:1081`）。 |
-| `stopping` | `pump_waits_reply` | **不是**不允许：代码会写 `waiting_for_reply` | `pump` 的 `:672-673` 只检查 `manageState` 和消息，不检查 `stopRequested`/当前状态；`stopHandle` 在 `:1072` abort 的是 pump 的 signal，但 `readAllOutbox` 已经返回的页仍会走到 `:673`。这是违反本表其它行的真实竞态，18.7 P2。 |
-| `waiting_for_reply`（有 gate） | `driver_start` 同 seed | 重放，不迁移 | `:1122` 在 busy 判断之前；同 seed 永远返回原 snapshot，不调 Workflow、不调 `onStarted`。 |
-| `waiting_for_reply`（gate 或 yielded） | `driver_start` 新 seed，但不是 DRV-18 的 parked plain wait | `busy` | `isActive('waiting_for_reply')` 为真（`:210`），`:1132-1133` 拒绝；yielded 等待也有 `wakeWaiting=true`（`:918`），同样 busy。 |
-| `stopping` | `driver_start` 新 seed | `busy` | `isActive('stopping')` 为真（`:210`），`:1132-1133`。 |
-| `running` | `driver_start` 新 seed | `busy` | `isActive('running')` 为真（`:210`），`:1132-1133`；busy 判断和 `handles.set` 在同一个同步块里（`:1112-1117`）。 |
-| `waiting` | `driver_start` 同 seed | 重放，不迁移 | `:1122`；即使 `waiting` 不是活动状态，同 seed 也不新建。 |
-| `completed` / `failed` / `stopped` | `driver_start` 同 seed | 重放，不迁移 | 同上；`closed` 检查（`:1095`）优先，`close` 之后是 `unavailable` 而不是重放。 |
-| 任意 | `driver_start`，`closed` 为真 | `unavailable` | `:1095`；`close` 先清空 map（`:1230-1232`），所以不会有旧句柄可重放。 |
-| 任意 | `driver_start`，驱动的浅层准入检查不通过 | `forbidden` / `invalid` | 作用域、`advance` 可否克隆、完整 GoalRef、Goal 项目匹配（`:1095-1104`）；这些在状态机之前，不建句柄。完整 Workflow 输入校验在 `workflow.ts:708-745`，通过准入的句柄之后仍可能被 Workflow 拒绝。 |
-| 任意 | `stop` / `read`，scope 不合法或 Goal 不在项目内 | `forbidden` / `invalid` | `:1207-1214`、`:1192-1199`；不建、不改。 |
-| 任意 | `stop` / `read`，没有匹配句柄 | `not_found` | `:1220`、`:1204`；`close` 清空 map 后也是 `not_found`。 |
-| 同一个 Goal 的 `stopped`/终态句柄 | `wake`（有句柄） | 不新建句柄 | `wake` 只要 `parked.length > 0` 就只处理已有句柄（`:1162-1171`），不会走到 `:1173-1177` 的新建分支；所以 `wake` 不能把终态句柄“复活”，只有新 seed 的 `driver_start` 能替换（DRV-24）。 |
-| 有 pending `GoalInterruption` 的 Goal（`ask`/`off`） | `wake`（登记表） | 当前来源走不到 | 等待登记表重建时 `held` 读到 Goal 显示的 `interruption` 原因就跳过（`host.ts:837-842`；`goal-wait-wakes.ts:175`、`:190`），不会 `register`，队列也不会为它调 `wake`。驱动本身没有读这条记录；如果直接调 `wake` 且没有句柄，`:1173-1177` 会起一个，`onStarted` 会把记录改成 `resumed`（`:1155`）。这是调用边界，18.7 N2。 |
-| `waiting_for_reply`（yielded / `pump` 等待，无 gate）、`running`（无 gate） | 登记表 `wake`（同 Goal 另一个句柄有登记） | **会再起一个循环** | `wake` 对同 Goal 的每个句柄都处理（`:1162-1170`）：有 gate 的 resolve；没有 gate 的，不管是 yielded 等待、`pump` 等待还是正在跑，都调 `runHandle(handle, true)`。这类句柄的 `current` 通常非空（`:957` 或 `:1140`），新循环会和已有的 `runHandle` 并发。18.7 P3。 |
-| 同一个句柄 | 两次 `goal_wait_wake` 紧邻到达 | 第二次通常走不到 | 第一次 resolve gate 后，原循环在同一个微任务里走到 `:899` 的 `leave`；登记表已删除，后续提交不会再次标记它。只有直接调 `wake` 才可能在 gate 清空后走 `:1167-1169`。 |
-| 任意 | `close` 之后 `wake` 无句柄 | 不新建 | `wake` 会调 `startHandle`，但 `closed` 在 `:1095` 返回 `unavailable`；`wake` 忽略返回值（`:1177`），所以从外面看是静默无操作。 |
-| `paused` / `cancelled` 的 Goal | `driver_start` | 不被驱动层拒绝 | 驱动不读 `desiredState`（18.1）；它照常建 `running` 句柄，再由 Workflow 的 owner 守卫返回 `waiting` 或拒绝。所以这里不能写成“不可能”；只能写“驱动层没有这条规则”。 |
-
-注：表中写 `wake` 在 `stopped`/`stopping`/终态上做什么，是“如果调用发生”的代码结果。单句柄时这些 `wake` 不会到达（`stop`/`leave` 后这个 Goal 没有登记）；多句柄时，只要同 Goal 还有一个已登记句柄，`wake` 就会遍历到这些句柄（对 `stopped`/`stopping`/终态通常是 no-op）。能到达的 `wake` 有三种：有句柄且 `wakeGate` 非空（DRV-16）；同 Goal 另一个句柄有登记，而当前句柄无 gate（DRV-26，可能并发）；没有句柄（DRV-01 的 `wake_new_handle`）。
+| `completed` / `failed` / `stopped`（`Lane`，无停止残留） | `stop({taskId})` | 忽略 | `stopAdvance` 对终态且无残留的 Lane 直接返回（`:1360`、`:1347-1349`）；终态不再取消。有停止残留的终态 Lane 仍进排空（DL-08）。 |
+| 任意（`GoalDriver`） | `stop({goalRef})` | 走 DG-09 | 公开 `stop` 对 Goal 仍调 `stopDriver`（`:1555-1560`）；`stopDrain === null` 时终态 Goal 会先写 `stopping` 再写 `stopped`，`stopDrain` 非空时 `stopAdvance` 直接返回。 |
+| `stopping` | Goal `start`（新 seed） | `busy` | `state === 'stopping'` 的排空窗口一律拒（`:1423-1428`）。 |
+| `accepted` 且（`deciding !== null` 或 `laneBusy`） | Goal `start`（新 seed） | `busy` | `:1423-1428`；from 不限，`waiting`/`completed`/`failed`/`stopped` 也可能因忙的 Lane 被拒。 |
+| `waiting_for_reply`（`handedBack !== null`） | `task_start`（新 seed） | 装入新 Lane | `laneBusy` 把“交回依据的停等”判成不忙（`:948-950`）；旧 Lane 的枚举不变。 |
+| `stopping` | `task_start` | `busy` | `:1469-1471`；排空已经取走 Lane 集，新 Lane 会逃出这次排空（rw1-01）。 |
+| `stopping` | 推进返回 `completed` / `waiting` / `failed` | 忽略结果 | 结果返回后先 `if (stopRequested) return`（驱动 `:1097`、看守 `:1197`），不写状态；只有 drain 写 `stopped`。 |
+| `stopping` | `pump_waits_reply` | 不写 | `pump` 写状态前都查 `!handle.stopRequested`（`:755`、`:758`）；P2 已修。 |
+| `completed` / `failed` | `wake` | 会再跑一趟 | `wake` 只看 `stopRequested`（`:1499`），不按终态挡：置 `recheck` + `kickDriver`，`runDriver` 随后写 `running`（DG-03/DG-17）。`failed` 本身不阻止登记或唤醒：决定循环失败后仍在推进的 Lane 可以登记等待，随后真实提交仍会唤醒目标；实际检查的只有 `stopRequested`。 |
+| 任意 | 两趟决定 | 不会发生 | `deciding` 是单一 promise，`kickDriver` 见到非空就返回（`:975`）；`recheck` 只补偿“清空前到达的唤醒”（`:989`）。 |
+| 任意 | 同一任务两个 Lane | 不会发生 | Lane 表按键唯一（`:942`），`installLane` 覆盖同 key；驱动按 Goal 唯一（`:410-412`）。 |
+| 任意 | `driver_start`，`closed` 为真 | `unavailable` | `:1396`；`close` 先清空 `handles`（`:1566`）。 |
+| 任意 | `driver_start`，浅层准入不通过 | `forbidden` / `invalid` | `:1396-1405`；不建对象。 |
+| 任意 | `stop` / `read`，scope 不合法或 Goal 不在项目内 | `forbidden` / `invalid` | `:1522-1527`、`:1539-1546`。 |
+| 任意 | `stop` / `read`，没有匹配对象 | `not_found` | `:1532`、`:1551`、`:1555`。 |
+| `waiting_for_reply` / `waiting` / `completed` / `failed` / `stopped` | Goal `start`（新 seed） | 装入同一个驱动 | 不新建对象（DG-11）；旧的 `registered`、`stopDrain` 等被清。 |
+| 只有 Task 看守的驱动 | `goal_wait_wake` | 只重开交回依据的 Lane | `:1505-1506`、`:952-964`；不跑 Goal 范围决定（§3.1）。 |
+| `paused` / `cancelled` 的 Goal | `driver_start` | 不被驱动层拒绝 | 驱动不读 `desiredState`（18.1）；它照常写 `running`，再由 Workflow 的 owner 守卫返回 `waiting` 或拒绝。 |
 
 ### 18.5 状态图
 
-图中的边画 18.3 里真正写 `state` 的迁移；DRV-18/21/24 的替换边画的是同一个键上新句柄在 `:1140` 的 `running` 初始化，不是旧句柄的迁移。18.3 中标“不写状态”“重放”“busy”“忽略”的行不画边，列在图后的注里，以保证两边能逐行对照。
+图中的边画 18.3 里真正写 `state` 的迁移；DL-11 的替换边画的是同 key 上的新 `running` 对象，DG-11 是同一个 `GoalDriver` 装入新启动状态（`:1441`），不是新对象。18.3 中标“不写状态”“重放”“busy”“忽略”的行不画边，列在图后的注里。
 
 ```mermaid
 stateDiagram-v2
-  [*] --> running : DRV-01 start / startup_redrive / intervention / adoption / wake(no handle)
-  running --> completed : DRV-02 advance completed (Task handle)
-  waiting_for_reply --> completed : DRV-02 advance completed after a wake
-  waiting --> completed : DRV-02 completed via a sibling wake
-  running --> waiting_for_reply : DRV-04 waiting + waitBasis + registry
-  running --> waiting_for_reply : DRV-05 waiting + yielded continuation
-  running --> waiting_for_reply : DRV-12 pump sees waitAfterSend
-  waiting --> waiting_for_reply : DRV-04 / DRV-05 park again
-  waiting_for_reply --> waiting_for_reply : DRV-04 / DRV-05 / DRV-12 park again
-  waiting_for_reply --> running : DRV-11 pump sees no needsReply
-  running --> waiting : DRV-06 waiting without park
-  running --> waiting : DRV-07 advance next=null
-  running --> waiting : DRV-10 loop exit
-  waiting --> waiting : DRV-06 / DRV-07 no park after a wake
-  waiting_for_reply --> waiting : DRV-06 / DRV-07 no park after a wake
-  waiting_for_reply --> waiting : DRV-10 loop exit
-  running --> failed : DRV-08 advance rejected
-  running --> failed : DRV-09 loop operation threw
-  waiting --> failed : DRV-08 / DRV-09 (via a sibling wake)
-  waiting_for_reply --> failed : DRV-08 / DRV-09
-  running --> stopping : DRV-13 stop
-  waiting_for_reply --> stopping : DRV-13 stop
-  waiting --> stopping : DRV-13 stop
-  stopping --> stopped : DRV-14 drain done
-  stopping --> waiting_for_reply : DRV-15 pump race (not allowed)
-  waiting --> running : DRV-21 same key, new Handle (old enum unchanged)
-  waiting_for_reply --> running : DRV-18 same key, new Handle; old stays waiting_for_reply
-  completed --> running : DRV-24 same key, new Handle (old enum unchanged)
-  failed --> running : DRV-24 same key, new Handle (old enum unchanged)
-  stopped --> running : DRV-24 same key, new Handle (old enum unchanged)
+  [*] --> running : DG-01 Goal start / wake(no driver)
+  [*] --> waiting : DG-02 a container from a Task start
+  running --> running : DG-03 another decision pass
+  waiting --> running : DG-03 another decision pass
+  waiting_for_reply --> running : DG-03 another decision pass
+  running --> completed : DG-04 decision completed
+  running --> waiting_for_reply : DG-06 waiting + basis + registry
+  running --> waiting_for_reply : DG-20 goal-level yielded continuation
+  running --> waiting : DG-07 no basis / next null
+  running --> failed : DG-08 rejected / threw
+  running --> stopping : DG-09 stop
+  waiting --> stopping : DG-09 stop
+  waiting_for_reply --> stopping : DG-09 stop
+  completed --> stopping : DG-09 stop
+  failed --> stopping : DG-09 stop
+  stopped --> stopping : DG-09 stop (stopDrain cleared)
+  stopping --> stopped : DG-10 drain done
+  waiting_for_reply --> running : DG-11 same object, new Goal seed
+  waiting --> running : DG-11 same object, new Goal seed
+  completed --> running : DG-11 same object, new Goal seed
+  failed --> running : DG-11 same object, new Goal seed
+  stopped --> running : DG-11 same object, new Goal seed
+  completed --> running : DG-17 wake
+  failed --> running : DG-17 wake
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> running : DL-01 install (long step / Task start)
+  running --> completed : DL-02
+  running --> waiting_for_reply : DL-03 yielded continuation
+  running --> waiting_for_reply : DL-04 waiting + basis handed back
+  running --> waiting_for_reply : DL-15 pump sees waitAfterSend
+  waiting_for_reply --> running : DL-14 pump clears the wait
+  running --> waiting : DL-05 plain wait / next null
+  running --> waiting : DL-06 a Goal-scope selection
+  running --> failed : DL-07 rejected / threw
+  waiting_for_reply --> running : DL-10 reopen the handed-back watch
+  waiting_for_reply --> running : DL-11 same key, new Lane
+  waiting --> running : DL-11 same key, new Lane
+  completed --> running : DL-11 same key, new Lane
+  failed --> running : DL-11 same key, new Lane
+  stopped --> running : DL-11 same key, new Lane
+  running --> stopping : DL-08 stop
+  waiting_for_reply --> stopping : DL-08 stop
+  waiting --> stopping : DL-08 stop
+  completed --> stopping : DL-08 stop (with residual)
+  failed --> stopping : DL-08 stop (with residual)
+  stopped --> stopping : DL-08 stop (with residual)
+  stopping --> stopped : DL-09 drain done
 ```
 
 注（不画边的 18.3 行）：
 
-- DRV-03：Goal 级完成分支（`handle.taskId===null && input.taskId!==undefined`）先改 `current` 继续或留下 successor，不写状态；旧状态可以是 `running`、`waiting_for_reply` 或 `waiting`。
-- DRV-16、DRV-17：`waiting_for_reply` 的唤醒/回复本身不写状态；后续走 DRV-02…DRV-12、DRV-29…DRV-31 或 DRV-10。
-- DRV-19、DRV-20、DRV-22、DRV-23、DRV-25、DRV-27、DRV-28、DRV-29…DRV-35：重放、`busy`、终态忽略、`close`、停止中丢结果、`read`、只改 `current`/`reason` 或只等待，都不写 `state`。
-- DRV-18、DRV-21、DRV-24 的 `→ running` 是同一个键上换新句柄：新句柄在 `:1140` 初始化 `running`，`:1147` 覆盖 map 项；旧句柄的枚举不变（`:1129-1130`）。
-- DRV-26：`wake` 本身不写 `state`，但它可能对同一个句柄再起一个 `runHandle`（18.7 P3）；新循环随后走 DRV-02…DRV-12，所以那些边也适用于它。
-- DRV-15 是唯一一条“代码会走、但本表认为不允许”的边（图上标 not allowed），画出来是为了让图与代码一致；它就是 18.7 P2。
+- DG-05、DG-12、DG-18、DG-19：Goal 完成分支里的特殊重选、重放、`close`，都不写 `GoalDriver.state`。DG-17 本身不写状态；循环空闲时由 DG-03 写 `running`，终态被直接 `wake` 也走这条（图上 `completed/failed → running`）。
+- DG-09 的 from 是任意：`stopDrain === null` 时 `stopped`/`completed`/`failed` 也会进 `stopping`；`stopDrain` 非空时 `stopAdvance` 直接返回。
+- DG-13…DG-16、DL-12、DL-13：`busy`、排空窗拒绝、新 seed 装入前的前置、重放、`close`，都不写状态。
+- DL-10（`reopenHandedBack`）的 `waiting_for_reply → running` 画在图上；它与 DL-11 的新 Lane 替换不是同一条，旧 Lane 的状态不变。
+- DG-11 是同一个 `GoalDriver` 上的新启动：装入新 seed 时 `state` 在 `:1441` 写 `running`，不新建对象。
+- DL-11 的替换是先 `installLane` 覆盖同 key，旧 Lane 的枚举不变（`:1455-1480`）。
+- DL-14、DL-15 是 `pump` 的两个方向：清掉等回复写回 `running`（`:755`）、看到待回复写 `waiting_for_reply`（`:758`）；两者都只在 `manageState` 为真且未停止时发生。
+- DL-08 的 from 含“有停止残留的终态 Lane”：终态无残留时 `stopAdvance` 直接返回（`:1360`），有残留时仍写 `stopping` 并排空。
+- Goal 的排空在 `:1376` 批量把全部 Lane 写 `stopped`；图上走同一条 `stopping → stopped`（DL-09），不另画边。
 
 ### 18.6 实现对照
 
-**A. 全部 `state` 写入点（12 处赋值 + 1 处初始化 = 13 处）。**
+**A. `GoalDriver` 的 `state` 写入点。**
 
 | # | `file:行` | 在哪个函数 | 写入 | 对应 18.3 |
 | --- | --- | --- | --- | --- |
-| W-01 | `src/app/collaboration-driver.ts:1140` | `startHandle` | `state: 'running'`（初始化） | DRV-01、DRV-18、DRV-21、DRV-24 |
-| W-02 | `:670` | `pump` | `running`（只有 `manageState` 且当前是 `waiting_for_reply`） | DRV-11 |
-| W-03 | `:673` | `pump` | `waiting_for_reply`（`manageState` 为真，且 `waitAfterSend` 或非 Session 收件人） | DRV-12、DRV-15 |
-| W-04 | `:853` | `runHandle` | `failed`（advance 非 ready） | DRV-08 |
-| W-05 | `:875` | `runHandle` | `completed`（advance completed） | DRV-02 |
-| W-06 | `:886` | `runHandle` | `waiting_for_reply`（登记等待） | DRV-04 |
-| W-07 | `:916` | `runHandle` | `waiting_for_reply`（yielded 等待） | DRV-05 |
-| W-08 | `:947` | `runHandle` | `waiting`（waiting 无登记/无 continuation） | DRV-06 |
-| W-09 | `:949` | `runHandle` | `waiting`（`next===null`） | DRV-07 |
-| W-10 | `:964` | `runHandle` | `failed`（catch） | DRV-09 |
-| W-11 | `:977` | `runHandle` | `waiting`（finally 兜底） | DRV-10 |
-| W-12 | `:1069` | `stopHandle` | `stopping` | DRV-13 |
-| W-13 | `:1081` | `stopHandle`（`stopDrain` 的异步体） | `stopped`（未终态时） | DRV-14 |
+| W-01 | `:905` | `makeHandle` | `running`（初始化） | DG-01 |
+| W-02 | `:925` | `installDriver` | `waiting`（未接受 Goal 启动的容器） | DG-02 |
+| W-03 | `:1044` | `runDriver` | `running`（一趟决定开始） | DG-03 |
+| W-04 | `:1099` | `runDriver` | `failed`（推进非 ready） | DG-08 |
+| W-05 | `:1114` | `runDriver` | `completed` | DG-04 |
+| W-06 | `:1126` | `runDriver` | `waiting_for_reply`（登记等待） | DG-06 |
+| W-07 | `:1128`、`:1131` | `runDriver` | `waiting`（无登记表 / 无依据） | DG-07 |
+| W-08 | `:1137` | `runDriver` | `waiting`（`next === null`） | DG-07 |
+| W-09 | `:1150` | `runDriver` | `failed`（catch） | DG-08 |
+| W-10 | `:1364` | `stopAdvance` | `stopping` | DG-09 |
+| W-11 | `:1377` | `stopAdvance` 的 drain | `stopped` | DG-10 |
+| W-12 | `:1441` | `startHandle` | `running`（新 seed 装入） | DG-11 |
+| W-23 | `:1004` | `awaitYielded`（经 `runDriver`） | `waiting_for_reply`（Goal 入口的 yielded 等待） | DG-20 |
 
-**B. 读 `state` 的分支。**
+**B. `Lane` 的 `state` 写入点。**
+
+| # | `file:行` | 在哪个函数 | 写入 | 对应 18.3 |
+| --- | --- | --- | --- | --- |
+| W-13 | `:905` | `makeHandle`（经 `installLane`） | `running`（初始化） | DL-01、DL-11 |
+| W-14 | `:755` | `pump` | `running`（清掉等回复，且未停止） | DL-14 |
+| W-15 | `:758` | `pump` | `waiting_for_reply`（`waitAfterSend`，且未停止） | DL-15 |
+| W-16 | `:1004` | `awaitYielded` | `waiting_for_reply`（yielded） | DL-03 |
+| W-17 | `:1203` | `runLane` | `completed` | DL-02 |
+| W-18 | `:1215` | `runLane` | `waiting_for_reply`（交回依据） | DL-04 |
+| W-19 | `:1227`、`:1230`、`:1234` | `runLane` | `waiting` | DL-05、DL-06 |
+| W-20 | `:1199`、`:1248` | `runLane` | `failed`（非 ready / catch） | DL-07 |
+| W-21 | `:958` | `reopenHandedBack` | `running` | DL-10 |
+| W-22 | `:1364`、`:1377` | `stopAdvance` | `stopping`、`stopped` | DL-08、DL-09 |
+| W-24 | `:1376` | `stopAdvance` 的 drain（Goal 排空） | `stopped`（批量写全部 Lane） | DG-09 |
+
+**C. 读 `state` 的分支。**
 
 | # | `file:行` | 在哪个函数 | 读法 | 用途 / 对应 18.3 |
 | --- | --- | --- | --- | --- |
-| R-01 | `:209-211` | `isActive` | `running` / `waiting_for_reply` / `stopping` | `start` 的 busy 判断（`:1132`）；`stopping` 也算活动。 |
-| R-02 | `:212-214` | `isTerminal` | `completed` / `failed` / `stopped` | `stopHandle`（`:1066`）、drain（`:1081`）、`stop`（`:1222`）。 |
-| R-03 | `:351` | `changed` | `handle.state` 进 digest | 变更通知；不迁移。 |
-| R-04 | `:375` | `handleSiblings` | 兄弟句柄的 `state` | `snapshot.siblings`；不迁移。 |
-| R-05 | `:385` | `snapshot` | `handle.state` | `driver-read` 的返回值；不迁移。 |
-| R-06 | `:670` | `pump` | `handle.state === 'waiting_for_reply'` | 只有这一种情况把状态改回 `running`；DRV-11。 |
-| R-07 | `:976` | `runHandle` | `handle.state === 'running'` 或 `'waiting_for_reply'`，且 `!stopRequested` | 决定 finally 是否写 `waiting`；DRV-10。 |
-| R-08 | `:1066` | `stopHandle` | `isTerminal(handle.state)` | 终态直接返回；DRV-22。 |
-| R-09 | `:1081` | `stopHandle` 的 drain | `isTerminal(handle.state)` | 只有非终态才写 `stopped`；DRV-14。 |
-| R-10 | `:1132` | `startHandle` | `isActive(existing.state) || existing.wakeWaiting` | 不同 seed 的 busy；DRV-19。 |
-| R-11 | `:1222` | `stop` | `isTerminal(handle.state)` | 只对非终态调 `stopHandle`；DRV-22。 |
-| R-12 | `:1192-1205` | `read` | 不直接读 `state`，但取句柄后返回 `snapshot` | 投影；DRV-28。 |
+| R-01 | `:210-215` | `isActive` / `isTerminal` | `running` / `waiting_for_reply` / `stopping`；`completed` / `failed` / `stopped` | `laneBusy`（`:948`）、`stopAdvance`（`:1360`）。 |
+| R-02 | `:442-458` | `driverStateForRead` | 按 18.1 A 表的顺序 | `driver-read` 的 Goal 状态；不迁移。 |
+| R-03 | `:448`、`:451` | `driverStateForRead` | `driver.state` 的 `failed` / `waiting_for_reply` 且 `!laneRunning` | 公开状态表的两行。 |
+| R-04 | `:455` | `driverStateForRead` | `driver.state === 'running'`、`deciding !== null`、`laneRunning` | running 行。 |
+| R-05 | `:465` | `snapshot` | `taskId === null` 时走 `driverStateForRead`，否则 `handle.state` | 公开投影。 |
+| R-06 | `:376-398` | `announceHandle` | Goal 用 `driverStateForRead` 加 Lane 摘要；Lane 用 `handle.state` | 变更通知；不迁移。 |
+| R-07 | `:948-950` | `laneBusy` | `isActive` 且不是“交回依据的 `waiting_for_reply`” | `start` 的 busy（`:1460`）。 |
+| R-08 | `:1423-1428` | `startHandle` | `state === 'stopping'`、`deciding !== null`、`laneBusy` | Goal start 的 busy。 |
+| R-09 | `:1396` | `startHandle` | `closed` | 关闭后拒绝新 start。 |
 
-**C. 其它标志的写入/读取点（和状态一起决定行为）。**
+**D. 其它标志的写入/读取点。**
 
 | 标志 | 写入 | 读取 | 对 18.3 的影响 |
 | --- | --- | --- | --- |
-| `stopRequested` | `:1067`、`:1129`、`:1143`（初始化）、`:1236` | `:519`、`:563`、`:654`、`:675`、`:705`、`:807`、`:851`、`:900`、`:915`、`:935`、`:963`、`:976` | 挡住所有循环和 admission；DRV-13、DRV-18、DRV-22、DRV-27。 |
-| `wakeWaiting` | `:888`、`:918`、`:898`、`:934`、`:1143` | `:1132` | parked 等待的 busy；DRV-19。 |
-| `wakeGate` | `:894`、`:896`、`:1061`、`:1143`、`:1166` | `:1060`、`:1126`、`:1165` | `wake` 选 resolve 还是 `runHandle`；DRV-16、DRV-18。 |
-| `current` | `:869`、`:943`、`:957`、`:973`、`:1140` | `:802`、`:386` | `runHandle` 的下一个输入；DRV-03、DRV-10、DRV-26。 |
-| `currentRun` | `:749`、`:849`、`:1142` | `:708`、`:924`、`:984` | `awaitWake`/`requestCancel` 的目标 Run；DRV-05、DRV-13。 |
-| `last` | `:839` | `:1126-1128` | 判断能否顶掉 parked plain wait；DRV-18。 |
-| `stopDrain` | `:1074` | `:1065`、`:1084`、`:1241` | 防重复排空；DRV-13、DRV-14、DRV-25、DRV-32。 |
-| `activePumpAbort` | `:754`、`:923`、`:769`、`:932`、`:1145` | `:1072`、`:1238` | stop/close 打断泵；DRV-13、DRV-25。 |
-| `closed` | `:339`（初始化）、`:1230` | `:348`、`:1095` | 关闭后拒绝新 start；DRV-01、DRV-25。 |
+| `stopRequested` | `:1362`、`:1438`（复位）、`:1571` | `:1039`、`:1050`、`:1065`、`:1097`、`:1170`、`:1197`、`:1213` | 挡住循环、admission 和搬运；DG-09、DG-13、DG-15、DL-08。 |
+| `wakeWaiting` | `:1006`、`:1021` | `:1348` | 残留判定；DL-03。 |
+| `stopDrain` | `:1369` | `:1359`、`:1440`、`:1472`、`:1576` | 防重复排空；DG-09、DG-10、DG-16、DL-08。 |
+| `currentRun` | `:1064`、`:1095`、`:938-939`、`:1195` | `:793`、`:1009`、`:1279` | 等待和取消的目标 Run；DG-09、DL-03。 |
+| `current` | `:1055`、`:1110`、`:1154`、`:1433`、`:1183`、`:1241` | `:1046`、`:1168` | 下一次循环的输入；DG-05、DG-11、DL-06。 |
+| `last` | `:1087`、`:1187` | `:1001`、`snapshot` | yielded continuation 的识别。 |
+| `accepted` | `:428`、`:921-924` | `:421`、`:1204`、`:1235`、`:1261`、`:1424`、`:1476` | 决定循环、`recheck`、`onStarted` 的分界。 |
+| `deciding` | `:977`、`:983` | `:975`、`:1424` | 同一时刻一趟决定。 |
+| `recheck` | `:1040`、`:1205`、`:1236`、`:1262`、`:1477`、`:1501` | `:989`、`:1143` | 决定循环的下一次进入。 |
+| `registered` | `:1125`、`:1223`、`:1273`、`:1443` | `:456` | 公开状态第 7 行。 |
+| `activeTaskIds` | `:943`、`:961`、`:1257` | `:1080` | Workflow 跳过正由看守推进的任务。 |
+| `handedBack` | `:1216`、`:955` | `:949`、`:954` | 交回依据的停等。 |
+| `closed` | `:369`、`close` | `:378`、`:1396` | 关闭后拒绝。 |
 
-### 18.7 照代码发现的问题（2026-10-31，Codex 核对、lead 裁定）
+### 18.7 照代码发现的问题（2026-10-31，Codex 核对、lead 裁定；2026-11-01 落地核对）
 
-范围同 18.1；`file:行` 的代码版本同本节开头。下面只列问题、裁定和需要的规则；是否改代码由用户定（决定 99-3），本节不写改法。
+范围同 18.1；`file:行` 按落地树 `7c1w1`（`f0c6987`）。P1–P6 由 DRV 修掉，`slice-DRV-SPEC` 已落地；N1 随 F2 消失；N2、W2、W3、W5 是写法或留到以后的项，没有为它们改代码。下表记现状和落地位置。
 
-| # | 问题 | 裁定 | 需要的规则（只写规则，不写改法） | 例子（事件序列） | file:行 |
-| --- | --- | --- | --- | --- | --- |
-| P1 | 删掉一个句柄的等待时，同 Goal 另一个停着的句柄失去唤醒。 | 真的 | 删掉一个句柄的等待时，同一 Goal 其它停着的句柄仍然能被唤醒。 | Goal G 的 Task A、B 都登记停住；`workflow/driver-stop {goalRef:G, taskId:B}`。B 走 `stopping → stopped`，`leaveGoalWait(B)` 删掉 G 的唯一登记（`:1057-1071`；`goal-wait-wakes.ts:96-99`）；之后命中 A 依据的提交找不到登记，A 的 `wakeGate` 不 resolve。 | `src/app/collaboration-driver.ts:215-217`、`:891`、`:1057-1062`、`:1071`、`:1129-1130`；`src/app/goal-wait-wakes.ts:54-55`、`:83-100` |
-| P2 | `stop` 之后泵晚写 `waiting_for_reply`，`close` 也不能保证 `running` 不变。 | 真的 | `stopRequested` 为真以后，泵不再改驱动的状态枚举；`close` 本身不写枚举。 | 一个 `perform:start` 的 outbox 页在 stop abort 前返回；`stopHandle` 已写 `stopping`（`:1069`）并 abort（`:1072`），`pump` 仍在 `:673` 写 `waiting_for_reply`，drain 再写 `stopped`（`:1081`）。`close` 也只置 `stopRequested`，挡不住已经在途的泵写枚举（`:1235-1240`）。 | `src/app/collaboration-driver.ts:672-673`、`:1067-1072`、`:1081`、`:1235-1240` |
-| P3 | Goal 唤醒对没有 gate 的同 Goal 句柄再起一个推进循环。 | 真的 | 一个 Goal 的唤醒不在已经在推进的句柄上再起一个推进循环。 | A 已登记停住；B 正在 `running`（`runHandle` 未返回）。命中 A 的提交唤醒 G；`wake` resolve A 后，看到 B 的 `wakeGate===null`，调 `runHandle(B, true)`（`:1164-1169`）；B 同时有两个循环写 `state`/`current`/`last`。 | `src/app/collaboration-driver.ts:1162-1170`、`:802`、`:807`、`:215-217`、`:1132` |
-| P4 | 有界唤醒再次停住时，队列 await 一个只能由同一个队列送来的唤醒。 | 真的 | 一次有界唤醒再次停住时就返回；等待队列的排空不等一个只能由同一个队列送来的唤醒（会卡住这个工作区的全部唤醒，直到有人停这个驱动）。 | A 的 `waiting` 保留非启动 successor（如 `select_work`）；兄弟登记唤醒 G；A 重入后 `select_work` 又返回 `waiting + waitBasis`，`:885-895` 在新 gate 上 await；`goal_waits` 的 `drain` 正 await `wake`（`goal-wait-wakes.ts:236`），队列无法再送下一次提交来 resolve 这个 gate。 | `src/app/collaboration-driver.ts:885-895`、`:1169`；`src/app/goal-wait-wakes.ts:232-237`；`src/app/wake-loop.ts:275`、`:302-304` |
-| P5 | 停止排空不等唤醒起的那次推进。 | 真的 | 每一次唤醒起的推进都占住它的句柄，并且在写 `stopped` 之前被停止的排空等到。 | A 原 `done` 已结束；兄弟唤醒让 A 从保留的 claim 输入再推进一次，claim 还在途时 `stop` 到达。`wake` 不更新 `handle.done`；stop 两次 cancel pass 后写 `stopped`（`:1064-1081`），晚到的结果才在 `:839-849` 记录 Run、`:851` 才 break。存储的 state 仍是 `waiting`，不同 seed 的 start 还能替换它（`:1132-1147`）。 | `src/app/collaboration-driver.ts:1064-1081`、`:1152-1154`、`:1169`、`:839-849`、`:1132-1147` |
-| P6 | 等待因异常退出时 `wakeWaiting` 没有清掉。 | 真的 | 从停住的等待出来的每条路，包括抛出异常，都清掉 `wakeWaiting`。 | yielded 等待置 `wakeWaiting=true`（`:918`）；`awaitWake` 里的 execution 读取在 `:710` 抛出；pump 清理在 `:929-932` 执行，但 `:934` 的复位被跳过；catch 写 `failed`（`:964`），`wakeWaiting` 仍为真，之后不同 seed 的 start 一直 `busy`（`:1132`），stop 又跳过终态句柄（`:1222`）。 | `src/app/collaboration-driver.ts:918`、`:710`、`:929-934`、`:964`、`:1132`、`:1222` |
-| W1 | 同一个 `waiting_for_reply` 表示三种不同的等待。 | 只是写法 | `waiting_for_reply` 三种用法照实写，状态和 `wakeGate`、`wakeWaiting`、`stopRequested` 一起定义；规则本身没问题。 | 两个句柄的 `driver-read` 都返回 `waiting_for_reply`：一个有 `wakeGate`，被 `wake` resolve 后跑一次 `select_work`；另一个是 `pump` 在看一个 `waitAfterSend` 的 Run，登记表里没有它。 | `src/app/collaboration-driver.ts:670`、`:673`、`:886`、`:916`、`:210`、`:290`、`:1132`、`:889-909`、`:927-935` |
-| W2 | H-12 说成“停着的驱动被唤醒后总会先跑维护”。 | 只是写法 | H-12 是有意的（7B-2 H 返工时按证据裁定；决定 99-3 提到的 H-12）：登记的 `waiting_for_reply` 句柄可以被唤醒；“总先跑维护”加限定（拒绝的输入、交回的回答更早返回，`workflow.ts:2699-2708`）。 | Task A 登记在 `PlanRevision`，Task B 登记在 `SessionMessage`；登记表按 Goal 合并成一条。一条 `SessionMessage` 提交唤醒 G；A 也做一次 `select_work`，先跑维护页（`workflow.ts:2710-2712`），尽管 A 自己的依据没变。 | `src/app/collaboration-driver.ts:885-909`、`:1159-1171`；`src/business/workflow/workflow.ts:2699-2712`；`src/app/goal-wait-wakes.ts:83-94`；`STATE-MACHINES-SPEC.md:4192`、`:5375` |
-| W3 | `pump` 的 “read-only” 注释与 `consumeConsultation` 不符。 | 只是写法 | 泵读发送方的发件箱并消费合格的咨询；`:647-648` 的 “read-only” 注释会误导。 | 一个 `perform:start` 的 Run 正在启动，发件箱里有一条未回复的 inquiry；`pump` 读到它，`consultOne` 调 `consumeConsultation`（`:477-478`），后者建/推进咨询 Query（`consultation.ts:229-235`）。 | `src/app/collaboration-driver.ts:647-648`、`:462-478`、`:674-691`；`src/business/workflow/consultation.ts:229-235` |
-| W4 | 无 `taskId` 的 `read` 与 Goal 范围 `stop` 的返回对象不清楚。 | 只是写法 | 无 `taskId` 的读取是“第一个匹配句柄加兄弟摘要”，Goal 范围的 `stop` 停全部、返回第一个的快照；选择规则没问题，注释要改。 | 先 `driver-start` 一个 `taskId=A` 的句柄，再 `driver-start` 一个 Goal 级句柄；`driver-read {goalRef:G}` 返回 A 的 snapshot，`siblings` 里是另一个；`stop {goalRef:G}` 停两个但返回 A 的快照。 | `src/app/collaboration-driver.ts:392-396`、`:1201-1202`、`:1216-1226`、`:369-378` |
-| W5 | 人启动时驱动先起循环、再等 `onStarted` 清记录。 | 只是写法 | 人启动时驱动先起循环、再等 `onStarted` 清记录，中间有一个窗口；97-9 已列为留到以后的小项，照实记下，不算新规则。 | 被中断的 Goal 收到人的 `workflow/driver-start`；`handle.done=runHandle(...)` 已开始推进（`:1152-1154`），`onStarted` 还没提交（`:1155`）；同时读 `driver-read` 得 `running`，读 `goals/display` 仍是 `NEEDS_DECISION/interrupted_pending_resume`（`STATE-MACHINES-SPEC.md:268`）。写入失败时记录保持 pending（`host.ts:803-805`）。 | `src/app/collaboration-driver.ts:1152-1155`；`src/app/host.ts:803-806`；`STATE-MACHINES-SPEC.md:268` |
-| N1 | 有界唤醒留下的 successor 没有自己安排的唤醒。 | 不是问题 | 留下 successor 是有意的（`tests/business/S7B2-BW-wait-basis.test.ts:57-78`）；它没有自己安排的唤醒，以后的唤醒是有条件的；唤醒从不执行留下的开工输入。 | 有界唤醒后 `select_work` 返回 `perform:start`；`:953-955` 把它留作 successor，`:973` 写回 `current`，状态 `waiting`。单句柄没有后续 `wake`；兄弟登记可让 `wake` 遍历到它，但入口在 `:821-825` 拒绝启动 Run 的输入，只留下它。 | `src/app/collaboration-driver.ts:794-799`、`:953-955`、`:973`、`:821-825`、`:1162-1170`、`:1122-1136`；`tests/business/S7B2-BW-wait-basis.test.ts:57-78` |
-| N2 | 只有人启动能清中断的规则散在 Host 的 `held` 和驱动的 `wake` 之间。 | 不是问题 | 调用边界：Host 不给 held 的 Goal 重建唤醒；人 `driver-start` 仍然允许并调 `onStarted`；没有现有调用方绕过它。 | `ask`/`off` 档重启后，held Goal 不在登记表里，`goal_waits` 不会为它调 `wake`（`host.ts:837-842`；`goal-wait-wakes.ts:175`、`:190`）。人调 `workflow/driver-start` 后正常建句柄并清记录（`:1155`、`host.ts:803-806`）。直接调公开 `wake(ctx, goalRef)` 能绕过，但当前没有这样的调用方。 | `src/app/collaboration-driver.ts:1160-1177`、`:1155`；`src/app/host.ts:837-842`、`:803-806`；`src/app/goal-wait-wakes.ts:175`、`:190` |
+| # | 原问题 | 现状 | 落地 |
+| --- | --- | --- | --- |
+| P1 | 删掉一个句柄的等待时，同 Goal 另一个停着的句柄失去唤醒。 | 已修：一个 Goal 只有一条登记，存在 `GoalDriver` 上；`stopAdvance` 只在 `taskId === null` 时调 `leaveGoalWait`（`:1366`），停一个 Lane 不碰它（`stopAdvance(lane)` 的 `lanes` 为空，`:1358`）。 | `slice-DRV-SPEC` §3.5；`collaboration-driver.ts:1358-1386` |
+| P2 | `stop` 之后泵晚写 `waiting_for_reply`，`close` 也不能保证 `running` 不变。 | 已修：`pump` 每次写状态前都查 `!handle.stopRequested`（`:755`、`:758`）；`close` 不写枚举（`:1563-1582`）。 | §3.5；`:733-785` |
+| P3 | Goal 唤醒对没有 gate 的同 Goal 句柄再起一个推进循环。 | 已修：`wake` 对已接受的驱动只置 `recheck` + `kickDriver`，不碰 Lane（`:1500-1503`）；同一时刻只有一趟决定（`deciding`）。 | §3.4；`:1488-1507` |
+| P4 | 有界唤醒再次停住时，队列 await 一个只能由同一个队列送来的唤醒。 | 已修：`wake` 马上返回，不 `await` 推进；推进由决定循环做，登记由下一趟重做。 | §3.4；`:1499-1503` |
+| P5 | 停止排空不等唤醒起的那次推进。 | 已修：长步骤把真实 Run 记到 Lane 的 `currentRun` 后才清驱动的交接槽（`:936-939`、`:1060-1068`）；`stopAdvance` 等 `done` + 全部 Lane 的 drain，再做第二次 `requestCancel`（`:1369-1378`）。 | §3.5；`:1358-1380` |
+| P6 | 等待因异常退出时 `wakeWaiting` 没有清掉。 | 已修：`awaitYielded` 的 `finally` 清 `wakeWaiting`（`:1021`）；`runDriver`/`runLane` 的 finally 清 `current`、`failedCardRefs`、`activeTaskIds`；busy 只看 `deciding` 和 `laneBusy`（`:948-950`、`:1424-1425`）。失败的 Lane 在已接受、未停止时置 `recheck`（`:1261-1264`，rw2-01）。 | §3.3、§3.5；`:1000-1029`、`:1153-1157`、`:1251-1266` |
+| W1 | 同一个 `waiting_for_reply` 表示三种不同的等待。 | 写法已分开：`GoalDriver` 的公开状态由 18.1 A 表给出；`Lane` 的 `waiting_for_reply` 用 `handedBack !== null` 表示“交回依据的停等”（`:948-950`、`:1216`）。 | §4.2；`:442-458` |
+| W2 | H-12 说成“停着的驱动被唤醒后总会先跑维护”。 | 未改（不在 DRV 范围）；登记等待的驱动被唤醒后跑一次 `select_work`，维护页在 `workflow.ts:2705`。 | — |
+| W3 | `pump` 的 “read-only” 注释与 `consumeConsultation` 不符。 | 未改（不在 DRV 范围）；注释仍在 `:732`。 | — |
+| W4 | 无 `taskId` 的 `read` 与 Goal 范围 `stop` 的返回对象不清楚。 | 已修：`publicTargetOf` 按公开顺序取首个对象，`enterPublicOrder` 在容器首次接受 Goal 启动时登记（`:419-431`）；`read`/`stop` 共用。接口注释 `:106` 仍写 “One active handle per Goal”，未改。 | §4.2；`:419-431`、`:1535-1556` |
+| W5 | `startHandle` 先起循环、再清中断记录，中间有窗口。 | 未改（97-9 留到以后）；`kickDriver` 后 `await onStarted`（`:1445-1451`）。 | — |
+| N1 | 有界唤醒留下的 successor 没有自己安排的唤醒。 | 已随 F2 消失：落地代码没有 bounded 进入，也没有“留下的 successor”；长步骤由 `runDriver` 直接 `installLane` 并开跑（`:1060-1071`），带依据的等待由看守交回、登记后由提交唤醒（`:1214-1226`、DG-17）。 | `slice-DRV-SPEC` §3.4；`:1060-1071` |
+| N2 | 只有人启动能清中断的规则散在 Host 的 `held` 和驱动的 `wake` 之间。 | 仍是调用边界，不是驱动规则：`held` 不给有 `interruption` 原因的 Goal 重建登记（`host.ts:842-847`；`goal-wait-wakes.ts:175`、`:190`）；人 `driver-start` 仍调 `onStarted`（`:1446`、`:1451`）；直接调公开 `wake` 会建驱动（`:1491-1497`），但当前没有这样的调用方。 | `:1488-1507`；`host.ts:842-847`、`:804-806` |
 
-P1、P3、P4、P5 要同一个 Goal 有两个句柄，生产里经 Host 的干预派发能走到（`src/app/host.ts:1799-1805`）；P2、P6 一个句柄就会出现。是否改代码由用户定（决定 99-3），本节不写改法。
+P1 要同一个 Goal 的两个句柄（或一条登记被两个对象共用）；落地后一个 Goal 一条登记，P1 不再成立。P3、P4、P5 随 `wake` 改成只置 `recheck` / 重开交回依据的看守而消失。P2、P6 一个对象就会出现，已按上表修掉。
 
-**H-12 专项：唤醒送到这个 Goal，和这个句柄会不会调 Workflow。** H-12 的现象是“停着的驱动被一条等待唤醒，跑了一次维护”。照代码看，“停着”至少有三种不同对象；H-12 命中的是 `waiting_for_reply` 的登记等待，不是 `stopped`。同一 Goal 有兄弟登记时，队列会对整个 Goal 调 `wake`，再把该 Goal 的每个句柄都遍历一遍（`:1162-1169`），所以“唤醒送到这个 Goal”不等于“这个句柄会调 Workflow”。
+**H-12 专项：唤醒送到这个 Goal，和这个对象会不会调 Workflow。** H-12 的现象是“停着的驱动被一条等待唤醒，跑了一次维护”。落地后 `wake` 不遍历 Lane：已接受的 `GoalDriver` 只置 `recheck` + `kickDriver`（`:1499-1503`），决定循环的一趟从 `select_work` 开始，`select_work` 先跑维护页（`workflow.ts:2705`）；只有 Task 看守的驱动只重开交回依据的 Lane（`:1505-1506`、`:952-964`）。
 
-| 场景 | 唤醒送到这个 Goal？ | 这个句柄会不会调 Workflow？ | 驱动做什么 | file:行 |
+| 对象 | 唤醒送到这个 Goal？ | 会不会调 Workflow？ | 做什么 | file:行 |
 | --- | --- | --- | --- | --- |
-| 1. `stopped`（stop drain 已完成） | 单句柄：不会（stop 已 `leave`）；同 Goal 有兄弟登记：队列会为这个 Goal 调 `wake`，并遍历到这个句柄（`:1162-1169`）。 | 不会：`stopRequested` 为真，循环条件直接跳过（`:807`）。 | 正常路径 `current` 已是 `null`，状态保持 `stopped`（`:973`、`:807`）；P5 的晚到推进是例外（它可能改写 `current`，但 `stopRequested` 仍挡住 Workflow）。 | `:1163-1170`、`:807`、`:973` |
-| 2. `stopping`（正在取消/排空） | 同上：单句柄不会；同 Goal 有兄弟登记时会被 `wake` 遍历到。 | 不会：`stopRequested` 为真（`:807`），`stopHandle` 已在 `:1071` `leaveGoalWait`。 | drain 最后写 `stopped`（`:1081`）。 | `:1067-1083`、`:807` |
-| 3. `waiting`（`current` 为空，普通“等待”） | 单句柄：不会（没有登记）；同 Goal 有兄弟登记：会被 `wake` 遍历到（`:1162-1169`）。 | 不会：`input = handle.current` 为 `null`，循环不执行（`:802`）。 | finally 不改写 `state`（`:976`）。 | `:802`、`:973`、`:1163-1170` |
-| 4. `waiting`（有界唤醒留下的 `current` 非空） | 单句柄：不会（没有自己的登记）；同 Goal 有兄弟登记：会被 `wake` 遍历到。 | 会；入口先拒绝启动 Run 的输入（`:821-825`），非启动的 successor 会调 Workflow，可能不止一次。 | 可能跑维护；随后走 DRV-02…DRV-08，状态可能变为 `waiting_for_reply`、`completed` 或 `failed`；启动 Run 的输入被拒时保持 `waiting`。结果再停住时又有 P4 的队列问题。 | `:953-955`、`:973`、`:821-825`、`:1163-1170` |
-| 5. `waiting_for_reply`（有 `wakeGate`，登记表停住） | 会：`goal_waits` 的 `wake` 清 gate 并 resolve（`:1165-1166`）。 | 会：醒来后 `leave`、`bounded=true`，做一次 `select_work`（`:899-909`）。 | H-12：`select_work` 通常先跑维护页（`workflow.ts:2710-2712`；拒绝的输入、交回的回答更早返回），即使这次提交只匹配同 Goal 另一个句柄；行为有意（见 18.7 W2）。 | `:885-909`、`:1159-1171`；`workflow.ts:2699-2712` |
-| 6. `waiting_for_reply`（yielded，无 gate） | 同 Goal 有兄弟登记时，队列会为这个 Goal 调 `wake`，并遍历到这个句柄（`:1162-1169`）。 | 会：`wake` 对它再起一个 `runHandle(handle, true)`，与已有的 `awaitWake` 循环并发（P3）。 | 两个循环都可能读/推进同一句柄。 | `:916-945`、`:1163-1170` |
-| 7. 有 pending `GoalInterruption`（`ask`/`off`），没有句柄 | 不会：登记表重建时 `held` 跳过这个 Goal，`goal_waits` 不会调 `wake`（`host.ts:837-842`；`goal-wait-wakes.ts:175`、`:190`）。 | 没有句柄，不会调 Workflow；`driver-read` 是 `not_found`。 | 人 `driver-start` 后才建句柄并清记录；直接调公开 `wake` 是调用边界外（N2）。 | `host.ts:837-842`；`goal-wait-wakes.ts:175`、`:190`；`:1155` |
-| 8. `auto` 档、有中断候选但没有 pending 记录 | 不是登记表唤醒；Host 启动重驱直接 `driver_start`（`host.ts:1634-1647`）。 | 会：无界循环从 `select_work` 开始推进。 | 维护页照跑（`workflow.ts:2710-2712`）；这是 `auto` 的设计。 | `host.ts:1634-1647`、`:1624`；`workflow.ts:2710-2712` |
+| 1. `GoalDriver`，`stopRequested` 为真（`stopped`/`stopping`） | 单 Goal：不会（stop 已 `leave`）；有兄弟登记时队列仍会为这个 Goal 调 `wake` | 不会 | `stopRequested` 挡住 `while` 和 `kickDriver` | `:1039`、`:1499` |
+| 2. `GoalDriver`，已接受，`running`/`waiting`/`waiting_for_reply` | 会 | 会：一趟决定 | 置 `recheck`、`kickDriver`；循环空闲就写 `running`，从 `select_work` 起，维护页先跑 | `:1499-1503`、`:1044`、`workflow.ts:2705` |
+| 3. `GoalDriver`，只有 Task 看守（`accepted=false`） | 会 | 不跑 Goal 范围：只重开交回依据的 Lane | `leaveGoalWait`、`reopenHandedBack` | `:1505-1506`、`:952-964` |
+| 4. 没有驱动 | 会 | 会：新建驱动跑一趟 | 合成 `select_work` 调 `startHandle` | `:1491-1497` |
+| 5. `ask`/`off` 档有 pending `GoalInterruption`、没有驱动 | 不会：`held` 跳过、不登记 | 没有对象；`driver-read` 是 `not_found` | 人 `driver-start` 后才建 | `host.ts:842-847`；`goal-wait-wakes.ts:175`、`:190` |
+| 6. `auto` 档有中断候选、没有 pending 记录 | 不是登记表唤醒；Host 启动重驱 `driver_start` | 会（无界） | 从 `select_work` 起，维护页照跑 | `host.ts:1660-1667` |
 
-同一 Goal 多句柄时，`wake` 不只处理停住的句柄：任何无 gate 的同 Goal 句柄（`running`、`pump` 等待、yielded 等待、`waiting`）都会在 `:1167-1169` 被再起一个 `runHandle`（P3）。第 5 行是 H-12 的登记等待，第 6 行是 yielded 等待；运行中的兄弟句柄也会被这样处理。
+`completed`/`failed` 本身不挡 `wake`：`failed` 后仍在推进的 Lane 可以登记等待，真实提交仍会把目标唤醒到第 2 行；实际检查的只有 `stopRequested`。`completed` 没有登记来源，只有直接调公开 `wake` 才会到第 2 行，`runDriver` 随后写 `running`（DG-03/DG-17）。
 
-**一句话结论。** 真正 `stopped`/`stopping` 的句柄被 `wake` 遍历到也不会调 Workflow；会做事的是 `waiting_for_reply` 的登记等待（H-12 第 5 行），以及同 Goal 无 gate 的兄弟句柄——包括 yielded 等待、运行中的句柄和有 `current` 的 `waiting`（第 6 行和表后注，P3）。单句柄的 `waiting`+successor 没有自己的唤醒来源（第 4 行、N1）。97-9 的中断 Goal 在 `ask`/`off` 下没有句柄、也不登记，所以唤醒事件不到；这条规则由 Host 的 `held` 保证，不在驱动里（第 7 行、N2）。
+**一句话结论。** 真正 `stopped`/`stopping` 的驱动被 `wake` 送到也不调 Workflow；会做事的是已接受的 `GoalDriver` 的一趟决定（第 2 行）、只有 Task 看守时的 `reopenHandedBack`（第 3 行）和没有驱动时新建的一趟（第 4 行）。`wake` 不再遍历句柄，P3 的两循环并发不在了。97-9 的中断 Goal 在 `ask`/`off` 下没有驱动、也不登记（第 5 行、N2）。H-12 的维护页在落地代码是 `workflow.ts:2705`。
 
 ## 附录 A　决定全文（2026-10-03 已确认）
 

@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 10-31 的决定（20–105）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–106）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1744,6 +1744,32 @@
       - **105-3 开工前演练，提前一波。** 用户：写任务书时也要让 DeepSeek 或 Codex 核实、预先构想，“可以，就这样做”。审查只看文字，探测只跑已有代码的接缝，所以加一步：Codex 列每个改动函数的出口、判每个具名变异能否在公开路径上变红；DSH 在一次性副本上试搭测试行和变异、提问题，不提交；lead 裁定后开工。演练和本组施工不并行；每一波施工时同时演练下一波，用这一波当前版本临时合的底树，不入库。第二波从 F1、DRV 第三轮返工的结果开始。
       - **105-4 7D1 开工裁定已冻结。** lead 笔记 `impl/s7d1/frozen/`（3,154 行）：生产 4,755、测试 4,131、比值 0.869。过了 Codex 两轮完整审查、一次快速核对和探测。lead 冻结前审的是裁定、预算、D1 的代码块、D2 和 D3 的白名单，不是逐行审。lead 更正了自己的 D4：G3-2 的五个文件本来就是 620 行，预算按 620。
       - 来源：lead 笔记 `impl/lines/7c/status-7c.md`、`dsh-q1.sh`…`dsh-q4.py`、`impl/s7d1/rd/`。
+
+    - **106 7C-0、F1、DRV 合入，冻结文字的裁定，第二波开工（11-01）。**
+      - **106-1 7C-0、F1、DRV 合入。** 提交 `23173b6c`（本地，11-01 01:08），三块从一棵测过的并集一起落地（`7c1w1`，底是 7B-3 的落地树）。
+        - **7C-0。** S1 把选人从 Workflow 搬进 `src/business/workflow/session-chooser.ts`，S2 把续作简报渲染器搬进 `src/contracts/continuation-brief-render.ts`；行为不变。
+        - **F1。** 7C 的冻结组，后面每组都在它的树上开工。共享名字和记录：职责收件人解析器 `src/core/work-graph/sessions/duty-recipient.ts`、目标秘书 `src/core/work-graph/tasks/goal-secretary.ts`、`RunSnapshot.startedSince`（必需的提交游标）、每张决定卡的 `openedAt`（从卡的来源读，已答的卡在这一读失败时保留答案）、改名后的 `request_rework` 和 `request_recheck`、四个工具声明（适配器和注册是 L1 的）、pick 和 overlap 契约。生产 584（505/79）对预算 478，测试 631（563/68）对 354；DSH 三轮返工，`a7af449` 全量过；RV1 13 条、RV2 3 条、RV3 2 条（一条是第二轮的修法改坏：回答卡补读时间失败把卡变成拒绝）、RV4 1 条复用，lead 收尾 `fe689e3`；`63be50e` 全量 1,064 个文件、12,825 项过、3 项跳过、732 秒。
+        - **DRV。** 每个 Goal 一个只做决定、不等 Run 的循环，每个在跑的 Task 一个看守，每次变化只叫循环再看一次；修三个按需求算 bug 的（目标内不并行派工、被唤醒的后继领取后没开跑、三种提交不唤醒等待）和 P1–P6；失败的看守结束，且目标已接受、未停止时再看一次；`selectNext` 跳过正由推进驱动的 Task 并合并候选的等待依据；`GOAL_WAIT_WAKE_AGGREGATE_TYPES` 加 `TaskRequeue` 和 `UnknownCallReview`。生产 964 对预算 775，测试约 1,698（是生产的 1.76 倍），对预算 700；DSH 三轮返工，之后 Opus 子任务收尾测试（`0584428`，决定 81、90-17）；RV1 18 条、RV2 6 条、RV3 3 条、RV4 5 条，RV5 未关 0、改坏 0，可合入；`7117420` 全量 1,070 个文件、12,824 项过、3 项跳过、1,087.24 秒，规模批 13 个文件 40 项、1,098.86 秒。
+        - **合计。** src 44 个文件 +2,237/−1,348、测试 73 个文件 +2,237/−132、其他 16 个文件 +129/−40，51 个提交；两组都超预算，按 10-26 的规矩在 Codex 复审后合入。
+        - **检查。** 总树 `7c1w1`（bubblewrap）全量 1,073 个文件、12,842 项过、3 项跳过、929.72 秒，规模批 13 个文件 40 项、927.20 秒；typecheck、架构、readme-check、kernel patch 检查都是 0。本次文档改稿：`slice-DRV-SPEC`、`STATE-MACHINES-SPEC` §18、`MVP-BEHAVIOR.md`（B03/B05/B16）、`DESIGN.md`（§1.4/§2.4/§2.10/§6）、`E3-UI-ITEMS.md`（D103-2/D106-1）、`slice-5-SPEC.md`（`DecisionCardV1` 加 `openedAt`）、`slice-7-SPEC.md`（两条后注）、`IMPLEMENTED-CAPABILITIES.md`（WG145–WG147）、`CORE-DATA-OPERATIONS.md`（D5/D6）。
+        - 来源：`docs-land1101/facts-land1101.md` §1；`7c/land1/msg-w1.txt:1-29`；`7c/status-7c.md`；`src/business/workflow/session-chooser.ts`、`src/contracts/continuation-brief-render.ts`、`src/core/work-graph/sessions/duty-recipient.ts`、`src/core/work-graph/tasks/goal-secretary.ts`。
+      - **106-2 lead 改掉冻结文字的裁定。** DRV 规格 `slice-DRV-SPEC` 按替换前后的整句改，冻结版在 `sdrv/drv-spec-frozen.md`。
+        - **§3.2。** 带依据的等待出口只登记、不再看一次，§3.3 的逐出口规则为准（DRV-02 不做；AG2b 的教训：否则 `run_check` 的 `waiting` 会自旋）。
+        - **§4.2。** 加一行 `driver.state === 'waiting_for_reply' && !laneRunning`，排在 running 之前（lead 第一轮裁定）；running 行含 `driver.state === 'running'`（rw1-02）。
+        - **§5.1。** 按 D-G、D-F2、D-F3b、D-P4、D-P5、D-P6 的最终写法；新 D-P6 行是：真实 yielded 等待 → 看守的执行读失败一次 → 公开 Goal 读取的 `last.waitBasis` 出现 `wait_reply` 和 `SessionMessage` → 真实回复 → 后继启动；具名变异删掉 Lane finally 的那个分支。失败的看守结束、目标已接受且未停止时再看一次（rw2-01，`src/app/collaboration-driver.ts` 的 Lane finally）。
+        - **§5.2。** 三行：K3-44 的谓词、S7B-L 的过滤、D-F3 的 `l46_blocked`。
+        - **D1。** `tests/scenarios/K3-44-crr-kind4.test.ts:209` 的谓词从“非 running 且非 waiting_for_reply”放宽为“非 running”，是已批准的历轮改动。
+        - **7C 书勘误。** `book-7c.md:1163` 只写了 `recordRunResult`，`run-reconcile-service.commitDecided` 是路径 (b) 的第三个写入点；F-resolver 的具名变异改成“反转 active 判断”。
+        - **F1 的累计 D1。** 回复写“累计 0 条”漏了三处已批准的旧期望改动（PC2 数量，C3、C8 的拒因）。
+        - 来源：`docs-land1101/facts-land1101.md` §2；`docs/refactor/design/orchestration-2026-10/slices/slice-DRV-SPEC.md` §3.2（L143）、§3.3（L167）、§4.2（L259）、§5.1（L288）、§5.2（L332）、§7（L429）；`sdrv/` 的回复和表；`tests/scenarios/K3-44-crr-kind4.test.ts:209`；`src/app/collaboration-driver.ts:1251`、`:1261`。
+      - **106-3 第一次开工前演练和第二波。** 对象 D、M、N、P、R；D 在 F1 的树，其余在 F1 和 DRV 的临时合并 `9cc077f`。Codex 列出口、判变异：D 12 条、M 10 条、N 6 条、P 6 条、R 10 条，五组都判“可开工：否”。DSH 在一次性副本上试搭，另查出并实测确认 D 8 条、M 10 条、N 7 条、P 8 条、R 14 条，和 Codex 大量重合。例子：删工具的文件清单漏了 `runtime-assets.json`；一个具名变异指错文件；创建提交写两个事件，而 `readOriginalSession` 只认一个；F1 的类型加了四个决定来源、编解码的名单没加，R 的真实保存答案走不到；注记的当前版本读没有公开生产者；几条具名变异在公开路径上红不了。裁定在 lead 笔记 `impl/lines/7c/frozen/7c1/7c1-<g>-drill-rulings.md`，改冻结裁定，两边不一致时以它为准。lead 另定：参谋模板留下提议的半句（只删采用的半句）；K3-39 的 `committed` 正例先找 Work Run 自己是实际修改者的路径，走不通就挪到 L1；N 给 `NoteReadPort` 加 `listCurrentVersions`；夹具由各组自己写，Codex 在 RV1 审（90-10 的做法在这一波改了）。`7c1w2b` = `e92410e`（`7c1w1` 加 `DECISION_SOURCE_KINDS` 的四个名字，F1 的遗漏），第二波的起点；不在 `23173b6c` 里，随第二波落地。五组 11-01 01:07 在 `7c1w2b` 上开工；行数预算不给 DSH 看（105-2），lead 事后对账。Q、L1 的 Codex 演练同时跑。
+        - 来源：`docs-land1101/facts-land1101.md` §3；lead 笔记 `impl/lines/7c/frozen/7c1/7c1-<g>-drill-rulings.md`；`7c1w2b` = `e92410e` 见 `docs-land1101/facts-land1101.md:38`。
+      - **106-4 已知限制和留到以后。** 用户 11-01 确认目标分层是真实的设计缺口、比较重要，排在哪一片待 lead 给方案（lead 笔记 `impl/goal-layering-and-superagent-1101.md`、设计稿 `impl/sgl/goal-layering-design.md`）；未裁定：Run 的 `tokenBudget` 100 万过小，未细化的必需任务没人触发细化（不符合 B03），分层规则没设计。
+        人对闲置线的干预走不下去（7B-3 V 留下的，11-01 复现，bubblewrap 下 4 臂全红）：规划 Query 领取后线读成 `query` 忙，Host 不再调 handler，Query 停在 `claimed`，模型一次没调，人什么也看不到。现有 `S7B-V` 的测试直接多次调 handler，所以没暴露。这一段在修（只改 `readConsumableSessions`）。另有四种结果没有收尾：模型反问、回答不合法、Query 没答就结束、人否了方案；人看不到，消息一直挂在队头，这条线后面的消息也被挡住。这四种等用户定。
+        D-P4 改用 `limitHold` 后，全量不设 `TEST_HOLD_LIMIT_MS` 时上界是这一行自己的 120 秒超时。DRV 的测试是生产的 1.76 倍，已按规矩合入。
+        - 来源：`docs-land1101/facts-land1101.md` §4；`docs/refactor/design/orchestration-2026-10/slices/slice-DRV-SPEC.md` §5.1 的 D-P4（L297）；lead 笔记 `impl/goal-layering-and-superagent-1101.md`。
+      - **106-5 下一步。** 7C-1 第二波（D、M、N、P、R）→ Q → L1 → 7C-2（F2 → H ∥ T → L2）→ 7D1 → 8B-2 → 8C → 8E → 7D2 → 6C → 第 9 片 → E3。8C、8E 的逐行审和开工裁定按 104-2；§6 选项 b 另开一片；冒烟核对表按 97-2 重做，下一轮真实模型冒烟前补上 7B-1…7B-3 和 DRV 的行为；远端推送等用户。
+        - 来源：`docs-land1101/facts-land1101.md` §5；决定 104-2、97-2。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

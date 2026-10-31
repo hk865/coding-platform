@@ -13,6 +13,10 @@
 
 **后注（7B-3 落地，lead 2026-10-31）：** 7B-3 已落在 `aedb093d`（本地，10-31）：这次的六组 N、P、CS、V、G、L 都已合入；N 的断开通知来源和 Host 系统 notify 构造器、P 的复制转发（目的地没了读“待你指定收件线”，`FORWARD_DESTINATION_GONE`）、CS 的问已退役线（咨询 Query 读结构化历史窗口，准备好的那一轮冻结正文）、V 的干预规划（含已完成 Goal 的接续 Goal）、G 的 L46 阻塞（每次推进重建，不存）和 L 的两条人用路由（`messages/forward`、`waits/dispose`）、Host 钩子，以及 `platform.messageForwarding`、`disconnect` 的发布。落地树 `7b3-land`（`8fae469`）上全量 1,061 个文件全过、12,808 项过、3 项跳过、852.13 秒（6 个并行；build、typecheck、check:architecture、kernel-patch 检查都是 0）；规模批 13 个文件 40 项全过、850.27 秒（4 个并行）。
 
+**后注（7C-0 落地，lead 2026-11-01）：** 7C-0 已落地（`23173b6c`，本地，11-01）：S1 把选人从 Workflow 搬进 `src/business/workflow/session-chooser.ts`（D5），`createSessionChooser` 返回 `chooseSession`、`responsibleSessionFor`、`chooseExcluded`；S2 把接续简报渲染器搬进 `src/contracts/continuation-brief-render.ts`（B4），`continuation-brief.ts` 保留类型、digest、来源检查点和校验并再导出两个模块。行为不变：错误码和文字、检查顺序、字段、列表和键顺序、存储读次数、批量和顺序、存储字节、渲染字节都不变；测试不改。
+
+**后注（7C-1 F1 落地，lead 2026-11-01）：** 7C-1 F1 已落地（`23173b6c`，本地，11-01）：共享名字和记录——职责收件人解析器 `src/core/work-graph/sessions/duty-recipient.ts`、目标的秘书 `src/core/work-graph/tasks/goal-secretary.ts`；`RunSnapshot.startedSince` 是必需的提交游标；每张决定卡都有 `openedAt`，从卡的来源读，读失败时已答的卡保留答案；委托操作改名为 `request_rework`、`request_recheck`；四个工具声明 `create_member`、`withdraw_session_message`、`request_rework`、`request_recheck`（适配器和注册在 L1）；pick 和 overlap 契约（`src/core/work-graph/model/pick-ports.ts`、`src/contracts/module-overlap-gate.ts`）。DSH 三轮返工；RV1 13 条、RV2 3 条、RV3 2 条（其中一条是第二轮的修法改坏：回答卡补读时间失败把卡变成拒绝）、RV4 1 条复用，lead 收尾（`fe689e3`）；`a7af449` 全量过，`63be50e` 全量 1,064 个文件、12,825 项过、3 项跳过、732 秒。生产 584（505/79），对预算 478；测试 631（563/68），对 354。
+
 **后注（决定 89，lead 2026-10-24）：** 决定 89（并行成员防重复）的五段 skill 正文和落地顺序在 [HANDOFF 决定 89](../../../HANDOFF.md)；其中和能力 B 有关的一段留给 7B，施工时按下面写进 7B 的任务书：
 - **加什么。** `project_source` 的 `compare` 加一个选项，列出重复候选：只给候选，判断留给 agent（和 PRODUCT 写定的做法一致，`PRODUCT.md:198`：冲突检查放在数据结构的工具里，由编排的 agent 决定）。
 - **候选池。** 只取同一次比较之后的那份材料、只在授权范围之内；“新加的”按比较前的那份材料判。不再扫描活动工作区，避免混进比较之后才发生的新变化。

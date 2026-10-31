@@ -713,6 +713,7 @@ type DecisionCardV1 = {
   candidateStatus: 'candidate' | 'stale' | null;
   staleReason: string | null;
   closedReason: 'goal_cancelled' | 'source_resolved' | null;
+  openedAt: string | null;
   readOnly: boolean;
   actions: ('answer' | 'ask_secretary' | 'apply' | 'record_application'
     | 'adopt' | 'regenerate' | 'abandon' | 'adopt_architecture'
@@ -776,6 +777,8 @@ interface WorkspaceDecisionSettingsPort {
   }>): Promise<WriteResult<WorkspaceSnapshot>>;
 }
 ```
+
+`openedAt`（决定 103-2，7C-1 F1）从卡的来源读，没有存的时间时是 `null`。
 
 limit=1..100，默认 50；source lookup 每页≤200，单次窗口≤25页/5000项、Goal≤200，窗口一致性重试≤4。超界回 capacity，连续并发无法得到稳定窗口回 unavailable，不伪造完整计数或新水位。Workspace 内可过滤 Goal；“全局队列”由 Host 汇总其真实授权 Workspace，不把不同库 cursor 合并成一个全局游标；本片 core 不提供跨项目授权读。
 
