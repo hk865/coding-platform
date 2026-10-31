@@ -11,6 +11,8 @@
 
 **后注（7B-2 落地，lead 2026-10-31）：** 7B-2 已落在 `8e55756c`（本地，10-31）：Host 空闲时按可消费 Session 的分批视图消费（按 Session 键续读、按 profile 匹配模型，`notify` 不开轮）；目标等待登记表在 `wakeLoop.start` 时从每个 Session 的等待和已放行未处理的动作用只读重建，`resumeOnStartup` 关时只登记、不排空；有待处理重启中断的 Goal 不登记、不叫醒（判据读 Goal 显示），重建失败下次排空重跑；秘书的回复和到期各开一轮（`reply`/`expiry`），同一处理点的几条并成一轮，`entered` 时按轮的 manifest Session 消费，交接后的接手者也能答，到期唤醒请求轮队列；`notify` 跟下一个真实轮进上下文，只带 notify 的供给不收人的消息（R-19）；`project_source` 的 `compare` 加 `duplicates: true`，两份捕获、两个提交、一个提交对当前工作树三种比较都适用，平台包的说明句重新生成。7B-3 第一波（F 的转发和等待处置、咨询创建读、Q 的两个 Query 配方）已并进同一条线；N、P、V、CS、G 和 7B-3 L 还没并入。
 
+**后注（7B-3 落地，lead 2026-10-31）：** 7B-3 已落在 `aedb093d`（本地，10-31）：这次的六组 N、P、CS、V、G、L 都已合入；N 的断开通知来源和 Host 系统 notify 构造器、P 的复制转发（目的地没了读“待你指定收件线”，`FORWARD_DESTINATION_GONE`）、CS 的问已退役线（咨询 Query 读结构化历史窗口，准备好的那一轮冻结正文）、V 的干预规划（含已完成 Goal 的接续 Goal）、G 的 L46 阻塞（每次推进重建，不存）和 L 的两条人用路由（`messages/forward`、`waits/dispose`）、Host 钩子，以及 `platform.messageForwarding`、`disconnect` 的发布。落地树 `7b3-land`（`8fae469`）上全量 1,061 个文件全过、12,808 项过、3 项跳过、852.13 秒（6 个并行；build、typecheck、check:architecture、kernel-patch 检查都是 0）；规模批 13 个文件 40 项全过、850.27 秒（4 个并行）。
+
 **后注（决定 89，lead 2026-10-24）：** 决定 89（并行成员防重复）的五段 skill 正文和落地顺序在 [HANDOFF 决定 89](../../../HANDOFF.md)；其中和能力 B 有关的一段留给 7B，施工时按下面写进 7B 的任务书：
 - **加什么。** `project_source` 的 `compare` 加一个选项，列出重复候选：只给候选，判断留给 agent（和 PRODUCT 写定的做法一致，`PRODUCT.md:198`：冲突检查放在数据结构的工具里，由编排的 agent 决定）。
 - **候选池。** 只取同一次比较之后的那份材料、只在授权范围之内；“新加的”按比较前的那份材料判。不再扫描活动工作区，避免混进比较之后才发生的新变化。

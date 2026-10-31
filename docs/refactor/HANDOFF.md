@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 10-31 的决定（20–100）
+## 2026-10-06 原型获批，以及 10-05 晚到 10-31 的决定（20–101）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1673,6 +1673,48 @@
       - `K3-08 (一)` 只在全量负载下偶发（隔离 6/6、4/4 绿）。
       - 秘书 Session 只有人发的 `notify` 时，它不进只带 notify 的供给（R-19）；L-R04 用系统上下文发送，书没有限定发送者。
       - 来源：`docs-land1031/facts-land1031.md` §5；`7b2/land/msg-7b2.txt` 的 Known limits。
+
+101. **7B-3 合入和落地的裁定（10-31，`aedb093d`）。**
+    - **101-1 7B-3 合入（10-31，`aedb093d`）。**
+      - 为什么：7B-3 剩下的六组（N、P、CS、V、G、L）已落地；F、接口提交、Q 已经随 7B-2 落地（`8e55756c`，决定 100-2）。
+      - 改了什么：
+        - N：断开通知的派生（`src/core/work-graph/views/disconnect-notices.ts:77` 的 `readDisconnectFacts`、`:172` 的 `createDisconnectNoticeSource`）。一条没消费的等待（`open`/`answered`/`expired`）里不可用的一方各派生一条 `disconnect`，写明是谁、什么时候、接手的人，或者“没人接，等你定”；不存通知。Host 的系统通知构造器在 `src/app/host-notices.ts`：`systemNotifyRequest`（`:15`）、`announceDisconnect`（`:35`）、`announceInterruption`（`:56`），requestId 确定。
+        - P：复制转发（`src/core/work-graph/tasks/goal-copy-service.ts:524` 的 `createCopiedInterventionForwarding`）。复制到复制目标里的干预经 F 的可信入口转发过去；目的地没了时读成“待你指定收件线”（`FORWARD_DESTINATION_GONE`，同文件 `:545`，常量在 `src/core/work-graph/state/message-machine.ts:1237`）。
+        - CS：问已退役的工作线（`src/business/workflow/consultation.ts:128` 的 `createConsultationConsumer`；`src/business/workflow/consultation-facts.ts:27` 的 `consultationCreateOf`；`src/core/work-graph/queries/platform-facts.ts:34` 的 `readConsultationCreate`、`:229` 的 `createConsultationFactsReader`）。人的提问由一次咨询 Query 回答，读这条线的结构化历史窗口：采集、创建写入和模式判断、编解码；准备好的那一轮冻结它读到的正文，`consultationFacts` 注入 Workflow 的依赖包（`consultation.ts:114`）。
+        - V：干预规划（`src/business/workflow/intervention.ts:40` 的 `createInterventionHandler`、`src/business/workflow/request-intake.ts:193` 的 `createRequestIntake`、`src/core/work-graph/tasks/plan-service.ts:1091` 的 `createPlanService`、`src/core/work-graph/tasks/initial-plan-answer.ts:74` 的 `proveInterventionSource` 和 `:124` 的 `sourceFactsGuards`）。人的干预有记录和事件、读、内部请求分支和处理分支（含已完成 Goal 的接续 Goal）；提议和采用共用一份干预来源证明，它读到的版本守卫存进采用。
+        - G：`workflow/advance` 里的 L46 处理（`src/business/workflow/task-gate.ts:181` 的 `createTaskGate`：正式依赖 `:117`、传递闭包 `:144`、Goal 等待依据 `:176`、覆盖的重排 `:405`；上游读是上下文输入 owner 上的薄端口 `readInputUpstreams`，`src/core/work-graph/tasks/context-input-service.ts:1150`）。等自动返工确认的失败 Task 挡住自己和正式依赖它的 Task（DAG 边、门的结果、按来源 Run 认定的旧式精确产物），按传递闭包算、每次推进重建、不存；Goal 范围的选择跳过被挡的，点名的 Task 返回门或 `l46_dependency_blocked: …`，全挡住时 Goal 等待并带合并的唤醒依据；软关系不挡。
+        - L：两条人用的路由 `messages/forward`、`waits/dispose`（`src/app/core-routes.ts:504`、`:505`，plain body，只限人；发布 `platform.messageForwarding` 和 `disconnect`）和 Host 钩子（`src/app/host.ts:993` 的 `announceDisconnections`；认领的干预分支在 `:1823` 用 Host 系统身份发中断通知，`reconcileContext` 在 `:1597`；两处 90-8 的 notify 改用 `systemNotifyRequest`，`:2037`、`:2156`）。
+      - 经过和数字：一次提交 `aedb093d`（本地，10-31 10:4x）。`7b2-land..7b3-land`：src 40 个文件 +2,017/−204；测试 32 个文件 +2,104/−53；README 和其他 14 个文件 +126/−104；89 个提交。落地后 `199cdc0e` 只改说明文字，成为 `aedb093d`，树不变。
+      - 检查：落地树 `8fae469`，全量 10:30–10:44。build、typecheck、check:architecture、kernel-patch 检查都是 0；1,061 个文件全过、12,808 项过、3 项跳过、852.13 秒（6 个并行）。规模批 10:30–10:43：13 个文件 40 项全过、850.27 秒（4 个并行）。
+      - 文档同步：STATE-MACHINES-SPEC 11 处（V 2、CS 4、N 1、P 1、G 1、L 1、§10 引言 1；§18 已核对不改）；MVP-BEHAVIOR 7 处；DESIGN 8 处；E3-UI-ITEMS 新增 1 节（4 行）；slice-7-SPEC 顶部后注 1 处；IMPLEMENTED-CAPABILITIES 在 WG138 后新增 6 行（WG139–WG144）；CORE-DATA-OPERATIONS 5 处；另同步 HANDOFF、DECISIONS、STATUS、AGENTS。
+      - 来源：`docs-land1031b/facts-land1031b.md` §1；`7b2/land3/msg-7b3.txt`（提交说明）；`7b2/status-1030.md`；`book-7b-frozen.md` §2.4（7B 第三次运行）；`7b3-start-rulings-v22.md`；`7b2/7b3*-table.md`；`ask/out/*`。
+    - **101-2 lead 改掉冻结文字的裁定和施工中的裁定（10-31）。**
+      - 勘误清单在 lead 笔记 `7b2/errata-7b23.md`（E1–E29）。本次落地的是标 (7B-3) 的那些，不逐条抄；新加的五条：
+        - E25：G-L46 用一个夹具选项开两个世界——默认是书的那一行，D 走软关系照常往下走；打开 `legacyOnD` 是冻结的步骤 1–6，D 通过上游读等 A。
+        - E26：G1 缺可信的检查配置，复用 S7A 的 `checkConfiguration`。
+        - E27：“已应用”的卡 = `decisions/answer` 加人对 A 的 `tasks/requeue`（覆盖的重排），不走 `decisions/application`。
+        - E28：冻结的上游读伪码把“产物还没存”（`not_found`）当成整个读失败；改成“还没存就先没有这条边，下一次推进重建”，别的读错误照样拒绝。
+        - E29：覆盖的重排之后，卡的读仍是 `answered_pending_application`（见 101-3）。
+      - 施工中的裁定：
+        - N-notify、N-interrupt 改成经 Host 触发（SR10 §10.9），不再直接调构造器。
+        - 测试世界复用 7B-2 H 的 `openConsumeHostWorld`（`tests/helpers/S7B2-consumable-sessions.ts:198`，导出在 `:287`）。
+        - 发送方的模型请求 +1 是认领的干预自己的驱动，不是通知。
+        - 回答之后第二次人的干预在认领前被拒（`busy`，Task 在 `verifying`）；“没有开着的等待就不发”只在 N 的构造器里直接断言。
+      - Codex 复审后改了两处生产代码：转发 owner 里和路由重复的人身份检查删掉（现在那条只拒非 Host，`src/core/work-graph/communication/message-forwarding.ts:232`；`disposeWait` 的人检查保留，`:363`）；中断通知改用 Host 系统身份，不再用消费时的操作者（人）身份（书 §3.11 第 4 条 `:736`–`:742`；`src/app/host.ts:1597`、`:1823`）。
+      - 来源：`docs-land1031b/facts-land1031b.md` §2；`7b2/errata-7b23.md`（E25–E29 和标 (7B-3) 的各行）；`ask/out/s97b3gl-q-n-hook-lead.md`、`s97b3gl-q-n-interrupt-lead.md`、`s97b3gl-q-n-interrupt-turns-lead.md`；`ask/out/s97b3gg-q-g1-legacy-lead.md`、`s97b3gg-q-g-rows-green-lead.md`；`7b3-start-rulings-v22.md` §10.9；`book-7b-frozen.md` §3.11 第 4 条。
+    - **101-3 已知限制（10-31）。**
+      - E29：人回答自动返工卡、再把 A 重新排队后，A 会被重选，但卡仍读“已回答、待应用”，“需要你决定”队列一直挂着；要不要在覆盖重排时关卡，以后定。
+      - G 没证明：拒绝子情况（无公开路径）、来源被替换后的重选、重启的具名变异。
+      - L：N-interrupt 第二次干预经 Host 不可达，“没有开着的等待就不发”只在构造器层证明。
+      - 测试量：G 测试/生产 1.59 倍、L 3.49 倍，超过“测试不超过生产”，按 10-26 的规矩在 Codex 查过没有漏复用、没有多余防御后合入。
+      - 目标驱动 §18.7 的 P1–P6 等用户定；这次没碰 `collaboration-driver.ts`，§18 照旧对得上代码。
+      - 来源：`docs-land1031b/facts-land1031b.md` §3；`7b2/land3/msg-7b3.txt` 的 Known limits；`7b2/errata-7b23.md:36`（E29）；`docs/refactor/STATE-MACHINES-SPEC.md` §18.7。
+    - **101-4 下一步（10-31）。**
+      - 7B 三次运行都已落地。按设计：7C → 7D1 → 8B-2；8B-2 要 7D1；8C、8E 暂缓（决定 56）。
+      - 等用户定：§18.7 的目标驱动问题要不要改代码；7D1 的 G4 卡片（约 150 行）和 G1 的纯函数部分是否并进早期部分；推送。
+      - 核对表按第二轮冒烟改（97-2）还要做；下一轮真实模型冒烟之前补上 7B-1…7B-3 的行为。
+      - 远端：本地提交等用户推送（`0be0b9e0`、`95023763`、`8e55756c`、`9dc4e171`、`eb61c3ad`、`aedb093d` 和这次的文档）。
+      - 来源：`docs-land1031b/facts-land1031b.md` §4；`7b2/status-1030.md`；`7b2/land3/msg-7b3.txt`。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

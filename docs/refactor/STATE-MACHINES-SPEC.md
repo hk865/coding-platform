@@ -522,6 +522,7 @@ D-9 波及的其它位置（A.2 需要同步改造）：
 | 对象.字段 | 位置 | 代码枚举 | 说明 |
 | --- | --- | --- | --- |
 | `PlanProposal.status`（`candidate_v2`） | `src/core/work-graph/model/plan-contracts.ts:39-48`（`:42`） | `'candidate' \| 'accepted' \| 'rejected'`；codec 三个值都接受（`persistence/plan-record-codecs.ts:645-647`） | `rejected` **只声明，无写入者**（D-17） |
+| `PlanProposal.sourceMessageRef`（schema 2，新增 V） | `plan-contracts.ts:47` | 必填键：`null` 或完整 `SessionMessageRef`；缺键拒绝（`plan-record-codecs.ts:800-804`） | 只有 `intervention_planning` 来源的提案带非空值；`proposal_recorded` 事件同样带它（`plan-record-codecs.ts:929-934`）。采用时作为来源证明的选择器（§3.7） |
 | `PlanProposal`（`legacy_v1`） | `plan-contracts.ts:48-50` | 恒为 `'candidate'`（解码见 `plan-record-codecs.ts:752`） | 只读；采用时返回 `unsupported` |
 | 派生 `stale` | 无字段 | `status='candidate'` 且 `basedOn≠Goal.activePlanRevision`；`findPendingProposal` 会跳过它（`plan-readers.ts:483,487`） | 是否可逆取决于 `basedOn` 指向什么。`basedOn` 为 null（指针已非空之后），或指向本 Goal 已存在、非活动的版本时，不可逆：指针只前移，W16 还要求目标键 ∅。`basedOn` 指向尚不存在的 planId 时，可逆：Host `proposePlan` 只检查形状（`plan-service.ts:1015-1017`），之后若另一候选以该 planId 被采用（`:1724-1733`），它会重新成为待决。lead 决定 L-11：A.2 不给 PLAN-01 加「`basedOn` 必须为 null 或本 Goal 已有的 PlanRevision」守卫，列为剩余缺口（§16.4 GAP-14） |
 | `PlanRevisionSnapshot` | `src/contracts/plan.ts:228-255`；`revision: 1`（`:233`） | 不可变；提交时对目标键做 ∅ 守卫（`plan-commit-compiler.ts:167,315`） | 没有候选、拒绝或替代字段 |
@@ -740,6 +741,16 @@ stateDiagram-v2
 | PLAN-08、09 | `derivePlanRevisionStatus` | `plan-service.ts:1377-1462`（`queryTaskGraph` 可按显式 planRef 读历史版本） | `tests/work-graph/W1-future-plan.test.ts:663` | 指针单调；superseded 版本不能再被指回 |
 | PLAN-05 守卫 9（新增，lead 决定 LA-3（2026-10-03）） | `plan-machine.ts`: `parallelCarrierFenceProblem`；调用 `state/task-failure.ts` 的 `reworkFenceOf` | `plan-service.ts:1737-1793`（类别为 `agent`/`system` 时，对获得新载体的义务读取其现有 active work 载体的事实，并把选中 Run@rev、Lease、指针 ControlIntent@rev 加入提交守卫）；`plan-readers.ts`（`readDispositionChangeTaskFacts`） | — | `tests/state/plan-machine.test.ts`：义务 O 唯一的 active work 载体 T 的最后一个 Run 被人工请求的 intent 取消，目标新增载体 T′：类别 `agent`/`system` → `forbidden`，`human` → 通过；O 另有一个未被围栏的 active work 载体 → 通过；T 是 Goal 扇出暂停后被重启打断的（围栏 `human_or_goal_resume`）→ `agent` 仍 `forbidden`；把 O 的一个已延后载体恢复为 active 也算新载体 → `forbidden`；O 的未围栏载体只有 gate → 仍 `forbidden`（gate 不计入）；新载体属于别的义务 → 通过；O 没有 active work 载体 → 通过。`W2-agent-whiteboard.test.ts`：Agent `apply_future_plan` 加入 T′ → `forbidden`，零写入；同一候选由操作者经 `plans/apply` 采用 → 提交。`W1-future-plan.test.ts`：Host 主体的 actor 为 `WORKFLOW_AUTOMATION_ACTOR` → `forbidden`；以 `kind:'system'` 启动的 Host 操作者 → 提交。竞争（`tests/composition/W1-future-plan-platform.test.ts`）：守卫 9 读取之后、提交之前，人工取消 O 的最后一个未围栏载体 → 采用 `revision_conflict`，重读后 `forbidden` |
 | 3.3 第 5 点（C6；迁移行是 §6 RUN-02/03） | `tasks/plan-task-basis.ts`: `entryPlanVerdict`（纯）；Run 机守卫读 `RunGuardContext.entryPlan`（§6） | `execution-entry-service.ts:936-1003`（`authorizeRuntimeEntry`，RUN-03 的重新授权用同一 helper）；`persistence/execution-entry-codecs.ts:303-306,392-398`（`activePlanRef`）；`materials/applicability.ts:219-223`、`materials/grant-service.ts:674-676,750-752,767`（2026-10-07 已删除，决定 34）、`materials/material-facts-service.ts:183`、`src/composition/create-platform.ts:294`（注入 `isTaskCarriedUnchanged`；这三处 2026-10-07 随授权读取侧删除，决定 34） | `tests/work-graph/B2-execution-entry.test.ts`；`tests/work-graph/B2-material-admission.test.ts`（2026-10-07 已删除） | `tests/state/plan-task-basis.test.ts`（`entryPlanVerdict`）：同一 ref → `active_plan`；P1 领取、P2 改了别的任务 → `carried_unchanged`；预置 P2 改了本任务 title → `changed`；活动计划中本任务被延后/取消或是 gate（预置）→ `changed`；basis 来源缺失 → `unavailable`；claim 计划晚于活动计划 → `changed`；P1→P2（无关）→P3（别的任务只改处置）→ `carried_unchanged`。`B2-execution-entry.test.ts`：P1 领取后无关 W16 到 P2，授权提交、`replayed:false`，Run/Attempt/Outbox 仍为 P1，事件带 `activePlanRef=P2`；W3 读后提交前有 W16 提交 → `revision_conflict`、零写入，按新指针重新授权成功；预置 P2 改了 title → `revision_conflict`、零写入；basis 来源缺失 → `unavailable`；P1 授权、之后 W16、同 requestId 重试 → 重放原 permit；无关 W16 后 RUN-03 重新授权（代际 +1）提交。`B2-material-admission.test.ts`（2026-10-07 随授权写入方删除）：P1 领取，经授权读一个选定输入，无关 W16 到 P2：准备、W3、W4 都通过，第二次无关 W16 后模型调用关口仍准入该材料。场景 `tests/scenarios/C6-unrelated-adoption.test.ts`（含领取与授权之间 Host 重启的 A8 变体，§12 W-01；以及 T1 经授权读外部材料的变体，lead 决定 LA-2（2026-10-03），这个变体 2026-10-07 随授权写入方删除）与 §9 VD-7 的 Workflow 用例同批 |
+
+### 3.7 干预规划与来源证明（7B-3 V，2026-10-31）
+
+**分支。** `handleIntervention` 先读消息与线事实，再按 Goal 的正式 phase 分：线上有未完成的 `active` Task 就按 `{kind:'intervention'}` 领取，开着的等待不消费；Goal `active` 且没有未完成任务时，跑一条只读 `intervention_planning` Query（记 `sourceMessageRef`）→ 按 `{kind:'intervention', messageRef}` 读答案并规范化 → `proposePlan`（带 `sourceMessageRef`）→ 首份计划留给人、未来细化按 autonomy 采用；Goal `COMPLETED` 时经 `requestIntake.submitInterventionGoal` 追加一条无目标的 `intervention_new_goal` RequestRound（新的接续 Goal 走目标卡流程），固定 `operationId` 作重放身份（`intervention.ts:40`、`:97`、`:132-143`、`:147-299`；`request-intake.ts:388-395`；`request-service.ts:111`）。
+
+**记录和事件。** 干预本身不新增阶段记录：每步的正式身份是 `intervention:<message key>:<stage>`，位置从 Query、提案、采用与领取重算（书 §3.10 第 1 条）。`PlanProposal` 与 `proposal_recorded` 事件都带 `sourceMessageRef`（必填的 `null` 或完整 ref）；`intervention_new_goal` 命令带来源消息与旧 Goal（`plan-contracts.ts:47`；`plan-record-codecs.ts:800-804`、`:929-934`；`plan-service.ts:1380-1402`；`request-service.ts:111`）。
+
+**一份来源证明。** 提议、初始采用与后续采用共用 `proveInterventionSource`：Query 必须是 `intervention_planning`，来源消息与 Goal 同一，消息未撤回且已释放，发送者是人或已释放的 `action_request`；它读到的 QueryJob 与消息版本作为守卫存进采用（`initial-plan-answer.ts:74-118`；`plan-service.ts:1604-1614`、`:1653-1661`、`:2929-2953`）。
+
+**Host 的调用。** Host 的干预调用在 `messageRef` 之外带四个字段：`roleBinding`、`runtimeBudget`、`budget`、`consumerId`（`ports.ts:312-317`；`host.ts:1815-1819`）。
 
 
 ## 4. Task（投影 phase + disposition）
@@ -1076,6 +1087,7 @@ Task 没有可写的存储 phase（D-1）。`effectivePhase` 是对 Run（含控
   - 从不自动重入队：`stopped` 的 Task、`outcome_unknown`、`paused_interrupted`、人工停止的 Task、模型服务中断（AV-5m）、`check_incomplete`（只做后继轮次）。Goal 不是 `active` 时 `selectNext` 返回 `waiting`。
   - 没有定时调度：自动返工只在推进、驱动启动、Host 启动核对之后的重新驱动（只在 `automation.resumeOnStartup` 为 `'auto'` 时；三档 `'auto' | 'ask' | 'off'`，默认 `'ask'`，决定 97-5；lead 决定 LA-6（2026-10-03），§12.1）或既有的提醒触发时运行；驱动停在 `waiting` 之后不会自己醒来（GAP-48）。模型服务中断（AV-5m）在哪一档都不自动续：没有网络恢复信号，也没有定时器，下一次 Host 启动也不续，只等人 `tasks/requeue`（驱动已停时再 `workflow/driver-start`）。所以 Goal 上的 `auto_rework_pending` 表示“等待推进”，不表示正在执行。
   - 升级之后第一次推进时，升级前就已 `failed` 且 outcome 已知的 Task 同样按判定自动返工，受上限约束；这是已知的迁移行为，不另加守卫（lead 按用户总体取向裁定）。
+  - **L46 的阻塞（7B-3 G）。** `selectNext` 在排序之后、循环之前跑一次 `taskBlocks`（`task-gate.ts:506`）：等自动返工确认的失败 Task 挡住自己和正式依赖它的 Task——DAG 的 `output-contract`/`artifact`/`decision`/`gate-result` 边、门结果、按来源 Run 认定的旧式精确产物；按传递闭包算（`closeBranches`，`task-gate.ts:144`），每次推进从 Task、Run、卡事实重建，不存。人对 A 的覆盖重排（`failure.automation.coveringRequeue`）之后同一趟释放；卡已答不应用或关闭时也释放（`task-gate.ts:529-538`）。覆盖重排之后，卡的读仍是 `answered_pending_application`（决定 101-3）。Goal 范围的选择跳过被挡的（`workflow.ts:1645-1650`）；点名的 Task 返回门或 `l46_dependency_blocked: …`（`:1647-1649`）；全挡住时 Goal 等待，带合并的唤醒依据（`l46_blocked: …`，`:1799-1811`）。Task 的投影 phase 与判定不变，阻塞只影响选择和等待。软关系 `expected_dependency`、`coordination` 不挡（`task-gate.ts:134`）。上游读是上下文输入 owner 上的薄端口 `readInputUpstreams`（`context-input-service.ts:1150`）；还没存的旧式精确产物（`not_found`）先不算这条边，下一次推进重建，别的读错误照常拒绝（`:1174-1181`）。纯规则都在 `task-gate.ts`。
 
 **缺口（TD-2；存储方式已由 lead 决定 L-3，随 C1 实施，链证据随 C5）：返工后，旧的阻塞证据仍会挡住完成**
 
@@ -2836,11 +2848,21 @@ stateDiagram-v2
 | SES-15、SES-16 | `transitionSession`（work_linked） | `sessions/session-lifecycle.ts` `runLinkAttempt` | `tests/work-graph/A1-session-lifecycle.test.ts:37`、`:206`、`:224` | 关闭不存在的链接得到 `not_found`，关闭已关闭的链接得到 `invalid` |
 | SES-17、SES-18 | `transitionSession`（occupancy_released）的空迁移分支 | 同 SES-04、SES-08 | `tests/work-graph/B2-execution-result.test.ts:94` | 返回 `ok:true` 且 `effects=[]`；持有者其他记录照常提交 |
 | QRR-01..QRR-06 | `transitionQueryRunRecovery`、`settleQueryRunRecord`、`markQueryRunUnknownRecord` | `queries/query-execution.ts` 的 `recordObservation`（QRR-03）、`reconcileQueryRun`（QRR-01/02/04/05）、`resolveUnknownQueryRun`（QRR-06）；Kernel 分类复用 `agent-runtime/run-reconcile.ts` | `tests/work-graph/R5b-query-execution.test.ts:100`（只覆盖 QRR-03 的进程内路径） | 逐行表驱动；新增取值通过 codec（`query-record-codecs.ts:293`、`materials/record-readers.ts:169-172`）；收束后 phase、status、outcome、endedAt 一致；paused/yielded 的 Kernel 状态按 SD-4(e) 分流；SD-3 时进入 `unknown` 且身份不依赖 Kernel 位置；R 来源各行与 QRR-06 在未持实例租约时 `busy` 且不写（L-1、L-10）；咨询 Query 收束后投影为 `ended`，不再提交 |
-| 派生 | `deriveAvailability`（迁自 `session-directory.ts:1027-1032`） | `session-directory.ts` 的 `readSession`、`findSessionsByTarget`、`findSessions`（`:1180`、`:1350`、`:1535`）。以 availability 或 occupancy 作门的消费者：`business/workflow/workflow.ts:221-228`（`roleReusable`）、`:459-460`；`business/workflow/consultation.ts:281`、`:391`；`src/app/host.ts:868`、`:877` | `tests/work-graph/B2-execution-result.test.ts:51`；`tests/composition/AG1-session-discovery.test.ts:119` | 18 种组合的 availability 快照表；Session 为 unavailable 或被 `outcome_unknown` 占用时，Host 注意力递送跳过、咨询返回 waiting、Workflow 报 waiting，都不领取；例外是 claim Session 为 `kernel_turn_open` 的 requeue 领取，Workflow 先 `close_open_turn`，关闭不可用才改走 `create_session`（见“结论码读取”行；K 片 cfe35550） |
+| 派生 | `deriveAvailability`（迁自 `session-directory.ts:1027-1032`） | `session-directory.ts` 的 `readSession`、`findSessionsByTarget`、`findSessions`（`:1180`、`:1350`、`:1535`）。以 availability 或 occupancy 作门的消费者：`business/workflow/workflow.ts:221-228`（`roleReusable`）、`:459-460`；`business/workflow/consultation.ts:472-474`（只看派生出的只读副本，来源可归档或退役）；`src/app/host.ts:868`、`:877` | `tests/work-graph/B2-execution-result.test.ts:51`；`tests/composition/AG1-session-discovery.test.ts:119` | 18 种组合的 availability 快照表；Session 为 unavailable 或被 `outcome_unknown` 占用时，Host 注意力递送跳过、Workflow 报 waiting，都不领取；已归档和已退役的线仍可被咨询（§8.7），咨询不再因来源不可用返回 waiting；例外是 claim Session 为 `kernel_turn_open` 的 requeue 领取，Workflow 先 `close_open_turn`，关闭不可用才改走 `create_session`（见“结论码读取”行；K 片 cfe35550） |
 | 读侧持有校验 | `ownsOccupancy`：只判定占用（kind、executionRef、generation），不看 lifecycle 和 health | `execution-entry-service.ts:1593-1607`；`query-execution.ts:935-938`；`plan-write-admission.ts:306-313`；`communication/mailbox-service.ts:641-647`。lifecycle/health 检查和错误码留在各调用方：entry 与计划写入查两者并返回 `busy`（`execution-entry-service.ts:1594-1595`、`plan-write-admission.ts:307-308`）；邮箱只查 lifecycle、不查 health，返回 `forbidden`（`mailbox-service.ts:641-647`） | `tests/work-graph/C1-session-mailbox.test.ts:364` | 四处读侧改用同一函数后，各自的错误码不变 |
 | 结论码读取（8.3 表外说明 `kernel_turn_open`） | 无新状态机函数；读 `SessionCard.record.healthConclusion` | `business/workflow/workflow.ts`：为 `claim_requeued` 领取时按 (a)–(d) 选 Session，(c) 先返回 `close_open_turn`（K 片 L7），关闭不可用才直接走 `create_session`（带 `requeue`），不经 `chooseSession`（`:450-487`）；`roleReusable`（`:221-228`）不改 | `tests/kernel/R4a-frozen-public.test.ts:284-315`（Kernel 拒绝在悬空 Turn 之后开新 Turn） | Workflow 单测：claim Session 为可复用、被占用、`kernel_turn_open`、`missing`/已归档/角色改变时，分别得到原 Session 领取、本轮跳过、`create_session`、`chooseSession(hint=null)`；`tests/scenarios/A8-host-restart.test.ts` 的 A8-3l、A8-3n、A8-3q |
 
 UI 中有两份重复的 availability 文案表：`src/ui/views.ts:516-518` 和 `src/ui/main.ts:5689-5691`。它们只是展示，不属于本机；“待核对”由 UI 组合 availability 与 Run 的 `outcome_unknown` 得出。
+
+### 8.7 咨询已归档与已退役的线（7B-3 CS，2026-10-31）
+
+**准入。** 人的提问不再拒绝已归档的来源，也接受已退役的线（退役 = health `unavailable` 且归档模式 `retired`）；一次咨询 Query 读这条线的结构化历史窗口，原线不恢复（`consultation.ts:412`；`platform-facts.ts:27-32`；`session-operations.ts:1030`；书 §3.15 第 1、5 条）。
+
+**模式与采集。** 模式只决定一次：已完成边界可读（含真正空的历史）为 `kernel`；边界确认缺失或损坏为 `platform_facts`，采集该 Goal 与其当前计划修订、Task（最多 20）及其最新 Run、最近 20 条消息，读不到的项记进 `unreadable`，不重试；瞬时读仍等待（`platform-facts.ts:70-74`、`:97-99`、`:106-218`、`:229-252`；`consultation-facts.ts:58-78`）。
+
+**创建写入与编解码。** create 操作带 `consultation: {messageRef, mode, facts, reason, sourceRef, boundary}`；重放读这条记录，不再采集（`consultation-facts.ts:25-55`；`session-contracts.ts:66-80`；`session-record-codecs.ts:764-789`）。
+
+**准备。** 准备好的那一轮从 create 操作读一次冻结正文：`platform_facts` 不再采集，`record` 用冻结文本、`body` 经材料端口开、`task` 取冻结 PlanRevision 的任务；`platform_facts` 不带 Session 历史（`query-preparation.ts:379-431`、`:443-464`）。`consultationFacts` 随 Workflow 的依赖包注入（`ports.ts:178`；`workflow.ts:2798`；`create-platform.ts:2329`）。
 
 
 ## 9. VerificationRound（轮次 + 单项检查）
@@ -3293,7 +3315,7 @@ stateDiagram-v2
 
 ## 10. Message
 
-消息是收件 Session 收到的一条陈述，不是任务义务。收件人忙或已归档都照常收信；收信不会唤醒执行、不会抢占，也不会建立任务依赖（`src/core/work-graph/model/communication-contracts.ts:6-11`）。本节把邮箱的写入点（state-writes-other §2 的 M-a…M-f，加 7B-1 的接受与到期、7B-2 的请求轮与只带 notify 的供给，见 §10.7、§10.10，以及 7B-3 F 的转发与等待处置，见 §10.11）转写为单调状态机。转发和等待处置都不新增消息状态。消息状态只有 `pending/read/responded`。“已交付”“等待”“已到期”“已落实”都用其他事实表达，不新增消息状态（ORCHESTRATION §0.2“确认层次”、§2 消息行）。
+消息是收件 Session 收到的一条陈述，不是任务义务。收件人忙或已归档都照常收信；收信不会唤醒执行、不会抢占，也不会建立任务依赖（`src/core/work-graph/model/communication-contracts.ts:6-11`）。本节把邮箱的写入点（state-writes-other §2 的 M-a…M-f，加 7B-1 的接受与到期、7B-2 的请求轮与只带 notify 的供给，见 §10.7、§10.10，以及 7B-3 F 的转发与等待处置、P 的复制转发、N 的断开通知和 L 的接线，见 §10.11–§10.13）转写为单调状态机。转发和等待处置都不新增消息状态。消息状态只有 `pending/read/responded`。“已交付”“等待”“已到期”“已落实”都用其他事实表达，不新增消息状态（ORCHESTRATION §0.2“确认层次”、§2 消息行）。
 
 本节依赖的决定（2026-10-03 已确认，D-6、D-4(b) 按原推荐）：D-17（不做“让出前即持久化的等待关联”）、D-6（重启补账，U-6）、D-4(b)（人工认定，Kernel 可能不可读；属 U-4；只经持实例租约的 Host 入口，lead 决定 L-1），以及 §6 的 RD-3（重启时 Kernel 终态为 yielded：由持久事实重建 continuation 后按原结果入账；只在本 Turn 恰好一条等待发信时重建，否则记为未知，lead 决定 L-5）。
 
@@ -3378,7 +3400,7 @@ type MessageGuardContext = {
 | `message_read` | P（work_run 工具 `ackMessage`） | `messageRef`，恰好一个消息版本钉 | M3 |
 | `message_responded` | P（work_run 文本回复）；P（Host 关联正式 Query Answer） | `messageRef`、版本钉，以及 `text` 或 `answerRef` | M3、§0.1 A′ |
 | `input_accepted` | K（Kernel `run.input_accepted`，由 Runtime 观察者提交，`agent-runtime/execution-inputs.ts:358-381`） | `messageRef`、`part: message \| response \| expiry`、`executionRef`、`kernel{adapterId, kernelSessionId, runId, turnId, position}`；接受同时决定 `consumesWait`（§10.7） | M3（接收确认与响应分别记录）、§0.2 确认层次 |
-| `consultation_derived` | P（Host 咨询消费者，`business/workflow/consultation.ts:368-379`） | `messageRef`、版本钉、`derivation` | §0.1 A′ |
+| `consultation_derived` | P（Host 咨询消费者，`business/workflow/consultation.ts:449-471`；事件由 `communication/mailbox-service.ts:3658-3705` 写） | `messageRef`、版本钉、`derivation` | §0.1 A′ |
 | `task_claimed`（Task 投影事件，此处只读） | P | 接续领取中的 `consumedWait{kind, originalRun?, messageRef, responseRef? \| expiryInputId?}`（三臂，§10.7）与 `previousRun` | M3（推进适用等待） |
 | `message_expired` | X（Host 到期扫描的 owner，`communication/message-expiry.ts:55`） | `messageRef`、`expiredAt`；命令 id 为 `expiry:<消息键>` | W-01…W-03、§10.7 |
 
@@ -3623,7 +3645,21 @@ stateDiagram-v2
 
 **归档和重新排队。** 归档的转移只提交 `reply_handler` 一步，不提交 `wait_cancel`；`waitChoiceForStep` 按步骤选等待自己的 kind，别的步骤不写成取消，所以转移的等待保持 open/answered（`src/business/workflow/session-archive.ts:593-600`；`communication/mailbox-service.ts:818-822`）。`wait` 来源的重新排队读请求里记录的转移或取消，以及旧 Run 的归档取消意图；转移必须和记录里的 `replyHandler` 对上，不会被当成取消（`tasks/requeue-service.ts:754-810`）。
 
+**复制目标的转发（7B-3 P）。** 复制目标的第一份 Plan 采用后，`selectNext` 在选 Task 之前跑一次 `forwardCopiedInterventions`（`workflow.ts:1571-1576`）：逐条读 `goal.copiedInterventions` 的收件线，经 F 的可信入口 `forwardCopiedIntervention` 以 `copy-forward:<goal key>:<message key>` 转发；成功或重放、目的地已不存在、或人已先转发都继续，别的拒绝上抛（`goal-copy-service.ts:524-551`）。目的地没了（`FORWARD_DESTINATION_GONE`）的那条留在未转发状态，由断开通知的 `copyGoal` 项带出，人可见为「待你指定收件线」（界面在 E3）（`state/message-machine.ts:1237`；`views/disconnect-notices.ts:196-198`）。`forwarded:` claim 让重复的推进不再发。
+
 **编解码。** `SessionMessageForwarded`、`SessionMessageWaitDisposed` 两个事件由 `sessions/message-record-codecs.ts:277-279` 声明，编码在 `:1526-1530`，解码/校验在 `:1572-1584`；记录仍由消息机器的构造器写（`state/message-machine.ts:1770`、`:1851`）。
+
+### 10.12 断开与中断通知（7B-3 N，2026-10-31）
+
+**断开。** `decisions/queue` 从事实派生 `disconnect` 通知：一条未消费的等待（`open`/`answered`/`expired`）中每个不可用的一侧一条，发往已归档或已退役线的未交付消息一条；写明是谁、什么时候（`occurredAt`）、接手的人（`handoff` 后继），没有接手的人写“没人接，等你定”。不存通知：每次读从消息、Session 与后继事实重算（`views/disconnect-notices.ts:77`、`:172`、`:195`；`views/decision-read-model.ts:159`；`create-platform.ts:1295`）。主题取消息的 Goal，没有 Goal 取项目；位置取归档消息的 `since` 或退役线的 `unavailableSince`（`:129-166`）。Session 读失败整次拒绝，记录不在就跳过该侧（`:136-140`、`:151-156`）；Host 系统发的 `notify` 不算未交付的断开事实（`:112-114`）；只有 Host 上下文能读这个来源（`:175-177`）。
+
+**Host 的系统通知。** 构造器在 `src/app/host-notices.ts`：`systemNotifyRequest`（`:15`）只填 `intent:'notify'`、收件人、正文、确定性 requestId，并可选带 `goalRef`；`announceDisconnect`（`:35`）给该线的断开事实两侧各发一条（没有对侧就只发一侧），requestId 为 `disconnect:<operationKey>:<message key>:<side>`（`:44`、`:48`）；`announceInterruption`（`:56`）给中断线开着的等待的接收方、在等的上游、目标当前的秘书和任务的参谋各发一条（按 Session 去重），requestId 为 `interrupt:<person message key>:<party key>`（`:93`）；只在 Host 认领人的干预之后调用，用 Host 的系统身份（§10.13）。同一条事实重复调用用同一 requestId。
+
+### 10.13 人的两条路由与发布（7B-3 L，2026-10-31）
+
+**路由。** `messages/forward` 与 `waits/dispose` 是 `plain` 路由（body 为 `{scope, input}`），只过 `personOnly` 后直接调用 F 的 `forwardMessage` / `disposeWait`；没有路由级的转发或处置规则（`core-routes.ts:504-505`、`:886-890`；`core-http-types.ts:439-456`）。
+
+**发布。** 组合根把 `messageForwarding` 与 `disconnect: {records, sessions}` 装进 `platform`，并列入不可枚举成员；发布本身不改消息状态（`create-platform.ts:2839-2847`、`:2978`）。Host 的生命周期 drain 在 `continueUnfinished` 之后分页读 `findSessions({includeArchived:true})`，对 `availability === 'unavailable'` 的线调 `announceDisconnect`（`host.ts:993-1009`）。认领的干预分支用 Host 系统身份（`reconcileContext(scope)`）调 `announceInterruption`（`host.ts:1823`）。两处 90-8 的通知改用 `systemNotifyRequest`：书记提醒（`host.ts:2037`）与注意力递送（`host.ts:2156`）。
 
 
 ## 11. 跨状态机不变量
