@@ -45,6 +45,7 @@
 | 6、7 补充：提示词和上下文（决定 83，2026-10-21 冻结；D3 已在结构一轮里做完（10-22），PC-1、PC-2 已合入（10-22、10-23）） | [slice-6-7-PROMPTS-SPEC.md](slice-6-7-PROMPTS-SPEC.md) | 施工时写 | 无（§0.1 用户 10-21 已定，测试入口 PE1–PE10 已确认） |
 | 8（2026-10-15 晚冻结；8A、8B、8C、8D、L8；8A 2026-10-17 合入，8D 和 §10 段、L8 2026-10-18 合入） | [slice-8-SPEC.md](slice-8-SPEC.md)（§9 是 8A 施工和验收中的限定，§10 是观测规模的修正，§11 是轻型扫描，§12 是 8D 和 §10 段的限定，§13 是 L8 的限定） | 8A：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8A-2026-10-17/README.md`）的 `books/`；8D 和 §10 段：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8D-2026-10-18/README.md`）的 `books/`；L8：证据（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8-L8-2026-10-18/README.md`）的 `books/`；8B 的书 10-24 已冻结；8B-1 已合入（`71281a9a`，决定 90-14：计划按架构目录的模块走，propose pin 当前 catalog、采用检查模块任务）；8B-2 在 7D1 之后；8C、8E 的盘点已做，草稿暂缓 | 无（§0.1 用户已定，决定 64） |
 | 8E 语义联系（决定 87，2026-10-22 冻结；接在 8C 之后，分两段） | [slice-8E-SPEC.md](slice-8E-SPEC.md) | 施工时写 | 无（§0.1 用户 10-22 已定，测试入口已确认） |
+| DRV 目标驱动改造（决定 102，2026-10-31 冻结；7C-1 改 `selectNext` 的组之前合入） | [slice-DRV-SPEC.md](slice-DRV-SPEC.md) | 施工时写 | 无（§6 用户 10-31 已定，选 b，另开小片） |
 
 ## 历史：第 0、1、3、5 片的冻结与施工（2026-10-08 至 10-09）
 
