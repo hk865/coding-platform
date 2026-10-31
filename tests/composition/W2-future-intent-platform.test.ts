@@ -180,13 +180,9 @@ it('real whiteboard factory proposes, adopts and queries an executionIntent futu
     expect(proposed.value.draft.tasks.find((task) => task.taskId === 'refine-next')?.executionIntent,
       'the adapter must not drop the v2 field').toBe('plan_only');
 
-    const applyResult = await byName('apply_future_plan').handler.execute(
-      call('apply_future_plan', 'w2-factory-apply', {
-        proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, expected: [],
-      }), { signal: new AbortController().signal });
-    expect(applyResult.status, JSON.stringify(applyResult)).toBe('success');
-    const applied = toolJson(applyResult) as WriteResult<PlanRevisionSnapshot>;
-    // TARGET: the factory chain adopts the future intent.
+    const applied = await f.plans.applyPlanChange(f.ctx, { meta: { requestId: 'w2-factory-apply', expected: [] },
+      input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
+    // TARGET: the Host adoption of the factory's future intent.
     expect(applied, JSON.stringify(applied)).toMatchObject({ status: 'committed' });
     if (applied.status !== 'committed') throw new Error('factory apply did not commit');
 

@@ -54,7 +54,7 @@ export type S7B2DirectoryWorld = {
   close(): Promise<void>;
 };
 
-function handleOf(session: S6ASession | null): S7B2DirectorySession | null {
+export function handleOf(session: S6ASession | null): S7B2DirectorySession | null {
   return session === null ? null : { session, key: plainSessionRefKey(session.ref) };
 }
 

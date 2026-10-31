@@ -12,7 +12,7 @@
  * `selectNext` to prove a non-executable upstream never blocks a downstream
  * candidate.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Phase, RuntimeExecutionDAG, RuntimeTask } from '../../src/contracts/plan.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
@@ -21,6 +21,8 @@ import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts
 import type { WorkflowDependencies } from '../../src/business/workflow/ports.js';
 import { orderTasksByDependency } from '../../src/business/workflow/task-order.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
+import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 
 type Edge = RuntimeExecutionDAG['dependsOn'][number];
 
@@ -38,22 +40,28 @@ const ids = (tasks: readonly RuntimeTask[]): string[] => tasks.map((entry) => en
 
 // -------------------------------------------------------------------------- //
 // UT39 also reaches the Workflow's `selectNext`: a controlled-double Workflow  //
-// whose only real answers are the adopted Plan/Goal, the reusable Session and   //
-// the workspace pin. Every other port throws if touched.                      //
+// whose only real answers are the adopted Plan/Goal, the Host world's own real  //
+// Session directory and the workspace pin. Every other port throws if touched. //
 // -------------------------------------------------------------------------- //
 
-const ORDER_PROJECT = 's1-order-project';
-const ORDER_WORKSPACE = 's1-order-workspace';
+const ORDER_PROJECT = S6A_SCOPE.projectId;
+const ORDER_WORKSPACE = S6A_SCOPE.workspaceId;
 const ORDER_GOAL = 's1-order-goal';
 const ORDER_PLAN_REF = { aggregateType: 'PlanRevision' as const, projectId: ORDER_PROJECT, planId: 's1-order-plan' };
-const ORDER_SESSION = { projectId: ORDER_PROJECT, sessionId: 's1-order-session' };
-const ORDER_ROLE = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
+const ORDER_ROLE = S6A_WORK_ROLE;
+
+let orderWorld: S6AHostWorld;
+
+beforeAll(async () => {
+  orderWorld = await openS6AHostWorld({ backend: 'memory' });
+});
+
+afterAll(async () => {
+  if (orderWorld !== undefined) await orderWorld.close();
+});
 
 function orderContext(): CoreCallContext {
-  const actor = { kind: 'human' as const, id: 's1-order-operator' };
-  return { projectId: ORDER_PROJECT, workspaceId: ORDER_WORKSPACE, principal: { kind: 'host', actor },
-    materialReader: { kind: 'host', projectId: ORDER_PROJECT, workspaceId: ORDER_WORKSPACE, actor },
-    signal: new AbortController().signal };
+  return orderWorld.humanContext();
 }
 
 /** Only two facts matter here: the Task id and whether it can execute at all. */
@@ -83,15 +91,10 @@ async function selectNextTask(
   const plan = { ref: ORDER_PLAN_REF, tasks: rows.map((row) => row.definition),
     assignments: rows.map((row) => ({ taskId: row.definition.taskId, role: 'builder', instruction: 'work' })),
     executionDag: { dependsOn } };
+  const session = await orderWorld.createWorkSession('s1-order-session');
   const deps: WorkflowDependencies = {
-    tasks: untouched('tasks'), sessions: { ...untouched<WorkflowDependencies['sessions']>('sessions'),
-      readSession: async () => ({ status: 'ready', value: { record: {
-        ref: { aggregateType: 'Session' as const, ...ORDER_SESSION }, revision: 1,
-        kernel: { adapterId: 's1-order-adapter', kernelSessionId: 'kernel-s1-order' },
-        lifecycle: 'active', health: 'available', healthConclusion: null, role: ORDER_ROLE,
-        workspaceId: ORDER_WORKSPACE, lastExecutionRef: null, occupancy: null, historyCursor: null,
-        createdAt: '2026-10-08T00:00:00.000Z', archivedAt: null },
-      links: [], recommendationReasons: [] } }) as never },
+    tasks: untouched('tasks'),
+    sessions: orderWorld.platform.sessions,
     executions: untouched('executions'), runtime: untouched('runtime'), evidence: untouched('evidence'),
     checks: untouched('checks'), sourceAuthority: { ...untouched<WorkflowDependencies['sourceAuthority']>('sourceAuthority'),
       load: async () => ({ status: 'found', snapshot: {
@@ -107,7 +110,7 @@ async function selectNextTask(
       budget: { tokenBudget: 1000, deadline: null } }] },
   };
   const input: WorkflowAdvanceInput = { schemaVersion: 1, goalRef: goal.ref, flowId: 's1-order-flow',
-    sessionHint: ORDER_SESSION, kind: 'select_work' };
+    sessionHint: session.ref, kind: 'select_work' };
   const result = await createWorkflow(deps).advanceWork(orderContext(), input);
   if (result.status !== 'ready') throw new Error(`the Workflow refused select_work: ${JSON.stringify(result)}`);
   const next = result.value.next;

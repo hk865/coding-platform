@@ -47,8 +47,10 @@ async function expectForbidden(f: ArchiveServiceFixture, request: Parameters<Ret
 }
 async function assertCap(f: ArchiveServiceFixture, claim: TaskClaim, archiveOrigin?: ArchiveRequeueOriginV1) {
   const before = f.snapshot();
-  const result = committed(await f.requeueService().requeueTask(f.hostCtx(archiveOrigin ? SESSION_ARCHIVE_AUTOMATION_ACTOR : WORKFLOW_AUTOMATION_ACTOR),
-    await f.requeueWrite(claim, archiveOrigin ? { archiveOrigin } : {})));
+  const outcome = await f.requeueService().requeueTask(f.hostCtx(archiveOrigin ? SESSION_ARCHIVE_AUTOMATION_ACTOR : WORKFLOW_AUTOMATION_ACTOR),
+    await f.requeueWrite(claim, archiveOrigin ? { archiveOrigin } : {}));
+  if (outcome.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(outcome)}`);
+  const result = committed(outcome);
   if (result.value.kind !== 'refused') throw new Error(JSON.stringify(result));
   const refusal = result.value.refusal;
   expect({ ref: refusal.ref, revision: refusal.revision, code: refusal.code,
@@ -85,7 +87,9 @@ describe.each(['memory', 'sqlite'] as const)('archive requeues (%s)', kind => {
     const request = await stoppedByArchive(f, r0);
     const anchor = await f.anchor(request, r0);
     const archiveOrigin = origin(f, request, anchor.value);
-    const result = committed(await f.requeueService().requeueTask(f.ctx, await f.requeueWrite(r0, { archiveOrigin })));
+    const outcome = await f.requeueService().requeueTask(f.ctx, await f.requeueWrite(r0, { archiveOrigin }));
+    if (outcome.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(outcome)}`);
+    const result = committed(outcome);
     if (result.value.kind !== 'requeued') throw new Error(JSON.stringify(result));
     expect({ failureClass: result.value.requeue.failureClass, automation: result.value.requeue.automation,
       archiveOrigin: result.value.requeue.archiveOrigin }).toEqual({ failureClass: 'interrupted', archiveOrigin,
@@ -131,7 +135,9 @@ describe.each(['memory', 'sqlite'] as const)('archive requeues (%s)', kind => {
     const request = await stoppedByArchive(f);
     const anchor = await f.anchor(request);
     const write = await f.requeueWrite(f.b2.claim, { archiveOrigin: origin(f, request, anchor.value) }, 'sv38');
-    const first = committed(await f.requeueService().requeueTask(f.ctx, write));
+    const firstOutcome = await f.requeueService().requeueTask(f.ctx, write);
+    if (firstOutcome.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(firstOutcome)}`);
+    const first = committed(firstOutcome);
     if (first.value.kind !== 'requeued') throw new Error(JSON.stringify(first));
     const encoded = await f.encoded(first.value.requeue.ref);
     const facts = await f.taskFacts();
@@ -159,7 +165,9 @@ describe.each(['memory', 'sqlite'] as const)('archive requeues (%s)', kind => {
     const request = await stoppedByArchive(f);
     const anchor = await f.anchor(request);
     const archiveOrigin = origin(f, request, anchor.value);
-    const queued = committed(await f.requeueService().requeueTask(f.ctx, await f.requeueWrite(f.b2.claim, { archiveOrigin })));
+    const queuedOutcome = await f.requeueService().requeueTask(f.ctx, await f.requeueWrite(f.b2.claim, { archiveOrigin }));
+    if (queuedOutcome.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(queuedOutcome)}`);
+    const queued = committed(queuedOutcome);
     if (queued.value.kind !== 'requeued') throw new Error(JSON.stringify(queued));
     const r1 = committed(await f.base.makeService(f.records, f.now).claimTask(f.ctx,
       await f.requeueClaimRequest(f.base.sessions.second, queued.value.requeue))).value;
@@ -185,7 +193,9 @@ describe.each(['memory', 'sqlite'] as const)('archive requeues (%s)', kind => {
     await f.cancel(request); // Existing yielded-wait control closes only the continuation window.
     const archiveOrigin: ArchiveRequeueOriginV1 = { kind: 'wait', archiveSessionRef: f.S,
       archiveRequestId: request.requestId, runRef: f.b2.claim.runRef, messageRef: message.ref };
-    const result = committed(await f.requeueService().requeueTask(f.ctx, await f.requeueWrite(f.b2.claim, { archiveOrigin })));
+    const outcome = await f.requeueService().requeueTask(f.ctx, await f.requeueWrite(f.b2.claim, { archiveOrigin }));
+    if (outcome.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(outcome)}`);
+    const result = committed(outcome);
     if (result.value.kind !== 'requeued') throw new Error(JSON.stringify(result));
     expect({ failureClass: result.value.requeue.failureClass, archiveOrigin: result.value.requeue.archiveOrigin,
       automation: result.value.requeue.automation }).toEqual({ failureClass: 'interrupted', archiveOrigin,

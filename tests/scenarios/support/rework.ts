@@ -79,9 +79,12 @@ export async function ownerRequeue(platform: Platform, caller: CoreCallContext, 
   if (goal.status !== 'ready') throw new Error(`the Goal must be readable: ${JSON.stringify(goal)}`);
   const run = await platform.executions.readExecution(hostCtx(), afterRunRef);
   if (run.status !== 'ready') throw new Error(`the afterRun must be readable: ${JSON.stringify(run)}`);
-  return platform.claims.requeueTask!(caller, { meta: { requestId, expected: [{ ref: AG2B_GOAL_REF, revision: goal.value.goal.revision },
-    { ref: afterRunRef, revision: run.value.run.revision }] },
+  const result = await platform.claims.requeueTask!(caller, { meta: { requestId,
+    expected: [{ ref: AG2B_GOAL_REF, revision: goal.value.goal.revision },
+      { ref: afterRunRef, revision: run.value.run.revision }] },
   input: { taskRef: TASK, afterRunRef, reason: 'try the stopped work again', ...extra } });
+  if (result.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(result)}`);
+  return result;
 }
 
 /** The work Task's rounds in the last invariant world. */

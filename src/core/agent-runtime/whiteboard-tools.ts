@@ -28,13 +28,13 @@
  * Deprecated read tools (slice 3, T5): `query_task_graph` and `query_ready_tasks`
  * are superseded by the read-only `look_graph`/`find_graph` graph tools in new
  * grants. The exports and behaviour stay unchanged for already-bound Runs and
- * explicit old callers; the two writer tools are unaffected.
+ * explicit old callers; the remaining writer tool is unaffected.
  */
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { VersionPin } from '../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
-import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../contracts/plan.js';
 import type { PlanChangeReason, PlanProposalRef, PlanTaskPort } from '../work-graph/model/plan-contracts.js';
@@ -61,7 +61,6 @@ export const WHITEBOARD_TOOL_NAMES = [
   'query_task_graph',
   'query_ready_tasks',
   'propose_future_plan',
-  'apply_future_plan',
 ] as const;
 
 export type WhiteboardToolName = (typeof WHITEBOARD_TOOL_NAMES)[number];
@@ -75,15 +74,7 @@ export type WhiteboardToolsConfig = {
   goalRef: GoalRef;
   /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
   requestIdForCall: (call: Readonly<ToolCall>) => string;
-  /**
-   * Slice 5 §4.5/T-R2-1: the SAME receipt reader the composition gives the
-   * Workflow (`DecisionActionDependencies.applicationReceipt`). It returns the
-   * formal identity/fingerprint saved in the event at a plan acceptance commit
-   * cursor, so an Agent that acknowledged a user answer can hand the exact
-   * receipt to `record_decision_application`. Absent (or null) keeps the old
-   * tool result shape: the `applicationReceipt` key is only added when the
-   * caller passed an `acknowledgementRef`.
-   */
+  /** The same plan-application receipt reader the Workflow gets; kept for the Runtime-side wiring. */
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
   texts?: Readonly<Record<string, ToolTextV1>>;
@@ -173,18 +164,6 @@ const planProposalRefSchema = z.object({
 }).strict();
 
 /**
- * Slice 5 §4.5/T-R2-1: the complete answer-message ref an Agent may attribute
- * its adoption to. It is attribution only; the plan owner re-reads the formal
- * answer and never trusts a model-supplied source.
- */
-const sessionMessageRefSchema = z.object({
-  aggregateType: z.literal('SessionMessage'),
-  projectId: z.string().min(1),
-  workspaceId: z.string().min(1),
-  messageId: z.string().min(1),
-}).strict();
-
-/**
  * Caller-visible W1 version pins. The plan service `normalizeCallerPlanPins`
  * remains the owner of the accepted subset and of the exact conflict
  * semantics; this schema only keeps the same five accepted ref shapes strict so
@@ -209,7 +188,6 @@ function versionPinSchema(refText: string, revisionText: string) {
 
 function buildSchemas(textOf: (name: WhiteboardToolName) => ToolTextV1): Record<WhiteboardToolName, z.ZodType> {
   const propose = textOf('propose_future_plan');
-  const apply = textOf('apply_future_plan');
   return {
   query_task_graph: z.object({
     planRef: planRevisionRefSchema.optional(),
@@ -236,20 +214,7 @@ function buildSchemas(textOf: (name: WhiteboardToolName) => ToolTextV1): Record<
       .describe(propose.parameters['reason']!),
     expected: z.array(versionPinSchema(propose.parameters['expected[].ref']!, propose.parameters['expected[].revision']!))
       .describe(propose.parameters['expected']!),
-  }).strict(),
-  // Agent `applyPlanChange` adopts only its own W2 candidate with
-  // `decisionRefs=[]`; the adapter supplies that empty list, the model cannot.
-  apply_future_plan: z.object({
-    proposalRef: planProposalRefSchema
-      .describe(apply.parameters['proposalRef']!),
-    expectedProposalRevision: z.number().int().min(1)
-      .describe(apply.parameters['expectedProposalRevision']!),
-    expected: z.array(versionPinSchema(apply.parameters['expected[].ref']!, apply.parameters['expected[].revision']!))
-      .describe(apply.parameters['expected']!),
-    acknowledgementRef: sessionMessageRefSchema.optional()
-      .describe(apply.parameters['acknowledgementRef']!),
-  }).strict(),
-  };
+  }).strict(),  };
 }
 
 // --------------------------------------------------------------------------
@@ -272,12 +237,6 @@ type ProposeArgs = {
   reason: PlanChangeReason;
   expected: VersionPin[];
 };
-type ApplyArgs = {
-  proposalRef: PlanProposalRef;
-  expectedProposalRevision: number;
-  expected: VersionPin[];
-  acknowledgementRef?: SessionMessageRef;
-};
 
 type PreparedWhiteboardCall = {
   plans: PlanTaskPort;
@@ -291,7 +250,7 @@ type PreparedWhiteboardCall = {
   requestId: string;
   /** Snapshotted trusted Goal. */
   goalRef: GoalRef;
-  /** Snapshot of the optional receipt reader; absent leaves the result shape unchanged. */
+  /** Snapshot of the optional receipt reader. */
   applicationReceipt: WhiteboardToolsConfig['applicationReceipt'];
 };
 
@@ -302,7 +261,7 @@ type PreparedWhiteboardCall = {
  * only the trusted Goal, the bound context and the callId-derived requestId.
  */
 async function dispatch(prepared: PreparedWhiteboardCall): Promise<ToolResult> {
-  const { plans, name, callId, args, context, requestId, goalRef, applicationReceipt } = prepared;
+  const { plans, name, callId, args, context, requestId, goalRef } = prepared;
   switch (name) {
     case 'query_task_graph': {
       const input = args as QueryTaskGraphArgs;
@@ -333,27 +292,6 @@ async function dispatch(prepared: PreparedWhiteboardCall): Promise<ToolResult> {
         basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected: [...input.expected],
       }, requestId, goalRef));
       return mapWrite(callId, result);
-    }
-    case 'apply_future_plan': {
-      const input = args as ApplyArgs;
-      const result = await plans.applyPlanChange(context, {
-        // The adapter, not the model, supplies the empty Agent decisionRefs.
-        input: { proposalRef: input.proposalRef, expectedProposalRevision: input.expectedProposalRevision, decisionRefs: [],
-          ...(input.acknowledgementRef === undefined ? {} : { acknowledgementRef: input.acknowledgementRef }) },
-        meta: { requestId, expected: input.expected },
-      });
-      // Slice 5 §4.5/T-R2-1: only an ACKNOWLEDGED, committed adoption carries a
-      // receipt, and only from the trusted event reader. Without an
-      // acknowledgement the WriteResult is returned byte-identical to today.
-      if (input.acknowledgementRef === undefined || result.status !== 'committed') {
-        return mapWrite(callId, result);
-      }
-      let receipt: DecisionApplicationReceiptV1 | null = null;
-      if (applicationReceipt !== undefined) {
-        try { receipt = await applicationReceipt(context, result.cursor); }
-        catch { receipt = null; }
-      }
-      return success(callId, { ...result, applicationReceipt: receipt });
     }
     default:
       return failure(callId, 'execution_failed', `whiteboard tool ${name} is not recognized`);
@@ -445,7 +383,6 @@ export function createWhiteboardTools(config: WhiteboardToolsConfig): Whiteboard
     query_task_graph: textOf('query_task_graph').description,
     query_ready_tasks: textOf('query_ready_tasks').description,
     propose_future_plan: textOf('propose_future_plan').description,
-    apply_future_plan: textOf('apply_future_plan').description,
   };
 
   function definitionFor(name: WhiteboardToolName): ToolDefinition {

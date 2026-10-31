@@ -24,7 +24,7 @@
 
 做 Host 心跳挑可打开 Session 的去这组。
 
-- `consumable-sessions.ts` — 所有 Session 的可消费视图：一次有界的 Session 目录走查，按候选给出可用性、busy 原因与可提供的输入种类；只读已发布事实、不写。目录扫描归 Session owner，投递判定用 `deliveryEligibility`，提供顺序用 `compareSessionInputCandidates`；`after`/`next` 是 Session 键（`plainSessionRefKey`），不是目录游标。
+- `consumable-sessions.ts` — 所有 Session 的可消费视图：一次有界的 Session 目录走查，按候选给出可用性、busy 原因与可提供的输入种类；只读已发布事实、不写。目录扫描归 Session owner，投递判定用 `deliveryEligibility`，提供顺序用 `compareSessionInputCandidates`；`after`/`next` 是 Session 键（`plainSessionRefKey`），不是目录游标。线被自己的 `intervention_planning` Query 占着且处于 `claimed`/`prepared` 时，busy 仍是 `query`，但把它记录的 `sourceMessageRef` 经同一条 `offerOf` 规则作为 `nextMessage` 提供（不走 `offersOf`，所以更新的消息不能插到已领取的规划前面；且只在该消息的收件人就是这条线时提供，用户收件人不是线）；`entering`/`entered` 是已经在跑的 turn，仍不提供任何消息。
 
 ### 活动与时间
 
@@ -76,7 +76,7 @@
 | --- | --- | --- | --- |
 | `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3024` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
 | `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:128` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
-| `createConsumableSessions` | `src/core/work-graph/views/consumable-sessions.ts:66` | 所有 Session 的可消费视图：一次有界的目录走查，按候选给出可用性、busy 原因与可提供的输入种类；`after`/`next` 是 Session 键 | Host 心跳挑要打开的 Session；不要另写 busy/offer 规则 |
+| `createConsumableSessions` | `src/core/work-graph/views/consumable-sessions.ts:66` | 所有 Session 的可消费视图：一次有界的目录走查，按候选给出可用性、busy 原因与可提供的输入种类；`after`/`next` 是 Session 键。自己的 `intervention_planning` Query 在 `claimed`/`prepared` 时 busy 仍为 `query`，但按 `sourceMessageRef` 经 `offerOf` 提供一条 `nextMessage`（仅当收件人是本线；不排 `offersOf`）；`entering`/`entered` 不提供 | Host 心跳挑要打开的 Session；不要另写 busy/offer 规则 |
 | `assembleLineBriefs` | `src/core/work-graph/views/work-line-reader.ts:239` | 把线头批量投影成 `LineBriefV1`，与 `lines/list` 同一路径 | 其他读要线摘要、且必须与列表逐字节一致时 |
 | `resolveContinuationLine` | `src/core/work-graph/views/work-line-reader.ts:1406` | 沿 continuation 后继找线头；分支返回全部头，环返回成员，最多 32 步 | 从线中任一 Session 找头时；不要另写遍历 |
 | `secretaryOrdinals` | `src/core/work-graph/views/work-line-reader.ts:275` | 秘书线名“秘书 N”的 N：本工作区秘书 Session 按 `createdAt`、同刻按 Session 键排，从 1 数（纯函数；一次读只算一回，归档的也算，只读副本不算；有 Session 的职责读不到、或 RoleSpec 角色的职责为 unknown 时整张编号读不到，秘书线名只给“秘书”并带问题；旧模板角色为 unknown 的肯定不是秘书，跳过） |

@@ -255,7 +255,7 @@ describe('W2 role skills in a real scripted Kernel request', () => {
     expect(requests[0]!.systemPrompt).toContain(SKILL_CONTENT['platform-adviser']);
     const names = requests[0]!.tools.map(tool => tool.name);
     expect(names).toContain('query_ready_tasks');
-    expect(names).not.toContain('propose_future_plan'); expect(names).not.toContain('apply_future_plan');
+    expect(names).not.toContain('propose_future_plan');
     const message = requests[1]!.messages.find(message => message.role === 'tool' && message.callId === 'adviser-ready');
     expect(message).toBeDefined();
     if (!message || message.role !== 'tool') throw Error('actual Kernel tool result missing');

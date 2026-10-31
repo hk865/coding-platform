@@ -223,9 +223,11 @@ export async function openManyTaskWorld(f: S5DecisionFixture, taskIds: readonly 
     await claimStack.enter(claim);
     const ended = await claimStack.end(claim);
     source.revision += 1;
-    const value = committed(await requeues.requeueTask(claimStack.automationContext(), { input: { taskRef: claim.task,
+    const outcome = await requeues.requeueTask(claimStack.automationContext(), { input: { taskRef: claim.task,
       afterRunRef: claim.runRef, reason: 'Retry the failed slice-2A work' },
-      meta: { requestId: f.newId(), expected: [await pin(f.records, goalRef), { ref: claim.runRef, revision: ended.revision }] } }));
+      meta: { requestId: f.newId(), expected: [await pin(f.records, goalRef), { ref: claim.runRef, revision: ended.revision }] } });
+    if (outcome.status === 'needs_decision') throw new Error(`requeue requested a decision: ${JSON.stringify(outcome)}`);
+    const value = committed(outcome);
     if (value.kind !== 'requeued') throw new Error(`the automatic requeue was refused: ${JSON.stringify(value)}`);
     return value.requeue;
   };

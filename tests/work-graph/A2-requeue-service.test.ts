@@ -115,7 +115,11 @@ async function open(kind: ClaimFixtureKind): Promise<Opened> {
         now, eventId,
       };
       const service = createTaskRequeueService(deps);
-      return (ctx, request) => service.requeueTask(ctx, request);
+      return async (ctx, request) => {
+        const result = await service.requeueTask(ctx, request);
+        if (result.status === 'needs_decision') throw new Error(`the A2 requeue asked for a decision: ${JSON.stringify(result)}`);
+        return result;
+      };
     },
     async enterAgent(claim, permissions, kernelRunId) {
       const prepared = await b2.buildPrepared({ claim, permissions });

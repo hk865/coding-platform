@@ -497,10 +497,12 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
       ? { ...ctx, principal: { kind: 'host', actor: reqActor },
         materialReader: { kind: 'host', projectId, workspaceId, actor: reqActor } }
       : ctx;
-    return service.requeueTask(callCtx, { input: { taskRef: task, afterRunRef,
+    const outcome = await service.requeueTask(callCtx, { input: { taskRef: task, afterRunRef,
       reason: `S2C-D requeue ${taskId}` },
       meta: { requestId: options.requestId ?? `s2c-d-requeue-${++seq}`,
         expected: [{ ref: goalRef, revision: goalRead.value.goal.revision }, await runPinOf(afterRunRef)] } });
+    if (outcome.status === 'needs_decision') throw new Error(`the S2C-D requeue asked for a decision: ${JSON.stringify(outcome)}`);
+    return outcome;
   }
 
   /**
@@ -644,9 +646,11 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
       if (goalRead.status !== 'ready') throw new Error('S2C-D line requeue Goal read failed');
       const run = await executions.readExecution(ctx, afterRunRef);
       if (run.status !== 'ready') throw new Error(`S2C-D line requeue Run read failed: ${JSON.stringify(run)}`);
-      return requeues.requeueTask(ctx, { input: { taskRef: task, afterRunRef, reason: 'S2C-D: the person continues the Task' },
+      const outcome = await requeues.requeueTask(ctx, { input: { taskRef: task, afterRunRef, reason: 'S2C-D: the person continues the Task' },
         meta: { requestId, expected: [{ ref: goalRef, revision: goalRead.value.goal.revision },
           { ref: afterRunRef, revision: run.value.run.revision }] } });
+      if (outcome.status === 'needs_decision') throw new Error(`the S2C-D line requeue asked for a decision: ${JSON.stringify(outcome)}`);
+      return outcome;
     }
 
     async function requeueRefOf(taskId: string): Promise<TaskRequeueRef> {

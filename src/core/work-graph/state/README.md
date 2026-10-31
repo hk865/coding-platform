@@ -63,6 +63,7 @@
 - `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
 - `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。
+- `rework-request.ts` — `ReworkRequest`（record 3）的唯一字段表与格式：`REWORK_REQUEST_FIELDS`/`REWORK_REQUEST_FORMAT`（`REWORK_REQUEST_ACTOR_FIELDS`/`REWORK_REQUEST_OUTCOME_FIELDS` 是与事件共用的两个子表），`rework-request-by-goal` 只有三个等值键（不含 `state`）并按 `since` 排序；`newReworkRequest` 返回未绑定 `since` 的 pending 记录，`applyReworkRequest`/`closeReworkRequestRecord` 产出下一版 pending 记录（revision、state、outcome、closedBy），`since` 只由提交的 `commitCursorBindings` 绑定。输入类型从字段表派生，本文件不 import `model/`，两个 owner 的 `RequeueTaskInput`/`ReverifyRoundInput` 留在调用侧。
 - `command-normalization.ts` — 命令文本规范化、sha256、action key 与 shell 动作解析（纯）。
 - `context-input.ts` — 上下文/声明输入的纯守卫：冻结段序、结构、渲染区间、字节数、Goal 段、平台职责；`secretary` 调用必须有 `goal` 和 `task` 两段（没有目标时 `goal` 段照旧渲染 Workspace、目标列表和 `secretary.noGoal`）。
 - `unknown-call-kinds.ts` — 固定工具种类表（自上而下首个匹配）与主机停止/清理接管判定。
@@ -147,9 +148,9 @@
 | `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:191` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
 | `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:213` | adopted/superseded 派生，不落库 | 读计划修订 |
 | `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:225` | 由提案与草稿算目标修订 ref | 采纳提案前 |
-| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1748` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
-| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:881` | 提案事件的前置检查 | 提案迁移前 |
-| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1556` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
+| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1674` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
+| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:868` | 提案事件的前置检查 | 提案迁移前 |
+| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1482` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
 | `newPendingQueryRecords` | `src/core/work-graph/state/query-run-recovery.ts:533` | 建 pending 的 QueryJob/QueryRun 对 | 新 Query 请求 |
 | `advanceQueryExecutionRecord` | `src/core/work-graph/state/query-run-recovery.ts:608` | 推进 claimed/prepared/entering/entered | Query 进入执行 |
 | `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:681` | 记录 unknown（Job 保持 running） | 结果未知 |

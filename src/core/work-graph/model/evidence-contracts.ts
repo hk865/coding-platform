@@ -24,6 +24,7 @@ import type {
     RoundSnapshot,
     VerificationRoundRef,
 } from '../../../contracts/verification.js';
+import type { ApprovedReworkApplyV1, ReworkOwnerResultV1 } from './claim-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 
 /** Result of finalizing one frozen round: the persisted snapshot plus the
@@ -173,6 +174,17 @@ export interface EvidencePort {
     reverifyRound?(
         ctx: CoreCallContext,
         request: GraphWrite<ReverifyRoundInput>,
+    ): Promise<ReworkOwnerResultV1<ReverifyOutcomeV1>>;
+    /**
+     * The person approved a stored pending recheck request (`book-7c.md:716–:726`, LD-25): the same successor path
+     * runs with the stored requester agent and the provenance rebuilt from its Run, no fresh admission, autonomy
+     * skipped. A repeat of `approval.commandId` replays; a fence that moved closes the request through its
+     * standalone close record.
+     */
+    reverifyApprovedByCard?(
+        ctx: CoreCallContext,
+        request: GraphWrite<ReverifyRoundInput>,
+        approval: ApprovedReworkApplyV1,
     ): Promise<EffectWriteResultV1<ReverifyOutcomeV1>>;
     beginCheck(
         ctx: CoreCallContext,

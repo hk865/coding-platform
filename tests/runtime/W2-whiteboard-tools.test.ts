@@ -64,10 +64,6 @@ function proposeArgs(): Record<string, unknown> {
     expected: [],
   };
 }
-function applyArgs(): Record<string, unknown> {
-  return { proposalRef: { ...PROPOSAL_REF }, expectedProposalRevision: 1, expected: [] };
-}
-
 /** Recording PlanTaskPort: the adapter must reach this SAME port in phase 2. */
 type Recorded = {
   queryGoal: Array<{ ctx: CoreCallContext; ref: GoalRef }>;
@@ -166,7 +162,7 @@ function outputValue(result: ToolResult): unknown {
 }
 
 describe('W2 whiteboard tool adapter', () => {
-  it('publishes exactly the four frozen names with read_only reads and non-file platform writes', () => {
+  it('publishes exactly the three frozen names with read_only reads and non-file platform writes', () => {
     const { handle, definitions, byName } = buildTools();
     expect(handle.names).toEqual([...WHITEBOARD_TOOL_NAMES]);
     expect(definitions.map(definition => definition.name)).toEqual([...WHITEBOARD_TOOL_NAMES]);
@@ -174,7 +170,7 @@ describe('W2 whiteboard tool adapter', () => {
       expect(byName(name).effectClass).toBe('read_only');
       expect(byName(name).independentReadOnly).toBe(true);
     }
-    for (const name of ['propose_future_plan', 'apply_future_plan']) {
+    for (const name of ['propose_future_plan']) {
       expect(byName(name).effectClass).not.toBe('read_only');
       expect(byName(name).independentReadOnly).toBe(false);
     }
@@ -186,7 +182,6 @@ describe('W2 whiteboard tool adapter', () => {
       query_task_graph: {},
       query_ready_tasks: { includeBlocked: false, page: { limit: 10 } },
       propose_future_plan: proposeArgs(),
-      apply_future_plan: applyArgs(),
     };
     const forbidden: Record<string, unknown>[] = [
       { principal: { kind: 'host', actor: { kind: 'human', id: 'x' } } },
@@ -218,13 +213,8 @@ describe('W2 whiteboard tool adapter', () => {
         toolCall(name, `call-${name}-pin`, { ...bases[name], expected: [] }), { signal: signal() });
       expect(result).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
     }
-    for (const extra of [{ submittedBy: {} }, { provenance: {} }, { decisionRefs: [] }, { actor: RUN_REF }]) {
-      const result = await byName('apply_future_plan').handler.execute(
-        toolCall('apply_future_plan', 'call-apply-forbidden', { ...applyArgs(), ...extra }), { signal: signal() });
-      expect(result).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
-    }
     // A nested unknown field inside a caller pin must be rejected too...
-    for (const name of ['propose_future_plan', 'apply_future_plan']) {
+    for (const name of ['propose_future_plan']) {
       const nested = await byName(name).handler.execute(
         toolCall(name, `call-${name}-nested`, {
           ...bases[name],
@@ -334,7 +324,7 @@ describe('W2 whiteboard tool adapter', () => {
     expect(request.meta.expected).toEqual([]);
   });
 
-  it('forwards propose/apply to the same W1 service with the trusted requestId and returns the real receipt (RED)', async () => {
+  it('forwards propose to the same W1 service with the trusted requestId and returns the real receipt (RED)', async () => {
     const { byName, recorded } = buildTools();
     const propose = await byName('propose_future_plan').handler.execute(
       toolCall('propose_future_plan', 'call-propose', proposeArgs()), { signal: signal() });
@@ -346,18 +336,6 @@ describe('W2 whiteboard tool adapter', () => {
     };
     expect(proposeRequest.input.goalRef).toEqual(GOAL_REF);
     expect(proposeRequest.meta.requestId).toBe(`w2:${GOAL_REF.goalId}:propose_future_plan:call-propose`);
-
-    const apply = await byName('apply_future_plan').handler.execute(
-      toolCall('apply_future_plan', 'call-apply', applyArgs()), { signal: signal() });
-    expect(apply).toMatchObject({ status: 'success' });
-    expect(outputValue(apply)).toEqual({ status: 'committed', value: PLAN, replayed: false, cursor: cursor(2) });
-    expect(recorded.applyPlanChange).toHaveLength(1);
-    const applyRequest = recorded.applyPlanChange[0]?.request as {
-      input: { proposalRef: PlanProposalRef; decisionRefs: unknown[] }; meta: { requestId: string };
-    };
-    // The adapter supplies the empty Agent decisionRefs; the model cannot.
-    expect(applyRequest.input.decisionRefs).toEqual([]);
-    expect(applyRequest.meta.requestId).toBe(`w2:${GOAL_REF.goalId}:apply_future_plan:call-apply`);
   });
 
   it('cancels before the plan operation on a pre-aborted signal, but keeps a real commit after a late abort (RED)', async () => {
@@ -368,13 +346,12 @@ describe('W2 whiteboard tool adapter', () => {
       toolCall('query_task_graph', 'call-pre', {}), { signal: aborted.signal });
     expect(pre).toMatchObject({ status: 'cancelled' });
     // A pre-commit cancellation of a WRITE must produce zero formal writes.
-    for (const [name, args] of [['propose_future_plan', proposeArgs()], ['apply_future_plan', applyArgs()]] as const) {
+    for (const [name, args] of [['propose_future_plan', proposeArgs()]] as const) {
       const cancelledWrite = await preTools.byName(name).handler.execute(
         toolCall(name, `call-pre-${name}`, args), { signal: aborted.signal });
       expect(cancelledWrite).toMatchObject({ status: 'cancelled' });
     }
     expect(preTools.recorded.proposePlan).toHaveLength(0);
-    expect(preTools.recorded.applyPlanChange).toHaveLength(0);
 
     // Phase 2 must not turn an already-committed write into "not committed"
     // because the signal changed after the commit returned.

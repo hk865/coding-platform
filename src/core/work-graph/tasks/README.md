@@ -11,7 +11,7 @@
 
 ## 文件
 
-本目录 80 个 `.ts`，按主题分组。
+本目录 83 个 `.ts`，按主题分组。
 
 ### 请求、秘书与决定卡（18 个）
 
@@ -37,7 +37,7 @@
 - `unknown-call-review-service.ts` — `UnknownCallReview` 读写 owner。
 - `unknown-call-review-target-digests.ts` — review 卡目标路径工作树摘要的单一读取。
 
-### 计划与 Goal（20 个）
+### 计划与 Goal（21 个）
 
 做 Plan 采用/校验、Goal 设置/控制/读取与 Goal 创建入口的去这组。
 
@@ -54,6 +54,7 @@
 - `initial-plan-answer.ts` — 初始 Plan 答案的事实读取与采用侧重核；工厂 `createInitialPlanAnswerReader` 只消费注入的 records/materials/bodies 端口，不调 Runtime，也不进 Kernel store。读取可带来源选择（`binding`：回答 + 草稿号；`prepared_goal`：回答；`intervention`：完整消息 ref，不比较 `answerRef`），只解析一次 `InitialPlanSourceResolutionV1`（来源、`bindingRef`、Goal 与 `goalRevision`）：带来源时不再套普通 Query 的 intent/Goal 准入，`prepared_goal` 只认冻结 manifest 的 `initial_coordination`（`semantic_query` 是 `source_stale`），绑定来源要注入绑定读端口（缺了是 `unavailable`），读不比较 `planDraftIndex`。
 - `initialization-adoption-service.ts` — P11 初始化采用的具名原子 owner（`createInitializationAdoptionService`）：`accept`/`read`/`resume`/`saveBefore`/`saveAfter`；`accept` 从来源事实建 revision 1 的记录，或给已有操作升 generation 而保留前缀/标记/结果；阶段写入和 `result` 只由 `state/initialization-adoption.ts` 的六个函数形成，每次一个 `executeWriteCommand` 和一条末尾事件，读与 resume 不写；`RETRYABLE_CODES` 是唯一一组可重试的 core 错误码（§7.2），不要另抄一份；纯 `unservedRoles` 是 accept 和提交内容检查共用的角色规则。
 - `initialization-pointers.ts` — 项目两个 active 治理指针（完成策略、架构基线）的唯一读取与 `activeRevision` 解码；缺失是 `null`，坏读是 `unavailable`。
+- `overlap-gates.ts` — 模块重叠门的四条纯规则：`moduleOverlapOf`（同 Goal、同模块的 running 任务构成重叠）、`splitNonOverlapping`（按每个候选的重叠判定稳定分组）、`overlapBasisDigest`（对 planRevision、waitingAttempt 与 running 集合做规范摘要）、`overlapGateSatisfied`（门已放行，或有够晚的 module/interface 注记）；事实/状态类型 `ModuleOverlapFactsV1`、`ModuleOverlapV1`、`OverlapBasisV1`、`OverlapGateStatusV1` 也在这里。同一文件追加记录 4 的 owner `createOverlapGateService`（`OverlapGatePort`）：`openOverlapGate` 以 `overlap-open:<gate ref key>:<basis digest>` 打开或给新 basis 开新 revision，`requestOverlapNote` 经注入的 resolver 与 `sendMessage` 发一条 `action_request` 并在同一 basis 的命令里写 `noteRequest` 与 `ModuleOverlapNoteRequested`，`readOverlapGate` 走唯一的单记录读取，`checkOverlapGate` 把真实当前注记交给 `overlapGateSatisfied`，`releaseOverlapGate` 先判满足再由人释放，`readOverlapGates` 按 `overlap-gate-by-goal` 页读。
 - `plan-commit-compiler.ts` — 初始/未来 Plan 采用的一次性 `PreparedCommit` 编译。
 - `plan-readers.ts` — canonical Task/Goal/Plan/治理/closure 的读取总汇与记录 schema/索引名；`policyRefFromBody`/`architectureRefFromBody` 是治理指针体的唯一解析器。
 - `plan-result-helpers.ts` — 计划服务共用的 `Owned`/`Rejection` 形状与 `mapStoreReadFailure`/`asWriteRejection`；`messageOf`、`rejected` 直接用 `src/contracts` 的正本。
@@ -74,7 +75,7 @@
 - `evidence-coverage.ts` — 有效证据的单一纯折叠与适用性判定。
 - `task-phase-facts.ts` — 完成 Task 的 phase 投影输入，由调用方给已读事实。
 
-### 执行入口与 Run（15 个）
+### 执行入口与 Run（16 个）
 
 做认领/返工、执行进入、模型 permit、Run 控制/对账/活动与 execution 读取的去这组。
 
@@ -88,7 +89,8 @@
 - `model-call-service.ts` — permit 的签发/消费，复用同一 `admitEnteredRun` 准入。
 - `reconcile-intents.ts` — 对账 Run end 时 queued `ControlIntent` 的观察与待写快照。
 - `reconcile-reads.ts` — 启动对账的候选集合读取（有界于未完成工作）。
-- `requeue-service.ts` — `requeueTask`：`TaskRequeue` 或 `TaskReworkRefusal` 的二选一 commit。
+- `requeue-service.ts` — `requeueTask`：`TaskRequeue` 或 `TaskReworkRefusal` 的二选一 commit；`needs_decision` 的 agent 请求写 `ReworkRequest@1` 并返回 `ReworkRequestedV1`（重放读 `ReworkRequestRecorded`）；`requeueApprovedByCard` 用记录里的 requester 与重建的 provenance 走同一条路径（不重做准入、跳过 autonomy），成功时在同一 commit 里追加 request@2，围栏变化时只写独立的 close 记录；requester 的 duty 来自准入已读 manifest 的 `contextAssembly.duty`，不再按模板推断。
+- `rework-requests.ts` — 受信返工请求的单条与按 Goal 全状态分页读取、人的已批准应用（经两个 owner 的 `*ApprovedByCard`）与唯一的独立 close 命令（`executeReworkRequestClose`，三个调用点共用）；`createReworkRequestService`。
 - `run-activity-service.ts` — `RunActivity`/`QueryActivity` 的 backfill 写入与合并候选读取；合并顺序的纯函数 `compareActivityBackfillCandidates`、`orderActivityBackfillCandidates`、`activityBackfillCandidateAfter`、`activityBackfillCursorOf` 也在这里（游标判断和下一个时刻的选择都调 `compareActivityBackfillCandidates`）：两种记录共用 `decideActivityOutcome`、同一身份/指纹与 CAS 规则（`expectedActivityRevision`，私有 `activityRevisionMatches`）和已有记录的重算规则（私有 `shouldBackfillRecordedActivity`）；Query 记录的目标和 Session 取 `model/query-activity-plan.ts` 的 `queryActivitySourceOf`；`listActivityBackfillCandidates` 把 Work ended 索引与 `s6-query-run-by-workspace-ended` 合成一张按 `endedAt` 降序、同一时刻 Work Run 在前、再按 `refKey` 升序的列表，`limit` 数合并后的候选，游标是 `{order, kind, refKey}`，续页时请求的 `to` 仍是排他上界；读取上限按读到的索引记录数各计一次，本次调用检查到第一个位置以前所需的页都读，之后只在预算内读页，已读到的先检查完再停，`next` 是最后检查的位置，只有索引没有下一页或早于 `from` 才算读完；没有记录的已进入 Query 不论结束在 `querySince` 前后都是候选；`ensureActivityRecording` 在已有 `since`、`querySince` 为 null 时用自己的一次提交补 Query epoch（revision + 1，不动 `since`）；这次提交的身份和指纹只含请求，先查回执再读时钟，重试或提交抛错后都重放原回执。
 - `run-reconcile-contracts.ts` — Run 对账端口与输入/输出契约。
 - `run-reconcile-service.ts` — 无 Kernel terminal 的 Run end 判定、未知结果处置与一 commit。
@@ -111,7 +113,7 @@
 - `task-review-reader.ts` — Task review 的分页读取，失败原样返回。
 - `trusted-context.ts` — 可信 Host 上下文绑定与同步请求隔离的共用缝。
 
-### 编解码（9 个）
+### 编解码（10 个）
 
 做记录/事件/索引的 schema、编解码与字段形状检查的去这组。
 
@@ -121,6 +123,7 @@
 - `command-rerun-request-codecs.ts` — `CommandRerunRequest` 记录、变更事件、三个索引与答案 identity。
 - `completion-record-codecs.ts` — `TaskReduction`/`GoalPhase` 编解码与 `TaskCompleted`/`GoalCompleted` 事件。
 - `model-request-codecs.ts` — `ModelRequestPermit` 记录与签发/证据事件的编解码。
+- `rework-request-codecs.ts` — `ReworkRequest` 记录（`reworkRequestCodec`）、两个重放事件（`ReworkRequestRecorded`/`ReworkRequestClosed`，`reworkRequestRecordedCodec`/`reworkRequestClosedCodec`）与 `REWORK_REQUEST_RECORD_SCHEMAS` 注册组；两个事件解码器 `reworkRequestRecordedEventFromEvent`/`reworkRequestClosedEventFromEvent`；请求分支的提交载荷 `reworkRequestRecordedFragment` 由两个 owner 共用。字段表与纯迁移在 `state/rework-request.ts`，本文件只做 Store 适配。
 - `run-activity-codecs.ts` — 再导出 `src/core/work-graph/persistence/run-activity-codecs.ts` 的编解码。
 - `session-anomaly-codecs.ts` — `SessionAnomalyAnchor` 记录、事件与两个索引。
 - `unknown-call-review-codecs.ts` — `UnknownCallReview` 记录、变更事件与两个索引。
@@ -183,7 +186,7 @@
 | `unknownCallReviewCardFacts`、`unknownCallReviewTargetPaths`、`UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX`、`readReviewTargetDigests` | `unknown-call-review-card.ts:155`、`unknown-call-review-card.ts:87`、`unknown-call-review-card.ts:80`、`unknown-call-review-target-digests.ts:30` | UCR 决定卡的纯投影、目标路径、文件对象上限与当前摘要读取 | 决定读模型与来源事实 |
 | `findAnswerMessage` | `decision-answer-lookup.ts:29` | 决定答案索引分页到结尾的单一查找 | 找某决定来源的答案 |
 | `readTaskReviews` | `task-review-reader.ts:42` | Task review 的分页读取（到结尾、同一 guards） | 执行准备、续接简报、CRR 列表 |
-| `readUnappliedAnswers`、`REWORK_NOTE_CONTENT_TYPE`、`readRequeueWindow`、`newBasisInputsProblem` | `unknown-call-review-answers.ts:179`、`requeue-service.ts:150`、`requeue-service.ts:403`、`requeue-service.ts:481` | 未应用答案读取（UCR 处置/批准、CRR 与 `message_release` 三种 kind，`message_release` 经 `messageReleaseAnswerCommand` + `commandKeys` 查回执）、返工说明内容类型、requeue 读窗口、新依据输入校验 | 启动恢复、返工准入 |
+| `readUnappliedAnswers`、`REWORK_NOTE_CONTENT_TYPE`、`readRequeueWindow`、`newBasisInputsProblem` | `unknown-call-review-answers.ts:179`、`requeue-service.ts:164`、`requeue-service.ts:445`、`requeue-service.ts:523` | 未应用答案读取（UCR 处置/批准、CRR 与 `message_release` 三种 kind，`message_release` 经 `messageReleaseAnswerCommand` + `commandKeys` 查回执）、返工说明内容类型、requeue 读窗口、新依据输入校验 | 启动恢复、返工准入 |
 | `messageReleaseCardFacts` **正本**、`messageReleaseBlockEligible` **正本** | `message-release-card.ts:38`、`message-release-card.ts:30` | `message_release` 卡的事实构造（source 只含消息与 Goal 两个 pin、`goalBases` 一份、`creationRevision: 1`、两个 `apply` 选项、`closedReason`）与派生块的准入规则（已批准且未撤回） | 卡来源、来源处理器与消息读/发件箱；不要另写卡片投影或准入判断 |
 | `messageReleaseAllowOf` **正本**、`messageReleaseAnswerFacts` **正本**、`messageReleaseAnswerCommand` **正本** | `message-release-answer.ts:19`、`message-release-answer.ts:36`、`message-release-answer.ts:60` | 放行答复的 allow 判定、从存下的来源键派生的答复事实，以及答复的 R2 命令字段（可信入口与未应用答案读取共用） | `decision-change-proof.ts` 的可信入口、未应用答案读取；不要另写答复派生或命令身份 |
 | `readEntryPlanVerdict` | `entry-plan-reader.ts:32` | 进入判定所需的旧 Plan/新 Plan 读取 | 进入授权与 RUN-03 复核 |
@@ -201,13 +204,13 @@
 | `admitGoalCreation`、`createGoalService` | `task-service.ts:156`、`task-service.ts:419` | Goal 创建的准入管线与服务工厂；新 Goal 以 `DEFAULT_GOAL_SETTINGS_V1` 的副本、`continuedFrom: null`、`copiedInterventions: []` 出生 | Host 建 Goal |
 | `createInitialPlanAnswerReader`、`sourceFactsGuards`、`proveInterventionSource` | `initial-plan-answer.ts:67`、`initial-plan-answer.ts:50`、`initial-plan-answer.ts:73` | 初始 Plan 答案的事实读取与采用侧重核（同一 records/materials/bodies 端口）；读取可带来源选择（`binding`/`prepared_goal`/`intervention`）：`intervention` 选择器只校验完整消息 ref，不比较 `answerRef`，解析出 `resolution.kind: 'intervention'`（Goal 与 revision 来自冻结 manifest，要求 manifest 也是 `intervention_planning`），带来源时不再套普通 Query 的 intent/Goal 准入 | 初答读取、模型协调草稿与干预提案的采用前证明 |
 | `InitialPlanSourceResolutionV1`（读取的结果） | `src/contracts/query-job.ts:636` | 来源与 Goal 只解析一次的产物：以哪条来源读（plain/binding/prepared_goal/intervention）、`bindingRef`、Goal 与 `goalRevision`；plain 是 Job 自己的 Goal 与冻结 manifest 的 revision，`binding` 的 Goal 与 revision 来自绑定；`prepared_goal` 只认冻结 manifest 的 `initial_coordination`，`intervention` 只认冻结 manifest 的同种类准备并把 `sourceMessageRef` 来源带回；绑定来源要注入绑定读端口（缺了是 `unavailable`） | 规范化、提案与采用重核都只用它取 Goal 与版本，不要再从 `job.intent.goalId` 推 |
-| `createPlanService`、`createRequestCandidateService`、`planProposalIdFor` | `plan-service.ts:1091`、`plan-service.ts:2321`、`plan-service.ts:396` | Plan 采用/task 读服务、request candidate 服务与提案 id。`proposePlan` 的带来源臂先用 Goal 无关的回执定位（身份 + `initialPlanProposalIdFor` + `sourceProposeFingerprint`（`initial-plan.ts:57`）），命中就还原原提案；未命中才读答案、从 `InitialPlanSourceResolutionV1` 取 Goal，并经同一个 `commitHostPlanProposal`（`writer: 'host'`、答案/Job/Run/绑定 guards、`requestRef`/`basedOn`/`replaces` 为 null）提交；同一请求换了来源是 `idempotency_conflict`。草稿臂的窄准入：带 `sourceMessageRef` 时按消息键与 candidate facts 的 `interventionSource` 比较，并要求请求不是 operator 发起的 root；不带时仍要求 root 且 `initiatedByOperator`（Host 与 Agent 两处同规则，`plan-service.ts:1184`–`:1191`/`:3326`–`:3333`）。`sourceMessageRef` 只在出现时进指纹，记录与事件里是必填可空；`acknowledgement`（7A §3.5）同样只在带它时进入指纹、事件与提交回执（`proofReceipt`），旧调用逐字节不变 | 组合根接线；带来源的提议不要等读完答案才查回执 |
-| `queryGoal` 的 `continuedBy` | `plan-service.ts:1856`（`GoalDetail` 在 `src/core/work-graph/model/plan-contracts.ts:64`） | 副本 GoalRef 列表：按 `GOAL_BY_CONTINUED_FROM_INDEX` 的 `continuedFrom.goal.goalId` 用 `lookupAll` 分页读到结尾，按 canonical 键序返回；没有副本为 `[]`，坏记录 `unavailable`；原 Goal 不写反向链接（DESIGN :335） | `goals/read`；`goals/display` 不含此字段 |
+| `createPlanService`、`createRequestCandidateService`、`planProposalIdFor` | `plan-service.ts:1050`、`plan-service.ts:2279`、`plan-service.ts:396` | Plan 采用/task 读服务、request candidate 服务与提案 id。`proposePlan` 的带来源臂先用 Goal 无关的回执定位（身份 + `initialPlanProposalIdFor` + `sourceProposeFingerprint`（`initial-plan.ts:57`）），命中就还原原提案；未命中才读答案、从 `InitialPlanSourceResolutionV1` 取 Goal，并经同一个 `commitHostPlanProposal`（`writer: 'host'`、答案/Job/Run/绑定 guards、`requestRef`/`basedOn`/`replaces` 为 null）提交；同一请求换了来源是 `idempotency_conflict`。草稿臂的窄准入：带 `sourceMessageRef` 时按消息键与 candidate facts 的 `interventionSource` 比较，并要求请求不是 operator 发起的 root；不带时仍要求 root 且 `initiatedByOperator`（Host 与 Agent 两处同规则，`plan-service.ts:1138`–`:1146`/`:3303`–`:3311`）。`sourceMessageRef` 只在出现时进指纹，记录与事件里是必填可空；`acknowledgement`（7A §3.5）同样只在带它时进入指纹、事件与提交回执（`proofReceipt`），旧调用逐字节不变 | 组合根接线；带来源的提议不要等读完答案才查回执 |
+| `queryGoal` 的 `continuedBy` | `plan-service.ts:1800`（`GoalDetail` 在 `src/core/work-graph/model/plan-contracts.ts:64`） | 副本 GoalRef 列表：按 `GOAL_BY_CONTINUED_FROM_INDEX` 的 `continuedFrom.goal.goalId` 用 `lookupAll` 分页读到结尾，按 canonical 键序返回；没有副本为 `[]`，坏记录 `unavailable`；原 Goal 不写反向链接（DESIGN :335） | `goals/read`；`goals/display` 不含此字段 |
 | `initialAnswerProposeFingerprint`、`sourceProposeFingerprint` | `initial-plan.ts:43`、`initial-plan.ts:57` | 初始答案与显式来源两条提议指纹的纯公式：普通臂省略来源、带来源臂绑定选择器，两者都不含草稿与 Goal | 提案回执的定位与重放；不要另算指纹 |
 | `HANDOFF_SYSTEM_PRINCIPAL` | `src/core/work-graph/model/request-contracts.ts:221` | 请求侧内部入口（理解轮追加、内部路由、关闭、回执读）的固定 Host system 主体；身份、事件 actor 与回执都从它生成，不取调用者主体 | H/I1 的请求侧内部写入与读取；不要另造系统主体 |
 | `createRequestRoundService` | `request-service.ts:885` | request round 的读写端口：人的提交/路由/跟进、内部 `assigned`/`end_unbound`、`reply`/`expiry` 轮追加（同一个 `buildRound` 写 `roundKind` 与 `relatedMessageRef`）、理解轮追加、内部路由、`intervention_new_goal`（无目标提交，`capacityBlocked: true`，固定 `operationId` 重放）、`closeUnderstanding` 与 `readRequestCommandReceipt`；每次提交一个 commit | Host 与 Workflow 的请求入口 |
 | `open`、`unassigned` **正本** | `request-service.ts:1977`、`request-service.ts:1925` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:831`）的游标解析和页读取，不要另写一份 |
-| `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:733`、`claim-service.ts:171`、`requeue-service.ts:609`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查（吃三臂 `SessionConsumedWaitStateV1`）、返工服务与对账候选读取器 | 组合根与启动对账 |
+| `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:733`、`claim-service.ts:171`、`requeue-service.ts:651`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查（吃三臂 `SessionConsumedWaitStateV1`）、返工服务与对账候选读取器 | 组合根与启动对账 |
 | `createExecutionEntryService`、`createModelCallService`、`createModelRequestReadPort`、`modelRequestPermitIdFor` | `execution-entry-service.ts:1396`、`model-call-service.ts:154`、`model-call-service.ts:366`、`model-call-contracts.ts:80` | 执行入口、模型请求读写与 permit id | 组合根接线 |
 | `createRunControlService`、`controlIntentRefFor`、`createRunStateReader` | `control-service.ts:598`、`control-service.ts:161`、`run-state-service.ts:407` | Run 控制服务、确定性的 intent 引用与执行读取器 | 组合根、Goal 扇出、执行读取 |
 | `createRunReconcileService`、`createExecutionHistoryService`、`createRunActivityService`、`runActivityRefOf` | `run-reconcile-service.ts:649`、`execution-history-service.ts:204`、`run-activity-service.ts:376`、`run-activity-service.ts:277` | Run 对账、执行历史定位器、活动回填与活动引用 | 启动对账与活动回填 |
@@ -231,6 +234,8 @@
 | `decodeSessionAnomalyAnchor`、`sessionAnomalyRefKey`、`S2C_ANOMALY_BY_SESSION_LOOKUP`、`decodeGoalPhaseSnapshot` | `session-anomaly-codecs.ts:275`、`session-anomaly-codecs.ts:262`、`session-anomaly-codecs.ts:28`、`completion-record-codecs.ts:204` | 异常锚读取/键、按 Session 的异常索引与 GoalPhase 解码 | 工作线、时间线、Goal 冲突读 |
 | `unknownCallReviewRefKey`、`unknownCallReviewChangedEventFromEvent`、`commandRerunRequestRefOfSource`、`commandRerunRequestChangedEventFromEvent` | `unknown-call-review-codecs.ts:540`、`unknown-call-review-codecs.ts:603`、`command-rerun-request-codecs.ts:382`、`command-rerun-request-codecs.ts:292` | 审查/CRR 记录键、变更事件解码与来源到 CRR 引用 | 读卡、应用答案、续接简报 |
 | `settleCopyItem`、`CopyRetractionSettleScopeV1`、`GOAL_COPY_RETRACTION_SETTLE_OPERATION`、`GoalCopyRetractionShape` | `goal-copy-progress.ts:60`、`goal-copy-progress.ts:45`、`goal-copy-progress.ts:22`、`goal-copy-progress.ts:26` | 一条未选中消息的撤回结果：一次 `goal.copyRetraction.settle` 的 R2 事件写入，只存 definite 结果；`outcome` 为 null 只查回执，提交一次后重放原结果 | C-b 的 copy confirm 对每条未选中消息调用；不要另写 settle 身份、形状或事件 |
+| `moduleOverlapOf`、`splitNonOverlapping`、`overlapBasisDigest`、`overlapGateSatisfied` | `overlap-gates.ts:44`、`overlap-gates.ts:57`、`overlap-gates.ts:70`、`overlap-gates.ts:87` | 重叠判定（同 Goal 同模块的 running）、稳定分组、`planRevision`/`waitingAttempt`/`running` 的规范摘要，以及门的满足判定（放行或够晚的 module/interface 注记） | 选择下一个任务、开/判重叠门时；不要重算重叠或另写摘要 |
+| `createOverlapGateService`、`OverlapGatePort`、`OverlapGateServiceDependencies` | `overlap-gates.ts:159`、`overlap-gates.ts:130`、`overlap-gates.ts:118` | 记录 4 的唯一 owner：开/请求注记/读/判满足/释放/按 Goal 分页读六个方法；依赖注入 resolver、`sendMessage`、真实当前注记读、提示词前缀和时钟，记录 4 没有 `state/` 文件 | 组合根构造与 L1 的 workflow step 调用；不要另写门记录、注记请求或满足判定 |
 
 ## 内部用
 

@@ -115,8 +115,6 @@ export type W2WhiteboardFixture = {
     overrides?: { requestId?: string; expected?: readonly VersionPin[] }): Promise<WriteResult<PlanProposal>>;
   proposeAsSecondWorkRun(draft: PlanRevisionDraft, basedOn: PlanRevisionRef | null,
     overrides?: { requestId?: string; expected?: readonly VersionPin[] }): Promise<WriteResult<PlanProposal>>;
-  applyAsWorkRun(proposalRef: PlanProposal['ref'], expectedProposalRevision: number,
-    overrides?: { requestId?: string; expected?: readonly VersionPin[] }): Promise<WriteResult<PlanRevisionSnapshot>>;
   proposeAsHost(draft: PlanRevisionDraft, basedOn: PlanRevisionRef | null,
     overrides?: { requestId?: string; expected?: readonly VersionPin[] }): Promise<WriteResult<PlanProposal>>;
   applyAsHost(proposalRef: PlanProposal['ref'], expectedProposalRevision: number,
@@ -141,7 +139,7 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
   // a test double for an external callback, not a Store fact.
   const host = { enabled: true, calls: 0 };
   const configuration = { ...structuredClone(B2_HOST), permissions: {
-    ...structuredClone(B2_HOST.permissions), tools: ['read', 'propose_future_plan', 'apply_future_plan'],
+    ...structuredClone(B2_HOST.permissions), tools: ['read', 'propose_future_plan'],
   } };
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
     host.calls++;
@@ -281,12 +279,6 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
     return plans.proposePlan(ctxWorkSecond,
       await buildAgentProposeRequest(goal2Ref, secondClaim.planRef, draft, basedOn, overrides));
   }
-  async function applyAsWorkRun(proposalRef: PlanProposal['ref'], expectedProposalRevision: number,
-    overrides: { requestId?: string; expected?: readonly VersionPin[] } = {}): Promise<WriteResult<PlanRevisionSnapshot>> {
-    return plans.applyPlanChange(ctxWork, { input: { proposalRef, expectedProposalRevision, decisionRefs: [] },
-      meta: { requestId: overrides.requestId ?? `w2-agent-apply-${++seq}`,
-        expected: overrides.expected ?? await callerPins() } });
-  }
   async function proposeAsHost(draft: PlanRevisionDraft, basedOn: PlanRevisionRef | null,
     overrides: { requestId?: string; expected?: readonly VersionPin[] } = {}): Promise<WriteResult<PlanProposal>> {
     return plans.proposePlan(ctxHost, await buildAgentProposeRequest(base.goalRef, basedOn ?? base.planRef, draft, basedOn, overrides));
@@ -337,7 +329,7 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
     readExecution, readRun, readSession, readLease, readPlanSnapshot,
     sessionPin, goalPin, callerPins,
     futureDraftFor, futureDraft, buildAgentProposeRequest,
-    proposeAsWorkRun, proposeAsSecondWorkRun, applyAsWorkRun, proposeAsHost, applyAsHost,
+    proposeAsWorkRun, proposeAsSecondWorkRun, proposeAsHost, applyAsHost,
     provenanceFor,
     async finishRun() {
       await runtimeSteps.finish(firstHandle, B2_AT, 'completed');

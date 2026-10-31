@@ -9,6 +9,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { createC2RuntimePlatform, type C2RuntimePlatformFixture } from '../helpers/C2-runtime-platform-fixture.js';
@@ -27,20 +28,16 @@ function callArgs(reply: ScriptedReply | undefined): Record<string, unknown> | u
 }
 
 it('W2 delegated future-plan writes run through the real entered Runtime model round (RED)', async () => {
-  let proposalRef: unknown;
-  let proposalRevision: unknown;
-  let basePlanRef: unknown;
-  let basePlanRevision: unknown;
+  let proposalRef: PlanProposalRef | undefined;
+  let proposalRevision: number | undefined;
   const replies: ScriptedReply[] = [
     { kind: 'calls', calls: [{ callId: 'c2-graph-1', name: 'query_task_graph', args: {} }] },
     { kind: 'calls', calls: [{ callId: 'c2-propose-1', name: 'propose_future_plan',
       args: { basedOn: {}, draft: {}, reason: {}, expected: [] } }] },
-    { kind: 'calls', calls: [{ callId: 'c2-apply-1', name: 'apply_future_plan',
-      args: { proposalRef: {}, expectedProposalRevision: 1, expected: [] } }] },
     { kind: 'calls', calls: [{ callId: 'c2-graph-2', name: 'query_task_graph', args: {} }] },
     { kind: 'text', text: 'C2 adopted the refined future plan' },
   ];
-  const fx = await createC2RuntimePlatform({ toolNames: ['query_task_graph', 'propose_future_plan', 'apply_future_plan'],
+  const fx = await createC2RuntimePlatform({ toolNames: ['query_task_graph', 'propose_future_plan'],
     scriptedReplies: replies,
     beforeReply: async (request, index) => {
       if (index === 1) {
@@ -48,7 +45,6 @@ it('W2 delegated future-plan writes run through the real entered Runtime model r
         expect(graph).toMatchObject({ status: 'ready', value: { plan: { ref: { aggregateType: 'PlanRevision' } } } });
         if (graph === undefined || graph.status !== 'ready') throw Error('C2 model did not receive the ready task graph');
         const base = graph.value.plan;
-        basePlanRef = base.ref; basePlanRevision = base.revision;
         const draft = { schemaVersion: 2, planId: 'c2-future-plan', planRevision: base.planRevision + 1,
           goalId: base.goalRef.goalId, stages: structuredClone(base.stages), tasks: structuredClone(base.tasks),
           assignments: structuredClone(base.assignments ?? []).map(assignment =>
@@ -66,15 +62,9 @@ it('W2 delegated future-plan writes run through the real entered Runtime model r
         }
       }
       if (index === 2) {
-        const write = toolJson(request, 'c2-propose-1') as { status: string; value?: { ref: unknown; revision: unknown } } | undefined;
+        const write = toolJson(request, 'c2-propose-1') as { status: string; value?: { ref: PlanProposalRef; revision: number } } | undefined;
         expect(write).toMatchObject({ status: 'committed', value: { ref: { aggregateType: 'PlanProposal' } } });
         proposalRef = write?.value?.ref; proposalRevision = write?.value?.revision;
-        const args = callArgs(replies[2]);
-        if (args !== undefined) {
-          args['proposalRef'] = structuredClone(proposalRef);
-          args['expectedProposalRevision'] = proposalRevision;
-          args['expected'] = [{ ref: basePlanRef, revision: basePlanRevision }];
-        }
       }
     } });
   fixtures.push(fx);
@@ -82,9 +72,13 @@ it('W2 delegated future-plan writes run through the real entered Runtime model r
   expect(prepared.status, JSON.stringify(prepared)).toBe('ready');
   if (prepared.status !== 'ready') return;
   const started = await fx.platform.runtime.startRun(fx.ctx, { prepared: prepared.value, consumerId: 'c2-driver', requestId: 'c2-start-w2' });
-  // Phase-2 target: a real entered Run performs the four-tool whiteboard round.
+  // A real entered Run performs the proposal round (graph, propose, graph); the Host adopts its candidate.
   expect(started, JSON.stringify(started)).toMatchObject({ status: 'ready', value: { run: { status: 'ended' }, session: { occupancy: null } } });
-  expect(fx.scripted.calls()).toBe(5);
+  expect(fx.scripted.calls()).toBe(4);
+  if (proposalRef === undefined || proposalRevision === undefined) throw new Error('the Runtime proposal was not captured');
+  const adopted = await fx.platform.plans.applyPlanChange(fx.ctx, { meta: { requestId: 'c2-apply-w2', expected: [] },
+    input: { proposalRef, expectedProposalRevision: proposalRevision, decisionRefs: [] } });
+  expect(adopted, JSON.stringify(adopted)).toMatchObject({ status: 'committed' });
   // The same production Plan instance now exposes the adopted future revision.
   const graph = await fx.platform.plans.queryTaskGraph(fx.ctx, { goalRef: fx.fixture.goalRef });
   expect(graph.status, JSON.stringify(graph)).toBe('ready');
@@ -99,7 +93,7 @@ it('W2 delegated future-plan writes run through the real entered Runtime model r
   expect(graph.value.plan.planRevision).toBe(fx.fixture.plan.planRevision + 1);
   expect(graph.value.plan.revision).toBe(1);
   // The adopted proposal keeps the real work_run provenance.
-  const proposal = await fx.platform.plans.readPlanProposal(fx.ctx, proposalRef as Parameters<typeof fx.platform.plans.readPlanProposal>[1]);
+  const proposal = await fx.platform.plans.readPlanProposal(fx.ctx, proposalRef);
   expect(proposal).toMatchObject({ status: 'ready', value: { submittedBy: { runRef: fx.claim.runRef } } });
   // The current executing Task is unchanged.
   const currentInstruction = graph.value.plan.assignments?.find(assignment => assignment.taskId === 'implement-a')?.instruction;

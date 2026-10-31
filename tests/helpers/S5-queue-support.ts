@@ -390,8 +390,10 @@ export async function noticeWork(f: S5DecisionFixture) {
   const requeue = async (taskId: string, actor: CoreCallContext) => {
     const claim = await start(taskId);
     const ended = await endRun(f, claim, { eventType: 'run_crashed', payload: { kind: 'crashed', error: 'recorded fixture failure' } });
-    const value = committed(await requeues().requeueTask(actor, { input: { taskRef: claim.task, afterRunRef: claim.runRef, reason: 'Retry failed work' },
-      meta: { requestId: f.newId(), expected: [await pin(f.records, goalRef), { ref: claim.runRef, revision: ended.revision }] } }));
+    const outcome = await requeues().requeueTask(actor, { input: { taskRef: claim.task, afterRunRef: claim.runRef, reason: 'Retry failed work' },
+      meta: { requestId: f.newId(), expected: [await pin(f.records, goalRef), { ref: claim.runRef, revision: ended.revision }] } });
+    if (outcome.status === 'needs_decision') throw new Error(`requeue requested a decision: ${JSON.stringify(outcome)}`);
+    const value = committed(outcome);
     if (value.kind !== 'requeued') throw new Error(`requeue refused: ${JSON.stringify(value)}`);
     return value.requeue;
   };
@@ -422,8 +424,10 @@ export async function noticeWork(f: S5DecisionFixture) {
     if (evidence.reverifyRound === undefined) throw new Error('missing reverify owner');
     for (let n = 1; n <= successors; n += 1) {
       current = await finish(current); history.push(current); source.revision += 1;
-      const result = committed(await evidence.reverifyRound(automationContext(f), { input: { predecessorRoundRef: current.ref },
-        meta: { requestId: f.newId(), expected: [{ ref: current.ref, revision: current.revision }] } }));
+      const outcome = await evidence.reverifyRound(automationContext(f), { input: { predecessorRoundRef: current.ref },
+        meta: { requestId: f.newId(), expected: [{ ref: current.ref, revision: current.revision }] } });
+      if (outcome.status === 'needs_decision') throw new Error(`reverify requested a decision: ${JSON.stringify(outcome)}`);
+      const result = committed(outcome);
       if (result.kind !== 'reverified') throw new Error(`reverify refused: ${JSON.stringify(result)}`);
       current = result.round;
       expect(current.chain).toMatchObject({ ordinal: n + 1, autoCount: n, predecessorRevision: 2 });

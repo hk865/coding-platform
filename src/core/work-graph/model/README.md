@@ -65,7 +65,7 @@
 | 名字 | 文件:行 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `GraphWrite` **正本** | `src/core/work-graph/model/task-contracts.ts:28` | 写请求信封 `{input, meta}`。`session-contracts.ts:14`、`src/core/work-graph/architecture/contracts.ts:16` 只是转出，不是副本 | 所有 GraphWrite 端口的请求参数 |
-| `TaskClaimPort` | `src/core/work-graph/model/claim-contracts.ts:132` | 认领、重新入队、审查认领的写入口；`ClaimTaskInput`/`RequeueTaskInput` 各有可选 `acknowledgement`，写结果带可选 `proofReceipt` | Task claim owner 注入时 |
+| `TaskClaimPort` | `src/core/work-graph/model/claim-contracts.ts:155` | 认领、重新入队、审查认领的写入口；`ClaimTaskInput`/`RequeueTaskInput` 各有可选 `acknowledgement`，写结果带可选 `proofReceipt` | Task claim owner 注入时 |
 | `SessionDirectoryPort` | `src/core/work-graph/model/session-contracts.ts:117` | Session 创建、读取与分页目录 | Session 目录消费者 |
 | `SessionReusePortV1`、`PreClaimAuthorizationPortV1` | `src/core/work-graph/model/pick-ports.ts:18`、`src/core/work-graph/model/pick-ports.ts:27` | 挑选的两个注入端口：只读复用判定与领取前授权；W 只声明，B（P 的 chooser）与 M 各自实现，组合根注入 | 挑 Secretary/成员或领取前判授权；不要另立平行端口 |
 | `SessionOperationRecordOf`、`SessionOperationRecord`、`SessionCreateOperationRecord` | `src/core/work-graph/model/session-contracts.ts:84`、`:63`、`:64` | `CoreOperation` 记录：按分支取类型；`admitSessionCreation` 只返回创建分支 | 读操作记录先判 `action.kind`，非创建分支在创建身份上答 `unavailable` |

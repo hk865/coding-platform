@@ -204,28 +204,23 @@ describe('B01-adopt-initial: the catalog governance selects judges a module task
 });
 
 describe('B01-adopt-future: a future module intent is checked against the catalog active at adoption', () => {
-  it.each(['host', 'agent'] as const)('%s adopts a plan_only intent without acceptance on a catalog module', async (adopter) => {
+  it('host adopts a plan_only intent without acceptance on a catalog module', async () => {
     const world = await agentWorld();
     const draft = world.futureDraft('s8b-future-plan', withIntent(R4C_MODULE));
-    const goalPin = async () => [{ ref: world.goalRef, revision: ready(await world.plans.queryGoal(world.ctx, world.goalRef)).goal.revision }];
-    const candidate = committed(adopter === 'agent' ? await world.proposeAsWorkRun(draft, world.planRef)
-      : await world.plans.proposePlan(world.ctx, { meta: { requestId: 's8b-host-future', expected: await goalPin() },
-        input: { goalRef: world.goalRef, basedOn: world.planRef, draft, reason: { text: 'a module intent', sources: [] } } }));
-    const adopted = adopter === 'agent' ? await world.applyAsWorkRun(candidate.ref, candidate.revision)
-      : await world.plans.applyPlanChange(world.ctx, { meta: { requestId: 's8b-host-apply', expected: await goalPin() },
-        input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] } });
+    const candidate = committed(await world.proposeAsHost(draft, world.planRef));
+    const adopted = await world.applyAsHost(candidate.ref, candidate.revision);
     expect(committed(adopted).tasks.find(task => task.taskId === 'work-0')?.scope)
       .toEqual({ kind: 'module', stageId: 'agent', moduleRef: R4C_MODULE });
   });
 
   it.each(BACKENDS)('a catalog revision between the adoption read and its commit is a revision conflict (%s)', async (backend) => {
     const world = await agentWorld(backend);
-    const candidate = committed(await world.proposeAsWorkRun(world.futureDraft('s8b-race-plan', withIntent(R4C_MODULE)),
+    const candidate = committed(await world.proposeAsHost(world.futureDraft('s8b-race-plan', withIntent(R4C_MODULE)),
       world.planRef));
     const goal = () => world.plans.queryGoal(world.ctx, world.goalRef);
     const before = await goal();
-    const hold = holdAdoption('agent adoption');
-    const applying = world.applyAsWorkRun(candidate.ref, candidate.revision);
+    const hold = holdAdoption('host adoption');
+    const applying = world.applyAsHost(candidate.ref, candidate.revision);
     try {
       await hold.reached;
       await world.addModule(catalogModule(world.scope.projectId, 'raced'));

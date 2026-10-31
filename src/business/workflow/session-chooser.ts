@@ -1,10 +1,20 @@
+import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import { rejected as rejection } from '../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
-import type { SessionRef } from '../../contracts/core/identity.js';
-import type { TaskTriple } from '../../contracts/dispatch.js';
-import type { GoalSnapshot } from '../../contracts/ledger.js';
+import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/identity.js';
+import type { RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
+import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import { sameJson as sameCanonical } from '../../contracts/fingerprint.js';
-import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
-import type { WorkflowDependencies } from './ports.js';
+import type { PickBasisV1 } from '../../contracts/pick-basis.js';
+import type { SessionActivityReadPort } from '../../core/work-graph/model/session-activity-contracts.js';
+import type { SessionCard, SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
+import type { SessionFactsPort } from '../../core/work-graph/model/session-facts-contracts.js';
+import type { PreClaimAuthorizationPortV1, SessionReuseVerdictV1 } from '../../core/work-graph/model/pick-ports.js';
+import type { WorkLineReadPort } from '../../core/work-graph/model/work-line-contracts.js';
+import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
+import { plainSessionRefKey } from '../../core/work-graph/sessions/session-record-codecs.js';
+import { latestActivityAt } from '../../core/work-graph/tasks/line-clock.js';
+import { comparePickCandidates, pickBasisRank, type PickCandidateV1 } from './pick-ranking.js';
 import type { Binding, Owned } from './workflow.js';
 
 export type SessionChoice =
@@ -13,120 +23,309 @@ export type SessionChoice =
   | { kind: 'waiting'; reason: string }
   | { kind: 'rejection'; rejection: CoreRejection };
 
-export function roleReusable(card: SessionCard, workspaceId: string, binding: Binding): boolean {
+/** The reads L1 wires. Absent = today's order and no authorization filter (lesson 2). */
+export type PickReadsV1 = {
+  activity?: {
+    lines: Pick<WorkLineReadPort, 'listWorkLines'>;                  // the canonical Work/Query/copy gather
+    record: Pick<SessionActivityReadPort, 'readSessionActivity'>;   // 6B's activity facts
+  };
+  goalRuns?: (ctx: CoreCallContext, goalRef: GoalRef) =>
+    Promise<{ status: 'ready'; runs: readonly RunSnapshot[] } | CoreRejection>;
+  authorization?: PreClaimAuthorizationPortV1;
+};
+
+type RoleVerdict = 'ok' | 'workspace' | 'archived' | 'unavailable' | 'occupied' | 'role';
+
+function roleVerdict(card: SessionCard, workspaceId: string, sessionRole: RoleConfigurationRef): RoleVerdict {
   const record = card.record;
-  return record.workspaceId === workspaceId
-    && record.lifecycle === 'active'
-    && record.health === 'available'
-    && record.occupancy === null
-    && sameCanonical(record.role, binding.sessionRole);
+  if (record.workspaceId !== workspaceId) return 'workspace';
+  if (record.lifecycle !== 'active') return 'archived';
+  if (record.health !== 'available') return 'unavailable';
+  if (record.occupancy !== null) return 'occupied';
+  return sameCanonical(record.role, sessionRole) ? 'ok' : 'role';
 }
 
-export function createSessionChooser(
-  deps: Pick<WorkflowDependencies, 'sessions' | 'sessionFacts' | 'responsibilities'>,
-) {
+export function roleReusable(card: SessionCard, workspaceId: string, binding: Binding): boolean {
+  return roleVerdict(card, workspaceId, binding.sessionRole) === 'ok';
+}
+
+type TaskLinkRead =
+  | { status: 'found'; card: SessionCard }
+  | { status: 'none' }
+  | { status: 'unavailable'; rejection: CoreRejection };
+type ExclusionRead = { excluded: boolean; incomplete: 'waits' | null };
+
+export function createSessionChooser(deps: {
+  sessions: SessionDirectoryPort;
+  sessionFacts?: SessionFactsPort;
+  responsibilities?: SessionResponsibilityPort;
+  pick?: PickReadsV1;
+}) {
   /**
    * Rule 7: a readonly copy, an archive-requested or a waiting Session is never
    * chosen for NEW work or Query claims. The original yielded-wait continuation
    * claim does not pass through here and keeps its legitimate reuse.
    */
-  async function chooseExcluded(owned: Owned, card: SessionCard): Promise<boolean> {
+  async function exclusionOf(ctx: CoreCallContext, card: SessionCard): Promise<ExclusionRead> {
     const record = card.record;
-    if (record.provenance?.kind === 'readonly_copy') return true;
-    if (record.archiveRequest !== null && record.archiveRequest !== undefined) return true;
-    if (deps.sessionFacts !== undefined) {
-      const facts = await deps.sessionFacts.readSessionFacts(owned.ctx, {
-        projectId: record.ref.projectId, sessionId: record.ref.sessionId,
-      });
-      if (facts.status === 'ready' && facts.value.wait !== null) return true;
+    if (record.provenance?.kind === 'readonly_copy') return { excluded: true, incomplete: null };
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) {
+      return { excluded: true, incomplete: null };
     }
-    return false;
+    if (deps.sessionFacts !== undefined) {
+      try {
+        const facts = await deps.sessionFacts.readSessionFacts(ctx, {
+          projectId: record.ref.projectId, sessionId: record.ref.sessionId,
+        });
+        if (facts.status === 'not_found') return { excluded: true, incomplete: null };
+        if (facts.status !== 'ready') return { excluded: true, incomplete: 'waits' };
+        const incomplete = facts.value.waits.some(wait => wait.complete === false) ? 'waits' : null;
+        if (facts.value.wait !== null || incomplete !== null) return { excluded: true, incomplete };
+        return { excluded: false, incomplete: null };
+      } catch {
+        return { excluded: true, incomplete: 'waits' };
+      }
+    }
+    return { excluded: false, incomplete: null };
+  }
+
+  async function chooseExcluded(owned: Owned, card: SessionCard): Promise<boolean> {
+    return (await exclusionOf(owned.ctx, card)).excluded;
   }
 
   /**
    * E16 (§4.1 S:799): a Task transferred to a chosen Session carries an OPEN
-   * responsible link on that Session, and its next pickup is claimed there
-   * first (before the hint and the directory order). Ordinary drops leave no
-   * open link, so the existing `chooseSession` order stays. The lookup is only
-   * attempted when the responsibility owner is installed; an unreadable target
-   * page falls through to the existing selection instead of failing it.
+   * responsible link on that Session. The targeted read is 8 x 50; a failed or
+   * truncated read is a definite failure (A-10), never "no link".
    */
-  async function responsibleSessionFor(
+  async function readResponsibleSession(
     owned: Owned, goal: GoalSnapshot, binding: Binding, task: TaskTriple,
-  ): Promise<SessionCard | null> {
-    if (deps.responsibilities === undefined) return null;
-    if (deps.sessions.findSessions === undefined) return null;
+  ): Promise<TaskLinkRead> {
+    if (deps.responsibilities === undefined) return { status: 'none' };
     const workspaceId = goal.workspaceRef.workspaceId;
     const target = { kind: 'task' as const, ref: task };
     let cursor: string | null = null;
     for (let page = 0; page < 8; page += 1) {
-      const found = await deps.sessions.findSessions(owned.ctx, {
-        workspace: { projectId: owned.projectId, workspaceId },
-        target,
-        includeArchived: false,
-        page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
-      });
-      if (found.status !== 'ready') return null;
+      let found: Awaited<ReturnType<SessionDirectoryPort['findSessions']>>;
+      try {
+        found = await deps.sessions.findSessions(owned.ctx, {
+          workspace: { projectId: owned.projectId, workspaceId },
+          target,
+          includeArchived: false,
+          page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
+        });
+      } catch {
+        return { status: 'unavailable', rejection: rejection('unavailable', 'the responsible Session link read failed') };
+      }
+      if (found.status === 'not_found') return { status: 'none' };
+      if (found.status !== 'ready') {
+        if (found.status === 'rejected' && (found.code === 'cancelled' || found.code === 'forbidden')) {
+          return { status: 'unavailable', rejection: found };
+        }
+        return { status: 'unavailable',
+          rejection: rejection('unavailable', 'the responsible Session link read is not ready') };
+      }
       for (const card of found.value.items) {
         if (!roleReusable(card, workspaceId, binding)) continue;
-        const openResponsible = card.links.some((link) => link.ref.relation === 'responsible'
+        const openResponsible = card.links.some(link => link.ref.relation === 'responsible'
           && link.until === null && sameCanonical(link.ref.target, target));
         if (!openResponsible) continue;
-        if (await chooseExcluded(owned, card)) continue;
-        return card;
+        if ((await exclusionOf(owned.ctx, card)).excluded) continue;
+        return { status: 'found', card };
       }
-      if (found.value.nextCursor === null) break;
+      if (found.value.nextCursor === null) return { status: 'none' };
       cursor = found.value.nextCursor;
     }
-    return null;
+    return { status: 'unavailable',
+      rejection: rejection('incomplete', 'the responsible Session link read exceeded its page bound') };
+  }
+
+  async function responsibleSessionFor(
+    owned: Owned, goal: GoalSnapshot, binding: Binding, task: TaskTriple,
+  ): Promise<SessionCard | null> {
+    const read = await readResponsibleSession(owned, goal, binding, task);
+    return read.status === 'found' ? read.card : null;
+  }
+
+  /** The one B implementation of F1's port; M consumes it through the injected port, never a second body. */
+  async function reusable(ctx: CoreCallContext, input: { workspaceId: string; sessionRole: RoleConfigurationRef;
+    card: SessionCard }): Promise<SessionReuseVerdictV1> {
+    const verdict = roleVerdict(input.card, input.workspaceId, input.sessionRole);
+    if (verdict !== 'ok') return { reusable: false, because: verdict };
+    const exclusion = await exclusionOf(ctx, input.card);
+    if (exclusion.incomplete === 'waits') return { reusable: false, because: 'waits_incomplete' };
+    if (!exclusion.excluded) return { reusable: true };
+    const record = input.card.record;
+    if (record.provenance?.kind === 'readonly_copy') return { reusable: false, because: 'readonly_copy' };
+    if (record.archiveRequest !== null && record.archiveRequest !== undefined) {
+      return { reusable: false, because: 'archive_requested' };
+    }
+    return { reusable: false, because: 'waiting' };
   }
 
   async function chooseSession(
-    owned: Owned, goal: GoalSnapshot, binding: Binding, sessionHint: SessionRef | null, task: TaskTriple | null,
-  ): Promise<SessionChoice> {
+    owned: Owned, goal: GoalSnapshot, binding: Binding, sessionHint: SessionRef | null,
+    task: TaskTriple | null, moduleRef: string | null = null,
+  ): Promise<SessionChoice & { basis: PickBasisV1 }> {
+    void sessionHint;
     const workspaceId = goal.workspaceRef.workspaceId;
+    let targeted: SessionCard | null = null;
     if (task !== null) {
-      const transferred = await responsibleSessionFor(owned, goal, binding, task);
-      if (transferred !== null) return { kind: 'reuse', card: transferred };
-    }
-    if (sessionHint !== null) {
-      const read = await deps.sessions.readSession(owned.ctx, sessionHint);
-      if (read.status === 'ready') {
-        const card = read.value;
-        if (roleReusable(card, workspaceId, binding) && !await chooseExcluded(owned, card)) {
-          return { kind: 'reuse', card };
+      const transferred = await readResponsibleSession(owned, goal, binding, task);
+      if (transferred.status === 'unavailable') {
+        if (transferred.rejection.code === 'cancelled' || transferred.rejection.code === 'forbidden') {
+          return { kind: 'rejection', rejection: transferred.rejection,
+            basis: { rank: 'none', incomplete: [], candidates: 0 } };
         }
-        if (card.record.workspaceId === workspaceId && card.record.occupancy !== null) {
-          return { kind: 'waiting', reason: `the continued Session is busy with a ${card.record.occupancy.kind}` };
-        }
-      } else if (read.status === 'rejected' && (read.code === 'cancelled' || read.code === 'forbidden')) {
-        return { kind: 'rejection', rejection: read };
+        return { kind: 'waiting', reason: transferred.rejection.reason,
+          basis: { rank: 'none', incomplete: ['task_links'], candidates: 0 } };
       }
+      if (transferred.status === 'found') targeted = transferred.card;
     }
+    const cards: SessionCard[] = [];
+    const cardKeys = new Set<string>();
+    const addCard = (card: SessionCard): void => {
+      const key = plainSessionRefKey(card.record.ref);
+      if (cardKeys.has(key)) return;
+      cardKeys.add(key);
+      cards.push(card);
+    };
+    if (targeted !== null) addCard(targeted);
     let cursor: string | null = null;
+    let readPage = false;
+    let directoryIncomplete = false;
     for (let page = 0; page < 8; page += 1) {
-      const found = await deps.sessions.findSessions(owned.ctx, {
-        workspace: { projectId: owned.projectId, workspaceId },
-        role: binding.sessionRole,
-        includeArchived: false,
-        page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
-      });
+      let found: Awaited<ReturnType<SessionDirectoryPort['findSessions']>>;
+      try {
+        found = await deps.sessions.findSessions(owned.ctx, {
+          workspace: { projectId: owned.projectId, workspaceId },
+          role: binding.sessionRole,
+          includeArchived: false,
+          page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
+        });
+      } catch {
+        if (!readPage && targeted === null) {
+          return { kind: 'waiting', reason: 'the Session directory is not readable',
+            basis: { rank: 'none', incomplete: [], candidates: 0 } };
+        }
+        directoryIncomplete = true;
+        break;
+      }
+      if (found.status === 'not_found') break;
       if (found.status !== 'ready') {
-        if (found.status === 'rejected' && (found.code === 'cancelled' || found.code === 'forbidden')) {
-          return { kind: 'rejection', rejection: found };
+        // A page-1 refusal still leaves the already-read targeted card a candidate (only that case skips the
+        // refusal); with nothing read yet it stays a rejection.
+        if (found.status === 'rejected' && (found.code === 'cancelled' || found.code === 'forbidden')
+          && (readPage || targeted === null)) {
+          return { kind: 'rejection', rejection: found, basis: { rank: 'none', incomplete: [], candidates: 0 } };
         }
-        return { kind: 'waiting', reason: 'the Session directory is not readable' };
-      }
-      for (const card of found.value.items) {
-        if (roleReusable(card, workspaceId, binding) && !await chooseExcluded(owned, card)) {
-          return { kind: 'reuse', card };
+        if (!readPage && targeted === null) {
+          return { kind: 'waiting', reason: 'the Session directory is not readable',
+            basis: { rank: 'none', incomplete: [], candidates: 0 } };
         }
+        directoryIncomplete = true;
+        break;
       }
+      readPage = true;
+      for (const card of found.value.items) addCard(card);
       if (found.value.nextCursor === null) break;
       cursor = found.value.nextCursor;
+      if (page === 7) directoryIncomplete = true;
     }
-    return { kind: 'create' };
+
+    const marks = new Set<PickBasisV1['incomplete'][number]>();
+    if (directoryIncomplete) marks.add('directory');
+
+    const runSessions = new Set<string>();
+    if (deps.pick?.goalRuns !== undefined) {
+      try {
+        const runs = await deps.pick.goalRuns(owned.ctx, goal.ref);
+        if (runs.status === 'ready') {
+          for (const run of runs.runs) {
+            if (run.status !== 'ended') continue;
+            const sessionRef = run.executionHistory?.sessionRef;
+            if (sessionRef === undefined) continue;
+            runSessions.add(plainSessionRefKey(sessionRef));
+          }
+        } else {
+          marks.add('goal_history');
+        }
+      } catch {
+        marks.add('goal_history');
+      }
+    }
+
+    const lineActivity = new Map<string, string>();
+    if (deps.pick?.activity !== undefined) {
+      try {
+        const lines = await deps.pick.activity.lines.listWorkLines(owned.ctx, {
+          workspace: { projectId: owned.projectId, workspaceId },
+        });
+        if (lines.status === 'ready') {
+          for (const row of lines.value.rows) {
+            lineActivity.set(row.key.sessionId, row.lastActivityAt);
+            for (const chained of row.chainSessions) lineActivity.set(chained.sessionId, row.lastActivityAt);
+          }
+        } else if (lines.status !== 'not_found') {
+          marks.add('activity');
+        }
+      } catch {
+        marks.add('activity');
+      }
+    }
+
+    const candidates: PickCandidateV1[] = [];
+    for (const card of cards) {
+      if (!roleReusable(card, workspaceId, binding)) continue;
+      const exclusion = await exclusionOf(owned.ctx, card);
+      if (exclusion.incomplete === 'waits') marks.add('waits');
+      if (exclusion.excluded) continue;
+      if (task !== null && deps.pick?.authorization !== undefined) {
+        const verdict = await deps.pick.authorization.check(owned.ctx, {
+          task, session: card.record.ref, binding: binding.roleBinding,
+        });
+        if (verdict.verdict === 'refused') continue;
+        if (verdict.verdict === 'unavailable') {
+          marks.add('authorization');
+          continue;
+        }
+      }
+      const record = card.record;
+      const responsibleTask = task !== null && card.links.some(link => link.ref.relation === 'responsible'
+        && link.until === null && sameCanonical(link.ref.target, { kind: 'task', ref: task }));
+      const responsibleModule = moduleRef !== null
+        && card.links.some(link => link.ref.relation === 'responsible' && link.until === null
+          && sameCanonical(link.ref.target,
+            { kind: 'module', ref: { projectId: owned.projectId, moduleId: moduleRef } }));
+      const sameGoalRun = runSessions.has(plainSessionRefKey(record.ref));
+      let activityAt = latestActivityAt(record.createdAt, [lineActivity.get(record.ref.sessionId) ?? null]);
+      if (deps.pick?.activity !== undefined) {
+        try {
+          const activity = await deps.pick.activity.record.readSessionActivity(owned.ctx, { session: record.ref });
+          if (activity.status === 'ready') {
+            activityAt = latestActivityAt(record.createdAt,
+              [lineActivity.get(record.ref.sessionId) ?? null, activity.value.lastActivityAt]);
+          } else if (activity.status !== 'not_found') {
+            marks.add('activity');
+          }
+        } catch {
+          marks.add('activity');
+        }
+      }
+      candidates.push({ card, responsibleTask, responsibleModule, sameGoalRun, activityAt });
+    }
+
+    const ranked = [...candidates].sort(comparePickCandidates);
+    const declared: PickBasisV1['incomplete'] = [
+      'task_links', 'module_links', 'goal_history', 'directory', 'activity', 'waits', 'authorization',
+    ];
+    const incomplete = declared.filter(mark => marks.has(mark));
+    if (ranked.length === 0) {
+      return { kind: 'create', basis: { rank: 'none', incomplete, candidates: 0 } };
+    }
+    return { kind: 'reuse', card: ranked[0]!.card,
+      basis: { rank: pickBasisRank(ranked), incomplete, candidates: ranked.length } };
   }
 
-  return { chooseSession, responsibleSessionFor, chooseExcluded };
+  return { chooseSession, responsibleSessionFor, chooseExcluded, reusable };
 }

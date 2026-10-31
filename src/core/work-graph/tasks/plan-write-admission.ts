@@ -59,13 +59,13 @@ export type PlanDelegatedWriteDependencies = Pick<ExecutionEntryDependencies,
 
 /**
  * The fixed delegated operations an Agent write may be admitted for (spec §4.1):
- * the two whiteboard plan tools plus the two rework operations. Each must be in
- * the current Host/Role grant (`manifest.permissions.tools`); no production Role
+ * the whiteboard plan tool plus the two rework operations. Each must be in the
+ * current Host/Role grant (`manifest.permissions.tools`); no production Role
  * grants the rework names before their Agent tools exist (GAP-46).
  */
-export type DelegatedWriteOperation = 'propose_future_plan' | 'apply_future_plan' | 'request_rework' | 'request_recheck';
-/** The plan-write subset (the two whiteboard write tools). */
-export type PlanWriteOperation = Extract<DelegatedWriteOperation, 'propose_future_plan' | 'apply_future_plan'>;
+export type DelegatedWriteOperation = 'propose_future_plan' | 'request_rework' | 'request_recheck';
+/** The plan-write subset: the one remaining whiteboard write tool. */
+export type PlanWriteOperation = Extract<DelegatedWriteOperation, 'propose_future_plan'>;
 
 /** The exact formal writer identity `identifyDelegatedWriter` proves. */
 export type AgentPlanWriter = {
@@ -81,6 +81,8 @@ export type AgentPlanWriter = {
 export type PlanWriteAdmission = {
   provenance: DelegatedWriteProvenanceV1;
   guards: readonly RecordGuard[];
+  /** The already-read manifest's duty, narrowed to record 3's two tool-bearing values (`book-7c.md:1089`). */
+  duty: 'executor' | 'adviser';
 };
 
 /** The fixed platform attribution of the internal Host-only WG11 read. */
@@ -358,7 +360,10 @@ export async function authorizeDelegatedWrite(
     ...hostRole.value.roleFacts.guards,
   ]);
   if (!merged.ok) return { status: 'rejected', code: merged.rejection.code, reason: merged.rejection.reason };
-  return { status: 'ready', value: { provenance, guards: merged.guards } };
+  // The duty comes from the manifest this admission already read (never a second read and never a template guess);
+  // record 3 keeps only the two tool-bearing duties, so every other platform duty is the executor default.
+  return { status: 'ready', value: { provenance, guards: merged.guards,
+    duty: manifest.contextAssembly.duty === 'adviser' ? 'adviser' : 'executor' } };
 }
 
 /** Former names, kept as aliases (spec §4.1); the plan service still uses them. */

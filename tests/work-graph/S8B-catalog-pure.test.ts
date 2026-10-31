@@ -160,7 +160,7 @@ function recordedAgent(overrides: Partial<RecordedEvent> = {}): RecordedEvent {
   return recordedHost({ writer: 'agent', basedOn: PLAN_1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE, ...overrides });
 }
 const ACCEPT_HOST: AcceptedEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef: PROPOSAL,
-  expectedProposalRevision: 1, decisionRefs: [], agentWriter: null };
+  expectedProposalRevision: 1, decisionRefs: [] };
 const REPLACED: PlanProposalEvent = { type: 'proposal_replaced', writer: 'host', ref: NEW_PROPOSAL, goalRef: GOAL,
   basedOn: null, draft: MODULE_DRAFT, reason: REASON, issues: [], catalogPin: pin2, submittedBy: null,
   sourceMessageRef: null, expectedHeadRevision: 1, requestedBy: OPERATOR, at: T, head: { proposalRef: PROPOSAL, revision: 1 },

@@ -37,7 +37,7 @@ export type ConsumableSessionV1 = {
   /** the Session's role; the Host matches its profile by `scope` + `sessionRole`. */
   role: RoleConfigurationRef;
   availability: SessionAvailability;
-  /** non-null means no offer is acted on; `kinds`/`nextMessage` are then empty/null. */
+  /** non-null means no queued offer; only a line's own unentered intervention planning Query keeps its source message. */
   busy: ConsumableSessionBusyV1 | null;
   /** offerable kinds in precedence order (person first); `['notify']` is the no-turn case. */
   kinds: readonly ConsumableSessionKindV1[];
@@ -53,7 +53,7 @@ export type ConsumableSessionsDependencies = {
   directory: Pick<SessionDirectoryPort, 'findSessions'>;
   executions: Pick<ExecutionReadPort, 'readExecution'>;
   queries: Pick<QueryJobPort, 'readQueryJob'>;
-  messages: Pick<SessionMailboxPort, 'readInbox' | 'readOutbox'>;
+  messages: Pick<SessionMailboxPort, 'readInbox' | 'readOutbox' | 'readMessage'>;
   /** The delivery-eligibility facts the offer rule reads (`session-facts-contracts.ts:79`). */
   eligibility: DeliveryEligibilityFactsPort;
 };
@@ -190,6 +190,40 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     });
   }
 
+  /**
+   * The one offer a claimed or prepared `intervention_planning` Query keeps on its own line: its recorded
+   * source message, built by the ordinary `offerOf` eligibility rule, and only when that message is addressed
+   * to this line. The Query has not entered a turn yet, so the Host may enter again and let the intervention
+   * handler continue the same Query; entering/entered are a running turn and offer nothing. Any other Query,
+   * any other line, and a paused Goal offer nothing.
+   */
+  async function resumeOfferOf(ctx: CoreCallContext, record: SessionCard['record']):
+    Promise<ReadResult<CandidateOffer | null>> {
+    const occupancy = record.occupancy;
+    if (occupancy === null || occupancy.kind !== 'execution'
+      || occupancy.executionRef.aggregateType !== 'QueryRun') return ready(null);
+    const read = await deps.queries.readQueryJob(ctx, queryJobRefFor(
+      occupancy.executionRef.projectId, occupancy.executionRef.workspaceId,
+      occupancy.executionRef.queryJobId));
+    if (read.status !== 'ready') return read;
+    const execution = read.value.job.job.intent.execution;
+    if (execution.kind !== 'intervention_planning') return ready(null);
+    const state = read.value.run.run.executionState;
+    if (state === undefined || (state.phase !== 'claimed' && state.phase !== 'prepared')) return ready(null);
+    const source = execution.sourceMessageRef;
+    if (source === undefined) return ready(null);
+    // The exact recorded source, never the queue head: a newer message stays queued. One offer needs no order.
+    const message = await deps.messages.readMessage(ctx, source);
+    if (message.status !== 'ready') return message;
+    const session: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
+    // The Query was claimed on this line, but only a message addressed to this line may be resumed: a user
+    // recipient (`'kind' in recipient`) is not a line, and another line's message stays with its own recipient.
+    const recipient = message.value.recipient;
+    if ('kind' in recipient || recipient.projectId !== session.projectId
+      || recipient.sessionId !== session.sessionId) return ready(null);
+    return offerOf(ctx, message.value, 'message', session, () => { throw new Error('a resume offer is never sorted'); });
+  }
+
   async function readConsumableSessions(ctx: CoreCallContext,
     input: { workspace: WorkspaceScope; after: string | null; limit: number }):
     Promise<ReadResult<ConsumableSessionsPageV1>> {
@@ -218,6 +252,13 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
           if (offers.status !== 'ready') return offers;
           kinds = offers.value.kinds;
           nextMessage = offers.value.nextMessage;
+        } else if (busyRead.value === 'query') {
+          const resumed = await resumeOfferOf(ctx, card.record);
+          if (resumed.status !== 'ready') return resumed;
+          if (resumed.value !== null) {
+            kinds = [resumed.value.kind];
+            nextMessage = { kind: resumed.value.kind, messageRef: resumed.value.message.ref };
+          }
         }
         items.push({
           session: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },

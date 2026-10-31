@@ -23,6 +23,7 @@
 | `note-review.ts` | `readNoteReviewSource` | note review 来源的完整分支事实；Goal 为 `null` 时读无 Goal 的注记卡（`goalId: null`）；先按注记自己的 subject 比对（卡开着、关了都先比），别的 subject 的注记拒绝。 |
 | `unknown-call-review.ts` | `readUnknownCallReviewSource` | unknown call review 来源的完整分支事实。 |
 | `command-rerun-request.ts` | `readCommandRerunRequestSource` | command rerun request 来源的完整分支事实。 |
+| `rework-request.ts` | `reworkRequestOptions`、`projectReworkRequestCard`、`reworkRequestClosedReason`、`reworkRequestCardSourceSpec`、`readReworkRequestSource` | `rework_request` 来源的完整分支事实：全状态页，rejected/stale 以 `source_resolved` 关闭，applied 留给回答覆盖。 |
 | `message-release.ts` | `readMessageReleaseSource` | message release 来源的完整分支事实：消息记录、它的 Goal 与 `tasks/message-release-card.ts` 的卡片事实；派生块是读的 DTO，不在分支事实里。 |
 
 ## 不要做

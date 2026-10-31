@@ -121,7 +121,7 @@ type HoldEntry = {
 };
 
 type ReadFaultEntry = { readonly refKey: string; readonly always: boolean; calls: number; released: boolean };
-type CommitFaultEntry = { readonly match: CommitMatch; fired: boolean; released: boolean };
+type CommitFaultEntry = { readonly match: CommitMatch; readonly afterCommit: boolean; fired: boolean; released: boolean };
 
 export class CommitBarrier {
   private entries: HoldEntry[] = [];
@@ -164,7 +164,16 @@ export class CommitBarrier {
 
   /** Fail the first commit `match` accepts before it reaches the store. */
   failCommitOnce(match: CommitMatch): CommitFault {
-    const entry: CommitFaultEntry = { match, fired: false, released: false };
+    return this.addCommitFault(match, false);
+  }
+
+  /** Let the first commit `match` accepts land, then fail its caller: the result is lost after a real commit. */
+  failAfterCommitOnce(match: CommitMatch): CommitFault {
+    return this.addCommitFault(match, true);
+  }
+
+  private addCommitFault(match: CommitMatch, afterCommit: boolean): CommitFault {
+    const entry: CommitFaultEntry = { match, afterCommit, fired: false, released: false };
     this.commitFaults.push(entry);
     return { release: () => { entry.released = true; } };
   }
@@ -209,6 +218,10 @@ export class CommitBarrier {
     const fault = this.commitFaults.find(candidate => !candidate.released && !candidate.fired && candidate.match(input));
     if (fault !== undefined) {
       fault.fired = true;
+      if (fault.afterCommit) {
+        await real(input);
+        throw new Error('S6A commit barrier: injected commit result loss after the commit');
+      }
       throw new Error('S6A commit barrier: injected commit I/O failure');
     }
     const entry = this.entries.find(candidate => !candidate.matched && candidate.match(input));

@@ -1016,3 +1016,6 @@ Promise<{ world: S6ARequestWorld; second: S6ASecondWorkspace }> {
   }
   return { world, second };
 }
+
+/** The Host Workflow binding the world starts with; P reuses it instead of a second copy. */
+export { WORKFLOW };

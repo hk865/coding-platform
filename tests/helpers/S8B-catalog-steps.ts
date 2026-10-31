@@ -255,25 +255,23 @@ export async function openCatalogWorld(backend: Backend, projectId = 's8b-catalo
 }
 
 /** The Agent world (memory or SQLite): W2's adopted Plan with no module task, a catalog of `R4C_MODULE`, an entered Work
- * Run with `propose_future_plan` / `apply_future_plan`; the catalog owner over its store; results read via `plans`, `ctx`. */
+ * Run with `propose_future_plan`; the catalog owner over its store; results read via `plans`, `ctx`. */
 export async function openAgentWorld(backend: Backend) {
   const w2 = await createW2WhiteboardFixture(backend);
   // The bootstrap owner the world was created with, for its registration read (which mints no time or event id).
   const { projects } = createProjectBootstrapServices({ records: w2.records, now: () => B2_AT, eventId: () => 's8b-unused' });
   const proposeAsWorkRun: W2WhiteboardFixture['proposeAsWorkRun'] = async (draft, basedOn, overrides = {}) =>
     w2.proposeAsWorkRun(draft, basedOn, { ...overrides, expected: overrides.expected ?? [await w2.goalPin()] });
-  const applyAsWorkRun: W2WhiteboardFixture['applyAsWorkRun'] = async (proposalRef, revision, overrides = {}) =>
-    w2.applyAsWorkRun(proposalRef, revision, { ...overrides, expected: overrides.expected ?? [await w2.goalPin()] });
   return {
     scope: w2.base.scope, goalRef: w2.goalRef, planRef: w2.planRef, plans: w2.plans, ctx: w2.ctxHost,
-    futureDraft: w2.futureDraft, proposeAsWorkRun, applyAsWorkRun,
+    futureDraft: w2.futureDraft, proposeAsWorkRun, proposeAsHost: w2.proposeAsHost, applyAsHost: w2.applyAsHost,
     ...catalogSteps(createArchitectureCatalogService({ records: w2.records }), w2.ctxHost,
       () => scopePinsOf(projects, w2.ctxHost, w2.base.scope), 's8b-agent'),
     close: () => w2.close(),
   };
 }
 
-/** Holds the next plan adoption's prepared commit (Host or Agent, both `plan-apply:`) until `release()`. */
+/** Holds the next plan adoption's prepared commit (`plan-apply:`) until `release()`. */
 export function holdAdoption(label = 'plan adoption') {
   return commitBarrier.hold(byIdentityPrefix('plan-apply:'), label);
 }

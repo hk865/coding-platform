@@ -258,9 +258,11 @@ async function requeue(platform: Platform, requestId: string, afterRunRef: RunRe
   const goal = await platform.plans.queryGoal(ctx(), goalRef);
   if (goal.status !== 'ready') throw new Error('the Goal must be readable');
   const run = await readRun(platform, afterRunRef);
-  return platform.claims.requeueTask!(ctx(), { meta: { requestId, expected: [{ ref: goalRef, revision: goal.value.goal.revision },
-    { ref: afterRunRef, revision: run.run.revision }] },
+  const result = await platform.claims.requeueTask!(ctx(), { meta: { requestId,
+    expected: [{ ref: goalRef, revision: goal.value.goal.revision }, { ref: afterRunRef, revision: run.run.revision }] },
     input: { taskRef: TASK, afterRunRef, reason: 'the registered check failed; try again', ...extra } });
+  if (result.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(result)}`);
+  return result;
 }
 
 it('D-3: FAIL → TaskRequeue (P4) → requeue claim with the continuation brief → no_new_basis refusal → note → PASS completes', async () => {

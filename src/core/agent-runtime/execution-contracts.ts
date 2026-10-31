@@ -241,14 +241,7 @@ export type RuntimeExecutionDependencies = {
    */
   decisionMessages?: Pick<DecisionMessagePort,
     'sendUserMessage' | 'recordDecisionApplication' | 'readDecisionAnswer'>;
-  /**
-   * Slice 5 §4.5/T-R2-1: the SAME receipt reader the composition gives the
-   * Workflow. The Runtime hands it to the whiteboard tool factory so an Agent
-   * that acknowledged a user answer can receive the formal
-   * `applicationReceipt` (identityKey/fingerprint at the plan acceptance
-   * cursor) it needs for `record_decision_application`. Optional so an old
-   * composition keeps the old tool result shape.
-   */
+  /** The same plan-application receipt reader the Workflow gets, shared with the whiteboard tools. */
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
   /** The secretary facts read; absent fails a secretary round `unsupported` before the model. */
   secretaryFacts?: SecretaryPreparationFactsPort;

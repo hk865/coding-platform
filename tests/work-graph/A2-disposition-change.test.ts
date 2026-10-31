@@ -21,10 +21,6 @@
  *   automation actor (class `system`) may not, nor add a parallel carrier beside it. A human stop committed
  *   between the guard 9 read and the commit moves the carrier's pinned Run: `revision_conflict`, and read
  *   again `forbidden` (§3.6 PLAN-05 守卫 9 race).
- * - An Agent (`apply_future_plan`, the W2 fixture's entered Run): cannot change its own running Task
- *   (`busy`); defers a sibling whose Run ended (recorded with the agent actor); may neither change a
- *   human-stopped sibling (guard 7) nor add a carrier beside it (guard 9), while an operator adopts the same
- *   candidate.
  *
  * Fixture note: every reachable Run is produced by `claimTask`, production prepare and the real Runtime
  * start/finish; a human stop is the real `submitControl` + delivery; a satisfied Task is the real
@@ -78,7 +74,6 @@ import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeT
 import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { createW2WhiteboardFixture, type W2WhiteboardFixture } from '../helpers/W2-whiteboard-fixture.js';
 
 const AT = '2026-10-06T00:00:00.000Z';
 // The accepted claim fixture's fixed scope; `setup` verifies it before use.
@@ -717,179 +712,6 @@ describe.each(BACKENDS)('guards 7 and 9 by the adopter class (§1 reworkActorCla
       expect(await f.apply(candidate, 'c7-g9-race-2', automation)).toEqual({ status: 'rejected', code: 'forbidden',
         reason: 'obligation o-solo: a human stopped this work; only an operator may add the parallel carrier B2' });
       expect(await f.activePlan()).toEqual(f.plan.ref);
-    });
-  });
-});
-
-describe.each(BACKENDS)('an Agent adoption (W2 apply_future_plan, adopter class agent) [%s]', kind => {
-  describe('rejects: an Agent cannot change its own running Task', () => {
-    it('cannot change the disposition of its own running Task (TASK-19 guard 1: busy), zero writes', async () => {
-      const f = await createW2WhiteboardFixture(kind);
-      try {
-        const draft = f.futureDraft('c7-w2-defer-own', base => ({ ...base,
-          tasks: base.tasks.map(task => task.taskId === 'implement-a' ? { ...task, disposition: 'deferred' as const } : task) }));
-        const proposed = await f.proposeAsWorkRun(draft, f.planRef, { requestId: 'c7-w2-defer-own' });
-        if (proposed.status !== 'committed') throw new Error(`C7 W2 own-task proposal failed: ${JSON.stringify(proposed)}`);
-        const candidate = proposed.value;
-        const before = await f.goalPin();
-        expect(await f.applyAsWorkRun(candidate.ref, candidate.revision, { requestId: 'c7-w2-defer-own-apply' })).toMatchObject({
-          status: 'rejected', code: 'busy', reason: expect.stringMatching(/^task implement-a still has an unfinished execution: run .* is running$/) });
-        expect(await f.goalPin()).toEqual(before);
-      } finally {
-        await f.close();
-      }
-    });
-  });
-
-  /** The W2 fixture with every ControlIntent group, so a real human stop can be submitted. */
-  const W2_CONTROL_SCHEMAS = { records: CONTROL_RECORD_SCHEMAS.records, events: CONTROL_RECORD_SCHEMAS.events,
-    lookups: CONTROL_RECORD_SCHEMAS.lookups };
-  const implementC: RuntimeTask = { taskId: 'implement-c', title: 'Implement C', requirementLevel: 'required', taskKind: 'work',
-    disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' };
-
-  /** The shared S2B Runtime over the W2 fixture's own real backend: sibling Runs are real claims + real starts. */
-  async function siblingRuntime(f: W2WhiteboardFixture): Promise<S2BRuntimeSteps> {
-    let sequence = 0;
-    let clock = AT;
-    return createS2BRuntimeSteps({
-      base: f.base, bodies: f.b2.bodies, ctx: f.base.ctx, directory: f.base.directory, scope: f.base.scope,
-      now: () => clock, setClock: (at) => { clock = at; },
-      eventId: () => `a2-c7-w2-event-${++sequence}`, newId: () => `a2-c7-w2-id-${++sequence}`,
-      consumerId: 'a2-c7-w2-sibling',
-    });
-  }
-  /** A Host adoption of a future revision that detaches implement-b from implement-a, so it can really be claimed. */
-  async function detachSibling(f: W2WhiteboardFixture, requestIdBase: string, edit?: (draft: DraftV2) => DraftV2) {
-    const draft = f.futureDraft(requestIdBase, base => edit === undefined
-      ? { ...base, executionDag: { dependsOn: [] } }
-      : edit({ ...base, executionDag: { dependsOn: [] } }));
-    const proposed = await f.proposeAsHost(draft, f.planRef, { requestId: requestIdBase });
-    if (proposed.status !== 'committed') throw new Error(JSON.stringify(proposed));
-    const applied = await f.applyAsHost(proposed.value.ref, proposed.value.revision, { requestId: `${requestIdBase}-apply` });
-    if (applied.status !== 'committed' || applied.value.schemaVersion !== 2) throw new Error(JSON.stringify(applied));
-    return applied.value;
-  }
-  /**
-   * A real sibling Run of `taskId` on `planRef`: the formal claim over a fresh
-   * Session, the production prepare/start, and either a normal final reply or
-   * the real `submitControl` cancel (`stopped`). No Run/Lease is hand-written.
-   */
-  async function endSibling(f: W2WhiteboardFixture, steps: S2BRuntimeSteps, taskId: string,
-    planRef: PlanRevisionRef, stopped: boolean): Promise<void> {
-    const session = await f.base.createSession(`a2-c7-w2-sibling-${taskId}-${stopped ? 'stopped' : 'ended'}`);
-    const goal = await f.goalPin(f.goalRef);
-    const card = await f.base.sessionsPort.readSession(f.base.ctx, session);
-    if (card.status !== 'ready') throw new Error(`C7 W2 sibling Session read failed: ${JSON.stringify(card)}`);
-    const request: GraphWrite<ClaimTaskInput> = { input: {
-      goalRef: f.goalRef, planRef, taskId, sessionRef: session,
-      roleBinding: f.base.roleBinding, budget: f.base.budget },
-    meta: { requestId: `a2-c7-w2-claim-${taskId}-${stopped ? 'stopped' : 'ended'}`, expected: [
-      goal,
-      { ref: f.base.workspaceRef, revision: 1 },
-      { ref: plainSessionRefToAggregate(session), revision: card.value.record.revision },
-    ] } };
-    const claimed = await f.base.service.claimTask(f.base.ctx, request);
-    if (claimed.status !== 'committed') throw new Error(`C7 W2 sibling claim failed: ${JSON.stringify(claimed)}`);
-    const handle = await steps.start(claimed.value, { at: AT,
-      replies: [{ kind: 'text', text: `A2 C7 W2 sibling ${taskId}` }] });
-    await steps.finish(handle, AT, stopped ? 'cancelled' : 'completed');
-  }
-  /** The Agent's own `propose_future_plan` on `basedOn`, with `reason.affectedTaskIds` when given. */
-  async function proposeAsAgent(f: W2WhiteboardFixture, draft: PlanRevisionDraft, basedOn: PlanRevisionSnapshot, requestId: string,
-    affectedTaskIds?: string[]) {
-    const request = await f.buildAgentProposeRequest(f.goalRef, basedOn.ref, draft, basedOn.ref, { requestId });
-    const proposed = await f.plans.proposePlan(f.ctxWork, { meta: request.meta, input: { ...request.input,
-      reason: { text: 'C7 Agent change', sources: [], ...(affectedTaskIds === undefined ? {} : { affectedTaskIds }) } } });
-    if (proposed.status !== 'committed') throw new Error(`C7 Agent proposal ${requestId} failed: ${JSON.stringify(proposed)}`);
-    return proposed.value;
-  }
-
-  it('defers a sibling whose Run ended (TASK-19, class agent): committed, recorded with the agent actor, shown on the row', async () => {
-    const f = await createW2WhiteboardFixture(kind, { ...W2_CONTROL_SCHEMAS, lookups: W2_CONTROL_SCHEMAS.lookups ?? [] });
-    const steps = await siblingRuntime(f);
-    try {
-      // The sibling is detached from implement-a through the public future revision, then really claimed and ended.
-      const p2 = await detachSibling(f, 'c7-w2-detach-b');
-      await endSibling(f, steps, 'implement-b', p2.ref, false);
-      const draft = f.futureDraftFor(p2, 'c7-w2-defer-b', base => ({ ...base,
-        tasks: base.tasks.map(task => task.taskId === 'implement-b' ? { ...task, disposition: 'deferred' as const } : task) }));
-      const candidate = await proposeAsAgent(f, draft, p2, 'c7-w2-defer-b', ['implement-b']);
-      const applied = await f.applyAsWorkRun(candidate.ref, candidate.revision, { requestId: 'c7-w2-defer-b-apply' });
-      if (applied.status !== 'committed' || applied.value.schemaVersion !== 2) throw new Error(JSON.stringify(applied));
-      const entry = expect.objectContaining({ taskId: 'implement-b', from: 'active', to: 'deferred', traced: true,
-        actor: expect.objectContaining({ kind: 'agent', runRef: f.claim.runRef }) });
-      expect(applied.value.dispositionRecord?.entries).toEqual([entry]);
-      const graph = await f.plans.queryTaskGraph(f.ctxHost, { goalRef: f.goalRef });
-      if (graph.status !== 'ready') throw new Error(JSON.stringify(graph));
-      expect(graph.value.tasks.find(row => row.ref.taskId === 'implement-b')).toMatchObject({ disposition: 'deferred',
-        dispositionChange: entry });
-    } finally {
-      await steps.close();
-      await f.close();
-    }
-  });
-
-  /**
-   * The human-stopped sibling world: the operator first gives implement-b (still untraced) an obligation it
-   * alone carries, and detaches it so it can be claimed; its Run is on P2, where its execution definition
-   * (now carrying obligation-b) has its basis, and a real human stop ends it.
-   */
-  async function stoppedSiblingWorld(f: W2WhiteboardFixture, steps: S2BRuntimeSteps) {
-    const p2 = await detachSibling(f, 'c7-w2-own-b', base => ({ ...base, obligations: [...base.obligations,
-      { obligationId: 'obligation-b', title: 'Deliver B', requirementLevel: 'required', taskIds: ['implement-b'],
-        verificationRequirements: [{ requirementId: 'check-b', requirementLevel: 'required', kind: 'test', description: 'Tests pass' }] }] }));
-    await endSibling(f, steps, 'implement-b', p2.ref, true);
-    return { p2, pins: await f.callerPins(f.goalRef, p2.ref) };
-  }
-
-  describe('rejects: a human-stopped sibling fences the Agent (guards 7 and 9); an operator adopts', () => {
-    it('may not change a human-stopped sibling (guard 7), zero writes', async () => {
-      const f = await createW2WhiteboardFixture(kind, { ...W2_CONTROL_SCHEMAS, lookups: W2_CONTROL_SCHEMAS.lookups ?? [] });
-      const steps = await siblingRuntime(f);
-      try {
-        const { p2, pins } = await stoppedSiblingWorld(f, steps);
-        const before = await f.goalPin();
-        // Guard 7: an Agent may not supersede what a human stopped.
-        const supersede = f.futureDraftFor(p2, 'c7-w2-supersede-b', base => ({ ...base,
-          tasks: [...base.tasks.map(task => task.taskId === 'implement-b'
-            ? { ...task, disposition: 'superseded' as const, replacedByTaskId: 'implement-c' } : task), implementC],
-          assignments: [...(base.assignments ?? []), { taskId: 'implement-c', role: 'builder', instruction: 'Implement C' }],
-          obligations: base.obligations.map(obligation => ({ ...obligation, taskIds: [...obligation.taskIds, 'implement-c'] })) }));
-        const superseding = await proposeAsAgent(f, supersede, p2, 'c7-w2-supersede-b', ['implement-b']);
-        expect(await f.applyAsWorkRun(superseding.ref, superseding.revision, { requestId: 'c7-w2-supersede-b-apply', expected: pins }))
-          .toEqual({ status: 'rejected', code: 'forbidden',
-            reason: 'only an operator may change the disposition of task implement-b: a human paused or cancelled it' });
-        expect(await f.goalPin()).toEqual(before);
-      } finally {
-        await steps.close();
-        await f.close();
-      }
-    });
-
-    it('may not add a carrier beside a human-stopped sibling (guard 9), zero writes; an operator adopts the same candidate', async () => {
-      const f = await createW2WhiteboardFixture(kind, { ...W2_CONTROL_SCHEMAS, lookups: W2_CONTROL_SCHEMAS.lookups ?? [] });
-      const steps = await siblingRuntime(f);
-      try {
-        const { p2, pins } = await stoppedSiblingWorld(f, steps);
-        const before = await f.goalPin();
-        // Guard 9: nor keep it and add a parallel carrier to the obligation it alone carries.
-        const parallel = f.futureDraftFor(p2, 'c7-w2-parallel-b', base => ({ ...base, tasks: [...base.tasks, implementC],
-          assignments: [...(base.assignments ?? []), { taskId: 'implement-c', role: 'builder', instruction: 'Implement C' }],
-          obligations: base.obligations.map(obligation => obligation.obligationId === 'obligation-b'
-            ? { ...obligation, taskIds: [...obligation.taskIds, 'implement-c'] } : obligation) }));
-        const adding = await proposeAsAgent(f, parallel, p2, 'c7-w2-parallel-b');
-        expect(await f.applyAsWorkRun(adding.ref, adding.revision, { requestId: 'c7-w2-parallel-b-apply', expected: pins }))
-          .toEqual({ status: 'rejected', code: 'forbidden',
-            reason: 'obligation obligation-b: a human stopped this work; only an operator may add the parallel carrier implement-c' });
-        expect(await f.goalPin()).toEqual(before);
-
-        // The operator adopts the same candidate through plans/apply (class human: guard 9 does not apply).
-        expect(await f.applyAsHost(adding.ref, adding.revision, { requestId: 'c7-w2-parallel-b-host', expected: pins }))
-          .toMatchObject({ status: 'committed' });
-      } finally {
-        await steps.close();
-        await f.close();
-      }
     });
   });
 });

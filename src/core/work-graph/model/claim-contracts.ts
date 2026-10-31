@@ -2,18 +2,20 @@
  * Expected pins are exactly Goal, Workspace and the selected Session; immutable
  * accepted Plan is separately read and guarded. No scope reservation is required.
  */
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { WriteResult, ReadResult } from '../../../contracts/core/results.js';
-import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type {
   ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
 import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueSnapshotV1, TaskRequeueTriggerV1 } from '../../../contracts/task-requeue.js';
 import type { ArchiveRequeueOriginV1 } from '../../../contracts/session-anomaly.js';
 import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
@@ -107,6 +109,27 @@ export type RequeueTaskInput = {
   acknowledgement?: SessionMessageRef;
 };
 export type TaskClaimOutbox = DispatchOutboxRecord;
+
+/**
+ * A rework request the person has to decide (`book-7c.md:710–:715`): the owner wrote `ReworkRequest@1` and its one
+ * `ReworkRequestRecorded` event, so this is a result of the call, not a committed rework. `cardKey` names the
+ * `rework_request` decision card (`decisionSourceKey` over the same ref).
+ */
+export type ReworkRequestedV1 = { status: 'needs_decision'; cardKey: string; request: ReworkRequestRef };
+/** Both owners' result: a committed/refused write, or the request card a `needs_decision` autonomy leaves to the person. */
+export type ReworkOwnerResultV1<T> = EffectWriteResultV1<T> | ReworkRequestedV1;
+/**
+ * The trusted application input (`book-7c.md:716–:726`): the stored pending request, the requester agent recorded on it,
+ * and the provenance rebuilt from the requester Run (never a fresh admission). `commandId` is the application command
+ * the applied merge and its replay use.
+ */
+export type ApprovedReworkApplyV1 = {
+  request: ReworkRequestRef;
+  revision: number;
+  actor: Extract<ActorRef, { kind: 'agent' }>;
+  provenance: DelegatedWriteProvenanceV1;
+  commandId: string;
+};
 /**
  * E5 (§2.3 S:622, L-d): the already committed `TaskRequeue` of a `(Task,
  * afterRun)` pair with the cursor of its original `TaskRequeued` event, so the
@@ -138,7 +161,14 @@ export interface TaskClaimPort {
    * `TaskClaimPort` while requeue lives in its own service; the composition
    * always publishes it once implemented (A.2 step 5.4).
    */
-  requeueTask?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>>;
+  requeueTask?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>): Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>>;
+  /**
+   * The person approved a stored pending request (`book-7c.md:716–:726`, LD-25): the owner's own path runs with the
+   * stored requester agent and the provenance rebuilt from its Run, no fresh admission, autonomy skipped. A repeat of
+   * `approval.commandId` replays; a fence that moved closes the request through its standalone close record.
+   */
+  requeueApprovedByCard?(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>, approval: ApprovedReworkApplyV1):
+  Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>>;
   /**
    * E5: the smallest no-write read of an already committed requeue. It restores
    * the original `TaskRequeued` event (via `lookupCommit`/`eventAt`) when the

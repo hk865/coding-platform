@@ -1,6 +1,6 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import type { SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionProvenanceV1 } from '../../contracts/core/session.js';
@@ -17,6 +17,8 @@ import type {
   UnknownCallReviewRef, UnknownCallReviewV1,
 } from '../../contracts/unknown-call-review.js';
 import type { TaskAutomationStopReason, TaskAutomationVerdictV1, TaskFailureFactsV1 } from '../../contracts/task-failure.js';
+import type { TaskRequeueOutcomeV1 } from '../../contracts/task-requeue.js';
+import type { ReverifyOutcomeV1 } from '../../core/work-graph/model/evidence-contracts.js';
 import {
   WORKFLOW_AUTOMATION_ACTOR, type ReworkFailureClass, type TaskRequeueRef, type TaskReworkRefusalRef,
 } from '../../contracts/task-requeue.js';
@@ -2404,7 +2406,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const requeue = deps.claims.requeueTask;
         if (requeue === undefined) return rejection('unsupported', 'the Task claim owner does not publish requeueTask');
         // C8: performed as the platform automation actor, never as the Host operator (TD-6).
-        const result = await requeue.call(deps.claims, automationContext(owned), operation.request);
+        // The request card is an agent answer; the automation step never gets one, so the result is narrowed here.
+        const result = (await requeue.call(deps.claims, automationContext(owned), operation.request)) as EffectWriteResultV1<TaskRequeueOutcomeV1>;
         const receipt: WorkflowStepReceipt = { kind: 'requeue_task', result };
         // §15.2 5.8 result mapping: a commit (`requeued`, or the policy refusal `refused`) and a
         // `revision_conflict` go back to the selection, where the facts as they are now decide (a
@@ -2416,7 +2419,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const reverify = deps.evidence.reverifyRound;
         if (reverify === undefined) return rejection('unsupported', 'the evidence owner does not publish reverifyRound');
         // C5/C8: performed as the platform automation actor, never as the Host operator (TD-6).
-        const result = await reverify.call(deps.evidence, automationContext(owned), operation.request);
+        // The request card is an agent answer; the automation step never gets one, so the result is narrowed here.
+        const result = (await reverify.call(deps.evidence, automationContext(owned), operation.request)) as EffectWriteResultV1<ReverifyOutcomeV1>;
         const receipt: WorkflowStepReceipt = { kind: 'reverify_round', result };
         // §15.2 5.9 result mapping (as 5.8): a commit (`reverified`, or the policy refusal `refused`) and a
         // `revision_conflict` go back to the selection (the successor head then runs its checks through

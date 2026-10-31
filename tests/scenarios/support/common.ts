@@ -550,7 +550,7 @@ export type PhaseLog = string[];
 
 const BOARD_AT = '2026-10-07T00:00:00.000Z';
 /** The PlanBoard work grant: the AG2b file tools plus the two W2 plan-write tools. */
-export const PLAN_BOARD_TOOLS: readonly string[] = ['read', 'write', 'propose_future_plan', 'apply_future_plan'];
+export const PLAN_BOARD_TOOLS: readonly string[] = ['read', 'write', 'propose_future_plan'];
 const PASS_COMMAND = 'node -e "process.exit(0)"';
 
 export type PlanBoardOptions = {
@@ -585,9 +585,9 @@ export async function cleanupCommon(): Promise<void> {
 }
 
 /**
- * The AG2b scope on fresh SQLite files through the composition root, whose work grant also holds the two W2
- * plan-write tools (`propose_future_plan`, `apply_future_plan`), so a running Run adopts a Plan through the real
- * tools (C6 main path, C7 coordinator, C8 LA-3). The harness's grant has no whiteboard tool, and a Host cannot be
+ * The AG2b scope on fresh SQLite files through the composition root, whose work grant also holds the W2
+ * plan-write tool (`propose_future_plan`), so a running Run proposes a Plan through the real tool (C6 main path,
+ * C7 coordinator, C8 LA-3). The harness's grant has no whiteboard tool, and a Host cannot be
  * given one without a startup file change (the shared fixture). Seeded through the owners with the AG2b seed
  * writes; the registered check is `pass` or the AG2b result-file check. Every Workflow step and every checked
  * write runs the §11 invariants (with the step's `FuzzStep`) and records the Goal display phase (`phases`).

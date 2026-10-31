@@ -3,10 +3,10 @@
  * C7-supersede-failed-task; C7 (U-12), §3.3 PLAN-05 with TASK-19 guards 1–8 and guard 9 (LA-3), §4 TASK-19,
  * AV-1, AV-8, §2 GOAL-25/GOAL-27/GOAL-30, §9 VD-11 (L-15), §11.3 I-3, §11.18 I-21, §11.19 I-22).
  *
- * 1. Main path, twice (the adopter is the coordinator's Agent, or the operator over `plans/apply` with the
- *    Agent's candidate: the Host's route layer, `createWorkbenchServer` with `createPlatformCoreRouteBindings`,
- *    served on the PlanBoard root, whose grant holds the Agent's W2 tools; the AG2b Host's grant has none, so
- *    its Agent could not propose): T's registered check FAILs, the Workflow requeues it automatically up to the cap
+ * 1. Main path (the adopter is the operator over `plans/apply` with the coordinator's candidate: the Host's route
+ *    layer, `createWorkbenchServer` with `createPlatformCoreRouteBindings`, served on the PlanBoard root, whose grant
+ *    holds the Agent's W2 proposal tool; the AG2b Host's grant has none, so its Agent could not propose): T's registered
+ *    check FAILs, the Workflow requeues it automatically up to the cap
  *    (1 here) and stops it (`stopped/auto_rework_cap_reached`), the Goal is NEEDS_DECISION. A coordinator
  *    Task's running Run proposes P2 (T superseded → T2; T2 a new required carrier of T's obligation; T kept
  *    in its taskIds; `affectedTaskIds: [T]`). Once adopted the Goal leaves NEEDS_DECISION, the Workflow
@@ -25,7 +25,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
@@ -36,7 +35,7 @@ import {
 import { checkI21NonActiveTaskQuiescent, checkI22TracedBasisFrozen, checkI3GoalCompletionBacked } from '../state/invariants.js';
 import { cleanupScenarios, SCENARIO_OPERATOR } from './harness.js';
 import { PlanBoard, cleanupCommon, toolOutputJson } from './support/common.js';
-import { agentActorOf, c7Case, cleanupPlan, committedOf, planAcceptedEventsIn, workTask } from './support/plan.js';
+import { c7Case, cleanupPlan, committedOf, planAcceptedEventsIn, workTask } from './support/plan.js';
 
 const {
   operator, goalRef, GATE, TASK, OBLIGATION, ctx, automation, work, openEnvironment, select, performs, drive, taskRow, goalDisplay, readRun, nextDraft, propose, apply, proposed, activePlanRef, withDisposition, check,
@@ -53,12 +52,10 @@ const COORDINATOR = 'ag2b-coordinator';
 const T2 = 'ag2b-work-2';
 const CAP_ONE = { schemaVersion: 1 as const, autoReworkLimit: 1, resumeOnStartup: 'auto' } as const;
 
-it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails to the cap, a coordinator\'s Run proposes T superseded by T2, the Workflow runs T2 and the Goal completes; T keeps its history; I-3, I-21, I-22 hold', async (adopter) => {
+it.each([['operator']] as const)('C7 main path (adopter: %s): T fails to the cap, a coordinator\'s Run proposes T superseded by T2, the Workflow runs T2 and the Goal completes; T keeps its history; I-3, I-21, I-22 hold', async () => {
   const proposeCall = { callId: 'c7-propose', name: 'propose_future_plan', args: {} as Record<string, unknown> };
-  const applyCall = { callId: 'c7-apply', name: 'apply_future_plan', args: {} as Record<string, unknown> };
-  const coordinatorReplies: ScriptedReply[] = adopter === 'agent'
-    ? [{ kind: 'calls', calls: [proposeCall] }, { kind: 'calls', calls: [applyCall] }, { kind: 'text', text: 'C7: T is replaced by T2' }]
-    : [{ kind: 'calls', calls: [proposeCall] }, { kind: 'text', text: 'C7: a replacement of T is proposed' }];
+  const coordinatorReplies: ScriptedReply[] = [
+    { kind: 'calls', calls: [proposeCall] }, { kind: 'text', text: 'C7: a replacement of T is proposed' }];
   const replies: ScriptedReply[] = [
     { kind: 'text', text: 'C7: attempt 1 leaves the result file missing' },
     { kind: 'text', text: 'C7: attempt 2 leaves it missing again' },
@@ -66,14 +63,12 @@ it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails
     { kind: 'calls', calls: [{ callId: 'c7-t2-edit', name: 'edit', args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
     { kind: 'text', text: 'C7: T2 wrote the result' },
   ];
-  const seen: { propose?: unknown; apply?: unknown; coordinatorRun?: RunRef } = {};
+  const seen: { propose?: unknown } = {};
   let board!: PlanBoard;
   board = await PlanBoard.open({ workIds: [T, COORDINATOR], check: 'result_file', automation: CAP_ONE, replies,
     duringReply: async (index, request) => {
       if (index === 2) {
         // The coordinator's Run is in the Kernel: it proposes P2 (T superseded by T2, a new carrier of T's obligation).
-        const run = (await board.taskRow(COORDINATOR)).execution;
-        if (run !== null) seen.coordinatorRun = run;
         const next = await board.nextDraft('ag2b-plan-c7-p2', draft => ({ ...draft,
           tasks: draft.tasks.flatMap(task => task.taskId === T
             ? [{ ...task, disposition: 'superseded' as const, replacedByTaskId: T2 }, workTask(T2, 'Replace the failing work')] : [task]),
@@ -88,14 +83,6 @@ it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails
         seen.propose = toolOutputJson(request, 'c7-propose');
         const proposal = seen.propose as { status?: string; value?: { ref: PlanProposalRef; revision: number } };
         if (proposal.status !== 'committed' || proposal.value === undefined) throw new Error(`propose: ${JSON.stringify(proposal)}`);
-        if (adopter === 'agent') {
-          Object.assign(applyCall.args, { proposalRef: proposal.value.ref, expectedProposalRevision: proposal.value.revision, expected: [] });
-        }
-      }
-      if (index === 4 && adopter === 'agent') {
-        seen.apply = toolOutputJson(request, 'c7-apply');
-        if (seen.coordinatorRun === undefined) throw new Error('the coordinator Run must be known');
-        await board.check('P2 adopted by the coordinator\'s Run', { kind: 'plan_adopted', actor: agentActorOf(seen.coordinatorRun) });
       }
     } });
   const p1 = (await board.graph()).plan;
@@ -118,23 +105,18 @@ it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails
   expect(board.scripted.calls()).toBe(2);
   expect(board.target.lastWorld?.requeues).toHaveLength(1);
 
-  // The coordinator's Run proposes P2 (and, as the Agent, adopts it); it stops before its own round opens.
+  // The coordinator's Run proposes P2; it stops before its own round opens.
   const coordinated = await board.advance(board.select('c7-coordinator', COORDINATOR), performs('open_checks'));
   expect(coordinated.next).not.toBeNull();
   expect(seen.propose).toMatchObject({ status: 'committed', value: { ref: { aggregateType: 'PlanProposal' } } });
   const candidate = (seen.propose as { value: { ref: PlanProposalRef; revision: number } }).value;
-  if (adopter === 'agent') {
-    expect(seen.apply, 'the Agent adopts its own candidate (TASK-19 as class agent: T is not fenced)')
-      .toMatchObject({ status: 'committed', value: { planRevision: p1.planRevision + 1 } });
-  } else {
-    // The candidate waits for a person; T's stop still decides the Goal (GOAL-30 before CHANGE_PENDING).
-    expect(await board.goalDisplay()).toMatchObject({ phase: 'NEEDS_DECISION', cause: { code: 'auto_rework_cap_reached', taskId: T } });
-    // A person adopts it over `plans/apply`: the Host's route layer on this root builds the operator's call context.
-    const applied = await board.route('plans/apply', graphWrite(AG2B_SCOPE,
-      { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] }, 'c7-operator-apply'));
-    expect(applied).toMatchObject({ status: 'committed', value: { planRevision: p1.planRevision + 1 } });
-    await board.check('P2 adopted by the operator over plans/apply', { kind: 'plan_adopted', actor: { ...SCENARIO_OPERATOR } });
-  }
+  // The candidate waits for a person; T's stop still decides the Goal (GOAL-30 before CHANGE_PENDING).
+  expect(await board.goalDisplay()).toMatchObject({ phase: 'NEEDS_DECISION', cause: { code: 'auto_rework_cap_reached', taskId: T } });
+  // A person adopts it over `plans/apply`: the Host's route layer on this root builds the operator's call context.
+  const applied = await board.route('plans/apply', graphWrite(AG2B_SCOPE,
+    { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] }, 'c7-operator-apply'));
+  expect(applied).toMatchObject({ status: 'committed', value: { planRevision: p1.planRevision + 1 } });
+  await board.check('P2 adopted by the operator over plans/apply', { kind: 'plan_adopted', actor: { ...SCENARIO_OPERATOR } });
   const p2 = (await board.graph()).plan;
   if (p2.schemaVersion !== 2) throw new Error('P2 is a v2 Plan');
   expect(p2.planRevision).toBe(p1.planRevision + 1);
@@ -144,7 +126,7 @@ it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails
   expect(p2.obligations.find(obligation => obligation.obligationId === 'ag2b-obligation')?.taskIds)
     .toEqual(expect.arrayContaining([T, T2, COORDINATOR, AG2B_GATE_TASK_ID]));
   expect(p2.taskStateBasis?.entries).toEqual(expect.arrayContaining([{ taskId: T, planRef: p1.ref }, { taskId: T2, planRef: p2.ref }]));
-  const actor = adopter === 'agent' ? { kind: 'agent', runRef: seen.coordinatorRun } : SCENARIO_OPERATOR;
+  const actor = SCENARIO_OPERATOR;
   expect(p2.dispositionRecord?.entries).toEqual([expect.objectContaining({ taskId: T, from: 'active', to: 'superseded',
     replacedByTaskId: T2, traced: true, setIn: p2.ref, proposalRef: candidate.ref, reason: expect.objectContaining({ affectedTaskIds: [T] }),
     actor: expect.objectContaining(actor) })]);
@@ -170,7 +152,7 @@ it.each([['agent'], ['operator']] as const)('C7 main path (adopter: %s): T fails
   expect(await board.goalDisplay()).toMatchObject({ phase: 'COMPLETED' });
   expect(board.phases).not.toContain('FAILED');
   expect(board.target.lastWorld?.requeues, 'T was never requeued again').toHaveLength(1);
-  expect(board.scripted.calls()).toBe(adopter === 'agent' ? 7 : 6);
+  expect(board.scripted.calls()).toBe(6);
 
   // T's Runs and rounds are still there; its row shows its failure beside the new disposition.
   const listed = await board.platform.executions.listExecutions!(board.ctx(), { goalRef: AG2B_GOAL_REF, taskId: T,

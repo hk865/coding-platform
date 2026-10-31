@@ -289,10 +289,12 @@ async function createBase() {
     const goal = ready(await base.plans.queryGoal(base.ctx, goalRef)).goal;
     // requeue-service.ts:751-886: human Host, ended known Run, released holder,
     // exact Goal+afterRun pins. FC-9 accepts observed/attested crashed Runs.
-    const result = committed(await composition1.claims.requeueTask(base.ctx, {
+    const outcome = await composition1.claims.requeueTask(base.ctx, {
       input: { taskRef: claim.task, afterRunRef: claim.runRef, reason: 'Person requests another attempt', newInputRefs: [] },
       meta: { requestId: requestId('requeue'), expected: [{ ref: goalRef, revision: goal.revision }, await b2.pin(claim)] },
-    }));
+    });
+    if (outcome.status === 'needs_decision') throw new Error(`requeue requested a decision: ${JSON.stringify(outcome)}`);
+    const result = committed(outcome);
     if (result.kind !== 'requeued') throw new Error(`WP1 setup requeue refused: ${JSON.stringify(result)}`);
     return result.requeue;
   }

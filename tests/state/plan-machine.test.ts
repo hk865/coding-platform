@@ -35,7 +35,6 @@ import {
   planRevisionTargetOf,
   tracedDispositionChangeProblem,
   transitionPlanProposal,
-  type AgentPlanWriterIdentity,
   type CandidatePlanProposal,
   type FutureAdoptionFacts,
   type FutureChangeTaskFactsV1,
@@ -85,7 +84,6 @@ const ROLE: RoleBindingRefV1 = {
 const SESSION: SessionRef = { projectId: PROJECT, sessionId: 's-writer' };
 const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: PROJECT, goalId: GOAL_ID, runId });
 const WRITER_RUN = runRef('run-writer');
-const WRITER: AgentPlanWriterIdentity = { runRef: WRITER_RUN, sessionRef: SESSION, roleBinding: ROLE, goalRef: GOAL };
 const PROVENANCE: PlanWriteProvenanceV1 = {
   schemaVersion: 1, runRef: WRITER_RUN, sessionRef: SESSION, roleBinding: ROLE, sessionGeneration: 1, entryGeneration: 1,
   authorizationRevision: 2, configurationRevision: 'cfg-1',
@@ -115,7 +113,7 @@ function candidate(input: { basedOn: PlanRevisionRef | null; draft: PlanRevision
 }
 
 const CANDIDATE_INITIAL = candidate({ basedOn: null, draft: INITIAL_DRAFT, catalogPin: PIN });
-/** An Agent-submitted future candidate: both adopters can take it. */
+/** An Agent-submitted future candidate: the Host adopts it. */
 const CANDIDATE_FUTURE = candidate({ basedOn: P1, draft: FUTURE_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE });
 const ACCEPTED = acceptProposalRecord(CANDIDATE_FUTURE);
 const REJECTED: CandidatePlanProposal = { ...CANDIDATE_FUTURE, revision: 2, status: 'rejected' };
@@ -135,8 +133,6 @@ const FUTURE_FACTS: FutureAdoptionFacts = {
   // C7 (5.10): an operator adoption without disposition-only Tasks reads no carrier.
   adopterClass: 'human', dispositionTaskFacts: [], sourceCarriers: { tasks: [], obligations: [] }, carrierFacts: [],
 };
-/** The same facts adopted by the Agent writer (its rework class is `agent`, §1). */
-const AGENT_FUTURE_FACTS: FutureAdoptionFacts = { ...FUTURE_FACTS, adopterClass: 'agent' };
 
 function context(overrides: Partial<PlanProposalGuardContext> = {}): PlanProposalGuardContext {
   return { goal: { activePlanRevision: P1, desiredState: 'active' }, goalInWorkspace: true, pinsAgree: true,
@@ -155,8 +151,7 @@ const RECORD_HOST: RecordedEvent = { type: 'proposal_recorded', writer: 'host', 
 const RECORD_ANSWER: RecordedEvent = { ...RECORD_HOST, writer: 'initial_answer' };
 const RECORD_AGENT: RecordedEvent = { ...RECORD_HOST, writer: 'agent', basedOn: P1, draft: FUTURE_DRAFT, submittedBy: PROVENANCE };
 const ACCEPT_HOST: AcceptedEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef: PROPOSAL_REF,
-  expectedProposalRevision: 1, decisionRefs: [], agentWriter: null };
-const ACCEPT_AGENT: AcceptedEvent = { ...ACCEPT_HOST, adopter: 'agent', agentWriter: WRITER };
+  expectedProposalRevision: 1, decisionRefs: [] };
 const STALE: PlanProposalEvent = { type: 'proposal_stale' };
 const REJECT: PlanProposalEvent = { type: 'proposal_rejected' };
 
@@ -183,7 +178,7 @@ const INITIAL_ADOPTION_EFFECTS: PlanProposalEffect[] = [
   ...SCOPE_GUARDS, g({ target: 'proposal', expectedRevision: 1 }), g({ target: 'governance' }),
   g({ target: 'plan_revision', ref: P1, expectedRevision: null }),
 ];
-function futureAdoptionEffects(input: { agent: boolean; pinnedPolicy?: boolean; changed?: string[]; added?: string[] }): PlanProposalEffect[] {
+function futureAdoptionEffects(input: { pinnedPolicy?: boolean; changed?: string[]; added?: string[] }): PlanProposalEffect[] {
   const changed = input.changed ?? [];
   const added = input.added ?? ['t-docs'];
   return [
@@ -192,7 +187,6 @@ function futureAdoptionEffects(input: { agent: boolean; pinnedPolicy?: boolean; 
       dispositionOnlyTaskIds: [] } },
     { kind: 'move_goal_pointer', from: P1, to: P2 },
     { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
-    ...(input.agent ? [g({ target: 'agent_admission' })] : []),
     ...(input.pinnedPolicy === true ? [g({ target: 'pinned_policy' })] : []),
     ...SCOPE_GUARDS, g({ target: 'proposal', expectedRevision: 1 }), g({ target: 'plan_revision', ref: P1, expectedRevision: 1 }),
     ...[...changed, ...added].flatMap((taskId) => [
@@ -346,7 +340,6 @@ const EVENTS = {
   recordAgent: RECORD_AGENT,
   recordAnswer: RECORD_ANSWER,
   acceptHost: ACCEPT_HOST,
-  acceptAgent: ACCEPT_AGENT,
   stale: STALE,
   reject: REJECT,
 } satisfies Record<string, PlanProposalEvent>;
@@ -354,10 +347,9 @@ type EventName = keyof typeof EVENTS;
 
 /** The world each pair is evaluated in: an initial candidate is adopted while the pointer is still null. */
 function worldFor(state: StateName, event: EventName): PlanProposalGuardContext {
-  const agent = event === 'recordAgent' || event === 'acceptAgent';
-  const initialAdoption = state === 'candidateInitial' && (event === 'acceptHost' || event === 'acceptAgent');
-  return context({ agentAdmission: agent ? 'ok' : null, ...(event === 'acceptAgent' ? { future: AGENT_FUTURE_FACTS } : {}),
-    ...(initialAdoption ? pointer(null) : {}) });
+  const agent = event === 'recordAgent';
+  const initialAdoption = state === 'candidateInitial' && event === 'acceptHost';
+  return context({ agentAdmission: agent ? 'ok' : null, ...(initialAdoption ? pointer(null) : {}) });
 }
 
 const EXISTS = no('illegal', 'revision_conflict', 'proposal proposal-1 already exists; only the original receipt replays');
@@ -373,7 +365,6 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     recordAgent: ok(CANDIDATE_FUTURE, RECORDED_AGENT_EFFECTS),
     recordAnswer: ok(CANDIDATE_INITIAL, RECORDED_ANSWER_EFFECTS),
     acceptHost: MISSING,
-    acceptAgent: MISSING,
     stale: no('illegal', 'not_found'),
     reject: no('illegal', 'not_found'),
   },
@@ -383,7 +374,6 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     recordAgent: EXISTS,
     recordAnswer: DUPLICATE,
     acceptHost: ok(acceptProposalRecord(CANDIDATE_INITIAL), INITIAL_ADOPTION_EFFECTS),
-    acceptAgent: no('guard_failed', 'forbidden', 'a candidate without an Agent submission source cannot be adopted by an Agent'),
     // PLAN-06: basedOn null while the pointer is P1 — stale for good.
     stale: ok(CANDIDATE_INITIAL),
     reject: no('illegal', 'unsupported', 'rejecting a plan candidate has no writer in this batch (D-17)'),
@@ -393,8 +383,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     // RECORD_AGENT builds exactly CANDIDATE_FUTURE.
     recordAgent: DUPLICATE,
     recordAnswer: EXISTS,
-    acceptHost: ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ agent: false })),
-    acceptAgent: ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ agent: true })),
+    acceptHost: ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({})),
     stale: no('guard_failed', 'invalid'),
     reject: no('illegal', 'unsupported'),
   },
@@ -403,7 +392,6 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     recordAgent: EXISTS,
     recordAnswer: EXISTS,
     acceptHost: NOT_PENDING,
-    acceptAgent: NOT_PENDING,
     stale: no('illegal', 'invalid'),
     reject: no('illegal', 'invalid', 'an accepted proposal is final; it cannot be rejected'),
   },
@@ -412,7 +400,6 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     recordAgent: EXISTS,
     recordAnswer: EXISTS,
     acceptHost: NOT_PENDING,
-    acceptAgent: NOT_PENDING,
     stale: no('illegal', 'invalid'),
     reject: no('illegal', 'invalid'),
   },
@@ -639,12 +626,6 @@ describe('PLAN-04 initial proposal_accepted (plan-service.ts:1140-1215)', () => 
     expectResult(result, ok(acceptProposalRecord(proposal), [...INITIAL_ADOPTION_EFFECTS.slice(0, 4), g({ target: 'origin_sources' }),
       ...INITIAL_ADOPTION_EFFECTS.slice(4)]));
   });
-
-  it('an Agent can never take the initial path', () => {
-    const agentInitial = candidate({ basedOn: null, draft: INITIAL_DRAFT, catalogPin: PIN, submittedBy: PROVENANCE });
-    expectResult(adopt(ACCEPT_AGENT, initialCtx({ agentAdmission: 'ok' }), agentInitial),
-      no('guard_failed', 'forbidden', 'an Agent apply requires a future revision with a source plan'));
-  });
 });
 
 // --------------------------------------------------------------------------
@@ -715,19 +696,19 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
 
   it('a Goal that is paused does not stop a plan adoption (PLAN-05)', () => {
     expectResult(adopt(ACCEPT_HOST, pointer(P1, 'paused')),
-      ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ agent: false })));
+      ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({})));
   });
 
   it('a new obligation joins the pinned policy guards (:1748-1761)', () => {
     expectResult(adopt(ACCEPT_HOST, facts({ pinnedPolicy: 'ok' })),
-      ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ agent: false, pinnedPolicy: true })));
+      ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ pinnedPolicy: true })));
   });
 
   it('guards the Lease ∅ / Reduction ∅ of every changed and added Task (:1773-1782)', () => {
     const touched = facts({ delta: delta(['t-build'], ['t-docs']),
       touchedTaskFacts: [DOCS_FACTS, { taskId: 't-build', runs: [], lease: null, reduction: null }] });
     expectResult(adopt(ACCEPT_HOST, touched),
-      ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ agent: false, changed: ['t-build'], added: ['t-docs'] })));
+      ok(acceptProposalRecord(CANDIDATE_FUTURE), futureAdoptionEffects({ changed: ['t-build'], added: ['t-docs'] })));
   });
 
   it('keeps today\'s order: schema, decisions, source, pointer, draft goal, revision, planId, target, delta, coverage, policy, draft, trace', () => {
@@ -762,55 +743,6 @@ describe('PLAN-05 future-only proposal_accepted (applyFutureRevision, plan-servi
   });
 });
 
-describe('PLAN-05 Agent proposal_accepted (applyPlanChangeAsAgent, plan-service.ts:2019-2106)', () => {
-  const agentCtx = (overrides: Partial<PlanProposalGuardContext> = {}) =>
-    context({ agentAdmission: 'ok', future: AGENT_FUTURE_FACTS, ...overrides });
-  const otherWriter = (patch: Partial<AgentPlanWriterIdentity>): AcceptedEvent => ({ ...ACCEPT_AGENT, agentWriter: { ...WRITER, ...patch } });
-
-  it.each<[string, PlanProposalMachineState, AcceptedEvent, Partial<PlanProposalGuardContext>, Expected]>([
-    ['decisionRefs are not empty, before any read (:2034-2036)', null, { ...ACCEPT_AGENT, decisionRefs: [{ ref: GOAL, revision: 1 }] }, {},
-      no('guard_failed', 'forbidden', 'an Agent future-plan apply does not accept decision references')],
-    ['no fresh admission verdict', CANDIDATE_FUTURE, ACCEPT_AGENT, { agentAdmission: null }, no('illegal', 'invalid')],
-    ['the admission fails, before the proposal read (:2057-2062)', null, ACCEPT_AGENT,
-      { agentAdmission: rejection('forbidden', 'the Run has ended') }, no('guard_failed', 'forbidden', 'the Run has ended')],
-    ['the admission sees a newer version', CANDIDATE_FUTURE, ACCEPT_AGENT,
-      { agentAdmission: rejection('revision_conflict', 'changed') }, no('stale', 'revision_conflict')],
-    ['the writer was not identified', CANDIDATE_FUTURE, { ...ACCEPT_AGENT, agentWriter: null }, {}, no('illegal', 'invalid')],
-    ['a Host candidate without submittedBy (:2075-2078)', candidate({ basedOn: P1, draft: FUTURE_DRAFT, catalogPin: PIN }), ACCEPT_AGENT, {},
-      no('guard_failed', 'forbidden', 'a candidate without an Agent submission source cannot be adopted by an Agent')],
-    ['submitted by another Run (:2079-2082)', CANDIDATE_FUTURE, otherWriter({ runRef: runRef('run-other') }), {},
-      no('guard_failed', 'forbidden', 'the candidate was submitted by another Agent Run')],
-    ['submitted through another Session', CANDIDATE_FUTURE, otherWriter({ sessionRef: { ...SESSION, sessionId: 's-other' } }), {},
-      no('guard_failed', 'forbidden', 'the candidate was submitted by another Agent Run')],
-    ['submitted under another role binding', CANDIDATE_FUTURE, otherWriter({ roleBinding: { ...ROLE, bindingVersion: 2 } }), {},
-      no('guard_failed', 'forbidden', 'the candidate was submitted by another Agent Run')],
-    ['the candidate Goal is not the writer Goal (:2083-2086)', CANDIDATE_FUTURE, otherWriter({ goalRef: { ...GOAL, goalId: 'g-other' } }), {},
-      no('guard_failed', 'forbidden', 'the candidate goal is not the Agent Run goal')],
-    ['the Goal is outside the proposal workspace (:2088-2089 → :1656)', CANDIDATE_FUTURE, ACCEPT_AGENT, { goalInWorkspace: false },
-      no('guard_failed', 'forbidden', 'the goal does not belong to the proposal workspace')],
-  ])('%s', (_name, state, event, overrides, expected) => {
-    expectResult(transitionPlanProposal(state, event, agentCtx(overrides)), expected);
-  });
-
-  it('checks decisionRefs before the fresh admission (:2034-2036 runs before :2057-2062)', () => {
-    const withDecisions: AcceptedEvent = { ...ACCEPT_AGENT, decisionRefs: [{ ref: GOAL, revision: 1 }] };
-    for (const state of [null, CANDIDATE_FUTURE]) {
-      expectResult(transitionPlanProposal(state, withDecisions, agentCtx({ agentAdmission: rejection('busy', 'busy') })),
-        no('guard_failed', 'forbidden', 'an Agent future-plan apply does not accept decision references'));
-    }
-  });
-
-  it('reads the state after the Agent pre-checks: not pending and old revisions keep their codes', () => {
-    expectResult(transitionPlanProposal(ACCEPTED, ACCEPT_AGENT, agentCtx()), no('illegal', 'invalid'));
-    expectResult(transitionPlanProposal(CANDIDATE_FUTURE, { ...ACCEPT_AGENT, expectedProposalRevision: 2 }, agentCtx()),
-      no('stale', 'revision_conflict', 'the proposal revision changed'));
-  });
-
-  it('then runs the same future path as the Host', () => {
-    expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_AGENT, agentCtx(pointer(P2))), no('stale', 'revision_conflict'));
-  });
-});
-
 // --------------------------------------------------------------------------
 // planProposalProblem: the same guards over the facts read so far (A.2 step 3)
 // --------------------------------------------------------------------------
@@ -821,7 +753,7 @@ describe('planProposalProblem (the owner asks after each read)', () => {
 
   it('agrees with transitionPlanProposal on every propose/apply pair once every fact is read', () => {
     for (const stateName of Object.keys(STATES) as StateName[]) {
-      for (const eventName of ['recordHost', 'recordAgent', 'recordAnswer', 'acceptHost', 'acceptAgent'] as const) {
+      for (const eventName of ['recordHost', 'recordAgent', 'recordAnswer', 'acceptHost'] as const) {
         const event = EVENTS[eventName] as RecordedEvent | AcceptedEvent;
         const ctx = worldFor(stateName, eventName);
         expect(planProposalProblem(STATES[stateName], event, ctx), `${stateName} × ${eventName}`)
@@ -841,7 +773,6 @@ describe('planProposalProblem (the owner asks after each read)', () => {
       [CANDIDATE_FUTURE, ACCEPT_HOST, context({ future: { ...FUTURE_FACTS, targetExists: true } })],
       [CANDIDATE_FUTURE, ACCEPT_HOST, context({ future: { ...FUTURE_FACTS,
         touchedTaskFacts: [{ ...DOCS_FACTS, runs: [runOf('run-docs', 't-docs')] }] } })],
-      [CANDIDATE_FUTURE, { ...ACCEPT_AGENT, agentWriter: { ...WRITER, runRef: runRef('run-other') } }, context({ agentAdmission: 'ok' })],
     ];
     for (const [state, event, ctx] of cases) {
       const expected = refusalOf(transitionPlanProposal(state, event, ctx));
@@ -893,15 +824,6 @@ describe('planProposalProblem (the owner asks after each read)', () => {
     no('guard_failed', 'revision_conflict', 'task t-docs already holds a TaskLease and is no longer a future task'));
   });
 
-  it('an Agent adoption judges decisionRefs and the fresh admission before the proposal is read', () => {
-    expectResult(planProposalProblem(undefined, { ...ACCEPT_AGENT, decisionRefs: [{ ref: GOAL, revision: 1 }] }, {})!,
-      no('guard_failed', 'forbidden', 'an Agent future-plan apply does not accept decision references'));
-    expect(planProposalProblem(undefined, ACCEPT_AGENT, {})).toBeNull();
-    expectResult(planProposalProblem(undefined, ACCEPT_AGENT, { agentAdmission: rejection('forbidden', 'the Run has ended') })!,
-      no('guard_failed', 'forbidden', 'the Run has ended'));
-    expect(planProposalProblem(undefined, ACCEPT_AGENT, { agentAdmission: 'ok' })).toBeNull();
-  });
-
   it('an Agent proposal judges the fresh admission first: a refused admission has no provenance yet', () => {
     const noProvenance: RecordedEvent = { ...RECORD_AGENT, submittedBy: null };
     expectResult(planProposalProblem(null, noProvenance, { agentAdmission: rejection('busy', 'the lease is held by another Run') })!,
@@ -932,8 +854,6 @@ describe('today\'s results pinned for the step 5 flips', () => {
     expectResult(transitionPlanProposal(null, RECORD_AGENT, context({ agentAdmission: 'ok', ...pointer(P1, 'cancelled') })), cancelled);
     expectResult(transitionPlanProposal(CANDIDATE_INITIAL, ACCEPT_HOST, context(pointer(null, 'cancelled'))), cancelled);
     expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_HOST, context(pointer(P1, 'cancelled'))), cancelled);
-    expectResult(transitionPlanProposal(CANDIDATE_FUTURE, ACCEPT_AGENT, context({ agentAdmission: 'ok', ...pointer(P1, 'cancelled') })),
-      cancelled);
     // The workspace and the caller pins answer first (they are read with the Goal).
     expectResult(transitionPlanProposal(null, RECORD_HOST, context({ ...pointer(P1, 'cancelled'), goalInWorkspace: false })),
       no('guard_failed', 'forbidden'));
@@ -1255,14 +1175,14 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
     reason: { ...REASON, affectedTaskIds: ['t-build'] } });
   const adopt = (future: Partial<FutureAdoptionFacts>, state: PlanProposalMachineState = listed, event: AcceptedEvent = ACCEPT_HOST,
     overrides: Partial<PlanProposalGuardContext> = {}) =>
-    transitionPlanProposal(state, event, context({ agentAdmission: event.adopter === 'agent' ? 'ok' : null,
+    transitionPlanProposal(state, event, context({
       future: { ...FUTURE_FACTS, delta: delta([], []), touchedTaskFacts: [], ...future }, ...overrides }));
   const deferBuild = (facts: TracedTaskFactsV1, adopterClass: FutureAdoptionFacts['adopterClass'] = 'human') =>
     ({ delta: delta([], [], { dispositionOnlyTaskIds: ['t-build'], dispositionChanges: [DEFER] }),
       dispositionTaskFacts: [facts], adopterClass });
   const UNTRACED: TracedTaskFactsV1 = { taskId: 't-build', runs: [], selectedRun: null, lease: null, reduction: null, pointerIntent: null };
 
-  function effects(input: { traced: boolean; agent?: boolean; carriers?: string[]; target?: PlanRevisionRef }): PlanProposalEffect[] {
+  function dispositionOnlyEffects(input: { traced: boolean; carriers?: string[]; target?: PlanRevisionRef }): PlanProposalEffect[] {
     const target = input.target ?? P2;
     return [
       { kind: 'write_proposal' },
@@ -1271,7 +1191,6 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
       { kind: 'move_goal_pointer', from: P1, to: target },
       { kind: 'change_task_disposition', change: { ...DEFER, traced: input.traced } },
       { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
-      ...(input.agent === true ? [g({ target: 'agent_admission' })] : []),
       ...SCOPE_GUARDS, g({ target: 'proposal', expectedRevision: 1 }), g({ target: 'plan_revision', ref: P1, expectedRevision: 1 }),
       ...(input.traced ? [g({ target: 'task_facts', taskId: 't-build' })]
         : [g({ target: 'task_record_absent', record: 'TaskLease', taskId: 't-build' }),
@@ -1282,12 +1201,12 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
   }
 
   it('a traced, ended, released and listed Task: TASK-19 passes; the change, its trace and the Task facts join the commit', () => {
-    expectResult(adopt(deferBuild(tracedFacts('t-build'))), ok(acceptProposalRecord(listed), effects({ traced: true })));
+    expectResult(adopt(deferBuild(tracedFacts('t-build'))), ok(acceptProposalRecord(listed), dispositionOnlyEffects({ traced: true })));
   });
 
   it('an untraced disposition-only Task keeps the Lease ∅ / Reduction ∅ guards and needs no affectedTaskIds', () => {
     expectResult(adopt(deferBuild(UNTRACED), CANDIDATE_FUTURE),
-      ok(acceptProposalRecord(CANDIDATE_FUTURE), effects({ traced: false })));
+      ok(acceptProposalRecord(CANDIDATE_FUTURE), dispositionOnlyEffects({ traced: false })));
   });
 
   it.each<[string, TracedTaskFactsV1, Expected]>([
@@ -1305,7 +1224,6 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
   it('TASK-19 guard 7: a human-stopped Task changes disposition only by an operator', () => {
     expectResult(adopt(deferBuild(humanCancelledFacts('t-build'), 'system')), no('guard_failed', 'forbidden',
       'only an operator may change the disposition of task t-build: a human paused or cancelled it'));
-    expectResult(adopt(deferBuild(humanCancelledFacts('t-build'), 'agent'), listed, ACCEPT_AGENT), no('guard_failed', 'forbidden'));
     expect(adopt(deferBuild(humanCancelledFacts('t-build'))).ok).toBe(true);
   });
 
@@ -1340,11 +1258,10 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
       delta: delta([], ['t-fix']), touchedTaskFacts: [{ taskId: 't-fix', runs: [], lease: null, reduction: null }],
       adopterClass, sourceCarriers: SOURCE_CARRIERS, ...(carrierFacts === undefined ? {} : { carrierFacts }) });
 
-    it('an automation (system) or Agent adoption adding a carrier to an obligation a human stopped → forbidden', () => {
+    it('an automation (system) adoption adding a carrier to an obligation a human stopped → forbidden', () => {
       const forbidden = no('guard_failed', 'forbidden',
         'obligation o-1: a human stopped this work; only an operator may add the parallel carrier t-fix');
       expectResult(adopt(addCarrier('system', [humanCancelledFacts('t-build')]), parallel), forbidden);
-      expectResult(adopt(addCarrier('agent', [humanCancelledFacts('t-build')]), parallel, ACCEPT_AGENT), forbidden);
     });
 
     it('an operator adoption is not limited and reads no carrier; an unfenced carrier lets automation add one', () => {
@@ -1357,7 +1274,7 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
       if (unfenced.ok) expect(unfenced.effects).toContainEqual(g({ target: 'carrier_facts', taskId: 't-build' }));
     });
 
-    it('the carrier facts are read after TASK-19, and only for an automation or Agent adopter', () => {
+    it('the carrier facts are read after TASK-19, and only for an automation adopter', () => {
       const { carrierFacts: _unread, ...noCarriers } = { ...FUTURE_FACTS, ...addCarrier('system', undefined) };
       void _unread;
       const read = { ...pointer(P1), goalInWorkspace: true, pinsAgree: true, agentAdmission: null, source: SOURCE };
@@ -1373,13 +1290,11 @@ describe('C7 PLAN-05 (5.10): disposition-only Tasks (TASK-19) and the parallel c
 });
 
 describe('exhaustive event variants (§1.1)', () => {
-  // A writer or adopter the machine does not know must reach the `never`
-  // branch, never silently take the Host path.
+  // A writer the machine does not know must reach the `never` branch, never
+  // silently take the Host path.
   it.each<[string, () => unknown, string]>([
     ['writer', () => transitionPlanProposal(null, { ...RECORD_HOST, writer: 'workflow' } as unknown as PlanProposalEvent, context()),
       'unreachable plan proposal writer'],
-    ['adopter', () => transitionPlanProposal(CANDIDATE_FUTURE,
-      { ...ACCEPT_HOST, adopter: 'workflow' } as unknown as PlanProposalEvent, context()), 'unreachable plan adopter'],
   ])('an unknown %s throws', (_name, run, message) => {
     expect(run).toThrow(message);
   });
@@ -1388,8 +1303,8 @@ describe('exhaustive event variants (§1.1)', () => {
 describe('purity', () => {
   it('never mutates the state, the event or the context', () => {
     const state = deepFreeze(structuredClone(CANDIDATE_FUTURE));
-    const ctx = deepFreeze(context({ agentAdmission: 'ok', future: AGENT_FUTURE_FACTS }));
-    const event = deepFreeze(structuredClone(ACCEPT_AGENT));
+    const ctx = deepFreeze(context());
+    const event = deepFreeze(structuredClone(ACCEPT_HOST));
     const before = JSON.stringify({ state, ctx, event });
     expect(transitionPlanProposal(state, event, ctx).ok).toBe(true);
     expect(JSON.stringify({ state, ctx, event })).toBe(before);

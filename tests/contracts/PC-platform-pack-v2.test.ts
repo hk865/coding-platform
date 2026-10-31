@@ -21,7 +21,7 @@ const V2_TEMPLATES = {
     'base': '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
     'skill-platform-work': 'eb4bb377bcc4f98259878c47260d5c68ad01c2ce18fbe3b67e97c495a29719f1',
     'skill-platform-secretary': 'fd4e0c37fc97bdc4e710b5c67a07b7374fa308db75e16eb24bd37939b80216e0',
-    'skill-platform-adviser': 'bbe5790ab24c8cad95572e3059290b91deb1f43dda9d9d776b2eac0e93d57c71',
+    'skill-platform-adviser': '5f2163a75ed75a613e29a2f51139fe8f78b3ec73ab5a3084d7635c1d4407b296',
     'skill-platform-scribe': 'fd7b2ac9359d991e3181d8c2dd73d23334683601b5b6e459f161519ba76b103d',
     'skill-platform-reviewer': '275be65bdac92bc2e1cf1b11dede3e3f049f6e356eb897b4fa6b2a737b575983',
 } as const;
@@ -30,7 +30,7 @@ const V2_TEMPLATES = {
 const V1_SKILL_DIGESTS = {
     'skill-platform-work': '2ccc77dc554adf50e7e55a6b86be85ff4bb4d4503c4cc13cb88e2b78ac958cd4',
     'skill-platform-secretary': '40666e6bfa98018b257058a18ba0fc481a93a5ce3bcb442c5950b74bccd1c1f7',
-    'skill-platform-adviser': 'fa8e91101f944615019c23b9a7d8ae38820c3a62755e04946cc27fcbb7ac48b2',
+    'skill-platform-adviser': '5e030c4d1a961d668efc90dd90eb11417afb48382a9ceab29a31b943d71d287c',
     'skill-platform-scribe': 'c0fe77a90c88a341d1698bc472e79d1681a8818079cc166c83337062375385ca',
     'skill-platform-reviewer': 'f55ce3b98b3bee9285d39d2587c21a547cb459c284d11e2a322364966e4845e3',
 } as const;
@@ -39,7 +39,7 @@ const V1_SKILL_DIGESTS = {
 const NAMED_SKILL_TOOLS = [
     'read', 'edit', 'shell',
     'look_graph', 'find_graph', 'record_note',
-    'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'apply_future_plan',
+    'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
     'find_related_sessions', 'read_session_card', 'send_session_message',
     'search', 'code_index', 'run_readonly_command',
 ] as const;

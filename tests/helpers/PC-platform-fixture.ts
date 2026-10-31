@@ -473,13 +473,15 @@ export async function openPCWorkFixture(options: PCOptions = {}) {
       async continuation(afterRunRef: RunRef = claim.runRef, note = 'Continue PC work') {
         const prior = ready(await base.platform.executions.readExecution(base.ctx, afterRunRef));
         const goal = ready(await base.platform.plans.queryGoal(base.ctx, base.goalRef));
-        const requeue = committed(await base.platform.claims.requeueTask!(base.ctx, {
+        const outcome = await base.platform.claims.requeueTask!(base.ctx, {
           input: { taskRef: claim.task, afterRunRef, reason: 'Continue PC work', note },
           meta: { requestId: `pc-requeue:${afterRunRef.runId}`, expected: [
             { ref: base.goalRef, revision: goal.goal.revision },
             { ref: afterRunRef, revision: prior.run.revision },
           ] },
-        }));
+        });
+        if (outcome.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(outcome)}`);
+        const requeue = committed(outcome);
         if (requeue.kind !== 'requeued') throw new Error(JSON.stringify(requeue));
         const ref = await claimSuccessorRun(base, base.goalRef, claim.task.taskId,
           claim.sessionRef, `pc-successor:${afterRunRef.runId}`, claim.planRef, requeue.requeue.ref);

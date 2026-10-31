@@ -190,6 +190,7 @@ it('R2B05 replays the committed requeue step after the autonomy changes to every
     result: { status: 'committed', replayed: false, value: { kind: 'requeued' } } } });
   const receipt = first.receipt;
   if (receipt === null || receipt.kind !== 'requeue_task') throw new Error('missing first requeue receipt');
+  if (receipt.result.status === 'needs_decision') throw new Error('the automatic requeue asked for a decision');
   const saved = committed(receipt.result);
   if (saved.value.kind !== 'requeued') throw new Error('the automatic requeue must commit, not a refusal');
   const ref = { aggregateType: 'TaskRequeue' as const, projectId: 'P', goalId: 'B', taskId: 'b-work',

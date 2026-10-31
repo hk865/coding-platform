@@ -52,8 +52,10 @@ describe.each(['memory', 'sqlite'] as const)('S2A notice counts and continuation
     await finalize();
     for (let index = 0; index < 10; index += 1) {
       chain.bumpSource();
-      const opened = committed(await chain.evidence.reverifyRound(automationContext(f), { input: { predecessorRoundRef: round.ref },
-        meta: { requestId: f.newId(), expected: [{ ref: round.ref, revision: round.revision }] } }));
+      const openedOutcome = await chain.evidence.reverifyRound(automationContext(f), { input: { predecessorRoundRef: round.ref },
+        meta: { requestId: f.newId(), expected: [{ ref: round.ref, revision: round.revision }] } });
+      if (openedOutcome.status === 'needs_decision') throw new Error(`the reverify asked for a decision: ${JSON.stringify(openedOutcome)}`);
+      const opened = committed(openedOutcome);
       if (opened.kind !== 'reverified') throw new Error(`the automatic reverify was refused: ${JSON.stringify(opened)}`);
       round = opened.round;
       createdRework.push(`automatic_rework:${String(round.chain?.ordinal ?? 0).padStart(4, '0')}:${canonicalJson(round.ref as unknown as JsonValue)}`);

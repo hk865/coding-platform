@@ -28,6 +28,8 @@
  * a Task/Run/Session, and never fabricates a PASS from a missing/blocked check.
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
+import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
@@ -57,6 +59,8 @@ import type {
     VerificationRoundMaterialIdentity, VerificationRoundSourcePort, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
 import { canonicalJson, canonicalOf, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
@@ -88,6 +92,8 @@ import {
     authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
 } from '../tasks/plan-write-admission.js';
 import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem } from '../tasks/requeue-service.js';
+import { readOwnerRecord } from '../tasks/owner-record-read.js';
+import { executeReworkRequestClose } from '../tasks/rework-requests.js';
 import { newBasisInputRefsProblem } from '../persistence/rework-codecs.js';
 import { reverifyBasis } from '../state/no-progress.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
@@ -127,7 +133,14 @@ import type {
     OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
 } from '../model/evidence-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { ApprovedReworkApplyV1, ReworkOwnerResultV1, ReworkRequestedV1 } from '../model/claim-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import {
+    applyReworkRequest, newReworkRequest, type PendingReworkRequestV1, type ReworkRequestV1,
+} from '../state/rework-request.js';
+import {
+    reworkRequestCodec, reworkRequestRecordedEventFromEvent, reworkRequestRecordedFragment,
+} from '../tasks/rework-request-codecs.js';
 import { sessionMessageRefProblem } from '../tasks/codec-shape-checks.js';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort;
@@ -637,6 +650,18 @@ function chainRefusal(refusal: Rejected, chain: RoundChainHeadV1): CoreRejection
 type ReverifyCaller =
     | { kind: 'host'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal; actor: HostActor }
     | { kind: 'work_run'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal };
+/** LD-25: the approved recheck runs the same path under the stored requester and its rebuilt provenance. */
+type ReverifyAuthority = {
+    caller: { kind: 'agent'; actor: Extract<ActorRef, { kind: 'agent' }> };
+    provenance: DelegatedWriteProvenanceV1;
+    approved: { record: ReworkRequestV1; commandId: string };
+};
+/** The guards a standalone request close needs. */
+type ReverifyCloseBase = {
+    identity: string; fingerprint: string; signal: AbortSignal; actor: ActorRef; principal: JsonValue;
+    goalRef: GoalRef; task: TaskTriple; run: RunSnapshot; readSet: readonly RecordGuard[];
+    approved: { record: ReworkRequestV1; commandId: string };
+};
 
 /** Bind the caller synchronously before the first await (Host: `bindTrustedContext`; work_run: its own scope and signal). */
 function bindReverifyCaller(ctx: CoreCallContext): ReverifyCaller | CoreRejection {
@@ -1627,7 +1652,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     async function replayReverify(
         receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string,
         acknowledgement: SessionMessageRef | null,
-    ): Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
+    ): Promise<ReworkOwnerResultV1<ReverifyOutcomeV1>> {
         const loaded = await loadReplayEvent(records, receipt);
         if (!loaded.ok) return loaded.rejection;
         const event = loaded.event;
@@ -1643,6 +1668,16 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             if (decoded.status !== 'decoded') return unavailable(`the recorded reverify refusal is not decodable: ${decoded.reason}`);
             recorded = { identityKey: decoded.value.identityKey, fingerprint: decoded.value.fingerprint,
                 value: { kind: 'refused', refusal: decoded.value.refusal } };
+        } else if (event.eventType === 'ReworkRequestRecorded') {
+            // B-09: the one request branch. The original card answer comes from this event, never from the record.
+            const decoded = reworkRequestRecordedEventFromEvent(event);
+            if (decoded.status !== 'decoded') return unavailable(`the recorded request event is not decodable: ${decoded.reason}`);
+            if (decoded.value.identityKey !== identity || decoded.value.fingerprint !== fingerprint) {
+                return unavailable('the recorded reverify request disagrees with the request identity');
+            }
+            return { status: 'needs_decision',
+                cardKey: decisionSourceKey({ kind: 'rework_request', requestRef: decoded.value.request }),
+                request: decoded.value.request };
         } else {
             return unavailable(`the recorded reverify receipt names a ${event.eventType} event`);
         }
@@ -1662,6 +1697,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         signal: AbortSignal;
         /** The real requester: an operator, a platform automation actor or an Agent. */
         actor: ActorRef;
+        principal: JsonValue;
         /** The Host identity the successor's event records; the Agent stays in `chain.reverify.requestedBy` (VR-14). */
         eventActor: HostActor | null;
         task: TaskTriple;
@@ -1683,6 +1719,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         noticeAutomationCap?: number;
         /** 7A §3.5: the acknowledged message, null when the call carried none (a refusal returns no proof). */
         acknowledgement: SessionMessageRef | null;
+        /** LD-25: the stored pending request an approved recheck applies (or closes on a re-run refusal). */
+        approved: { record: ReworkRequestV1; commandId: string } | null;
         /** A lost slot claim: the head moved, answered from the chain read again. */
         slotTaken(): Promise<CoreRejection>;
     };
@@ -1696,6 +1734,18 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      * restores the original value.
      */
     async function commitReverify(write: ReverifyCommit): Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
+        // LD-25: an approved recheck does not write a second owner refusal; the stored request closes instead
+        // (`book-7c.md:724–:726`), never by a second owner commit.
+        if (write.approved !== null) {
+            const refusalEffect = write.decided.effects.find(effect => effect.kind === 'refuse_reverify');
+            if (refusalEffect !== undefined && refusalEffect.kind === 'refuse_reverify') {
+                return await commitRequestClose({ identity: write.identity, fingerprint: write.fingerprint, signal: write.signal,
+                    actor: write.actor, principal: write.principal,
+                    goalRef: { aggregateType: 'Goal', projectId: write.task.projectId, goalId: write.task.goalId },
+                    task: write.task, run: write.run, readSet: write.readSet, approved: write.approved }, 'rejected',
+                    refusalEffect.refusal.code, refusalEffect.refusal.reason);
+            }
+        }
         const guards: RecordGuard[] = [];
         const written: EncodedRecord[] = [];
         let claims: UniqueClaimChange[] = [];
@@ -1761,11 +1811,21 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             }
         }
         if (event === null || value === null) throw new Error('a reverify write commits a successor round or a refusal');
-        const merged = mergeGuards([...guards, refusalGuard]);
+        // B-08: an approved application appends the applied request@2 and its CAS to the same records/read set.
+        const applied = write.approved === null || value.kind !== 'reverified' ? null
+            : applyReworkRequest(write.approved.record, value.round.ref,
+                { commandId: write.approved.commandId, at: deps.now() });
+        const appliedKey = applied === null ? null : canonicalOf(applied.ref);
+        if (applied !== null && appliedKey === null) return invalid('the applied request ref is not canonical JSON');
+        const merged = mergeGuards([...guards, refusalGuard,
+            ...(appliedKey === null ? [] : [{ refKey: appliedKey, expectedRevision: 1 }])]);
         if (!merged.ok) return merged.rejection;
+        const bindings = [...(roundOriginBinding ?? []),
+            ...(appliedKey === null ? [] : [{ refKey: appliedKey, field: 'since' as const }])];
         const prepared: PreparedCommit = { identityKey: write.identity, fingerprint: write.fingerprint, guards: merged.guards,
-            records: written, claims, indexGuards: [], indexChanges: [], events: [event],
-            ...(roundOriginBinding === undefined ? {} : { commitCursorBindings: roundOriginBinding }) };
+            records: applied === null ? written : [...written, reworkRequestCodec.encode(applied)],
+            claims, indexGuards: [], indexChanges: [], events: [event],
+            ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }) };
         try {
             if (write.signal.aborted) return cancelled('the reverify was cancelled before commit');
             const receipt = await records.commit(prepared);
@@ -1773,7 +1833,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 if (receipt.code === 'unique_conflict') return await write.slotTaken();
                 return mapStoreFailure(receipt);
             }
-            if (receipt.replayed) return await replayReverify(receipt, write.identity, write.fingerprint, write.acknowledgement);
+            if (receipt.replayed) {
+                const replayed = await replayReverify(receipt, write.identity, write.fingerprint, write.acknowledgement);
+                return replayed as EffectWriteResultV1<ReverifyOutcomeV1>;
+            }
             return { status: 'committed', value, replayed: false, cursor: receipt.cursor,
                 // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
                 // when the call carried an acknowledgement; a refusal never returns one.
@@ -1782,11 +1845,71 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         } catch (error) {
             const outcome = await lookupReceipt(records, write.identity, write.fingerprint);
             if (outcome.status === 'found') {
-                return await replayReverify(outcome.receipt, write.identity, write.fingerprint, write.acknowledgement);
+                const replayed = await replayReverify(outcome.receipt, write.identity, write.fingerprint, write.acknowledgement);
+                return replayed as EffectWriteResultV1<ReverifyOutcomeV1>;
             }
             if (outcome.status === 'failed') return outcome.rejection;
             return unavailable(`the reverify commit result is unknown: ${messageOf(error)}`);
         }
+    }
+
+    /**
+     * The request branch's one commit (B-09): `ReworkRequest@1` plus its one `ReworkRequestRecorded` event under the
+     * already-computed identity/fingerprint, the same read-set guards and the Store-bound `since`.
+     */
+    async function commitReverifyReworkRequest(base: {
+        identity: string; fingerprint: string; signal: AbortSignal; actor: ActorRef; goalRef: GoalRef;
+        readSet: readonly RecordGuard[]; acknowledgement: SessionMessageRef | null;
+    }, record: PendingReworkRequestV1, value: ReworkRequestedV1): Promise<ReworkOwnerResultV1<ReverifyOutcomeV1>> {
+        const key = canonicalOf(record.ref);
+        if (key === null) return invalid('the rework request ref is not canonical JSON');
+        const merged = mergeGuards([...base.readSet, { refKey: key, expectedRevision: null }]);
+        if (!merged.ok) return merged.rejection;
+        const prepared: PreparedCommit = { identityKey: base.identity, fingerprint: base.fingerprint, guards: merged.guards,
+            ...reworkRequestRecordedFragment({ record, eventId: deps.newId(), occurredAt: record.requestedAt,
+                identityKey: base.identity, actor: base.actor as Extract<ActorRef, { kind: 'agent' }>,
+                fingerprint: base.fingerprint }),
+            indexGuards: [], indexChanges: [] };
+        if (base.signal.aborted) return cancelled('the reverify was cancelled before its request commit');
+        try {
+            const receipt = await records.commit(prepared);
+            if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+            if (receipt.replayed) return await replayReverify(receipt, base.identity, base.fingerprint, base.acknowledgement);
+            return value;
+        } catch (error) {
+            const outcome = await lookupReceipt(records, base.identity, base.fingerprint);
+            if (outcome.status === 'found') {
+                return await replayReverify(outcome.receipt, base.identity, base.fingerprint, base.acknowledgement);
+            }
+            if (outcome.status === 'failed') return outcome.rejection;
+            return unavailable(`the rework request commit result is unknown: ${messageOf(error)}`);
+        }
+    }
+
+    /**
+     * LD-25: a fence that moved since the request closes it through the standalone close record
+     * (`book-7c.md:724–:726`): one `ReworkRequest@2` plus its one `ReworkRequestClosed` event, never a second owner
+     * commit. The answer is a rejection; the closed record's outcome is the card's result.
+     */
+    async function commitRequestClose(base: ReverifyCloseBase, outcome: 'rejected' | 'stale', code: string, reason: string):
+    Promise<CoreRejection> {
+        const closedRef = { ref: base.approved.record.ref, revision: base.approved.record.revision + 1 };
+        const reverifyClosedRejection = (closed: Pick<ReworkRequestV1, 'ref' | 'revision'>): CoreRejection => outcome === 'stale'
+            ? rejectedWithCurrent('revision_conflict', reason, [{ ref: closed.ref, revision: closed.revision }])
+            : rejectedWithCurrent('forbidden', reason, [{ ref: closed.ref, revision: closed.revision }]);
+        // The close is the one shared `executeWriteCommand` body; this owner supplies its own read-set guards and maps
+        // the closed revision to the rejection the owner path would have given.
+        const closed = await executeReworkRequestClose({
+            records, scope: { projectId: base.goalRef.projectId, workspaceId: base.approved.record.workspaceId },
+            principal: base.principal,
+            commandId: base.approved.commandId,
+            fingerprintInput: { kind: 'rework-request-close', request: base.approved.record.ref, state: outcome, code, reason },
+            current: base.approved.record, outcome, code, reason, guards: base.readSet,
+            now: deps.now, eventId: deps.newId,
+        });
+        if (closed.status === 'committed') return reverifyClosedRejection(closedRef);
+        if (closed.status === 'refused') return closed.refusal;
+        return closed;
     }
 
     /**
@@ -1814,12 +1937,54 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      *  12. one commit (`commitReverify`).
      */
     async function reverifyRound(ctx: CoreCallContext, request: GraphWrite<ReverifyRoundInput>):
-    Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
+    Promise<ReworkOwnerResultV1<ReverifyOutcomeV1>> {
         const caller = bindReverifyCaller(ctx);
         if ('status' in caller) return caller;
-        const { scope, signal } = caller;
         const owned = isolateWrite(request);
         if (!owned.ok) return owned.rejection;
+        return runReverify(caller, owned, null);
+    }
+
+    /**
+     * LD-25 (`book-7c.md:716–:726`): the person approved a stored pending recheck request. The successor path runs
+     * with the stored requester agent and the provenance rebuilt from its Run; there is no fresh admission (the
+     * requester Run may have ended), and the autonomy fence is skipped because the card is the person's decision.
+     */
+    async function reverifyApprovedByCard(ctx: CoreCallContext, request: GraphWrite<ReverifyRoundInput>,
+        approval: ApprovedReworkApplyV1): Promise<EffectWriteResultV1<ReverifyOutcomeV1>> {
+        const caller = bindReverifyCaller(ctx);
+        if ('status' in caller) return caller;
+        const owned = isolateWrite(request);
+        if (!owned.ok) return owned.rejection;
+        const requestRef = approval.request;
+        const key = canonicalOf(requestRef);
+        if (key === null) return invalid('the rework request ref is not canonical JSON');
+        const loaded = await readOwnerRecord({
+            store: records, refKey: key, decode: reworkRequestCodec.decode,
+            readError: message => unavailable(`the rework request could not be read: ${message}`),
+        });
+        if ('rejection' in loaded) return loaded.rejection;
+        if ('notFound' in loaded) return notFound('the rework request does not exist');
+        const record = loaded.value;
+        if (record.revision !== approval.revision) {
+            return rejectedWithCurrent('revision_conflict', 'the rework request changed since it was read',
+                [{ ref: record.ref, revision: record.revision }]);
+        }
+        if (record.state !== 'pending' && record.closedBy?.commandId !== approval.commandId) {
+            return rejectedWithCurrent('revision_conflict', `the rework request is ${record.state}`,
+                [{ ref: record.ref, revision: record.revision }]);
+        }
+        const applied = await runReverify(caller, owned, { caller: { kind: 'agent', actor: approval.actor },
+            provenance: approval.provenance, approved: { record, commandId: approval.commandId } });
+        return applied as EffectWriteResultV1<ReverifyOutcomeV1>;
+    }
+
+    async function runReverify(
+        caller: ReverifyCaller,
+        owned: { input: ReverifyRoundInput; requestId: string; expected: readonly VersionPin[] },
+        authority: ReverifyAuthority | null,
+    ): Promise<ReworkOwnerResultV1<ReverifyOutcomeV1>> {
+        const { scope, signal } = caller;
         const input = owned.input;
         const shape = reverifyInputProblem(input, scope);
         if (shape !== null) return shape;
@@ -1833,10 +1998,13 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if ('status' in pins) return pins;
         if (signal.aborted) return cancelled('the reverify was cancelled before lookup');
 
-        // 1–2. The requester and the receipt; an Agent's identity is the formal writer (W2).
+        // 1–2. The requester and the receipt; an Agent's identity is the formal writer (W2). An approved
+        // application carries the stored requester and its rebuilt provenance instead of a fresh admission.
         let actor: ActorRef;
         let agentWriter: AgentPlanWriter | null = null;
-        if (caller.kind === 'host') {
+        if (authority !== null) {
+            actor = authority.caller.actor;
+        } else if (caller.kind === 'host') {
             actor = caller.actor;
         } else {
             if (deps.delegatedWrites === undefined) return forbidden('Agent reverifies are not admitted by this Host');
@@ -1861,10 +2029,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (lookup.status === 'found') {
             return await replayReverify(lookup.receipt, identity, fingerprint, input.acknowledgement ?? null);
         }
-        const actorClass = reworkActorClassOf(caller.ctx.principal, actor);
+        const actorClass = authority !== null ? 'agent' : reworkActorClassOf(caller.ctx.principal, actor);
         if (actorClass === null) return forbidden('the caller cannot rework this Task');
         let admissionGuards: readonly RecordGuard[] = [];
-        if (agentWriter !== null) {
+        let agentDuty: 'executor' | 'adviser' | null = null;
+        if (authority === null && agentWriter !== null) {
             if (agentWriter.goalRef.goalId !== task.goalId) return forbidden('an Agent reworks only Tasks of its own Goal');
             const admitted = await authorizeDelegatedWrite(deps.delegatedWrites!, caller.ctx,
                 { writer: agentWriter, operation: 'request_recheck' });
@@ -1872,6 +2041,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 return admitted.status === 'rejected' ? admitted : forbidden('the Agent reverify admission is not readable');
             }
             admissionGuards = admitted.value.guards;
+            agentDuty = admitted.value.duty;
         }
 
         // 3. The predecessor, its chain, the Goal and its current adopted Plan (VD-7), the subject Run.
@@ -1938,6 +2108,21 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             chain.kind === 'head' ? [{ ref: chain.head.ref, revision: chain.head.revision }] : undefined;
         const admission = reverifyAdmissionProblem(predecessor, facts, guardCtx);
         if (admission !== null && !admission.ok) {
+            // LD-25: a source/chain/task that moved since the request closes the stored request stale
+            // (`book-7c.md:724–:726`), through the standalone close record.
+            if (authority !== null && (admission.code === 'source_stale' || admission.code === 'revision_conflict'
+                || admission.code === 'invalid' || admission.code === 'unavailable')) {
+                const closeGoalKey = canonicalOf(goalRef);
+                const closeRunKey = canonicalOf(run.ref);
+                if (closeGoalKey === null || closeRunKey === null) return invalid('the reverify read refs are not canonical JSON');
+                return await commitRequestClose({ identity, fingerprint, signal, actor,
+                    principal: principalIdentity(caller.ctx.principal), goalRef, task, run,
+                    readSet: [{ refKey: closeGoalKey, expectedRevision: goal.revision },
+                        { refKey: planRevisionRefKey(planRef), expectedRevision: plan.revision },
+                        { refKey: closeRunKey, expectedRevision: run.revision },
+                        ...cover.guards, ...admissionGuards],
+                    approved: authority.approved }, 'stale', admission.code, admission.detail);
+            }
             // §9.4: a moved head or a stale pin names the head; a requeued subject Run names its TaskRequeue@1.
             const moved = chainRead.chain.kind === 'head'
                 && (!sameRef(chainRead.chain.head.ref, predecessor.ref) || pins.predecessor !== predecessor.revision);
@@ -1984,10 +2169,19 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             return rejectedWithCurrent('revision_conflict', 'the predecessor is no longer the chain head (a successor round or a requeue committed first)',
                 headPin(again.chain));
         };
-        const commitBase = { identity, fingerprint, signal, actor, task, predecessor, run, refusalRef, refusalKey: refusalRead.key,
+        const closeBase = (approved: { record: ReworkRequestV1; commandId: string }): ReverifyCloseBase =>
+            ({ identity, fingerprint, signal, actor, principal: principalIdentity(caller.ctx.principal),
+                goalRef, task, run, readSet, approved });
+        const commitBase = { identity, fingerprint, signal, actor, principal: principalIdentity(caller.ctx.principal),
+            task, predecessor, run, refusalRef, refusalKey: refusalRead.key,
             currentRefusal, goalEndedRunsAtRefusal: countEndedGoalRuns(ended.runs), slotTaken,
-            acknowledgement: input.acknowledgement ?? null };
-        if (reverifyCapRefusal(predecessor, actorClass, policy.autoReworkLimit) !== null) {
+            acknowledgement: input.acknowledgement ?? null, approved: authority === null ? null : authority.approved };
+        const capRefusal = reverifyCapRefusal(predecessor, actorClass, policy.autoReworkLimit);
+        if (capRefusal !== null) {
+            // LD-25: a cap reached since the request closes it rejected with that code, as the card's outcome.
+            if (authority !== null) {
+                return await commitRequestClose(closeBase(authority.approved), 'rejected', capRefusal.code, capRefusal.reason);
+            }
             const capped = decide(null);
             if (!capped.ok) return rejectedWithCurrent(capped.code, capped.detail);
             return await commitReverify({ ...commitBase, eventActor: null, readSet, decided: capped });
@@ -1997,16 +2191,37 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // the current Goal autonomy; `needs_decision` refuses with `forbidden`
         // and writes nothing. A person's explicit reverify keeps its existing
         // rights. The cap fence above stays first (旧上限先有效).
-        if (actorClass !== 'human') {
-            const countedNext = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, reverifyExemption(predecessor));
+        if (authority === null && actorClass !== 'human') {
+            const exemption = reverifyExemption(predecessor);
+            const countedNext = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, exemption);
             const cap = policy.autoReworkLimit;
             const verdict = deps.automaticReverifyPolicy !== undefined
                 ? deps.automaticReverifyPolicy({ goal, actorClass, countedNext, cap })
                 : decisionActionPolicy({ autonomy: goalSettingsOf(goal).autonomy, action: 'auto_reverify',
                     actorClass, countedNext, cap });
-            if (verdict === 'needs_decision' || verdict === 'user_only') {
-                return forbidden('the Goal autonomy requires a user decision before an automatic reverify');
+            if (verdict === 'needs_decision') {
+                if (caller.kind !== 'work_run' || agentWriter === null) {
+                    // Record 3's requester is the agent that asked (book-7c.md:1089, :716): an automatic system
+                    // reverify has no such requester, so the person's decision still refuses with zero writes.
+                    return forbidden('the Goal autonomy requires a user decision before an automatic reverify');
+                }
+                const requestRef: ReworkRequestRef = { aggregateType: 'ReworkRequest', projectId: task.projectId,
+                    goalId: task.goalId, taskId: task.taskId, requestId: identity };
+                const pending = newReworkRequest({ ref: requestRef, workspaceId: scope.workspaceId, kind: 'recheck', task,
+                    subject: { kind: 'round', round: predecessor.ref },
+                    requester: { actor: agentWriter.actor, session: agentWriter.sessionRef, run: agentWriter.runRef,
+                        duty: agentDuty! },
+                    reason: input.reason ?? '', requestedAt: deps.now(),
+                    input: { kind: 'recheck', value: input as unknown as JsonValue },
+                    pins: owned.expected as unknown as JsonValue[],
+                    countedNext: exemption === 'host_interruption' ? null : countedNext });
+                // B-09: the same command id replays this card answer from ReworkRequestRecorded, never from the record.
+                return await commitReverifyReworkRequest({ identity, fingerprint, signal, actor, goalRef, readSet,
+                    acknowledgement: input.acknowledgement ?? null }, pending,
+                    { status: 'needs_decision', cardKey: decisionSourceKey({ kind: 'rework_request', requestRef }),
+                        request: requestRef });
             }
+            if (verdict === 'user_only') return forbidden('the Goal autonomy requires a user decision before an automatic reverify');
         }
 
         // 9. The current configuration (its executor runs the successor), its Host grant, a full capture and the compile.
@@ -2061,5 +2276,5 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     }
 
     return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
-        abandonCheck, interruptCheck, finalizeChecks, reverifyRound };
+        abandonCheck, interruptCheck, finalizeChecks, reverifyRound, reverifyApprovedByCard };
 }

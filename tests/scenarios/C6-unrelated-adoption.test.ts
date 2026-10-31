@@ -4,10 +4,11 @@
  * §9 VD-7, §12.2 W-01, §13.1 `plan` (L-4), §11.19 I-22).
  *
  * 1. Main path: the Workflow claims T1 (`ag2b-work`); another Task's running Run (`ag2b-other`, an Agent
- *    with the W2 plan-write tools) proposes and adopts P2, which adds the unrelated intent T3. T1 keeps
- *    its Session and Lease; it is authorized (the audit names P2), enters, completes; its round opens
- *    under P2 (VD-7) and PASS satisfies it. The Goal is never FAILED, no TaskRequeue is written, T1's
- *    no-progress key is the same against P1 and P2 (L-4), and the §11 invariants hold after every step.
+ *    with the W2 plan-write tool) proposes P2, which adds the unrelated intent T3, and a person adopts P2
+ *    over `plans/apply`. T1 keeps its Session and Lease; it is authorized (the audit names P2), enters,
+ *    completes; its round opens under P2 (VD-7) and PASS satisfies it. The Goal is never FAILED, no
+ *    TaskRequeue is written, T1's no-progress key is the same against P1 and P2 (L-4), and the §11
+ *    invariants hold after every step.
  * 2. (Merged into the main path, case 1: the moved Host `plans/apply` variant, where the operator adopted
  *    the unrelated P2 after the claim, no longer has a case of its own.)
  * 3. Variant W-01 note (moved case): an adoption before the prepare and a fresh selection continue the claim.
@@ -28,15 +29,14 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
-import { AG2B_GOAL_REF, AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
-import { assertInvariants, cleanupScenarios, eventTypesIn, openHostScenario, performs } from './harness.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
+import { assertInvariants, cleanupScenarios, eventTypesIn, openHostScenario, performs, SCENARIO_OPERATOR } from './harness.js';
 import {
   PlanBoard, cleanupCommon, execution, putKernelBack, startWithKernelAside, toolOutputJson, type PhaseLog,
 } from './support/common.js';
 import {
-  advanceLogged, agentActorOf, authorizedEventsIn, c6Case, cleanupPlan, committedOf, futureIntent, hostAdopt, hostGraph,
+  advanceLogged, authorizedEventsIn, c6Case, cleanupPlan, committedOf, futureIntent, hostAdopt, hostGraph,
   noProgressKeyAgainst, planAcceptedEventsIn,
 } from './support/plan.js';
 
@@ -52,19 +52,16 @@ const T1 = AG2B_WORK_TASK_ID;
 const OTHER = 'ag2b-other';
 const T3 = 'ag2b-future';
 
-it('C6 main path: another Task\'s running Run adopts P2 after the Workflow claimed T1; T1 keeps its Session and Lease, runs under P2 and is satisfied; no FAILED, no TaskRequeue, the same no-progress key', async () => {
+it('C6 main path: another Task\'s running Run proposes P2 after the Workflow claimed T1; the operator adopts it; T1 keeps its Session and Lease, runs under P2 and is satisfied; no FAILED, no TaskRequeue, the same no-progress key', async () => {
   const propose = { callId: 'c6-propose', name: 'propose_future_plan', args: {} as Record<string, unknown> };
-  const apply = { callId: 'c6-apply', name: 'apply_future_plan', args: {} as Record<string, unknown> };
-  const seen: { propose?: unknown; apply?: unknown; adopter?: RunRef; adopterStatus?: string } = {};
+  const seen: { propose?: unknown; applied?: unknown } = {};
   let board!: PlanBoard;
   board = await PlanBoard.open({ workIds: [T1, OTHER], check: 'pass', replies: [
-    { kind: 'calls', calls: [propose] }, { kind: 'calls', calls: [apply] },
-    { kind: 'text', text: 'C6: the other Task adopted P2' }, { kind: 'text', text: 'C6: T1 finished its work' }],
+    { kind: 'calls', calls: [propose] },
+    { kind: 'text', text: 'C6: the other Task proposed P2' }, { kind: 'text', text: 'C6: T1 finished its work' }],
   duringReply: async (index, request) => {
     if (index === 0) {
       // The other Task's Run is in the Kernel: it proposes P2 = P1 + the unrelated intent T3.
-      const adopter = (await board.taskRow(OTHER)).execution;
-      if (adopter !== null) seen.adopter = adopter;
       const next = await board.nextDraft('ag2b-plan-c6-p2', draft => ({ ...draft, tasks: [...draft.tasks, futureIntent(T3)] }));
       Object.assign(propose.args, { basedOn: next.source.ref, draft: next.draft,
         reason: { text: 'C6: an unrelated future intent', sources: [] }, expected: [] });
@@ -74,14 +71,16 @@ it('C6 main path: another Task\'s running Run adopts P2 after the Workflow claim
       seen.propose = toolOutputJson(request, 'c6-propose');
       const proposal = seen.propose as { status?: string; value?: { ref: PlanProposalRef; revision: number } };
       if (proposal.status !== 'committed' || proposal.value === undefined) throw new Error(`propose: ${JSON.stringify(proposal)}`);
-      Object.assign(apply.args, { proposalRef: proposal.value.ref, expectedProposalRevision: proposal.value.revision, expected: [] });
-      // The apply is sent in this call's reply: the adopting Run's status as it sends it.
-      if (seen.adopter !== undefined) seen.adopterStatus = (await board.readRun(seen.adopter)).run.status;
-    }
-    if (index === 2) {
-      seen.apply = toolOutputJson(request, 'c6-apply');
-      if (seen.adopter === undefined) throw new Error('the adopting Run must be known');
-      await board.check('P2 adopted by the other Task\'s Run', { kind: 'plan_adopted', actor: agentActorOf(seen.adopter) });
+      // A person adopts it over `plans/apply` while the proposing Run is still the other Task's running Run.
+      const applied = await board.route('plans/apply', graphWrite(AG2B_SCOPE,
+        { proposalRef: proposal.value.ref, expectedProposalRevision: proposal.value.revision, decisionRefs: [] }, 'c6-operator-apply'));
+      expect(applied).toMatchObject({ status: 'committed', value: { planRevision: p1.planRevision + 1 } });
+      seen.applied = applied;
+      // Production recorded the person as P2's actor (`PlanRevisionAccepted.actor`, plan-commit-compiler.ts:182).
+      const adoptedPlan = (applied as { value: PlanRevisionSnapshot }).value;
+      expect(planAcceptedEventsIn(board.database).filter(event => event.aggregateId === adoptedPlan.ref.planId))
+        .toEqual([{ aggregateId: adoptedPlan.ref.planId, actor: expect.objectContaining({ ...SCENARIO_OPERATOR }) }]);
+      await board.check('P2 adopted by the operator over plans/apply', { kind: 'plan_adopted', actor: { ...SCENARIO_OPERATOR } });
     }
   } });
   const p1 = (await board.graph()).plan;
@@ -97,18 +96,12 @@ it('C6 main path: another Task\'s running Run adopts P2 after the Workflow claim
   expect(held.lease).toMatchObject({ holderRunId: claim.runRef.runId, attemptId: claim.attemptRef.attemptId });
   expect(held.lease?.release).toBeUndefined();
 
-  // The other Task runs: its Agent proposes and adopts P2 through apply_future_plan, then its own round passes.
+  // The other Task runs: its Run proposes P2; a person adopts the candidate over `plans/apply`, then T1's round passes.
   const other = await board.advance(board.select('c6-other', OTHER));
   expect(other.state).toBe('completed');
   expect(seen.propose).toMatchObject({ status: 'committed', value: { ref: { aggregateType: 'PlanProposal' } } });
-  expect(seen.apply).toMatchObject({ status: 'committed', value: { planRevision: p1.planRevision + 1 } });
   const p2 = (await board.graph()).plan;
-  expect((seen.apply as { value: PlanRevisionSnapshot }).value.ref).toEqual(p2.ref);
-  // The adopter was the other Task's running Run, and production recorded it as P2's actor
-  // (`PlanRevisionAccepted.actor`, plan-commit-compiler.ts:182).
-  expect(seen.adopterStatus, 'the adopting Run was running when it sent apply_future_plan').toBe('running');
-  expect(planAcceptedEventsIn(board.database).filter(event => event.aggregateId === p2.ref.planId))
-    .toEqual([{ aggregateId: p2.ref.planId, actor: expect.objectContaining({ kind: 'agent', runRef: seen.adopter }) }]);
+  expect((seen.applied as { value: PlanRevisionSnapshot }).value.ref).toEqual(p2.ref);
   expect(p2.tasks.map(task => task.taskId)).toEqual([...p1.tasks.map(task => task.taskId), T3]);
   // P2 carries T1 unchanged: the same definition, the basis inherited from P1.
   expect(p2.tasks.find(task => task.taskId === T1)).toEqual(p1.tasks.find(task => task.taskId === T1));
@@ -145,13 +138,13 @@ it('C6 main path: another Task\'s running Run adopts P2 after the Workflow claim
   expect(await board.advance(board.select('c6-goal'))).toMatchObject({ state: 'completed' });
   expect(await board.goalDisplay()).toMatchObject({ phase: 'COMPLETED' });
 
-  // Never FAILED (every step and write was sampled); no TaskRequeue; T1 claimed once; four model calls.
+  // Never FAILED (every step and write was sampled); no TaskRequeue; T1 claimed once; three model calls.
   expect(board.phases).not.toContain('FAILED');
   expect(board.phases).toContain('RUNNING');
   expect(board.target.lastWorld?.requeues).toEqual([]);
   expect(eventTypesIn(board.database)).not.toContain('TaskRequeued');
   expect(board.target.lastWorld?.events.filter(event => event.eventType === 'TaskClaimed' && event.taskId === T1)).toHaveLength(1);
-  expect(board.scripted.calls(), 'the other Task\'s three calls and T1\'s one').toBe(4);
+  expect(board.scripted.calls(), 'the other Task\'s two calls and T1\'s one').toBe(3);
   // §13.1 (L-4): T1's key is the same whether P1 or P2 is the active Plan.
   const head = board.target.lastWorld?.rounds.find(round => round.subject.taskId === T1) ?? null;
   const keyP1 = noProgressKeyAgainst(p1, ended.run, head);

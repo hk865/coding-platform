@@ -166,8 +166,10 @@ export async function platformRequeue(h: PlatformScenario, requestId: string, af
     taskId, operation: 'requeue' as const, subjectId: afterRunRef.runId };
   const expected = [{ ref: AG2B_GOAL_REF, revision: await platformGoalRevision(h) }, { ref: afterRunRef, revision: run.run.revision },
     ...(options.refusalPin === undefined ? [] : [{ ref: refusalRef, revision: options.refusalPin }])];
-  return h.platform.claims.requeueTask!(h.ctx(options.actor), { meta: { requestId, expected },
+  const result = await h.platform.claims.requeueTask!(h.ctx(options.actor), { meta: { requestId, expected },
     input: { taskRef: taskRefOf(taskId), afterRunRef, reason: 'retry the same work', ...options.input } });
+  if (result.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(result)}`);
+  return result;
 }
 
 /**

@@ -14,7 +14,6 @@ import { EXPLORATION_TOOL_NAMES } from '../../src/core/agent-runtime/observed-mo
 import {
   BUILTIN_TOOL_NAMES, RESERVED_TOOL_NAMES,
 } from '../../src/core/agent-runtime/execution-driver.js';
-import { WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
 import { containedByHostStop, kernelToolNameOf, unknownCallKindOf } from '../../src/core/work-graph/state/unknown-call-kinds.js';
 
@@ -36,10 +35,6 @@ describe('K3-34 tool-name constants', () => {
     }
     // K3 row 4 / decision 72 (U1): the note tool constant names exactly record_note.
     expect([...NOTE_TOOL_NAMES].sort()).toEqual(['record_note']);
-    // decision 64 deletes apply_future_plan; it is the row-8 default until 4C.
-    expect(WHITEBOARD_TOOL_NAMES).toContain('apply_future_plan');
-    expect(unknownCallKindOf('apply_future_plan')).toBe('process');
-    expect(containedByHostStop('apply_future_plan')).toBe(false);
   });
 
   it('K3-34 maps BUILTIN_TOOL_NAMES through write -> edit into the table', () => {

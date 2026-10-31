@@ -21,7 +21,7 @@
 import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import { commandIdentityKey } from '../../../contracts/command-event.js';
-import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type {
   DecisionApplicationReceiptV1, EffectWriteResultV1, SessionMessageRef,
@@ -133,7 +133,7 @@ import {
   type NoticeOriginWireV1,
   type PlanProposalRecordedEvent,
 } from '../persistence/plan-record-codecs.js';
-import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { interruptionRefOf } from '../state/goal-interruption.js';
 import {
   confirmActivePlan,
@@ -502,47 +502,6 @@ function planAcceptanceProof(input: {
   const target = planRevisionTargetOf(candidate.ref, candidate.draft);
   changes.push({ before: { ref: target, revision: 0 }, after: { ref: target, revision: 1 } });
   return { proof: { acknowledgementRef, capturedPins, changes, basisRebases } };
-}
-
-/**
- * Slice 5 §2.8/T-R2-1: the Agent branch reads the formal answer the
- * acknowledgement names and uses its SAVED `response.decision.source` as the
- * decision basis. The source is never taken from model/caller JSON. This is new
- * business I/O, so it runs only after the original receipt replay; a missing
- * answer is `not_found` and a damaged/unreadable one is returned as its store
- * rejection. The caller has already refused another Workspace before any
- * foreign read.
- */
-async function readAcknowledgedAnswerSource(
-  records: GoalRecordTransactionPort & RecordLookupPort,
-  acknowledgementRef: SessionMessageRef,
-): Promise<{ status: 'ready'; source: DecisionSourceV1 } | Rejection> {
-  const key = sessionMessageRefKey(acknowledgementRef);
-  let read: Awaited<ReturnType<typeof records.readMany>>;
-  try { read = await records.readMany([key]); }
-  catch (error) { return rejected('unavailable', `the acknowledged answer read failed: ${messageOf(error)}`); }
-  if (read.status !== 'ready') return mapStoreReadFailure(read, 'the acknowledged answer is not readable');
-  const record = read.value.records.find((candidate) => candidate.refKey === key);
-  if (record === undefined) {
-    return read.value.missing.includes(key)
-      ? rejected('not_found', 'the acknowledged answer does not exist')
-      : rejected('unavailable', 'the acknowledged answer read was not reported');
-  }
-  const decoded = decodeSessionMessageRecord(record);
-  if (decoded.status !== 'decoded') {
-    return rejected('unavailable', `the acknowledged answer is damaged: ${decoded.reason}`);
-  }
-  const message = decoded.value;
-  if (message.ref.projectId !== acknowledgementRef.projectId
-    || message.ref.workspaceId !== acknowledgementRef.workspaceId
-    || message.ref.messageId !== acknowledgementRef.messageId) {
-    return rejected('unavailable', 'the stored acknowledged answer does not match the requested identity');
-  }
-  const response = message.response;
-  if (response === null || !('decision' in response)) {
-    return rejected('not_found', 'the acknowledged message does not carry a user decision answer');
-  }
-  return { status: 'ready', source: response.decision.source };
 }
 
 // --------------------------------------------------------------------------
@@ -1546,19 +1505,6 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return rejected('invalid', 'applyPlanChange requires meta.requestId');
-    // W2 Agent branch is recognized first and never falls through to the Host-only binding.
-    if (isWorkRunCaller(ctx)) {
-      const ownedContext = ownCallContext(ctx);
-      if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
-      return applyPlanChangeAsAgent(deps, records, ownedContext.value, {
-        proposalRef, expectedProposalRevision, decisionRefs: rawInput['decisionRefs'],
-        requestId, expected: rawMeta['expected'],
-        // Slice 5 §2.8 D8/T-R2-1: the Agent branch receives attribution only.
-        // It reads the formal answer itself and never accepts a caller-supplied
-        // `decisionSource` (the parsed Host `decisionSource` below is unused here).
-        acknowledgementRef,
-      });
-    }
     const bound = boundWriteActor(ctx, proposalRef.projectId, proposalRef.workspaceId);
     if (bound.status !== 'ok') return rejected(bound.code, bound.reason);
     if (bound.aborted) return rejected('cancelled', 'plan adoption was cancelled before admission');
@@ -1585,10 +1531,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const evaluate = async (): Promise<WriteResult<PlanRevisionSnapshot>> => {
       const adoption: AcceptedPlanEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef,
-        expectedProposalRevision, decisionRefs: decisionRefs as readonly VersionPin[], agentWriter: null };
+        expectedProposalRevision, decisionRefs: decisionRefs as readonly VersionPin[] };
       // PLAN-04/05: the proposal kind, status and revision, then the scope and decisionRefs and the pointer
       // (initial) or the draft schema and decisionRefs (future), before the next read.
-      const read = await readAdoption(records, adoption, null, rawMeta['expected']);
+      const read = await readAdoption(records, adoption, rawMeta['expected']);
       if (read.status !== 'ready') return read;
       const { candidate, scope, adoptionScope } = read;
       // Slice 5 §2.8 D8: attribution/proof data only, computed from the answer
@@ -1605,11 +1551,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         // source revision is read; the proof's guards join this CAS.
         const sourceProof = await proveFutureAdoptionSource(records, ctx.signal, candidate);
         if ('status' in sourceProof) return sourceProof;
-        // The Host principal as `boundWriteActor` bound it (its actor is the principal's own).
         return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
-          principal: { kind: 'host', actor: bound.actor as Extract<CorePrincipal, { kind: 'host' }>['actor'] },
           operatorActor: deps.operatorActor,
-          extraGuards: sourceProof.guards, preCommitSignal: null, eventId: deps.eventId, now: deps.now, decisionProof });
+          extraGuards: sourceProof.guards, eventId: deps.eventId, now: deps.now, decisionProof });
       }
 
       // S5-PLAN-03: a request-associated initial candidate releases its slot in
@@ -1631,7 +1575,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
             && refKeyOf(candidate.basedOn) === refKeyOf(scope.goal.activePlanRevision);
         // Slice 5 §3.1 S5-PLAN-03/§3.2: the first plan is user-only and the
         // adopting action's autonomy verdict is not hardcoded. `bound` is the
-        // trusted Host operator; an Agent never reaches here (W2 branch above).
+        // trusted Host operator; an Agent proposes only.
         const operatorMatches = hostOperatorMatches(deps.operatorActor, bound.actor, true);
         const adopterClass = reworkActorClassOf(null, bound.actor) ?? 'human';
         requestFacts = requestCandidateFacts({ replacesIsNull: true, basedOnIsActivePointer,
@@ -2560,7 +2504,7 @@ type PinComparison = ReturnType<typeof compareCallerPlanPins>;
 
 type AcceptedPlanEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
 type MachineRefusalOf = Extract<MachineRefusal, { ok: false }>;
-/** The scope facts of an adoption (and the Agent's fresh admission), read before its source or facts. */
+/** The scope facts of an adoption, read before its source or facts. */
 type PlanAdoptionScope = Pick<PlanProposalGuardContext, 'goal' | 'goalInWorkspace' | 'pinsAgree' | 'agentAdmission'>;
 
 /** A plan-machine refusal keeps its CoreError and text (§1.2); `current` is the versions today's refusal reported. */
@@ -2867,23 +2811,21 @@ type AdoptionRead = {
 };
 
 /**
- * PLAN-04/05 up to the adopter's own reads, one implementation for the Host
- * and the Agent: read the proposal and ask (kind, status, revision; the Agent's
- * submission source), then read the real proposal Goal's scope with the
- * caller pins and ask again (workspace, pins; the initial pointer, or the
- * future draft schema and decisionRefs). A stale refusal reports what it read.
+ * PLAN-04/05 up to the adopter's own reads: read the proposal and ask (kind,
+ * status, revision), then read the real proposal Goal's scope with the caller
+ * pins and ask again (workspace, pins; the initial pointer, or the future draft
+ * schema and decisionRefs). A stale refusal reports what it read.
  */
 async function readAdoption(
   records: GoalRecordTransactionPort & RecordLookupPort,
   adoption: AcceptedPlanEvent,
-  agentAdmission: 'ok' | null,
   expected: unknown,
 ): Promise<({ status: 'ready' } & AdoptionRead) | CoreRejection> {
   const proposalRef = adoption.proposalRef;
   const proposalRead = await readProposal(records, proposalRef);
   if (proposalRead.status !== 'ready') return proposalRead;
   const proposal = proposalRead.proposal;
-  let refused = planProposalProblem(proposal, adoption, { agentAdmission });
+  let refused = planProposalProblem(proposal, adoption, {});
   if (refused?.ok === false) {
     return refusalOf(refused, refused.reason === 'stale' ? [{ ref: proposalRef, revision: proposal.revision }] : undefined);
   }
@@ -2895,7 +2837,7 @@ async function readAdoption(
   if (pins.status === 'invalid') return rejected('invalid', pins.reason);
   const scoped = await readPlanScope(records, proposal.goalRef, proposalRef.workspaceId, pins.pins);
   if (scoped.status !== 'ready') return scoped;
-  const adoptionScope: PlanAdoptionScope = { ...scoped.facts, agentAdmission };
+  const adoptionScope: PlanAdoptionScope = { ...scoped.facts, agentAdmission: null };
   refused = planProposalProblem(proposal, adoption, adoptionScope);
   if (refused?.ok === false) {
     // A stale refusal is the pins' (they come first) or the initial pointer's; each reports what it read.
@@ -2917,7 +2859,7 @@ function adoptionAsk<F extends object>(candidate: PlanCommit['proposal'], adopti
   };
 }
 
-/** The original plan-apply command (Host or Agent): its receipt identity also names its commit and event. */
+/** The plan-apply command: its receipt identity also names its commit and event. */
 type ApplyReceipt = { identityKey: string; fingerprint: string; projectId: string; workspaceId: string;
   idempotencyKey: string; actor: ActorRef };
 
@@ -2953,15 +2895,13 @@ async function proveFutureAdoptionSource(
 }
 
 /**
- * The ONE future-adoption orchestration shared by the Host and Agent apply
- * paths (PLAN-05 + GOAL-03). The caller has read the proposal and the scope
- * (`readAdoption`); this reads the real source, the target, the pinned policy
- * and the touched Task facts, asking the plan machine after each read with the
- * existing validators' verdicts, merges the caller's admission guards with the
- * exact local CAS guards the machine names, and performs the single
- * `compileFuturePlanAdoption` commit. Only the original command (`receipt`:
- * actor, identity, fingerprint) and the admission guards differ; the Host
- * initial path and both propose paths are separate.
+ * The future-adoption orchestration (PLAN-05 + GOAL-03). The caller has read
+ * the proposal and the scope (`readAdoption`); this reads the real source, the
+ * target, the pinned policy and the touched Task facts, asking the plan machine
+ * after each read with the existing validators' verdicts, merges the caller's
+ * source-proof guards with the exact local CAS guards the machine names, and
+ * performs the single `compileFuturePlanAdoption` commit. The Host initial path
+ * and both propose paths are separate.
  */
 async function applyFutureRevision(input: {
   records: GoalRecordTransactionPort & RecordLookupPort;
@@ -2969,13 +2909,10 @@ async function applyFutureRevision(input: {
   read: AdoptionRead;
   adoption: AcceptedPlanEvent;
   receipt: ApplyReceipt;
-  /** The caller's principal (Host or work Run), for the adopter's rework class (C7). */
-  principal: CorePrincipal;
   /** Slice 5 §3.2: the exact configured operator, or absent (the trusted Host actor). */
   operatorActor?: PlanServiceDependencies['operatorActor'];
-  /** The Agent's fresh admission guards (`agent_admission`); none for the Host. */
+  /** The V-01 intervention source-proof guards joined to this CAS. */
   extraGuards: readonly RecordGuard[];
-  preCommitSignal: AbortSignal | null;
   eventId: () => string;
   now: () => string;
   /** Slice 5 §2.8 D8: the accepted event's acknowledgement attribution/proof, or null. */
@@ -2985,7 +2922,7 @@ async function applyFutureRevision(input: {
   const { actor } = receipt;
   const { candidate: proposal, scope: goalScope, adoptionScope } = input.read;
   const proposalRef = adoption.proposalRef;
-  // The Host branched on basedOn; PLAN-05 refused an Agent candidate without one.
+  // A future adoption always has a source plan (`basedOn`).
   const sourceRead = await readPlan(records, proposal.basedOn!);
   if (sourceRead.status !== 'ready') return sourceRead;
   const source = sourceRead.plan;
@@ -3080,16 +3017,15 @@ async function applyFutureRevision(input: {
   refused = ask({ touchedTaskFacts: futureFacts.value.tasks });
   if (refused !== null) return refusalOf(refused);
   // C7 (TASK-19): the disposition-only Tasks' facts, judged with the adopter's class (§1 `reworkActorClassOf`:
-  // an Agent apply is `agent`, a Host automation actor `system`, any other Host actor `human`; an actor
-  // that is not the principal's own has none).
-  const adopterClass = reworkActorClassOf(input.principal, actor);
+  // a Host automation actor is `system`, any other Host actor `human`).
+  const adopterClass = reworkActorClassOf(null, actor);
   if (adopterClass === null) return rejected('forbidden', 'the plan adopter has no rework actor class');
   const dispositionRead = await readDispositionChangeTaskFacts(records, proposal.goalRef, source, supported!.dispositionOnlyTaskIds);
   if (dispositionRead.status !== 'ready') return dispositionRead;
   const dispositionTaskFacts = dispositionRead.tasks.map((entry) => entry.facts);
   refused = ask({ adopterClass, dispositionTaskFacts });
   if (refused !== null) return refusalOf(refused);
-  // Guard 9 (LA-3): an `agent`/`system` adopter reads the existing active work carriers of each source
+  // Guard 9 (LA-3): a `system` (automation) adopter reads the existing active work carriers of each source
   // obligation that gains a new one; an operator adoption reads none.
   const sourceCarriers: PlanCarrierViewV1 = { tasks: source.tasks, obligations: source.obligations };
   let carrierRead: DispositionChangeTaskFacts[] = [];
@@ -3118,7 +3054,7 @@ async function applyFutureRevision(input: {
     ? goalScope.goal.activePlanRevision === null
     : goalScope.goal.activePlanRevision !== null
       && refKeyOf(proposal.basedOn) === refKeyOf(goalScope.goal.activePlanRevision);
-  const operatorMatches = hostOperatorMatches(input.operatorActor, actor, input.principal.kind === 'host');
+  const operatorMatches = hostOperatorMatches(input.operatorActor, actor, true);
   const requestFacts: PlanRequestCandidateFacts = requestCandidateFacts({ replacesIsNull: true, basedOnIsActivePointer,
     firstPlanUserOnly: true, slotOwnerMatches, operatorMatches,
     goalNotCancelled: goalScope.goal.desiredState !== 'cancelled',
@@ -3133,7 +3069,7 @@ async function applyFutureRevision(input: {
       touchedTaskFacts: futureFacts.value.tasks, adopterClass, dispositionTaskFacts, sourceCarriers, carrierFacts } });
   if (!decided.ok) return refusalOf(decided);
   const commit = planCommitOf(decided, { scope: goalScope, actor,
-    agentAdmission: input.extraGuards, pinnedPolicy: pinnedPolicyGuards,
+    pinnedPolicy: pinnedPolicyGuards,
     ...(catalogGuards === undefined ? {} : { catalog: catalogGuards }),
     disposition: adoptionDispositionFacts({ source, delta: supported!, read: dispositionRead.tasks, carriers: carrierRead,
       goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass }) });
@@ -3142,9 +3078,6 @@ async function applyFutureRevision(input: {
   // Extras first: mergeGuards keeps first occurrences (same-version duplicates drop) and the target Plan ∅ guard stays last.
   const merged = mergeGuards([...input.extraGuards, ...commit.guards]);
   if (!merged.ok) return merged.rejection;
-  if (input.preCommitSignal !== null && input.preCommitSignal.aborted) {
-    return rejected('cancelled', 'the plan adoption was cancelled before commit');
-  }
   const derived = deriveCommandIds({ projectId: receipt.projectId, actor, idempotencyKey: receipt.idempotencyKey }, 'plan-apply');
   const compiled = compileFuturePlanAdoption({
     commit: { ...adoptionCommitOf(commit), guards: merged.guards },
@@ -3246,7 +3179,7 @@ async function recheckAgentProposal(
   return null;
 }
 
-/** Exact plan-apply receipt re-read (Host and Agent) for the concurrent-commit window. */
+/** Exact plan-apply receipt re-read for the concurrent-commit window. */
 async function recheckApply(
   records: GoalRecordTransactionPort & RecordLookupPort,
   expected: ApplyReceipt,
@@ -3489,115 +3422,6 @@ async function proposePlanAsAgent(
   return outcome;
 }
 
-/**
- * W2 Agent apply path. The original command author is recovered from the
- * receipt/event identity, never inferred from the current candidate. The
- * candidate must carry this exact Run/Session/Role source (PLAN-05, Agent
- * adopter); the same W1 future compile/commit runs with the Agent actor and
- * the admitted local guards.
- */
-async function applyPlanChangeAsAgent(
-  deps: PlanServiceDependencies,
-  records: GoalRecordTransactionPort & RecordLookupPort,
-  ctx: CoreCallContext,
-  input: { proposalRef: PlanProposalRef; expectedProposalRevision: number; decisionRefs: unknown;
-    requestId: string; expected: unknown;
-    /** Slice 5 §2.8 D8: the answer attribution passed through by `applyPlanChange`; proof data only. */
-    acknowledgementRef: SessionMessageRef | null },
-): Promise<WriteResult<PlanRevisionSnapshot>> {
-  const delegated = deps.delegatedWrites;
-  if (delegated === undefined) {
-    return forbidden('plan writes require the W2 delegatedWrites dependency for a work-run caller');
-  }
-  const scope = { projectId: input.proposalRef.projectId, workspaceId: input.proposalRef.workspaceId };
-  const identified = await identifyPlanWriter(delegated, ctx, scope);
-  if (identified.status !== 'ready') return asWriteRejection(identified, 'the Agent plan writer could not be identified');
-  const writer = identified.value;
-  const adoption: AcceptedPlanEvent = { type: 'proposal_accepted', adopter: 'agent', proposalRef: input.proposalRef,
-    expectedProposalRevision: input.expectedProposalRevision, decisionRefs: input.decisionRefs as readonly VersionPin[],
-    agentWriter: { runRef: writer.runRef, sessionRef: writer.sessionRef, roleBinding: writer.roleBinding, goalRef: writer.goalRef } };
-  // PLAN-05 (Agent): decisionRefs before any other check or read.
-  const refusedDecisions = planProposalProblem(undefined, adoption, {});
-  if (refusedDecisions?.ok === false) return refusalOf(refusedDecisions);
-  const pins = normalizeCallerPlanPins(scope, input.expected);
-  if (pins.status === 'invalid') return rejected('invalid', pins.reason);
-  const expected = orderedPlanPins(input.expected);
-  const identity = { projectId: scope.projectId, actor: writer.actor, idempotencyKey: input.requestId };
-  const identityKey = PLAN_APPLY_IDENTITY_PREFIX + commandIdentityKey(identity);
-  const fingerprint = agentCommandFingerprint('PlanApplyAgent', {
-    projectId: scope.projectId, workspaceId: scope.workspaceId, proposalRef: input.proposalRef,
-    expectedProposalRevision: input.expectedProposalRevision, decisionRefs: input.decisionRefs, expected,
-    // §2.8 D8/T-R2-1: only a present answer changes the Agent command identity;
-    // an Agent apply without attribution keeps its byte-identical fingerprint.
-    // The answer's decision source is NOT part of the fingerprint: it is read
-    // from the formal answer after the original receipt replay, so a retry can
-    // restore the first receipt even when the answer read is unavailable.
-    ...(input.acknowledgementRef === null ? {} : { acknowledgementRef: input.acknowledgementRef }),
-  });
-  const receiptExpected = { identityKey, fingerprint, projectId: scope.projectId,
-    workspaceId: scope.workspaceId, idempotencyKey: input.requestId, actor: writer.actor };
-
-  const early = await records.lookupCommit({ identityKey, fingerprint });
-  if (early.status === 'ready') {
-    const restored = await restoreAcceptedPlan(records, early.value, receiptExpected);
-    if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-    return { status: 'committed', value: restored.value, replayed: true, cursor: early.value.cursor };
-  }
-  if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
-  if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
-
-  const authorized = await authorizePlanWrite(delegated, ctx, { writer, operation: 'apply_future_plan' });
-  const freshAdmission = authorized.status === 'ready' ? authorized.value : null;
-  // PLAN-05 (Agent): the fresh admission before the proposal read; a refused write re-reads the receipt.
-  const refusedAdmission = planProposalProblem(undefined, adoption, { agentAdmission: freshAdmission === null
-    ? asWriteRejection(authorized, 'the Agent plan write is not authorized') : 'ok' });
-  if (refusedAdmission?.ok === false) {
-    const concurrent = await recheckApply(records, receiptExpected);
-    if (concurrent !== null) return concurrent;
-    return refusalOf(refusedAdmission);
-  }
-  // PLAN-05 refused an Agent write without the fresh admission above.
-  const admission = freshAdmission!;
-
-  const evaluate = async (): Promise<WriteResult<PlanRevisionSnapshot>> => {
-    // PLAN-05 (Agent): kind, status, revision and the submission source, then the scope, the draft schema
-    // and decisionRefs, before the source read.
-    const read = await readAdoption(records, adoption, 'ok', input.expected);
-    if (read.status !== 'ready') return read;
-    // Slice 5 §2.8 D8: the same acceptance proof the Host branch builds, but the
-    // Agent branch reads the formal answer itself and uses its SAVED
-    // `response.decision.source` as the basis. It is attribution data only; the
-    // Agent's fresh admission above remains the sole authorization.
-    let decisionProof: PlanAcceptanceDecisionProofV1 | null = null;
-    if (input.acknowledgementRef !== null) {
-      // §8.2 line 1366: this is the first new business read, so it happens only
-      // after the original receipt replay above.
-      const derived = await readAcknowledgedAnswerSource(records, input.acknowledgementRef);
-      if (derived.status !== 'ready') return derived;
-      const proof = planAcceptanceProof({ acknowledgementRef: input.acknowledgementRef,
-        decisionSource: derived.source, candidate: read.candidate, goal: read.scope.goal,
-        afterProposalRevision: read.candidate.revision + 1 });
-      if ('status' in proof) return proof;
-      decisionProof = { acknowledgementRef: input.acknowledgementRef, decisionApplication: proof.proof };
-    }
-    // V-01: the Agent's future adoption re-proves the same intervention source; the
-    // proof's QueryJob and message guards join the fresh admission's guards.
-    const sourceProof = await proveFutureAdoptionSource(records, ctx.signal, read.candidate);
-    if ('status' in sourceProof) return sourceProof;
-    return applyFutureRevision({ records, read, adoption, receipt: receiptExpected, principal: ctx.principal,
-      operatorActor: deps.operatorActor,
-      extraGuards: [...admission.guards, ...sourceProof.guards], preCommitSignal: ctx.signal, eventId: deps.eventId, now: deps.now,
-      decisionProof });
-  };
-
-  const outcome = await evaluate();
-  if (outcome.status === 'rejected') {
-    const concurrent = await recheckApply(records, receiptExpected);
-    if (concurrent !== null) return concurrent;
-  }
-  return outcome;
-}
-
 // --------------------------------------------------------------------------
 // Write entry binding (Host only)
 // --------------------------------------------------------------------------
@@ -3616,7 +3440,8 @@ function boundWriteActor(
     return { status: 'rejected', code: 'forbidden', reason: 'the call context does not match the requested workspace scope' };
   }
   if (bound.principal?.kind !== 'host') {
-    return { status: 'rejected', code: 'forbidden', reason: 'plan writes require a trusted Host call context in this batch' };
+    return { status: 'rejected', code: 'forbidden',
+      reason: 'plan adoption requires a trusted Host call context; an Agent proposes only' };
   }
   return { status: 'ok', actor: cloneActorRef(bound.principal.actor as ActorRef), aborted: bound.signal?.aborted === true };
 }

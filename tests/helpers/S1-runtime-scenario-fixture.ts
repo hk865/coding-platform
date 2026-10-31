@@ -281,10 +281,12 @@ export async function openS1RuntimeFixture(options: {
       return { projectId: receipt.value.ref.projectId, sessionId: receipt.value.ref.sessionId };
     },
     async requeue(claimed: TaskClaim, archiveOrigin?: ArchiveRequeueOriginV1) {
-      const result = committed(await requeues.requeueTask(base.ctx, { input: { taskRef: claimed.task,
+      const outcome = await requeues.requeueTask(base.ctx, { input: { taskRef: claimed.task,
         afterRunRef: claimed.runRef, reason: 'continue stopped work', note: `New operator basis ${newId()}`,
         ...(archiveOrigin === undefined ? {} : { archiveOrigin }) },
-        meta: { requestId: newId(), expected: [await base.goalPin(), await pin(claimed)] } }));
+        meta: { requestId: newId(), expected: [await base.goalPin(), await pin(claimed)] } });
+      if (outcome.status === 'needs_decision') throw new Error(`requeue requested a decision: ${JSON.stringify(outcome)}`);
+      const result = committed(outcome);
       if (result.kind !== 'requeued') throw new Error(`S1 TaskRequeue refused: ${JSON.stringify(result)}`);
       return result.requeue;
     },

@@ -335,7 +335,9 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   async function growChain(count: number, finalRunning = false, sessionRef = S, first = b2.claim) {
     let claim = first;
     for (let index = 0; index < count; index++) {
-      const queued = committed(await requeueService().requeueTask(hostCtx(WORKFLOW_AUTOMATION_ACTOR), await requeueWrite(claim)));
+      const outcome = await requeueService().requeueTask(hostCtx(WORKFLOW_AUTOMATION_ACTOR), await requeueWrite(claim));
+      if (outcome.status === 'needs_decision') throw new Error(`requeue requested a decision: ${JSON.stringify(outcome)}`);
+      const queued = committed(outcome);
       if (queued.value.kind !== 'requeued') throw new Error(JSON.stringify(queued));
       claim = committed(await base.makeService(records, now).claimTask(ctx,
         await requeueClaimRequest(sessionRef, queued.value.requeue))).value;

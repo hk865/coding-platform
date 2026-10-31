@@ -11,37 +11,21 @@
  * wrappers are the two named read faults.
  */
 import { describe, expect, it } from 'vitest';
-import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
-import { createDutyRecipient } from '../../src/core/work-graph/sessions/duty-recipient.js';
 import { createGoalSecretary } from '../../src/core/work-graph/tasks/goal-secretary.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { GoalConfirmDraftReceiptV1 } from '../../src/contracts/goal-card.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { workspaceOf } from '../../src/core/work-graph/tasks/request-service.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE,
-  S6A_WORK_ROLE_BINDING } from '../helpers/S6A-request-fixture.js';
-import { createS6BLine, holdS6BRequestRound, openS6BProjectWorld } from '../helpers/S6B1-fixture.js';
+import { S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { openS6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { dutyOf } from '../helpers/S7C-duty-fixture.js';
+import { createS6BLine, holdS6BRequestRound, openS6BProjectWorld } from '../helpers/S6B1-fixture.js';
 import { readQuery } from '../helpers/A2-restart-fixture.js';
 
 const ADVISER = platformRoleProfile('adviser').template;
-const WORKFLOW = {
-  consumerId: 'ag2b-consumer',
-  bindings: [{ workspace: S6A_SCOPE, sessionRole: S6A_WORK_ROLE, roleBinding: S6A_WORK_ROLE_BINDING,
-    budget: { tokenBudget: 1_000_000, deadline: null } }],
-};
 const smallest = (refs: SessionRef[]): SessionRef =>
   [...refs].sort((left, right) => left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0)[0]!;
-
-function dutyOf(world: Awaited<ReturnType<typeof openS6BProjectWorld>>['world']) {
-  const duties = createSessionDutyResolver({
-    readRoleSpec: (...args) => world.platform.roles.readRoleSpec(...args), configuration: WORKFLOW });
-  return createDutyRecipient({
-    findSessions: (ctx, input) => world.platform.sessions.findSessions(ctx, input),
-    dutyOfRole: (ctx, role) => duties(role, ctx),
-  });
-}
 
 describe('F-resolver', () => {
   it('resolves adviser, secretary and scribe by duty, smallest sessionId, active only, else null', async () => {

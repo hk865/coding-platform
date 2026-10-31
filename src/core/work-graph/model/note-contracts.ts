@@ -318,6 +318,9 @@ export interface NoteReadPort {
   readNote(ctx: CoreCallContext, input: { noteId: string; version?: number }): Promise<ReadResult<NoteItemV1>>;
   listByAnchor(ctx: CoreCallContext, input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }):
     Promise<ReadResult<NotePageV1>>;
+  /** The current version of each note on one anchor; the overlap gate compares every `since` with the Run starts. */
+  listCurrentVersions(ctx: CoreCallContext, input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }):
+    Promise<ReadResult<{ items: NoteVersionSnapshot[]; next: string | null; complete: boolean }>>;
 }
 
 // --------------------------------------------------------------------------

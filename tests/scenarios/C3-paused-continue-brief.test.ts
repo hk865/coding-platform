@@ -65,10 +65,12 @@ it('C3/C4: a Run a person paused, with a steer the Kernel never accepted, ends p
         // delegated-write admission; `direct()` would refuse every Agent before it.
         const agentPlatform = await openWorkRoot(h);
         try {
-          agentContinue = await agentPlatform.claims.requeueTask!(workRunCtx(agentRun), {
+          const outcome = await agentPlatform.claims.requeueTask!(workRunCtx(agentRun), {
             input: { taskRef: taskRefOf(AG2B_WORK_TASK_ID), afterRunRef: pausedRun, reason: 'the Agent continues the paused Task' },
             meta: { requestId: 'c3-agent-continue', expected: [{ ref: AG2B_GOAL_REF, revision: goal.revision },
               { ref: pausedRun, revision: afterRun.revision }] } });
+          if (outcome.status === 'needs_decision') throw new Error(`the C3 Agent requeue asked for a decision: ${JSON.stringify(outcome)}`);
+          agentContinue = outcome;
         } finally {
           await agentPlatform.close();
         }

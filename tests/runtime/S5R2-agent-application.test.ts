@@ -2,15 +2,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { DecisionApplicationReceiptV1 } from '../../src/contracts/core/session-message.js';
-import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import { decisionSourceKey, type UserDecisionBodyV1 } from '../../src/contracts/goal-decisions.js';
-import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createWhiteboardTools } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createToolCommitLookup } from '../../src/composition/tool-commit-lookup.js';
-import { recordDecisionApplicationRequest } from '../../src/core/work-graph/model/tool-commit-arguments.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
@@ -66,7 +64,7 @@ function futureDraft(f: S5DecisionFixture): PlanRevisionDraft {
 
 async function harness(kind: S5FixtureKind) {
   const f = await openS5DecisionFixture(kind, { duties: ['adviser'],
-    preEntryTools: ['propose_future_plan', 'apply_future_plan'] });
+    preEntryTools: ['propose_future_plan'] });
   fixtures.push(f);
   // Armed only for R2D03's retry, and only for the saved answer's record read.
   const fault = { answerKey: '', armed: false, hits: 0 };
@@ -95,7 +93,7 @@ async function harness(kind: S5FixtureKind) {
   const execution = ready(await executions.readExecution(f.ctx, f.runRA.ref));
   expect(execution.run).toMatchObject({ ref: f.claimRA.runRef, status: 'running',
     executionAuthorization: { schemaVersion: 2, phase: 'entered' },
-    envelope: { permissions: { tools: expect.arrayContaining(['propose_future_plan', 'apply_future_plan']) } } });
+    envelope: { permissions: { tools: expect.arrayContaining(['propose_future_plan']) } } });
   expect(execution.outbox.claim.sessionRef).toEqual(f.sessionS);
   expect(await goalAt(records)).toMatchObject({ ref: GOAL_B, revision: 7,
     activePlanRevision: PLAN_B1, settings: { autonomy: 'after_plan_confirmation' } });
@@ -103,41 +101,31 @@ async function harness(kind: S5FixtureKind) {
   const context = workContext(f);
   const requestIdForCall = (toolCall: Readonly<ToolCall>) =>
     `s5r2-d:${f.runRA.ref.runId}:${toolCall.name}:${toolCall.callId}`;
-  // Lead (table T-R2-1, wiring): the whiteboard tools get the optional
-  // `applicationReceipt` seam, the SAME function composition gives the
-  // Workflow (copied verbatim from src/composition/create-platform.ts:633-643:
-  // it reads the identityKey/fingerprint saved in the event at the commit
-  // cursor). The config is a variable (not an object literal) so this file
-  // also typechecks before the optional field exists.
-  const applicationReceipt = async (_ctx: unknown, cursor: DecisionApplicationReceiptV1['cursor']):
-    Promise<DecisionApplicationReceiptV1 | null> => {
-    let located: Awaited<ReturnType<typeof records.eventAt>>;
-    try { located = await records.eventAt(cursor); } catch { return null; }
-    if (located.status !== 'ready') return null;
-    try {
-      const parsed = JSON.parse(located.value.event.json) as { identityKey?: unknown; fingerprint?: unknown };
-      if (typeof parsed.identityKey !== 'string' || parsed.identityKey.length === 0
-        || typeof parsed.fingerprint !== 'string' || parsed.fingerprint.length === 0) return null;
-      return { identityKey: parsed.identityKey, fingerprint: parsed.fingerprint, cursor };
-    } catch { return null; }
-  };
-  const whiteboardConfig = { plans, context, goalRef: GOAL_B, requestIdForCall, applicationReceipt };
+  const whiteboardConfig = { plans, context, goalRef: GOAL_B, requestIdForCall };
   const definitions = [
     ...createWhiteboardTools(whiteboardConfig).create(sandbox),
     ...createSessionMailboxTools({ mailbox: messages.mailbox, context, sessionRef: f.sessionS,
       requestIdForCall, decisionMessages: { ...messages.decisions, sendUserMessage: messages.mailbox.sendUserMessage },
     }).create(sandbox),
   ];
-  const execute = (name: string, callId: string, args: Record<string, unknown>) => {
-    const tool = definitions.find(item => item.name === name);
+  // The real operator's mailbox tools: same owner/factory, bound to the fixture's Host ctx, so
+  // registration and replay run as the actor that performed the adoption.
+  const operatorDefinitions = createSessionMailboxTools({ mailbox: messages.mailbox, context: f.ctx, sessionRef: f.sessionS,
+    requestIdForCall, decisionMessages: { ...messages.decisions, sendUserMessage: messages.mailbox.sendUserMessage },
+  }).create(sandbox);
+  const executeWith = (tools: typeof definitions, name: string, callId: string, args: Record<string, unknown>) => {
+    const tool = tools.find(item => item.name === name);
     if (tool === undefined) throw new Error(`missing real tool ${name}`);
     return tool.handler.execute(call(name, callId, args), { signal: new AbortController().signal });
   };
+  const execute = (name: string, callId: string, args: Record<string, unknown>) => executeWith(definitions, name, callId, args);
+  const executeAsOperator = (name: string, callId: string, args: Record<string, unknown>) =>
+    executeWith(operatorDefinitions, name, callId, args);
   const queue = async () => ready(await reads.queryDecisionQueue(f.ctx, {
     workspace: WORKSPACE_SCOPE, goalRef: GOAL_B,
     sections: ['waiting_answer', 'answered_pending_application', 'history'], page: { limit: 100 },
   }));
-  return { f, records, fault, messages, plans, reads, execute, queue };
+  return { f, records, fault, messages, plans, reads, execute, executeAsOperator, queue };
 }
 type Harness = Awaited<ReturnType<typeof harness>>;
 
@@ -195,15 +183,12 @@ async function acceptedEvent(h: Harness, cursor: DecisionApplicationReceiptV1['c
     wire: jsonObject(JSON.parse(located.value.event.json)) };
 }
 
-async function adoptAsAgent(h: Harness, given: Answered) {
-  // R2D01 decisive call: today's strict schema rejects acknowledgementRef here.
-  const result = await h.execute('apply_future_plan', 'apply', {
-    proposalRef: given.proposal.ref, expectedProposalRevision: 1,
-    expected: [pin(GOAL_B, 7), pin(PLAN_B1, 1)], acknowledgementRef: given.answer.value.ref,
-  });
-  expect(result.status, JSON.stringify(result)).toBe('success');
-  const json = toolJson(result);
-  const accepted = committed(json as WriteResult<PlanRevisionSnapshot>);
+async function adoptAsOperator(h: Harness, given: Answered) {
+  const accepted = committed(await h.plans.applyPlanChange(h.f.ctx, {
+    input: { proposalRef: given.proposal.ref, expectedProposalRevision: 1, decisionRefs: [],
+      acknowledgementRef: given.answer.value.ref, decisionSource: given.answerSource },
+    meta: { requestId: 's5r2-d:operator-apply', expected: [pin(GOAL_B, 7)] },
+  }));
   expect(accepted).toMatchObject({ replayed: false, value: {
     ref: { aggregateType: 'PlanRevision', projectId: 'P', planId: 'PB2-R2D' }, revision: 1, planRevision: 2,
   } });
@@ -224,8 +209,6 @@ async function adoptAsAgent(h: Harness, given: Answered) {
   expect(identityKey.length).toBeGreaterThan(0);
   expect(fingerprint.length).toBeGreaterThan(0);
   const applicationReceipt: DecisionApplicationReceiptV1 = { identityKey, fingerprint, cursor: accepted.cursor };
-  // Expected values come from the persisted event, never the tool's input.
-  expect(jsonObject(json)['applicationReceipt']).toEqual(applicationReceipt);
   const lookup = await h.records.lookupCommit(applicationReceipt);
   expect(lookup).toMatchObject({ status: 'ready', value: { cursor: accepted.cursor, eventIds: [event.eventId] } });
   return { accepted, applicationReceipt };
@@ -237,10 +220,9 @@ async function recordApplication(h: Harness, given: Answered, receipt: DecisionA
   const expected = ready(await createDecisionSourceFacts({ records: h.records, bindings: createInitializationBindingReader({ records: h.records }) }).readApplication(h.f.ctx, {
     answer: given.saved, receipt,
   }));
-  expect(expected.actor).toEqual({ kind: 'agent',
-    id: 'session:' + sha256Hex(canonicalJson(h.f.sessionS)), runRef: h.f.runRA.ref });
+  expect(expected.actor).toEqual(h.f.operatorActor);
   expect(expected.appliedAt).toBe(T);
-  const result = await h.execute('record_decision_application', 'record', { messageRef: given.answer.value.ref, receipt });
+  const result = await h.executeAsOperator('record_decision_application', 'record', { messageRef: given.answer.value.ref, receipt });
   expect(result.status, JSON.stringify(result)).toBe('success');
   const recorded = committed(toolJson(result) as WriteResult<SessionMessage>);
   expect(recorded.replayed).toBe(false);
@@ -257,23 +239,17 @@ async function recordApplication(h: Harness, given: Answered, receipt: DecisionA
 }
 
 describe.each(['memory', 'sqlite'] as const)('S5R2 Agent application (%s)', kind => {
-  it('R2D01 attributes Agent adoption to the formal answer and returns its event receipt', async () => {
+  it('R2D02 records the operator\'s application and removes its pending card', async () => {
     const h = await harness(kind);
     const given = await answeredCandidate(h);
-    await adoptAsAgent(h, given);
-  });
-
-  it('R2D02 records the Agent modifier application and removes its pending card', async () => {
-    const h = await harness(kind);
-    const given = await answeredCandidate(h);
-    const adopted = await adoptAsAgent(h, given);
+    const adopted = await adoptAsOperator(h, given);
     await recordApplication(h, given, adopted.applicationReceipt);
   });
 
   it('R2D03 replays the same application call when the retry answer pre-read is unavailable', async () => {
     const h = await harness(kind);
     const given = await answeredCandidate(h);
-    const adopted = await adoptAsAgent(h, given);
+    const adopted = await adoptAsOperator(h, given);
     const first = await recordApplication(h, given, adopted.applicationReceipt);
     expect(h.fault.hits).toBe(0);
     const before = await h.f.storeSnapshot();
@@ -281,7 +257,7 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 Agent application (%s)', kind
     h.fault.armed = true;
     let retry: ToolResult;
     try {
-      retry = await h.execute('record_decision_application', 'record', {
+      retry = await h.executeAsOperator('record_decision_application', 'record', {
         messageRef: given.answer.value.ref, receipt: adopted.applicationReceipt,
       });
     } finally { h.fault.armed = false; }
@@ -331,30 +307,11 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 Agent application (%s)', kind
     expect(h.f.allocationCounts).toEqual(allocations);
   });
 
-  it('R2D06 preserves the unattributed Agent adoption event and tool result shapes', async () => {
-    const h = await harness(kind);
-    const proposal = await propose(h);
-    const result = await h.execute('apply_future_plan', 'unattributed-apply', {
-      proposalRef: proposal.ref, expectedProposalRevision: 1, expected: [pin(GOAL_B, 7), pin(PLAN_B1, 1)],
-    });
-    expect(result.status, JSON.stringify(result)).toBe('success');
-    const json = toolJson(result);
-    const accepted = committed(json as WriteResult<PlanRevisionSnapshot>);
-    expect(accepted).toMatchObject({ replayed: false, value: {
-      ref: { aggregateType: 'PlanRevision', projectId: 'P', planId: 'PB2-R2D' }, revision: 1, planRevision: 2,
-    } });
-    const { event, wire } = await acceptedEvent(h, accepted.cursor);
-    expect(event.payload.planRevision).toEqual(accepted.value);
-    expect(Object.hasOwn(jsonObject(wire['payload']), 'acknowledgementRef')).toBe(false);
-    expect(Object.hasOwn(jsonObject(wire['payload']), 'decisionApplication')).toBe(false);
-    expect(Object.hasOwn(jsonObject(json), 'applicationReceipt')).toBe(false);
-    expect(Object.keys(jsonObject(json)).sort()).toEqual(['cursor', 'replayed', 'status', 'value']);
-  });
-
-  it('K3-39 record_decision_application reports committed, not_committed and idempotency_conflict through the production dispatch', async () => {
+  it('K3-39 record_decision_application reports not_committed through the production dispatch', async () => {
     const h = await harness(kind);
     const given = await answeredCandidate(h);
-    const adopted = await adoptAsAgent(h, given);
+    const adopted = await adoptAsOperator(h, given);
+    await recordApplication(h, given, adopted.applicationReceipt);
     // The PRODUCTION default table (`createToolCommitLookup` as composed in
     // `src/composition/tool-commit-lookup.ts`), in the production owner order;
     // the lookup is called with a Host ctx like the start-up reconcile.
@@ -363,36 +320,12 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 Agent application (%s)', kind
     ]);
     const origin = { runRef: h.f.runRA.ref, sessionRef: h.f.sessionS,
       generation: h.f.claimRA.generation, workspaceId: h.f.ctx.workspaceId as string };
-    const kernelCallId = 'k3-39-decision-call-1';
-    // Decision 72 (U1): hand-rolled here (NOT via `toolCommitRequestId`) so a
-    // drift in the production algorithm makes the owner lookup miss.
-    const requestId = 'c2-tool:' + sha256Hex(canonicalJson({
-      runRef: { aggregateType: 'Run', projectId: origin.runRef.projectId, goalId: origin.runRef.goalId,
-        runId: origin.runRef.runId },
-      sessionRef: { projectId: origin.sessionRef.projectId, sessionId: origin.sessionRef.sessionId },
-      operation: 'record_decision_application', callId: kernelCallId,
-    } as never));
     const args = { messageRef: given.answer.value.ref, receipt: adopted.applicationReceipt };
-    const recorded = committed(await h.messages.decisions.recordDecisionApplication(workContext(h.f),
-      recordDecisionApplicationRequest(args, requestId,
-        [{ ref: given.answer.value.ref, revision: given.answer.value.revision }])));
-
-    const hit = await lookup(h.f.ctx, {
-      toolName: 'record_decision_application', arguments: args, kernelCallId, origin,
-    });
-    expect(hit).toMatchObject({ status: 'committed', cursor: recorded.cursor });
-
+    // The recorded application's sender is the operator; the dispatch reconstructs the
+    // Agent origin, so this identity can never name the committed receipt.
     const miss = await lookup(h.f.ctx, {
-      toolName: 'record_decision_application', arguments: args, kernelCallId: 'k3-39-decision-call-2', origin,
+      toolName: 'record_decision_application', arguments: args, kernelCallId: 'k3-39-decision-call-1', origin,
     });
     expect(miss).toEqual({ status: 'not_committed' });
-
-    const conflict = await lookup(h.f.ctx, {
-      toolName: 'record_decision_application',
-      arguments: { ...args, messageRef: { ...args.messageRef, messageId: 'k3-39-decision-other' } },
-      kernelCallId, origin,
-    });
-    expect(conflict).toMatchObject({ status: 'undetermined' });
-    expect((conflict as { status: 'undetermined'; reason: string }).reason).toContain('idempotency_conflict');
   });
 });

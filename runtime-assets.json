@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "36409e82993fbb945aff7a1e5527590b5a6f6df2bd170cd486618ff9545aea24"
+    "sha256": "e2a619164299833088c2dc7499428a3a4072d5aba041d6610660039cd1efb992"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -121,7 +121,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "bbe5790ab24c8cad95572e3059290b91deb1f43dda9d9d776b2eac0e93d57c71"
+    "sha256": "5f2163a75ed75a613e29a2f51139fe8f78b3ec73ab5a3084d7635c1d4407b296"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -142,10 +142,6 @@
   {
     "path": "resources/prompts/platform/tools/propose_future_plan.json",
     "sha256": "0cc4c6f1faabcf562a3b2b71eb5a07a5f46b9d8f00b4b1d6595cdb083eb1a899"
-  },
-  {
-    "path": "resources/prompts/platform/tools/apply_future_plan.json",
-    "sha256": "93d34c4663e70715fc2edb07d7028d160b820417b8e82a1f75c1d4fd9a24292a"
   },
   {
     "path": "resources/prompts/platform/tools/create_member.json",

@@ -16,6 +16,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1 } from '../../../contracts/graph-context.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
@@ -182,6 +183,56 @@ Promise<ReadOutcome<NoteHeadSnapshot[]>> {
     }
   }
   return { ok: true, value: [...seen.values()] };
+}
+
+type AnchorHeadsPage = {
+  /** The unfiltered `headsByAnchorKey` answer, handed to the old read's check unchanged. */
+  heads: NoteHeadSnapshot[];
+  all: NoteHeadSnapshot[];
+  page: NoteHeadSnapshot[];
+  next: string | null;
+};
+
+/**
+ * The ONE anchor paging core: limit and cursor validation, the five-index head set, the `createdAt`/`noteId`
+ * order, `after`, the page slice and the next cursor. Each public read keeps its own DTO and further checks.
+ */
+async function pageAnchorHeads(records: RecordLookupPort, ctx: CoreCallContext,
+  input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }): Promise<ReadOutcome<AnchorHeadsPage>> {
+  if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MEMORY_PAGE_MAX) {
+    return { ok: false, code: 'invalid', reason: 'limit must be 1–100' };
+  }
+  const anchorKey = anchorKeyOf(input.anchor);
+  let after: string | null = null;
+  if (input.cursor !== null) {
+    try {
+      const parsed = JSON.parse(input.cursor) as { v?: unknown; anchorKey?: unknown; limit?: unknown; after?: unknown };
+      if (parsed.v !== 1 || parsed.anchorKey !== anchorKey || parsed.limit !== input.limit
+        || !(parsed.after === null || typeof parsed.after === 'string')) {
+        return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+      }
+      after = parsed.after as string | null;
+    } catch {
+      return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    }
+  }
+  // `headsByAnchorKey` already keeps only the heads whose five slots name this anchor key.
+  const headSet = await headsByAnchorKey(records, ctx.projectId, anchorKey);
+  if (!headSet.ok) return headSet;
+  const all = [...headSet.value].sort((left, right) => left.createdAt === right.createdAt
+    ? left.noteId.localeCompare(right.noteId) : left.createdAt.localeCompare(right.createdAt));
+  let start = 0;
+  if (after !== null) {
+    const index = all.findIndex(head => head.noteId === after);
+    // A cursor naming a note not on this anchor is a mismatch; never silently restart at the first page.
+    if (index < 0) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    start = index + 1;
+  }
+  const page = all.slice(start, start + input.limit);
+  const next = start + input.limit < all.length
+    ? JSON.stringify({ v: 1, anchorKey, limit: input.limit, after: page[page.length - 1]!.noteId })
+    : null;
+  return { ok: true, value: { heads: headSet.value, all, page, next } };
 }
 
 async function currentHeadsForGoal(records: RecordLookupPort, projectId: string, goalId: string):
@@ -2132,44 +2183,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       return { status: 'ready', value: checked.value.items[0]! };
     },
     async listByAnchor(ctx, input) {
-      if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MEMORY_PAGE_MAX) {
-        return rejected('invalid', 'limit must be 1–100');
-      }
-      const anchorKey = anchorKeyOf(input.anchor);
-      let after: string | null = null;
-      if (input.cursor !== null) {
-        try {
-          const parsed = JSON.parse(input.cursor) as { v?: unknown; anchorKey?: unknown; limit?: unknown; after?: unknown };
-          if (parsed.v !== 1 || parsed.anchorKey !== anchorKey || parsed.limit !== input.limit
-            || !(parsed.after === null || typeof parsed.after === 'string')) {
-            return rejected('invalid', 'cursor_mismatch');
-          }
-          after = parsed.after as string | null;
-        } catch {
-          return rejected('invalid', 'cursor_mismatch');
-        }
-      }
-      const headSet = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
-      if (!headSet.ok) return rejected(headSet.code, headSet.reason);
-      const all = headSet.value
-        .filter(head => head.anchorKey0 === anchorKey || head.anchorKey1 === anchorKey || head.anchorKey2 === anchorKey
-          || head.anchorKey3 === anchorKey || head.anchorKey4 === anchorKey)
-        .sort((left, right) => left.createdAt === right.createdAt
-          ? left.noteId.localeCompare(right.noteId) : left.createdAt.localeCompare(right.createdAt));
+      const paged = await pageAnchorHeads(deps.records, ctx, input);
+      if (!paged.ok) return rejected(paged.code, paged.reason);
+      const { heads, all, page, next } = paged.value;
       if (all.length === 0) {
         const exists = await anchorExistsNow(ctx, input.anchor);
         if (!exists.ok) return rejected(exists.code, exists.reason);
         if (!exists.exists) return rejected('not_found', 'anchor_not_found');
       }
-      let start = 0;
-      if (after !== null) {
-        const index = all.findIndex(head => head.noteId === after);
-        // A cursor naming a note not on this anchor is a mismatch;
-        // never silently restart at the first page.
-        if (index < 0) return rejected('invalid', 'cursor_mismatch');
-        start = index + 1;
-      }
-      const page = all.slice(start, start + input.limit);
       const items: NoteItemV1[] = [];
       const cache = newHeadCache();
       const headSnapshots = new Map<string, NoteHeadSnapshot>();
@@ -2182,16 +2203,38 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // F4: the anchor set and the page's heads already read in this call are
       // handed to the check (the raw `headsByAnchorKey` value, never a filter).
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
-      anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, headSet.value);
+      anchorSets.set(`${ctx.projectId}\u0000${anchorKeyOf(input.anchor)}`, heads);
       const checked = await withCheck(ctx, items, undefined, headSnapshots, anchorSets);
       if (!checked.ok) return rejected(checked.code, checked.reason);
-      const next = start + input.limit < all.length
-        ? JSON.stringify({ v: 1, anchorKey, limit: input.limit, after: page[page.length - 1]!.noteId })
-        : null;
       const pointer = await pointerOf(ctx.projectId, input.anchor);
       if (!pointer.ok) return rejected(pointer.code, pointer.reason);
       const result: NotePageV1 = { items: checked.value.items, next, complete: next === null, pointer: pointer.value };
       return { status: 'ready', value: result };
+    },
+
+    /**
+     * The current-version read for the overlap gate: the SAME anchor index and the SAME cursor/paging as
+     * `listByAnchor`, but each page item is the note's current `NoteVersionSnapshot` read from its head and version.
+     * A failed, missing or damaged head/version is `unavailable`, never an empty page.
+     */
+    async listCurrentVersions(ctx, input) {
+      try {
+        const paged = await pageAnchorHeads(deps.records, ctx, input);
+        if (!paged.ok) return rejected(paged.code, paged.reason);
+        const items: NoteVersionSnapshot[] = [];
+        for (const indexed of paged.value.page) {
+          const head = await readHeadRecord(deps.records, ctx.projectId, indexed.noteId);
+          if (!head.ok) return rejected(head.code, head.reason);
+          if (head.value === null) return rejected('unavailable', 'the note head is missing');
+          const version = await readVersionRecord(deps.records, ctx.projectId, indexed.noteId, head.value.version);
+          if (!version.ok) return rejected(version.code, version.reason);
+          if (version.value === null) return rejected('unavailable', 'the note version is missing');
+          items.push(version.value);
+        }
+        return { status: 'ready', value: { items, next: paged.value.next, complete: paged.value.next === null } };
+      } catch (error) {
+        return rejected('unavailable', messageOf(error));
+      }
     },
 
     async memoryLookup(ctx, input) {

@@ -14,7 +14,7 @@
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（18 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 168 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 169 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（15 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（148 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
@@ -31,6 +31,7 @@
 - `AG2b-collaboration-fixture.ts` — 真实启动文件 + SQLite ledger/Kernel store + 受控 Kernel provider 起 Host，经公共 HTTP 路由建 Project/Workspace/Goal/Plan/Session 和 AG1 工作线；`tests/scenarios/S2C-K2-paused-transfer.test.ts` 在用。
 - `C2-runtime-platform-fixture.ts` — 真实 TaskClaim + SQLite 配 `createTargetPlatform`，RoleSpec 经真实 writer 安装激活，两个 Session 走真实生命周期并 claim；`tests/state/invariants.test.ts` 在用。
 - `DRV-fixture.ts` — 不冻结；DRV §5.1 的测试共用体：`runsOf`（`executions/list`）、`driverRead`（Goal/Task 的 `workflow/driver-read`）、`parkedOnBasis`（驱动末次结果带等待依据）、`startGoalDriver`/`startTaskDriver`（`workflow/driver-start`）、薄包 `harness.ts` 的 `waitFor` 的 `waitDriver`，以及 D-P5/D-P6 的 `world.platform` 驱动装配 `buildDrvDriver`；`tests/scenarios/DRV-goal-driver*.test.ts` 在用。
+- `IV-host-fixture.ts` — IV 片的真实 Host 消费循环世界：`openConsumeWorld`（memory 或 SQLite）、`heartbeat`/`heartbeatUntil` 的消费屏障、与 Host 循环同一次读的 `consumeView`、`createLine`/`openLine`/`openIdleLine`、计划 Query 与提案的公共读、`awaitPlanningAnswer`/`awaitClaimedPlanning`/`awaitProposal`、`candidateCards`、`sessionQueries`、`sessionExecutions`、`heartbeatUntilModel`；只走公开步骤，不读写 store；`tests/scenarios/IV-intervention-host.test.ts` 在用。
 - `K3-07-host-child.mjs` — 子进程用编译后的 `dist/` 起真实 Host，并在子进程内注入很小的 ModelClientPort；`tests/scenarios/K3-07-real-host-kill.test.ts` 在用。
 - `K3-07-support.ts` — 父进程侧：写子进程读的启动 JSON、起/杀子进程并收结果；`tests/scenarios/K3-07-real-host-kill.test.ts` 在用。
 - `K-legacy-reader-support.ts` — 同一 ledger 上只注册当前 workspace 的 Kernel store、不注册前任 adapter，给出「前任历史读被拒」的前置；`tests/scenarios/K-W-workflow-close.test.ts` 在用。
@@ -56,9 +57,12 @@ Session 目录、生命周期、归档和交接；事实由正式 owner 写，�
 - `S1-public-anchor.ts` — slice-1 公共归档路径：真实 claim、execution-result 停止、`requestSessionArchive` 登记、`finishSessionArchive` 收线，并加 §2.6 workspace-capture；`tests/scenarios/K3-29-startup-reconcile-2b.test.ts` 经 K3-35 夹具在用。
 - `S1-session-facts-fixture.ts` — fx2 的生产入口前置：公共 Session 创建/观察和 `observeStore`，不调用模型；`tests/work-graph/S1-session-facts.test.ts` 在用。
 - `S1-workflow-archive-fixture.ts` — FX3 owner、注入时钟、逐次 commit 的不变量观察，claim/entry 沿用现有夹具，域写入走生产 writer；`tests/business/S1-archive-flow.test.ts` 在用。
+- `S7C-duty-fixture.ts` — F1 的 duty resolver 装配：在真实 Host 目录上按 Session 的固定 duty 解析 adviser/secretary/scribe，取最小的 active `sessionId`，没有则 null；`configuration` 给 Slice-1 的 executor 回退，其余 duty 来自 Session 自己的 role 事实；只导出 `dutyOf`，经 `createSessionDutyResolver` 和 `createDutyRecipient` 走公开读；`tests/state/S7C-overlap-gate-service.test.ts`、`tests/work-graph/S7C-f-resolver.test.ts` 在用。
 - `WP1-handover-fixture.ts` — 五套交接世界（中断、Role 不匹配、别的责任、被占/被归档前任），每套经 claim/link/enter/terminal/requeue/archive 公共步骤；`tests/business/WP1-continuation-handover.test.ts` 在用。
 - `WP1-units-fixture.ts` — DU09 duty-maintenance、GC03/GC04/AN08 的 assembler facts、WF01/WF02 的 start 拒绝工作流；`tests/composition/WP1-session-duty.test.ts` 在用。
 - `graph-session-fixture.ts` — 真实 Project/Workspace/CompletionPolicy + 真实 Session 目录，link/archive/reactivate 全走正式服务；`tests/work-graph/A1-independent-review.test.ts` 在用。
+- `S7C1-p-directory-delta.ts` — P 的目录 delta（`openS7C1DirectoryDelta`）：在 `openS7B2DirectoryWorld`（memory 或 SQLite）上只用公共步骤补归档线、别的职责线、带 module 责任链接的线、一条真实结束的 Work Run、九跳等待链与一条仅等待线、请求归档线；并给出 chooser 的真实依赖（Host 发布的目录/事实/责任端口、Work 绑定、世界自己的上下文、真实 `goals/read`）；`tests/business/S7C1-P-rank.test.ts`、`S7C1-P-reads.test.ts`、`S7C1-P-suggest.test.ts` 在用。
+- `S7C1-p-paging-world.ts` — P 的翻页世界（`openS7C1PagingWorld`）：一个 S6A Host 世界（memory 或 SQLite）的 `page_two`/`bound`/`single` 三种模式，51 个真实 Session 的页 1/页 2、401 个的 8×50 读和单个候选都经公共 `createWorkSession` 建；返回包住真实平台端口的目录/事实/线读，`page`/`link`/`facts`/`lines` 一次性故障由测试武装，`activity.record` 为 `null` 且 `blocked` 说明 Host 不发布真实 Session 活动记录端口、由 L1 注入；`tests/business/S7C1-P-reads.test.ts`、`S7C1-P-reads.scale.test.ts` 在用。
 
 ### 计划和任务
 
@@ -237,6 +241,7 @@ commit 闸门、阻塞替身、store/Kernel 读故障和崩溃重启；只在规
 - `S7B3-damaged-world.ts` — 冻结；7B-3 Q 的损坏世界 `openS7BDamagedWorld`（夹具规格 v2.2 §2.3）：在规划世界上按六种 `defect` 准备源线：`corrupt`、`transient`、`missing`、`none` 用规划世界的线跑一个真实 Run 后经 `sessions/archive-line` 归档（未完成任务给真实的 `drop`），`empty` 不跑 Run 就归档，`retired` 另开 SQLite 上真实的 `unavailable` 秘书并给它发消息、不归档；`corrupt`、`transient`、`missing` 在打开世界时包住真实的 Kernel store registry，按 `sessionId`、`after`、`limit` 命中正文页 `(0, position)` 或边界读 `(position - 1, 1)`；7B-3 的 CS 在用。
 - `S7B3-consultation-fixture.ts` — 7B-3 CS 的咨询夹具 `consultRetiredLine`（夹具规格 v2.2 §2.5）：在损坏世界的源线上，先经 `sendS7A2PersonMessage` 给源线发一条自己的 `inquiry`（Q2 的消息是已被接受的 `action_request`），再经真实的 `workflow/consultation` 路由咨询一次，公开读回结果、消息、副本（`sessions/facts`）和创建操作（`sessions/operation`）；`replay: true` 时按住咨询派生的提交，读到已持久化的创建操作后真崩溃 Host，在新 Host 上用同一个请求体再咨询一次；不读写 store；`tests/app/S7B3-CS-consult.test.ts` 在用。
 - `S7B-L46-fixture.ts` — 7B-3 G 的 L46 世界 `openS7BL46World`：一个真实 S7B Host，A/B/C/D 四任务、A 的真实失败 Run 及其自动返工卡，C 对 A 的 `gate-result` 边、D 对 A 的 `expected_dependency` 关系；`legacyOnD` 另采用一版把 A 的准备清单 `bundleRef` 声明为 D 的精确输入；只走 `plans/propose`/`plans/apply`、`goals/settings/set`、`workflow/advance` 和公开读，不读写 store；`tests/business/S7B-L46.test.ts`、`S7B-L46-restart.test.ts` 在用。
+- `S7C-n-overlap-fixture.ts` — A5 模块重叠门纯输入：waiting/running 三元组、冻结 basis 与摘要、未发送及已发送并放行的 gate；只运行时导入 `makeCommitCursor`，其余为类型导入，不访问存储；`tests/state/S7C-module-overlap-gate-codec-pure.test.ts`、`tests/state/S7C-overlap-basis-digest-pure.test.ts`、`tests/state/S7C-overlap-gate-satisfied-pure.test.ts` 在用。
 - `SP-record-store-support.ts` — SP store 契约共用：schema 构造与 `commit` 写入，期望值留在测试；`tests/record-store/SP-literal-type.test.ts` 在用。
 - `change-stream-reader.ts` — 逐帧读真实 `text/event-stream` 响应体，心跳注释返回 `{ comment: true }`；`tests/app/change-commit-observer.test.ts` 在用。
 - `field-table-fixture.ts` — 测试本地的字段表格式（`Parcel` 记录和 `ParcelMoved` 事件，没有生产聚合）注册到两个真实 RecordStore 后端，经公共 `commit` 写、`readMany`/`lookupOrdered` 读回；`tests/work-graph/field-table-codec.test.ts` 在用。

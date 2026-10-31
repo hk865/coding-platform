@@ -30,7 +30,7 @@ import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contra
 import type { VersionPin } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { TaskAutomationPolicyV1 } from '../../src/contracts/task-requeue.js';
 import type { GoalControlOutcomeV1 } from '../../src/app/goal-fan-out-driver.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
@@ -133,8 +133,8 @@ export async function readExecution(host: AG2bHost, runRef: RunRef): Promise<Tas
   return read.value;
 }
 
-export async function readGoal(host: AG2bHost): Promise<GoalSnapshot> {
-  const read = await post<ReadResult<{ goal: GoalSnapshot }>>(host, 'goals/read', plain(AG2B_SCOPE, AG2B_GOAL_REF));
+export async function readGoal(host: AG2bHost, goalRef: GoalRef = AG2B_GOAL_REF): Promise<GoalSnapshot> {
+  const read = await post<ReadResult<{ goal: GoalSnapshot }>>(host, 'goals/read', plain(AG2B_SCOPE, goalRef));
   if (read.status !== 'ready') throw new Error(`the Goal must be readable: ${JSON.stringify(read)}`);
   return read.value.goal;
 }

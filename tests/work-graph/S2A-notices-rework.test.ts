@@ -42,6 +42,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A automatic-rework notices (%s)'
     expect(round).toMatchObject({ revision: 2, status: 'finalized', outcome: 'INCONCLUSIVE' });
     const humanResult = await evidence.reverifyRound(f.ctx, { input: { predecessorRoundRef: round.ref },
       meta: { requestId: f.newId(), expected: [{ ref: round.ref, revision: round.revision }] } });
+    if (humanResult.status === 'needs_decision') throw new Error(`the reverify asked for a decision: ${JSON.stringify(humanResult)}`);
     const human = committed(humanResult);
     if (human.kind !== 'reverified') throw new Error('the person reverify must open a successor');
     expect(human.round.chain?.reverify).toMatchObject({ actorClass: 'human' });
@@ -62,8 +63,10 @@ describe.each(['memory', 'sqlite'] as const)('S2A automatic-rework notices (%s)'
 
     // Only THEN does the system open round 3.
     chain.bumpSource();
-    const system = committed(await evidence.reverifyRound(automationContext(f), { input: { predecessorRoundRef: round.ref },
-      meta: { requestId: f.newId(), expected: [{ ref: round.ref, revision: round.revision }] } }));
+    const systemOutcome = await evidence.reverifyRound(automationContext(f), { input: { predecessorRoundRef: round.ref },
+      meta: { requestId: f.newId(), expected: [{ ref: round.ref, revision: round.revision }] } });
+    if (systemOutcome.status === 'needs_decision') throw new Error(`the reverify asked for a decision: ${JSON.stringify(systemOutcome)}`);
+    const system = committed(systemOutcome);
     if (system.kind !== 'reverified') throw new Error(`the system reverify must open a successor: ${JSON.stringify(system)}`);
     expect(system.round.chain?.reverify).toMatchObject({ actorClass: 'system' });
     expect(system.round.chain?.ordinal).toBe(3);

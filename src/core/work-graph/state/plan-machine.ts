@@ -24,7 +24,7 @@
  *
  * W16 (§3.3, C7): the untraced rule for the changed and added Tasks, TASK-19
  * (`tracedDispositionChangeProblem`) for the traced disposition-only ones, then
- * guard 9 (`parallelCarrierFenceProblem`, LA-3) for an `agent`/`system` adopter.
+ * guard 9 (`parallelCarrierFenceProblem`, LA-3) for a `system` (automation) adopter.
  * Each disposition change is a `change_task_disposition` effect the owner asks
  * the Task machine (TASK-18/19) about, as it asks the Goal machine about
  * `move_goal_pointer`. Rows and their status: spec §15.2/§15.3.
@@ -236,24 +236,14 @@ export type PlanProposalMachineState = PlanProposalRecord | null;
 /** Host `proposePlan`; Agent `propose_future_plan`; Workflow/Host initial answer (`proposeInitialPlanFromAnswer`). */
 export type PlanProposalWriter = 'host' | 'agent' | 'initial_answer';
 
-/** Host `applyPlanChange`; Agent `apply_future_plan` (`applyPlanChangeAsAgent`). */
-export type PlanAdopter = 'host' | 'agent';
-
-/** The identified Agent writer (`plan-write-admission.ts:74-81`, without the actor). */
-export type AgentPlanWriterIdentity = {
-  runRef: RunRef;
-  sessionRef: SessionRef;
-  roleBinding: RoleBindingRefV1;
-  goalRef: GoalRef;
-};
+/** Host `applyPlanChange`; an Agent proposes only (`propose_future_plan`). */
+export type PlanAdopter = 'host';
 
 /**
  * §3.2. `proposal_recorded.issues` is `validatePlanDraft(draft, policy)`:
  * diagnostics recorded on the candidate, never blocking (PLAN-01).
  * `submittedBy` is the admitted provenance, present only for the Agent writer.
- * `proposal_accepted.agentWriter` is the identified writer, present only for
- * the Agent adopter. `proposal_stale` is derived at read time;
- * `proposal_rejected` has no writer (D-17).
+ * `proposal_stale` is derived at read time; `proposal_rejected` has no writer (D-17).
  */
 export type PlanProposalEvent =
   | {
@@ -284,7 +274,6 @@ export type PlanProposalEvent =
     proposalRef: PlanProposalRef;
     expectedProposalRevision: number;
     decisionRefs: readonly VersionPin[];
-    agentWriter: AgentPlanWriterIdentity | null;
   }
   | { type: 'proposal_stale' }
   | { type: 'proposal_rejected' }
@@ -326,7 +315,6 @@ export type PlanProposalEvent =
     proposalRef: PlanProposalRef;
     expectedProposalRevision: number;
     decisionRefs: readonly VersionPin[];
-    agentWriter: AgentPlanWriterIdentity | null;
     requestRef: QueryJobRef | null;
   }
   | {
@@ -403,10 +391,9 @@ export type FutureAdoptionFacts = PlanDraftAdmissionFacts & {
   /** `readFutureChangeTaskFacts` for `changedTaskIds ∪ addedTaskIds`. */
   touchedTaskFacts: readonly FutureChangeTaskFactsV1[];
   /**
-   * C7: `reworkActorClassOf(principal, actor)` of the adopter (§1): an Agent
-   * `apply_future_plan` is `agent`; a Host actor that is a platform automation
-   * actor is `system`; every other Host actor (a Host started as
-   * `kind:'system'` too) is `human`.
+   * C7: `reworkActorClassOf(principal, actor)` of the adopter (§1): a Host
+   * actor that is a platform automation actor is `system`; every other Host
+   * actor (a Host started as `kind:'system'` too) is `human`.
    */
   adopterClass: ReworkActorClass;
   /** C7: `readDispositionChangeTaskFacts` for `dispositionOnlyTaskIds` (TASK-19). */
@@ -414,8 +401,8 @@ export type FutureAdoptionFacts = PlanDraftAdmissionFacts & {
   /** Guard 9 (LA-3): the source Plan's carriers, read with the source. */
   sourceCarriers: PlanCarrierViewV1;
   /**
-   * Guard 9: the facts of `parallelCarrierFactTaskIds`, read only for an
-   * `agent`/`system` adopter (an operator adoption is never limited by it).
+   * Guard 9: the facts of `parallelCarrierFactTaskIds`, read only for a
+   * `system` (automation) adopter (an operator adoption is never limited by it).
    */
   carrierFacts: readonly TracedTaskFactsV1[];
 };
@@ -750,7 +737,7 @@ function obligationsGainingWorkCarriers(source: PlanCarrierViewV1, target: PlanC
 /**
  * The existing active work carriers whose facts guard 9 needs: only those of
  * the obligations that gain a new carrier (sorted, unique). The service reads
- * them only for an `agent`/`system` adopter and joins their selected Run@rev,
+ * them only for a `system` (automation) adopter and joins their selected Run@rev,
  * Lease (@k or ∅) and pointer ControlIntent@rev to the commit guards.
  */
 export function parallelCarrierFactTaskIds(input: { source: PlanCarrierViewV1; target: PlanCarrierViewV1 }): string[] {
@@ -762,7 +749,7 @@ export function parallelCarrierFactTaskIds(input: { source: PlanCarrierViewV1; t
 }
 
 /**
- * Guard 9 (lead decision LA-3, 2026-10-03): an `agent`/`system` W16 may not add
+ * Guard 9 (lead decision LA-3, 2026-10-03): a `system` (automation) W16 may not add
  * an active work carrier (a new Task, a Task newly listed in `taskIds`, or one
  * restored to `active`) to a source obligation whose existing active work
  * carriers are non-empty and all fenced (`reworkFenceOf ≠ 'none'`). An
@@ -859,7 +846,7 @@ type AdmittedAdoption =
     untracedDispositionTaskIds: readonly string[];
     /** C7: every disposition change, with its trace. */
     dispositionChanges: readonly PlannedDispositionChangeV1[];
-    /** Guard 9: the carriers whose facts were read (agent/system adopter only). */
+    /** Guard 9: the carriers whose facts were read (system adopter only). */
     carrierTaskIds: readonly string[];
   };
 
@@ -1243,29 +1230,13 @@ function sourcePlanStep(
 
 /**
  * PLAN-04/05 and the §3.4 `proposal_accepted` rows. Host `applyPlanChange`
- * (`plan-service.ts:1140-1215`); Agent `applyPlanChangeAsAgent` (`:2019-2106`),
- * whose decisionRefs and fresh admission checks run before the proposal read.
+ * (`plan-service.ts:1140-1215`); an Agent proposes only (`propose_future_plan`).
  */
 function acceptedStep(
   state: PlanProposalMachineState | undefined,
   event: AcceptedEvent,
   facts: PlanProposalReadFacts,
 ): AcceptStep {
-  switch (event.adopter) {
-    case 'host':
-      break;
-    case 'agent': {
-      // :2034-2036, before the fresh admission (:2057-2062)
-      if (event.decisionRefs.length > 0) {
-        return reject('guard_failed', 'forbidden', 'an Agent future-plan apply does not accept decision references');
-      }
-      const admission = agentAdmissionStep(facts);
-      if (admission !== null) return admission;
-      break;
-    }
-    default:
-      return unreachable(event.adopter, 'plan adopter');
-  }
   if (state === undefined) return UNREAD;
   if (state === null) return reject('illegal', 'not_found', `proposal ${event.proposalRef.proposalId} does not exist`);
   switch (state.status) {
@@ -1292,19 +1263,7 @@ function onProposalAccepted(
   if (step === UNREAD) return unreachable(step as never, 'unread plan proposal guard fact');
   if (!isAdmitted(step)) return step;
   return accept<PlanProposalMachineState, PlanProposalEffect>(acceptProposalRecord(step.proposal),
-    adoptionEffects(step, event.adopter));
-}
-
-/** The adopter's own CAS guards: the fresh Agent admission joins the commit (`extraGuards`, :2095 → :1773-1774). */
-function adopterCommitGuards(adopter: PlanAdopter): PlanCommitGuard[] {
-  switch (adopter) {
-    case 'host':
-      return [];
-    case 'agent':
-      return [{ target: 'agent_admission' }];
-    default:
-      return unreachable(adopter, 'plan adopter');
-  }
+    adoptionEffects(step));
 }
 
 function candidateStep(
@@ -1316,44 +1275,12 @@ function candidateStep(
   if (proposal.revision !== event.expectedProposalRevision) {
     return reject('stale', 'revision_conflict', 'the proposal revision changed');
   }
-  switch (event.adopter) {
-    case 'host':
-      break;
-    case 'agent': {
-      const problem = agentCandidateProblem(proposal, event);
-      if (problem !== null) return problem;
-      break;
-    }
-    default:
-      return unreachable(event.adopter, 'plan adopter');
-  }
   // validateProposalScope (:1644-1666)
   const scope = scopeStep(facts, 'the goal does not belong to the proposal workspace');
   if (scope !== null) return scope;
   return proposal.basedOn === null
     ? initialAdoptionStep(proposal, event, facts)
     : futureAdoptionStep(proposal, event, facts);
-}
-
-/** :2075-2087 — only this Run's own future candidate of its own Goal. */
-function agentCandidateProblem(proposal: CandidatePlanProposal, event: AcceptedEvent): Rejected | null {
-  const writer = event.agentWriter;
-  if (writer === null) return reject('illegal', 'invalid', 'an Agent apply requires the identified writer');
-  const submittedBy = proposal.submittedBy;
-  if (submittedBy === undefined) {
-    return reject('guard_failed', 'forbidden', 'a candidate without an Agent submission source cannot be adopted by an Agent');
-  }
-  if (!sameCanonicalOrThrow(submittedBy.runRef, writer.runRef) || !sameCanonicalOrThrow(submittedBy.sessionRef, writer.sessionRef)
-    || !sameCanonicalOrThrow(submittedBy.roleBinding, writer.roleBinding)) {
-    return reject('guard_failed', 'forbidden', 'the candidate was submitted by another Agent Run');
-  }
-  if (proposal.goalRef.projectId !== event.proposalRef.projectId || proposal.goalRef.goalId !== writer.goalRef.goalId) {
-    return reject('guard_failed', 'forbidden', 'the candidate goal is not the Agent Run goal');
-  }
-  if (proposal.basedOn === null) {
-    return reject('guard_failed', 'forbidden', 'an Agent apply requires a future revision with a source plan');
-  }
-  return null;
 }
 
 /** PLAN-04 + GOAL-02 + PLAN-08 (`plan-service.ts:1165-1215` → `plan-commit-compiler.ts:135-181`). */
@@ -1392,7 +1319,7 @@ function initialAdoptionStep(
  * → `plan-commit-compiler.ts:241-328`). C7 (step 5.10): a changed or added
  * Task falls under the untraced rule; a disposition-only Task under TASK-19
  * when it is traced (an untraced one keeps the Lease ∅ / Reduction ∅ commit
- * guards); then guard 9 for an `agent`/`system` adopter.
+ * guards); then guard 9 for a `system` (automation) adopter.
  */
 function futureAdoptionStep(
   proposal: CandidatePlanProposal,
@@ -1470,7 +1397,7 @@ function futureAdoptionStep(
   const traced = tracedDispositionChangeProblem({ goalDesiredState: facts.goal.desiredState, tasks: dispositionJudged,
     affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass });
   if (traced !== null) return reject(traced.reason ?? 'guard_failed', traced.code, traced.detail);
-  // Guard 9 (LA-3): only an `agent`/`system` adopter reads and judges the existing carriers.
+  // Guard 9 (LA-3): only a `system` (automation) adopter reads and judges the existing carriers.
   let carrierTaskIds: readonly string[] = [];
   if (adopterClass !== 'human') {
     const sourceCarriers = future.sourceCarriers;
@@ -1494,7 +1421,7 @@ function futureAdoptionStep(
 }
 
 /** The one adoption commit of an admitted candidate (§3.3 effects column of PLAN-04/05). */
-function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): PlanProposalEffect[] {
+function adoptionEffects(admitted: AdmittedAdoption): PlanProposalEffect[] {
   const proposal = admitted.proposal;
   switch (admitted.path) {
     case 'initial': {
@@ -1527,7 +1454,6 @@ function adoptionEffects(admitted: AdmittedAdoption, adopter: PlanAdopter): Plan
         // C7: TASK-18 (untraced) / TASK-19 (traced) for each disposition change, in taskId order.
         ...admitted.dispositionChanges.map((change): PlanProposalEffect => ({ kind: 'change_task_disposition', change })),
         { kind: 'append_event', eventType: 'PlanRevisionAccepted' },
-        ...adopterCommitGuards(adopter).map(guard),
       ];
       if (admitted.pinnedPolicy) effects.push(guard({ target: 'pinned_policy' }));
       effects.push(
@@ -1681,7 +1607,7 @@ function onProposalAdopted(
 ): PlanProposalTransition {
   const accepted: AcceptedEvent = { type: 'proposal_accepted', adopter: event.adopter,
     proposalRef: event.proposalRef, expectedProposalRevision: event.expectedProposalRevision,
-    decisionRefs: event.decisionRefs, agentWriter: event.agentWriter };
+    decisionRefs: event.decisionRefs };
   const step = acceptedStep(state, accepted, ctx);
   if (step === UNREAD) return unreachable(step as never, 'unread plan proposal guard fact');
   if (!isAdmitted(step)) return step;
@@ -1700,7 +1626,7 @@ function onProposalAdopted(
       return reject('guard_failed', 'forbidden', 'the autonomy policy requires a user decision before this adoption');
     }
   }
-  const effects = adoptionEffects(step, event.adopter);
+  const effects = adoptionEffects(step);
   if (event.requestRef !== null) {
     effects.push({ kind: 'request_slot', goalRef: step.proposal.goalRef, requestRef: event.requestRef,
       expectedOwner: step.proposal.ref, nextOwner: null });

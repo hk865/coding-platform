@@ -310,233 +310,12 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
       "additionalProperties": false
     }
   },
-  {
-    "name": "apply_future_plan",
-    "description": "Adopt your own W2 candidate proposal for the bound Goal. decisionRefs are supplied by the platform. Pass acknowledgementRef only when the user answered a card for this candidate; the plan owner re-reads that formal answer and derives the decision source itself. Only a real committed plan revision is reported as success.",
-    "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "proposalRef": {
-          "type": "object",
-          "properties": {
-            "aggregateType": {
-              "type": "string",
-              "const": "PlanProposal"
-            },
-            "projectId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "workspaceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "proposalId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "aggregateType",
-            "projectId",
-            "workspaceId",
-            "proposalId"
-          ],
-          "additionalProperties": false,
-          "description": "Your own candidate_v2 proposal ref; the plan service refuses another Run/author candidate."
-        },
-        "expectedProposalRevision": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991,
-          "description": "The exact revision of proposalRef, as read."
-        },
-        "expected": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "ref": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "aggregateType": {
-                        "type": "string",
-                        "const": "Project"
-                      },
-                      "projectId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "aggregateType",
-                      "projectId"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "aggregateType": {
-                        "type": "string",
-                        "const": "Workspace"
-                      },
-                      "projectId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "workspaceId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "aggregateType",
-                      "projectId",
-                      "workspaceId"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "aggregateType": {
-                        "type": "string",
-                        "const": "Goal"
-                      },
-                      "projectId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "goalId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "aggregateType",
-                      "projectId",
-                      "goalId"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "aggregateType": {
-                        "type": "string",
-                        "const": "PlanRevision"
-                      },
-                      "projectId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "planId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "aggregateType",
-                      "projectId",
-                      "planId"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "aggregateType": {
-                        "type": "string",
-                        "const": "PlanProposal"
-                      },
-                      "projectId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "workspaceId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "proposalId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "aggregateType",
-                      "projectId",
-                      "workspaceId",
-                      "proposalId"
-                    ],
-                    "additionalProperties": false
-                  }
-                ],
-                "description": "One of the five W1 caller-visible refs: Project | Workspace | Goal | PlanRevision | PlanProposal."
-              },
-              "revision": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991,
-                "description": "The exact version the caller saw for `ref`; the plan service rejects a mismatch with the current record."
-              }
-            },
-            "required": [
-              "ref",
-              "revision"
-            ],
-            "additionalProperties": false
-          },
-          "description": "The exact W1 version pins the caller saw; omit a pin rather than guessing a fresh revision."
-        },
-        "acknowledgementRef": {
-          "description": "The user answer message this adoption is attributed to, when the user answered a card for this candidate. Attribution only; the plan owner re-reads the formal answer and derives the decision source itself. Omit it when the adoption is not attributed to a user answer.",
-          "type": "object",
-          "properties": {
-            "aggregateType": {
-              "type": "string",
-              "const": "SessionMessage"
-            },
-            "projectId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "workspaceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "messageId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "aggregateType",
-            "projectId",
-            "workspaceId",
-            "messageId"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "proposalRef",
-        "expectedProposalRevision",
-        "expected"
-      ],
-      "additionalProperties": false
-    }
-  }
 ];
 
 const changedDescriptions = {
   query_task_graph: 'PC2-W changed query_task_graph description',
   query_ready_tasks: 'PC2-W changed query_ready_tasks description',
   propose_future_plan: 'PC2-W changed propose_future_plan description',
-  apply_future_plan: 'PC2-W changed apply_future_plan description',
 } as const;
 const changed: Texts = {
   query_task_graph: { description: changedDescriptions.query_task_graph, parameters: {} },
@@ -550,34 +329,21 @@ const changed: Texts = {
       'expected[].revision': 'PC2-W changed propose expected revision parameter',
     },
   },
-  apply_future_plan: {
-    description: changedDescriptions.apply_future_plan,
-    parameters: {
-      ...PLATFORM_PROMPT_PACK_V1.tools['apply_future_plan']!.parameters,
-      proposalRef: 'PC2-W changed apply proposalRef parameter',
-      'expected[].ref': 'PC2-W changed apply expected ref parameter',
-      'expected[].revision': 'PC2-W changed apply expected revision parameter',
-    },
-  },
 };
 
-it('PC2-W-whiteboard-tools carries all four changed descriptions and each tool its own parameter texts', () => {
+it('PC2-W-whiteboard-tools carries all three changed descriptions and each tool its own parameter texts', () => {
   const tools = definitions(changed);
   expect(Object.fromEntries(tools.map(tool => [tool.name, tool.description]))).toEqual(changedDescriptions);
   const propose = schemaOf(tools, 'propose_future_plan');
   expect(propose.properties['basedOn']!.description).toBe('PC2-W changed propose basedOn parameter');
   expect(propose.properties['expected']!.items!.properties!['ref']!.description).toBe('PC2-W changed propose expected ref parameter');
   expect(propose.properties['expected']!.items!.properties!['revision']!.description).toBe('PC2-W changed propose expected revision parameter');
-  const apply = schemaOf(tools, 'apply_future_plan');
-  expect(apply.properties['proposalRef']!.description).toBe('PC2-W changed apply proposalRef parameter');
-  expect(apply.properties['expected']!.items!.properties!['ref']!.description).toBe('PC2-W changed apply expected ref parameter');
-  expect(apply.properties['expected']!.items!.properties!['revision']!.description).toBe('PC2-W changed apply expected revision parameter');
 });
 
 it('PC2-W-whiteboard-tools falls back per tool to the hand-written platform specification', () => {
   const tools = definitions({ query_task_graph: changed['query_task_graph']! });
   expect(tools.find(tool => tool.name === 'query_task_graph')?.description).toBe('PC2-W changed query_task_graph description');
-  for (const name of ['query_ready_tasks', 'propose_future_plan', 'apply_future_plan']) {
+  for (const name of ['query_ready_tasks', 'propose_future_plan']) {
     const actual = specification(tools).find(tool => tool.name === name)!;
     const expected = DEFAULT_SPECIFICATION.find(tool => tool.name === name)!;
     expect(actual.description).toBe(expected.description);
@@ -590,10 +356,6 @@ it('PC2-W-whiteboard-tools default keeps the moved whiteboard pin parameter desc
   expect(schemaOf(tools, 'propose_future_plan').properties['expected']!.items!.properties!['ref']!.description)
     .toBe('One of the five W1 caller-visible refs: Project | Workspace | Goal | PlanRevision | PlanProposal.');
   expect(schemaOf(tools, 'propose_future_plan').properties['expected']!.items!.properties!['revision']!.description)
-    .toBe('The exact version the caller saw for `ref`; the plan service rejects a mismatch with the current record.');
-  expect(schemaOf(tools, 'apply_future_plan').properties['expected']!.items!.properties!['ref']!.description)
-    .toBe('One of the five W1 caller-visible refs: Project | Workspace | Goal | PlanRevision | PlanProposal.');
-  expect(schemaOf(tools, 'apply_future_plan').properties['expected']!.items!.properties!['revision']!.description)
     .toBe('The exact version the caller saw for `ref`; the plan service rejects a mismatch with the current record.');
 });
 

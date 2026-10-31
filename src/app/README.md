@@ -97,7 +97,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1457`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:1461`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。

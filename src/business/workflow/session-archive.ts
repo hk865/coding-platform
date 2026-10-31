@@ -18,7 +18,8 @@ import type { RunRef, RunSnapshot } from '../../contracts/dispatch.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { ArchiveChangedFilesV1, ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../contracts/session-anomaly.js';
 import type { SubmitControlInput } from '../../contracts/control-intent.js';
-import type { TaskRequeueRef, TaskReworkRefusalSnapshotV1 } from '../../contracts/task-requeue.js';
+import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskReworkRefusalSnapshotV1 } from '../../contracts/task-requeue.js';
+import type { EffectWriteResultV1 } from '../../contracts/core/session-message.js';
 import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
@@ -687,7 +688,9 @@ export function createSessionArchiveService(
           }
         }
         try {
-          const requeued = await requeue(actorCtx, write);
+          // A Host-automation archive requeue never asks for a decision (the owner's request branch is the agent's),
+          // so the widened result is narrowed here to the commit/refusal arms the archive maps.
+          const requeued = await requeue(actorCtx, write) as EffectWriteResultV1<TaskRequeueOutcomeV1>;
           if (requeued.status !== 'committed') {
             if (covered && requeued.code === 'idempotency_conflict') continue;
             return partial(await currentRecord(actorCtx, sessionRef, fallbackSession), receipts, requeued, requeueRefusals);

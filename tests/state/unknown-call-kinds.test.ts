@@ -25,7 +25,7 @@ const READ_ONLY_NAMES = [
   'run_readonly_command',
 ];
 const PLATFORM_NAMES = [
-  // L3 row 4 (decision 64 removes apply_future_plan; 4C adds record_note)
+  // L3 row 4 (4C adds record_note)
   'send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message',
   'record_decision_application', 'propose_future_plan', 'request_command_rerun',
   // L3 row 5
@@ -58,10 +58,6 @@ describe('K3-34 unknown call kinds', () => {
   it('K3-34 defaults an out-of-table name to process and refuses RUN-25 containment', () => {
     expect(unknownCallKindOf('some_future_tool')).toBe('process');
     expect(containedByHostStop('some_future_tool')).toBe(false);
-    // decision 64 deletes apply_future_plan; until 4C removes the tool it is the
-    // row-8 default, never a platform tool that stops with the Host.
-    expect(unknownCallKindOf('apply_future_plan')).toBe('process');
-    expect(containedByHostStop('apply_future_plan')).toBe(false);
   });
 
   it('K3-34 maps the authorization name write to the Kernel tool edit', () => {

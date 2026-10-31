@@ -43,7 +43,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
@@ -58,6 +57,7 @@ import type {
 import type { VerificationRoundSourcePort } from '../../src/contracts/verification-context.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { EvidencePort, ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-graph/model/evidence-contracts.js';
+import type { ReworkOwnerResultV1 } from '../../src/core/work-graph/model/claim-contracts.js';
 import {
   VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
 } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
@@ -180,7 +180,7 @@ function hostCtx(fixture: R3eEvidenceFixture, actor: { kind: 'human' | 'system';
     signal: new AbortController().signal };
 }
 
-function reverified(result: WriteResult<ReverifyOutcomeV1>): RoundSnapshot {
+function reverified(result: ReworkOwnerResultV1<ReverifyOutcomeV1>): RoundSnapshot {
   if (result.status !== 'committed' || result.value.kind !== 'reverified') throw Error(`the reverify must commit a successor: ${JSON.stringify(result)}`);
   return result.value.round;
 }

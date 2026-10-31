@@ -22,10 +22,10 @@
  *    `controls/submit` cancel is still an operator's (`stopped/task_cancelled`),
  *    the Workflow requeues nothing and the automation's requeue is `forbidden`.
  * 4. LA-3 (W16 guard 9): an Agent Run (a coordinator Task with the W2
- *    whiteboard tools, support/common.ts `PlanBoard`) proposes a parallel
+ *    whiteboard tool, support/common.ts `PlanBoard`) proposes a parallel
  *    carrier for the obligation whose only active work a person cancelled;
- *    adopting it through `apply_future_plan` is `forbidden`, and its requeue of
- *    the cancelled work is `forbidden`; the operator adopts the same candidate.
+ *    the platform automation's adoption is `forbidden`, and the Agent's requeue
+ *    of the cancelled work is `forbidden`; the operator adopts the same candidate.
  * 5. AV-4 kept as written: a pause superseded by the natural completion fences
  *    rework only; the round still opens, passes and completes the Task.
  * 6. VR-14 step 5: the same pause on an INCONCLUSIVE round fences the
@@ -314,14 +314,13 @@ it('C8 variant (S21): a Host started as {kind:\'system\'} cancels as an operator
     automationPolicy: h.automationPolicy() });
 }, 120_000);
 
-it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrier beside human-cancelled work nor requeue it; the operator adopts the same candidate', async () => {
+it('LA-3 (W16 guard 9, hard limit 3): the platform automation may not add a parallel carrier beside human-cancelled work and an Agent may not requeue it; the operator adopts the same candidate', async () => {
   const COORDINATOR = 'ag2b-coordinator';
   const PARALLEL = 'ag2b-work-parallel';
   const replies: ScriptedReply[] = [
     { kind: 'calls', calls: [{ callId: 'la3-propose', name: 'propose_future_plan', args: {} }] },
-    { kind: 'calls', calls: [{ callId: 'la3-apply', name: 'apply_future_plan', args: {} }] },
-    { kind: 'text', text: 'LA-3: the coordinator could not add the parallel carrier' }];
-  const seen: { agentRequeue?: unknown; propose?: unknown; apply?: unknown } = {};
+    { kind: 'text', text: 'LA-3: the coordinator proposed a parallel carrier' }];
+  const seen: { agentRequeue?: unknown; propose?: unknown } = {};
   let run1Ref: RunRef | null = null;
   let wb!: PlanBoard;
   wb = await PlanBoard.open({ workIds: [AG2B_WORK_TASK_ID], replies, duringReply: async (index, request) => {
@@ -344,9 +343,7 @@ it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrie
       seen.propose = toolOutputJson(request, 'la3-propose');
       const proposal = seen.propose as { status?: string; value?: { ref: unknown; revision: number } };
       if (proposal.status !== 'committed' || proposal.value === undefined) throw new Error(`propose: ${JSON.stringify(proposal)}`);
-      Object.assign(callArgs(replies[1]), { proposalRef: proposal.value.ref, expectedProposalRevision: proposal.value.revision, expected: [] });
     }
-    if (index === 2) seen.apply = toolOutputJson(request, 'la3-apply');
   } });
   const { platform, target } = wb;
   await assertInvariantsAt(target, 'seeded');
@@ -386,11 +383,11 @@ it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrie
   const p2 = (await platform.plans.queryTaskGraph(hostCtx(), { goalRef: AG2B_GOAL_REF }));
   if (p2.status !== 'ready') throw new Error('the task graph must be readable');
 
-  // The coordinator's Run: its requeue and its adoption are refused; it then answers and ends.
+  // The coordinator's Run: its requeue is refused; it proposes the parallel carrier and ends.
   const coordinated = await wb.advance({ schemaVersion: 1, goalRef: AG2B_GOAL_REF, flowId: 'la3-coordinator',
     sessionHint: null, kind: 'select_work', taskId: COORDINATOR }, performs('open_checks'));
   expect(coordinated.next).not.toBeNull();
-  expect(wb.scripted.calls()).toBe(3);
+  expect(wb.scripted.calls()).toBe(2);
   // The platform refuses an Agent's requeue at its grant before the fence: no production Role may hold
   // `request_rework` while the Agent tool does not exist (GAP-46; the Runtime refuses unknown tool names,
   // src/core/agent-runtime/execution-driver.ts:118, and the admission refuses a manifest without it,
@@ -401,14 +398,18 @@ it('LA-3 (W16 guard 9, hard limit 3): an Agent may neither add a parallel carrie
   expect(seen.agentRequeue, 'an Agent requeue of human-cancelled work').toMatchObject({ status: 'rejected', code: 'forbidden',
     reason: 'the current Host/Role grant does not include request_rework' });
   expect(seen.propose).toMatchObject({ status: 'committed', value: { ref: { aggregateType: 'PlanProposal' } } });
-  expect(seen.apply, 'guard 9').toMatchObject({ status: 'rejected', code: 'forbidden',
+  const candidate = (seen.propose as { value: { ref: PlanProposalRef; revision: number } }).value;
+  // The platform automation may not add the parallel carrier beside the human-cancelled work (guard 9).
+  const automationApplied = await platform.plans.applyPlanChange(hostCtx({ ...WORKFLOW_AUTOMATION_ACTOR }),
+    { meta: { requestId: 'la3-automation-apply', expected: [] },
+      input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] } });
+  expect(automationApplied, 'guard 9').toMatchObject({ status: 'rejected', code: 'forbidden',
     reason: `obligation ag2b-obligation: a human stopped this work; only an operator may add the parallel carrier ${PARALLEL}` });
-  const afterAgent = await platform.plans.queryTaskGraph(hostCtx(), { goalRef: AG2B_GOAL_REF });
-  expect(afterAgent.status === 'ready' ? afterAgent.value.plan.ref : null, 'the active Plan is still P2').toEqual(p2.value.plan.ref);
+  const afterAutomation = await platform.plans.queryTaskGraph(hostCtx(), { goalRef: AG2B_GOAL_REF });
+  expect(afterAutomation.status === 'ready' ? afterAutomation.value.plan.ref : null, 'the active Plan is still P2').toEqual(p2.value.plan.ref);
   expect(target.lastWorld?.requeues).toEqual([]);
 
-  // The operator adopts the Agent's candidate: an operator is not fenced (LA-3).
-  const candidate = (seen.propose as { value: { ref: PlanProposalRef; revision: number } }).value;
+  // The operator adopts the same candidate: an operator is not fenced (LA-3).
   const adopted = await platform.plans.applyPlanChange(hostCtx(), { meta: { requestId: 'la3-operator-apply', expected: [] },
     input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] } });
   if (adopted.status !== 'committed') throw new Error(`the operator adoption must commit: ${JSON.stringify(adopted)}`);

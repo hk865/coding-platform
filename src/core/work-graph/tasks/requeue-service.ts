@@ -33,6 +33,7 @@
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentRef } from '../../../contracts/control-intent.js';
+import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -40,8 +41,11 @@ import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/co
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
-import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
 import {
@@ -93,12 +97,22 @@ import {
 } from './claim-record-codecs.js';
 import { sessionMessageRefProblem } from './codec-shape-checks.js';
 import type {
-  ReadTaskRequeueByIdentityInputV1, RequeueTaskInput, TaskClaimPort, TaskRequeueReadV1,
+  ApprovedReworkApplyV1, ReadTaskRequeueByIdentityInputV1, RequeueTaskInput, ReworkOwnerResultV1, ReworkRequestedV1,
+  TaskClaimPort, TaskRequeueReadV1,
 } from '../model/claim-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { loadReplayEvent, mapStoreFailure, mergeGuards } from './execution-entry-service.js';
+import { lookupCommittedReceipt } from '../persistence/receipt-lookup.js';
+import { readOwnerRecord } from './owner-record-read.js';
+import {
+  applyReworkRequest, newReworkRequest, type PendingReworkRequestV1, type ReworkRequestV1,
+} from '../state/rework-request.js';
+import {
+  reworkRequestCodec, reworkRequestRecordedEventFromEvent, reworkRequestRecordedFragment,
+} from './rework-request-codecs.js';
+import { executeReworkRequestClose } from './rework-requests.js';
 import {
   readCanonicalTaskFacts, readGoal, readGoalRunsForCount, readPlan, readPointerIntents, readRunRoundChain, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState,
@@ -196,6 +210,30 @@ function refusalOf(refused: MachineRefusal | null): Rejection | null {
 function refKeyOf(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }
+/** LD-25: the approved application runs the same path under the stored requester and its rebuilt provenance. */
+type RequeueAuthority = {
+  caller: Caller;
+  provenance: DelegatedWriteProvenanceV1;
+  approved: { record: ReworkRequestV1; commandId: string };
+};
+/** The guards a standalone request close needs; `approved` is the stored pending request it closes. */
+type CloseBase = {
+  owned: OwnedCall; identity: string; fingerprint: string; actor: ActorRef; goalRef: GoalRef; window: RequeueWindow;
+  admissionGuards: readonly RecordGuard[]; acknowledgement: SessionMessageRef | null;
+  approved: { record: ReworkRequestV1; commandId: string } | null;
+};
+type CommitBase = CloseBase & {
+  afterRun: RunSnapshot;
+  /** The afterRun's pointer intent, read after the window (TASK-28 re-judges the fence with it). */
+  pointerIntent: StopIntentV1 | null;
+  /** VR-09: the chain head as read and its same-owner successor slot claim; the head's reverify refusal as read. */
+  roundGuards: readonly RecordGuard[];
+  roundClaims: readonly UniqueClaimChange[];
+  /** The Goal's Workspace as read (TASK-16 guards Workspace@rev). */
+  workspaceGuard: RecordGuard;
+  /** The afterRun's claim Session as read (TASK-16 guards it). */
+  sessionGuard: RecordGuard;
+};
 
 // --------------------------------------------------------------------------
 // Caller and request isolation
@@ -381,6 +419,9 @@ function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; 
 // The read window (§4.3 step 3)
 // --------------------------------------------------------------------------
 
+/** The exact `not_found` fact `readRequeueWindow` returns when the Task left the current Plan (R-03). */
+const TASK_NOT_IN_PLAN = 'the Task is not part of the active Plan';
+
 export type RequeueWindow = {
   goal: GoalSnapshot;
   plan: PlanRevisionSnapshot;
@@ -414,7 +455,7 @@ export async function readRequeueWindow(
     if (planRead.status !== 'ready') return { ok: false, rejection: reject(planRead.code, planRead.reason) };
     const plan = planRead.plan;
     const definition = plan.tasks.find((task) => task.taskId === taskId);
-    if (definition === undefined) return { ok: false, rejection: reject('not_found', 'the Task is not part of the active Plan') };
+    if (definition === undefined) return { ok: false, rejection: reject('not_found', TASK_NOT_IN_PLAN) };
     const factsRead = await readCanonicalTaskFacts(records, goalRef, plan, taskId);
     if (factsRead.status !== 'ready') return { ok: false, rejection: reject(factsRead.code, factsRead.reason) };
     const facts = factsRead.value;
@@ -441,7 +482,7 @@ export async function readRequeueWindow(
       coveringRequeue: canonical.requeueRef,
     };
     const state = taskMachineStateOf(definition, phaseFacts);
-    if (state === null) return { ok: false, rejection: reject('not_found', 'the Task is not part of the active Plan') };
+    if (state === null) return { ok: false, rejection: reject('not_found', TASK_NOT_IN_PLAN) };
     const basis = buildEffectiveTaskBasis(plan).get(taskId);
     return { ok: true, value: { goal, plan, definition, facts, canonical, state, rework: {
       selectedRun,
@@ -609,7 +650,7 @@ function requeueConfirmedByCardOf(window: RequeueWindow, taskId: string, afterRu
 
 export function createTaskRequeueService(
   deps: TaskRequeueDependencies,
-): Required<Pick<TaskClaimPort, 'requeueTask' | 'readTaskRequeue' | 'readTaskRequeueByIdentity'>> {
+): Required<Pick<TaskClaimPort, 'requeueTask' | 'requeueApprovedByCard' | 'readTaskRequeue' | 'readTaskRequeueByIdentity'>> {
   const records = deps.records;
   const policyOf = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
@@ -622,7 +663,7 @@ export function createTaskRequeueService(
   async function replay(
     receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string, actor: ActorRef,
     acknowledgement: SessionMessageRef | null,
-  ): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
+  ): Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
     const loaded = await loadReplayEvent(records, receipt);
     if (!loaded.ok) return loaded.rejection;
     const event = loaded.event;
@@ -635,6 +676,19 @@ export function createTaskRequeueService(
       const refused = taskReworkRefusedEventFromEvent(event);
       if (refused.status !== 'decoded') return reject('unavailable', `the recorded refusal event is not decodable: ${refused.reason}`);
       decoded = { ...refused.value, value: { kind: 'refused', refusal: refused.value.refusal } };
+    } else if (event.eventType === 'ReworkRequestRecorded') {
+      // B-09: the one request branch. The original card answer comes from this event, never from the current record.
+      const recorded = reworkRequestRecordedEventFromEvent(event);
+      if (recorded.status !== 'decoded') return reject('unavailable', `the recorded request event is not decodable: ${recorded.reason}`);
+      if (recorded.value.identityKey !== identity || recorded.value.fingerprint !== fingerprint) {
+        return reject('unavailable', 'the recorded rework request disagrees with the request identity');
+      }
+      if (!sameRef({ kind: recorded.value.actor.kind, id: recorded.value.actor.id }, { kind: actor.kind, id: actor.id })) {
+        return reject('unavailable', 'the recorded rework request belongs to another actor');
+      }
+      return { status: 'needs_decision',
+        cardKey: decisionSourceKey({ kind: 'rework_request', requestRef: recorded.value.request }),
+        request: recorded.value.request };
     } else {
       return reject('unavailable', `the recorded requeue receipt names a ${event.eventType} event`);
     }
@@ -814,13 +868,58 @@ export function createTaskRequeueService(
   }
 
   async function requeueTask(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>):
-  Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
+  Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
+    const ownedCall = ownCall(ctx);
+    if (!ownedCall.ok) return ownedCall.rejection;
+    const ownedRequest = ownRequest(request);
+    if (!ownedRequest.ok) return ownedRequest.rejection;
+    return runRequeue(ownedCall.value, ownedRequest.value, null);
+  }
+
+  /**
+   * LD-25 (`book-7c.md:716–:726`): the person approved a stored pending request. The same owner path runs with the
+   * stored requester agent and the provenance rebuilt from its Run; there is no fresh admission (the requester Run may
+   * have ended), and the autonomy fence is skipped because the card is the person's decision. The stored request is
+   * this call's pending revision; its applied/rejected/stale result is merged or closed in the same commit's read set.
+   */
+  async function requeueApprovedByCard(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>,
+    approval: ApprovedReworkApplyV1): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
     const ownedCall = ownCall(ctx);
     if (!ownedCall.ok) return ownedCall.rejection;
     const owned = ownedCall.value;
     const ownedRequest = ownRequest(request);
     if (!ownedRequest.ok) return ownedRequest.rejection;
-    const { input, requestId, expected } = ownedRequest.value;
+    const { input } = ownedRequest.value;
+    const requestRef = approval.request;
+    const task: TaskTriple = { projectId: input.taskRef.projectId, goalId: input.taskRef.goalId, taskId: input.taskRef.taskId };
+    const key = refKeyOf(requestRef);
+    const loaded = await readOwnerRecord({
+      store: records, refKey: key, decode: reworkRequestCodec.decode,
+      readError: message => reject('unavailable', `the rework request could not be read: ${message}`),
+    });
+    if ('rejection' in loaded) return loaded.rejection;
+    if ('notFound' in loaded) return reject('not_found', 'the rework request does not exist');
+    const record = loaded.value;
+    if (record.revision !== approval.revision) {
+      return rejectedWithNonEmptyCurrent('revision_conflict', 'the rework request changed since it was read',
+        [{ ref: record.ref, revision: record.revision }]);
+    }
+    // A pending request is the only applied-merge source; an already applied record replays only for this command.
+    if (record.state !== 'pending' && record.closedBy?.commandId !== approval.commandId) {
+      return rejectedWithNonEmptyCurrent('revision_conflict', `the rework request is ${record.state}`,
+        [{ ref: record.ref, revision: record.revision }]);
+    }
+    const writer: AgentPlanWriter = { actor: approval.actor, runRef: approval.actor.runRef,
+      sessionRef: approval.provenance.sessionRef, goalRef: { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId },
+      workspaceId: owned.scope.workspaceId, roleBinding: approval.provenance.roleBinding };
+    const applied = await runRequeue(owned, ownedRequest.value, { caller: { kind: 'agent', writer },
+      provenance: approval.provenance, approved: { record, commandId: approval.commandId } });
+    return applied as EffectWriteResultV1<TaskRequeueOutcomeV1>;
+  }
+
+  async function runRequeue(owned: OwnedCall, ownedRequest: OwnedRequest, authority: RequeueAuthority | null):
+  Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
+    const { input, requestId, expected } = ownedRequest;
     const shape = inputProblem(input, owned.scope);
     if (shape !== null) return shape;
     const task: TaskTriple = { projectId: input.taskRef.projectId, goalId: input.taskRef.goalId, taskId: input.taskRef.taskId };
@@ -833,9 +932,16 @@ export function createTaskRequeueService(
     if (!pins.ok) return pins.rejection;
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled before lookup');
 
-    // 1-2. The caller and the receipt. An Agent's identity is the formal writer (W2).
+    // 1-2. The caller and the receipt. An Agent's identity is the formal writer (W2); an approved application
+    // carries the stored requester and its rebuilt provenance instead of re-deriving them.
     let caller: Caller;
-    if (owned.principal.kind === 'host') {
+    let agentProvenance: DelegatedWriteProvenanceV1 | null = null;
+    let agentDuty: 'executor' | 'adviser' | null = null;
+    let admissionGuards: readonly RecordGuard[] = [];
+    if (authority !== null) {
+      caller = authority.caller;
+      agentProvenance = authority.provenance;
+    } else if (owned.principal.kind === 'host') {
       const host = hostActorOf(owned);
       if (!host.ok) return host.rejection;
       caller = { kind: 'host', actor: host.actor };
@@ -859,11 +965,10 @@ export function createTaskRequeueService(
     if (lookup.status === 'ready') return replay(lookup.value, identity, fingerprint, actor, input.acknowledgement ?? null);
     if (lookup.code !== 'not_found') return mapStoreFailure(lookup);
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled during lookup');
-    const actorClass: ReworkActorClass | null = reworkActorClassOf(owned.principal, actor);
+    // An approved application already carries the stored requester (LD-25): no fresh admission.
+    const actorClass: ReworkActorClass | null = authority !== null ? 'agent' : reworkActorClassOf(owned.principal, actor);
     if (actorClass === null) return reject('forbidden', 'the caller cannot rework this Task');
-    let agentProvenance: DelegatedWriteProvenanceV1 | null = null;
-    let admissionGuards: readonly RecordGuard[] = [];
-    if (caller.kind === 'agent') {
+    if (authority === null && caller.kind === 'agent') {
       // TD-6: the same Goal, then the current delegated-write admission (Run entered and running, Session,
       // Lease, the manifest's `request_rework` grant, Host/Role recheck).
       if (caller.writer.goalRef.goalId !== task.goalId) return reject('forbidden', 'an Agent reworks only Tasks of its own Goal');
@@ -874,23 +979,53 @@ export function createTaskRequeueService(
       }
       agentProvenance = admitted.value.provenance;
       admissionGuards = admitted.value.guards;
+      agentDuty = admitted.value.duty;
     }
 
     // 3. The read window and the state preconditions.
     const windowRead = await readRequeueWindow(records, goalRef, task.taskId, afterRunRef);
-    if (!windowRead.ok) return windowRead.rejection;
+    if (!windowRead.ok) {
+      // R-03: an approved application whose Task left the current Plan closes the stored request stale through
+      // the one close body; every other read failure is returned as-is, never closed as a guess.
+      if (authority !== null && windowRead.rejection.code === 'not_found'
+        && windowRead.rejection.reason === TASK_NOT_IN_PLAN) {
+        const closed = await executeReworkRequestClose({
+          records, scope: owned.scope, principal: principalIdentity(owned.ctx.principal),
+          commandId: authority.approved.commandId,
+          fingerprintInput: { kind: 'rework-request-close', request: authority.approved.record.ref,
+            state: 'stale', code: 'source_stale', reason: windowRead.rejection.reason },
+          current: authority.approved.record, outcome: 'stale', code: 'source_stale',
+          reason: windowRead.rejection.reason, guards: [], now: deps.now, eventId: deps.eventId,
+        });
+        if (closed.status === 'committed') {
+          return rejectedWithNonEmptyCurrent('revision_conflict', windowRead.rejection.reason,
+            [{ ref: authority.approved.record.ref, revision: authority.approved.record.revision + 1 }]);
+        }
+        if (closed.status === 'refused') return closed.refusal;
+        return closed;
+      }
+      return windowRead.rejection;
+    }
     const window = windowRead.value;
     const goal = window.goal;
     if (goal.workspaceRef.workspaceId !== owned.scope.workspaceId) return reject('forbidden', 'the Goal belongs to another workspace');
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled during the read');
     const afterRun = window.rework.selectedRun as RunSnapshot;
+    const approvedClose = authority === null ? null : authority.approved;
+    const cardCloseBase = (): CloseBase => ({ owned, identity, fingerprint, actor, goalRef, window, admissionGuards,
+      acknowledgement: input.acknowledgement ?? null, approved: approvedClose });
     // §3.4: with an archive origin the Task machine runs only after the origin
     // is verified (below), because a verified wait-cancel is what makes the
     // ordinary yielded row requeueable. Without one the old early check stays.
     const hasArchiveOrigin = input.archiveOrigin !== undefined && input.archiveOrigin !== null;
     if (!hasArchiveOrigin) {
       const stateProblem = taskRequeueStateProblem(window.state, window.rework);
-      if (stateProblem !== null) return stateRefusal(stateProblem, window);
+      if (stateProblem !== null && !stateProblem.ok) {
+        if (approvedClose !== null && (stateProblem.code === 'invalid' || stateProblem.code === 'revision_conflict')) {
+          return closeApprovedRequest(cardCloseBase(), 'stale', stateProblem.code, stateProblem.detail);
+        }
+        return stateRefusal(stateProblem, window);
+      }
     }
     if (pins.value.goal.revision !== goal.revision) {
       return reject('revision_conflict', 'the Goal changed since the caller read it', [{ ref: goalRef, revision: goal.revision }]);
@@ -943,6 +1078,10 @@ export function createTaskRequeueService(
     const pointers = await readPointerIntents(records, [afterRun]);
     if (pointers.status !== 'ready') return reject(pointers.code, pointers.reason);
     const pointerIntent = pointers.intents.get(afterRun.ref.runId) ?? null;
+    const baseSoFar: CommitBase = { owned, identity, fingerprint, actor, goalRef, window, admissionGuards,
+      acknowledgement: input.acknowledgement ?? null, approved: approvedClose, afterRun, pointerIntent,
+      roundGuards: [], roundClaims: [], workspaceGuard: workspace.guard,
+      sessionGuard: { refKey: sessionAggregateRefKey(claimSession.ref), expectedRevision: claimSession.revision } };
 
     // 4-5. The Goal, the class and the actor × class matrix with the fence; then the new inputs.
     // §3.4: an archive origin is verified against its durable request and its
@@ -957,7 +1096,12 @@ export function createTaskRequeueService(
     }
     if (hasArchiveOrigin) {
       const stateProblem = taskRequeueStateProblem(window.state, window.rework);
-      if (stateProblem !== null) return stateRefusal(stateProblem, window);
+      if (stateProblem !== null && !stateProblem.ok) {
+        if (approvedClose !== null && (stateProblem.code === 'invalid' || stateProblem.code === 'revision_conflict')) {
+          return closeApprovedRequest(cardCloseBase(), 'stale', stateProblem.code, stateProblem.detail);
+        }
+        return stateRefusal(stateProblem, window);
+      }
     }
     const derivation = deriveReworkClass(afterRun, pointerIntent, window.rework.chain, archive);
     if (derivation.kind !== 'class') return reject('invalid', `the selected Run has nothing to rework (${derivation.row})`);
@@ -1014,7 +1158,7 @@ export function createTaskRequeueService(
     // (`STATE-MACHINES-SPEC.md:398`, `:400`), so a trigger validated above is not asked again.
     const requeueConfirmedByCard = actorClass === 'system'
       && requeueConfirmedByCardOf(window, task.taskId, afterRun.ref.runId);
-    if (policyCode === null && actorClass !== 'human' && !requeueConfirmedByCard
+    if (authority === null && policyCode === null && actorClass !== 'human' && !requeueConfirmedByCard
       && input.trigger === undefined) {
       let autonomy = goalSettingsOf(goal).autonomy;
       if (deps.goalSettings !== undefined) {
@@ -1033,7 +1177,27 @@ export function createTaskRequeueService(
         countedNext: automation.counted ? automation.autoCount : null,
         cap: automation.cap ?? Number.MAX_SAFE_INTEGER,
       });
-      if (verdict === 'needs_decision' || verdict === 'user_only') {
+      if (verdict === 'needs_decision') {
+        if (caller.kind !== 'agent') {
+          // Record 3's requester is the agent that asked (book-7c.md:1089, :716): an automatic system requeue has
+          // no such requester, so the person's decision still refuses with zero writes.
+          return reject('forbidden', 'the Goal autonomy requires a user decision before an automatic requeue');
+        }
+        const requestRef: ReworkRequestRef = { aggregateType: 'ReworkRequest', projectId: task.projectId,
+          goalId: task.goalId, taskId: task.taskId, requestId: identity };
+        const pending = newReworkRequest({ ref: requestRef, workspaceId: owned.scope.workspaceId, kind: 'requeue', task,
+          subject: { kind: 'run', run: afterRun.ref },
+          requester: { actor: caller.writer.actor, session: caller.writer.sessionRef, run: caller.writer.runRef,
+            duty: agentDuty! },
+          reason: input.reason, requestedAt: deps.now(),
+          input: { kind: 'requeue', value: input as unknown as JsonValue },
+          pins: expected as unknown as JsonValue[],
+          countedNext: automation.counted ? automation.autoCount : null });
+        // B-09: the same command id replays this card answer from ReworkRequestRecorded, never from the record.
+        return commitRequeueReworkRequest(baseSoFar, pending, { status: 'needs_decision',
+          cardKey: decisionSourceKey({ kind: 'rework_request', requestRef }), request: requestRef });
+      }
+      if (verdict === 'user_only') {
         return reject('forbidden', 'the Goal autonomy requires a user decision before an automatic requeue');
       }
     }
@@ -1068,10 +1232,7 @@ export function createTaskRequeueService(
     const refusalBase = { current: currentRefusal, ref: refusalRef, task, afterRunRef: afterRun.ref,
       subjectRoundRef: head === null ? null : head.ref, failureClass: derivation.failureClass,
       requestedBy: actor, goalEndedRunsAtRefusal, configurationRevision: null };
-    const commitBase: CommitBase = { owned, identity, fingerprint, actor, goalRef, window, afterRun, admissionGuards,
-      pointerIntent, roundGuards, roundClaims, workspaceGuard: workspace.guard,
-      sessionGuard: { refKey: sessionAggregateRefKey(claimSession.ref), expectedRevision: claimSession.revision },
-      acknowledgement: input.acknowledgement ?? null };
+    const commitBase: CommitBase = { ...baseSoFar, roundGuards, roundClaims };
     if (policyCode !== null) {
       return commitRefusal(commitBase, { ...refusalBase, code: policyCode, basisDigest: null, source: null,
         matchedRequeueRef: null, reason: policyCode === 'budget_not_increased'
@@ -1133,7 +1294,7 @@ export function createTaskRequeueService(
       fingerprint, requeue,
       // 7A §3.5 rule 3: the effect event carries the key only when the input did.
       ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) };
-    return commit(commitBase, {
+    return commitRequeueWrite(commitBase, {
       records: [encodeTaskRequeueSnapshot(requeue, { since: null })],
       extraGuards: [{ refKey: taskRequeueRefKey(requeue.ref), expectedRevision: null }],
       event: encodeTaskRequeuedEvent(event),
@@ -1141,6 +1302,8 @@ export function createTaskRequeueService(
       // Slice 5 §2.5: the Store binds this creation commit cursor to the wire
       // `since`; a later update never rebinds it.
       commitCursorBindings: [{ refKey: taskRequeueRefKey(requeue.ref), field: 'since' }],
+      // B-08: the approved application's request@2 rides this same commit.
+      ...(authority === null ? {} : { applied: authority.approved }),
     });
   }
 
@@ -1262,27 +1425,14 @@ export function createTaskRequeueService(
     return { status: 'ready', value: { requeue, cursor: sinceCursor } };
   }
 
-  type CommitBase = {
-    owned: OwnedCall; identity: string; fingerprint: string; actor: ActorRef; goalRef: GoalRef; window: RequeueWindow;
-    afterRun: RunSnapshot; admissionGuards: readonly RecordGuard[];
-    /** The afterRun's pointer intent, read after the window (TASK-28 re-judges the fence with it). */
-    pointerIntent: StopIntentV1 | null;
-    /** VR-09: the chain head as read and its same-owner successor slot claim; the head's reverify refusal as read. */
-    roundGuards: readonly RecordGuard[];
-    roundClaims: readonly UniqueClaimChange[];
-    /** The Goal's Workspace as read (TASK-16 guards Workspace@rev). */
-    workspaceGuard: RecordGuard;
-    /** The afterRun's claim Session as read (TASK-16 guards it). */
-    sessionGuard: RecordGuard;
-    /** 7A §3.5: the acknowledged message, null when the call carried none (a refusal returns no proof). */
-    acknowledgement: SessionMessageRef | null;
-  };
-
   /** TASK-28 (ND-8): the policy refusal @k+1 through the machine, committed with the same read set. */
   async function commitRefusal(
     base: CommitBase,
     input: Omit<Parameters<typeof taskReworkRefusalEffects>[0], 'refusedAt'>,
   ): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
+    // LD-25: an approved application does not write a second owner refusal; the stored request closes instead
+    // (`book-7c.md:724–:726`), never by a second owner commit.
+    if (base.approved !== null) return closeApprovedRequest(base, 'rejected', input.code, input.reason);
     const refusedAt = deps.now();
     const [written] = taskReworkRefusalEffects({ ...input, refusedAt });
     if (written?.kind !== 'write_task_rework_refusal') throw new Error('a policy refusal writes its TaskReworkRefusal');
@@ -1293,33 +1443,47 @@ export function createTaskRequeueService(
     const event: TaskReworkRefusedEvent = { eventId: deps.eventId(), eventType: TASK_REWORK_REFUSED_EVENT_TYPE,
       schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, occurredAt: refusedAt, identityKey: base.identity, actor: base.actor,
       fingerprint: base.fingerprint, refusal };
-    return commit(base, {
+    const committed = await commitRequeueWrite(base, {
       records: [encodeTaskReworkRefusalSnapshot(refusal)],
       extraGuards: [{ refKey: taskReworkRefusalRefKey(refusal.ref), expectedRevision: written.expectedRevision }],
       event: encodeTaskReworkRefusedEvent(event),
       value: { kind: 'refused', refusal },
     });
+    return committed as EffectWriteResultV1<TaskRequeueOutcomeV1>;
   }
 
   /**
-   * The one commit of a requeue or a refusal (TASK-16, and TASK-28 with the
-   * same read set): the Goal@rev, the active Plan@1, the directed task facts
-   * (every Run, Lease, Reduction) and the rework records read (TaskRequeue@1,
-   * refusal@k, and the absent keys at null), VR-09's chain-head guard and
-   * same-owner slot claim, the head's reverify refusal as read (§13.2
-   * point 5), the afterRun's claim Session@rev, the
-   * Workspace@rev, the Agent admission guards, plus the written record's own
-   * CAS. A losing concurrent requeue or refusal is the store's
-   * `revision_conflict`, whose `current` names the record that won.
+   * The one commit of a requeue, a refusal or the request card (TASK-16, TASK-28 and the request branch with the
+   * same read set): the Goal@rev, the active Plan@1, the directed task facts (every Run, Lease, Reduction) and the
+   * rework records read (TaskRequeue@1, refusal@k, and the absent keys at null), VR-09's chain-head guard and
+   * same-owner slot claim, the head's reverify refusal as read (§13.2 point 5), the afterRun's claim Session@rev,
+   * the Workspace@rev, the Agent admission guards, plus the written record's own CAS. B-08: an approved
+   * application appends the applied request@2 and its CAS to the same records/read set, with no second event and no
+   * second commit. A losing concurrent write is the store's `revision_conflict`.
    */
-  async function commit(base: CommitBase, write: {
+  type RequeueCommitWrite = {
     records: PreparedCommit['records']; extraGuards: readonly RecordGuard[];
     event: PreparedCommit['events'][number]; value: TaskRequeueOutcomeV1;
     /** Slice 5 §2.5: the wire origin bindings of the records this commit creates. */
     commitCursorBindings?: PreparedCommit['commitCursorBindings'];
-  }): Promise<EffectWriteResultV1<TaskRequeueOutcomeV1>> {
+  };
+  /** LD-25/B-08: the approved application's write is always the committed requeue plus its request@2. */
+  type RequeueAppliedCommitWrite = RequeueCommitWrite & {
+    value: Extract<TaskRequeueOutcomeV1, { kind: 'requeued' }>;
+    applied: { record: ReworkRequestV1; commandId: string };
+  };
+
+  async function commitRequeueWrite(base: CommitBase,
+    write: (RequeueCommitWrite & { applied?: undefined }) | RequeueAppliedCommitWrite):
+  Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
     const { window } = base;
-    const writtenKeys = new Set(write.extraGuards.map((guard) => guard.refKey));
+    const appliedRecord = write.applied === undefined ? null
+      : applyReworkRequest(write.applied.record, write.value.requeue.ref,
+        { commandId: write.applied.commandId, at: deps.now() });
+    const appliedKey = appliedRecord === null ? null : refKeyOf(appliedRecord.ref);
+    const extraGuards: RecordGuard[] = [...write.extraGuards,
+      ...(appliedKey === null ? [] : [{ refKey: appliedKey, expectedRevision: 1 }])];
+    const writtenKeys = new Set(extraGuards.map((guard) => guard.refKey));
     const merged = mergeGuards([
       { refKey: refKeyOf(base.goalRef), expectedRevision: window.goal.revision },
       { refKey: planRevisionRefKey(window.plan.ref), expectedRevision: window.plan.revision },
@@ -1329,29 +1493,120 @@ export function createTaskRequeueService(
       base.sessionGuard,
       base.workspaceGuard,
       ...base.admissionGuards.filter((guard) => guard.refKey !== base.sessionGuard.refKey),
-      ...write.extraGuards,
+      ...extraGuards,
+    ]);
+    if (!merged.ok) return merged.rejection;
+    const bindings = [...(write.commitCursorBindings ?? []),
+      ...(appliedKey === null ? [] : [{ refKey: appliedKey, field: 'since' as const }])];
+    const prepared: PreparedCommit = { identityKey: base.identity, fingerprint: base.fingerprint, guards: merged.guards,
+      records: appliedRecord === null ? write.records
+        : [...write.records, reworkRequestCodec.encode(appliedRecord)],
+      claims: base.roundClaims.map((claim) => ({ ...claim })), indexGuards: [], indexChanges: [],
+      events: [write.event],
+      ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }) };
+    if (base.owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled before commit');
+    try {
+      const receipt = await records.commit(prepared);
+      if (receipt.status !== 'committed') {
+        // A concurrent successor round moved the head slot (VR-09): the same answer as a stale read.
+        if (receipt.code === 'unique_conflict') {
+          return reject('revision_conflict', `${receipt.reason} (a successor round of the chain head committed first)`);
+        }
+        return mapStoreFailure(receipt);
+      }
+      if (receipt.replayed) return replay(receipt, base.identity, base.fingerprint, base.actor, base.acknowledgement);
+      return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor,
+        // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
+        // when the call carried an acknowledgement; a refusal never returns one.
+        ...(base.acknowledgement === null || write.value.kind !== 'requeued' ? {}
+          : { proofReceipt: { identityKey: base.identity, fingerprint: base.fingerprint, cursor: receipt.cursor } }) };
+    } catch (error) {
+      // DR-03: a commit whose answer was lost is looked up by its own identity and answered by the original replay.
+      const outcome = await lookupCommittedReceipt(records, base.identity, base.fingerprint);
+      if (outcome.status === 'found') {
+        return replay(outcome.receipt, base.identity, base.fingerprint, base.actor, base.acknowledgement);
+      }
+      if (outcome.status === 'missing') {
+        return reject('unavailable', `the requeue commit result is unknown: ${messageOf(error)}`);
+      }
+      return reject('unavailable', outcome.reason);
+    }
+  }
+
+  /**
+   * The request branch's one commit (B-09): `ReworkRequest@1` plus its one `ReworkRequestRecorded` event under the
+   * already-computed identity/fingerprint, the same read-set guards and the Store-bound `since`.
+   */
+  async function commitRequeueReworkRequest(base: CommitBase, record: PendingReworkRequestV1,
+    value: ReworkRequestedV1): Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
+    const key = refKeyOf(record.ref);
+    const merged = mergeGuards([
+      { refKey: refKeyOf(base.goalRef), expectedRevision: base.window.goal.revision },
+      { refKey: planRevisionRefKey(base.window.plan.ref), expectedRevision: base.window.plan.revision },
+      ...base.window.facts.guards,
+      ...base.window.facts.reworkGuards.filter((guard) => guard.refKey !== key),
+      base.sessionGuard,
+      base.workspaceGuard,
+      ...base.admissionGuards.filter((guard) => guard.refKey !== base.sessionGuard.refKey),
+      { refKey: key, expectedRevision: null },
     ]);
     if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = { identityKey: base.identity, fingerprint: base.fingerprint, guards: merged.guards,
-      records: write.records, claims: base.roundClaims.map((claim) => ({ ...claim })), indexGuards: [], indexChanges: [],
-      events: [write.event],
-      ...(write.commitCursorBindings === undefined ? {} : { commitCursorBindings: write.commitCursorBindings }) };
-    if (base.owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled before commit');
-    const receipt = await records.commit(prepared);
-    if (receipt.status !== 'committed') {
-      // A concurrent successor round moved the head slot (VR-09): the same answer as a stale read.
-      if (receipt.code === 'unique_conflict') {
-        return reject('revision_conflict', `${receipt.reason} (a successor round of the chain head committed first)`);
+      ...reworkRequestRecordedFragment({ record, eventId: deps.eventId(), occurredAt: record.requestedAt,
+        identityKey: base.identity, actor: base.actor as Extract<ActorRef, { kind: 'agent' }>,
+        fingerprint: base.fingerprint }),
+      indexGuards: [], indexChanges: [] };
+    if (base.owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled before its request commit');
+    try {
+      const receipt = await records.commit(prepared);
+      if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+      if (receipt.replayed) return replay(receipt, base.identity, base.fingerprint, base.actor, base.acknowledgement);
+      return value;
+    } catch (error) {
+      const outcome = await lookupCommittedReceipt(records, base.identity, base.fingerprint);
+      if (outcome.status === 'found') {
+        return replay(outcome.receipt, base.identity, base.fingerprint, base.actor, base.acknowledgement);
       }
-      return mapStoreFailure(receipt);
+      if (outcome.status === 'missing') {
+        return reject('unavailable', `the rework request commit result is unknown: ${messageOf(error)}`);
+      }
+      return reject('unavailable', outcome.reason);
     }
-    if (receipt.replayed) return replay(receipt, base.identity, base.fingerprint, base.actor, base.acknowledgement);
-    return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor,
-      // 7A §3.5 rule 5: the receipt of this effect's own commit, present only
-      // when the call carried an acknowledgement; a refusal never returns one.
-      ...(base.acknowledgement === null || write.value.kind !== 'requeued' ? {}
-        : { proofReceipt: { identityKey: base.identity, fingerprint: base.fingerprint, cursor: receipt.cursor } }) };
   }
 
-  return { requeueTask, readTaskRequeue, readTaskRequeueByIdentity };
+  /**
+   * LD-25: a fence that moved since the request closes it through the standalone close record (`book-7c.md:724–:726`):
+   * one `ReworkRequest@2` plus its one `ReworkRequestClosed` event, never a second owner commit. The answer is the
+   * rejection the owner would have given; the closed record (and its outcome) is the card's result.
+   */
+  async function closeApprovedRequest(base: CloseBase, outcome: 'rejected' | 'stale', code: string, reason: string):
+  Promise<CoreRejection> {
+    if (base.approved === null) throw new Error('a standalone request close requires the stored request');
+    const key = refKeyOf(base.approved.record.ref);
+    const closedRef = { ref: base.approved.record.ref, revision: base.approved.record.revision + 1 };
+    const requeueClosedRejection = (closed: Pick<ReworkRequestV1, 'ref' | 'revision'>): CoreRejection => outcome === 'stale'
+      ? rejectedWithNonEmptyCurrent('revision_conflict', reason, [{ ref: closed.ref, revision: closed.revision }])
+      : rejectedWithNonEmptyCurrent('forbidden', reason, [{ ref: closed.ref, revision: closed.revision }]);
+    // The close is the one shared `executeWriteCommand` body; this owner supplies its own read-set guards and maps
+    // the closed revision to the rejection the owner path would have given.
+    const closed = await executeReworkRequestClose({
+      records, scope: base.owned.scope, principal: principalIdentity(base.owned.ctx.principal),
+      commandId: base.approved.commandId,
+      fingerprintInput: { kind: 'rework-request-close', request: base.approved.record.ref, state: outcome, code, reason },
+      current: base.approved.record, outcome, code, reason,
+      guards: [
+        { refKey: refKeyOf(base.goalRef), expectedRevision: base.window.goal.revision },
+        { refKey: planRevisionRefKey(base.window.plan.ref), expectedRevision: base.window.plan.revision },
+        ...base.window.facts.guards,
+        ...base.window.facts.reworkGuards.filter((guard) => guard.refKey !== key),
+        ...base.admissionGuards.filter((guard) => guard.refKey !== key),
+      ],
+      now: deps.now, eventId: deps.eventId,
+    });
+    if (closed.status === 'committed') return requeueClosedRejection(closedRef);
+    if (closed.status === 'refused') return closed.refusal;
+    return closed;
+  }
+
+  return { requeueTask, requeueApprovedByCard, readTaskRequeue, readTaskRequeueByIdentity };
 }

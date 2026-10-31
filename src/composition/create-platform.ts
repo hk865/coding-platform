@@ -199,6 +199,7 @@ import type {
 } from '../core/work-graph/model/goal-card-contracts.js';
 import { DISPATCH_COUNTER_SCHEMAS } from '../core/work-graph/persistence/dispatch-counter-codecs.js';
 import { GOAL_INTERRUPTION_SCHEMAS } from '../core/work-graph/persistence/goal-interruption-codecs.js';
+import { MODULE_OVERLAP_GATE_SCHEMAS } from '../core/work-graph/persistence/module-overlap-gate-codecs.js';
 import { createGoalInterruptionService } from '../core/work-graph/tasks/goal-interruption-service.js';
 // Slice 1 (spec §3.3, §4.4): the Session-facts, responsibility and anomaly owners
 // constructed by this composition root and injected through the narrow ports.
@@ -860,6 +861,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records,
       ...DISPATCH_COUNTER_SCHEMAS.records, ...GOAL_CONFIRM_SCHEMAS.records, ...GOAL_COPY_RECORD_SCHEMAS.records,
       ...GOAL_INTERRUPTION_SCHEMAS.records,
+      ...MODULE_OVERLAP_GATE_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
@@ -875,6 +877,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events,
       ...DISPATCH_COUNTER_SCHEMAS.events, ...GOAL_CONFIRM_SCHEMAS.events, ...GOAL_COPY_RECORD_SCHEMAS.events,
       ...GOAL_INTERRUPTION_SCHEMAS.events,
+      ...MODULE_OVERLAP_GATE_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
@@ -890,6 +893,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? [],
       ...DISPATCH_COUNTER_SCHEMAS.lookups ?? [], ...GOAL_CONFIRM_SCHEMAS.lookups ?? [],
       ...GOAL_INTERRUPTION_SCHEMAS.lookups ?? [],
+      ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
@@ -1527,9 +1531,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
         // the three user tools call the real owners and never fail closed.
         decisionMessages: rawDecisionMessages,
-        // Slice 5 §4.5/T-R2-1: the SAME receipt reader the Workflow receives, so
-        // an acknowledged Agent plan adoption returns the formal receipt the
-        // Agent needs for `record_decision_application`.
+        // The same plan-application receipt reader the Workflow gets, shared with the whiteboard tools.
         applicationReceipt,
         materials: rawMaterials, bodies, activity: executionHistory, graphHistory, sessionOperations,
         // R4.3a: the SAME raw control service `platform.controls` wraps. The
@@ -2253,7 +2255,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
         resolveScribeRecipient: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
       } = {
-        writeNote, reviewNote, withdrawNote, readNote, listByAnchor, countCurrentNotes, checkNotes,
+        writeNote, reviewNote, withdrawNote, readNote, listByAnchor,
+        listCurrentVersions: noteReads.listCurrentVersions, countCurrentNotes, checkNotes,
         // K3 L4: the read-only committed-receipt lookup stays on the note owner group
         // so the owner lookup is reachable through the same public `notes` surface.
         ...(noteWrite.lookupToolCommit === undefined ? {} : { lookupToolCommit: noteWrite.lookupToolCommit }),

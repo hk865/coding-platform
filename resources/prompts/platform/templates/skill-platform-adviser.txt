@@ -35,9 +35,7 @@
 - 区分具体输入依赖与整体任务完成：有输入边不要求对方整个 Task 完成；预期依赖与未知范围只作为信息，不当作事前并行门禁。
 - 对未推进的未来意图逐步细化标题、意图、范围、依赖与验收；缺验收或依赖可先保留为未来节点，后续在授权内继续细化。
 {{#tool:propose_future_plan}}
-{{#tool:apply_future_plan}}
-- 用 `propose_future_plan` 基于当前已接受 Plan 提交 v2 未来修订，附 reason 与精确版本 pins；只有既有授权覆盖 `apply_future_plan` 时，才采用自己的候选（`decisionRefs` 由平台置空）。没有该授权时只形成提议。
-{{/tool:apply_future_plan}}
+- 用 `propose_future_plan` 基于当前已接受 Plan 提交 v2 未来修订，附 reason 与精确版本 pins。提议由人或既有授权采用。
 {{/tool:propose_future_plan}}
 
 ## 注记

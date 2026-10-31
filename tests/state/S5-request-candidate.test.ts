@@ -307,7 +307,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const u2Before = structuredClone(u2);
     const event: AdoptedEvent = {
       type: 'proposal_adopted', adopter: 'host', proposalRef: U1, expectedProposalRevision: 1,
-      decisionRefs: [], agentWriter: null, requestRef: Q1,
+      decisionRefs: [], requestRef: Q1,
     };
     const result = transitionPlanProposal(u1, event, context({ source: SOURCE_B1, future: FUTURE_OK,
       requestCandidate: requestFacts({ slotExpectedOwnerIsNull: false }) }));
@@ -336,7 +336,7 @@ describe('S5 request candidate unit rows (§5.2 PC01..PC10)', () => {
     const before = structuredClone(u2);
     const event: AdoptedEvent = {
       type: 'proposal_adopted', adopter: 'host', proposalRef: U2, expectedProposalRevision: 1,
-      decisionRefs: [], agentWriter: null, requestRef: Q2,
+      decisionRefs: [], requestRef: Q2,
     };
     const result = transitionPlanProposal(u2, event, context({
       goal: { activePlanRevision: PB2, desiredState: 'active' },

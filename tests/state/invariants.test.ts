@@ -281,9 +281,11 @@ async function requeue(platform: Platform, requestId: string, afterRunRef: RunRe
   if (goal.status !== 'ready') throw new Error('the Goal must be readable');
   const run = await platform.executions.readExecution(ctx(), afterRunRef);
   if (run.status !== 'ready') throw new Error('the Run must be readable');
-  return platform.claims.requeueTask!(ctx(), { meta: { requestId, expected: [{ ref: goalRef, revision: goal.value.goal.revision },
-    { ref: afterRunRef, revision: run.value.run.revision }] },
+  const result = await platform.claims.requeueTask!(ctx(), { meta: { requestId,
+    expected: [{ ref: goalRef, revision: goal.value.goal.revision }, { ref: afterRunRef, revision: run.value.run.revision }] },
     input: { taskRef: TASK, afterRunRef, reason: 'the registered check failed; try again', ...extra } });
+  if (result.status === 'needs_decision') throw new Error(`the requeue asked for a decision: ${JSON.stringify(result)}`);
+  return result;
 }
 
 beforeAll(async () => {

@@ -66,12 +66,13 @@ const HOST_SEEDS = [{ seed: 1, system: false }, { seed: 4, system: false }, { se
   { seed: 25, system: false }, { seed: 20, system: true }];
 const HOST_OPERATIONS = 40;
 /**
- * The agent-grant world seeds (chosen from seeds 1–60 so that together with the Host seeds they cover every kind
- * below): seed 16 has the Agent's requeue and reverify of a Run a person paused refused by the fence, seed 43 reaches
- * `verification_uncovered` on G1's chain, seed 14 commits an Agent requeue and Agent W16s, seed 4 brings the three
- * owner-level races to the commit with both writers, seed 23 the requeue ∥ W16 race with W16 committing first.
+ * The agent-grant world seeds (chosen from seeds 1–64 so that together with the Host seeds they cover every kind
+ * below): seed 64 has the Agent's reverify of a Run a person paused refused by the fence, seed 43 the same for its
+ * requeue and reaches `verification_uncovered` on G1's chain, seed 14 commits an Agent requeue and Agent W16s, seed 4
+ * brings the three owner-level races to the commit with both writers, seed 23 the requeue ∥ W16 race with W16 committing
+ * first.
  */
-const AGENT_SEEDS = [4, 14, 16, 23, 43];
+const AGENT_SEEDS = [4, 14, 23, 43, 64];
 const AGENT_OPERATIONS = 40;
 
 it.each(HOST_SEEDS)('Host world, seed $seed (system Host actor: $system): every operation keeps I-1..I-22', async ({ seed, system }) => {
@@ -182,7 +183,6 @@ const COVERAGE: ReadonlyArray<{ kind: string; keys: RegExp; optional?: true }> =
   { kind: 'reverify refusal', keys: /^fact:refusal:reverify:/ },
   { kind: '只改处置的 W16 by a person', keys: /^fact:disposition:human:/ },
   { kind: '只改处置的 W16 by the automation', keys: /^fact:disposition:system:/ },
-  { kind: '只改处置的 W16 by an Agent', keys: /^fact:disposition:agent:/ },
   { kind: 'W16 adds a carrier (a person)', keys: /^w16:human:carrier:committed$/ },
   { kind: 'guard 9: an automatic carrier adoption with every carrier fenced is forbidden', keys: /^guard9:(system|agent):carrier-only:rejected:forbidden$/ },
   { kind: 'the human-stop cycle (requeue, reverify and the Workflow do not rework)', keys: /^human-stop-cycle:done$/ },

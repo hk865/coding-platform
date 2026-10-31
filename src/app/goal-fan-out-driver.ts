@@ -462,6 +462,9 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
           results.push(written.value.kind === 'requeued' ? result('requeued', null) : result('refused', written.value.refusal.code));
           continue;
         }
+        // A resume carries its trigger, so the owner never asks for a decision here (requeue-service.ts:1017); any
+        // other non-commit is a failure. Only a refusal carries `code`/`current`.
+        if (written.status !== 'rejected') { results.push(result('failed', reasonOf(written))); continue; }
         // GOAL-29: a TaskRequeue already covering the Run is done; a Goal that moved on drops this continuation.
         const current = written.current ?? [];
         if (written.code === 'revision_conflict'

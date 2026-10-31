@@ -2091,7 +2091,7 @@ async function openAgentPlatform(h: HostScenario, policy: TaskAutomationPolicyV1
  * (GAP-46), so the Agent Runs are entered through the formal entry writers with the fixture's explicit Kernel
  * binding, as the W2 fixture does.
  */
-export const AGENT_GRANT = { ...B2_HOST.permissions, tools: ['read', 'request_rework', 'request_recheck', 'propose_future_plan', 'apply_future_plan'] };
+export const AGENT_GRANT = { ...B2_HOST.permissions, tools: ['read', 'request_rework', 'request_recheck', 'propose_future_plan'] };
 
 /** The R3e Goal's optional work Task whose Run is that Goal's Agent writer. */
 const R3E_AGENT_TASK_ID = 'fuzz-r3e-agent-work';
@@ -2432,7 +2432,7 @@ export class AgentFuzz {
       [2, ['goal', () => this.opGoal()]],
       [3, ['cap', async () => this.opCap()]],
       [2, ['source', async () => this.opSource()]],
-      [raceable ? 2 : 4, ['w16', () => this.opW16(this.rng.pick<AgentCaller>(['human', 'system', 'agent', 'agent']))]],
+      [raceable ? 2 : 4, ['w16', () => this.opW16(this.rng.pick<'human' | 'system'>(['human', 'system']))]],
       [raceable ? 3 : 0, ['race-requeue-w16', () => this.opRaceRequeueW16()]],
       [raceable ? 2 : 0, ['race-requeue-refusal', () => this.opRaceRequeueRefusal()]],
       [carrierRace ? 6 : 0, ['race-carrier-pause', () => this.opRaceCarrierPause()]],
@@ -2699,7 +2699,7 @@ export class AgentFuzz {
   }
 
   /** Proposes the W16 draft (of `taskId`, see `w16Draft`) as `caller` and, unless `apply` is false, adopts it. */
-  private async proposeAndApply(caller: AgentCaller, apply: boolean, taskId?: string):
+  private async proposeAndApply(caller: 'human' | 'system', apply: boolean, taskId?: string):
   Promise<{ answer: unknown; change: string; proposal: PlanProposal | null } | null> {
     const prepared = this.w16Draft(taskId);
     if (prepared === null) return null;
@@ -2721,8 +2721,8 @@ export class AgentFuzz {
     return { answer: applied, change: prepared.change, proposal: proposed.value };
   }
 
-  /** W16 that changes only a disposition, adopted by a person, the automation or the Agent of G1 (TASK-18/19, guard 7). */
-  private async opW16(caller: AgentCaller): Promise<void> {
+  /** W16 that changes only a disposition, adopted by a person or the automation (TASK-18/19, guard 7). */
+  private async opW16(caller: 'human' | 'system'): Promise<void> {
     const done = await this.proposeAndApply(caller, true);
     if (done === null) return;
     const outcome = outcomeOf(done.answer);
@@ -2735,7 +2735,7 @@ export class AgentFuzz {
    * A W16 of G1 that only adds an active carrier of its obligation, adopted by `caller` through `plans` (the production
    * owner, or one racing through a barrier). Answers the adoption, or null when the proposal was refused or had issues.
    */
-  private async proposeCarrier(caller: AgentCaller, label: string): Promise<{ proposal: PlanProposal; carrier: string; fenced: boolean } | null> {
+  private async proposeCarrier(caller: 'human' | 'system', label: string): Promise<{ proposal: PlanProposal; carrier: string; fenced: boolean } | null> {
     const world = this.world();
     const base = this.b2.base;
     const active = this.goalOf().activePlanRevision;
@@ -2759,18 +2759,17 @@ export class AgentFuzz {
    * Adopts a carrier proposal as `caller` and judges guard 9 (LA-3): an automatic adoption while every existing carrier
    * is fenced commits nothing and is `forbidden`; a committed one is checked with its step (I-17's guard 9 clause).
    */
-  private async adoptCarrier(caller: AgentCaller, prepared: { proposal: PlanProposal; carrier: string; fenced: boolean }, label: string): Promise<string> {
+  private async adoptCarrier(caller: 'human' | 'system', prepared: { proposal: PlanProposal; carrier: string; fenced: boolean }, label: string): Promise<string> {
     const base = this.b2.base;
     const adopted = await this.quietRefusal(label, () => this.plans.applyPlanChange(this.ctxFor(caller), {
       meta: { requestId: this.requestId('carrier-apply'), expected: [{ ref: base.goalRef, revision: this.goalOf().revision }] },
       input: { proposalRef: prepared.proposal.ref, expectedProposalRevision: prepared.proposal.revision, decisionRefs: [] } }));
     const outcome = outcomeOf(adopted);
-    const cls = caller === 'agent-other-goal' ? 'agent' : caller;
-    this.counts.add(`w16:${cls}:carrier:${outcome}`);
-    if (prepared.fenced) this.counts.add(`guard9:${cls}:carrier-only:${outcome}`);
+    this.counts.add(`w16:${caller}:carrier:${outcome}`);
+    if (prepared.fenced) this.counts.add(`guard9:${caller}:carrier-only:${outcome}`);
     this.record(`${label}: ${caller} adds carrier ${prepared.carrier}${prepared.fenced ? ' (every existing carrier fenced)' : ''}: ${outcome}${reasonOf(adopted)}`);
-    if (prepared.fenced && cls !== 'human' && outcome !== 'rejected:forbidden') {
-      throw new Error(`guard 9: a ${cls} adoption adding carrier ${prepared.carrier} while every existing carrier is fenced must be forbidden, `
+    if (prepared.fenced && caller !== 'human' && outcome !== 'rejected:forbidden') {
+      throw new Error(`guard 9: a ${caller} adoption adding carrier ${prepared.carrier} while every existing carrier is fenced must be forbidden, `
         + `got ${outcome}${reasonOf(adopted)}\n${this.replayText()}`);
     }
     await this.gate.check(label, adopted.status === 'committed' ? ownerStep('plan_adopted', this.actorFor(caller), this.policy, label) : undefined);
@@ -2779,8 +2778,8 @@ export class AgentFuzz {
 
   /**
    * Guard 9 decided in sequence (LA-3): the target's selected Run is fenced (a person stopped it), a person pauses the
-   * Agent writer's Run, the last unfenced active carrier of G1's obligation, and then the automation, or the Agent
-   * writer itself, adopts a W16 that only adds a carrier: `forbidden`, nothing written (`adoptCarrier`).
+   * Agent writer's Run, the last unfenced active carrier of G1's obligation, and then the automation adopts a W16 that
+   * only adds a carrier: `forbidden`, nothing written (`adoptCarrier`).
    */
   private async opGuard9Sequential(): Promise<void> {
     const writer = this.agentWriter;
@@ -2790,7 +2789,7 @@ export class AgentFuzz {
     this.counts.add(`control:pause:human:${outcomeOf(paused)}`);
     this.record(`guard 9 in sequence: a person pauses the Agent writer's Run ${writer.claim.runRef.runId}: ${outcomeOf(paused)}${reasonOf(paused)}`);
     await this.gate.check('guard 9: the last carrier paused');
-    const adopter = this.rng.weighted<AgentCaller>([[3, 'system'], [1, 'agent']]);
+    const adopter: 'human' | 'system' = 'system';
     const prepared = await this.proposeCarrier(adopter, 'guard 9 in sequence');
     if (prepared === null) return;
     if (!prepared.fenced) {
@@ -3050,7 +3049,7 @@ export class AgentFuzz {
 
   /**
    * PLAN-05 (§3 test row "TASK-19 与选中 Run 上的 submitControl 并发"): a W16 that changes only implement-a's
-   * disposition (adopted by the automation or the Agent writer) and a person's pause or cancel of implement-a's
+   * disposition (adopted by the automation) and a person's pause or cancel of implement-a's
    * selected Run, in one read window (`commitBarrier`, both commit orders). When both reach their commit, exactly one
    * commits and the other is `revision_conflict`; the loser, retried once from a fresh read, is judged again (guards 3
    * and 7: an automatic adopter after a person's stop that landed is `forbidden` or `busy`). Today no Run state lets
@@ -3061,7 +3060,7 @@ export class AgentFuzz {
   private async opRaceW16Control(): Promise<void> {
     const run = this.targetRun();
     if (run === undefined) return;
-    const adopter = this.rng.pick<AgentCaller>(['system', 'agent']);
+    const adopter: 'human' | 'system' = 'system';
     const prepared = await this.proposeAndApply(adopter, false, this.targetClaim.task.taskId);
     if (prepared === null || prepared.proposal === null) {
       this.counts.add('race-w16-control:no-proposal');
