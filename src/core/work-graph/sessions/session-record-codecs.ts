@@ -21,7 +21,7 @@ import {
   defineEvent, f, type EventFormat, type Fields, type InferEvent,
 } from '../../../contracts/data-format.js';
 import {
-  id, OperationRefShape, PlanRevisionRefShape, SessionMessageRefShape,
+  id, OperationRefShape, PlanRevisionRefShape, SessionMessageRefShape, TaskTripleShape,
 } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
@@ -43,10 +43,15 @@ import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.j
 import {
   HandoffActionShape, SecretaryArchiveActionShape, upgradeSessionOperationActionV1,
 } from '../model/session-operation-arms.js';
+import {
+  MemberCreateActionShape, checkMemberCreatedEventBody,
+  memberCreationAcceptedEventFormat, memberCreationDecidedEventFormat, memberCreatedEventFormat,
+  type MemberCreatedEventV1,
+} from '../state/member-creation.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { createEventCodec as createEnvelopeEventCodec } from '../persistence/event-codec-factory.js';
 import { createEventCodec, type EventCodec } from '../persistence/field-table-codec.js';
-import { versionPinProblem } from '../persistence/decision-record-codecs.js';
+import { decisionChangeProofProblem, versionPinProblem } from '../persistence/decision-record-codecs.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
 
 // --------------------------------------------------------------------------
@@ -58,6 +63,7 @@ export const SESSION_RECORD_SCHEMA_ID = 'SessionRecord@1';
 export const SESSION_WORK_LINK_SCHEMA_ID = 'SessionWorkLink@1';
 export const SESSION_CREATION_ADMITTED_EVENT_TYPE = 'SessionCreationAdmitted';
 export const SESSION_CREATED_EVENT_TYPE = 'SessionCreated';
+export const MEMBER_CREATED_EVENT_TYPE = 'MemberCreated';
 export const SESSION_EVENT_SCHEMA_VERSION = 1;
 export const SESSION_BY_WORKSPACE_LOOKUP = 'session-by-workspace';
 export const SESSION_WORK_LINKS_LOOKUP = 'session-work-links';
@@ -69,6 +75,8 @@ export const SESSION_LINKS_BY_TASK_LOOKUP = 'session-links-by-task';
 export const SESSION_LINKS_BY_WORK_LOOKUP = 'session-links-by-work';
 /** The operations of a workspace by phase; unfinished is `accepted` or `running`, and readers filter by `action.kind`. */
 export const CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP = 'core-operation-by-workspace-phase';
+/** One Goal's member operations in requested order; `stage` is deliberately absent (every reader filters it in memory). */
+export const CORE_OPERATION_MEMBER_BY_GOAL_LOOKUP = 'core-op-member-by-goal';
 
 // Slice 2C L4 indexes 1–5 (spec §2).
 export const S2C_SESSION_BY_KIND_FROM_LOOKUP = 's2c-session-by-kind-from';
@@ -384,6 +392,7 @@ const OPERATION_PHASES = ['accepted', 'running', 'completed', 'failed', 'unknown
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
   'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance', 'archiveRequest', 'unavailableSince',
+  'delegationCeiling', 'secretaryCreated',
 ];
 const WORK_LINK_BODY_KEYS: readonly string[] = ['ref', 'revision', 'since', 'until'];
 
@@ -452,23 +461,59 @@ export function checkSessionProvenance(value: unknown, ownProjectId: string, own
   }
 }
 
+/** The creator's ceiling on a member-created or inherited line; absent is no ceiling. */
+export function checkDelegationCeiling(value: unknown): Problem {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['tools', 'writeScope', 'createMember'])) {
+    return 'delegationCeiling must be {tools,writeScope,createMember}';
+  }
+  if (!Array.isArray(value['tools']) || !value['tools'].every(nonEmpty)) return 'delegationCeiling tools must be strings';
+  if (!Array.isArray(value['writeScope']) || !value['writeScope'].every(nonEmpty)) {
+    return 'delegationCeiling writeScope must be strings';
+  }
+  if (typeof value['createMember'] !== 'boolean') return 'delegationCeiling createMember must be a boolean';
+  return null;
+}
+
+/** The secretary-created pin is exactly `true`; absent means not secretary-created. */
+export function checkSecretaryCreated(value: unknown): Problem {
+  return value === true ? null : 'secretaryCreated must be true when present';
+}
+
 /**
  * Slice 6A §3.4.7: the first-phase admission's line-creation intent. `null` is
  * the current-format value of every creation that opens no line; an object must
- * carry exactly the frozen four fields.
+ * carry exactly the frozen fields.
  */
 export function checkSessionCreationIntent(value: unknown): Problem {
   if (value === null) return null;
-  if (!isRecord(value) || !hasOnlyKeys(value, ['duty', 'scope', 'reason', 'creator'])) {
-    return 'creation must be null or {duty,scope,reason,creator}';
+  if (!isRecord(value) || !hasOnlyKeys(value, ['duty', 'scope', 'reason', 'creator',
+    'delegationCeiling', 'secretaryCreated'])) {
+    return 'creation must be null or {duty,scope,reason,creator,delegationCeiling?,secretaryCreated?}';
   }
   if (!(PLATFORM_DUTIES as readonly string[]).includes(String(value['duty']))) return 'creation duty is not recognized';
   const scope = value['scope'];
-  if (!isRecord(scope) || !hasOnlyKeys(scope, ['kind']) || scope['kind'] !== 'project') {
-    return 'creation scope must be {kind:project}';
+  if (!isRecord(scope)) return 'creation scope must be {kind:project} or {kind:task,task}';
+  if (scope['kind'] === 'project') {
+    if (!hasOnlyKeys(scope, ['kind'])) return 'a project creation scope carries unknown fields';
+  } else if (scope['kind'] === 'task') {
+    if (!hasOnlyKeys(scope, ['kind', 'task'])) return 'a task creation scope carries unknown fields';
+    const taskProblem = checkShape(TaskTripleShape, scope['task'], 'stored');
+    if (taskProblem !== null) return `a task creation scope requires a complete TaskTriple: ${taskProblem}`;
+  } else {
+    return 'creation scope must be {kind:project} or {kind:task,task}';
   }
   if (!nonEmpty(value['reason'])) return 'creation requires a non-empty reason';
-  return actorRefProblem(value['creator'], 'creation creator');
+  const creator = actorRefProblem(value['creator'], 'creation creator');
+  if (creator !== null) return creator;
+  if (value['delegationCeiling'] !== undefined) {
+    const ceiling = checkDelegationCeiling(value['delegationCeiling']);
+    if (ceiling !== null) return ceiling;
+  }
+  if (value['secretaryCreated'] !== undefined) {
+    const pin = checkSecretaryCreated(value['secretaryCreated']);
+    if (pin !== null) return pin;
+  }
+  return null;
 }
 
 function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
@@ -735,12 +780,15 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
   const arm = kind === 'create' ? checkCreateAction(body, action)
     : kind === 'handoff' ? checkShape(HandoffActionShape, action, 'stored')
       : kind === 'secretary_archive' ? checkShape(SecretaryArchiveActionShape, action, 'stored')
-        : 'action.kind is not recognized';
+        : kind === 'member_create' ? checkShape(MemberCreateActionShape, action, 'stored')
+          : 'action.kind is not recognized';
   if (arm !== null) return arm;
   // The archive arm names no workspace: the top-level field is its only one.
   const armWorkspace = kind === 'create' ? (action['workspace'] as UnknownRecord)['workspaceId']
     : kind === 'handoff' ? ((action['input'] as UnknownRecord)['workspace'] as UnknownRecord)['workspaceId']
-      : body['workspaceId'];
+      : kind === 'member_create'
+        ? (((action['input'] as UnknownRecord)['workspace'] as UnknownRecord)['workspaceId'])
+        : body['workspaceId'];
   if (body['workspaceId'] !== armWorkspace) return 'operation workspaceId disagrees with the action workspace';
   const foreign = foreignProjectPath(action, (body['ref'] as UnknownRecord)['projectId'] as string, 'action');
   if (foreign !== null) return `operation ${foreign} belongs to another project`;
@@ -943,6 +991,14 @@ export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSin
     const archiveRequest = checkSessionArchiveRequest(body['archiveRequest'], refValue['projectId'] as string);
     if (archiveRequest !== null) return `session archiveRequest: ${archiveRequest}`;
   }
+  if (body['delegationCeiling'] !== undefined) {
+    const ceiling = checkDelegationCeiling(body['delegationCeiling']);
+    if (ceiling !== null) return `session delegationCeiling: ${ceiling}`;
+  }
+  if (body['secretaryCreated'] !== undefined) {
+    const pin = checkSecretaryCreated(body['secretaryCreated']);
+    if (pin !== null) return `session secretaryCreated: ${pin}`;
+  }
   // Wiring package 2 (spec §2.3 P01): the entry position is either absent
   // (legacy / available) or a real platform cursor; the explicit `null`
   // placeholder is legal only in an EVENT body (the record-store binds it in
@@ -1138,6 +1194,37 @@ export const secretaryArchiveRecordedCodec = createArmEventCodec(defineEvent({
   fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
     phase: f.enumOf(OPERATION_PHASES), action: f.ref(SecretaryArchiveActionShape) },
 }));
+/**
+ * The member arm's three events. Accepted and decided carry the whole stored action, like the handoff arm. The proof
+ * event carries only the effect: the new Session aggregate (tagged, so its commit refKey matches), the post-effect
+ * version, the actual initiator Run, the acknowledgement and the formal change proof. The state field table and the
+ * event-body shape stay in `state/member-creation.ts`; this layer adds the Store envelope and the one formal proof
+ * rule (`persistence/decision-record-codecs.ts`).
+ */
+export const memberCreationAcceptedCodec = createEventCodec(memberCreationAcceptedEventFormat);
+export const memberCreationDecidedCodec = createEventCodec(memberCreationDecidedEventFormat);
+
+/** MemberCreated's body: the state field table and event shape, then the formal change-proof rule. */
+function memberCreatedBodyProblem(value: unknown): string | null {
+  const body = checkMemberCreatedEventBody(value);
+  if (body !== null) return body;
+  const proof = isRecord(value) ? value['proof'] : null;
+  return proof === null ? null : decisionChangeProofProblem(proof);
+}
+
+const memberCreatedEnvelope = createEnvelopeEventCodec<MemberCreatedEventV1>({
+  eventType: MEMBER_CREATED_EVENT_TYPE,
+  schemaVersion: SESSION_EVENT_SCHEMA_VERSION,
+  jsonLabel: memberCreatedEventFormat.name,
+  bodyProblem: memberCreatedBodyProblem,
+});
+
+export const memberCreatedCodec = {
+  encode(event: MemberCreatedEventV1): EncodedDomainEvent {
+    return memberCreatedEnvelope.encode(event);
+  },
+  registration: memberCreatedEnvelope.registration,
+};
 
 // --------------------------------------------------------------------------
 // The single registration
@@ -1188,10 +1275,17 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
     },
     sessionHandoffRecordedCodec.registration,
     secretaryArchiveRecordedCodec.registration,
+    memberCreationAcceptedCodec.registration,
+    memberCreationDecidedCodec.registration,
+    memberCreatedCodec.registration,
   ],
   lookups: [
     { name: CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, aggregateType: 'CoreOperation',
       paths: ['ref.projectId', 'workspaceId', 'phase'] },
+    { name: CORE_OPERATION_MEMBER_BY_GOAL_LOOKUP, aggregateType: 'CoreOperation',
+      paths: ['action.input.workspace.projectId', 'action.input.workspace.workspaceId',
+        'action.input.scope.task.goalId'],
+      orderBy: { path: 'requestedAt', valueType: 'text' } },
     { name: SESSION_BY_WORKSPACE_LOOKUP, aggregateType: 'Session', paths: ['ref.projectId', 'workspaceId'] },
     { name: SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP, aggregateType: 'Session',
       paths: ['ref.projectId', 'workspaceId', 'lifecycle'] },
@@ -1345,4 +1439,13 @@ export function sessionCreatedPayloadFromEvent(event: EncodedDomainEvent): Decod
       session: body['session'] as unknown as SessionRecord,
     },
   };
+}
+
+/** The proof decoder's event: the Store envelope, then the member arm's body and formal proof rules. */
+export function decodeMemberCreatedEventFromEvent(event: EncodedDomainEvent): DecodeResult<MemberCreatedEventV1> {
+  const checked = validateEvent(event, MEMBER_CREATED_EVENT_TYPE, memberCreatedBodyProblem);
+  if (checked.status !== 'decoded') return checked;
+  const body = parseObject(event.json);
+  if (body === null) return invalid('MemberCreated event json is not an object');
+  return { status: 'decoded', value: body as unknown as MemberCreatedEventV1 };
 }

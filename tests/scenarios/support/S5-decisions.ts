@@ -568,7 +568,7 @@ export async function s5AgentRequeue(h: HostScenario, afterRunRef: RunRef) {
   const bodies = createSqliteRawArtifactStore(join(h.database, 'artifacts.sqlite'));
   const now = () => '2026-10-08T00:00:00.000Z';
   const permissions: TaskEnvelopeV1['permissions'] = {
-    policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [],
+    policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [], createMember: false,
   };
   const hostTemplate = { templateId: AG2B_WORK_ROLE.templateId, revision: AG2B_WORK_ROLE.templateRevision,
     digest: artifactBodyDigest('S5 auxiliary requeue admission') };

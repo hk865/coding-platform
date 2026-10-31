@@ -65,7 +65,7 @@
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 取 `Error.message`，否则 `String(error)`；转换抛错不吞 | 统一错误文本；本层及全仓的旧副本已删除，不要在本层再抽一份（M1-38） |
 | `mergeGuards` | `src/core/work-graph/persistence/record-guards.ts:12` | 唯一的提交前 guard 合并：同 key 不同 revision 立即 `revision_conflict`，绝不 first-wins；**正本** | 提交前合并全部读依赖；queries 不能 import tasks，需要时先报 lead，不要另写 |
 | `appendGuardFirstWins` | `src/core/work-graph/queries/request-rounds-read.ts:178` | 读窗口专用的 first-wins 追加：同 key 只留第一条 guard；不是提交前的 `mergeGuards`，也不是它的副本 | 请求轮的读窗口与 `tasks/initial-plan-answer.ts` 的来源 guards 追加；不要用于提交前合并 |
-| `checkSessionProvenance` / `readSuccessorFacts` | `src/core/work-graph/sessions/session-record-codecs.ts:397`、`src/core/work-graph/queries/request-rounds-read.ts:188` | `checkSessionProvenance` 校验 new/task 续接/secretary handoff/readonly-copy；`readSuccessorFacts` 按 provenance 读 owner 的 live 后继索引 | 请求 owner 延续；完整 provenance 判定在 sessions |
+| `checkSessionProvenance` / `readSuccessorFacts` | `src/core/work-graph/sessions/session-record-codecs.ts:409`、`src/core/work-graph/queries/request-rounds-read.ts:188` | `checkSessionProvenance` 校验 new/task 续接/secretary handoff/readonly-copy；`readSuccessorFacts` 按 provenance 读 owner 的 live 后继索引 | 请求 owner 延续；完整 provenance 判定在 sessions |
 
 ## 内部用
 

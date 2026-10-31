@@ -627,7 +627,7 @@ const copyProvenance = (from: SessionRef, workspaceId: string, messageId: string
 
 const MAIL_HOST = { configurationRevision: 's2c-11-mail-host@1',
   permissions: { policyRevision: 'legacy-template',
-    tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[] },
+    tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[], createMember: false },
   hostTemplate: L_HOST.hostTemplate };
 
 /** A real wait: the head's scripted send with `waitAfterSend` yields its Run on the saved message. */

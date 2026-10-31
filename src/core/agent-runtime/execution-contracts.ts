@@ -141,6 +141,8 @@ export type ResolvedRuntimeConfiguration = {
    * prove whole-workspace shell access; absence means shell is unsupported.
    * Requires tools:shell and writeScope:["."], with Kernel denied prefixes. */
   shellWorkspaceAccess?: 'all_except_denied';
+  /** The Host's delegation grant for one executor line; absence means false. */
+  createMember?: boolean;
   /** L18: the Host grants the read-only process tool `run_readonly_command` when
    * the whole workspace is readable and the switch is on. Absence means the tool
    * is not granted for this Run. */

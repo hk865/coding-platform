@@ -67,10 +67,13 @@ function runRefProblem(value: unknown): string | null {
 }
 function permissionsProblem(value: unknown): string | null {
   if (!isJsonObject(value)) return 'permit permissions must be an object';
-  if (!hasOnlyKeys(value, ['policyRevision', 'tools', 'writeScope'])) return 'permit permissions carries unknown fields';
+  if (!hasOnlyKeys(value, ['policyRevision', 'tools', 'writeScope', 'createMember'])) {
+    return 'permit permissions carries unknown fields';
+  }
   if (!nonEmpty(value['policyRevision'])) return 'permit permissions policyRevision is required';
   if (!Array.isArray(value['tools']) || !value['tools'].every(nonEmpty)) return 'permit permissions tools must be strings';
   if (!Array.isArray(value['writeScope']) || !value['writeScope'].every(nonEmpty)) return 'permit permissions writeScope must be strings';
+  if (typeof value['createMember'] !== 'boolean') return 'permit permissions createMember must be a boolean';
   return null;
 }
 function deliveryPinProblem(value: unknown): string | null {

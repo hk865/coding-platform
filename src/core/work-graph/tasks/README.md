@@ -11,9 +11,9 @@
 
 ## 文件
 
-本目录 83 个 `.ts`，按主题分组。
+本目录 87 个 `.ts`，按主题分组。
 
-### 请求、秘书与决定卡（18 个）
+### 请求、秘书与决定卡（19 个）
 
 做 request round 的提交/路由/分配、秘书准入、决定答案与决定卡投影的去这组。
 
@@ -30,6 +30,7 @@
 - `request-tail-fragment.ts` — request 尾部的非提交 prepare 片段，活动形状 `RequestTailActivityV1` 的唯一正本（`request-service.ts` 的 `PreparedAppendActivityV1` 是它的别名）：`createRequestTailFragment` 从完整请求事实和归属命令产一轮 `routing: null` 的归属轮（`goalAttribution` 带 GoalRef；`job.goalId` 与 `job.goalAttribution` 都写该 Goal id，下游按字符串比较；`understanding` 与 `activity` 都是 `null`）以及它的 tail claim、receipt、guards 和提交事件，调用方只把片段并进自己的那一次 `records.commit`。`prepareRoutingRequestTail` 是请求 owner 的 `prepareRoute` 与 `prepareAssigned` 两个调用点共用的同一构造；片段不读 store、不提交、不重试，目标 Session 的冲突按来源分类（`fresh` → `revision_conflict`，`recipient`/`none` → `busy`）。
 - `secretary-handoff-basis.ts` — 秘书交接的 too-long 唯一规则与唯一读取：`secretaryHandoffBasis` 由 profile 的真实窗口算 `min(500,000, floor(0.8 × window))`，`tooLong = usage !== null && inputTokens >= threshold`；`readSecretaryHandoffBasis` 把 `S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP` 完整分页到结尾，新 generation 先、同一 run 内最后一个有 usage 的请求先，返回 run、请求下标、水位与阈值。读失败或坏 QueryRun 是 `unavailable`，不是“不够长”；空账本才给 `readThrough: null`。selection 与 H 的触发都调它。
 - `secretary-selection.ts` — 秘书候选事实与选择：`admitRequestSecretary` 是唯一准入检查（scope、可用性、派发、duty、profile），`createSecretarySelection` 只列已准入候选并调用上面那一份 basis 读取（水位与 `tooLong` 都来自它）；另有 `createProjectSecretaryScope`、`orderCandidates`（丢掉 `tooLong` 候选）。
+- `member-service.ts` — 成员创建的 owner 与冻结端口 `MemberRequestPortV1`/`MemberDecisionPortV1`：进度构造与阶段迁移只在 `state/member-creation.ts`（`acceptedMemberCreation`/`advancedMemberCreation`），本文件只读事实、调状态函数、加 revision/时刻、编码并提交；每个写（accepted、首次决定、阶段）各用身份+指纹经共享 R2 执行器 `executeWriteCommand` 提交；`requestMember` 验 `memberCreateInputProblem`、按注入的复用端口找空闲执行线、用 Goal 的自主档判卡，并把 Goal settings/采用计划/Work Run envelope 的真实版本并入 guard；需要决定时写 `awaiting_decision`（卡键随决定存下，重放答同一个键），自动档或批准后经注入的 `ensureLine`（子身份 `<operationId>:create`、task scope、`parentOperation`、Work 调用经注入的 `executions/readExecution` 读 accepted envelope 做准入（`tools` 含 `create_member` 且 `createMember` 为 true）并用同一份 permissions 写 `delegationCeiling`、秘书调用带 `secretaryCreated` 且不带 ceiling）在 Host 受信系统上下文创建子线，`created/replayed` 以子线登记提交的正式回执收 `done`；批准前重读采用计划，任务已离开则写 `stale` 且不建线；恢复的 `rejected`/`capacity_blocked` 只写 `lastRefusal` 并保持 `creating`。`resumePendingMemberCreations`、`readPendingMemberCards`、`readMemberRequestCommit` 都只读一次 `core-op-member-by-goal` 或身份行；秘书调用先解析已采用计划、负责参谋（缺了 `invalid/no_responsible_adviser`）与请求当前 owner（缺了 `forbidden`）。秘书的轮解析仍用调用者自己的 `query_run` 上下文；参谋、请求 owner 和复用候选这些 Host 侧读走 `systemContext`，因为 Session 目录只收 Host/work_run。
 - `secretary-query-run.ts` — 运行中秘书 QueryRun 的唯一受信解析器 `createSecretaryQueryRun`：只读已存的 QueryRun、它的执行状态、QueryJob、Session 与执行绑定的 manifest（取准备时冻结的 Plan 与请求材料），什么都不取自输入；`forbidden` 与 `unavailable` 分开；`goals` 按同一份 live 规则从冻结材料（按 ref 重读当前载体 Job 的命令）与当前 operation 记录重算，只读结果复制成可变 `GoalRef[]`，有效 Goal 不从这里读。
 - `session-facts.ts` — `SessionFactsPort` 的唯一实现（keyset 分页，有页限）：`readSessionFacts` 用一条有序扫描读本 Session 发出的等待 `waits`（open/answered/expired，按消息 `since` 从早到晚；100/页、25 页，超页是 `incomplete`），`wait` 取其中最早、其原 Run 确实在同一条消息上 yield 的一条（原 Run 按各 Work 行的 `originalRun` 一次 `readMany` 读）；`readWait` 按消息 ref 返回完整 `WaitStateV1`（撤回的也返回）。
 - `unknown-call-review-answers.ts` — 决定答案索引的内部读取（UCR/CRR 与 `message_release` 三种 source kind）；`message_release` 分支调 `message-release-answer.ts` 的答复派生与 R2 命令字段查回执，给出 `MessageReleaseAnswerHitV1`。
@@ -82,7 +83,8 @@
 - `claim-service.ts` — `claimTask` 认领准入：一次 commit 写 Lease、Attempt、starting Run、Outbox 与 Session 占用。可选 `acknowledgement` 进入认领的指纹和事件，以及成功与重放的回执。续作认领的 `consumedWait` 是三臂联合（`wait_reply`/`expiry`/`intervention`），`previousRun` 从放出的 Lease 推出，不取调用方输入。
 - `control-contracts.ts` — `RunControlPort` 与内部 `ControlObservationPort` 的契约。
 - `control-service.ts` — 持久 Run 控制（pause/cancel/resume/steer）的单一实现与读取。
-- `execution-entry-service.ts` — 授权/开始/进入/结果四条执行生命周期写，以及共享准入与 guard helper。
+- `execution-entry-service.ts` — 授权/开始/进入/结果四条执行生命周期写，以及共享准入与 guard helper；`isPermissions` 要求必填 `createMember`，`recheckHostRoleAdmission` 的 Host/Role 比较是四字段精确比较。
+- `pick-authorization.ts` — `hostRolePermissionsAdmitted`：Host grant 与 Role 上限的唯一判断（工具、写范围、shell 与 `createMember`），供执行复核和 L1 的组合根授权适配器共用。
 - `execution-history-binding.ts` — `executionHistory` 定位器更新的纯编译缝，不含 I/O。
 - `execution-history-service.ts` — `executionHistory` 定位器维护：一 commit、一事件、一个 Kernel 唯一槽。
 - `model-call-contracts.ts` — 模型请求 permit 的窄端口与 DTO（一次签发、一次消费）。
@@ -148,8 +150,8 @@
 | `requestAssignmentRow` **正本** | `request-service.ts:765` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
 | `readLiveGoal` **正本** | `request-service.ts:464` | 请求与追问 append 前的唯一 Goal 复核：存在、属于本工作区、且不是 `cancelled`；`active` 与 `paused` 都放行（DESIGN :341、slice-6 :213） | submit 与 follow-up；不要另写一份 live 判断 |
 | `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等（F 行副本的正本）；`src/core/work-graph/state/ref-equality.ts:2` 的 `sameRef` 是按结构逐字段比较，不等价 | 判等引用/内容时；不要另写副本 |
-| `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1234` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
-| `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1244` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
+| `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1328` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
+| `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1338` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 取 `Error.message`，否则 `String(error)`；转换抛错不吞 | 错误文案；本目录旧副本已删除，不要再写（M1-38） |
 | `sessionRefProblem` **正本** | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整 `{projectId, sessionId}` 引用 | 校验 SessionRef；不要另写形状检查 |
 | `storeFailureToRejection` **正本** | `src/core/work-graph/persistence/read-result-failures.ts:40` | 按 owner 语义把 Store 失败映射成 `CoreRejection` | 处理 store 失败；owner 写入用同文件的 `ownerWriteStoreFailureToRejection`，读用 `ownerReadStoreFailureToRejection` |
@@ -189,7 +191,7 @@
 | `readUnappliedAnswers`、`REWORK_NOTE_CONTENT_TYPE`、`readRequeueWindow`、`newBasisInputsProblem` | `unknown-call-review-answers.ts:179`、`requeue-service.ts:164`、`requeue-service.ts:445`、`requeue-service.ts:523` | 未应用答案读取（UCR 处置/批准、CRR 与 `message_release` 三种 kind，`message_release` 经 `messageReleaseAnswerCommand` + `commandKeys` 查回执）、返工说明内容类型、requeue 读窗口、新依据输入校验 | 启动恢复、返工准入 |
 | `messageReleaseCardFacts` **正本**、`messageReleaseBlockEligible` **正本** | `message-release-card.ts:38`、`message-release-card.ts:30` | `message_release` 卡的事实构造（source 只含消息与 Goal 两个 pin、`goalBases` 一份、`creationRevision: 1`、两个 `apply` 选项、`closedReason`）与派生块的准入规则（已批准且未撤回） | 卡来源、来源处理器与消息读/发件箱；不要另写卡片投影或准入判断 |
 | `messageReleaseAllowOf` **正本**、`messageReleaseAnswerFacts` **正本**、`messageReleaseAnswerCommand` **正本** | `message-release-answer.ts:19`、`message-release-answer.ts:36`、`message-release-answer.ts:60` | 放行答复的 allow 判定、从存下的来源键派生的答复事实，以及答复的 R2 命令字段（可信入口与未应用答案读取共用） | `decision-change-proof.ts` 的可信入口、未应用答案读取；不要另写答复派生或命令身份 |
-| `readEntryPlanVerdict` | `entry-plan-reader.ts:32` | 进入判定所需的旧 Plan/新 Plan 读取 | 进入授权与 RUN-03 复核 |
+| `readEntryPlanVerdict`、`planGuard` | `entry-plan-reader.ts:32` | 进入判定所需的旧 Plan/新 Plan 读取 | 进入授权与 RUN-03 复核 |
 | `evaluateEligibility` | `eligibility.ts:32` | Task 资格纯规则（phase、kind、assignment、lease） | 候选列表与认领前置；不替代认领准入 |
 | `deriveRequestCore`、`createRequestFacts`、`createCandidateRequestFactsReader`、`resolveRequestRoot` | `request-facts.ts:96`、`request-facts.ts:337`、`request-facts.ts:422`、`request-facts.ts:189` | request 核心视图、事实端口、candidate adapter 与轮→请求根的唯一解析（普通 Query 或外来引用是 `not_found`）；注入 `bindings` 时草稿的 `confirmedGoalRef` 来自真实 binding 读；candidate adapter 另带 `interventionSource`（`intervention_planning` Query 的 `execution.sourceMessageRef`，其他为 `null`） | 请求视图与候选列表；不要另算 owner 或另读 binding |
 | `createGoalSecretary` **正本** | `goal-secretary.ts:74` | Goal 当前秘书：`g:<goalId>` 与 `no-goal` 两个请求根槽按 `since` 新到旧、按衍生有效 Goal 保留，取最新保留根的 owner，否则 secretary 职责；任何 `ownerOf`/`effectiveGoalOf` 失败是 `unavailable` | 找 Goal 的当前秘书；不要用某个根索引里的 Session 冒充 owner（A-21），也不要另写一份根扫描 |
@@ -198,8 +200,9 @@
 | `readGoalInterruption` | `plan-readers.ts:2033` | 目标中断记录的单键读（与 `readGoalPhase` 共用同一个 keyed reader，同样 `{snapshot|null, readThrough, guard}` 形状） | 中断 owner、目标显示与卡片；不要另读记录格式 |
 | `createGoalConfirmService`、`GOAL_CONFIRM_SCHEMAS`、`createInitializationBindingReader` | `goal-confirm-service.ts:231`、`goal-confirm-service.ts:95`、`goal-confirm-service.ts:115` | confirm-draft owner（纯规则 → 一次 commit）与 `InitializationBindingReadPort` 的读取工厂（按 answer+draft/Goal 读，坏记录 `unavailable`）；schema 组给组合根 | 组合根发布 `goals.confirmDraft` / `bindings`；不要另写 Goal 出生或 binding 构造 |
 | `readAdmissionFacts`、`readStoredManifest`、`readManifestFromEnvelope` | `execution-entry-service.ts:262`、`execution-entry-service.ts:280`、`execution-entry-service.ts:314` | 执行事实/清单读取与 manifest 解码 | 执行入口与模型调用 |
-| `admitEnteredRun`、`recheckHostRoleAdmission`、`loadReplayEvent` | `execution-entry-service.ts:595`、`execution-entry-service.ts:508`、`execution-entry-service.ts:1339` | 已进入 Run 的准入复核、Host/Role 复核与重放事件加载 | 执行入口与模型调用；不要复制授权算法 |
-| `executionReadGuards`、`claimEffectRecords`、`claimLeaseOf`、`claimSessionOf`、`hostLeaseOf` | `execution-entry-service.ts:947`、`execution-entry-service.ts:890`、`execution-entry-service.ts:675`、`execution-entry-service.ts:686`、`execution-entry-service.ts:793` | 执行读 guard、Run effect 到记录/effect 的翻译、Lease/Session 上下文 | 执行/对账 commit；不要手拼相关记录 |
+| `admitEnteredRun`、`recheckHostRoleAdmission`、`loadReplayEvent` | `execution-entry-service.ts:620`、`execution-entry-service.ts:511`、`execution-entry-service.ts:1364` | 已进入 Run 的准入复核、Host/Role 复核与重放事件加载 | 执行入口与模型调用；不要复制授权算法 |
+| `hostRolePermissionsAdmitted` | `src/core/work-graph/tasks/pick-authorization.ts:2` | Host grant 与 Role 上限的唯一判断：工具交集、写范围、完整 shell 子句和 `createMember` | 执行入口复核；L1 的组合根授权适配器 |
+| `executionReadGuards`、`claimEffectRecords`、`claimLeaseOf`、`claimSessionOf`、`hostLeaseOf` | `execution-entry-service.ts:972`、`execution-entry-service.ts:915`、`execution-entry-service.ts:700`、`execution-entry-service.ts:711`、`execution-entry-service.ts:818` | 执行读 guard、Run effect 到记录/effect 的翻译、Lease/Session 上下文 | 执行/对账 commit；不要手拼相关记录 |
 | `identifyDelegatedWriter`、`authorizeDelegatedWrite` | `plan-write-admission.ts:144`、`plan-write-admission.ts:234` | 委派写者身份识别与当前权限复核（含真实 guards） | Agent 计划写、requeue；两步顺序不可换 |
 | `admitGoalCreation`、`createGoalService` | `task-service.ts:156`、`task-service.ts:419` | Goal 创建的准入管线与服务工厂；新 Goal 以 `DEFAULT_GOAL_SETTINGS_V1` 的副本、`continuedFrom: null`、`copiedInterventions: []` 出生 | Host 建 Goal |
 | `createInitialPlanAnswerReader`、`sourceFactsGuards`、`proveInterventionSource` | `initial-plan-answer.ts:67`、`initial-plan-answer.ts:50`、`initial-plan-answer.ts:73` | 初始 Plan 答案的事实读取与采用侧重核（同一 records/materials/bodies 端口）；读取可带来源选择（`binding`/`prepared_goal`/`intervention`）：`intervention` 选择器只校验完整消息 ref，不比较 `answerRef`，解析出 `resolution.kind: 'intervention'`（Goal 与 revision 来自冻结 manifest，要求 manifest 也是 `intervention_planning`），带来源时不再套普通 Query 的 intent/Goal 准入 | 初答读取、模型协调草稿与干预提案的采用前证明 |
@@ -211,7 +214,7 @@
 | `createRequestRoundService` | `request-service.ts:885` | request round 的读写端口：人的提交/路由/跟进、内部 `assigned`/`end_unbound`、`reply`/`expiry` 轮追加（同一个 `buildRound` 写 `roundKind` 与 `relatedMessageRef`）、理解轮追加、内部路由、`intervention_new_goal`（无目标提交，`capacityBlocked: true`，固定 `operationId` 重放）、`closeUnderstanding` 与 `readRequestCommandReceipt`；每次提交一个 commit | Host 与 Workflow 的请求入口 |
 | `open`、`unassigned` **正本** | `request-service.ts:1977`、`request-service.ts:1925` | 两条具名开放轮读取：`open` 一页给出某状态分区里有开放轮的请求根（每个根一次，带 continuation 与 `wrapped`）；`unassigned` 给出最老 pending 轮命中的未分配请求 | 队列分派与 drain；两者共用 `readOpenIndexPage`（`request-service.ts:831`）的游标解析和页读取，不要另写一份 |
 | `createTaskClaimService`、`workClaimDispatchProblem`、`createTaskRequeueService`、`createReconcileCandidateReader` | `claim-service.ts:733`、`claim-service.ts:171`、`requeue-service.ts:651`、`reconcile-reads.ts:52` | 认领服务、认领分派前置检查（吃三臂 `SessionConsumedWaitStateV1`）、返工服务与对账候选读取器 | 组合根与启动对账 |
-| `createExecutionEntryService`、`createModelCallService`、`createModelRequestReadPort`、`modelRequestPermitIdFor` | `execution-entry-service.ts:1396`、`model-call-service.ts:154`、`model-call-service.ts:366`、`model-call-contracts.ts:80` | 执行入口、模型请求读写与 permit id | 组合根接线 |
+| `createExecutionEntryService`、`createModelCallService`、`createModelRequestReadPort`、`modelRequestPermitIdFor` | `execution-entry-service.ts:1421`、`model-call-service.ts:154`、`model-call-service.ts:366`、`model-call-contracts.ts:80` | 执行入口、模型请求读写与 permit id | 组合根接线 |
 | `createRunControlService`、`controlIntentRefFor`、`createRunStateReader` | `control-service.ts:598`、`control-service.ts:161`、`run-state-service.ts:407` | Run 控制服务、确定性的 intent 引用与执行读取器 | 组合根、Goal 扇出、执行读取 |
 | `createRunReconcileService`、`createExecutionHistoryService`、`createRunActivityService`、`runActivityRefOf` | `run-reconcile-service.ts:649`、`execution-history-service.ts:204`、`run-activity-service.ts:376`、`run-activity-service.ts:277` | Run 对账、执行历史定位器、活动回填与活动引用 | 启动对账与活动回填 |
 | `createGoalSettingsService`、`setGoalControlFromHost`、`createGoalDecisionCauseReader` | `goal-settings-service.ts:174`、`goal-control.ts:125`、`goal-decision-reader.ts:117` | Goal 设置、desired state 与决定原因读取 | 组合根、Host 控制、决定队列 |
@@ -271,13 +274,14 @@
 - `readClaimedAtForRun` 的正本在 `line-clock.ts:190`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:190` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
 - `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:403` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:646` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。
 - `lookupCommit` 只有 `src/core/record-store/ports.ts:190` 这个端口；`lookupCommittedReceipt`（`src/core/work-graph/persistence/receipt-lookup.ts:18`，`src/core/work-graph/queries/query-job-service.ts:423` 转出）是带失败分类的唯一包装。claim/control 等 owner 直接调用端口时也要自己分类失败，不要复制整套重试与分类逻辑。
-- `sessionAggregateRefKey` 与 `plainSessionRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1234`/`:1244` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:78`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是 `sessionAggregateRefKey` 的副本，不要改写成它。
+- `sessionAggregateRefKey` 与 `plainSessionRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1328`/`:1319` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:78`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是 `sessionAggregateRefKey` 的副本，不要改写成它。
 - `storeFailureToRejection` 只有 `src/core/work-graph/persistence/read-result-failures.ts:40`；owner 用同文件的 `ownerWriteStoreFailureToRejection`（`src/core/work-graph/persistence/read-result-failures.ts:108`），`request-service` 的本地 store 失败 switch 已改为调用它，不要恢复手写映射。
 - `rejected` 只有 `src/contracts/core/rejections.ts:5` 这一份；`request-service` 的本地 `rejection` 已删，不要恢复。
 - `messageOf` 只有 `src/contracts/error-message.ts:2` 这一份；本目录与 `record-store`、`agent-runtime` 的旧副本已删除，不要恢复（M1-38）。
-- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:166` 的 `checkPlainSessionRef` 是 planned SessionRef 输入的报错适配器（S06，两种固定文字），不能换成 `sessionRefProblem`；不要新增形状检查副本。
+- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:174` 的 `checkPlainSessionRef` 是 planned SessionRef 输入的报错适配器（S06，两种固定文字），不能换成 `sessionRefProblem`；不要新增形状检查副本。
 - 不要把失败的读取变成空事实、`not_found` 或普通 blocked；`unavailable`/`incomplete` 原样返回（FP-05、M1-12、MH-06）。
 - 不要手改受保护字段或只写生命周期的一半：Run、Attempt、Lease、Outbox、Session 占用、Task/Goal reduction 都经 `state/` 的构造函数，并在同一 commit 里写齐（M1-01、M1-05、M1-36）。
 - 不要先读现状再查 receipt：重放与丢失 ack 的恢复都先 `lookupCommit`/`replayCommittedReceipt`，绝不按今天的快照重建原答案（M1-14、M1-15、M1-25、M1-26）。
 - 不要一个 commit 混用多次读的事实窗口，或让同 key 的 guard first-wins：冲突的 revision 必须拒绝并重读（M1-07、M1-09、M1-10）。
 - 不要发明默认值（秘书、容量、唤醒驱动、时钟）：时间用注入的 `now()`，配置从 Host 透传（FP-15、MH-02、MH-25）。
+| `createMemberService`、`MemberServiceDependenciesV1`、`MemberRequestPortV1`、`MemberDecisionPortV1` | `member-service.ts:359`、`member-service.ts:148`、`member-service.ts:87`、`member-service.ts:106` | 成员创建的唯一 owner 与两个冻结端口：进度构造/阶段迁移调 `state/member-creation.ts`，本文件只管信封、revision/时刻、编码与提交；每个写各用自己的键经共享 R2 执行器按身份+指纹重放，一张卡或自动档（卡键随决定存下，重放答同一个键），批准后经注入的 `ensureLine` 以 `<operationId>:create` 建执行子线（`parentOperation`、Work 调用经 `executions/readExecution` 读 accepted envelope 做准入并用同一份 permissions 带 `delegationCeiling`、秘书 `secretaryCreated` 且不带 ceiling）；批准前重读采用计划，任务离开则 `stale` 不建线；启动恢复按 Goal 读 `core-op-member-by-goal` 续建原 child，`rejected`/`capacity_blocked` 只写 `lastRefusal` 保持 `creating`，pending 卡读只留 `awaiting_decision`，`readMemberRequestCommit` 只做一次身份读；子线登记提交的 `MemberCreated` 回执就是正式 proof receipt | Q 导入端口类型，L1 组合根注入 `records`/`commitIdentities`/`sessions`/`lines`/`requests`/`secretaryRuns`/`duties`/`executions`/`executorRole`/`reuse`/`now`/`eventId` 并接启动恢复；不要另写成员端口、卡源或第二条重放 |

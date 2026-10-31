@@ -54,9 +54,12 @@ export function effectiveDuty(
   return { duty: roleDuty ?? hostDuty ?? templateDuty ?? 'executor' };
 }
 
+export type RolePayloadPermissionsV1 =
+  Pick<TaskEnvelopeV1['permissions'], 'policyRevision' | 'tools' | 'writeScope'>;
+
 export function rolePayload(
   role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>,
-  permissions: TaskEnvelopeV1['permissions'],
+  permissions: RolePayloadPermissionsV1,
   duty: PlatformDutyV1,
   residentBudgetBytes: number,
   texts: PromptTextsV1 = DEFAULT_TEXTS,

@@ -328,6 +328,10 @@ export type NewSessionRecordInput = {
    * writes it; an absent one is the `new` default before the record exists.
    */
   provenance: SessionProvenanceV1;
+  /** The creator's accepted permissions for a member-created or inherited line; absent is no ceiling. */
+  delegationCeiling?: SessionRecord['delegationCeiling'];
+  /** Present only on a secretary-created executor; absent is not secretary-created. */
+  secretaryCreated?: SessionRecord['secretaryCreated'];
 };
 
 /** SES-01: `active / available / null` at revision 1; no `healthConclusion` field (absent reads as null). */
@@ -346,6 +350,14 @@ export function createSessionRecord(input: NewSessionRecordInput): SessionRecord
     createdAt: input.createdAt,
     archivedAt: null,
     provenance: input.provenance,
+    ...(input.delegationCeiling === undefined ? {} : {
+      delegationCeiling: {
+        tools: [...input.delegationCeiling.tools],
+        writeScope: [...input.delegationCeiling.writeScope],
+        createMember: input.delegationCeiling.createMember,
+      },
+    }),
+    ...(input.secretaryCreated === undefined ? {} : { secretaryCreated: input.secretaryCreated }),
   };
 }
 

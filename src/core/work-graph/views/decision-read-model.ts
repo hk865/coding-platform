@@ -10,7 +10,7 @@
  * unshown source item cross the page.
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { UserMessageResponseV1 } from '../../../contracts/core/session-message.js';
@@ -29,7 +29,7 @@ import {
 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { EncodedRecord } from '../../record-store/ports.js';
+import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type {
   DecisionCardSourcePort,
   DecisionCardV1,
@@ -47,6 +47,11 @@ import type {
   NoteDecisionSourcePort,
 } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
+import type { MemberCallerV1 } from '../state/member-creation.js';
+import {
+  memberCreationCardFacts, memberCreationClosedReason, memberCreationSourceIdentity,
+  type MemberOperationRecordV1,
+} from '../communication/decision-source/member-creation.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
@@ -78,6 +83,12 @@ import {
   S7A2_RELEASE_BY_GOAL_LOOKUP,
   sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
+import {
+  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, CORE_OPERATION_MEMBER_BY_GOAL_LOOKUP,
+  decodeSessionOperationRecord, memberCreationAcceptedCodec, operationRefKey,
+} from '../sessions/session-record-codecs.js';
+import { commandIdentity, readCommittedEvent } from '../persistence/command-executor.js';
+import { lookupCommittedReceipt } from '../persistence/receipt-lookup.js';
 import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import type { PlanningQuestionReader } from '../tasks/planning-question-reader.js';
 import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoalPlanWindow,
@@ -105,12 +116,19 @@ import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } fr
 import { groupNotices, noticePage, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
 
 /**
+ * The views' read seam plus the two commit reads the member notice rebuilds its position from. The composition root
+ * already passes the same `backend.records`, so this widening adds no injection and no second reader.
+ */
+type DecisionReadModelRecordsPort = DecisionReadRecordsPort &
+  Pick<GoalRecordTransactionPort, 'lookupCommit' | 'eventAt'>;
+
+/**
  * The narrow readers, the shared Store seam and the two injected helpers. A
  * missing `kind`/`category` reader is reported as `not_available`; the read
  * model never substitutes an available empty source for it.
  */
 export type DecisionReadModelDependencies = {
-  records: DecisionReadRecordsPort;
+  records: DecisionReadModelRecordsPort;
   cardSources: readonly DecisionCardSourcePort[];
   noticeSources: readonly DecisionNoticeSourcePort[];
   conflicts: GoalConflictAssemblerPort;
@@ -156,8 +174,8 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
-  'member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework', 'continuation',
-  'disconnect',
+  'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
+  'continuation', 'disconnect',
 ];
 const CARD_ACTIONS: readonly CardAction[] = ['answer', 'ask_secretary', 'apply', 'record_application',
   'adopt', 'regenerate', 'abandon', 'adopt_architecture', 'adopt_completion_policy'];
@@ -1281,7 +1299,9 @@ async function readDecisionQueueWindow(
       const pages: NoticeSourceItemsV1[] = [];
       for (const category of requested) {
         const provider = injectedNotices.get(category) ?? (category === 'member_notice'
-          ? builtInMemberNoticeSource(deps.records, messages) : undefined);
+          ? builtInMemberNoticeSource(deps.records, messages)
+          : category === 'member_created'
+            ? builtInMemberCreatedNoticeSource(deps.records) : undefined);
         if (provider === undefined) continue;
         // Same §4.1/§4.2 read as the card sources: continuous pages to the end
         // (2A L6/L8), the shared `atLeastCursor`, and no discarded `nextCursor`.
@@ -1878,6 +1898,10 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
   if (card.answer !== null) {
     if (card.application !== null) return { ...card, state: 'applied', readOnly: false, actions: [] };
     if (card.answer.decision.requiresApplication) {
+      // A resolved member operation's answer stays history instead of a pending application.
+      if (card.source.kind === 'member_creation' && card.closedReason !== null) {
+        return { ...card, state: 'answered_no_application', readOnly: false, actions: [] };
+      }
       return { ...card, state: 'answered_pending_application', readOnly: false, actions: ['apply', 'record_application'] };
     }
     return { ...card, state: 'answered_no_application', readOnly: false, actions: [] };
@@ -1968,6 +1992,90 @@ function sortCards(cards: readonly DecisionCardV1[]): DecisionCardV1[] {
   });
 }
 
+
+/**
+ * The `member_creation` card source (§3.12 item 1), registered on the generic collection adapter. The frozen
+ * `core-op-member-by-goal` lookup is keyed by the three equal values only; `stage` deliberately leaves the key, so this
+ * source keeps every operation whose decision verdict is `needs_decision` in every stage (terminal history included)
+ * and filters only the verdict in memory. `closedReasonOf` supplies the history closure; `openedAt` is the operation's
+ * own requested time.
+ */
+export function createMemberCreationCardSource(
+  deps: { records: DecisionReadRecordsPort },
+): DecisionCardSourcePort {
+  return createCollectionCardSource<MemberOperationRecordV1>({
+    kind: 'member_creation',
+    serves: ['goal'],
+    async readCollection(_ctx, { workspace, subject }) {
+      const goalRef = decisionSubjectGoalRef({ subject });
+      if (goalRef === null) {
+        return { status: 'rejected', code: 'invalid', reason: 'a member_creation card source needs a Goal' };
+      }
+      let batch;
+      try {
+        batch = await lookupAll(deps.records, CORE_OPERATION_MEMBER_BY_GOAL_LOOKUP,
+          [goalRef.projectId, workspace.workspaceId, goalRef.goalId]);
+      } catch (error) {
+        return storeFailureToRejection(error as { code: string; reason: string });
+      }
+      const items: MemberOperationRecordV1[] = [];
+      for (const encoded of batch.items) {
+        const decoded = decodeSessionOperationRecord(encoded as EncodedRecord);
+        if (decoded.status !== 'decoded') {
+          return { status: 'rejected', code: 'unavailable', reason: `a member operation is damaged: ${decoded.reason}` };
+        }
+        const operation = decoded.value;
+        if ((operation.action as { kind: string }).kind !== 'member_create') continue;
+        const member = operation as unknown as MemberOperationRecordV1;
+        if (member.action.progress.decision?.verdict !== 'needs_decision') continue;
+        items.push(member);
+      }
+      return { status: 'ready', value: items };
+    },
+    keyOf: (operation) => decisionSourceKey(memberCreationSourceIdentity(operation)),
+    project: (operation, subject, goal) => {
+      const facts = memberCreationCardFacts(operation, goal);
+      return {
+        cardKey: facts.source.key, source: facts.source,
+        state: facts.closedReason === null ? 'waiting_answer' : 'closed',
+        subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
+        objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
+        candidateStatus: null, staleReason: null, closedReason: facts.closedReason, openedAt: facts.openedAt,
+        readOnly: facts.closedReason !== null, actions: facts.closedReason === null ? ['answer'] : [],
+      };
+    },
+    closedReasonOf: (operation) => memberCreationClosedReason(operation),
+    async readByKey(_ctx, { source }) {
+      const identity = parseIdentity(source.key);
+      if (identity === null || identity.kind !== 'member_creation') {
+        return { status: 'rejected', code: 'invalid',
+          reason: 'a member_creation source key is not a member operation identity' };
+      }
+      const goalRef = decisionSubjectGoalRef(source);
+      if (goalRef === null) return { status: 'ready', value: null };
+      const record = await readOne(deps.records, canonicalJson(identity.operationRef as unknown as JsonValue));
+      if (record === null) return { status: 'ready', value: null };
+      const decoded = decodeSessionOperationRecord(record);
+      if (decoded.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable', reason: `the member operation is damaged: ${decoded.reason}` };
+      }
+      const operation = decoded.value;
+      if ((operation.action as { kind: string }).kind !== 'member_create') return { status: 'ready', value: null };
+      const member = operation as unknown as MemberOperationRecordV1;
+      const task = member.action.input.scope.task;
+      if (task.projectId !== goalRef.projectId || task.goalId !== goalRef.goalId) {
+        return { status: 'ready', value: null };
+      }
+      if (member.action.progress.decision?.verdict !== 'needs_decision') {
+        return { status: 'ready', value: null };
+      }
+      const closed = memberCreationClosedReason(member);
+      if (closed !== null) return { status: 'ready', value: { closed, openedAt: member.requestedAt } };
+      return { status: 'ready', value: { item: member } };
+    },
+  }, (goalRef) => readGoalForBasis(deps.records, goalRef));
+}
+
 // -------------------------------------------------------------------------- //
 // Built-in member notification source                                         //
 // -------------------------------------------------------------------------- //
@@ -2028,6 +2136,105 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
       const end = Math.min(remaining.length, start + input.page.limit);
       return { status: 'ready', value: { availability: 'available', items: remaining.slice(start, end),
         nextCursor: end < remaining.length ? String(end) : null, sourceCursor: null } };
+    },
+  };
+}
+
+
+/**
+ * The `member_created` notice (§3.12 item 5): one item per member operation whose `done` write left a notice key. The
+ * position is the original `member.request` receipt, rebuilt from the operation's own saved facts — the saved
+ * fingerprint, caller and command id — and then proved by reading the committed `MemberCreationAccepted` event.
+ * `host_pick` writes `null` and is unreachable here. A missing receipt or a damaged/wrong event is `unavailable`,
+ * never an item without a position.
+ *
+ * The record saves the caller, not a whole `CorePrincipal` (no role binding or initiator), so the saved Work/Query
+ * Run is the minimal identity input `principalIdentity` folds; it invents no field.
+ */
+function builtInMemberCreatedNoticeSource(records: DecisionReadModelRecordsPort): DecisionNoticeSourcePort {
+  return {
+    category: 'member_created',
+    async readPage(_ctx, input) {
+      const watermarkRead = await readWatermark(records);
+      if (watermarkRead.status !== 'ready') return watermarkRead;
+      const items: NoticeItemV1[] = [];
+      // Every `done` member write leaves `phase: 'completed'`; the other partitions can never produce a notice.
+      let batch;
+      try {
+        batch = await lookupAll(records, CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP,
+          [input.workspace.projectId, input.workspace.workspaceId, 'completed']);
+      } catch (error) {
+        return storeFailureToRejection(error as { code: string; reason: string });
+      }
+      for (const encoded of batch.items) {
+        const decoded = decodeSessionOperationRecord(encoded as EncodedRecord);
+        if (decoded.status !== 'decoded') {
+          return { status: 'rejected', code: 'unavailable',
+            reason: `a member operation is damaged: ${decoded.reason}` };
+        }
+        const operation = decoded.value;
+        if ((operation.action as { kind: string }).kind !== 'member_create') continue;
+        const action = (operation as unknown as MemberOperationRecordV1).action;
+        const caller = action.input.caller as Exclude<MemberCallerV1, { kind: 'host_pick' }>;
+        const itemKey = action.progress.noticeItemKey;
+        if (itemKey === null) continue;
+        if (itemKey !== `member:${operation.ref.operationId}`) {
+          return { status: 'rejected', code: 'unavailable',
+            reason: 'the member notice item key does not match the operation' };
+        }
+        if (action.progress.decision?.verdict !== 'automatic_notice') continue;
+        if (action.progress.stage !== 'done') continue;
+        const subject: DecisionSubjectV1 = {
+          kind: 'goal',
+          goalRef: {
+            aggregateType: 'Goal', projectId: action.input.scope.task.projectId,
+            goalId: action.input.scope.task.goalId,
+          },
+        };
+        if (input.goalRef !== undefined
+          && (subject.goalRef.projectId !== input.goalRef.projectId
+            || subject.goalRef.goalId !== input.goalRef.goalId)) continue;
+        const principal = principalIdentity(caller.kind === 'work'
+          ? { kind: 'work_run', runRef: caller.run }
+          : { kind: 'query_run', queryRunRef: caller.run });
+        // The exact saved write, never an identity-only guess: the fingerprint the request stored with its caller.
+        const identityKey = commandIdentity({
+          operation: 'member.request',
+          scope: { projectId: operation.ref.projectId, workspaceId: operation.workspaceId },
+          principal,
+          commandId: action.input.commandId,
+        });
+        const found = await lookupCommittedReceipt(records, identityKey, action.input.fingerprint);
+        if (found.status === 'missing') {
+          return { status: 'rejected', code: 'unavailable',
+            reason: 'the member request has no committed receipt' };
+        }
+        if (found.status === 'conflict') return { status: 'rejected', code: 'idempotency_conflict', reason: found.reason };
+        if (found.status === 'invalid') return { status: 'rejected', code: 'invalid', reason: found.reason };
+        if (found.status === 'unavailable') return { status: 'rejected', code: 'unavailable', reason: found.reason };
+        // The one committed-event read proves the cursor, the receipt's last event id, the type and the decode.
+        const read = await readCommittedEvent(records, found.receipt, {
+          eventType: 'MemberCreationAccepted', schemaVersion: 1, decode: memberCreationAcceptedCodec.decode });
+        if (read.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: read.reason };
+        const accepted = read.value;
+        if (operationRefKey(accepted.operationRef) !== operationRefKey(operation.ref)) {
+          return { status: 'rejected', code: 'unavailable',
+            reason: 'the member request event records another operation' };
+        }
+        items.push({
+          itemKey, category: 'member_created', subject,
+          position: { kind: 'commit', cursor: found.receipt.cursor, itemKey },
+          summary: '成员已创建', objects: [], rework: null,
+        });
+      }
+      items.sort((left, right) => compareNoticePositions(left.position, right.position));
+      const after = input.after;
+      const remaining = after === undefined ? items : items.filter(item => compareNoticePositions(item.position, after) > 0);
+      const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
+      const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+      const end = Math.min(remaining.length, start + input.page.limit);
+      return { status: 'ready', value: { availability: 'available', items: remaining.slice(start, end),
+        nextCursor: end < remaining.length ? String(end) : null, sourceCursor: watermarkRead.value } };
     },
   };
 }
@@ -2224,7 +2431,7 @@ function cardSourceAvailability(kind: DecisionSourceV1['kind'], injected: Readon
 }
 
 function noticeSourceAvailability(category: NoticeCategoryV1, injected: ReadonlyMap<string, DecisionNoticeSourcePort>): 'available' | 'not_available' {
-  if (category === 'member_notice') return 'available';
+  if (category === 'member_notice' || category === 'member_created') return 'available';
   return injected.has(category) ? 'available' : 'not_available';
 }
 

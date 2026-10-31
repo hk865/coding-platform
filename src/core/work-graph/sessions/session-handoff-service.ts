@@ -109,7 +109,7 @@ function admissionRejection(admitted: Exclude<OperationAdmissionV1, { ok: true }
 }
 
 /** The one answer for a write the executor ran: its committed shape, the refusal arm's rejection or the failure. */
-function writeAnswer<T>(result: CommandResult<T, CoreRejection>): WriteResult<T> {
+export function writeAnswer<T>(result: CommandResult<T, CoreRejection>): WriteResult<T> {
   if (result.status === 'committed') {
     return { status: 'committed', value: result.value, replayed: result.replayed, cursor: result.cursor };
   }
@@ -159,7 +159,8 @@ async function unfinishedPinsOf(records: Pick<RecordLookupPort, 'lookup'>, scope
       const decoded = decodeSessionOperationRecord(encoded);
       if (decoded.status !== 'decoded') return rejected('unavailable', `an unfinished operation is damaged: ${decoded.reason}`);
       const operation = decoded.value;
-      if (operation.action.kind !== 'create' && sameRef(operation.action.input.source, source)) {
+      if (operation.action.kind !== 'create' && operation.action.kind !== 'member_create'
+        && sameRef(operation.action.input.source, source)) {
         pins.push({ ref: operation.ref, revision: operation.revision });
       }
     }

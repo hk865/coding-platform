@@ -198,7 +198,7 @@ describe.each(['memory', 'sqlite'] as const)('%s: S3 role profiles', kind => {
         execution: {} as never,
         role: { status: 'resolved', roleId: read.value.roleId, revision: read.value.ref, spec: read.value.content },
         configuration: {} as never,
-        permissions: { policyRevision: 's3-role', tools: [], writeScope: [] },
+        permissions: { policyRevision: 's3-role', tools: [], writeScope: [], createMember: false },
         toolNames: ['read'],
         history: { callKind: 'work' as const, hasCompletedCursor: false },
       });

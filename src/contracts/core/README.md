@@ -46,7 +46,7 @@
 | `PersistedSourceCaptureRef` | `src/contracts/core/source.ts:24` | 临时捕获与其持久化 Artifact 正文的配对。 | 捕获已落盘后读取；持久化不等于当前文件见证。 |
 | `CorePrincipal` | `src/contracts/core/call-context.ts:13` | 受信绑定的人/工作 Run/Query Run 主体。 | 端口接收调用者身份时；它只记录身份，不授予能力。 |
 | `CoreCallContext` | `src/contracts/core/call-context.ts:52` | 项目/工作区、主体、材料读者与取消信号。 | Core 端口统一的调用上下文。 |
-| `principalIdentity` **正本** | `src/contracts/core/call-context.ts:64` | 把受信主体（Host 的 actor、工作 Run 的 RunRef、Query Run 的 QueryRunRef）折成命令身份与指纹里的 `principal`。 | 带命令身份的写入算 identity/fingerprint 时；不要再写一份 `principalOf`，两个主体才不会互相重放。 |
+| `principalIdentity` **正本** | `src/contracts/core/call-context.ts:64` | 把受信主体（Host 的 actor、工作 Run 的 RunRef、Query Run 的 QueryRunRef）折成命令身份与指纹里的 `principal`；参数只要求这三组身份字段，完整 `CorePrincipal` 仍可赋值。 | 带命令身份的写入算 identity/fingerprint 时；不要再写一份 `principalOf`，两个主体才不会互相重放。 |
 | `hostPrincipalOf` **正本**、`HostPrincipal` | `src/contracts/core/call-context.ts:79`、`src/contracts/core/call-context.ts:73` | 调用者是指定 kind（人或受信 system）的 Host 时返回该主体，否则 `null`。 | Host 命令的授权检查；之后的步骤只拿返回的主体。 |
 | `RunExecutionHistoryV1` | `src/contracts/core/execution-history.ts:7` | Run 历史位置与已观察水位。 | 记录/读取 Run 执行历史；旧 Run 缺失表示未索引，不是未执行。 |
 | `SessionArchiveRequestV1` | `src/contracts/core/session-archive.ts:28` | 不可变归档请求（任务去留、等待、执行、可信条件、回执）。 | 发起/重放 Session 归档；`condition` 必填，非秘书模式一律 `null`，并属于请求指纹。 |

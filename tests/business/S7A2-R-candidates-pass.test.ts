@@ -102,7 +102,7 @@ async function ledger(kind: 'memory' | 'sqlite') {
     templateId: 'builder', revision: '1', digest: sha256Hex('s7a2-pass-trusted-host-template') };
   const configurationRevision = 's7a2-pass-host-config@1';
   const hostPermissions = { policyRevision: fixture.roleBinding.policyRevision,
-    tools: [...SESSION_MAILBOX_TOOL_NAMES], writeScope: [] as string[] };
+    tools: [...SESSION_MAILBOX_TOOL_NAMES], writeScope: [] as string[], createMember: false };
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
     if (ctx.projectId !== claim.sessionRef.projectId || ctx.workspaceId !== claim.workspaceId
       || !sameJson(input.sessionRole, SESSION_ROLE) || !sameJson(input.hostTemplate, hostTemplate)

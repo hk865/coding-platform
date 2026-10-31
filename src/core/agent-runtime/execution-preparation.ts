@@ -403,13 +403,29 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         ? { ok: true as const, writeScope: [] as string[] }
         : validateWriteScope(hostConfig.writeScope, roleResolution, hostConfig.shellWorkspaceAccess);
       if (!writeScopeResult.ok) return writeScopeResult.rejection;
+      // A member-created or inherited line may not prepare outside its creator's ceiling.
+      // An absent fragment is "no creator ceiling", never a default.
+      const ceiling = session.delegationCeiling ?? null;
+      if (ceiling !== null) {
+        const ceilingWrites = new Set(ceiling.writeScope);
+        if (writeScopeResult.writeScope.some(path => !ceilingWrites.has(path))) {
+          return rejected('forbidden', 'the prepared write scope is outside the creator ceiling');
+        }
+      }
       // L20: the proposal phase swaps only the one write tool.
       const reviewToolNames = reviewPurpose?.phase === 'proposal'
         ? UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES : UNKNOWN_CALL_REVIEW_ROUND_TOOL_NAMES;
+      const grantedTools = reviewPurpose !== undefined ? [...reviewToolNames] : intersectTools(hostConfig.tools, roleResolution);
+      // The Host grant is false unless it explicitly sets createMember; a ceiling
+      // can only narrow it, and a secretary-created line is pinned false.
+      let createMember = hostConfig.createMember === true;
+      if (ceiling !== null) createMember = createMember && ceiling.createMember;
+      if (session.secretaryCreated === true) createMember = false;
       const permissions: TaskEnvelopeV1['permissions'] = {
         policyRevision: run.roleBinding.policyRevision,
-        tools: reviewPurpose !== undefined ? [...reviewToolNames] : intersectTools(hostConfig.tools, roleResolution),
+        tools: ceiling === null ? grantedTools : grantedTools.filter(tool => ceiling.tools.includes(tool)),
         writeScope: writeScopeResult.writeScope,
+        createMember,
       };
       const hasShell = permissions.tools.includes('shell');
       if (hasShell && (hostConfig.shellWorkspaceAccess !== 'all_except_denied' || permissions.writeScope.length !== 1 || permissions.writeScope[0] !== '.')) {
@@ -765,6 +781,7 @@ export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguratio
     tools: [...config.tools],
     writeScope: [...config.writeScope],
     ...(config.shellWorkspaceAccess === undefined ? {} : { shellWorkspaceAccess: config.shellWorkspaceAccess }),
+    createMember: config.createMember === true,
     ...(config.readonlyCommandAccess === undefined ? {} : { readonlyCommandAccess: config.readonlyCommandAccess }),
     skills: { resourceRoot: config.skills.resourceRoot, enabledIds: [...config.skills.enabledIds] },
     systemInstruction: config.systemInstruction,

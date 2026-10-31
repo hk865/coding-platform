@@ -22,7 +22,7 @@
 
 ### 执行准备与输入
 做 Work 准备、输入通道、模型预算、注册检查和 Role profile 的去这组。
-- `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线。
+- `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线；`createMember` 取 Host 授权，Session 有 `delegationCeiling` 时工具取交集、写范围越界答 `forbidden`、委托取合取，`secretaryCreated` 一律钉 false。
 - `execution-inputs.ts` — 统一输入通道：邮件、答复、到期（expiry）、steer 和 attention 的候选与 accepted 排除。`only: 'notify'` 是秘书请求轮的供给：跳过 person 列表、续接与答复邮件，只把 `intent` 缺省或 `notify` 的收件箱邮件经 `readMessagePart` 供出（`notify-delivery`）。
 - `check-execution.ts` — 可信 Host 注册检查执行器。
 - `model-budget.ts` — 模型预算、token 计量与超限错误。
@@ -47,7 +47,7 @@
 - `context-review-recipe.ts` — review 轮上下文装配。
 - `context-continuation-recipe.ts` — continuation 段的 blocked commands 与 brief 事实。
 - `context-history-facts.ts` — Session 历史模式/基线判定与 Kernel 命令事实。
-- `context-fact-text.ts` — 各段 payload/文本构造（Role、Goal、Task、Query、notes 等）；`withNoteVersion` 与 `understandingLine` 是共用的注记行规则。
+- `context-fact-text.ts` — 各段 payload/文本构造（Role、Goal、Task、Query、notes 等）；`RolePayloadPermissionsV1` 是 `rolePayload` 收的三个字段（Query 只投影这三个，Work 传完整 envelope）；`withNoteVersion` 与 `understandingLine` 是共用的注记行规则。
 - `consultation-facts-text.ts` — 平台事实的唯一渲染器：`consultationFactLine` 把一条已解析事实渲染成正文行或 `- unreadable: <定位符>` 行，`consultationFactsLines` 依次渲染免责声明、已解析事实、omitted 与 unreadable 列表；不读端口、不重采集。
 - `context-rendering.ts` — 纯渲染：节序、字节预算、模板渲染、attention；固定字符串读取用 `packString`（`src/contracts/prompts/pack-string.ts:4`）；`templateSectionOrder` 把 `secretary-round` 的三个 `task_*` 槽投影成一个 `task` 段，`sectionOrderFor`/`queryPreparedSectionOrder` 也覆盖 `secretary`，`renderQueryContext` 同时渲染秘书轮。`intervention-planning` 的 `plan` 槽同样投影成 `task` 段（`message` 不是段），`sectionOrderFor`/`queryPreparedSectionOrder` 覆盖 `intervention_planning`，该模板没有可选段。
 - `context-review-input.ts` — unknown-call review 输入构造与命令字节上限。

@@ -37,6 +37,7 @@ import { decodePlanRevisionAcceptedEvent, decodePlanProposalRecordedEvent } from
 import { taskClaimedEventFromEvent, taskRequeuedEventFromEvent } from '../tasks/claim-record-codecs.js';
 import { unknownCallReviewChangedEventFromEvent } from '../tasks/unknown-call-review-codecs.js';
 import { commandRerunRequestChangedEventFromEvent } from '../tasks/command-rerun-request-codecs.js';
+import { decodeMemberCreatedEventFromEvent } from '../sessions/session-record-codecs.js';
 import {
   verificationRoundEventFromEvent, VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
   type VerificationRoundEvent,
@@ -126,6 +127,21 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof ?? null };
   },
   SessionMessageReleaseDecided: decodeMessageReleaseProofEvent,
+  // member_created -> the new Session aggregate; the party is the Run that initiated the request (absent for a
+  // secretary Query run or a Host pick). The post-effect version is read from THIS commit, never from the event.
+  MemberCreated: (event, commit) => {
+    const decoded = decodeMemberCreatedEventFromEvent(event);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithCurrent('unavailable', `the MemberCreated event is damaged: ${decoded.reason}`);
+    }
+    const after = effectPinOf(commit, decoded.value.sessionRef);
+    if (after === null) {
+      return rejectedWithCurrent('invalid', 'the MemberCreated commit carries no such Session version');
+    }
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof,
+      effect: { kind: 'member_created', ref: decoded.value.sessionRef, party: decoded.value.initiatorRun, after,
+        ...(decoded.value.acknowledgement === undefined ? {} : { acknowledgement: decoded.value.acknowledgement }) } };
+  },
   // 7A §3.5 item 1: claim_created → the RunRef the claim created; the party is that Run.
   TaskClaimed: (event, commit) => {
     const decoded = taskClaimedEventFromEvent(event);

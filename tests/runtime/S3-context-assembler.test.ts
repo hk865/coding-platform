@@ -96,7 +96,7 @@ const ROLE_BINDING: RoleBindingRefV1 = {
 const TASK_BUDGET: TaskBudgetV1 = { tokenBudget: 4096, deadline: null };
 const HOST_CONFIGURATION_REVISION = 's3-ca-host@1';
 const CA_PERMISSIONS: TaskEnvelopeV1['permissions'] = {
-  policyRevision: 'legacy-template', tools: ['read'], writeScope: [],
+  policyRevision: 'legacy-template', tools: ['read'], writeScope: [], createMember: false,
 };
 
 const GOAL_SNAPSHOT: GoalSnapshot = {

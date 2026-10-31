@@ -67,11 +67,13 @@ import {
   decodeSessionOperationRecord, decodeSessionRecord,
   decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionCreationAdmittedEvent,
   encodeSessionCreatedEvent, encodeSessionOperationRecord, encodeSessionRecord, isPlatformCursor,
+  MEMBER_CREATED_EVENT_TYPE, memberCreatedCodec,
   operationRefKey, plainSessionRefToAggregate, sessionAggregateRefKey, sessionCreatedPayloadFromEvent,
   sessionOperationFromAdmittedEvent, sessionWorkLinkRefKey, type PendingSessionWorkLink,
   type SessionCreatedEvent,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import type { MemberCreateActionV1, MemberCreatedEventV1 } from '../state/member-creation.js';
 import {
   createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession,
   type SessionTransition,
@@ -144,7 +146,7 @@ function sessionCreateIdentityKey(
     ...(parentOperation === null ? {} : { parentOperation }),
   } as unknown as JsonValue));
 }
-function sessionRegisterIdentityKey(actor: HostActor, projectId: string, requestId: string): string {
+export function sessionRegisterIdentityKey(actor: HostActor, projectId: string, requestId: string): string {
   return SESSION_REGISTER_IDENTITY_PREFIX +
     sha256Hex(canonicalJson({ actor: actorIdentity(actor), projectId, requestId } as unknown as JsonValue));
 }
@@ -639,21 +641,50 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     registration: NormalizedRegistration,
     scope: WorkspaceScope,
   ): Promise<RestoreOutcome<SessionRecord>> {
-    if (receipt.eventIds.length !== 1) {
+    // One event is the ordinary SessionCreated receipt. The only accepted multi-event shape is the member creation's
+    // `[SessionCreated, MemberCreated]`: the last event is the proof, so SessionCreated is read at the previous cursor
+    // by its own event id. Every other shape stays rejected.
+    if (receipt.eventIds.length !== 1 && receipt.eventIds.length !== 2) {
       return {
         ok: false,
-        rejection: reject('unavailable', `a registration receipt must reference exactly one event, got ${receipt.eventIds.length}`),
+        rejection: reject('unavailable', `a registration receipt must reference one event or SessionCreated+MemberCreated, got ${receipt.eventIds.length}`),
       };
     }
-    const located = await records.eventAt(receipt.cursor);
+    let sessionCursor = receipt.cursor;
+    if (receipt.eventIds.length === 2) {
+      const lastLocated = await records.eventAt(receipt.cursor);
+      if (lastLocated.status !== 'ready') {
+        return {
+          ok: false,
+          rejection: reject('unavailable',
+            `the MemberCreated event at ${String(receipt.cursor)} is not readable: ${lastLocated.code}: ${lastLocated.reason}`),
+        };
+      }
+      if (String(lastLocated.value.cursor) !== String(receipt.cursor)
+        || lastLocated.value.event.eventId !== receipt.eventIds[1]
+        || lastLocated.value.event.eventType !== MEMBER_CREATED_EVENT_TYPE) {
+        return { ok: false, rejection: reject('unavailable', 'the registration receipt does not end with MemberCreated') };
+      }
+      let sequence: number;
+      try {
+        sequence = seqOfCommitCursor(receipt.cursor);
+      } catch (error) {
+        return { ok: false, rejection: reject('unavailable', `the registration receipt cursor is not a ledger cursor: ${String(error)}`) };
+      }
+      if (sequence <= 1) {
+        return { ok: false, rejection: reject('unavailable', 'the registration receipt has no preceding SessionCreated event') };
+      }
+      sessionCursor = makeCommitCursor(sequence - 1);
+    }
+    const located = await records.eventAt(sessionCursor);
     if (located.status !== 'ready') {
       return {
         ok: false,
         rejection: reject('unavailable',
-          `the original SessionCreated event at ${String(receipt.cursor)} is not readable: ${located.code}: ${located.reason}`),
+          `the original SessionCreated event at ${String(sessionCursor)} is not readable: ${located.code}: ${located.reason}`),
       };
     }
-    if (String(located.value.cursor) !== String(receipt.cursor) || located.value.event.eventId !== receipt.eventIds[0]) {
+    if (String(located.value.cursor) !== String(sessionCursor) || located.value.event.eventId !== receipt.eventIds[0]) {
       return { ok: false, rejection: reject('unavailable', 'the registration receipt disagrees with the recorded event') };
     }
     const decoded = sessionCreatedPayloadFromEvent(located.value.event);
@@ -1043,6 +1074,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     // Slice 1 §2.2: the accepted operation's normalized provenance is the only
     // source, and the codec requires it.
     const acceptedProvenance = storedOperation.action.provenance;
+    const creation = storedOperation.action.creation;
     const session = createSessionRecord({
       ref: plainSessionRefToAggregate(registration.sessionRef),
       kernel: { adapterId: registration.adapterId, kernelSessionId: registration.kernelSessionId },
@@ -1050,6 +1082,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       workspaceId: scope.workspaceId,
       createdAt,
       provenance: acceptedProvenance,
+      // The ceiling and secretary pin are written once, in the creation commit.
+      ...(creation?.delegationCeiling === undefined ? {} : { delegationCeiling: creation.delegationCeiling }),
+      ...(creation?.secretaryCreated === undefined ? {} : { secretaryCreated: creation.secretaryCreated }),
     });
     const completedOperation: SessionOperationRecord = {
       ...storedOperation,
@@ -1076,6 +1111,56 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       operationRef: registration.operationRef,
       session,
     };
+    // A member-created Session rides its parent's effect in the SAME creation commit. The parent is the stored
+    // operation's `parentOperation`; only a member_create parent whose `createChild` is this create operation is the
+    // member arm (a handoff successor has a handoff parent and writes no such event). The proof is present only when
+    // the creation carried an acknowledgement, because without one no message can ever cite the effect.
+    let memberEvent: MemberCreatedEventV1 | null = null;
+    const parentRef = storedOperation.action.parentOperation;
+    if (parentRef !== null) {
+      const parentKey = operationRefKey(parentRef);
+      const parentRead = await records.readMany([parentKey]);
+      if (parentRead.status !== 'ready') return mapStoreFailure(parentRead);
+      const parentRecord = parentRead.value.records.find((entry) => entry.refKey === parentKey);
+      if (parentRecord === undefined) {
+        return reject('unavailable', 'the parent operation of the Session creation does not exist');
+      }
+      const decodedParent = decodeSessionOperationRecord(parentRecord);
+      if (decodedParent.status !== 'decoded') {
+        return reject('unavailable', `the parent Session operation is damaged: ${decodedParent.reason}`);
+      }
+      const parent = decodedParent.value;
+      const parentAction = (parent.action as { kind: string }).kind === 'member_create'
+        ? parent.action as unknown as MemberCreateActionV1 : null;
+      if (parentAction !== null
+        && parentAction.progress.createChild !== null
+        && operationRefKey(parentAction.progress.createChild) === operationRefKey(storedOperation.ref)) {
+        const acknowledgement = parentAction.input.acknowledgement;
+        const proof: MemberCreatedEventV1['proof'] = acknowledgement === null ? null : {
+          acknowledgementRef: acknowledgement,
+          // The new Session is the only changed aggregate; it had no prior version. The answer's captured source pins
+          // are checked when the answer itself is applied, so they are not replayed here.
+          capturedPins: [],
+          changes: [{ before: { ref: session.ref, revision: 0 }, after: { ref: session.ref, revision: session.revision } }],
+          basisRebases: [],
+        };
+        memberEvent = {
+          eventId: deriveEventId(identityKey, 'member-created'),
+          eventType: MEMBER_CREATED_EVENT_TYPE,
+          schemaVersion: 1,
+          occurredAt: createdAt,
+          projectId: scope.projectId,
+          workspaceId: scope.workspaceId,
+          operationRef: parent.ref,
+          sessionRef: session.ref,
+          sessionRevision: session.revision,
+          initiatorRun: parentAction.input.caller.kind === 'work' ? parentAction.input.caller.run : null,
+          actor,
+          ...(acknowledgement === null ? {} : { acknowledgement }),
+          proof,
+        };
+      }
+    }
     const guardByKey = new Map<string, RecordGuard>();
     guardByKey.set(opKey, { refKey: opKey, expectedRevision: 1 });
     guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: null });
@@ -1109,6 +1194,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           throw new Error(`session_created has no ${effect.kind} effect`);
       }
     }
+    // The proof decoder reads the receipt's LAST event, so the member event is appended after every effect event.
+    if (memberEvent !== null) events.push(memberCreatedCodec.encode(memberEvent));
     for (const guard of targetGuards.values()) guardByKey.set(guard.refKey, guard);
     const claims: UniqueClaimChange[] = [{
       claimKey: kernelSessionClaimKey(registration.adapterId, registration.kernelSessionId),

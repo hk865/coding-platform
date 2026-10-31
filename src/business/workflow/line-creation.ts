@@ -17,8 +17,11 @@ import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/iden
 import type { OperationRef } from '../../contracts/core/operations.js';
 import type { CoreRejection, OperationReceipt, ReadResult } from '../../contracts/core/results.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
+import type { TaskTriple } from '../../contracts/dispatch.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import { rejected } from '../../contracts/core/rejections.js';
+import { TaskTripleShape } from '../../contracts/data-format-refs.js';
+import { checkShape } from '../../contracts/validation/data-format.js';
 import type { SessionOperationsPort } from '../../core/agent-runtime/session-operations.js';
 import type { SessionDirectoryPort, SessionOperationRecord } from '../../core/work-graph/model/session-contracts.js';
 import { stableSessionCreationIdentity } from '../../core/work-graph/sessions/session-directory.js';
@@ -27,10 +30,14 @@ import { trustedContext } from '../../core/work-graph/sessions/trusted-context.j
 export type LineCreationInput = {
   commandId: string;
   duty: PlatformDutyV1;
-  scope: { kind: 'project' };
+  scope: { kind: 'project' } | { kind: 'task'; task: TaskTriple };
   reason: 'secretary_needed' | string;
   provenance: SessionProvenanceV1;
   roleConfiguration: RoleConfigurationRef;
+  /** The creator's accepted permissions for a member-created line; absent is no ceiling. */
+  delegationCeiling?: { tools: string[]; writeScope: string[]; createMember: boolean };
+  /** Present only on a secretary-created executor; absent is not secretary-created. */
+  secretaryCreated?: true;
   /** The source line this successor replaces; absent is null (ordinary creation normalizes to null). */
   replaces?: SessionRef | null;
   /** The handoff operation that creates this successor; absent is null. */
@@ -98,11 +105,18 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         workspace,
         role: input.roleConfiguration,
         recommendedRefs: [],
-        initialLinks: [],
+        // A task line starts as its Task's responsible holder; a project line opens none.
+        initialLinks: input.scope.kind === 'task'
+          ? [{ target: { kind: 'task', ref: input.scope.task }, relation: 'responsible' }]
+          : [],
         meta: { requestId: input.commandId, expected: [] },
         provenance: input.provenance,
         // The creator is the trusted Host actor of THIS call, never the caller's field.
-        creation: { duty: input.duty, scope: input.scope, reason: input.reason, creator: actor },
+        creation: {
+          duty: input.duty, scope: input.scope, reason: input.reason, creator: actor,
+          ...(input.delegationCeiling === undefined ? {} : { delegationCeiling: input.delegationCeiling }),
+          ...(input.secretaryCreated === undefined ? {} : { secretaryCreated: input.secretaryCreated }),
+        },
         // The parent operation is the runtime request's own optional member; `replaces` is not, so it rides as the
         // one extra member the admission reads.
         parentOperation,
@@ -129,10 +143,20 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         || typeof input.commandId !== 'string' || input.commandId.length === 0) {
         return { status: 'rejected', code: 'invalid', reason: 'a line creation requires a non-empty commandId' };
       }
-      // Slice 6A ruling 4.7: project scope only until 7D1; refused before any capacity count.
+      // A line names either the project or one Task; refused before any capacity count.
       const scope: unknown = input.scope;
-      if (typeof scope !== 'object' || scope === null || (scope as { kind?: unknown }).kind !== 'project') {
-        return { status: 'rejected', code: 'invalid', reason: 'a line scope is {kind:project} only' };
+      const taskScope = typeof scope === 'object' && scope !== null
+        && (scope as { kind?: unknown }).kind === 'task' ? (scope as { task?: unknown }).task : null;
+      if (taskScope === null) {
+        if (typeof scope !== 'object' || scope === null || (scope as { kind?: unknown }).kind !== 'project') {
+          return { status: 'rejected', code: 'invalid', reason: 'a line scope is {kind:project} or {kind:task,task}' };
+        }
+      } else {
+        const taskProblem = checkShape(TaskTripleShape, taskScope, 'stored');
+        if (taskProblem !== null) {
+          return { status: 'rejected', code: 'invalid',
+            reason: `a task line scope requires a complete TaskTriple: ${taskProblem}` };
+        }
       }
       const stable = stableSessionCreationIdentity(trusted.actor, trusted.scope.projectId, input.commandId);
 
@@ -200,6 +224,8 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
             reason: creation.reason,
             provenance: read.value.action.provenance,
             roleConfiguration: read.value.action.role,
+            ...(creation.delegationCeiling === undefined ? {} : { delegationCeiling: creation.delegationCeiling }),
+            ...(creation.secretaryCreated === undefined ? {} : { secretaryCreated: creation.secretaryCreated }),
             replaces: read.value.action.provenance.kind === 'handoff' ? read.value.action.provenance.from : null,
             parentOperation: read.value.action.parentOperation,
           },

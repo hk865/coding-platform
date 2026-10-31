@@ -148,7 +148,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
     // The real Runtime Host grant needs the mailbox tools this case uses.
     const host = { configurationRevision: 's2c-rd8-mail-host@1',
       permissions: { policyRevision: 'legacy-template',
-        tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[] },
+        tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[], createMember: false },
       hostTemplate: L_HOST.hostTemplate };
     let sequence = 0;
     const steps = await createS2BRuntimeSteps({ base: f.base, bodies: f.runs.bodies, ctx: f.ctx,

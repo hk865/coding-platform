@@ -878,7 +878,7 @@ function modelPermit(overrides: Partial<ModelRequestPermitV1> = {}): ModelReques
   return {
     schemaVersion: 1, permitId: modelPermitRef.permitId, runRef: runRef('run-1'), requestId: 'model-request-1',
     requestDigest: sha('4'), contextInputDigest: sha('5'), manifestDigest: sha('6'), deliveryRefs: [],
-    permissions: { policyRevision: 'policy-1', tools: ['read'], writeScope: [] },
+    permissions: { policyRevision: 'policy-1', tools: ['read'], writeScope: [], createMember: false },
     prompt: modelPrompt(), sequence: 1, consumedByAttemptId: null, issuedAt: at, consumedAt: null,
     ...overrides,
   };

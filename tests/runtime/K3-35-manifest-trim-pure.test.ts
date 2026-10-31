@@ -161,7 +161,7 @@ const CLAIM: TaskClaim = {
   claimedAt: AT,
 };
 const PERMISSIONS: PreparedTaskManifestV1['permissions'] = {
-  policyRevision: 'k335-pure-policy', tools: ['read', 'shell'], writeScope: ['src/'],
+  policyRevision: 'k335-pure-policy', tools: ['read', 'shell'], writeScope: ['src/'], createMember: false,
 };
 const BUDGET: TaskBudgetV1 = { tokenBudget: 120_000, deadline: null };
 const SOURCE_REFS: PreparedTaskManifestV1['sourceRefs'] = [

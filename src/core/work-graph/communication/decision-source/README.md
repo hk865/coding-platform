@@ -24,6 +24,7 @@
 | `unknown-call-review.ts` | `readUnknownCallReviewSource` | unknown call review 来源的完整分支事实。 |
 | `command-rerun-request.ts` | `readCommandRerunRequestSource` | command rerun request 来源的完整分支事实。 |
 | `rework-request.ts` | `reworkRequestOptions`、`projectReworkRequestCard`、`reworkRequestClosedReason`、`reworkRequestCardSourceSpec`、`readReworkRequestSource` | `rework_request` 来源的完整分支事实：全状态页，rejected/stale 以 `source_resolved` 关闭，applied 留给回答覆盖。 |
+| `member-creation.ts` | `readMemberCreationSource`、`memberCreationCardFacts`、`memberCreationClosedReason`、`memberCreationSourceIdentity`、`MemberOperationRecordV1`、`MemberCreationCardFactsV1` | member creation 来源的完整分支事实：按 identity.operationRef 重读一条 `member_create` 操作并核对 Goal/Task/revision；唯一纯投影产出卡片事实（operation pin、approve/reject 选项、`source_resolved` 的终态集合与 `requestedAt`）。 |
 | `message-release.ts` | `readMessageReleaseSource` | message release 来源的完整分支事实：消息记录、它的 Goal 与 `tasks/message-release-card.ts` 的卡片事实；派生块是读的 DTO，不在分支事实里。 |
 
 ## 不要做

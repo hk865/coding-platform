@@ -403,7 +403,7 @@ export function liveUnderstandingGrants(input: {
 
 /** The operation's current understanding generation: the greatest record, or null when it has none. */
 export function currentUnderstandingGeneration(
-  operation: { action: { kind: 'handoff'; progress: { understanding: readonly { generation: number }[] } } | { kind: 'create' | 'secretary_archive' } },
+  operation: { action: { kind: 'handoff'; progress: { understanding: readonly { generation: number }[] } } | { kind: 'create' | 'secretary_archive' | 'member_create' } },
 ): number | null {
   if (operation.action.kind !== 'handoff') return null;
   let current: number | null = null;

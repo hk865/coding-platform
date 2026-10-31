@@ -103,7 +103,7 @@ export function materialsFor(f: S5DecisionFixture) {
   return createMaterialService({ bodies: f.bodies, authority: createMaterialRecordReaders(f.records).authority, now: f.now });
 }
 export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDependencies {
-  const permissions = { policyRevision: 'legacy-template', tools: ['read', ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES], writeScope: [] };
+  const permissions = { policyRevision: 'legacy-template', tools: ['read', ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES], writeScope: [], createMember: false };
   // The world has two formal Host templates: the decision sender's RA uses
   // `platform-adviser`; the older builder Sessions/Runs keep `builder`.
   const hostTemplates = [
@@ -353,7 +353,7 @@ export async function noticeWork(f: S5DecisionFixture) {
     async resolveRoot() { return { status: 'ready' as const, value: { root: f.base.directory, workspaceRevision: (await workspaceSnapshot(f)).revision } }; },
     async authorize() { return { status: 'ready' as const, value: { subjectKey: 's5-notice-host', permissionRevision: 's5-notice-permission', allowsRead: () => true } }; },
   };
-  const grant = { policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [] as string[] };
+  const grant = { policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [] as string[], createMember: false };
   const template = { templateId: 'builder', revision: '1', digest: sha256Hex('S5 notice controller') };
   const authorizeConfiguration: AuthorizeConfiguration = async (_ctx, input) => input.configurationRevision === 's5-notice-controller'
     && key(input.permissions) === key(grant) && key({ value: input.hostTemplate }) === key({ value: template })

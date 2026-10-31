@@ -420,7 +420,9 @@ export async function driveS6BHandoff(world: S6AHostWorld, input: {
    */
   function holdMatcherOf(record: SessionOperationRecord, hold: S6B2HandoffHold): CommitMatch {
     const action = record.action;
-    if (action.kind === 'create') throw new Error('S6B2: a create operation has no advance write to hold');
+    if (action.kind === 'create' || action.kind === 'member_create') {
+      throw new Error('S6B2: a create operation has no advance write to hold');
+    }
     const principal = savedHostPrincipal(action.input.actor);
     if (principal === null) throw new Error('S6B2: the held operation has no saved Host actor');
     const keys = advanceWriteKeys({

@@ -91,7 +91,7 @@ const envelope: TaskEnvelopeV1 = {
   schemaVersion: 1, envelopeId: 'env-1', projectId: P, workspaceId: W, goalId: G, taskId: T,
   runRef: claim.runRef, attemptRef: claim.attemptRef, planRef, roleBinding,
   workspaceSnapshot: { workspaceId: W, revision: 7 },
-  permissions: { policyRevision: 'policy-1', tools: [], writeScope: [] }, budget, sourceRefs: [],
+  permissions: { policyRevision: 'policy-1', tools: [], writeScope: [], createMember: false }, budget, sourceRefs: [],
   bundleRef: { kind: 'artifact', contentType: 'text/plain', digest: 'f'.repeat(64), sizeBytes: 1,
     source: { kind: 'workspace', refId: W, revision: '7' } },
 };

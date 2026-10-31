@@ -40,6 +40,10 @@ export type SessionRecord = {
   provenance: SessionProvenanceV1;
   /** Absent on records written before slice 1 and read as null; non-null only while an archive is pending. */
   archiveRequest?: SessionArchiveRequestV1 | null;
+  /** The creator's accepted permissions for a member-created or inherited line; absent means no ceiling. */
+  delegationCeiling?: { tools: string[]; writeScope: string[]; createMember: boolean };
+  /** Present only on a secretary-created executor; every later preparation pins `createMember` false. */
+  secretaryCreated?: true;
   /**
    * Wiring package 2 (spec §2.3, L10): the commit cursor of the most recent
    * available→unavailable entry. `null` is the pending placeholder written in

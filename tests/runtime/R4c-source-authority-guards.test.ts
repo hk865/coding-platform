@@ -105,7 +105,7 @@ function validEnvelope(): TaskEnvelopeV1 {
     runRef: { ...runRef }, attemptRef: { ...attemptRef },
     planRef: { aggregateType: 'PlanRevision', projectId, planId: 'guard-plan' },
     roleBinding: { ...roleBinding }, workspaceSnapshot: { workspaceId, revision: 1 },
-    permissions: { policyRevision: 'p1', tools: ['read'], writeScope: [] },
+    permissions: { policyRevision: 'p1', tools: ['read'], writeScope: [], createMember: false },
     budget: { tokenBudget: 1000, deadline: null }, sourceRefs: [],
     bundleRef: { kind: 'artifact', digest: 'f'.repeat(64), sizeBytes: 10, contentType: 'text/plain',
       source: { kind: 'workspace', refId: workspaceId, revision: '1' } },

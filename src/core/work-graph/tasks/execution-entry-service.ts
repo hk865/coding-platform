@@ -37,6 +37,7 @@ import { rejectedWithCurrent as reject } from '../../../contracts/core/rejection
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { ARTIFACT_MAX_SIZE_BYTES, artifactBodyDigest, artifactBodySize, type ArtifactRef } from '../../../contracts/artifact.js';
+import { hostRolePermissionsAdmitted } from './pick-authorization.js';
 import type {
   ExecutionAuthorizationV2, RoleBindingRefV1, RunReconciliationBasisV1, RunRef, RunSnapshot,
   RuntimeInputBindingV1, TaskAttemptSnapshot, TaskBudgetV1, TaskLeaseSnapshot, TaskTriple,
@@ -187,7 +188,8 @@ function isWorkspacePin(value: unknown): value is { workspaceId: string; revisio
 function isPermissions(value: unknown): value is TaskEnvelopeV1['permissions'] {
   return isRecord(value) && nonEmpty(value['policyRevision'])
     && Array.isArray(value['tools']) && value['tools'].every(nonEmpty)
-    && Array.isArray(value['writeScope']) && value['writeScope'].every(nonEmpty);
+    && Array.isArray(value['writeScope']) && value['writeScope'].every(nonEmpty)
+    && typeof value['createMember'] === 'boolean';
 }
 function isBudget(value: unknown): value is TaskBudgetV1 {
   return isRecord(value) && isPositiveSafeInteger(value['tokenBudget'])
@@ -521,7 +523,9 @@ export async function recheckHostRoleAdmission(
 ): Promise<{ ok: true; value: HostRoleAdmission } | Rejected> {
   // R4/L13: a review-purpose Run resolves its Role with EMPTY declared
   // permissions, so only the Role's tool ceiling is skipped; validity and the
-  // manifest-role match checks below stay.
+  // manifest-role match checks below stay. Its tools are outside the Role
+  // ceiling, so the new Host/Role intersection is skipped as well; review
+  // admission is reviewRoundAdmissionProblem's (create-platform.ts).
   const reviewPurpose = isReviewRoundPurpose(input.run.purpose);
   const roleFacts = await deps.roles.resolveRoleBindingFacts(ctx, {
     roleBinding: input.roleBinding,
@@ -566,6 +570,26 @@ export async function recheckHostRoleAdmission(
     || !sameJson(host.value.permissions, input.permissions)
     || !sameJson(host.value.hostTemplate, input.hostTemplate)) {
     return { ok: false, rejection: forbidden('the trusted Host configuration disagrees with the prepared manifest') };
+  }
+  // The accepted permissions are the only Host grant this lane receives; a shell
+  // permission in them implies the adapter already admitted whole-workspace shell.
+  if (!reviewPurpose) {
+    const admitted = hostRolePermissionsAdmitted({
+      permissions: input.permissions,
+      host: {
+        tools: host.value.permissions.tools,
+        writeScope: host.value.permissions.writeScope,
+        createMember: host.value.permissions.createMember,
+        ...(input.permissions.tools.includes('shell') ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
+      },
+      role: resolution.status === 'resolved'
+        ? {
+          tools: resolution.spec.permissions.tools,
+          writeScope: resolution.spec.permissions.writeScope === 'none' ? 'none' : [],
+        }
+        : null,
+    });
+    if (!admitted.ok) return { ok: false, rejection: forbidden(admitted.reason) };
   }
   return { ok: true, value: { roleFacts, host: host.value } };
 }

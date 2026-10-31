@@ -61,7 +61,10 @@ export type CoreCallContext = {
  * model can never name another caller), so two principals never replay each other. A Host caller is its actor; a
  * Run its RunRef; a QueryRun its QueryRunRef.
  */
-export function principalIdentity(principal: CorePrincipal): JsonValue {
+export function principalIdentity(principal:
+    | { kind: 'host'; actor: Pick<ActorRef, 'kind' | 'id'> }
+    | { kind: 'work_run'; runRef: Pick<RunRef, 'projectId' | 'goalId' | 'runId'> }
+    | { kind: 'query_run'; queryRunRef: QueryRunRef }): JsonValue {
     if (principal.kind === 'host') return { kind: 'host', actor: { kind: principal.actor.kind, id: principal.actor.id } };
     if (principal.kind === 'work_run') {
         return { kind: 'work_run', runRef: { projectId: principal.runRef.projectId, goalId: principal.runRef.goalId,

@@ -325,6 +325,24 @@ export function validateWorkbenchRuntimeConfiguration(
         }
       }
     }
+    // The Host grant's delegation is false by default. Fixed duties never carry
+    // it: their tool set has no create_member, so a true grant is a config error.
+    const createMember = binding.grant['createMember'];
+    if (createMember !== undefined && typeof createMember !== 'boolean') {
+      return { code: 'invalid', reason: `bindings[${index}].grant.createMember must be a boolean when present` };
+    }
+    if (createMember === true) {
+      const legacyRole = binding.role.kind === 'legacy_template' ? binding.role : null;
+      const fixedDuty = duty as PlatformDutyV1 | undefined
+        ?? (legacyRole === null ? undefined : PLATFORM_DUTIES.find(candidate => {
+          const template = platformRoleProfile(candidate).template;
+          return template.templateId === legacyRole.templateId
+            && template.templateRevision === legacyRole.templateRevision;
+        }));
+      if (fixedDuty === 'secretary' || fixedDuty === 'scribe' || fixedDuty === 'reviewer') {
+        return { code: 'invalid', reason: `bindings[${index}].grant.createMember must not be set for ${fixedDuty}` };
+      }
+    }
     const skills: Record<string, unknown> | undefined = isPlainObject(binding.grant['skills'])
       ? binding.grant['skills'] : undefined;
     if (skills !== undefined && (skills['bundle'] !== undefined || skills['behaviors'] !== undefined)) {
@@ -500,6 +518,8 @@ export function createWorkbenchRuntimeHostBindings(
       configurationRevision: binding.configurationRevision,
       model: model.value,
       ...binding.grant,
+      // Absent is false; the resolved grant always carries the boolean.
+      createMember: binding.grant.createMember === true,
       skills: resolveSkillSelection(binding.grant.skills),
     };
     return narrowResolvedReadonlyCommands({ status: 'ready', value: assembled },

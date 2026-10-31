@@ -26,7 +26,6 @@ import { renderDeliveryInput } from '../../contracts/prompts/delivery-input.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
-import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SecretaryRoundMaterialV1, QueryJobRef } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
@@ -41,7 +40,7 @@ import type {
 import {
   annotations, effectiveDuty, goalPayload, notImplementedExtensions, noteSourcesOf,
   optionalRowsFromExtensions, rolePayload, topLevelModuleCards, understandingLine, withNoteVersion,
-} from './context-fact-text.js';
+  type RolePayloadPermissionsV1 } from './context-fact-text.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
 import {
   CONTEXT_FORMAT_VERSION, contextSectionHeaders, queryContextPrelude, renderQueryContext,
@@ -213,7 +212,7 @@ export async function assembleSecretaryContext(
   const dutyResult = effectiveDuty(input.role, input.configuration, input.facts.record?.session?.role, texts);
   if ('rejection' in dutyResult) return dutyResult.rejection;
   const duty: PlatformDutyV1 = dutyResult.duty;
-  const permissions: TaskEnvelopeV1['permissions'] = {
+  const permissions: RolePayloadPermissionsV1 = {
     policyRevision: input.configuration?.configurationRevision ?? '',
     tools: [...input.permissions.tools], writeScope: [...input.permissions.writeScope],
   };

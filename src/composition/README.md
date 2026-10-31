@@ -40,7 +40,7 @@
 - 不要复制领域规则或状态迁移：状态写入只经 `src/core/work-graph/state/`（AGENTS 第 9 条）。
 - 不要另建第二个平台/服务图，也不要把某项业务选择（哪个 owner 做决定）写进装配层。
 - 不要绕过 `trackedCall`（`src/composition/create-platform.ts:1462`）发布异步端口；关闭时用同一 drain，detached work 走 `trackDetached`（`src/composition/create-platform.ts:1469`）（MH-07）。
-- 不要给未配置 `secretaryOpenCap` 的 Host 发明 secretary 或自造全放行 adapter：无 cap 时 `requestCapacity`（`src/composition/create-platform.ts:1940`）直接走 `createAlwaysAdmitCapacity`（`src/business/workflow/line-creation.ts:64`），默认 profile 端口是 `defaultSecretaryProfiles`（`src/composition/create-platform.ts:1939`）的显式 null（FP-15、MH-02、FP-12、MH-12）。
+- 不要给未配置 `secretaryOpenCap` 的 Host 发明 secretary 或自造全放行 adapter：无 cap 时 `requestCapacity`（`src/composition/create-platform.ts:1940`）直接走 `createAlwaysAdmitCapacity`（`src/business/workflow/line-creation.ts:71`），默认 profile 端口是 `defaultSecretaryProfiles`（`src/composition/create-platform.ts:1935`）的显式 null（FP-15、MH-02、FP-12、MH-12）。
 - 不要假设 wake driver 已存在：`createRequestIntake`（`src/business/workflow/request-intake.ts:193`）的 `wake` 来自平台选项 `requestWake`，没有它就什么都不接，提交的轮留在记录上等 Query 路由或下一个 Host；平台自己不推进任何轮。`requestRounds` 的 `open` 与 `unassigned` 一样经 `trackedCall` 发布，队列按页读、不写状态。
 - 请求轮的授权预算只有一处：`createAuthorizeQueryConfiguration`（`src/composition/create-platform.ts:704`）的 `requested` 取 `queryExecutionBindingOf(input.job, input.run).runtimeBudget`（请求轮是认领时冻结的 profile 预算，普通 Query 与旧的 Job intent 相同）；不要在别处再读 Job intent 的执行预算。
 - 新增 Host 选项必须声明、校验、转发、重开都走：`secretaryOpenCap`（`src/app/host.ts:186`）校验（`src/composition/create-platform.ts:823`）后进 `createTargetPlatform`（`src/composition/create-platform.ts:822`）到传给 cap adapter 的 limit（`src/composition/create-platform.ts:1942`）；`secretaryProfiles` 在 `src/composition/create-platform.ts:407` 声明（FP-15、MH-02）。

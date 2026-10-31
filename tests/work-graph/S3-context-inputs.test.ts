@@ -603,7 +603,7 @@ async function createInputFixture(
     records: backend.records, plans, sessionsPort: base.sessionsPort, roleService: base.roleService,
     service: claimService };
   const runtimePermissions = { policyRevision: roleBinding.policyRevision,
-    tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[] };
+    tools: ['read', 'send_session_message', 'respond_session_message'], writeScope: [] as string[], createMember: false };
   const runtimeHost = { configurationRevision: 's3-runtime-config-1', permissions: runtimePermissions,
     hostTemplate: B2_HOST.hostTemplate };
   let runtimeSeq = 0;

@@ -26,7 +26,7 @@
 - `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`。
 - `reduction.ts` — `TaskReductionRef`、归因码与完成审计快照。
 - `rework-request.ts` — `ReworkRequestRef`：返工请求（记录 3）的 ref；记录的值类型和字段表在 `core/work-graph/persistence/rework-request-codecs.ts`。
-- `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定。
+- `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定；`permissions.createMember` 是必填布尔（Work 的委托），两个 Query 配方只用三字段投影。
 - `task-failure.ts` — 任务失败/自动化停止/返工事实 DTO。
 - `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor、策略默认、启动三档 `RESUME_ON_STARTUP_MODES`、`isAutomationActor`、`reworkActorClassOf`。
 

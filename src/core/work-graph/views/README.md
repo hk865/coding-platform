@@ -39,7 +39,7 @@
 
 做决定队列、冲突合成与图读取扩展的去这组。
 
-- `decision-read-model.ts` — 决定队列的唯一聚合器，以及通用集合适配器和五个具体卡片来源适配器；卡片与请知悉项的 `subject` 由本层构造，统一是 `DecisionSubjectV1`（Goal，或带 `projectRef.projectId` 的 project；没有并列的 `goalRef`），排序、过滤与分页点都用带标记的 `decisionSubjectKey`；项目 subject 的 `note_review` 卡不带 Goal 依据。同一套装配另有整页读 `readWholePage`（不分页、请知悉按主对话折叠、项目行加所选 Goal 的行，token 由主对话签发；`notices.goalRef` 为 `null` 时只读项目行），给主对话和 `requests/read` 用。
+- `decision-read-model.ts` — 决定队列的唯一聚合器，以及通用集合适配器和六个具体卡片来源适配器；卡片与请知悉项的 `subject` 由本层构造，统一是 `DecisionSubjectV1`（Goal，或带 `projectRef.projectId` 的 project；没有并列的 `goalRef`），排序、过滤与分页点都用带标记的 `decisionSubjectKey`；项目 subject 的 `note_review` 卡不带 Goal 依据。同一套装配另有整页读 `readWholePage`（不分页、请知悉按主对话折叠、项目行加所选 Goal 的行，token 由主对话签发；`notices.goalRef` 为 `null` 时只读项目行），给主对话和 `requests/read` 用。
 - `goal-conflicts.ts` — Goal 足迹与冲突组装（F43），并导出 views 共用的 scope/watermark/Goal 列表读法。
 - `context-extensions.ts` — 图读取的可选 `extensions`：异常锚点提醒、决定队列提示、注记记忆材料行。
 
@@ -86,15 +86,16 @@
 | `createGraphContextReader` | `src/core/work-graph/views/graph-context-reader.ts:475` | 上下文事实、图 look/find、注意力图的只读视图；无 Goal 的 look/find 走项目分支 | 上下文组装、图页、注意力扫描、秘书轮的项目视图 |
 | `createGoalPointerFacts` | `src/core/work-graph/views/pointer-facts.ts:23` | 返回 Goal 理解指针及同次读取的水位，缺失保留必须不存在的版本期待 | 组合根向三版本读取器注入指针端口时 |
 | `createContextExtensionsReader` | `src/core/work-graph/views/context-extensions.ts:256` | 图读取的可选 extensions：异常锚点、决定队列提示、记忆材料；无 Goal 的请求只投影项目理解和 norms，其余 Goal 专属行跳过；读失败原样返回 | 组装上下文、需要这些扩展行时 |
-| `createDecisionReadModel` | `src/core/work-graph/views/decision-read-model.ts:210` | 决定队列的唯一聚合器：卡片、请知悉、冲突合成一页，卡片按 `decisionSubjectKey` 排序与过滤；`DecisionWholePageReader` 的 `readWholePage` 是同一装配的整页读（`notices.goalRef` 可为 `null`，项目行是公共部分） | 读决定队列或标记请知悉已看时；主对话要卡片和请知悉时用整页读，不要另写装配 |
-| `cardInScope` | `src/core/work-graph/views/decision-read-model.ts:2337` | 一张卡是否属于某个 Goal（队列的 Goal 过滤用的同一条规则） | 按 Goal 挑卡时；`requests/read` 的卡片也用它 |
+| `createDecisionReadModel` | `src/core/work-graph/views/decision-read-model.ts:230` | 决定队列的唯一聚合器：卡片、请知悉、冲突合成一页，卡片按 `decisionSubjectKey` 排序与过滤；`DecisionWholePageReader` 的 `readWholePage` 是同一装配的整页读（`notices.goalRef` 可为 `null`，项目行是公共部分） | 读决定队列或标记请知悉已看时；主对话要卡片和请知悉时用整页读，不要另写装配 |
+| `cardInScope` | `src/core/work-graph/views/decision-read-model.ts:2541` | 一张卡是否属于某个 Goal（队列的 Goal 过滤用的同一条规则） | 按 Goal 挑卡时；`requests/read` 的卡片也用它 |
 | `createCollectionCardSource` | `src/core/work-graph/views/decision-read-model.ts:302` | 集合型卡片来源的通用适配器：一次/页装配、偏移分页、关闭卡片；规格用 `serves` 声明服务的 subject，`readCollection` 和 `project` 都只收一个 `subject`，装配缓存按来源种类、工作区和 subject 分开；队列只在不按 Goal 过滤的读里枚举一次项目 | 新增卡片来源时只注册读写和投影，不复制分页 |
-| `createGoalCauseCardSource` | `src/core/work-graph/views/decision-read-model.ts:234` | 把 Goal 决策依据读法包成 `goal_cause` 卡片来源 | 装配决定队列、注册来源 |
-| `createPlanningQuestionCardSource` | `src/core/work-graph/views/decision-read-model.ts:255` | 把规划问题读法包成 `planning_question` 卡片来源 | 装配决定队列、注册来源 |
-| `createNoteReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:391` | 注记复核卡片来源（`serves: ['goal', 'project']`），含按 key 直读；项目 subject 的卡是无 Goal 依据的注记卡；直读先按注记自己的 subject 比对（开着、关了都先比），所以别的 subject 的注记不是这张卡 | 装配决定队列、注册来源 |
-| `createUnknownCallReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:491` | 未知调用复核卡片来源，含按 key 直读与历史关闭 | 装配决定队列、注册来源 |
-| `createCommandRerunRequestCardSource` | `src/core/work-graph/views/decision-read-model.ts:624` | 命令重跑请求卡片来源，含修订与 Task 结束检查 | 装配决定队列、注册来源 |
-| `createMessageReleaseCardSource` | `src/core/work-graph/views/decision-read-model.ts:798` | 放行卡片来源（`serves: ['goal']`）：按 Goal 读 `awaiting` 与 `approved` 两条索引（撤回的跳过），每项用同一份阻塞投影派生 `releaseBlock`，卡上合并 `deadline` 与块；含按 key 直读 | 装配决定队列、注册来源；不要另写放行卡或阻塞判定 |
+| `createGoalCauseCardSource` | `src/core/work-graph/views/decision-read-model.ts:254` | 把 Goal 决策依据读法包成 `goal_cause` 卡片来源 | 装配决定队列、注册来源 |
+| `createPlanningQuestionCardSource` | `src/core/work-graph/views/decision-read-model.ts:275` | 把规划问题读法包成 `planning_question` 卡片来源 | 装配决定队列、注册来源 |
+| `createNoteReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:412` | 注记复核卡片来源（`serves: ['goal', 'project']`），含按 key 直读；项目 subject 的卡是无 Goal 依据的注记卡；直读先按注记自己的 subject 比对（开着、关了都先比），所以别的 subject 的注记不是这张卡 | 装配决定队列、注册来源 |
+| `createUnknownCallReviewCardSource` | `src/core/work-graph/views/decision-read-model.ts:509` | 未知调用复核卡片来源，含按 key 直读与历史关闭 | 装配决定队列、注册来源 |
+| `createCommandRerunRequestCardSource` | `src/core/work-graph/views/decision-read-model.ts:642` | 命令重跑请求卡片来源，含修订与 Task 结束检查 | 装配决定队列、注册来源 |
+| `createMemberCreationCardSource` | `src/core/work-graph/views/decision-read-model.ts:1996` | 成员创建卡片来源（`serves: ['goal']`）：用冻结的三值 `core-op-member-by-goal` 索引读一个 Goal 的所有成员操作，只保留 `decision.verdict === 'needs_decision'`（各阶段都留，终态进 history），`closedReasonOf` 是 `done`/`rejected`/`stale`；含按 key 直读。L1 在 composition 注册 | 装配决定队列、读成员卡 |
+| `createMessageReleaseCardSource` | `src/core/work-graph/views/decision-read-model.ts:826` | 放行卡片来源（`serves: ['goal']`）：按 Goal 读 `awaiting` 与 `approved` 两条索引（撤回的跳过），每项用同一份阻塞投影派生 `releaseBlock`，卡上合并 `deadline` 与块；含按 key 直读 | 装配决定队列、注册来源；不要另写放行卡或阻塞判定 |
 | `createMainSurfaceReadModel` | `src/core/work-graph/views/main-surface-read-model.ts:197` | `main/read` 与 `requests/read` 的读端口：请求根按 Goal 槽有序读、请求视图、一次整页读 | composition 装配主对话读时 |
 | `parseMainReadInput` | `src/core/work-graph/views/main-surface-read-model.ts:215` | `main/read` 的输入：`goalId` 为 Goal id 或 null，`cursor` 为 null 或一页返回的游标形状 | 校验主对话读的输入时 |
 | `mainReadPhases`、`mainReadStart`、`mainPageStep` | `src/core/work-graph/views/main-surface-read-model.ts:103`、`src/core/work-graph/views/main-surface-read-model.ts:116`、`src/core/work-graph/views/main-surface-read-model.ts:123` | 主对话页的段（本 Goal 段，第一个 Goal 再接它之前的无 Goal 段）、游标从哪段续读、一页截到多少和下一页游标 | 改主对话分页时；不要另算段或游标 |
@@ -108,6 +109,7 @@
 | `createNoticePositionComparator` | `src/core/work-graph/views/notice-position.ts:37` | 把唯一顺序注入决定读模型 | 组装决定读模型时 |
 | `compareNoticePositions` | `src/core/work-graph/views/notice-position.ts:42` | 按 ledger 游标再按 `itemKey` 比较两个位置 | 任何需要通知顺序时；唯一允许解析 ledger 游标的位置 |
 | `mergeNoticePages` | `src/core/work-graph/views/notice-position.ts:56` | 把各来源已过滤的页稳定合并，截到 limit，返回每类已显示位置 | 决定队列合并请知悉来源时 |
+| `member_created` 内置请知悉 | `src/core/work-graph/views/decision-read-model.ts:2152` | 每个写了 `noticeItemKey` 的 `automatic_notice` + `done` 成员操作一项（只读 `completed` 分区）；位置由保存的 fingerprint/caller/commandId 经 `principalIdentity` 用保存的 caller 折出 `member.request` 身份，用 `lookupCommittedReceipt` 按身份+指纹查回执，再 `readCommittedEvent` 解码原 `MemberCreationAccepted` 事件并核对 operation；键不是 `member:<operationId>`→`unavailable`、缺回执→`unavailable`、`conflict`→`idempotency_conflict`、坏事件→`unavailable`；subject 是 Goal；`host_pick` 为空键、不读 `caller.run` | 主对话/请知悉读；`records` 窄口含 `lookupCommit`/`eventAt`，组合根传同一个 `backend.records` |
 | `groupNotices` | `src/core/work-graph/views/notice-grouping.ts:63` | 按 `pass_through`/`user_affected_per_goal`/`main_conversation` 折叠显示行；按 `decisionSubjectKey` 把每个 subject 的书记整理折成一行，主对话另把每个 subject 的自动返工折成一行，成员原行放在 `memberViews` | 显示前分组；输入必须已按位置排序 |
 | `seenThroughOfNotices` | `src/core/work-graph/views/notice-grouping.ts:128` | 只按实际显示的成员计算每类 seenThrough 推进 | `markNoticesSeen` 计算推进位置时 |
 | `noticePage` | `src/core/work-graph/views/notice-grouping.ts:163` | 按给定的 subject 集合放行（项目行加所选 Goal 的行）；推进按全部行里的连续前缀算，别的 subject 的行挡住就不越过 | 主对话页和整页读组请知悉时 |

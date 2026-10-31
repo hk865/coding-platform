@@ -15,6 +15,7 @@
 做 Session 生命周期、占用、责任交接、请求轮与控制意图的去这组。
 
 - `session-activity.ts` — Session 活动记录的纯规则与记录构造都在这里：`latestActivityAt`（线卡时钟，`src/core/work-graph/state/session-activity.ts:25`；`tasks/line-clock.ts` 只再导出）与 `nextSessionActivity`（`src/core/work-graph/state/session-activity.ts:41`；一次提交事实之后的下一条记录：revision 递增、时刻不回退、迟到的旧事实不改 kind/source）。
+- `member-creation.ts` — 记录 1 的 `member_create` 分支：调用者/输入/进度的字段表、跨字段规则 `memberCreateInputProblem`（任务属于调用者的工作区和项目、reason 1..2000 UTF-8 字节）、纯 progress 步骤与阶段迁移 `acceptedMemberCreation`/`advancedMemberCreation`（接已存 action 与事实，返回下一个 action 和 phase，不读时钟），以及 `MemberCreationAccepted`/`MemberCreationDecided`/`MemberCreated` 三个事件的纯体格式；MemberCreated 只留字段表和事件形状，正式 proof 由 `sessions/session-record-codecs.ts` 调 `decisionChangeProofProblem`，Store 信封与 typed 解码也在那里。
 - `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入；分派准入把已消费等待按消息、原 Run 与任务三元匹配（`SessionConsumedWaitStateV1`），`intervention` 在旁边运行、不消费等待。
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
 - `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写，包含三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）、推进用的 `withHandoffProgress`、纯覆盖规则 `coverageHolds`、简报就绪规则 `briefReady` 和 entered 确认的 `consumeHandoffBrief`。
@@ -78,6 +79,9 @@
 | `firstDispatch`、`nextDispatch`、`DispatchCounterWriteV1` | `src/core/work-graph/state/dispatch-counter.ts:10`、`src/core/work-graph/state/dispatch-counter.ts:28`、`src/core/work-graph/state/dispatch-counter.ts:4` | 首次与后续派工的计数器记录和版本期待 | 发送 owner 在同一次提交中写计数器并构造 guard 时 |
 | `interruptionRefOf`、`pendingGoalInterruption`、`resumedGoalInterruption`、`GoalInterruptionWriteV1` | `src/core/work-graph/state/goal-interruption.ts:17`、`src/core/work-graph/state/goal-interruption.ts:22`、`src/core/work-graph/state/goal-interruption.ts:38`、`src/core/work-graph/state/goal-interruption.ts:9` | 目标中断记录的地址，pending/resumed 迁移与版本期待（已 pending 保留、已 resumed 不再写） | 启动对账记录候选、驱动开始时结清、显示读记录时；不要另写记录地址，不要绕过状态层写记录 |
 | `decideActivityOutcome` | `src/core/work-graph/state/activity-replacement.ts:23` | 按 L4 判定本次活动写是 created/replaced/unchanged | 回填或 Run 结束要写 Run.activity 时 |
+| `MemberCreateActionShape`、`memberCreateInputProblem` | `src/core/work-graph/state/member-creation.ts:139`、`:99` | `member_create` 的字段表与跨字段规则（任务/调用者在同一项目、reason 1..2000 UTF-8 字节，`done` 必须有 outcome） | 编解码 member 操作、建事件、M-records 的纯规则行 |
+| `MEMBER_CREATION_STAGES`、`MEMBER_CREATION_ANSWERS`、`MEMBER_CREATION_VERDICTS`、`memberCreationAcceptedEventFormat`、`memberCreationDecidedEventFormat`、`memberCreatedEventFormat`、`checkMemberCreatedEventBody` | `src/core/work-graph/state/member-creation.ts:35`、`:37`、`:39`、`:283`、`:303`、`:341`、`:366` | 成员创建的固定阶段/答复/判定值，以及三个事件的纯体格式与 Created 的字段/形状校验（正式 proof 在 sessions 层） | 建成员事件、校验成员进度与答复时 |
+| `MemberCreationStepV1`、`acceptedMemberCreation`、`advancedMemberCreation` | `src/core/work-graph/state/member-creation.ts:176`、`:190`、`:207` | 成员创建的纯 progress 步骤与阶段迁移：接已存 action 和事实，返回下一个 action 与 phase；revision/时刻/编码/提交由 `tasks/member-service.ts` 写 | 写 accepted、决定、建线、拒绝或恢复进度时；不要另写阶段或 phase 判断 |
 | `newArchitectureCaptureRequestRecord` | `src/core/work-graph/state/architecture-capture.ts:37` | 建 status=requested 的捕获请求记录（revision/requestSeq 递增） | 接受一次自动捕获触发时 |
 | `architectureAutoCaptureState` | `src/core/work-graph/state/architecture-capture.ts:56` | 自动捕获的公开投影，pending 由 satisfiedRequestSeq 算出 | 判断是否该触发捕获 |
 | `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:231` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
@@ -186,17 +190,17 @@
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |
-| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:333` | 建 Session 记录 | 新建 Session |
-| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:356` | 在下一代 generation 上取得占用 | 运行开始 |
-| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:380` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
-| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:413` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
-| `transitionSession` | `src/core/work-graph/state/session-availability.ts:619` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
+| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:338` | 建 Session 记录；可选的 `delegationCeiling`/`secretaryCreated` 从创建意图带进记录 | 新建 Session |
+| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:369` | 在下一代 generation 上取得占用 | 运行开始 |
+| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:393` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
+| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:425` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
+| `transitionSession` | `src/core/work-graph/state/session-availability.ts:631` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
 | `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:297` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
 | `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:254` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
 | `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:238` | 下一次占用代数 | 取占用时 |
-| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:677` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
-| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:695` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
-| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:523` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
+| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:689` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
+| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:707` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
+| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:535` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
 | `transitionResponsibility` | `src/core/work-graph/state/session-responsibility.ts:33` | 责任转移/关闭：关源链接、开目标链接 | 责任交接 |
 | `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:77`、`:100` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |
 | `OperationCallerV1`、`OperationSessionFactV1`、`HandoffAdmissionFactsV1`、`SecretaryArchiveAdmissionFactsV1`、`OperationAdmissionV1` | `src/core/work-graph/state/session-handoff.ts:21`、`:23`、`:26`、`:41`、`:49` | 两张准入表的输入和结果：调用者的分类、公开读到的 Session 事实、交接和秘书归档各自的事实、准入结果（`busy` 带未完成操作的 pin） | owner 读完事实后调 `admitHandoff` 或 `admitSecretaryArchive` |
@@ -261,5 +265,5 @@
 - 不要在服务里 spread 一条 Run/Session/Task 改字段或另写一套迁移；受保护字段写入一律走本层构造器与 `transition*`（M1-05、M1-06）。
 - 不要手抄 Session 的 lifecycle/health/occupancy 判定：领用走 `occupancyAdmissionProblem`，只共享 lifecycle/health 的候选筛选走 `sessionAvailabilityAdmissionProblem` 并把 busy 单列（FP-09、M1-04）。
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
-- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:890`）翻译。
+- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:915`）翻译。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

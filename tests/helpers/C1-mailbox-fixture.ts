@@ -100,7 +100,7 @@ export function envelopeFor(run: RunSnapshot, tools: string[] = [...SESSION_MAIL
     planRef: run.planRef,
     roleBinding: run.roleBinding,
     workspaceSnapshot: run.workspaceSnapshot,
-    permissions: { policyRevision: 'c1-policy', tools: [...tools], writeScope: [] },
+    permissions: { policyRevision: 'c1-policy', tools: [...tools], writeScope: [], createMember: false },
     budget: run.budget,
     sourceRefs: [],
     // The C2 fixture stores a REAL prepared manifest; a rewritten envelope keeps
@@ -148,7 +148,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   const c1SessionRole: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
   const c1ConfigurationRevision = 'c1-mailbox-host-config@1';
   const c1HostPermissions = { policyRevision: fixture.roleBinding.policyRevision,
-    tools: [...SESSION_MAILBOX_TOOL_NAMES], writeScope: [] as string[] };
+    tools: [...SESSION_MAILBOX_TOOL_NAMES], writeScope: [] as string[], createMember: false };
   const sameJson = (left: unknown, right: unknown): boolean => canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
     if (ctx.projectId !== busySession.projectId || ctx.workspaceId !== claim.workspaceId

@@ -47,7 +47,7 @@ const INPUT_REF: ArtifactRef = {
 /** The whole role interval, hand-written; the stale-files reminder ends it. */
 const ROLE_TEXT = '## Runtime context\n'
   + '## Runtime binding\n'
-  + 'roleBinding: {"policyRevision":"legacy-template","tools":["read"],"writeScope":[]}\n'
+  + 'roleBinding: {"policyRevision":"legacy-template","tools":["read"],"writeScope":[],"createMember":false}\n'
   + 'tools: read\n'
   + 'writeScope: (none)\n'
   + '\n'

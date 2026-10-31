@@ -15,7 +15,7 @@ import { entryPlanVerdict, isBasisUnsupported, planTaskFacts } from './plan-task
 
 export type EntryPlanRead = { status: 'ready'; verdict: EntryPlanVerdict; guards: RecordGuard[] };
 
-function planGuard(plan: PlanRevisionSnapshot): RecordGuard {
+export function planGuard(plan: PlanRevisionSnapshot): RecordGuard {
   return { refKey: planRevisionRefKey(plan.ref), expectedRevision: plan.revision };
 }
 

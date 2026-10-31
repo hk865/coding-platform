@@ -115,7 +115,7 @@ const OLD_A: ArtifactRef = {
 const HOST_TEMPLATE_DIGEST = H('trusted builder template revision 1');
 const HOST_CONFIG_REVISION = 's3-host-config@1';
 const HOST_PERMISSIONS: TaskEnvelopeV1['permissions'] = {
-  policyRevision: 'legacy-template', tools: ['read'], writeScope: [],
+  policyRevision: 'legacy-template', tools: ['read'], writeScope: [], createMember: false,
 };
 const HOST_TEMPLATE = { templateId: 'builder', revision: '1', digest: HOST_TEMPLATE_DIGEST };
 const WORK_PRELUDE = '# Verified runtime task input\n\nThis is the current task context assembled from formal platform facts; it is not a transcript.';

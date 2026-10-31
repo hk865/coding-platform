@@ -62,7 +62,7 @@
 | `dispatchCoreRoute` | `src/app/core-routes.ts:1268` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
 | `parseCoreRouteRequest` | `src/app/core-routes.ts:655` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
 | `createWorkbenchTools` | `src/app/workbench-tools.ts:283` | 适配 Kernel 文件沙箱与进程沙箱：读写、列目录、后台命令 | 工作台的文件/命令路由；不要直接碰 Kernel sandbox |
-| `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:391` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
+| `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:409` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
 | `validateWorkbenchRuntimeConfiguration` | `src/app/runtime-configuration.ts:281` | 纯校验 binding/profile/grant/budget，重复或错配直接报错 | 装载或替换运行期配置前 |
 | `narrowResolvedReadonlyCommands` | `src/app/runtime-configuration.ts:186` | 按 Host `allowReadonlyCommands:false` 收窄每个已解析 binding 的工具 | 通用 binding 解析边界；设置重建也要走 |
 | `createSecretaryProfiles` | `src/app/secretary-profiles.ts:50` | Host 的 `SecretaryProfilePort`：`forSession` 只按实时 profile 列表匹配 workspace 与完整 `sessionRole`（`sameJson`），不做 duty 判定；`forNewLine` 调真正的 duty resolver | Host 在 `src/app/secretary-profiles.ts:50` 构造并作为 `secretaryProfiles` 选项注入（`src/app/secretary-profiles.ts:50`）；duty 正本是 `createSessionDutyResolver`（`src/composition/session-duty.ts:55`），不要另写判断 |

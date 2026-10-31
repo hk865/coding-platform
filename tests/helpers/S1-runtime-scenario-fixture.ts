@@ -178,7 +178,7 @@ export async function openS1RuntimeFixture(options: {
   const activity = createExecutionHistoryReader({ history: sessionOperations });
   const scripted = createScriptedModel(options.replies ?? [{ kind: 'text', text: 'S1 fixture answer' }], options.beforeReply);
   const tools = ['read', 'write', 'send_session_message', 'respond_session_message'];
-  const permissions = { policyRevision: base.roleBinding.policyRevision, tools, writeScope: ['.'] };
+  const permissions = { policyRevision: base.roleBinding.policyRevision, tools, writeScope: ['.'], createMember: false };
   const host: RuntimeHostBindings = { async resolveConfiguration(ctx, input) {
     if (ctx.projectId !== base.scope.projectId || ctx.workspaceId !== base.scope.workspaceId
       || input.role.kind !== 'legacy_template' || input.role.templateId !== 'builder')

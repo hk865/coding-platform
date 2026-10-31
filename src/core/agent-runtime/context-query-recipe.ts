@@ -5,7 +5,6 @@ import type { ContextAssemblyBindingV1, PlatformDutyV1 } from '../../contracts/g
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
-import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import { isRequestRound } from '../../contracts/query-job.js';
@@ -15,7 +14,7 @@ import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-cont
 import {
   annotations, effectiveDuty, goalPayload, notImplementedExtensions, noteSourcesOf,
   queryFocusLines, queryPlanSummary, rolePayload, topLevelModuleCards,
-} from './context-fact-text.js';
+  type RolePayloadPermissionsV1 } from './context-fact-text.js';
 import {
   CONTEXT_FORMAT_VERSION, queryContextPrelude, renderQueryContext, sectionOrderFor,
 } from './context-rendering.js';
@@ -66,7 +65,7 @@ export async function assembleQueryContext(
   const dutyResult = effectiveDuty(input.role, input.configuration, input.facts.record?.session?.role, texts);
   if ('rejection' in dutyResult) return dutyResult.rejection;
   const duty: PlatformDutyV1 = dutyResult.duty;
-  const permissions: TaskEnvelopeV1['permissions'] = {
+  const permissions: RolePayloadPermissionsV1 = {
     policyRevision: input.configuration?.configurationRevision ?? '',
     tools: [...input.permissions.tools], writeScope: [...input.permissions.writeScope],
   };

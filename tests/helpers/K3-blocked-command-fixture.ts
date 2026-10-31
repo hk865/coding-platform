@@ -289,7 +289,7 @@ async function seedBlockedRun(
       const template = input.sessionRole.kind === 'legacy_template' ? value.hostTemplate : null;
       if (value.configurationRevision !== input.configurationRevision
         || JSON.stringify(input.permissions) !== JSON.stringify({ policyRevision: input.run.roleBinding.policyRevision,
-          tools: [...value.tools], writeScope: [...value.writeScope] })
+          tools: [...value.tools], writeScope: [...value.writeScope], createMember: false })
         || JSON.stringify(template) !== JSON.stringify(input.hostTemplate)) {
         return { status: 'rejected', code: 'forbidden', reason: 'the trusted Host double does not grant this configuration' };
       }

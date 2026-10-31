@@ -33,6 +33,8 @@ export type TaskEnvelopeV1 = {
         policyRevision: string;
         tools: string[];
         writeScope: string[];
+        /** Required delegation: may this Run request one executor line? */
+        createMember: boolean;
     };
     budget: TaskBudgetV1;
     /** Selected versioned sources (compact; NO transcript). */

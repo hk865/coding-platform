@@ -48,7 +48,7 @@ export const B2_AT = CLAIM_FIXTURE_AT;
 const B2_INPUT = 'Implement A using the accepted task and plan contract.';
 export const B2_HOST = {
   configurationRevision: 'b2-host-config-1',
-  permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] as string[] },
+  permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] as string[], createMember: false },
   hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('trusted builder template revision 1') },
 };
 /** The frozen prompt facts a real Runtime sends with one model request (ruling 26). */

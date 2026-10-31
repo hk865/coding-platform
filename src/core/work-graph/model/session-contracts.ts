@@ -5,12 +5,14 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { HandoffActionV1, SecretaryArchiveActionV1 } from './session-operation-arms.js';
+import type { MemberCreateActionV1 } from '../state/member-creation.js';
 import type { GraphWrite } from './task-contracts.js';
 
 export type { GraphWrite } from './task-contracts.js';
@@ -22,9 +24,11 @@ export type SessionPage<T> = { items: T[]; nextCursor: string | null; sourceCurs
  */
 export type SessionCreationIntentV1 = {
   duty: PlatformDutyV1;
-  scope: { kind: 'project' };
+  scope: { kind: 'project' } | { kind: 'task'; task: TaskTriple };
   reason: string;
   creator: ActorRef;
+  delegationCeiling?: { tools: string[]; writeScope: string[]; createMember: boolean };
+  secretaryCreated?: true;
 };
 export type SessionCreationInput = {
   workspace: WorkspaceScope;
@@ -79,8 +83,9 @@ export interface ConsultationCreateReadPort {
   readConsultationCreate(ctx: CoreCallContext, input: { operationRef: OperationRef }):
     Promise<ReadResult<ConsultationCreateV1>>;
 }
-/** The three arms of a `CoreOperation` record; every reader judges `kind` first. */
-export type SessionOperationActionV1 = SessionCreateActionV1 | HandoffActionV1 | SecretaryArchiveActionV1;
+/** The four arms of a `CoreOperation` record; every reader judges `kind` first. */
+export type SessionOperationActionV1 =
+  | SessionCreateActionV1 | HandoffActionV1 | SecretaryArchiveActionV1 | MemberCreateActionV1;
 export type SessionOperationRecordOf<A extends SessionOperationActionV1> = {
   ref: OperationRef;
   revision: number;

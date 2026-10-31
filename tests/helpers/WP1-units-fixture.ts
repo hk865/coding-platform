@@ -435,7 +435,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
     status: 'absent', roleId: 'builder', reason: 'The fixture uses the trusted legacy template',
   };
   const taskInput: AssemblerFactsFixture['taskInput'] = { execution, role, configuration,
-    permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [] },
+    permissions: { policyRevision: 'legacy-template', tools: ['read'], writeScope: [], createMember: false },
     toolNames: ['read'],
     history: { callKind: 'work', hasCompletedCursor: false } };
   // S3-context-assembler.test.ts:551 supplies the same Query seam; retain a

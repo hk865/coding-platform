@@ -848,7 +848,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const s5Host = {
     configurationRevision: 's5-host-config-1',
     permissions: { policyRevision: 'legacy-template',
-      tools: ['read', ...preEntryTools, ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES] as string[], writeScope: [] as string[] },
+      tools: ['read', ...preEntryTools, ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES] as string[], writeScope: [] as string[], createMember: false },
     hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('s5 trusted builder template') },
   };
   const authorizeConfiguration: AuthorizeConfiguration = async (callCtx, input) => {

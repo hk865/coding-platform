@@ -64,6 +64,7 @@
 | `workspaceSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:587` | Workspace 快照值形状校验 | 解码或提交 Workspace 时 |
 | `readGoalSettings` | `src/core/work-graph/persistence/record-codecs.ts:832` | 返回 Goal 快照自带的 `settings`（每个 Goal 出生即有，不再补默认值） | 需要 Goal 设置时 |
 | `effectiveWorkspaceDecisionSettings` | `src/core/work-graph/persistence/record-codecs.ts:840` | 读取 Workspace 生效的决定设置 | 需要决定设置时 |
+| `goalRefFor` | `src/core/work-graph/persistence/commit-compiler.ts:56` | 生成 `{aggregateType:'Goal', projectId, goalId}` 的规范 GoalRef | 需要 GoalRef 时；不要另写构造器 |
 | `compileGoalCreate` | `src/core/work-graph/persistence/commit-compiler.ts:90` | 把已由 `state/` 构造的 Goal 快照/guard 编译成一次 `PreparedCommit`；`birthEvent: "none"` 不建、不编码 `GoalCreated`（自己的结果事件记出生的 owner：确认草稿、复制） | Goal 创建的写入 owner |
 | `normalizeCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:194` | 校验并归一化调用方 Goal pins | 组装 Goal 创建提交前 |
 | `compareCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:246` | 比较 caller pins 与观察到的版本，返回不一致项 | 提交前核对 pins |
@@ -105,7 +106,7 @@
 
 以下导出只在本层的 schema 注册、codec 与提交编译内部使用；跨层复用先看上表，确需复用就补进上表。
 
-- commit-compiler：`GOAL_CREATE_IDENTITY_PREFIX`、`goalCreateIdentityKey`、`goalCreateFingerprint`、`projectRefFor`、`workspaceRefFor`、`goalRefFor`。
+- commit-compiler：`GOAL_CREATE_IDENTITY_PREFIX`、`goalCreateIdentityKey`、`goalCreateFingerprint`、`projectRefFor`、`workspaceRefFor`。
 - control-record-codecs：`CONTROL_INTENT_SNAPSHOT_SCHEMA_ID`、`CONTROL_INTENT_SUBMITTED_EVENT_TYPE`、`CONTROL_INTENT_EVENT_SCHEMA_VERSION`、`CONTROL_INTENT_OBSERVED_EVENT_TYPE`、`CONTROL_INTENT_OBSERVED_EVENT_SCHEMA_VERSION`、`controlObservationProblem`、`controlPlatformObservationProblem`、`controlIntentObservationProblem`、`encodeControlIntentSnapshot`、`decodeControlIntentSnapshot`、`encodeControlIntentSubmittedEvent`、`controlIntentSubmittedEventFromEvent`、`encodeControlIntentObservedEvent`、`controlIntentObservedEventFromEvent`、`CONTROL_BY_WORKSPACE_STATUS_INDEX`、`S2B_CONTROL_BY_RUN_LOOKUP`、`CONTROL_RECORD_SCHEMAS`。
 - decision-record-codecs：`GOAL_SETTINGS_CHANGED_EVENT`、`WORKSPACE_NOTICE_SEEN_CHANGED_EVENT`、`DECISION_EVENT_SCHEMA_VERSION`、`encodeGoalSettingsChangedEvent`、`decodeGoalSettingsChangedEvent`、`encodeWorkspaceNoticeSeenChangedEvent`、`decodeWorkspaceNoticeSeenChangedEvent`、`goalSettingsChangedEventProblem`、`workspaceNoticeSeenChangedEventProblem`、`DECISION_RECORD_SCHEMAS`。
 - evidence-record-codecs：`VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID`、`EVIDENCE_SNAPSHOT_SCHEMA_ID`、`TASK_EVIDENCE_INDEX_SNAPSHOT_SCHEMA_ID`、`VERIFICATION_ROUND_OPENED_EVENT_TYPE`、`VERIFICATION_CHECK_BEGUN_EVENT_TYPE`、`VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE`、`VERIFICATION_ROUND_FINALIZED_EVENT_TYPE`、`VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE`、`VERIFICATION_CHECK_ABANDONED_EVENT_TYPE`、`VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE`、`EVIDENCE_EVENT_SCHEMA_VERSION`、`VERIFICATION_ROUND_EVENT_TYPES`、`encodeVerificationRoundSnapshot`、`decodeVerificationRoundSnapshot`、`encodeEvidenceSnapshot`、`decodeEvidenceSnapshot`、`encodeTaskEvidenceIndexSnapshot`、`decodeTaskEvidenceIndexSnapshot`、`encodeVerificationRoundEvent`、`verificationRoundEventFromEvent`、`checkObservationProblem`、`checkExecutionTicketProblem`、`VERIFICATION_ROUND_ORIGINAL_LOOKUP`、`VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT`、`VERIFICATION_ROUND_BY_TASK_LOOKUP`、`VERIFICATION_ROUND_BY_STATUS_LOOKUP`、`S2A_ROUND_REVERIFY_LOOKUP`、`S2A_ROUND_REVERIFY_LOOKUP_INDEXES`、`S2B_ROUND_BY_GOAL_LOOKUP`、`S2B_ROUND_BY_GOAL_FINALIZED_LOOKUP`、`S2B_ROUND_BY_GOAL_LOOKUP_INDEXES`、`EVIDENCE_RECORD_SCHEMAS`。
@@ -123,7 +124,7 @@
 - `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:40`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
 - `actorRefProblem` 是 actor 字段形状的正本；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换；sessions 的 `checkCreationActor` 包装已删除（S05、FP-17）。
 - `canonicalRefKey` 委托 `src/contracts/fingerprint.ts:59` 的 `canonicalKey`；`configuration/role-record-codecs.ts` 的旧副本已删除，不要恢复。
-- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:166` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
+- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:174` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
 - 不要复制 Store 失败 switch；按 owner 语义选现有映射，request 尾/收件冲突先单独处理（M1-30、M1-10）。
 - 不要把 `lookupAll`/`readAllOrdered` 当成有界队列步；完整集与遍历预算是两个契约（M1-13）。
 - 不要重建事件 codec 管线、改校验顺序或把持久化 JSON 换成 canonical-key 序列化（M1-37）。
