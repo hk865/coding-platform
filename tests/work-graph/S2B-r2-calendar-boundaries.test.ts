@@ -76,7 +76,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 calendar boundaries (%
     // exactly at `from` and ends exactly on the 11:00 hour boundary.
     const run = await f.runAndEnd('work-1', f.b2.base.sessions.second,
       '2026-10-14T10:00:00.000Z', '2026-10-14T11:00:00.000Z');
-    await f.writeActivity(run, { status: 'unknown', ruleVersion: 1,
+    await f.writeActivity(run, { status: 'unknown', ruleVersion: 2,
       reason: 'history_read_failed', detail: 'S2B round-2 closed span' });
     f.setClock('2026-10-14T12:00:00.000Z');
 

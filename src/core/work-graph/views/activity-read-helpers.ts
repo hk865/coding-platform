@@ -18,8 +18,11 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import { isRequestRound } from '../../../contracts/query-job.js';
-import type { QueryActivitySnapshot, RunActivityFactsV1, RunActivitySnapshot } from '../../../contracts/run-activity.js';
+import type {
+  LineReadingV1, QueryActivitySnapshot, RunActivityFactsV1, RunActivitySnapshot, RunUsageReadingV1,
+} from '../../../contracts/run-activity.js';
 import { provenNotEnteredKernel } from '../../../contracts/run-activity.js';
+import { lineReadingOf, runUsageOf } from '../model/plan-loop-readings.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
@@ -216,14 +219,15 @@ export function queryMissingActivityFacts(run: QueryRunSnapshot | null, querySin
 export function runMissingActivityViewOf(runRef: RunRef, classification: MissingActivityClassification): RunActivityViewV1 {
   switch (classification.kind) {
     case 'in_progress':
-      return emptyView(runRef, 'in_progress', null, false);
+      return emptyView(runRef, 'in_progress', null, false, unknownReadings(null));
     case 'not_entered':
       return { runRef, status: 'not_entered', reason: null, error: false,
         totals: { steps: 0, edits: 0, editsUnknown: 0 },
         changedFiles: { definite: 0, possible: 0, possiblyIncomplete: false }, usage: null,
+        readings: { usage: zeroUsageReading(), lines: zeroLineReading() },
         recordedBy: null, recordedAt: null, countedThroughTurnEnd: null, unresolvedCalls: null };
     case 'unknown':
-      return emptyView(runRef, 'unknown', classification.reason, classification.error);
+      return emptyView(runRef, 'unknown', classification.reason, classification.error, unknownReadings(classification.reason));
   }
 }
 
@@ -276,7 +280,7 @@ type ActivityViewCommonFields<R extends string | null> = {
   error: boolean;
   totals: RunActivityViewV1['totals'];
   changedFiles: RunActivityViewV1['changedFiles'];
-  usage: RunActivityViewV1['usage'];
+  usage: QueryActivityViewV1['usage'];
   recordedBy: R;
   recordedAt: string;
   countedThroughTurnEnd: boolean | null;
@@ -321,7 +325,18 @@ function activityViewCore<R extends string | null>(
 
 export function activityViewOf(activity: RunActivitySnapshot, since: string | null): RunActivityViewV1 {
   const late = since !== null && activity.recordedBy === 'backfill' && activity.runEndedAt >= since;
-  return { runRef: activity.runRef, ...activityViewCore(activity.facts, activity, late) };
+  const facts = activity.facts;
+  return {
+    runRef: activity.runRef,
+    ...activityViewCore(facts, activity, late),
+    // §10.4: the public cumulative total additionally says how many requests
+    // the retention cap left out; the readings are computed before this view
+    // trims requests (it never exposes them).
+    usage: facts.status === 'counted'
+      ? { ...facts.usage.totals, complete: facts.usage.complete, omitted: facts.usage.omitted }
+      : null,
+    readings: { usage: runUsageOf(facts), lines: lineReadingOf(facts) },
+  };
 }
 
 /** L16: a Query activity record's view, on the same counted/unknown rule as the Work one. */
@@ -342,9 +357,27 @@ function emptyView(
   status: RunActivityViewV1['status'],
   reason: ActivityUncountedReason | 'recorded_late' | null,
   error: boolean,
+  readings: RunActivityViewV1['readings'],
 ): RunActivityViewV1 {
-  return { runRef, status, reason, error, totals: null, changedFiles: null, usage: null,
+  return { runRef, status, reason, error, totals: null, changedFiles: null, usage: null, readings,
     recordedBy: null, recordedAt: null, countedThroughTurnEnd: null, unresolvedCalls: null };
+}
+
+/** No Kernel history: unknown readings keep the reason and never invent a zero. */
+function unknownReadings(reason: string | null): RunActivityViewV1['readings'] {
+  return {
+    usage: { tokens: null, complete: false, growth: { tokens: null, complete: false }, reason },
+    lines: { added: null, deleted: null, complete: false, reason },
+  };
+}
+
+/** The existing un-entered proof is a complete zero: the Run never did any work. */
+function zeroUsageReading(): RunUsageReadingV1 {
+  return { tokens: 0, complete: true, growth: { tokens: 0, complete: true }, reason: null };
+}
+
+function zeroLineReading(): LineReadingV1 {
+  return { added: 0, deleted: 0, complete: true, reason: null };
 }
 
 /**

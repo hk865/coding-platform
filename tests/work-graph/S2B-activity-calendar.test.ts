@@ -159,7 +159,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B activity calendar (%s)', (kind
     }));
 
     const unknownRun = await f.runAndEnd('work-2', session, '2026-10-14T10:00:00.000Z', '2026-10-14T10:30:00.000Z');
-    await f.writeActivity(unknownRun, { status: 'unknown', ruleVersion: 1,
+    await f.writeActivity(unknownRun, { status: 'unknown', ruleVersion: 2,
       reason: 'history_read_failed', detail: 'the S2B fixture injects an unknown tally' });
 
     // Ended before `since`, with no record: not_backfilled.

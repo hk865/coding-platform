@@ -96,6 +96,7 @@ export function countedFacts(input: {
   turnTerminal?: boolean; unresolvedCalls?: number;
   changedFiles?: { definite?: string[]; possible?: string[]; possiblyIncomplete?: boolean;
     incompleteBecause?: ('command_ran' | 'edits_unknown' | 'cap')[]; definiteOmitted?: number; possibleOmitted?: number };
+  changedLines?: { added: number; deleted: number; complete: boolean };
   usage?: { requests?: []; omitted?: number; totals?: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
     complete?: boolean };
 }): RunActivityFactsV1 {
@@ -103,7 +104,7 @@ export function countedFacts(input: {
     steps: sum.steps + quarter.steps, edits: sum.edits + quarter.edits, editsUnknown: sum.editsUnknown + quarter.editsUnknown,
   }), { steps: 0, edits: 0, editsUnknown: 0 });
   return {
-    status: 'counted', ruleVersion: 1,
+    status: 'counted', ruleVersion: 2,
     window: {
       kernelRunId: input.kernelRunId ?? 's2b-kernel-run', kernelTurnId: input.kernelTurnId ?? 's2b-kernel-turn',
       fromPosition: 1, throughPosition: input.throughPosition ?? 4, bound: 'end_position',
@@ -115,6 +116,7 @@ export function countedFacts(input: {
       definiteOmitted: input.changedFiles?.definiteOmitted ?? 0, possibleOmitted: input.changedFiles?.possibleOmitted ?? 0,
       possiblyIncomplete: input.changedFiles?.possiblyIncomplete ?? false,
       incompleteBecause: input.changedFiles?.incompleteBecause ?? [] },
+    changedLines: input.changedLines ?? { added: 0, deleted: 0, complete: true },
     usage: { requests: input.usage?.requests ?? [], omitted: input.usage?.omitted ?? 0,
       totals: input.usage?.totals ?? { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
       complete: input.usage?.complete ?? true },

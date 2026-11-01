@@ -42,7 +42,7 @@
 - `query-job.ts` — Query 聚合/意图/执行/答案：`QueryJobV1`（`understanding` 是唯一的命令存放处）、`GoalScreeningShape`/`GoalScreeningV1`（目标卡草稿的筛选，整体或 null）、`GoalCardDraftV1` 的 `screening`、回答的 `planDraftIndex`、`RequestUnderstandingCommandV1`（`request_understanding` 命令的唯一格式）、`SecretaryRoundMaterialV1.command`（从 `round.job.understanding` 投影一次）、`SecretaryRequestManifestV1` 的 `briefRef`/`understandingGrants`、`RequestCommandReceiptV1` 的 `understanding` 臂、`consultationQueryRefs`、`interventionPlanningQueryRefs`（由真实来源消息派生计划 Query 的固定身份）、`queryJobRefFor`、`validQueryExecution`（执行种类含 `intervention_planning`；该种类必带 `sourceMessageRef`，其他种类不得带）、`InitialPlanSourceResolutionV1`（plain/binding/prepared_goal/`intervention` 四臂，干预臂带 `InterventionAnswerSourceV1`）。
 - `initialization-binding.ts` — 初始化绑定记录（字段表格式 `InitializationBinding@1`，`revision`/`goalRevision` 固定为 1）：`InitializationBindingRefShape`、`InitializationBindingFormat`、两个查找名；两条规则要求 ref 指向同一份回答和草稿，且回答、请求、Goal 同一项目、回答与请求同一工作区；记录没有事件，键是完整 ref 的 `canonicalJson`。
 - `initialization-adoption.ts` — P11 初始化采用的共享数据（唯一正本）：`InitializationAdoptionRefShape`/`InitializationAdoptionRef`、`INITIALIZATION_ADOPT_STAGES`/`InitializationAdoptStageV1`、pin/progress/result/record 类型，以及操作定位 `initializationAdoptionOperationId`；阶段/进度检查是 J 的 `validation/initialization-adoption.ts`（P-3 不写它）。
-- `run-activity.ts` — Run/Query 活动读数：规则版本、各项上限、`RunActivitySnapshot`、`QueryActivitySnapshot`、带 `querySince` 的 `ActivityRecordingSnapshot`、显式 unknown 的唯一构造 `unknownFacts` 与 `provenNotEnteredKernel`。
+- `run-activity.ts` — Run/Query 活动读数：`RUN_ACTIVITY_RULE_VERSION` 2（只升规则版本，`RunActivity@1`/`QueryActivity@1` 和 schemaVersion 不动）、各项上限、`RunActivitySnapshot`、`QueryActivitySnapshot`、带 `querySince` 的 `ActivityRecordingSnapshot`、counted 事实的 `changedLines`（只有确认成功的 `create`/`replace` 计行，shell 或未知结果标不全）、三个读数结果类型 `RunGrowthReadingV1`/`RunUsageReadingV1`/`LineReadingV1`、显式 unknown 的唯一构造 `unknownFacts` 与 `provenNotEnteredKernel`。
 - `runtime-budget.ts` — `RuntimeBudget`、`DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS`、`validateRuntimeBudget`。
 
 ### Session/通信
@@ -95,6 +95,7 @@
 - `human-role-collaboration.ts` — 协作策略 revision/active 与 `coordinationPolicyContentDigest`。
 - `keyset-cursor.ts` — 有序查找的翻页游标 `KeysetCursorV1`（`{ v: 1, goalId, after }`，只绑一个 Goal，`goalId` 为 null 是工作区页）与它的 `encodeKeysetCursor`/`decodeKeysetCursor`（base64url 的 JSON）。
 - `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:124`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:130`）/ `compareCursors`（`src/contracts/ledger.ts:142`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:151`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）。
+- `line-delta.ts` — 真实文本行 diff 的唯一正本：`lineDelta`（LCS，超过 250k 格改用 Myers；返回 `added`/`deleted`/`totalLines`）与 `contentLines`，`MAX_LCS_CELLS` 私有；两者从 `src/app/attention-observer.ts` 搬来，注意力和 Run activity tally 共用（`core` 不 import `app`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
 - `note.ts` — 注记 Head/Version/CurrentPointer、锚点、`NOTE_GENERAL_KINDS` 与 `renderNoteHeader`；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
@@ -175,8 +176,8 @@
 | `sameArtifactOwnerRunRef` | `src/contracts/material-access.ts:88` | 比较 artifact 的 Run/QueryRun 所有者。 | 归属与读取授权判断。 |
 | `defaultResourceCapSettings` | `src/contracts/resource-caps.ts:25` | 按本机内存算默认 memory 上限与 tasksMax。 | Host 未配置资源上限时的默认值。 |
 | `validateRuntimeBudget` | `src/contracts/runtime-budget.ts:29` | 归一/校验不可信预算；累积上限保持 null。 | HTTP 或边界接受预算时。 |
-| `provenNotEnteredKernel` | `src/contracts/run-activity.ts:128` | 判定已结束 Run 是否可证明未进入 Kernel。 | 无进展/返工判断；running 必须当作不完整。 |
-| `unknownFacts` | `src/contracts/run-activity.ts:104` | 带规则版本的显式 unknown 活动读数，detail 截到 500 字；唯一构造。 | Runtime 读窗口失败、WorkGraph 收尾提交没拿到 tally 时；不要写 0，也不要另写构造。 |
+| `provenNotEnteredKernel` | `src/contracts/run-activity.ts:146` | 判定已结束 Run 是否可证明未进入 Kernel。 | 无进展/返工判断；running 必须当作不完整。 |
+| `unknownFacts` | `src/contracts/run-activity.ts:122` | 带规则版本的显式 unknown 活动读数，detail 截到 500 字；唯一构造。 | Runtime 读窗口失败、WorkGraph 收尾提交没拿到 tally 时；不要写 0，也不要另写构造。 |
 | `isAutomationActor` | `src/contracts/task-requeue.ts:57` | 判断 actor 是否为平台自动化 actor。 | 归因分类与权限判断。 |
 | `reworkActorClassOf` | `src/contracts/task-requeue.ts:75` | 由 principal 与 actor 定 agent/system/human。 | 返工/重跑归因；`query_run` 返回 null。 |
 | `isReviewRoundPurpose` | `src/contracts/review-admission.ts:57` | 判断 Run 是否为审查/提案轮。 | 审查准入分支；缺失 purpose 是普通工作。 |
@@ -216,7 +217,7 @@
 | `MIB`、`RESOURCE_CAP_DEFAULT_TASKS_MAX`、`RESOURCE_CAP_DEFAULT_MEMORY_CEILING_MIB`、`RESOURCE_CAP_MIN_MEMORY_MIB`、`RESOURCE_CAP_MIN_TASKS`、`RESOURCE_CAP_MAX_TASKS` | `src/contracts/resource-caps.ts:10` | 资源上限的单位、默认与边界。 | 计算/校验资源设置。 |
 | `UNKNOWN_CALL_REVIEW_ROUND_TOOL_NAMES`、`UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES` | `src/contracts/review-admission.ts:29`、`src/contracts/review-admission.ts:38` | 审查轮/提案轮的固定工具集。 | 准入判定与审查能力查询。 |
 | `ROLE_SPEC_REVISION`、`ROLE_RESPONSIBILITIES`、`ROLE_MATERIAL_KINDS`、`ROLE_OUTPUT_KINDS` | `src/contracts/role-spec.ts:45` | 角色规格版本、职责、材料与输出闭集。 | 校验/生成角色规格。 |
-| `RUN_ACTIVITY_RULE_VERSION`、`ACTIVITY_QUARTER_CAP`、`RUN_CHANGED_FILES_CAP`、`RUN_USAGE_REQUESTS_CAP`、`ACTIVITY_RECENT_WINDOW_DAYS`、`ACTIVITY_READ_RECORD_CAP`、`RUN_ACTIVITY_MAX_PAGES`、`FILE_EDIT_TOOL_NAMES`、`ACTIVITY_AUTO_RETRY_REASONS` | `src/contracts/run-activity.ts:9` | 活动读数的规则版本、各项上限与自动重试原因。 | 计算/读取 Run 活动。 |
+| `RUN_ACTIVITY_RULE_VERSION`、`ACTIVITY_QUARTER_CAP`、`RUN_CHANGED_FILES_CAP`、`RUN_USAGE_REQUESTS_CAP`、`ACTIVITY_RECENT_WINDOW_DAYS`、`ACTIVITY_READ_RECORD_CAP`、`RUN_ACTIVITY_MAX_PAGES`、`FILE_EDIT_TOOL_NAMES`、`ACTIVITY_AUTO_RETRY_REASONS` | `src/contracts/run-activity.ts:12` | 活动读数的规则版本、各项上限与自动重试原因。 | 计算/读取 Run 活动。 |
 | `DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS` | `src/contracts/runtime-budget.ts:19`、`src/contracts/runtime-budget.ts:21` | 默认预算与单次响应 token 上限。 | 归一预算时。 |
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:29` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:186`、`src/contracts/unknown-call-review.ts:195` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |

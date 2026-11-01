@@ -22,7 +22,7 @@ import type {
   ActivityRecordingRef, ActivityRecordingSnapshot, RunActivityBound,
   RunActivityRef, RunActivitySnapshot, RunActivityUnknownReason,
 } from '../../../contracts/run-activity.js';
-import { ACTIVITY_QUARTER_CAP, RUN_CHANGED_FILES_CAP, RUN_USAGE_REQUESTS_CAP } from '../../../contracts/run-activity.js';
+import { ACTIVITY_QUARTER_CAP, RUN_ACTIVITY_RULE_VERSION, RUN_CHANGED_FILES_CAP, RUN_USAGE_REQUESTS_CAP } from '../../../contracts/run-activity.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   hasOnlyKeys, invalid, isNonNeg as isNonNegativeSafeInteger, isPos as isPositiveSafeInteger,
@@ -183,6 +183,17 @@ function changedFilesProblem(value: unknown): string | null {
   }
   return null;
 }
+/** §10.4 (3): the current tally always writes the line reading; a missing one is a damaged record. */
+function changedLinesProblem(value: unknown): string | null {
+  if (!isObject(value) || !hasOnlyKeys(value, ['added', 'deleted', 'complete'])) {
+    return 'facts.changedLines must be { added, deleted, complete }';
+  }
+  if (!isNonNegativeSafeInteger(value['added']) || !isNonNegativeSafeInteger(value['deleted'])) {
+    return 'facts.changedLines added and deleted must be non-negative safe integers';
+  }
+  if (typeof value['complete'] !== 'boolean') return 'facts.changedLines.complete must be a boolean';
+  return null;
+}
 function usageRequestProblem(value: unknown): string | null {
   if (!isObject(value) || !hasOnlyKeys(value, [
     'requestId', 'startedAt', 'usageStatus', 'inputTokens', 'outputTokens', 'cachedInputTokens', 'costUsdMicros',
@@ -225,7 +236,11 @@ function usageProblem(value: unknown): string | null {
 /** The one `RunActivityFactsV1` validator, shared by the Work and Query records. */
 export function runActivityFactsProblem(value: unknown): string | null {
   if (!isObject(value)) return 'facts must be an object';
-  if (!isPositiveSafeInteger(value['ruleVersion'])) return 'facts.ruleVersion must be a positive safe integer';
+  // The current format only: an older rule version is a damaged record, not an
+  // upgrade to backfill (D-6, PLS-27).
+  if (value['ruleVersion'] !== RUN_ACTIVITY_RULE_VERSION) {
+    return `facts.ruleVersion must be ${String(RUN_ACTIVITY_RULE_VERSION)}`;
+  }
   if (value['status'] === 'unknown') {
     if (!hasOnlyKeys(value, ['status', 'ruleVersion', 'reason', 'detail'])) return 'unknown facts carry unknown fields';
     if (!UNKNOWN_REASONS.includes(value['reason'] as RunActivityUnknownReason)) return 'facts.reason is not recognized';
@@ -235,7 +250,7 @@ export function runActivityFactsProblem(value: unknown): string | null {
     return null;
   }
   if (value['status'] !== 'counted') return 'facts.status is not recognized';
-  if (!hasOnlyKeys(value, ['status', 'ruleVersion', 'window', 'quarters', 'overflow', 'totals', 'changedFiles', 'usage'])) {
+  if (!hasOnlyKeys(value, ['status', 'ruleVersion', 'window', 'quarters', 'overflow', 'totals', 'changedFiles', 'changedLines', 'usage'])) {
     return 'counted facts carry unknown fields';
   }
   const window = windowProblem(value['window']);
@@ -248,6 +263,8 @@ export function runActivityFactsProblem(value: unknown): string | null {
   if (totals !== null) return totals;
   const changed = changedFilesProblem(value['changedFiles']);
   if (changed !== null) return changed;
+  const lines = changedLinesProblem(value['changedLines']);
+  if (lines !== null) return lines;
   return usageProblem(value['usage']);
 }
 /** The one activity span validator, shared by the Work and Query records. */

@@ -17,7 +17,7 @@ import { queryActivityViewOf } from '../../src/core/work-graph/views/activity-re
 const queryRunRef: QueryRunRef = { aggregateType: 'QueryRun', projectId: 'p1', workspaceId: 'w1',
   queryJobId: 'q1', runId: 'r1' };
 const unreadable: RunActivityFactsV1 = {
-  status: 'unknown', ruleVersion: 1, reason: 'kernel_unreadable', detail: 'the Kernel store was missing',
+  status: 'unknown', ruleVersion: 2, reason: 'kernel_unreadable', detail: 'the Kernel store was missing',
 };
 
 describe('QRR-06: the closing write of a Query whose Kernel history is unreadable', () => {
@@ -34,7 +34,7 @@ describe('QRR-06: the closing write of a Query whose Kernel history is unreadabl
       revision: 1, schemaVersion: 1, queryRunRef,
       sessionRef: { projectId: 'p1', sessionId: 's1' }, askedSessionRef: null, goalId: 'goal-1',
       queryEndedAt: '2026-10-23T10:00:00.000Z', recordedAt: '2026-10-23T10:05:00.000Z', recordedBy: 'query_end',
-      facts: { status: 'unknown', ruleVersion: 1, reason: 'kernel_unreadable', detail: 'the Kernel store was missing' },
+      facts: { status: 'unknown', ruleVersion: 2, reason: 'kernel_unreadable', detail: 'the Kernel store was missing' },
       span: { firstAt: '2026-10-23T09:10:00.000Z', lastAt: '2026-10-23T10:00:00.000Z', basis: 'run_times' },
     });
 

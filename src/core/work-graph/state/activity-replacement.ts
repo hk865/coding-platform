@@ -10,15 +10,15 @@ export type ActivityWriteOutcome = 'created' | 'replaced' | 'unchanged';
 /**
  * L4, applied top-down. `endCommit` is true only for the RUN-21 path inside a
  * Run-ending commit; the backfill never replaces a current-rule `counted`
- * record (row 4). Rows:
+ * record (row 3). There is no older-rule-version branch: the current codec
+ * rejects any other rule version as damaged before this rule runs (D-6). Rows:
  * 1. absent → created;
- * 2. the old rule version is older → replaced;
- * 3. old `counted`, this is the RUN-21 end, the new window is a terminal
+ * 2. old `counted`, this is the RUN-21 end, the new window is a terminal
  *    extension of an unfinished old one → replaced;
- * 4. old `counted`, anything else → unchanged;
- * 5. old `unknown`, new `counted` → replaced;
- * 6. old `unknown`, new `unknown` with a different reason → replaced;
- * 7. old `unknown`, new `unknown` with the same reason → unchanged.
+ * 3. old `counted`, anything else → unchanged;
+ * 4. old `unknown`, new `counted` → replaced;
+ * 5. old `unknown`, new `unknown` with a different reason → replaced;
+ * 6. old `unknown`, new `unknown` with the same reason → unchanged.
  */
 export function decideActivityOutcome(
   existing: RunActivityFactsV1 | null,
@@ -27,7 +27,6 @@ export function decideActivityOutcome(
 ): ActivityWriteOutcome {
   if (existing === null) return 'created';
   const old = existing;
-  if (old.ruleVersion < incoming.ruleVersion) return 'replaced';
   if (old.status === 'counted') {
     if (!endCommit || incoming.status !== 'counted') return 'unchanged';
     const unfinished = !old.window.turnTerminal || old.window.unresolvedCalls > 0;

@@ -24,7 +24,7 @@ import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
-  ACTIVITY_AUTO_RETRY_REASONS, ACTIVITY_READ_RECORD_CAP, RUN_ACTIVITY_RULE_VERSION,
+  ACTIVITY_AUTO_RETRY_REASONS, ACTIVITY_READ_RECORD_CAP,
   provenNotEnteredKernel,
 } from '../../../contracts/run-activity.js';
 import type {
@@ -281,7 +281,7 @@ export function runActivityRefOf(run: Pick<RunSnapshot, 'ref'>): RunActivityRef 
 /**
  * L5: build the RunActivity record an END commit appends, reading the current
  * record and applying L4. `record === null` means the commit writes nothing
- * (L4 rows 4 and 7). The end commit appends the record with NO extra event.
+ * (L4 rows 3 and 6). The end commit appends the record with NO extra event.
  */
 export async function planRunActivityForCommit(
   records: Pick<GoalRecordTransactionPort, 'readMany'>,
@@ -959,12 +959,12 @@ export function createRunActivityService(deps: RunActivityServiceDependencies): 
 
 /**
  * L8's rule for a record that already exists, the same for a Work Run and a
- * Query: a record of an older rule version is redone; a counted one is never
- * recounted; an unknown one is retried by the human range backfill always and
- * by the automatic one only for the auto-retry reasons.
+ * Query: a counted one is never recounted; an unknown one is retried by the
+ * human range backfill always and by the automatic one only for the
+ * auto-retry reasons. Any other rule version is rejected by the codec as a
+ * damaged record, so it is never an upgrade candidate (D-6).
  */
 function shouldBackfillRecordedActivity(facts: RunActivityFactsV1, recentOnly: boolean): boolean {
-  if (facts.ruleVersion < RUN_ACTIVITY_RULE_VERSION) return true;
   if (facts.status === 'counted') return false;
   if (!recentOnly) return true;
   return (ACTIVITY_AUTO_RETRY_REASONS as readonly string[]).includes(facts.reason);

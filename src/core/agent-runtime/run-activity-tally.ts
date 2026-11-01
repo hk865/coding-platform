@@ -22,6 +22,7 @@ import type {
   RunActivityFactsV1,
   RunModelUsageRequestV1,
 } from '../../contracts/run-activity.js';
+import { lineDelta } from '../../contracts/line-delta.js';
 import type { AgentEvent } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import { reduceTurnFromStart } from './kernel-turn-facts.js';
@@ -99,6 +100,48 @@ function omittedOverflow(omitted: readonly ActivityQuarterV1[]): ActivityTotalsV
   const first = omitted[0]!;
   const last = omitted[omitted.length - 1]!;
   return { steps, edits, editsUnknown, firstAt: first.at, lastAt: last.at };
+}
+
+/**
+ * §10.4 (3): the changed-lines branch, independent of the edit decision table
+ * above. Only a successfully confirmed `create`/`replace` adds lines; a
+ * `shell`, an unknown or missing result, a rejected/failed/cancelled call and
+ * any other mode mark the reading incomplete without inventing a zero.
+ */
+function changedLinesOf(
+  started: ReadonlyMap<string, StartedCall>,
+  settled: ReadonlyMap<string, AgentEvent>,
+  unknownResult: ReadonlySet<string>,
+): { added: number; deleted: number; complete: boolean } {
+  const lines = { added: 0, deleted: 0, complete: true };
+  for (const [callId, call] of started) {
+    if (call.name === 'shell') { lines.complete = false; continue; }
+    if (call.name !== 'edit') continue;
+    const result = settled.get(callId);
+    if (unknownResult.has(callId) || result === undefined) { lines.complete = false; continue; }
+    const payload = result.payload as { result: { status: string; effects: { sideEffect: string } } };
+    if (result.type !== 'tool.completed' || payload.result.status !== 'success'
+      || payload.result.effects.sideEffect !== 'confirmed') {
+      lines.complete = false;
+      continue;
+    }
+    const mode = call.arguments['mode'];
+    if (mode === 'create') {
+      const newText = call.arguments['newText'] as string;
+      const delta = lineDelta(null, newText);
+      lines.added += delta.added;
+      lines.deleted += delta.deleted;
+    } else if (mode === 'replace') {
+      const oldText = call.arguments['oldText'] as string;
+      const newText = call.arguments['newText'] as string;
+      const delta = lineDelta(oldText, newText);
+      lines.added += delta.added;
+      lines.deleted += delta.deleted;
+    } else {
+      lines.complete = false;
+    }
+  }
+  return lines;
 }
 
 export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kernel: KernelExecutionBinding,
@@ -276,6 +319,7 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
     changedFiles: { definite: definiteKept, possible: possibleKept,
       definiteOmitted, possibleOmitted,
       possiblyIncomplete: incompleteBecause.length > 0, incompleteBecause },
+    changedLines: changedLinesOf(started, settled, unknownResult),
     usage: { requests: keptRequests, omitted: omittedUsage, totals: usageTotals, complete: usageComplete },
   };
 }

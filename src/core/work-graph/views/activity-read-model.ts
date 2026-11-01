@@ -26,8 +26,8 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type {
-  ActivityRecordingSnapshot, ActivityTotalsV1, QueryActivitySnapshot, RunActivitySnapshot,
-  RunActivityUnknownReason, RunModelUsageV1,
+  ActivityRecordingSnapshot, ActivityTotalsV1, LineReadingV1, QueryActivitySnapshot, RunActivitySnapshot,
+  RunActivityUnknownReason, RunModelUsageV1, RunUsageReadingV1,
 } from '../../../contracts/run-activity.js';
 import { ACTIVITY_READ_RECORD_CAP } from '../../../contracts/run-activity.js';
 import type {
@@ -140,7 +140,8 @@ export type RunActivityViewV1 = {
   reason: ActivityUncountedReason | 'recorded_late' | null; error: boolean;
   totals: ActivityTotalsV1 | null;
   changedFiles: { definite: number; possible: number; possiblyIncomplete: boolean } | null;
-  usage: (RunModelUsageV1['totals'] & { complete: boolean }) | null;
+  usage: (RunModelUsageV1['totals'] & { complete: boolean; omitted: number }) | null;
+  readings: { usage: RunUsageReadingV1; lines: LineReadingV1 };
   recordedBy: 'run_end' | 'backfill' | null;
   recordedAt: string | null;
   countedThroughTurnEnd: boolean | null;

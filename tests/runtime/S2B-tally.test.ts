@@ -21,6 +21,7 @@ import {
   readCall,
   shellCall,
   successResult,
+  type KernelToolCall,
 } from '../helpers/S2B-kernel-records-fixture.js';
 
 /** Run the pure function over the whole fixture Turn and narrow the counted branch. */
@@ -28,6 +29,9 @@ function tally(builder: KernelTurnRecords): Extract<RunActivityFactsV1, { status
   const facts = tallyTurnActivity(builder.records(), builder.kernel, builder.window());
   expect(facts.status).toBe('counted');
   if (facts.status !== 'counted') throw new Error(`expected counted, got ${facts.status}`);
+  // The current tally format: rule version 2 always carries the line reading.
+  expect(facts.changedLines).toBeDefined();
+  expect(facts.ruleVersion).toBe(2);
   return facts;
 }
 
@@ -37,6 +41,13 @@ const REV = 'rev-2';
 function turnWithStarted(call: ReturnType<typeof editReplaceCall>): KernelTurnRecords {
   const builder = new KernelTurnRecords();
   builder.runStarted().modelRequestStarted('req-1').assistantMessage('m-1', [call]).toolStarted(call);
+  return builder;
+}
+
+/** A minimal open Turn whose single assistant message requested several calls. */
+function turnWithCalls(calls: readonly KernelToolCall[]): KernelTurnRecords {
+  const builder = new KernelTurnRecords();
+  builder.runStarted().modelRequestStarted('req-1').assistantMessage('m-1', calls);
   return builder;
 }
 
@@ -415,6 +426,58 @@ describe('BE0 tallyTurnActivity', () => {
       expect(facts.usage.omitted).toBe(0);
       expect(facts.usage.totals).toEqual({ inputTokens: 60, outputTokens: 21, cachedInputTokens: 7 });
       expect(facts.usage.complete).toBe(false);
+    });
+  });
+
+  describe('2B-04 L1 changed lines (rule version 2)', () => {
+    it('2B-04 a->b->a accumulates +2/-2 instead of netting to zero', () => {
+      const forward = editReplaceCall('e1', 'a.ts', 'a', 'b');
+      const back = editReplaceCall('e2', 'a.ts', 'b', 'a');
+      const builder = turnWithCalls([forward, back]);
+      builder.toolStarted(forward)
+        .toolCompleted('e1', successResult('e1',
+          { effects: { sideEffect: 'confirmed', changedPaths: ['a.ts'], workspaceRevision: REV } }))
+        .toolStarted(back)
+        .toolCompleted('e2', successResult('e2',
+          { effects: { sideEffect: 'confirmed', changedPaths: ['a.ts'], workspaceRevision: REV } }));
+      expect(tally(builder).changedLines).toEqual({ added: 2, deleted: 2, complete: true });
+    });
+
+    const UNSETTLED_EDITS = [
+      {
+        label: 'failed',
+        expected: { added: 0, deleted: 0, complete: false },
+        settle: (builder: KernelTurnRecords) => builder.toolFailed('e1', 'execution', failedResult('e1',
+          { code: 'execution_failed', effects: { sideEffect: 'confirmed', changedPaths: ['a.ts'], workspaceRevision: REV } })),
+      },
+      {
+        label: 'cancelled',
+        expected: { added: 0, deleted: 0, complete: false },
+        settle: (builder: KernelTurnRecords) => builder.toolCancelled('e1', cancelledResult('e1',
+          { effects: { sideEffect: 'confirmed', changedPaths: ['a.ts'], workspaceRevision: REV } })),
+      },
+    ] as const;
+
+    it.each(UNSETTLED_EDITS)('2B-04 a $label edit with confirmed side effects marks lines incomplete and adds nothing', (row) => {
+      const call = editReplaceCall('e1', 'a.ts', 'a', 'b');
+      const builder = turnWithStarted(call);
+      row.settle(builder);
+      expect(tally(builder).changedLines).toEqual(row.expected);
+    });
+
+    it('2B-04 any shell call marks lines incomplete, even a clean one', () => {
+      const call = shellCall('s1', 'true');
+      const builder = turnWithStarted(call);
+      builder.toolCompleted('s1', successResult('s1',
+        { effects: { sideEffect: 'none', changedPaths: [], workspaceRevision: null } }));
+      expect(tally(builder).changedLines).toEqual({ added: 0, deleted: 0, complete: false });
+    });
+
+    it('2B-04 an ordinary read-only tool failure leaves lines complete', () => {
+      const call = readCall('r1', 'src/a.ts');
+      const builder = turnWithStarted(call);
+      builder.toolFailed('r1', 'execution', failedResult('r1', { code: 'execution_failed' }));
+      expect(tally(builder).changedLines).toEqual({ added: 0, deleted: 0, complete: true });
     });
   });
 });

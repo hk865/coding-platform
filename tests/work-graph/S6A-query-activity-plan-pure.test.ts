@@ -34,7 +34,7 @@ function planFacts(throughPosition: number, options: {
 } = {}): RunActivityFactsV1 {
   return {
     status: 'counted',
-    ruleVersion: options.ruleVersion ?? 1,
+    ruleVersion: options.ruleVersion ?? 2,
     window: {
       kernelRunId: 'kr-1',
       kernelTurnId: 'kt-1',
@@ -53,6 +53,7 @@ function planFacts(throughPosition: number, options: {
       definite: [], possible: [], definiteOmitted: 0, possibleOmitted: 0,
       possiblyIncomplete: false, incompleteBecause: [],
     },
+    changedLines: { added: 0, deleted: 0, complete: true },
     usage: {
       requests: [],
       omitted: 0,
@@ -62,7 +63,7 @@ function planFacts(throughPosition: number, options: {
   };
 }
 
-function planUnknownFacts(reason: 'kernel_unreadable' | 'turn_not_found', ruleVersion = 1): RunActivityFactsV1 {
+function planUnknownFacts(reason: 'kernel_unreadable' | 'turn_not_found', ruleVersion = 2): RunActivityFactsV1 {
   return { status: 'unknown', ruleVersion, reason, detail: 'the window could not be read' };
 }
 
@@ -163,16 +164,6 @@ describe('planQueryActivityWrite: a current-rule counted record', () => {
 });
 
 describe('planQueryActivityWrite: rule versions and unknown reasons', () => {
-  it('replaces a record written under an older rule version', () => {
-    const existing = existingSnapshot(planFacts(5, { ruleVersion: 1 }));
-    const result = planQueryActivityWrite(existing, planUnknownFacts('kernel_unreadable', 2), { ...CONTENT, endCommit: false });
-    expect(result.outcome).toBe('replaced');
-    expect(result.snapshot.revision).toBe(3);
-    expect(result.snapshot.span).toEqual({
-      firstAt: '2026-10-24T09:55:00.000Z', lastAt: '2026-10-24T10:06:00.000Z', basis: 'run_times',
-    });
-  });
-
   it('keeps an unknown record retried for the same reason', () => {
     const existing = existingSnapshot(planUnknownFacts('kernel_unreadable'), 4);
     const result = planQueryActivityWrite(existing, planUnknownFacts('kernel_unreadable'), { ...CONTENT, endCommit: false });

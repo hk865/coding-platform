@@ -52,7 +52,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B readRunActivities (%s)', (kind
     }));
 
     const unknown = await f.runAndEnd('work-3', session, '2026-10-14T10:30:00.000Z', '2026-10-14T10:45:00.000Z');
-    await f.writeActivity(unknown, { status: 'unknown', ruleVersion: 1,
+    await f.writeActivity(unknown, { status: 'unknown', ruleVersion: 2,
       reason: 'history_read_failed', detail: 'S2B fixture unknown tally' });
 
     const notBackfilled = await f.runAndEnd('work-4', session, '2026-10-14T09:30:00.000Z', '2026-10-14T09:45:00.000Z');

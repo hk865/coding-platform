@@ -9,7 +9,7 @@ import type { RunRef, RunSnapshot } from './dispatch.js';
 import type { QueryRunRef } from './query-job.js';
 
 /** L1: the tally rule version. A record carries the version it was computed with. */
-export const RUN_ACTIVITY_RULE_VERSION = 1 as const;
+export const RUN_ACTIVITY_RULE_VERSION = 2 as const;
 /** L2: at most this many 15-minute quarters per Run; the rest go to `overflow`. */
 export const ACTIVITY_QUARTER_CAP = 1000;
 /** L3: at most this many `definite` and this many `possible` changed files. */
@@ -47,6 +47,22 @@ export type RunModelUsageV1 = {
   requests: RunModelUsageRequestV1[]; omitted: number;
   totals: { inputTokens: number; outputTokens: number; cachedInputTokens: number }; complete: boolean;
 };
+/** The context-growth reading of one Run (10.4 (2)); `null` when it cannot be computed. */
+export type RunGrowthReadingV1 = { tokens: number | null; complete: boolean };
+/** The cumulative-token reading of one Run: input + output, no cache deduction (10.4 (1)). */
+export type RunUsageReadingV1 = {
+  tokens: number | null;
+  complete: boolean;
+  growth: RunGrowthReadingV1;
+  reason: string | null;
+};
+/** The changed-lines reading of one Run (10.4 (3)); a missing record is null, never a complete zero. */
+export type LineReadingV1 = {
+  added: number | null;
+  deleted: number | null;
+  complete: boolean;
+  reason: string | null;
+};
 export type RunActivityUnknownReason =
   | 'no_history_locator' | 'kernel_unreadable' | 'history_read_failed' | 'history_damaged' | 'turn_not_found' | 'capacity';
 /** Where the window's upper bound came from (L6). */
@@ -55,11 +71,13 @@ export type RunActivityFactsV1 =
   | { status: 'counted'; ruleVersion: number;
       window: { kernelRunId: string; kernelTurnId: string; fromPosition: number; throughPosition: number;
         bound: RunActivityBound; turnTerminal: boolean;                // L4: the reduced Turn in the window is terminal
-        unresolvedCalls: number;                                        // L1 end; L4 row 3 uses it
+        unresolvedCalls: number;                                        // L1 end; L4 row 2 uses it
         turnStartedAt: string; lastRecordAt: string };                 // the two times L4's span uses
       quarters: ActivityQuarterV1[];                                    // sorted by `at`, only non-empty quarters, ≤ ACTIVITY_QUARTER_CAP
       overflow: (ActivityTotalsV1 & { firstAt: string; lastAt: string }) | null;
-      totals: ActivityTotalsV1; changedFiles: RunChangedFilesV1; usage: RunModelUsageV1 }
+      totals: ActivityTotalsV1; changedFiles: RunChangedFilesV1;
+      changedLines: { added: number; deleted: number; complete: boolean };  // 10.4 (3): only confirmed edits add lines
+      usage: RunModelUsageV1 }
   | { status: 'unknown'; ruleVersion: number; reason: RunActivityUnknownReason; detail: string };   // detail ≤ 500 characters
 export type RunActivitySnapshot = {
   ref: RunActivityRef; revision: number; schemaVersion: 1;

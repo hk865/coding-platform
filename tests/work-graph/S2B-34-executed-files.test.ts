@@ -25,7 +25,7 @@ async function open(kind: 'memory' | 'sqlite'): Promise<S2BTrackFixture> {
 }
 
 const unknownFacts: RunActivityFactsV1 = {
-  status: 'unknown', ruleVersion: 1, reason: 'history_read_failed', detail: 'the S2B fixture read failed',
+  status: 'unknown', ruleVersion: 2, reason: 'history_read_failed', detail: 'the S2B fixture read failed',
 };
 
 describe.each(['memory', 'sqlite'] as const)('S2B executed files (%s)', (kind) => {

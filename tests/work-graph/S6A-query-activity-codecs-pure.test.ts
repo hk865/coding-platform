@@ -33,7 +33,7 @@ const QUERY_ACTIVITY_REF = {
 function recordFacts(): RunActivityFactsV1 {
   return {
     status: 'counted',
-    ruleVersion: 1,
+    ruleVersion: 2,
     window: {
       kernelRunId: 'kr-1',
       kernelTurnId: 'kt-1',
@@ -52,6 +52,7 @@ function recordFacts(): RunActivityFactsV1 {
       definite: ['src/a.ts'], possible: [], definiteOmitted: 0, possibleOmitted: 0,
       possiblyIncomplete: false, incompleteBecause: [],
     },
+    changedLines: { added: 0, deleted: 0, complete: true },
     usage: {
       requests: [{
         requestId: 'req-1', startedAt: '2026-10-24T10:01:00.000Z', usageStatus: 'reported',

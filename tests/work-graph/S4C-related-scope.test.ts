@@ -222,17 +222,18 @@ async function writeCoreNotes(f: S4ANoteFixture, ctx: CoreCallContext): Promise<
 
 function countedFacts(definite: string[]): RunActivityFactsV1 {
   const at = '2026-10-15T00:00:00.000Z';
-  return { status: 'counted', ruleVersion: 1,
+  return { status: 'counted', ruleVersion: 2,
     window: { kernelRunId: 's4c-kernel-run', kernelTurnId: 's4c-kernel-turn', fromPosition: 1, throughPosition: 4,
       bound: 'end_position', turnTerminal: true, unresolvedCalls: 0, turnStartedAt: at, lastRecordAt: at },
     quarters: [], overflow: null, totals: { steps: 0, edits: 0, editsUnknown: 0 },
     changedFiles: { definite: [...definite], possible: [], definiteOmitted: 0, possibleOmitted: 0,
       possiblyIncomplete: false, incompleteBecause: [] },
+    changedLines: { added: 0, deleted: 0, complete: true },
     usage: { requests: [], omitted: 0, totals: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }, complete: true } };
 }
 
 function unknownFacts(): RunActivityFactsV1 {
-  return { status: 'unknown', ruleVersion: 1, reason: 'no_history_locator', detail: 's4c unknown' };
+  return { status: 'unknown', ruleVersion: 2, reason: 'no_history_locator', detail: 's4c unknown' };
 }
 
 /** End a claimed Run through the real Host control entry, then record its activity. */

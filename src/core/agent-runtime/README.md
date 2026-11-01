@@ -132,7 +132,7 @@
 | `applyTurnEvents` | `src/core/agent-runtime/kernel-turn-facts.ts:62` | 在已归约状态上应用增量 | 增量观察 |
 | `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:81` | 列未闭合工具调用 | 判断 Turn 能否完成 |
 | `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:47` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
-| `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:104` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
+| `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:147` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
 | `countQueryActivity` | `src/core/agent-runtime/runtime.ts:906` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
 | `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |

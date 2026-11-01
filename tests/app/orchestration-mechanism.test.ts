@@ -12,8 +12,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createAttentionObserver,
   graphChangedElements,
-  lineDelta,
 } from '../../src/app/attention-observer.js';
+import { lineDelta } from '../../src/contracts/line-delta.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import type { SessionMessage, SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { ToolCall, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';

@@ -130,7 +130,7 @@
 | `readWatermark` | `src/core/work-graph/views/activity-read-helpers.ts:130`、`src/contracts/core/results.ts:33` | 读存储读水位：活动读返回 `ReadResult`，决定读返回 ready/rejection | 一次读的前后水位；同一能力两份，正本待 lead 定 |
 | `createActivityReadModel` | `src/core/work-graph/views/activity-read-model.ts:1125` | 日历（Goal/workspace 范围，含 Query 步数与查询覆盖）、单 Run 与单 Query 活动视图 | 活动页、Run/Query 活动列 |
 | `classifyMissingActivity` | `src/core/work-graph/views/activity-read-helpers.ts:171` | Work 与 Query 共用的缺失记录规则：never entered、进行中、未补记/未记录/无记录起点 | 任何按活动记录判空/判未知的读；不要另写一份 |
-| `queryActivityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:328` | 把 `QueryActivity` 快照投影成 `QueryActivityViewV1`（含补记 late 规则） | Query 活动读投影时 |
+| `queryActivityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:343` | 把 `QueryActivity` 快照投影成 `QueryActivityViewV1`（含补记 late 规则） | Query 活动读投影时 |
 | `createTrackReadModel` | `src/core/work-graph/views/track-read-model.ts:1277` | 轨道条：Run/验收轮/Query 的重叠窗口分页 | 轨道页；composition 把 `readTrackBars` 与 `TrackReadPort` 装到一起 |
 | `createTaskStateTimeline` | `src/core/work-graph/views/task-state-timeline.ts:534` | 任务状态时间条，按已存时间点折段 | 任务时间视图 |
 | `readStableActivityWindow` | `src/core/work-graph/views/activity-stable-window.ts:29` | 跑一次活动读 attempt：新预算、前后水位相等、最多四次 | 写新的活动读循环时；不要再复制重试 |
@@ -138,7 +138,7 @@
 | `readOrderedAll` | `src/core/work-graph/views/activity-read-helpers.ts:84` | 把有序索引读到尾并计预算 | 需要完整有序事实时 |
 | `readEqualityAll` | `src/core/work-graph/views/activity-read-helpers.ts:94` | 把等值索引候选集读完并计预算 | 需要完整等值事实集时 |
 | `readOneKeyed` | `src/core/work-graph/views/activity-read-helpers.ts:117` | 按 key 读一条记录并计预算（miss 也计） | 活动读里按键取记录时 |
-| `activityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:322` | 把 `RunActivity` 快照投影成 `RunActivityViewV1` | 活动/轨道读投影时 |
+| `activityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:326` | 把 `RunActivity` 快照投影成 `RunActivityViewV1` | 活动/轨道读投影时 |
 | `createNoteCheck` | `src/core/work-graph/views/note-views.ts:214` | 注记派生字段的唯一检查端口（freshness、changedFiles、冲突、配额等） | 注记读模型要派生字段时；不要另写检查 |
 | `latestActivityAt`（**正本**） | `src/core/work-graph/state/session-activity.ts:25` | 线卡时钟的纯规则：Session 创建时刻与调用方给的时刻取最大 ISO 串，空集回退 `createdAt` | 线卡/选择读时钟；不要另写一份 |
 | `readClaimedAtForRun`（**正本**） | `src/core/work-graph/tasks/line-clock.ts:190` | Run 无起止时间时，从按代排序的 Work claim 索引顶行读 claim 时间，只认本 Run | claimedAt 回退；本层与 `secretary-selection.ts` 都调这一份 |

@@ -18,7 +18,7 @@ const ASKED_SESSION_REF = { projectId: 'p1', sessionId: 'sess-asked' };
 
 const COUNTED_FACTS: RunActivityFactsV1 = {
   status: 'counted',
-  ruleVersion: 1,
+  ruleVersion: 2,
   window: {
     kernelRunId: 'kr-7', kernelTurnId: 'kt-7', fromPosition: 0, throughPosition: 12,
     bound: 'end_position', turnTerminal: true, unresolvedCalls: 2,
@@ -32,6 +32,7 @@ const COUNTED_FACTS: RunActivityFactsV1 = {
     definiteOmitted: 0, possibleOmitted: 0,
     possiblyIncomplete: true, incompleteBecause: ['command_ran'],
   },
+  changedLines: { added: 3, deleted: 1, complete: false },
   usage: {
     requests: [], omitted: 2,
     totals: { inputTokens: 1200, outputTokens: 300, cachedInputTokens: 100 }, complete: false,
@@ -115,7 +116,7 @@ describe('queryActivityViewOf', () => {
 
   it('projects an unknown tally as unknown with no numbers', () => {
     const unknownFacts: RunActivityFactsV1 = {
-      status: 'unknown', ruleVersion: 1, reason: 'history_damaged', detail: 'the Kernel turn record is missing',
+      status: 'unknown', ruleVersion: 2, reason: 'history_damaged', detail: 'the Kernel turn record is missing',
     };
     expect(queryActivityViewOf(
       queryActivity({ recordedBy: 'query_end', queryEndedAt: '2026-10-24T09:05:00.000Z', facts: unknownFacts }),

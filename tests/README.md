@@ -20,7 +20,7 @@
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（148 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（123 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景；S6B3-goal-cards、S6B3-copy、S6B3-adoption 是 6B-3 的验收场景 G-01、G-02、R-14，在 memory 上用 `S6B3-fixture.ts` 的步骤把目标卡确认、复制和初始化采用串成人看到的流程；S7B-V-intervention、S7B-V-restart、S7B-V-wait-kept 是 7B-3 V 的干预、重启与等待保持场景）。
 - `tests/state/` — 状态机、编解码、查询和恢复不变量（57 个），例如 `K3-14-conclusion-pure.test.ts`。
-- `tests/work-graph/` — WorkGraph 域服务和读模型（402 个），是夹具使用最密集的文件夹。
+- `tests/work-graph/` — WorkGraph 域服务和读模型（402 个），是夹具使用最密集的文件夹；`PL-12-activity-runs-readings.test.ts`、`PL-20-same-session-usage.test.ts` 经 `PL-readings-fixture.ts` 核对 `activity/runs` 的三个 Run 读数。
 
 ## tests/helpers/ 的夹具
 
@@ -151,6 +151,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 
 Run 活动、track/timeline 背后的活动记录、回填和复核轮；写入走 `RunActivity`/evidence 的公共 owner。
 
+- `PL-readings-fixture.ts` — PL R3 的公开世界：`openPLReadingsWorld` 在 memory Host 上用 `withConfiguredHost` 给 Work binding 真实 write/shell 授权，经 `governS6B`/`adoptS6BPlan`/`createS6BLine` 建 Plan 和线；返回 `line`、`runTask`（脚本回复，claim 并驱动到结束）、`readRuns`（公开 `activity/runs`）与 `close`，`runView` 从答案里取一条；不读写 store、不为 Run 造调用上下文；`tests/work-graph/PL-12-activity-runs-readings.test.ts`、`PL-20-same-session-usage.test.ts` 在用。
 - `S2B-activity-fixture.ts` — 真实 Store + claim/entry + 可拨平台时钟，`RunActivity` 只经公共服务写，配 evidence schema；`tests/app/S2B-r2-backfill-identity.test.ts` 在用。
 - `S2B-r2-activity-support.ts` — R4/R5/R7/R8 修补：`seedActivityRun`/`authorizeOnlyRun` 造 V2 授权、只有 position 没 activity、authorized 未 enter 的 Run，其余走公共读/服务；`tests/work-graph/S2B-r2-workspace-binding.test.ts` 在用。
 - `S2B-r2-backfill-kernel-support.ts` — 真实 SQLite Runtime + Kernel 历史 Run，回填只经 `createRunActivityService`/`createActivityBackfill` 写；`tests/app/S2B-r2-backfill-real-kernel.test.ts` 在用。

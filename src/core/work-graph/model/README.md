@@ -16,6 +16,7 @@
 - `execution-entry-contracts.ts` — 执行授权/开始/进入/结果的端口与 DTO（不含 Query/Review 的伪 Run）。
 - `execution-history-contracts.ts` — `RunExecutionHistory` 写入端口与输入/结果。
 - `execution-read-contracts.ts` — `TaskExecutionRecord` 精确读取与按 Goal/Task 的执行分页。
+- `plan-loop-readings.ts` — 三个 Run 读数（纯函数，只读已记录的 `RunActivityFactsV1`，不补算）：`runUsageOf`（累计 input+output，不扣缓存；unknown 保留原因）、`runGrowthOf`（第一次输入不计，看不到末段时不补）、`lineReadingOf`（counted 的 `changedLines`，缺失不是完整零）。阶段/超线读数（`stageReadingOf`/`stageOverLine`/`lineOverrun`）不在 R3。
 - `query-activity-plan.ts` — Query 活动写入的纯计划：`queryActivityRefOf`、`QueryActivityRecordContent`、`planQueryActivityWrite`（替换规则调用 `state/activity-replacement.ts`）与 `queryActivitySourceOf`（记录里的目标和两个 Session）。
 - `task-contracts.ts` — `GoalTaskPort`（创建/完成/控制 Goal）与 `GraphWrite` 正本。
 - `task-index.ts` — plan-local 的正反邻接构造和两种环检测，纯算法、无 Store 语义。
@@ -131,6 +132,7 @@
 | `buildTaskAdjacency` | `src/core/work-graph/model/task-index.ts:23` | 构造一个 plan 的正向/反向依赖表，保留声明顺序 | 需要 plan-local 邻接时 |
 | `hasDirectedCycle` | `src/core/work-graph/model/task-index.ts:46` | 对已有邻接表做 DFS 环检测 | 已构造邻接后校验 |
 | `hasCycleInEdges` | `src/core/work-graph/model/task-index.ts:69` | 对任意 `{from,to}` 边集做环检测 | 非执行 DAG 的关系校验 |
+| `runUsageOf`、`runGrowthOf`、`lineReadingOf` | `src/core/work-graph/model/plan-loop-readings.ts:38` | 三个 Run 读数（规格 10.4）的唯一纯实现：累计 token 与增长量、确认的增删行；unknown 一律 `null` 并保留 `reason`，不写 0 | `activity/runs` 的 `readings` 投影（`views/activity-read-helpers.ts`）和后续 P6/P7 消费者；不要另算 |
 | `queryActivityRefOf` | `src/core/work-graph/model/query-activity-plan.ts:26` | 由完整 `QueryRunRef` 构造 `QueryActivity` 记录 ref | 读写 Query 活动记录；不要另拼 ref |
 | `planQueryActivityWrite` | `src/core/work-graph/model/query-activity-plan.ts:41` | 调 `decideActivityOutcome` 定 created/replaced/unchanged 并构造下一版 `QueryActivity` 快照与 span | Query 收尾提交与 Query backfill；不要另写替换规则 |
 | `queryActivitySourceOf` | `src/core/work-graph/model/query-activity-plan.ts:79` | 从 QueryJob 与 QueryRun 读出记录要写的目标（请求轮取 prepared manifest 冻结的目标，其他取 intent 目标）、执行 Session 和被问 Session；两个 Session 都投影成 `{projectId, sessionId}`（claim 可能留下完整 Session aggregate ref）；进入了却没有 prepared manifest 的请求轮答原因 | Query 收尾提交与 Query backfill 写记录内容；不要另读目标或 Session |
