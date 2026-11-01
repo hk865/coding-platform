@@ -158,7 +158,9 @@
             "materials",
             "sessions",
             "queries",
-            "tasks"
+            "tasks",
+            "architecture",
+            "configuration"
           ]
         },
         {

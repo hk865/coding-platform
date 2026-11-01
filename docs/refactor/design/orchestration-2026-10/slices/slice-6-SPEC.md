@@ -252,11 +252,11 @@
   - **受影响任务。** 逐项：`running` → 先用已有控制停下再切换（采用等它停，原因 `stopping_affected_work`）；`waiting` 或结果 `unknown` → 采用等它了结；`completed` → 它的满足和证据留作历史，建**替代任务**承担新义务；被替代任务的下游改接到替代任务；不受影响的照常继续。**不物理删任务**：物理删除不支持（`plan-validation.ts:324`）——要撤掉的义务走**取消**，保留 `taskId`、记 disposition（第二轮审查第 7 条）。
   - **写入。** 目标/验收的改动写在采用那次提交里；只重做受影响的部分；旧证据不能满足新的验收。不自动回退工作区。
   - 新的做法上线以后，删掉 `UserDecisionV1` 一族（F12 列的引用），保留消息正文 `UserDecisionBodyV1`。
-  - **6C 冻结前 lead 另写替代与切换的状态表**（本条要求，写出来）。
+  - **6C 冻结前 lead 另写替代与切换的状态表**（本条要求，写出来）。已写在 [STATE-MACHINES-SPEC §3.9](../../../STATE-MACHINES-SPEC.md)（2026-11-01）。
 - **L14 初始化采用的补记（决定 48；6C，第一轮审查第 9 条）。**【lead 定，待审】
   - **生产者改动。** 初始架构、完成标准被采用的事件（`ArchitectureCatalogAdopted`、`ProjectCompletionPolicyActivated`）在来自卡回答时带上 `acknowledgementRef`（那张回答消息）；`decision-application.ts` 照别的证明一样校它（F13）。
   - **历史数据。** 这次改动以前答过的卡：**读的时候**投影成 `source_resolved`，附“没有证明（旧数据）”；读不写任何东西。
-  - **写侧修复。** Host 启动时做一个修复步骤，加已有的 `decisions/application` 重试；读只投影。
+  - **写侧修复。** Host 启动时做一个修复步骤，加已有的 `decisions/application` 重试；读只投影。**（2026-11-01 改：Host 启动没有现成的 `operationRef` 来源，`decisions/application` 也不在启动时跑。修复改由再次调用 `initialization/adopt` 驱动：既有的采用恢复重放冻结的子提交，补记③一次；重启本身不写。不加 lookup、索引或启动扫描。崩溃后采用本来就没做完，人要再调一次才能做完，所以这个时机够用。见 6C 任务书 §3.10。）**
 - **L15 秘书线自动归档（R33；6B，第一轮审查第 6 条）。**【lead 定，待审】没有还在处理的请求、没有占用、最后一个新请求满 1 天 → 归档；每个项目至少留一条最近用过、可用的秘书线——**按时序读每个项目里合格的秘书，保留轮次 `since` 最晚的那条**；已换手交出的不等一天（L10 第 6 步）（第二轮审查第 5 条）。归档时未答的“请回答”跟着请求走（第 7 片）。用已有的自动维护，加秘书这一类。**这和 7D2 L38 是同一条闲置归档规则（“闲”不含请知悉；每种职责保留最后一条）；7D2 把闲置归档扩到参谋、书记线。**（审查二第 18 条）**（决定 91 取消 L15：秘书线不按空闲时间归档；换手交出后归档照旧，见 L10。）**
 - **L16 查询也记活动（6A；用户 2026-10-15 晚定，§0.1 第 3 条）。**【lead 定】把 2B 的活动计数扩到查询。2B L1 的算法不变（一步 = 一个 `tool.started`，回答正文不算步；`tallyTurnActivity`，`run-activity-tally.ts:104`）。（审查二额外核对 D2）（审查二额外核对 D3）（审查二额外核对 D4）
   - **记哪些：** 进入过 Kernel 的查询都记：秘书的一轮、`intervention_planning` 的只读查询、问一问的只读副本（第 7 片 7B）、角色线的探索查询（第 7 片 7D2 的 `role_exploration`）。
@@ -395,7 +395,7 @@ export const QUERY_UNASSIGNED_INDEX = 's6-query-unassigned';   // 未分配队�
 - 查询轮次的状态是今天 `QueryJob`/`QueryRun` 状态的投影（第一轮审查第 1 条）：未领取 → `queued`；claimed/prepared/started → `running`；answered / failed / cancelled / `routing` / `absorbed` 的终态 → `ended`；结果未知 → `unknown`。`routing` 轮写下就是终态，不跑模型（S6-Q-02）。
 - 秘书线归档沿用 Session 的归档行（原因 `secretary_idle`、`secretary_handoff`，S6-S-01、S6-S-02）。**（决定 91 以后没有 `secretary_idle`。）**
 - 目标复制：新目标照建目标的行；旧目标不动（S6-G-02）。
-- 初始化补记：读侧把历史答过的卡投影为 `source_resolved`（附“没有证明（旧数据）”）并只读；写侧由 Host 启动步骤加既有 `decisions/application` 重试（S6-P-01 同族，第一轮审查第 9 条）。
+- 初始化补记：读侧把历史答过的卡投影为 `source_resolved`（附“没有证明（旧数据）”）并只读；写侧由 Host 启动步骤加既有 `decisions/application` 重试（S6-P-01 同族，第一轮审查第 9 条）。**（2026-11-01 改：写侧由再次调用 `initialization/adopt` 驱动，见 L14。）**
 - 初始化分支：项目还没有采用的正式架构、或没有生效的完成标准时，秘书这一轮用执行种类 `initial_coordination`（L8），回答的 `setup` 存成候选、不自动采用（和普通 ideas 回答分开；没有目标的回答先存候选，目标确认后绑定并写不可变绑定事实 `InitializationBindingV1`，7D2 L41 第 1 段）；无 Goal 的读取和规范化从绑定取 Goal 版本和 `planId`，提议和采用都守同一个绑定（审查二第 8 条）；采用仍是你的动作，走现有的人工采用入口（`ui/views/execution/planning.ts:274` 的 `adoptInitialPlanSetup` 路由），补记走 L14。（61-1、61-3）
 
 ## 4. 规则

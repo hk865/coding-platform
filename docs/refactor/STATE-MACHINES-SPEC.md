@@ -767,6 +767,37 @@ stateDiagram-v2
 
 - 这六个**不是持久状态、不是新字段**；它们是规格 §6.1 那张表的结果归类，读的时候从上面的事实算。
 
+### 3.9 替代与切换（6C，2026-11-01）
+
+这一节是 `slice-6-SPEC.md` L13 要求在 6C 冻结前写出来的状态表，对应规格的 S6-P-01、S6-P-02，实现依据是 6C 任务书 §3.7。按答复改计划不新增持久状态、记录或索引：候选还是 `PlanProposal`，采用还是原来的那一次提交。下面的分类是 `plans/apply` 读到的事实，每次调用都重算。
+
+**这张表只管带批准的改动。** 候选的 `decisionRefs` 不为空，且批准载荷核对通过（版本、`answerRef`、`payloadDigest`）。没有批准时，§3.3 的无痕规则和 §3.4 的禁止项照旧。
+
+| 受影响的任务 | 怎么判 | `plans/apply` 的结果 | 这一次写什么 | 之后 |
+| --- | --- | --- | --- | --- |
+| 在跑 | Run 是 `starting` 或 `running` | `busy`，原因 `stopping_affected_work` | 只写取消控制，每个 Run 一个，请求号 `plan-change:<proposalId>:<taskId>:<runId>`；不写采用 | 候选仍是 `candidate`；Run 结束后调用方再调 |
+| 等待中 | 让出的等待，或等待类的 phase | `busy`，原因 `waiting_affected_work` | 什么都不写，不发控制 | 候选仍是 `candidate`；等它了结后再调 |
+| 结果未知 | `outcome_unknown`，或还没结的隔离和对账 | `busy`，原因 `waiting_affected_work` | 什么都不写，不发控制 | 未知不算了结；了结后再调 |
+| 已停下、未满足 | Run 已结束（`runUnresolvedBlocker` 无），Lease 已放，没有新的未结事实 | 进入采用 | 任务带新定义进新计划版本 | 按新定义重新调度 |
+| 已完成 | `satisfied` | 进入采用 | 旧任务 `superseded`，`replacedByTaskId` 指向同 `taskKind` 的新任务；新任务 `pending` | 旧满足和证据留在旧计划版本 |
+| 不受影响 | 不在差异里 | 不看它 | 不写 | 照常继续 |
+| 新增 | 只在草稿里有 | 不读事实 | 新任务 `pending` | 正常调度 |
+| 撤销 | 草稿里 `cancelled`，保留 taskId | 走既有处置规则 | 写 `dispositionRecord` | 不物理删除 |
+
+一次采用里同时有几种任务时，先看表的前三行：有在跑的就停，有等待或未知的就等，只有全部了结才写采用。采用是一次提交：新计划版本、Goal 指针和批准允许的目标文字写在一起。
+
+| 写在这次提交里的 | 规则 |
+| --- | --- |
+| 验收 | 改了的 `VerificationRequirement` 必须换新的 `requirementId`，旧证据按旧 id 记，满足不了新验收 |
+| 范围 | 任务的 `TaskScope` 可以在批准钉住的版本里改；门和角色不能改 |
+| 目标文字 | 只从核对过的授权载荷的 `goalObjective` 取；`goalWithObjective` 只设文字，`nextGoalPointer` 只加一次版本 |
+| 下游 | 旧边 `D→T`、`T` 被 `T2` 替代、`D` 留下：草稿必须有 `D→T2`，不能有 `D→T`；平台只校验，不替草稿改边 |
+| 回执 | `PlanAdoptionResultV1 = { planRevision, replaced, rewired }`；`rewired` 只列通过上一行比较的边 |
+
+**重试和崩溃。** 控制写了、采用没写时崩溃：再调一次，控制的身份让重复提交幂等。采用已提交：重放返回原回执，不再核对批准。`busy` 不算失败，候选留在原处。
+
+**不做的：** 平台不在服务端等待（`plans/apply` 不阻塞）；不自动回退工作区；不物理删除任务；没有批准时不放宽已完成任务的终态（TASK-19 第 5 条保留）；不新增事件类型、证明项或索引。
+
 ## 4. Task（投影 phase + disposition）
 
 Task 没有可写的存储 phase（D-1）。`effectivePhase` 是对 Run（含控制指针）、TaskAttempt、TaskLease、TaskReduction、选定 Run 的轮次链头（§9 VR-14，C5；gate 取 gate 自己的链头，P20）和新增 TaskRequeue 的纯投影，由 `projectTaskPhase(facts)` 计算。所有影响 Task 的写入都先经 `transitionTask` 判定合法性，并返回投影后的下一 phase。这些写入是：领取、重入队（含“继续”）、返工拒绝记录（TASK-28，重入队与后继轮次共用）、完成、处置变更。
