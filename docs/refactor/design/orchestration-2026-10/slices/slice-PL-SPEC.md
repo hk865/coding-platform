@@ -86,6 +86,7 @@ lead，2026-11-01。设计唯一依据：`plan-loop-design.md`（v4 定稿，685
 
 ### 1.6 对 B/C/D 的约束
 - **必须用：** B 用 `src/core/work-graph/views/consumable-sessions.ts:81-89`（`offerKindOf`）、`src/business/workflow/intervention.ts:178` 和 `:296-303`、`resources/prompts/platform/templates/skill-platform-work.txt:24-26`、`src/app/host.ts:1219-1252` 与 `:427-431`；C 用 `src/business/workflow/workflow.ts:1929-1940`、`src/business/workflow/task-gate.ts:193`、`src/core/work-graph/evidence/verification-plan.ts:61`、`src/core/work-graph/tasks/plan-validation.ts:46`、`docs/refactor/HANDOFF.md:1722`、`docs/refactor/design/orchestration-2026-10/slices/slice-6-SPEC.md:247`；D 用 `src/business/workflow/workflow.ts:613`/`:2488-2504`、`src/core/work-graph/state/plan-machine.ts:677-696`、`src/core/work-graph/state/control-intent-machine.ts:185`/`:200`、`src/core/work-graph/tasks/control-service.ts:601`。
+- **P1 第二段已带的共用件：** `src/core/work-graph/tasks/plan-lineage.ts`、`src/core/work-graph/state/plan-candidate.ts` 的诊断和 `src/core/work-graph/state/secretary-note.ts` 的 `planningNoteAdmission` 归 P1 第二段；B/C/D 只导入，不再各写一份。
 - **不能用：** `workflow.ts:1770`、`intervention.ts:274-281`（当自动采用）、`host.ts:424`、`host.ts:1829`、`runtime-configuration.ts:481`、`runtime-configuration.ts:121`、`communication-tools.ts:357`、`tool-group-assembly.ts:562`、`context-fact-text.ts:255/259`、`task-gate.ts:40`（当判定函数）、`slice-7-SPEC.md:42/491`、`DESIGN.md:517`（当自动采用句）、`plan-service.ts:2991`（当模块校验），以及 `7c1-start-rulings-v2.md`、`7c2-start-rulings-v2.md`、`run-iv2.md`、`goal-layering-design.md` 的旧行号（这些文档现在都在 ``，按新副本核）。
 
 
@@ -251,10 +252,10 @@ const producer = graph.tasks.find((row) => row.definition.taskKind === 'work'
 
 **实现：不新增等待分支。** 在目标级等待结果的共同收口附加 `refinement`：
 ```
-result = collected ?? gap;
+result = merge(候选等待, L46 等待, collected 等待, gap 依据);
 return attachRefinement(result);
 ```
-- 这样覆盖 L46 的卡/等待、收集等待和普通缺口；等待原因和唤醒依据照旧合并，不丢其中一支；`reasons`/`recordKinds` 仍由 `goalWaitBasisOf`（`src/business/workflow/task-gate.ts:176`）组。加两项现有开放字段：`reasons` 追加 `plan_only:<stageId>`（段占位）或 `plan_only_task:<taskId>`（目标级占位）；`recordKinds` 追加 `'SessionMessage'`（`PlanProposal` 已在现有列表，`workflow.ts:1938`-`:1940`）。
+- 这样覆盖候选等待、L46 的卡/等待、收集等待和普通缺口；等待原因和唤醒依据照旧合并，不丢其中一支；`reasons`/`recordKinds` 仍由 `goalWaitBasisOf`（`src/business/workflow/task-gate.ts:176`）组。加两项现有开放字段：`reasons` 追加 `plan_only:<stageId>`（段占位）或 `plan_only_task:<taskId>`（目标级占位）；`recordKinds` 追加 `'SessionMessage'`（`PlanProposal` 已在现有列表，`workflow.ts:1938`-`:1940`）。显式任务和已有具体检查出口先返回，不到共同收口；到了共同收口才按这四支 merge。
 
 **动作，顺序不能换（v3 §5.4）：**
 
@@ -272,10 +273,10 @@ return attachRefinement(result);
 ```ts
 import type { GoalWaitBasisV1 } from './contracts.js';
 import type { GoalSnapshot } from '../../contracts/ledger.js';
+import type { RefinementTargetV1 } from '../../contracts/plan-round.js';
 
 /** 共同收口里第一条“required + active + work + plan_only”任务；undefined = 这次等待没有 plan_only 标记。 */
-export type PlanOnlyTargetV1 = { stageId: string | null; taskId: string | null };
-export function planOnlyTargetOf(basis: GoalWaitBasisV1 | undefined): PlanOnlyTargetV1 | undefined {
+export function planOnlyTargetOf(basis: GoalWaitBasisV1 | undefined): RefinementTargetV1 | undefined {
   const task = basis?.reasons.find(reason => reason.startsWith('plan_only_task:'));
   if (task !== undefined) {
     const taskId = task.slice('plan_only_task:'.length);
@@ -493,7 +494,7 @@ execution: {
 | 收件线是 `executor` 或 `secretary`，且不是系统轮 | 今天的路径：`addressed = message.taskRef ?? latestWork`，未完成任务领取；否则 `planOnIdleLine` | 可决定领取 | 现行 |
 | `sessionDuty` 未装配 / `unknown`（老窄装配） | 非系统轮按今天的路径；系统轮仍按“只作上下文、不领”；`answerShape` 只有系统轮可能是 plan 形状，duty 读不到时按 `text`（不猜审阅） | 系统轮不领 | 系统轮不领 |
 - **“不走 `latestWork` 回退”。** 今天的 `addressed = message.taskRef ?? facts.value.latestWork?.task ?? null`（`:79`）会把“发给参谋线的行动请求”当成“让这条线继续它的上一个任务”。规划线/系统轮分支改成 `addressed = message.taskRef`；`goalRef` 用 `message.goalRef`（设计 `:139`）。现有的领取块 `if (addressed !== null) {…}`（`:96`-`:115`）要包在 `if (!systemRound && !planningLine && addressed !== null)` 里；否则 `deviation:` 带 `taskRef` 时仍会走领取。`message.goalRef` 为空时走现有 `queued`/`no_task`（`:117` 一带），不猜；**“不走 `claimFirstReady`”。** 规划分支写候选/写审阅结论后返回，不调用 `:345` 的 `claimFirstReady`，也不调用 `:320`-`:336` 的 `applyPlanChange`。采用移出到目标循环（C 的 6.1，设计 `:203`-`:205`）；本节只保证参谋/审阅/系统轮这条分支不领、不采用；**执行者/审阅者发给参谋的普通 `action_request`。** 它们没有前缀，收件线是 `adviser`（或 `reviewer`），所以走同一分支；`taskRef` 进规划上下文，不进领取。设计 `:140` 的“按发信身份和收件线职责判断这不是让这条线继续任务”就是这张表；**`planOnIdleLine` 的收尾。** 现有四收尾不变（`:260`-`:343`）：无效答案、无答案、问题卡、候选。规划的 Query 仍是那条 `intervention_planning`：`interventionPlanningQueryRefs(message.ref)`、`sourceMessageRef = message.ref`、`focusTaskRefs: []`、`budget: input.budget`（`:178`-`:260`）。**加三处**：
-  1. 消息带 `followupOf` 时（本规格只有 `planresume:` 会带），`intent.execution` 加 `repliesToMessageRef`：**继承原 Query 的 `repliesToMessageRef`**（多次问人时一路继承最初执行者的 M），不是复制当次 `followupOf`；原 Query 没有该值时才用 6.3.1 来源链的 `rootMessage`（最初执行者 M，不是中间那条 R）。`question` 用正文（首行请求号 + `originalQueryRef` 引用 + 固定请求语；原问题全文和逐卡答复正文都不进正文，准备阶段按引用装配，见 5.3.5 #8）。不解析前缀。
+  1. 消息带 `followupOf` 时（本规格只有 `planresume:` 会带），`intent.execution` 加 `repliesToMessageRef`：**继承原 Query 的 `repliesToMessageRef`**（多次问人时一路继承最初执行者的 M），不是复制当次 `followupOf`；原 Query 没有该值时才用 6.3.1 来源链的 `rootMessage`（最初执行者 M，不是中间那条 R）。`question` 用正文（首行请求号 + `originalQueryRef` 引用 + 固定请求语；原问题全文和逐卡答复正文都不进正文，准备阶段按引用装配，见 5.3.5 #8）。不解析前缀。**建 `planfix:` Query 时也读来源链**：根消息不是本轮 R、也不是 Host 系统轮时，`intent.execution.repliesToMessageRef = lineage.rootMessage`，`sourceMessageRef` 仍是 R；不放宽邮箱检查。
   2. 建 Query 时写 `execution.answerShape`（`planningAnswerShapeOf` 的结果；`plan_review` 只由审阅分支用）。这是 Query 创建时的平台决定，不是准备阶段从正文推。
   3. 答案形成 draft 后、`proposePlan` 前剥掉 segment 的 `origin`，调用 `mergeStageRefinement(base, segmentWithoutOrigin)`（v3 §5.5；5.1.2 的签名）；base 由 C 的候选/目标读给出，本节只要求“refine/deviation 用活动计划的 snapshot，planfix 用被审候选的 draft，planresume 用 6.3.1 来源链的 `fixBase`（原 Query 是返修轮时），没有 `fixBase` 才用活动计划 snapshot；结果保留 base 的来源证明”，`basedOn` 按 5.1.2 分开取：base 是活动计划 snapshot 时取它的 `ref`；base 是 `fixBase`（被审候选的 draft）时取父候选的 `basedOn`。候选的 `PlanChangeReason` 从答案根的 `reason` 读（`{text, affectedTaskIds?}`，缺省用 `{text: summary, affectedTaskIds: []}`），平台补 `sources: []` 后原样交给 `proposePlan`；不另建影响记录。
 - **两种收尾（设计 `:142`、`:311`；PLS-06/PLT-10/C-25）。** 规划 Query 的答案落成后，Host 的 `consumeIdle` 调 `handleIntervention(..., completion: 'associate_answer', replyToOriginal: <boolean>)`（`host.ts:1870`-`:1880`）；这个布尔值按下一段的规则算，不是直接把 `reason` 传下去。**系统消息 R 可以结束**：候选写入（`progressed: proposal`）、最终回答、问题卡都只把答案关联回 R；**执行者原消息 M 不在候选待决、问人期间回复**。M 的回复只发生在三种终态：最终文字/无效答案的回答、提案被拒（`declined`）、采用成功（含早已 `accepted` 的候选，返回 `answer_ready` 且 `reason:'adopted'`）。Host **按真实发送者和执行者的 open wait** 决定 `replyToOriginal`，不按 `reason` 单判：`executorWait && candidateOrQuestions` 才延后回 M（`candidateOrQuestions` = `reason` 是 `candidate` 或 `questions`）（`executorWait` = 这条收尾要回的 M 是执行者 `work_run`/`secretary_round` 发的、它的 wait 仍 `open` 且 `response===null`；M 取 `repliesToMessageRef ?? 6.3.1 来源链的 rootMessage`）；`answered`/`invalid_plan`/`declined`/`adopted` 照旧回 M。**人的普通消息没有执行者 wait**，不管 `reason` 是 `candidate` 还是 `questions` 都按原收尾结束（关联答案或撤回），不套“执行者保持等待”的例外；**Host 系统 R** 同样按原收尾结束，R 的结束不等于 M 的回复。**M 只有一个回复槽**：`associateAnswer` 先读消息现状，已有同答案的回复就返回 `responded`（幂等），已有别的回复返回 `source_stale`，绝不第二次覆盖；候选待决期间 M 的 wait 保持 `open`，不被提前解除。**没有 R 的原始执行者消息不关联**：`replyToOriginal=false` 且消息本身就是 Query 来源（`planresume:` 还没出现）时，`associateAnswer` 直接返回 `responded` 的空操作，不写 M；只有 `planresume:` 的 R 才在候选写入/问题卡时被关联。**M 的关联必须用 R 的 Query**：`interventionPlanningQueryRefs(R)`，不是 `interventionPlanningQueryRefs(M)`；`associateAnswer` 拆成 `queryMessageRef`/`replyToMessageRef` 两个参数，现有单参数调用传同一个值。审阅轮同样只关联回 `planreview:` 消息，不写候选。没有答案/无效答案/问题卡沿用现有三种收尾（`host.ts:1858`-`:1886`）：通知（`questions` 不发）+ 关联，或通知 + 撤回。**不把“消息有回复”当作闭环完成**：M 仍在等时，R 的结束只是系统轮结束；闭环由采用/最终回答收尾（6.1、7.3、7.3.1）。
@@ -807,7 +808,7 @@ export async function exportTaskbooksForPlan(input: {
 
 **逐处代码点。**
 
-1. **消息正文：`message-record-codecs.ts:124`。** `SESSION_MESSAGE_MAX_TEXT_BYTES=16 KiB` 保留；新增 `SYSTEM_ROUND_MESSAGE_MAX_TEXT_BYTES=64 KiB`、`isSystemRoundSender(sender)`（`sender.kind==='host' && sender.actor.kind==='system' && sender.actor.id===SYSTEM_ROUND_ACTOR.id`，即 N7 的 `host:plan-round`；`workflow:auto-rework` 等自动化身份不算）和**唯一长度正本** `sessionMessageTextBound({ sender, part, original })`：`part==='message'` 按本条 `sender` 选 16/64 KiB；`part==='response'` **一律 16 KiB**，不看原消息是不是系统轮。`original` 只供消费分支核对“回复的是哪条消息”，不改长度。`mailbox-service.ts:762` 的 `normalizeText` 收 `maxBytes`；`sendMessage`（`:2656`）按本条 `owned.principal` 选；`sendUserMessage`（`:4380`）、`respond`（`:3534`）固定 16 KiB；`storeBody`（`:5084`）用本条 `sender` 选。`readQueryAnswerFacts`（`:2287`）的 `bodyBounded` 用 `part` 区分：Query 的来源消息是 `message` 部分（按该消息 `sender`，系统轮可 64 KiB），回复是 `response` 部分（固定 16 KiB）；`message-body-envelope.ts:217` 同一判据（`part==='response'` 固定 16，`part==='message'` 按本条 sender）。**发送和读取用同一个 `sessionMessageTextBound`，不按 `followupOf` 判**（PLS-15）。失败：发送/存储超界 `capacity`；读回超界现有“stored message body text is invalid”；回复超界 `guard_failed`/`capacity`，消息不提交。
+1. **消息正文：`message-record-codecs.ts:124`。** `SESSION_MESSAGE_MAX_TEXT_BYTES=16 KiB` 保留；新增 `SYSTEM_ROUND_MESSAGE_MAX_TEXT_BYTES=64 KiB`、`isSystemRoundSender(sender)`（`sender.kind==='host' && sender.actor.kind==='system' && sender.actor.id===SYSTEM_ROUND_ACTOR.id`，即 N7 的 `host:plan-round`；`workflow:auto-rework` 等自动化身份不算）和**唯一长度正本** `sessionMessageTextBound({ sender, part, original })`：`part==='message'` 按本条 `sender` 选 16/64 KiB；`part==='response'` **一律 16 KiB**，不看原消息是不是系统轮。`original` 只供消费分支核对“回复的是哪条消息”，不改长度。`mailbox-service.ts:762` 的 `normalizeText` 收 `maxBytes`；`sendMessage`（`:2656`）按本条 `owned.principal` 选；`sendUserMessage`（`:4380`）、`respond`（`:3534`）固定 16 KiB；`storeBody`（`:5084`）用本条 `sender` 选。`readQueryAnswerFacts`（`:2287`）**先按 Query 冻结形状调用 `planningReplyTextOf` 派生回复文本，再对派生回复文本按 16 KiB 判**，后续 `facts.text` 也使用它；普通咨询保持原文，审阅解析无效时不调用回复写入。**不再在这里给来源消息按 64 KiB 放行**；64 KiB 只用于发送和 envelope 的 `message` 部分。`message-body-envelope.ts:217` 的 `part==='response'` 仍固定 16 KiB。**发送和读取用同一个 `sessionMessageTextBound`，不按 `followupOf` 判**（PLS-15）。失败：发送/存储超界 `capacity`；读回超界现有“stored message body text is invalid”；回复超界 `guard_failed`/`capacity`，消息不提交。
 2. **Query 问题：`query-job-service.ts:84`-`:96`。** `MAX_QUESTION_BYTES=16 KiB` 保留；新增 `PLANNING_MAX_QUESTION_BYTES=64 KiB`。`queryTextProblem(text, executionKind?)`：`intervention_planning` 64 KiB，其余（含缺省）16 KiB。`submitQueryJob` 在 `:263` 传；`intent.execution` 今天在 `:291` 读，把只读 `kind` 的窄读提到 `:263` 前。`request-service.ts:355`/`:388` 是人入口，保持 16 KiB。失败 `invalid`，reason 用选中的上限。
 3. **答案观察：`query-observation.ts:50`、`:156`-`:166`、`:187`-`:205`、`:498`-`:505`。** `MAX_ANSWER_BYTES=16 KiB` 保留；新增 `PLANNING_MAX_ANSWER_BYTES=256 KiB`。**两条路分开取 bound**：已接受的工具答案（`:498` 另一支）按 `manifest.answerShape`，`plan_round` 用 256 KiB，`plan_review`/`secretary`/`initial`/`null` 用 16 KiB；**纯文字退路 `extractAnswer` 对所有形状都用 16 KiB**（规划轮的退路也按 16 KiB 判，≤16 KiB 的退路原文保留为回复，PLS-34/PLT-12）。不再用 `isRequestRound(job)`。工具答案拼出文本超 256 KiB 折成 `too_long`。失败：普通 Query 和规划轮的文字退路 `too_long` → `gap`；请求轮 `failed` + `answerCheck.detail='too_long'`；16 KiB 请求轮的 reason 仍是现有的 `the secretary answer is over the 16 KiB answer bound`。
 4. **持久答案：`query-record-codecs.ts:578`。** `16 KiB` 改成 `256 KiB`，issue 文字 `answer.answer exceeds 256 KiB`。持久层不知道 `answerShape`，只保证规划答案存得下；普通答案 16 KiB 的语义在观察器/工具/审阅解析器上已判过。`bodyRef`、digest、`answer.answer` 全文相等的校验（`initial-plan-answer.ts:266`、`:383`）不看字节上限。
@@ -837,7 +838,7 @@ export async function exportTaskbooksForPlan(input: {
 8. **执行者上报的收件人。** 执行者用现有发信找它认到的参谋线（技能里用 `find_related_sessions` 认人），带 `waitAfterSend: true`；执行者不是 Host，不能调 `resolveDutyRecipient`。平台侧的系统轮和通知才按 L35（7D2 前 `resolveDutyRecipient`）。见 D-V2。
 9. **不写全的后果。** 审阅轮会看任务书够不够让执行者不猜（C 的 6.3）；平台不查（设计 `:179`）。
 
-**输入模板。** `intervention-planning.txt`（现有，`{{prelude}}{{role}}{{goal}}{{plan}}{{message}}`）不改结构；`initial-planning-answer` 指南（`resources/prompts/platform/templates/initial-planning-answer.txt`）加两条：`estimatedLines` 字段；当请求说“只这一段”时只输出这一段、平台会合并。指南同时服务初始规划和规划轮，所以两句都写成条件句。审阅的输入模板由 C 的新模板负责。
+**输入模板。** `intervention-planning.txt`（现有，`{{prelude}}{{role}}{{goal}}{{plan}}{{message}}`）不改结构；`initial-planning-answer` 指南（`resources/prompts/platform/templates/initial-planning-answer.txt`）加两条：`estimatedLines` 字段；当请求说“只这一段”时只输出这一段、平台会合并。**再按有没有 `submit_plan_round` 分两种写法：有工具 → 填 `answerKind`/`summary`/`plan` 或 `questions`，固定成员由平台填；没有工具 → 原 JSON 文字协议；工具声明同步。** 指南同时服务初始规划和规划轮，所以这些写成条件句。审阅的输入模板由 C 的新模板负责。
 
 ---
 ### 5.5 走法：真实调用顺序
@@ -1147,7 +1148,7 @@ applyPlanChange(automationContext(owned), {
 | `request_fix` | 同上，请求号 `planfix:<proposalId>:<revision>`；**只在 5b 的 `not_sent` 才返回发送步骤**。发完不马上结束整趟：按 5b 沿 `planfix:` 与它经 `planresume:` 续出的最后一轮读 `wait: fix`，合并依据继续选任务；`skipped` 同样按已发进 `wait: fix`，不当成新的可推进动作 | 参谋线被消费（B 的 §5.2）；新候选的 `PlanProposal` 提交叫醒目标（`src/app/goal-wait-wakes.ts:31`-`:37`） |
 | `request_resume`（3b 的续轮） | 同上，请求号 `planresume:<goalId>:<queryJobId>`；先登记 `plan_resume_pending`，再发；发完返回 `waiting`，等新候选 | 原规划线被消费（B 的 §5.2）；新候选写回后由候选分支接着处理 |
 | `adopt` | `advance`，`next: perform(adopt_plan)`；不登记（提交本身会叫醒/继续） | Host 驱动执行采用 |
-| `card` | **不立刻返回 `waiting`**：先回到同一次目标级选择继续选任务；选到 `perform` 就返回它。只有在没有其他可推进步骤时，才返回 `waiting`，`next: null`，`waitBasis` = 候选等待依据与本次选任务的等待依据合并（`reasons` 并入候选原因，游标取较早），`source` = 候选卡来源（`{kind:'candidate', key, subject, pins}`，形状照 `src/core/work-graph/views/decision-read-model.ts:1868` 一带），`reason` 写清哪一行 | 卡本来就在队列里（`src/core/work-graph/views/decision-read-model.ts:1844`）；Host 导出任务书；其他分支不被这张卡挡住 |
+| `card` | **不立刻返回 `waiting`**：先回到同一次目标级选择继续选任务；选到 `perform` 就返回它，`advance` 出口也带候选卡来源（`value.source`）。只有在没有其他可推进步骤时，才返回 `waiting`，`next: null`，`waitBasis` = 候选等待依据与本次选任务的等待依据合并（`reasons` 并入候选原因，游标取较早），`source` = 候选卡来源（`{kind:'candidate', key, subject, pins}`，形状照 `src/core/work-graph/views/decision-read-model.ts:1868` 一带），`reason` 写清哪一行 | 卡本来就在队列里（`src/core/work-graph/views/decision-read-model.ts:1844`）；Host 导出任务书；其他分支不被这张卡挡住 |
 | `wait: busy` / `wait: review` / `wait: fix` | 同 `card` 的“先继续选任务、没有可推进步骤才等”的返回形状，但 `source` 不填卡来源（候选还没转卡），`reason` 写 `busy`/`review`/`fix` 与细节 | Run 结束/等待变化的提交叫醒目标后重试；审阅答复或返修新候选提交叫醒 |
 
 **候选不阻断其他分支。** 候选处理在目标级选择之前跑，但 `card`/`wait` 只表示“这一条暂时没有立即动作”，不是整个 Goal 的结束。先继续现有的选任务流程：另一条分支能领取或接续新 Run 就照常返回 `perform`；只有整趟没有别的可推进步骤时，才把候选依据并进 `waiting`（设计 `:296`、`:298`“只挡那一支”）。这样审中、返修已发（`wait: fix`）、待改、待人或 `busy` 不会挡住别的段、别的任务或后来建出的线；`request_fix` 也不会每趟重选发送步骤把别的任务挤掉。
@@ -1183,14 +1184,12 @@ export type PlanningQuestionGroupV1 = {
   resumeMessageExists: boolean;
 };
 
-deps.planCandidates(scope, ctx, goalRef?): Promise<
-  | { status: 'ready'; goals: readonly {
+deps.planCandidates(scope, ctx, goalRef?): Promise<ReadResult<{ goals: readonly {
         goalRef: GoalRef;
         pending: { proposalRef: PlanProposalRef; basedOn: PlanRevisionRef | null } | null;
         /** 只含本闭环来源的 intervention_planning 问题组；其他规划问题不进这里、也不算读失败。 */
         questionGroups: readonly PlanningQuestionGroupV1[];
-        readThrough: CommitCursor | null }[] }
-  | CoreRejection>;
+        readThrough: CommitCursor | null }[] }>>;
 ```
 - 实现：`goalRef` 给出时只读这个 Goal，否则按工作区枚举**没结束的 Goal**（`active`；`paused` 由 97-9 的 `held` 处理，人启动后进恢复；现成的 `listGoals`，`src/core/work-graph/tasks/reconcile-reads.ts:39`、`:99`；索引 `GOAL_BY_WORKSPACE_INDEX`）。**`completed`/`cancelled` 的 Goal 不读**：那里没有还在等 M 的执行者，不用补回复。每个 Goal 用 `findPendingProposal`（`src/core/work-graph/tasks/plan-readers.ts:555`）读候选；用现有 `readPlanningQuestions`（`src/core/work-graph/tasks/planning-question-reader.ts:176`、`:201`）**只枚举问题身份和它的 `DecisionSourceV1`**，不要拿它返回的 `state`/`answer` 当答复——那张卡始终是 `waiting_answer`、`answer:null`。**自动续轮分支只处理有本闭环来源的问题组**：按卡的 `source.pins` 找原 QueryJob，`execution.kind === 'intervention_planning'` 且 `execution.sourceMessageRef` 存在才收进 `questionGroups`；初始化/普通 `initial_coordination` 等没有来源的规划问题**保留原读和原流程**，不进组、不当读失败——一张历史问题不能拒绝整个 Goal 的候选读（PLT-14）。对进组的每张卡调现有 `readDecisionAnswer({source: card.source})`（`src/core/work-graph/communication/decision-service.ts:843`；由组合根以目标卡的正式读身份注入），`message !== null` 才算这一问有答案；按卡 `source.pins` 里的 `QueryJobAnswer.queryJobId` 分组，原消息取原 QueryJob 的 `intent.execution.sourceMessageRef`；用 `systemRoundRequestId({kind:'planresume',...})` + `systemRoundMessageRef`/Query 读判 `resumeMessageExists`。**读失败原样保留**：问题枚举、进组卡的答案读、消息/Query 读任一步返回 `CoreRejection`，整条 `planCandidates` 返回它，不折成“没有待答/没有未续轮”；**不进组的规划问题不参与这条读**。
 - `readThrough` 取这些读的批次水位；登记：`registry.register({ projectId, goalId, recordKinds: [<候选依据的 kinds>, 'SessionMessage', 'PlanProposal'], reasons: ['restart'] }, readThrough)`，和现有两半同一个 `register`（`:86`）；`held` 的目标照样跳过（97-9 不绕过）；`ask`/`off` 档下有待处理中断的 Goal 不登记，等人 `workflow/driver-start`（`plan-loop-design.md:230`、`:501`）；只登记“有候选、或有 `allAnswered === false` 的问题组、或有 `allAnswered === true && resumeMessageExists === false` 的问题组、或有已采用候选但源消息未回复”的 Goal，不登记全部 Goal（否则每个 Goal 都会在启动时被拉起一次，改变 97-9 的静默）。这第三半的读是新增的窄口，列在 §21（C-11 的 `planCandidates`）；它与 3b 共用同一组事实，偏差 2 里说明为什么 `queryGoal` 的单条不够。**终态收尾缺失不靠 Goal 登记**：`settlementOfferOf` 在每次 `readConsumableSessions` 扫描时按源消息直接给报价（5.5.2，含候选已写、R 未关联的情况），目标没被登记也会被 Host 消费。
@@ -1233,7 +1232,7 @@ export type PlanDiagnosisFindingV1 = {
   message: string;
 };
 
-/** 只读事实；不读存储、不看时钟、不调工具。找不到问题返回 []。 */
+/** 只读事实；不读存储、不看时钟、不调工具。找不到问题返回 []；覆盖未知（checks 为 null）返回 null。 */
 export function diagnosePlanCandidate(input: {
   /** 候选的草案（义务和验证要求都在里面）。 */
   candidate: Pick<PlanRevisionDraft, 'obligations'>;
@@ -1241,10 +1240,11 @@ export function diagnosePlanCandidate(input: {
   catalogPin: ArchitectureCatalogPinV1 | null;
   /** 政策的 `requirementKinds`。 */
   requirementKinds: readonly string[];
-  /** 已注册检查能力（Host 的受信检查配置，`src/core/work-graph/evidence/evidence-service.ts:992` 的同一来源）。 */
-  checks: readonly CheckCapabilityV1[];
-}): PlanDiagnosisFindingV1[];
+  /** 已注册检查能力；null = 覆盖未知，不判。 */
+  checks: readonly CheckCapabilityV1[] | null;
+}): PlanDiagnosisFindingV1[] | null;
 ```
+- **`checks` 的两种空值（DR-P4-08）。** `null` 表示覆盖未知，不判，返回 `null`；`[]` 表示配置存在但没有能力，仍逐条诊断必需要求，返回 `PlanDiagnosisFindingV1[]`（不是“无 finding”）。**`checks` 为 `[]` 时，每条必需验证要求都要出 finding**，不能把空配置当成已覆盖。
 - `code: 'reviewer_not_supported'` 只对 `kind === 'reviewer'` 的必需要求出（第 9 片前）；其余未被覆盖的要求是 `no_registered_check`。依据：`plan-loop-design.md:236`、`:49`。
 - **诊断失败不单独返修（PL-03）。** 诊断只在两处出现：审阅输入（6.3.2）和候选卡（6.4 / 6.5）；有 finding 时候选**不能自动采用**（6.1.3 的表），审阅者看得到并可以让参谋改；改不了就转卡（`:234`）。不另开诊断返修循环。
 - **`emptyRequiredObligation` 不进 finding。** 那种草案已被 plan 校验拒绝、根本写不成候选（`verification-plan.ts:86`-`:89` 的 `invalid`），不是诊断的对象；这里写明只是让复用的函数保留原判定。
@@ -1293,20 +1293,26 @@ export type PlanSourceLineageV1 = {
   /** 那一轮要修的候选；没有 fixRound 就是 null。planresume 的合并 base 和 basedOn 取它。 */
   fixBase: PlanProposal | null;
 };
+export type PlanSourceLineageDeps = {
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+  queries: Pick<QueryJobPort, 'readQueryJob'>;
+  plans: Pick<PlanTaskPort, 'readPlanProposal'>;
+};
 /** 从一条源消息（候选的 sourceMessageRef 或 planresume 消息）沿链读到 root；读失败原样返回。 */
-export function planSourceLineageOf(source: SessionMessageRef): Promise<ReadResult<PlanSourceLineageV1>>;
+export function planSourceLineageOf(ctx: CoreCallContext, deps: PlanSourceLineageDeps,
+  source: SessionMessageRef): Promise<ReadResult<PlanSourceLineageV1>>;
 ```
 - 走法：读消息正文首行，用 `systemRoundOfText` 取 `kind`；`planfix` → 读父候选 `{proposalId, proposalRevision}`（`readPlanProposal`），**第一次遇到时**记 `fixRound = 这条 planfix: 消息`、`fixBase = 父候选`（`??=`，继续往回不覆盖），再从**父候选的 `sourceMessageRef`** 继续；`planresume` → 用 `head.queryJobId` 读原 QueryJob，取 `execution.sourceMessageRef`，再从它继续（原 Query 可能正是返修 Query，于是下一步就是 `planfix:`）；其他首行 → 到此为止，当前消息是 `rootMessage`。每一步都往更早的提交走，不会回环；消息/候选/Query 任一读失败原样返回，不猜。`fixRound`/`fixBase` 是链上**最近**的那一轮（第一次遇到的），`rootMessage` 是最早的那条。
-- **后继关系：** 候选 B 的 `planSourceLineageOf(B.sourceMessageRef).fixBase` 指向候选 A，就说明 B 接替 A；`latestAgentCandidate` 和候选卡按这个关系**排除已有后继的旧候选**，直接写出的返修候选和经 `planresume:` 续出的候选都算。旧版只被排除，不改记录、不写 `replaces`。合并 base 取 `fixBase.draft`，`basedOn` 取 `fixBase.basedOn`（6.1.2 步 3 之后的 planresume 分支、5.1.2）。返回身份仍不解析正文其余部分、不加字段（M-1）。
+- **后继关系：** 候选 B 的 `planSourceLineageOf(ctx, deps, B.sourceMessageRef).fixBase` 指向候选 A，就说明 B 接替 A；`latestAgentCandidate` 和候选卡按这个关系**排除已有后继的旧候选**，直接写出的返修候选和经 `planresume:` 续出的候选都算。旧版只被排除，不改记录、不写 `replaces`。合并 base 取 `fixBase.draft`，`basedOn` 取 `fixBase.basedOn`（6.1.2 步 3 之后的 planresume 分支、5.1.2）。返回身份仍不解析正文其余部分、不加字段（M-1）。
 
 **续轮 `planresume:` 怎么用 `repliesToMessageRef`（B 的 5.2）。** 本段不定义它。目标循环只用一条事实：候选的 `sourceMessageRef` 若是 `planresume:` 消息，则来源和“回答”的比较按 §5.2/§7.3 的 `repliesToMessageRef` 精确比（`plan-loop-design.md:145`、`:327`）；审阅请求号永远不带 `planresume:`。**续轮冻结 `prev.repliesToMessageRef ?? lineage.rootMessage`**：新 Query 继承原 Query 的 `repliesToMessageRef`，原 Query 没有才用来源链的 `rootMessage`（最初执行者 M），不是复制这条 R 的 `followupOf`；否则 `planfix → 问人 → planresume` 会把原 planfix Query 缺的 `repliesToMessageRef` 落成中间那条 R，采用/回复时找不到仍在等的 M（PLT-06/C-25/C-33）。
 #### 6.3.2 审阅输入模板
 **谁渲染、什么时候。** 审阅轮的 Query 的 `question` 是请求正文（和干预轮同一条路：`intent.question`，`src/business/workflow/intervention.ts:201`）；准备阶段把审阅模板渲染后附在问题后面（和 `initial-planning-answer` 今天附在 `intervention_planning` 后面同一位置，`src/core/agent-runtime/query-preparation.ts:368`-`:380`）。**准备阶段按冻结的 `answerShape` 选指南：** `plan_review` 只附 `plan-review-input`，不附 `initial-planning-answer`；`plan_round` 只附 `initial-planning-answer`；两者都不附在普通 Query 上。模板 id `plan-review-input`，文件 `resources/prompts/platform/templates/plan-review-input.txt`，槽表加在 `src/contracts/prompts/slot-tables.ts`（现有 `intervention-planning` 的六槽旁边，`:45`-`:50`）：
 ```
 'plan-review-input': {
-  prelude: { required: false }, role: { required: true }, goal: { required: true },
+  prelude: { required: false }, goal: { required: true },
   plan: { required: false }, candidate: { required: true },
-  diagnosis: { required: true }, message: { required: true },
+  message: { required: true },
 }
 ```
 
@@ -1320,8 +1326,6 @@ export function planSourceLineageOf(source: SessionMessageRef): Promise<ReadResu
 {{plan}}
 ## 这一版的候选（这一版新写内容的完整任务书、义务和依赖差异）
 {{candidate}}
-## 机械诊断（平台只判事实；不是入图门槛）
-{{diagnosis}}
 ## 请求
 {{message}}
 ## 你要回答
@@ -1336,16 +1340,14 @@ export function planSourceLineageOf(source: SessionMessageRef): Promise<ReadResu
 
 | 槽 | 来源 | 复用 |
 |---|---|---|
-| `role` | 本轮的角色/职责文本 | 现成的 Query 配方（`src/core/agent-runtime/context-query-recipe.ts` 的 role 槽） |
 | `goal` | 目标行 | 现成的 `goal` 槽 |
 | `plan` | 已采用计划（`manifest.focusPlan`）的**依据**：段骨架（标题、stageId、description）、每个任务的标题/scope/disposition、义务（含 taskIds/verificationRequirements）、`executionDag.dependsOn`、`inputRequirements`；任务书 `instruction` 只作背景，不是被审对象 | 现成的 `task`/`plan` 槽写法（`query-planning-input.txt`、`intervention-planning.txt`），外加 `deriveFuturePlanDelta` 的 source 侧事实 |
-| `candidate` | 这一版新写内容的**完整任务书**，不是摘要：新增/改动任务的 `assignment.instruction` 全文、`estimatedLines`/`sizeClass`、新增/改动的义务和验证要求、`executionDag.dependsOn`/`taskRelations`/`inputRequirements` 的差异（新增/删除/替换的边和端点），外加 `deriveFuturePlanDelta` 的新增/改动/取消/只改处置四组 taskId 清单。只列这一版动到的任务；已采用段不重抄 | `deriveFuturePlanDelta`（`src/core/work-graph/tasks/plan-validation.ts:348`）定改动集；`taskCardOf(... assignment?.instruction ...)`（`graph-context-reader.ts:1869`）取全文；`queryPlanSummary`（`context-fact-text.ts:363`）只用于 `plan` 背景 |
-| `diagnosis` | 6.2 的输出（空写“无”） | 新渲染，纯文本行 |
+| `candidate` | 这一版新写内容的**完整任务书**，不是摘要：新增/改动任务的 `assignment.instruction` 全文、`estimatedLines`/`sizeClass`、新增/改动的义务和验证要求、`executionDag.dependsOn`/`taskRelations`/`inputRequirements` 的差异（新增/删除/替换的边和端点），外加 `deriveFuturePlanDelta` 的新增/改动/取消/只改处置四组 taskId 清单。只列这一版动到的任务；已采用段不重抄 | `deriveFuturePlanDelta(base, proposal.draft)`（`src/core/work-graph/tasks/plan-validation.ts:348`）定改动集；按 `proposal.draft.assignments` 里 `changedIds` 命中的任务取 `assignment.instruction` 原样渲染全文，不调 `taskCardOf`；`queryPlanSummary`（`context-fact-text.ts:363`）只用于 `plan` 背景 |
 | `message` | 请求正文 | 现成 |
 
-**候选怎么被准备阶段读到。** 审阅轮的请求号里有 `proposalId`（6.3.1），准备阶段从自己的 project/workspace 和这个 id 组 `PlanProposalRef`，用现成的 `plans.readPlanProposal` 读候选（`PlanTaskPort.readPlanProposal`，`src/core/work-graph/model/plan-contracts.ts:228`；装配依赖里已有可选的 `plans`，`src/core/agent-runtime/context-types.ts:39`-`:41`）。**`proposalId`/`revision` 从 `systemRoundOfText(record.job.job.intent.question)` 的首行取**（这是 M-1 允许的“读正文时解析首行”的同一解析；这里只用于候选身份，不用于工具选择）；首行解析不到、或候选读不到，这一轮准备失败（`invalid`/`unavailable`/`not_found`），不拿已采用计划或“最新候选”冒充。**64 KiB 只约束保存的请求正文（`planreview:` 消息和 Query 的 `question`）**；候选槽是准备阶段从 `readPlanProposal` 读出来再渲染的，不占 `question` 的字节，也不因为候选大就拒绝这一轮：完整候选随准备输入一起装配，装不下时走现有容量出口（5.3.5 的 `ContextCapacityExceeded`），不截断、不退回标题摘要，也不把已采用计划冒充成候选。
+**候选怎么被准备阶段读到。** 审阅轮的请求号里有 `proposalId`（6.3.1），准备阶段从自己的 project/workspace 和这个 id 组 `PlanProposalRef`，用现成的 `plans.readPlanProposal` 读候选（`PlanTaskPort.readPlanProposal`，`src/core/work-graph/model/plan-contracts.ts:228`；装配依赖里已有可选的 `plans`，`src/core/agent-runtime/context-types.ts:39`-`:41`）。**`proposalId`/`revision` 从 `systemRoundOfText(record.job.job.intent.question)` 的首行取**（这是 M-1 允许的“读正文时解析首行”的同一解析；这里只用于候选身份，不用于工具选择）；首行解析不到、或候选读不到，这一轮准备失败（`invalid`/`unavailable`/`not_found`），不拿已采用计划或“最新候选”冒充。**64 KiB 只约束保存的请求正文（`planreview:` 消息和 Query 的 `question`）**；候选槽是准备阶段从 `readPlanProposal` 读出的 `proposal.draft` 再渲染的，不占 `question` 的字节，也不因为候选大就拒绝这一轮：完整候选随准备输入一起装配，装不下时走现有容量出口（5.3.5 的 `ContextCapacityExceeded`），不截断、不退回标题摘要，也不把已采用计划冒充成候选。
 
-**为什么诊断放进请求正文。** 6.2 说“随候选写进审阅输入”（`plan-loop-design.md:234`）；诊断的输入（检查覆盖）只有 Workflow 这一侧读得到（6.2 末），所以由目标循环把 finding 行写进 `planreview:` 的正文，模板原样显示；准备阶段不重算诊断。
+**为什么诊断放进请求正文。** 6.2 说“随候选写进审阅输入”（`plan-loop-design.md:234`）；诊断的输入（检查覆盖）只有 Workflow 这一侧读得到（6.2 末），所以由目标循环把 finding 行写进 `planreview:` 的正文，模板经 `{{message}}` 原样显示；准备阶段不重算诊断。
 #### 6.3.3 审阅答案工具（冻结的 `submit_plan_review`）
 **工具名和 schema。** 审阅轮冻结 `submit_plan_review`（名字是规格新定；设计只给“答案工具”）。工具在 `src/core/agent-runtime/answer-tools.ts`，和 FA 的三个 submit 工具同一个工厂、同一条接受/屏障路径。
 - **参数（Kernel schema）**：根对象，strict，`{ verdict: enum(['pass','fix']), findings?: array(object({ taskId: string|null, text: string })) }`。`findings` 可省：`pass` 省了就是空数组，`fix` 省了由内容检查拒。和 `answerSchemaFor`（`answer-tools.ts:382`）、`buildSchemas`（`whiteboard-tools.ts:190`-`:217`）同一写法：无 transform、不把根 union 交给 Kernel。
@@ -1402,7 +1404,7 @@ export function planSourceLineageOf(source: SessionMessageRef): Promise<ReadResu
 ### 6.4 让人知道（“请知悉”）
 #### 6.4.1 出现位置
 - **采用后**（`plan-loop-design.md:257`-`:259`）：读模型的通知里出 **1 条**，类别是 `plan_adoption`（名字是规格新定，见 §21）；内容是“改了什么、影响哪些任务、审阅结论、任务书导出结果”。采用状态只写“已采用”，不写采用者；审阅结论按 6.4.2 读确切四态；差异、影响任务和任务书三行照下。人和自动化同一条。任务书那一行是本节新加的，见 6.4.3。
-- **转候选卡时**不另出通知：候选卡本身已经在队列里（`decision-read-model.ts:1844`）。候选卡后端事实是 **tracked 公开平台方法** `readCandidateCard(goalRef, proposalRef)`（内部实现沿用候选卡组卡路径的 `candidateCardFacts`，不新造找卡扫描），冻结路由 **`decisions/candidate-card`**；返回 `{ card: DecisionCardV1; diagnosis; exactReview; exportRead }`，四样事实各自可读、失败各写一行；**`decisions/card` 原样保留**给只读 `DecisionCardV1` 的调用方，不改它的返回形状、不改 `DecisionCardV1` 字段、不新造卡类型。四样是：`card`（现有卡、pins、`candidateStatus`/`staleReason`）+ `diagnosis`（6.2 输出；读不到写“检查覆盖读不到”）+ `exactReview`（候选未采用时按当前 `(proposalId, revision)` 读；已采用时按 `revision - 1` 读接受前版本，同 6.4.2；四态照 6.1.2 步 5；`not_sent` 写“尚未审阅”，`waiting` 写“审阅中”，`terminal_invalid` 写“审阅结论无效：<reason>”，读取失败写“审阅结论读不到：<reason>”）+ `exportRead`（`exportBooks` 的 `written`/`missing`/`incomplete`/`not_configured`/`unavailable`，6.4.3；候选阶段传候选的 draft，见 6.4.3）。候选卡不是采用，没有“这次采用”的通知；界面呈现归 E3，本节只保证这四样通过公开入口可读、失败有明确一行，不把读不到折成空。接线三处：`create-platform.ts` 的 platform/world 公开方法、`core-routes.ts` 的冻结路由、`WorkflowDependencies` 的可选依赖 `readCandidateCard`（真实装配必接；缺依赖 `unsupported`，不折成空）。
+- **转候选卡时**不另出通知：候选卡本身已经在队列里（`decision-read-model.ts:1844`）。候选卡后端事实是 **tracked 公开平台方法** `readCandidateCard(goalRef, proposalRef)`（内部实现沿用候选卡组卡路径的 `candidateCardFacts`，不新造找卡扫描），冻结路由 **`decisions/candidate-card`**；返回 `{ card: DecisionCardV1; diagnosis; exactReview: ReadResult<PlanReviewReadV1>; exportRead }`，四样事实各自可读、失败各写一行；**`decisions/card` 原样保留**给只读 `DecisionCardV1` 的调用方，不改它的返回形状、不改 `DecisionCardV1` 字段、不新造卡类型。四样是：`card`（现有卡、pins、`candidateStatus`/`staleReason`）+ `diagnosis`（6.2 输出；读不到写“检查覆盖读不到”）+ `exactReview`（`ReadResult<PlanReviewReadV1>`；候选未采用时按当前 `(proposalId, revision)` 读；已采用时按 `revision - 1` 读接受前版本，同 6.4.2；四态照 6.1.2 步 5；`not_sent` 写“尚未审阅”，`waiting` 写“审阅中”，`terminal_invalid` 写“审阅结论无效：<reason>”，读取失败写“审阅结论读不到：<reason>”；读失败不使整张卡失败）+ `exportRead`（`exportBooks` 的 `written`/`missing`/`incomplete`/`not_configured`/`unavailable`，6.4.3；候选阶段传候选的 draft，见 6.4.3）。候选卡不是采用，没有“这次采用”的通知；界面呈现归 E3，本节只保证这四样通过公开入口可读、失败有明确一行，不把读不到折成空。接线三处：`create-platform.ts` 的 platform/world 公开方法、`core-routes.ts` 的冻结路由、`WorkflowDependencies` 的可选依赖 `readCandidateCard`（真实装配必接；缺依赖 `unsupported`，不折成空）。
 - **阶段结束时**出同一条“请知悉”，由 `plan_notice` 通知源生产：内容按 5.8 的六项（token/增长量/行数、完成任务、返工次数、下一阶段档位、阶段线超线），`itemKey=stage-end:<planId>:<planRevision>:<stageId>`，`position` 用该 stage gate 已终结验证轮的 `since`；同一阶段同一版一条，重放不重复。读不到计划/TaskRow/回合/RunActivity 时整条 `unavailable`，不写成“没有阶段结束”；没有已满足的 stage gate 不产生项。
 - **偏差“不改计划”时**也出同一条“请知悉”，同一个 `plan_notice` 源：按 `deviation:` 的确定性请求号找到源消息和 `intervention_planning` Query，读现有 `readQueryJob`/`readQueryAnswer`；只有这一轮的答案是“回答”分支（既没有 `plan` 也没有 `questions`，即参谋明确不改计划）才产生项；文字答案不区分目标循环是否判成 `invalid_plan`，一律按“不改计划”处理。内容 = 7.1.1 的停因/超线事实 + “不改计划”的判断 + 这一轮答案的短文字原文（已存、非空、≤16 KiB，不截断，不复制计划全文），`itemKey=deviation-notice:<goalId>:<requestId>`，`position` 用源 R 完成关联时提交的回执 cursor——身份固定为 `intervention:<messageKey>:respond`（`sessionMessageRefKey(源 R)`，`src/business/workflow/intervention.ts:155`），复用 `readCommitByIdentity` 读这条回复提交的回执 `cursor`（身份键的算法见 6.4.2；实现见 `sqlite-record-store.ts:535`、`in-memory-record-store.ts:449`）；**不是 Query 的创建 `since`**（`QueryJob.since` 是创建提交）：较早创建、晚答的 Query 也以这条回复提交的 cursor 定位，不会落到已看过的游标之前。不重发、不建卡、不写记录。Query/回执读失败 `unavailable`；还没终态/还没答案/回执未提交不产生项；同一 `itemKey` 只一条。
 - **类别和人的读取。** 这两类“请知悉”用新类别 `plan_notice`，它是现有 `noticeSources`/`NOTICE_CATEGORIES` 投影机制内的类别（不是复用 `plan_adoption`，也不是新记录）：注册到 `create-platform.ts` 的 `noticeSources` 后，人的队列读（`decisions/queue` 的 `notices`、`main/read`）按 Goal 读到它；它和 `member_notice` 走同一个队列读和同一个 `seenThrough` 游标机制，只是类别不同；**不发 Session 的 `notify` 来充当人的投影**（发给参谋 Session 的 `notify` 不会自动进人的通知读）。类别要同时加在类型联合、读模型的 `NOTICE_CATEGORIES` 列表和持久层的允许类别表三处，缺一处会被读模型或 settings codec 拒绝。
@@ -1417,22 +1419,22 @@ export function planSourceLineageOf(source: SessionMessageRef): Promise<ReadResu
 | `itemKey` | `plan-adoption:<planRef.planId>:<planRevision>` | 采用提交的活动计划版本 |
 | `category` | `'plan_adoption'` | §21 C-7 |
 | `subject` | `{ kind:'goal', goalRef }` | 采用提交的 Goal |
-| `position` | `{ kind:'commit', cursor: <PlanRevisionAccepted 的提交游标>, itemKey }` | 有序读的游标 |
-| `summary` | 一句话：`已采用 · 计划 v<planRevision> · 改 <n> 个任务（<ids>）`；后面**按确切审阅四态接一句**：`decided pass` → ` · 审阅 pass`（只有这一种接 pass），`decided fix` → ` · 审阅要求返修`，`not_sent` → ` · 尚未审阅`，`waiting` → ` · 审阅中`，`terminal_invalid` → ` · 审阅结论无效：<reason>`，读取失败 → ` · 审阅结论读不到：<reason>`；不按候选来源接 pass；再接 6.4.3 的任务书一行 | 接受提交的 `position` 游标 + 确切审阅答案（6.1.2 步 5；采用后按候选的 `revision - 1` 读接受前版本）+ 差异 + 导出物现状（6.4.3） |
-| `objects` | `{kind:'aggregate', pin: PlanRevision, label:'adopted-plan'}`、`{kind:'aggregate', pin: PlanProposal, label:'candidate'}`、`{kind:'aggregate', pin: Goal, label:'goal'}` | 采用提交（`PlanRevisionAccepted` 的 `payload.planRevision` 和 proposal） |
+| `position` | `{ kind:'commit', cursor: <已采用候选记录的 until>, itemKey }` | 已采用候选的 `until`（采用那次提交的游标，`decodePlanProposalOrigin(record).until`） |
+| `summary` | 一句话：`已采用 · 计划 v<planRevision> · 改 <n> 个任务（<ids>）`；后面**按确切审阅四态接一句**：`decided pass` → ` · 审阅 pass`（只有这一种接 pass），`decided fix` → ` · 审阅要求返修`，`not_sent` → ` · 尚未审阅`，`waiting` → ` · 审阅中`，`terminal_invalid` → ` · 审阅结论无效：<reason>`，读取失败 → ` · 审阅结论读不到：<reason>`；不按候选来源接 pass；再接 6.4.3 的任务书一行 | 已采用候选记录的 `until` + 确切审阅答案（6.1.2 步 5；采用后按候选的 `revision - 1` 读接受前版本）+ 差异 + 导出物现状（6.4.3） |
+| `objects` | `{kind:'aggregate', pin: PlanRevision, label:'adopted-plan'}`、`{kind:'aggregate', pin: PlanProposal, label:'candidate'}`、`{kind:'aggregate', pin: Goal, label:'goal'}` | 采用提交（`PlanRevision` 的 `ref`/`revision` 和 `acceptedCandidatesOf` 的 proposal） |
 | `rework` | `null` | 不是返工 |
 | `actions` | 不带 | 无动作 |
 - **“改了什么”** = `deriveFuturePlanDelta(source, target)`（`src/core/work-graph/tasks/plan-validation.ts:348`）：新增/改动/取消/只改处置四组；target 是采用的 `PlanRevisionSnapshot`，source 是它的 `basedOn` 那一版（候选记录里有 `basedOn`，`plan-machine.ts:96`）。
 - **“影响哪些任务”** = 候选的 `reason.affectedTaskIds`（`plan-machine.ts:76`；模型自己写的，平台不补语义，`plan-loop-design.md:329`-`:330`）+ 上面差异里动到的 taskId。两者并列写，不合并成一个“影响范围”。
-- **“审阅结论”读确切事实，不按候选来源推**（PLT-17）。通知不区分采用者：采用状态只写“已采用”，审阅结论写确切的四态。审阅按该候选的**接受前版本**读：`acceptedCandidatesOf(goalRef)` 读回的 accepted 候选 `revision` 已是接受后（@1 → @2，`acceptProposalRecord` 的 `revision + 1`，`plan-machine.ts:141`-`:143`），所以 `(proposalId, proposalRevision)` 取 `proposal.revision - 1`；候选尚未采用（候选卡/审阅中）仍取当前 `revision`。按这一对读 6.1.2 步 5 的四态：`decided` 且 `verdict === 'pass'` 才写“审阅 pass”；`decided fix` 写“审阅要求返修”；`not_sent` 写“尚未审阅”；`waiting` 写“审阅中”；`terminal_invalid` 写“审阅结论无效：<reason>”；读取失败写“审阅结论读不到：<reason>”。接受事件的提交游标仍只用于 `position`（C-8）；事件读不到按 `unavailable`，不猜。不按候选来源推、不加读口、不新增字段。
+- **“审阅结论”读确切事实，不按候选来源推**（PLT-17）。通知不区分采用者：采用状态只写“已采用”，审阅结论写确切的四态。审阅按该候选的**接受前版本**读：`acceptedCandidatesOf(goalRef)` 读回的 accepted 候选 `revision` 已是接受后（@1 → @2，`acceptProposalRecord` 的 `revision + 1`，`plan-machine.ts:141`-`:143`），所以 `(proposalId, proposalRevision)` 取 `proposal.revision - 1`；候选尚未采用（候选卡/审阅中）仍取当前 `revision`。按这一对读 6.1.2 步 5 的四态：`decided` 且 `verdict === 'pass'` 才写“审阅 pass”；`decided fix` 写“审阅要求返修”；`not_sent` 写“尚未审阅”；`waiting` 写“审阅中”；`terminal_invalid` 写“审阅结论无效：<reason>”；读取失败写“审阅结论读不到：<reason>”。通知项的 `position` 用候选记录的 `until`（见下）；没有 `until` 的本片之前采用的候选不产生项，不算读失败；候选记录读失败才是 `unavailable`。不按候选来源推、不加读口、不新增字段。
 - **阶段结束和偏差“不改计划”的投影**（PLT-16）。同一个 `plan_notice` 类别下由 `createPlanNoticeSource({ records, plans, rounds, runs, activities, deviations, queries, commitIdentities })` 的两个只读分支生产：`stage-end:<planId>:<planRevision>:<stageId>` 用 stage gate 已终结验证轮的 `since` 和 5.8 六项；`deviation-notice:<goalId>:<requestId>` 用确定性 `deviation:` Query 的答案（按目标循环同一个 `parseInitialPlanningResponseV2` 口径判：`plan` → 有候选、`needs_decision` → 有卡，两者都不产生项；文字退路 = “回答”分支，才产生“不改计划”项；偏差项原样带这一轮的短文字答案，已存、非空、≤16 KiB、不截断）和源 R 的回复提交游标——固定身份 `intervention:<messageKey>:respond` 的已提交回执 `cursor`：邮箱的回复提交是 `respond_from_query_answer` 臂（`mailbox-service.ts:3653`），身份键按现有 `identityKeyOf('respond_from_query_answer', scope, senderIdentity, 请求号)` 算（`:1232`-`:1236`；`senderIdentityOf` 取答案的 QueryRun sender，`:1212`），该式由 mailbox 导出为只读薄函数（输入源 R 和固定请求号，内部取答案的 QueryRun sender）、通知源只调它（不复制哈希）；再 `readCommitByIdentity`（`src/core/record-store/ports.ts:206`-`:211`）读 `receipt.cursor`；不新增持久字段；不是 Query 的 `since`。两者都只读、不写记录、不建卡、不重发。**三种出口**：读失败 → `unavailable`（source 返回拒绝，队列写“读不到”，不折成空）；没有事实（stage gate 未满足 / Query 未终态 / 答案是 plan 或 questions）→ 不产生项；同一 `itemKey` 只合并成一条（stage gate 被再次验证时仍取最早归约到 `satisfied` 的那一轮 `since`，不换位置、不追加），重放/再读不追加。源在 `src/core/work-graph/views/plan-notices.ts`，注册到 `create-platform.ts` 的 `noticeSources`；人的 `decisions/queue` notices 直接读到，不需要另发 `notify`。注入的读口就是现有读：`records`（按 Goal 读 `PlanRevision`/`SessionMessage`/`VerificationRound`）、`plans.queryTaskGraph`、`S2B_ROUND_BY_GOAL_LOOKUP`（`VerificationRound` 记录，`since` 是游标）、PLS-23 的 `executions.listExecutions` + `readRunActivities`、`readDeviationFacts`、`readQueryJob`/`readQueryAnswer`、`commitIdentities`（`RecordCommitIdentityPort.readCommitByIdentity`；现有存储成员，不新增持久字段）；真实装配必接，某个分支需要而缺读口时该分支 `unsupported`，读失败 `unavailable`，都不折成“没有”。
-- **怎么从采用的计划找到候选**：通知源拿采用提交的 `PlanRevisionRef`，用新窄读 `acceptedCandidatesOf(goalRef)` 读完这个 Goal 的所有已采用候选，再挑 `planRevisionTargetOf(proposal) === planRef` 的那一条（`src/core/work-graph/state/plan-machine.ts:225`-`:227` 的 `planRevisionTargetOf`；读走 `PLAN_PROPOSAL_LOOKUP_INDEX`，`src/core/work-graph/persistence/plan-record-codecs.ts:64`）。找到才写 `affectedTaskIds` 和差异的 source；找不到按“未知”写，不猜。这条候选已 `accepted`、`proposal.revision` 是接受后的版本；审阅结论按上一段的 `revision - 1` 读接受前版本，不按这个 revision 算 `planreview:`。
-- **`PlanRevision` 的有序读和接受事件**：今天只有按 Goal 的有序索引（`src/core/work-graph/persistence/plan-record-codecs.ts:1116` 的 `s2b-plan-revision-by-goal`）。**`PlanRevisionSnapshot` 只有 `acceptedAt`，不带自己的 `since`**；通知项的 `position` 从同一次接受的 `PlanRevisionAccepted` 事件取（提交游标就是 `position` 的 cursor；读口用读模型已注入的 `lookupCommit`+`eventAt` 按该次采用的提交回执读这一条事件）；事件本身只用来取 `position`。`itemKey` 仍按 `plan-adoption:<planId>:<planRevision>`。事件读不到按 `unavailable` 写一行，不读记录自身的游标、不猜。**不新增 project 索引**：决定队列按 subject 分组，通知源按目标读，跨目标排序仍用同一个提交游标合并；代价是每个有采用的目标各读一次，可接受。
+- **怎么从采用的计划找到候选和 `position`**：通知源拿采用提交的 `PlanRevisionRef`，用 `acceptedCandidatesOf(goalRef)`（每个 Goal 调一次）读完这个 Goal 的所有已采用候选，再挑 `planRevisionTargetOf(proposal) === planRef` 的那一条（`src/core/work-graph/state/plan-machine.ts:225`-`:227` 的 `planRevisionTargetOf`；读走 `PLAN_PROPOSAL_LOOKUP_INDEX`，`src/core/work-graph/persistence/plan-record-codecs.ts:64`）。找到后用 `records.readMany([proposalRefKey])` 读这条候选记录，`decodePlanProposalOrigin(record).until` 就是 `position.cursor`；**没有 `until` 的候选是本片之前采用的，不产生通知项，不算读失败**；候选记录读失败才是 `unavailable`。找到才写 `affectedTaskIds` 和差异的 source；找不到按“未知”写，不猜。这条候选已 `accepted`、`proposal.revision` 是接受后的版本；审阅结论按上一段的 `revision - 1` 读接受前版本，不按这个 revision 算 `planreview:`。不读 `PlanRevisionAccepted` 事件、不拿 `acceptedAt` 或当前水位冒充。
+- **`PlanRevision` 的有序读**：今天只有按 Goal 的有序索引（`src/core/work-graph/persistence/plan-record-codecs.ts:1116` 的 `s2b-plan-revision-by-goal`）。**`PlanRevisionSnapshot` 只有 `acceptedAt`，不带自己的 `since`**；通知项的 `position` 不读它，也不用接受事件，`position.cursor` 只取已采用候选记录的 `until`（上一段）。`itemKey` 仍按 `plan-adoption:<planId>:<planRevision>`。没有 `until` 的候选不产生项；候选记录读失败按 `unavailable` 写一行，不猜、不拿 `acceptedAt` 或当前水位代替。**不新增 project 索引**：决定队列按 subject 分组，通知源按目标读，跨目标排序仍用同一个提交游标合并；代价是每个有采用的目标各读一次，可接受。
 - **任务书那一行不落在记录里**：`summary` 的导出结果由通知源在每次读时调 `exportBooks`（6.4.3）按文件现状算。投影仍然只读、不写、不重试；这一行不是持久字段。
 #### 6.4.3 任务书导出：何时、失败怎么让人知道
-**何时。** 采用提交之后；转候选卡时（`plan-loop-design.md:191`、`:441`）。由 Host 在处理采用/转卡的结果时做，不在投影里做；写哪、写什么、路径和文件名是 §5.3.4 的正文，本节只定“何时、结果怎么进通知、失败文字、去重”。
+**何时。** 采用提交之后；转候选卡时（`plan-loop-design.md:191`、`:441`）。由 Host 在处理采用/转卡的结果时做，不在投影里做；写哪、写什么、路径和文件名是 §5.3.4 的正文，本节只定“何时、结果怎么进通知、失败文字、去重”。**转卡导出走结果上的 `value.source`**：Host 用同一个包装接住驱动和公开 `advanceWork` 的返回，来源是候选时按来源读候选 draft 再导出，不新增字段。
 
-**调用点（三个，走同一个包装）。** 在 `host.ts` 加 `adoptAndExport(adopt)`：`committed`（含 `replayed`）后启动一次 `exportTaskbooksForPlan`（Host 传 `root` 和已注册的每个工作区根，5.3.4 的隔离检查在写前做），**采用路径不等它**（失败不 rethrow、不回滚，采用结果原样返回）；这个异步工作登记进 Host 的关闭等待，进程退出前等它结束，不丢写、不把半写的任务书当成功（PLS-31/C-32）。三个调用点：人采用首份（`:2273`-`:2281` 的 `adoptInitialization` 包装，`committed` 后、`startGoalDriver` 前）、人采用后续（`plans/apply` 的 bindings 覆盖成同一包装；`core-routes.ts:859` 现在直接绑 `applyPlanChange`）、自动采用（C 的 `adopt_plan` 在 Host 装配时传同一包装）。
+**调用点（三个采用点，走同一个包装；转卡也走同一 Host 包装）。** 在 `host.ts` 加 `adoptAndExport(adopt)`：`committed`（含 `replayed`）后启动一次 `exportTaskbooksForPlan`（Host 传 `root` 和已注册的每个工作区根，5.3.4 的隔离检查在写前做），**采用路径不等它**（失败不 rethrow、不回滚，采用结果原样返回）；这个异步工作登记进 Host 的关闭等待，进程退出前等它结束，不丢写、不把半写的任务书当成功（PLS-31/C-32）。三个采用调用点：人采用首份（`:2273`-`:2281` 的 `adoptInitialization` 包装，`committed` 后、`startGoalDriver` 前）、人采用后续（`plans/apply` 的 bindings 覆盖成同一包装；`core-routes.ts:859` 现在直接绑 `applyPlanChange`）、自动采用（C 的 `adopt_plan` 在 Host 装配时传同一包装）。转卡由 Host 对 `advanceWork` 的同一包装接住：`r=await advance(...); if(candidateSource(r)) scheduleExport(candidate.draft); return r;`，驱动和公开 `advanceWork` 都走这条，来源只读 `value.source`。
 
 **同一版重复采用/重试。** 每次 `committed`（包括 `replayed`）都调用一次导出，同一版本同一路径覆盖写。这不是“导出失败后的重试”：没有失败驱动的重试、退避、队列或“稍后再试”的记录；重放同一个采用只是同一次采用的回执，覆盖写是幂等的。采用结果、状态、版本都不因为导出再写一次而变。
 
@@ -1455,7 +1457,7 @@ export type TaskbookExportReadPort = {
 ```
 - **候选阶段的输入是 draft，不是 snapshot（PLT-11）。** 候选卡读的是候选的 `PlanRevisionDraft`（还没采用、没有 `ref`/`acceptedAt`），所以 `read` 的 `plan` 是 `PlanRevisionSnapshot | PlanRevisionDraft` 的联合：探针只取两者共有的 `planId`/`planRevision`/`stages`/`tasks` 和 `renderTaskbookMarkdown` 需要的段/任务书内容，**不要求 `ref`/`acceptedAt`**；期望路径和期望字节数按同一 `planId`/`planRevision`/`stageId` 算。这是 TypeScript 的入参联合，不是新字段、不是新记录；候选阶段和采用阶段的失败行/三态相同。`renderTaskbookMarkdown` 的入参也按同一联合冻结，不复制第二份草稿类型。
 - **成功/失败的判定。** `exportBooks` 在 Host 侧做探针（它在 `src/app`，能同时用 `taskbookRelativePath` 和纯渲染 `renderTaskbookMarkdown`）：对传入的 `plan`（`PlanRevisionSnapshot | PlanRevisionDraft`）的每个 `stages[].stageId` 算期望路径和期望字节数；文件不存在/读不到 → `missing`；存在但 `actualBytes < expectedBytes` → `incomplete`（写到一半、被截断）；`actualBytes >= expectedBytes` → `written`。**不保存导出结果**：通知每次读重算，所以投影不写、崩溃后可重建；代价是文件被外部删除或改动后，通知会从“已导出”变成“未写出/不完整”，文字不声称具体 fs 原因。
-- **通知在哪个函数生成。** `createPlanAdoptionNoticeSource({ records, exports })` 的 `readPage`（`plan-adoption-notices.ts`）读按 Goal 的 `PlanRevision` 记录，逐条组 `NoticeItemV1`；`summaryOf(adoption, candidate, exportRead)` 是唯一的文本构造。它先调 `deps.exports.read({ plan, scope })`，再把结果拼进 `summary`；不读审阅 Query、不发消息、不写记录。
+- **通知在哪个函数生成。** `createPlanAdoptionNoticeSource({ records, exports, reviews, acceptedCandidatesOf })` 的 `readPage`（`plan-adoption-notices.ts`）读按 Goal 的 `PlanRevision` 记录，逐条组 `NoticeItemV1`；`summaryOf(adoption, candidate, reviewRead, exportRead)` 是唯一的文本构造。它先调 `deps.exports.read({ plan, scope })`，再把结果拼进 `summary`；`reviews.read` 就是 `readPlanReview`，采用后传 `proposal.revision - 1`。不读审阅 Query、不发消息、不写记录。
 - **失败文字（逐 stage 一行，用 `；` 连接）。**
   - `written`：`任务书 <stageId> 已导出（<path>）`；
   - `missing`：`任务书 <stageId> 导出失败：未写出（<path>）；采用不受影响，不自动重试`；
@@ -1464,8 +1466,8 @@ export type TaskbookExportReadPort = {
   - `unavailable`：`任务书状态读不到：<reason>`（读口或探针本身失败，不说成“未配置”）。
   多段时每段各自一行；一段失败不会盖掉别的段已导出的路径。精确的 fs 原因（`ENOTDIR`/`EACCES` 等）不在通知里，因为不落记录；现有 Host 没有日志设施，本节不为它新增日志，通知是失败的唯一必需落点。
 - **失败不挡采用。** `exportTaskbooksForPlan` 先做 5.3.4 的导出根隔离检查，再捕获每个 stage 的 fs 异常，返回 `failed`（`TaskbookExportV1`，§5.3.4）；包装不 rethrow、不回滚、不改 `committed` 的 receipt，也不把采用改成 `busy`/拒绝。自动采用照常继续，下一段照常可派；人采用照常返回 `committed`。测试 46/47 与本节一致。
-- **转候选卡。** 候选卡阶段也调一次 `exportTaskbooksForPlan`（§5.3.4），输入是候选的 `PlanRevisionDraft`（不是已采用 snapshot）；卡文本用同一个 `exportBooks` 的三态行。卡不是通知，不产生 `plan_adoption` 条目；人批准前能读路径或失败行。
-- **同一版重复采用/重试时通知不重复。** `itemKey` 固定为 `plan-adoption:<planId>:<planRevision>`；`PlanRevisionAccepted` 每个计划版本一次，`plans/apply` 的重放返回同一 receipt，不追加第二个接受事件；即使有两个同版本的接受事件，通知合并（`compareNoticePositions`/`mergeNoticePages`，`views/notice-position.ts`）按 `itemKey` 和位置去重，读出来仍是一条。导出可能因为重放再覆盖写一次，但通知仍是一条，`position` 仍是同一个提交游标。
+- **转候选卡。** 不靠候选卡读口写文件：转卡结果（`value.source` 是候选来源）由 Host 的同一包装接住，按来源读候选 draft 后调一次 `exportTaskbooksForPlan`（§5.3.4），覆盖驱动和公开 `advanceWork` 两条路；卡文本用同一个 `exportBooks` 的三态行。卡不是通知，不产生 `plan_adoption` 条目；人批准前能读路径或失败行。
+- **同一版重复采用/重试时通知不重复。** `itemKey` 固定为 `plan-adoption:<planId>:<planRevision>`；同一计划版本的采用提交只产生一条通知项，`plans/apply` 的重放返回同一 receipt，不追加第二个接受事件；即使有两条同版本的候选记录，通知合并（`compareNoticePositions`/`mergeNoticePages`，`views/notice-position.ts`）按 `itemKey` 和位置去重，读出来仍是一条。导出可能因为重放再覆盖写一次，但通知仍是一条，`position` 仍是同一个 `until`。
 - **不做的。** 不写 Notification/新记录、不建“导出记录”、不建新卡、不重试、不做原子临时文件/回滚（设计没写）；导出物丢了按计划版本重建（`plan-loop-design.md:193`）。不把失败原因塞进 `NoticeItemV1` 的新字段；`summary` 是唯一新增的文本落点。
 ### 6.5 对象和状态
 **不加持久状态，不加记录**（`plan-loop-design.md:263`）。每一类东西落在现有的记录/字段上：
@@ -1506,11 +1508,13 @@ export type TaskbookExportReadPort = {
 | `latestAgentCandidate(goalRef)` | `ReadResult<PlanProposal \| null>` | `ready(null)` 只在**枚举完成**、排除请求槽候选、首个方案、以及按 6.3.1 来源链（`planfix:`/`planresume:` 两种首行）已有后继的旧候选之后，确实没有待决 agent 候选 | Goal `not_found` 原样；`not_ready` 原样；缺依赖 `unsupported`；读失败 `unavailable` |
 | `completedFixes(goalRef, basedOn)` | `ReadResult<number>` | `ready(0)` 只在同一 `basedOn` 的候选枚举完成且没有写出候选的 planfix 轮；按 6.3.1 的 `fixRound` 去重后计数；不是“没读到” | Goal/计划 `not_found` 原样；`not_ready` 原样；缺依赖 `unsupported`；读失败 `unavailable` |
 | `planFixRead(goalRef, proposalRef, revision)` | `ReadResult<PlanFixReadV1>`（`not_sent`/`waiting`/`terminal`） | `not_sent` 只在回执 `not_committed` 且原 `planfix:` Query `not_found`；`waiting` = 已发（含回执已 `committed`、Query 还没建出）且最后一轮（`planfix:` 或它经 `planresume:` 续出的轮）未终态、问题卡没全答或续轮没建，或最后一轮终态但收尾没写完；`terminal` = 最后一轮已终态、收尾完成仍没有后继候选；**读最后一轮的 Query/收尾，不以原 `planfix:` Query 的结束判**；不是“没读到” | Goal `not_found` 原样；`not_ready` 原样；缺依赖 `unsupported`；回执/Query/消息/问题/答案读失败 `unavailable` |
-| `planChecks(scope)` | `ReadResult<readonly CheckCapabilityV1[] \| null>` | `ready(null)` = 没有检查配置（6.2 的 `diagnosis` 传 `null`，不判自动采用）；`ready([])` = 配置存在但为空（诊断无 finding） | 缺 resolver `unsupported`；读失败 `unavailable`；`not_ready` 原样 |
+| `planChecks(scope)` | `ReadResult<readonly CheckCapabilityV1[] \| null>` | `ready(null)` = 没有检查配置（6.2 的 `diagnosis` 传 `null`，不判自动采用）；`ready([])` = 配置存在但没有能力，仍逐条诊断必需要求，不是“无 finding” | 缺 resolver `unsupported`；读失败 `unavailable`；`not_ready` 原样 |
 | `planCandidates(scope, ctx, goalRef?)` | `ReadResult<{ goals: readonly {...}[] }>` | `ready({goals: []})` 只在工作区枚举完成且没有未结束的 Goal；`questionGroups: []` 只在该 Goal 没有**本闭环来源**（`intervention_planning` + `sourceMessageRef`）的问题组（其他规划问题保留原读，不算空、不算失败）；`pending: null` 只在候选读完成且没有待决候选 | 缺依赖 `unsupported`；进组问题的枚举/答案/消息/Query 读失败 `unavailable` 或原 `CoreRejection`；`not_ready` 原样；没有来源的普通规划问题不参与、不拒绝整条读 |
 | `acceptedCandidatesOf(goalRef)` | `ReadResult<readonly PlanProposal[]>` | `ready([])` 只在 by-Goal 候选枚举完成且这个 Goal 没有 `status==='accepted'` 的候选；**不按 `activePlanRevision` 过滤**，所有已采用候选都返回；`not_found` 只给 Goal 本身不存在 | 缺依赖 `unsupported`；读失败 `unavailable`（记录不一致按 codec 现有 issue 拒绝） |
 | `exportBooks(input)` | `{status:'not_configured'} \| {status:'ready'; stages: TaskbookFileStatusV1[]} \| {status:'unavailable'; reason}` | `not_configured` 只在没有 `settingsDirectory`；`ready` 里单段文件不存在/偏短分别是 `missing`/`incomplete`，不是读口失败 | 缺依赖/探针本身读失败 `unavailable`（通知写“任务书状态读不到”，不折成“未配置”） |
-| `readCandidateCard(goalRef, proposalRef)`（公开平台方法；`candidateCardFacts` 是内部实现，路由见表下 5a） | `ReadResult<{ card: DecisionCardV1; diagnosis: ... \| null; exactReview: ...; exportRead: TaskbookExportReadV1 }>` | 候选 `not_found` = 权威不存在，读模型不出卡；四样事实各自缺失按 6.4.1 的文字出口写，不把整张卡折成空 | 卡本身读失败 `unavailable`；诊断/审阅/导出子读失败各自保留 `null`/`unavailable`/`terminal_invalid`，卡仍可读并写明原因；缺实现 `unsupported`（真实装配必接） |
+| `readCandidateCard(goalRef, proposalRef)`（公开平台方法；`candidateCardFacts` 是内部实现，路由见表下 5a） | `ReadResult<{ card: DecisionCardV1; diagnosis: ... \| null; exactReview: ReadResult<PlanReviewReadV1>; exportRead: TaskbookExportReadV1 }>` | 候选 `not_found` = 权威不存在，读模型不出卡；四样事实各自缺失按 6.4.1 的文字出口写，不把整张卡折成空 | 卡本身读失败 `unavailable`；诊断/审阅/导出子读失败各自保留 `null`/`unavailable`/`terminal_invalid`，卡仍可读并写明原因；缺实现 `unsupported`（真实装配必接） |
+
+**共享审阅读（不是第八个 Workflow 窄读）。** P5 导出 `readPlanReview(ctx, { goalRef, proposalRef, revision }): Promise<ReadResult<PlanReviewReadV1>>`；P4 经 `readCandidateCard` 的 `exactReview` 读到，P6 由 L 注入。`ready.value` 就是 6.1.3 的四态；`undetermined` → `rejected('unavailable', reason)`，缺回执读取依赖 → `unsupported`；回执查询使用 `systemRoundContext` 的固定发送身份，不沿用人的候选卡读取身份。读失败不折成 `not_sent`；采用后读接受前版本时由调用方传 `proposal.revision - 1`。
 
 - 七个读口都不新造“找候选/找卡”的扫描：`latestAgentCandidate`/`completedFixes`/`acceptedCandidatesOf` 复用 by-Goal 的候选枚举；`planCandidates` 复用问题 reader + 决定答案读；`planFixRead` 复用 `systemRoundRequestId`/`systemRoundMessageRef`/`interventionPlanningQueryRefs`、消息回执读、问题 reader + `readDecisionAnswer`，以及续轮 `planresume:` 的同一组确定性消息/Query 读；`exportBooks` 复用 `taskbookRelativePath`/`renderTaskbookMarkdown`。
 - **`acceptedCandidatesOf` 还用于崩溃恢复（PLT-09/C-27）**：采用成功后候选已退出 pending 集合，`latestAgentCandidate` 读不到它；恢复读完这个 Goal 的**所有已采用候选**（不限定活动计划那一版），再用 6.3.1 来源链/`repliesToMessageRef` 找各自的源消息。源消息仍 open、`response===null` 时**只补回复**，不再采用、不再 propose。
@@ -1534,7 +1538,7 @@ export type TaskbookExportReadPort = {
 | 13 | `src/app/goal-wait-wakes.ts:160`-`:202` 的 `createGoalWaitRebuild`；`:39`-`:54` 的 `GoalWaitWakes` 类型 | 重启重建第三半（候选、已答未续轮、已采用未回复）；`register` 的 kinds；不写恢复记录 | 本段 |
 | 14 | `src/app/collaboration-driver.ts:1082`、`:1120`-`:1124`（以及 `:1182`、`:1214` 的任务看守同类处） | `advance` 上的 `waitBasis` 在发系统轮请求之前登记；别的登记路径不变 | 本段 |
 | 15 | `src/core/work-graph/views/plan-adoption-notices.ts`（新）；`src/contracts/goal-decisions.ts:56`-`:59` | `plan_adoption` 通知源和类别；`readPage` 调 `exportBooks` 把每段任务书的 `written/missing/incomplete` 写进 `summary`；导出结果不落记录 | 本段 |
-| 16 | `src/core/work-graph/persistence/plan-record-codecs.ts:1116` 一带 | 不加索引；通知源按目标读 `PlanRevision`，`position` 用接受事件的提交游标（C-8）；事件读不到 `unavailable`（C-36） | 本段 |
+| 16 | `src/core/work-graph/persistence/plan-record-codecs.ts:1116` 一带 | 不加索引；通知源按目标读 `PlanRevision`，`position` 用已采用候选记录的 `until`（C-8）；没有 `until` 不产生项，候选记录读失败 `unavailable`（C-36） | 本段 |
 | 17 | `src/app/host.ts` 的 `consumeIdle`（`:1855`、`:1880`）、`adoptInitialization`（`:2273`-`:2281`）、`:2307` 的关闭等待、`plans/apply` 的 bindings 覆盖、C 的 `adopt_plan` 装配 | 允许改这些既有调用点：系统轮/恢复报价进消费循环，采用走同一个 `adoptAndExport`，导出异步工作纳入关闭等待；不改采用结果、不重试、不写记录（PLS-31/C-32） | 本段（5.3 的正文另定） |
 | 18 | `src/core/work-graph/sessions/duty-recipient.ts:22`-`:24` | duty 联合加 `'reviewer'` | 本段（L35/7D2 的线由 7D2 建） |
 | 19 | `src/core/work-graph/tasks/goal-decision-reader.ts:78`、`:280`、`:442`；`src/core/work-graph/views/decision-read-model.ts:254`；`src/core/work-graph/tasks/goal-deviation-facts.ts`（新）；`src/contracts/plan-deviation.ts`（新） | 在现有 goal_cause 读取里按细化需求或**共享 `readDeviationFacts` + `deviationsOfGoal` 的偏差需求**（`growth`/`lines`/`budget`/`stop` 都算）+ 参谋收件人派生 `no_adviser`；卡源与 `selectNext` 共用同一读口（`tasks/goal-deviation-facts.ts`）和同一 contracts 纯函数（`plan-deviation.ts` 是唯一正本），只有权威无收件人才派生，读失败原样；不新增持久 cause/记录（PLS-17/C-28/PLT-15） | 本段 |
@@ -2042,7 +2046,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 | F1 候选世界 | F0 + 参谋线跑一轮规划 Query；`sendS7A2PersonMessage`；`scripted.script(adviser,[{kind:'text', text: planAnswer}])`；`awaitProposal` | `S7A2-fixture.ts:120`、`IV-host-fixture.ts:155`、`S7B-V-fixture.ts:89`、`:115`、`S6A-host-fixture.ts:621` |
 | F2 审阅世界 | F1 + 审阅线（`reviewer` 的 `sessions/create`/`extraBindings`）；审阅答案走 `submit_plan_review`（C 的 6.3） | `S6A-request-fixture.ts:311`；`role-profiles.ts` 的 `platformRoleProfile` |
 | F3 偏差世界 | F0 + 让任务到返工上限/`no_new_basis`/`budget_exhausted`，或 Run 结束在 `yielded` | `C8-auto-rework-cap.test.ts`、`C8-budget.test.ts`、`S7B-V-fixture.ts` |
-| F4 N 门世界 | F0 + 两个同模块会重叠任务；一条 Run 在跑；规划轮先写模块注记；第二个任务派工 | `S7C-L1-overlap.test.ts`、`S7C1-member-fixture.ts:261`、`S6A-commit-barrier.ts:133` |
+| F4 N 门世界 | F0 + 两个同模块会重叠任务；一条 Run 在跑；规划轮先写模块注记；第二个任务派工 | `S7C-L1-overlap.test.ts`、`S7C-member-fixture.ts:261`、`S6A-commit-barrier.ts:133` |
 | F5 导出世界 | F0 + Host 设置指定工作区外的任务书目录；采用和转卡各一次；失败用真实 `ENOTDIR`/`EACCES`，不 mock；**隔离变体：工作区根 = `<settingsDirectory>/taskbooks`（或导出根落在任一工作区根内），真实磁盘、不 mock** | `host.ts:454` |
 | F6 重启世界 | F2 + SQLite；审阅 Query 已开、未答时 `world.crash()`；同目录起新 Host；`resumeOnStartup` 默认 `ask` | `S6A-host-fixture.ts:381`、`S6B3-fixture.ts:902`、`:912` |
 ### 15.3 v3 第 9 节 1–21
@@ -2053,9 +2057,9 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 - 具名变异：Host 仍按 `reason=candidate/questions` 单判不回复（不读发送者和执行者 wait）；本行会在“人的消息永远不结束/下一趟又开一轮”处红。
 - 期望来源：v3 §9-1；v3 §5.3；5.2.4 的“消息一定结束”。
 **PL-02 规划答案是 `needs_decision`；提案被拒绝** （v3 §9-2） 入口：`queries/read`（`:517`）；`decisions/queue`/`decisions/card`（`:594`、`:595`）；`messages/outbox`（`:501`）；`workflow.handleIntervention`。
-- 前置：F1；三个变体：规划答案要人 decision；提案被现有校验拒绝（如 `dangling_task_ref`）；执行者 M 让出等回复时同一答案。人的普通原消息另作对照。
-- 步骤：1）规划 Query 结束；2）Host 收尾；3）读问题卡/拒绝原因；4）再让心跳跑一趟；5）读这条线后面的请求；6）读人的原消息和执行者 M 的 `response`。
-- 观察量：问题或原因在 `decisions/card`/`messages/outbox` 可见；同一 Query 不被心跳重开；这条线后面的请求能被消费，不被堵住；**问题卡出现时人的普通原消息已按原收尾结束（`response` 已关联），只有执行者 M 的 wait 仍 open；提案被拒时只回执行者 M**。
+- 前置：F1；三个变体：规划答案要人 decision；提案被现有校验拒绝（已采用 catalog 下没有的未知模块任务，真实 `plans/propose` 拒绝，没有候选写入）；执行者 M 让出等回复时同一答案。人的普通原消息另作对照。
+- 步骤：1）规划 Query 结束；2）Host 收尾；3）读问题卡或 `plans/propose` 的拒收回包；4）再让心跳跑一趟；5）读这条线后面的请求；6）读人的原消息和执行者 M 的 `response`。
+- 观察量：问题卡在 `decisions/card`/`messages/outbox` 可见；未知模块任务由 `plans/propose` 直接拒绝、没有候选写入；同一 Query 不被心跳重开；这条线后面的请求能被消费，不被堵住；**问题卡出现时人的普通原消息已按原收尾结束（`response` 已关联），只有执行者 M 的 wait 仍 open；提案被拒时只回执行者 M**。
 - 具名变异：把 `needs_decision` 收尾写成“保持 Query 打开、等下一次心跳”；本行会在“重复进入/堵住后面的请求”处红。
 - 期望来源：v3 §9-2；v3 §5.3“按终态收尾”。
 **PL-03 两阶段目标：第一阶段完成，第二阶段只有占位任务** （v3 §9-3，v4 §15 加审阅轮） 入口：`workflow/driver-start`（`:527`）；`workflow/advance`（`:525`）；审阅入口（`submit_plan_review`，C 的 6.3）；`plans/apply`（`:484`）；`main/read`（`:631`）。
@@ -2097,15 +2101,15 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 **PL-09 提案删除必需义务** （v3 §9-9） 入口：`plans/propose`（`:483`）；`plans/proposal`（`:485`）；`plans/apply`（`:484`）；`decisions/card`（`:595`）；`tasks/query`（`:486`）。
 - 前置：F1；候选把一条必需义务删掉，或改变有执行痕迹的定义；诊断可先存成带诊断的候选。
 - 步骤：1）候选写入；2）读候选状态和诊断；3）目标循环尝试自动采用；4）读拒绝；5）人读卡。
-- 观察量：候选可以是 `candidate` 且带诊断；`plans/apply` 回拒绝（现有 `unsupported_execution_change`/`dangling_task_ref` 一类），活动计划不变；卡上有拒绝原因；人也不能绕过。
+- 观察量：候选可以是 `candidate` 且带诊断；`plans/apply` 回拒绝（现有 `unsupported_execution_change`/`dangling_task_ref` 一类），活动计划不变；卡只核对既有引用、pins 和候选状态，不要求有拒绝原因；拒绝原因从 `plans/apply` 回包核对；人也不能绕过。
 - 具名变异：让 `applyPlanChange` 接受删除必需义务的候选；本行会在“采用成功/活动计划变了”处红。
 - 期望来源：v3 §9-9；v3 §5.6 的非法提案；`plan-validation.ts:501`、`plan-service.ts:3024`。
-**PL-10 阶段合计超线** （v3 §9-10，v4 §15 改成只提醒） 入口：`plans/propose`/`plans/apply`（`:483`、`:484`）；`workflow/advance`（`:525`）；`main/read`（`:631`）；`decisions/card`（`:595`）。
-- 前置：F1/F2；阶段 `Σ estimatedLines > 2_000`，或阶段累计 token `> 0.6B`；候选其他方面合法、审阅 `pass`、自动档。
-- 步骤：1）阶段读数超线；2）目标循环采用/转卡；3）读“请知悉”/卡；4）读活动计划。
-- 观察量：超线数字写进“请知悉”/卡，有“不全/未知”时写明；阶段线**不挡采用**——自动档仍 `accepted`，或按原规则转卡；没有因为阶段线开系统轮/停任务。
+**PL-10 阶段合计超线** （v3 §9-10，v4 §15 改成只提醒） 入口：`plans/propose`/`plans/apply`（`:483`、`:484`）；`workflow/advance`（`:525`）；`main/read`（`:631`）的 notices；`tasks/query`（`:486`）。
+- 前置：F2；阶段 `Σ estimatedLines > 2_000`，或阶段累计 token `> 0.6B`；候选其他方面合法、审阅 `pass`、自动档；真实 usage 配置按 R3 读数世界；第一段任务完成、stage gate 走到已终结验证轮。
+- 步骤：1）合法候选被证明仍能自动采用（采用当下不要求卡/通知出现阶段数字）；2）真实任务执行、阶段 gate 完成、验证轮终结；3）从 `main/read` 读阶段结束 `plan_notice` 的六项；4）读活动计划和下一阶段。
+- 观察量：阶段结束 `plan_notice` 的 `stage-end:<planId>:<planRevision>:<stageId>` 写出超线数字，有“不全/未知”时写明；阶段线**不挡采用**——自动档仍 `accepted`，不因为阶段线转人工卡；没有因为阶段线开系统轮/停任务；采用当下不产生阶段数字或阶段结束通知。
 - 具名变异：让阶段超线把自动采用改成“必须人采用”；本行会在“采用被挡/多出一张卡”处红。
-- 期望来源：v3 §9-10；v4 §15 第 10 条改动；v4 §10 阶段线“只提醒，可配置”；10.3。
+- 期望来源：v3 §9-10；v4 §15 第 10 条改动；v4 §10 阶段线“只提醒，可配置”；10.3；DR-P4-12。
 **PL-11 任务过提醒线、过 2 倍线** （v3 §9-11，v4 §15 改成 2 倍线开参谋轮） 入口：`activity/runs`（`:602`）；`messages/outbox`（`:501`）；`workflow.handleIntervention`（`workflow.ts:3039`）；`main/read`（`:631`）；`workflow/advance`（`:525`）。
 - 前置：F0；任务 A 的 `sizeClass: 'small'`（提醒线 1M，2 倍线 2M）；同目标 B 可继续；A 的 Run 正常结束，增长量先 1.2M、后 2.1M。
 - 步骤：1）1.2M 时 Run 结束；2）读参谋的 `notify`；3）2.1M 时 Run 结束；4）读 `deviation:…:growth:…` 和人通知；5）读 A/B 状态。
@@ -2138,10 +2142,10 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 - 期望来源：v3 §9-15；v3 §4.1“小目标不用分”；v3 §5.1。
 **PL-16 占位任务和 L46 被挡、和别的等待同时存在** （v3 §9-16） 入口：`workflow/advance`（`:525`）；`workflow/driver-read`（`:528`）；`tasks/query`（`:486`）；`decisions/queue`（`:594`）；`messages/outbox`（`:501`）。
 - 前置：F0；目标同时有：活动的必需 `plan_only` 占位、L46 的卡/等待闭包、另一条普通等待；没有可推进步骤。
-- 步骤：1）Workflow 走到共同收口；2）附加 `refinement`；3）目标循环登记等待并 drain；4）发 `refine:`；5）读等待依据。
-- 观察量：细化照常触发；`workflow/driver-read` 的等待依据同时含 `plan_only:<stageId>`、L46 的 `l46_blocked:` 和别的等待原因；唤醒依据合并，不丢其中一支；没有新增等待分支/记录。
-- 具名变异：把 `attachRefinement` 只加在 `gap` 分支，L46/收集等待分支不附加；本行会在“L46 同时存在时不触发”处红。
-- 期望来源：v3 §9-16；v3 §5.4“共同收口 `result = collected ?? gap`”；5.1.4。
+- 步骤：1）Workflow 走到共同收口；2）按四支 merge 后附加 `refinement`；3）目标循环登记等待并 drain；4）发 `refine:`；5）读等待依据。
+- 观察量：细化照常触发；`workflow/driver-read` 的等待依据同时含 `plan_only:<stageId>`、真实 block reason（如 `handoff_approval:<cardKey>`）、另一支等待和候选等待原因；唤醒依据合并，不丢其中一支；没有 `l46_blocked:` 等待标签；没有新增等待分支/记录。
+- 具名变异：把 `attachRefinement` 只加在 `gap` 分支，L46/收集/候选等待分支不附加；本行会在“L46 同时存在时不触发”处红。
+- 期望来源：v3 §9-16；v3 §5.4“共同收口 merge(候选等待, L46 等待, collected 等待, gap 依据) → attachRefinement”；5.1.4；DR-P4-07。
 **PL-17 有任务在跑时存在占位任务** （v3 §9-17） 入口：`workflow/advance`（`:525`）；`executions/read`（`:530`）；`messages/outbox`（`:501`）；`main/read`（`:631`）。
 - 前置：F0；第一段最后一个任务正在跑（Run `entered`，模型请求按住）；下一段唯一占位；Workflow 这一趟没有可推进步骤。
 - 步骤：1）按住 A 的模型请求；2）目标循环读到共同收口；3）发 `refine:`；4）参谋细化；5）A 结束；6）读 A 和细化结果。
@@ -2248,9 +2252,9 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 **PL-34 参谋答改计划，替代执行者在等的任务** （v4 §15-34） 入口：执行者 `send_session_message`/让出；`workflow.handleIntervention`；`controls/submit`（`:463`）；`plans/propose`/`plans/apply`（`:483`、`:484`）；`messages/outbox`（`:501`）；`main/read`（`:631`）。
 - 前置：F0；A 让出等回复；参谋候选由 `submit_plan_round` 表单构造，显式带任务上的 `replacedByTaskId`、plan 顶层的 `inputRequirements`、根上的 `reason{text,affectedTaskIds:['A']}`；诊断无问题、审阅 `pass`、自动档；等待来源就是这条消息。
 - 步骤：1）参谋用 `submit_plan_round({answerKind:'plan',summary,plan,reason})` 提交替代候选；2）读候选，断言 `replacedByTaskId`/`inputRequirements`/`reason.affectedTaskIds` 原样进候选；3）审阅 `pass`；4）目标循环确认候选替代的正是 A 的等待来源；5）平台 `controls/submit` 取消 A 让出的 Run；6）`plans/apply` 采用；7）回复 A 原消息；8）读“请知悉”和任务图。
-- 观察量：`replacedByTaskId`、`inputRequirements`、`reason.affectedTaskIds` 三项原样可读；缺 `affectedTaskIds` 时按 `plan-machine.ts:695` 原样拒绝（平台不替模型补语义）；A 的让出 Run 控制状态 `cancelled`；候选 `accepted`；A 原消息收到回复；影响清单含 A/被替代任务；原任务 A 仍在计划里，替代任务新增；没有“先采用后取消”的 `busy`。取消/采用失败只出现 `revision_conflict`/`source_stale`/`busy`/`forbidden`/`invalid`/`unavailable`/`not_found`，**不出现不存在的 `stale`**；职责读的 `not_found`/`not_ready` 经 `asRejection` 成为 `rejected`，不把 `ReadResult` 原样当干预结果。
+- 观察量：`replacedByTaskId`、`inputRequirements`、`reason.affectedTaskIds` 三项原样可读；缺 `affectedTaskIds` 时按 `plan-machine.ts:695` 原样拒绝（平台不替模型补语义）；A 的让出 Run 控制状态 `cancelled`；候选 `accepted`；A 原消息收到回复；影响清单含 A/被替代任务；原任务 A 仍在计划里，替代任务新增；没有“先采用后取消”的 `busy`。取消/采用失败只出现 `revision_conflict`/`source_stale`/`busy`/`forbidden`/`invalid`/`unavailable`/`not_found`，**不出现不存在的 `stale`**；职责读的 `not_found`/`not_ready` 经 `asRejection` 成为 `rejected`，不把 `ReadResult` 原样当干预结果。取消身份按候选 `(proposalId, proposalRevision)` + `runRef`、不含 Run revision；本次 `queued` 时直接续采用、不再提交，权威 `not_found` 才提交，`superseded`/`outcome_unknown`/读失败保留实际出口；取消已提交/采用未提交和取消+采用已提交/回复未提交两个重启窗口按 7.3.1 第 8 步续做。
 - 具名变异：删掉采用前的平台取消（或放到采用之后）；本行在“采用回 `busy`/没有取消”处红。
-- 期望来源：v4 §15-34；v4 §7.3.1；D14；5.2.7(3)、6.7.1 的 `asRejection`。
+- 期望来源：v4 §15-34；v4 §7.3.1；D14；5.2.7(3)、6.7.1 的 `asRejection`；C-27/PLT-08/09。
 **PL-35 参谋答问人** （v4 §15-35） 入口：`workflow.handleIntervention`；`decisions/queue`/`card`/`answer`（`:594`–`:596`）；`workflow/advance`（`:525`）；`executions/list`（`:534`）。
 - 前置：F0；A 让出等回复；参谋答案是“问人”；A 的等待保留；B 可继续；另加一支人的普通消息发给闲置参谋线（不是执行者 M，没有执行者 wait）。
 - 步骤：1）参谋回答问人；2）Host 出问题卡；3）A 这一支继续等；4）B 继续；5）人读卡；6）人答复后 A 按新答案继续（本行可只到“卡出现、B 不停”）；7）另起一支：人发普通消息，参谋也答“问人”，读人的原消息和执行者 M 的 response。
@@ -2290,7 +2294,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 **PL-41 重启发生在审阅轮中** （v4 §15-41） 入口：`createLocalWorkbenchHost`（`host.ts:454`）；`runStartupReconcile`（`startup-reconcile.ts:320`）；`createGoalWaitRebuild`（`goal-wait-wakes.ts:160`）；`host/reconcile-report`（`:554`）；`workflow/driver-start`（`:527`）；`queries/read`（`:517`）；`messages/read`（`:502`）；`planCandidates`/`settlementOfferOf`/`acceptedCandidatesOf`（6.1.6、6.7.1）。
 - 前置：F6（SQLite）；三个变体：(a) 审阅 Query 已开、模型请求按住、未回答；(b) 原规划 Query 已 `settled`、对应收尾未写，含问题/文字回答/审阅/无答案收尾/候选未写或已写但 R 未关联五支；(c) 候选已 `accepted`、M 未回，另做“P2 采用后回复失败、人又采用 P3，再重启”的支。旧 Host 停在对应崩溃点；`resumeOnStartup` 默认 `ask`；目标有未完成必需工作；`completed`/`cancelled` Goal 不进恢复集合；另有一个没有本闭环来源的历史规划问题。
 - 步骤：1）在对应点 `crash()`（先等 `reached`）；2）同目录起新 Host；3）启动核对写 `GoalInterruption`/报告；重建只按问题 reader 枚举**有本闭环来源**（`intervention_planning` 且 `execution.sourceMessageRef` 存在）的问题身份、逐卡 `readDecisionAnswer` 取已存答复，并用 `settlementOfferOf` 从邮箱遍历到的源消息读原 Query 和缺失收尾，用 `acceptedCandidatesOf(goalRef)` 读**全部**已采用候选；4）人 `workflow/driver-start`；5）解除后读审阅回答/候选/回复；6）读活动计划；7）P2/P3 支读 P2 的 M 和 P3 的 M；8）读 `plan_adoption` 的 `position` 和重启后再读一次（不读 actor）。
-- 观察量：人启动前没有新审阅 Query、没有采用；报告显示中断/等人；启动后 (a) 原结论只读一次，`plans/apply` 只提交一次，同一候选没有第二轮审阅；(b) 由 `settlementOfferOf` 从原 Query/源消息续写确定性候选/回复，覆盖问题/文字回答/审阅/无答案收尾/候选未写或已写但 R 未关联五支，不靠重新投递源消息，不重开模型轮，不新建 Query 或恢复记录，**不以 Session 被 settled Query 占用为定位条件**；`planCandidates` 只收有来源的问题组，历史无来源问题不返回整口 `CoreRejection`；(c) 由 `acceptedCandidatesOf(goalRef)` 找到**所有**已采用候选（不只活动计划那一版），只补 M 回复，不再采用、不再 propose，M 恰好一条回复；P2/P3 支里 P2 的 M 仍被补回复，`completed`/`cancelled` Goal 不在恢复集合；`plan_adoption` 的 `position` 来自同一次接受提交的 `PlanRevisionAccepted`，通知不区分采用者、不读 actor，重启后再读不重复；三个变体活动计划都只前进一版。
+- 观察量：人启动前没有新审阅 Query、没有采用；报告显示中断/等人；启动后 (a) 原结论只读一次，`plans/apply` 只提交一次，同一候选没有第二轮审阅；(b) 由 `settlementOfferOf` 从原 Query/源消息续写确定性候选/回复，覆盖问题/文字回答/审阅/无答案收尾/候选未写或已写但 R 未关联五支，不靠重新投递源消息，不重开模型轮，不新建 Query 或恢复记录，**不以 Session 被 settled Query 占用为定位条件**；`planCandidates` 只收有来源的问题组，历史无来源问题不返回整口 `CoreRejection`；(c) 由 `acceptedCandidatesOf(goalRef)` 找到**所有**已采用候选（不只活动计划那一版），只补 M 回复，不再采用、不再 propose，M 恰好一条回复；P2/P3 支里 P2 的 M 仍被补回复，`completed`/`cancelled` Goal 不在恢复集合；`plan_adoption` 的 `position` 来自已采用候选记录的 `until`，没有 `until` 不产生项；通知不区分采用者、不读 actor，重启后再读不重复；三个变体活动计划都只前进一版。
 - 具名变异：让 `settlementOfferOf` 仍要求 Session 被 settled Query 占用（不以邮箱遍历到的源消息定位）；本行在“问题/文字回答/审阅/无答案收尾/候选未写或已写但 R 未关联补不上”处红。
 - 期望来源：v4 §15-41；v4 §6.1；决定 97-9；5.5.2/6.1.6 的 C-26/C-27；PLT-02/09/14/17。
 **PL-42 审阅结束时目标没有任何可推进工作，也没有在跑的 Run** （v4 §15-42） 入口：`goal-wait-wakes` 的登记/排空；`workflow/advance`（`:525`）；`workflow/driver-read`（`:528`）。
@@ -2306,11 +2310,11 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 - 具名变异：让 planresume 一律以活动计划为 base（不读 `fixBase`）；本行在“丢待修候选/旧候选不被排除/`basedOn` 错”处红。
 - 期望来源：v4 §15-43；v4 §6.1；v4 §17；6.3.1/6.3.4；C-25/C-33 的续轮来源。
 **PL-44 采用回 `busy`** （v4 §15-44） 入口：`plans/apply`（`:484`）；`goal-wait-wakes` 的 `Run`/`TaskLease`/`SessionMessage` 提交；`workflow/advance`（`:525`）；`plans/proposal`（`:485`）；`decisions/queue`（`:594`）。
-- 前置：F1；候选已 `pass`、诊断无问题、自动档；候选动到的任务正好有未结束 Run 或未消费让出等待；`plans/apply` 回 `busy`；候选没转卡。另加两个恢复变体：(b) 取消已提交、采用未提交时重启；(c) 取消+采用都提交、回复未提交，另做 P2 采用后回复失败、人又采用 P3、再重启的支。
-- 步骤：1）第一次采用得 `busy`；2）候选保持 `candidate`；3）让阻塞的 Run 结束/等待被消费；4）`goal_waits` 的提交叫醒目标；5）重试 `plans/apply`；6）(b) 在取消提交后、采用前重启，先读同一 `controlIntentRefFor` 的既有 intent 再续采用；7）(c) 在采用后、回复前重启，按 `acceptedCandidatesOf` + 源消息 open wait 只补回复；8）P2/P3 支读 P2 的 M 和 P3 的 M。
-- 观察量：第一次 `busy`；活动计划不变；候选仍 `candidate`；提交后同一候选 `accepted`，只产生一版采用；没有第二次采用同一候选。(b) 复用一个取消身份，不生成第二个、不再次撞 `busy`；本次 `queued` 取消围栏成立时直接续采用、不再提交，权威 `not_found` 才提交，`superseded`/`outcome_unknown`/读失败保留实际出口；全文不再出现已删除的两个旧控制状态名；(c) 不再采用、不再 propose，只补 M 回复且只有一条；用 `acceptedCandidatesOf` 覆盖所有已采用候选，P2/P3 支里 P2 的 M 仍被补回复，`completed`/`cancelled` Goal 不进恢复集合；两者都不新建 Query/恢复记录；采用成功后 `plan_adoption` 只写“已采用”和确切审阅结论，不区分采用者。候选 `card`/审中/待改/`busy` 时先继续选任务，能推进就推进，只有没有别的可推进步骤才带着合并后的依据返回 `waiting`。
-- 具名变异：把本次 `queued` 当成“没有 intent”（再提交一次取消）；本行在“第二次提交/撞 `busy`/覆盖人的停止指针”处红。
-- 期望来源：v4 §15-44；v4 §6.1；7.3.1 第 3/8 步；C-26/C-27/C-36；PLT-08/09。
+- 前置：F1；候选已 `pass`、诊断无问题、自动档；候选动到的任务正好有未结束 Run 或未消费让出等待；`plans/apply` 回 `busy`；候选没转卡。另加已采用未回复恢复变体：候选已 `accepted`、M 未回时重启，另做 P2 采用后回复失败、人又采用 P3、再重启的支。
+- 步骤：1）第一次采用得 `busy`；2）候选保持 `candidate`；3）让阻塞的 Run 结束/等待被消费；4）`goal_waits` 的提交叫醒目标；5）重试 `plans/apply`；6）在采用后、回复前重启，按 `acceptedCandidatesOf` + 源消息 open wait 只补回复；7）P2/P3 支读 P2 的 M 和 P3 的 M。
+- 观察量：第一次 `busy`；活动计划不变；候选仍 `candidate`；提交后同一候选 `accepted`，只产生一版采用；没有第二次采用同一候选。已采用未回复恢复：不再采用、不再 propose，只补 M 回复且只有一条；用 `acceptedCandidatesOf` 覆盖所有已采用候选，P2/P3 支里 P2 的 M 仍被补回复，`completed`/`cancelled` Goal 不进恢复集合；不新建 Query/恢复记录；采用成功后 `plan_adoption` 只写“已采用”和确切审阅结论，不区分采用者。候选 `card`/审中/待改/`busy` 时先继续选任务，能推进就推进，只有没有别的可推进步骤才带着合并后的依据返回 `waiting`。
+- 具名变异：让重启恢复再次采用已采用候选（不只补回复）；本行在“第二次采用/多一版”处红。
+- 期望来源：v4 §15-44；v4 §6.1；7.3.1 第 8 步的已采用未回复恢复；C-27/C-36；PLT-09。
 **PL-45 执行者发给参谋长消息带 `taskRef`，参谋线有未完成 Work** （v4 §15-45） 入口：执行者真实工具发 `action_request`；`workflow.handleIntervention`（`workflow.ts:3039`）；`sessions/executions`（`:563`）；`queries/read`（`:517`）；`tasks/query`（`:486`）。
 - 前置：F0；参谋线自己有一个未完成 Work W；A 发消息给参谋，带 `taskRef: W`；A 让出；参谋线可消费。
 - 步骤：1）A 发消息；2）Host 消费；3）`handleIntervention` 按发信身份和收件线 duty 判断“请参谋处理问题”，`taskRef` 只作上下文；4）开规划 Query；5）W 不被领取。
@@ -2320,13 +2324,13 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 **PL-46 一段任务书被采用；候选转卡** （v4 §15-46） 入口：`plans/apply`（`:484`）；`decisions/queue`/`card`/`candidate-card`（`:594`–`:596`）；`main/read`（`:631`）；`workspaces/registration`（`:529`）；真实文件读取。
 - 前置：F5；任务书目录在工作区外、真实磁盘；一段任务书被采用；另一个候选转卡；两处内容可区分（不同目标/阶段/计划版本）；导出前读一次工作区版本；另加隔离变体：工作区根 = `<settingsDirectory>/taskbooks`（或导出根落在任一工作区根内），真实磁盘、不 mock。
 - 步骤：1）采用一段任务书；2）Host 导出，路径写进“请知悉”；3）读文件；4）候选转卡；5）再导出，路径写进卡；6）读文件；7）再读工作区版本；8）完整读入、按片段搜索；9）隔离变体：同一采用/转卡再跑一次。
-- 观察量：两份 Markdown 都存在、UTF-8 可读、非空；含完整 `instruction` 和任务/阶段/版本标识；片段搜索命中；文件名含目标/阶段/计划版本，并含唯一 `planId`；不同候选同阶段同 revision 的导出路径不互相覆盖；同一候选重复导出只覆盖自己的文件；工作区 revision 不变；工作区里没有多出导出文件。候选转卡时经 `decisions/candidate-card` 的 `exportRead` 读（`written`/`missing`/`incomplete`/`not_configured`/`unavailable`），失败行可读、不折成空；`exportRead` 的输入是候选 draft（未采用），路径按 `planId`/`planRevision`/`stageId` 算，不要求 `ref`/`acceptedAt`。采用/转卡走同一个 `adoptAndExport`；系统轮消费/恢复报价接在 `consumeIdle` 的既有 `offer.kind` 分支，关闭时等导出异步工作。隔离变体：`plans/apply` 仍 `committed`，工作区里没有多出任务书，`main/read` 写“未写出”，`decisions/queue` 没有新卡。
+- 观察量：两份 Markdown 都存在、UTF-8 可读、非空；含完整 `instruction` 和任务/阶段/版本标识；片段搜索命中；文件名含目标/阶段/计划版本，并含唯一 `planId`；不同候选同阶段同 revision 的导出路径不互相覆盖；同一候选重复导出只覆盖自己的文件；工作区 revision 不变；工作区里没有多出导出文件。候选转卡时经 `decisions/candidate-card` 的 `exportRead` 读（`written`/`missing`/`incomplete`/`not_configured`/`unavailable`），失败行可读、不折成空；`exportRead` 的输入是候选 draft（未采用），路径按 `planId`/`planRevision`/`stageId` 算，不要求 `ref`/`acceptedAt`。采用走 `adoptAndExport`，转卡走 Host 对 `advanceWork` 的同一包装（`value.source`），驱动和公开 `advanceWork` 都覆盖；系统轮消费/恢复报价接在 `consumeIdle` 的既有 `offer.kind` 分支，关闭时等导出异步工作。隔离变体：`plans/apply` 仍 `committed`，工作区里没有多出任务书，`main/read` 写“未写出”，`decisions/queue` 没有新卡。
 - 具名变异：只凭 `promptsRoot` 通过就跳过导出根检查（不比较工作区根）；本行在“隔离变体仍写出任务书/工作区多文件”处红。
 - 期望来源：v4 §15-46；5.3.4；N12；N2/PLT-22；C-23。
 **PL-47 导出失败** （v4 §15-47） 入口：`plans/apply`（`:484`）；`decisions/queue`（`:594`）；`main/read`（`:631`）；`decisions/candidate-card`（`:596`）；真实文件系统故障（`ENOTDIR`/`EACCES`）和导出根隔离失败。
 - 前置：F5；导出根设成必然失败的真实路径；候选已 `pass`、诊断无问题、自动档；采用将要发生；另加隔离失败一支（导出根命中工作区根）。
 - 步骤：1）采用；2）导出失败；3）读采用结果和活动计划；4）读“请知悉”/卡；5）读工作区版本；6）隔离失败支同法跑一遍。
-- 观察量：`plans/apply` 仍 `committed`，活动计划前进一版；候选不是 `not_adopted`；提示写出失败原因；工作区版本不变；不重试到卡死；人自己采用时也发这一条提示（裁定 C-9/N12）；隔离失败也走现有 `failed` 出口、不新造结果码。若此时转候选卡，`decisions/candidate-card` 的 `exportRead` 必须是 `unavailable`/`incomplete` 并带失败行，不能折成 `not_configured` 或空白；它的输入是候选 draft（未采用），不要求 `ref`/`acceptedAt`。
+- 观察量：`plans/apply` 仍 `committed`，活动计划前进一版；候选不是 `not_adopted`；提示写出失败原因；工作区版本不变；不重试到卡死；人自己采用时也发这一条提示（裁定 C-9/N12）；隔离失败也走现有 `failed` 出口、不新造结果码。若此时转候选卡，`decisions/candidate-card` 的 `exportRead` 按正文口径：单文件不存在或读不到是 `missing`，短文件是 `incomplete`，缺读口或探针本身失败是 `unavailable`；不能折成 `not_configured` 或空白；它的输入是候选 draft（未采用），不要求 `ref`/`acceptedAt`。
 - 具名变异：把导出失败包成采用失败（回滚/回错误）；本行在“采用没成功/活动计划没变”处红。
 - 期望来源：v4 §15-47；5.3.4；裁定 C-9/N12；N2/PLT-22；C-23。
 **PL-48 改动行数超过预估 2 倍；增长量过 2 倍线** （v4 §15-48） 入口：`plans/propose` 的 `estimatedLines`；Run 结束处的行数/增长量读数；`workflow.handleIntervention`；`activity/runs`（`:602`）；`messages/outbox`（`:501`）；`workflow/advance`（`:525`）；`main/read`（`:631`）。
@@ -2416,7 +2420,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 - 具名变异：让 `submit_plan_round` 的 `questions` 分支构造成 plan 文本；或允许空 `questions` 通过（`parseInitialPlanningResponseV2` 的空数组规则）。
 - 期望来源：C-1 的“一个工具写计划或问题”；`submit_initial_questions` 的 `questions` 非空规则；6.1 的问题卡出口。
 **A-10 `planresume:` 只带引用；续轮最终回答/候选回最初 M** 入口：一轮问题卡答完 → 目标驱动发 `planresume:` → Host 消费原规划线 → `messages/read`/`body`（`:502`、`:503`）读消息、`queries/read`（`:517`）读 Query 的 `question`；Host 夹具的模型请求记录（`S6A-host-fixture.ts:322`）读准备输入；`plans/proposal`（`:485`）读候选；`messages/outbox`/`read` 读最初 M 的 response；`executions/read`（`:530`）读执行者接续；普通消息/普通 Query 和没有本闭环来源的历史规划问题作对照。
-- 前置：原规划轮有 `needs_decision` 答案；原问题 + 5 张卡**各 16 KiB** 答复（合计 80 KiB，已超过 64 KiB）；`planresume:` 正文/`question` 只含请求头 + `originalQueryRef: <canonicalJson(originalMessageRef)>`（实测只有几百字节，不带原问题全文、不带逐卡答复正文、不带 256 KiB 规划答案）；原规划线 active；参谋续轮能交最终文字回答或采用候选；最初执行者 M 是原计划的 `work_run` 发送者、wait 仍 open；另有一个历史初始化/普通 `initial_coordination` 规划问题，它没有本闭环来源消息。
+- 前置：原规划轮有 `needs_decision` 答案；原问题 + 5 张卡**各 14 KiB 可打印 ASCII 答复**（合计 70 KiB，已超过 64 KiB）；`planresume:` 正文/`question` 只含请求头 + `originalQueryRef: <canonicalJson(originalMessageRef)>`（实测只有几百字节，不带原问题全文、不带逐卡答复正文、不带 256 KiB 规划答案）；原规划线 active；参谋续轮能交最终文字回答或采用候选；最初执行者 M 是原计划的 `work_run` 发送者、wait 仍 open；另有一个历史初始化/普通 `initial_coordination` 规划问题，它没有本闭环来源消息。
 - 步骤：1）所有问题卡答完、还没有 `planresume:` 消息时，目标循环先登记 `plan_resume_pending`，再发 `planresume:`（`followupOf=M`，正文只带请求头 + `originalQueryRef`）；2）建新 Query（`execution.kind='intervention_planning'`，`question` 同这小正文）；3）读消息体和 Query；读准备输入，确认原问题 + 5 组问答在模型输入里；4）重复调用一次，读请求号；5）续轮让参谋交 `plan` 候选或纯文字最终回答（纯文字用一段非 v2 JSON、可逐字比对的 ≤16 KiB 文本；`questions` 只作再次问人的对照），公开读最初 M 的 response 和执行者接续；6）另起未准备就重启的变体（F6）；7）再跑历史无来源问题：`planCandidates`/普通 Query 不被整口拒绝；8）做一次问题/答案/消息读失败变体。
 - 观察量：`planresume:` 消息和 Query 都成功，正文/`question` 只有请求头 + `originalQueryRef`、没有逐卡答复，不出现 `capacity`/`invalid`；准备输入含原问题和 5 组问答（逐卡答复来自准备装配，不在保存正文里）；Query 的 `answerShape` 是 `plan_round`、工具表是 `submit_plan_round`；续轮最终回答/采用后，**最初 M 的 response 恰好一条、内容来自续轮结果**（`planningReplyTextOf`：规划答案能解析成合法 `plan`/`questions` 时取 `summary`；`plan_round` 的文字退路（已保存、非空、≤16 KiB）逐字保留原文，不复制全文），执行者 wait 关闭并在新 Run 继续；重复调用只回放同一请求号/同一条消息；未准备就重启时按同一 `originalQueryRef` 重装配成功；历史无来源问题使 `planCandidates` 仍 `ready`、普通 Query/原请求流程不被拒、不返回一整口 `unsupported`；问题枚举、答案读、消息/Query 读失败原样保留，不折成已答/未答。
 - 具名变异：让采用/最终回答后不按 6.3.1 来源链给最初执行者 M 写回复（只把答案关联回续轮 R、漏掉这次最终关联）；本行在“M 没有唯一回复/执行者不继续”处红。
@@ -2436,8 +2440,8 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 **G-05 规划答案 100 KiB 与 256 KiB 边界；文字退路 16 KiB** （B-D5、C-1、PLS-34；v3 5.5） 入口：`workflow/driver-start`/`workflow/advance`；`messages/inbox`（`:500`）/`messages/body`（`:503`）或 `queries/read`（`:517`）/`queries/answer`（`:522`）读规划 Query 的答案；`plans/proposal`（`:485`）读候选；Host 消费循环 `consumeIdle`（`host.ts:1825`）。
 - 前置：F1（已有参谋线和规划 Query 的消费路径）；规划线的 `perResponseTokens = planningOutputReserveTokens(contextWindowTokens)`（唯一正本），窗口本身不改；完整输入 + 预留装得下（装不下走现有 `ContextCapacityExceeded`，不把窗口改大来迁就 131072）；脚本让参谋在本轮调用 `submit_plan_round`，表单里放一个 100 KiB 的 `instruction`；另有两次运行分别把拼出的 `answer.answer` 调到正好 262,144 字节和 262,145 字节（按 UTF-8 字节手算 filler，不按字符数）；再有一个没有提交工具的规划轮，最终文本是 16 KiB + 1 字节；最后做规划轮注记变体、文字退路回复和秘书请求轮对照。
 - 步骤：1）发 `refine:`，Host 消费，参谋提交 100 KiB 的规划答案；2）读 `queries/answer` 和 `plans/proposal`；3）同法提交正好 256 KiB 的答案；4）同法提交 256 KiB + 1 字节的答案；5）没有提交工具的规划轮让最终文本是 16 KiB + 1 字节；6）采用/收尾时读回复正文；7）规划轮分别写 `convention`（stage 锚点）/`understanding` 注记；8）文字退路的规划答案、N 的 `text` 轮和普通咨询各读一次回复正文；9）再看秘书请求轮和邮箱工具表。
-- 观察量：100 KiB 和正好 256 KiB 都被接受，`queries/read` 的 `answer.answer` UTF-8 字节数等于提交值，候选是 `candidate`，`answer.bodyRef.digest` 与 `answer.answer` 的 sha256 一致；256 KiB + 1 字节的工具体提交得到 `capacity`（不产生答案/候选）；没有提交工具的那一轮超过 **16 KiB** 时观察器给 `too_long`（普通 Query 落 `gap`、不产生答案），不是 256 KiB。采纳/收尾时回复正文 ≤16 KiB 且按 `planningReplyTextOf` 派生：规划答案能解析出合法 `plan`/`questions` 时取 `summary`；`plan_round` 的文字退路保留已保存原文（不是解析出的 `summary`，也不复制答案全文），`plan_review` 文字退路解析不出不造回复；N 的 `text` 轮回复取原文本；普通咨询答案不变。规划轮 **stage 锚点 `convention` 写入成功**（该轮 `prepared.requestEffectiveGoalId` 是 null，Goal 只能来自 `manifest.goal.ref.goalId`）、同一 Query 的 Goal `understanding` 被 `forbidden`；秘书请求轮仍成功；邮箱工具仍没有。边界是 `>` 不是 `>=`：正好 262,144 字节通过。
-- 具名变异：把窗口改大来迁就 131072（不从 `planningOutputReserveTokens(contextWindowTokens)` 取预留、不改 `contextWindowTokens`）；本行在“`fits` 失败、请求发不出/两格预留不对”处红。
+- 观察量：100 KiB 和正好 256 KiB 都被接受，`queries/read` 的 `answer.answer` UTF-8 字节数等于提交值，候选是 `candidate`，`answer.bodyRef.digest` 与 `answer.answer` 的 sha256 一致；256 KiB + 1 字节的工具体提交得到 `capacity`（不产生答案/候选）；没有提交工具的那一轮超过 **16 KiB** 时观察器给 `too_long`（普通 Query 落 `gap`、不产生答案），不是 256 KiB。采纳/收尾时回复正文 ≤16 KiB 且按 `planningReplyTextOf` 派生：规划答案能解析出合法 `plan`/`questions` 时取 `summary`；其他已保存的非空短文字保留原文（不取解析出的 `summary`，也不复制答案全文），`plan_review` 文字退路解析不出不造回复；N 的 `text` 轮回复取原文本；普通咨询答案不变。规划轮 **stage 锚点 `convention` 写入成功**（该轮 `prepared.requestEffectiveGoalId` 是 null，Goal 只能来自 `manifest.goal.ref.goalId`）、同一 Query 的 Goal `understanding` 被 `forbidden`；秘书请求轮仍成功；邮箱工具仍没有。边界是 `>` 不是 `>=`：正好 262,144 字节通过。
+- 具名变异：把答案边界判断从 `>` 改成 `>=`；本行在“正好 262,144 字节被误判 `capacity`/`too_long`”处红。
 - 期望来源：B-D5；C-1；5.3.5 的定值表与 #2/#3；5.2.7（4）/5.2.8 的注记准入；G-N2/N1 的窗口公式；v3 5.5“答案形状不变，数组里只放这一段”；设计 `:183` 的 256 KiB 建议。手算：256 × 1024 = 262,144 字节；131,072 token × 2 bytes/token ≈ 262,144 字节。
 **G-08 导出失败进这次采用的“请知悉”（人工采用也发）** （C-9/N12） 入口：`plans/apply`（`:484`）做人采用；`main/read`（`:631`）读“请知悉”；`goals/read`（`:473`）读活动计划；真实文件系统读任务书目录。
 - 前置：F5；Host 设置给了 `settingsDirectory`，其中 `taskbooks` 是一个**普通文件**（不是目录），使导出真实 `ENOTDIR`；目标有一个可采用的候选/首份计划；人调用 `plans/apply`；另加隔离失败一支（导出根命中工作区根）。
@@ -2520,6 +2524,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 - **决定契约（`goal-decisions.ts`、`decision-contracts.ts`）。** 7D1 拥有 `DecisionSubjectV1` 项目主体、`notifyProject` 和项目卡源；PL-1 不新增 `DecisionSourceV1.kind`、不新增主体种类。候选卡复用现有 `candidate` 源，审阅结论走答案/消息；候选号/版本/诊断/审阅结论放卡的内容/引脚，不放进 subject。两片都不改 `DecisionSubjectShape` 字段名；PL-1 若必须加契约字段，先停、交 lead。
 - **决定读模型（`decision-read-model.ts` 及读口）。** 7D1 先落项目主体分组/排序/请知悉读口；PL-1 之后加候选卡和审阅结论读法，复用 `decisionSubjectKey`、`decisionSourceKey`、`notice-position`，不另写“按目标找卡”读口、不新建卡表/计数/水位；诊断和结论从候选/Query 答案读，不从读模型反推。读口测试都经公开路由，不读库。
 - **提示词包（`pack.json`、`strings.json`、`templates/`）。** 同一时刻只有一个片拥有。7D1 先落职责/角色线条目；PL-1 rebase 后只加规划、审阅、参谋技能和三种答复条目，不改 7D1 的条目和版本号。每条目带自己的 `version`，改文字就升版本，不手改生成物；主仓有 `runtime-assets.json`/哈希重生成就按主仓步骤重跑。两片的提示词测试分别过，合入前跑全量和规模批。
+- **P1 第二段已带的共用件。** `tasks/plan-lineage.ts`、`state/plan-candidate.ts` 的诊断、`state/secretary-note.ts` 的 `planningNoteAdmission` 归 P1 第二段；P2/P3/P4/P5 只导入，不再各写一份，也不占 7D1 的共享面。
 - **提交顺序。** 后落的一片先跑共享文件的现有测试再改自己的块；两片不得在同一提交里改同一共享文件的不同段落。
 
 ## 21. 规格新定的（总表）
@@ -2561,7 +2566,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 | C-5 | 发系统轮请求是 `WorkflowCalls` 的成员，复用 `SessionMailboxPort['sendMessage']`。 | 6.1.4 | 设计 `:222`、`:228` |
 | C-6 | 等待依据含 `Session`，让晚建的审阅线能叫醒目标。 | 6.1.5 | 设计 `:228`、`:230` |
 | C-7 | 采用通知类别 `plan_adoption`；阶段结束/偏差“不改计划”另用 `plan_notice`（C-35），两者都在现有 `NoticeItemV1` 投影机制内。 | 6.4.1 | 设计 `:259`、`:441`；PLT-16 |
-| C-8 | 不加“按项目的有序索引”；通知源按目标读 `PlanRevision`，`position` 取同一次接受的 `PlanRevisionAccepted` 事件提交游标（记录自身不带 `since`；事件只用于 `position`）；事件读不到 `unavailable`。 | 6.4.2 | 设计 `:441`、`:259`；PLT-17 |
+| C-8 | 不加“按项目的有序索引”；通知源按目标读 `PlanRevision`，`position` 取已采用候选记录的 `until`（提交戳；`decodePlanProposalOrigin(record).until`），没有 `until` 的本片之前采用候选不产生项、不算读失败；候选记录读失败 `unavailable`。 | 6.4.2 | 设计 `:441`、`:259`；PLT-17 |
 | C-9 | 导出失败不只写日志：写进这次采用的 `plan_adoption` 通知（`summary`），人自己采用也发；不写卡、不重试、不回滚。**取代第一稿“一行 Host 日志”**。 | 6.4.3 | C-9/N12 裁定 |
 | C-10 | 任务书目录归 §5.3；通知/卡只写路径和状态。 | 6.4.3 | 设计 `:614` |
 | C-11 | `latestAgentCandidate`/`completedFixes`/`planChecks`/`planCandidates`/`planFixRead`/`acceptedCandidatesOf`/`exportBooks` 七个窄读，都做成可选依赖；真实装配必接，缺依赖走 `unsupported`/`unavailable`，只有枚举完成且确实没有才是空；`latestAgentCandidate` 和候选卡按 6.3.1 来源链（`planfix:`/`planresume:` 两种首行）排除已有后继的旧候选；`planCandidates` 只收有本闭环来源的问题组；不新造“找候选/找卡”的扫描。出口契约见 6.7.1。 | 6.7、6.7.1 | 6.1/6.2/6.4 |
@@ -2586,10 +2591,10 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 | C-30 | `planLoopLimits` 在现有 Host 设置体系内补齐校验、持久化、读取和生效（`plan-loop-limits/save`、`saved/effective/defaults`、注入 `deviationsOfGoal`）；E3 只接页面，不新建设置记录。 | 10.3、7.5 | PLS-26；`host-settings.ts:1277` |
 | C-31 | 错误统一经现有映射：保留 `revision_conflict`/`source_stale` 的实际语义；职责读等 `ReadResult` 的 `not_found`/`not_ready` 用既有 `asRejection` 转成干预结果；不新增错误码，不使用不存在的 `stale`。 | 5.2.4、5.6、6.7.1、7.5 | PLS-30；`results.ts:16`、`intervention.ts:57` |
 | C-32 | `host.ts` 保留共享文件串行和 rebase 要求；允许改 `consumeIdle`（`:1855`、`:1880`）、初始化采用（`:2273`）、关闭等待（`:2307`）附近的最小调用点；导出等异步工作纳入 Host 关闭等待。 | 5.7、19.2 | PLS-31；`host.ts:1855`、`:1880`、`:2273`、`:2307` |
-| C-33 | **同一来源链跨两种首行**：`planSourceLineageOf(sourceMessageRef)` 从候选/续轮消息走链——`planfix:` 读父候选，`planresume:` 读原 QueryJob 的 `execution.sourceMessageRef`——得到 `rootMessage`、`fixRound`、`fixBase`。planresume 的 base 取 `fixBase.draft`、`basedOn` 取 `fixBase.basedOn`（没有 `fixBase` 才用活动计划 snapshot/其 `ref`）；`repliesToMessageRef` 冻结 `prev.repliesToMessageRef ?? lineage.rootMessage`；后继关系（`fixBase` 指向旧候选）用于排除旧候选和给 `completedFixes` 按轮去重。不加字段、不沿 `replaces`。 | 6.3.1、5.1.2、5.2.4、5.2.6、7.3.1 | PLS-04/PLT-06/07；设计 `:326`、`:327` |
+| C-33 | **同一来源链跨两种首行**：`planSourceLineageOf(ctx, deps, sourceMessageRef)` 从候选/续轮消息走链——`planfix:` 读父候选，`planresume:` 读原 QueryJob 的 `execution.sourceMessageRef`——得到 `rootMessage`、`fixRound`、`fixBase`。planresume 的 base 取 `fixBase.draft`、`basedOn` 取 `fixBase.basedOn`（没有 `fixBase` 才用活动计划 snapshot/其 `ref`）；`repliesToMessageRef` 冻结 `prev.repliesToMessageRef ?? lineage.rootMessage`；后继关系（`fixBase` 指向旧候选）用于排除旧候选和给 `completedFixes` 按轮去重。不加字段、不沿 `replaces`。 | 6.3.1、5.1.2、5.2.4、5.2.6、7.3.1 | PLS-04/PLT-06/07；设计 `:326`、`:327` |
 | C-34 | **返修读取三态**：`PlanFixReadV1`（`not_sent`/`waiting`/`terminal`）由 `planFixRead` 从同一确定性 `planfix:` 消息/Query 起读，遇 `questions` 沿 `planresume:<goalId>:<queryJobId>` 继续读续轮，按最后一轮的状态和收尾得；只 `not_sent` 返回 `request_fix` 发送步骤，`waiting` 走 `wait: fix` 并继续选任务，`terminal`（最后一轮终态、收尾完成、无后继候选）转 `fix_invalid` 卡；`sendSystemRound` 的 `skipped` 显式接住、按已发读同一条 Query，不当成新的可推进动作。 | 6.1.2 步 5b、6.1.3、6.1.4、6.1.5、6.3.4、6.7.1 | PLT-06；设计 `:219`、`:222` |
 | C-35 | 阶段结束和偏差“不改计划”的“请知悉”由 `plan_notice` 通知源生产（现有 `noticeSources`/`NOTICE_CATEGORIES` 投影机制内的新类别，不复用 `plan_adoption`；见 §22 C-D11）：阶段结束按 stage gate 已终结验证轮的 `since` 出 `stage-end:<planId>:<planRevision>:<stageId>`，内容按 5.8 六项；偏差按确定性 `deviation:` Query 的“回答”分支（没有 `plan` 也没有 `questions`）出 `deviation-notice:<goalId>:<requestId>`，`position` 取源 R 的固定身份 `intervention:<messageKey>:respond` 已提交回执 cursor（`readCommitByIdentity`；身份键算法见 6.4.2），不是 Query 的 `since`；内容 = 偏差事实 + “不改计划” + 这一轮答案的短文字原文（≤16 KiB，不截断）。读失败 `unavailable`、无事实不产生项、同 `itemKey` 一条；人的 `decisions/queue` notices 直接读到，不新增记录、不靠给 Session 的 `notify`。 | 5.8、6.4.1、6.4.2、6.7.1 | PLT-16 |
-| C-36 | 采用通知只写“已采用”和确切审阅结论，人和自动化同一条；采用状态不写采用者。`position` 取同一次接受提交的事件游标（C-8），事件只用于位置。审阅按 accepted 候选的**接受前版本**读：`(proposalId, proposalRevision)` 取 `proposal.revision - 1`（`acceptProposalRecord` 接受后 +1，`plan-machine.ts:141`-`:143`）；候选未采用时仍用当前 `revision`。四态按这一对读（`not_sent`/`waiting`/`decided`/`terminal_invalid`），读不到写“审阅结论读不到”；事件读不到 `unavailable`，不按候选来源猜、不加读口。 | 6.4.2 | PLT-17/PLT-08（第 1 问裁定）；`plan-machine.ts:141` |
+| C-36 | 采用通知只写“已采用”和确切审阅结论，人和自动化同一条；采用状态不写采用者。`position` 只用已采用候选记录的 `until`（提交戳，C-8），没有 `until` 不产生项、不算读失败；不读 `PlanRevisionAccepted` 事件。审阅按 accepted 候选的**接受前版本**读：`(proposalId, proposalRevision)` 取 `proposal.revision - 1`（`acceptProposalRecord` 接受后 +1，`plan-machine.ts:141`-`:143`）；候选未采用时仍用当前 `revision`。四态按这一对读（`not_sent`/`waiting`/`decided`/`terminal_invalid`），读不到写“审阅结论读不到”；候选记录读失败 `unavailable`，不按候选来源猜、不加读口。 | 6.4.2 | PLT-17/PLT-08（第 1 问裁定）；`plan-machine.ts:141` |
 | D-1 | 任务 2 倍线分 `growth`（上下文增长量过 sizeClass 的 2 倍线）和 `lines`（`changedLines.added+deleted > 2×estimatedLines`）两条独立偏差，各自请求号。**取代第一稿“合并为 lines”**；按 v3 重判。 | 7.1、7.2、10.3 | v3 §4.3；v4 §10 |
 | D-2 | 偏差 `kind` 四值 `growth|lines|budget|stop`；`SystemRoundV1` 的 deviation 臂用 `cause`，外层判别式仍叫 `kind`。 | 7.1.1 | 设计 `:291`；v3 §4.3 |
 | D-3 | 返工上限和 `no_new_basis` 合为一个 `stop`，正文写停因码。 | 7.1.1 | 设计 `:286`；`task-failure.ts:948`、`:951` |
@@ -2632,7 +2637,7 @@ D-19–D-22 是 v3 重判后与设计/第一稿的偏差，列在 §22，不在�
 | C-D1 | 设计 `:247`：审阅用答案工具提交，形状校验照 `answer-tools.ts`。 | 答案工具只在 request round 创建（`query-preparation.ts:356`、`query-execution.ts:528`），`answerToolsOf` 只映射两种 `executionKind`。 | 审阅者只能写纯文本，`submit_plan_review` 永不进工具表。 | **C-1 已裁定**：加 `execution.answerShape`，审阅 Query 冻结 `plan_review`，准备/启动按清单挂 `submit_plan_review`（C-17）。 |
 | C-D2 | 设计 `:326`：`planfix:` 沿链往回读；`:223` 说读现有候选和 Query。 | 消息不存 `requestId`，前缀不可逆；`queryGoal.pendingPlan` 走 `findPendingProposal`，按 refKey 最小选，不是最新。 | 返修链和 3 次上限数不出；同 `basedOn` 两份候选时拿错。 | 返修写新独立候选；上一版身份从 `sourceMessageRef` 首行 `systemRoundOfText` 取，`completedFixes` 数同一 `basedOn` 上已完成 planfix 轮数；`latestAgentCandidate` 按首行后继关系排除旧候选、取最新；不改 `queryGoal`（C-11、C-D8）。 |
 | C-D3 | 设计 `:263`：第 6.1 节的表是一个纯函数。 | `busy`/其他采用拒绝是“采用这一步”的结果，不落记录，纯函数拿不到。 | 照字面写要加“上次采用被拒”的持久/内存字段。 | 认可 6.1.3 + 6.1.4 的分法：判断点一处，动作仍在 6.1（C-13）。 |
-| C-D4 | 设计 `:259`、`:441`：自动采用后出“请知悉”，走投影，不新增记录。 | 通知源按有序索引读；`PlanRevision` 只有按 Goal 的索引，没有按 project 的。 | 不加索引要为每个 Goal 各读一遍。 | **C-8**：不加索引；通知源按目标读，位置用接受提交游标；代价是每目标各读一次。 |
+| C-D4 | 设计 `:259`、`:441`：自动采用后出“请知悉”，走投影，不新增记录。 | 通知源按有序索引读；`PlanRevision` 只有按 Goal 的索引，没有按 project 的。 | 不加索引要为每个 Goal 各读一遍。 | **C-8**：不加索引；通知源按目标读，位置用已采用候选记录的 `until`（没有 `until` 不产生项）；代价是每目标各读一次。 |
 | C-D5 | 设计 `:193`：导出失败不挡采用，只提示。 | 没有通用“提示”面；`host-notices` 只发固定文案 `notify`。 | 不写清楚就静默失败。 | **C-9/N12 已裁定**：写进这次采用的 `plan_adoption` 通知 `summary`，人采用也发；不重试、不回滚、不新造卡（6.4.3）。 |
 | C-D6 | 第一稿说 16 KiB 要“三处一起改”。 | `answer-tools.ts:571` 只在 request round。 | 秘书上限与规划答案混在一起。 | **已由第三稿按 lead 裁定解决**：规划答案 256 KiB，秘书/审阅 16 KiB；消息、问题、回复按 16/64 分开；持久层只放答案（N1/C-19）。 |
 | C-D7 | 设计 `:139` 说不新增消息字段。 | `SessionMessageRecord` 不存 `requestId`/`execution.kind`。 | `planresume:` 的长度不能按请求号判。 | **已由第三稿按 lead 裁定解决**：按 `sessionMessageTextBound({sender,part,original})` 判，只有 Host 系统轮 `message` 部分到 64 KiB，回复一律 16；不用 `followupOf`（5.2.7、5.3.5 #1）。 |
@@ -2649,8 +2654,8 @@ D-19–D-22 是 v3 重判后与设计/第一稿的偏差，列在 §22，不在�
 | D-20 | 第一稿 D-8/D-10 把阶段线写成 1,500 万增长量、64 倍仅供界面展示。 | v4 §10 已改成 2,000 行或 0.6B token；v3 §4.2 的 64 倍是实测换算。 | 口径混用会让提醒线算错。 | 阶段线 2,000/0.6B 只提醒；64 倍是校准（N19/N20/D-8/D-10）。 |
 | D-21 | 第一稿 D-7：三个读数 = Run 用量/阶段用量/任务改动行数。 | v3 §4.2：三个读数是累计 token/上下文增长量/改动行数。 | 把聚合层当读数，公式会重复也读不对。 | 按 v3 改；Run/阶段/任务只是聚合层（N17/D-7）。 |
 | D-22 | 第一稿 D-5：同一任务同一版只留一条偏差。 | v3 §4.3 分 `growth`/`lines` 两条软线。 | 只留一条会丢掉增长量 2 倍线。 | 每种 `kind` 最多一条；硬停因存在时软线不发轮（N18/D-1/D-5）。 |
-| G-D1 | 设计 `:143`-`:145` 的续轮要带原问题和已存答案。 | 正文若照抄完整规划答案会到 256 KiB；原问题 + 五张卡各 16 KiB 答复 + 请求头更大，去掉原问题仍超 64 KiB。 | 消息发不出、Query 提交被拒、答卡续轮卡死。 | **已由第三稿按 lead 裁定解决、第四稿按 PLT-13 改成只带引用**：正文/`question` = 请求头 + `originalQueryRef`（原 Query 的源消息引用），原问题和逐卡答复正文都不进正文；准备阶段按引用读原 Query 的原问题、`needs_decision` 答案和逐卡 `readDecisionAnswer`，把 `savedAnswers` 追加进准备输入。64 KiB 只约束保存的正文，装配后的输入装不下走现有容量出口；不截断、不分片、不加 ref 字段（5.3.5 #8）。 |
-| G-D2 | 设计 `:259` 说通知写“自动采用/人采用”。 | `PlanRevisionSnapshot` 只有 `acceptedAt`/`origin`，没有接受 actor；同一次接受提交的 `PlanRevisionAccepted` 事件不用来区分采用者。 | 按候选来源推会制造假事实；按 actor 分标签会把同一条采用写成两种。 | **已按裁定解决**：通知只写“已采用”和确切审阅四态，人和自动化同一条；`PlanRevisionAccepted` 只用于 `position`，事件读不到 `unavailable`；不读 actor、不加读口、不新增字段（6.4.2、C-36）。 |
+| G-D1 | 设计 `:143`-`:145` 的续轮要带原问题和已存答案。 | 正文若照抄完整规划答案会到 256 KiB；原问题 + 五张卡各 14 KiB 答复 + 请求头更大，去掉原问题仍超 64 KiB。 | 消息发不出、Query 提交被拒、答卡续轮卡死。 | **已由第三稿按 lead 裁定解决、第四稿按 PLT-13 改成只带引用**：正文/`question` = 请求头 + `originalQueryRef`（原 Query 的源消息引用），原问题和逐卡答复正文都不进正文；准备阶段按引用读原 Query 的原问题、`needs_decision` 答案和逐卡 `readDecisionAnswer`，把 `savedAnswers` 追加进准备输入。64 KiB 只约束保存的正文，装配后的输入装不下走现有容量出口；不截断、不分片、不加 ref 字段（5.3.5 #8）。 |
+| G-D2 | 设计 `:259` 说通知写“自动采用/人采用”。 | `PlanRevisionSnapshot` 只有 `acceptedAt`/`origin`，没有接受 actor；同一次接受提交的 `PlanRevisionAccepted` 事件不用来区分采用者。 | 按候选来源推会制造假事实；按 actor 分标签会把同一条采用写成两种。 | **已按裁定解决**：通知只写“已采用”和确切审阅四态，人和自动化同一条；`position` 只用已采用候选记录的 `until`，没有 `until` 不产生项；不读 actor、不加读口、不新增字段（6.4.2、C-36）。 |
 | G-D3 | 设计 §5.2 只要求阶段 gate 按阶段验收。 | 模块 gate 原来在全部必需 work 满足后才选；后续段必需占位会挡住某段的模块 gate。 | 用模块 gate 做更细验收时，后续段占位会挡住它。 | **lead 已裁定**：模块 gate 和阶段 gate 用同一条件，只等它覆盖的工作（5.1.3、G-N1）；不是新机制。 |
 | G-D4 | 设计 `:193`：导出失败只提示。 | Host 没有日志设施；通知只写三态/路径，不落文件系统的错误原因。 | 文件被外部删除或改动，也读成失败或不完整。 | **lead 已裁定**：不做。通知只写三态和路径，够人判断，不为精确错误码加记录。 |
 | G-D5 | v3 §5.2：阶段 gate 等“必需普通任务全部满足”。 | 选择用 `unfinishedWork` 交集，deferred 的必需覆盖任务会挡；GV-5 的 `gateFixInProgress` 只数 active。 | 两者对 deferred 不同。 | 选择按 v3，读模型文案不改（5.1.3）。 |
