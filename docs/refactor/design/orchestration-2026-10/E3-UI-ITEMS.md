@@ -427,3 +427,11 @@
 | D108-4 | 自动采用后的“请知悉”：改了什么、影响哪些任务、审阅结论；走投影，不新增记录。 | 待设计/待后端；复用现成差异计算和通知投影（`plan-loop-design.md` §6.4） | 决定 108；事实单 §3 |
 | D108-5 | 三个读数：累计 token、上下文增长量、改动行数；给阶段线和 2 倍线看用量。 | 待设计；后端在 PL-1、PL-2，读数的算法按 `slice-PL-SPEC` 第 10 节，用途见 `plan-loop-design.md` §10 | 决定 108；事实单 §3 |
 | D108-6 | 阶段说明：`PlanStage.description` 给人和审阅者看，不进 `{{task}}`。 | 字段已有：`PlanStage.description`（`src/contracts/plan.ts:151`），不进 `{{task}}`（`src/core/agent-runtime/context-fact-text.ts:262`；`plan-loop-design.md` §5.3） | 决定 108；事实单 §3 |
+
+## 采用前停稳加的（2026-11-02）
+
+这条来自 [slice-PS-SPEC.md](slices/slice-PS-SPEC.md)。
+
+| 编号 | 界面项 | 数据从哪来 | 决定出处 |
+| --- | --- | --- | --- |
+| DPS-1 | 候选卡的“采用中，等 X 停下”：`plans/apply` 返回 `busy`、原因是 `stopping_affected_work` 时显示；Run 结束后界面自动再调一次同一 `plans/apply`，人只点一次。服务端不存这个状态，重启后人再点一次，候选还在。 | 后端在 PS；Run 的状态读 `executions/read`、`tasks/query`（规格 §3.10、§3.13） | 决定 102-4；规格 §6 U3 |
