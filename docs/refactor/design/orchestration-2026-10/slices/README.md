@@ -47,6 +47,7 @@
 | 8E 语义联系（决定 87，2026-10-22 冻结；接在 8C 之后，分两段） | [slice-8E-SPEC.md](slice-8E-SPEC.md) | 施工时写 | 无（§0.1 用户 10-22 已定，测试入口已确认） |
 | DRV 目标驱动改造（决定 102，2026-10-31 冻结；7C-1 改 `selectNext` 的组之前合入） | [slice-DRV-SPEC.md](slice-DRV-SPEC.md) | 施工时写 | 无（§6 用户 10-31 已定，选 b，另开小片） |
 | PL 计划闭环（决定 107-3、108-3，2026-11-01 冻结；PL-1 在 7C-2 之后、和 7D1 并行，PL-2 在 PL-1 之后；设计 [plan-loop-design.md](../plan-loop-design.md)、[goal-layering-design.md](../goal-layering-design.md)） | [slice-PL-SPEC.md](slice-PL-SPEC.md) | 施工时写 | 无（设计第 18 节用户已答；行号按合并树 `5a1ec32`，写书时重指） |
+| 第 9 片（执行结果审阅、真实冲突和真实验收、量线长；2026-11-01 冻结；排在 6C 之后，只读报告见证另开一片） | [slice-9-SPEC.md](slice-9-SPEC.md) | 施工时写 | §0.1 的 U1–U5 待用户定 |
 
 ## 历史：第 0、1、3、5 片的冻结与施工（2026-10-08 至 10-09）
 
