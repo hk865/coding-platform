@@ -28,7 +28,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import { messageOf } from '../../../contracts/error-message.js';
-import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { hasOnlyKeys, inList, isNonNeg, utf8Bytes } from '../../../contracts/validation/common.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import type { EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
@@ -59,7 +59,7 @@ import type { SessionGuardContext, SessionRelease, SessionReleaseCause } from '.
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   bindTrustedContext, checkRunPin, claimEffectRecords, claimLeaseOf, claimSessionOf, executionReadGuards, hostLeaseOf,
-  isRecord, isolateWrite, mapStoreFailure, mergeGuards, nonEmpty, readAdmissionFacts,
+  handoffBriefConsumptionForCommit, isRecord, isolateWrite, mapStoreFailure, mergeGuards, nonEmpty, readAdmissionFacts,
   type ClaimSessionRelease,
 } from './execution-entry-service.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
@@ -745,10 +745,22 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       }
     }
     if (written.length === 0) return invalid('the Run has nothing for the reconcile to write');
+    // The commit that FIRST records entry joins the SAME manifest-driven contribution the normal entered commit
+    // uses: a manifest without a handoff binding contributes nothing, and one with a binding reads that exact record.
+    let handoffGuard: RecordGuard | null = null;
+    if (bindsStart) {
+      const handoff = await handoffBriefConsumptionForCommit({ bodies: deps.bodies, records },
+        nextRun, facts.outbox.claim, input.nowIso);
+      if (!handoff.ok) return handoff.rejection;
+      if (handoff.value !== null) {
+        written.push(handoff.value.record);
+        handoffGuard = handoff.value.guard;
+      }
+    }
     const intentGuards: RecordGuard[] = input.intents.map(intent => ({ refKey: refKeyOf(intent.ref), expectedRevision: intent.revision }));
     const merged = mergeGuards([...executionReadGuards(facts, refKeyOf(facts.run.ref), input.runPin), ...intentGuards,
       ...intentWrites.guards, ...(input.readGuards ?? []), ...(activityGuard === null ? [] : [activityGuard]),
-      ...reviewGuards]);
+      ...(handoffGuard === null ? [] : [handoffGuard]), ...reviewGuards]);
     if (!merged.ok) return merged.rejection;
     const event: ExecutionRunReconciledEvent = { eventId: input.eventId, eventType: EXECUTION_RUN_RECONCILED_EVENT_TYPE,
       schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: input.nowIso, identityKey: input.identity,

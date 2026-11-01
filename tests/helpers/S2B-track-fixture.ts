@@ -487,7 +487,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
   async function reconcileHostTakeover(runRef: RunRef, at: string): Promise<void> {
     clock = at;
     const reconcile = createRunReconcileService({ records: baseRecords, reads: runReads,
-      hostInstance: { hostInstanceId: 's2b-track-host', lease: 'owned' }, now, eventId });
+      bodies: b2.bodies, hostInstance: { hostInstanceId: 's2b-track-host', lease: 'owned' }, now, eventId });
     const read = await runReads.readExecution(b2.ctx, runRef);
     if (read.status !== 'ready') throw new Error(`S2B reconcile Run read failed: ${JSON.stringify(read)}`);
     const result = await reconcile.reconcileRun(b2.ctx, {

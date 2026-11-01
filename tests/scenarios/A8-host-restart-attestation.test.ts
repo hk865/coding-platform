@@ -70,10 +70,11 @@ it('RUN-22 (LA-8): the owner answers a same-identity attestation retry with the 
   expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
 
   const backend = ownerBackend(database);
+  const bodies = createSqliteRawArtifactStore(join(database, 'artifacts.sqlite'));
   try {
     const records = backend.records;
     const reads = createRunStateReader({ records });
-    const owner = createRunReconcileService({ records, reads, hostInstance: OWNER_HOST, now: () => AG2B_AT,
+    const owner = createRunReconcileService({ records, reads, bodies, hostInstance: OWNER_HOST, now: () => AG2B_AT,
       eventId: ownerIds('a8-attest-owner-event') });
     const pin = [{ ref: runRef, revision: unknown.run.revision }];
     // K3 §5.3: the attestation now carries the owner's review draft.
@@ -104,6 +105,7 @@ it('RUN-22 (LA-8): the owner answers a same-identity attestation retry with the 
     expect(ledgerEvents(database), 'neither retry writes').toBe(events);
     expect(await reads.readExecution(hostCtx(), runRef)).toEqual(attested);
   } finally {
+    await bodies.close();
     await backend.close();
   }
 }, 180_000);

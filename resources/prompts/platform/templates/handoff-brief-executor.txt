@@ -1,0 +1,7 @@
+## Handoff brief
+
+You are continuing this line. The work below is now yours. The understanding
+pointer is the version the predecessor recorded before the handoff; read it
+before you answer.
+
+{{task_round}}

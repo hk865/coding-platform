@@ -568,7 +568,7 @@ async function reviewDispositionOtherGoal() {
 describe('rejects: a source that differs from the platform\'s only in its subject', () => {
   it.each([
     { entry: 'source facts: a project subject on a goal card', observe: sourceFactsProject,
-      refused: { status: 'rejected', code: 'invalid', reason: 'a project subject serves only a note_review source' },
+      refused: { status: 'rejected', code: 'invalid', reason: 'a project subject serves only a note_review or handoff_approval source' },
       after: [{ state: 'waiting_answer', answer: null }] },
     { entry: 'plan decoder: a project subject', observe: planDecoderProject,
       refused: { status: 'rejected', code: 'invalid', reason: 'decisionSource must be a DecisionSourceV1 shape' },

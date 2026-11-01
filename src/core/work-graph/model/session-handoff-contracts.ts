@@ -12,6 +12,8 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import type { RequestSessionArchiveInput } from '../../../contracts/core/session-archive.js';
+import type { DecisionApplicationReceiptV1 } from '../../../contracts/core/session-message.js';
+import type { HandoffTriggerV1 } from '../../../contracts/handoff.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { QueryJobRef, QueryRunRef, RequestUnderstandingCommandV1 } from '../../../contracts/query-job.js';
 import type { EncodedRecord, RecordGuard } from '../../record-store/ports.js';
@@ -82,9 +84,23 @@ export type HandoffProgressV1 = {
   operation: OperationRef; revision: number; stage: HandoffStageV1;
   phase: 'accepted' | 'running' | 'completed' | 'failed';
   /** The trigger the operation was accepted with; the automatic identity is frozen at accept. */
-  trigger: 'too_long' | 'manual';
+  trigger: HandoffTriggerV1;
   successor: SessionRef | null; archived: boolean; noticeItemKey: string | null; lastRefusal: string | null;
 };
+
+/**
+ * The `handoff.decide` application: the person's approve/reject of the operation's one pending approval card.
+ * `commandId` is the application command id, so a repeated delivery replays the original decision.
+ */
+export type HandoffDecideInputV1 = {
+  commandId: string; operation: OperationRef; verdict: 'approve' | 'reject';
+};
+export type HandoffDecideResultV1 =
+  | { status: 'committed'; value: { operation: OperationRef; revision: number; state: 'approved' | 'rejected' };
+      replayed: boolean; receipt: DecisionApplicationReceiptV1 }
+  /** The pin moved, or the operation has no pending approval any more: the card's answer no longer applies. */
+  | { status: 'stale'; operation: OperationRef; revision: number }
+  | CoreRejection;
 
 export type SecretaryArchiveStageV1 = (typeof SECRETARY_ARCHIVE_STAGES)[number];
 export type SecretaryArchiveAcceptInputV1 = {

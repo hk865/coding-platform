@@ -529,23 +529,26 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     consumeBarrier: () => real.consumeBarrier(),
   });
 
-  /** Runs `start` with the Host factory spy installed; host-world starts are serialized. */
+  /** Runs `start` with the Host factory wrapper installed; host-world starts are serialized. */
   async function hostStart<T>(start: () => Promise<T>): Promise<T> {
     const previous = hostStarts;
     let done!: () => void;
     hostStarts = new Promise<void>(resolve => { done = resolve; });
     await previous;
     const real = hostModule.createLocalWorkbenchHost;
-    const spy = vi.spyOn(hostModule, 'createLocalWorkbenchHost').mockImplementation(async hostOptions => {
+    const wrapper: typeof real = async hostOptions => {
       const instance: HostInstance = { index: instances.length + 1, abandoned: false, crashOnClose: false };
       instances.push(instance);
       const database = hostOptions.storage.kind === 'sqlite' ? hostOptions.storage.directory : null;
       return crashable(await real(patchOptions(hostOptions, instance)), instance, database);
-    });
+    };
+    Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
+      { value: wrapper, configurable: true, writable: true });
     try {
       return await start();
     } finally {
-      spy.mockRestore();
+      Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
+        { value: real, configurable: true, writable: true });
       done();
     }
   }

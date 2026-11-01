@@ -32,10 +32,11 @@
 - `secretary-query-run-contracts.ts` — 运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1` 与解析端口 `SecretaryQueryRunPort`；`goals` 只是冻结材料列表上仍有效的 `request_understanding` 授权集（解析时按当前 operation 记录重算），绝不是本轮的有效 Goal；`planRef` 是准备时冻结的 Plan，秘书的阶段锚点取它的版本。
 - `secretary-lifecycle-contracts.ts` — 秘书生命周期的跨组契约：`SecretaryHandoffBasisV1`、覆盖/路由/简报事实与四态、归档条件的可合并片段、`SecretaryHandoffFactsPort`/`SecretaryArchiveConditionPort`；只有声明，规则和读取器在各自 owner。
 - `secretary-note-contracts.ts` — 再导出 `QueryNoteAdmissionV1`（Query 本轮可写的注记值：none 或 secretary 的 kinds/withdraw/grantedGoalIds）；唯一的声明和纯规则 `secretaryNoteAdmission` 都在 `state/secretary-note.ts`。
-- `session-handoff-contracts.ts` — 交接推进与秘书归档的输入/结果/进度类型，简报消费端口 `HandoffBriefPort`、简报引用的窄读口 `HandoffBriefRefsReadPort` 与 Workflow 入口 `SessionHandoffWorkflowPort`；命令和组合在各自 owner。
+- `session-handoff-contracts.ts` — 交接推进与秘书归档的输入/结果/进度类型，`handoff.decide` 的输入/结果（`HandoffDecideInputV1`/`HandoffDecideResultV1`），简报消费端口 `HandoffBriefPort`、简报引用的窄读口 `HandoffBriefRefsReadPort` 与 Workflow 入口 `SessionHandoffWorkflowPort`；`HandoffProgressV1.trigger` 用 F2 的 `HandoffTriggerV1`；命令和组合在各自 owner。
+- **记录 5 不在本层。** 6B 的 `HandoffBriefV1` 是秘书 QueryRun 简报；H 的 `WorkHandoffBriefV1` 是 `state/work-handoff-brief.ts` 的纯记录类型，ref/材料/绑定来自 `contracts/handoff-brief.ts`（F2），消费贡献是 `workHandoffBriefConsumption`。不要把两者混用或在本层复制记录 5 的类型。
 - `session-activity-contracts.ts` — Session 活动记录的窄读端口：`SessionActivityStateV1`（`src/core/work-graph/model/session-activity-contracts.ts:17`；`revision: 0` 是缺失，`record: null` 与坏记录区分）与 `SessionActivityReadPort`（`src/core/work-graph/model/session-activity-contracts.ts:20`；实现在 `sessions/session-activity.ts`，调用方不拼记录键、不解码信封）；这两个契约目前没有生产调用者，留给第 7 片按决定 91 的保留上限重建同一读取（allowlist 的 `kept-for`）。
 - `session-contracts.ts` — Session 创建/目录/分页契约；`CoreOperation` 记录的四个分支（`SessionOperationRecordOf`：顶层 `workspaceId`，`action.kind` 为 `create`/`handoff`/`secretary_archive`/`member_create`；创建分支带 `parentOperation`），读者先判 `kind`；7B-3 加 `ConsultationFactRefV1`/`ConsultationFactsV1`/`ConsultationCreateV1` 与 `ConsultationCreateReadPort`，创建输入可选 `consultation?`，记录动作必填 `consultation: ConsultationCreateV1 | null`；只 `export type { GraphWrite }` 转出（测试经此路径 import），正本在 `task-contracts.ts`。
-- `session-operation-arms.ts` — `CoreOperation` 的交接分支和秘书归档分支：两张字段表（`HandoffActionShape`、`SecretaryArchiveActionShape`）、两组阶段（`HANDOFF_STAGES`、`SECRETARY_ARCHIVE_STAGES`）、四条规则和推出的类型；进度里的三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）和归档的 `input.actor` 也在这里，旧记录由唯一的 `upgradeSessionOperationActionV1` 补 `null`；`ActorRefField`（`ActorRef` 的字段，Goal 复制的字段表也用它）从这里导出；`progress` 只由 `state/session-handoff.ts` 写。
+- `session-operation-arms.ts` — `CoreOperation` 的交接分支和秘书归档分支：两张字段表（`HandoffActionShape`、`SecretaryArchiveActionShape`）、两组阶段（`HANDOFF_STAGES`、`SECRETARY_ARCHIVE_STAGES`）、四条规则和推出的类型；交接的 `trigger` 取 F2 的 `HANDOFF_TRIGGERS`，`input.tool`（触发 `tool` 的调用者片段）与 `progress.approval`（`short`/`long`、`pending`/`approved`/`rejected`、accept revision 的 pin、card key、答案）是记录 2 的两个新字段；进度里的三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）和归档的 `input.actor` 也在这里，旧记录由唯一的 `upgradeSessionOperationActionV1` 补 `null`（含 `input.tool`、`progress.approval`）；`ActorRefField`（`ActorRef` 的字段，Goal 复制的字段表也用它）从这里导出；`progress` 只由 `state/session-handoff.ts` 写。
 - `session-facts-contracts.ts` — Session facts/责任 basis 端口、6 个查找索引名与 `SLICE1_LOOKUP_INDEXES`；`SessionFactsV1.waits` 与 `SessionFactsPort.readWait` 带 `SessionWaitV1`（消息、原 Run、收件方、等待状态、期限与完整位）；直接咨询准入只读的三个非消息事实 `DeliveryEligibilityFactsV1` 与 `DeliveryEligibilityFactsPort`；撤回用的收件方未结束执行端口（`RecipientExecutionsPort`）与 `OPEN_WORK_STAGES`/`OPEN_QUERY_PHASES`。
 - `dispatch-basis-contracts.ts` — 派发依据：三版事实（计划窗口、理解指针、`DispatchCounter`）的事实读与公开投影端口，以及目标理解指针端口（`GoalUnderstandingPointerPort`）。
 - `tool-commit-arguments.ts` — Kernel 工具参数到 owner `GraphWrite` 的纯映射，以及 tool commit 的 identity/lookup 辅助。
@@ -74,9 +75,9 @@
 | `ConsultationCreateV1` | `src/core/work-graph/model/session-contracts.ts:67` | 创建 arm 的冻结载荷 `{messageRef, mode, facts, reason, sourceRef, boundary}`；`kernel` 的 `facts`/`reason` 为 null | CS 的创建与重放、Q 的 `platform_facts` 准备 |
 | `ConsultationCreateReadPort` | `src/core/work-graph/model/session-contracts.ts:82` | Q 侧按 operation 读冻结创建载荷的唯一端口 | `readConsultationCreate` 实现；Q 的准备调用 |
 | `HandoffActionShape`、`HandoffActionV1`、`HANDOFF_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:215`、`:316`、`:212` | 交接分支的字段表、类型和阶段顺序（`accepted` … `finished`），含每个分配的 `createInput`、每个理解代的 `command` 和 `archiveRequest.savedInput` | 校验、编码交接操作；推进步骤按这个阶段顺序 |
-| `SecretaryArchiveActionShape`、`SecretaryArchiveActionV1`、`SECRETARY_ARCHIVE_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:292`、`:317`、`:291` | 秘书归档分支的字段表、类型和阶段顺序；`input.actor` 是接受时保存的可信 actor，旧记录为 `null` | 校验、编码秘书归档操作 |
+| `SecretaryArchiveActionShape`、`SecretaryArchiveActionV1`、`SECRETARY_ARCHIVE_STAGES` | `src/core/work-graph/model/session-operation-arms.ts:313`、`:338`、`:312` | 秘书归档分支的字段表、类型和阶段顺序；`input.actor` 是接受时保存的可信 actor，旧记录为 `null` | 校验、编码秘书归档操作 |
 | `handoffReachedInputProblem`、`archiveSavedInputProblem` | `src/core/work-graph/model/session-operation-arms.ts:162`、`:179` | 已到达步骤缺原输入的拒绝规则（交接与秘书归档各一条正本）：`create` 目标的分配已标 successor/createOperation 但 `createInput` 为 `null`、`understanding` 有 round 但 `command` 为 `null`、`archiveRequest` 有 receipt 但 `savedInput` 为 `null` 各给一条原因；`existing` 目标本来不存 create 输入 | 推进服务在选下一步之前据此答 `invalid`；不要重建输入或跳过该步 |
-| `upgradeSessionOperationActionV1` | `src/core/work-graph/model/session-operation-arms.ts:324` | 唯一的兼容读：旧记录/事件缺 `createInput`、`understanding[].command`、`archiveRequest.savedInput` 或归档 `actor` 时读作 `null`；没有可补的字段时原样返回 | `sessions/session-record-codecs.ts` 的记录读和两个分支事件在字段表检查之前调用它，返回的就是升级后的值；不要另写 normalizer |
+| `upgradeSessionOperationActionV1` | `src/core/work-graph/model/session-operation-arms.ts:345` | 唯一的兼容读：旧记录/事件缺 `createInput`、`understanding[].command`、`archiveRequest.savedInput` 或归档 `actor` 时读作 `null`；没有可补的字段时原样返回 | `sessions/session-record-codecs.ts` 的记录读和两个分支事件在字段表检查之前调用它，返回的就是升级后的值；不要另写 normalizer |
 | `GoalTaskPort` | `src/core/work-graph/model/task-contracts.ts:59` | Goal 创建、Task/Goal 正式完成与 desired state 控制 | Goal/Task 写 owner |
 | `PlanTaskPort` | `src/core/work-graph/model/plan-contracts.ts:226` | Plan 采用、task 读与规划诊断；`proposePlan` 的 `sourceMessageRef` 只对 `intervention_planning` 来源走窄准入（普通请求仍按 root/`initiatedByOperator`），`readInitialPlanAnswerFacts` 的来源选择器可带 `InterventionAnswerSourceV1` | Plan/task 写 owner |
 | `CandidateRequestFactsPort` | `src/core/work-graph/model/decision-contracts.ts:86` | candidate request facts：`root`、`initiatedByOperator`、`currentSecretary` 与 `guards` 之外，另带 `interventionSource`（admitted `intervention_planning` Query 的来源消息，其他 Query 为 `null`） | 计划提案的窄准入与候选头读取；不要另读 Query 意图 |
@@ -186,15 +187,15 @@
 | `HandoffAdvanceResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:61` | 交接推进命令的写结果、下一阶段与停止原因；无写停走第三臂 |
 | `SessionHandoffWorkflowPort` | `src/core/work-graph/model/session-handoff-contracts.ts:71` | Workflow 侧交接入口：startHandoff/continueHandoff/advance/manualArchive |
 | `HandoffProgressV1` | `src/core/work-graph/model/session-handoff-contracts.ts:81` | 交接操作的进度投影：阶段、phase、后继、归档、notice 键与最后拒绝 |
-| `SecretaryArchiveStageV1` | `src/core/work-graph/model/session-handoff-contracts.ts:89` | 秘书归档阶段字面量类型，顺序取 SECRETARY_ARCHIVE_STAGES |
-| `SecretaryArchiveAcceptInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:90` | 归档接受命令的输入：源 Session 与每个请求根的去向 |
-| `SecretaryArchiveAcceptResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:94` | 归档接受命令的结果：操作、accepted 阶段 |
-| `SecretaryArchiveAdvanceInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:96` | 归档推进输入：continue 或 replay |
-| `SecretaryArchiveProgressV1` | `src/core/work-graph/model/session-handoff-contracts.ts:99` | 归档操作的进度投影：每项结果、路由轮、归档请求与最后拒绝 |
-| `SecretaryArchiveAdvanceResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:107` | 归档推进命令的写结果与停止原因 |
-| `HandoffBriefPort` | `src/core/work-graph/model/session-handoff-contracts.ts:121` | D 在 entered 确认时调用的简报消费端口；H 用 state 构造器实现 |
-| `HandoffBriefGoalRefsV1`、`HandoffBriefGoalRefV1` | `src/core/work-graph/model/session-handoff-contracts.ts:128`、`:129` | 简报保存的每 Goal 引用（written/current），由进度的 brief 字段派生，不另立形状 | 推进写 brief、facts 层给出引用时用同一份 |
-| `HandoffBriefRefsReadPort` | `src/core/work-graph/model/session-handoff-contracts.ts:135` | 简报引用的窄读口：facts 层读 Note，推进只存引用 | I1 把 facts 层作为推进的 `coverage` 依赖注入；Session owner 不读 Note |
+| `SecretaryArchiveStageV1` | `src/core/work-graph/model/session-handoff-contracts.ts:105` | 秘书归档阶段字面量类型，顺序取 SECRETARY_ARCHIVE_STAGES |
+| `SecretaryArchiveAcceptInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:106` | 归档接受命令的输入：源 Session 与每个请求根的去向 |
+| `SecretaryArchiveAcceptResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:110` | 归档接受命令的结果：操作、accepted 阶段 |
+| `SecretaryArchiveAdvanceInputV1` | `src/core/work-graph/model/session-handoff-contracts.ts:112` | 归档推进输入：continue 或 replay |
+| `SecretaryArchiveProgressV1` | `src/core/work-graph/model/session-handoff-contracts.ts:115` | 归档操作的进度投影：每项结果、路由轮、归档请求与最后拒绝 |
+| `SecretaryArchiveAdvanceResultV1` | `src/core/work-graph/model/session-handoff-contracts.ts:123` | 归档推进命令的写结果与停止原因 |
+| `HandoffBriefPort` | `src/core/work-graph/model/session-handoff-contracts.ts:137` | D 在 entered 确认时调用的简报消费端口；H 用 state 构造器实现 |
+| `HandoffBriefGoalRefsV1`、`HandoffBriefGoalRefV1` | `src/core/work-graph/model/session-handoff-contracts.ts:144`、`:145` | 简报保存的每 Goal 引用（written/current），由进度的 brief 字段派生，不另立形状 | 推进写 brief、facts 层给出引用时用同一份 |
+| `HandoffBriefRefsReadPort` | `src/core/work-graph/model/session-handoff-contracts.ts:151` | 简报引用的窄读口：facts 层读 Note，推进只存引用 | I1 把 facts 层作为推进的 `coverage` 依赖注入；Session owner 不读 Note |
 
 ## 内部用
 - 无：本层导出的函数与常量都供上层调用；其余导出是类型契约，不做运行时实现。

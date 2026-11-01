@@ -48,9 +48,12 @@ import {
   memberCreationAcceptedEventFormat, memberCreationDecidedEventFormat, memberCreatedEventFormat,
   type MemberCreatedEventV1,
 } from '../state/member-creation.js';
+import {
+  WORK_HANDOFF_BRIEF_CONSUMED_FORMAT, WORK_HANDOFF_BRIEF_FORMAT, WORK_HANDOFF_BRIEF_RECORDED_FORMAT,
+} from '../state/work-handoff-brief.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { createEventCodec as createEnvelopeEventCodec } from '../persistence/event-codec-factory.js';
-import { createEventCodec, type EventCodec } from '../persistence/field-table-codec.js';
+import { createEventCodec, createRecordCodec, formatSchemas, type EventCodec } from '../persistence/field-table-codec.js';
 import { decisionChangeProofProblem, versionPinProblem } from '../persistence/decision-record-codecs.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
 
@@ -1225,6 +1228,25 @@ export const memberCreatedCodec = {
   },
   registration: memberCreatedEnvelope.registration,
 };
+
+// --------------------------------------------------------------------------
+// Record 5: the Work handoff brief
+// --------------------------------------------------------------------------
+
+/**
+ * Record 5's one registration group: its record, both replay events and the
+ * `work-handoff-brief-by-session` lookup. The field tables and the cross-field
+ * rule stay in `state/work-handoff-brief.ts`; only this layer names the Store
+ * envelope. The composition root registers this bundle beside
+ * `SESSION_RECORD_SCHEMAS`; it is not merged into that group.
+ */
+export const workHandoffBriefCodec = createRecordCodec(WORK_HANDOFF_BRIEF_FORMAT);
+export const handoffBriefRecordedCodec = createEventCodec(WORK_HANDOFF_BRIEF_RECORDED_FORMAT);
+export const handoffBriefConsumedCodec = createEventCodec(WORK_HANDOFF_BRIEF_CONSUMED_FORMAT);
+
+export const HANDOFF_BRIEF_RECORD_SCHEMAS: RecordBackendSchemas = formatSchemas([
+  workHandoffBriefCodec, handoffBriefRecordedCodec, handoffBriefConsumedCodec,
+]);
 
 // --------------------------------------------------------------------------
 // The single registration

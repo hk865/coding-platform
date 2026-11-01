@@ -13,6 +13,8 @@
 import type { SessionAnomalyAnchorV1 } from './session-anomaly.js';
 import type { ReworkActorClass, ReworkFailureClass, StopRequester } from './task-requeue.js';
 import { truncateUtf8 } from './utf8.js';
+import { canonicalJson } from './fingerprint.js';
+import type { HandoffBriefMaterialV1, HandoffBriefNoteIndexV1, HandoffBriefTaskV1 } from './handoff-brief.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from './prompts/prompt-set.js';
 import { packString } from './prompts/pack-string.js';
@@ -367,6 +369,110 @@ export function renderContinuationBriefZh(
     if (utf8Length(text) <= limit) return text;
   }
   return fixedCandidate(suffixMandatory.anomaly, suffixMandatory.review);
+}
+
+/**
+ * The handoff brief's task-round value: the facts of F2's normalized material,
+ * in the same fixed layout as the continuation brief. It renders facts only and
+ * never adds one; the module index and the understanding pointer are the two
+ * pointers §3.6 requires, and the conclusion is the body the material already
+ * read (never thinking, never an intermediate reply).
+ */
+/** One plain material text through the shared bounded-text truncator (the material never marks a cut). */
+function handoffTextZh(B: BriefTexts, text: string, cap: number): string {
+  return boundedZh(B, { text, truncated: false }, cap);
+}
+
+function handoffNoteIndexTextZh(
+  B: BriefTexts, index: HandoffBriefNoteIndexV1, cap: number,
+): string {
+  if (index.length === 0) return B.S('brief.list.none');
+  return index.map(entry =>
+    `${entry.moduleId}: ${listZh(B, entry.notes.map(note => `${note.noteRef}@${String(note.version)}`), cap)}`,
+  ).join(B.S('brief.separator.semicolon'));
+}
+
+function handoffTaskLineZh(B: BriefTexts, task: HandoffBriefTaskV1, cap: number, prefix = ''): string {
+  const result = task.lastResult === null ? B.S('brief.list.none') : handoffTextZh(B, task.lastResult, cap);
+  return `${prefix}- task ${canonicalJson(task.task)}: phase ${task.phase}; last result: ${result}`;
+}
+
+function handoffDecisionTextZh(
+  B: BriefTexts, decisions: readonly { source: string; key: string }[], cap: number,
+): string {
+  return listZh(B, decisions.map(decision => `${decision.source}:${decision.key}`), cap);
+}
+
+function handoffUnderstandingTextZh(
+  B: BriefTexts, understanding: readonly { noteId: string; version: number }[], cap: number,
+): string {
+  return listZh(B, understanding.map(note => `${note.noteId}@${String(note.version)}`), cap);
+}
+
+/** The lines the handoff template puts in its one `task_round` slot, with `cap` applied to every free text. */
+function handoffBriefLinesZh(material: HandoffBriefMaterialV1, B: BriefTexts, cap: number): string[] {
+  const lines: string[] = [];
+  if (material.duty === 'executor') {
+    for (const task of material.tasks) lines.push(handoffTaskLineZh(B, task, cap));
+    if ('absent' in material.conclusion) {
+      lines.push('- conclusion: no formal final answer');
+    } else {
+      lines.push(`- conclusion ${canonicalJson(material.conclusion.run)}: `
+        + `${handoffTextZh(B, material.conclusion.body, cap)}`);
+    }
+    lines.push(`- note index: ${handoffNoteIndexTextZh(B, material.noteIndex, cap)}`);
+    lines.push(`- understanding: ${handoffUnderstandingTextZh(B, material.understanding, cap)}`);
+    lines.push(`- old line: ${canonicalJson(material.oldLine)}`);
+  } else {
+    for (const goal of material.goals) {
+      lines.push(`- goal ${canonicalJson(goal.goalRef)}`);
+      for (const task of goal.tasks) lines.push(handoffTaskLineZh(B, task, cap, '  '));
+      lines.push(`  - note index: ${handoffNoteIndexTextZh(B, goal.noteIndex, cap)}`);
+      lines.push(`  - open decisions: ${handoffDecisionTextZh(B, goal.openDecisions, cap)}`);
+    }
+    if (material.queryAnswers.length === 0) {
+      lines.push(`- query answers: ${B.S('brief.list.none')}`);
+    } else {
+      for (const answer of material.queryAnswers) {
+        lines.push(`- query answer ${canonicalJson(answer.run)}: ${handoffTextZh(B, answer.body, cap)}`);
+      }
+    }
+    lines.push(`- understanding: ${handoffUnderstandingTextZh(B, material.understanding, cap)}`);
+    lines.push(`- old line: ${canonicalJson(material.oldLine)}`);
+  }
+  lines.push(B.S('handoff.briefTools'));
+  return lines;
+}
+
+/**
+ * The successor's first-round handoff brief (B4): F2's executor/adviser template
+ * over the one `task_round` value built from the material, with the same byte
+ * budget and truncation/omission rules as the continuation brief. Pure and
+ * deterministic; it reads the pack's frozen texts only and never re-derives a
+ * fact. The digest is NOT rendered here: record 5's digest covers the material
+ * alone (B2-03).
+ */
+export function renderHandoffBriefZh(material: HandoffBriefMaterialV1, texts: PromptTextsV1): string {
+  const B = briefTexts(texts);
+  const templateId = material.duty === 'executor' ? 'handoff-brief-executor' : 'handoff-brief-adviser';
+  // The frozen public signature takes no tool list; the two templates declare
+  // `read`, so the renderer derives their current tool blocks itself.
+  const toolNames = templateToolNames(texts, templateId);
+  const limit = CONTINUATION_BRIEF_LIMITS.renderedBytes;
+  const render = (lines: readonly string[]): string =>
+    renderTemplate(texts, templateId, { task_round: lines.join('\n') }, toolNames).text;
+  for (const cap of RENDER_TEXT_CAPS) {
+    const text = render(handoffBriefLinesZh(material, B, cap));
+    if (utf8Length(text) <= limit) return text;
+  }
+  // Even the shortest per-text cap does not fit: keep the leading lines (the
+  // tasks and facts that matter most) and state how many were left out.
+  const lines = handoffBriefLinesZh(material, B, RENDER_TEXT_CAPS[RENDER_TEXT_CAPS.length - 1]!);
+  for (let kept = lines.length - 1; kept >= 1; kept -= 1) {
+    const text = render([omittedNoteZh(B, lines.length - kept), ...lines.slice(0, kept)]);
+    if (utf8Length(text) <= limit) return text;
+  }
+  return render([omittedNoteZh(B, lines.length)]);
 }
 
 function omittedNoteZh(B: BriefTexts, lines: number): string {

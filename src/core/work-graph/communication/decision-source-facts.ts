@@ -56,6 +56,7 @@ import { readUnknownCallReviewSource } from './decision-source/unknown-call-revi
 import { readCommandRerunRequestSource } from './decision-source/command-rerun-request.js';
 import { readMessageReleaseSource } from './decision-source/message-release.js';
 import { readMemberCreationSource } from './decision-source/member-creation.js';
+import { readHandoffApprovalSource } from './decision-source/handoff-approval.js';
 import { readReworkRequestSource } from './decision-source/rework-request.js';
 import type { DecisionSourceBranchFacts } from './decision-source/types.js';
 
@@ -171,9 +172,11 @@ export function createDecisionSourceFacts(
         if (goalRef === null) {
           // A project subject serves no other source kind in this slice; a
           // branch that would need a Goal stays an explicit refusal.
-          return identity.kind === 'note_review'
-            ? readNoteReviewSource(support, ctx, source, identity, deps, null)
-            : rejectedWithCurrent('invalid', 'a project subject serves only a note_review source');
+          if (identity.kind === 'note_review') return readNoteReviewSource(support, ctx, source, identity, deps, null);
+          if (identity.kind === 'handoff_approval') {
+            return readHandoffApprovalSource(support, ctx, source, identity, deps, null);
+          }
+          return rejectedWithCurrent('invalid', 'a project subject serves only a note_review or handoff_approval source');
         }
         switch (identity.kind) {
           case 'message':
@@ -198,6 +201,8 @@ export function createDecisionSourceFacts(
             return readMemberCreationSource(support, identity, goalRef);
           case 'rework_request':
             return readReworkRequestSource(support, ctx, identity, deps, goalRef);
+          case 'handoff_approval':
+            return readHandoffApprovalSource(support, ctx, source, identity, deps, goalRef);
           default:
             return rejectedWithCurrent('invalid', 'the decision source kind is not recognized');
         }

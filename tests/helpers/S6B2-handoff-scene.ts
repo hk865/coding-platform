@@ -8,6 +8,9 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../src/
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
+import { createHandoffBriefMaterialAssembler,
+  type HandoffBriefAssemblyDeps } from '../../src/core/agent-runtime/handoff-brief-assembly.js';
+import { createSessionHistoryCursorOwner } from '../../src/core/agent-runtime/session-operations.js';
 import { createSecretaryHandoffFacts } from '../../src/core/work-graph/views/secretary-handoff-facts.js';
 import {
   createSecretaryArchiveService, createSessionHandoffAdvanceService,
@@ -229,12 +232,23 @@ type AdvanceOptions = {
 export function s6b2Advance(world: S6B2WorldValue, captured: S6B2Captured, options: AdvanceOptions = {}) {
   const backend = s6b2Backend(captured);
   const records = options.records ?? backend.records;
+  // The successor brief assembles over the world's own real reads: the captured backend, the published note,
+  // decision and Query execution owners, and the Kernel history of the same platform.
+  const brief = createHandoffBriefMaterialAssembler({
+    records: records as unknown as HandoffBriefAssemblyDeps['records'],
+    sessions: world.platform.sessions, executions: world.platform.executions,
+  }, () => ({
+    history: createSessionHistoryCursorOwner({ kernelStores: world.platform.kernelStores }),
+    records: records as unknown as HandoffBriefAssemblyDeps['records'],
+    notes: world.platform.notes, decisions: world.platform.decisions,
+    queryExecution: world.platform.reconcile,
+  }));
   return createSessionHandoffAdvanceService({ records, commitIdentities: backend.commitIdentities,
     operations: world.platform.sessions, coverage: options.coverage ?? s6b2Facts(world, captured, records),
     basis: options.basis ?? s6b2Basis(records), requests: options.requests ?? world.platform.requestRounds,
     transfers: options.transfers ?? s6b2Transfers(world, captured, records),
     archive: options.archive ?? world.platform.sessions,
-    duty: s6b2Duty, now: () => world.clock.now() });
+    duty: s6b2Duty, brief, now: () => world.clock.now() });
 }
 
 export function s6b2Archive(world: S6B2WorldValue, captured: S6B2Captured,

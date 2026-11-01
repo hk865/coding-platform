@@ -221,7 +221,7 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
   });
   // The real unknown-run attestation owner (RUN-22); this is what IT26 binds.
   const reconcile = createRunReconcileService({
-    records, reads, hostInstance: { hostInstanceId: 's1-archive-flow-host', lease: 'owned' }, now, eventId,
+    records, reads, bodies: b2.bodies, hostInstance: { hostInstanceId: 's1-archive-flow-host', lease: 'owned' }, now, eventId,
   });
 
   const session: SessionRef = base.sessions.first;

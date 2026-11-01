@@ -508,7 +508,7 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
       controls: createRunControlService({ records, authority: materialReads.authority, reads: restartedReads, now, eventId }),
       entry: createExecutionEntryService({ records, reads: restartedReads, roles: restartedRoles, bodies,
         authorizeConfiguration, hostInstance, now, eventId, newId }),
-      reconcile: createRunReconcileService({ records, reads: restartedReads, hostInstance, now, eventId }),
+      reconcile: createRunReconcileService({ records, reads: restartedReads, bodies, hostInstance, now, eventId }),
       now, newId,
     };
     const record = await restartedReads.readExecution(ctx, runRef);

@@ -294,7 +294,7 @@ function attemptCacheKey(input: ReadPageInput): string {
 }
 
 /** Serves one page of an already-assembled (and `after`-filtered) collection. */
-function paginateAssembled(assembled: AssembledReworkPage, input: ReadPageInput): {
+export function paginateAssembled(assembled: AssembledReworkPage, input: ReadPageInput): {
   status: 'ready'; value: DecisionSourcePageV1<NoticeItemV1>;
 } {
   const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);

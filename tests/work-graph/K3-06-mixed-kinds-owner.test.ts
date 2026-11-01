@@ -89,10 +89,12 @@ type OwnerServices = {
 };
 
 /** The owner services over the ONE world store: no second fixture backend. */
-function ownerServices(records: K3ReviewCardWorld['records']): OwnerServices {
+function ownerServices(world: K3ReviewCardWorld): OwnerServices {
+  const records = world.records;
   const reads = createRunStateReader({ records });
   let seq = 0;
   const reconcile = createRunReconcileService({ records, reads,
+    bodies: world.fixture.bodies,
     hostInstance: { hostInstanceId: 'k3-06-owner-host', lease: 'owned',
       takeover: { kind: 'hl03_stale_lock', previousInstanceId: 'previous-host', previousPid: 42 } },
     now: () => AT, eventId: () => `k3-06-event-${String(++seq)}` });
@@ -207,7 +209,7 @@ describe('K3-06 owner: the reachable one-process-item record, then the L3 kind r
         expect(unknown).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
 
         // The owner services read the SAME world store, not a second backend.
-        const services = ownerServices(world.records);
+        const services = ownerServices(world);
         // `edit` is L3 row 6 `file_edit`; claiming `platform` must be refused.
         const wrong: UnknownCallReviewItemV1 = { ...EDIT_ITEM, alias: 1, callId: 'k3-06-wrong',
           kernel: { ...EDIT_ITEM.kernel, callId: 'k3-06-wrong' }, kind: 'platform' };

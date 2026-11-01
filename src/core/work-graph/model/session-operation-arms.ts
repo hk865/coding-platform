@@ -12,6 +12,7 @@ import {
   RunRefShape, SessionAggregateRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape, WorkspaceScopeShape,
 } from '../../../contracts/data-format-refs.js';
 import { CORE_ERRORS } from '../../../contracts/core/results.js';
+import { HANDOFF_TRIGGERS } from '../../../contracts/handoff.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import { isRecord } from '../../../contracts/validation/common.js';
@@ -217,7 +218,18 @@ export const HandoffActionShape = defineShape({ name: 'HandoffAction', fields: {
   input: f.object({
     workspace: f.ref(WorkspaceScopeShape),
     source: f.ref(SessionRefShape),
-    trigger: f.enumOf(['too_long', 'manual'] as const),
+    trigger: f.enumOf(HANDOFF_TRIGGERS),
+    // The tool caller's saved fragment; `null` on the `too_long` and `manual` triggers.
+    tool: f.nullable(f.object({
+      caller: f.object({
+        actor: f.object({ kind: f.literal('agent'), id, runRef: f.ref(RunRefShape) }),
+        session: f.ref(SessionRefShape),
+        run: f.ref(RunRefShape),
+        duty: f.enumOf(['executor', 'adviser'] as const),
+      }),
+      reason: id,
+      understanding: f.array(NoteVersionField),
+    })),
     actor: ActorRefField,
     assignments: f.array(f.object({
       target: f.union('kind', {
@@ -235,6 +247,15 @@ export const HandoffActionShape = defineShape({ name: 'HandoffAction', fields: {
     advanceGeneration: f.integer({ min: 1 }),
     fence: f.nullable(f.object({ claimKey: id, state: f.enumOf(['held', 'released'] as const), changedAt: f.isoTime() })),
     stoppedWriter: f.nullable(f.object({ lastExecution: f.nullable(ExecutionRefField), observedAt: f.isoTime() })),
+    // The approval card of a `needs_decision` tool handoff; `null` on every automatic branch.
+    approval: f.nullable(f.object({
+      required: f.enumOf(['short', 'long'] as const),
+      state: f.enumOf(['pending', 'approved', 'rejected'] as const),
+      // The operation at its accept revision.
+      pin: f.object({ ref: f.ref(OperationRefShape), revision: f.integer({ min: 1 }) }),
+      cardKey: id,
+      answer: f.nullable(f.object({ at: f.isoTime(), commandId: id })),
+    })),
     // One per input assignment, in the same order.
     assignments: f.array(f.object({
       successor: f.nullable(f.ref(SessionRefShape)),
@@ -327,6 +348,9 @@ export function upgradeSessionOperationActionV1(value: unknown): unknown {
     const progress = value['progress'];
     if (!isRecord(progress)) return value;
     let changed = false;
+    const input = value['input'];
+    const nextInput = isRecord(input) && !Object.hasOwn(input, 'tool')
+      ? (() => { changed = true; return { ...input, tool: null }; })() : input;
     const assignments = Array.isArray(progress['assignments'])
       ? progress['assignments'].map((entry) => {
           if (!isRecord(entry) || Object.hasOwn(entry, 'createInput')) return entry;
@@ -341,12 +365,15 @@ export function upgradeSessionOperationActionV1(value: unknown): unknown {
           return { ...entry, command: null };
         })
       : progress['understanding'];
+    const approval = Object.hasOwn(progress, 'approval')
+      ? progress['approval'] : (() => { changed = true; return null; })();
     const archive = progress['archiveRequest'];
     const archiveRequest = isRecord(archive) && !Object.hasOwn(archive, 'savedInput')
       ? (() => { changed = true; return { ...archive, savedInput: null }; })()
       : archive;
     if (!changed) return value;
-    return { ...value, progress: { ...progress, assignments, understanding, archiveRequest } };
+    return { ...value, input: nextInput,
+      progress: { ...progress, assignments, understanding, approval, archiveRequest } };
   }
   if (value['kind'] === 'secretary_archive') {
     let changed = false;

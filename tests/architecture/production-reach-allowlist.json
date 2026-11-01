@@ -1373,6 +1373,8 @@
     {"file": "src/core/work-graph/tasks/goal-secretary.ts", "name": "MAX_PAGES", "reason": "kept-for", "note": "slice 7 of the orchestration design (7C-1 L1/N): the kept-for `createGoalSecretary` bound (8 pages of 50), wired with it"},
     {"file": "src/core/work-graph/tasks/goal-secretary.ts", "name": "RootCandidate", "reason": "kept-for", "note": "slice 7 of the orchestration design (7C-1 L1/N): the kept-for `createGoalSecretary` goal-slot row, wired with it"},
     {"file": "src/core/work-graph/tasks/goal-secretary.ts", "name": "readGoalSlot", "reason": "kept-for", "note": "slice 7 of the orchestration design (7C-1 L1/N): the kept-for `createGoalSecretary` bounded goal-slot read, wired with it"},
-    {"file": "src/core/work-graph/tasks/goal-secretary.ts", "name": "createGoalSecretary", "reason": "kept-for", "note": "slice 7 of the orchestration design (7C-1 L1/N): L1 wires the goal-secretary resolver for the overlap note request and the secretary lifecycle; F1 constructs it in its row, so no production caller names it yet"}
+    {"file": "src/core/work-graph/tasks/goal-secretary.ts", "name": "createGoalSecretary", "reason": "kept-for", "note": "slice 7 of the orchestration design (7C-1 L1/N): L1 wires the goal-secretary resolver for the overlap note request and the secretary lifecycle; F1 constructs it in its row, so no production caller names it yet"},
+    {"file": "src/core/work-graph/state/work-handoff-brief.ts", "name": "HandoffBriefRecordedEvent", "reason": "kept-for", "note": "slice 7 of the orchestration design: H's brief state declares the recorded event; 7C-2 L2 consumes it"},
+    {"file": "src/core/work-graph/state/work-handoff-brief.ts", "name": "HandoffBriefConsumedEvent", "reason": "kept-for", "note": "slice 7 of the orchestration design: H's brief state declares the consumed event; 7C-2 L2 consumes it"}
   ]
 }

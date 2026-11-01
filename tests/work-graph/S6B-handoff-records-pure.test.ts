@@ -26,7 +26,7 @@ const transfer = (taskId: string) => ({ task: task(taskId), input: null, receipt
 const shell = { revision: 1, workspaceId: W, phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null };
 
 const handoff = { ...shell, ref: op('h1'), action: { kind: 'handoff',
-  input: { workspace: { projectId: P, workspaceId: W }, source: session('s1'), trigger: 'manual',
+  input: { workspace: { projectId: P, workspaceId: W }, source: session('s1'), trigger: 'manual', tool: null,
     actor: { kind: 'human', id: 'operator' }, commandId: 'c1', fingerprint: 'a'.repeat(64),
     assignments: [{ target: { kind: 'create', duty: 'executor' }, tasks: [task('a'), task('b')] },
       { target: { kind: 'existing', session: session('s2') }, tasks: [] }] },
@@ -34,7 +34,7 @@ const handoff = { ...shell, ref: op('h1'), action: { kind: 'handoff',
     assignments: [{ successor: null, createOperation: null, createInput: null, transfers: [transfer('a'), transfer('b')] },
       { successor: null, createOperation: null, createInput: null, transfers: [] }],
     coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
-    lastRefusal: null } } };
+    approval: null, lastRefusal: null } } };
 const item = (queryJobId: string) => ({ requestRoot: root(queryJobId), input: null, outcome: null, routingRound: null,
   reason: null, cursor: null });
 const archive = { ...shell, ref: op('a1'), action: { kind: 'secretary_archive',

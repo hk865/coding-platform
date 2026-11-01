@@ -182,7 +182,7 @@ function requestWorldOptions(options: S6AWorldOptions): S6AWorldOptions {
   const actor: { kind: 'human'; id: string } = options.actor !== undefined && options.actor.kind === 'human'
     ? { kind: 'human', id: options.actor.id } : { ...OPERATOR };
   return {
-    ...options, scribe: true, extraBindings: S7A_EXTRA_BINDINGS,
+    ...options, scribe: true, extraBindings: [...S7A_EXTRA_BINDINGS, ...(options.extraBindings ?? [])],
     extraHostOptions: { checks: checkConfiguration(actor), ...(options.extraHostOptions ?? {}) },
   };
 }
@@ -627,4 +627,4 @@ export async function cancelS7AGoal(world: S6AHostWorld, goal: GoalRef) {
   }, `s7a-control-cancel-${goal.goalId}`, await goalControlPins(world, goal))), 'the cancel control');
   return { goal: value.goal };
 }
-export { checkConfiguration };
+export { bindingOf, checkConfiguration };

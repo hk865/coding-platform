@@ -151,6 +151,8 @@ function derive(
     coveredByDrop: deriveCoveredByDrop(rounds),
     answers: [],
     candidate: null,
+    reply: false,
+    release: false,
     ...overrides,
   }, bindings);
 }

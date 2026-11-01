@@ -13,6 +13,7 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreError } from '../../../contracts/core/results.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
+import type { HandoffApprovalV1 } from '../../../contracts/handoff.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { QueryJobRef, QueryRunRef, RequestUnderstandingCommandV1 } from '../../../contracts/query-job.js';
 import { sameRef } from './ref-equality.js';
@@ -88,6 +89,11 @@ export function admitHandoff(facts: HandoffAdmissionFactsV1): OperationAdmission
   if (missing >= 0) return guardRefusal('not_found', `assignments[${missing}].target is not a Session of the workspace`);
   if (source.duty === 'unknown') return guardRefusal('invalid', 'the source Session has no known duty, so no target can share it');
   for (const [index, target] of targets.entries()) {
+    // A tool handoff may only select an active executor line; manual and too_long keep their admission.
+    if (facts.trigger === 'tool' && target.kind === 'existing' && target.session.kind === 'present'
+      && (target.session.duty !== 'executor' || target.session.archived || target.session.readonlyCopy)) {
+      return guardRefusal('invalid', `assignments[${index}].target is not an active executor line`);
+    }
     const duty = target.kind === 'create' ? target.duty : target.session.kind === 'present' ? target.session.duty : 'unknown';
     if (duty === 'unknown') return guardRefusal('invalid', `assignments[${index}].target has no known duty`);
     if (duty !== source.duty) {
@@ -112,7 +118,7 @@ export function newHandoffOperationRecord<Ref, Input extends {
           createInput: null,
           transfers: assignment.tasks.map(task => ({ task: task as Task, input: null, receipt: null })) })),
         coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
-        lastRefusal: null,
+        approval: null, lastRefusal: null,
       },
     },
     phase: 'accepted' as const, requestedAt: facts.at, updatedAt: facts.at, observation: null, failure: null,
@@ -252,6 +258,57 @@ export function consumeHandoffBrief<R extends SavedPositionRecord>(
         brief: { ...brief, consumedBy: run } } } } as R,
     guard: { refKey: canonicalKey(record.ref), expectedRevision: record.revision },
   };
+}
+
+/**
+ * Record the accept-time approval card: the operation is at its accept revision, so the transition does not move
+ * the revision (the accept write itself creates revision 1 with this value).
+ */
+export function withHandoffApproval<R extends { action: { progress: { approval: HandoffApprovalV1 | null } } }>(
+  record: R, approval: HandoffApprovalV1,
+): R {
+  return { ...record, action: { ...record.action,
+    progress: { ...record.action.progress, approval } } } as R;
+}
+
+/** The structural record a `handoff.decide` transition writes; state names no model type. */
+type ApprovalRecord = {
+  revision: number;
+  updatedAt: string;
+  phase: 'accepted' | 'running' | 'completed' | 'failed' | 'unknown';
+  action: { progress: {
+    stage: string;
+    approval: HandoffApprovalV1 | null;
+    lastRefusal: unknown;
+    [key: string]: unknown;
+  }; [key: string]: unknown };
+  [key: string]: unknown;
+};
+
+/**
+ * The one `handoff.decide` state change: the pending approval takes the person's verdict and its answer, and a
+ * rejection ends the operation (`failed`, nothing moved on the source). An approve leaves the stage and phase where
+ * they are, so the next advance resumes the normal phases.
+ */
+export function decidedHandoffApproval<R extends ApprovalRecord>(
+  record: R, input: { state: 'approved' | 'rejected'; at: string; commandId: string },
+): R {
+  const progress = record.action.progress;
+  const approval = progress.approval;
+  if (approval === null || approval.state !== 'pending') {
+    throw new Error('decidedHandoffApproval: the operation has no pending approval');
+  }
+  return {
+    ...record,
+    revision: record.revision + 1,
+    updatedAt: input.at,
+    ...(input.state === 'rejected' ? { phase: 'failed' as const } : {}),
+    action: { ...record.action, progress: { ...progress,
+      approval: { ...approval, state: input.state, answer: { at: input.at, commandId: input.commandId } },
+      ...(input.state === 'rejected'
+        ? { lastRefusal: { stage: progress.stage, code: 'invalid', reason: 'the handoff was rejected', at: input.at } }
+        : {}) } },
+  } as R;
 }
 
 /** The structural coverage a `coverageHolds` call judges; state names no model type. */

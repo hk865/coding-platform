@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "f901eee5325697382d6771dff64d718f4ecd868743b0ac9a61b7f113b025d3a2"
+    "sha256": "4d4b8719a0718a389d6ff6716d0f1dd120a9c55fd1a2092a0bc02d71158306f8"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -106,6 +106,22 @@
   {
     "path": "resources/prompts/platform/templates/handoff-brief-secretary.txt",
     "sha256": "d9207c93fb42718ece6b1e70e3bcbb526a28c3782f4e99e680fd366ffc15b6a9"
+  },
+  {
+    "path": "resources/prompts/platform/templates/handoff-write-understanding-executor.txt",
+    "sha256": "9a2052eaa2733fef9dc4fd9204ac2abf5aa6dad7af02572765c5514deec86e69"
+  },
+  {
+    "path": "resources/prompts/platform/templates/handoff-write-understanding-adviser.txt",
+    "sha256": "2866e995a7d717ae0609cb36f6429e8e230b8645116a8b294401eaa4d9e9bf1b"
+  },
+  {
+    "path": "resources/prompts/platform/templates/handoff-brief-executor.txt",
+    "sha256": "fe377f27256035f66a35ba7f32cd1c4aaae54e886b36806884a9440f2197efa6"
+  },
+  {
+    "path": "resources/prompts/platform/templates/handoff-brief-adviser.txt",
+    "sha256": "13847b5c80c917823e061de4dcd4db5c586cd0c44f6f8d26d107d9201bf7b4cb"
   },
   {
     "path": "resources/prompts/platform/templates/base.txt",
@@ -282,6 +298,10 @@
   {
     "path": "resources/prompts/platform/tools/submit_initial_questions.json",
     "sha256": "5dd9daf3528030f5b6cf660c5e34c2d4f18a178c640d8398670a3855f49fc817"
+  },
+  {
+    "path": "resources/prompts/platform/tools/hand_off.json",
+    "sha256": "c97efdbbc64510922a2c0e42c663d6d43cf286dc12c92950e2140d854ce77434"
   },
   {
     "path": "scripts/cpp-source-query.py",

@@ -293,7 +293,7 @@ export async function createB2RuntimeFixture(options: {
     const common={records,reads:executions,roles,bodies,authorizeConfiguration,
       ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId,newId};
     entry=createExecutionEntryService(common);modelRequests=createModelCallService(common);
-    const runReconcile=overrides.runReconcile===true?createRunReconcileService({records,reads:executions,
+    const runReconcile=overrides.runReconcile===true?createRunReconcileService({records,reads:executions,bodies,
       ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId}):undefined;
     return {claims:claimFixture.makeService(records),executions,entry:overrides.entry??entry,modelRequests:overrides.modelRequests??modelRequests,
       roles,plans,sessions,materials,bodies,historyWriter:createExecutionHistoryService({records,now,eventId}),activity,graphHistory:createGraphExecutionHistoryReader({executions,history:activity}),sessionOperations,kernelStores:selectedKernelStores,

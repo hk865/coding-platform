@@ -143,18 +143,20 @@ function configuredHostFactory(original: typeof HOST_FACTORY,
   };
 }
 
-/** Install the configured factory for one real Host start (open or reopen), then restore it. */
-async function withConfiguredHost<T>(run: () => Promise<T>, hostGrant?: S7C1HostGrant): Promise<T> {
+/** Install one complete-configuration Host factory for one real Host start (open or reopen), then restore it. */
+export async function withConfiguredHost<T>(run: () => Promise<T>,
+  configure: (original: typeof HOST_FACTORY) => typeof HOST_FACTORY): Promise<T> {
   const original = HOST_FACTORY;
-  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true });
-  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', {
-    value: configuredHostFactory(original, hostGrant), configurable: true, writable: true });
+  Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
+    { value: configure(original), configurable: true, writable: true });
   try { return await run(); }
-  finally { Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true }); }
+  finally { Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
+    { value: original, configurable: true, writable: true }); }
 }
 
 async function openConfiguredHost(options: S6AHostWorldOptions, hostGrant?: S7C1HostGrant): Promise<S6AHostWorld> {
-  return await withConfiguredHost(() => openS6AHostWorld(options), hostGrant);
+  return await withConfiguredHost(() => openS6AHostWorld(options),
+    original => configuredHostFactory(original, hostGrant));
 }
 
 /** The platform publishes `records` only; the same backend's identity port is captured from its factory. */
@@ -352,7 +354,8 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
 
     return { backend, world, main, goal, plan, tasks, secretary, run, query: queryRound, queryRead, member, holdFirst,
       lines: { module: moduleLine, work: workLine, noCreate: noCreateLine, adviser: adviserLine, scribe: scribeLine,
-        fixed: fixedLine }, reopen: () => withConfiguredHost(() => world.reopen(), options.hostGrant),
+        fixed: fixedLine }, reopen: () => withConfiguredHost(() => world.reopen(),
+          original => configuredHostFactory(original, options.hostGrant)),
       close: async () => {
         try {
           if (releaseFirst !== null) await releaseFirst();

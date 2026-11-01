@@ -50,9 +50,17 @@ import {
   createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createMessageReleaseCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { reworkRequestCardSourceSpec } from '../core/work-graph/communication/decision-source/rework-request.js';
+import {
+  handoffApprovalCard, handoffApprovalCardKey, handoffApprovalClosedReason, handoffApprovalOperationOfSource,
+  handoffApprovalSubjectOf, readHandoffApprovalOperation, readHandoffApprovalOperations,
+  type HandoffApprovalOperationV1,
+} from '../core/work-graph/communication/decision-source/handoff-approval.js';
+import { createHandoffToolEntry } from '../business/workflow/handoff-tool-entry.js';
+import { createHandoffApprovalApplicationAdapter } from '../business/workflow/session-handoff.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
 import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
+import { createContinuationNoticeSource } from '../core/work-graph/views/continuation-notices.js';
 import { createNoteReviewNoticeSource } from '../core/work-graph/views/note-review-notices.js';
 import { createNoticePositionComparator } from '../core/work-graph/views/notice-position.js';
 import { createNoticeDisplayToken } from '../core/work-graph/views/notice-display-token.js';
@@ -148,7 +156,7 @@ import { createMemberService, type MemberRequestPortV1 } from '../core/work-grap
 import { createReworkRequestService } from '../core/work-graph/tasks/rework-requests.js';
 import { REWORK_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/rework-request-codecs.js';
 import { createOverlapGateService, type OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
-import { decisionSourceKey } from '../contracts/goal-decisions.js';
+import { decisionSourceKey, decisionSubjectKey } from '../contracts/goal-decisions.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
@@ -166,6 +174,9 @@ import {
 } from '../core/work-graph/sessions/session-handoff-service.js';
 import { createHandoffBriefPort } from '../core/work-graph/sessions/session-handoff-brief.js';
 import {
+  createHandoffBriefMaterialAssembler, type HandoffBriefAssemblyDeps,
+} from '../core/agent-runtime/handoff-brief-assembly.js';
+import {
   readHandoffFence as readHandoffFenceOf, type HandoffFencePort,
 } from '../core/work-graph/sessions/session-handoff-fence.js';
 import { createSecretaryHandoffFacts } from '../core/work-graph/views/secretary-handoff-facts.js';
@@ -179,7 +190,10 @@ import { readSecretaryHandoffBasis } from '../core/work-graph/tasks/secretary-ha
 import type { HandoffWorkflowDependencies } from '../business/workflow/contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
-  sessionAggregateRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
+  sessionAggregateRefKey, HANDOFF_BRIEF_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
+import {
+  createWorkHandoffBriefRead, type WorkHandoffBriefReadPort,
+} from '../core/agent-runtime/execution-preparation.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -234,7 +248,7 @@ import { createToolCommitLookup } from './tool-commit-lookup.js';
 import type {
   WorkspaceBaselineV1, WorkspaceCaptureV1,
 } from '../contracts/unknown-call-review.js';
-import { SLICE1_LOOKUP_INDEXES } from '../core/work-graph/model/session-facts-contracts.js';
+import { SLICE1_LOOKUP_INDEXES, WORK_EXECUTION_BY_SESSION_LOOKUP } from '../core/work-graph/model/session-facts-contracts.js';
 import { createKernelStoreRegistry } from '../core/agent-runtime/kernel-store-locator.js';
 import { createSessionHistoryCursorOwner, createSessionOperations } from '../core/agent-runtime/session-operations.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
@@ -983,7 +997,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...GOAL_INTERRUPTION_SCHEMAS.records,
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
       ...REWORK_REQUEST_RECORD_SCHEMAS.records,
-      ...INITIALIZATION_ADOPTION_SCHEMAS.records],
+      ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1000,7 +1014,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...GOAL_INTERRUPTION_SCHEMAS.events,
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
       ...REWORK_REQUEST_RECORD_SCHEMAS.events,
-      ...INITIALIZATION_ADOPTION_SCHEMAS.events],
+      ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1017,7 +1031,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...GOAL_INTERRUPTION_SCHEMAS.lookups ?? [],
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
-      ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? []],
+      ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
+      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -1408,6 +1423,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const goalCauseCards = createGoalCauseCardSource(goalDecisionCauseReader);
     const planningQuestionCards = createPlanningQuestionCardSource(planningQuestionReader);
     const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
+    // The `continuation` fact is the existing saved brief of a requeued Run that
+    // actually entered; the callback reads the wrapped Runtime port built below.
+    const continuationNotices = createContinuationNoticeSource({
+      records: backend.records,
+      readBrief: (ctx, input) => runtimePort.readContinuationBrief(ctx, input) });
     // Wiring 2 I-5 (§2.3, L7): the ONE undelivered-reply projector. It reads the
     // SAME directory and mailbox the rest of the platform owns and never commits.
     const undeliveredReplyNotices = createUndeliveredReplyNoticeSource({
@@ -1436,14 +1456,47 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The card-source list is the decision read model's ONE registration point. M's member source exists on this
     // tree; R's rework source is pushed below once its owner is built (the read model holds this array by reference,
     // so both pending-card reads answer `ready` and the Task block sources work). No second card projection exists.
+    // The `handoff_approval` card: the operation's own approval fragment, one projection in the source module; every
+    // phase is listed so a handled card stays in `history`. The card serves the subject its assignments derive — one
+    // Goal or the project — and the collection keeps only that subject's operations.
+    const handoffApprovalCards = createCollectionCardSource<HandoffApprovalOperationV1>({
+      kind: 'handoff_approval',
+      serves: ['goal', 'project'],
+      async readCollection(_ctx, { workspace, subject }) {
+        const read = await readHandoffApprovalOperations(backend.records,
+          { projectId: workspace.projectId, workspaceId: workspace.workspaceId });
+        if (read.status !== 'ready') return read;
+        const wanted = decisionSubjectKey(subject);
+        return { status: 'ready', value: read.value.filter(operation =>
+          decisionSubjectKey(handoffApprovalSubjectOf(operation)) === wanted) };
+      },
+      keyOf: operation => handoffApprovalCardKey(operation),
+      project: operation => handoffApprovalCard(operation),
+      closedReasonOf: operation => handoffApprovalClosedReason(operation),
+      async readByKey(_ctx, { source }) {
+        const operationRef = handoffApprovalOperationOfSource(source);
+        if (operationRef === null) {
+          return { status: 'rejected', code: 'invalid', reason: 'the handoff approval source names no operation' };
+        }
+        const read = await readHandoffApprovalOperation(backend.records, operationRef);
+        if (read.status !== 'ready') return read;
+        if (read.value === null) return { status: 'ready', value: null };
+        if (decisionSubjectKey(handoffApprovalSubjectOf(read.value)) !== decisionSubjectKey(source.subject)) {
+          return { status: 'ready', value: null };
+        }
+        const closed = handoffApprovalClosedReason(read.value);
+        return { status: 'ready', value: closed === null
+          ? { item: read.value } : { closed, openedAt: read.value.requestedAt } };
+      },
+    });
     const decisionCardSources = [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
-      commandRerunRequestCards, messageReleaseCards,
+      commandRerunRequestCards, messageReleaseCards, handoffApprovalCards,
       createMemberCreationCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: decisionCardSources,
       noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices,
-        createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts })],
+        createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts }), continuationNotices],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
@@ -1602,7 +1655,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
     // classifier reads the Kernel through the same history owner the observer uses.
     const runReconcile: RunReconcileService = createRunReconcileService({ records: backend.records, reads: executionReader,
-      ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
+      bodies, ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
     // Slice 2B §2/P1: the WorkGraph RunActivity write and backfill candidate
     // reader. The end commits write the record through their own `records`
     // dependency; this owner is what the Workflow backfill and the activity
@@ -1728,6 +1781,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const modelRequests = createModelCallService(entryDependencies);
       const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff'> & {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
+        /** H: record 5's readiness read into Work preparation. */
+        handoffBriefs: WorkHandoffBriefReadPort;
       } = {
         claims, executions: executionReader, entry, historyWriter, modelRequests,
         // The same owners the rest of the platform publishes: M's member request
@@ -1760,6 +1815,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(secretaryFacts === undefined ? {} : { secretaryFacts }),
         // SR3 item 6/§8.3: the SAME hand-off facts owner the lifecycle publishes, read once per successor round.
         handoff: { readBriefState: (ctx, input) => handoffFacts.readBriefState(ctx, input) },
+        // H: record 5's readiness read, over the SAME record backend and Session
+        // operations owner the handoff lifecycle uses.
+        handoffBriefs: createWorkHandoffBriefRead({ records: backend.records, operations: sessionDirectory }),
         memoryMaterial,
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: continuationWorkspaceSource,
@@ -2208,17 +2266,28 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The two lifecycle operation owners: the handoff (accept + advance) and the manual archive (accept + advance).
     // Played as one member each; the Workflow's composite drives them and the routes only accept.
     const handoffAccept = createSessionHandoffService({ records: backend.records, sessions: sessionDirectory,
-      duty: sessionDutyResolver, now });
+      duty: sessionDutyResolver, goals: rawGoalSettings, commitIdentities: rawBackend.commitIdentities, now });
+    // H: the successor step's complete-material seam. The assembly's note and
+    // decision readers are built later in this root, so the adapter holds them
+    // once they exist and is only called once an advance reaches the successor
+    // stage (after construction).
+    let handoffBriefAssembly: HandoffBriefAssemblyDeps | null = null;
+    const handoffBriefsMaterial = createHandoffBriefMaterialAssembler({
+      records: backend.records, sessions: sessionDirectory, executions: executionReader,
+    }, () => handoffBriefAssembly);
     const handoffAdvance = createSessionHandoffAdvanceService({
       records: backend.records, commitIdentities: rawBackend.commitIdentities, operations: sessionDirectory,
       coverage: handoffFacts, basis: (session, scope) => readHandoffBasis(lifecycleReadContext(scope), session),
       requests: rawRequestRounds, transfers: sessionResponsibility, archive: sessionLifecycle,
-      duty: sessionDutyResolver, now,
+      duty: sessionDutyResolver, brief: handoffBriefsMaterial, now,
     });
     /** The one handoff owner the routes accept through and the Workflow advances: the same instance, never a second. */
     const handoff: SessionHandoffPort = {
       acceptHandoff: (ctx, input) => trackedCall(() => handoffAccept.acceptHandoff(ctx, input), unavailable),
       advanceHandoff: (ctx, input) => trackedCall(() => handoffAdvance.advanceHandoff(ctx, input), unavailable),
+      decideHandoff: (ctx, input) => trackedCall(() => handoffAdvance.decideHandoff(ctx, input), unavailable),
+      lookupToolCommit: (ctx, input) => trackedCall(() => handoffAccept.lookupToolCommit(ctx, input),
+        () => ({ status: 'undetermined', reason: 'the platform is closed' })),
     };
     const archive = createSecretaryArchiveService({ records: backend.records,
       commitIdentities: rawBackend.commitIdentities, operations: sessionDirectory,
@@ -2379,6 +2448,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       runTask: createNoteRunTaskResolver(backend.records),
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
     boundNoteReads = noteReads;
+    // H: the assembly reads the SAME history, records, note, decision and Query
+    // execution owners the rest of this root publishes. A platform without a
+    // Runtime has no Query execution reader; the successor step then answers
+    // `unavailable` rather than fabricating answers.
+    if (queryExecution !== undefined) {
+      handoffBriefAssembly = { history: historyOwner, records: backend.records, notes: noteReads,
+        decisions: rawDecisionReads, queryExecution };
+    }
+    // The `hand_off` tool entry closes over this platform's own reads: the tool-group context (`CoreCallContext`)
+    // carries no port, and each platform keeps its own entry so no installation can overwrite another's.
+    const handoffEntry = createHandoffToolEntry({ handoff, notes: noteReads,
+      plans: (_ctx, goalRef) => readGoalPlanWindow(backend.records, goalRef),
+      sessions: sessionDirectory, sessionFacts, duty: sessionDutyResolver });
     // Slice 4C-2 U8 (§11.4/L20): the ONE memory-material read reaches the
     // extensions reader through the SAME deps object created above; the caller
     // still picks the parts. §11.5: the narrow update-due and scribe to-do
@@ -2670,6 +2752,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         member_creation: createMemberCreationApplicationAdapter(memberService.decision),
         rework_request: createReworkRequestApplicationAdapter({
           reworks: reworkRequestService, applicationReceipt }),
+        // The `handoff_approval` row: the person's answer becomes `handoff.decide` under the application commandId.
+        handoff_approval: createHandoffApprovalApplicationAdapter(handoff),
       },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end

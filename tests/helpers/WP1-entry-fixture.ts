@@ -338,6 +338,7 @@ export async function revokeUnentered(fixture: GoalContentEntryFixture, authoriz
   }), 'GE05 begin (stop before entering)');
   const reconcile = createRunReconcileService({ records: fixture.base.records,
     reads: createRunStateReader({ records: fixture.base.records, bodies: fixture.b2.bodies }),
+    bodies: fixture.b2.bodies,
     hostInstance: { hostInstanceId: 'wp1-ce-host', lease: 'owned' }, now, eventId: () => 'wp1-ce-ge05-reconciled' });
   const revoked = committed(await reconcile.reconcileRun(fixture.ctx, {
     input: { runRef: fixture.claim.runRef, basis: { kind: 'host_instance_takeover', hostInstanceId: 'wp1-ce-host' },
@@ -403,6 +404,7 @@ export async function openAnomalyReaderFixture(kind: ClaimFixtureKind): Promise<
     if (intentRef === undefined) throw new Error('AN07 archive did not submit its cancel');
     const reconcile = createRunReconcileService({ records: base.records,
       reads: createRunStateReader({ records: base.records, bodies: execution.bodies }),
+      bodies: execution.bodies,
       hostInstance: { hostInstanceId: 'wp1-ce-an07-host', lease: 'owned' }, now, eventId: () => 'wp1-ce-an07-stopped' });
     // The same trusted clean takeover observation as S1-archive-flow:stopArchiveWork.
     // archiveLine has already called Runtime.deliverControl; with no live handle

@@ -231,6 +231,7 @@ describe('the existing input templates stay byte-identical and keep their orders
         expect(workPreparedSectionOrder()).toEqual({
             work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
             continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
+            handoff: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
         });
         expect(queryPreparedSectionOrder().planning).toEqual(['role', 'goal', 'task', 'footprint']);
         expect(queryPreparedSectionOrder().copy).toEqual(['role', 'goal', 'task']);

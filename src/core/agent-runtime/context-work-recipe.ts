@@ -6,6 +6,8 @@ import {
   ContinuationBriefCapacityError, continuationBriefDigest, renderContinuationBriefZh,
   type ContinuationBriefV1,
 } from '../../contracts/continuation-brief.js';
+import type { HandoffBriefBindingV1, HandoffBriefMaterialV1 } from '../../contracts/handoff-brief.js';
+import { renderHandoffBriefZh } from '../../contracts/continuation-brief-render.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ArchitectureReminderFactsV1 } from '../../contracts/architecture-observation.js';
 import type { PreparedTaskManifestV1, UnknownCallReviewInputV1 } from '../../contracts/core/prepared-execution.js';
@@ -57,6 +59,12 @@ export async function assembleWorkContext(
     toolNames: readonly string[];
     /** Ruling 14 C6: the real completed boundary Q read once at preparation. */
     history: ContextWorkHistoryInputV1;
+    /**
+     * H: record 5's frozen binding and material. Present only on the successor's
+     * first Work Run (no `requeueRef`, no review purpose); the recipe renders it
+     * with `renderHandoffBriefZh` into the `continuation` section.
+     */
+    handoff?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1 };
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
@@ -267,6 +275,16 @@ export async function assembleWorkContext(
   // structurally; its history source is the original Run (L12), never a
   // TaskRequeue.
   const reviewPurpose = run?.purpose?.kind === 'unknown_call_review' ? run.purpose : undefined;
+  // H: the successor's first Work Run renders the frozen handoff material into
+  // the SAME `continuation` section, under the `handoff` call kind. A requeue or
+  // review-purpose Run keeps its own brief; the two are never offered together.
+  let handoffBrief: AssembledContextV1['handoffBrief'] = null;
+  if (input.handoff !== undefined && run?.requeueRef === undefined && reviewPurpose === undefined) {
+    const rendered = renderHandoffBriefZh(input.handoff.material, texts);
+    continuationSuffix = rendered;
+    handoffBrief = { binding: input.handoff.binding, material: input.handoff.material,
+      renderedDigest: sha256Hex(rendered) };
+  }
   if (reviewPurpose !== undefined) {
     const assembledReview = await assembleReviewForContext(
       deps, ctx, execution, reviewPurpose, texts, input.toolNames);
@@ -286,7 +304,9 @@ export async function assembleWorkContext(
     sessionBasis,
     hasCompletedCursor: input.history.hasCompletedCursor,
   });
-  const callKind = continuationSuffix === null ? 'work' : 'continuation';
+  const callKind = handoffBrief === null
+    ? continuationSuffix === null ? 'work' : 'continuation'
+    : 'handoff';
   const sectionOrder = sectionOrderFor(callKind, 'work-input', texts);
   const rendered = renderContext({
     prelude: workContextPrelude(texts),
@@ -344,6 +364,7 @@ export async function assembleWorkContext(
   return {
     status: 'ready',
     value: { input: rendered.input, binding, continuationBrief, sessionBasis, selectedTaskInputs,
+      ...(handoffBrief === null ? {} : { handoffBrief }),
       ...(anomalyAnchorRefs === null ? {} : { anomalyAnchorRefs }),
       ...(unknownCallReview === undefined ? {} : { unknownCallReview }),
       takesSessionHistory, renderMaterial: rendered.material },

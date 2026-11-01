@@ -1,0 +1,8 @@
+{
+  "description": "Session handoff: hand_off. Hand your own line, or an executor line of your goal as an adviser, to a new line whose duty follows the source, or an existing executor line. The source Run must have recorded an understanding note on a handed goal or stage anchor first; without one the result is incomplete and nothing is written. The result says whether the handoff is accepted, waiting for the person's approval, incomplete, or refused; it is not the handoff completing.",
+  "parameters": {
+    "source": "必填：交出的 Session 线",
+    "assignments": "Non-empty array of {target, tasks}: target is {kind:\"create\",duty:\"executor\"|\"adviser\"} or {kind:\"existing\",session}; every task must hold an open responsible link on the source",
+    "reason": "Why this line is handed over"
+  }
+}

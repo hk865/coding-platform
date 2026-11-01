@@ -376,7 +376,7 @@ async function attestedStop(f: HandoverBase): Promise<void> {
   await f.b2.enter();
   await unknownWork(f.b2, f.now);
   const reconcile = createRunReconcileService({ records: f.base.records,
-    reads: f.composition1.reads, hostInstance: { hostInstanceId: 'fx3-host', lease: 'owned' },
+    reads: f.composition1.reads, bodies: f.b2.bodies, hostInstance: { hostInstanceId: 'fx3-host', lease: 'owned' },
     now: f.now, eventId: () => f.requestId('attestation-event') });
   // run-reconcile-service.ts:512-548; same inputs as S1 archive IT26:596.
   // The human Host owns the instance lease; unknown_attested != interrupted_clean.

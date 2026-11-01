@@ -17,7 +17,6 @@ import type { CoreRejection, ReadResult } from '../../../contracts/core/results.
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { NoticePositionV1 } from '../../../contracts/goal-decisions.js';
 import { messageOf } from '../../../contracts/error-message.js';
-import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type {
@@ -32,6 +31,7 @@ import {
   CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord,
 } from '../sessions/session-record-codecs.js';
 import { advanceWriteKeys, handoffRecordedEvent, savedHostPrincipal } from '../sessions/session-handoff-service.js';
+import { handoffApprovalSubjectOf } from '../communication/decision-source/handoff-approval.js';
 import { compareNoticePositions } from './notice-position.js';
 import { readWatermark } from './goal-conflicts.js';
 
@@ -117,7 +117,6 @@ async function readHandoffNoticePage(
 ): Promise<ReadResult<DecisionSourcePageV1<NoticeItemV1>>> {
   const watermarkRead = await readWatermark(records);
   if (watermarkRead.status !== 'ready') return watermarkRead;
-  if (input.goalRef !== undefined) return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: watermarkRead.value } };
   const items: NoticeItemV1[] = [];
   for (const phase of NOTICE_PHASES) {
     let batch;
@@ -135,6 +134,15 @@ async function readHandoffNoticePage(
       const operation = decoded.value;
       if (operation.action.kind !== 'handoff') continue;
       if (operation.action.progress.noticeItemKey === null) continue;
+      const subject = handoffApprovalSubjectOf(operation as SessionOperationRecordOf<HandoffActionV1>);
+      // A Goal-scoped item is returned only by that Goal's read, and the project
+      // read returns only project-scoped items: the two reads are disjoint, so
+      // the merge can never see one `itemKey` twice.
+      if (input.goalRef !== undefined) {
+        if (subject.kind !== 'goal' || subject.goalRef.goalId !== input.goalRef.goalId) continue;
+      } else if (subject.kind === 'goal') {
+        continue;
+      }
       const read = await noticePositionOf(records, ctx, operation as SessionOperationRecordOf<HandoffActionV1>);
       if (read.status !== 'ready' || read.value === null) {
         return read.status === 'ready' ? rejected('unavailable', 'the notice position is missing') : read;
@@ -142,7 +150,7 @@ async function readHandoffNoticePage(
       items.push({
         itemKey: operation.action.progress.noticeItemKey,
         category: 'handoff',
-        subject: { kind: 'project', projectRef: { projectId: input.workspace.projectId } },
+        subject,
         position: read.value.position,
         summary: summaryOf(operation as SessionOperationRecordOf<HandoffActionV1>, read.value.occurredAt),
         objects: [],

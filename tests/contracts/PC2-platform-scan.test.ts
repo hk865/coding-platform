@@ -18,6 +18,7 @@ import { REQUEST_COMMAND_RERUN_TOOL_NAMES } from '../../src/core/agent-runtime/c
 import { GRAPH_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
 import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
 import { ANSWER_TOOL_NAMES } from '../../src/core/agent-runtime/answer-tools.js';
+import { HANDOFF_TOOL_NAMES } from '../../src/core/agent-runtime/handoff-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from '../../src/core/agent-runtime/member-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../../src/core/agent-runtime/readonly-command-tool.js';
 import { READ_REQUESTS_TOOL_NAMES } from '../../src/core/agent-runtime/request-read-tools.js';
@@ -46,6 +47,7 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     ...ANSWER_TOOL_NAMES,
     ...READ_REQUESTS_TOOL_NAMES,
     ...REWORK_TOOL_NAMES,
+    ...HANDOFF_TOOL_NAMES,
     CREATE_MEMBER_TOOL_NAME,
     READONLY_COMMAND_TOOL_NAME,
 ]);
@@ -107,7 +109,7 @@ describe('PC-19 platform tool-name scan (ruling 18)', () => {
             + GRAPH_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
             + ANSWER_TOOL_NAMES.length + READ_REQUESTS_TOOL_NAMES.length + 1
-            + REWORK_TOOL_NAMES.length + 1);
+            + REWORK_TOOL_NAMES.length + 2);
         for (const name of Object.keys(PACK.manifest.tools)) expect(EVERY_TOOL_NAME.has(name)).toBe(true);
     });
 

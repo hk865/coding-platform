@@ -15,6 +15,7 @@
  * directory order the row pages (page 1, a real send, then page 1's last key as `page.afterSessionKey`).
  */
 import * as hostModule from '../../src/app/host.js';
+import type { AttentionScopeV1 } from '../../src/app/attention-observer.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
@@ -24,7 +25,7 @@ import { AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, graphWrite, p
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions } from './S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING, S6A_AT, S6A_SECRETARY_PROFILE_ID,
-  type S6ASession, type S6AWorldOptions } from './S6A-request-fixture.js';
+  type S6ABackend, type S6AExtraBinding, type S6ASession, type S6AWorldOptions } from './S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
 import { committed, pauseS7AGoal, ready, replyS7AMessage, S7A_REPLY_TOOLS, sessionOf } from './S7A-fixture.js';
 import { expireS7BWait, listed, sendS7BWaitingInquiry } from './S7B-fixture.js';
@@ -232,10 +233,14 @@ async function openConsumeHostWorld(options: S6AHostWorldOptions): Promise<S6AHo
     }
   }
 }
-export async function openS7B2ConsumeWorld(): Promise<S7B2ConsumeWorld> {
-  const world = await openConsumeHostWorld({ backend: 'memory',
-    extraBindings: [S7A_REPLY_TOOLS, { ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] }],
-    extraHostOptions: { inputConsumers: [{ scope: S6A_SCOPE,
+export async function openS7B2ConsumeWorld(options: { backend?: S6ABackend;
+  attention?: readonly AttentionScopeV1[]; extraBindings?: readonly S6AExtraBinding[] } = {})
+  : Promise<S7B2ConsumeWorld> {
+  const world = await openConsumeHostWorld({ backend: options.backend ?? 'memory',
+    extraBindings: [S7A_REPLY_TOOLS, { ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] },
+      ...(options.extraBindings ?? [])],
+    extraHostOptions: { ...(options.attention === undefined ? {} : { attention: options.attention }),
+      inputConsumers: [{ scope: S6A_SCOPE,
       sessionRef: { projectId: S6A_SCOPE.projectId, sessionId: 's7b2-consume-period' },
       goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: 's7b2-consume-period' },
       queryProfileId: S6A_SECRETARY_PROFILE_ID, heartbeatMs: 25 }] } });

@@ -63,9 +63,10 @@
 - `note-views.ts` — `NoteCheckPort`：注记的 freshness、changedFiles、冲突、配额等派生字段。
 - `note-review-notices.ts` — `note_review` 请知悉来源：三类注记版本流；`goalId: null` 的版本是项目 subject 的行，按绑定的项目作用域读，Goal 过滤页不收。
 - `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮。
-- `handoff-notices.ts` — `handoff` 请知悉来源：每个走到通知写的交接操作一项；位置由 `noticePositionOf` 从操作保存的 Host principal、workspace、通知键和 `advanceGeneration` 重建原写身份并读回执与事件，缺回执或校验不符为 `unavailable`，绝不给无位置条目。
+- `handoff-notices.ts` — `handoff` 请知悉来源：每个走到通知写的交接操作一项；位置由 `noticePositionOf` 从操作保存的 Host principal、workspace、通知键和 `advanceGeneration` 重建原写身份并读回执与事件，缺回执或校验不符为 `unavailable`，绝不给无位置条目。item 的 subject 直接调用 `communication/decision-source/handoff-approval.ts` 的 `handoffApprovalSubjectOf`（恰好一个 Goal 是 `{kind:'goal'}`，两个以上或没有 Task 是项目），审批卡和通知共用这一份规则；项目读只出项目 subject、Goal 读只出该 Goal 的条目，两读按构造不相交，合并不会重复同一个 `itemKey`。
 - `undelivered-reply-notices.ts` — `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复。
 - `disconnect-notices.ts` — `disconnect` 请知悉来源：未消费等待的两侧与发往已归档/已停用线的消息各一项；`readDisconnectFacts` 是同一条纯事实读，Host 的断开通知构建器也用它。归档线的位置是原消息的 `since`，停用线的位置是绑定的 `unavailableSince`，时间只取该位置事件的 `occurredAt`；不存通知、不写、不取时钟。导出 `DISCONNECT_PAGE_LIMIT`、`disconnectOperationKeyOf`、`disconnectItemKey`；前两个只用于本来源的页宽和操作键，item key 由操作键、消息和被断开的一侧组成。
+- `continuation-notices.ts` — `continuation` 请知悉来源：中断后实际入场的新 Run，读现有接续说明只取 `resume_after_interruption`；同一 Run 一条，位置是首次入场的提交，内容链接前后两次 Run；前一 Run 的 `takeover_unresolved`（RUN-25）保留 `automatic_rework` 的“自动恢复”，不重复；按已看位置增量读，坏记录或读失败原样返回。
 - `notice-display-token.ts` — 请知悉展示页的 HMAC token；密钥由 composition 注入。
 - `notice-grouping.ts` — 请知悉分组的唯一纯函数与 seenThrough 推进；折行与筛选都按带标记的 `decisionSubjectKey`（一个 Goal 或一个项目各折各的），主对话把每个 subject 的自动返工折成一行，`noticePage` 放指定 subject 的行；推进仍按全部显示行的连续前缀算，别的 subject 的行挡住就不越过。
 - `notice-position.ts` — `NoticePositionV1` 的唯一排序与分页合并点。
@@ -104,8 +105,10 @@
 | `createNoteReviewNoticeSource` | `src/core/work-graph/views/note-review-notices.ts:51` | `note_review` 请知悉来源：三类版本流，按已看位置增量读；`goalId: null` 的版本是项目 subject 的行，Goal 过滤页不收 | 装配请知悉来源时 |
 | `createUndeliveredReplyNoticeSource` | `src/core/work-graph/views/undelivered-reply-notices.ts:62` | `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复 | 装配请知悉来源时 |
 | `createDisconnectNoticeSource` | `src/core/work-graph/views/disconnect-notices.ts:172` | `disconnect` 请知悉来源：等待两侧或发往已归档/停用线的消息，按已看位置增量读；Goal 过滤页只收该 Goal 的行 | 装配请知悉来源时 |
+| `createContinuationNoticeSource` | `src/core/work-graph/views/continuation-notices.ts:57` | `continuation` 请知悉来源：已入场、带接续说明且 `mode` 为 `resume_after_interruption` 的新 Run，一条；前一 Run 的 `takeover_unresolved`（RUN-25）不重复 | 装配请知悉来源时 |
 | `readDisconnectFacts` | `src/core/work-graph/views/disconnect-notices.ts:77` | 唯一的断开事实读：一次消息窗口、一次后继读，返回两侧与停用时间；不写、不取时钟 | 请知悉来源与 Host 的断开通知构建器共用，不要另扫 wait |
 | `readOrderedToEnd` | `src/core/work-graph/views/automatic-rework-notices.ts:93` | 从保存的提交位置把有序索引读到尾（可选下界，分页） | 请知悉来源要按提交位置做增量读时 |
+| `paginateAssembled` | `src/core/work-graph/views/automatic-rework-notices.ts:297` | 把已组装的一页按页宽和游标切片，三个请知悉来源共用的分页正本 | 请知悉来源分页时；不要另写副本 |
 | `createNoticePositionComparator` | `src/core/work-graph/views/notice-position.ts:37` | 把唯一顺序注入决定读模型 | 组装决定读模型时 |
 | `compareNoticePositions` | `src/core/work-graph/views/notice-position.ts:42` | 按 ledger 游标再按 `itemKey` 比较两个位置 | 任何需要通知顺序时；唯一允许解析 ledger 游标的位置 |
 | `mergeNoticePages` | `src/core/work-graph/views/notice-position.ts:56` | 把各来源已过滤的页稳定合并，截到 limit，返回每类已显示位置 | 决定队列合并请知悉来源时 |
@@ -118,7 +121,7 @@
 | `readGoalFootprint` | `src/core/work-graph/views/goal-conflicts.ts:350` | 一个 Goal 的足迹：计划模块 + 已执行文件映射 | 冲突判断、执行影响展示 |
 | `mapExecutedFilesToModules` | `src/core/work-graph/views/goal-conflicts.ts:440` | 已执行路径按架构目录做最长合法段匹配；无唯一主人保持 `unmapped` | 需要把文件映射到 `ModuleRef` 时；不要按名字猜 |
 | `createSecretaryHandoffFacts` **正本** | `src/core/work-graph/views/secretary-handoff-facts.ts:264` | 覆盖、路由集、简报状态与简报引用的唯一读取：完整分页打开请求、每根走 owner 读、每个 Goal 读 CurrentPointer/NoteHead/NoteVersion（正文一次解码），返回一个首读 horizon；路由集 `closed:true` 只在本次读完整时给出；`readBriefState` 只在归档成功且路由集完整后给 `ready`，否则 `waiting`；`readBriefGoalRefs` 给推进返回每 Goal 的 saved 引用 | 推进的 coverage/fence/recheck/routing 扫描、brief 引用与后继轮的准备；不要另写覆盖、路由或简报读 |
-| `createHandoffNoticeSource`、`noticePositionOf` | `src/core/work-graph/views/handoff-notices.ts:168`、`:53` | `handoff` 请知悉来源与单条位置读：每个操作一项，位置是原通知写的提交；身份只用操作保存的 actor/workspace/键/generation 重建 | I1 注入 `createDecisionReadModel` 的 `noticeSources`；只读，不写记录或事件 |
+| `createHandoffNoticeSource`、`noticePositionOf` | `src/core/work-graph/views/handoff-notices.ts:176`、`:53` | `handoff` 请知悉来源与单条位置读：每个操作一项，位置是原通知写的提交；身份只用操作保存的 actor/workspace/键/generation 重建；subject 取 assignments 的 Task Goal（恰好一个 Goal 才按 Goal，否则项目），项目读与 Goal 读不相交 | I1 注入 `createDecisionReadModel` 的 `noticeSources`；只读，不写记录或事件 |
 | `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:549` | 秘书请求轮准备事实的唯一读取：请求轮材料（含执行轮与批轮各自的理解命令投影）与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals、唯一的 `briefRef`/`understandingGrants` 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史、治理指针或重算授权集 |
 | `workspaceScopeProblem` | `src/core/work-graph/views/goal-conflicts.ts:94` | 在任何记录读之前比较显式 workspace 与 `ctx` 范围 | 每个显式 workspace 输入的读 |
 | `listWorkspaceGoals` | `src/core/work-graph/views/goal-conflicts.ts:121` | 读完一个 workspace 的 Goal 集合，带 watermark 与 truncated | 需要 Goal 全集的读 |
@@ -145,7 +148,7 @@
 | `readQueryRunByRef` | `src/core/work-graph/tasks/line-clock.ts:117` | 按精确 ref 读 QueryRun，拒绝跨 workspace | 已持有 QueryRun ref 时 |
 | `copyPhase` | `src/core/work-graph/tasks/line-clock.ts:172` | 只读副本的 phase 与 Query 开始时刻 | 线详情要展示副本状态时 |
 
-`goal-conflicts.ts:45`、`src/core/work-graph/persistence/read-result-failures.ts:22`、`src/core/work-graph/persistence/read-result-failures.ts:40` 只是转出 `persistence` 的 `atLeastCursorResult`、`storeFailureToRejection`、`lookupAll` 和 `tasks/goal-basis.ts` 的 `goalDecisionBasis`；新代码从原位置 import。
+`goal-conflicts.ts:45`、`src/core/work-graph/persistence/read-result-failures.ts:22`、`src/core/work-graph/persistence/read-result-failures.ts:45` 只是转出 `persistence` 的 `atLeastCursorResult`、`storeFailureToRejection`、`lookupAll` 和 `tasks/goal-basis.ts` 的 `goalDecisionBasis`；新代码从原位置 import。
 
 ## 内部用
 

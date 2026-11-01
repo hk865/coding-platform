@@ -382,7 +382,7 @@ export async function openK3ReviewCardWorld(
     conflicts: createGoalConflictAssembler({ records,
       catalog: createArchitectureCatalogService({ records }), executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
-  createRunReconcileService({ records, reads,
+  createRunReconcileService({ records, reads, bodies: fixture.bodies,
     hostInstance: { hostInstanceId: 'k3-review-card-host', lease: 'owned', takeover: { kind: 'hl01_no_lock' } },
     now: () => T, eventId: () => `k3-review-card-event-${String(nextSequence())}` });
 

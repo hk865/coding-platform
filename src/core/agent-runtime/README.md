@@ -59,7 +59,7 @@
 
 ### 工具注册与工具实现
 做工具组装配和每个 Kernel 工具实现的去这组。
-- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.answerTools` 可为 `null`/`secretary`/`initial`：只有两个 Query 调用按冻结的 `executionKind` 给出，`finalToolNamesOf` 把提交工具名追加在既有扩展名之后，Work 不传、行为不变。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`WorkToolGroupInput.mailbox` 是完整 `SessionMessageCommandPort`；未绑定的检查在 mailbox/decision 分支内，只选用户决策工具同样要求它。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。 7C-1 的 Work 工具组还注册 `create_member`、`request_rework`、`request_recheck` 与秘书的 `read_requests`：成员名字要求 `memberCreation`，返工两名要求 `claims.requeueTask` 与 `evidence.reverifyRound`，缺依赖的名字保留为 `unsupported` 而不是被丢掉。
+- `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.answerTools` 可为 `null`/`secretary`/`initial`：只有两个 Query 调用按冻结的 `executionKind` 给出，`finalToolNamesOf` 把提交工具名追加在既有扩展名之后，Work 不传、行为不变。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`WorkToolGroupInput.mailbox` 是完整 `SessionMessageCommandPort`；未绑定的检查在 mailbox/decision 分支内，只选用户决策工具同样要求它。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。 7C-1 的 Work 工具组还注册 `create_member`、`request_rework`、`request_recheck` 与秘书的 `read_requests`：成员名字要求 `memberCreation`，返工两名要求 `claims.requeueTask` 与 `evidence.reverifyRound`，缺依赖的名字保留为 `unsupported` 而不是被丢掉。`hand_off` 只由 `...HANDOFF_TOOL_NAMES` 进入已知名集合；`WorkToolGroupInput.handoffs`/`duty` 缺一个或正式 duty 不是 executor/adviser 时，选中的名字在模型前 `unsupported`，`finalToolNamesOf` 里 `handoffNames` 按 Work-only 规则跟随 `mailboxNames`。
 - `exploration-tools.ts` — 源码探索工具组。
 - `graph-tools.ts` — `look_graph`/`find_graph` 只读图工具，`success`/`rejectedResult` 是各工具共用的结果构造（提交工具也直接用它们）；`goalRef` 可为 `null`（请求无目标时的项目读分支）。`history` 模式没有可信目标时以 `invalid`“this request has no goal”拒绝，不拿别的目标的历史。
 - `answer-tools.ts` — 秘书填表式回答（97-3）的三个提交工具。`ANSWER_TOOL_NAMES` 是名字清单；`createAnswerTools` 按冻结的 manifest 事实每轮建 zod schema（只在无 `effectiveGoalId` 的轮次出现 `goalCardDrafts`/`planDraftIndex`），处理器不写任何东西：`buildAnswerText` 把表单拼成今天的 v1/v2 协议文本并填入版本、`phase: "pending"`、`requireDag` 与每个 ref 的项目号；`answerProblems` 是检查入口；`answerSubmitNamesIn`/`answerToolsOf` 从冻结的工具名和执行种类取名字；`createAnswerToolBarrier` 在收下的提交组后 `yield`；`submittedAnswerArgumentsOf` 按 transcript 找第一条成功的提交调用参数，观察侧用同一 `buildAnswerText` 重建。
@@ -67,10 +67,11 @@
 - `whiteboard-tools.ts` — 白板/未来计划工具。
 - `communication-tools.ts` — SessionMailbox 与用户决策工具。`SessionMailboxToolsConfig.mailbox` 是完整 `SessionMessageCommandPort`；`SESSION_MAILBOX_TOOL_NAMES` 的第七个名字是 `withdraw_session_message`（`{ messageRef }`，owner 自己钉当前版本），`SECRETARY_QUERY_MAILBOX_TOOL_NAMES` 是秘书请求轮可选的四个（`send`/`ack`/`respond`/`withdraw`）；`send_session_message` 带 `expected`/`taskRef`/`followupOf`/`deadlineMs`，没有 `goalRef`；`respond_session_message` 是扁平的两臂 `{ messageRef, expectedRevision, text } | { messageRef, expectedRevision, reject: true, reason }`。
 - `member-tools.ts` — `create_member` 的模型适配器。`CREATE_MEMBER_TOOL_NAME` 与 `CreateMemberToolsConfig` 绑定 M 的 `requestMember`、可信上下文、Work Run 或秘书轮的 caller 和命令身份；严格 schema 只要 `duty`、`scope.task`、`reason` 和可选的 `acknowledgement`，字节上限和准入都在 member service；四种成功结果原样交给 `success`，`rejected` 保留原码。
+- `handoff-tools.ts` — `hand_off` 的模型适配器。`HANDOFF_TOOL_NAMES` 只是 `HAND_OFF_TOOL_NAME` 的单名清单；`HandoffRequestPort` 是 H 的 `requestHandoff` 的结构端口（`caller` 带 agent actor、session、run、duty），`createHandoffTools` 从可信 `work_run` 上下文快照 principal，用 `agentActorOf` 派生 caller actor，把 `{commandId, caller, source, assignments, reason}` 原样交给 owner，并把 `incomplete`/`accepted`/`needs_decision`、`CoreRejection`、取消与抛错映射到冻结的 Kernel 结果；它不加批准、理解检查或状态规则。
 - `request-read-tools.ts` — 秘书的只读 `read_requests` 适配器（`READ_REQUESTS_TOOL_NAME`、`READ_REQUESTS_TOOL_NAMES`）。经 `MainSurfaceReadPort.readMainPage` 读一个 Goal 或无目标视图（一页 20 个）或经 `readRequestView` 读一个 `requestRoot`；只投影请求字段，每轮答案按共用的 2 KiB 截断并附包内省略行；不读卡片、通知或已读位置，也不写。
 - `session-discovery-tools.ts` — Session 发现工具（已弃用，保留旧 Run 行为）。
 - `unknown-call-review-tools.ts` — review 轮的记录与更安全方案工具。
-- `command-rerun-tools.ts` — `request_command_rerun` 工具。
+- `command-rerun-tools.ts` — `request_command_rerun` 工具；本文件导出三个结果构造正本 `noneEffects`、`success`、`failed`，其他工具适配器直接复用。
 - `readonly-command-tool.ts` — `run_readonly_command` 沙箱工具、注册与选项。
 - `rework-tools.ts` — `request_rework`/`request_recheck` 的 Work 工具：`REQUEST_REWORK_TOOL_NAME`、`REQUEST_RECHECK_TOOL_NAME` 与 `REWORK_TOOL_NAMES` 是固定名单，`createReworkTools` 按 `claims.requeueTask`/`evidence.reverifyRound` 建两个薄适配器，命令身份由工厂按调用绑定，不读第二个记录。
 
@@ -81,6 +82,7 @@
 - `observation-recovery.ts` — 按 Kernel run/turn 过滤的精确原历史读取。
 - `graph-execution-history.ts` — WorkGraph locator 到 RT7 原历史的适配。
 - `continuation-brief-assembly.ts` — continuation brief 的事实读取与纯装配。
+- `handoff-brief-assembly.ts` — 交接 brief 的材料装配（只读、不写记录 5）：执行者取按 Plan 顺序交出的任务（phase 与最近一次已结束 Run 的结果都来自同一次 `readCanonicalTaskFacts`，不是 Plan 采用的 phase）、源 Run 的正式结论（`outcome.finalMessageId` 指向的 assistant 正文，缺失为 `no_formal_final_answer`，绝不取 thinking/中间回答）、模块注记索引与源 Run 的理解指针；参谋按整个项目的每个 Goal 经 `readGoalPlanWindow` 取任务/注记索引/未决决定，再取源 Session 最近三条已结束 Query 回答（每条截到 2 KiB）。工具交接的输入带接受时存下的 `understanding`，两臂直接采用该版本、不再重扫；manual/too_long 传 `null`，仍读源 Run 的当前版本。读失败整份 `unavailable`，取消传 `cancelled`，`not_entered` 是具名 absent；不把失败折成空材料。
 - `run-reconcile.ts` — 启动与进程内 Run/Query 对账分类器；QRR-04 用已读窗口写活动计数，QRR-06 的 attestation 事实带计数（Kernel 不可读或无固定 Turn 时是显式 `unknown`）。重建的 yielded continuation 只写 `kind: 'wait_reply'`，`expiry`/`intervention` 是 claim 的选择，不由 yield 写入。
 - `session-anomaly-facts.ts` — 归档异常锚点旁的变更文件快照。
 - `unknown-call-draft.ts` — unknown-call review 草稿读取与工作区捕获。
@@ -103,13 +105,15 @@
 | `createContextAssembler` | `src/core/agent-runtime/context-assembler.ts:27` | 按调用种类装配一次上下文 | prepare 需要正式上下文时，别自己拼 |
 | `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:193` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定；可选的 `handoff` 材料渲染后加在 task 段开头 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
 | `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:135` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
-| `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:282` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
+| `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:376` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
+| `createWorkHandoffBriefRead` | `src/core/agent-runtime/execution-preparation.ts:91` | 记录 5 的只读就绪读：按 successor Session 查最新记录，再核对交接操作的传输已完成；成功空页是旧路径 `null`，读失败（页面或操作）一律 `unavailable` | 准备 Work Run 时决定是否交出交接 brief |
 | `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:309` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:247` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:164` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:219` | 一次 fresh QueryRun 驱动；秘书轮按准入多建注记、邮箱、成员和请求读组 | 正式 Query 启动 |
 | `createMemberTools` | `src/core/agent-runtime/member-tools.ts:84` | `create_member` 的模型适配器；可信 caller 与命令身份由工厂绑定 | Work Run 或秘书轮注册成员工具时 |
 | `createReworkTools` | `src/core/agent-runtime/rework-tools.ts:155` | `request_rework`/`request_recheck` 的 Work 适配器：只把调用交 `claims.requeueTask` 与 `evidence.reverifyRound`，命令身份由工厂绑定 | Work Run 注册两个返工工具时 |
+| `createHandoffTools` | `src/core/agent-runtime/handoff-tools.ts:79` | `hand_off` 的模型适配器；可信 caller、命令身份和四个结果臂由工厂/owner 决定 | Work Run 注册 `hand_off` 时（组合根经 `RuntimeExecutionDependencies.handoffs` 传入） |
 | `createReadRequestTools` | `src/core/agent-runtime/request-read-tools.ts:69` | 秘书的只读请求历史适配器；一页/单请求，答案按 2 KiB 截断 | 秘书轮注册 `read_requests` 时 |
 | `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:287` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
 | `mapOutcome` | `src/core/agent-runtime/query-observation.ts:121` | Kernel 终态到 Query 结局的映射：transcript 有冻结清单里的收下提交时，`yielded`/`completed`/`failed`/`limit_exceeded` 记 `answered`，`cancelled` 仍 `cancelled`；无收下提交按各自旧映射 | Query observer 的终态读取；重启的 Q-03 也走同一函数 |
@@ -132,30 +136,33 @@
 | `countQueryActivity` | `src/core/agent-runtime/runtime.ts:906` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
 | `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |
+| `assembleHandoffBrief` | `src/core/agent-runtime/handoff-brief-assembly.ts:540` | 读完整交接材料（executor/adviser 两臂）并返回 `HandoffBriefMaterialV1`；不创建记录 5、不提交，失败整份拒绝 | 交接 successor 的 create/select 步；组合根注入 `HandoffBriefAssemblyDeps` |
+| `HandoffBriefAssemblyDeps`、`AssembleHandoffBriefInput` | `src/core/agent-runtime/handoff-brief-assembly.ts:68`、`:76` | 材料装配的注入端口（历史 owner、记录读、Note 页、决定队列、Query 执行读）与两臂输入（源/源 Run/workspace/signal，executor 另带源记录与交出的任务） | 组合根接线与 H-brief-material 行 |
+| `createHandoffBriefMaterialAssembler`、`HandoffBriefMaterialSources` | `src/core/agent-runtime/handoff-brief-assembly.ts:567`、`:551` | successor 步的材料适配工厂：定位源 Run（最近已结束的，否则当前 claim 以得具名 `not_entered`），再调 `assembleHandoffBrief`；已定位 Run 的读失败是 `unavailable`，只有成功读取证明源从未有 Run 才是 `null` | 组合根与 6B 共享场景调同一个工厂 |
 | `reconcileRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:214` | 启动时分类一个 Run 并提交一次对账 | 启动恢复 |
 | `reconcileQueryRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:567` | QueryRun 启动对账 | Query 恢复 |
 | `reconcileRunControlsAtStartup` | `src/core/agent-runtime/run-reconcile.ts:518` | 启动时结清排队控制与已接受的 steer | 控制意图恢复 |
 | `readAttestationFacts` | `src/core/agent-runtime/run-reconcile.ts:661` | 读 attestation 的 Kernel 与输入确认事实 | RUN-25 判定 |
 | `readReviewDraftAtEntry` | `src/core/agent-runtime/run-reconcile.ts:750` | 入口一次读 Kernel 事实与未截断 review 草稿 | review 轮入口 |
 | `readUnknownCallReviewDraft` | `src/core/agent-runtime/unknown-call-draft.ts:169` | 读完整 review 草稿 | review 候选与 attestation |
-| `renderContext` | `src/core/agent-runtime/context-rendering.ts:418` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
-| `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:452` | 渲染 Query 输入 | prepare Query |
+| `renderContext` | `src/core/agent-runtime/context-rendering.ts:424` | 按冻结模板渲染 Work 输入并记录节区间 | prepare Work |
+| `renderQueryContext` | `src/core/agent-runtime/context-rendering.ts:458` | 渲染 Query 输入 | prepare Query |
 | `consultationFactsLines` | `src/core/agent-runtime/consultation-facts-text.ts:31` | 平台事实段的完整文本：免责声明、已解析事实、omitted 与 unreadable 列表 | 装配带 `platform_facts` 创建载荷的咨询 Query 上下文时；不要另写渲染 |
-| `rerenderContextV1` | `src/core/agent-runtime/context-rendering.ts:501` | 只替换 review 槽重渲染 | 准备 review 指令 |
-| `renderAttentionChanges` | `src/core/agent-runtime/context-rendering.ts:543` | 渲染 attention 段 | attention 扫描 |
+| `rerenderContextV1` | `src/core/agent-runtime/context-rendering.ts:507` | 只替换 review 槽重渲染 | 准备 review 指令 |
+| `renderAttentionChanges` | `src/core/agent-runtime/context-rendering.ts:549` | 渲染 attention 段 | attention 扫描 |
 | `storePromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:168` | 每种文本只存一次，返回冻结 `PromptSetV1` | prepare 冻结提示词 |
 | `readPromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:243` | 按 ref 读文本并校验内容 | 读冻结提示词 |
 | `resolvePromptPack` | `src/core/agent-runtime/prompt-set-texts.ts:140` | 经 `PromptPackSourcePort` 解析指定 pack | prepare 选包 |
 | `selectPromptSkills` | `src/core/agent-runtime/prompt-set-texts.ts:333` | 按选择取 Skill 内容 | prepare 冻结 Skill |
 | `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
 | `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
-| `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:238` | 按 grant/配置选 Work 工具组 | 驱动装配 |
-| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:605` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
+| `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:243` | 按 grant/配置选 Work 工具组 | 驱动装配 |
+| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:620` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
 | `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:133` | 图历史读端口的工具代理 | 工具需要图历史 |
 | `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:238` | `project_source` 冻结模式工具 | 源码工具组 |
 | `duplicates`（`project_source` 的 compare 选项） | `src/core/agent-runtime/project-source-tool.ts:120` | `duplicates: true` 让同一次 compare 在 after 材料上列出重复候选；缺省时结果与字节不变 | 模型要在一次比较里同时拿重复候选时 |
 | `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |
-| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:528` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
+| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:543` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
 | `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
 | `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
 | `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |
@@ -172,6 +179,7 @@
 - 上下文渲染与输入校验：`contextSectionHeaders`、`workContextPrelude`、`queryContextPrelude`、`CONTEXT_FORMAT_VERSION`、`CONTEXT_SECTION_ORDER`、`templateSectionOrder`、`sectionOrderFor`、`workPreparedSectionOrder`、`queryPreparedSectionOrder`、`renderSkillTextV1`、`ATTENTION_HEADER`、`ATTENTION_MAX_BYTES`、`REVIEW_COMMAND_MAX_BYTES`、`buildUnknownCallReviewInputV1`、`trimUnknownCallReviewInput`、`byKey`、`mapRead`、`requirementIdOf`、`emptyNotes`、`indexRowText`、`canonical`、`sortedSources`。
 - 架构提醒与 continuation：`ARCHITECTURE_REMINDER_UNAVAILABLE_KEY`、`architectureReminderRowEntries`、`ANOMALY_ANCHOR_LIMIT`、`assembleAnomalySection`、`assembleUnknownCallReviewSection`、`acceptedMessagesOf`、`selfChangedFactsOf`。
 - 执行、输入与预算：`createShellBlockedHook`、`SHELL_BLOCKED_UNCONFIRMED_TEXT`、`SHELL_ALLOWANCE_UNCONFIRMED_TEXT`、`turnIsComplete`、`terminalEventOf`、`transcriptHasOutcomeUnknown`、`deriveInputId`、`formatDecisionResponseInput`、`createMailboxInputSupply`、`createControlOnlyInputSupply`、`confirmMailboxInputs`、`PREPARED_MANIFEST_CONTENT_TYPE`、`MAX_PREPARED_MANIFEST_BYTES`、`WORKSPACE_BASELINE_CONTENT_TYPE`、`REVIEW_INSTRUCTION_MAX_BYTES`、`fitUnknownCallReviewForManifest`、`rehydratePreparedExecution`、`snapshotRuntimeConfiguration`、`loadPreparedManifest`、`briefWorkspaceFacts`、`MAX_QUERY_MANIFEST_BYTES`、`BudgetExceeded`、`ContextCapacityExceeded`、`taskBudgetDeadlineRemaining`、`remainingTaskDeadlineMs`、`RuntimeModelCallRejected`。
+- 交接材料：`HANDOFF_QUERY_ANSWER_BYTES`（Query 回答的 2 KiB 截断上限）。
 - 历史、活动与对账：`unknownFacts`、`bookLateEvidenceInProcess`、`stopPausedRunInProcess`、`kernelDatabaseState`、`RUNTIME_HISTORY_PRINCIPAL_ACTOR`。
 - 工具适配：`createGraphTools`、`GRAPH_TOOL_NAMES`、`metadataSample`、`toModelCoverage`、`toModelCapture`、`projectSourceInputSchema`、`createNoteTools`、`NOTE_TOOL_NAMES`、`createWhiteboardTools`、`WHITEBOARD_TOOL_NAMES`、`createSessionMailboxTools`、`SESSION_MAILBOX_TOOL_NAMES`、`USER_DECISION_TOOL_NAMES`、`SESSION_MESSAGE_SEND_TIMEOUT_MS`、`createSessionDiscoveryTools`、`SESSION_DISCOVERY_TOOL_NAMES`、`createUnknownCallReviewTools`、`RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME`、`PROPOSE_SAFER_METHOD_TOOL_NAME`、`RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES`、`PROPOSE_SAFER_METHOD_TOOL_NAMES`、`UNKNOWN_CALL_REVIEW_EVIDENCE_MAX_CHARS`、`UNKNOWN_CALL_REVIEW_CRASH_EVIDENCE_MAX_CHARS`、`UNKNOWN_CALL_PROPOSAL_RATIONALE_MAX_CHARS`、`createCommandRerunTools`、`REQUEST_COMMAND_RERUN_TOOL_NAME`、`REQUEST_COMMAND_RERUN_TOOL_NAMES`。
 - 工具组装配与源码捕获：`createQueryGraphToolGroup`、`createReviewToolGroup`、`createRerunToolGroup`、`assembleObservedExtensions`、`EXPLORATION_TOOL_NAMES`、`BUILTIN_TOOL_NAMES`、`RESERVED_TOOL_NAMES`、`RUNTIME_TOOL_NAMES`、`createSourceCaptureAccess`、`createRuntimeSourceCaptureFactory`、`createQuerySourceCaptureFactory`、`unknownCallInventoryProblem`、`captureUnknownCallWorkspace`、`createReadonlyCommandTool`、`registerReadonlyCommandTool`、`readonlyCommandSandboxOptions`、`READONLY_OUTPUT_STREAM_LIMIT_BYTES`、`READONLY_OUTPUT_LIMIT_BYTES`、`READONLY_DEFAULT_TIMEOUT_MS`、`READONLY_MIN_TIMEOUT_MS`、`READONLY_MAX_TIMEOUT_MS`、`READONLY_DISPATCHER_TIMEOUT_MS`、`READONLY_MAX_EXTERNAL_PATHS`。

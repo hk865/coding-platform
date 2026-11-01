@@ -104,7 +104,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.id, operatorActor: actor,
     messages: userMailbox, materials, messageWrites: createMessageWriteOwner(mailboxDeps),
     sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }) });
-  const reconcile = createRunReconcileService({ records, reads, hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' }, now: f.now, eventId: f.id });
+  const reconcile = createRunReconcileService({ records, reads, bodies: b2.bodies, hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' }, now: f.now, eventId: f.id });
   let tokens = createNoticeDisplayToken(new Uint8Array(32).fill(1));
   let tokenGeneration = 1;
   function notices() {

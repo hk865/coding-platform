@@ -69,9 +69,12 @@ const MODEL_CRASH_UNLIKELY = '模型写：没看到崩溃痕迹';
 /**
  * The public instruction size. ASCII only, so one repetition is one manifest
  * byte. Tuned so the WORK manifest is under 262,144 while the REVIEW manifest
- * with the expanded item is over it and its floor is not.
+ * with the expanded item is over it and its floor is not. The H/T pack adds
+ * `hand_off` and its four templates to every manifest's prompt set; at 243_700
+ * the work manifest measured 258,882 and the review floor 262,228 (over by 84),
+ * so the fill is 700 bytes lower and the floor keeps a margin.
  */
-const INSTRUCTION_REPEAT = 243_700;
+const INSTRUCTION_REPEAT = 243_000;
 const LONG_INSTRUCTION = 'K3-42 (二) sized instruction: ' + 'x'.repeat(INSTRUCTION_REPEAT);
 
 afterEach(async () => {

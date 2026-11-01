@@ -140,6 +140,7 @@ async function ownerFixture(kind: 'memory' | 'sqlite'): Promise<OwnerFx> {
   const reads = createRunStateReader({ records });
   let seq = 0;
   const reconcile = createRunReconcileService({ records, reads,
+    bodies: b2.bodies,
     hostInstance: { hostInstanceId: 'k3-11-owner-host', lease: 'owned',
       takeover: { kind: 'hl03_stale_lock', previousInstanceId: 'previous-host', previousPid: 42 } },
     now: () => AT, eventId: () => `k3-11-owner-event-${String(++seq)}` });

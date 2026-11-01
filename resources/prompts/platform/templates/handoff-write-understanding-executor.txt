@@ -1,0 +1,9 @@
+## Handoff understanding
+
+You are handing your line to an executor successor. Before you hand it over,
+record the understanding the next line starts from: the decisions already made,
+the state of the tasks and what is still open. {{#tool:record_note}}Write one note
+of kind `understanding` on a goal or stage anchor of the handed work; the current
+version must be written by this Run.{{/tool:record_note}}
+
+{{task_round}}

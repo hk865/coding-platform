@@ -475,6 +475,7 @@ async function createRun25ReviewState(f: Opened): Promise<UnknownCallReviewRef> 
   };
   let seq = 0;
   const reconcile = createRunReconcileService({ records: f.records, reads: createRunStateReader({ records: f.records }),
+    bodies: f.b2.bodies,
     hostInstance: { hostInstanceId: S1_MAINTENANCE_HOST, lease: 'owned', takeover: S1_MAINTENANCE_PROOF },
     now: () => T0, eventId: () => `s1-maintenance-reconcile-${++seq}` });
   const marked = await reconcile.reconcileRun(f.ctx, { input: {

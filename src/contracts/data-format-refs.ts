@@ -18,6 +18,9 @@ export const DispatchCounterRefShape = defineShape({ name: 'DispatchCounterRef',
   aggregateType: f.literal('DispatchCounter'), projectId: id, goalId: id,
 } });
 export const SessionRefShape = defineShape({ name: 'SessionRef', fields: { projectId: id, sessionId: id } });
+export const HandoffBriefRefShape = defineShape({ name: 'HandoffBriefRef', fields: {
+  aggregateType: f.literal('HandoffBrief'), projectId: id, sessionId: id, operationId: id,
+} });
 export const SessionAggregateRefShape = defineShape({
   name: 'SessionAggregateRef', fields: { projectId: id, sessionId: id, aggregateType: f.literal('Session') },
 });

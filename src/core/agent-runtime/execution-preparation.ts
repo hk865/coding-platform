@@ -52,7 +52,99 @@ import { projectRunPermissions } from '../work-graph/tasks/pick-authorization.js
 import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
 import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
+import type { RecordOrderedLookupPort } from '../record-store/lookup-ports.js';
+import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
+import {
+  WORK_HANDOFF_BRIEF_BY_SESSION_LOOKUP, workHandoffBriefTransferComplete,
+  type WorkHandoffBriefV1,
+} from '../work-graph/state/work-handoff-brief.js';
+import { workHandoffBriefCodec } from '../work-graph/sessions/session-record-codecs.js';
+import type { HandoffActionV1 } from '../work-graph/model/session-operation-arms.js';
+import type { SessionOperationRecordOf } from '../work-graph/model/session-contracts.js';
 import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
+
+/**
+ * H: the narrow readiness read of record 5. The preparation asks once per Work
+ * Run; a successor's record is offered only after the matching assignment's
+ * responsibility transfer completed (B-02). The port is optional so a direct
+ * preparation caller without a registered record-5 bundle keeps the old path.
+ */
+export type WorkHandoffBriefReadPort = {
+  readForSuccessor(ctx: CoreCallContext, input: { session: SessionRef; workspaceId: string }):
+    Promise<ReadResult<WorkHandoffBriefV1 | null>>;
+};
+
+export type WorkHandoffBriefReadDependencies = {
+  records: RecordOrderedLookupPort;
+  operations: Pick<SessionDirectoryPort, 'getSessionOperation'>;
+};
+
+/**
+ * The one readiness read: `work-handoff-brief-by-session` for the successor
+ * Session, then the stored handoff operation's own phase progress. A successful
+ * page with no record (or a record whose transfer has not completed, or one
+ * already consumed) is the old path, `null`. Any failed read — the page itself or
+ * the operation after a record was found — is `unavailable`, never a fabricated
+ * brief and never silence about a broken read.
+ */
+export function createWorkHandoffBriefRead(deps: WorkHandoffBriefReadDependencies): WorkHandoffBriefReadPort {
+  return {
+    async readForSuccessor(ctx, input) {
+      let page;
+      try {
+        page = await deps.records.lookupOrdered({
+          index: WORK_HANDOFF_BRIEF_BY_SESSION_LOOKUP,
+          values: [input.session.projectId, input.workspaceId, input.session.sessionId],
+          direction: 'desc',
+          limit: 1,
+        });
+      } catch (error) {
+        // A failed read is never proof that the successor has no brief.
+        return rejected('unavailable', `the stored handoff brief could not be read: ${messageOf(error)}`);
+      }
+      if (page.status !== 'ready') {
+        return rejected('unavailable', `the stored handoff brief read is not ready: ${page.code}: ${page.reason}`);
+      }
+      const latest = page.value.records[0];
+      if (latest === undefined) return { status: 'ready', value: null };
+      const decoded = workHandoffBriefCodec.decode(latest);
+      if (decoded.status !== 'decoded') {
+        return rejected('unavailable', `the stored handoff brief is damaged: ${decoded.reason}`);
+      }
+      // The record format stores the material as canonical JSON (`f.json()`); the
+      // contract union is the decoded record's own type, not an arbitrary value.
+      const record = decoded.value as unknown as WorkHandoffBriefV1;
+      if (record.binding.successor.projectId !== input.session.projectId
+        || record.binding.successor.sessionId !== input.session.sessionId) {
+        return rejected('invalid', 'the stored handoff brief names another successor Session');
+      }
+      // A consumed record is never offered twice.
+      if (record.consumedBy !== null) return { status: 'ready', value: null };
+      let operation;
+      try {
+        operation = await deps.operations.getSessionOperation(ctx, record.binding.operation);
+      } catch (error) {
+        return rejected('unavailable', `the handoff operation could not be read: ${messageOf(error)}`);
+      }
+      if (operation.status === 'not_found') {
+        return rejected('unavailable', 'the handoff operation of the stored brief is absent');
+      }
+      if (operation.status !== 'ready') {
+        return operation.status === 'rejected' ? operation
+          : rejected('unavailable', 'the handoff operation read is not ready');
+      }
+      if (operation.value.action.kind !== 'handoff') {
+        return rejected('invalid', 'the stored handoff brief names another operation kind');
+      }
+      if (!workHandoffBriefTransferComplete(record,
+        operation.value as SessionOperationRecordOf<HandoffActionV1>)) {
+        return { status: 'ready', value: null };
+      }
+      return { status: 'ready', value: record };
+    },
+  };
+}
 
 /**
  * The default assembler consumes the preparation ports plus the optional
@@ -83,6 +175,8 @@ export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies
       ctx: CoreCallContext,
       task: { projectId: string; goalId: string; taskId: string },
     ) => Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
+    /** H: record 5's readiness read; absent keeps every Work Run without a handoff brief. */
+    handoffBriefs?: WorkHandoffBriefReadPort;
   };
 
 // Slice 1 §4.1 (T10): the archive-origin rule lives with the brief assembly (slice 3 moved the brief into the
@@ -520,6 +614,18 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       const history: ContextWorkHistoryInputV1 = {
         callKind: 'work', hasCompletedCursor: session.historyCursor !== null,
       };
+      // H: the successor's first Work Run reads record 5 once and offers its
+      // frozen material only when the matching assignment's responsibility
+      // transfer completed (B-02). A requeue or review-purpose Run keeps its own
+      // brief; the two are never offered together.
+      let handoff: { binding: WorkHandoffBriefV1['binding']; material: WorkHandoffBriefV1['material'] } | undefined;
+      if (deps.handoffBriefs !== undefined && run.requeueRef === undefined && reviewPurpose === undefined) {
+        const read = await deps.handoffBriefs.readForSuccessor(owned, {
+          session: claim.sessionRef, workspaceId: session.workspaceId,
+        });
+        if (read.status !== 'ready') return read;
+        if (read.value !== null) handoff = { binding: read.value.binding, material: read.value.material };
+      }
       // Slice 3 (§4.2/§4.3, C7): the ONE context assembler owns the eight
       // sections and the byte budget. Its rejection (in particular a failing
       // `graphContext` read) is propagated unchanged; the manifest is built from
@@ -527,6 +633,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       let input: string;
       let inputDigest: string;
       let brief: ContinuationBriefV1 | null;
+      let handoffBrief: PreparedTaskManifestV1['handoffBrief'];
       let sessionBasis: PreparedTaskManifestV1['sessionBasis'];
       let selectedTaskInputs: PreparedTaskManifestV1['selectedTaskInputs'];
       let contextAssembly: PreparedTaskManifestV1['contextAssembly'];
@@ -535,6 +642,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         assembled = await assembler.assembleTask(owned, {
           execution: record.value, role: roleResolution, configuration: hostConfig, permissions,
           texts: tracked.texts, toolNames, history,
+          ...(handoff === undefined ? {} : { handoff }),
           ...(taskReviews === undefined ? {} : { taskReviews }),
         });
       } catch (error) {
@@ -549,6 +657,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       input = assembled.value.input;
       inputDigest = sha256Hex(input);
       brief = assembled.value.continuationBrief;
+      handoffBrief = assembled.value.handoffBrief ?? undefined;
       sessionBasis = assembled.value.sessionBasis;
       selectedTaskInputs = assembled.value.selectedTaskInputs;
       contextAssembly = assembled.value.binding;
@@ -640,6 +749,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           takesSessionHistory,
           promptSet,
           ...(brief === null ? {} : { continuationBrief: brief }),
+          ...(handoffBrief === undefined ? {} : { handoffBrief }),
           ...(sessionBasis === undefined ? {} : { sessionBasis }),
           ...(workspaceBaseline === undefined ? {} : { workspaceBaseline }),
           ...(review === undefined ? {} : { unknownCallReview: review }),

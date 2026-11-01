@@ -13,6 +13,7 @@ import type { WriteResult } from '../../../contracts/core/results.js';
 import type { RunReconciliationBasisV1, RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { SessionProbeVerdict } from '../state/session-availability.js';
 import type { RunUnknownCause } from '../state/run-machine.js';
 import type { GraphWrite } from '../model/task-contracts.js';
@@ -146,6 +147,7 @@ export interface RunReconcileService extends RunReconcilePort {
 export type RunReconcileDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   reads: ExecutionReadPort;
+  bodies: Pick<RawArtifactStorePort, 'read'>;
   hostInstance?: HostInstanceFacts;
   now(): string;
   eventId(): string;

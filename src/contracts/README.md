@@ -34,7 +34,7 @@
 做派发、Query、Run 活动/预算、续接简报与控制意图的去这组。
 - `continuation-brief.ts` — 续接简报：`ContinuationBriefV1` 等形状、digest、来源比较与结构校验；转出下面两个文件的上限、marker 与渲染，现有的 import 路径都不变。
 - `continuation-brief-base.ts` — 简报的上限 `CONTINUATION_BRIEF_LIMITS` 与第二行标记 `continuationBriefMarker`：不 import 任何文件的叶子，渲染和结构校验都从这里取上限。
-- `continuation-brief-render.ts` — 简报的中文渲染：`renderContinuationBriefZh`、`approvedMethodLinesZh`、`templateToolNames` 与 `ContinuationBriefCapacityError`；包里的固定文字、模板渲染和字节预算的私有 helper（`briefTexts`、`renderBriefTemplateZh`、`clip`、`boundedZh`、`listZh`）也在这里，别的简报渲染写进本文件复用它们。简报类型只用 `import type` 从 `continuation-brief.ts` 取，不反向 value import（那会形成加载环）。
+- `continuation-brief-render.ts` — 简报的中文渲染：`renderContinuationBriefZh`、`renderHandoffBriefZh`、`approvedMethodLinesZh`、`templateToolNames` 与 `ContinuationBriefCapacityError`；包里的固定文字、模板渲染和字节预算的私有 helper（`briefTexts`、`renderBriefTemplateZh`、`clip`、`boundedZh`、`listZh`）也在这里，别的简报渲染写进本文件复用它们。简报类型只用 `import type` 从 `continuation-brief.ts` 取，不反向 value import（那会形成加载环）。
 - `control-intent.ts` — 暂停/取消/恢复/引导：`ControlIntentRef`、`ControlIntentRequestV1`、`ControlIntentSnapshotV1`。
 - `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`MODEL_SERVICE_FAILURE_CODES`、`TERMINAL_PAYLOAD_*`。
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
@@ -50,6 +50,8 @@
 - `context-continuity.ts` — `WorkContextRef`：持久工作身份。
 - `coordination.ts` — `WorkParticipationRef` 与 `AgentPrincipalRefV1`（参与关系与 Agent 归因）。
 - `delegated-write.ts` — `DelegatedWriteProvenanceV1`/`PlanWriteProvenanceV1`：Agent 写入来源与授权代数。
+- `handoff.ts` — 交接的触发与批准片段：触发闭集 `HANDOFF_TRIGGERS`/`HandoffTriggerV1`（`too_long`/`manual`/`tool`）、记录 2 的 `HandoffToolFragmentV1` 与 `HandoffApprovalV1`，以及工具的唯一名字 `HAND_OFF_TOOL_NAME`。
+- `handoff-brief.ts` — Work 交接简报（记录 5）的契约：ref `HandoffBriefRef`、归一化材料 `HandoffBriefMaterialV1`（executor/adviser 两臂，含 `HandoffBriefTaskV1`/`HandoffBriefNoteIndexV1`）、独立绑定 `HandoffBriefBindingV1` 与唯一摘要 `handoffBriefDigest`；渲染在 H 的 `continuation-brief-render.ts`。
 - `session-activity.ts` — Session 的活动记录（字段表格式 `SessionActivity@1`）：`SessionActivityRefShape`、`SessionActivityFormat` 和推导出的 `SessionActivityRef`/`SessionActivityV1`；只随引起它的事实一起提交，`source` 是那个事实的 ref（`input` 来自 QueryJob 或 SessionMessage，`round_ended` 来自 QueryRun）。
 - `session-anomaly.ts` — `SessionAnomalyAnchorRef`、归档变更与排队来源视图。
 - `work-line.ts` — 工作线读 DTO：列表、详情、悬停、分段与执行项；秘书线的名字是“秘书 N”（`LineNameV1.ordinal`）。消息项的 `LineMessageStateV1` 顶层带 `release`（记录原值）、推导出的 `delivery`/`deliveredTo`/`evidence`/`reason` 与 `disposition`（`reason` 是未送达的读原因，仅 `delivery === 'undelivered'` 时非 null；记录上存的 `delivery` 不读，7B 才读）；`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。
@@ -82,7 +84,7 @@
 - `actor-equality.ts` — actor 身份比较：`sameActorIdentity`（两个 unknown，只比 `kind`/`id`，不算 `runRef`）与 `sameActorKindAndId`（typed actor，只比 `kind`/`id`）。
 - `command-event.ts` — 命令/事件基线：`CommitCursor`、`CommandFingerprint`、`ActorRef`、`CommandIdentity`、`normalizeObjective`、`commandFingerprint`、`commandIdentityKey`。
 - `data-format.ts` — 字段表格式：字段只写一次的运行时描述（`f` 的封闭字段种类，含 JSON 值 `f.json()`、`defineShape`/`defineRecord`/`defineEvent`），TS 类型由它推导（`InferShape`、`InferRecord`、`InferPending`、`InferEvent`）；描述在构造时校验，坏描述抛 `<what> description is invalid: <detail>`。值检查在 `validation/data-format.ts`，RecordStore 适配在 `src/core/work-graph/persistence/field-table-codec.ts`。
-- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（23 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref（含 `CurrentPointerRef`）与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple`/`ProjectScope`/`WorkspaceScope` 各自一份；7A-1 加 `DispatchCounterRefShape`（`src/contracts/data-format-refs.ts:17`），6B-3 加 `PlanRevisionRefShape`（`src/contracts/data-format-refs.ts:52`），7C-1 加 `ReworkRequestRefShape`/`ModuleOverlapGateRefShape`（`src/contracts/data-format-refs.ts:66`、`:69`）；另导出 `id`，即 ref 内字段的非空字符串描述（按码点计，至少 1）。
+- `data-format-refs.ts` — 字段表格式可复用的 ref 描述（24 种，每种与手写 ref 类型一致）：带 `aggregateType` 的聚合 ref（含 `CurrentPointerRef`）与不带标签的 `SessionRef`/`ModuleRef`/`TaskTriple`/`ProjectScope`/`WorkspaceScope` 各自一份；7A-1 加 `DispatchCounterRefShape`（`src/contracts/data-format-refs.ts:17`），6B-3 加 `PlanRevisionRefShape`（`src/contracts/data-format-refs.ts:55`），7C-1 加 `ReworkRequestRefShape`/`ModuleOverlapGateRefShape`（`src/contracts/data-format-refs.ts:69`、`:72`），7C-2 加 `HandoffBriefRefShape`（`src/contracts/data-format-refs.ts:21`）；另导出 `id`，即 ref 内字段的非空字符串描述（按码点计，至少 1）。
 - `goal-interruption.ts` — `GoalInterruption@1` 的字段表 `GoalInterruptionFields`（`src/contracts/goal-interruption.ts:18`）、推导类型 `GoalInterruptionV1`（`src/contracts/goal-interruption.ts:28`）、具名规则与格式 `GoalInterruptionFormat`（`src/contracts/goal-interruption.ts:30`）、ref 形状 `GoalInterruptionRefShape`（`src/contracts/goal-interruption.ts:10`）；一个 Goal 一条记录，`pending`/`resumed` 只由 `state/goal-interruption.ts` 写。
 - `dispatch-counter-format.ts` — `DispatchCounter@1` 的字段表 `DispatchCounterFields`（`src/contracts/dispatch-counter-format.ts:5`）、推导类型 `DispatchCounterV1`（`src/contracts/dispatch-counter-format.ts:14`）、具名规则 `dispatchCounterProblem` 与格式 `DispatchCounterFormat`；规则检查正安全整数、Goal 身份和消息项目一致性。
 - `error-message.ts` — `messageOf`：取 `Error.message`，否则 `String(error)`；转换本身抛错时不吞。
@@ -114,8 +116,8 @@
 | `sha256Hex` | `src/contracts/fingerprint.ts:72` | UTF-8 文本的 SHA-256 小写十六进制。 | 所有内容寻址与摘要的哈希原语。 |
 | `f` | `src/contracts/data-format.ts:132` | 字段表的封闭字段种类：字符串（字节/码点上限）、sha256、整数、有限数、revision、字面量（字符串、安全整数或布尔）、枚举、布尔、JSON 值、ref、游标、可绑定游标、ISO 时间、optional/nullable、数组、精确对象、判别联合。 | 新记录、事件或嵌套形状写字段表时；不在此列的是具名规则（`rules`）或留手写。 |
 | `defineShape`、`defineRecord`、`defineEvent` | `src/contracts/data-format.ts:250`、`src/contracts/data-format.ts:314`、`src/contracts/data-format.ts:346` | 构造并校验嵌套形状、存储记录（`ref` 是本 `aggregateType` 的完整带标签 ref，`revision` 是 `f.revision` 或 `f.literal(1)`，可带 lookup）和事件（字段不含四个信封键）。 | 新格式只写这一份字段表；类型用 `InferRecord`/`InferPending`/`InferEvent` 推导，不再手写一份。 |
-| `ProjectRefShape` 等 20 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`DispatchCounterRefShape`、`SessionRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`PlanRevisionRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`、`ReworkRequestRefShape`、`ModuleOverlapGateRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
-| `ProjectScopeShape`、`WorkspaceScopeShape`、`CurrentPointerRefShape` | `src/contracts/data-format-refs.ts:72`、`src/contracts/data-format-refs.ts:73`、`src/contracts/data-format-refs.ts:74` | 不带标签的 `{ projectId }`、`{ projectId, workspaceId }` 范围和带标签的 `CurrentPointerRef`（ref 描述共 23 个）。 | 字段表里写范围或注记当前指针时；不要另写一份。 |
+| `ProjectRefShape` 等 21 个 ref 描述 | `src/contracts/data-format-refs.ts:12` | `ProjectRefShape`、`WorkspaceRefShape`、`GoalRefShape`、`DispatchCounterRefShape`、`SessionRefShape`、`HandoffBriefRefShape`、`SessionAggregateRefShape`、`ModuleRefShape`、`QueryJobRefShape`、`QueryRunRefShape`、`QueryJobAnswerRefShape`、`SessionMessageRefShape`、`TaskTripleShape`、`RunRefShape`、`OperationRefShape`、`PlanProposalRefShape`、`PlanRevisionRefShape`、`TaskRequeueRefShape`、`VerificationRoundRefShape`、`ReworkRequestRefShape`、`ModuleOverlapGateRefShape`。 | 字段表里的 `f.ref(...)`；不要另写只查 `aggregateType`/`projectId` 的通用 ref 检查。 |
+| `ProjectScopeShape`、`WorkspaceScopeShape`、`CurrentPointerRefShape` | `src/contracts/data-format-refs.ts:75`、`src/contracts/data-format-refs.ts:76`、`src/contracts/data-format-refs.ts:77` | 不带标签的 `{ projectId }`、`{ projectId, workspaceId }` 范围和带标签的 `CurrentPointerRef`（ref 描述共 24 个）。 | 字段表里写范围或注记当前指针时；不要另写一份。 |
 | `id` | `src/contracts/data-format-refs.ts:10` | ref 内字段的非空字符串描述（`min: 1`，按码点计）。 | 写 ref 的字段表时复用；不要另写 `f.string({ min: 1 })`。 |
 | `SessionActivityFormat`、`SessionActivityRefShape` | `src/contracts/session-activity.ts:40`、`src/contracts/session-activity.ts:37` | Session 活动记录的字段表和它的 ref；两条规则：`session` 与 ref 同一个 Session、`source` 在同一项目且种类对得上。 | 写或读 Session 的最后活动；类型用 `SessionActivityV1`，不要手写。 |
 | `SessionActivityRef`、`SessionActivityV1`、`SessionActivityKindV1`、`SessionActivitySourceV1` | `src/contracts/session-activity.ts:60`、`src/contracts/session-activity.ts:61`、`src/contracts/session-activity.ts:62`、`src/contracts/session-activity.ts:64` | 由字段表推导的活动引用、记录、类别和来源类型。 | 供活动状态、codec 和读取使用。 |
@@ -184,10 +186,10 @@
 | `continuationBriefDigest` | `src/contracts/continuation-brief.ts:293` | 简报摘要 `sha256Hex(canonicalJson(brief))`。 | 固定 `inputBinding.continuationBriefDigest`。 |
 | `continuationBriefMarker` | `src/contracts/continuation-brief-base.ts:28` | 简报第二行的标记文本。 | 重渲染后逐字比对。 |
 | `compareSourceCheckpoints` | `src/contracts/continuation-brief.ts:303` | 比较两个持久化来源戳，无法判定即 `unknown`。 | 判断工作区是否变化。 |
-| `renderContinuationBriefZh` | `src/contracts/continuation-brief-render.ts:224` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
-| `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:733` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
+| `renderContinuationBriefZh` | `src/contracts/continuation-brief-render.ts:226` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
+| `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:839` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
 | `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
-| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:814` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
+| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
 | `renderNoteHeader` | `src/contracts/note.ts:115` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
 | `planValidationError` | `src/contracts/plan.ts:303` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:309` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |

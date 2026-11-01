@@ -6,9 +6,10 @@ import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   armS6B3ChildCommitFault, armS6B3ReadManyFault, callS6B3LateRoute, callS6B3PublishedOwner,
   configureS6B3SecondWorkspace, disposeS6B3SettingsWrapper, holdS6B3AdoptionGate, holdS6B3PreparedGoalAnswer,
-  holdS6B3RequestAnswer, installS6B3SettingsSpy, openS6B3World, releaseS6B3DraftAnswer, settingsWithChecks,
-  type S6B3World,
+  holdS6B3RequestAnswer, installS6B3SettingsSpy, openS6B3World, releaseS6B3DraftAnswer,
+  settingsWithChecks, type S6B3World,
 } from '../helpers/S6B3-fixture.js';
+import { seedS6AMemory } from '../helpers/S6A-memory-fixture.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { InitialPlanningSetupV2, InitializationSourceV1 } from '../../src/contracts/initial-planning.js';
 import type { QueryJobAnswerRef } from '../../src/contracts/query-job.js';
@@ -66,7 +67,7 @@ async function prepared(world: S6B3World, scope: Scope, target: GoalRef, withSet
  * step, `body` runs on them, and the world is closed in `finally`.
  */
 async function inRow(name: string, body: (row: RowWorld) => Promise<void>,
-  options: { bare?: boolean; decision?: boolean } = {}): Promise<void> {
+  options: { bare?: boolean; decision?: boolean; governance?: 'architecture' | 'policy' } = {}): Promise<void> {
   const world = await openS6B3World({ backend: 'memory', mainGoals: 'none' });
   try {
     const second = await configureS6B3SecondWorkspace(world, { name: `s6b3-adoption-${name}`, goals: 2 });
@@ -83,6 +84,21 @@ async function inRow(name: string, body: (row: RowWorld) => Promise<void>,
         goalId: other.ref.goalId, executionKind: 'initial_coordination', reply: () => ({ kind: 'text', text: JSON.stringify({
           schemaVersion: 2, kind: 'needs_decision', summary: `S6B3 ${name}`, questions: [`S6B3 ${name} question`] }) }) }))
       : null;
+    if (options.governance !== undefined) {
+      await seedS6AMemory({
+        scope,
+        goals: { first: first.ref, second: other.ref },
+        clock: world.host.clock,
+        platform: world.host.platform,
+        post: world.host.post,
+        humanContext: world.host.humanContext,
+        settleDetached: world.host.settleDetached,
+      }, {
+        architecture: options.governance === 'architecture',
+        policy: options.governance === 'policy',
+        notes: false,
+      });
+    }
     await body({
       world, scope, goal: first.ref, goalRevision: first.revision, answer, commandId: `s6b3-adopt-${name}`,
       bare, decision,
@@ -551,8 +567,15 @@ describe('rejects: the adoption service refusals, deferred to the published owne
     await exercise();
   });
 
-  it('accept: no setup with either governance read missing is incomplete', async () => {
-    const exercise = () => inRow('missing-governance', async row => {
+  it.each([
+    ['accept: no setup with either governance read missing is incomplete',
+      'missing-governance', undefined, '初始架构和完成标准'],
+    ['accept: no setup with only the architecture present names the missing completion standard',
+      'policy-missing', 'architecture', '完成标准'],
+    ['accept: no setup with only the completion policy present names the missing initial architecture',
+      'architecture-missing', 'policy', '初始架构'],
+  ] as const)('%s', async (_title, name, governance, missing) => {
+    const exercise = () => inRow(name, async row => {
       const bare = row.bare;
       if (bare === null) throw new Error('the row lacks its bare prepared answer');
       const before = await goalRevisionOf(row, bare.goal);
@@ -563,11 +586,12 @@ describe('rejects: the adoption service refusals, deferred to the published owne
         source,
         expectedAnswerDigest: bare.answer.digest,
         expectedGoal,
-      })).toMatchObject({ status: 'rejected', code: 'incomplete' });
+      })).toMatchObject({ status: 'rejected', code: 'incomplete',
+        reason: `项目 ${row.scope.projectId} 缺少${missing}` });
       expect(await goalRevisionOf(row, bare.goal)).toBe(before);
       expect(await adoptionOwner(row, 'read', { operationRef: operationRef(row, source, expectedGoal) }))
         .toMatchObject({ status: 'not_found' });
-    }, { bare: true });
+    }, governance === undefined ? { bare: true } : { bare: true, governance });
     await exercise();
   });
 

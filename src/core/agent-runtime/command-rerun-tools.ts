@@ -76,17 +76,17 @@ export type CommandRerunToolsHandle = {
   create: (workspace: WorkspaceSandbox) => ToolDefinition[];
 };
 
-function noneEffects(): ToolResult['effects'] {
+export function noneEffects(): ToolResult['effects'] {
   return { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] };
 }
 
-function success(callId: string, value: unknown, text: string): ToolResult {
+export function success(callId: string, value: unknown, text: string): ToolResult {
   return { schemaVersion: 1, callId, status: 'success',
     output: [{ kind: 'json', value: value as never }, { kind: 'text', text }],
     effects: noneEffects() };
 }
 
-function failed(callId: string, code: 'invalid_arguments' | 'execution_failed', message: string): ToolResult {
+export function failed(callId: string, code: 'invalid_arguments' | 'execution_failed', message: string): ToolResult {
   return { schemaVersion: 1, callId, status: 'error',
     error: { code, message, retryable: false }, output: [], effects: noneEffects() };
 }

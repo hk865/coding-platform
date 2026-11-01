@@ -62,6 +62,9 @@ const SECTION_NAMES: ReadonlySet<string> = new Set(CONTEXT_SECTION_ORDER);
 const CALL_KIND_SECTIONS: Readonly<Partial<Record<ContextCallKindV1, readonly ContextSectionNameV1[]>>> = {
   work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
   continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
+  // H: the successor's handoff brief lives in the SAME `continuation` section
+  // with the continuation order; `handoff` is only the call kind.
+  handoff: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
   planning: ['role', 'goal', 'task', 'footprint'],
   copy: ['role', 'goal', 'task'],
   // The intervention template's `plan` slot is its `task` binding section.
@@ -95,7 +98,7 @@ export function templateSectionOrder(texts: PromptTextsV1, templateId: ContextTe
  * sections. A person's pack that declares another legal order is followed.
  */
 export function sectionOrderFor(
-  callKind: 'work' | 'continuation' | 'planning' | 'copy' | 'secretary' | 'intervention_planning',
+  callKind: 'work' | 'continuation' | 'handoff' | 'planning' | 'copy' | 'secretary' | 'intervention_planning',
   templateId: ContextTemplateId,
   texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): ContextSectionNameV1[] {
@@ -106,7 +109,10 @@ export function sectionOrderFor(
 /** Every call kind a Work preparation can produce (`work` also covers a review-purpose Run). */
 export function workPreparedSectionOrder(texts: PromptTextsV1 = DEFAULT_TEXTS): PromptSetV1['sectionOrder'] {
   return { work: sectionOrderFor('work', 'work-input', texts),
-    continuation: sectionOrderFor('continuation', 'work-input', texts) };
+    continuation: sectionOrderFor('continuation', 'work-input', texts),
+    // H-05: the entry reads this kind's order; it is the SAME continuation
+    // computation, not a second order table.
+    handoff: sectionOrderFor('handoff', 'work-input', texts) };
 }
 
 /**

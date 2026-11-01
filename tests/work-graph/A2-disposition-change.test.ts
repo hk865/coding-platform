@@ -367,6 +367,7 @@ async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
         storeKey: 'r4c-claim-kernel-store', workspace: base.scope, databasePath: join(base.directory, 'kernel.sqlite') }] });
       const owner = createSessionHistoryCursorOwner({ kernelStores });
       const reconcile = createRunReconcileService({ records, reads: executions,
+        bodies: b2.bodies,
         hostInstance: { hostInstanceId, lease: 'owned' }, now, eventId });
       const executionRecord = async (): Promise<TaskExecutionRecord> => {
         const read = await executions.readExecution(ctx, held.claim.runRef);

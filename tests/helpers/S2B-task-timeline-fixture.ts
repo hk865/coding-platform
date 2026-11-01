@@ -198,7 +198,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
     setClock: (at) => { clock = at; }, eventId, newId, consumerId: 's2b-timeline-runtime',
     withMailbox: true });
   const controls = createRunControlService({ records: baseRecords, authority, reads: runReads, now, eventId });
-  const reconcile = createRunReconcileService({ records: baseRecords, reads: runReads, hostInstance: HOST_INSTANCE, now, eventId });
+  const reconcile = createRunReconcileService({ records: baseRecords, reads: runReads, bodies: b2.bodies, hostInstance: HOST_INSTANCE, now, eventId });
   const requeues = createTaskRequeueService({
     records: baseRecords, reads: runReads, materials,
     messages: { readMessage: async () => ({ status: 'rejected' as const, code: 'not_found' as const,

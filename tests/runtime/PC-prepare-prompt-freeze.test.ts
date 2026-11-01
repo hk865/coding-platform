@@ -35,6 +35,7 @@ const QUERY_INSTRUCTION = 'PC_QUERY_HOST_INSTRUCTION';
 const WORK_ORDER = {
   work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
   continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
+  handoff: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
 };
 const QUERY_ORDER = {
   planning: ['role', 'goal', 'task', 'footprint'],

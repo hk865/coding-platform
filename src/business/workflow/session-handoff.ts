@@ -15,10 +15,13 @@ import type {
   HandoffProgressV1, HandoffSavedInputV1, SecretaryArchiveProgressV1,
   SessionHandoffWorkflowPort,
 } from '../../core/work-graph/model/session-handoff-contracts.js';
+import type { DecisionApplicationAdapter } from './decision-actions.js';
+import { handoffApprovalOperationOfSource } from '../../core/work-graph/communication/decision-source/handoff-approval.js';
 import type { SecretaryArchiveActionV1, HandoffActionV1 } from '../../core/work-graph/model/session-operation-arms.js';
 import type { SessionOperationRecordOf } from '../../core/work-graph/model/session-contracts.js';
 import {
   advanceCommandId, archiveContextOf, handoffContextOf, savedHostPrincipal, successorOf,
+  type SessionHandoffPort,
 } from '../../core/work-graph/sessions/session-handoff-service.js';
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import { transferPinsOf } from '../../core/work-graph/sessions/session-responsibility-service.js';
@@ -361,5 +364,43 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
     },
     advance,
     manualArchive,
+  };
+}
+
+/**
+ * The `handoff_approval` step ② application: the person's approve/reject answer becomes the `handoff.decide`
+ * application under the answer's own `requestId`, so a repeated delivery replays the original decision. The
+ * owner's committed receipt is the formal application receipt; a moved pin (the card's answer no longer applies)
+ * is reported as `source_stale` and writes nothing.
+ */
+export function createHandoffApprovalApplicationAdapter(
+  handoff: Pick<SessionHandoffPort, 'decideHandoff'>,
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { source, selection, requestId }) {
+      const optionId = selection.kind === 'option' ? selection.optionId : null;
+      if (optionId !== 'approve' && optionId !== 'reject') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid', reason: 'a handoff_approval card answers approve or reject',
+        }, receipt: null } };
+      }
+      const operation = handoffApprovalOperationOfSource(source);
+      if (operation === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid', reason: 'the answer source is not a handoff_approval card',
+        }, receipt: null } };
+      }
+      const result = await handoff.decideHandoff(ctx, { commandId: requestId, operation,
+        verdict: optionId === 'approve' ? 'approve' : 'reject' });
+      if (result.status === 'committed') {
+        return { status: 'ready', value: { action: null, receipt: result.receipt } };
+      }
+      if (result.status === 'stale') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'source_stale', reason: 'the handoff approval moved before this answer',
+        }, receipt: null } };
+      }
+      return { status: 'ready', value: { action: result, receipt: null } };
+    },
   };
 }

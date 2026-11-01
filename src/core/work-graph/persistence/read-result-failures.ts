@@ -12,6 +12,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejected, rejectedWithCurrent, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import { CORE_ERRORS, type CoreRejection, type ReadResult } from '../../../contracts/core/results.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 
 /**
@@ -36,10 +37,17 @@ export function storeFailureCode(failure: { code: string }): CoreRejection['code
   return STORE_FAILURE_CODES.has(failure.code) ? failure.code as CoreRejection['code'] : 'unavailable';
 }
 
-/** A Store failure mapped to the domain vocabulary; `views/` never writes. */
-export function storeFailureToRejection(failure: { code: string; reason: string }, current?: unknown): CoreRejection {
-  return rejectedWithCurrent(storeFailureCode(failure), failure.reason,
-    Array.isArray(current) ? current as VersionPin[] : undefined);
+/**
+ * A Store failure mapped to the domain vocabulary; `views/` never writes. A
+ * structured rejection keeps its code/reason mapping; any other throw is the
+ * same `unavailable` read failure the callers must not swallow.
+ */
+export function storeFailureToRejection(failure: unknown, current?: unknown): CoreRejection {
+  if (isRecord(failure) && typeof failure.code === 'string' && typeof failure.reason === 'string') {
+    return rejectedWithCurrent(storeFailureCode({ code: failure.code }), failure.reason,
+      Array.isArray(current) ? current as VersionPin[] : undefined);
+  }
+  return rejected('unavailable', messageOf(failure));
 }
 
 /** Decodes the `revision_conflict` pins; only a null revision or an unreadable ref is skipped. */

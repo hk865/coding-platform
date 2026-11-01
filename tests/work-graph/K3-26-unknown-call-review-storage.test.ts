@@ -218,6 +218,7 @@ async function reviewWorldFixture(kind: 'memory' | 'sqlite'): Promise<ReviewWorl
   const reads = createRunStateReader({ records });
   let seq = 0;
   const reconcile = createRunReconcileService({ records, reads,
+    bodies: world.fixture.bodies,
     hostInstance: { hostInstanceId: 'k3-26-host', lease: 'owned',
       takeover: { kind: 'hl03_stale_lock', previousInstanceId: 'previous-host', previousPid: 42 } },
     now: () => AT, eventId: () => `k3-26-event-${String(++seq)}` });
@@ -567,6 +568,7 @@ async function ownerFixture(kind: 'memory' | 'sqlite'): Promise<OwnerFixture> {
   const reads = createRunStateReader({ records });
   let seq = 0;
   const reconcile = createRunReconcileService({ records, reads,
+    bodies: world.fixture.bodies,
     hostInstance: { hostInstanceId: 'k3-26-host', lease: 'owned', takeover: TAKEOVER },
     now: () => AT, eventId: () => `k3-26-event-${String(++seq)}` });
   return { world, harness, reconcile, reviews: world.reviews,

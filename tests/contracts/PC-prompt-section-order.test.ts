@@ -15,6 +15,7 @@ describe('ruling 18: the projected section order', () => {
     expect(workPreparedSectionOrder()).toEqual({
       work: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'unknown_call_review', 'reminders'],
       continuation: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
+      handoff: ['role', 'goal', 'task', 'footprint', 'notes', 'inputs', 'continuation', 'reminders'],
     });
   });
 

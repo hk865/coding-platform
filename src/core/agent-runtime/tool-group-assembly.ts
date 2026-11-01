@@ -24,6 +24,7 @@ import {
   USER_DECISION_TOOL_NAMES,
 } from './communication-tools.js';
 import { createMemberTools, CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
+import { createHandoffTools, HANDOFF_TOOL_NAMES } from './handoff-tools.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
@@ -72,7 +73,7 @@ export const EXPLORATION_TOOL_NAMES = [
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
-  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES,
+  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES,
 ]);
 /** K3 group 3: the L13 exploration names a review-round manifest may select.
  * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
@@ -220,6 +221,10 @@ export type WorkToolGroupInput = {
    * selection of look/find memory or `record_note` without the needed port
    * fails closed before the model. */
   notes?: RuntimeExecutionDependencies['notes'];
+  /** H's one trusted entry; absent makes a selected `hand_off` unregisterable. */
+  handoffs?: RuntimeExecutionDependencies['handoffs'];
+  /** The formal Session duty the start resolved; `hand_off` is executor/adviser only. */
+  duty?: 'executor' | 'adviser';
   /** Names this Runtime handles outside the coordination factories (the
    * read-only process tool). They are recognized but never built here. */
   extensionNames?: ReadonlySet<string>;
@@ -250,13 +255,15 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
+  const handoffNames = HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
   const reworkNames = REWORK_TOOL_NAMES.filter(name => wanted.has(name));
   const members = input.memberCreation;
   const reworkClaims = input.claims?.requeueTask;
   const reworkEvidence = input.evidence?.reverifyRound;
   if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
-    && graphNames.length === 0 && noteNames.length === 0 && memberNames.length === 0 && reworkNames.length === 0) {
+    && graphNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
+    && memberNames.length === 0 && reworkNames.length === 0) {
     return { ok: true, value: null };
   }
   if (decisionNames.length > 0 && input.decisionMessages === undefined) {
@@ -275,6 +282,9 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (noteNames.length > 0 && (input.notes?.write === undefined || input.notes.check === undefined)) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
+  }
+  if (handoffNames.length > 0 && (input.handoffs === undefined || input.duty === undefined)) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects hand_off but no handoff entry or formal Session duty is bound: ${handoffNames.join(', ')}`) };
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
   if (mailboxNames.length > 0 || decisionNames.length > 0) {
@@ -364,8 +374,13 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
+  if (handoffNames.length > 0 && input.handoffs !== undefined && input.duty !== undefined) {
+    handles.push(createHandoffTools({ handoffs: input.handoffs, context: input.context,
+      sessionRef: input.sessionRef, duty: input.duty, requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }) }));
+  }
   const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames,
-    ...memberNames, ...reworkNames];
+    ...handoffNames, ...memberNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -627,6 +642,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const mailboxNames = query
     ? secretary ? SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name)) : []
     : SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
+  const handoffNames = query ? [] : HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
   const decisionNames = query ? [] : USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
   const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
@@ -671,7 +687,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (rerun && (!owners.commandRerunRequests || !owners.unknownCallReviews)) {
     return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
   }
-  const coordinationNames = [...mailboxNames, ...decisionNames, ...whiteboardNames,
+  const coordinationNames = [...mailboxNames, ...handoffNames, ...decisionNames, ...whiteboardNames,
     ...discoveryNames, ...graphNames, ...noteNames, ...memberNames, ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };

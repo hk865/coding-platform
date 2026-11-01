@@ -36,6 +36,14 @@ import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { derivePlanProposalReadVerdict, type PlanProposalRef } from '../state/plan-machine.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { lookupAll } from '../persistence/lookup-all.js';
+import {
+  SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP, decodeSessionMessageRecord, sessionMessageRefKey,
+} from '../sessions/message-record-codecs.js';
+import {
+  messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+} from '../state/message-machine.js';
+import { messageReleaseBlockEligible } from './message-release-card.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
 import {
   compareRequestRounds, deriveCoveredByDrop, deriveEffectiveGoalId, readRequestRounds,
@@ -84,6 +92,10 @@ export type RequestCoreFactsV1 = {
   coveredByDrop: readonly QueryJobRef[];
   answers: readonly QueryJobAnswerSnapshot[];
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
+  /** A secretary inquiry of this request still open: the request has a question waiting for a reply. */
+  reply: boolean;
+  /** A message of this request is awaiting release, or approved and not yet actually released. */
+  release: boolean;
 };
 
 /** The map key of one `(answerRef, draftIndex)` initialization binding; canonical JSON keeps the pair unambiguous. */
@@ -142,6 +154,8 @@ export function deriveRequestCore(
     view.status === 'running'
     || (view.status === 'queued' && !coveredKeys.has(canonicalJson(ordered[index]!.ref as unknown as JsonValue))));
   if (roundReason) reasons.push('round');
+  if (facts.reply) reasons.push('reply');
+  if (facts.release) reasons.push('release');
   if (facts.candidate !== null) reasons.push('candidate');
 
   return {
@@ -182,6 +196,63 @@ export interface RequestFactsPort {
 
 function unavailable(reason: string): { status: 'rejected'; code: 'unavailable'; reason: string } {
   return { status: 'rejected', code: 'unavailable', reason };
+}
+
+/**
+ * The request's own message reasons: a secretary inquiry whose wait is still open (`reply`) and a message
+ * awaiting or approved-but-not-released (`release`). It reads every message of this request root, never only
+ * the current owner's, and reuses the outbox's decode and root check. A read failure is `unavailable`; a
+ * cancelled caller is `cancelled`.
+ */
+async function readRequestMessageReasons(
+  records: RecordLookupPort, ctx: CoreCallContext, requestRoot: QueryJobRef,
+): Promise<{ status: 'ready'; value: { reply: boolean; release: boolean } }
+  | { status: 'rejected'; code: 'cancelled' | 'unavailable'; reason: string }> {
+  if (ctx.signal.aborted) {
+    return { status: 'rejected', code: 'cancelled', reason: 'the request message read was cancelled before lookup' };
+  }
+  let batch;
+  try {
+    batch = await lookupAll(records, SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP,
+      [requestRoot.projectId, requestRoot.workspaceId, requestRoot.queryJobId]);
+  } catch (error) {
+    const code = isRecord(error) ? error['code'] : undefined;
+    if (code === 'cancelled') {
+      return { status: 'rejected', code: 'cancelled', reason: 'the request message read was cancelled during lookup' };
+    }
+    return unavailable(`the request messages could not be read: ${messageOf(error)}`);
+  }
+  if (ctx.signal.aborted) {
+    return { status: 'rejected', code: 'cancelled', reason: 'the request message read was cancelled after lookup' };
+  }
+  const rootKey = keyOf(requestRoot);
+  let reply = false;
+  let release = false;
+  for (const record of batch.items) {
+    const decoded = decodeSessionMessageRecord(record);
+    if (decoded.status !== 'decoded') {
+      return unavailable(`a request message is damaged: ${decoded.reason}`);
+    }
+    const message = decoded.value;
+    if (sessionMessageRefKey(message.ref) !== record.refKey
+      || message.ref.projectId !== requestRoot.projectId
+      || message.ref.workspaceId !== requestRoot.workspaceId
+      || message.requestRoot === null
+      || keyOf(message.requestRoot) !== rootKey
+      || (message.sender.kind === 'secretary_round' && keyOf(message.sender.requestRoot) !== rootKey)) {
+      return unavailable('a request message disagrees with the request root');
+    }
+    if (message.sender.kind === 'secretary_round' && message.intent === 'inquiry'
+      && messageConsumptionProblem(messageFactsOfRecord(message)) === null
+      && waitStateOf(message, waitFactsOfRecord(message)).state === 'open') {
+      reply = true;
+    }
+    if (message.withdrawnAt === null
+      && (message.release === 'awaiting' || messageReleaseBlockEligible(message))) {
+      release = true;
+    }
+  }
+  return { status: 'ready', value: { reply, release } };
 }
 
 /**
@@ -353,6 +424,8 @@ export function createRequestFacts(deps: RequestFactsDependencies): RequestFacts
     if (facts.status !== 'ready') {
       return unavailable(facts.status === 'rejected' ? facts.reason : 'the request facts are unavailable');
     }
+    const messages = await readRequestMessageReasons(deps.records, ctx, input.requestRoot);
+    if (messages.status !== 'ready') return { status: 'rejected', code: messages.code, reason: messages.reason };
     const answers = await readAnswers(deps, facts.value.rounds);
     if (answers.status !== 'ready') return { status: 'rejected', code: answers.code, reason: answers.reason };
     const confirmed = await readConfirmedGoalRefs(deps, ctx, answers.value);
@@ -372,6 +445,8 @@ export function createRequestFacts(deps: RequestFactsDependencies): RequestFacts
         coveredByDrop: facts.value.coveredByDrop,
         answers: answers.value,
         candidate: candidate.value,
+        reply: messages.value.reply,
+        release: messages.value.release,
       }, confirmed.value),
     };
   }

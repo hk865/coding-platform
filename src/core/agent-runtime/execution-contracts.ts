@@ -343,6 +343,8 @@ export type RuntimeExecutionDependencies = {
     write?: NoteWritePort;
     check?: Pick<NoteCheckPort, 'checkNotes'>;
   };
+  /** H's one handoff entry; absent fails a Run selecting `hand_off` closed before the model. */
+  handoffs?: import('./handoff-tools.js').HandoffRequestPort;
   /**
    * K3 L14: the SAME UnknownCallReview owner the routes publish. The review
    * round's `record_unknown_call_review` tool binds the record and the

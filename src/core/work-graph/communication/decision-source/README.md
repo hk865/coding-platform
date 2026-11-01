@@ -26,10 +26,11 @@
 | `rework-request.ts` | `reworkRequestOptions`、`projectReworkRequestCard`、`reworkRequestClosedReason`、`reworkRequestCardSourceSpec`、`readReworkRequestSource` | `rework_request` 来源的完整分支事实：全状态页，rejected/stale 以 `source_resolved` 关闭，applied 留给回答覆盖。 |
 | `member-creation.ts` | `readMemberCreationSource`、`memberCreationCardFacts`、`memberCreationClosedReason`、`memberCreationSourceIdentity`、`MemberOperationRecordV1`、`MemberCreationCardFactsV1` | member creation 来源的完整分支事实：按 identity.operationRef 重读一条 `member_create` 操作并核对 Goal/Task/revision；唯一纯投影产出卡片事实（operation pin、approve/reject 选项、`source_resolved` 的终态集合与 `requestedAt`）。 |
 | `message-release.ts` | `readMessageReleaseSource` | message release 来源的完整分支事实：消息记录、它的 Goal 与 `tasks/message-release-card.ts` 的卡片事实；派生块是读的 DTO，不在分支事实里。 |
+| `handoff-approval.ts` | `readHandoffApprovalSource`、`handoffApprovalSubjectOf`、`handoffApprovalCardFacts`、`handoffApprovalCard`、`handoffApprovalCardKey`、`handoffApprovalClosedReason`、`handoffApprovalSourceIdentity`、`handoffApprovalOperationOfSource`、`readHandoffApprovalOperation`、`readHandoffApprovalOperations`、`HandoffApprovalOperationV1`、`HandoffApprovalCardFactsV1` | `handoff_approval` 来源：按 identity 的 operation ref 重读一条 `handoff` 操作，只用它自己的 `progress.approval` 与 `requestedAt`；subject 由 `handoffApprovalSubjectOf` 按 `assignments` 的不同 Goal 数派生（恰好一个 Goal 是该 Goal，其余是项目），通知来源也调用同一份；所有阶段都列出，`approved`/`rejected`/已结束以 `source_resolved` 关闭。集合读遍历 workspace 五个阶段的操作并按 subject 筛选；唯一纯投影同时产出卡片事实和 `DecisionCardV1`，不另写第二份。 |
 
 ## 不要做
 
 - 不要在 handler 里另写记录读取、解码、scope 检查或 pin 比较；用 `createSourceReadSupport` 和本文件夹的纯 helper。
 - 不要把失败的读折成空来源或默认读者；拒绝原样返回。
-- 不要自己解析 `subject` 或另写取 Goal 的 helper：Goal 只由 `communication/decision-source-facts.ts` 收窄一次再传进来（项目 subject 传 `null`）。
+- 不要自己解析 `subject` 或另写取 Goal 的 helper：Goal 只由 `communication/decision-source-facts.ts` 收窄一次再传进来（项目 subject 传 `null`；`handoff_approval` 的 Goal/项目两臂都分派到同一个来源读取）。
 - 不要从 `views` 读一手事实，也不要 import `decision-source-facts.ts`。

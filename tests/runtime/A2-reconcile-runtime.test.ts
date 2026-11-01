@@ -971,6 +971,7 @@ it('K3-21 review_round wins over every other guard', async () => {
     let attestSeq = 0;
     const reconcile = createRunReconcileService({ records: fx.claimFixture.records,
       reads: createRunStateReader({ records: fx.claimFixture.records }),
+      bodies: fx.deps.bodies,
       hostInstance: { hostInstanceId: 'k3-review-attest', lease: 'owned' }, now: () => B2_AT,
       eventId: () => `k3-review-attest-${String(++attestSeq)}` });
     const attested = await reconcile.resolveUnknownRun(fx.ctx, { input: {

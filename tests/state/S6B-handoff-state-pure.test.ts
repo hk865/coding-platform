@@ -59,7 +59,8 @@ describe('a handoff that passes', () => {
       action: { kind: 'handoff', input, progress: { stage: 'accepted', advanceGeneration: 1, fence: null, stoppedWriter: null,
         assignments: [{ successor: null, createOperation: null, createInput: null, transfers: [transfer('a'), transfer('b')] },
           { successor: null, createOperation: null, createInput: null, transfers: [] }],
-        coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null, lastRefusal: null } },
+        coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
+        approval: null, lastRefusal: null } },
       phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null });
   });
 });

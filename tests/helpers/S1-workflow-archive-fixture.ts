@@ -310,6 +310,7 @@ export async function unknownWork(f: B2ExecutionFixture, now: () => string): Pro
   let eventSeq = 0;
   const reconcile = createRunReconcileService({ records: f.base.records,
     reads: createRunStateReader({ records: f.base.records }),
+    bodies: f.bodies,
     hostInstance: { hostInstanceId: 'fx3-host', lease: 'owned' }, now, eventId: () => `fx3-unknown-${++eventSeq}` });
   const result = await reconcile.reconcileRun(f.ctx, {
     input: { runRef: f.claim.runRef, basis: { kind: 'host_instance_takeover', hostInstanceId: 'fx3-host' },
@@ -329,6 +330,7 @@ export async function interruptWork(f: B2ExecutionFixture, now: () => string): P
   let eventSeq = 0;
   const reconcile = createRunReconcileService({ records: f.base.records,
     reads: createRunStateReader({ records: f.base.records }),
+    bodies: f.bodies,
     hostInstance: { hostInstanceId: 'fx3-host', lease: 'owned' }, now, eventId: () => `fx3-interrupted-${++eventSeq}` });
   const result = await reconcile.reconcileRun(f.ctx, {
     input: { runRef: f.claim.runRef, basis: { kind: 'host_instance_takeover', hostInstanceId: 'fx3-host' },

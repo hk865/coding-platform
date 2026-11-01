@@ -48,12 +48,12 @@
 | `commandIdentity`、`commandKeys` | `src/core/work-graph/persistence/command-executor.ts:31`、`:43` | 一次写的 R2 identity 和 fingerprint：identity 只由 operation、scope、principal、commandId 决定，fingerprint 只由 operation 和该写的冻结输入决定 | `executeWriteCommand` 与 H 的 `advanceWriteKeys` 共用；重放只用 `commandIdentity`，不要另写一份哈希 |
 | `lookupCommittedReceiptByIdentity`、`ReceiptByIdentityLookup` | `src/core/work-graph/persistence/receipt-lookup.ts:54`、`:42` | 只按 identity 读已提交回执和提交时的 fingerprint：found/missing/invalid/unavailable；`corrupt` 行归 unavailable | 父写入按 commandId 重放时；不要用当前输入或伪造 fingerprint 代替 |
 | `storeFailureCode` | `src/core/work-graph/persistence/read-result-failures.ts:35` | 把 Store 失败码收窄为 `CoreRejection['code']` | 需要判断失败类别时 |
-| `storeFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:40` | 通用 Store 失败→`CoreRejection`，可带 `current`；**正本** | 没有 owner 特有语义的读写失败；request-service 的旧映射已删，见“不要做” |
-| `pinsFromStoreCurrent` | `src/core/work-graph/persistence/read-result-failures.ts:46` | 从 Store 的 conflict `current` 解出可回填的 version pins | 映射 revision conflict 时 |
-| `sessionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:64` | Session 写失败映射：unique 冲突转 revision conflict | Session 目录/生命周期写失败时 |
-| `executionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:86` | 执行/owner 写失败映射：unique 冲突转 busy | 执行入口或 owner 写失败时 |
-| `ownerWriteStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:108` | owner 写失败的窄映射 | 一般 owner 写入时 |
-| `ownerReadStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:122` | owner 读失败的窄映射 | 一般 owner 读取时 |
+| `storeFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:45` | 通用 Store 失败→`CoreRejection`，可带 `current`；**正本** | 没有 owner 特有语义的读写失败；request-service 的旧映射已删，见“不要做” |
+| `pinsFromStoreCurrent` | `src/core/work-graph/persistence/read-result-failures.ts:54` | 从 Store 的 conflict `current` 解出可回填的 version pins | 映射 revision conflict 时 |
+| `sessionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:72` | Session 写失败映射：unique 冲突转 revision conflict | Session 目录/生命周期写失败时 |
+| `executionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:94` | 执行/owner 写失败映射：unique 冲突转 busy | 执行入口或 owner 写失败时 |
+| `ownerWriteStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:116` | owner 写失败的窄映射 | 一般 owner 写入时 |
+| `ownerReadStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:130` | owner 读失败的窄映射 | 一般 owner 读取时 |
 | `mergeGuards` | `src/core/work-graph/persistence/record-guards.ts:11` | 按 refKey 合并 guards：同 key 不同 revision 返回 `revision_conflict` | 任何提交合并读依赖的 guards 时；`tasks/execution-entry-service.ts` 仅保留再导出 |
 | `atLeastCursorResult` | `src/core/work-graph/persistence/read-result-failures.ts:22` | 比较观察到的 watermark 与要求的 `atLeastCursor`，不足则给真实 `not_ready` | 索引读承诺新鲜度时 |
 | `lookupAll` | `src/core/work-graph/persistence/lookup-all.ts:32` | 把一个等值索引读到结尾，窗口变化最多重试 4 次，返回 watermark 且 `truncated` 恒为 false | 契约要求完整等值事实集时 |
@@ -121,7 +121,7 @@
 - run-activity-codecs：`RUN_ACTIVITY_SCHEMA_ID`、`ACTIVITY_RECORDING_SCHEMA_ID`、`RUN_ACTIVITY_RECORDED_EVENT_TYPE`、`ACTIVITY_RECORDING_STARTED_EVENT_TYPE`、`RUN_ACTIVITY_EVENT_SCHEMA_VERSION`、`S2B_RUN_ACTIVITY_BY_GOAL_LAST_LOOKUP`、`activityRecordRefProblem`、`runActivityFactsProblem`、`runActivitySpanProblem`、`runActivityRefKey`、`activityRecordingRefKey`、`encodeRunActivitySnapshot`、`decodeRunActivitySnapshot`、`encodeActivityRecordingSnapshot`、`decodeActivityRecordingSnapshot`、`encodeRunActivityRecordedEvent`、`runActivityRecordedEventFromEvent`、`encodeActivityRecordingStartedEvent`、`activityRecordingStartedEventFromEvent`、`RUN_ACTIVITY_RECORD_SCHEMAS`。
 
 ## 不要做
-- `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:40`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
+- `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:45`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
 - `actorRefProblem` 是 actor 字段形状的正本；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换；sessions 的 `checkCreationActor` 包装已删除（S05、FP-17）。
 - `canonicalRefKey` 委托 `src/contracts/fingerprint.ts:59` 的 `canonicalKey`；`configuration/role-record-codecs.ts` 的旧副本已删除，不要恢复。
 - `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:174` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。

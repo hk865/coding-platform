@@ -258,7 +258,7 @@ export async function openS1RuntimeFixture(options: {
     unknownCallReviews,
     readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
       readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
-    runReconcile: createRunReconcileService({ records, reads, hostInstance, now, eventId: newId }),
+    runReconcile: createRunReconcileService({ records, reads, bodies, hostInstance, now, eventId: newId }),
     historyWriter: createExecutionHistoryService({ records, now, eventId: newId }), activity,
     graphHistory: createGraphExecutionHistoryReader({ executions: reads, history: activity }), sessionOperations,
     sourceAuthority: () => createSourceAuthorityReader({ authority: materialReads.authority }), workspaceSource: source };

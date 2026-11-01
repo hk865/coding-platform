@@ -69,6 +69,18 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'handoff-brief-secretary': {
         task_round: { required: true },
     },
+    'handoff-write-understanding-executor': {
+        task_round: { required: true },
+    },
+    'handoff-write-understanding-adviser': {
+        task_round: { required: true },
+    },
+    'handoff-brief-executor': {
+        task_round: { required: true },
+    },
+    'handoff-brief-adviser': {
+        task_round: { required: true },
+    },
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },

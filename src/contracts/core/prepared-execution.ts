@@ -26,6 +26,7 @@ import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
 import { templateToolNames, type ContinuationBriefV1 } from '../continuation-brief.js';
+import type { HandoffBriefBindingV1, HandoffBriefMaterialV1 } from '../handoff-brief.js';
 import type { ContextAssemblyBindingV1 } from '../graph-context.js';
 import type { PromptSetV1 } from '../prompts/prompt-set.js';
 import type {
@@ -230,6 +231,14 @@ export type PreparedTaskManifestV1 = {
    * section (an independent interval in the frozen order) of `input`.
    */
   continuationBrief?: ContinuationBriefV1;
+  /**
+   * H: the successor's first-round handoff brief, frozen beside
+   * `continuationBrief`. The binding and the material are record 5's own; the
+   * rendered text is the `continuation` section's interval of `input`.
+   * `renderedDigest = sha256Hex(rendered bytes)` — a frozen derivation, not the
+   * record's material-only digest.
+   */
+  handoffBrief?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1; renderedDigest: string };
   /** Slice 3: the assembled context binding fixed at prepare (required). */
   contextAssembly: ContextAssemblyBindingV1;
   /** The assembly's history decision, inside the manifest digest. */

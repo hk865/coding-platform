@@ -72,6 +72,19 @@ export function unservedRoles(
     .map(assignment => assignment.role);
 }
 
+/**
+ * The one list of what the project is missing before a no-setup answer can be adopted: the project id and
+ * `初始架构`, `完成标准`, or both. `null` = neither is missing. Only an explicit `not_found` read reaches
+ * here as missing; every other read failure keeps its own original path.
+ */
+function missingInitializationGovernanceReason(
+  projectId: string, architectureMissing: boolean, completionPolicyMissing: boolean,
+): string | null {
+  if (!architectureMissing && !completionPolicyMissing) return null;
+  if (architectureMissing && completionPolicyMissing) return `项目 ${projectId} 缺少初始架构和完成标准`;
+  return architectureMissing ? `项目 ${projectId} 缺少初始架构` : `项目 ${projectId} 缺少完成标准`;
+}
+
 const ACCEPT_OPERATION = 'initialization.adoptAccept';
 const ADVANCE_OPERATION = 'initialization.adoptAdvance';
 
@@ -302,9 +315,12 @@ export function createInitializationAdoptionService(
         if (policy.status === 'not_ready') {
           return rejected('unavailable', 'the completion policy is not ready');
         }
-        if (architecture.status === 'not_found' || policy.status !== 'ready') {
-          return rejected('incomplete', 'the initialization governance is incomplete');
-        }
+        const missing = missingInitializationGovernanceReason(
+          ctx.projectId,
+          architecture.status === 'not_found',
+          policy.status === 'rejected' && policy.code === 'not_found',
+        );
+        if (missing !== null) return rejected('incomplete', missing);
       }
       return { status: 'ready', facts: { record: null } };
     }

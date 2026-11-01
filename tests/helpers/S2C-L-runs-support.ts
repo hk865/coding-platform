@@ -228,7 +228,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
   }
 
   async function reconcileInterrupt(claim: TaskClaim): Promise<RunSnapshot> {
-    const reconcile = createRunReconcileService({ records, reads: createRunStateReader({ records }), hostInstance, now, eventId });
+    const reconcile = createRunReconcileService({ records, reads: createRunStateReader({ records }), bodies, hostInstance, now, eventId });
     const result = await reconcile.reconcileRun(base.ctx, {
       input: { runRef: claim.runRef, basis: { kind: 'host_instance_takeover', hostInstanceId: hostInstance.hostInstanceId },
         probe: 'ready', result: { kind: 'interrupted_clean', turn: { terminal: false, inFlightToolCallIds: [],

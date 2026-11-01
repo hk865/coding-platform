@@ -69,7 +69,7 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
-  | 'memberCreation'
+  | 'memberCreation' | 'handoffs'
   | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
@@ -633,6 +633,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           },
         }),
         ...(deps.notes === undefined ? {} : { notes: deps.notes }),
+        ...(deps.handoffs === undefined ? {} : { handoffs: deps.handoffs }),
+        ...(hostConfig.platformDuty === 'executor' || hostConfig.platformDuty === 'adviser'
+          ? { duty: hostConfig.platformDuty } : {}),
         texts: toolTexts,
         extensionNames: new Set([READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
           PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME]),

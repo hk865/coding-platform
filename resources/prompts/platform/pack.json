@@ -115,6 +115,30 @@
       "version": 1,
       "mentionsTools": []
     },
+    "handoff-write-understanding-executor": {
+      "file": "templates/handoff-write-understanding-executor.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "handoff-write-understanding-adviser": {
+      "file": "templates/handoff-write-understanding-adviser.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "handoff-brief-executor": {
+      "file": "templates/handoff-brief-executor.txt",
+      "version": 1,
+      "mentionsTools": [
+        "read"
+      ]
+    },
+    "handoff-brief-adviser": {
+      "file": "templates/handoff-brief-adviser.txt",
+      "version": 1,
+      "mentionsTools": [
+        "read"
+      ]
+    },
     "base": {
       "file": "templates/base.txt",
       "version": 2,
@@ -185,6 +209,7 @@
     "propose_safer_method": "tools/propose_safer_method.json",
     "submit_secretary_answer": "tools/submit_secretary_answer.json",
     "submit_initial_plan": "tools/submit_initial_plan.json",
-    "submit_initial_questions": "tools/submit_initial_questions.json"
+    "submit_initial_questions": "tools/submit_initial_questions.json",
+    "hand_off": "tools/hand_off.json"
   }
 }

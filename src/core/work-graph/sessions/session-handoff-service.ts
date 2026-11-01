@@ -13,25 +13,35 @@ import { principalIdentity, type CoreCallContext, type HostPrincipal } from '../
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RequestSessionArchiveInput, SessionArchiveConditionV1 } from '../../../contracts/core/session-archive.js';
 import type { QueryJobRef, QueryRunRef, RequestUnderstandingCommandV1 } from '../../../contracts/query-job.js';
+import type { HandoffBriefMaterialV1 } from '../../../contracts/handoff-brief.js';
+import { handoffBriefDigest } from '../../../contracts/handoff-brief.js';
 import { messageOf } from '../../../contracts/error-message.js';
+import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { HAND_OFF_TOOL_NAME, type HandoffApprovalV1, type HandoffToolFragmentV1,
+  type HandoffTriggerV1 } from '../../../contracts/handoff.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionWorkLink } from '../../../contracts/core/session.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { DecisionApplicationReceiptV1 } from '../../../contracts/core/session-message.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalKey, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import { SESSION_ARCHIVE_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
+import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
+import { OperationRefShape } from '../../../contracts/data-format-refs.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
-  EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordCommitIdentityPort, RecordGuard,
-  UniqueClaimChange,
+  CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordCommitIdentityPort,
+  RecordGuard, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type {
   HandoffAdvanceInputV1, HandoffAdvanceResultV1, HandoffAdvanceStopV1, HandoffBriefRefsReadPort,
+  HandoffDecideInputV1, HandoffDecideResultV1,
   HandoffRequestFactsReadPort,
   HandoffSavedCreateInputV1,
   HandoffSavedInputV1, HandoffStageV1,
@@ -39,6 +49,7 @@ import type {
   SecretaryArchiveAdvanceResultV1, SecretaryArchiveStageV1,
 } from '../model/session-handoff-contracts.js';
 import type { SecretaryHandoffBasisV1, SecretaryHandoffFactsPort } from '../model/secretary-lifecycle-contracts.js';
+import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import { HANDOFF_SYSTEM_PRINCIPAL, type HandoffRequestReceiptReadPort } from '../model/request-contracts.js';
 import type { SessionDirectoryPort, SessionOperationRecord, SessionOperationRecordOf } from '../model/session-contracts.js';
 import {
@@ -46,6 +57,8 @@ import {
   archiveSavedInputProblem, handoffReachedInputProblem, type HandoffActionV1, type SecretaryArchiveActionV1,
 } from '../model/session-operation-arms.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import type { WorkHandoffBriefV1 } from '../state/work-handoff-brief.js';
+import { toolCommitLookupUnknownTool, toolCommitRequestId } from '../model/tool-commit-arguments.js';
 import {
   commandIdentity, commandKeys, executeWriteCommand, readCommittedEvent, type CommandResult, type Keys,
 } from '../persistence/command-executor.js';
@@ -56,9 +69,10 @@ import { currentPointerRefKey } from '../persistence/note-record-codecs.js';
 import type { CommittedReceipt } from '../persistence/receipt-lookup.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { ownerReadStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { decisionActionPolicy } from '../state/decision-policy.js';
 import {
-  briefReady, coverageHolds, saveArchiveReceipt, saveArchiveSavedInput, saveHandoffCreateInput,
-  saveUnderstandingCommand, withHandoffProgress,
+  briefReady, coverageHolds, decidedHandoffApproval, saveArchiveReceipt, saveArchiveSavedInput, saveHandoffCreateInput,
+  saveUnderstandingCommand, withHandoffApproval, withHandoffProgress,
 } from '../state/session-handoff.js';
 import { sameRef } from '../state/ref-equality.js';
 import { openResponsibleLinkOf } from '../state/session-availability.js';
@@ -70,6 +84,7 @@ import {
 import {
   CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord, encodeSessionOperationRecord, operationRefKey,
   plainSessionRefKey, secretaryArchiveRecordedCodec, sessionHandoffRecordedCodec,
+  workHandoffBriefCodec, handoffBriefRecordedCodec,
 } from './session-record-codecs.js';
 import { readHandoffFence, secretaryHandoffClaimKey } from './session-handoff-fence.js';
 import { stableSessionCreationIdentity } from './session-directory.js';
@@ -82,18 +97,30 @@ import { eventIdOf, trustedContext } from './trusted-context.js';
 
 export type HandoffAcceptInputV1 = {
   commandId: string; workspace: WorkspaceScope; source: SessionRef;
-  trigger: 'too_long' | 'manual';
+  trigger: HandoffTriggerV1;
   assignments: { target: { kind: 'create'; duty: PlatformDutyV1 } | { kind: 'existing'; session: SessionRef }; tasks: TaskTriple[] }[];
+  /** The tool caller's saved fragment; absent on the `too_long` and `manual` triggers. */
+  tool?: HandoffToolFragmentV1 | null;
 };
-export type HandoffAcceptResultV1 = WriteResult<{ operation: OperationRef; stage: 'accepted'; phase: 'accepted' }>;
+export type HandoffAcceptResultV1 = WriteResult<{ operation: OperationRef; stage: 'accepted'; phase: 'accepted';
+  /** The approval card the accept opened, or `null` on the automatic branch. */
+  approval: HandoffApprovalV1 | null }>;
 export interface SessionHandoffPort {
   acceptHandoff(ctx: CoreCallContext, input: HandoffAcceptInputV1): Promise<HandoffAcceptResultV1>;
   advanceHandoff(ctx: CoreCallContext, input: HandoffAdvanceInputV1): Promise<HandoffAdvanceResultV1>;
+  /** The one `handoff.decide` application of an approval card (the trusted application entry's command). */
+  decideHandoff(ctx: CoreCallContext, input: HandoffDecideInputV1): Promise<HandoffDecideResultV1>;
+  /** The one committed-receipt lookup of the `hand_off` tool call (the tool-commit dispatcher's owner). */
+  lookupToolCommit(ctx: CoreCallContext, input: ToolCommitLookupInput): Promise<ToolCommitLookupResult>;
 }
 
 const OPERATION = 'handoff.accept';
 type ReadFacts = NonNullable<HandoffAdmissionFactsV1['read']>;
-type AcceptFacts = { read: ReadFacts; sourceRevision: number | null };
+type AcceptFacts = { read: ReadFacts; sourceRevision: number | null;
+  /** The approval tier of the source line; `short`/`long` is the one policy table's action input. */
+  required: 'short' | 'long';
+  /** The accept opens a pending approval card (only a `tool` handoff can). */
+  needsDecision: boolean };
 type HandoffRecordedEvent = Extract<ReturnType<typeof sessionHandoffRecordedCodec.decode>, { status: 'decoded' }>['value'];
 /** The one handoff record event: the owner's writes encode it, the replays and the notice projection decode it. */
 export const handoffRecordedEvent = { eventType: 'SessionHandoffRecorded', schemaVersion: 1,
@@ -132,15 +159,17 @@ function copiedInput<T>(raw: T, what: string): { ok: true; value: T } | { ok: fa
  */
 async function sessionFactOf(reads: { sessions: Pick<SessionDirectoryPort, 'readSession'>; duty: SessionDutyReadPort },
   ctx: CoreCallContext, ref: SessionRef):
-  Promise<{ status: 'ready'; fact: OperationSessionFactV1; revision: number | null } | CoreRejection> {
+  Promise<{ status: 'ready'; fact: OperationSessionFactV1; revision: number | null;
+    links: readonly SessionWorkLink[] } | CoreRejection> {
   const read = await reads.sessions.readSession(ctx, ref);
-  if (read.status === 'not_found') return { status: 'ready', fact: { kind: 'missing' }, revision: null };
+  if (read.status === 'not_found') return { status: 'ready', fact: { kind: 'missing' }, revision: null, links: [] };
   if (read.status === 'rejected') return read;
   if (read.status !== 'ready') return rejected('unavailable', 'the Session read is not ready');
   const { record } = read.value;
   const duty = await reads.duty(record.role, ctx);
-  return { status: 'ready', revision: record.revision, fact: { kind: 'present', archived: record.lifecycle === 'archived',
-    readonlyCopy: record.provenance.kind === 'readonly_copy', duty: duty.status === 'ready' ? duty.value : 'unknown' } };
+  return { status: 'ready', revision: record.revision, links: read.value.links,
+    fact: { kind: 'present', archived: record.lifecycle === 'archived',
+      readonlyCopy: record.provenance.kind === 'readonly_copy', duty: duty.status === 'ready' ? duty.value : 'unknown' } };
 }
 
 /** The accepted or running operations that name this source, as pins; a damaged record is `unavailable`. */
@@ -168,10 +197,44 @@ async function unfinishedPinsOf(records: Pick<RecordLookupPort, 'lookup'>, scope
   return { status: 'ready', value: pins };
 }
 
+/**
+ * The approval tier (book-7c §3.5 item 4): an adviser line and an executor line holding an open module
+ * `responsible` link are long-lived; every other executor line is short-lived.
+ */
+function handoffRequiredOf(duty: PlatformDutyV1 | 'unknown', links: readonly SessionWorkLink[]): 'short' | 'long' {
+  if (duty === 'adviser') return 'long';
+  if (duty !== 'executor') return 'short';
+  return links.some(link => link.ref.relation === 'responsible' && link.until === null
+    && link.ref.target.kind === 'module') ? 'long' : 'short';
+}
+
+/** The first handed Task's Goal; a short handoff reads that Goal's autonomy. */
+function firstTaskGoalOf(assignments: HandoffAcceptInputV1['assignments']): GoalRef | null {
+  for (const assignment of assignments) {
+    const task = assignment.tasks[0];
+    if (task !== undefined) {
+      return { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
+    }
+  }
+  return null;
+}
+
+/** The `hand_off` tool's one committed-receipt lookup: rebuilt from the same trusted principal, scope and call. */
+function toolCommitIdentity(scope: { projectId: string; workspaceId: string },
+  input: ToolCommitLookupInput): string {
+  return commandIdentity({ operation: OPERATION, scope,
+    principal: principalIdentity(HANDOFF_SYSTEM_PRINCIPAL), commandId: toolCommitRequestId(input) });
+}
+
 export function createSessionHandoffService(deps: {
   records: GoalRecordTransactionPort & RecordLookupPort; sessions: Pick<SessionDirectoryPort, 'readSession'>;
-  duty: SessionDutyReadPort; now: () => string;
-}): Pick<SessionHandoffPort, 'acceptHandoff'> {
+  duty: SessionDutyReadPort;
+  /** The Goal autonomy of a short handoff's first Task. */
+  goals: GoalSettingsPort;
+  /** The identity-only receipt read the `hand_off` tool's replay lookup uses. */
+  commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
+  now: () => string;
+}): Pick<SessionHandoffPort, 'acceptHandoff' | 'lookupToolCommit'> {
   async function readHandoffFacts(ctx: CoreCallContext, input: HandoffAcceptInputV1):
     Promise<{ status: 'ready'; facts: AcceptFacts } | CoreRejection> {
     const source = await sessionFactOf(deps, ctx, input.source);
@@ -188,8 +251,24 @@ export function createSessionHandoffService(deps: {
     }
     const unfinished = await unfinishedPinsOf(deps.records, input.workspace, input.source);
     if (unfinished.status !== 'ready') return unfinished;
+    const required = source.fact.kind === 'present' ? handoffRequiredOf(source.fact.duty, source.links) : 'short';
+    let needsDecision = false;
+    if (input.trigger === 'tool') {
+      const action = required === 'long' ? 'long_handoff' as const : 'short_handoff' as const;
+      // `long_handoff` is `needs_decision` at both levels, so its autonomy never enters the verdict.
+      const goalRef = required === 'long' ? null : firstTaskGoalOf(input.assignments);
+      let autonomy: 'every_step' | 'after_plan_confirmation' = 'every_step';
+      if (goalRef !== null) {
+        const settings = await deps.goals.readGoalSettings(ctx, { goalRef });
+        if (settings.status === 'rejected') return settings;
+        if (settings.status !== 'ready') return rejected('unavailable', 'the handoff Goal settings read is not ready');
+        autonomy = settings.value.settings.autonomy;
+      }
+      needsDecision = decisionActionPolicy({ autonomy, action, actorClass: 'agent', countedNext: null, cap: 0 })
+        === 'needs_decision';
+    }
     return { status: 'ready', facts: { read: { source: source.fact, targets, unfinished: unfinished.value },
-      sourceRevision: source.revision } };
+      sourceRevision: source.revision, required, needsDecision } };
   }
 
   return {
@@ -204,7 +283,8 @@ export function createSessionHandoffService(deps: {
       // The action as it would be stored: the shape is checked before anything is hashed or read. The write command
       // puts its own input fingerprint in place of the placeholder, so the check cannot depend on it.
       const actionOf = (fingerprint: string): HandoffActionV1['input'] => ({ workspace: given.workspace!, source: given.source!,
-        trigger: given.trigger!, actor, assignments: given.assignments!, commandId: given.commandId!, fingerprint });
+        trigger: given.trigger!, tool: given.tool ?? null, actor, assignments: given.assignments!, commandId: given.commandId!,
+        fingerprint });
       let candidate: unknown;
       try {
         candidate = newHandoffOperationRecord({ ref: null, at: '', input: actionOf('0'.repeat(64)) }).action;
@@ -222,14 +302,18 @@ export function createSessionHandoffService(deps: {
       };
       const precheck = admitHandoff(early);
       if (!precheck.ok) return admissionRejection(precheck);
+      if (given.trigger === 'tool' && (given.tool === undefined || given.tool === null)) {
+        return rejected('invalid', 'a tool handoff carries its caller fragment');
+      }
 
       const result = await executeWriteCommand<AcceptFacts, AcceptFacts, CoreRejection, HandoffRecordedEvent,
-        { operation: OperationRef; stage: 'accepted'; phase: 'accepted' }>(deps.records, {
+        { operation: OperationRef; stage: 'accepted'; phase: 'accepted'; approval: HandoffApprovalV1 | null }>(deps.records, {
         operation: OPERATION,
         scope: { projectId: input.workspace.projectId, workspaceId: input.workspace.workspaceId },
         principal: principalIdentity(ctx.principal),
         commandId: input.commandId,
-        fingerprintInput: { source: input.source, trigger: input.trigger, assignments: input.assignments } as unknown as JsonValue,
+        fingerprintInput: { source: input.source, trigger: input.trigger, assignments: input.assignments,
+          tool: input.tool ?? null } as unknown as JsonValue,
         read: () => readHandoffFacts(ctx, input),
         decide(facts) {
           const admitted = admitHandoff({ ...early, read: facts.read });
@@ -239,8 +323,14 @@ export function createSessionHandoffService(deps: {
           const ref: OperationRef = { aggregateType: 'CoreOperation', projectId: input.workspace.projectId,
             operationId: handoffOperationId(keys) };
           const at = deps.now();
-          const record: SessionOperationRecordOf<HandoffActionV1> = newHandoffOperationRecord({ ref, at,
+          const accepted: SessionOperationRecordOf<HandoffActionV1> = newHandoffOperationRecord({ ref, at,
             input: actionOf(keys.fingerprint) });
+          // The pin is the operation at its accept revision; the card key is the canonical identity of that ref.
+          const record = facts.needsDecision
+            ? withHandoffApproval(accepted, { required: facts.required, state: 'pending',
+              pin: { ref: structuredClone(ref), revision: accepted.revision },
+              cardKey: decisionSourceKey({ kind: 'handoff_approval', operationRef: ref }), answer: null })
+            : accepted;
           return {
             // The operation is new; the source is pinned at the revision the facts read.
             guards: [{ refKey: operationRefKey(ref), expectedRevision: null },
@@ -263,10 +353,27 @@ export function createSessionHandoffService(deps: {
             return event.phase === 'accepted' && event.action.progress.stage === 'accepted' ? null
               : 'the event is not an accepted handoff';
           },
-          project: event => ({ operation: event.operationRef, stage: 'accepted', phase: 'accepted' }),
+          project: event => ({ operation: event.operationRef, stage: 'accepted', phase: 'accepted',
+            approval: event.action.progress.approval }),
         },
       });
       return writeAnswer(result);
+    },
+
+    /**
+     * The one committed-receipt lookup of the `hand_off` tool call: the accept's identity is rebuilt from the same
+     * trusted system principal, the origin's workspace and the tool call's one request id. A damaged identity row or
+     * a failed read is `undetermined`, never `not_committed`.
+     */
+    async lookupToolCommit(_ctx, input) {
+      if (input.toolName !== HAND_OFF_TOOL_NAME) return toolCommitLookupUnknownTool(input.toolName);
+      const found = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
+        toolCommitIdentity({ projectId: input.origin.runRef.projectId, workspaceId: input.origin.workspaceId }, input));
+      if (found.status === 'found') {
+        return { status: 'committed', cursor: found.receipt.cursor, eventIds: [...found.receipt.eventIds] };
+      }
+      return found.status === 'missing' ? { status: 'not_committed' }
+        : { status: 'undetermined', reason: found.reason };
     },
   };
 }
@@ -340,7 +447,25 @@ export function archiveContextOf(ctx: CoreCallContext): CoreCallContext {
 // The chained advance: one atomic parent write per call                      //
 // -------------------------------------------------------------------------- //
 
-export type SessionHandoffAdvancePort = Pick<SessionHandoffPort, 'advanceHandoff'>;
+export type SessionHandoffAdvancePort = Pick<SessionHandoffPort, 'advanceHandoff' | 'decideHandoff'>;
+
+/**
+ * The material seam at the successor step. AgentRuntime owns the reads and the
+ * pure assembly; WorkGraph may not import it, so the composition root injects
+ * the adapter. The adapter resolves the source Session's last ended Run and
+ * calls `assembleHandoffBrief`; this owner only receives complete material or a
+ * rejection and creates record 5 after it.
+ */
+export type HandoffBriefMaterialAssembler = {
+  assemble(ctx: CoreCallContext, input: {
+    source: SessionRef;
+    duty: 'executor' | 'adviser';
+    tasks: readonly TaskTriple[];
+    workspaceId: string;
+    /** The tool accept's saved admission-time understanding; null on the manual and too_long paths. */
+    understanding: { noteId: string; version: number }[] | null;
+  }): Promise<ReadResult<HandoffBriefMaterialV1>>;
+};
 
 export type SessionHandoffAdvanceDependencies = {
   /** The operation and parent-write store; it carries `lookupCommit` and the event read. */
@@ -362,12 +487,46 @@ export type SessionHandoffAdvanceDependencies = {
   archive: Pick<SessionLifecyclePort, 'readSessionArchiveRequestReceipt'>;
   /** The one trusted duty read: the source Session's own role decides the secretary steps. */
   duty: SessionDutyReadPort;
+  /** The successor step's complete-material seam; the composition root implements it from AgentRuntime's assembler. */
+  brief: HandoffBriefMaterialAssembler;
   now(): string;
 };
 
 type HandoffProgress = HandoffActionV1['progress'];
 type AdvanceResult = Extract<HandoffAdvanceResultV1, { status: 'committed' }>['value'];
 type Stop = AdvanceResult['stop'];
+
+/** Record 5 before the Store binds its `since`; the successor-stage commit supplies the cursor binding. */
+type PendingWorkHandoffBriefV1 = Omit<WorkHandoffBriefV1, 'since'> & { since: CommitCursor | null };
+
+/** Only the two Work duties have a handoff brief; a secretary/scribe successor has none. */
+function briefDutyOf(duty: PlatformDutyV1 | 'unknown'): 'executor' | 'adviser' | null {
+  return duty === 'executor' || duty === 'adviser' ? duty : null;
+}
+
+/** Record 5's complete value from material that already read successfully; the digest covers the material only. */
+function pendingWorkHandoffBrief(input: {
+  operation: OperationRef; source: SessionRef; successor: SessionRef; duty: 'executor' | 'adviser';
+  tasks: readonly TaskTriple[]; workspaceId: string; material: HandoffBriefMaterialV1;
+}): PendingWorkHandoffBriefV1 {
+  const digest = handoffBriefDigest(input.material);
+  return {
+    ref: { aggregateType: 'HandoffBrief', projectId: input.operation.projectId,
+      sessionId: input.successor.sessionId, operationId: input.operation.operationId },
+    revision: 1,
+    workspaceId: input.workspaceId,
+    operation: input.operation,
+    source: input.source,
+    duty: input.duty,
+    tasks: [...input.tasks],
+    binding: { operation: input.operation, source: input.source, successor: input.successor,
+      duty: input.duty, digest },
+    digest,
+    material: input.material,
+    consumedBy: null,
+    since: null,
+  };
+}
 
 /** The source's real duty is the only secretary test: never the target's shape, the trigger or saved coverage. */
 export function isSecretaryDuty(duty: PlatformDutyV1 | 'unknown'): boolean {
@@ -613,6 +772,24 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
       const principalValue = principalIdentity(principal);
       const source = action.input.source;
 
+      /** The successor step's complete material; a failure writes no record 5 and no partial material. */
+      async function readBriefMaterial(duty: 'executor' | 'adviser', tasks: readonly TaskTriple[]):
+      Promise<{ material: HandoffBriefMaterialV1 } | { rejection: CoreRejection }> {
+        let read: Awaited<ReturnType<HandoffBriefMaterialAssembler['assemble']>>;
+        try {
+          // The tool accept carries the understanding version it admitted; the manual and too_long triggers keep
+          // the assembler's own read of the source Run's current version.
+          read = await deps.brief.assemble(savedCtx, { source, duty, tasks, workspaceId: record.workspaceId,
+            understanding: action.input.trigger === 'tool' ? action.input.tool?.understanding ?? null : null });
+        } catch (error) {
+          return { rejection: unavailable(`the handoff brief material read failed: ${messageOf(error)}`) };
+        }
+        if (read.status === 'ready') return { material: read.value };
+        if (read.status === 'rejected' && read.code === 'cancelled') return { rejection: read };
+        return { rejection: unavailable(read.status === 'rejected' ? read.reason
+          : 'the handoff brief material is not ready') };
+      }
+
       if (input.kind === 'replay') {
         const parsed = parseCommandId(input.commandId, operation, HANDOFF_STAGES);
         if (parsed === null) return rejected('invalid', 'the replay commandId does not name a handoff write');
@@ -688,6 +865,8 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
         receipt: { cursor: CommitCursor } | null; progress: HandoffProgress;
         phaseValue: SessionOperationRecord['phase']; guards: RecordGuard[]; claims: UniqueClaimChange[];
         ledgerHorizon?: CommitCursor | null; next: HandoffStageV1 | null; stop: Stop; refusal?: true;
+        /** Record 5 written in this same parent write; its `since` is bound from this commit's cursor. */
+        brief?: PendingWorkHandoffBriefV1;
       }): Promise<HandoffAdvanceResultV1> {
         // One raise per re-pass: the stage decision marks the re-pass's first write, which raises by one and clears
         // the mark; every later write (a receipt, an after write, a replay) reads the raised generation and never
@@ -712,11 +891,25 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
               eventType: 'SessionHandoffRecorded', schemaVersion: 1, occurredAt: at, projectId: operation.projectId,
               workspaceId: record.workspaceId, operationRef: operation, revision: nextRecord.revision,
               phase: nextRecord.phase, action: nextRecord.action });
+            const brief = draft.brief;
+            const briefRecords: EncodedRecord[] = [];
+            const briefEvents: EncodedDomainEvent[] = [];
+            const commitCursorBindings: CommitCursorBinding[] = [];
+            if (brief !== undefined) {
+              briefRecords.push(workHandoffBriefCodec.encode(brief));
+              briefEvents.push(handoffBriefRecordedCodec.encode({ eventId: eventIdOf(keys.identityKey, 'handoff-brief'),
+                eventType: 'HandoffBriefRecorded', schemaVersion: 1, occurredAt: at,
+                handoffBrief: brief as unknown as JsonValue }));
+              commitCursorBindings.push({ refKey: canonicalKey(brief.ref), field: 'since' });
+            }
             return { guards: [{ refKey: operationRefKey(operation),
-              expectedRevision: draft.guardRevision ?? record.revision }, ...draft.guards],
-              records: [encodeSessionOperationRecord(nextRecord)], claims: draft.claims,
-              events: [event],
-              ...(draft.ledgerHorizon === undefined ? {} : { ledgerHorizon: draft.ledgerHorizon }) };
+              expectedRevision: draft.guardRevision ?? record.revision },
+              ...(brief === undefined ? [] : [{ refKey: canonicalKey(brief.ref), expectedRevision: null }]),
+              ...draft.guards],
+              records: [encodeSessionOperationRecord(nextRecord), ...briefRecords], claims: draft.claims,
+              events: [...briefEvents, event],
+              ...(draft.ledgerHorizon === undefined ? {} : { ledgerHorizon: draft.ledgerHorizon }),
+              ...(commitCursorBindings.length === 0 ? {} : { commitCursorBindings }) };
           },
           result: {
             eventType: handoffRecordedEvent.eventType, schemaVersion: handoffRecordedEvent.schemaVersion,
@@ -787,6 +980,13 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
       }
 
       const stage = action.progress.stage;
+
+      // The approval card gates every phase: a pending decision stops before the fence and writes nothing. Approve
+      // and reject have already moved `progress.approval`, so only `pending` waits here; a rejected operation is
+      // `failed` and never reaches this owner.
+      if (action.progress.approval?.state === 'pending') {
+        return stopOf('incomplete', 'the handoff waits for its approval');
+      }
 
       /**
        * The stage after the last successor: named tasks move in `transfer`, and with no named task the residual check
@@ -981,6 +1181,16 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
             const card = await deps.operations.readSession(savedCtx, target.session);
             if (card.status !== 'ready') return card.status === 'rejected' ? card
               : unavailable('the existing successor Session read is not ready');
+            // The primitive admits an existing target only with the source's duty; a Work duty has a brief.
+            const targetDuty = briefDutyOf(duty.value);
+            let brief: PendingWorkHandoffBriefV1 | undefined;
+            if (targetDuty !== null) {
+              const handed = action.input.assignments[index]!.tasks;
+              const material = await readBriefMaterial(targetDuty, handed);
+              if ('rejection' in material) return material.rejection;
+              brief = pendingWorkHandoffBrief({ operation, source, successor: target.session, duty: targetDuty,
+                tasks: handed, workspaceId: record.workspaceId, material: material.material });
+            }
             const assignments = action.progress.assignments.map((entry, position) => position === index
               ? { ...entry, successor: target.session, createOperation: null } : entry);
             const allSuccessors = assignments.every(entry => entry.successor !== null);
@@ -991,7 +1201,8 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
               savedInput: null, receipt: null,
               progress: { ...action.progress, stage: next, assignments }, phaseValue: 'running',
               guards: [{ refKey: plainSessionRefKey(target.session), expectedRevision: card.value.record.revision }],
-              claims: [], next, stop: next === 'successor' ? 'advanced' : 'advanced' });
+              claims: [], next, stop: next === 'successor' ? 'advanced' : 'advanced',
+              ...(brief === undefined ? {} : { brief }) });
           }
           const saved = assignment.createInput;
           if (saved === null) {
@@ -1047,6 +1258,15 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
           const card = await deps.operations.readSession(savedCtx, stable.plannedSessionRef);
           if (card.status !== 'ready') return card.status === 'rejected' ? card
             : unavailable('the successor Session read is not ready');
+          const targetDuty = briefDutyOf(saved.duty);
+          let brief: PendingWorkHandoffBriefV1 | undefined;
+          if (targetDuty !== null) {
+            const handed = action.input.assignments[index]!.tasks;
+            const material = await readBriefMaterial(targetDuty, handed);
+            if ('rejection' in material) return material.rejection;
+            brief = pendingWorkHandoffBrief({ operation, source, successor: stable.plannedSessionRef, duty: targetDuty,
+              tasks: handed, workspaceId: record.workspaceId, material: material.material });
+          }
           const assignments = action.progress.assignments.map((entry, position) => position === index
             ? { ...entry, successor: stable.plannedSessionRef, createOperation: stable.operationRef } : entry);
           const allSuccessors = assignments.every(entry => entry.successor !== null);
@@ -1061,7 +1281,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
               { refKey: operationRefKey(stable.operationRef), expectedRevision: created.revision },
               { refKey: plainSessionRefKey(stable.plannedSessionRef), expectedRevision: card.value.record.revision },
             ],
-            claims: [], next, stop: 'advanced' });
+            claims: [], next, stop: 'advanced', ...(brief === undefined ? {} : { brief }) });
         }
         return rejected('invalid', 'the successor stage has no unfinished assignment');
       }
@@ -1373,6 +1593,90 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
       }
 
       return rejected('invalid', `the handoff stage ${String(stage)} has no advance step`);
+    },
+
+    /**
+     * `handoff.decide`: the trusted application entry's approve/reject of the operation's pending approval card.
+     * The accept's own pin (`progress.approval.pin`) decides staleness; the application `commandId` is the replay
+     * key, and the decision's receipt is read back under the same identity. A rejection ends the operation with
+     * nothing moved on the source.
+     */
+    async decideHandoff(ctx, rawInput): Promise<HandoffDecideResultV1> {
+      const trusted = trustedContext(ctx, 'a handoff decision');
+      if (!trusted.ok) return trusted.rejection;
+      const copy = copiedInput(rawInput, 'handoff decision input');
+      if (!copy.ok) return copy.rejection;
+      const input = copy.value;
+      const given = (isRecord(input) ? input : {}) as Record<string, unknown>;
+      const operationProblem = checkShape(OperationRefShape, given['operation'], 'stored');
+      if (operationProblem !== null) return rejected('invalid', `the handoff decision requires ${operationProblem}`);
+      const operation = given['operation'] as OperationRef;
+      const verdict = given['verdict'];
+      if (verdict !== 'approve' && verdict !== 'reject') {
+        return rejected('invalid', 'a handoff decision is approve or reject');
+      }
+      if (typeof given['commandId'] !== 'string' || given['commandId'].length === 0) {
+        return rejected('invalid', 'a handoff decision requires a non-empty commandId');
+      }
+      const commandId = given['commandId'];
+      const scope = trusted.scope;
+      const principal = principalIdentity(ctx.principal);
+      const state = verdict === 'approve' ? 'approved' as const : 'rejected' as const;
+      const result = await executeWriteCommand<SessionOperationRecordOf<HandoffActionV1>,
+        { record: SessionOperationRecordOf<HandoffActionV1>; state: typeof state },
+        { status: 'stale'; operation: OperationRef; revision: number }, HandoffRecordedEvent,
+        { operation: OperationRef; revision: number; state: 'approved' | 'rejected' }>(deps.records, {
+        operation: 'handoff.decide',
+        scope,
+        principal,
+        commandId,
+        fingerprintInput: { operation, verdict } as unknown as JsonValue,
+        read: async () => {
+          const loaded = await readOperation(ctx, operation);
+          if (loaded.status === 'not_found') return rejected('not_found', 'the handoff operation is not in this workspace');
+          if (loaded.status === 'not_ready') return unavailable('the handoff operation read is not ready');
+          if (loaded.status !== 'ready') return loaded;
+          return { status: 'ready', facts: loaded.value };
+        },
+        decide: (facts) => {
+          const approval = facts.action.progress.approval;
+          // A handled card, or a pin the operation already moved past, is stale: the answer no longer applies.
+          if (approval === null || approval.state !== 'pending' || approval.pin.revision !== facts.revision) {
+            return { refuse: { status: 'stale' as const, operation, revision: facts.revision } };
+          }
+          return { decision: { record: facts, state } };
+        },
+        build: (decision, keys) => {
+          const record = decision.record;
+          const at = deps.now();
+          const next = decidedHandoffApproval(record, { state: decision.state, at, commandId });
+          const event = sessionHandoffRecordedCodec.encode({ eventId: eventIdOf(keys.identityKey, 'decide'),
+            eventType: 'SessionHandoffRecorded', schemaVersion: 1, occurredAt: at, projectId: operation.projectId,
+            workspaceId: record.workspaceId, operationRef: operation, revision: next.revision, phase: next.phase,
+            action: next.action });
+          return { guards: [{ refKey: operationRefKey(operation), expectedRevision: record.revision }],
+            records: [encodeSessionOperationRecord(next)], claims: [], events: [event] };
+        },
+        result: {
+          eventType: 'SessionHandoffRecorded',
+          schemaVersion: 1,
+          decode: event => sessionHandoffRecordedCodec.decode(event),
+          validate(event, receipt, keys) {
+            if (event.operationRef.operationId !== operation.operationId) return 'the event records another operation';
+            if (event.action.progress.approval?.state !== state) return 'the event records another verdict';
+            return advanceEventProblem(event, receipt, keys.identityKey, operation, scope);
+          },
+          project: (event) => ({ operation: event.operationRef, revision: event.revision,
+            state: event.action.progress.approval!.state === 'approved' ? 'approved' as const : 'rejected' as const }),
+        },
+      });
+      if (result.status === 'refused') return result.refusal;
+      if (result.status === 'rejected') return rejectedWithCurrent(result.code, result.reason, result.current);
+      const identityKey = commandIdentity({ operation: 'handoff.decide', scope, principal, commandId });
+      const found = await lookupCommittedReceiptByIdentity(deps.commitIdentities, identityKey);
+      if (found.status !== 'found') return unavailable('the handoff decision receipt could not be read');
+      return { status: 'committed', value: result.value, replayed: result.replayed,
+        receipt: { identityKey, fingerprint: found.fingerprint, cursor: found.receipt.cursor } };
     },
   };
 }

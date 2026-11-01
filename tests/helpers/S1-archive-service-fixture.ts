@@ -299,7 +299,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
       meta: { requestId: id(), expected: [await pin(b2.claim.runRef)] } }));
     const delivered = await deliverControl(paused.value.intent);
     delivered.finish(); await delivered.coordinator.close();
-    const service = createRunReconcileService({ records, reads, hostInstance: { hostInstanceId: 'fx1-host', lease: 'owned' }, now, eventId: id });
+    const service = createRunReconcileService({ records, reads, bodies: b2.bodies, hostInstance: { hostInstanceId: 'fx1-host', lease: 'owned' }, now, eventId: id });
     committed(await service.reconcileRun(ctx, { input: { runRef: b2.claim.runRef,
       basis: { kind: 'host_instance_takeover', hostInstanceId: 'fx1-host' }, probe: 'ready',
       result: { kind: 'interrupted_clean', turn: { terminal: false, inFlightToolCallIds: [], lastPosition: 3,

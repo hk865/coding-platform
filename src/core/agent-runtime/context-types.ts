@@ -7,6 +7,7 @@ import type {
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
+import type { HandoffBriefBindingV1, HandoffBriefMaterialV1 } from '../../contracts/handoff-brief.js';
 import type {
   AttentionGraphReadRequestV1, ContextAssemblyBindingV1, GraphAttentionFactsV1,
 } from '../../contracts/graph-context.js';
@@ -125,6 +126,12 @@ export type ContextQueryHistoryInputV1 =
 export type AssembledContextV1 = {
   input: string; binding: ContextAssemblyBindingV1;
   continuationBrief: ContinuationBriefV1 | null;
+  /**
+   * H: the successor's handoff brief the recipe rendered into the `continuation`
+   * section, with the material-only record digest and the rendered-bytes digest
+   * the manifest freezes. Absent/null on every other Work call kind.
+   */
+  handoffBrief?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1; renderedDigest: string } | null;
   sessionBasis: PreparedTaskManifestV1['sessionBasis'] | undefined;
   selectedTaskInputs: PreparedTaskManifestV1['selectedTaskInputs'];
   /** Slice 1 §2.7: the anchors named by the brief's anomaly section (absent/null when it has none). */
@@ -146,6 +153,11 @@ export interface ContextAssembler {
     /** The frozen `PromptSetV1.toolNames`, never recomputed here (ruling 10/16). */
     toolNames: readonly string[];
     history: ContextWorkHistoryInputV1;
+    /**
+     * H: record 5's frozen binding and material, read once at preparation and
+     * offered to the successor's first Work Run only (a `handoff` call kind).
+     */
+    handoff?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1 };
   }): Promise<ReadResult<AssembledContextV1>>;
   assembleQuery(ctx: CoreCallContext, input: {
     facts: QueryPreparationFacts;

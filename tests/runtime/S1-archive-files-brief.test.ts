@@ -137,6 +137,7 @@ describe('S1 archive changed files and brief anomaly section', () => {
     const owner = createSessionHistoryCursorOwner({ kernelStores: f.deps.kernelStores });
     const record = await f.read(claim);
     const reconcile = createRunReconcileService({ records: f.records, reads: f.reads,
+      bodies: f.bodies,
       hostInstance: { hostInstanceId: 's1-after-crash', lease: 'owned' }, now: () => t0, eventId: f.newId });
     const report = await reconcileRunAtStartup({ owner, controls: f.controls, entry: f.entry, reconcile,
       now: () => t0, newId: f.newId }, f.base.ctx, { record, hostInstanceId: 's1-after-crash',

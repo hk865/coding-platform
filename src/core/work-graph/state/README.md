@@ -19,6 +19,7 @@
 - `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入；分派准入把已消费等待按消息、原 Run 与任务三元匹配（`SessionConsumedWaitStateV1`），`intervention` 在旁边运行、不消费等待。
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
 - `session-handoff.ts` — 交接操作和秘书归档操作的纯准入（拒绝顺序：调用者、范围、形状、源和目标、职责、未完成操作）与接受时的记录构造；两个分支的 `progress` 只在这里写，包含三个保存位置（`createInput`、`understanding[].command`、`archiveRequest.savedInput`）、推进用的 `withHandoffProgress`、纯覆盖规则 `coverageHolds`、简报就绪规则 `briefReady` 和 entered 确认的 `consumeHandoffBrief`。
+- `work-handoff-brief.ts` — 工作线交接简报（记录 5）的纯 state 半边：字段表 `WORK_HANDOFF_BRIEF_SCHEMA_ID`/`WORK_HANDOFF_BRIEF_FIELDS`、两个事件类型与格式 `WORK_HANDOFF_BRIEF_RECORDED_EVENT_TYPE`/`WORK_HANDOFF_BRIEF_CONSUMED_EVENT_TYPE`/`WORK_HANDOFF_BRIEF_RECORDED_FORMAT`/`WORK_HANDOFF_BRIEF_CONSUMED_FORMAT`、按 Session 的查找 `WORK_HANDOFF_BRIEF_BY_SESSION_LOOKUP`、绑定规则 `workHandoffBriefBindingProblem`、记录格式 `WORK_HANDOFF_BRIEF_FORMAT`、传输完成 `workHandoffBriefTransferComplete` 与消费贡献 `workHandoffBriefConsumption`；Store 信封与 `HANDOFF_BRIEF_RECORD_SCHEMAS` 注册在 `sessions/session-record-codecs.ts`。
 - `session-anomaly.ts` — Session 异常锚点的构造/迁移/读取与 Task 归档状态派生。
 - `request-rounds.ts` — 请求轮构造：新请求、路由轮（普通路由与 `routing: null` 的归属臂）、未开始结束、新尝试、吸收、intake、entered；归属臂把 `goalAttribution.goalId` 同时写进 `job.goalId` 与 `job.goalAttribution`（下游按字符串比较），`understanding` 保持 `null`，普通路由臂不变；理解命令的合法状态迁移 `live → closed|consumed`、当前 generation 读取，以及冻结材料列表上仍有效授权集的唯一纯规则（每条命令按自己的 operation 判 generation/state/root owner，按 Goal 去重并保持轮次顺序）。
 - `review-lease.ts` — 复查租约释放、可证明未进入的复查取消、复查轮已知结束。
@@ -204,11 +205,12 @@
 | `transitionResponsibility` | `src/core/work-graph/state/session-responsibility.ts:33` | 责任转移/关闭：关源链接、开目标链接 | 责任交接 |
 | `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:77`、`:100` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |
 | `OperationCallerV1`、`OperationSessionFactV1`、`HandoffAdmissionFactsV1`、`SecretaryArchiveAdmissionFactsV1`、`OperationAdmissionV1` | `src/core/work-graph/state/session-handoff.ts:21`、`:23`、`:26`、`:41`、`:49` | 两张准入表的输入和结果：调用者的分类、公开读到的 Session 事实、交接和秘书归档各自的事实、准入结果（`busy` 带未完成操作的 pin） | owner 读完事实后调 `admitHandoff` 或 `admitSecretaryArchive` |
-| `admitSecretaryArchive`、`newSecretaryArchiveOperationRecord` | `src/core/work-graph/state/session-handoff.ts:125`、`:138` | 秘书归档的拒绝顺序（人、范围、形状、源、秘书职责、未完成操作）；接受时的记录，每个选择一项，`input.actor` 从可信上下文保存 | 秘书归档 owner 的接受 |
-| `saveHandoffCreateInput`、`saveUnderstandingCommand`、`saveArchiveSavedInput`、`saveArchiveReceipt` | `src/core/work-graph/state/session-handoff.ts:194`、`:206`、`:219`、`:228` | 三个保存位置的结构拷贝：后继的 `ensureLine` 输入、某理解代的命令、归档的 `GraphWrite`，以及归档注册返回的 `{identityKey,fingerprint}`；写归档 receipt 前必须先有保存输入 | 推进的 before/after 写；原输入按自己的 generation 重放 |
-| `withHandoffProgress`、`coverageHolds` | `src/core/work-graph/state/session-handoff.ts:189`、`:271` | 推进写唯一的 progress 构造；覆盖规则：每个 Goal 的当前理解文字必须由旧 Session 在最后进入并结束的轮写入，无 Goal 不需要覆盖 | 推进的每一步；不要另写 progress 或第二条覆盖规则 |
-| `consumeHandoffBrief` | `src/core/work-graph/state/session-handoff.ts:242` | entered 确认的消费迁移：写 `brief.consumedBy`、revision 加 1，并给出 pin 住读到的 revision 的 guard；不写事件 | D 在 entered 提交里合并 record+guard；推进只设 `brief.ready`，从不消费 |
-| `briefReady`、`BriefReadyFacts` | `src/core/work-graph/state/session-handoff.ts:277` | 简报就绪：受保护的最终归档提交成功且完整路由集已保存（`closed` 且每根有回执或被明确跳过）；`pending`/`partial` 不是成功 | 推进在归档 after 写里设 `brief.ready`；读取按同一规则判 `waiting` |
+| `admitSecretaryArchive`、`newSecretaryArchiveOperationRecord` | `src/core/work-graph/state/session-handoff.ts:132`、`:145` | 秘书归档的拒绝顺序（人、范围、形状、源、秘书职责、未完成操作）；接受时的记录，每个选择一项，`input.actor` 从可信上下文保存 | 秘书归档 owner 的接受 |
+| `saveHandoffCreateInput`、`saveUnderstandingCommand`、`saveArchiveSavedInput`、`saveArchiveReceipt` | `src/core/work-graph/state/session-handoff.ts:200`、`:212`、`:225`、`:234` | 三个保存位置的结构拷贝：后继的 `ensureLine` 输入、某理解代的命令、归档的 `GraphWrite`，以及归档注册返回的 `{identityKey,fingerprint}`；写归档 receipt 前必须先有保存输入 | 推进的 before/after 写；原输入按自己的 generation 重放 |
+| `withHandoffProgress`、`coverageHolds` | `src/core/work-graph/state/session-handoff.ts:195`、`:328` | 推进写唯一的 progress 构造；覆盖规则：每个 Goal 的当前理解文字必须由旧 Session 在最后进入并结束的轮写入，无 Goal 不需要覆盖 | 推进的每一步；不要另写 progress 或第二条覆盖规则 |
+| `consumeHandoffBrief` | `src/core/work-graph/state/session-handoff.ts:248` | entered 确认的消费迁移：写 `brief.consumedBy`、revision 加 1，并给出 pin 住读到的 revision 的 guard；不写事件 | D 在 entered 提交里合并 record+guard；推进只设 `brief.ready`，从不消费 |
+| `withHandoffApproval`、`decidedHandoffApproval` | `src/core/work-graph/state/session-handoff.ts:267`、`:293` | 交接批准卡：接受时写入待批 `approval`（不动 revision）；`handoff.decide` 把人的裁决与回答写回，拒绝把操作置 `failed` | 交接接受与 `handoff.decide` |
+| `briefReady`、`BriefReadyFacts` | `src/core/work-graph/state/session-handoff.ts:349` | 简报就绪：受保护的最终归档提交成功且完整路由集已保存（`closed` 且每根有回执或被明确跳过）；`pending`/`partial` 不是成功 | 推进在归档 after 写里设 `brief.ready`；读取按同一规则判 `waiting` |
 | `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:200` | 失败分类（FC-1..FC-17） | 重排队前 |
 | `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:147` | 人工停止围栏 | 判定谁能重做 |
 | `reworkPermission` | `src/core/work-graph/state/task-failure.ts:414` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
@@ -265,5 +267,5 @@
 - 不要在服务里 spread 一条 Run/Session/Task 改字段或另写一套迁移；受保护字段写入一律走本层构造器与 `transition*`（M1-05、M1-06）。
 - 不要手抄 Session 的 lifecycle/health/occupancy 判定：领用走 `occupancyAdmissionProblem`，只共享 lifecycle/health 的候选筛选走 `sessionAvailabilityAdmissionProblem` 并把 busy 单列（FP-09、M1-04）。
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
-- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:915`）翻译。
+- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:981`）翻译。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

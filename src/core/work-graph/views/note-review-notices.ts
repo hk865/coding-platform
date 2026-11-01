@@ -34,7 +34,7 @@ import {
 } from '../persistence/note-record-codecs.js';
 import { compareNoticePositions } from './notice-position.js';
 import { listWorkspaceGoals, readWatermark, storeFailureToRejection, type DecisionReadRecordsPort } from './goal-conflicts.js';
-import { readOrderedToEnd } from './automatic-rework-notices.js';
+import { paginateAssembled, readOrderedToEnd } from './automatic-rework-notices.js';
 
 /** The three registered notice classes, in read order. */
 const NOTE_NOTICE_CLASSES = ['user_affected', 'structural', 'scribe_result'] as const;
@@ -160,18 +160,3 @@ async function readNoteReviewPage(
 /** L11: what one window attempt assembled, shared by its internal pages. */
 type AssembledNoteReviewPage = { watermark: CommitCursor | null; remaining: NoticeItemV1[] };
 
-/** Serves one page of an already-assembled (and `after`-filtered) collection. */
-function paginateAssembled(assembled: AssembledNoteReviewPage, input: ReadPageInput): {
-  status: 'ready'; value: DecisionSourcePageV1<NoticeItemV1>;
-} {
-  const offset = input.page.cursor === undefined ? 0 : Number(input.page.cursor);
-  const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
-  const limit = Number.isSafeInteger(input.page.limit) && input.page.limit > 0 ? input.page.limit : 50;
-  const end = Math.min(assembled.remaining.length, start + limit);
-  return { status: 'ready', value: {
-    availability: 'available',
-    items: assembled.remaining.slice(start, end),
-    nextCursor: end < assembled.remaining.length ? String(end) : null,
-    sourceCursor: assembled.watermark,
-  } };
-}

@@ -689,7 +689,7 @@ describe.each(['memory', 'sqlite'] as const)('S3 prepared context admission (%s)
       const execution = await reads.readExecution(fixture.ctx, fixture.runB);
       if (execution.status !== 'ready') throw new Error(`AD06 Run record read failed: ${JSON.stringify(execution)}`);
       const hostInstanceId = 'ad06-host';
-      const reconcile = createRunReconcileService({ records: fixture.base.records, reads, now: () => AT,
+      const reconcile = createRunReconcileService({ records: fixture.base.records, reads, bodies: fixture.bodies, now: () => AT,
         hostInstance: { hostInstanceId, lease: 'owned' }, eventId: () => 'ad06-reconcile-event' });
       const controls = createRunControlService({ records: fixture.base.records, reads,
         authority: createMaterialRecordReaders(fixture.base.records).authority, now: () => AT,
