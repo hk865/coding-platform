@@ -180,7 +180,7 @@
   - **归属**：按 `since` 顺序读这个请求的轮次，只看普通轮和 `routing` 非空的 `routing` 轮，取最后一个；是 `routing` 轮就取 `routing.to`，否则取它的 `assignedSession`／Session；`to: null`（放下）＝没有归属。只补 `goalAttribution` 的 `routing` 轮（`routing: null`）不参与归属（第二轮审查第 1 条）。换手（L10）也写 `routing` 轮。旧轮完成得晚不改归属（按创建顺序，不按完成顺序）。
   - **有效目标**：取最新的非空 `goalAttribution`，否则取 `requestGoalId`；普通转交不改它（第二轮审查第 1 条）。
   - **接任锚**：归属的 Session 已归档时，按 Session 的换手来历（`接手自`）找接任者；没有接任者 → 按 L4 另挑。
-  - **还在处理**：下面任一项为真：(1) 有 `queued`/`running` 的轮，或已排队的轮（`assignedSession` 非空且未 `ended`）；(2) 秘书为它发的“请回答”没回、没到期、没撤回（第 7 片以前恒为假）；(3) 它要发的消息在待放行（第 7 片以前恒为假）；(4) 它的候选计划在等你采用，含过期的。
+  - **还在处理**：下面任一项为真：(1) 有 `queued`/`running` 的轮，或已排队的轮（`assignedSession` 非空且未 `ended`）；(2) 秘书为它发的“请回答”没回、没到期、没撤回（由 `readRequestMessageReasons` 读这个请求根的全部消息，`reply` 看等待是否仍 `open`）；(3) 它要发的消息在待放行（同一读数，`release` 看待放行 `awaiting` 或已批准 `approved`）；(4) 它的候选计划在等你采用，含过期的。`round` 和 `candidate` 的读法照旧。
   - **秘书在等**：归它的、还在处理的请求里，有它发出的未完“请回答”（DESIGN §1.1 L97）。
   - 旧查询（没有 `requestRoot`）各自算一个只有一轮的请求，归属是它自己的 Session（`assignedSession` 从执行状态回填）。
   - 读这些用一个共享的 `RequestFactsPort`（替换 F2 的过渡读取），给挑秘书、候选卡、主对话、归档和第 7 片用。

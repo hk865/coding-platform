@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–107）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–108）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1815,6 +1815,43 @@
         - **演练。** H、T、L2 的开工前演练等 L1 落地再开；F2 的演练已做，裁定 `frozen/7c2/7c2-f2-drill-rulings.md`。
         - **审和核对。** 8C、8E 的逐行审和开工裁定按 104-2；§6 选项 b 另开一片；真实模型冒烟前按 97-2 重做核对表，补 7B-1…7B-3、DRV、M、IV2 的行为。
         - 来源：`docs-land1101b/facts-land1101b.md` §5；`7c/status-7c.md:358`、`:386`。
+
+    - **108 Q、L1、F2、T、H、GP 合入，GP 的三个缺口，计划闭环的进度，这批的做法和下一步（11-01）。**
+      - **108-1 Q、L1、F2、T、H、GP 合入。** 两个提交：`28bece35`（7C-1 的 Q 和 L1，已推到远端 `feat/orchestration-slices`）、`8fabb5a3`（7C-2 的 F2、T、H、GP，本地，等用户推）。
+        - **Q。** 秘书的请求轮六个工具：四个邮箱工具（`send_session_message`、`ack_session_message`、`respond_session_message`、`withdraw_session_message`）、`create_member`、`read_requests`；其他 Query 全禁。`read_requests` 只读，按工作区任一目标或无目标读，最新在前，每页 20 条，每轮回答截到 2 KiB。
+        - **L1。** `selectNext` 用真实证据；没有合适的线时，有参谋先发给参谋；没有参谋出成员卡，人批准后建线；建线后才领取。返工请求、模块重叠门、成员卡接成真实来源；两条人用路由（`goals/overlap-gates`、`goals/overlap-release`）；工具装配一个 owner；晚注册的 Workflow 读 live 配置；`resolveRoleConfiguration` 是可选端口；同一命令下过期的返工请求回 `source_stale`。
+        - **F2、H、T。** F2 冻结共享名字、契约形状、模板和包条目。H 的交接入口、审批卡、简报记录和唯一消费落地：卡的 subject 跟 assignments 覆盖的 Goals 走，只有一个 Goal 用该 Goal，否则用项目；项目 subject 的卡也能服务 `handoff_approval`。简报记成 `HandoffBrief@1`，真正进入 Kernel 的第一次进入提交消费一次，没进入的留给下一次。T 加 `hand_off` 工具和适配器，但 `handoffs` 未绑定，真实调用、H-01、H-02 的公开链路行等 L2；`HandoffBriefRecordedEvent`、`HandoffBriefConsumedEvent` 的允许清单两行留到 L2。GP 三条见 108-2。
+        - **检查。** `S7C1-DEFERRED` 九条随 L1 全绿。全量：`2e00ff2`（第三轮前树）1,102 个文件、12,984 项过、3 项跳过、1,030.66 秒；第三轮 `6c96416` 只改测试和 README；`7570e87` 1,116 个文件、13,075 项过、3 项跳过、654.79 秒。规模批：14 个文件 42 项，1,024.37 秒、586.58 秒。已知限制：`member.request` 接受提交与下一阶段之间崩溃，Task 留在 pending、没有卡。
+        - **文档。** `STATE-MACHINES-SPEC.md` 新增 §20（1 处）；`slice-7-SPEC.md` 后注 1 段；`slice-6-SPEC.md:183` 1 处；`MVP-BEHAVIOR.md` 7 处；`DESIGN.md` 8 处；`E3-UI-ITEMS.md` 新增“决定 108”一节 6 条；`PRODUCT.md` 3 处；`DSH-WORKFLOW.md` 2 处；`IMPLEMENTED-CAPABILITIES.md` 新增 WG155–WG160 六行、WG151 1 处；`CORE-DATA-OPERATIONS.md` 8 处。
+        - 来源：`docs-land1101c/facts-land1101c.md` §1；`7c/land3/msg-l1.txt:1-20`、`7c/land3/msg-7c2a.txt:1-21`；`7c/status-7c.md:470`、`:484`、`:510`、`:514`。
+      - **108-2 GP 补的三个需求缺口。** 用户/lead 的口径“不符合需求的就是 bug”。
+        - **GP-1。** 请求处理完的四种（轮、回复、释放、候选）都能读出来：`readRequestMessageReasons`；顺序 round→reply→release→candidate；读失败是 `unavailable`。
+        - **GP-2。** 采用时缺治理，说清缺初始架构、完成标准还是两者：`missingInitializationGovernanceReason`；只把明确的 `not_found` 当缺失，码仍 `incomplete`，不自动安装。
+        - **GP-3。** Work 线中断后真的接上了才告诉人：`createContinuationNoticeSource`；新 Run 实际入场且简报 `mode='resume_after_interruption'`，同 Session 和新 Session 都算；普通返工、只建 Session 没入场、Goal 驱动重启本身、RUN-25 之后都不发。
+        - **顺带。** `paginateAssembled` 成为三个通知来源的唯一分页；`storeFailureToRejection` 收 `unknown`。
+        - 来源：`docs-land1101c/facts-land1101c.md` §2；`7c/7c2-gp-rulings.md:7-30`；`7c/land3/msg-7c2a.txt:14-18`。
+      - **108-3 计划闭环：D8 定稿、v4、架构书、规格的进度。** 用户的答复经分叉会话转来（`local_004c0a5e`），不是在这个会话里说的。
+        - **D8 定稿（用户）。** 所有 agent 候选都审，审阅通过才自动采用；第一份计划只在工作区已有代码时审一次，结论放在卡上，不拦人；探索、调研、重拟不审。
+        - **v4（比 v3 多）。** 目标循环读“已答、还没续轮”的规划问题并发 `planresume:`；等待登记 `SessionMessage`；重启重新登记有待决候选或问题的目标；`intervention_planning` 加 `repliesToMessageRef`。
+        - **架构书（用户 11-01，分叉会话转来）。** 原话“不是实际的取代架构图，只是把架构书变成可视化的和目前的可架构图的可视化类似的东西。”正式架构按 61-5；现在只定约定：模块部分用图的结构，状态机只给生命周期复杂的对象、挂在模块下，写进参谋和书记技能。MVP 之后做只读视图、“目标对当下”对比、模块下的状态图、任务关联目标节点（E3 待办）。不是 MVP 门槛，W2 和 7C-2 不变。
+        - **规格进度。** 第一稿 2,771 行，没给 Codex 审（DSH 自报 23 条）；第二稿 2,430 行，Codex 第一轮全审 37 条；第三稿 2,562 行，第二轮全审 22 条，上一轮闭合 24、没闭合或改坏 13、新发现 9；第四稿在写，之后一次快速核对。用户问过两稿问题数为什么差不多：第一稿没审过，两个数不是一个口径。
+        - **裁定。** 阶段 gate 只等它覆盖的工作，目标 gate 等全部；审阅轮和规划轮走提交工具；只有 Query 答案 256 KiB，回复短结论 16 KiB，系统轮消息和 question 64 KiB，只认可信发送身份；规划轮输出预留 `min(131072, ⌊窗口/2⌋)`，不改窗口；没有参谋走 `goal_cause`、code `no_adviser`；不加新的阻塞闭包。
+        - 来源：`docs-land1101c/facts-land1101c.md` §3；`sgl/plan-loop-design.md` §6.3、§11.1；`7c/status-7c.md:433`、`:434`、`:447`、`:458`、`:477-506`。
+      - **108-4 这批定下的做法。**
+        - **每层只审一次（用户，分叉会话转来）。** 原话“下一步就是把片变成任务书，这个时候片还要审吗？在施工的时候应该不用吧。产品文档也是一样的，产品文档定下来之后分片，这个时候产品文档就不用审了，除非以后用户或者说实际施工中发现确实有缺陷。或者说实际的施工本身就算是某一种审核。”做法：审这一版新写的内容，上一层是依据，下层发现上层有问题写成偏差。
+        - **DSH 沙箱有 bubblewrap（11-01）。** 真实 Run 自己能跑，红了就是真红，只有 `ENOENT …/bwrap` 算环境；见 `tools` 的 `run-dsh.mjs`，写进 `DSH-WORKFLOW.md`。
+        - **接线组演练加一步。** 用户问“为什么接线容易返工”之后 lead 定：分组不变（依赖、文件不重叠、大小）；从 7D1 的 W 组起，演练时 Codex 按真实运行顺序走每条主流程，含冷启动、重启、绑定晚于启动；写进 `PROCESS`（已写）和 `DSH-WORKFLOW.md`。
+        - **合并树试跑。** F2、T、H、L1 分头施工，并起来全量 41 项红，27 项是 H 的夹具没跟上 L1 第二轮；专门开一轮 H 第三轮在合并树上收口，之后全绿。
+        - **全量和规模批别同时跑。** 同时跑时 `2B-09`（100 毫秒超时）红了一次，单独跑绿。
+        - **等启动器的通知再落地。** lead 这批在 L1 启动器的 post-run 跑完之前就落地了，用户看到了指出；之后 post-run 79 个文件全绿。
+        - 来源：`docs-land1101c/facts-land1101c.md` §4；`7c/status-7c.md:415`、`:426`、`:459`、`:485`、`:510`；`sgl/plan-loop-design.md` §6.3。
+      - **108-5 已知限制和下一步。**
+        - **已知限制。** 写在 `28bece35` 的提交说明：`member.request` 接受提交和下一阶段之间崩溃，Task 留在 pending、没有卡。
+        - **下一步。** L2（施工中，基线 `7570e87`）→ 7D1 ∥ PL-1 → 8B-2 → 8C → 8E → PL-2 → 7D2 → 6C → 第 9 片 → E3。
+        - **写书。** 规格定稿后立刻写 PL-1 的书，同时写 7D2、6C、第 9 片的书，和 7D1 施工并行（用户问过施工会不会追上写书）。
+        - **冒烟。** 下一轮真实模型冒烟用核对表 v4（207 行）；要核真实 provider 能不能收 131072 的 `max_tokens`。
+        - **B06、K2。** 只读报告见证（B06）在 MVP 门之前要有一片（设计第 11 节）。K2 不是 MVP 门槛。
+        - 来源：`docs-land1101c/facts-land1101c.md` §5；`7c/status-7c.md:480`、`:502`、`:514`；`sgl/plan-loop-design.md` §11。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
