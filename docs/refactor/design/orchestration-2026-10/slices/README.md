@@ -49,6 +49,7 @@
 | PL 计划闭环（决定 107-3、108-3，2026-11-01 冻结；PL-1 在 7C-2 之后、和 7D1 并行，PL-2 在 PL-1 之后；设计 [plan-loop-design.md](../plan-loop-design.md)、[goal-layering-design.md](../goal-layering-design.md)） | [slice-PL-SPEC.md](slice-PL-SPEC.md) | 施工时写 | 无（设计第 18 节用户已答；行号按合并树 `5a1ec32`，写书时重指） |
 | 第 9 片（执行结果审阅、真实冲突和真实验收、量线长；2026-11-01 冻结；排在 6C 之后，只读报告见证另开一片） | [slice-9-SPEC.md](slice-9-SPEC.md) | 施工时写 | 无（§0.1 的 U1–U5 用户已定） |
 | PS 采用前停稳（决定 102-4，2026-11-02 冻结；排在 PL-1 之后、6C 之前） | [slice-PS-SPEC.md](slice-PS-SPEC.md) | 施工时写 | 无（§6 的 U1–U4 按已有决定定） |
+| B06 只读报告见证（2026-11-02 冻结；排在第 9 片之后、E3 之前；MVP 门之前必须做完） | [slice-B06-SPEC.md](slice-B06-SPEC.md) | 施工时写 | 无（§7 的 L1–L5 按已有决定定） |
 
 ## 历史：第 0、1、3、5 片的冻结与施工（2026-10-08 至 10-09）
 
