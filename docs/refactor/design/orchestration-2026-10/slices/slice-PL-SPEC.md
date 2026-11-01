@@ -1991,7 +1991,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 8. **写进事实。** 系统轮的正文和“请知悉”用同一组读数；未知写“未知+原因”，不全写“至少/不全”，不写 0。偏差的请求号带 `kind` 和 `planRevision`，同一版同一任务每种 `kind` 最多一条。
 ### 13.2.2 三个读数怎么取
 本节不重复公式：累计 token、上下文增长量、改动行数的定义和算法只在 10.2/10.4 写一处。这里只记读哪些现有读、按什么顺序读：
-- 累计 token：`RunActivityFactsV1.usage.totals.inputTokens + outputTokens`；`usage.complete === false`/`usage.omitted > 0` 标不全（10.4（1））；上下文增长量：`runGrowthOf(usage.requests)`；第一次输入不计，只累加上涨 + 最后一次输出，`omitted > 0` 返回 `null`（10.4（2））；改动行数：`facts.changedLines.added + deleted`；只有成功的 `edit` 计入，`shell`/未知/被拒 → `complete:false`（10.4（3））；三者都从 Run 结束写下的 `RunActivity` 读，不新读库、不新算第二份。
+- 累计 token：`RunActivityFactsV1.usage.totals.inputTokens + outputTokens`；`usage.complete === false`/`usage.omitted > 0` 标不全（10.4（1））；上下文增长量：`runGrowthOf(facts.usage)`；第一次输入不计，只累加上涨 + 最后一次输出，`omitted > 0` 返回 `null`（10.4（2））；改动行数：`facts.changedLines.added + deleted`；只有成功的 `edit` 计入，`shell`/未知/被拒 → `complete:false`（10.4（3））；三者都从 Run 结束写下的 `RunActivity` 读，不新读库、不新算第二份。
 ### 13.2.3 未知怎么标
 
 | 情况 | 读数 | 文字 | 过线 |
