@@ -242,7 +242,7 @@ const producer = graph.tasks.find((row) => row.definition.taskKind === 'work'
 - **失败/拒绝。** 检查失败 → gate 行的失败事实，下一次 `advanceGate` 走第 1/2 条（reverify 或 stopped+建议），任务/Run 的停因仍是现有的；`open_checks`/`run_check`/`finalize_checks` 的写入被拒 → 现有 `CoreRejection` 原样返回给驱动，下一趟重读重试（现有 Workflow 推进语义，不是新的重试机制）；等待 → 现有 `waiting`；没有 producer → 现有等待文字。没有新的错误码，也没有新的“gate 卡住”状态。
 
 **不做的。**
-- 不为阶段 gate 新增持久状态、调度记录、优先级队列或“已选/已开”标记；不因为某段没有 stage gate 拒绝计划，也不为它补 gate；不把目标 gate 前移，不让它和阶段 gate 一起在 `unfinishedWork` 之前选；不新增依赖闭包，不改 `resolveGate` 的匹配规则；不把 module gate 前移。裁定只写阶段 gate；模块 gate 仍在 `unfinishedWork.length === 0` 之后选。若某段用模块 gate 做更细的验收，后续段的必需占位仍会挡住它，这是本节的残留，列在 §22 的 G-D3（未决）：按同一条件扩到 `scope.kind === 'module'` 即可，同样不是新机制。
+- 不为阶段 gate 新增持久状态、调度记录、优先级队列或“已选/已开”标记；不因为某段没有 stage gate 拒绝计划，也不为它补 gate；不把目标 gate 前移，不让它和阶段 gate 一起在 `unfinishedWork` 之前选；不新增依赖闭包，不改 `resolveGate` 的匹配规则。
 #### 5.1.4 什么时候发细化（触发）
 **条件（v3 §5.4）：** Workflow 这一轮走到等待结果，**没有可推进的步骤**，且存在**活动的、必需的、`plan_only` 的普通任务**。
 - **延期不算。** `disposition: 'deferred'` 的占位不触发，保持不推进；**自动返工和重新检查先走。** 它们本身是可推进步骤，现有选择会先返回它们，不会被细化抢走；**有任务在跑也可能触发。** 上一段最后几个任务在跑时提前细化下一段，和“每一波施工时演练下一波”是同一个做法；不额外加“没有在跑的 Run”条件；**已有更具体出口的等待不被抢。** `wait_reply`、检查、卡等已有明确下一步的等待仍走原出口；细化只加在目标级等待结果的共同收口。
@@ -2597,7 +2597,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 | D-7 | 三个读数 = 累计 token / 上下文增长量 / 改动行数；Run/任务/阶段/目标只是同一组读数的聚合层。**取代第一稿“Run 用量/阶段用量/任务改动行数”**。 | 10.1、10.4、13.2 | v3 §4.2 |
 | D-8 | 阶段线 = Σ`estimatedLines` 2,000 行或阶段累计 token 0.6B；只提醒、可配置。 | 10.3 | v4 §10 |
 | D-10 | `GROWTH_UNIT_TOKENS=64` + `growthUnitsOf` 是换算/校准，不是仅供界面展示；0.6B ≈ 940 万增长量。 | 10.5、13.2.4 | v3 §4.2 |
-| D-12 | 平台取消的身份 = `WORKFLOW_AUTOMATION_ACTOR` + `wf-auto:` 请求号 + pin Run revision。 | 7.3.1 | 设计 `:324`、`:449` |
+| D-12 | 平台取消的身份 = `WORKFLOW_AUTOMATION_ACTOR` + `wf-auto:` 请求号，绑定候选和 `runRef`，不含 Run revision（C-27）。 | 7.3.1 | 设计 `:324`、`:449` |
 | D-13 | 取消后采用失败的出口：不自动回复、不重发取消；候选按 6.1 的 `busy` 保留/其他拒绝转卡；人走 `tasks/requeue`、替代任务或暂停目标。 | 7.3.1 | 设计 `:303`、`:610` |
 | D-14 | 消息等候选期间不再供给 = `findPendingProposal` + `sourceMessageRef` 相同，加 message 的 delivered。 | 7.3.2 | 设计 `:328`、`:611` |
 | D-15 | 系统停因 + “回答”不回复；判断写进“请知悉”。 | 7.1.3、7.2 | 设计 `:312`、`:313`、`:643` |

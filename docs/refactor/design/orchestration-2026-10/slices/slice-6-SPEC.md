@@ -106,7 +106,7 @@
 **1. 拆成三小片（建议拆）。** 第 6 片比第 4 片还大。照第 2 片（决定 50）的做法：
 - **6A 请求和秘书的执行：** 请求的归属和“还在处理”、挑秘书、请求发送、秘书的一轮由 Host 驱动（带看、找、只读命令）、主对话的读取、两个索引。
 - **6B 秘书的生命周期和目标卡：** 秘书太长换手（全部未完请求跟着转）、秘书线自动归档、秘书的“记”（第 4 片的工具注册给秘书）、目标卡起草和确认、取消的目标“重新入队”复制成新目标。
-- **6C 方案和按答复改计划：** 2–3 个思路、选一个出完整计划、每轮显示改了什么、按请求出候选；按你的答复改目标或验收落成新的计划版本（E08）、定下以后删掉 `UserDecisionV1`；初始化采用的补记（决定 48 从第 5 片移来）。
+- **6C 方案和按答复改计划：** 2–3 个思路、选一个出阶段骨架和第一段、后续段由 PL-1 的细化轮补、每轮显示改了什么、按请求出候选；首案审阅接 PL-1（判定在 6C L7）；按你的答复改目标或验收落成新的计划版本（E08）、定下以后删掉 `UserDecisionV1`；初始化采用的补记（决定 48 从第 5 片移来）。
 
 顺序 6A → 6B，6C 在 7D2（8D 之后）之后（6B 先做；审查二第 18 条的新顺序 `4A → 4B → 4C → 6A → 6B → 7A → 7B → 7C → 7D1 → 8A → 8B → 8C → 8D → 7D2 → 6C`）。**“可单独开工的核心”和“完整验收”分开看**（第一轮审查第 11 条）：
 - **6A 的核心在 2C 合入后即可建**（线名和“等回复”读法）；完整验收还要 6A 自己的两个索引和 Host 驱动跑通。
@@ -204,8 +204,9 @@
 - **L7 回答和思路（R22、R23）。**【lead 定，待审】
   - 秘书一轮的正式回答：正文，加 0 个或 2–3 个思路，**思路存在回答里**（`QueryJobAnswerV1.ideas: { title; detail }[]`，每个思路一行标题加不超过 600 个码点的说明）；1 个或 4 个以上退回。回答保持 `revision: 1`、不可改。
   - **填表式回答（FA，决定 97-3）。** 请求轮的正式回答由 `submit_secretary_answer`、`submit_initial_plan` 或 `submit_initial_questions` 生成协议文本；有收下的提交时，观察器从提交参数重建文本并走 `formalAnswerOf`（`src/core/agent-runtime/query-observation.ts:187`）；没有提交时读最后的文本（旧的 `extractAnswer`，代码框权宜保留），文字坏了照旧算这轮失败。接受处结束这一轮，不再请求一次模型。
-  - 你选一个思路（`requests/select-idea`，只认人）：**选择写在它派生的那一轮上**（新 `followup` 轮的 `selectedIdea: { round: 回答轮, index: n }`），并排这个同请求的 `followup` 轮，输入写明“你选了第 n 个”；秘书据此出完整计划（6C）。选择不直接采用任何东西，也不改回答。
+  - 你选一个思路（`requests/select-idea`，只认人）：**选择写在它派生的那一轮上**（新 `followup` 轮的 `selectedIdea: { round: 回答轮, index: n }`），并排这个同请求的 `followup` 轮，输入写明“你选了第 n 个”；秘书据此出阶段骨架和第一段（6C；后续段由 PL-1 的细化轮补）。选择不直接采用任何东西，也不改回答。
   - 每轮修改的“改了什么”：同一请求前后两个候选的结构差异（`deriveFuturePlanDelta`，F8）加秘书在回答里写的说明（6C）。
+  - **和 PL-1 的分工（规格 §5.1、§6.3.4；PL-1 / 6C L7）。** 规划提示词输出“阶段骨架 + 第一段”，后续段由 PL-1 的细化轮补；第一段的任务书仍写全。已有代码的工作区第一版完整方案出来后审一次（D15），空工程不审；意见交给写方案的秘书并写在卡上，不挡人采用；之后改稿由人带到收敛，不每轮审。首案判定/实现留在 6C L7，不另加字段/读口。
 - **L8 秘书的准备路径（含没有目标时）。**【lead 定，待审，第一轮审查第 5 条】
   - 新的查询调用类 `secretary`：可信上下文来自 `QueryRun` 主事（principal），职责 `secretary`；manifest 只对这一个类允许 `goalId: null`（别的查询类仍要有目标）。**新的查询调用类 `role_exploration`（区域参谋、开局参谋的探索）：`goalId` 可为空（同秘书），可信 principal 是 `QueryRun`，绑定 `role_line` 操作和那条系统“请动手”消息；注册工具：看、找、只读命令、范围受限的 `record_note`（按第 4 片 L2a 的范围准入）、`propose_architecture_revision`；普通 `copy` 的权限不变。`query-execution.ts:381` 对 `secretary` 和 `role_exploration` 放开“没有目标”**（审查二第 11 条）。
   - **初始化分支（61-1、61-3）**：项目还没有采用的正式架构，或没有生效的完成标准时，这一轮的执行种类用 `initial_coordination`（`callKind` 仍是秘书，不是 `copy`），按已有的初始协调回答格式准备、出回答（v2 协议的 `setup`：architecture / completionPolicy / checks），**和普通 ideas 回答分开**。还没有目标的回答先存成候选，目标确认后再绑到那个目标（7D2 L41 第 1 段）。**目标确认那次提交写一条不可变的绑定事实 `InitializationBindingV1 { answerRef, answerDigest, requestRef, draftIndex, goalRef, goalRevision }`；原 Job、回答、prepared manifest 都不改。没有目标的初始化分支在读取和规范化时用这个绑定：Goal 版本和 `planId` 从绑定来；提议和采用都重读并守同一个绑定**（审查二第 8 条）。**采用仍是你的动作**，走现有的人工采用入口（今天在 `ui/views/execution/planning.ts:274` 的 `adoptInitialPlanSetup` 调的路由）；采用事件的补记走 L14。最小根模块 `.` 允许（61-2；第 8 片 L10）。已有采用的架构和生效的完成标准时走普通 `secretary` 路径。
@@ -278,6 +279,7 @@
 - **第 5 片：** 决定队列、候选卡、答复和落实（L6、L13、L14）；共享卡按 L6 去重；答复上存 `approvedPayload` 的 `answerRef` 和 `payloadDigest`（第二轮审查第 6 条）。
 - **第 7 片：** 秘书发消息、待放行、回复到了开下一轮、派工核对版本、消息处置（撤回、转交）、复制目标时干预的撤回和转交；6B 的撤回端口等它（L12）；**7C 给 6B 的共享换手原语加 agent 工具和审批卡**（第二轮审查第 9 条）。
 - **第 7 片（7D1、7D2）：** 7D 已拆成 7D1、7D2（审查二第 18 条）：**7D1 共享基础**（在 8C 之前）含 `RoleScopeV1`/`SessionRoleFactsV1`/`RoleLineAllocationV1`、`planReanchor`/`reanchorSessionResponsibility` 和 transfer 扩展、`role-scope:` 占位、项目主体卡源；**7D2 角色线编排**（在 8D 之后）含开局三条线（L4 的开局秘书是其中之一）、你手工开秘书和范围（L4）、位置、拆分、运行准入、上限卡、队列、规则、冷启动；负责关系包含范围的挑秘书（L4）依赖 7D1 的 `RoleScopeV1`、`planReanchor` 挪负责关系（L12）是 7D1、闲置归档扩到参谋和书记（L15）是 7D2；目标初筛和排队（L11）接 7D2 L33。新顺序 `4A → 4B → 4C → 6A → 6B → 7A → 7B → 7C → 7D1 → 8A → 8B → 8C → 8D → 7D2 → 6C`。
+- **第 7 片的 PL-1（第 7 片新增的一段）：** 6C L7 接 PL-1 的 `planreview` 和首案审阅，后续段由 PL-1 的细化轮补；L13 不变（设计 §13）。
 - **K2：** 压缩做好以前，太长就换手（L10）。
 
 ## 1. 范围
@@ -286,7 +288,7 @@
 
 - **6A：** L1–L8、L16（查询也记活动，新路由 `activity/queries`）；路由 `requests/submit`、`requests/select-idea`、`requests/route`（转交/放下）、`requests/ask`（卡片问秘书/重出）、`main/read`、`requests/read`；Host 的秘书轮驱动与启动扫描；挑秘书**按范围过滤**（开局秘书和手工开的秘书）、未分配队列（`s6-query-unassigned`）和排空、`initial_coordination` 初始化分支。**核心在 2C 之后可建；完整验收要两个索引和驱动。**（第一轮审查第 10、11 条；审查二第 7 条）
 - **6B：** L9–L12、L15；路由 `goals/confirm-draft`、`goals/copy-draft`、`goals/copy-confirm`、`secretaries/archive`、`secretaries/handoff`（手动换手）；目标草稿带 `screening` 和“参谋已满，先排队”；复制时用 `planReanchor` 挪负责关系；闲置归档和 7D2 L38 一致（审查二第 18 条）。撤回端口等 7A。**含 Runtime 换手原语的阶段（不带工具、不带审批卡），作为 6B 的前置；7C 才加 agent 工具和审批卡**（第二轮审查第 9 条）。
-- **6C：** L7 的完整计划和“改了什么”、L13、L14；删 `UserDecisionV1`。**完整验收要 6B 和第 4 片。**答复带 `approvedPayload`，提议和采用核到同一份（第二轮审查第 6 条）；**无 Goal 初始化绑定 `InitializationBindingV1` 的提议、采用和计划读取（审查二第 8 条）**。
+- **6C：** L7 的阶段骨架和第一段 + 后续细化（待 PL-1）、“改了什么”、L13、L14；删 `UserDecisionV1`。**完整验收要 6B 和第 4 片。**6C L7 接 PL-1 的 `planreview`/首案审阅；L13 不变。答复带 `approvedPayload`，提议和采用核到同一份（第二轮审查第 6 条）；**无 Goal 初始化绑定 `InitializationBindingV1` 的提议、采用和计划读取（审查二第 8 条）**。
 
 ### 1.2 不在本片
 

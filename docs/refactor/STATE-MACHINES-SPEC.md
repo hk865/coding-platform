@@ -744,14 +744,28 @@ stateDiagram-v2
 
 ### 3.7 干预规划与来源证明（7B-3 V，2026-10-31）
 
-**分支。** `handleIntervention` 先读消息与线事实，再按 Goal 的正式 phase 分：线上有未完成的 `active` Task 就按 `{kind:'intervention'}` 领取，开着的等待不消费；Goal `active` 且没有未完成任务时，跑一条只读 `intervention_planning` Query（记 `sourceMessageRef`）→ 按 `{kind:'intervention', messageRef}` 读答案并规范化 → `proposePlan`（带 `sourceMessageRef`）→ 首份计划留给人、未来细化按 autonomy 采用；Goal `COMPLETED` 时经 `requestIntake.submitInterventionGoal` 追加一条无目标的 `intervention_new_goal` RequestRound（新的接续 Goal 走目标卡流程），固定 `operationId` 作重放身份（`intervention.ts:40`、`:97`、`:132-143`、`:147-299`；`request-intake.ts:388-395`；`request-service.ts:111`）。
+**分支。** `handleIntervention` 先读消息与线事实，再按 Goal 的正式 phase 分：线上有未完成的 `active` Task 就按 `{kind:'intervention'}` 领取，开着的等待不消费；Goal `active` 且没有未完成任务时，跑一条只读 `intervention_planning` Query（记 `sourceMessageRef`）→ 按 `{kind:'intervention', messageRef}` 读答案并规范化 → `proposePlan`（带 `sourceMessageRef`）→ 首份计划留给人。**当前实现：** 后续细化仍在干预分支内按自治级别采用（`intervention.ts:318`、`:325`），没有统一的候选循环，也没有采用前的机械诊断和独立审阅。**待 PL-1：** 未来细化/干预候选统一走规格 §6.1 的候选循环：机械诊断 → 审阅 → 自动采用/转卡；审阅不是检查证据、不碰完成归约。Goal `COMPLETED` 时经 `requestIntake.submitInterventionGoal` 追加一条无目标的 `intervention_new_goal` RequestRound（新的接续 Goal 走目标卡流程），固定 `operationId` 作重放身份（`intervention.ts:40`、`:97`、`:132-143`、`:147-299`；`request-intake.ts:388-395`；`request-service.ts:111`）。
 
-**记录和事件。** 干预本身不新增阶段记录：每步的正式身份是 `intervention:<message key>:<stage>`，位置从 Query、提案、采用与领取重算（书 §3.10 第 1 条）。`PlanProposal` 与 `proposal_recorded` 事件都带 `sourceMessageRef`（必填的 `null` 或完整 ref）；`intervention_new_goal` 命令带来源消息与旧 Goal（`plan-contracts.ts:47`；`plan-record-codecs.ts:800-804`、`:929-934`；`plan-service.ts:1380-1402`；`request-service.ts:111`）。
+**记录和事件。** 干预本身不新增阶段记录：每步的正式身份是 `intervention:<message key>:<stage>`，位置从 Query、提案、采用与领取重算（书 §3.10 第 1 条）。候选的来源消息/Query 事实（`sourceMessageRef`、`requestRef`、`basedOn`、`submittedBy`）沿用这些现有字段和 Query 读取，不新增字段；平台取消让出的 Run 归 §7.8，本节不重复。`PlanProposal` 与 `proposal_recorded` 事件都带 `sourceMessageRef`（必填的 `null` 或完整 ref）；`intervention_new_goal` 命令带来源消息与旧 Goal（`plan-contracts.ts:47`；`plan-record-codecs.ts:800-804`、`:929-934`；`plan-service.ts:1380-1402`；`request-service.ts:111`）。
 
 **一份来源证明。** 提议、初始采用与后续采用共用 `proveInterventionSource`：Query 必须是 `intervention_planning`，来源消息与 Goal 同一，消息未撤回且已释放，发送者是人或已释放的 `action_request`；它读到的 QueryJob 与消息版本作为守卫存进采用（`initial-plan-answer.ts:74-118`；`plan-service.ts:1604-1614`、`:1653-1661`、`:2929-2953`）。
 
 **Host 的调用。** Host 的干预调用在 `messageRef` 之外带四个字段：`roleBinding`、`runtimeBudget`、`budget`、`consumerId`（`ports.ts:312-317`；`host.ts:1815-1819`）。
 
+### 3.8 候选派生状态（PL-1，2026-11-01）
+
+候选仍落在现有 `PlanProposal` 上，不新增持久状态、记录或字段。下面六个派生状态只是规格 §6.1 判断结果的归类，读时从现有事实重算；目标显示沿用 `CHANGE_PENDING`。候选处理不改变 §3.1–3.5 的 PlanProposal/PlanRevision 迁移。
+
+| 派生状态 | 归哪些情况 | 从哪些现有事实算 |
+| --- | --- | --- |
+| 待审 | 候选待决（`findPendingProposal`），这一版审阅读取是 `not_sent`，有审阅线 | 候选记录 + 规格 §6.1.2 步 5 的 `not_sent` + 审阅线存在 |
+| 审中 | 这一版有审阅 Query，读取是 `waiting` | `readQueryJob` 的 `run.run.status`/`executionState.phase`；规格 §6.1.2 步 5 的 `waiting` |
+| 待改 | 审阅 `fix`，没到上限；返修没发或已发等新候选 | `parsePlanReviewAnswer` 的 `fix` + `completedFixes < 3` + 规格 §6.1.2 步 5b 的 `not_sent`/`waiting` |
+| 待采用 | 规格 §6.1 的 `adopt` 行；`busy` 时留在这里 | `pass` + 诊断空 + `automatic`；`busy` 的最后一次采用结果 |
+| 待人 | 规格 §6.1 转卡的各行（含 `review_invalid`/`fix_invalid`） | `card` 的 `reason` |
+| 已采用未回复 | 采用提交成功，但候选来源消息（沿规格 §6.3.1 来源链/`repliesToMessageRef`）仍是 open wait、`response===null` | `acceptedCandidatesOf` + 源消息 wait/response（规格 §6.1.6、§7.3.1 第 8 步） |
+
+- 这六个**不是持久状态、不是新字段**；它们是规格 §6.1 那张表的结果归类，读的时候从上面的事实算。
 
 ## 4. Task（投影 phase + disposition）
 
@@ -2388,6 +2402,25 @@ stateDiagram-v2
 4. 能力只是工作区级声明，单个 Run 的实际结果仍以 ControlIntent 的状态与观察为准（MVP-BEHAVIOR B08：逐个 Run 显示 unsupported 或 unknown）。
 5. **A.2 5.2 同步（D-15 如实，按子步追加）。** 上表“目标 reason 必须写明的边界”是 A.2 结束时的 reason。每一步只上报当时已成立的边界，后面的子步建成哪条边界，就在同一提交追加哪条，并改 `tests/app/A2-runtime-capabilities.test.ts`（其中“尚未建成”的短语表逐步移入肯定断言）。5.2 上报：`continueHistory`：接续＝新 Run，不是原 Turn 的恢复；上一 Turn 有 Kernel 终态时，同 Session 新 Run 接续，含 yielded 后继 Run；上一 Turn 没有 Kernel 终态时，Kernel 拒绝在该 Session 开新 Turn，不提供接续。`safePointPause`：活句柄在下一个安全点暂停，resume 沿原 Turn 重入；未进入的 Run 由平台直接暂停与恢复（D-7）；重启后暂停中的 Run 不核对（见 `recoverRun`）；Query 不支持（D-11）。`cancel`：活句柄取消，停止被证明前保持“停止请求中”；未进入时平台取消（D-7）；已在安全点暂停的 Run 上的 cancel 无法投递，保持“停止请求中”（7.3 情形 3）；YieldedWait 上的取消只作为接续围栏；Query 不能取消（7.3 情形 1）。`recoverRun` 的 reason 写“没有启动核对”。之后：5.4 向 `continueHistory` 追加 (3) 接续说明（C3）。5.6 把 `continueHistory` 的“不提供接续”换成 (2)（新 Session、`kernel_turn_open`；列举时含 RUN-19/24、RUN-23、RUN-22 认定且 Turn 未结束的 Run），并追加 (4)（重建不出时 outcome 记为未知、原因 `continuation_unrebuildable`，保留 Session 与 Lease 直到人工认定，§6 RD-3、RUN-20(iii)）；把 `safePointPause` 的“不核对”换成 RUN-14 守卫、paused-interrupted（C4、LA-1）与 GOAL-29；把 `cancel` 的“无法投递”换成 RD-7，并追加 RUN-23（LA-7）与 C7；同时改写 `recoverRun` 的 reason（核对已存在）。5.7 再按上表把 `recoverRun` 改为 supported。A.2 5.7 同步：`recoverRun` 上报 supported，reason 写明上表的边界中 5.7 时已成立的部分：只做启动核对、不做原 Turn 的 fresh resume（D-17）；持实例租约、在任何执行驱动之前；已结束的补账；未进入的保留 claim（已开始的进入被撤销）并由同一 claim 重驱；干净中断的记为 crashed（类别 `interrupted`，由人重新入队）；queued cancel 且 Turn 干净的按取消结束（RUN-23，LA-7）；暂停中（或已请求暂停）的结束为 paused-interrupted，不算失败，释放 Session 与 Lease，只由人继续或由人恢复 Goal 后接续（C4）；证明不了的记为未知、保留 Session 与 Lease 直到人工认定（认定也须持实例租约，L-1），探针证明不了的保持原样等下次启动（W-07）；接续＝新 Run 加接续说明，在新 Session 中接原会话已完成的历史（LA-1）；核对后为有未进入 Run（指针不是 paused/cancelled）的 active Goal 启动既有协作驱动，受 `automation.resumeOnStartup` 控制（默认开启），一切经 Workflow 与 owner 守卫，paused-interrupted 仍只允许人工，没有定时调度（LA-6）；该设置关闭时核对照常、核对后不启动驱动，自动化只在 `workflow/advance`、`workflow/driver-start` 或人工操作时继续（固定文字，与本 Host 的设置无关）；没有实例租约的 Host 不核对、不启动执行驱动，普通读取与 owner 写入照常（L-10）。reason 按每次读取时 Host 已安装的 `automation.resumeOnStartup` 生成：本 Host 关闭该设置时末尾另加一句“本 Host 已关闭 `automation.resumeOnStartup`”，有无实例租约都成立。2026-10-29 补注（SMK3b，决定 97-5）：设置改为 `'auto' | 'ask' | 'off'` 三档、默认 `'ask'`；固定文字改为 `auto` 档启动驱动、核对每一档照常、`ask` 和 `off` 档自动化只在 `workflow/advance`、`workflow/driver-start` 或人工操作时继续；“本 Host 已关闭…”那一句改为按档写的位置句：`auto`“启动时自动续做被中断的目标”、`ask`“启动时列出被中断的目标，等你点继续”、`off`“启动时只核对，不续做、不处理排队”，仍按每次读取时安装的设置生成，有无实例租约都成立。`tests/app/A2-runtime-capabilities.test.ts` 的三句常量（`RESUME_ON_STARTUP_AUTO`、`RESUME_ON_STARTUP_ASK`、`RESUME_ON_STARTUP_OFF`，`:105-107`）与断言随之改写。上表中尚未成立的两处留给后续子步在同一提交追加：“可自动重新入队”（RUN-19 类别 `interrupted`）与启动重驱的条件 (a)（必需 active Task 的判定为 `requeue`、`claim_requeued`）随 5.8，`reverify` 随 5.9（见 §15.2 的 5.8、5.9 行）；在此之前 `tests/app/A2-runtime-capabilities.test.ts` 的 `RECOVER_RUN_NOT_YET_BUILT` 按子步列出这些短语（5.8：`automatic`、`automation verdict`、`claim_requeued`；5.9：`reverify`）并断言 reason 不含，建成的子步把它们移入肯定断言。
 
+### 7.8 平台取消让出的 Run（PL-2，2026-11-01）
+
+**放行条件（两条同时成立）。** 候选的 `reason.affectedTaskIds` 含该 `taskId`，且草稿把该任务设为 `superseded` 并给 `replacedByTaskId`；等待的消息与候选的来源精确一致。来源按规格 §6.3.1 的来源链定位到最初的执行者消息：普通候选就是 `sourceMessageRef`，返修候选沿 `planfix:` 回溯父候选直到 `rootMessage`，续轮候选取冻结的 `repliesToMessageRef`（`planresume:` 原 Query 的 `sourceMessageRef`），再与等待的消息精确比较。只是“动到”这个任务、或来源消息不同，都不放行。
+
+**人停在先。** 两条都满足后，先读 Run 的停止来源：用 `stopRequesterOf` 和 `reworkFenceOf` 判，`human_only`（人暂停或取消过）时不提交取消、候选转卡；其余情况再按下面的取消条件处理。必须显式判，因为 `controlSubmitProblem` 允许 paused→cancel，不先判就会盖掉人的停止指针（`task-failure.ts:130` 的 `reworkStopOf`）。
+
+**身份。** 提交用平台自动化 actor `WORKFLOW_AUTOMATION_ACTOR`。取消身份只由候选 `(proposalId, proposalRevision)` 和 `runRef` 决定，不含 Run revision；pin 用这次判据读到的 Run 版本，只作 `expected`。这样取消已提交、重读拿到新 Run revision 时仍是同一控制意图。
+
+**提交前。** 先按上文的“人停在先”排除人的停止，再用 `controlIntentRefFor` 和 `readControl` 读既有意图：本次 `queued`/`applied` 直接续采用，权威 `not_found` 才提交；`superseded`/`outcome_unknown`/读失败保留实际出口。不使用不存在的错误码 `stale`。
+
+**顺序。** 先取消、再采用、再回复。只在采用成功后，回复仍在等的执行者 M（`repliesToMessageRef ??` 按规格 §6.3.1 来源链取 `rootMessage`）；已有同答案回复幂等，已有别的回复 `source_stale`，不第二次覆盖。
+
+**围栏。** 取消在让出的 Run 上保持 `queued`，作为续作围栏，不拉起 Run；指针已是 `cancelled` 时不直接 resume。
+
+**失败出口。** 取消没提交（含人停在先）：不采用，转候选卡并写原因（人停在先写人已停止，其余写取消被拒的码）。取消提交了、采用被拒：候选按 `busy` 保留重试，其他拒绝转卡写原因；不自动回复、不重发取消。取消后采用一直没成功，目标循环按 `busy` 重试规则等事实变化，不重发取消。
+
+**恢复。** 崩溃后按同一身份重读：本次 `queued`/`applied` 续采用，权威 `not_found` 才提交，其他终态或读失败保留实际出口；采用已提交的按 `acceptedCandidatesOf` 和源消息只补回复，不再采用、不再 propose。
+
+**不新增。** 不新增状态、记录、错误码。这是 CTL-01 的既有 cancel 用法（未进入的才走 CTL-02），不改 §7.3 的状态集合。
 
 ## 8. Session（lifecycle × health × occupancy → availability）
 

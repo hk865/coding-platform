@@ -276,7 +276,7 @@
     最后交接那次提交把持有从前任移给接任者；部分交出多出一条线，要另外准入；换职责（L40）按目标职责准入。所有建线入口都走这一步：开局线、你开、
     平台加、提议拆分、秘书建执行者、参谋建成员、换手。（审查二第 1 条）
     **旧线的持有【lead 定】**：7D1 合入时已有的线没有 `RoleLineAllocationV1`。某个（项目、职责）第一次准入时，在那次提交里按“必须不存在”建出这条记录：`holders` = 这个项目里这种职责、没归档的全部 Session（含待命、退役未归档；`since` 记建记录的游标），`reservations` 为空；读口没有记录时按同样的规则读出、不写。持有超过上限照“调低上限”办：不撤销，降到上限以下之前不再加。（审查二 lead 补）
-  - **同时运行上限**：持租约的 Host 里设一个所有模型入口共用的准入器，按 (项目, 职责) 串行地查和预留，再异步开始。计数组只有四个（决定 62-2）：秘书、参谋、书记、执行者。
+  - **同时运行上限**：持租约的 Host 里设一个所有模型入口共用的准入器，按 (项目, 职责) 串行地查和预留，再异步开始。计数组只有四个（决定 62-2）：秘书、参谋、书记、执行者。审阅线（`reviewer`）只经 `role_line_add` 建，运行准入并入执行者组；保留名额沿用现有准入，不新增第五组初值/数字。
     映射：独立审阅者（`reviewer`）算执行者组；只读副本、咨询（问一问）算它复制的那条线的职责组；7D1 之前建的旧线（读作 `openedBy: 'legacy'`）按它的固定职责算；没有映射的调用一律拒绝启动
     （`invalid/no_running_group`），不绕过上限。准入器接在真实的共同启动路径上：Run 和 Query 都已有持久身份（准备之后、交给 Kernel 之前），在这一步过准入。
     包括 Workflow 派工、消息消费、秘书的一轮、咨询（`consultation.ts:226`）、公开的 `executions/start`、`queries/start`（`core-routes.ts:529`、`:569`）。
@@ -294,7 +294,7 @@
   参谋的状态，串行进行；同时写负责链接和占位，从队里移除。
   1. 目标确认（或继续）后要一个目标参谋：候选 = 可用、没在换手、没归档、没退役的参谋线；按 L28 能再接这个目标的（负责的进行中目标还没到 3 个，
      且这个目标和它现有的目标都是 small，或它现在一个目标都没有）；按负担（负责的进行中目标数 → 负责的没终结任务数 → 最近活动早的）挑最轻的。
-  2. 没有候选：开一条新参谋线（`role_line_add`，按 L36）；保留上限满了开不了 → 进队，目标栏显示“排队等参谋 · 第 n 位”。
+  2. 没有候选：开一条新参谋线（`role_line_add`，按 L36）；保留上限满了开不了 → 进队，目标栏显示“排队等参谋 · 第 n 位”。`role_line_add` 也可建审阅者线（duty `reviewer`），用 S7-RL-01 的同一组步骤，不另列阶段。
   3. 排位：秘书初筛有 `suggestedPosition` 就按建议排到那里，没有就排到最后（时间先后）；你能 `reorder`、提到队首、`assign` 给某个参谋（可以超过 3 个）。
      建议排位照旧生效，不是只展示。依据：用户 10-15 原话“初筛再进行分配……可以初步形成队列。如果还不行就按照时序形成队列，不过用户需要可以查看并指定排序”，
      以及 17:2x lead 向用户说明“有初筛就按初筛的建议排，没有就按时间先后”后用户批准决定 62。（审查二第 3 条）
@@ -307,8 +307,10 @@
   不从界面文案反推；部分交出不改。建它的线归档（不是完整换手）→ 联系失效，只留历史；那条线重新启用 → 联系恢复。复用已有执行者不改 `creator`，
   只记这次派工的来源。7D 之前建的线读作 `openedBy: 'legacy'`、`creator: unknown`，名字用系统名。
 - **L35 找谁拿主意（60-6、60-10）。**【lead 定】按事情分两类：
-  - 一般要拿主意的事（执行者、审阅者的上报）：这个任务所属目标的目标参谋 → （没有）creator（有效的 Session）→ 你；
+  - 一般要拿主意的事（执行者、执行结果审阅的上报）：这个任务所属目标的目标参谋 → （没有）creator（有效的 Session）→ 你；
   - 技术约定类的事（接口、这块的约定）：任务所属模块的最窄有效负责范围参谋（按 L23 减去同职责更深的负责区域）→ 目标参谋 → creator → 你；跨几个区域的由目标参谋分别去问。（审查二第 6 条）
+  - **计划审阅结论。** 审阅答案关联回 `planreview:` 请求消息，叫醒目标循环；由循环按规格 §6.1 决定返修、自动采用或转候选卡，不由审阅者直接写卡。首案另按 6C L7 处理。执行结果审阅的上报仍按 L35 找目标参谋。
+  - **PL 的读口。** `resolveDutyRecipient({duty:'reviewer'})` 是 PL 找审阅线的读口；没有审阅线就转候选卡 `no_review_line`，不发明审阅通过（规格 §6.3.4）。`refine:` 找参谋线走 L35（7D2 前用 `{duty:'adviser'}`）。执行者不调它（D-V2 不变）。
   creator 和收件线不是同一条时另收一份请知悉，按来源操作和最终收件线去重。回复消息仍回发信方（L9）；干活结果仍写在任务图上。
   第 7 片 L21 的“没有当前参谋就发给配置的那个”改按这条找。
 - **L36 出不出卡：三层（决定 62-3、62-4）。** 动作入口（今天查 `decisionActionPolicy` 的地方）判；policy 仍是纯函数，由可信 owner 给全输入：动作、actorClass、
@@ -404,8 +406,10 @@
 - **7C：** L15–L22；工具 `create_member`、`hand_off`、`request_rework`、`request_recheck`；参谋、书记的确认和回复授权；秘书的查询调用种类的发信/确认/回复/撤回注册。共用的 Runtime 换手动作（阶段推进）在 6B，不在本片；7C 只加 `hand_off` 工具和批准卡。（第一轮审查第 10、13、14 条；第二轮审查第 8 条）
 - **7D1 共享基础（7D1 可验）：** L23–L25，加上 L31 的保留上限和 `RoleLineAllocationV1`、L34 的 `SessionRoleFactsV1`、L43 的项目主体请知悉基础；接口 `WorkLinkTarget { goal, project }`、`RoleScopeV1`、`planReanchor`/`reanchorSessionResponsibility`/`transferSessionResponsibility` 的扩展、`role-scope:` 占位、`DecisionSubjectV1`、`SessionRoleFactsV1`、`CreatorRefV1`、`RoleLineAllocationV1`；路由 `projects/role-limits`（读）、`projects/role-limits/set { expectedRevision, running?, open? }`（`running` 先只存，运行准入在 7D2；审查二 lead 补：保留准入在 7D1，要能调上限才验得了）；读口 `role-lines/allocation`；项目主体的卡源和请知悉基础（`DecisionSubjectV1`、`notifyProject`）。排在 8C 之前。（审查二第 18 条）
 - **7D2 角色线编排（7D2 联动补验）：** L26–L45（L46 仍属 7B）；路由 `role-lines/open { duty: RoleLineOpenDutyV1, scope: RoleScopeV1[], name? }`、`role-lines/change-scope { session, scope: RoleScopeV1[] }`、`goals/adviser-queue`（读）、`goals/adviser-queue/reorder { expectedRevision, order }`、`goals/adviser-queue/assign { goalRef, adviser }`、`autonomy-rules`（读）、`autonomy-rules/create`、`autonomy-rules/revoke`、`autonomy-rules/update { expiresAt }`；读口 `role-lines/read`、`role-lines/operations`；工具 `propose_role_split`、秘书查询的 `create_member`、8C 的 `propose_architecture_revision`、查询调用类 `role_exploration`；新动作 `role_line_add`、`role_line_split`、`role_line_reuse`、`goal_queue_assign`、`create_member`、`short_change_duty`；新卡源（主体 `project`）`role_capacity`、`role_line_change`、8C 的 `structural_proposal { batchRef }`。排在 8D 之后。（决定 60-1、60-2、60-3、60-4、60-5、60-6、60-7、60-8、60-10；61-4；62-1、62-2、62-3、62-4、62-5、62-6、62-7；审查二第 18 条）
+  - **和 PL 的分工（设计 §13、规格 §6.3.1）：** PL 拿走计划候选循环、`refine:`/`deviation:`/`planreview:`/`planfix:`/`planresume:` 系统轮、机械诊断、审阅轮、任务书导出、阶段 gate 和逐段细化；7D2 留下角色线编排、保留名额（上限归 7D1）、运行准入、队列、规则、冷启动，L46 仍属 7B。7D2 要提供 PL 的调用面：`role-lines/open` 仍只收秘书、参谋、书记；`role_line_add` 加审阅者（第五种职责，走 6A 共用建线入口）；L35 的收件人要能被 PL 的 `planreview`/`refine` 用；内建 binding、Query profile 和只读工具给参谋和审阅者。PL 的候选/偏差做法不放进 7D2。
+- **PL（第 7 片新增的一段，不另开片，不放进第 8 片；设计 §13）：** PL-1：骨架/逐段细化、系统轮、阶段 gate、候选循环、诊断、审阅轮、任务书导出；排在 7C-2 之后，和 7D1 并行，共享文件串行落地。PL-2：偏差；在 PL-1 之后。端到端依赖 7D2 的 `role_line_add`（加审阅者）和真实参谋线、审阅线；首案判定和实现留在 6C L7（规格 §19.1）。7A/7B/7C 原有范围不变。
 
-**不在本片：** 压缩（K2）；秘书太长换手（第 6 片）；界面（E3：消息状态、待放行、干预入口）；真实冲突场景和审阅者（第 9 片）。
+**不在本片：** 压缩（K2）；秘书太长换手（第 6 片）；界面（E3：消息状态、待放行、干预入口）；真实冲突场景（第 9 片）；执行结果审阅（第 9 片）。审阅线编排在 7D2、计划候选审阅在 PL-1（都在本片，见 §1）；第 9 片可复用审阅线。
 
 ## 2. 接口（第一稿，冻结时细调）
 
@@ -495,8 +499,9 @@ export type RoleScopeV1 =
   | { kind: 'project' }
   | { kind: 'goal'; goalRef: GoalRef }
   | { kind: 'region'; moduleRef: ModuleRef };   // L23：子树减去同职责更深的负责区域
-export type RoleLineDutyV1 = 'secretary' | 'adviser' | 'scribe' | 'executor';   // 上限按这四种
-export type RoleLineOpenDutyV1 = 'secretary' | 'adviser' | 'scribe';            // role-lines/open 只收这三种
+// resolveDutyRecipient（src/core/work-graph/sessions/duty-recipient.ts）的 duty 联合：'adviser' | 'secretary' | 'scribe' | 'reviewer'。
+export type RoleLineDutyV1 = 'secretary' | 'adviser' | 'scribe' | 'executor' | 'reviewer';   // duty 五种；运行准入仍四组，reviewer 并入 executor
+export type RoleLineOpenDutyV1 = 'secretary' | 'adviser' | 'scribe';            // role-lines/open 只收这三种；审阅者只经 role_line_add
 
 export type SessionRoleFactsV1 = {             // 每条线一份，在登记平台 Session 的那次提交里写
   sessionRef: SessionRef; revision: number;
@@ -511,15 +516,15 @@ export type CreatorRefV1 =
 
 export type ProjectRoleLimitsV1 = {
   projectRef: ProjectScope; revision: number;
-  running: Record<RoleLineDutyV1, number>;     // 初值 secretary 4, adviser 4, scribe 2, executor 8
-  open: Record<RoleLineDutyV1, number>;        // 初值 secretary 8, adviser 8, scribe 4, executor 16
+  running: Record<Exclude<RoleLineDutyV1, 'reviewer'>, number>;     // 初值 secretary 4, adviser 4, scribe 2, executor 8；reviewer 并入 executor 组
+  open: Record<Exclude<RoleLineDutyV1, 'reviewer'>, number>;        // 初值 secretary 8, adviser 8, scribe 4, executor 16；reviewer 沿用现有准入，不新增第五组初值
 };
-export type RoleLineAllocationV1 = {           // 每个项目、每种职责一份；有正式读口 role-lines/allocation
-  projectRef: ProjectScope; duty: RoleLineDutyV1; revision: number;
+export type RoleLineAllocationV1 = {           // 每个项目、每种职责一份；有正式读口 role-lines/allocation；reviewer 的持有/预留记在 executor 组（L31）
+  projectRef: ProjectScope; duty: Exclude<RoleLineDutyV1, 'reviewer'>; revision: number;
   holders: { sessionRef: SessionRef; since: CommitCursor }[];
   reservations: { operationRef: OperationRef; reservedAt: CommitCursor }[];
 };
-// 运行准入的计数组就是 RoleLineDutyV1 四种（秘书、参谋、书记、执行者）；映射：`reviewer` → 执行者组；
+// 运行准入的计数组仍是四种（秘书、参谋、书记、执行者）；映射：`reviewer` → 执行者组；
 // 只读副本、咨询（问一问）→ 它复制的那条线的职责组；7D1 之前建的旧线（`openedBy: 'legacy'`）→ 它的固定职责；
 // 没有映射的调用 → `invalid/no_running_group`，不绕过上限。
 // 准入器接在真实共同 Runtime 启动路径（Run/Query 准备之后、交给 Kernel 之前）；被挡时 Run/Query 保持“已准备、未开始”，
@@ -528,7 +533,7 @@ export type RoleLineAllocationV1 = {           // 每个项目、每种职责一
 // 角色线的操作：用已有的 SessionOperation，加 kind 'role_line'
 export type RoleLineOperationV1 = {
   kind: 'role_line';
-  action: 'start_lines' | 'open' | 'role_line_split' | 'role_line_reuse' | 'goal_queue_assign' | 'cold_start' | 'create_member';
+  action: 'start_lines' | 'open' | 'role_line_add' | 'role_line_split' | 'role_line_reuse' | 'goal_queue_assign' | 'cold_start' | 'create_member';
   phase: string;                               // 每种 action 的阶段在 L26、L29、L33、L41、L42 里列
   steps: { key: string; duty: RoleLineDutyV1 | null; sessionOperationRef: OperationRef | null;
            state: 'pending' | 'reserved' | 'created' | 'registered' | 'linked' | 'done' | 'failed' }[];
@@ -550,7 +555,7 @@ export type RuleActionV1 = 'refine_future' | 'minor_semantic_patch' | 'system_re
 export type AutonomyRuleV1 = {
   ref: { projectId: string; ruleId: string; aggregateType: 'AutonomyRule' }; revision: number;
   actions: RuleActionV1[]; scope: RoleScopeV1[];                  // 都不能为空
-  limits: { open?: Partial<Record<RoleLineDutyV1, number>> } | null;
+  limits: { open?: Partial<Record<Exclude<RoleLineDutyV1, 'reviewer'>, number>> } | null;   // reviewer 沿用 executor 的准入
   expiresAt: string | null; approvedBy: ActorRef; approvedFrom: { cardKey: string; answerMessageRef: SessionMessageRef } | null;   // 从哪张卡的哪条答复提议来的（第 5 片 DecisionCardV1.cardKey、answerMessageRef）
   state: 'active' | 'revoked';
 };
@@ -563,7 +568,7 @@ export type DecisionSubjectV1 = { kind: 'goal'; goalRef: GoalRef } | { kind: 'pr
 // 项目范围的负责关系不扩大 Runtime 的工作区权限；执行者照旧建在任务所在的工作区。跨工作区的候选读取按“同项目的所有工作区”，
 // 执行绑定照旧按任务的工作区。（审查二第 9 条）
 export type RoleCapacityEpisodeV1 = {
-  projectRef: ProjectScope; duty: RoleLineDutyV1; episode: number; capValue: number;
+  projectRef: ProjectScope; duty: Exclude<RoleLineDutyV1, 'reviewer'>; episode: number; capValue: number;   // reviewer 并入 executor，不单开 episode
   openedAt: CommitCursor; closedAt: CommitCursor | null; revision: number;
 };
 ```
@@ -579,7 +584,7 @@ export type RoleCapacityEpisodeV1 = {
 新读口（公开，测试也用）：`role-lines/read`（每条线的名字、职责、范围、creator 和它现在的状态、待命原因、名额状态、`running_cap` 等待原因）、
 `role-lines/allocation`（每种职责的上限、持有、预留）、`role-lines/operations`（L26–L42 的操作和阶段）。
 新工具：`propose_role_split`（参谋、书记）；秘书查询调用种类的 `create_member`（L42）；8C 的 `propose_architecture_revision`（参谋）。
-新常量：`ROLE_LINE_DEFAULT_LIMITS`、`MAX_GOALS_PER_ADVISER = 3`、`REGION_SLOT_LINE_BUDGET = 15000`（非空行）、`SCRIBE_SLOT_NOTE_LIMIT = 500`、
+新常量：`ROLE_LINE_DEFAULT_LIMITS`（仍四组；reviewer 并入 executor）、`MAX_GOALS_PER_ADVISER = 3`、`REGION_SLOT_LINE_BUDGET = 15000`（非空行）、`SCRIBE_SLOT_NOTE_LIMIT = 500`、
 `ROLE_LINE_IDLE_ARCHIVE_MS = 86_400_000`（**决定 91 取消**）、`ROLE_LINE_SLOW_MESSAGE_LIMIT = 10`（比较用 `>`）、`ROLE_LINE_SLOW_WINDOW_MS = 1_800_000`、
 `NOTICE_SUMMARY_WINDOW_MS = 900_000`、`QUEUE_DRAIN_BATCH = 16`；输入量阈值复用第 6 片 L10 的 `min(500000, 模型容量 × 0.8)`（软预算，一轮结束后才拆或换手；用户 2026-10-15 晚定）。
 新错误：`capacity/at_cap`、`revision_conflict/scope_owned`、`invalid/role_line_duty`、`invalid/rule_action_fixed`、`invalid/rule_limit_over_cap`、
@@ -607,7 +612,7 @@ export type RoleCapacityEpisodeV1 = {
 | S7-MSG-10 | 等待/动作 → `rejectedAt` | 实际收件人回 `reject: true` 和理由；先到者赢 | 实际收件人 | 写 `rejectedAt`、理由 | `revision_conflict`（后到）、`forbidden`、`not_found` | 回复是单次提交，按 `commandId` 重放 |
 | S7-DC-01 | 计数不存在 → `sequence: 1` | 守卫「必须不存在」 | 派工提交 | 建 `DispatchCounter`、写 1；消息 pins 记 0 | `revision_conflict` | 与消息、序号同一提交；崩则一起回滚 |
 | S7-DC-02 | `sequence: n → n+1` | 版本守卫过；`expectedRevision` 对上 | 派工提交 | 写 n+1；消息 pins 记 n | `revision_conflict`、`idempotency_conflict` | 同上；同 `commandId` 回原回执 |
-| S7-RL-01（7D2 联动补验；审查二第 18 条；决定 60-1、60-2、60-5） | 无 → `RoleLineOperationV1`（action `start_lines`/`open`/`role_line_split`/`role_line_reuse`/`goal_queue_assign`/`cold_start`/`create_member`）：`steps.state` `pending → reserved → created → registered → linked → done`；action `role_line_split` 的阶段 `planned → admitted → created → linked → done`，恢复从没完成的阶段接着做 | 建 Session 的同一次提交写 `SessionRoleFactsV1`（`openedBy`、`creator`、`originOperation`）和负责链接；`role-scope:` 占位（L24）；按 `RoleLineAllocationV1` 取预留（L31）；守上限版本和分配版本 | 平台（L26、L41）、人（L27）、平台规则（L29/L33）、agent 提议（L30）、秘书（L42） | 写范围链接、占占位；登记那次提交预留转持有；`phase` 记进度、`result.status` 记 `done`/`failed`/`waiting` | `capacity/at_cap`、`invalid/role_line_duty`、`revision_conflict/scope_owned` | 注册平台 Session 那次提交里预留转持有；崩了按 operation 身份从没完成的步骤接着做，不重复建、不重复写 |
+| S7-RL-01（7D2 联动补验；审查二第 18 条；决定 60-1、60-2、60-5） | 无 → `RoleLineOperationV1`（action `start_lines`/`open`/`role_line_add`/`role_line_split`/`role_line_reuse`/`goal_queue_assign`/`cold_start`/`create_member`）：`steps.state` `pending → reserved → created → registered → linked → done`；action `role_line_split` 的阶段 `planned → admitted → created → linked → done`，恢复从没完成的阶段接着做 | 建 Session 的同一次提交写 `SessionRoleFactsV1`（`openedBy`、`creator`、`originOperation`）和负责链接；`role-scope:` 占位（L24）；按 `RoleLineAllocationV1` 取预留（L31）；守上限版本和分配版本 | 平台（L26、L41）、人（L27）、平台规则（L29/L33）、agent 提议（L30）、秘书（L42） | 写范围链接、占占位；登记那次提交预留转持有；`phase` 记进度、`result.status` 记 `done`/`failed`/`waiting` | `capacity/at_cap`、`invalid/role_line_duty`、`revision_conflict/scope_owned` | 注册平台 Session 那次提交里预留转持有；崩了按 operation 身份从没完成的步骤接着做，不重复建、不重复写 |
 | S7-RL-02（7D2 联动补验；审查二第 18 条；决定 60-7） | `scoped` → 待命（读时原因 `unassigned`） | 最后一个 `responsible` 链接被关（目标完成、取消且没复制）；`lifecycle` 仍 `active`，不加生命周期值 | 平台（L25 的 `reason: 'standby'`） | 关最后一个范围链接、释放 `role-scope:` 占位；2C 的 T9 读原因 `unassigned` | 无 | 关链接和释放占位同一提交 |
 | S7-RL-03（7D2 联动补验；审查二第 18 条；决定 60-7） | 待命 → `scoped`（复用，`role_line_reuse`） | 新范围的占位空；按 L39 挑选（闲着、不太长、以前管过的模块有交集、最近活动）；未归档、已持有名额的待命线复用不新增预留、不要求总数低于上限，已归档线先走重新启用准入（L31） | 平台规则 / 人 | 用 L25 开新范围链接、占占位；`RoleLineOperationV1` action `role_line_reuse` | `revision_conflict/scope_owned` | 同一提交（审查二第 1 条） |
 | S7-RL-04（7D2 联动补验；审查二第 18 条；决定 60-3、60-7、60-8；**决定 91 改写**） | `scoped`/待命 → archived（闲置归档） | 参谋、书记闲满 `ROLE_LINE_IDLE_ARCHIVE_MS = 86_400_000`（L38 的“闲”事实读全）；每种职责保留最后一条不归档 | Host / 平台 | 归档、释放 `role-scope:` 占位和持有；项目范围按 `project_scope_moved` 挪给同职责里负担最轻的线 | 无 | 释放同一提交；重启按事实重算 |
