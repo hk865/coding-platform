@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–108）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–109）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1852,6 +1852,43 @@
         - **冒烟。** 下一轮真实模型冒烟用核对表 v4（207 行）；要核真实 provider 能不能收 131072 的 `max_tokens`。
         - **B06、K2。** 只读报告见证（B06）在 MVP 门之前要有一片（设计第 11 节）。K2 不是 MVP 门槛。
         - 来源：`docs-land1101c/facts-land1101c.md` §5；`7c/status-7c.md:480`、`:502`、`:514`；`sgl/plan-loop-design.md` §11。
+      - **109 L2、R3 合入，书和规格冻结，8C、8E 的逐行审，临时树开工，两处错和下一步（11-01）。**
+        - **109-1 L2、R3 合入，7C-2 做完。** 两个提交：`61deb845`（7C-2 L2：接线组）、`1f3fb923`（PL R3），本地，等用户推。
+          - **L2。** `handoffs` 绑定（`src/composition/create-platform.ts:1859`），真实 `hand_off` 到 H，审批卡的应用行接通，H-01、H-02 的公开链路行跑通；允许清单里 `HandoffBriefRecordedEvent`、`HandoffBriefConsumedEvent` 两行去掉（生产仍不写 `HandoffBriefConsumed`）。Host 加系统发件箱（存储和发布）、提醒路径、返工通知、授权；职责收件人读真实目录：没有固定职责的 `legacy_template` Session 跳过，读失败这一趟不处理、下一次重试，不投兜底。自动返工通知的 `taskCount` 合计两臂；接续 Run 没有 `requeueRef` 时沿 `previousRun` 找到后面的 requeue，否则答复接续后参谋的第二张通知会丢。每条 Run 链普通 1 次 Run 点读，有 requeue 2 次，走过 N 个 Run 才找到是 N+1 次。
+          - **R3。** `RunActivity` 加 `changedLines`，每次编辑按 `contracts/line-delta.ts` 的唯一规则；确认副作用的失败编辑把计数标为不全；a-b-a 记 added 2、deleted 2。`RUN_ACTIVITY_RULE_VERSION` 从 1 升到 2，`RunActivity@1`、`QueryActivity@1` 和 schemaVersion 不变。`plan-loop-readings.ts` 的三个读数只读已存事实；`activity/runs` 的读投影已在用 `runUsageOf`、`lineReadingOf`（`runGrowthOf` 由 `runUsageOf` 调），规划的决定还没有用它们。`1f3fb923` 的提交说明写“生产还没有调用者”，这句不准，以这里为准。
+          - **检查。** 全量和规模批在 `e38bc2a` 上：1,122 个文件、13,106 项过、3 项跳过、762.65 秒；规模批 14 个文件 42 项、594.77 秒。落地树 `44aab2a` 多第三次复审的两处小改（`savedRequeueAutoCount` 去掉没有裁定要求的防环、测试复用 `nextOf`），两个测试文件 11/11，`readme-check` 25 个目录 0 个问题。
+          - **行数。** L2：src 23 个文件 +1,216/−117，测试 17 个文件 +1,451/−49，README 11 个文件 +59/−52。R3：src 10 个文件 +267/−81，测试 22 个文件 +395/−31，README 6 个文件 +15/−11。
+          - **审和返工。** L2 施工一轮、返工两轮；第二次复审查出接续 Run 没有 `requeueRef`、计数读成 0、参谋第二张通知丢失，第二轮返工修好；第三次复审六条全关，新提两处小的，错 0、缺 0。R3 施工一轮、返工一轮（`ef6bb26`，Codex 第一轮 6 条小的，没有 bug），生产差异 lead 读过，没再过 Codex。7C-2 到此做完，7C 整段做完。
+          - **文档。** 这批同步了 `STATE-MACHINES-SPEC.md`、`slice-2B-SPEC.md`、`slice-7-SPEC.md`、`slice-PL-SPEC.md`、`slice-8-SPEC.md`、`slice-9-SPEC.md`、`MVP-BEHAVIOR.md`、`DESIGN.md`、`IMPLEMENTED-CAPABILITIES.md`（WG161、WG162）、`CORE-DATA-OPERATIONS.md`、`DSH-WORKFLOW.md`，共 11 个文件。L2、R3 没有新状态或迁移。
+          - 来源：`docs-land1101d/facts-land1101d.md` §1；`7c/land4/msg-l2.txt:1-11`、`7c/land4/msg-r3.txt:1-10`；`7c/status-7c.md:549`、`:551`。
+        - **109-2 书和规格。**
+          - **书冻结。** PL、7D2、6C 的书冻结，在 lead 笔记 `impl/sgl/book/`（`book-pl-frozen.md`、`book-7d2-frozen.md`、`book-6c-frozen.md`），不进仓库；估算 6C 2,357＋1,980＝4,337，7D2 约 11,650。
+          - **闭环验收组。** 一个施工包不保证自己能编译、走得到、变绿。PL：`R3 → [P1…P6＋L] → [P7＋P8]`；7D2：`Admission → Orchestration → Cold start → CL`；6C：`[G1＋G2＋G3]`。
+          - **第 9 片规格冻结。** `8edac3ac`，`slices/slice-9-SPEC.md`：Codex 三轮（21、16、3 条），执行审查是系统轮，真实冲突和验收，线长读数。
+          - **U1–U5（用户：“都按建议”）。** U1 窗口；U2 DeepSeek 系 1M→131072、128k→64000，拒绝就记失败，不悄悄降；U3 保留决定 39，量过再定；U4 HTTP 读模型算过、浏览器记“未覆盖”；U5 完整规模、SQLite 单读者加重建优先；提交 `112c3a32`、`b6cbb5fc`。
+          - **真实模型通路。** 早已适配（用户 11-01：“事实上我们早就适配了，我记得有给你相关的api吧。”）；网关 `smoke-flash`、`smoke-ollama`、`smoke-deepseek` 都在，规格 §0.1 已写。
+          - **`0928eb5d`。** 写 STATE-MACHINES §3.9 的替代与切换状态表、`module-target.json` 的 communication→architecture、configuration 两条边；第 6 片 L14 写侧修复放到下一次 `initialization/adopt`。
+          - **PL 的上层文档。** `457d71eb`，规格 `3c8feefe`，已在仓库。
+          - 来源：`docs-land1101d/facts-land1101d.md` §2；`7c/status-7c.md:547`、`:549`、`:551`、`:553`、`:555`。
+        - **109-3 8C、8E 的逐行审（补决定 104-2）。**
+          - **范围。** 全文在 lead 笔记 `s8c/lead-read-8c.md`、`s8c/lead-read-8e.md`；书不重开审查（每层一次），改动都进开工裁定。
+          - **8E。** 没有会做错事的地方，只有过期的次序和引用要收。
+          - **8C 的四处真缺口（lead 已裁定）。** ①删自己任务的模块永远退回，触发挪到 `complete_task` 那一支提交成功之后；②恢复之后没有触发点，同一个 owner 加按目标的入口 `attemptRepairsForGoal`，恢复那一趟、驱动启动和启动扫都走它；③足迹证据缺失的卡批准了也不生效，证据缺失时人的批准就算数，证实的越界批准了也是 `forbidden`/`outside_footprint`；④`footprint_unknown` 的卡提前出现，足迹一项只在绑定轮次定案 PASS 之后才算。
+          - **另有。** 从注记找轮次的办法、启动扫的边界、两处措辞、批次窗口口子（建议形状已记下）。8C 的开工裁定在 7D1、8B-2 之后写。
+          - 来源：`docs-land1101d/facts-land1101d.md` §3；`s8c/lead-read-8c.md:1-37`、`s8c/lead-read-8e.md:1-11`。
+        - **109-4 临时树上开工：P1 和 G1-1；7D1 的夹具没有专人。**
+          - **开工。** 用户：“可以，就这样开工”。L2 第二轮返工一回来，合上 R3 做临时树 `u3-t1`（`e38bc2a`），P1（22:54）和 7D1 G1-1（23:00）从它开工，L2 复审同时进行；第三次复审只改 L2 自己的文件，两组不受影响。
+          - **7D1 的裁定。** 开工裁定写于 `52e5b00`，用 relink 工具重指到 `u3-t1`；叠加裁定 `7d1-overlay-1101.md` 记基线、和 PL-1 并行、PL 书核出的五处归属、行数不给 DSH 看（决定 105-2）。
+          - **夹具。** 7D1 没有专门写夹具的人：G1-1 问 `04a` 不在树上也不在白名单；裁定每组按冻结的夹具规格自己写，Codex 随组审，G1-1、G1-2 白名单已放开，`session-duty-double.ts` 要在 G3-1 之前备好。
+          - **P1 的裁定。** `DR-P1-01`…`05`（lead 笔记 `impl/sgl/pl/frozen/pl-p1-rulings.md`），规格的相应文字等 P1 落地再改。
+          - 来源：`docs-land1101d/facts-land1101d.md` §4；`7c/status-7c.md:557-558`。
+        - **109-5 这批的两处错和下一步。**
+          - **错一。** `DR-R3-07` 写了 `maxRequests: 300`，非法（上限 128）；DSH 问了没猜，改成 `null`：`validateRuntimeBudget` 的 128 只卡写出来的数字，`null` 是不限，Work 绑定默认就是 `null` 限额，真实 Work Run 能超过 256 次请求；这是 lead 的错（`src/contracts/runtime-budget.ts:19`、`:33`）。
+          - **错二。** 第 9 片规格写过“真实模型尚未授权”，不对，用户指出；已改规格，记进 lead 的记忆：说缺什么之前先看 `key-names.sh`。
+          - **下一步。** 7D1 ∥ PL-1（`7D1 W → PL-1 → 7D2` 在 `host.ts` 上串行）→ 8B-2 → 8C → 8E-1 → 8E-2 → PL-2[P7＋P8] → 7D2-1 → 6C → 第 9 片 → E3。
+          - **7D1 波次。** W1 G1-1 → W2 G1-2 → W3 G3-1 ∥ G4 ∥ G2-2a → W4 G2-1 ∥ G3-2 → W5 G2-2b → W6 W → W7 CL。
+          - **其他。** §6 选项 b、只读报告见证（B06）各一片，在 MVP 门之前；K2 不是 MVP 门槛。下一轮真实模型冒烟用核对表 v4，要核 provider 收不收 131072 或 64000 的 `max_tokens`。
+          - 来源：`docs-land1101d/facts-land1101d.md` §5、§6；`7c/status-7c.md:545`。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

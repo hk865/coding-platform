@@ -3,6 +3,8 @@ lead，2026-11-01。设计唯一依据：`plan-loop-design.md`（v4 定稿，685
 
 状态：**已冻结（11-01）**。Codex 两轮全审（37 条、22 条）加一次快速核对（8 条），lead 审 §21、§22 后冻结。之后的修改走偏差，不再审这一层。
 
+**后注（R3 落地，lead 2026-11-01）：** R3 已落地（`1f3fb923`）：`RunActivity` 加 `changedLines`，每次编辑按 `contracts/line-delta.ts` 的唯一规则计数；副作用已确认的失败编辑把计数标为不全；a-b-a 记 added 2、deleted 2。`RUN_ACTIVITY_RULE_VERSION` 从 1 升到 2，`RunActivity@1`、`QueryActivity@1` 和 schemaVersion 不变。`plan-loop-readings.ts` 的三个读数 `runGrowthOf`、`runUsageOf`、`lineReadingOf` 读已存事实，不另存；`activity/runs` 的读投影已经在用 `runUsageOf`、`lineReadingOf`（`runGrowthOf` 由 `runUsageOf` 调）；规划的决定还没有用它们，PL-1 后面的组才用。数字：src 10 个文件 +267/−81，测试 22 个文件 +395/−31，README 6 个文件 +15/−11；全量和规模批在 `e38bc2a` 上：1,122 个文件、13,106 项过、3 项跳过、762.65 秒；规模批 14 个文件 42 项、594.77 秒。
+
 ---
 ## 0. 一页说明（给用户）
 **一句话。** 计划从“人采用一次”变成闭环：执行中发现缺口或偏差，参谋写下一段或改计划；候选先过机械诊断，再过审阅；目标循环按自治级别自动采用或转成候选卡；采用后回到执行。人能看到每一段的任务书、改动和用量。
@@ -1865,7 +1867,7 @@ export function deviationText(d: DeviationV1, taskBookPath: string | null): stri
 - **只累加上涨。** 输入下降不计；之后再涨才计。同一步里新增和裁剪互相抵消时会少计，所以这是工作量的近似读数，不是精确账；**第一次输入不计。** 同一 Session 连做两个任务时，第二个任务的第一个 Run 第一次输入不计，所以不会把第一个任务的历史算进来；**能直接相加。** 任务是它的 Run 之和，阶段是任务之和，目标是全部之和；不按 Session 去重。每个成员的 Run 都计入，包括子 agent；**缓存和重发照计。** 累计 token 用 `usage.totals.inputTokens + outputTokens`，不减去 `cachedInputTokens`，也不因重发去重；**有未知时跳过并标“不全”。** 某次请求没报用量，就跳过它参与的那一段，读数标 `complete:false`，文字写“不全”；不把它当 0。
 
 **改动行数的算法。**
-- 成功的 `edit`：`mode:'create'` 按 `newText` 的行数记新增，`mode:'replace'` 用 `lineDelta(oldText, newText)` 记增删；`shell` 也可能改文件，但算不到可靠行数：出现 `shell`、未知结果、被拒绝的调用、非 `create`/`replace` 的模式，都标 `complete:false`，不补 0；沿用现有 `command_ran` 的“不全”口径；被拒绝的调用不算；不明副作用标“不全”；行数只从这个 Run 自己的 Kernel `edit` 记录算，不读工作区快照，避免把并行 Run 的写入算进来；`lineDelta` 现在在 `src/app/attention-observer.ts:124`，`core/agent-runtime` 不能反向 import `app`；落地时原样挪到 `src/contracts/line-delta.ts`，`attention-observer.ts` 改为导入，不写第二份（D-18）。
+- 成功的 `edit`：`mode:'create'` 按 `newText` 的行数记新增，`mode:'replace'` 用 `lineDelta(oldText, newText)` 记增删；`shell` 也可能改文件，但算不到可靠行数：出现 `shell`、未知结果、被拒绝的调用、非 `create`/`replace` 的模式，都标 `complete:false`，不补 0；沿用现有 `command_ran` 的“不全”口径；被拒绝的调用不算；不明副作用标“不全”；行数只从这个 Run 自己的 Kernel `edit` 记录算，不读工作区快照，避免把并行 Run 的写入算进来；`lineDelta` 已随 R3 移至 `src/contracts/line-delta.ts:19`，提醒观察器和活动计数共同导入这一份。
 ### 10.3 任务档位、阈值和三条线
 计划里的任务加一个可选字段 `sizeClass`（v3 §4.3）。没有档位时只累计，不提醒。下表是默认值；判定用 Host 当前有效的 `planLoopLimits`（10.3 末，可由 `plan-loop-limits/save` 改）。
 
@@ -2504,7 +2506,7 @@ export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
 |---|---|---|
 | 7C-1 L1 | 任务书展开、已执行定义冻结、计划来源和影响（设计 §13 第 3 步） | PL-1 的“已执行任务不改定义、用替代任务”没有底 |
 | 7C-2 L2 | PL-2 的偏差入口和并发顺序 | PL-2 不开工 |
-| 第 2 步（三个读数） | 已提到 PL-1 的 R3 组，L2 之后立刻落地，不再是 PL-2 的外部依赖（lead，2026-11-01，薄书 §2.4） | 无 |
+| 第 2 步（三个读数） | 已提到 PL-1 的 R3 组，R3 已落地（`1f3fb923`），不再是 PL-2 的外部依赖（lead，2026-11-01，薄书 §2.4） | 无 |
 | 7D2 `role_line_add`（加审阅者）和内建 binding | 真实的参谋线、审阅线；PL 的端到端 | 审阅线只能靠外部配置或人手动建；没有审阅线时按 §7 转候选卡，不跳过 |
 | 7D2 L35 | 执行者上报的收件人（7D2 前用 `resolveDutyRecipient`） | PL-2 的“执行者上报”只能走旧收件人 |
 | 6C L13 | 改目标、验收、范围、在跑切换、加预算 | 这些只出依赖说明，不在本规格做；D14 不改变这一条 |

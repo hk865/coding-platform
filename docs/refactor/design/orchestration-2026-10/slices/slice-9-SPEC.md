@@ -69,7 +69,7 @@ lead，2026-11-01。代码、测试行号按基线 `7570e87`，文档行号按�
 |---|---|---|---|
 | 7D2 | 否 | 审阅线（`role_line_add` 加 reviewer）、开局三线、开线/改范围、运行准入、上限卡；只供审阅线 | 审阅块只写“复用 7D2 的审阅线”；没有审阅线时保留 open 轮、等待 `no_review_line`（PL-1 同一口径），晚建线后同一轮续；不发明“审阅通过” |
 | 6C | 否 | 按答复改目标/验收/范围、在跑切换、加预算；E08、方案迭代的正式生产者 | E08/方案迭代只写依赖；验收记 `prereq-slice-missing`，不写“已实现待跑” |
-| L2 片（7C-2 handoff） | 否 | `handoffs` 绑定、`hand_off` 真实调用、H-01/H-02、人回复入口；E06、干预、等待 | 只验审批卡/简报记录/未绑定 `unsupported`；人回复入口记 `entry-missing` |
+| L2 片（7C-2 handoff） | 是（`61deb845`） | `handoffs` 绑定、`hand_off` 真实调用、H-01/H-02、人回复入口；E06、干预、等待 | 已合入，按真实链路验；人回复入口按当时的树核，没有才记 `entry-missing` |
 | 7D1 | 否 | `RoleScopeV1`、`SessionRoleFactsV1`、`RoleLineAllocationV1`、`planReanchor`/`reanchorSessionResponsibility` | 不提前定义这些类型；审阅者范围先用现有 `DecisionSubjectV1`，标“待 7D1 换” |
 | PL | 否 | PL-1 系统轮正本、`sendSystemRound`、`planningAnswerShapeOf`/`finalizeToolNamesOf`、`compileVerificationCoverage`、`submit_plan_review` 先例、`planningOutputReserveTokens`；PL-2 偏差回计划 | **PL-1 是 §3 的硬依赖**：没有它，审阅系统轮/答案形状/共享覆盖都无从接；131072 两格等 PL-1，之前只跑显式探针；E09 偏差等 PL-2 |
 | 8B-2 | 否 | `assign_module_maintainer`、`module_maintainer_assignment` 卡源；冲突时“谁负责这个模块” | 冲突协调不写工具名/卡源；只写“负责关系由 8B-2 提供” |
@@ -103,7 +103,7 @@ lead，2026-11-01。代码、测试行号按基线 `7570e87`，文档行号按�
 | 7D2 审阅线 | §3.3 的 `role_line_add` 加 reviewer、审阅 Session 的职责/范围、reviewer profile、只读工具 | 没有审阅线时保留 open 轮、等待 `no_review_line`，晚建线后同一轮续；不是“未实现”，不伪装审阅通过 |
 | 7D1 角色范围 | 审阅者读原历史的范围、`RoleScopeV1` | 先用 `DecisionSubjectV1`（Goal 或 project）；标“待 7D1 换”，不提前定义 `RoleScopeV1` |
 | 6C | E08 改目标/验收、方案迭代的回答→候选 | 场景记 `prereq-slice-missing`；只验现有确认/采用/pin 的部分，不写“已实现” |
-| L2 片（7C-2） | E06 换手、直接干预/等待的人回复入口 | 场景记 `entry-missing`；只验审批卡/简报/未绑定 `unsupported` |
+| L2 片（7C-2，已合入 `61deb845`） | E06 换手、直接干预/等待的人回复入口 | 已合入；人回复入口按当时的树核，没有才记 `entry-missing` |
 | PL-2 | E09 的偏差回计划、替代任务 | E09 只验 `compare-formal` 漂移读取；修复/正式版本记未覆盖 |
 | 8B-2/8C | E09 的模块负责人、正式架构变更 | 同上；不写工具名/卡源，不提前定义 8C 类型 |
 | 8E | 冲突发现后读联系 | 标“可选/不做”；不写 `link`/`flow` 字段名 |

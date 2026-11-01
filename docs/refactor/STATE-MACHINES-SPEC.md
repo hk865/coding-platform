@@ -6154,38 +6154,38 @@ P1 要同一个 Goal 的两个句柄（或一条登记被两个对象共用）�
 
 ## 20. 7C-2 的交接简报与交接审批卡（2026-11-01）
 
-7C-2 的 H 给交接加了记录 5 `HandoffBrief@1` 和 `handoff_approval` 卡；F2 先冻结共享名字、契约形状、模板和包条目；T 加 `hand_off` 工具和适配器。记录 5 是 Work 交接的简报记录，和 6B 秘书的 `HandoffBriefV1` 不是同一个东西（`state/work-handoff-brief.ts:5-9`）。行号按落地树 `7570e87`。
+7C-2 的 H 给交接加了记录 5 `HandoffBrief@1` 和 `handoff_approval` 卡；F2 先冻结共享名字、契约形状、模板和包条目；T 加 `hand_off` 工具和适配器。记录 5 是 Work 交接的简报记录，和 6B 秘书的 `HandoffBriefV1` 不是同一个东西（`state/work-handoff-brief.ts:5-9`）。行号按落地树 `44aab2a`。
 
 ### 20.1 `HandoffBrief@1`（记录 5）
 
 **记录。** `WorkHandoffBriefV1` 的字段是 `ref{aggregateType:'HandoffBrief', projectId, sessionId, operationId}`（`sessionId` 是接任者）、`revision`、`workspaceId`、`operation`、`source`、`duty:'executor'|'adviser'`、`tasks`、`binding`、`digest`、`material`、`consumedBy`、`since`（`state/work-handoff-brief.ts:40-53`）。ref、material 和 binding 来自 F2 的 `contracts/handoff-brief.ts`，这里只 import，不重声明：ref 是 `:16-21`，material 是 `:26-39` 的规范化联合，binding 是 `:42-48`，digest 的唯一规则是 `handoffBriefDigest(material)`（`:51-53`）。记录里的 `material` 存规范 JSON，联合仍由装配和准备两条路径拥有（`state/work-handoff-brief.ts:74-76`）；`digest` 只覆盖 material，不是渲染字节、模板 id 或工具表（`:36-38`）。`consumedBy` 是唯一的 CAS 字段，`since` 是 Store 绑定的游标（`:36-39`、`:77-78`）。跨字段规则是 operation、source、duty、digest 必须与 binding 相同，否则拒绝（`:81-103`）。
 
-schema 是 `HandoffBrief@1`（`:31`）；按 Session 的 lookup 是 `work-handoff-brief-by-session`，equal 为 `ref.projectId`、`workspaceId`、`ref.sessionId`，按 `since` 排序（`:111-115`）。两个事件是 `HandoffBriefRecorded` 和 `HandoffBriefConsumed`（`:32-33`、`:134-148`）；两者都带整条记录的 `handoffBrief`，重放恢复原记录（含 material 和 `consumedBy`），不按当前状态重算（`:118-132`）；三个格式作为一组注册为 `HANDOFF_BRIEF_RECORD_SCHEMAS`（`sessions/session-record-codecs.ts:1243-1250`）。
+schema 是 `HandoffBrief@1`（`:31`）；按 Session 的 lookup 是 `work-handoff-brief-by-session`，equal 为 `ref.projectId`、`workspaceId`、`ref.sessionId`，按 `since` 排序（`:111-115`）。两个事件是 `HandoffBriefRecorded` 和 `HandoffBriefConsumed`（`:32-33`、`:134-148`）；两者都带整条记录的 `handoffBrief`，重放恢复原记录（含 material 和 `consumedBy`），不按当前状态重算（`:118-132`）；三个格式作为一组注册为 `HANDOFF_BRIEF_RECORD_SCHEMAS`（`sessions/session-record-codecs.ts:1252-1258`）。
 
-**写入。** 记录在 handoff advance 的同一笔提交里写。`commitWrite` 收可选的 `brief`，把记录、`HandoffBriefRecorded` 和 `since` 的 commit cursor binding 一起放进这笔（`sessions/session-handoff-service.ts:863-869`、`:894-912`），并给新 ref 加 `expectedRevision:null` 的守卫（`:905-908`）。写入前是 `since:null` 的 pending 形状，游标由这笔提交绑定（`:499-500`）；记录在 successor 阶段建：接任者是已有 Session 时在 `:1186-1205`，是新建 Session 时在 `:1262-1284`；digest 从已读成功的 material 算，只覆盖 material（`:507-524`）。只有 `executor`、`adviser` 两个 Work duty 有简报，秘书或书记接任者没有（`:502-505`）。
+**写入。** 记录在 handoff advance 的同一笔提交里写。`commitWrite` 收可选的 `brief`，把记录、`HandoffBriefRecorded` 和 `since` 的 commit cursor binding 一起放进这笔（`sessions/session-handoff-service.ts:863-869`、`:894-912`），并给新 ref 加 `expectedRevision:null` 的守卫（`:905-908`）。写入前是 `since:null` 的 pending 形状，游标由这笔提交绑定（`:499-500`）；记录在 successor 阶段建：接任者是已有 Session 时在 `:1195`，是新建 Session 时在 `:1271`；digest 从已读成功的 material 算，只覆盖 material（`:507-524`）。只有 `executor`、`adviser` 两个 Work duty 有简报，秘书或书记接任者没有（`:502-505`）。
 
 **就绪不是字段。** 后继只有在对应 assignment 的每次移交都带回执之后才会被提供记录 5；判断用存储的 handoff operation 自己的 phase progress，不另设状态（`state/work-handoff-brief.ts:157-194`）。读按 Session lookup 取最新一条，读失败是 `unavailable`（`src/core/agent-runtime/execution-preparation.ts:91-115`、`:140`）。
 
-**`HandoffBriefConsumed` 的现状。** 事件的 schema 和编解码已经注册（`state/work-handoff-brief.ts:142-148`；`sessions/session-record-codecs.ts:1245`、`:1249`），但生产路径不写它：记录 5 的唯一生产写入是 successor 阶段那笔 `HandoffBriefRecorded`（`sessions/session-handoff-service.ts:900-902`）；消费只把记录的 `consumedBy` 从 `null` 改成 Run、`revision` 加一，不写事件（`state/work-handoff-brief.ts:196-213`）。允许清单里 `HandoffBriefRecordedEvent`、`HandoffBriefConsumedEvent` 两行留到 L2（`tests/architecture/production-reach-allowlist.json:1377-1378`）。不要把“已注册”读成“已发出”。
+**`HandoffBriefConsumed` 的现状。** 事件的 schema 和编解码已经注册（`state/work-handoff-brief.ts:142-148`；`sessions/session-record-codecs.ts:1254`、`:1256`），但生产路径不写它：记录 5 的唯一生产写入是 successor 阶段那笔 `HandoffBriefRecorded`（`sessions/session-handoff-service.ts:903-907`）；消费只把记录的 `consumedBy` 从 `null` 改成 Run、`revision` 加一，不写事件（`state/work-handoff-brief.ts:196-206`）。允许清单里 `HandoffBriefRecordedEvent`、`HandoffBriefConsumedEvent` 两行已随 L2 去掉。不要把“已注册”读成“已发出”。
 
 ### 20.2 唯一消费
 
-**规则。** 只有真正进入 Kernel 的第一次进入提交才消费记录 5。`recordExecutionEntered` 在 `bindsStart`（`startedSince` 为空、`startedAt` 非空）时把 `@2` 的记录和 CAS guard 并进同一笔（`tasks/execution-entry-service.ts:1960`、`:1969-1976`、`:1982-1983`）；`recordRunResult` 里从真实 Kernel 证据首次记录进入的 terminal 或核对行同样并进同一笔（`:2147`、`:2191-2201`）。`handoffBriefConsumptionForCommit` 对 requeue Run（自带接续简报）、manifest 没有简报、或调用方没有进入证据的情况都不消费；`consumedBy` 是别的 Run 时回 `unavailable`，是本 Run 时不写；存储记录的 binding 或 material 与 manifest 冻结的不一致时回 `invalid`（`:374-423`）。`workHandoffBriefConsumption` 只给出带 `consumedBy` 的记录和按读到 revision 的 guard，不写事件、不发明时间字段（`state/work-handoff-brief.ts:196-213`）。没有进入的尝试不写记录，简报留给下一次 Run。
+**规则。** 只有真正进入 Kernel 的第一次进入提交才消费记录 5。`recordExecutionEntered` 在 `bindsStart`（`startedSince` 为空、`startedAt` 非空）时把 `@2` 的记录和 CAS guard 并进同一笔（`tasks/execution-entry-service.ts:1960`、`:1969-1976`、`:1982-1983`）；`recordRunResult` 里从真实 Kernel 证据首次记录进入的 terminal 或核对行同样并进同一笔（`:2147`、`:2191-2201`）。`handoffBriefConsumptionForCommit` 对 requeue Run（自带接续简报）、manifest 没有简报、或调用方没有进入证据的情况都不消费；`consumedBy` 是别的 Run 时回 `unavailable`，是本 Run 时不写；存储记录的 binding 或 material 与 manifest 冻结的不一致时回 `invalid`（`:374-423`）。`workHandoffBriefConsumption` 只给出带 `consumedBy` 的记录和按读到 revision 的 guard，不写事件、不发明时间字段（`state/work-handoff-brief.ts:196-206`）。没有进入的尝试不写记录，简报留给下一次 Run。
 
 **迁移。**
 
 | # | from | event | guard | to | effects | 幂等/重复事件 | 原文编号 | 现状 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| HB-01 | absent | `HandoffBriefRecorded`（successor 阶段的 handoff advance） | handoff advance 自己的守卫（operation revision 等于读到的，接任者 Session 的 revision 等于读到的）加新 ref 的 `expectedRevision:null`；只有两个 Work duty 有简报 | `@1`（`consumedBy:null`） | 同一笔写记录、事件和 `since`（commit cursor binding）；material 和 digest 来自已读成功的材料；不发消息、不写消费 | 同一 handoff advance 命令身份重放原回执；ref 已有记录 → `revision_conflict`；ref 由项目、接任 Session 和 operation 确定；不同 assignment 不保证得到不同 ref。 | 新增（7C-2 H） | `sessions/session-handoff-service.ts:1186-1205`、`:1262-1284`、`:894-912`；`state/work-handoff-brief.ts:40-53` |
-| HB-02 | `@1`（`consumedBy:null`） | 无（第一次进入或核对提交里的消费贡献） | `bindsStart`（第一次进入）；manifest 带 handoff brief；brief 的 successor 是本次 claim 的 Session；存储记录的 binding、material 与 manifest 冻结的一致；`consumedBy` 的 CAS 钉在读到的 revision | `@2`（`consumedBy:run`） | 同一笔加记录 `@2`；不写事件、不发明时间字段；没有进入证据就不调用 | 同一 entered/result 命令身份重放原回执；记录只落一次；并发另一个 Run → `revision_conflict` | 新增（7C-2 H） | `tasks/execution-entry-service.ts:374-423`、`:1969-1983`、`:2191-2201`；`state/work-handoff-brief.ts:196-213` |
+| HB-01 | absent | `HandoffBriefRecorded`（successor 阶段的 handoff advance） | handoff advance 自己的守卫（operation revision 等于读到的，接任者 Session 的 revision 等于读到的）加新 ref 的 `expectedRevision:null`；只有两个 Work duty 有简报 | `@1`（`consumedBy:null`） | 同一笔写记录、事件和 `since`（commit cursor binding）；material 和 digest 来自已读成功的材料；不发消息、不写消费 | 同一 handoff advance 命令身份重放原回执；ref 已有记录 → `revision_conflict`；ref 由项目、接任 Session 和 operation 确定；不同 assignment 不保证得到不同 ref。 | 新增（7C-2 H） | `sessions/session-handoff-service.ts:1195`、`:1271`、`:894-912`；`state/work-handoff-brief.ts:40-53` |
+| HB-02 | `@1`（`consumedBy:null`） | 无（第一次进入或核对提交里的消费贡献） | `bindsStart`（第一次进入）；manifest 带 handoff brief；brief 的 successor 是本次 claim 的 Session；存储记录的 binding、material 与 manifest 冻结的一致；`consumedBy` 的 CAS 钉在读到的 revision | `@2`（`consumedBy:run`） | 同一笔加记录 `@2`；不写事件、不发明时间字段；没有进入证据就不调用 | 同一 entered/result 命令身份重放原回执；记录只落一次；并发另一个 Run → `revision_conflict` | 新增（7C-2 H） | `tasks/execution-entry-service.ts:374-423`、`:1969-1983`、`:2191-2201`；`state/work-handoff-brief.ts:196-206` |
 | HB-03 | `@2`（`consumedBy:runX`） | 无 | 读到的记录 `consumedBy` 非空 | 不变 | 同一 Run：不写，返回 `null`；别的 Run：`unavailable`，不写 | 同一 Run 且同一命令重放读原回执；同一 Run 的新命令不写简报；别的 Run 永远拒绝 | 新增（7C-2 H） | `tasks/execution-entry-service.ts:415-418` |
 
 **明确禁止。**
 
-- 回退 `consumedBy`，或把 `@2` 改回未消费：没有写入者；进入提交的消费贡献只做 `null → run`（`tasks/execution-entry-service.ts:415-418`；`state/work-handoff-brief.ts:203-213`）。
+- 回退 `consumedBy`，或把 `@2` 改回未消费：没有写入者；进入提交的消费贡献只做 `null → run`（`tasks/execution-entry-service.ts:415-418`；`state/work-handoff-brief.ts:203-206`）。
 - 第二次消费：`consumedBy` 不是本 Run 时回 `unavailable`，不写记录（`tasks/execution-entry-service.ts:415-417`）。
 - 把没进入的尝试当消费：只有 `bindsStart` 的第一次进入提交才并消费，没有进入证据时调用方不读不写（`tasks/execution-entry-service.ts:1960`、`:1969-1975`、`:2191-2197`；注释 `:364-372`）。
-- 消费时写 `HandoffBriefConsumed` 或发明时间字段：`workHandoffBriefConsumption` 不写事件，`at` 只是调用方共用的提交形状，不是记录字段（`state/work-handoff-brief.ts:196-213`）。
+- 消费时写 `HandoffBriefConsumed` 或发明时间字段：`workHandoffBriefConsumption` 不写事件，`at` 只是调用方共用的提交形状，不是记录字段（`state/work-handoff-brief.ts:196-206`）。
 
 ### 20.3 `handoff_approval` 卡
 
@@ -6195,7 +6195,7 @@ schema 是 `HandoffBrief@1`（`:31`）；按 Session 的 lookup 是 `work-handof
 
 ### 20.4 H-01、H-02 与 L2
 
-`createHandoffToolEntry` 每个平台建一个入口（`src/composition/create-platform.ts:2459-2464`；工厂 `src/business/workflow/handoff-tool-entry.ts:245-249`），`hand_off` 的名字已在工具集合里（`src/core/agent-runtime/handoff-tools.ts:19`；包条目 `src/contracts/prompts/platform-pack.generated.ts:1182`）。但 `handoffs` 只是可选的 Runtime 端口（`src/core/agent-runtime/execution-contracts.ts:346-347`），本批没有把它绑进执行依赖，选中 `hand_off` 的 Run 在模型调用前以 `unsupported` 关门（`src/core/agent-runtime/tool-group-assembly.ts:224-226`、`:286-288`）。所以真实调用要等 L2，H-01、H-02 的公开链路行也随 L2 落。
+`createHandoffToolEntry` 每个平台建一个入口（`src/composition/create-platform.ts:2505`；工厂 `src/business/workflow/handoff-tool-entry.ts:249-250`），`hand_off` 的名字已在工具集合里（`src/core/agent-runtime/handoff-tools.ts:19`；包条目 `src/contracts/prompts/platform-pack.generated.ts:1182`）。`handoffs` 仍是可选的 Runtime 端口（`src/core/agent-runtime/execution-contracts.ts:346-347`），端口缺失时选中 `hand_off` 的 Run 仍在模型调用前以 `unsupported` 关门（`src/core/agent-runtime/tool-group-assembly.ts:286-288`）。L2 已在组合根把端口绑到 H 的入口（`src/composition/create-platform.ts:1859`），真实 `hand_off` 调用到 H，H-01、H-02 的公开链路行已跑（`tests/app/S7C-L2.test.ts:240-300`；`tests/scenarios/S7C-H-entered.test.ts:149-235`）。审批卡的应用行也接通：`handoff_approval` 的适配器注册在 `src/composition/create-platform.ts:2820`，答案经 `handoff.decide` 应用（`src/business/workflow/session-handoff.ts:376-406`；`tests/app/S7C-L2.test.ts:315`）。（行号按落地树 `44aab2a`。）
 
 ## 附录 A　决定全文（2026-10-03 已确认）
 
