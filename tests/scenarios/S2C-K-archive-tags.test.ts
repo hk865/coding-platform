@@ -84,7 +84,7 @@ type SessionCardRead = {
  * the registered check" flow is 2C-05 (3)/(3'), which needs bwrap.
  */
 it('2C-10 (LE4) a reused Session gains the claimed Task\'s open responsible link in the claim commit, and replaying the claim opens nothing new', async () => {
-  const h: HostScenario = await openHostScenario({ workIds: ['ag2b-work', 'ag2b-work-2'] });
+  const h: HostScenario = await openHostScenario({ workIds: ['ag2b-work', 'ag2b-work-2'], lineTaskIds: [] });
   const yTarget: WorkLinkTarget = { kind: 'task', ref: {
     projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: 'ag2b-work-2' } };
   const created = await createAG2bSession(h.host, 's2c10-s', AG2B_WORK_ROLE,

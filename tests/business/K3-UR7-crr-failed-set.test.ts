@@ -412,10 +412,11 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     const narrowedWorkflow = {
       async advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput,
         internal?: WorkflowAdvanceInternal): Promise<WorkflowAdvanceResult> {
-        if (calls.length >= 10) {
+        // This hand-assembled Workflow has no member service, so the pass stops at the first member pick.
+        if (calls.length >= 10 || (input.kind === 'perform' && input.operation.kind === 'host_pick_member')) {
           void driver?.stop(ctx, { goalRef: GOAL_B });
           const capped: WorkflowAdvanceResult = { status: 'ready', value: {
-            state: 'waiting', receipt: null, next: null, reason: 'K3 UR7 driver cap' } };
+            state: 'waiting', receipt: null, next: null, pick: null, reason: 'K3 UR7 driver cap' } };
           calls.push({ input: structuredClone(input), internal: undefined, result: capped });
           return capped;
         }

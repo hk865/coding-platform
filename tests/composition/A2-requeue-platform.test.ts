@@ -39,6 +39,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { continuationBriefDigest, continuationBriefMarker } from '../../src/contracts/continuation-brief.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
@@ -53,6 +54,7 @@ import type { RequeueTaskInput } from '../../src/core/work-graph/model/claim-con
 import type { RecordCommitObserver } from '../../src/composition/commit-observer.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
+import { seedPlatformLine } from '../helpers/A2-restart-fixture.js';
 import { interventionDeliveryText } from '../helpers/S7B-delivery-samples.js';
 
 const AT = '2026-10-05T00:00:00.000Z';
@@ -100,28 +102,38 @@ function workspaceBindings(directory: string, state: { revision: number }): Work
 }
 
 function runtimeHost(scripted: ReturnType<typeof createScriptedModel>): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'a2-requeue-host-config@1',
+      model: { configuration: { revision: 'a2-requeue-host-config@1', provider: 'deepseek', model: 'a2-requeue-scripted',
+        baseUrl: 'http://127.0.0.1' },
+      client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+        tokenizer: 'a2-requeue-counter' }) } },
+      budget: runtimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 requeue trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills',
+        import.meta.url)), enabledIds: [] },
+      systemInstruction: 'A2 requeue trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'a2-requeue-host-config@1',
-        model: { configuration: { revision: 'a2-requeue-host-config@1', provider: 'deepseek', model: 'a2-requeue-scripted',
-          baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-          tokenizer: 'a2-requeue-counter' }) } },
-        budget: runtimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 requeue trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills',
-          import.meta.url)), enabledIds: [] },
-        systemInstruction: 'A2 requeue trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -204,6 +216,11 @@ async function openEnvironment(commitObserver?: RecordCommitObserver): Promise<E
   const applied = await platform.plans.applyPlanChange(host, { meta: { requestId: 'a2-plan-apply', expected: [] },
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error('Plan adoption failed');
+  // A-25: the removed create step used to make work-1's executor line on the first `select_work`.
+  await seedPlatformLine(platform, host, 'a2-requeue-line', {
+    workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+    targets: [TASK],
+  });
   return { platform, scripted, workspaceRoot, workspaceRevision: state.revision };
 }
 
@@ -573,11 +590,16 @@ it('W-21 / C3: an archived afterRun Session moves the requeue to a new Session; 
     { ref: unlinked.value.record.ref, revision: unlinked.value.record.revision }] },
   input: { sessionRef, reason: 'retire the first Session' } })).toMatchObject({ status: 'committed', value: { lifecycle: 'archived' } });
 
-  // W-21: archived → the default selection without a hint creates a Session that claims with the requeue.
+  // W-21: archived → the successor is seeded through `sessions/create` (the removed picking step no longer
+  // creates it); the ordinary `select_work` then claims the requeue in it.
   const requeued = await requeue(platform, 'a2-requeue-move', run1Ref);
   if (requeued.status !== 'committed' || requeued.value.kind !== 'requeued') throw new Error(`requeue: ${JSON.stringify(requeued)}`);
+  await seedPlatformLine(platform, ctx(), 'a2-requeue-successor', {
+    workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+    targets: [TASK],
+  });
   const second = await drive(platform, select('a2-requeue-move-flow-2'));
-  expect(second.find(receipt => receipt.kind === 'create_session')).toMatchObject({ result: { status: 'completed' } });
+  expect(second.find(receipt => receipt.kind === 'create_session')).toBeUndefined();
   expect(second.find(receipt => receipt.kind === 'claim_task')).toMatchObject({ result: { status: 'committed' } });
   const run2Ref = (await taskRow(platform)).execution;
   if (run2Ref === null || run2Ref.runId === run1Ref.runId) throw new Error('Run 2 must be the selected Run');

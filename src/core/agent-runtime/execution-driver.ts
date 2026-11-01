@@ -69,6 +69,8 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
+  | 'memberCreation'
+  | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
   | 'commandRerunRequests' | 'commandRecognizer'> & {
@@ -549,6 +551,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           notes: deps.notes?.write !== undefined && deps.notes?.check !== undefined,
           unknownCallReviews: deps.unknownCallReviews !== undefined,
           commandRerunRequests: deps.commandRerunRequests !== undefined,
+          memberCreation: deps.memberCreation !== undefined,
+          reworkRequests: deps.claims.requeueTask !== undefined,
+          recheckRequests: deps.evidence?.reverifyRound !== undefined,
         },
         readonlyCommand: {
           requested: readonlyRequested,
@@ -606,11 +611,14 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         selected: manifest.permissions.tools,
         mailbox: deps.messages,
         ...(deps.decisionMessages === undefined ? {} : { decisionMessages: deps.decisionMessages }),
-        ...(deps.applicationReceipt === undefined ? {} : { applicationReceipt: deps.applicationReceipt }),
+        ...(deps.memberCreation === undefined ? {} : { memberCreation: deps.memberCreation }),
+        claims: deps.claims,
+        ...(deps.evidence === undefined ? {} : { evidence: deps.evidence }),
         sessions: deps.sessions,
         plans: deps.plans,
         context: toolContext,
         sessionRef,
+        runRef,
         goalRef,
         requestIdForCall,
         onWaitRegistered,

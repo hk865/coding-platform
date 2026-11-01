@@ -225,7 +225,7 @@ it('2C-05 (3\') the 22-Task variant reads only "archived" with doneEvidence inco
     { kind: 'calls' as const, calls: [{ callId: 's2c05cp-x1', name: 'read', args: { path: 'src/module.ts' } }] },
     ...Array.from({ length: 21 }, () => ({ kind: 'text' as const, text: '2C-05 (3p): a terminal Task completes' })),
   ];
-  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds, script: { replies } });
+  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds, lineTaskIds: ['ag2b-work'], script: { replies } });
 
   // The Workflow's maintenance page closes a terminal responsibility at the next advance, so 21 terminal links can
   // never still be open when X is dropped. The 22 closures are built in the order DE5 needs instead: X is dropped
@@ -273,7 +273,7 @@ it('2C-05 (3\') the 22-Task variant reads only "archived" with doneEvidence inco
 }, 480_000);
 
 it('2C-05 (4) archive(drop) → reactivate → complete and close a Task → archive again still reads only "archived" (the known mislabel)', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: ['ag2b-work', 'ag2b-work-2'],
+  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: ['ag2b-work', 'ag2b-work-2'], lineTaskIds: ['ag2b-work'],
     script: { replies: [
       { kind: 'text', text: '2C-05 (4): the first Task is dropped' },
       { kind: 'text', text: '2C-05 (4): the second Task completes' },

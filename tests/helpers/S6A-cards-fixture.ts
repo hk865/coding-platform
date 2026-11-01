@@ -82,7 +82,7 @@ import type {
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { draftFrom } from '../scenarios/support/common.js';
 import { driveWorkflow } from './A2-restart-fixture.js';
-import { AG2B_WORK_TASK_ID, ag2bPlanDraft, graphWrite, plain, writeAG2bWorkspace } from './AG2b-collaboration-fixture.js';
+import { AG2B_WORK_ROLE, AG2B_WORK_TASK_ID, ag2bPlanDraft, createAG2bSession, graphWrite, plain, writeAG2bWorkspace } from './AG2b-collaboration-fixture.js';
 import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions } from './S6A-host-fixture.js';
 import type { S6AGovernance } from './S6A-memory-fixture.js';
 import {
@@ -604,7 +604,19 @@ export async function openS6ANoticesWorld(options: S6AHostWorldOptions): Promise
     };
     await world.settleDetached();
     await world.setResumeOnStartup(false);
-    const worker = await world.createWorkSession('s6a-cards-worker');
+    // A-25/A-09: the hinted worker line must be the key-1 holder for each reworked Task, so it is created through
+    // the real route with the old create step's open `responsible` links (both Goals' Tasks it rewrites).
+    const workerCreated = await createAG2bSession(world.ag2b, 's6a-session-s6a-cards-worker', AG2B_WORK_ROLE, [
+      { target: { kind: 'task' as const, ref: { projectId: S6A_SCOPE.projectId, goalId: world.goals.first.goalId,
+        taskId: AG2B_WORK_TASK_ID } }, relation: 'responsible' as const },
+      { target: { kind: 'task' as const, ref: { projectId: S6A_SCOPE.projectId, goalId: world.goals.first.goalId,
+        taskId: S6A_CARDS_SECOND_TASK_ID } }, relation: 'responsible' as const },
+      { target: { kind: 'task' as const, ref: { projectId: S6A_SCOPE.projectId, goalId: world.goals.second.goalId,
+        taskId: AG2B_WORK_TASK_ID } }, relation: 'responsible' as const },
+    ]);
+    const workerCard = await world.readSession(workerCreated.sessionRef);
+    const worker: S6ASession = { label: 's6a-cards-worker', ref: workerCreated.sessionRef,
+      aggregateRef: workerCard.record.ref, role: structuredClone(AG2B_WORK_ROLE), createdAt: workerCard.record.createdAt };
 
     async function rework(input: { label: string; goal: GoalRef; taskId: string }): Promise<S6ARework> {
       await world.scripted.script(worker, [

@@ -34,6 +34,7 @@ import { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } fro
 import type {
   QueryRuntimeConfigurationInput,
   ReadonlyCommandAccessInput,
+  RoleRuntimeConfigurationInput,
   ResolvedRuntimeConfiguration,
   RuntimeConfigurationInput,
   RuntimeHostBindings,
@@ -535,6 +536,11 @@ export function createWorkbenchRuntimeHostBindings(
       return resolve(ctx, input.role);
     },
     async resolveQueryConfiguration(ctx, input: QueryRuntimeConfigurationInput) {
+      return resolve(ctx, input.role);
+    },
+    // A-07: the same scope/Role binding lookup with no Run, for the read-only
+    // pre-claim check that runs before a Run exists.
+    async resolveRoleConfiguration(ctx, input: RoleRuntimeConfigurationInput) {
       return resolve(ctx, input.role);
     },
     // R3 (L13/U5): the review-round capability reads the SAME binding lookup as

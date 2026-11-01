@@ -150,7 +150,7 @@ describe('S5R2 driver ordering safe point (memory)', () => {
     // Only advanceWork is scripted: this full typed receipt is consumed by the
     // real driver's complete_task/next recognition, and is never written to Store.
     const completedTask: WorkflowAdvanceResult = { status: 'ready', value: {
-      state: 'advance', reason: 'the selected Task was completed', next: pinned,
+      state: 'advance', reason: 'the selected Task was completed', next: pinned, pick: null,
       receipt: { kind: 'complete_task', result: { status: 'committed', replayed: false,
         cursor: makeCommitCursor(1), value: {
           ref: { aggregateType: 'TaskReduction', projectId: 'P', goalId: 'A', taskId: 'a-work' },

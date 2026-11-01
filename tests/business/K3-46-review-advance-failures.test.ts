@@ -77,7 +77,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** The Task an advance's next operation targets (`claim_task` input or a step's `taskRef`). */
+/** The Task an advance's next operation targets (`claim_task` input, a step's `taskRef`, or `host_pick_member`'s scope Task). */
 function targetTaskId(next: WorkflowAdvanceInput | null): string | null {
   if (next === null || next.kind !== 'perform') return null;
   const operation = next.operation as unknown as Record<string, unknown>;
@@ -85,6 +85,11 @@ function targetTaskId(next: WorkflowAdvanceInput | null): string | null {
   if (isRecord(request)) {
     const input = request['input'];
     if (isRecord(input) && typeof input['taskId'] === 'string') return input['taskId'];
+    const scope = request['scope'];
+    if (isRecord(scope) && scope['kind'] === 'task') {
+      const task = scope['task'];
+      if (isRecord(task) && typeof task['taskId'] === 'string') return task['taskId'];
+    }
   }
   const taskRef = operation['taskRef'];
   if (isRecord(taskRef) && typeof taskRef['taskId'] === 'string') return taskRef['taskId'];
@@ -459,7 +464,7 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
         if (calls.length >= 8) {
           void driver?.stop(ctx, { goalRef: GOAL_B });
           const capped: WorkflowAdvanceResult = { status: 'ready', value: {
-            state: 'waiting', receipt: null, next: null, reason: 'K3-46 continuous drive cap' } };
+            state: 'waiting', receipt: null, next: null, pick: null, reason: 'K3-46 continuous drive cap' } };
           calls.push({ input: structuredClone(input), result: capped });
           return capped;
         }

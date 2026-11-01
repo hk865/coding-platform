@@ -121,6 +121,10 @@ async function startRW1RealHost(replies: readonly ScriptedReply[]): Promise<AG2b
 /** The seeded plan's assignment role must be the template the grant carries
  * (`local-workbench`); the Workflow resolves a binding by the assignment role. */
 function patchPlanPropose(suffix: string, body: unknown): unknown {
+  // The seeded executor line carries the same template.
+  if (suffix === 'sessions/create') {
+    return { ...(body as object), input: { ...(body as { input: object }).input, role: LOCAL_WORKBENCH_ROLE } };
+  }
   const cloned = structuredClone(body) as { request: { input: { draft?: { assignments?: { role: string }[] } } } };
   if (suffix === 'plans/propose') {
     for (const assignment of cloned.request.input.draft?.assignments ?? []) assignment.role = 'local-workbench';

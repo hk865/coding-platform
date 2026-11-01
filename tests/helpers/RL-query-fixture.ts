@@ -70,8 +70,12 @@ export async function createRLQueryFixture(options: RLQueryFixtureOptions): Prom
   const state: QueryState = { revision: null, authReads: 0,
     revisionFor: options.revisionFor ?? (() => 'rl-read-1'), allowWholeWorkspace: options.allowWholeWorkspace ?? true };
   const scripted = createScriptedModel(options.replies);
+  // A-07: both resolutions answer the same unsupported Work binding.
+  const unsupportedWork = () =>
+    ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'this chain never runs Work execution' });
   const host: RuntimeHostBindings = {
-    async resolveConfiguration() { return { status: 'rejected', code: 'unsupported', reason: 'this chain never runs Work execution' }; },
+    async resolveConfiguration() { return unsupportedWork(); },
+    async resolveRoleConfiguration() { return unsupportedWork(); },
     async resolveQueryConfiguration() {
       return { status: 'ready', value: {
         configurationRevision: 'rl-query-host@1',

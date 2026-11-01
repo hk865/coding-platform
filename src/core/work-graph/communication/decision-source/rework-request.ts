@@ -80,8 +80,8 @@ export function projectReworkRequestCard(
   const objects: DecisionObjectV1[] = [
     { kind: 'aggregate', pin: reworkRequestPinOf(record), label: 'rework request' },
     // A Task has no stored record; revision 0 is the absence pin `decision-source-facts` already knows.
-    { kind: 'aggregate', pin: { ref: structuredClone(record.task) as unknown as VersionPin['ref'], revision: 0 },
-      label: 'task' },
+    { kind: 'aggregate', pin: { ref: { aggregateType: 'Task', ...structuredClone(record.task) } as unknown as VersionPin['ref'],
+      revision: 0 }, label: 'task' },
   ];
   return {
     cardKey: key,

@@ -20,17 +20,24 @@
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { VersionPin } from '../../contracts/core/identity.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { OperationRef } from '../../contracts/core/operations.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { DecisionSelectionV1, DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
+import type { ReworkRequestRef } from '../../contracts/rework-request.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
+import { OperationRefShape, ReworkRequestRefShape } from '../../contracts/data-format-refs.js';
+import { checkShape } from '../../contracts/validation/data-format.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { CommandRerunRequestPort } from '../../core/work-graph/model/command-rerun-request-contracts.js';
 import { commandRerunRequestRefOfSource } from '../../core/work-graph/tasks/command-rerun-request-codecs.js';
+import { nestedSourceObject, parseDecisionSourceKey } from '../../core/work-graph/tasks/decision-source-identity.js';
+import type { MemberDecisionPortV1 } from '../../core/work-graph/tasks/member-service.js';
+import type { ReworkRequestService } from '../../core/work-graph/tasks/rework-requests.js';
 import type {
   DecisionMessagePort,
   GoalExecutedFilesPort,
@@ -100,6 +107,13 @@ export type DecisionActionDependencies = {
    */
   goalPhasePin?: (ctx: CoreCallContext, goalRef: GoalRef) => Promise<VersionPin | CoreRejection>;
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
+  /**
+   * The member and rework ② owners. Optional so an old composition keeps starting; a composition that publishes
+   * either card installs its owner here, and the ONE adapter table gains that row without a composition-side
+   * adapter literal. A missing owner leaves the kind answering only.
+   */
+  memberDecisions?: Pick<MemberDecisionPortV1, 'applyMemberDecision'>;
+  reworkApplications?: Pick<ReworkRequestService, 'applyApprovedReworkRequest' | 'closeReworkRequest' | 'readRequest'>;
 };
 
 /** The shared ②-then-③ result (the coordinator owns the exact public narrowing). */
@@ -318,6 +332,137 @@ export function createMessageReleaseApplicationAdapter(
   };
 }
 
+/**
+ * The `member_creation` step ② adapter (`LD-23`): the answer is the person's approve/reject on M's stored member
+ * operation, and the owner's own write is the application. A `done` result is NOT the note `status:'done'` arm — it
+ * maps uniformly to `{ action: null, receipt }` with the official receipt the write returned, which step ③ records.
+ * A `rejected`/`stale` result is a `CoreRejection`; the coordinator then reports the card as not applied.
+ */
+export type MemberCreationApplicationDependencies = {
+  members: Pick<MemberDecisionPortV1, 'applyMemberDecision'>;
+};
+
+/** Parse one `member_creation` source key into its operation ref; null when the key carries no valid ref.
+ *  The key is the canonical identity (the card's own), not a current payload. */
+function memberOperationOfSource(source: DecisionSourceV1): OperationRef | null {
+  if (source.kind !== 'member_creation') return null;
+  const parsed = parseDecisionSourceKey(source);
+  if (parsed === null || parsed.kind !== 'member_creation') return null;
+  const ref = nestedSourceObject(parsed.body, 'operationRef');
+  if (ref === null || checkShape(OperationRefShape, ref, 'stored') !== null) return null;
+  return ref as unknown as OperationRef;
+}
+
+export function createMemberCreationApplicationAdapter(
+  members: MemberCreationApplicationDependencies['members'],
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answerRef, source, selection, requestId }) {
+      const optionId = selection.kind === 'option' ? selection.optionId : null;
+      if (optionId !== 'approve' && optionId !== 'reject') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'a member_creation card answers approve or reject',
+        }, receipt: null } };
+      }
+      const operation = memberOperationOfSource(source);
+      if (operation === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'the answer source is not a member_creation card',
+        }, receipt: null } };
+      }
+      const result = await members.applyMemberDecision(ctx, {
+        commandId: requestId, operation, answer: answerRef, verdict: optionId,
+      });
+      if (result.status === 'done') {
+        return { status: 'ready', value: { action: null, receipt: result.receipt } };
+      }
+      if (result.status === 'stale') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'source_stale', reason: 'the member request is stale',
+        }, receipt: null } };
+      }
+      return { status: 'ready', value: { action: result, receipt: null } };
+    },
+  };
+}
+
+/**
+ * The `rework_request` step ② adapter (`R-03`): the person's approve applies through R's one trusted entry, which
+ * rebuilds the requester's provenance from the persisted Run and re-runs the owner's fences (a `source_stale` there
+ * is already committed as the request's stale close). A committed result's `proofReceipt` is the official receipt;
+ * a missing one is read by cursor through `applicationReceipt`, because step ③'s receipt-from-action branch only
+ * reads a non-null action's cursor. A refusal passes through as the `CoreRejection`.
+ */
+export type ReworkRequestApplicationDependencies = {
+  reworks: Pick<ReworkRequestService, 'applyApprovedReworkRequest' | 'closeReworkRequest' | 'readRequest'>;
+  applicationReceipt?: DecisionActionDependencies['applicationReceipt'];
+};
+
+/** The request ref of one `rework_request` source key; null when the key carries no valid ref. */
+function reworkRequestOfSource(source: DecisionSourceV1): ReworkRequestRef | null {
+  if (source.kind !== 'rework_request') return null;
+  const parsed = parseDecisionSourceKey(source);
+  if (parsed === null || parsed.kind !== 'rework_request') return null;
+  const ref = nestedSourceObject(parsed.body, 'requestRef');
+  if (ref === null || checkShape(ReworkRequestRefShape, ref, 'stored') !== null) return null;
+  return ref as unknown as ReworkRequestRef;
+}
+
+export function createReworkRequestApplicationAdapter(
+  deps: ReworkRequestApplicationDependencies,
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answerRef, source, selection, requestId }) {
+      const request = reworkRequestOfSource(source);
+      if (request === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'the answer source is not a rework_request card',
+        }, receipt: null } };
+      }
+      // The person's reject is the request's own close effect; it never enters the approved application.
+      if (selection.kind === 'option' && selection.optionId === 'reject') {
+        const closed = await deps.reworks.closeReworkRequest(ctx, {
+          request, commandId: requestId, outcome: 'rejected',
+          reason: 'the person rejected the rework request',
+        });
+        return closed.status === 'committed'
+          ? { status: 'ready', value: { action: null, receipt: null } }
+          : { status: 'ready', value: { action: closed, receipt: null } };
+      }
+      const result = await deps.reworks.applyApprovedReworkRequest(ctx, {
+        request, commandId: requestId, answerRef,
+      });
+      if (result.status !== 'committed') {
+        // The two owners close a stale source in the same commit and answer
+        // `revision_conflict`; the request's own close, under this command, is
+        // the stale card result. The read-only recognition writes nothing.
+        if (result.status === 'rejected') {
+          const closed = await deps.reworks.readRequest(ctx, { ref: request });
+          if (closed.status === 'ready' && closed.value.state === 'stale'
+            && closed.value.closedBy?.commandId === requestId) {
+            return { status: 'ready', value: { action: {
+              status: 'rejected', code: 'source_stale', reason: 'the rework request is stale',
+            }, receipt: null } };
+          }
+        }
+        return { status: 'ready', value: { action: result, receipt: null } };
+      }
+      // A `source_stale` application closes the request instead of applying it; that close is not an application.
+      if ('state' in result.value && result.value.state === 'stale') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'source_stale', reason: 'the rework request is stale',
+        }, receipt: null } };
+      }
+      return { status: 'ready', value: { action: null,
+        receipt: result.proofReceipt ?? (deps.applicationReceipt === undefined ? null
+          : await deps.applicationReceipt(ctx, result.cursor)) } };
+    },
+  };
+}
+
 export function createDecisionActions(deps: DecisionActionDependencies): DecisionActionsPort {
   /**
    * §3.3 line 625: the exact `meta.expected` pin set of a `resolveGoalConflict`
@@ -431,6 +576,15 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
             applyGoalConflict(adapterCtx, adapterInput.answer, adapterInput.answerRef,
               adapterInput.selection, adapterInput.requestId, goalSettings),
         },
+      }),
+      // The two L1 owners registered here, beside the built-in conflict row; the composition's own
+      // `decisionApplications` entries still win (last spread), so no second dispatch table exists.
+      ...(deps.memberDecisions === undefined ? {} : {
+        member_creation: createMemberCreationApplicationAdapter(deps.memberDecisions),
+      }),
+      ...(deps.reworkApplications === undefined ? {} : {
+        rework_request: createReworkRequestApplicationAdapter({
+          reworks: deps.reworkApplications, applicationReceipt: deps.applicationReceipt }),
       }),
       ...deps.decisionApplications,
     };

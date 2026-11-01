@@ -804,6 +804,12 @@ describe('R6 execution entry (expected red at the first stage-one unsupported)',
       if (adoptedBody.status !== 'ready' || adoptedBody.value.next === null || adoptedBody.value.next.kind !== 'work')
         throw new Error(`adoption did not hand off: ${JSON.stringify(adoptedBody)}`);
 
+      // A-25: picking no longer makes a line; the two work Tasks share this one executor line (the shared claim Session below).
+      expect(await (await corePost(started.base, 'sessions/create', started.token, plain({
+        workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' }, recommendedRefs: [],
+        initialLinks: ['r6x-work-1', 'r6x-work-2'].map(taskId => ({
+          target: { kind: 'task', ref: { projectId: scope.projectId, goalId: execGoalRef.goalId, taskId } }, relation: 'responsible' })),
+        meta: { requestId: 'r6x-line', expected: [] } }))).json()).toMatchObject({ status: 'completed' });
       let advanceInput: WorkflowAdvanceInput = adoptedBody.value.next.input;
       const receipts: WorkflowStepReceipt[] = [];
       let finalState = '';

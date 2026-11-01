@@ -21,6 +21,7 @@ import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../../src/bus
 import type { WorkflowHostConfiguration } from '../../../src/business/workflow/ports.js';
 import type { ArtifactRef } from '../../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../../src/contracts/core/identity.js';
 import type { RunRef } from '../../../src/contracts/dispatch.js';
 import { sha256Hex } from '../../../src/contracts/fingerprint.js';
 import type { GoalRef } from '../../../src/contracts/ledger.js';
@@ -35,7 +36,7 @@ import {
   AG2B_CONSUMER_ID, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_WORK_INSTRUCTION, AG2B_WORK_ROLE,
   AG2B_WORK_ROLE_BINDING, graphWrite, permissionRevision, writeAG2bWorkspace,
 } from '../../helpers/AG2b-collaboration-fixture.js';
-import { tempDir } from '../../helpers/A2-restart-fixture.js';
+import { seedPlatformLine, tempDir } from '../../helpers/A2-restart-fixture.js';
 import type { Platform } from '../harness.js';
 import { performs, SCENARIO_OPERATOR } from '../harness.js';
 
@@ -110,26 +111,36 @@ export function s3Checks(actor: WorkbenchActor, command: string, revision: strin
 
 /** The custom Host binding: the §5.1 grants with `look_graph`/`find_graph` in Work and Query. */
 export function s3Runtime(work: ScriptedModel, query: ScriptedModel | null): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== P || context.workspaceId !== W) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 's3-work-host@1',
+      model: { configuration: { revision: 's3-work-model@1', provider: 'deepseek', model: 's3-scripted-work', baseUrl: 'http://127.0.0.1' },
+        client: work.client,
+        inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
+      budget: AG2B_RUNTIME_BUDGET,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) } : null,
+      tools: [...WORK_TOOLS], writeScope: ['.'],
+      skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] }, systemInstruction: AG2B_WORK_INSTRUCTION,
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== P || context.workspaceId !== W) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 's3-work-host@1',
-        model: { configuration: { revision: 's3-work-model@1', provider: 'deepseek', model: 's3-scripted-work', baseUrl: 'http://127.0.0.1' },
-          client: work.client,
-          inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
-        budget: AG2B_RUNTIME_BUDGET,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) } : null,
-        tools: [...WORK_TOOLS], writeScope: ['.'],
-        skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] }, systemInstruction: AG2B_WORK_INSTRUCTION,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
     ...(query === null ? {} : {
       async resolveQueryConfiguration(context: CoreCallContext) {
@@ -314,6 +325,10 @@ export async function openS3Host(
 
     // One Plan revision names `old-A` by its content address before it exists.
     await seedS3Graph(platform, actor, legacyArtifactRef());
+    // A-25: the removed create step used to make the executor line on the first `select_work`.
+    await seedPlatformLine(platform, s3Ctx(actor), 's3-line', {
+      workspace: SCOPE, role: AG2B_WORK_ROLE, targets: [TA],
+    });
 
     // Run the real `tA` to its end; the Workflow stops before opening checks, so
     // the owner Run is completed without a reducing round.

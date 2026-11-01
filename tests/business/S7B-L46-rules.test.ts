@@ -65,7 +65,7 @@ const BASIS: GoalWaitBasisV1 = { projectId: 'P', goalId: 'G',
   reasons: ['automation_confirmation:system_requeue'] };
 const block = (taskId: string): L46BlockV1 => ({
   task: task(taskId), action: 'system_requeue', wakeBasis: BASIS,
-  gate: { status: 'ready', value: { state: 'waiting', receipt: null, next: null,
+  gate: { status: 'ready', value: { state: 'waiting', receipt: null, next: null, pick: null,
     reason: 'automation_confirmation_required:system_requeue', waitBasis: BASIS } },
 });
 const taskOf = (taskId: string): TaskTriple | undefined =>

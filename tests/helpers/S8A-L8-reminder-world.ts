@@ -160,21 +160,25 @@ async function writeFilesAt(root: string, files: Record<string, string>): Promis
 
 /** A scripted Host: the preparation reads this configuration and calls no model. */
 function hostFor(): RuntimeHostBindings {
-  return {
-    async resolveConfiguration(): Promise<{ status: 'ready'; value: ResolvedRuntimeConfiguration }> {
-      return { status: 'ready', value: {
-        configurationRevision: 's8a-l8-host@1',
-        model: { configuration: { revision: 's8a-l8-model@1', provider: 'scripted', model: 's8a-l8',
-          baseUrl: 'http://127.0.0.1' }, client: {} as unknown as ResolvedRuntimeConfiguration['model']['client'] },
-        budget: { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
-          maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 },
-        hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex('s8a-l8-template') },
-        tools: ['read'], writeScope: [], skills: { resourceRoot: 'resources/skills', enabledIds: [] },
-        systemInstruction: 'Stopped before the model.',
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-        platformDuty: 'executor', contextResidentBytes: 20000,
-      } };
+  // A-07: the one configuration body both resolutions share.
+  const configured = (): { status: 'ready'; value: ResolvedRuntimeConfiguration } => ({
+    status: 'ready', value: {
+      configurationRevision: 's8a-l8-host@1',
+      model: { configuration: { revision: 's8a-l8-model@1', provider: 'scripted', model: 's8a-l8',
+        baseUrl: 'http://127.0.0.1' }, client: {} as unknown as ResolvedRuntimeConfiguration['model']['client'] },
+      budget: { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
+        maxRequests: 4, maxToolCalls: 8, timeoutMs: null, perResponseTokens: 512 },
+      hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex('s8a-l8-template') },
+      tools: ['read'], writeScope: [], skills: { resourceRoot: 'resources/skills', enabledIds: [] },
+      systemInstruction: 'Stopped before the model.',
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+      platformDuty: 'executor', contextResidentBytes: 20000,
     },
+  });
+  return {
+    async resolveConfiguration() { return configured(); },
+    // A-07: the no-Run lookup returns the same trusted ready grant.
+    async resolveRoleConfiguration() { return configured(); },
   };
 }
 

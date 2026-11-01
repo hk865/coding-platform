@@ -20,8 +20,14 @@ import type { SessionDutyResolver, WorkflowHostConfiguration } from '../business
 
 export type SessionDutyResolverDependencies = {
   readRoleSpec: RoleConfigurationPort['readRoleSpec'];
-  configuration: WorkflowHostConfiguration | undefined;
+  /** A value for callers that hold one, or a getter that resolves the current Host configuration at call time. */
+  configuration: WorkflowHostConfiguration | undefined | (() => WorkflowHostConfiguration | undefined);
 };
+
+/** The one rule for reading the dependency: a getter is called on every resolve, never captured. */
+function configurationOf(deps: SessionDutyResolverDependencies): WorkflowHostConfiguration | undefined {
+  return typeof deps.configuration === 'function' ? deps.configuration() : deps.configuration;
+}
 
 function known(value: PlatformDutyV1 | 'unknown'): ReadResult<PlatformDutyV1 | 'unknown'> {
   return { status: 'ready', value };
@@ -79,7 +85,7 @@ export function createSessionDutyResolver(deps: SessionDutyResolverDependencies)
       // binding's `sessionRole`) and NEVER to `effectivePlatformDuty`'s default
       // `executor`.
       if (roleDuty === undefined && templateDuty === undefined) {
-        return known(namesAnExecutorRole(deps.configuration, role) ? 'executor' : 'unknown');
+        return known(namesAnExecutorRole(configurationOf(deps), role) ? 'executor' : 'unknown');
       }
 
       // §4.1 step 4: one side may decide; a conflicting pair is `unknown`.

@@ -12,26 +12,32 @@ import * as hostModule from '../../src/app/host.js';
 import * as memoryStore from '../../src/core/record-store/in-memory-record-store.js';
 import * as sqliteStore from '../../src/core/record-store/sqlite-record-store.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
 import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
+import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { RecordCommitIdentityPort, StoreResult } from '../../src/core/record-store/ports.js';
 import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { RawArtifactRecord } from '../../src/core/record-store/body-ports.js';
+import * as runtimeConfigurationModule from '../../src/app/runtime-configuration.js';
+import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createMemberService, type MemberServiceV1 } from '../../src/core/work-graph/tasks/member-service.js';
 import { createSecretaryQueryRun } from '../../src/core/work-graph/tasks/secretary-query-run.js';
 import { createDutyRecipient } from '../../src/core/work-graph/sessions/duty-recipient.js';
 import { createLineCreation, createAlwaysAdmitCapacity } from '../../src/business/workflow/line-creation.js';
+import { createSessionChooser } from '../../src/business/workflow/session-chooser.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
-import { advanceUntil, driveWorkflow, readQuery } from './A2-restart-fixture.js';
-import { ag2bPlanDraft, graphWrite } from './AG2b-collaboration-fixture.js';
+import { advanceUntil, driveWorkflow, readExecution, readQuery } from './A2-restart-fixture.js';
+import { ag2bPlanDraft, graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
-import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions } from './S6A-host-fixture.js';
+import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions, type S6AToolCall } from './S6A-host-fixture.js';
 import {
   S6A_AT, S6A_SCRIBE_ROLE, S6A_SCOPE,
   type S6ABackend, type S6ASession,
@@ -39,6 +45,8 @@ import {
 import { createS6BLine, governS6B, holdS6BRequestRound, type S6BHeldRound } from './S6B1-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
 import { sessionOf } from './S7A-fixture.js';
+import { draftFrom } from '../scenarios/support/common.js';
+import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 
 const ADVISER_ROLE = platformRoleProfile('adviser').template;
 const EXECUTOR_ROLE = platformRoleProfile('executor').template;
@@ -46,17 +54,44 @@ type LegacyRole = Extract<RoleConfigurationRef, { kind: 'legacy_template' }>;
 /** The creator line: writeScope [] and createMember true, a distinct Role so the executor Role can differ. */
 const CREATOR_ROLE: LegacyRole = { kind: 'legacy_template', templateId: 's7c-creator', templateRevision: '1' };
 /** The service's executorRole: writeScope ['.'] and createMember true; distinct from the no-create executor. */
-const CREATE_ROLE: LegacyRole = { kind: 'legacy_template', templateId: 's7c-executor', templateRevision: '1' };
+export const S7C1_CREATE_ROLE: LegacyRole = { kind: 'legacy_template', templateId: 's7c-executor', templateRevision: '1' };
+const CREATE_ROLE = S7C1_CREATE_ROLE;
 const MEMBER_TOOL_NAMES = ['create_member', 'request_rework', 'request_recheck', 'withdraw_session_message'] as const;
 
 /** The `openConsumeHostWorld` wrapper: mutate the configuration before the real factory, restore on every path. */
 const HOST_FACTORY = hostModule.createLocalWorkbenchHost;
 let configuredWorkflow: WorkflowHostConfiguration | undefined;
 
-async function openConfiguredHost(options: S6AHostWorldOptions): Promise<S6AHostWorld> {
-  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: HOST_FACTORY, configurable: true, writable: true });
-  const original = HOST_FACTORY;
-  const wrapper: typeof original = async hostOptions => {
+/**
+ * L1-14 (M-admission): the test-owned Host grant flag. The fixture reads it on every runtime resolution, so a test
+ * can model the Host narrowing its grant after a real preparation without touching the live Host's state; the
+ * configuration revision never changes (the same shape K3-19's read-only narrowing uses).
+ */
+export type S7C1HostGrant = { createMember: boolean };
+
+const BINDINGS_FACTORY = runtimeConfigurationModule.createWorkbenchRuntimeHostBindings;
+
+function narrowedBindingsFactory(original: typeof BINDINGS_FACTORY,
+  grant: S7C1HostGrant): typeof BINDINGS_FACTORY {
+  return (configuration, dependencies, narrowing) => {
+    const base = original(configuration, dependencies, narrowing);
+    const narrowed = (result: Awaited<ReturnType<RuntimeHostBindings['resolveConfiguration']>>) =>
+      grant.createMember || result.status !== 'ready'
+        ? result : { ...result, value: { ...result.value, createMember: false } };
+    return {
+      ...base,
+      async resolveConfiguration(ctx, input) { return narrowed(await base.resolveConfiguration(ctx, input)); },
+      ...(base.resolveQueryConfiguration === undefined ? {} : { async resolveQueryConfiguration(ctx, input) {
+        return narrowed(await base.resolveQueryConfiguration!(ctx, input)); } }),
+      ...(base.resolveRoleConfiguration === undefined ? {} : { async resolveRoleConfiguration(ctx, input) {
+        return narrowed(await base.resolveRoleConfiguration!(ctx, input)); } }),
+    };
+  };
+}
+
+function configuredHostFactory(original: typeof HOST_FACTORY,
+  hostGrant: S7C1HostGrant | undefined): typeof HOST_FACTORY {
+  return async hostOptions => {
     const configuration = hostOptions.runtimeConfiguration;
     const work = configuration?.bindings.find(binding => binding.id === 's6a-work-binding');
     const template = hostOptions.workflow?.bindings[0];
@@ -65,7 +100,7 @@ async function openConfiguredHost(options: S6AHostWorldOptions): Promise<S6AHost
     }
     // The creator line: writeScope [] and createMember true; only already-registered tools.
     work.role = structuredClone(CREATOR_ROLE);
-    work.grant = { ...work.grant, createMember: true, tools: ['read'],
+    work.grant = { ...work.grant, createMember: true, tools: ['read', 'create_member'],
       hostTemplate: { templateId: CREATOR_ROLE.templateId, revision: CREATOR_ROLE.templateRevision,
         digest: work.grant.hostTemplate!.digest } };
     const workflowBindings = [...hostOptions.workflow!.bindings];
@@ -85,7 +120,7 @@ async function openConfiguredHost(options: S6AHostWorldOptions): Promise<S6AHost
         roleBinding: { ...template.roleBinding, bindingId: id, templateId: role.templateId, templateRevision: role.templateRevision } });
     };
     // The adviser caller carries the four new tool names; it starts no Run here (L1's tool-bearing Run).
-    addBinding('s7c-adviser-binding', ADVISER_ROLE, 'S7C trusted adviser guidance', { createMember: false,
+    addBinding('s7c-adviser-binding', ADVISER_ROLE, 'S7C trusted adviser guidance', { createMember: true,
       tools: [...MEMBER_TOOL_NAMES] });
     // The service's executorRole: createMember true and writeScope ['.'], so a Work child's ['.'] is outside the [] ceiling.
     addBinding('s7c-create-binding', CREATE_ROLE, 'S7C trusted creator-ceiling executor guidance', { createMember: true,
@@ -98,11 +133,28 @@ async function openConfiguredHost(options: S6AHostWorldOptions): Promise<S6AHost
     const noCreate = configuration.bindings.find(binding => binding.id === 's7c-executor-binding')!;
     const { createMember: _absent, ...grant } = noCreate.grant;
     noCreate.grant = grant;
-    return await original(hostOptions);
+    if (hostGrant === undefined) return await original(hostOptions);
+    const bindings = BINDINGS_FACTORY;
+    Object.defineProperty(runtimeConfigurationModule, 'createWorkbenchRuntimeHostBindings', {
+      value: narrowedBindingsFactory(bindings, hostGrant), configurable: true, writable: true });
+    try { return await original(hostOptions); }
+    finally { Object.defineProperty(runtimeConfigurationModule, 'createWorkbenchRuntimeHostBindings',
+      { value: bindings, configurable: true, writable: true }); }
   };
-  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: wrapper, configurable: true, writable: true });
-  try { return await openS6AHostWorld(options); }
+}
+
+/** Install the configured factory for one real Host start (open or reopen), then restore it. */
+async function withConfiguredHost<T>(run: () => Promise<T>, hostGrant?: S7C1HostGrant): Promise<T> {
+  const original = HOST_FACTORY;
+  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true });
+  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', {
+    value: configuredHostFactory(original, hostGrant), configurable: true, writable: true });
+  try { return await run(); }
   finally { Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true }); }
+}
+
+async function openConfiguredHost(options: S6AHostWorldOptions, hostGrant?: S7C1HostGrant): Promise<S6AHostWorld> {
+  return await withConfiguredHost(() => openS6AHostWorld(options), hostGrant);
 }
 
 /** The platform publishes `records` only; the same backend's identity port is captured from its factory. */
@@ -164,6 +216,13 @@ export type S7C1World = {
   readonly queryRead: Awaited<ReturnType<typeof readQuery>>;
   /** Part C's member service over the real Host ports. */
   readonly member: MemberServiceV1;
+  /**
+   * L1-22: start m1 and hold it at its model request (`firstRun: 'deferred'`); after this the Goal-scope
+   * selection skips the running m1 and reaches n1. A no-op for `'held'` (already held) and `'ended'`.
+   */
+  readonly holdFirst: () => Promise<void>;
+  /** A real close and reopen on the same directory, with the same configured bindings. */
+  readonly reopen: () => Promise<void>;
   readonly close: () => Promise<void>;
 };
 
@@ -195,11 +254,16 @@ export async function memberCardOf(target: S7C1World, commandId: string, reason:
   return result;
 }
 
+/** L1-22: the first Task's Run state when the world returns (`ended`: the existing row; the other two hold m1). */
+export type S7C1FirstRun = 'ended' | 'held' | 'deferred';
+
 /** One instance per row; `adviser: false` opens without the adviser line (the L1 host-pick row). */
-export async function openS7C1World(options: { backend?: S6ABackend; adviser?: boolean } = {}): Promise<S7C1World> {
+export async function openS7C1World(options: { backend?: S6ABackend; adviser?: boolean; firstRun?: S7C1FirstRun;
+  /** L1-14's mutable Host grant; absent keeps the fixture's fixed grants. */ hostGrant?: S7C1HostGrant } = {}): Promise<S7C1World> {
   const backend = options.backend ?? 'memory';
   const adviser = options.adviser ?? true;
-  const world = await withS7CCapturedBackend(() => openConfiguredHost({ backend, scribe: true }));
+  const firstRun = options.firstRun ?? 'ended';
+  const world = await withS7CCapturedBackend(() => openConfiguredHost({ backend, scribe: true }, options.hostGrant));
   try {
     world.clock.set(S6A_AT);
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -231,13 +295,47 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
       sessionHint: moduleLine.ref, kind: 'select_work', taskId: tasks[0]!.taskId }, 'claim_task');
     const receipts: WorkflowStepReceipt[] = [];
     let started = false;
-    try {
-      await driveWorkflow(world.ag2b, claimInput, { stopBefore: 'open_checks', receipts });
-      started = true;
-    } catch (error) {
-      if (!/ENOENT|bwrap/.test(String(error))) throw error;
+    let deferredStart: WorkflowAdvanceInput | null = null;
+    let releaseFirst: (() => Promise<void>) | null = null;
+    /** Start the first Run and keep its drive pending at the real model request (the existing holdRun pattern). */
+    const holdFirstRun = async (start: WorkflowAdvanceInput): Promise<void> => {
+      const gate = await world.gates.modelRequest(moduleLine);
+      const drive = driveWorkflow(world.ag2b, start, { stopBefore: 'open_checks', receipts });
+      try {
+        await Promise.race([gate.reached, drive]);
+        started = true;
+        releaseFirst = async () => { gate.release(); await drive; };
+      } catch (error) {
+        gate.release();
+        await drive.catch(() => undefined);
+        releaseFirst = null;
+        if (!/ENOENT|bwrap/.test(String(error))) throw error;
+      }
+    };
+    if (firstRun === 'deferred') {
+      // The row claims, starts and holds m1 with `holdFirst` just before its Goal-scope pass; until then the
+      // module line stays free, so the row's named pass on m2 can use it.
+      deferredStart = claimInput;
+    } else if (firstRun === 'held') {
+      await holdFirstRun(claimInput);
+    } else {
+      try {
+        await driveWorkflow(world.ag2b, claimInput, { stopBefore: 'open_checks', receipts });
+        started = true;
+      } catch (error) {
+        if (!/ENOENT|bwrap/.test(String(error))) throw error;
+      }
     }
-    const run = { runRef: claimOf(receipts), started };
+    const run = {
+      get runRef(): RunRef { return claimOf(receipts); },
+      get started(): boolean { return started; },
+    };
+    const holdFirst = async (): Promise<void> => {
+      if (firstRun !== 'deferred') return;
+      const start = deferredStart;
+      deferredStart = null;
+      if (start !== null) await holdFirstRun(start);
+    };
 
     const sent = await world.post('messages/send', graphWrite(S6A_SCOPE, {
       recipient: moduleLine.ref, text: 'S7C input', intent: 'inquiry', needsReply: false,
@@ -252,9 +350,16 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
 
     const member = createS7C1MemberService(world);
 
-    return { backend, world, main, goal, plan, tasks, secretary, run, query: queryRound, queryRead, member,
+    return { backend, world, main, goal, plan, tasks, secretary, run, query: queryRound, queryRead, member, holdFirst,
       lines: { module: moduleLine, work: workLine, noCreate: noCreateLine, adviser: adviserLine, scribe: scribeLine,
-        fixed: fixedLine }, close: () => world.close() };
+        fixed: fixedLine }, reopen: () => withConfiguredHost(() => world.reopen(), options.hostGrant),
+      close: async () => {
+        try {
+          if (releaseFirst !== null) await releaseFirst();
+        } finally {
+          await world.close();
+        }
+      } };
   } catch (error) {
     await world.close().catch(() => undefined);
     throw error;
@@ -291,10 +396,114 @@ export function createS7C1MemberService(world: S6AHostWorld): MemberServiceV1 {
     sessions: { createSession: (...args) => world.platform.runtime.createSession(...args) },
     operations: { getSessionOperation: (...args) => world.platform.sessions.getSessionOperation(...args) },
     capacity: createAlwaysAdmitCapacity() });
+  // P's one reuse body over the Host's own real owners; the member service consumes the port, never a second filter.
+  const reuse = {
+    reusable: createSessionChooser({
+      sessions: world.platform.sessions,
+      sessionFacts: world.platform.sessionFacts,
+      responsibilities: world.platform.responsibilities,
+    }).reusable,
+  };
   return createMemberService({ records, commitIdentities: identity,
     sessions: { findSessions: world.platform.sessions.findSessions },
     lines: { ensureLine: lineCreation.ensureLine }, requests: { ownerOf: world.platform.requestFacts.ownerOf },
     secretaryRuns: createSecretaryQueryRun({ records, duties: sessionDuty, bodies }),
-    duties: duty, executions: world.platform.executions, executorRole: CREATE_ROLE,
-    now: world.clock.now, eventId: randomUUID });
+    duties: duty, executions: world.platform.executions,
+    // The direct seam names the one explicit Role the M rows exercise; the platform's own member owner
+    // resolves the Role through the Task's served binding.
+    executorRole: async () => ({ status: 'ready', value: structuredClone(CREATE_ROLE) }),
+    reuse, now: world.clock.now, eventId: randomUUID });
+}
+
+/** A real tool call of the tool-bearing Work Run (what the Kernel started). */
+export type S7C1ToolLine = {
+  readonly work: {
+    readonly runRef: RunRef;
+    readonly execution: Awaited<ReturnType<typeof readExecution>>;
+    readonly facts: SessionFactsV1;
+    readonly call: S6AToolCall;
+  };
+  readonly query: {
+    readonly request: S6BHeldRound['request'];
+    readonly read: Awaited<ReturnType<typeof readQuery>>;
+    readonly manifest: PreparedQueryManifestV1;
+  };
+  /** The task line's saved input message, read through `messages/read`. */
+  readonly message: SessionMessage | null;
+};
+
+/** The JSON block of the tool result the Runtime served the model for the named call. */
+export function jsonOf(requests: readonly ModelRequest[], callId: string): unknown {
+  for (const request of requests) {
+    const message = request.messages.find(candidate => candidate.role === 'tool' && candidate.callId === callId);
+    if (message === undefined || message.role !== 'tool') continue;
+    const output = (message.result as { output?: readonly { kind: string; value?: unknown }[] }).output ?? [];
+    const block = output.find(candidate => candidate.kind === 'json');
+    if (block !== undefined) return block.value;
+  }
+  throw new Error(`S7C: no model request carries the tool result ${callId}`);
+}
+
+/**
+ * FX-7C1-02, the tool-bearing caller: a real Work Run on FX-01's adviser caller line (the one
+ * binding whose declaration carries the four member/rework tool names) and a real secretary Query
+ * round on the goal. It scripts exactly one tool call and returns the refs and the public reads;
+ * no configuration is patched after the Host opened. The task the Run names is moved to the adviser
+ * binding through the real `plans/propose` + `plans/apply` routes, so the accepted envelope carries
+ * the four names; the envelope itself is the Run's, never a test-built one. The added `s7c-tool` task
+ * carries the Run on the adviser line; the optional `task` only aims the member request (the tool
+ * argument) at an existing adopted-Plan Task.
+ */
+export async function startS7C1ToolLine(target: S7C1World,
+  options: { task?: TaskTriple } = {}): Promise<S7C1ToolLine> {
+  const caller = target.lines.adviser;
+  if (caller === null) throw new Error('S7C tool line: the world was opened without its adviser caller line');
+  const toolTask = { taskId: 's7c-tool', title: 'S7C tool line', requirementLevel: 'required' as const,
+    taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const,
+    scope: { kind: 'goal' as const }, executionIntent: 'request_execution' as const };
+  const runTask = { projectId: target.goal.projectId, goalId: target.goal.goalId, taskId: toolTask.taskId };
+  const requestTask = options.task === undefined ? runTask : structuredClone(options.task);
+  const plan = target.plan;
+  if (plan === null) throw new Error('S7C tool line: the Goal has no adopted Plan');
+  const draft = draftFrom(plan, 's7c-tool-plan', draftPlan => ({ ...draftPlan,
+    tasks: [...draftPlan.tasks, toolTask],
+    assignments: [...(draftPlan.assignments ?? []),
+      { taskId: toolTask.taskId, role: ADVISER_ROLE.templateId, instruction: 'S7C tool line' }],
+    obligations: draftPlan.obligations.map(obligation => ({ ...obligation,
+      taskIds: [...obligation.taskIds, toolTask.taskId] })) }));
+  const proposed = valueOf<{ ref: unknown; revision: number }>(await target.main.post('plans/propose', graphWrite(S6A_SCOPE, {
+    goalRef: target.goal, basedOn: plan.ref, draft, reason: { text: 'S7C tool line', sources: [] },
+  }, 's7c-tool-plan-propose')), 'committed', 'the tool-line Plan proposal');
+  valueOf(await target.main.post('plans/apply', graphWrite(S6A_SCOPE, {
+    proposalRef: proposed.ref, expectedProposalRevision: proposed.revision, decisionRefs: [],
+  }, 's7c-tool-plan-apply')), 'committed', 'the tool-line Plan adoption');
+
+  await target.world.scripted.script(caller, [
+    { kind: 'calls', calls: [{ callId: 's7c-tool-call', name: 'create_member', args: {
+      duty: 'executor', scope: { kind: 'task', task: requestTask }, reason: 'S7C tool-line member request' } }] },
+    { kind: 'text', text: 'S7C tool-line answer' },
+  ]);
+  const gate = await target.world.gates.toolCall(caller, 'create_member');
+  const receipts: WorkflowStepReceipt[] = [];
+  const driven = driveWorkflow(target.world.ag2b, { schemaVersion: 1, goalRef: target.goal,
+    flowId: 's7c-tool-line', sessionHint: caller.ref, kind: 'select_work', taskId: runTask.taskId },
+  { stopBefore: 'open_checks', receipts });
+  const call = await gate.reached;
+  gate.release();
+  await driven;
+  const claim = claimOf(receipts);
+  const execution = await readExecution(target.world.ag2b, claim);
+  const factsRead = await target.world.post('sessions/facts', plain(S6A_SCOPE, caller.ref));
+  const facts = valueOf<SessionFactsV1>(factsRead.body, 'ready', 'the caller line facts');
+  const inbox = await target.world.post('messages/inbox', plain(S6A_SCOPE, {
+    recipient: target.lines.module.ref, page: { limit: 1 } }));
+  const page = valueOf<{ items: readonly SessionMessage[] }>(inbox.body, 'ready', 'the task line inbox');
+  const message = page.items[0] === undefined ? null
+    : valueOf<SessionMessage>((await target.world.post('messages/read', plain(S6A_SCOPE,
+      page.items[0].ref))).body, 'ready', 'the task input message');
+
+  const query = await holdS6BRequestRound(target.world, { label: 's7c-tool-query',
+    goalId: target.goal.goalId }, async round => ({ request: round.request, read: round.query,
+    manifest: round.manifest }));
+  return { work: { runRef: claim, execution, facts, call }, query: query.value, message };
 }

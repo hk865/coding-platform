@@ -66,6 +66,8 @@ import type { RuntimeBudget } from '../contracts/runtime-budget.js';
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
 import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
+// The overlap gate's person release and Goal page, derived from N's one port.
+import type { OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
 // The Goal-card confirmation and copy owners and the Host's initialization adoption owner.
 import type { GoalConfirmPort, GoalCopyPort } from '../core/work-graph/model/goal-card-contracts.js';
 import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
@@ -321,6 +323,9 @@ export type CoreRouteSuffix =
   | 'secretaries/archive'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
   | 'goals/dispatch-basis'
+  // The person's overlap-gate release and the Goal's gate page.
+  | 'goals/overlap-release'
+  | 'goals/overlap-gates'
   // The two person-only Goal-card commands, the copy preview and the person-only initialization adoption.
   | 'goals/confirm-draft'
   | 'goals/copy-draft'
@@ -474,6 +479,16 @@ export type GoalsConflictsBody = PlainBody<DecisionReadPort['queryGoalConflicts'
 export type GoalsConflictsResponse = RouteResponse<DecisionReadPort['queryGoalConflicts']>;
 export type GoalsDispatchBasisBody = PlainBody<DispatchBasisReadPort['readDispatchBasis']>;
 export type GoalsDispatchBasisResponse = RouteResponse<DispatchBasisReadPort['readDispatchBasis']>;
+/** The person's release and the Goal's gate page; each body is N's exact port input. */
+export type GoalsOverlapReleaseBody = PlainBody<OverlapGatePort['releaseOverlapGate']>;
+export type GoalsOverlapReleaseResponse = RouteResponse<OverlapGatePort['releaseOverlapGate']>;
+export type GoalsOverlapGatesBody = PlainBody<OverlapGatePort['readOverlapGates']>;
+export type GoalsOverlapGatesResponse = RouteResponse<OverlapGatePort['readOverlapGates']>;
+/** The two overlap-gate routes' DTO assembly: the production-reach anchor for the four aliases above. */
+export type OverlapCoreRouteDto = {
+  'goals/overlap-release': { body: GoalsOverlapReleaseBody; response: GoalsOverlapReleaseResponse };
+  'goals/overlap-gates': { body: GoalsOverlapGatesBody; response: GoalsOverlapGatesResponse };
+};
 export type GoalsConfirmDraftBody = PlainBody<GoalConfirmPort['confirmDraft']>;
 export type GoalsConfirmDraftResponse = RouteResponse<GoalConfirmPort['confirmDraft']>;
 export type GoalsCopyDraftBody = PlainBody<GoalCopyPort['readDraft']>;

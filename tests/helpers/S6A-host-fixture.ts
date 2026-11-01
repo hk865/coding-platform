@@ -90,7 +90,7 @@ import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import { waitFor } from '../scenarios/harness.js';
 import { deferred, driveWorkflow, writeStaleLock, type Deferred } from './A2-restart-fixture.js';
-import { AG2B_WORK_TASK_ID, ag2bPlanDraft, graphWrite } from './AG2b-collaboration-fixture.js';
+import { AG2B_WORK_TASK_ID, ag2bPlanDraft, createAG2bSession, graphWrite } from './AG2b-collaboration-fixture.js';
 import { commitBarrier, type CommitMatch } from './S6A-commit-barrier.js';
 import { seedS6AMemory, type S6AGovernance, type S6AMemoryWorld } from './S6A-memory-fixture.js';
 import {
@@ -751,7 +751,14 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       workPlanAdopted = true;
       await world.settleDetached();
       const recipient = await world.createWorkSession(`${label}-recipient`);
-      const session = await world.createSecretary(label);
+      // A-25/A-09: the hinted Session must be the key-1 holder, so the line is created through the real route with
+      // an open `responsible` link to the Work Task (the old create step's own link).
+      const linked = await createAG2bSession(world.ag2b, `s6a-session-${label}`, S6A_SECRETARY_ROLE, [{
+        target: { kind: 'task' as const, ref: { projectId: S6A_SCOPE.projectId, goalId: S6A_GOAL_1.goalId,
+          taskId: AG2B_WORK_TASK_ID } }, relation: 'responsible' as const }]);
+      const linkedCard = await world.readSession(linked.sessionRef);
+      const session: S6ASession = { label, ref: linked.sessionRef, aggregateRef: linkedCard.record.ref,
+        role: structuredClone(S6A_SECRETARY_ROLE), createdAt: linkedCard.record.createdAt };
       await world.scripted.script(session, [{ kind: 'calls', calls: [{ callId: `s6a-wait-${label}`, name: 'send_session_message',
         args: { recipient: recipient.ref, text: `S6A Work question from ${label}`, intent: 'inquiry', needsReply: true,
           waitAfterSend: true } }] }]);

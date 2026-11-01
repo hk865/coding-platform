@@ -532,6 +532,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           return narrow(await bindings.resolveQueryConfiguration!(ctx, input), ctx);
         },
       }),
+      ...(bindings.resolveRoleConfiguration === undefined ? {} : {
+        async resolveRoleConfiguration(ctx, input) {
+          return narrow(await bindings.resolveRoleConfiguration!(ctx, input), ctx);
+        },
+      }),
       // R3 (L13/U5): forward the capability with the SAME switch narrowing, so
       // a programmatic runtime cannot report `available` for a workspace whose
       // `allowReadonlyCommands` switch is off.
@@ -1308,8 +1313,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     if (!rebuildRuntimeFromSettings || resolverRegistry === undefined) return;
     const configuration = buildRuntimeConfiguration(snapshot);
-    resolverRegistry.install(createWorkbenchRuntimeHostBindings(configuration,
-      versionProvider(versionSecretSource(configuration, snapshot)), runtimeNarrowing));
+    const installed = createWorkbenchRuntimeHostBindings(configuration,
+      versionProvider(versionSecretSource(configuration, snapshot)), runtimeNarrowing);
+    resolverRegistry.install(installed);
     // Only a SUCCESSFUL install publishes executable profiles: the live
     // bootstrap projection becomes exactly the installed configuration's
     // queryProfiles (every startup profile is preserved). A newly selected
@@ -1645,6 +1651,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     takeover: instanceLease.takeover,
     scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
     context: reconcileContext,
+    members: platform.memberCreations,
     fanOut: (ctx, goalRef, options) => goalFanOut.fanOut(ctx, goalRef, options),
     ...(lifecycleQueue === undefined ? {} : { handoffQueue: lifecycleQueue }),
   });

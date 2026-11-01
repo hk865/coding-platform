@@ -135,7 +135,7 @@ it('A4 (领取、发信、记录结果): every step of a Run, its rounds and the
     }
     input = answer.next;
   }
-  expect(resent).toEqual(['create_session', 'claim_task', 'prepare', 'start', 'open_checks', 'run_check', 'finalize_checks',
+  expect(resent).toEqual(['claim_task', 'prepare', 'start', 'open_checks', 'run_check', 'finalize_checks',
     'complete_task', 'open_checks', 'run_check', 'finalize_checks', 'complete_task', 'complete_goal']);
   // One Turn, two model calls, one check process per round, one claim, one Goal completion.
   expect(h.counts()).toMatchObject({ modelCalls: 2, kernelTurnsStarted: 1, checksBegun: 2 });

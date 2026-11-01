@@ -55,7 +55,7 @@ import {
 } from './harness.js';
 import {
   driveChecked, editThenText, execution, pausedRunOnClosedHostChecked, replayOf, requeueBodyOf, requiredBriefOf, selectedRun, sessionKey,
-  stepOf,
+  stepOf, taskRefOf,
 } from './support/common.js';
 import {
   crashMidTurn, expectQuietHarnessRestart, expectQuietRestart, forceTurnOnKernelSession, performedOf,
@@ -99,7 +99,7 @@ it('A8-3l, A8-3p (W-20, RUN-24, LA-1, C3, C4, §13.4 #23/#24; K KA-07, KA-04): a
     // Run3 (the automatic rework, in S1 again) writes it.
     { kind: 'calls', calls: [{ callId: 'a8-3p-run3-edit', name: 'edit', args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
     { kind: 'text', text: 'restart scenario A8-3p: Run3 wrote the result file' }];
-  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], check: 'pass', script: { replies,
+  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0_TASK], check: 'pass', script: { replies,
     duringReply: async (index) => {
       if (index !== 3 || scenario === undefined) return;
       pauseRef = (await submitControl(scenario.host, await selectedRun(scenario), 'pause', 'restart scenario: pause', 'a8-3l-pause')).intent.ref;
@@ -294,7 +294,7 @@ it('A8-3n (closing supported; KA-10, W-11, RUN-19, LA-7, §13.4 #17, LA-6): the 
     // rework) writes it.
     { kind: 'text', text: 'restart scenario A8-3n: Run2 continued without the result file' },
     ...editThenText('a8-3n-run3')];
-  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], check: 'pass',
+  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0_TASK], check: 'pass',
     automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' }, script: { replies,
       duringReply: async (index) => {
         if (index !== 3 || scenario === undefined) return;
@@ -405,7 +405,7 @@ it('A8-3n (closing unsupported; W-11, RUN-19, LA-7, §13.4 #17, LA-6, K L7, deci
     // Run2 (the automatic continuation, in the idle Session) answers without the result file; Run3 (the counted rework) writes it.
     { kind: 'text', text: 'restart scenario A8-3n: Run2 continued without the result file' },
     ...editThenText('a8-3n-run3')];
-  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], check: 'pass',
+  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0_TASK], check: 'pass',
     automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' }, script: { replies,
       duringReply: async (index) => {
         if (index !== 3 || scenario === undefined) return;
@@ -549,6 +549,7 @@ it('A8-3q, A8-3o (W-21, W-20, HL-06, HL-01, LA-1, SES-02): a Run paused by a per
   expect((await h.taskRow(WORK_B)).execution, 'B has never been claimed').toBeNull();
   const reconciledEvents = h.ledgerEventTypes().filter(type => type === 'ExecutionRunReconciled').length;
 
+  // A-25: B's executor line is seeded before the Goal-level pass; the retired SA is never chosen for B.
   // The Goal-level 推进 skips A (stopped/task_paused) and claims B through chooseSession: never SA.
   const goalDrive = await h.advance(h.select('a8-3q-goal'));
   expect(await h.taskRow(WORK_B)).toMatchObject({ effectivePhase: 'satisfied' });
@@ -744,7 +745,8 @@ it('LA-1 and contract (e) (closing supported; KA-07, KA-09, A8-3l step 5, A8-3r)
   let interrupted: RunRef;
   const inv: InvariantTarget = { database };   // A.2 step 6
   try {
-    await seedAG2bWorkGraph(first, [RUN0_TASK, 'ag2b-work']);
+    await seedAG2bWorkGraph(first, [RUN0_TASK, 'ag2b-work'], { lineTaskIds: [RUN0_TASK] });
+    // A-25: the removed create step made this line (also the history source of the continuation below).
     // Run0 of another Task completes in Session S1 (its history cursor moves).
     await driveChecked(first, inv, { ...selectWork('a2-seeded-run0'), taskId: RUN0_TASK });   // A.2 step 6: checked per step
     const run0Ref = (await workRow(first, RUN0_TASK)).execution;
@@ -863,7 +865,8 @@ it('LA-1 and contract (e) (closing unsupported; A8-3l step 5, A8-3r, K L8): the 
   let interrupted: RunRef;
   const inv: InvariantTarget = { database };   // A.2 step 6
   try {
-    await seedAG2bWorkGraph(first, [RUN0_TASK, 'ag2b-work']);
+    await seedAG2bWorkGraph(first, [RUN0_TASK, 'ag2b-work'], { lineTaskIds: [RUN0_TASK] });
+    // A-25: the removed create step made this line (also the history source of the continuation below).
     // Run0 of another Task completes in Session S1 (its history cursor moves).
     await driveChecked(first, inv, { ...selectWork('a2-seeded-run0'), taskId: RUN0_TASK });   // A.2 step 6: checked per step
     const run0Ref = (await workRow(first, RUN0_TASK)).execution;

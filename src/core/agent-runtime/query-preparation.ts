@@ -33,7 +33,9 @@ import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-co
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
 import { secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
-import { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
+import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
+import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
+import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
@@ -67,9 +69,18 @@ export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
  * Role ceiling declare. Declaring a name here grants nothing; it is the outer
  * intersection applied AFTER the Host grant and Role ceiling.
  */
-const FORBIDDEN_QUERY_TOOL_NAMES = new Set<string>([
-  'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES,
+const FORBIDDEN_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME,
+  READ_REQUESTS_TOOL_NAME,
 ]);
+/** Only a secretary request round may select these six. */
+const SECRETARY_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  ...SECRETARY_QUERY_MAILBOX_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME,
+]);
+function forbiddenQueryToolNames(secretaryRound: boolean): ReadonlySet<string> {
+  if (!secretaryRound) return FORBIDDEN_QUERY_TOOL_NAMES;
+  return new Set([...FORBIDDEN_QUERY_TOOL_NAMES].filter(name => !SECRETARY_QUERY_TOOL_NAMES.has(name)));
+}
 
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
   try {
@@ -117,16 +128,19 @@ export function projectQueryConfiguration(input: {
   host: ResolvedRuntimeConfiguration;
   requested: RuntimeBudget;
   roleResolution: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
+  /** `isRequestRound(job)`: the one frozen class fact. */
+  secretaryRound: boolean;
 }): {
   configurationRevision: string;
   permissions: { tools: string[]; writeScope: [] };
   hostTemplate: PreparedQueryManifestV1['hostTemplate'];
   budget: RuntimeBudget;
 } {
+  const forbidden = forbiddenQueryToolNames(input.secretaryRound);
   const ceiling = input.roleResolution.status === 'resolved'
     ? new Set(input.roleResolution.spec.permissions.tools)
     : null;
-  const tools = input.host.tools.filter(tool => !FORBIDDEN_QUERY_TOOL_NAMES.has(tool)
+  const tools = input.host.tools.filter(tool => !forbidden.has(tool)
     && (ceiling === null || ceiling.has(tool)));
   return {
     configurationRevision: input.host.configurationRevision,
@@ -235,6 +249,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         host: configured.value,
         requested: binding.runtimeBudget,
         roleResolution: executionState.roleResolution,
+        secretaryRound: requestRound,
       });
       const hostTemplate = executionState.roleResolution.status === 'resolved' ? null : projected.hostTemplate;
       if (executionState.roleResolution.status === 'absent') {

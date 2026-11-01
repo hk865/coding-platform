@@ -82,7 +82,7 @@ it.each([
 ])('start and observe: a Run that ended %s goes back to select_work with the receipt kept', async (_label, run) => {
   for (const kind of ['start', 'observe'] as const) {
     const result = await workflowWith({ run }).advanceWork(ctx, perform(kind));
-    expect(result, kind).toEqual({ status: 'ready', value: { state: 'advance', reason: null, next: SELECT_WORK,
+    expect(result, kind).toEqual({ status: 'ready', value: { state: 'advance', reason: null, next: SELECT_WORK, pick: null,
       receipt: { kind, result: { status: 'ready', value: { run } } } } });
   }
 });

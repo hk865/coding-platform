@@ -132,7 +132,7 @@ describe('collaboration driver change notices', () => {
       const started = await driver.start(context(), startInput);
       expect(started.status).toBe('ready');
       expect(recorder.notices).toEqual([{ scope, goalId: goalRef.goalId, taskId: null }]);
-      finish({ status: 'ready', value: { state: 'completed', receipt: null, next: null, reason: 'goal complete' } });
+      finish({ status: 'ready', value: { state: 'completed', receipt: null, next: null, pick: null, reason: 'goal complete' } });
       await until(() => recorder.notices.length >= 2);
       await sleep(100);
       expect(recorder.notices).toEqual([

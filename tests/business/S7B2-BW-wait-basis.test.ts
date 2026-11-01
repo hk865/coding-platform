@@ -40,7 +40,7 @@ describe('BW-basis (memory)', () => {
         sessionHint: basis.sender.ref, kind: 'select_work', taskId: basis.task.taskId,
       }));
       expect(second.body).toEqual({ status: 'ready', value: {
-        state: 'waiting', receipt: null, next: null,
+        state: 'waiting', receipt: null, next: null, pick: null,
         reason: 'the continuation wait has not been answered yet', waitBasis,
       } });
 

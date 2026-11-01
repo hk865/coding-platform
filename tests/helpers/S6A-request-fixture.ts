@@ -339,6 +339,8 @@ export type S6AWorldOptions = {
   scribe?: boolean;
   /** Applied to the Host's traced configuration; never replaces a fixture binding and never duplicates one. */
   extraBindings?: readonly S6AExtraBinding[];
+  /** Cold start: omit the startup `workflow` option, so only a binding registered through a route later exists. */
+  omitStartupWorkflow?: true;
 };
 
 export type S6AReopenOptions = {
@@ -552,7 +554,7 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
   const hostOptions = (): LocalWorkbenchHostOptions => {
     const extraRows = (options.extraBindings ?? []).flatMap(entry =>
       entry.workflow === undefined ? [] : [structuredClone(entry.workflow)]);
-    const workflow = { ...structuredClone(WORKFLOW),
+    const workflow = options.omitStartupWorkflow === true ? undefined : { ...structuredClone(WORKFLOW),
       bindings: [...WORKFLOW.bindings, ...(scribe ? [SCRIBE_WORKFLOW_BINDING] : []), ...extraRows] };
     return {
       storage: backend === 'sqlite' ? { kind: 'sqlite', directory: database } : { kind: 'memory' },
@@ -562,7 +564,7 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
       kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
         databasePath: join(database, 'kernel.sqlite') }] },
       runtimeConfiguration: runtimeConfigurationOf(configuration, order, scribe, options.extraBindings ?? []),
-      workflow,
+      ...(workflow === undefined ? {} : { workflow }),
       publicDir,
       now: () => clock.now(),
       runtimeProvider: { registry, secretSource: { get: (name: string) => name === SECRET_VAR ? SECRET_VALUE : undefined } },

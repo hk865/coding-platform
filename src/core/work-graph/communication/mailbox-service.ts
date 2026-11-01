@@ -67,18 +67,20 @@ import type { ConsumedWaitV1, ExecutionAuthorizationV2, RunRef, RunSnapshot } fr
 import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import {
   ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest,
-  toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+  toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId, withdrawSessionMessageRequest,
   type SessionMessageSendInput, type SendUserMessageInput,
 } from '../model/tool-commit-arguments.js';
 import { consultationQueryRefs, interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
-import type { MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
+import type { HostSendCommitLookup, HostSendCommitLookupInput, MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
 import { deriveMessageDelivery, deriveSessionInputId, waitConsumedClaimKey } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
 import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
+import { commandKeys } from '../persistence/command-executor.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
 import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
@@ -4630,6 +4632,26 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
           };
           break;
         }
+        case 'withdraw_session_message': {
+          // The withdraw write is one R2 command (`message.withdraw`): reuse its
+          // commandKeys, principal and `{messageRef}` fingerprint, never the send
+          // identity algorithm above.
+          const normalized = normalizeMessageRef((args as { messageRef?: unknown }).messageRef);
+          if (!normalized.ok) throw new Error('invalid_arguments');
+          const ref = normalized.ref;
+          if (ref.projectId !== origin.runRef.projectId || ref.workspaceId !== origin.workspaceId) {
+            throw new Error('invalid_arguments');
+          }
+          const request = withdrawSessionMessageRequest({ messageRef: ref }, requestId);
+          const keys = commandKeys({
+            operation: 'message.withdraw',
+            scope: { projectId: origin.runRef.projectId, workspaceId: origin.workspaceId },
+            principal: principalIdentity({ kind: 'work_run', runRef: origin.runRef }),
+            commandId: request.meta.requestId,
+            fingerprintInput: { messageRef: ref },
+          });
+          return toolCommitLookupResult(await records.lookupCommit(keys));
+        }
         default:
           return toolCommitLookupUnknownTool(input.toolName);
       }
@@ -4651,6 +4673,42 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       return { status: 'undetermined', reason: 'the mailbox receipt lookup failed' };
     }
     return toolCommitLookupResult(lookup);
+  };
+
+  // ---- D-L1-3 Host-send receipt read ---------------------------------------
+
+  /** The Host send's own committed-receipt read: identity-only, so a recipient that changed since the send never
+   * changes the answer; it never writes and carries no Run origin. */
+  const lookupHostSendCommit: HostSendCommitLookup = async (
+    ctx: CoreCallContext, input: HostSendCommitLookupInput,
+  ): Promise<ToolCommitLookupResult> => {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return { status: 'undetermined', reason: owned.rejection.reason };
+    if (owned.principal.kind !== 'host') return { status: 'undetermined', reason: 'not_a_host_send' };
+    try {
+      const write = ownWrite<SessionMessageSendInputV1['input']>({
+        input: input.arguments as SessionMessageSendInputV1['input'],
+        meta: { requestId: input.requestId, expected: [] } });
+      if (!write.ok) return { status: 'undetermined', reason: write.rejection.reason };
+      // Argument validation only; the identity is the original send's, never a current payload.
+      const send = normalizeSendMessageInput(write.input);
+      if (send.status !== 'ready') return { status: 'undetermined', reason: 'invalid_arguments' };
+      const senderIdentity = senderIdentityOf({ kind: 'host', actor: { ...owned.principal.actor } });
+      const identityKey = identityKeyOf('send', input.scope, senderIdentity, input.requestId);
+      if (deps.commitIdentities === undefined) {
+        return { status: 'undetermined', reason: 'the commit-identity read is not configured' };
+      }
+      // Identity-only replay: the existing commit identity answers even when the recipient changed.
+      const found = await lookupCommittedReceiptByIdentity(deps.commitIdentities, identityKey);
+      if (found.status === 'found') {
+        return { status: 'committed', cursor: found.receipt.cursor as CommitCursor,
+          eventIds: [...found.receipt.eventIds] };
+      }
+      if (found.status === 'missing') return { status: 'not_committed' };
+      return { status: 'undetermined', reason: found.reason };
+    } catch {
+      return { status: 'undetermined', reason: 'the mailbox receipt lookup failed' };
+    }
   };
 
   // ---- message.withdraw ---------------------------------------------------
@@ -4971,7 +5029,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
   }
 
   return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted, sendUserMessage,
-    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies, lookupToolCommit,
+    disposeArchiveWait, readUndeliveredReplies, readRoutedReplies, lookupToolCommit, lookupHostSendCommit,
     withdrawMessage, releaseMessage, readMessageView, readInboxView };
 }
 

@@ -230,7 +230,9 @@ async function createLine(world: S6B3World, scope: { projectId: string; workspac
  *  `actor` is the Host's HTTP actor (default the human operator), so a row can post as a non-person Host.
  *  `staticChecks` is the operator's static `checks` Host option (the CLI config's), so the main scope has a fallback. */
 export async function openS6B3World(
-  options: { backend: S6ABackend; mainGoals?: 'none'; actor?: WorkbenchActor; staticChecks?: true }): Promise<S6B3World> {
+  options: { backend: S6ABackend; mainGoals?: 'none'; actor?: WorkbenchActor; staticChecks?: true;
+    /** Cold start: the Host gets no startup `workflow`; the workspace opened through settings registers the binding. */
+    omitStartupWorkflow?: true }): Promise<S6B3World> {
   const settingsDirectory = await mkdtemp(join(tmpdir(), 's6b3-settings-'));
   let host: S6AHostWorld;
   try {
@@ -238,6 +240,7 @@ export async function openS6B3World(
       backend: options.backend,
       defaultGoals: false,
       ...(options.actor === undefined ? {} : { actor: options.actor }),
+      ...(options.omitStartupWorkflow === true ? { omitStartupWorkflow: true } : {}),
       extraHostOptions: { settings: { settingsDirectory }, ...(options.staticChecks === true
         ? { checks: ag2bChecksConfiguration({ actor: OPERATOR, command: 'node --test' }) } : {}) },
     });

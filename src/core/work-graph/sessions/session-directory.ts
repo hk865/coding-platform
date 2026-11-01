@@ -1135,7 +1135,10 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       if (parentAction !== null
         && parentAction.progress.createChild !== null
         && operationRefKey(parentAction.progress.createChild) === operationRefKey(storedOperation.ref)) {
-        const acknowledgement = parentAction.input.acknowledgement;
+        // A human-approved creation cites the card answer it was decided by; an automatic or reused one keeps the
+        // request's original acknowledgement.
+        const acknowledgement = parentAction.progress.decision?.answerRef
+          ?? parentAction.input.acknowledgement;
         const proof: MemberCreatedEventV1['proof'] = acknowledgement === null ? null : {
           acknowledgementRef: acknowledgement,
           // The new Session is the only changed aggregate; it had no prior version. The answer's captured source pins

@@ -479,7 +479,8 @@ export function createDecisionMessageService(
    * nothing; every other kind keeps the slice-5 rule. B3 adds its kind here.
    */
   const OPTION_REQUIRED_SOURCE_KINDS: ReadonlySet<DecisionSourceV1['kind']> =
-    new Set<DecisionSourceV1['kind']>(['unknown_call_review']);
+    new Set<DecisionSourceV1['kind']>(['unknown_call_review', 'member_creation', 'rework_request',
+      'handoff_approval', 'adviser_creation']);
 
   function validSelection(kind: DecisionSourceV1['kind'], options: readonly DecisionOptionV1[],
     selection: DecisionSelectionV1): boolean {

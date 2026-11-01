@@ -10,7 +10,7 @@ import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/r
 import { checkAllInvariants, invariantStoreOf, readInvariantWorld, type InvariantWorld } from '../state/invariants.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
-import type { SessionRef, SessionWorkLinkRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createTaskClaimFixture } from './task-claim-fixture.js';
 import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
@@ -179,19 +179,33 @@ export async function openS1RuntimeFixture(options: {
   const scripted = createScriptedModel(options.replies ?? [{ kind: 'text', text: 'S1 fixture answer' }], options.beforeReply);
   const tools = ['read', 'write', 'send_session_message', 'respond_session_message'];
   const permissions = { policyRevision: base.roleBinding.policyRevision, tools, writeScope: ['.'], createMember: false };
-  const host: RuntimeHostBindings = { async resolveConfiguration(ctx, input) {
-    if (ctx.projectId !== base.scope.projectId || ctx.workspaceId !== base.scope.workspaceId
-      || input.role.kind !== 'legacy_template' || input.role.templateId !== 'builder')
-      return { status: 'rejected', code: 'forbidden', reason: 'S1 Host scope/role mismatch' };
-    return { status: 'ready', value: { configurationRevision: B2_HOST.configurationRevision,
-      model: { configuration: { revision: 's1-script', provider: 'deepseek', model: 's1-scripted', baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer', tokenizer: 's1' }) } },
-      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12,
-        maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-      hostTemplate: B2_HOST.hostTemplate, tools: [...tools], writeScope: ['.'],
-      skills: { resourceRoot: base.directory, enabledIds: [] }, systemInstruction: null,
-      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } };
-  } };
+  const host: RuntimeHostBindings = {
+    // A-07: the one scope/Role check and configuration body both resolutions share.
+    ...(() => {
+      const resolveFor = (ctx: CoreCallContext, role: RoleConfigurationRef) => {
+        if (ctx.projectId !== base.scope.projectId || ctx.workspaceId !== base.scope.workspaceId
+          || role.kind !== 'legacy_template' || role.templateId !== 'builder')
+          return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'S1 Host scope/role mismatch' };
+        return { status: 'ready' as const, value: { configurationRevision: B2_HOST.configurationRevision,
+          model: { configuration: { revision: 's1-script', provider: 'deepseek', model: 's1-scripted', baseUrl: 'http://127.0.0.1' },
+            client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 's1' }) } },
+          budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12,
+            maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
+          hostTemplate: B2_HOST.hostTemplate, tools: [...tools], writeScope: ['.'],
+          skills: { resourceRoot: base.directory, enabledIds: [] }, systemInstruction: null,
+          deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } };
+      };
+      return {
+        async resolveConfiguration(ctx: CoreCallContext, input: Parameters<RuntimeHostBindings['resolveConfiguration']>[1]) {
+          return resolveFor(ctx, input.role);
+        },
+        // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+        async resolveRoleConfiguration(ctx: CoreCallContext, input: Parameters<NonNullable<RuntimeHostBindings['resolveRoleConfiguration']>>[1]) {
+          return resolveFor(ctx, input.role);
+        },
+      };
+    })(),
+  };
   const authorizeConfiguration: AuthorizeConfiguration = async (ctx, input) => {
     const resolution = await roles.resolveRoleBinding(ctx, { roleBinding: input.run.roleBinding, declaredPermissions: input.permissions });
     if (resolution.status !== 'ready') return resolution;

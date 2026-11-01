@@ -188,3 +188,9 @@ export function toolCommitLookupResult(
 export function toolCommitLookupUnknownTool(toolName: string): ToolCommitLookupResult {
   return { status: 'undetermined', reason: `unknown_tool: ${toolName}` };
 }
+
+/** `withdraw_session_message` arguments -> the exact `mailbox.withdrawMessage` request. */
+export function withdrawSessionMessageRequest(input: { messageRef: SessionMessageRef }, requestId: string):
+GraphWrite<{ messageRef: SessionMessageRef }> {
+  return { input: { messageRef: { ...input.messageRef } }, meta: { requestId, expected: [] } };
+}

@@ -354,7 +354,7 @@ it('delivers a real Host attention change into the original idle Session once', 
   let host: Awaited<ReturnType<typeof f.startAG2bHost>> | undefined;
   try {
     host = await f.startAG2bHost(publicDir);
-    await f.seedAG2bWorkGraph(host);
+    await f.seedAG2bWorkGraph(host, undefined, { lineTaskIds: [] });
     const member = await f.createAG2bSession(host, 'attention-recipient');
     const { root, database } = host;
     await host.host.close();
@@ -418,7 +418,7 @@ it('automatically answers an inquiry without making its sender wait', async () =
       { kind: 'text', text: 'Question sent; continue independently.' },
     ];
     host = await f.startAG2bHost(publicDir, { replies });
-    await f.seedAG2bWorkGraph(host);
+    await f.seedAG2bWorkGraph(host, undefined, { lineTaskIds: [] });
     const member = await f.createAG2bSession(host, 'nonwaiting-recipient');
     const sender = await f.createAG2bSession(host, 'nonwaiting-sender', f.AG2B_WORK_ROLE);
     replies[0] = { kind: 'calls', calls: [{ callId: 'async-question', name: 'send_session_message', args: {

@@ -54,7 +54,11 @@ import {
 import type { MemberCallerV1, MemberCreateActionV1, MemberCreationStepV1 } from '../state/member-creation.js';
 import { acceptedMemberCreation, advancedMemberCreation, memberCreateInputProblem } from '../state/member-creation.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
-import { commandIdentity, executeWriteCommand } from '../persistence/command-executor.js';
+import { commandIdentity, commandKeys, executeWriteCommand } from '../persistence/command-executor.js';
+import {
+  agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+} from '../model/tool-commit-arguments.js';
+import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
 import { goalRefFor } from '../persistence/commit-compiler.js';
@@ -157,8 +161,13 @@ export type MemberServiceDependenciesV1 = {
    * `createMember: true`) and the child Session's delegation ceiling. A secretary caller never reads it.
    */
   executions: Pick<ExecutionReadPort, 'readExecution'>;
-  /** The normal executor line's role; fixture/composition supplies the real Host binding. */
-  executorRole: RoleConfigurationRef;
+  /**
+   * The executor line's Role for one Task: the composition reads the Task's current plan assignment and returns
+   * the served binding's `sessionRole`; absent binding is a rejection, never the platform executor template.
+   */
+  executorRole: (
+    ctx: CoreCallContext, input: { workspace: WorkspaceScope; task: TaskTriple },
+  ) => Promise<ReadResult<RoleConfigurationRef>>;
   /** The identity-only receipt read (the store object's `commitIdentities`, not `records`). */
   commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
   /** P's `createSessionChooser.reusable`, injected by L1; absent means no reuse (the positive half joins L1). */
@@ -170,6 +179,8 @@ export type MemberServiceDependenciesV1 = {
 export type MemberServiceV1 = {
   request: MemberRequestPortV1;
   decision: MemberDecisionPortV1;
+  /** The read-only committed `member.request` lookup for the `create_member` tool. */
+  lookupToolCommit: ToolCommitLookup;
 };
 
 type MemberOperationRecordV1 = SessionOperationRecordOf<MemberCreateActionV1>;
@@ -600,7 +611,12 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
         },
       };
     }
-    const reused = await findReusable(ctx, workspace, task, structuredClone(deps.executorRole));
+    const role = await deps.executorRole(ctx, { workspace, task });
+    if (role.status !== 'ready') {
+      if (role.status === 'rejected') return role;
+      return rejected('unavailable', 'the Task executor role is not readable');
+    }
+    const reused = await findReusable(ctx, workspace, task, structuredClone(role.value));
     if (reused !== null && 'status' in reused) return reused;
     return {
       status: 'ready',
@@ -760,13 +776,20 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       if ('status' in read) return read;
       delegationCeiling = read.ceiling;
     }
+    const role = await deps.executorRole(ctx, {
+      workspace: operation.action.input.workspace, task: operation.action.input.scope.task,
+    });
+    if (role.status !== 'ready') {
+      if (role.status === 'rejected') return role;
+      return rejected('unavailable', 'the Task executor role is not readable');
+    }
     return {
       commandId: childCommandIdOf(operation.ref),
       duty: 'executor',
       scope: { kind: 'task', task: structuredClone(operation.action.input.scope.task) },
       reason: operation.action.input.reason,
       provenance: { schemaVersion: 1, kind: 'new' },
-      roleConfiguration: structuredClone(deps.executorRole),
+      roleConfiguration: structuredClone(role.value),
       ...(delegationCeiling === undefined ? {} : { delegationCeiling: structuredClone(delegationCeiling) }),
       ...(caller.kind === 'secretary_query' ? { secretaryCreated: true as const } : {}),
       parentOperation: structuredClone(operation.ref),
@@ -1066,6 +1089,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
           kind: 'decided',
           answer: choice.kind === 'reject' ? 'reject' : 'approve',
           stale: choice.kind === 'stale',
+          answerRef: structuredClone(input.answer),
         });
         built = next;
         return {
@@ -1219,8 +1243,66 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     return { status: 'unavailable', reason: read.reason ?? 'the member request receipt is unavailable' };
   }
 
+  /**
+   * L4: the read-only committed-receipt lookup for `create_member`. It rebuilds
+   * the write's own R2 identity from the Kernel-recorded arguments and the
+   * original Run provenance, never from the reconcile caller's ctx.
+   */
+  const lookupToolCommit: ToolCommitLookup = async (
+    _ctx: CoreCallContext, input: ToolCommitLookupInput,
+  ): Promise<ToolCommitLookupResult> => {
+    if (input.toolName !== 'create_member') return toolCommitLookupUnknownTool(input.toolName);
+    const args = input.arguments;
+    if (!isRecord(args)) return { status: 'undetermined', reason: 'invalid_arguments' };
+    try {
+      const scope = args['scope'];
+      if (!isRecord(scope) || scope['kind'] !== 'task' || !isRecord(scope['task'])) {
+        return { status: 'undetermined', reason: 'invalid_arguments' };
+      }
+      const rawTask = scope['task'];
+      const task: TaskTriple = {
+        projectId: rawTask['projectId'] as string,
+        goalId: rawTask['goalId'] as string,
+        taskId: rawTask['taskId'] as string,
+      };
+      const acknowledgement = args['acknowledgement'];
+      const origin = input.origin;
+      const session = { projectId: origin.sessionRef.projectId, sessionId: origin.sessionRef.sessionId };
+      const run = { aggregateType: 'Run' as const, projectId: origin.runRef.projectId,
+        goalId: origin.runRef.goalId, runId: origin.runRef.runId };
+      const workspace = { projectId: origin.runRef.projectId, workspaceId: origin.workspaceId };
+      const request: MemberRequestInputV1 = {
+        commandId: toolCommitRequestId(input),
+        caller: { kind: 'work', actor: agentActorOf(session, run), session, run },
+        duty: 'executor',
+        scope: { kind: 'task', task },
+        reason: args['reason'] as string,
+        ...(acknowledgement === undefined ? {} : { acknowledgement: acknowledgement as SessionMessageRef }),
+      };
+      const inputProblem = memberCreateInputProblem({
+        input: {
+          workspace, caller: request.caller, duty: request.duty, scope: request.scope, reason: request.reason,
+          acknowledgement: request.acknowledgement ?? null,
+          commandId: request.commandId, fingerprint: '0'.repeat(64),
+        },
+      });
+      if (inputProblem !== null) return { status: 'undetermined', reason: 'invalid_arguments' };
+      const keys = commandKeys({
+        operation: REQUEST_OPERATION,
+        scope: { projectId: origin.runRef.projectId, workspaceId: origin.workspaceId },
+        principal: principalIdentity({ kind: 'work_run', runRef: run }),
+        commandId: request.commandId,
+        fingerprintInput: requestFingerprintInput(request, workspace, task, request.acknowledgement ?? null),
+      });
+      return toolCommitLookupResult(await deps.records.lookupCommit(keys));
+    } catch {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+  };
+
   return {
     request: { requestMember, resumePendingMemberCreations, readPendingMemberCards, readMemberRequestCommit },
     decision: { applyMemberDecision },
+    lookupToolCommit,
   };
 }

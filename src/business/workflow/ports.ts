@@ -7,7 +7,7 @@ import type { CoreRejection } from '../../contracts/core/results.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
-import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1 } from '../../contracts/dispatch.js';
+import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../contracts/query-job.js';
@@ -51,6 +51,9 @@ import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRa
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
   ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
 import type { ConsultationFactsPort } from '../../core/work-graph/queries/platform-facts.js';
+import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-service.js';
+import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
+import type { PickReadsV1 } from './session-chooser.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -93,6 +96,17 @@ export const DEFAULT_SESSION_ARCHIVE_POLICY: SessionArchivePolicyV1 = {
  */
 export type SessionDutyResolver =
   (role: RoleConfigurationRef, ctx?: CoreCallContext) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
+
+/**
+ * One card a pending source holds over a Task (M's and R's reads): the Task it blocks and the formal card source.
+ * The Workflow reads the card by that source through the existing `decisionReads` and blocks the Task and its
+ * dependents until the card is applied, answered without application, or closed.
+ */
+export type PendingCardV1 = { task: TaskTriple; source: DecisionSourceV1 };
+
+/** L1's two pending block sources: one Goal's cards whose owning operation/request is still waiting. */
+export type PendingCardsPort = (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+  Promise<ReadResult<readonly PendingCardV1[]>>;
 
 /**
  * The exact owners the Workflow composes. It reads and calls only these ports;
@@ -232,6 +246,18 @@ export type WorkflowDependencies = {
    * `pass` and the owner guards still decide.
    */
   unknownCallReviews?: UnknownCallReviewPort & UnknownCallReviewReadPort;
+  /** P's chooser reads (`session-chooser.ts`); the composition supplies the activity, goal-Run and pre-claim
+   *  authorization facts. Absent keeps today's order and no authorization filter. */
+  pick?: PickReadsV1;
+  /** N's module-overlap gate owner: the open/note steps and the gate read. */
+  overlap?: OverlapGatePort;
+  /** M's member request seam (the no-adviser `host_pick` step and its item-5 commit read). */
+  members?: Pick<MemberRequestPortV1, 'requestMember' | 'readMemberRequestCommit'>;
+  /** M's pending `member_creation` cards for the Task block source; the composition adapts
+   *  `readPendingMemberCards` into this one shape. */
+  pendingMemberCreations?: PendingCardsPort;
+  /** R's pending `rework_request` cards for the Task block source. */
+  pendingReworkRequests?: PendingCardsPort;
 };
 
 /**

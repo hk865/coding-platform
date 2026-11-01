@@ -21,12 +21,12 @@
 import { afterEach, expect, it } from 'vitest';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
-import { AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   assertInvariants, checkRevisionOf, cleanupScenarios, hostCtx, openHostScenario, openPlatformScenario, performs, SCENARIO_OPERATOR,
   stepOfReceipt, type Driven,
 } from './harness.js';
-import { committedOutcomesOf, editThenText, execution } from './support/common.js';
+import { committedOutcomesOf, editThenText, execution, taskRefOf } from './support/common.js';
 import { countsAllowingInterruptions } from './support/restart.js';
 
 afterEach(cleanupScenarios);
@@ -41,15 +41,16 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   const h = await openHostScenario({ workIds: [AG2B_WORK_TASK_ID, WORK_2],
     script: { replies: [...editThenText('smoke-work-1'), { kind: 'text', text: 'scenario smoke: work-2 finds the result file' }] } });
   await assertInvariants(h, 'seeded');
-  expect(h.counts()).toMatchObject({ modelCalls: 0, kernelRecords: 0, kernelTurnsStarted: 0, kernelSessionRevisions: 0, checksBegun: 0 });
+  // The seed holds one line per work Task, one Kernel Session record each.
+  expect(h.counts()).toMatchObject({ modelCalls: 0, kernelRecords: 2, kernelTurnsStarted: 0, kernelSessionRevisions: 2, checksBegun: 0 });
 
   const first = await h.advance(h.select('smoke-1', AG2B_WORK_TASK_ID));
-  expect(kinds(first)).toEqual(expect.arrayContaining(['create_session', 'claim_task', 'start', 'open_checks', 'run_check',
+  expect(kinds(first)).toEqual(expect.arrayContaining(['claim_task', 'start', 'open_checks', 'run_check',
     'finalize_checks', 'complete_task']));
   expect(committedOutcomesOf(first)).toEqual(['PASS']);
   // advance() checked the invariants after every receipt, with the step's kind.
-  expect(h.invariantLabels).toEqual(['seeded', 'smoke-1#1 create_session', 'smoke-1#2 claim_task', 'smoke-1#3 prepare', 'smoke-1#4 start',
-    'smoke-1#5 open_checks', 'smoke-1#6 run_check', 'smoke-1#7 finalize_checks', 'smoke-1#8 complete_task']);
+  expect(h.invariantLabels).toEqual(['seeded', 'smoke-1#1 claim_task', 'smoke-1#2 prepare', 'smoke-1#3 start',
+    'smoke-1#4 open_checks', 'smoke-1#5 run_check', 'smoke-1#6 finalize_checks', 'smoke-1#7 complete_task']);
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
   expect(await h.taskRow(WORK_2)).toMatchObject({ effectivePhase: 'pending' });
   const afterRun = h.counts();
@@ -57,7 +58,7 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   expect(afterRun.kernelRecords).toBeGreaterThan(1);
   expect(afterRun.kernelSessionRevisions).toBeGreaterThan(0);
   const kernelAfterRun = h.kernelSnapshot();
-  expect(kernelAfterRun.sessions).toHaveLength(1);
+  expect(kernelAfterRun.sessions).toHaveLength(2);
   expect(h.ledgerEventTypes()).toEqual(expect.arrayContaining(['TaskClaimed', 'ExecutionEntryAuthorized']));
 
   // HL-06 then HL-01: nothing was left open, so the reconcile has nothing to do and writes nothing. The new

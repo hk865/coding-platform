@@ -11,6 +11,9 @@
     "afterRunRef.goalId": "The Run's goal id.",
     "afterRunRef.runId": "The Run id.",
     "reason": "Why the task should run again; the owner's reason text.",
-    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise."
+    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise.",
+    "expected": "The exact W1 version pins the caller saw for this rework; omit a pin rather than guessing a fresh revision. The Goal and the afterRun are on different `look_graph` cards: read the Goal revision from the Goal card and the Run revision from its own Run card (the Task card's `executions` lists the Run refs). The optional TaskReworkRefusal pin is the current requeue refusal record, when one was shown.",
+    "expected[].ref": "One of the caller-visible refs this rework pins: Goal | Run | TaskReworkRefusal (requeue).",
+    "expected[].revision": "The exact version the caller saw for `ref`; the owner rejects a mismatch with the current record."
   }
 }

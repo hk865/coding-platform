@@ -29,7 +29,7 @@ afterEach(cleanupScenarios);
 it('2C-35 T3(c) requires no occupancy: after the transfer H is working while Y runs and paused only when idle, and X keeps its paused_interrupted cause', async () => {
   let h: HostScenario | undefined;
   let heldIndex = -1;
-  h = await openHostScenario({ workIds: ['ag2b-work', 'ag2b-work-2'],
+  h = await openHostScenario({ workIds: ['ag2b-work', 'ag2b-work-2'], lineTaskIds: ['ag2b-work'],
     script: { replies: [...PAUSE_ON_SECOND_REPLY, { kind: 'text', text: '2C-35: Y ends' }],
       duringReply: async (index) => {
         if (index !== 1 || h === undefined) return;

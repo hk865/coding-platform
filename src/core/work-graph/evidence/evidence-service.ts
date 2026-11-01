@@ -35,6 +35,9 @@ import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identit
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { messageOf } from '../../../contracts/error-message.js';
+import type {
+    ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult,
+} from '../../../contracts/unknown-call-review.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type {
     EffectivityAnchorV1, EvidenceOutcome, EvidenceRef, EvidenceSnapshot, EvidenceV1,
@@ -133,6 +136,9 @@ import type {
     OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
 } from '../model/evidence-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import {
+    agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+} from '../model/tool-commit-arguments.js';
 import type { ApprovedReworkApplyV1, ReworkOwnerResultV1, ReworkRequestedV1 } from '../model/claim-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
@@ -655,6 +661,8 @@ type ReverifyAuthority = {
     caller: { kind: 'agent'; actor: Extract<ActorRef, { kind: 'agent' }> };
     provenance: DelegatedWriteProvenanceV1;
     approved: { record: ReworkRequestV1; commandId: string };
+    /** The person's card answer the approved commit proves. */
+    answerRef: SessionMessageRef;
 };
 /** The guards a standalone request close needs. */
 type ReverifyCloseBase = {
@@ -762,6 +770,15 @@ function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; 
         });
 }
 
+/** The one `r3e-reverify` receipt fingerprint: write, replay and the read-only commit lookup share it. */
+function reverifyFingerprintOf(request: ReverifyRoundInput, predecessor: VerificationRoundRef,
+    expected: readonly VersionPin[]): string {
+    return fingerprintOf({ kind: 'r3e-reverify', predecessorRoundRef: predecessor,
+        onlyIfSourceChanged: request.onlyIfSourceChanged ?? false, newInputRefs: request.newInputRefs ?? [],
+        reason: request.reason ?? null, note: request.note ?? null, expected: sortedPins(expected),
+        ...(request.acknowledgement === undefined ? {} : { acknowledgement: request.acknowledgement }) });
+}
+
 /** The reverify refusal record as read: absent (k = 0), or @k; `unsupported` (no claim schemas) is a confirmed absence. */
 async function readReverifyRefusal(records: Records, ref: TaskReworkRefusalRef):
 Promise<{ ok: true; current: TaskReworkRefusalSnapshotV1 | null; key: string } | { ok: false; rejection: CoreRejection }> {
@@ -854,7 +871,7 @@ export type EvidenceServiceDependencies = {
     newId(): string;
 };
 
-export function createEvidenceService(deps: EvidenceServiceDependencies): EvidencePort {
+export function createEvidenceService(deps: EvidenceServiceDependencies): EvidencePort & { lookupToolCommit: ToolCommitLookup } {
     const records = deps.records;
 
     async function storeReport(
@@ -1721,6 +1738,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         acknowledgement: SessionMessageRef | null;
         /** LD-25: the stored pending request an approved recheck applies (or closes on a re-run refusal). */
         approved: { record: ReworkRequestV1; commandId: string } | null;
+        /** The person's card answer; non-null only for an approved recheck. */
+        answerRef: SessionMessageRef | null;
         /** A lost slot claim: the head moved, answered from the chain read again. */
         slotTaken(): Promise<CoreRejection>;
     };
@@ -1803,7 +1822,15 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                         schemaVersion: 1, occurredAt: deps.now(), identityKey: write.identity, roundRef: successor.ref,
                         actor: write.eventActor, fingerprint: write.fingerprint, result: successor,
                         // 7A §3.5 rule 3: the effect event carries the key only when the input did.
-                        ...(write.acknowledgement === null ? {} : { acknowledgement: write.acknowledgement }) });
+                        ...(write.acknowledgement === null ? {} : { acknowledgement: write.acknowledgement }),
+                        // The approved card's formal proof rides the same commit as its applied request@2.
+                        ...(write.approved === null || write.answerRef === null ? {} : { proof: {
+                            acknowledgementRef: write.answerRef,
+                            capturedPins: [],
+                            changes: [{ before: { ref: write.approved.record.ref, revision: write.approved.record.revision },
+                                after: { ref: write.approved.record.ref, revision: write.approved.record.revision + 1 } }],
+                            basisRebases: [],
+                        } }) });
                     value = { kind: 'reverified', round: successor };
                     break;
                 }
@@ -1975,7 +2002,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 [{ ref: record.ref, revision: record.revision }]);
         }
         const applied = await runReverify(caller, owned, { caller: { kind: 'agent', actor: approval.actor },
-            provenance: approval.provenance, approved: { record, commandId: approval.commandId } });
+            provenance: approval.provenance, approved: { record, commandId: approval.commandId },
+            answerRef: approval.answerRef });
         return applied as EffectWriteResultV1<ReverifyOutcomeV1>;
     }
 
@@ -2019,10 +2047,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let fingerprint: string;
         try {
             identity = identityKeyOf('r3e-reverify:', actor, scope.projectId, scope.workspaceId, owned.requestId);
-            fingerprint = fingerprintOf({ kind: 'r3e-reverify', predecessorRoundRef: predecessorRef,
-                onlyIfSourceChanged: input.onlyIfSourceChanged ?? false, newInputRefs: input.newInputRefs ?? [],
-                reason: input.reason ?? null, note: input.note ?? null, expected: sortedPins(owned.expected),
-                ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) });
+            fingerprint = reverifyFingerprintOf(input, predecessorRef, owned.expected);
         } catch { return invalid('the reverify request is not canonicalizable JSON'); }
         const lookup = await lookupReceipt(records, identity, fingerprint);
         if (lookup.status === 'failed') return lookup.rejection;
@@ -2175,7 +2200,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const commitBase = { identity, fingerprint, signal, actor, principal: principalIdentity(caller.ctx.principal),
             task, predecessor, run, refusalRef, refusalKey: refusalRead.key,
             currentRefusal, goalEndedRunsAtRefusal: countEndedGoalRuns(ended.runs), slotTaken,
-            acknowledgement: input.acknowledgement ?? null, approved: authority === null ? null : authority.approved };
+            acknowledgement: input.acknowledgement ?? null, approved: authority === null ? null : authority.approved,
+            answerRef: authority === null ? null : authority.answerRef };
         const capRefusal = reverifyCapRefusal(predecessor, actorClass, policy.autoReworkLimit);
         if (capRefusal !== null) {
             // LD-25: a cap reached since the request closes it rejected with that code, as the card's outcome.
@@ -2275,6 +2301,58 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             readSet: [...readSet, prepared.workspaceGuard, ...prepared.policyGuards, prepared.baselineGuard] });
     }
 
+    /**
+     * L4: the read-only committed-receipt lookup for `request_recheck`. It
+     * rebuilds the owner request from the Kernel-recorded arguments and reuses
+     * `identityKeyOf`, `fingerprintOf`, `sortedPins` and `reverifyPinsOf`, so a
+     * committed successor round and its pending rework request answer from the
+     * same identity row.
+     */
+    const lookupToolCommit: ToolCommitLookup = async (
+        _ctx: CoreCallContext, input: ToolCommitLookupInput,
+    ): Promise<ToolCommitLookupResult> => {
+        if (input.toolName !== 'request_recheck') return toolCommitLookupUnknownTool(input.toolName);
+        const args = input.arguments;
+        if (!isRecord(args)) return { status: 'undetermined', reason: 'invalid_arguments' };
+        const expected = args['expected'];
+        const acknowledgement = args['acknowledgement'];
+        if (!Array.isArray(expected) || (acknowledgement !== undefined && !isRecord(acknowledgement))) {
+            return { status: 'undetermined', reason: 'invalid_arguments' };
+        }
+        const candidate: ReverifyRoundInput = {
+            predecessorRoundRef: args['predecessorRoundRef'] as VerificationRoundRef,
+            ...(args['onlyIfSourceChanged'] === undefined ? {} : { onlyIfSourceChanged: args['onlyIfSourceChanged'] as boolean }),
+            ...(args['reason'] === undefined ? {} : { reason: args['reason'] as string }),
+            ...(acknowledgement === undefined ? {} : { acknowledgement: acknowledgement as SessionMessageRef }),
+        };
+        const scope = { projectId: input.origin.runRef.projectId, workspaceId: input.origin.workspaceId };
+        if (reverifyInputProblem(candidate, scope) !== null) return { status: 'undetermined', reason: 'invalid_arguments' };
+        const raw = candidate.predecessorRoundRef;
+        const predecessorRef: VerificationRoundRef = { aggregateType: 'VerificationRound', projectId: raw.projectId,
+            workspaceId: raw.workspaceId, goalId: raw.goalId, taskId: raw.taskId, runId: raw.runId, roundId: raw.roundId };
+        const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: predecessorRef.projectId,
+            goalId: predecessorRef.goalId, taskId: predecessorRef.taskId, operation: 'reverify', subjectId: predecessorRef.roundId };
+        const pins = reverifyPinsOf(expected as VersionPin[], predecessorRef, refusalRef);
+        if ('status' in pins) return { status: 'undetermined', reason: 'invalid_arguments' };
+        const actor = agentActorOf(input.origin.sessionRef, input.origin.runRef);
+        const requestId = toolCommitRequestId(input);
+        let identityKey: string;
+        let fingerprint: string;
+        try {
+            identityKey = identityKeyOf('r3e-reverify:', actor, scope.projectId, scope.workspaceId, requestId);
+            fingerprint = reverifyFingerprintOf(candidate, predecessorRef, expected as VersionPin[]);
+        } catch {
+            return { status: 'undetermined', reason: 'invalid_arguments' };
+        }
+        let lookup;
+        try {
+            lookup = await records.lookupCommit({ identityKey, fingerprint });
+        } catch {
+            return { status: 'undetermined', reason: 'the recheck receipt lookup failed' };
+        }
+        return toolCommitLookupResult(lookup);
+    };
+
     return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
-        abandonCheck, interruptCheck, finalizeChecks, reverifyRound, reverifyApprovedByCard };
+        abandonCheck, interruptCheck, finalizeChecks, reverifyRound, reverifyApprovedByCard, lookupToolCommit };
 }

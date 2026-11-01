@@ -280,7 +280,7 @@ it.each([
 ] as const)('a gate stopped with %s waits with what a person can do about it', async (reason, detail, advice) => {
   const { workflow, calls } = workflowWith([SATISFIED_WORK, gateRowOf({ kind: 'stopped', reason, detail })]);
   expect(await workflow.advanceWork(ctx, selectWork())).toEqual({ status: 'ready', value: { state: 'waiting', next: null,
-    receipt: null, reason: `${reason}: the goal gate gate-1 is not re-verified automatically; ${advice}`,
+    pick: null, receipt: null, reason: `${reason}: the goal gate gate-1 is not re-verified automatically; ${advice}`,
     waitBasis: { projectId: P, goalId: G,
       recordKinds: ['VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'Run', 'Goal', 'PlanRevision'],
       reasons: ['formal_check', 'evidence', 'goal_gate'] } } });
@@ -299,7 +299,7 @@ it.each([
   const { workflow, calls } = workflowWith([rowOf('work-1', failureOf('work-1', reverifyOf('work-1')))], { reverify: () => answer });
   const { next } = await reverifyRequestOf(workflow, selectWork('work-1'));
   expect(await workflow.advanceWork(ctx, next)).toEqual({ status: 'ready', value: { state: 'advance', reason: null,
-    next: selectWork('work-1'), receipt: { kind: 'reverify_round', result: answer } } });
+    next: selectWork('work-1'), pick: null, receipt: { kind: 'reverify_round', result: answer } } });
   // TD-6: the owner is called once, as the Workflow automation actor in the same trusted scope and signal.
   expect(calls).toHaveLength(1);
   const call = calls[0]!;
@@ -318,7 +318,7 @@ it.each([
   const answer = rejected(code as CoreRejection['code'], reason);
   const { workflow } = workflowWith([rowOf('work-1', failureOf('work-1', reverifyOf('work-1')))], { reverify: () => answer });
   const { next } = await reverifyRequestOf(workflow, selectWork('work-1'));
-  expect(await workflow.advanceWork(ctx, next)).toEqual({ status: 'ready', value: { state: 'waiting', next: null,
+  expect(await workflow.advanceWork(ctx, next)).toEqual({ status: 'ready', value: { state: 'waiting', next: null, pick: null,
     reason: `${code}: ${reason}`, receipt: { kind: 'reverify_round', result: answer } } });
 });
 
@@ -340,7 +340,7 @@ it('§15.2 5.9 (VR-07 Workflow row): finalize_checks answered busy on a finalize
   const perform: WorkflowAdvanceInput = { ...selectWork('work-1'), kind: 'perform', operation: { kind: 'finalize_checks',
     request: { input: { roundRef: roundRefOf('work-1') }, meta: { requestId: 'r', expected: [] } } } as unknown as WorkflowOperation };
   expect(await finalizeOf('finalized').advanceWork(ctx, perform)).toEqual({ status: 'ready', value: { state: 'advance',
-    reason: null, next: selectWork('work-1'), receipt: { kind: 'finalize_checks', result: busy } } });
+    reason: null, next: selectWork('work-1'), pick: null, receipt: { kind: 'finalize_checks', result: busy } } });
   expect(await finalizeOf('open').advanceWork(ctx, perform)).toEqual({ status: 'ready', value: { state: 'waiting',
-    next: null, reason: 'the round is already finalized', receipt: { kind: 'finalize_checks', result: busy } } });
+    next: null, pick: null, reason: 'the round is already finalized', receipt: { kind: 'finalize_checks', result: busy } } });
 });

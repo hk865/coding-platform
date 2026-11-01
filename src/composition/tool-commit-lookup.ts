@@ -18,6 +18,7 @@ import type { ToolCommitLookup } from '../contracts/unknown-call-review.js';
 /** L3 row-4 names the mailbox owner publishes the committed-send lookup for. */
 export const MAILBOX_COMMIT_LOOKUP_TOOLS: readonly string[] = [
   'send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message',
+  'withdraw_session_message',
 ];
 /** L3 row-4 name the decision owner publishes the committed-application lookup for. */
 export const DECISION_COMMIT_LOOKUP_TOOLS: readonly string[] = ['record_decision_application'];
@@ -27,11 +28,18 @@ export const PLAN_COMMIT_LOOKUP_TOOLS: readonly string[] = ['propose_future_plan
 export const NOTE_COMMIT_LOOKUP_TOOLS: readonly string[] = ['record_note'];
 /** L3 row-4 name the CRR owner publishes the committed-request lookup for. */
 export const COMMAND_RERUN_COMMIT_LOOKUP_TOOLS: readonly string[] = ['request_command_rerun'];
+/** L3 row-4 name the member owner publishes the committed-creation lookup for. */
+export const MEMBER_COMMIT_LOOKUP_TOOLS: readonly string[] = ['create_member'];
+/** L3 row-4 name the requeue owner publishes the committed-request lookup for. */
+export const REWORK_COMMIT_LOOKUP_TOOLS: readonly string[] = ['request_rework'];
+/** L3 row-4 name the evidence owner publishes the committed-recheck lookup for. */
+export const RECHECK_COMMIT_LOOKUP_TOOLS: readonly string[] = ['request_recheck'];
 
 /** The production owner order (`create-platform.ts`); the default for a plain array. */
 const DEFAULT_OWNER_TOOL_NAMES: readonly (readonly string[])[] = [
   MAILBOX_COMMIT_LOOKUP_TOOLS, DECISION_COMMIT_LOOKUP_TOOLS, PLAN_COMMIT_LOOKUP_TOOLS, NOTE_COMMIT_LOOKUP_TOOLS,
-  COMMAND_RERUN_COMMIT_LOOKUP_TOOLS,
+  COMMAND_RERUN_COMMIT_LOOKUP_TOOLS, MEMBER_COMMIT_LOOKUP_TOOLS, REWORK_COMMIT_LOOKUP_TOOLS,
+  RECHECK_COMMIT_LOOKUP_TOOLS,
 ];
 
 export function createToolCommitLookup(

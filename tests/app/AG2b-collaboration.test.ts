@@ -22,6 +22,7 @@
  * final expectation for Stage 2.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { seedHostLine } from '../helpers/A2-restart-fixture.js';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -246,7 +247,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       expect(bootstrap.execution.queryProfiles.map(profile => profile.id)).toEqual([AG2B_QUERY_PROFILE_ID]);
       expect(JSON.stringify(bootstrap)).not.toContain('ag2b-controlled-secret-value');
 
-      const seeded = await seedAG2bWorkGraph(started);
+      const seeded = await seedAG2bWorkGraph(started, undefined, { lineTaskIds: [] });
       workTarget = seeded.workTarget;
       const createdB = await createAG2bSession(started, 'ag2b-b-session', AG2B_QUERY_ROLE, [
         { target: workTarget, relation: 'participates' },
@@ -261,6 +262,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       expect(started.scripted.calls()).toBe(0);
 
       const sessionsBefore = await sessionCount(started);
+      await seedHostLine(started, 'ag2b-a-line');
       const startResponse = await corePost(started.base, 'workflow/driver-start', started.token, plain(AG2B_SCOPE, startBody));
       // FIRST RED (Stage 1): the route is not published, so the real HTTP
       // boundary answers 404 `unpublished core route workflow/driver-start`.
@@ -277,7 +279,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       // `waiting_for_reply` is projected when the pump SEES the wait message; the
       // consultation consumer derives A′ asynchronously right after it.
       await expect.poll(() => sessionCount(started), { timeout: 10_000, interval: 50,
-        message: 'the Workflow created the A Session plus its derived child A′' }).toBe(sessionsBefore + 2);
+        message: 'the A line plus its derived child A′' }).toBe(sessionsBefore + 2);
       const cardsWhileBusy = await listSessions(started);
       const querySessionsWhileBusy = cardsWhileBusy.filter(isQueryRole);
       // B stays the occupied SOURCE; the consultation runs in its own derived child.
@@ -410,7 +412,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       },
     });
     try {
-      const seeded = await seedAG2bWorkGraph(started);
+      const seeded = await seedAG2bWorkGraph(started, undefined, { lineTaskIds: [] });
       workTarget = seeded.workTarget;
       const createdB = await createAG2bSession(started, 'ag2b-busy-session', AG2B_QUERY_ROLE, [
         { target: workTarget, relation: 'participates' },
@@ -419,6 +421,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       // Occupy B with a real formal Query claim; nothing here rewrites storage.
       await claimBusyQuery(started, createdB, 'stop');
       const sessionsBefore = await sessionCount(started);
+      await seedHostLine(started, 'ag2b-a-line');
 
       const startResponse = await corePost(started.base, 'workflow/driver-start', started.token, plain(AG2B_SCOPE, startBody));
       // FIRST RED (Stage 1): the unpublished route answers 404 before any
@@ -426,7 +429,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       expect(startResponse.status).toBe(200);
       const waiting = await waitForDriver(started, snapshot => snapshot.state === 'waiting_for_reply');
       expect(waiting.state).toBe('waiting_for_reply');
-      // B was never consulted and the Workflow created only A's Session.
+      // B was never consulted.
       expect(started.scripted.calls()).toBe(3);
       await expect.poll(() => sessionCount(started), { timeout: 10_000, interval: 50,
         message: 'A plus its derived child are created next to the occupied B' }).toBe(sessionsBefore + 2);

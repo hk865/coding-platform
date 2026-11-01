@@ -125,27 +125,38 @@ export async function createC2RuntimePlatform(options: C2RuntimePlatformOptions 
   const scripted = createScriptedModel(options.scriptedReplies ?? [{ kind: 'text', text: 'C2 scripted answer' }], options.beforeReply);
   const allowedRuns = new Set<string>([canonicalJson(claim.runRef as unknown as JsonValue)]);
   let authorizeCalls = 0;
-  const host: RuntimeHostBindings = {
-    async resolveConfiguration(ctx, request) {
-      if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
-        || !allowedRuns.has(canonicalJson(request.runRef as unknown as JsonValue))) {
-        return { status: 'rejected', code: 'forbidden', reason: 'C2 Host is not bound to this complete Run/scope' };
-      }
-      if (request.roleResolution.status === 'inadmissible') {
-        return { status: 'rejected', code: 'forbidden', reason: 'C2 Host refuses the current Role' };
-      }
-      return { status: 'ready', value: {
-        configurationRevision: 'c2-host-config@1',
-        model: { configuration: { revision: 'c2-host-config@1', provider: 'deepseek', model: 'c2-local-scripted', baseUrl: 'http://127.0.0.1' },
-          client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'c2-fixture-counter' }) } },
-        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-        tools: [...toolNames], writeScope: [...(options.writeScope ?? [])], hostTemplate: null,
-        skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
-        systemInstruction,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
-    },
-  };
+  const host: RuntimeHostBindings = (() => {
+    // A-07: the one configuration body both resolutions share.
+    const configured = () => ({ status: 'ready' as const, value: {
+      configurationRevision: 'c2-host-config@1',
+      model: { configuration: { revision: 'c2-host-config@1', provider: 'deepseek', model: 'c2-local-scripted', baseUrl: 'http://127.0.0.1' },
+        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'c2-fixture-counter' }) } },
+      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
+      tools: [...toolNames], writeScope: [...(options.writeScope ?? [])], hostTemplate: null,
+      skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
+      systemInstruction,
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } });
+    return {
+      async resolveConfiguration(ctx, request) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
+          || !allowedRuns.has(canonicalJson(request.runRef as unknown as JsonValue))) {
+          return { status: 'rejected', code: 'forbidden', reason: 'C2 Host is not bound to this complete Run/scope' };
+        }
+        if (request.roleResolution.status === 'inadmissible') {
+          return { status: 'rejected', code: 'forbidden', reason: 'C2 Host refuses the current Role' };
+        }
+        return configured();
+      },
+      // A-07: no Run exists; the same scope check and configuration with the Role only.
+      async resolveRoleConfiguration(ctx) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'C2 Host is not bound to this workspace' };
+        }
+        return configured();
+      },
+    };
+  })();
   const workspaceHost: RuntimeExecutionDependencies['workspaceHost'] = {
     async resolveRoot(scope) {
       return scope.projectId === f.scope.projectId && scope.workspaceId === f.scope.workspaceId

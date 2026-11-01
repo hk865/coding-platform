@@ -1898,8 +1898,9 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
   if (card.answer !== null) {
     if (card.application !== null) return { ...card, state: 'applied', readOnly: false, actions: [] };
     if (card.answer.decision.requiresApplication) {
-      // A resolved member operation's answer stays history instead of a pending application.
-      if (card.source.kind === 'member_creation' && card.closedReason !== null) {
+      // A resolved member operation's or rework request's answer stays history instead of a pending application.
+      if ((card.source.kind === 'member_creation' || card.source.kind === 'rework_request')
+        && card.closedReason !== null) {
         return { ...card, state: 'answered_no_application', readOnly: false, actions: [] };
       }
       return { ...card, state: 'answered_pending_application', readOnly: false, actions: ['apply', 'record_application'] };

@@ -11,6 +11,9 @@
     "predecessorRoundRef.roundId": "The round id.",
     "onlyIfSourceChanged": "When true, the owner opens a successor only if the source changed since the predecessor; omit for the owner's default.",
     "reason": "Why the result should be examined again; the owner's reason text.",
-    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise."
+    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise.",
+    "expected": "The exact W1 version pins the caller saw for this recheck; omit a pin rather than guessing a fresh revision. The predecessor round revision comes from its own `look_graph` VerificationRound card (the Task card's `checks` relation names the rounds), not from the Goal or Task card. The optional TaskReworkRefusal pin is the current reverify refusal record, when one was shown.",
+    "expected[].ref": "One of the caller-visible refs this recheck pins: VerificationRound | TaskReworkRefusal (reverify).",
+    "expected[].revision": "The exact version the caller saw for `ref`; the owner rejects a mismatch with the current record."
   }
 }

@@ -891,10 +891,12 @@ async function openInputFixture(storage: StorageKind): Promise<InputFixture> {
     },
   };
   const queryModel = createScriptedModel([{ kind: 'text', text: FX_PLAN_ANSWER_TEXT }]);
+  // A-07: both resolutions answer the same unsupported Work binding.
+  const unsupportedWork = () =>
+    ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'this fixture runs no Work execution' });
   const runtime: RuntimeHostBindings = {
-    async resolveConfiguration() {
-      return { status: 'rejected', code: 'unsupported', reason: 'this fixture runs no Work execution' };
-    },
+    async resolveConfiguration() { return unsupportedWork(); },
+    async resolveRoleConfiguration() { return unsupportedWork(); },
     async resolveQueryConfiguration() {
       return { status: 'ready', value: {
         configurationRevision: 's3-graph-host@1',
@@ -1163,14 +1165,12 @@ async function openGtPlatform(options: {
   const workModel = createScriptedModel([...(options.workReplies ?? [{ kind: 'text', text: 'gt work answer' }])]);
   const queryModel = createScriptedModel([...(options.queryReplies ?? [{ kind: 'text', text: 'gt query answer' }])]);
   const actor = GT_ACTOR;
-  const base = ag2bWorkRuntime(() => workModel, { queryModel });
+  const base = ag2bWorkRuntime(() => workModel, {
+    queryModel,
+    tools: options.workTools ?? GT_WORK_TOOLS,
+  });
   const host: RuntimeHostBindings = {
-    async resolveConfiguration(ctx, request) {
-      const result = await base.resolveConfiguration(ctx, request);
-      return result.status === 'ready'
-        ? { ...result, value: { ...result.value, tools: [...(options.workTools ?? GT_WORK_TOOLS)] } }
-        : result;
-    },
+    ...base,
     async resolveQueryConfiguration(ctx, request) {
       const result = await base.resolveQueryConfiguration!(ctx, request);
       return result.status === 'ready'

@@ -347,6 +347,16 @@ export function createHostRuntimeResolverRegistry(initial: RuntimeHostBindings):
     async readonlyCommandAccess(input) {
       return current.readonlyCommandAccess?.(input) ?? null;
     },
+    // A-07: the no-Run pre-claim check has no RunRef to pin, so the same "current
+    // settings version" rule applies. The current binding owns the capability; a
+    // binding without it keeps the existing `unsupported` answer.
+    async resolveRoleConfiguration(ctx, input) {
+      const resolveRole = current.resolveRoleConfiguration;
+      if (resolveRole === undefined) {
+        return { status: 'rejected', code: 'unsupported', reason: 'the Host has no no-Run configuration binding' };
+      }
+      return resolveRole(ctx, input);
+    },
   };
 }
 

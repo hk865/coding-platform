@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "e2a619164299833088c2dc7499428a3a4072d5aba041d6610660039cd1efb992"
+    "sha256": "f901eee5325697382d6771dff64d718f4ecd868743b0ac9a61b7f113b025d3a2"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -117,7 +117,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "fd4e0c37fc97bdc4e710b5c67a07b7374fa308db75e16eb24bd37939b80216e0"
+    "sha256": "cb02659d41f8d91e430352da33b0a17154161a2edb30cb9d66e1823afa1da8d5"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
@@ -152,12 +152,16 @@
     "sha256": "febb24dffb552328da0fcf125b469c9a5c6a00e2c3515f70111c7f97f6bf96a0"
   },
   {
+    "path": "resources/prompts/platform/tools/read_requests.json",
+    "sha256": "426080b13bba32ae53f37a589366a33dd1c67907e00820e6a37cbdcaca13b121"
+  },
+  {
     "path": "resources/prompts/platform/tools/request_rework.json",
-    "sha256": "93fe21b9a3d9d6e7b6b447036ca892c07f3bf34cfa01ee3355ad24e4b7bf432d"
+    "sha256": "68a6f30f73d8dec02d714059009321cf8c0f277b5ff102a05d4fc37d0b9a2591"
   },
   {
     "path": "resources/prompts/platform/tools/request_recheck.json",
-    "sha256": "2ac19989ef6f3ba6bfc7f87edea10e0473e13d47bf1218ca0de8059e1a1fb01f"
+    "sha256": "b74f3b1e88b553f5531da61fe9f13dfd324c3c662a9a415bc60f5b47939e7b68"
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",

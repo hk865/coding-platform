@@ -21,6 +21,7 @@ describe('wiring 1 start refusal mapping', () => {
       status: 'ready',
       value: {
         state: 'advance',
+        pick: null,
         receipt: { kind: 'start', result: startResult },
         next: {
           schemaVersion: 1,
@@ -45,6 +46,7 @@ describe('wiring 1 start refusal mapping', () => {
       status: 'ready',
       value: {
         state: 'waiting',
+        pick: null,
         receipt: { kind: 'start', result: startResult },
         next: null,
         reason: 'the Goal changed since the caller read it',

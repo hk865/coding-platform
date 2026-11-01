@@ -63,8 +63,9 @@ import {
   seedAG2bWorkGraph, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
 } from '../../helpers/AG2b-collaboration-fixture.js';
 import {
-  answer, goalControlPins, moveKernelAside, post, readExecution, readGoal, restoreKernel, selectWork, tempDir, workRow, writeStaleLock,
-  type AdvanceValue, type PausedOnClosedHost,
+  answer, goalControlPins, moveKernelAside, post, readExecution, readGoal, restoreKernel,
+  selectWork, tempDir,
+  workRow, writeStaleLock, type AdvanceValue, type PausedOnClosedHost,
 } from '../../helpers/A2-restart-fixture.js';
 import type { FuzzStep, FuzzStepKind } from '../../state/invariants.js';
 import {

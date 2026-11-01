@@ -11,7 +11,12 @@ import type { CommandRerunRequestRef } from '../../contracts/command-rerun-reque
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
-import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import type {
+  SessionMailboxPort, SessionMessage,
+} from '../../core/work-graph/model/communication-contracts.js';
+import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-service.js';
+import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
+import type { PickBasisV1 } from '../../contracts/pick-basis.js';
 import type {
   GoalDecisionCauseReadV1, MessageReleasePort,
 } from '../../core/work-graph/model/decision-contracts.js';
@@ -147,6 +152,16 @@ export type WorkflowCalls = {
    * bounded candidate page; `perform` calls this one owner method.
    */
   release_message: MessageReleasePort['releaseApproved'];
+  // The adviser's one Host-system `sendMessage`, released directly: the only send on this
+  // step. No person or secretary send.
+  suggest_member: SessionMailboxPort['sendMessage'];
+  // The no-adviser path: M's own member request, no Session, Run or message; `host_pick` is
+  // always `needs_decision` and shows the existing `member_creation` card.
+  host_pick_member: MemberRequestPortV1['requestMember'];
+  // The module-overlap gate's two write steps (`book-7c.md` §3.3 items 3 and 5): the open, which
+  // also records one note request, and the note request on an already opened basis.
+  open_overlap_gate: OverlapGatePort['openOverlapGate'];
+  request_overlap_note: OverlapGatePort['requestOverlapNote'];
 };
 
 export type WorkflowStepKind = keyof WorkflowCalls;
@@ -273,6 +288,8 @@ export type WorkflowAdvanceResult = CoreRejection | {
     state: 'advance' | 'waiting' | 'completed';
     receipt: WorkflowStepReceipt | null;
     next: WorkflowAdvanceInput | null;
+    /** The pick basis behind this selection (LR7C-09), or null when no picker ran. Required, nullable. */
+    pick: PickBasisV1 | null;
     /**
      * K3 UR7 rework 1 (answer 7): the union failed-card set the Host driver
      * carries into the next step of the same continuous selection. Present

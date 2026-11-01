@@ -108,6 +108,7 @@ import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/mo
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { COMMAND_RERUN_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/command-rerun-request-codecs.js';
+import { REWORK_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/rework-request-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
@@ -503,6 +504,7 @@ const additionalSchemas: RecordBackendSchemas[] = [QUERY_JOB_RECORD_SCHEMAS, SES
   LINE_SETTINGS_RECORD_SCHEMAS,
   UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
   COMMAND_RERUN_REQUEST_RECORD_SCHEMAS,
+  REWORK_REQUEST_RECORD_SCHEMAS,
   SESSION_ANOMALY_RECORD_SCHEMAS,
   SESSION_LIFECYCLE_RECORD_SCHEMAS,
   RUN_ACTIVITY_RECORD_SCHEMAS,

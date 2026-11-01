@@ -99,8 +99,8 @@
 | `ExecutionReadPort` | `src/core/work-graph/model/execution-read-contracts.ts:96` | 精确 Task execution 与按 Goal/Task 的分页读取 | 读执行事实，不再另写读取器 |
 | `EvidencePort` | `src/core/work-graph/model/evidence-contracts.ts:119` | 验证轮与检查生命周期的唯一受信写入口；`ReverifyRoundInput` 有可选 `acknowledgement`，写结果带可选 `proofReceipt` | 证据/验证 owner |
 | `MaterialPort` | `src/core/work-graph/model/material-contracts.ts:11` | 存 artifact、按引用打开并区分历史用途 | 材料读写 |
-| `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:319` | 消息发送、读取、ack、回复；读不改状态 | 收件箱与决定消息 |
-| `ForwardMessageInputV1`、`DisposeWaitInputV1`、`ForwardMessageResultV1`、`MessageForwardingPort` | `src/core/work-graph/model/communication-contracts.ts:477` | 转发 owner 的输入/结果 DTO 与端口：`forwarded` 是一次提交，`existing` 是第二次同目标命令且不带游标；P 的复制转发只经 `forwardCopiedIntervention` | 组合根装配转发 owner、P 的复制 owner 与 F 的行时；不要另写转发输入/结果或端口 |
+| `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:328` | 消息发送、读取、ack、回复；读不改状态；7C-1 另带可选的 Host 发送回执读 `lookupHostSendCommit`（只按原发送身份查，不改答案） | 收件箱与决定消息 |
+| `ForwardMessageInputV1`、`DisposeWaitInputV1`、`ForwardMessageResultV1`、`MessageForwardingPort` | `src/core/work-graph/model/communication-contracts.ts:490` | 转发 owner 的输入/结果 DTO 与端口：`forwarded` 是一次提交，`existing` 是第二次同目标命令且不带游标；P 的复制转发只经 `forwardCopiedIntervention` | 组合根装配转发 owner、P 的复制 owner 与 F 的行时；不要另写转发输入/结果或端口 |
 | `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:434` | 决定队列、来源页与冲突读取 | 决定读模型 |
 | `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:241` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
 | `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:261` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
@@ -144,6 +144,7 @@
 | `proposeFuturePlanRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:168` | `propose_future_plan` 参数 → plan owner 请求 | 未来 Plan 工具 |
 | `toolCommitLookupResult` | `src/core/work-graph/model/tool-commit-arguments.ts:177` | 把 Store lookup 结果映射成 committed/not_committed/undetermined | owner 的只读 lookup |
 | `toolCommitLookupUnknownTool` | `src/core/work-graph/model/tool-commit-arguments.ts:188` | 对不属于该 owner 的工具名返回 undetermined | 统一 lookup 分发 |
+| `withdrawSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:193` | `withdraw_session_message` 工具的写入载荷，工具和回执查找共用 | 撤回工具和它的回执查找 |
 | 注记写入上限 | `src/core/work-graph/model/note-contracts.ts:22` | `NOTE_CONCLUSION_MAX_CODEPOINTS`、`NOTE_BODY_MAX_BYTES`、`UNDERSTANDING_BODY_MAX_BYTES`、`NOTE_FACTS_MAX`、`NOTE_BASIS_FILES_MAX`、`NOTE_BASIS_FILE_MAX_BYTES`、`NOTE_SYMBOL_HITS_MAX`、`NOTE_EXTRA_ANCHORS_MAX`、`NOTE_ANCHOR_QUOTA`、`NOTE_GOAL_QUOTA`、`NOTE_EXISTING_TOPICS_MAX`、`NOTE_ANCHOR_CANDIDATES_MAX`、`NOTE_ANCHOR_CANDIDATE_SCAN` | 注记写入/锚点准入的注入初值 |
 | 注记与记忆读取上限 | `src/core/work-graph/model/note-contracts.ts:32` | `MEMORY_PAGE_MAX`、`NOTE_READ_FILES_MAX`、`NOTE_READ_FACTS_MAX`、`NOTE_SYMBOL_RECHECK_MAX`、`MEMORY_PAGE_DEFAULT`、`MEMORY_RESULT_MAX_BYTES`、`NOTE_BODY_PAGE_BYTES`、`MEMORY_TOPICS_MAX` | 注记/记忆读取分页与字节上限 |
 | 检索与项目理解上限 | `src/core/work-graph/model/note-contracts.ts:46` | `TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_CANDIDATE_MAX`、`NOTE_RANK_WEIGHT_TOPIC`、`NOTE_RANK_WEIGHT_CONCLUSION`、`NOTE_RANK_WEIGHT_BODY`、`NOTE_SIMILAR_MAX`、`NOTE_SIMILAR_MIN`、`PROJECT_UNDERSTANDING_BODY_MAX_BYTES`、`FIND_RELATED_FILES_MAX`、`PROJECT_NORMS_CHECK_MAX`、`PROJECT_NORMS_MAX` | 全文检索、排序与项目理解读取；`TEXT_SEARCH_MAX_TERMS` 就是全文检索的词数上限 |

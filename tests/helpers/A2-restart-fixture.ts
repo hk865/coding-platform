@@ -27,16 +27,21 @@ import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
 import { HOST_INSTANCE_LOCK_FILE } from '../../src/app/host-instance-lease.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { ControlIntentSnapshotV1, SubmittedControl } from '../../src/contracts/control-intent.js';
-import type { VersionPin } from '../../src/contracts/core/identity.js';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type {
+  RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope,
+} from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
-import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { TaskAutomationPolicyV1 } from '../../src/contracts/task-requeue.js';
 import type { GoalControlOutcomeV1 } from '../../src/app/goal-fan-out-driver.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
 import {
-  AG2B_GOAL_REF, AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID,
-  AG2B_WORKSPACE_REF, corePost, graphWrite, plain, type AG2bHost,
+  AG2B_GOAL_REF, AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_ROLE,
+  AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, AG2B_WORKSPACE_REF, corePost, createAG2bSession, graphWrite, plain,
+  type AG2bHost,
 } from './AG2b-collaboration-fixture.js';
 
 const temporary: string[] = [];
@@ -76,6 +81,42 @@ export async function answer(host: AG2bHost, suffix: string, body: unknown): Pro
 
 export const selectWork = (flowId: string, goalLevel = false): WorkflowAdvanceInput => ({ schemaVersion: 1, goalRef: AG2B_GOAL_REF,
   flowId, sessionHint: null, kind: 'select_work', ...(goalLevel ? {} : { taskId: AG2B_WORK_TASK_ID }) });
+
+/** The composition root's Session writer (the owner behind `sessions/create`); the helper builds only its request. */
+type SessionLineWriter = {
+  runtime: {
+    createSession(ctx: CoreCallContext, request: CreateSessionRequest):
+      Promise<{ status: 'completed'; value: { ref: SessionRef } } | { status: string; reason?: string }>;
+  };
+};
+
+/**
+ * A-25: the executor line the removed `select_work` create step used to make. The public
+ * `sessions/create` route/owner writes the Session and its open `responsible` task links in ONE call, so a
+ * shared world keeps its old first selection without a second line or a test-built record.
+ */
+export async function seedHostLine(host: AG2bHost, requestId: string,
+  targets: readonly TaskTriple[] = [TASK]): Promise<SessionRef> {
+  const created = await createAG2bSession(host, requestId, AG2B_WORK_ROLE, targets.map(target =>
+    ({ target: { kind: 'task' as const, ref: target }, relation: 'responsible' as const })));
+  return created.sessionRef;
+}
+
+/** `seedHostLine` for a composition root opened in process (the same public owner `sessions/create` binds). */
+export async function seedPlatformLine(platform: SessionLineWriter, ctx: CoreCallContext, requestId: string, input: {
+  workspace: WorkspaceScope; role: RoleConfigurationRef; targets: readonly TaskTriple[];
+}): Promise<SessionRef> {
+  const created = await platform.runtime.createSession(ctx, {
+    workspace: input.workspace, role: input.role, recommendedRefs: [],
+    initialLinks: input.targets.map(target => ({ target: { kind: 'task' as const, ref: target },
+      relation: 'responsible' as const })),
+    meta: { requestId, expected: [] },
+  });
+  if (!('value' in created)) {
+    throw new Error(`the Session line was not created: ${JSON.stringify(created)}`);
+  }
+  return created.value.ref;
+}
 
 export type AdvanceValue = Extract<WorkflowAdvanceResult, { status: 'ready' }>['value'];
 

@@ -12,14 +12,16 @@
  * no stand-in is built (L1 supplies it later).
  */
 import { describe, expect, it } from 'vitest';
+import type { MemberRequestResultV1 } from '../../src/core/work-graph/tasks/member-service.js';
 import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
 import { plainSessionRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { readGoal } from '../helpers/A2-restart-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, WORKFLOW } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
-import { ready, sessionOf } from '../helpers/S7A-fixture.js';
+import { jsonOf, openS7C1World, startS7C1ToolLine } from '../helpers/S7C-member-fixture.js';
+import { ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import {
   openS7C1Chooser, openS7C1DirectoryDelta, pickChooser, pickOwned,
 } from '../helpers/S7C1-p-directory-delta.js';
@@ -113,10 +115,40 @@ describe('P-reads: read failures on memory (book-7c.md:1368)', () => {
 });
 
 describe('P-reads: the targeted responsible card (book-7c.md:1368)', () => {
-  // S7C1-DEFERRED: the refused-authorization row (P-01) awaits the real `PreClaimAuthorizationPortV1` that M
-  // implements and L1 injects; P injects no literal verdict. L1 completes this row.
-  it('a refused authorization excludes the targeted responsible line (P-01)', () => {
-    throw new Error('S7C1-DEFERRED: the real PreClaimAuthorizationPortV1 is not injected (7C-1 L1)');
+  it('a refused authorization excludes the targeted responsible line (P-01)', async () => {
+    const world = await openS7C1World();
+    try {
+      await setS7AAutonomy(world.world, world.goal, 'after_plan_confirmation');
+      const task = world.tasks[2]!;
+      // A REAL Work child line: the tool-bearing Work Run creates it through `create_member`. Its delegation
+      // ceiling is the creator's envelope (`writeScope: []`), while its own executor binding grants `['.']`,
+      // so the real pre-claim authorization refuses it (a refusal excludes without an `incomplete` mark).
+      await startS7C1ToolLine(world, { task });
+      const caller = world.lines.adviser;
+      if (caller === null) throw new Error('P-reads: the world was opened without its adviser caller line');
+      const created = jsonOf(await world.world.scripted.requests(caller), 's7c-tool-call') as MemberRequestResultV1;
+      if (created.status !== 'created') throw new Error(`P-reads: no Work child line: ${JSON.stringify(created)}`);
+      const child = await world.world.readSession(created.session);
+      expect(child.record.delegationCeiling?.writeScope).toEqual([]);
+      expect(child.record.occupancy).toBeNull();
+
+      const answer = await world.world.post('workflow/advance', plain(S6A_SCOPE, {
+        schemaVersion: 1, goalRef: world.goal, flowId: 's7c1-p-refused', sessionHint: null,
+        kind: 'select_work', taskId: task.taskId,
+      }));
+      const body = answer.body as { status: string; value?: { state: string; next: { kind: string;
+        taskId?: string; operation?: { kind: string } } | null;
+        pick: { rank: string; incomplete: readonly string[]; candidates: number } | null } };
+      if (body.status !== 'ready' || body.value === undefined) {
+        throw new Error(`P-reads: the refused-authorization advance was not ready: ${JSON.stringify(body)}`);
+      }
+      expect(body.value.pick).toEqual({ rank: 'none', incomplete: [], candidates: 0 });
+      expect(body.value.next).toMatchObject({ kind: 'perform', taskId: task.taskId,
+        operation: { kind: 'suggest_member' } });
+      expect((await world.world.readSession(created.session)).record.occupancy).toBeNull();
+    } finally {
+      await world.close();
+    }
   });
 
   it('a sole targeted card survives a page-1 failure and its rank is none (P-01)', async () => {

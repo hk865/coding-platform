@@ -31,6 +31,7 @@ import type { WorkflowHostConfiguration } from '../../src/business/workflow/port
 import type { ActorRef } from '../../src/contracts/command-event.js';
 import type { ControlIntentKindV1, ControlIntentSnapshotV1 } from '../../src/contracts/control-intent.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { ExecutionAuthorizationV2, RunRef, RunSnapshot, TaskAttemptSnapshot } from '../../src/contracts/dispatch.js';
@@ -48,6 +49,7 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { RequeueTaskInput, TaskClaimOutbox } from '../../src/core/work-graph/model/claim-contracts.js';
 import { desiredStateOfKind } from '../../src/core/work-graph/state/control-intent-machine.js';
 import { buildSuccessorRound, reverifyFailureClass } from '../../src/core/work-graph/state/verification-machine.js';
+import { seedPlatformLine } from '../helpers/A2-restart-fixture.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { createC2RuntimePlatform } from '../helpers/C2-runtime-platform-fixture.js';
@@ -107,26 +109,36 @@ function workspaceBindings(directory: string, state: { revision: number }): Work
 }
 
 function runtimeHost(scripted: ReturnType<typeof createScriptedModel>): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'inv-host-config@1',
+      model: { configuration: { revision: 'inv-host-config@1', provider: 'deepseek', model: 'inv-scripted', baseUrl: 'http://127.0.0.1' },
+        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'inv-counter' }) } },
+      budget: runtimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('Invariant trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills',
+        import.meta.url)), enabledIds: [] },
+      systemInstruction: 'Invariant trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'inv-host-config@1',
-        model: { configuration: { revision: 'inv-host-config@1', provider: 'deepseek', model: 'inv-scripted', baseUrl: 'http://127.0.0.1' },
-          client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'inv-counter' }) } },
-        budget: runtimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('Invariant trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills',
-          import.meta.url)), enabledIds: [] },
-        systemInstruction: 'Invariant trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -207,6 +219,12 @@ async function openEnvironment(directories: string[]): Promise<Environment> {
   const applied = await platform.plans.applyPlanChange(host, { meta: { requestId: 'inv-plan-apply', expected: [] },
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error('Plan adoption failed');
+  // A-25: picking no longer makes a line, so the world seeds the executor line.
+  for (const taskId of ['work-1']) {
+    await seedPlatformLine(platform, host, `line-${taskId}`, {
+      workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' }, targets: [{ projectId, goalId: goalRef.goalId, taskId }],
+    });
+  }
   return { platform, scripted, directory, workspaceRoot };
 }
 

@@ -61,6 +61,12 @@ afterEach(async () => {
   await cleanupRestart();
 });
 
+/** A-07: both resolutions answer the same unsupported Work binding. */
+function unsupportedWork() {
+  return { status: 'rejected' as const, code: 'unsupported' as const,
+    reason: 'the S0 attention fixture never executes a Run' };
+}
+
 async function openPlatform(kind: 'memory' | 'sqlite'): Promise<Platform> {
   const directory = kind === 'sqlite' ? await tempDir('s0-attention-') : undefined;
   const platform = await createTargetPlatform({
@@ -75,9 +81,8 @@ async function openPlatform(kind: 'memory' | 'sqlite'): Promise<Platform> {
     },
     // A real Runtime publishes `readAttentionGraph`; this fixture never starts a Run.
     runtime: {
-      async resolveConfiguration() {
-        return { status: 'rejected', code: 'unsupported', reason: 'the S0 attention fixture never executes a Run' };
-      },
+      async resolveConfiguration() { return unsupportedWork(); },
+      async resolveRoleConfiguration() { return unsupportedWork(); },
     },
     now: () => '2026-10-19T00:00:00.000Z',
   });

@@ -232,32 +232,43 @@ export async function createS2BBe1Platform(options: S2BBe1PlatformOptions): Prom
   const scripted = createBe1ScriptedModel(options.scriptedReplies, options.beforeReply);
   const allowedRuns = new Set<string>(runs.map(run => refKey(run.ref)));
   const allowsRead = options.allowsRead ?? (() => true);
-  const host: RuntimeHostBindings = {
-    async resolveConfiguration(ctx, request) {
-      if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
-        || !allowedRuns.has(refKey(request.runRef))) {
-        return { status: 'rejected', code: 'forbidden', reason: 'S2B BE1 Host is not bound to this complete Run/scope' };
-      }
-      if (request.roleResolution.status === 'inadmissible') {
-        return { status: 'rejected', code: 'forbidden', reason: 'S2B BE1 Host refuses the current Role' };
-      }
-      return { status: 'ready', value: {
-        configurationRevision: 's2b-be1-host@1',
-        model: { configuration: { revision: 's2b-be1-host@1', provider: 'deepseek', model: 's2b-local-scripted', baseUrl: 'http://127.0.0.1' },
-          client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 's2b-be1-counter' }) } },
-        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
-          maxRequests: options.maxRequests ?? 128, maxToolCalls: options.maxToolCalls ?? 256,
-          timeoutMs: null, perResponseTokens: 4096 },
-        tools: [...options.toolNames], writeScope: [...writeScope],
-        hostTemplate: null,
-        ...(options.shell === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
-        ...(options.readonlyCommands === true ? { readonlyCommandAccess: 'all_except_denied' as const } : {}),
-        skills: { resourceRoot: SKILL_ROOT, enabledIds: [] },
-        systemInstruction: null,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
-    },
-  };
+  const host: RuntimeHostBindings = (() => {
+    // A-07: the one configuration body both resolutions share.
+    const configured = () => ({ status: 'ready' as const, value: {
+      configurationRevision: 's2b-be1-host@1',
+      model: { configuration: { revision: 's2b-be1-host@1', provider: 'deepseek', model: 's2b-local-scripted', baseUrl: 'http://127.0.0.1' },
+        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 's2b-be1-counter' }) } },
+      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
+        maxRequests: options.maxRequests ?? 128, maxToolCalls: options.maxToolCalls ?? 256,
+        timeoutMs: null, perResponseTokens: 4096 },
+      tools: [...options.toolNames], writeScope: [...writeScope],
+      hostTemplate: null,
+      ...(options.shell === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
+      ...(options.readonlyCommands === true ? { readonlyCommandAccess: 'all_except_denied' as const } : {}),
+      skills: { resourceRoot: SKILL_ROOT, enabledIds: [] },
+      systemInstruction: null,
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } });
+    return {
+      async resolveConfiguration(ctx, request) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
+          || !allowedRuns.has(refKey(request.runRef))) {
+          return { status: 'rejected', code: 'forbidden', reason: 'S2B BE1 Host is not bound to this complete Run/scope' };
+        }
+        if (request.roleResolution.status === 'inadmissible') {
+          return { status: 'rejected', code: 'forbidden', reason: 'S2B BE1 Host refuses the current Role' };
+        }
+        return configured();
+      },
+      // A-07: no Run exists; the same scope check and configuration with the Role only.
+      async resolveRoleConfiguration(ctx) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'S2B BE1 Host is not bound to this workspace' };
+        }
+        return configured();
+      },
+    };
+  })();
   const workspaceDir = join(f.directory, 'workspace');
   await mkdir(workspaceDir, { recursive: true });
   const workspaceHost: WorkspaceHostBindings = {

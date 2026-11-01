@@ -28,6 +28,7 @@ import { createTargetPlatform } from '../../../src/composition/create-platform.j
 import type { ActorRef } from '../../../src/contracts/command-event.js';
 import type { ArtifactRef } from '../../../src/contracts/artifact.js';
 import type { CoreCallContext } from '../../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../../src/contracts/core/identity.js';
 import { sha256Hex } from '../../../src/contracts/fingerprint.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../../src/contracts/plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskAutomationPolicyV1 } from '../../../src/contracts/task-requeue.js';
@@ -38,6 +39,7 @@ import type { PlanProposalRef } from '../../../src/core/work-graph/model/plan-co
 import type { FuzzStep } from '../../state/invariants.js';
 import { AG2B_GATE_TASK_ID, AG2B_GOAL_REF } from '../../helpers/AG2b-collaboration-fixture.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
+import { seedPlatformLine } from '../../helpers/A2-restart-fixture.js';
 import {
   assertInvariants, assertInvariantsAt, performs, stepOfReceipt, type Driven, type InvariantTarget, type Platform,
   type PlatformScenario,
@@ -164,28 +166,38 @@ function caseWorkspace(ids: CaseIds, directory: string, state: CaseWorkspaceStat
 }
 
 function caseRuntime(ids: CaseIds, scripted: ScriptedModel): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== ids.projectId || context.workspaceId !== ids.workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: `${ids.prefix}-host-config@1`,
+      model: { configuration: { revision: `${ids.prefix}-host-config@1`, provider: 'deepseek', model: `${ids.prefix}-scripted`,
+        baseUrl: 'http://127.0.0.1' },
+      client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+        tokenizer: `${ids.prefix}-counter` }) } },
+      budget: RUNTIME_BUDGET,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex(ids.instruction) } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../../vendor/coding-agent/resources/skills',
+        import.meta.url)), enabledIds: [] },
+      systemInstruction: ids.instruction, deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== ids.projectId || context.workspaceId !== ids.workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: `${ids.prefix}-host-config@1`,
-        model: { configuration: { revision: `${ids.prefix}-host-config@1`, provider: 'deepseek', model: `${ids.prefix}-scripted`,
-          baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-          tokenizer: `${ids.prefix}-counter` }) } },
-        budget: RUNTIME_BUDGET,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex(ids.instruction) } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../../vendor/coding-agent/resources/skills',
-          import.meta.url)), enabledIds: [] },
-        systemInstruction: ids.instruction, deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -227,6 +239,14 @@ async function openCase(profile: CaseProfile, options: OpenCaseOptions): Promise
   holder.environment = environment;
   environments.set(platform, environment);
   await seedCase(profile, ids, platform, state);
+  // A-25: the removed create step used to make the executor line on the first `select_work`; the world seeds it
+  // with the same open responsible links for every ordinary work Task of the moved case.
+  for (const task of profile.tasks.filter(candidate => candidate.taskKind === 'work')) {
+    await seedPlatformLine(platform, caseCtx(ids), `${ids.prefix}-line-${task.taskId}`, {
+      workspace: ids.scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+      targets: [{ projectId: ids.projectId, goalId: ids.goalRef.goalId, taskId: task.taskId }],
+    });
+  }
   await assertInvariantsAt(environment.invariants, `${ids.prefix} seeded`);
   return environment;
 }

@@ -40,7 +40,8 @@ import type { SessionMessage, SessionMessageCommandPort } from '../work-graph/mo
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
 import {
   ackSessionMessageRequest, recordDecisionApplicationRequest, respondSessionMessageRequest,
-  sendSessionMessageRequest, sendUserMessageRequest, type SessionMessageSendInput,
+  sendSessionMessageRequest, sendUserMessageRequest, withdrawSessionMessageRequest,
+  type SessionMessageSendInput,
 } from '../work-graph/model/tool-commit-arguments.js';
 import type { RespondMessageV1 } from '../work-graph/model/message-payload.js';
 
@@ -55,6 +56,15 @@ export const SESSION_MAILBOX_TOOL_NAMES = [
   'read_session_message_body',
   'ack_session_message',
   'respond_session_message',
+  'withdraw_session_message',
+] as const;
+
+/** The secretary request round's four mailbox tools; the three reads stay forbidden for every Query. */
+export const SECRETARY_QUERY_MAILBOX_TOOL_NAMES = [
+  'send_session_message',
+  'ack_session_message',
+  'respond_session_message',
+  'withdraw_session_message',
 ] as const;
 
 /**
@@ -324,6 +334,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     read_session_message_body: textOf('read_session_message_body').description,
     ack_session_message: textOf('ack_session_message').description,
     respond_session_message: textOf('respond_session_message').description,
+    withdraw_session_message: textOf('withdraw_session_message').description,
     send_user_message: textOf('send_user_message').description,
     read_user_decision: textOf('read_user_decision').description,
     record_decision_application: textOf('record_decision_application').description,
@@ -383,6 +394,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
         reject: z.literal(true), reason: z.string().min(1),
       }).strict(),
     ]),
+    z.object({ messageRef: message }).strict(),
   ];
   const trustedSessionRef: SessionRef = { projectId: config.sessionRef.projectId, sessionId: config.sessionRef.sessionId };
 
@@ -514,6 +526,12 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
                 // The payload is flat; its body arm is spread into the owner's
                 // input. The full command port is the one that carries both arms.
                 const result = await config.mailbox.respondMessage(context, respondSessionMessageRequest(input, requestId));
+                return mapWrite(call.callId, result);
+              }
+              case 'withdraw_session_message': {
+                const input = args as { messageRef: SessionMessageRef };
+                const result = await config.mailbox.withdrawMessage(context,
+                  withdrawSessionMessageRequest(input, requestId));
                 return mapWrite(call.callId, result);
               }
               default:

@@ -33,14 +33,21 @@ import {
 export async function openShellWorkRoot(h: HostScenario, model: ScriptedModel,
   observer?: RecordCommitObserver): Promise<Platform> {
   const base = ag2bWorkRuntime(() => model, { tools: [...AG2B_WORK_TOOLS, 'shell'] });
+  // A-07: both resolutions overlay the SAME grant; the pre-claim check has no Run.
+  const overlay = (resolved: Awaited<ReturnType<typeof base.resolveConfiguration>>) => {
+    if (resolved.status !== 'ready') return resolved;
+    return { status: 'ready' as const,
+      value: { ...resolved.value, shellWorkspaceAccess: 'all_except_denied' as const } };
+  };
   const runtime = {
     ...base,
     async resolveConfiguration(context: Parameters<typeof base.resolveConfiguration>[0],
       request: Parameters<typeof base.resolveConfiguration>[1]) {
-      const resolved = await base.resolveConfiguration(context, request);
-      if (resolved.status !== 'ready') return resolved;
-      return { status: 'ready' as const,
-        value: { ...resolved.value, shellWorkspaceAccess: 'all_except_denied' as const } };
+      return overlay(await base.resolveConfiguration(context, request));
+    },
+    async resolveRoleConfiguration(context: Parameters<typeof base.resolveConfiguration>[0],
+      input: Parameters<NonNullable<typeof base.resolveRoleConfiguration>>[1]) {
+      return overlay(await base.resolveRoleConfiguration!(context, input));
     },
   };
   return await createTargetPlatform({

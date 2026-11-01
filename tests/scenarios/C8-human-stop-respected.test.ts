@@ -460,7 +460,7 @@ it('AV-4 (STEP5-FLIPS §14): a pause superseded by the natural completion fences
   const planRef = { aggregateType: 'PlanRevision', projectId: AG2B_SCOPE.projectId, planId: 'ag2b-plan' };
   // The same selection the source (A2 AV-4) asserted, with its exact request fields: the selected Task's
   // open, and exactly the open's input (the completed Run, its Task, the adopted Plan).
-  expect(steps[0]).toEqual({ state: 'advance', receipt: null, reason: null, next: expect.objectContaining({ kind: 'perform',
+  expect(steps[0]).toEqual({ state: 'advance', receipt: null, reason: null, pick: null, next: expect.objectContaining({ kind: 'perform',
     taskId: AG2B_WORK_TASK_ID, operation: { kind: 'open_checks',
       request: expect.objectContaining({ input: { subjectRunRef: runRef, subject: taskRef, planRef } }) } }) });
   expect(steps.slice(1).map(step => step.receipt?.kind)).toEqual(['open_checks', 'run_check', 'finalize_checks', 'complete_task', undefined]);

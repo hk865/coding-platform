@@ -42,6 +42,7 @@ import type { ContinuationWorkspaceBytes } from '../workspace/continuation-diff-
 import type { RoleBindingFactsPort } from '../work-graph/model/configuration-contracts.js';
 import type { MaterialPort } from '../work-graph/model/material-contracts.js';
 import type { TaskClaimPort } from '../work-graph/model/claim-contracts.js';
+import type { EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type {
   UnknownCallReviewPort, UnknownCallReviewReadPort,
 } from '../work-graph/model/unknown-call-review-contracts.js';
@@ -57,7 +58,9 @@ import type { GraphContextReadPort } from '../work-graph/model/graph-context-con
 import type { SecretaryPreparationFactsPort } from '../work-graph/model/secretary-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { NoteCheckPort, NoteMemoryMaterialPort, NoteMemoryReadPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
+import type { MemberRequestPortV1 } from '../work-graph/tasks/member-service.js';
 import type { ModelRequestPort, ModelRequestReadPort } from '../work-graph/tasks/model-call-contracts.js';
+import type { MainSurfaceReadPort } from '../work-graph/views/main-surface-read-model.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
 import type { SessionMessageCommandPort } from '../work-graph/model/communication-contracts.js';
@@ -126,6 +129,10 @@ export type RuntimeConfigurationInput = {
   roleResolution: RoleSpecResolutionV1;
 };
 
+/** A-07: the same trusted binding lookup keyed only by scope and Role, for the
+ * read-only check that runs before a Run exists (no faked RunRef). */
+export type RoleRuntimeConfigurationInput = { role: RoleConfigurationRef };
+
 /** The Host's exact, trusted grant for this Run. `configurationRevision` is the
  * version that must be re-checked when start actually consumes it. */
 export type ResolvedRuntimeConfiguration = {
@@ -184,6 +191,8 @@ export type ReadonlyCommandAccessInput = {
 export interface RuntimeHostBindings {
   resolveConfiguration(ctx: CoreCallContext, input: RuntimeConfigurationInput): Promise<ReadResult<ResolvedRuntimeConfiguration>>;
   resolveQueryConfiguration?(ctx: CoreCallContext, input: QueryRuntimeConfigurationInput): Promise<ReadResult<ResolvedRuntimeConfiguration>>;
+  /** A-07: the no-Run scope/Role lookup the pre-claim check consumes. */
+  resolveRoleConfiguration?(ctx: CoreCallContext, input: RoleRuntimeConfigurationInput): Promise<ReadResult<ResolvedRuntimeConfiguration>>;
   /**
    * K3 L13/U5/R3: the binding-level read-only command facts the Runtime's
    * `reviewCapability` probes with (the SAME `readonlyCommandAccess` and
@@ -230,6 +239,12 @@ export type RuntimeExecutionDependencies = {
    * with this dependency absent must fail closed as `unsupported` before the model.
    */
   messages?: SessionMessageCommandPort;
+  /** The one member request owner behind the `create_member` adapter. */
+  memberCreation?: MemberRequestPortV1;
+  /** LD-06 (lead, 11-01): the `request_recheck` owner, only the method the tool calls; the card path stays on the Workflow side. */
+  evidence?: Pick<EvidencePort, 'reverifyRound'>;
+  /** The one read-only request view behind `read_requests`; injected by the composition root. */
+  mainSurface?: MainSurfaceReadPort;
   /** The expiry chain count, injected beside `messages`; absent fails the expiry input closed. */
   expiryCount?: (ctx: CoreCallContext, input: { messageRef: SessionMessageRef }) =>
     Promise<ReadResult<1 | 2 | 'incomplete'>>;

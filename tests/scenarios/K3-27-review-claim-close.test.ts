@@ -169,7 +169,7 @@ function concludingModel(label: string) {
 describe('K3-27 the review claim\'s K close', () => {
   it('K3-27 (success): the review claim closes the dangling Turn and the round claims in the original Session', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
-      script: { replies: [readCall('k3-27-success-other'), { kind: 'text', text: 'the other task completes' }] }, workIds: [AG2B_WORK_TASK_ID, 'k3-27-success-other-task'] });
+      script: { replies: [readCall('k3-27-success-other'), { kind: 'text', text: 'the other task completes' }] }, workIds: [AG2B_WORK_TASK_ID, 'k3-27-success-other-task'], lineTaskIds: ['k3-27-success-other-task'] });
     const crashed = await crashedOriginalSession(h, 'k3-27-success');
     const root = await openReviewWorkRoot(h, concludingModel('k3-27-success'));
     try {
@@ -216,7 +216,7 @@ describe('K3-27 the review claim\'s K close', () => {
   it('K3-27 (Kernel version conflict): the close answers conflict, the Workflow waits, and the next advance closes the Turn and claims in the original Session', async () => {
     kernelClosure.mode = 'conflict-once';
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
-      script: { replies: [readCall('k3-27-conflict-other'), { kind: 'text', text: 'the other task completes' }] }, workIds: [AG2B_WORK_TASK_ID, 'k3-27-conflict-other-task'] });
+      script: { replies: [readCall('k3-27-conflict-other'), { kind: 'text', text: 'the other task completes' }] }, workIds: [AG2B_WORK_TASK_ID, 'k3-27-conflict-other-task'], lineTaskIds: ['k3-27-conflict-other-task'] });
     const crashed = await crashedOriginalSession(h, 'k3-27-conflict');
     const root = await openReviewWorkRoot(h, concludingModel('k3-27-conflict'));
     try {
@@ -252,7 +252,7 @@ describe('K3-27 the review claim\'s K close', () => {
 
   it('K3-27 (unsupported): the fallback creates a Session and hands over; the round claims there, seeded with the original history; the continuation is in the same Session and the brief carries the review record', async () => {
     const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
-      script: { replies: [readCall('k3-27-fallback-other'), { kind: 'text', text: 'the other task completes' }] }, workIds: [AG2B_WORK_TASK_ID, 'k3-27-fallback-other-task'] });
+      script: { replies: [readCall('k3-27-fallback-other'), { kind: 'text', text: 'the other task completes' }] }, workIds: [AG2B_WORK_TASK_ID, 'k3-27-fallback-other-task'], lineTaskIds: ['k3-27-fallback-other-task'] });
     const crashed = await crashedOriginalSession(h, 'k3-27-fallback');
     // The record exists (RUN-25); only the review claim's K close finds the
     // Kernel closure unavailable now.

@@ -175,7 +175,7 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     const requeue = decoded.value.requeue;
     const after = effectPinOf(commit, requeue.ref);
     if (after === null) return rejectedWithCurrent('invalid', 'the receipt does not commit the requeue');
-    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: null,
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof ?? null,
       effect: { kind: 'requeue', ref: requeue.ref, party: requeue.afterRunRef, after,
         ...(decoded.value.acknowledgement === undefined ? {} : { acknowledgement: decoded.value.acknowledgement }) } };
   },
@@ -192,7 +192,7 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     const round = reverified.result;
     const after = effectPinOf(commit, round.ref);
     if (after === null) return rejectedWithCurrent('invalid', 'the receipt does not commit the successor round');
-    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: null,
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: reverified.proof ?? null,
       effect: { kind: 'recheck', ref: round.ref, party: round.subjectRunRef, after,
         ...(reverified.acknowledgement === undefined ? {} : { acknowledgement: reverified.acknowledgement }) } };
   },

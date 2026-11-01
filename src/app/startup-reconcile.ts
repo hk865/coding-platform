@@ -63,6 +63,7 @@ import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { HandoffQueuePort } from './wake-loop.js';
 import type { RedriveAnswerV1 } from '../business/workflow/contracts.js';
 import type { UnappliedAnswersReadV1 } from '../core/work-graph/tasks/unknown-call-review-answers.js';
+import type { MemberRequestPortV1 } from '../core/work-graph/tasks/member-service.js';
 
 type Scope = { projectId: string; workspaceId: string };
 
@@ -164,6 +165,8 @@ export type StartupReconcileDependencies = {
   scopes: readonly Scope[];
   /** The Host's own context for one workspace (the Host actor, a never-aborted signal). */
   context(scope: Scope): CoreCallContext;
+  /** LD-14: continue every pending member child before Runs or Sessions are classified. */
+  members?: Pick<MemberRequestPortV1, 'resumePendingMemberCreations'>;
   /** Step 6: one idempotent fan-out pass for the Goal's current epoch (GOAL-16/14, then GOAL-29 on a resume). */
   fanOut(ctx: CoreCallContext, goalRef: GoalRef, options: GoalFanOutPassOptions): Promise<GoalFanOutReportV1>;
   /**
@@ -328,6 +331,22 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
   return report;
 
   async function reconcileScope(scope: Scope, ctx: CoreCallContext, out: StartupReconcileReportV1): Promise<void> {
+    // Step 0 (LD-14): the Host start-up continues a pending member child under
+    // its own system context, before any Run or Session is classified.
+    if (deps.members !== undefined) {
+      try {
+        const resumed = await deps.members.resumePendingMemberCreations(ctx);
+        if (resumed.status !== 'ready') {
+          out.problems.push(`${scope.workspaceId}: the pending member creations are not resumable (${rejectionText(resumed)})`);
+        } else {
+          for (const left of resumed.value.left) {
+            out.problems.push(`${scope.workspaceId}: the member operation ${left.operation.operationId} was left (${left.code}: ${left.reason})`);
+          }
+        }
+      } catch (error) {
+        out.problems.push(`${scope.workspaceId}: the pending member creations are not resumable (${messageOf(error)})`);
+      }
+    }
     // Step 1: probe and record health (SES-12/13/19).
     const probes = new Map<string, SessionMappingProbe>();
     const sessions: SessionRecord[] = [];

@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
@@ -42,6 +42,7 @@ import type {
 } from '../../src/business/workflow/contracts.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver, type AutoCaptureDriver } from '../../src/app/auto-capture-driver.js';
+import { seedPlatformLine } from '../helpers/A2-restart-fixture.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 
@@ -82,29 +83,39 @@ function contextFor(projectId: string, workspaceId: string): CoreCallContext {
 
 function runtimeHost(projectId: string, workspaceId: string,
   scripted: ReturnType<typeof createScriptedModel>): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 's8a-l8-pass-host-config@1',
+      model: { configuration: { revision: 's8a-l8-pass-host-config@1', provider: 'deepseek',
+        model: 's8a-l8-pass-scripted', baseUrl: 'http://127.0.0.1' },
+      client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+        tokenizer: 's8a-l8-pass-counter' }) } },
+      budget: runtimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('S8A L8 trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: {
+        resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url)),
+        enabledIds: [] },
+      systemInstruction: 'S8A L8 trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 's8a-l8-pass-host-config@1',
-        model: { configuration: { revision: 's8a-l8-pass-host-config@1', provider: 'deepseek',
-          model: 's8a-l8-pass-scripted', baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-          tokenizer: 's8a-l8-pass-counter' }) } },
-        budget: runtimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('S8A L8 trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: {
-          resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url)),
-          enabledIds: [] },
-        systemInstruction: 'S8A L8 trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -255,6 +266,12 @@ async function openEnvironment(backend: Backend, projectId: string): Promise<Fix
     expected: [{ ref: goalRef, revision: 1 }] },
   input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error('Plan adoption failed');
+  // A-25: picking no longer makes a line, so the world seeds the executor line.
+  for (const taskId of ['work-1']) {
+    await seedPlatformLine(platform, ctx, `line-${taskId}`, {
+      workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' }, targets: [{ projectId, goalId: goalRef.goalId, taskId }],
+    });
+  }
 
   const driver = createAutoCaptureDriver({
     architecture: platform.architecture,

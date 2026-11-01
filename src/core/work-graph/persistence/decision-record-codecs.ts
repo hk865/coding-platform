@@ -167,6 +167,7 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   SessionMessage: { strings: ['projectId', 'workspaceId', 'messageId'] },
   TaskRequeue: { strings: ['projectId', 'goalId', 'taskId', 'afterRunId'] },
   TaskReworkRefusal: { strings: ['projectId', 'goalId', 'taskId', 'operation', 'subjectId'] },
+  ReworkRequest: { strings: ['projectId', 'goalId', 'taskId', 'requestId'] },
   // The note-card proof pins name the note aggregates (the card's captured note
   // and each superseded head). Every changed object is the SAME NoteHead
   // aggregate (`@v -> @v+1`), so no NoteVersion ref rule is needed.

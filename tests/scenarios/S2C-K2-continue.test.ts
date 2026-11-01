@@ -12,6 +12,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import { cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario } from './harness.js';
+import { seedHostLine } from '../helpers/A2-restart-fixture.js';
 import {
   AG2B_GOAL_REF, AG2B_PROJECT_REF, AG2B_SCOPE, AG2B_WORKSPACE_REF, AG2B_WORK_ROLE, createAG2bSession, graphWrite,
   listSessions, plain,
@@ -231,6 +232,7 @@ it('2C-39 (4) one line with two paused-interrupted Tasks in two Goals lists two 
   const applied = await platform.plans.applyPlanChange(hostCtx(), { meta: { requestId: 's2c39d-apply2', expected: [] },
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   expect(applied.status, JSON.stringify(applied)).toBe('committed');
+  await seedHostLine(h.host, 's2c39d-y-line', [{ projectId: AG2B_SCOPE.projectId, goalId: goal2.goalId, taskId: 'ag2b-work-2' }]);
 
   // 1) Run X on Goal G, pause it and crash: G's line is retired with X paused-interrupted.
   const toStartX = await h.advance(h.select('s2c39d-x', 'ag2b-work'), { stopBefore: performs('start') });

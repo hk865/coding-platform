@@ -343,30 +343,40 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
   const queryInstruction = options.queryInstruction === undefined
     ? 'WP2 trusted read-only consultation guidance' : options.queryInstruction;
   const allowedRuns = new Set<string>();
-  const host: RuntimeHostBindings = {
-    async resolveConfiguration(ctx, request) {
-      if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
-        || (!options.allowAnyRun && !allowedRuns.has(canonicalJson(request.runRef as unknown as JsonValue)))) {
-        return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host is not bound to this complete Run/scope' };
-      }
-      if (request.roleResolution.status === 'inadmissible') {
-        return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host refuses the current Role' };
-      }
-      return { status: 'ready', value: {
-        configurationRevision: 'wp2-host-config@1',
-        model: { configuration: { revision: 'wp2-host-config@1', provider: 'deepseek', model: 'wp2-local-scripted', baseUrl: 'http://127.0.0.1' },
-          client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'wp2-fixture-counter' }) } },
-        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-        tools: [...toolNames], writeScope: [...(options.writable === true ? ['.'] : options.writeScope ?? [])],
-        ...(options.writable === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
-        ...(options.contextResidentBytes === undefined ? {} : { contextResidentBytes: options.contextResidentBytes }),
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: request.role.templateId, revision: request.role.templateRevision, digest: sha256Hex(systemInstruction ?? '') } : null,
-        skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
-        systemInstruction, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
-    },
-    async resolveQueryConfiguration(ctx, request) {
+  const host: RuntimeHostBindings = (() => {
+    // A-07: the one configuration body both resolutions share.
+    const configured = (role: RoleConfigurationRef) => ({ status: 'ready' as const, value: {
+      configurationRevision: 'wp2-host-config@1',
+      model: { configuration: { revision: 'wp2-host-config@1', provider: 'deepseek', model: 'wp2-local-scripted', baseUrl: 'http://127.0.0.1' },
+        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'wp2-fixture-counter' }) } },
+      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
+      tools: [...toolNames], writeScope: [...(options.writable === true ? ['.'] : options.writeScope ?? [])],
+      ...(options.writable === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
+      ...(options.contextResidentBytes === undefined ? {} : { contextResidentBytes: options.contextResidentBytes }),
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: role.templateId, revision: role.templateRevision, digest: sha256Hex(systemInstruction ?? '') } : null,
+      skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
+      systemInstruction, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } });
+    return {
+      async resolveConfiguration(ctx, request) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
+          || (!options.allowAnyRun && !allowedRuns.has(canonicalJson(request.runRef as unknown as JsonValue)))) {
+          return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host is not bound to this complete Run/scope' };
+        }
+        if (request.roleResolution.status === 'inadmissible') {
+          return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host refuses the current Role' };
+        }
+        return configured(request.role);
+      },
+      // A-07: no Run exists; the same scope check and configuration with the Role only.
+      async resolveRoleConfiguration(ctx, input) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host is not bound to this workspace' };
+        }
+        return configured(input.role);
+      },
+      async resolveQueryConfiguration(ctx, request) {
       if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId) {
         return { status: 'rejected', code: 'forbidden', reason: 'WP2 query Host is not bound to this workspace' };
       }
@@ -382,8 +392,9 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
         systemInstruction: queryInstruction,
         deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       } };
-    },
-  };
+      },
+    };
+  })();
   const workspaceHost: RuntimeExecutionDependencies['workspaceHost'] = {
     async resolveRoot(scope) {
       return scope.projectId === f.scope.projectId && scope.workspaceId === f.scope.workspaceId
@@ -722,30 +733,40 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
   const allowedRuns = new Set<string>();
   if (claim !== null) allowedRuns.add(canonicalJson(claim.runRef as unknown as JsonValue));
   if (secondClaim !== null) allowedRuns.add(canonicalJson(secondClaim.runRef as unknown as JsonValue));
-  const host: RuntimeHostBindings = {
-    async resolveConfiguration(ctx, request) {
-      if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
-        || (!options.allowAnyRun && !allowedRuns.has(canonicalJson(request.runRef as unknown as JsonValue)))) {
-        return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host is not bound to this complete Run/scope' };
-      }
-      if (request.roleResolution.status === 'inadmissible') {
-        return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host refuses the current Role' };
-      }
-      return { status: 'ready', value: {
-        configurationRevision: 'wp2-host-config@1',
-        model: { configuration: { revision: 'wp2-host-config@1', provider: 'deepseek', model: 'wp2-local-scripted', baseUrl: 'http://127.0.0.1' },
-          client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'wp2-fixture-counter' }) } },
-        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-        tools: [...toolNames], writeScope: [...(options.writable === true ? ['.'] : options.writeScope ?? [])],
-        ...(options.writable === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
-        hostTemplate: null,
-        ...(options.contextResidentBytes === undefined ? {} : { contextResidentBytes: options.contextResidentBytes }),
-        skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
-        systemInstruction,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
-    },
-    async resolveQueryConfiguration(ctx, request) {
+  const host: RuntimeHostBindings = (() => {
+    // A-07: the one configuration body both resolutions share.
+    const configured = () => ({ status: 'ready' as const, value: {
+      configurationRevision: 'wp2-host-config@1',
+      model: { configuration: { revision: 'wp2-host-config@1', provider: 'deepseek', model: 'wp2-local-scripted', baseUrl: 'http://127.0.0.1' },
+        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'wp2-fixture-counter' }) } },
+      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12, maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
+      tools: [...toolNames], writeScope: [...(options.writable === true ? ['.'] : options.writeScope ?? [])],
+      ...(options.writable === true ? { shellWorkspaceAccess: 'all_except_denied' as const } : {}),
+      hostTemplate: null,
+      ...(options.contextResidentBytes === undefined ? {} : { contextResidentBytes: options.contextResidentBytes }),
+      skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [...(options.skillIds ?? C2_SKILL_IDS)] },
+      systemInstruction,
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } });
+    return {
+      async resolveConfiguration(ctx, request) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId
+          || (!options.allowAnyRun && !allowedRuns.has(canonicalJson(request.runRef as unknown as JsonValue)))) {
+          return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host is not bound to this complete Run/scope' };
+        }
+        if (request.roleResolution.status === 'inadmissible') {
+          return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host refuses the current Role' };
+        }
+        return configured();
+      },
+      // A-07: no Run exists; the same scope check and configuration with the Role only.
+      async resolveRoleConfiguration(ctx) {
+        if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'WP2 Host is not bound to this workspace' };
+        }
+        return configured();
+      },
+      async resolveQueryConfiguration(ctx, request) {
       if (ctx.projectId !== f.scope.projectId || ctx.workspaceId !== f.scope.workspaceId) {
         return { status: 'rejected', code: 'forbidden', reason: 'WP2 query Host is not bound to this workspace' };
       }
@@ -761,8 +782,9 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
         systemInstruction: queryInstruction,
         deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       } };
-    },
-  };
+      },
+    };
+  })();
   const workspaceHost: RuntimeExecutionDependencies['workspaceHost'] = {
     async resolveRoot(scope) {
       return scope.projectId === f.scope.projectId && scope.workspaceId === f.scope.workspaceId

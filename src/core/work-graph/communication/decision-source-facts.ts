@@ -34,6 +34,7 @@ import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } fr
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { CommandRerunRequestReadPort } from '../model/command-rerun-request-contracts.js';
+import type { ReworkRequestReadPort } from '../tasks/rework-requests.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { KernelCommandReader } from '../model/kernel-command-read-contracts.js';
 import type { PlanProposalRef, PlanTaskPort } from '../model/plan-contracts.js';
@@ -54,6 +55,8 @@ import { readNoteReviewSource } from './decision-source/note-review.js';
 import { readUnknownCallReviewSource } from './decision-source/unknown-call-review.js';
 import { readCommandRerunRequestSource } from './decision-source/command-rerun-request.js';
 import { readMessageReleaseSource } from './decision-source/message-release.js';
+import { readMemberCreationSource } from './decision-source/member-creation.js';
+import { readReworkRequestSource } from './decision-source/rework-request.js';
 import type { DecisionSourceBranchFacts } from './decision-source/types.js';
 
 /** The one Store seam this reader uses, the same instance every other WorkGraph reader shares. */
@@ -86,6 +89,12 @@ export type DecisionSourceFactsDependencies = {
    * source is explicitly `unavailable`, never an inferred open card.
    */
   commandRerunRequests?: Pick<CommandRerunRequestReadPort, 'listRequests' | 'readRequest'>;
+  /**
+   * The rework request owner's direct read. Optional; without it a
+   * `rework_request` source is explicitly `unavailable`, never an inferred card.
+   * The switch arm reads one request by its ref.
+   */
+  reworkRequests?: Pick<ReworkRequestReadPort, 'readRequest'>;
   /** The original Run's Kernel command text (the card's blocked command). */
   readKernelCommandFacts?: KernelCommandReader;
   /** The original Run's Session, the Kernel reader's input. */
@@ -185,6 +194,10 @@ export function createDecisionSourceFacts(
             return readCommandRerunRequestSource(support, ctx, identity, deps, goalRef);
           case 'message_release':
             return readMessageReleaseSource(support, identity, goalRef);
+          case 'member_creation':
+            return readMemberCreationSource(support, identity, goalRef);
+          case 'rework_request':
+            return readReworkRequestSource(support, ctx, identity, deps, goalRef);
           default:
             return rejectedWithCurrent('invalid', 'the decision source kind is not recognized');
         }
@@ -319,6 +332,10 @@ export async function readSavedAnswerReaderSessions(
     }
     case 'goal_cause':
     case 'goal_conflict':
+      return { status: 'ready', value: [] };
+    // The member and rework cards are read by the person's card chain; no saved-answer Session is named.
+    case 'member_creation':
+    case 'rework_request':
       return { status: 'ready', value: [] };
     default:
       return { status: 'ready', value: [] };

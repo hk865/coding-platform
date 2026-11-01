@@ -21,6 +21,7 @@ import type { WorkflowAdvanceInput } from '../../../src/business/workflow/contra
 import type { WorkflowHostConfiguration } from '../../../src/business/workflow/ports.js';
 import { createTargetPlatform } from '../../../src/composition/create-platform.js';
 import type { CoreCallContext } from '../../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../../src/contracts/core/results.js';
 import type { RunRef } from '../../../src/contracts/dispatch.js';
 import { sha256Hex } from '../../../src/contracts/fingerprint.js';
@@ -31,6 +32,7 @@ import type { RuntimeHostBindings } from '../../../src/core/agent-runtime/execut
 import type { RequeueTaskInput } from '../../../src/core/work-graph/model/claim-contracts.js';
 import type { WorkspaceHostBindings } from '../../../src/core/workspace/access.js';
 import { createScriptedModel, type ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
+import { seedPlatformLine } from '../../helpers/A2-restart-fixture.js';
 import { AG2B_GOAL_REF, AG2B_WORK_TASK_ID } from '../../helpers/AG2b-collaboration-fixture.js';
 import { TASK, type AdvanceValue } from '../../helpers/A2-restart-fixture.js';
 import {
@@ -148,27 +150,37 @@ function budgetWorkspaceBindings(directory: string, state: { revision: number })
 }
 
 function budgetRuntimeHost(scripted: ScriptedModel): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== BUDGET_PROJECT_ID || context.workspaceId !== budgetWorkspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'a2-budget-host-config@1',
+      model: { configuration: { revision: 'a2-budget-host-config@1', provider: 'deepseek', model: 'a2-budget-scripted',
+        baseUrl: 'http://127.0.0.1' },
+      client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+        tokenizer: 'a2-budget-counter' }) } },
+      budget: budgetRuntimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 budget trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] },
+      systemInstruction: 'A2 budget trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== BUDGET_PROJECT_ID || context.workspaceId !== budgetWorkspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'a2-budget-host-config@1',
-        model: { configuration: { revision: 'a2-budget-host-config@1', provider: 'deepseek', model: 'a2-budget-scripted',
-          baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-          tokenizer: 'a2-budget-counter' }) } },
-        budget: budgetRuntimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 budget trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] },
-        systemInstruction: 'A2 budget trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -255,6 +267,11 @@ export async function openBudgetEnvironment(): Promise<{ platform: Platform; scr
   'Plan proposal');
   await committed(await platform.plans.applyPlanChange(host, { meta: { requestId: 'a2-budget-plan-apply', expected: [] },
     input: { proposalRef: proposed.ref, expectedProposalRevision: proposed.revision, decisionRefs: [] } }), 'Plan adoption');
+  // A-25: the removed create step used to make the executor line on the first `select_work`.
+  await seedPlatformLine(platform, budgetCtx(), 'a2-budget-line', {
+    workspace: BUDGET_SCOPE, role: BUDGET_SESSION_ROLE,
+    targets: [{ projectId: BUDGET_PROJECT_ID, goalId: BUDGET_GOAL_REF.goalId, taskId: BUDGET_TASK_ID }],
+  });
   return { platform, scripted, workspaceRoot, directory, target: { database: directory, projectId: BUDGET_PROJECT_ID } };
 }
 

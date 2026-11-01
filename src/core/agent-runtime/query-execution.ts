@@ -25,6 +25,7 @@ import {
   type QueryRequestPromptFactsV1,
 } from '../../contracts/prompts/prompt-set.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
+import { packString } from '../../contracts/prompts/pack-string.js';
 import { GRAPH_TOOL_NAMES } from './graph-tools.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
@@ -33,6 +34,11 @@ import { runObservedModel } from './observed-model-run.js';
 import { readPromptTexts } from './prompt-set-texts.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { createMailboxInputSupply } from './execution-inputs.js';
+import {
+  createSessionMailboxTools, SECRETARY_QUERY_MAILBOX_TOOL_NAMES, type SessionMailboxToolsHandle,
+} from './communication-tools.js';
+import { createMemberTools, CREATE_MEMBER_TOOL_NAME, type CreateMemberToolsHandle } from './member-tools.js';
+import { createReadRequestTools, READ_REQUESTS_TOOL_NAMES, type ReadRequestToolsHandle } from './request-read-tools.js';
 import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
@@ -109,16 +115,16 @@ function noteOwnersOf(notes: RuntimeExecutionDependencies['notes']):
 }
 
 /**
- * The trusted command identity of one `record_note` call: the QueryRun
- * principal plus the Kernel call's own id and name, in the same shape the Work
- * tool commits use. It never reads model arguments, so a replay of the same
- * call derives the same id.
+ * The trusted command identity of one Query tool call: the QueryRun principal
+ * plus the Kernel call's own id and name, in the same shape the Work tool
+ * commits use. It never reads model arguments, so a replay of the same call
+ * derives the same id.
  */
-function queryNoteRequestIdForCall(queryRunRef: QueryRunRef, call: Readonly<ToolCall>): string {
+function queryToolRequestIdForCall(queryRunRef: QueryRunRef, call: Readonly<ToolCall>): string {
   if (!nonEmpty(call.callId) || !nonEmpty(call.name)) {
     throw new Error('the Kernel tool call carries no trusted identity');
   }
-  return 'r5b-query-note:' + sha256Hex(canonicalJson({
+  return 'r5b-query-tool:' + sha256Hex(canonicalJson({
     queryRunRef: {
       aggregateType: 'QueryRun', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId,
       queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId,
@@ -289,7 +295,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('unavailable', `Host Query configuration resolution failed: ${messageOf(error)}`);
       }
       if (configured.status !== 'ready') return mapRead(configured);
-      const projected = projectQueryConfiguration({ host: configured.value, requested: binding.runtimeBudget, roleResolution: state.roleResolution });
+      const projected = projectQueryConfiguration({
+        host: configured.value, requested: binding.runtimeBudget, roleResolution: state.roleResolution,
+        secretaryRound: manifest.request !== null,
+      });
       if (projected.configurationRevision !== manifest.hostConfigurationRevision
         || !sameRef(projected.permissions, manifest.permissions)
         || !sameRef(projected.budget, manifest.runtimeBudget)
@@ -378,6 +387,14 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       // The answer tools follow the frozen request kind, never the Host grant.
       const submitNames = answerSubmitNamesIn(frozenToolNames);
+      // Only a secretary request round selects the four mailbox names and the
+      // two platform tools; every other Query's frozen list carries none.
+      const secretaryMailboxNames: readonly string[] = manifest.request === null ? []
+        : SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      const memberNames = frozenToolNames.includes(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
+      const readRequestNames: readonly string[] = READ_REQUESTS_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      const mailboxPort = deps.messages;
+      const memberPort = deps.memberCreation;
       // The round's accepted submit callIds are a closure value: a QueryRun's
       // Kernel Turn runs once, so nothing is persisted.
       const acceptedAnswerCallIds = new Set<string>();
@@ -388,7 +405,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
       }
       let coordinationTools: ToolGroup | null = null;
-      if (grantedGraphNames.length > 0 || noteAdmission.class === 'secretary' || submitNames.length > 0) {
+      if (grantedGraphNames.length > 0 || noteAdmission.class === 'secretary' || submitNames.length > 0
+        || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
         // uses the ORIGINAL initiator's same-scope Host context for RT8 only.
@@ -411,6 +429,16 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           materialReader: { kind: 'run', requester: structuredClone(queryRunRef) },
           signal,
         };
+        // The one trusted Host context this Query's Host-reading tools share:
+        // the Host principal and material reader are paired, with this Query's
+        // project/workspace, initiator and signal. No second copy exists.
+        const trustedHostContext: CoreCallContext = {
+          projectId: queryRunRef.projectId,
+          workspaceId: queryRunRef.workspaceId,
+          principal: { kind: 'host', actor: structuredClone(initiator) },
+          materialReader: { kind: 'host', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, actor: structuredClone(initiator) },
+          signal,
+        };
         let graphTools: ToolGroup | null = null;
         if (grantedGraphNames.length > 0 && graphDeps !== null) {
           let goalRef: GoalRef | null;
@@ -422,13 +450,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             if (facts.value.goal === null) return rejected('invalid', 'no goal');
             goalRef = facts.value.goal.ref;
           }
-          const trustedHostContext: CoreCallContext = {
-            projectId: queryRunRef.projectId,
-            workspaceId: queryRunRef.workspaceId,
-            principal: { kind: 'host', actor: structuredClone(initiator) },
-            materialReader: { kind: 'host', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, actor: structuredClone(initiator) },
-            signal,
-          };
           graphTools = createQueryGraphToolGroup({
             names: grantedGraphNames,
             context: toolContext,
@@ -452,10 +473,51 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             context: toolContext,
             notes: noteOwners.write,
             check: noteOwners.check,
-            requestIdForCall: (call: Readonly<ToolCall>): string => queryNoteRequestIdForCall(queryRunRef, call),
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
             texts: toolTexts,
             kinds: noteAdmission.kinds,
             withdraw: noteAdmission.withdraw,
+          });
+        }
+        let mailboxTools: SessionMailboxToolsHandle | null = null;
+        if (secretaryMailboxNames.length > 0) {
+          if (mailboxPort === undefined) {
+            return rejected('unsupported', 'the secretary Query selected a mailbox tool but no SessionMailbox dependency is bound');
+          }
+          mailboxTools = createSessionMailboxTools({
+            mailbox: mailboxPort,
+            context: toolContext,
+            sessionRef: state.sessionRef,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+          });
+        }
+        let memberTools: CreateMemberToolsHandle | null = null;
+        if (memberNames.length > 0) {
+          if (memberPort === undefined) {
+            return rejected('unsupported', 'the secretary Query selected create_member but no member-creation owner is bound');
+          }
+          memberTools = createMemberTools({
+            members: memberPort,
+            context: toolContext,
+            caller: {
+              kind: 'secretary_query', session: state.sessionRef, run: queryRunRef,
+              round: record.job.ref, requestRoot: manifest.request!.requestRoot,
+            },
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+          });
+        }
+        let readRequestTools: ReadRequestToolsHandle | null = null;
+        if (readRequestNames.length > 0) {
+          if (deps.mainSurface === undefined) {
+            return rejected('unsupported', 'the secretary Query selected read_requests but no main-surface read dependency is bound');
+          }
+          readRequestTools = createReadRequestTools({
+            view: deps.mainSurface,
+            context: trustedHostContext,
+            cutLine: packString(promptTexts.value, 'secretary.answerOmitted'),
+            texts: toolTexts,
           });
         }
         let answerTools: AnswerToolsHandle | null = null;
@@ -477,13 +539,19 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             texts: toolTexts,
           });
         }
-        const names = [...grantedGraphNames, ...noteNames, ...submitNames];
+        const names = [
+          ...grantedGraphNames, ...noteNames, ...secretaryMailboxNames, ...memberNames, ...readRequestNames,
+          ...submitNames,
+        ];
         if (names.length > 0) {
           coordinationTools = {
             names,
             create: (workspace) => [
               ...(graphTools?.create(workspace) ?? []),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
+              ...(mailboxTools?.create(workspace) ?? []).filter(definition => secretaryMailboxNames.includes(definition.name)),
+              ...(memberTools?.create(workspace) ?? []).filter(definition => memberNames.includes(definition.name)),
+              ...(readRequestTools?.create(workspace) ?? []).filter(definition => readRequestNames.includes(definition.name)),
               ...(answerTools?.create(workspace) ?? []),
             ],
           };

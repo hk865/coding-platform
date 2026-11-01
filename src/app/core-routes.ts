@@ -47,6 +47,8 @@ import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-
 import type { GraphContextReadPort } from '../core/work-graph/model/graph-context-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
 import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-basis-contracts.js';
+// The overlap gate owner (the person's release and the Goal's gate page).
+import type { OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
 // The Goal draft confirmation, the Goal copy and the Host's initialization adoption owner.
 import type {
   GoalConfirmPort, GoalCopyPort,
@@ -94,6 +96,7 @@ import {
   type CoreScope,
   type K3CoreRouteDto,
   type MessagesCoreRouteDto,
+  type OverlapCoreRouteDto,
   type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type SecretariesArchiveBody,
@@ -241,6 +244,9 @@ export type CoreRouteBindings = {
   queryGoalConflicts: DecisionReadPort['queryGoalConflicts'];
   /** §3.6 item 5: the Goal card's three-version read, published on the Goal service. */
   readDispatchBasis: DispatchBasisReadPort['readDispatchBasis'];
+  /** The person's gate release and the Goal's gate page, N's one owner port. */
+  releaseOverlapGate: OverlapGatePort['releaseOverlapGate'];
+  readOverlapGates: OverlapGatePort['readOverlapGates'];
   readRequestCandidate: RequestCandidatePort['readRequestCandidate'];
   abandonPlanProposal: RequestCandidatePort['abandonPlanProposal'];
   queryDecisionQueue: DecisionReadPort['queryDecisionQueue'];
@@ -408,6 +414,8 @@ export type CoreRoutePlatform = {
     listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
       Promise<ReadResult<VersionListPageV1>>;
   };
+  /** The non-enumerable overlap-gate owner. A narrow platform without it answers `unsupported`. */
+  overlapGates?: OverlapGatePort;
   /** The two secretary lifecycle accept owners, non-enumerable on the composed platform (they are internal owners,
    * not public keys), so a narrow platform without them answers `unsupported`. The advance half is the Workflow's
    * `sessionHandoff`, published beside them. */
@@ -448,6 +456,7 @@ export type CoreRouteSpec = {
 export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
   | keyof MessagesCoreRouteDto
+  | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto,
   CoreRouteSpec
 > = {
@@ -536,6 +545,9 @@ export const CORE_ROUTE_SPECS: Record<
   // A.2 step 5.5 (spec §2.6 Host route `goals/control`, §2.3 fan-out, §2.1 display).
   'goals/control': { kind: 'graph_write', binding: 'setGoalControl', owner: 'goalControl.setGoalControl' },
   'goals/display': { kind: 'plain', binding: 'readGoalDisplay', owner: 'goalControl.readGoalDisplay' },
+  // The person's gate release and the Goal's gate page; both are N's plain port inputs.
+  'goals/overlap-release': { kind: 'plain', binding: 'releaseOverlapGate', owner: 'overlapGates.releaseOverlapGate' },
+  'goals/overlap-gates': { kind: 'plain', binding: 'readOverlapGates', owner: 'overlapGates.readOverlapGates' },
   // A.2 step 5.6 (spec §6 RUN-22, §8 QRR-06, §12.1 step 7, §12.8).
   'executions/resolve-unknown': { kind: 'graph_write', binding: 'resolveUnknownRun', owner: 'platform.resolveUnknownRun' },
   'queries/resolve-unknown': { kind: 'graph_write', binding: 'resolveUnknownQueryRun', owner: 'platform.resolveUnknownQueryRun' },
@@ -1025,6 +1037,14 @@ export function createPlatformCoreRouteBindings(
     queryGoalConflicts: platform.decisions === undefined ? unsupported('the platform does not publish decisions.queryGoalConflicts')
       : platform.decisions.queryGoalConflicts.bind(platform.decisions),
     readDispatchBasis: platform.goals.readDispatchBasis.bind(platform.goals),
+    // Only the person releases; a system or member actor is `forbidden` before the owner runs. The Gate
+    // page is the ordinary read. A narrow platform without the owner answers explicit `unsupported`.
+    releaseOverlapGate: platform.overlapGates === undefined
+      ? unsupported('the platform does not publish overlapGates.releaseOverlapGate')
+      : personEntry(platform.overlapGates.releaseOverlapGate.bind(platform.overlapGates)),
+    readOverlapGates: platform.overlapGates === undefined
+      ? unsupported('the platform does not publish overlapGates.readOverlapGates')
+      : platform.overlapGates.readOverlapGates.bind(platform.overlapGates),
     readRequestCandidate: platform.requestCandidates === undefined ? unsupported('the platform does not publish requestCandidates.readRequestCandidate')
       : platform.requestCandidates.readRequestCandidate.bind(platform.requestCandidates),
     abandonPlanProposal: platform.requestCandidates === undefined ? unsupported('the platform does not publish requestCandidates.abandonPlanProposal')
@@ -1367,6 +1387,9 @@ export async function dispatchCoreRoute(
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
       case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);
       case 'goals/display': return bindings.readGoalDisplay(ctx, plain.input as never);
+      // The person's gate release and the Goal's gate page.
+      case 'goals/overlap-release': return bindings.releaseOverlapGate(ctx, plain.input as never);
+      case 'goals/overlap-gates': return bindings.readOverlapGates(ctx, plain.input as never);
       case 'executions/resolve-unknown': return bindings.resolveUnknownRun(ctx, graphWrite.request as never);
       case 'queries/resolve-unknown': return bindings.resolveUnknownQueryRun(ctx, graphWrite.request as never);
       case 'host/reconcile-report': return bindings.readReconcileReport(ctx, plain.input as never);

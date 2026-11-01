@@ -7,7 +7,8 @@
  * whose Session read back carries `secretaryCreated`; the next real preparation of that line is inspected at its
  * `prepare` receipt (the Workflow is stopped before `start`). The fixture gives that child the `createMember: true`
  * executor binding (`tests/helpers/S7C-member-fixture.ts:80-81`, `:135`), so `createMember: false` at prepare is the
- * pin's own effect: ignoring `session.secretaryCreated` in preparation makes this row read true. A world opened with
+ * pin's own effect: ignoring `session.secretaryCreated` in preparation makes this row read true. The same preparation
+ * keeps the executor binding's own `writeScope: ['.']` (L37's contained-child arm). A world opened with
  * `adviser: false` has no responsible adviser, and a round whose request root the person has dropped has no current
  * owner.
  */
@@ -79,7 +80,7 @@ describe('M-secretary: a real secretary_query caller', () => {
     expect(result.session).not.toEqual(world.lines.module.ref);
   });
 
-  it('prepares the secretary-created line through the real Workflow', async () => {
+  it('prepares the secretary-created line with the executor write scope', async () => {
     world = await openS7C1World();
     await setS7AAutonomy(world.world, world.goal, 'after_plan_confirmation');
     // Task n1 is linked to no existing line, so the child is the only responsible line the Workflow can claim.
@@ -90,6 +91,7 @@ describe('M-secretary: a real secretary_query caller', () => {
     // The child's Host binding grants createMember; only the secretary pin can make this false.
     expect(prepared.envelope.permissions.createMember).toBe(false);
     expect(prepared.envelope.permissions.tools).toEqual(['read']);
+    expect(prepared.envelope.permissions.writeScope).toEqual(['.']);
   });
 });
 

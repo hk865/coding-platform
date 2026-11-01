@@ -33,7 +33,8 @@ async function unusedDriverPort(): Promise<never> {
 }
 
 export function completedAdvance(): WorkflowAdvanceResult {
-  return { status: 'ready', value: { state: 'completed', receipt: null, next: null, reason: 'script completed' } };
+  return { status: 'ready', value: { state: 'completed', receipt: null, next: null, pick: null,
+    reason: 'script completed' } };
 }
 
 export function deferred<T>() {

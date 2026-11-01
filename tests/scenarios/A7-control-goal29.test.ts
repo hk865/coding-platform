@@ -29,7 +29,7 @@ import { controlGoal, readControl, readExecution, readGoal } from '../helpers/A2
 import {
   assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, SCENARIO_OPERATOR, type HostScenario,
 } from './harness.js';
-import { NO_REDRIVE, briefOf, operatorRequeue, ownerStep, readCall, selectedRun } from './support/common.js';
+import { NO_REDRIVE, briefOf, operatorRequeue, ownerStep, readCall, selectedRun, taskRefOf } from './support/common.js';
 import { fanOutIntentRef, goalControlled } from './support/control.js';
 
 afterEach(cleanupScenarios);
@@ -48,7 +48,7 @@ it('A7-G4 with history (closing supported; KA-07, GOAL-29, LA-1, contract (e)): 
   const RUN0 = 'ag2b-work-0';
   const RUN0_TEXT = 'A7-G4 history: Run0 completed this Turn in S1';
   let h: HostScenario | undefined;
-  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], script: {
+  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0], script: {
     // Run0 (a read, then its answer) completes in S1; the work Run's first reply declares a read, and the Goal pause
     // submitted during that request lands at the safe point before the read runs; the continuation answers.
     replies: [readCall('a7-g4h-run0'), { kind: 'text', text: RUN0_TEXT }, readCall('a7-g4h-interrupted'),
@@ -58,6 +58,7 @@ it('A7-G4 with history (closing supported; KA-07, GOAL-29, LA-1, contract (e)): 
       await goalControlled(h.host, 'pause', 'a7-g4h-pause');
     } } });
   h = scenario;
+  // A-25: the removed create step made this line; it is also the hinted Session where one is used.
   await scenario.advance(scenario.select('a7-g4h-run0', RUN0));
   const run0 = await readExecution(scenario.host, await selectedRun(scenario, RUN0));
   expect(run0.run).toMatchObject({ status: 'ended', outcome: 'completed' });
@@ -119,7 +120,7 @@ it('A7-G4 with history under every_step (GOAL-29, C-151; STATE-MACHINES-SPEC.md:
   const RUN0 = 'ag2b-work-0';
   const RUN0_TEXT = 'A7-G4 history: Run0 completed this Turn in S1';
   let h: HostScenario | undefined;
-  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], script: {
+  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0], script: {
     // Run0 (a read, then its answer) completes in S1; the work Run's first reply declares a read, and the Goal pause
     // submitted during that request lands at the safe point before the read runs; the continuation answers.
     replies: [readCall('a7-g4h-run0'), { kind: 'text', text: RUN0_TEXT }, readCall('a7-g4h-interrupted'),
@@ -129,6 +130,7 @@ it('A7-G4 with history under every_step (GOAL-29, C-151; STATE-MACHINES-SPEC.md:
       await goalControlled(h.host, 'pause', 'a7-g4h-pause');
     } } });
   h = scenario;
+  // A-25: the removed create step made this line; it is also the hinted Session where one is used.
   // The person's Goal autonomy is every_step before the pause (the public settings route); GOAL-29's continuation
   // is still the person's resume, not an automatic requeue that would ask for a decision at GOAL-05.
   const before = await readGoal(scenario.host);
@@ -182,7 +184,7 @@ it('A7-G4 with history (closing unsupported; GOAL-29, LA-1, contract (e)): a Run
   const RUN0 = 'ag2b-work-0';
   const RUN0_TEXT = 'A7-G4 history: Run0 completed this Turn in S1';
   let h: HostScenario | undefined;
-  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], script: {
+  const scenario = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', workIds: [RUN0, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0], script: {
     // Run0 (a read, then its answer) completes in S1; the work Run's first reply declares a read, and the Goal pause
     // submitted during that request lands at the safe point before the read runs; the continuation answers.
     replies: [readCall('a7-g4h-run0'), { kind: 'text', text: RUN0_TEXT }, readCall('a7-g4h-interrupted'),
@@ -192,6 +194,7 @@ it('A7-G4 with history (closing unsupported; GOAL-29, LA-1, contract (e)): a Run
       await goalControlled(h.host, 'pause', 'a7-g4h-pause');
     } } });
   h = scenario;
+  // A-25: the removed create step made this line; it is also the hinted Session where one is used.
   await scenario.advance(scenario.select('a7-g4h-run0', RUN0));
   const run0 = await readExecution(scenario.host, await selectedRun(scenario, RUN0));
   expect(run0.run).toMatchObject({ status: 'ended', outcome: 'completed' });
@@ -255,6 +258,7 @@ it('GOAL-29 race outcomes (§2.3, 5.6 FINAL #27): a person\'s 继续 committed b
         await goalControlled(h.host, 'pause', `a7-race-${race}-pause`);
       } } });
     h = scenario;
+  // A-25: the removed create step made this line; it is also the hinted Session where one is used.
     expect((await scenario.advance(scenario.select(`a7-race-${race}`, AG2B_WORK_TASK_ID))).state).toBe('waiting');
     const runRef = await selectedRun(scenario);
     expect((await scenario.restart({ staleLock: true })).report).toMatchObject({ runs: [{ ref: JSON.stringify(runRef), row: 'W-20' }] });

@@ -41,6 +41,9 @@ import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/co
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
+import type {
+  ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult,
+} from '../../../contracts/unknown-call-review.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../../contracts/dispatch.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -101,6 +104,9 @@ import type {
   TaskClaimPort, TaskRequeueReadV1,
 } from '../model/claim-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
+import {
+  agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
+} from '../model/tool-commit-arguments.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { loadReplayEvent, mapStoreFailure, mergeGuards } from './execution-entry-service.js';
@@ -215,6 +221,8 @@ type RequeueAuthority = {
   caller: Caller;
   provenance: DelegatedWriteProvenanceV1;
   approved: { record: ReworkRequestV1; commandId: string };
+  /** The person's card answer the approved commit proves. */
+  answerRef: SessionMessageRef;
 };
 /** The guards a standalone request close needs; `approved` is the stored pending request it closes. */
 type CloseBase = {
@@ -413,6 +421,13 @@ function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; 
       const rightKey = refKeyOf(right.ref);
       return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
     });
+}
+
+/** The one `task-requeue` receipt fingerprint: write, replay and the read-only commit lookup share it. */
+function taskRequeueFingerprintOf(actor: ActorRef, scope: { projectId: string; workspaceId: string },
+  input: unknown, expected: readonly VersionPin[]): string {
+  return sha256Hex(canonicalJson({ kind: 'task-requeue', actor, projectId: scope.projectId,
+    workspaceId: scope.workspaceId, input, expected: sortedPins(expected) } as unknown as JsonValue));
 }
 
 // --------------------------------------------------------------------------
@@ -650,7 +665,8 @@ function requeueConfirmedByCardOf(window: RequeueWindow, taskId: string, afterRu
 
 export function createTaskRequeueService(
   deps: TaskRequeueDependencies,
-): Required<Pick<TaskClaimPort, 'requeueTask' | 'requeueApprovedByCard' | 'readTaskRequeue' | 'readTaskRequeueByIdentity'>> {
+): Required<Pick<TaskClaimPort, 'requeueTask' | 'requeueApprovedByCard' | 'readTaskRequeue' | 'readTaskRequeueByIdentity'>>
+  & { lookupToolCommit: ToolCommitLookup } {
   const records = deps.records;
   const policyOf = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
@@ -658,6 +674,59 @@ export function createTaskRequeueService(
     return REQUEUE_IDENTITY_PREFIX + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id },
       projectId: scope.projectId, workspaceId: scope.workspaceId, requestId } as unknown as JsonValue));
   }
+
+  /**
+   * L4: the read-only committed-receipt lookup for `request_rework`. It rebuilds
+   * the tool's owner request from the Kernel-recorded arguments and reuses the
+   * same `identityOf`, `sortedPins` and pin rule as the write, so a committed
+   * requeue and its pending rework request answer from the same identity row.
+   */
+  const lookupToolCommit: ToolCommitLookup = async (
+    _ctx: CoreCallContext, input: ToolCommitLookupInput,
+  ): Promise<ToolCommitLookupResult> => {
+    if (input.toolName !== 'request_rework') return toolCommitLookupUnknownTool(input.toolName);
+    const args = input.arguments;
+    if (!isRecord(args)) return { status: 'undetermined', reason: 'invalid_arguments' };
+    const expected = args['expected'];
+    const acknowledgement = args['acknowledgement'];
+    if (!Array.isArray(expected) || (acknowledgement !== undefined && !isRecord(acknowledgement))) {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    const candidate: RequeueTaskInput = {
+      taskRef: args['taskRef'] as TaskTriple,
+      afterRunRef: args['afterRunRef'] as RunRef,
+      reason: args['reason'] as string,
+      ...(acknowledgement === undefined ? {} : { acknowledgement: acknowledgement as SessionMessageRef }),
+    };
+    const scope = { projectId: input.origin.runRef.projectId, workspaceId: input.origin.workspaceId };
+    if (inputProblem(candidate, scope) !== null) return { status: 'undetermined', reason: 'invalid_arguments' };
+    const task = candidate.taskRef;
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
+    const afterRunRef: RunRef = { aggregateType: 'Run', projectId: candidate.afterRunRef.projectId,
+      goalId: candidate.afterRunRef.goalId, runId: candidate.afterRunRef.runId };
+    const refusalRef: TaskReworkRefusalRef = { aggregateType: 'TaskReworkRefusal', projectId: task.projectId,
+      goalId: task.goalId, taskId: task.taskId, operation: 'requeue', subjectId: afterRunRef.runId };
+    if (!expectedPinsOf(expected as VersionPin[], goalRef, afterRunRef, refusalRef).ok) {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    const actor = agentActorOf(input.origin.sessionRef, input.origin.runRef);
+    const requestId = toolCommitRequestId(input);
+    let identity: string;
+    let fingerprint: string;
+    try {
+      identity = identityOf(actor, scope, requestId);
+      fingerprint = taskRequeueFingerprintOf(actor, scope, candidate, expected as VersionPin[]);
+    } catch {
+      return { status: 'undetermined', reason: 'invalid_arguments' };
+    }
+    let lookup;
+    try {
+      lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
+    } catch {
+      return { status: 'undetermined', reason: 'the rework receipt lookup failed' };
+    }
+    return toolCommitLookupResult(lookup);
+  };
 
   /** Receipt replay: the recorded `TaskRequeued` or `TaskReworkRefused` restores the original value. */
   async function replay(
@@ -913,7 +982,8 @@ export function createTaskRequeueService(
       sessionRef: approval.provenance.sessionRef, goalRef: { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId },
       workspaceId: owned.scope.workspaceId, roleBinding: approval.provenance.roleBinding };
     const applied = await runRequeue(owned, ownedRequest.value, { caller: { kind: 'agent', writer },
-      provenance: approval.provenance, approved: { record, commandId: approval.commandId } });
+      provenance: approval.provenance, approved: { record, commandId: approval.commandId },
+      answerRef: approval.answerRef });
     return applied as EffectWriteResultV1<TaskRequeueOutcomeV1>;
   }
 
@@ -958,8 +1028,7 @@ export function createTaskRequeueService(
     let fingerprint: string;
     try {
       identity = identityOf(actor, owned.scope, requestId);
-      fingerprint = sha256Hex(canonicalJson({ kind: 'task-requeue', actor, projectId: owned.scope.projectId,
-        workspaceId: owned.scope.workspaceId, input, expected: sortedPins(expected) } as unknown as JsonValue));
+      fingerprint = taskRequeueFingerprintOf(actor, owned.scope, input, expected);
     } catch { return reject('invalid', 'the requeue request is not canonicalizable JSON'); }
     const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
     if (lookup.status === 'ready') return replay(lookup.value, identity, fingerprint, actor, input.acknowledgement ?? null);
@@ -1293,7 +1362,15 @@ export function createTaskRequeueService(
       schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, occurredAt: requeue.requestedAt, identityKey: identity, actor,
       fingerprint, requeue,
       // 7A §3.5 rule 3: the effect event carries the key only when the input did.
-      ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) };
+      ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
+      // The approved card's formal proof rides the same commit as its applied request@2.
+      ...(authority === null ? {} : { proof: {
+        acknowledgementRef: authority.answerRef,
+        capturedPins: [],
+        changes: [{ before: { ref: authority.approved.record.ref, revision: authority.approved.record.revision },
+          after: { ref: authority.approved.record.ref, revision: authority.approved.record.revision + 1 } }],
+        basisRebases: [],
+      } }) };
     return commitRequeueWrite(commitBase, {
       records: [encodeTaskRequeueSnapshot(requeue, { since: null })],
       extraGuards: [{ refKey: taskRequeueRefKey(requeue.ref), expectedRevision: null }],
@@ -1341,8 +1418,7 @@ export function createTaskRequeueService(
     let fingerprint: string;
     try {
       identity = identityOf(actor, owned.scope, requestId);
-      fingerprint = sha256Hex(canonicalJson({ kind: 'task-requeue', actor, projectId: owned.scope.projectId,
-        workspaceId: owned.scope.workspaceId, input, expected: sortedPins(expected) } as unknown as JsonValue));
+      fingerprint = taskRequeueFingerprintOf(actor, owned.scope, input, expected);
     } catch { return reject('invalid', 'the requeue request is not canonicalizable JSON'); }
     const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
     if (lookup.status !== 'ready') {
@@ -1608,5 +1684,5 @@ export function createTaskRequeueService(
     return closed;
   }
 
-  return { requeueTask, requeueApprovedByCard, readTaskRequeue, readTaskRequeueByIdentity };
+  return { requeueTask, requeueApprovedByCard, readTaskRequeue, readTaskRequeueByIdentity, lookupToolCommit };
 }

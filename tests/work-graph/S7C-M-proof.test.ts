@@ -43,9 +43,10 @@ async function memberInboxOf(target: S7C1World): Promise<SessionMessageRef> {
   if (input === undefined) throw new Error(`S7C: no input message: ${JSON.stringify(inbox)}`);
   return input.ref;
 }
-async function approve(target: S7C1World, commandId: string, operation: { operationId: string }, label: string) {
+async function approve(target: S7C1World, commandId: string, operation: { operationId: string },
+  answer: SessionMessageRef) {
   return target.member.decision.applyMemberDecision(target.world.humanContext(), {
-    commandId, operation: operation as never, answer: await answerOf(target, label), verdict: 'approve',
+    commandId, operation: operation as never, answer, verdict: 'approve',
   });
 }
 async function requestOf(target: S7C1World, commandId: string, reason: string, acknowledgement: SessionMessageRef) {
@@ -56,21 +57,23 @@ async function requestOf(target: S7C1World, commandId: string, reason: string, a
 }
 
 describe.each(['memory', 'sqlite'] as const)('M-proof: the member_created receipt (%s)', backend => {
-  it('carries the real input acknowledgement, applies it through messages/apply and reads the saved proof', async () => {
+  it('carries the real card answer, applies it through messages/apply and reads the saved proof', async () => {
     world = await openS7C1World({ backend, adviser: false });
     const acknowledgement = await memberInboxOf(world);
     const request = await memberCardOf(world, 's7c-proof', 'S7C proof', acknowledgement);
-    const done = await approve(world, 's7c-proof-approve', request.operation, 'approve');
+    // A human-approved creation cites the card answer it was decided by.
+    const answer = await answerOf(world, 'approve');
+    const done = await approve(world, 's7c-proof-approve', request.operation, answer);
     if (done.status !== 'done') throw new Error(`S7C: not done: ${JSON.stringify(done)}`);
     const created = await world.world.readSession(done.session);
     // The proof's `ref` is the new Session's aggregate ref and its effect is exactly the caller's `{kind, ref}`.
     const proof = { receipt: done.receipt, effect: { kind: 'member_created' as const, ref: created.record.ref } };
-    const body = graphWrite(S6A_SCOPE, { messageRef: acknowledgement, proof }, `s7c-proof-apply-${backend}`);
+    const body = graphWrite(S6A_SCOPE, { messageRef: answer, proof }, `s7c-proof-apply-${backend}`);
     const applied = valueOf<{ appliedAt: string; applicationProof?: unknown }>(
       (await world.world.post('messages/apply', body)).body, 'committed', 'the applied proof');
     expect(applied.applicationProof).toEqual(proof);
     const read = valueOf<{ appliedAt: string; applicationProof?: unknown }>(
-      (await world.world.post('messages/read', plain(S6A_SCOPE, acknowledgement))).body,
+      (await world.world.post('messages/read', plain(S6A_SCOPE, answer))).body,
       'ready', 'the saved proof');
     expect(read.applicationProof).toEqual(proof);
     expect(read.appliedAt).toBe(applied.appliedAt);
@@ -80,13 +83,14 @@ describe.each(['memory', 'sqlite'] as const)('M-proof: the member_created receip
 describe('M-proof: the receipt replay', () => {
   it('replays the same receipt and decision for the same command ids (memory)', async () => {
     world = await openS7C1World({ backend: 'memory', adviser: false });
-    const acknowledgement = await memberInboxOf(world);
-    const request = await memberCardOf(world, 's7c-replay', 'S7C replay', acknowledgement);
-    const done = await approve(world, 's7c-replay-approve', request.operation, 'replay');
+    const acknowledgment = await memberInboxOf(world);
+    const request = await memberCardOf(world, 's7c-replay', 'S7C replay', acknowledgment);
+    const answer = await answerOf(world, 'replay');
+    const done = await approve(world, 's7c-replay-approve', request.operation, answer);
     if (done.status !== 'done') throw new Error(`S7C: not done: ${JSON.stringify(done)}`);
-    expect(await requestOf(world, 's7c-replay', 'S7C replay', acknowledgement))
+    expect(await requestOf(world, 's7c-replay', 'S7C replay', acknowledgment))
       .toMatchObject({ status: 'created', proofReceipt: done.receipt });
-    expect(await approve(world, 's7c-replay-approve', request.operation, 'replay')).toEqual(done);
+    expect(await approve(world, 's7c-replay-approve', request.operation, answer)).toEqual(done);
   });
 });
 
@@ -99,7 +103,8 @@ describe('M-proof: the SQLite recovery', () => {
     // The child's own registration commit lands, but the approving call never receives its result: the Host is
     // abandoned and reopened on the same SQLite directory before the member owner can read the commit back.
     const hold = commitBarrier.holdAfter(byIdentityPrefix('session-register:'), 'the member child registration');
-    const first = approve(world, 's7c-lost-approve', request.operation, 'lost').catch(() => undefined);
+    const answer = await answerOf(world, 'lost');
+    const first = approve(world, 's7c-lost-approve', request.operation, answer).catch(() => undefined);
     await hold.reached;
     await withS7CCapturedBackend(() => world!.world.crash());
 
@@ -119,11 +124,11 @@ describe('M-proof: the SQLite recovery', () => {
     const created = await world.world.readSession(creation.session);
     const proof = { receipt: creation.proofReceipt, effect: { kind: 'member_created' as const, ref: created.record.ref } };
     const applied = valueOf<{ appliedAt: string; applicationProof?: unknown }>(
-      (await world.world.post('messages/apply', graphWrite(S6A_SCOPE, { messageRef: acknowledgement, proof },
+      (await world.world.post('messages/apply', graphWrite(S6A_SCOPE, { messageRef: answer, proof },
         's7c-lost-apply'))).body, 'committed', 'the recovered proof');
     expect(applied.applicationProof).toEqual(proof);
     const read = valueOf<{ appliedAt: string; applicationProof?: unknown }>(
-      (await world.world.post('messages/read', plain(S6A_SCOPE, acknowledgement))).body,
+      (await world.world.post('messages/read', plain(S6A_SCOPE, answer))).body,
       'ready', 'the recovered saved proof');
     expect(read.applicationProof).toEqual(proof);
     expect(read.appliedAt).toBe(applied.appliedAt);

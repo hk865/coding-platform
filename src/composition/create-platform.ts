@@ -6,6 +6,7 @@ import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
 import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
 import { rejected } from '../contracts/core/rejections.js';
+import { revisionAssignments } from '../contracts/plan.js';
 import { createInMemoryRecordBackend } from '../core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../core/record-store/sqlite-record-store.js';
 import { RawArtifactBodyStore } from '../core/record-store/body-store.js';
@@ -26,7 +27,7 @@ import { createModelCallService, createModelRequestReadPort } from '../core/work
 import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
 import { createMessageExpiryOwner, type MessageExpiryPort } from '../core/work-graph/communication/message-expiry.js';
 import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
-import { createDecisionSourceFacts } from '../core/work-graph/communication/decision-source-facts.js';
+import { createDecisionSourceFacts, type DecisionSourceFactsDependencies } from '../core/work-graph/communication/decision-source-facts.js';
 import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
 import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
 import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
@@ -44,10 +45,11 @@ import { createUndeliveredReplyNoticeSource } from '../core/work-graph/views/und
 import { createDisconnectNoticeSource } from '../core/work-graph/views/disconnect-notices.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
-  createCommandRerunRequestCardSource, createDecisionReadModel, createGoalCauseCardSource,
-  createNoteReviewCardSource, createPlanningQuestionCardSource, createUnknownCallReviewCardSource,
-  createMessageReleaseCardSource,
+  createCollectionCardSource, createCommandRerunRequestCardSource, createDecisionReadModel,
+  createGoalCauseCardSource, createMemberCreationCardSource, createNoteReviewCardSource,
+  createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createMessageReleaseCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
+import { reworkRequestCardSourceSpec } from '../core/work-graph/communication/decision-source/rework-request.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
 import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
@@ -67,13 +69,16 @@ import type { MessageReleaseApprovedHookV1 } from '../core/work-graph/communicat
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
-import { servedRoleIds } from '../business/workflow/role-bindings.js';
-import { createCommandRerunRequestApplicationAdapter, createMessageReleaseApplicationAdapter } from '../business/workflow/decision-actions.js';
+import { servingBinding, servedRoleIds } from '../business/workflow/role-bindings.js';
+import {
+  createCommandRerunRequestApplicationAdapter, createMemberCreationApplicationAdapter,
+  createMessageReleaseApplicationAdapter, createReworkRequestApplicationAdapter,
+} from '../business/workflow/decision-actions.js';
 import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY } from '../business/workflow/ports.js';
 import type {
-  SessionArchivePolicyV1, SessionDutyResolver, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort,
+  PendingCardV1, SessionArchivePolicyV1, SessionDutyResolver, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort,
 } from '../business/workflow/ports.js';
 // The request commands and the one line-creation entry the composition wires
 // over its own records/Session/role owners.
@@ -89,7 +94,7 @@ import {
   createMainSurfaceReadModel, type MainSurfaceReadPort,
 } from '../core/work-graph/views/main-surface-read-model.js';
 import {
-  createRequestRoundService, type RequestFactsReader, type RequestRoundPort,
+  createRequestRoundService, workspaceOf, type RequestFactsReader, type RequestRoundPort,
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
 import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-query-run.js';
@@ -136,12 +141,20 @@ import { createTaskClaimService } from '../core/work-graph/tasks/claim-service.j
 import { createTaskRequeueService } from '../core/work-graph/tasks/requeue-service.js';
 import { TASK_CLAIM_RECORD_SCHEMAS, decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../core/work-graph/tasks/claim-record-codecs.js';
 import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
-import type { RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
+import type { RoleBindingFacts, RoleBindingFactsPort, RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
+import type { PreClaimAuthorizationPortV1 } from '../core/work-graph/model/pick-ports.js';
+import { hostRolePermissionsAdmitted, projectRunPermissions } from '../core/work-graph/tasks/pick-authorization.js';
+import { createMemberService, type MemberRequestPortV1 } from '../core/work-graph/tasks/member-service.js';
+import { createReworkRequestService } from '../core/work-graph/tasks/rework-requests.js';
+import { REWORK_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/rework-request-codecs.js';
+import { createOverlapGateService, type OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
+import { decisionSourceKey } from '../contracts/goal-decisions.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalRunsForCount, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -170,7 +183,7 @@ import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefKey, plainS
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
-import { SESSION_ACTIVITY_SCHEMAS } from '../core/work-graph/sessions/session-activity.js';
+import { SESSION_ACTIVITY_SCHEMAS, createSessionActivityReader } from '../core/work-graph/sessions/session-activity.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../core/work-graph/persistence/initialization-binding-codecs.js';
 // The initialization adoption operation owner and its bundle; the Host's adoption composite drives it.
 import { INITIALIZATION_ADOPTION_SCHEMAS } from '../core/work-graph/persistence/initialization-adoption-codecs.js';
@@ -228,6 +241,7 @@ import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
+import type { NoteVersionSnapshot } from '../contracts/note.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { OperationRef } from '../contracts/core/operations.js';
 import type { SessionOperationRecord } from '../core/work-graph/model/session-contracts.js';
@@ -290,7 +304,7 @@ import type { TaskExecutionRecord } from '../core/work-graph/model/execution-rea
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 import type { RunRef, RunSnapshot, SourceRefV1 } from '../contracts/dispatch.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
-import { queryExecutionBindingOf } from '../contracts/query-job.js';
+import { isRequestRound, queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
@@ -309,6 +323,8 @@ import type {
 } from '../core/work-graph/model/work-line-contracts.js';
 import { createWorkLineConversation } from './work-line-conversation.js';
 import { createArchitectureReminderFactsReader } from './architecture-reminder-facts.js';
+import { createSessionChooser, type PickReadsV1 } from '../business/workflow/session-chooser.js';
+import { messageOf } from '../contracts/error-message.js';
 
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
@@ -659,12 +675,21 @@ function createAuthorizeConfiguration(host: RuntimeHostBindings): AuthorizeConfi
       }
     } else {
       const ceiling = resolution.status === 'resolved' ? resolution.spec.permissions : null;
-      if (!policyRevisionMatches
-        || !permissions.tools.every(tool => current.tools.includes(tool) && (ceiling === null || ceiling.tools.includes(tool)))
-        || !permissions.writeScope.every(path => current.writeScope.includes(path))
-        || (ceiling?.writeScope === 'none' && permissions.writeScope.length !== 0)
-        || (permissions.tools.includes('shell') && (current.shellWorkspaceAccess !== 'all_except_denied'
-          || permissions.writeScope.length !== 1 || permissions.writeScope[0] !== '.'))) {
+      // The ONE shared Host/Role judgment `recheckHostRoleAdmission` also calls
+      // (`tasks/pick-authorization.ts`); it carries the shell clause this branch
+      // used to spell out. The policy revision stays a separate, earlier
+      // rejection because it is not a permission-ceiling question.
+      const admitted = hostRolePermissionsAdmitted({
+        permissions,
+        host: {
+          tools: current.tools, writeScope: current.writeScope,
+          ...(current.shellWorkspaceAccess === undefined ? {} : { shellWorkspaceAccess: current.shellWorkspaceAccess }),
+          createMember: current.createMember === true,
+        },
+        role: ceiling === null ? null
+          : { tools: ceiling.tools, writeScope: ceiling.writeScope === 'none' ? 'none' : [] },
+      });
+      if (!policyRevisionMatches || !admitted.ok) {
         return { status: 'rejected', code: 'forbidden', reason: 'the prepared permissions are not allowed by the current Host and Role ceilings' };
       }
     }
@@ -692,6 +717,101 @@ function createAuthorizeConfiguration(host: RuntimeHostBindings): AuthorizeConfi
       permissions: structuredClone(permissions),
       hostTemplate: hostTemplate === null ? null : structuredClone(hostTemplate),
     } };
+  };
+}
+
+/**
+ * A-07's read-only pre-claim check. A claim resolves the Role with empty
+ * declared permissions, and the entered Run's Host/Role re-check needs a Run,
+ * manifest and permissions; neither can answer before a claim. This port makes
+ * the SAME two resolutions without a Run — the candidate Session's own fixed
+ * Role and the current Host binding — and then calls the ONE shared judgment.
+ * A read that does not settle is `unavailable`, never admitted; an inadmissible
+ * Role or a permission outside the current ceilings is `refused`.
+ */
+function createPreClaimAuthorization(
+  host: RuntimeHostBindings,
+  roles: RoleBindingFactsPort,
+  sessions: Pick<SessionDirectoryPort, 'readSession'>,
+): PreClaimAuthorizationPortV1 {
+  return {
+    async check(ctx, input) {
+      let card;
+      try {
+        card = await sessions.readSession(ctx, input.session);
+      } catch (error) {
+        return { verdict: 'unavailable', reason: messageOf(error) };
+      }
+      if (card.status !== 'ready') {
+        return { verdict: 'unavailable', reason: card.status === 'rejected'
+          ? card.reason : 'the candidate Session is not readable' };
+      }
+      let facts: RoleBindingFacts;
+      try {
+        facts = await roles.resolveRoleBindingFacts(ctx, {
+          roleBinding: input.binding, declaredPermissions: { tools: [], writeScope: [] },
+        });
+      } catch (error) {
+        return { verdict: 'unavailable', reason: messageOf(error) };
+      }
+      if (facts.result.status !== 'ready') {
+        return { verdict: 'unavailable', reason: facts.result.status === 'rejected'
+          ? facts.result.reason : 'the Role binding facts are not readable' };
+      }
+      const resolution = facts.result.value;
+      if (resolution.status === 'inadmissible') {
+        return { verdict: 'refused', code: 'forbidden',
+          reason: `the Role binding is not admissible: ${resolution.reasons.map(reason => reason.code).join(',')}` };
+      }
+      const resolveRole = host.resolveRoleConfiguration;
+      if (resolveRole === undefined) {
+        return { verdict: 'unavailable', reason: 'the Host has no no-Run configuration binding' };
+      }
+      let configured;
+      try {
+        // The same scope/Role binding lookup preparation uses, with no Run.
+        configured = await resolveRole(ctx, { role: card.value.record.role });
+      } catch (error) {
+        return { verdict: 'unavailable', reason: messageOf(error) };
+      }
+      if (configured.status !== 'ready') {
+        return { verdict: 'unavailable', reason: configured.status === 'rejected'
+          ? configured.reason : 'the current Host configuration is not readable' };
+      }
+      const current = configured.value;
+      const projected = projectRunPermissions({
+        policyRevision: input.binding.policyRevision,
+        host: {
+          tools: current.tools, writeScope: current.writeScope,
+          ...(current.shellWorkspaceAccess === undefined ? {} : { shellWorkspaceAccess: current.shellWorkspaceAccess }),
+          createMember: current.createMember === true,
+        },
+        roleResolution: resolution,
+        ceiling: card.value.record.delegationCeiling ?? null,
+        secretaryCreated: card.value.record.secretaryCreated === true,
+      });
+      if (!projected.ok) {
+        return { verdict: 'refused', code: projected.rejection.code, reason: projected.rejection.reason };
+      }
+      const admitted = hostRolePermissionsAdmitted({
+        permissions: projected.permissions,
+        host: {
+          tools: current.tools, writeScope: current.writeScope,
+          ...(current.shellWorkspaceAccess === undefined ? {} : { shellWorkspaceAccess: current.shellWorkspaceAccess }),
+          createMember: current.createMember === true,
+        },
+        // The same ceiling projection the entered re-check uses: a resolved
+        // RoleSpec contributes its tools and the none-write rule, an absent
+        // Role is null (the legacy Host-template branch).
+        role: resolution.status === 'resolved'
+          ? { tools: resolution.spec.permissions.tools,
+            writeScope: resolution.spec.permissions.writeScope === 'none' ? 'none' : [] }
+          : null,
+      });
+      return admitted.ok
+        ? { verdict: 'admitted' }
+        : { verdict: 'refused', code: admitted.code, reason: admitted.reason };
+    },
   };
 }
 
@@ -725,7 +845,7 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
     // profile (what preparation froze), a plain Query's Job intent.
     return { status: 'ready', value: projectQueryConfiguration({
       host: configured.value, requested: queryExecutionBindingOf(input.job, input.run).runtimeBudget,
-      roleResolution: input.roleResolution,
+      roleResolution: input.roleResolution, secretaryRound: isRequestRound(input.job),
     }) };
   };
 }
@@ -862,6 +982,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...DISPATCH_COUNTER_SCHEMAS.records, ...GOAL_CONFIRM_SCHEMAS.records, ...GOAL_COPY_RECORD_SCHEMAS.records,
       ...GOAL_INTERRUPTION_SCHEMAS.records,
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
+      ...REWORK_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
@@ -878,6 +999,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...DISPATCH_COUNTER_SCHEMAS.events, ...GOAL_CONFIRM_SCHEMAS.events, ...GOAL_COPY_RECORD_SCHEMAS.events,
       ...GOAL_INTERRUPTION_SCHEMAS.events,
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
+      ...REWORK_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
@@ -894,6 +1016,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...DISPATCH_COUNTER_SCHEMAS.lookups ?? [], ...GOAL_CONFIRM_SCHEMAS.lookups ?? [],
       ...GOAL_INTERRUPTION_SCHEMAS.lookups ?? [],
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
+      ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
@@ -1035,15 +1158,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       now, eventId: randomUUID,
     });
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
-    const workflowConfiguration = options.workflow === undefined
-      ? undefined : structuredClone(options.workflow);
     // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
     // this narrow port, and the Workflow uses the SAME resolver instance (the
     // composition root injects one result, never a second resolver). Slice 4A P5:
-    // the notes service shares this instance too.
+    // the notes service shares this instance too. The configuration is read
+    // through the live dependency, so a binding registered after startup counts.
     const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
       readRoleSpec: roleService.readRoleSpec.bind(roleService),
-      configuration: workflowConfiguration,
+      configuration: () => workflowDependencies.configuration,
     });
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
@@ -1054,6 +1176,20 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return role.templateId === template.templateId && role.templateRevision === template.templateRevision;
       });
     const messageDuties = createMessageDutiesFactsAdapter({ roles: roleService, sessions: sessionDirectory, legacyDuty });
+    // §3.11: the one duty recipient resolver, shared by the notes surface and the Workflow's secretary lifecycle. Its
+    // scribe arm is the old closure exactly: it pages the directory to its end, keeps active cards whose fixed duty is
+    // `scribe`, sorts by `sessionId` and returns the first, with no health filter. A failed page is returned unchanged,
+    // as the old closure did. The adviser/secretary arms answer `unavailable` when a card's duty cannot be read, never
+    // "no recipient"; the scribe arm skips such a card, byte-identical to the old closure.
+    const dutyRecipient = createDutyRecipient({
+      findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input),
+      dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx),
+    });
+    // A-07's pre-claim check: the SAME current Host resolution and the Session's
+    // own fixed Role, with no Run. An old composition without a trusted Host has
+    // no port, so the chooser keeps today's order and no authorization filter.
+    const preClaimAuthorization = options.runtime === undefined ? null
+      : createPreClaimAuthorization(options.runtime, roleService, sessionDirectory);
     // The public mailbox is real even without a model Host binding; internal
     // calls use the raw service so an in-flight operation is never rejected by
     // the public tracked wrapper after close has already begun. It is built
@@ -1081,6 +1217,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       pointer: createGoalPointerFacts({ records: backend.records }) });
     const mailboxDependencies = { records: backend.records, sessions: sessionDirectory,
       executions: executionReader, roles: roleService, materials: rawMaterials,
+      // The Host-send receipt read (D-L1-3) is identity-only, from the store's own
+      // identity port; it never turns a committed send into a second write.
+      commitIdentities: rawBackend.commitIdentities,
       systemActor: SYSTEM_ACTOR, now, newId: randomUUID, duties: messageDuties,
       // An absent duration is the platform's day; the owner keeps no second
       // default and a caller-named duration always wins.
@@ -1212,12 +1351,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           reason: 'the note-decision source is not bound yet' })
         : boundNoteDecisionSource.readNoteDecision(ctx, input),
     };
-    const decisionSources = createDecisionSourceFacts({ records: backend.records, plans: planService, bindings: bindingReads,
+    const decisionSourceDependencies: DecisionSourceFactsDependencies = {
+      records: backend.records, plans: planService, bindings: bindingReads,
       noteDecisions: noteDecisionSourcePort, unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace },
       // K3 L19a: the SAME CRR owner, original-Run execution read and Kernel
       // command reader (the K L9 window) the card source uses.
       commandRerunRequests, commandRerunExecutions: executionReader,
-      readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input) });
+      readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input),
+    };
+    const decisionSources = createDecisionSourceFacts(decisionSourceDependencies);
     // §4.5: the formal identity/fingerprint of a settings commit are persisted
     // verbatim in its event body, so the finite coordinator can hand the real
     // `DecisionApplicationReceiptV1` to `recordDecisionApplication` from the
@@ -1291,16 +1433,25 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The handoff notices are a read projection of the handoff operations' own saved writes: one item per operation,
     // no stored notice and no new writer.
     const handoffNotices = createHandoffNoticeSource({ records: backend.records });
+    // The card-source list is the decision read model's ONE registration point. M's member source exists on this
+    // tree; R's rework source is pushed below once its owner is built (the read model holds this array by reference,
+    // so both pending-card reads answer `ready` and the Task block sources work). No second card projection exists.
+    const decisionCardSources = [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
+      commandRerunRequestCards, messageReleaseCards,
+      createMemberCreationCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
-      cardSources: [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
-        commandRerunRequestCards, messageReleaseCards],
+      cardSources: decisionCardSources,
       noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices,
         createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts })],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
     });
+    // The main read and `requests/read`'s ONE whole-page run of the decision read model's assembly. It is built
+    // before the Runtime dependencies because Q's `read_requests` tool receives this owner.
+    const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
+      decisions: rawDecisionReads });
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
       bodies, now, newId: randomUUID });
     // The ONE verification workspace reader: the evidence owner captures rounds
@@ -1340,6 +1491,54 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
     const sessionOperations = createSessionOperations({ sessions: sessionDirectory, kernelStores });
+    // ONE capacity adapter and ONE line-creation entry shared by the request commands, the handoff successor and
+    // the member service's child line: a member-created line is admitted through the same cap and admission.
+    const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
+      ? createAlwaysAdmitCapacity()
+      : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
+    const requestLineCreation = createLineCreation({
+      sessions: sessionOperations, operations: sessionDirectory, capacity: requestCapacity,
+    });
+    // M's ONE member owner: the request and decision ports over the SAME records, identity read, Session directory,
+    // line admission, request facts, secretary rounds, duty resolver and Run read the rest of the platform uses.
+    // The child line's Role is the normal executor template; the creator's accepted permissions ride as its ceiling.
+    // P's ONE reuse body over the same directory/facts owners the Workflow's chooser reads; `reusable` needs no
+    // `pick` read, so the member service takes the port before the Workflow dependency bag is assembled below.
+    const memberReuse = {
+      reusable: createSessionChooser({ sessions: sessionDirectory, sessionFacts }).reusable,
+    };
+    const memberService = createMemberService({
+      records: backend.records, commitIdentities: rawBackend.commitIdentities,
+      sessions: { findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input) },
+      lines: requestLineCreation,
+      requests: { ownerOf: (ctx, input) => rawRequestFacts.ownerOf(ctx, input) },
+      secretaryRuns: secretaryQueryRun,
+      duties: dutyRecipient,
+      executions: executionReader,
+      executorRole: async (_ctx, { workspace, task }) => {
+        const window = await readGoalPlanWindow(backend.records,
+          { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId });
+        if (window.status !== 'ready') return window;
+        if (window.plan === null) return rejected('not_found', 'the Task has no active Plan');
+        const assignment = revisionAssignments(window.plan)
+          .find(candidate => candidate.taskId === task.taskId);
+        if (assignment === undefined) {
+          return rejected('not_found', `the Task ${task.taskId} has no role assignment`);
+        }
+        const configuration = workflowDependencies.configuration;
+        if (configuration === undefined) {
+          return rejected('unsupported', 'no trusted Workflow configuration is registered for the executor role');
+        }
+        const binding = servingBinding(configuration.bindings,
+          workspace.projectId, workspace.workspaceId, assignment.role);
+        if (binding === null) {
+          return rejected('unsupported', `no trusted Workflow binding matches workspace ${workspace.workspaceId} and role ${assignment.role}`);
+        }
+        return { status: 'ready', value: structuredClone(binding.sessionRole) };
+      },
+      reuse: memberReuse,
+      now, eventId: randomUUID,
+    });
     const executionHistory = createExecutionHistoryReader({ history: sessionOperations });
     const historyWriter = createExecutionHistoryService({ records: backend.records, now, eventId: randomUUID });
     const graphHistory = createGraphExecutionHistoryReader({ executions: executionReader, history: executionHistory });
@@ -1503,6 +1702,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // the Runtime receives this stable holder and the note tools read its
     // fields at Run start time. No notes block is moved.
     const noteToolDeps: NonNullable<RuntimeExecutionDependencies['notes']> = {};
+    // The published TaskClaimPort and the Runtime's rework tools take this ONE composite owner: the claim write plus
+    // the requeue write and its identity replay read, all drained through the same trackedCall path.
+    const claims: TaskClaimPort = {
+      claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
+      requeueTask: (...args) => trackedCall(() => requeueService.requeueTask(...args), unavailable),
+      // K3 L21 D9 (ruling 4): the record-keyed replay read of the derived
+      // release-hold requeue, from the same owner instance and never a write.
+      readTaskRequeueByIdentity: (...args) => trackedCall(
+        () => requeueService.readTaskRequeueByIdentity(...args), unavailable),
+    };
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
       const host = options.runtime;
@@ -1520,7 +1729,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff'> & {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
       } = {
-        claims: claimService, executions: executionReader, entry, historyWriter, modelRequests,
+        claims, executions: executionReader, entry, historyWriter, modelRequests,
+        // The same owners the rest of the platform publishes: M's member request
+        // port, Q's read-only request view, and L8's evidence owner (only the
+        // one method the recheck tool calls). No second instance exists.
+        memberCreation: memberService.request,
+        mainSurface: rawMainSurface,
+        evidence: rawEvidence,
         // Ruling 30: the Work permit read over the SAME record backend. The pack
         // source is the Host's disk-backed one when a settings directory is
         // configured, the generated platform pack otherwise.
@@ -1672,14 +1887,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // route table never sees a missing method. The reader implementation is
       // still an explicit stage-one gap.
       listExecutions: (...args) => trackedCall(() => executionReader.listExecutions!(...args), unavailable),
-    };
-    const claims: TaskClaimPort = {
-      claimTask: (...args) => trackedCall(() => claimService.claimTask(...args), unavailable),
-      requeueTask: (...args) => trackedCall(() => requeueService.requeueTask(...args), unavailable),
-      // K3 L21 D9 (ruling 4): the record-keyed replay read of the derived
-      // release-hold requeue, from the same owner instance and never a write.
-      readTaskRequeueByIdentity: (...args) => trackedCall(
-        () => requeueService.readTaskRequeueByIdentity(...args), unavailable),
     };
     const roles: RoleConfigurationPort = {
       installRoleSpec: (ctx, command) => trackedCall(() => roleService.installRoleSpec(ctx, command),
@@ -1933,19 +2140,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         sessionOperations.createSession(...args),
     };
     // The request command owners and the secretary lifecycle share ONE request facts reader (`rawRequestFacts`, built
-    // before the mailbox above), ONE profile port, ONE capacity adapter and ONE line-creation entry: a handoff's
-    // successor line is admitted through the same cap and the same admission a request command's secretary is.
+    // before the mailbox above), ONE profile port and the ONE capacity adapter and line-creation entry built above:
+    // a handoff's successor line is admitted through the same cap and the same admission a request command's
+    // secretary is.
     const defaultSecretaryProfiles: SecretaryProfilePort = {
       forSession: () => null,
       forNewLine: async () => ({ status: 'ready', value: null }),
     };
     const rawSecretaryProfiles: SecretaryProfilePort = options.secretaryProfiles ?? defaultSecretaryProfiles;
-    const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
-      ? createAlwaysAdmitCapacity()
-      : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
-    const requestLineCreation = createLineCreation({
-      sessions: sessionOperations, operations: sessionDirectory, capacity: requestCapacity,
-    });
     const rawRequestRounds = createRequestRoundService({
       records: backend.records, facts: rawRequestFacts, sessionFacts, duty: sessionDutyResolver,
       profiles: rawSecretaryProfiles, now, operationId: randomUUID,
@@ -2228,21 +2430,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }
       return { status: 'ready', value: goalIds };
     };
-    // §3.11: the one duty recipient resolver. Its scribe arm is the old closure
-    // exactly: it pages the directory to its end, keeps active cards whose fixed
-    // duty is `scribe`, sorts by `sessionId` and returns the first, with no
-    // health filter. `notes.resolveScribeRecipient` keeps the same public shape
-    // and result; there is no second copy of the scan (LD-04). A failed page is
-    // returned unchanged, as the old closure did. The adviser/secretary arms
-    // answer `unavailable` when a card's duty cannot be read, never "no
-    // recipient"; the scribe arm skips such a card, byte-identical to the old
-    // closure.
-    // The public surface is unchanged: one function of the caller context; the
-    // resolver is built once here, not per call.
-    const dutyRecipient = createDutyRecipient({
-      findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input),
-      dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx),
-    });
+    // The SAME duty recipient resolver built beside the Session duty resolver above; `notes.resolveScribeRecipient`
+    // keeps the same public shape and result, with no second copy of the scan (LD-04).
     const resolveScribeRecipient = (ctx: CoreCallContext): Promise<ReadResult<SessionRef | null>> =>
       dutyRecipient.resolveDutyRecipient(ctx, {
         workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
@@ -2280,6 +2469,59 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The approval hook's receive side: G calls it; R's Host binds the sink to `armMessageRelease(scope)`.
     const onMessageReleaseApproved: MessageReleaseApprovedHookV1 = approved =>
       options.onMessageReleaseApproved?.(approved);
+    // R's ONE rework-request owner: the pending-card page the Task block reads and the person's approved
+    // application entry. Both approved owner entries are the platform's existing requeue/evidence instances.
+    // The public EvidencePort keeps the approved-recheck entry optional for older compositions while the concrete
+    // owner always publishes it; this narrows the type only — no new runtime branch and no second owner.
+    const reworkEvidence = rawEvidence as typeof rawEvidence
+      & Required<Pick<EvidencePort, 'reverifyApprovedByCard'>>;
+    const reworkRequestService = createReworkRequestService({
+      records: backend.records, requeues: requeueService, evidence: reworkEvidence,
+      reads: executionReader, bodies, now, eventId: randomUUID,
+    });
+    // The decision-source switch arm needs R's direct request read (a text-only answer must be `invalid`, not an
+    // unbound-reader `unavailable`). The source-facts owner holds this same deps object, so bind it in place.
+    decisionSourceDependencies.reworkRequests = { readRequest: reworkRequestService.readRequest };
+    // R's rework card source is the spec wrapped by the ONE generic collection adapter; the read model keeps the
+    // array above by reference, so this registration reaches the pending read and the decision queue.
+    decisionCardSources.push(createCollectionCardSource(reworkRequestCardSourceSpec({
+      readRequest: reworkRequestService.readRequest, listByGoal: reworkRequestService.listByGoal,
+    })));
+    // N's ONE module-overlap gate owner. Its recipient read is F1's single duty resolver bound to the Goal's
+    // workspace (the owner tries the adviser and then the secretary); its note-request text is the pack's one-line
+    // prefix, to which the owner appends the module id; its current-note read is the note read model's own
+    // `listCurrentVersions` over the module anchor, paged to the end. No second reader, codec or service exists.
+    const overlapGates = createOverlapGateService({
+      records: backend.records,
+      resolveRecipient: (ctx, _goalRef, duty) => dutyRecipient.resolveDutyRecipient(ctx, {
+        workspace: workspaceOf(ctx), duty,
+      }),
+      sendMessage: mailbox.sendMessage,
+      readNotes: async (ctx, input) => {
+        const notes: NoteVersionSnapshot[] = [];
+        let cursor: string | null = null;
+        for (;;) {
+          const page = await noteReads.listCurrentVersions(ctx, {
+            anchor: { kind: 'module', moduleId: input.moduleId }, limit: 100, cursor });
+          if (page.status !== 'ready') return page;
+          notes.push(...page.value.items);
+          if (page.value.complete) return { status: 'ready', value: notes };
+          cursor = page.value.next;
+        }
+      },
+      noteRequestText: PLATFORM_PROMPT_PACK_V1.strings['overlap.noteRequest'],
+      now,
+    });
+    // The same gate owner reaches the Workflow raw and the two overlap routes through this
+    // port; every route call is drained through the one trackedCall/close path.
+    const overlapGatePort: OverlapGatePort = {
+      openOverlapGate: (...args) => trackedCall(() => overlapGates.openOverlapGate(...args), unavailable),
+      requestOverlapNote: (...args) => trackedCall(() => overlapGates.requestOverlapNote(...args), unavailable),
+      readOverlapGate: (...args) => trackedCall(() => overlapGates.readOverlapGate(...args), unavailable),
+      checkOverlapGate: (...args) => trackedCall(() => overlapGates.checkOverlapGate(...args), unavailable),
+      releaseOverlapGate: (...args) => trackedCall(() => overlapGates.releaseOverlapGate(...args), unavailable),
+      readOverlapGates: (...args) => trackedCall(() => overlapGates.readOverlapGates(...args), unavailable),
+    };
     const workflowDependencies: WorkflowDependencies & {
       sessionHandoff?: HandoffWorkflowDependencies;
     } = {
@@ -2315,11 +2557,48 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // back to the ordinary Work bindings' `sessionRole` (I-1, L5). Slice 2C
       // L7: the hoisted instance is the SAME one the line read receives.
       sessionDuty: sessionDutyResolver,
-      ...(workflowConfiguration === undefined ? {} : { configuration: workflowConfiguration }),
+      // The startup Workflow is only the seed: `registerWorkflowBinding` replaces
+      // this dependency afterwards, and every reader above resolves it live.
+      ...(options.workflow === undefined ? {} : { configuration: structuredClone(options.workflow) }),
       // Slice 1 (spec §4.1): the full mailbox owns `disposeArchiveWait`; without
       // it an ordinary transferred-wait archive answers unsupported. It is the
       // SAME mailbox instance the Runtime and routes use, never a second copy.
       messages: mailbox,
+      // M's request seam and the two pending-card adapters the Task block reads. The member adapter only maps
+      // M's own card to the Workflow's `{task, source}` (no store read); the rework adapter pages R's public
+      // pending list with its own cursor and builds each card's source from the stored record identity. N's ONE
+      // gate owner is the same instance the routes and the platform publish.
+      members: memberService.request,
+      pendingMemberCreations: async (ctx, input) => {
+        const read = await memberService.request.readPendingMemberCards(ctx, input);
+        if (read.status !== 'ready') return read;
+        return { status: 'ready', value: read.value.map(card => ({ task: card.task, source: card.source })) };
+      },
+      pendingReworkRequests: async (ctx, input) => {
+        const cards: PendingCardV1[] = [];
+        let cursor: string | undefined;
+        for (;;) {
+          const page = await reworkRequestService.listPending(ctx, {
+            goalRef: input.goalRef, page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) } });
+          if (page.status !== 'ready') return page;
+          for (const record of page.value.items) {
+            cards.push({
+              task: record.task,
+              source: {
+                kind: 'rework_request',
+                key: decisionSourceKey({ kind: 'rework_request', requestRef: record.ref }),
+                subject: { kind: 'goal', goalRef: { aggregateType: 'Goal',
+                  projectId: record.ref.projectId, goalId: record.ref.goalId } },
+                pins: [{ ref: structuredClone(record.ref), revision: record.revision }],
+                goalBases: [],
+              },
+            });
+          }
+          if (page.value.nextCursor === null) return { status: 'ready', value: cards };
+          cursor = page.value.nextCursor;
+        }
+      },
+      overlap: overlapGates,
       // Book §3.8 item 3: the release owner, the bounded candidate page and the trusted answer entry. R's Host and the
       // approval hook arm the same queue; the Workflow only selects and performs.
       messageRelease: rawMessageRelease,
@@ -2385,6 +2664,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         message_release: createMessageReleaseApplicationAdapter({
           applyMessageRelease: messageReleaseApplication.applyMessageRelease,
           onApproved: onMessageReleaseApproved }),
+        // The member_creation and rework_request rows: M's stored member decision and R's one approved-request
+        // entry. The factories take exactly M's decision pick and R's application deps; no second application
+        // flow is added here.
+        member_creation: createMemberCreationApplicationAdapter(memberService.decision),
+        rework_request: createReworkRequestApplicationAdapter({
+          reworks: reworkRequestService, applicationReceipt }),
       },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
@@ -2476,9 +2761,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const WORKSPACE_CHANGE_CAPTURE_CONTENT_TYPE = 'application/vnd.platform.workspace-change-capture+json';
     // K3 (Q2/L4): the owners' published committed-call lookups, dispatched by
     // tool name. A row-4 name no owner publishes stays `lookup_not_published`.
+    // The positions follow `DEFAULT_OWNER_TOOL_NAMES`; the mailbox owner answers
+    // `withdraw_session_message` beside its sends, and the member owner answers
+    // `create_member`.
     const toolCommitLookup = createToolCommitLookup([
       mailbox.lookupToolCommit, rawDecisionMessages.lookupToolCommit, planService.lookupToolCommit,
-      noteWrite.lookupToolCommit, commandRerunRequests.lookupToolCommit,
+      noteWrite.lookupToolCommit, commandRerunRequests.lookupToolCommit, memberService.lookupToolCommit,
+      requeueService.lookupToolCommit, rawEvidence.lookupToolCommit,
     ]);
     // K3 (Q3/L5): the classifier's and the attestation entry's workspace capture.
     // It reads the prepared manifest at `bundleRef`, takes its run-start
@@ -2761,6 +3050,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       lines: workLines,
       readSessionHistory: (...args) => runtimePort.readSessionHistory(...args),
     });
+    // P's chooser reads: the SAME WorkLineReadPort above, 6B's activity record over the SAME records, the Goal's
+    // ended-Run history (an unreadable read stays its CoreRejection, never an empty list) and A-07's pre-claim port.
+    // The Workflow holds its dependency bag by reference, so this is installed before the platform is published.
+    const pickReads: PickReadsV1 = {
+      ...(preClaimAuthorization === null ? {} : { authorization: preClaimAuthorization }),
+      activity: { lines: workLines, record: createSessionActivityReader({ records: backend.records }) },
+      goalRuns: (ctx, goalRef) => readGoalRunsForCount(backend.records, goalRef),
+    };
+    workflowDependencies.pick = pickReads;
     // The request commands and the drain over the SAME records, Session owners
     // and trusted duty resolver the platform already publishes. The profile port,
     // the request facts reader, the capacity adapter, the line-creation entry and
@@ -2802,9 +3100,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readFacts: (ctx, input) => trackedCall(() => rawRequestFacts.readFacts(ctx, input), requestClosed),
     };
     // The main read and `requests/read`: the request facts above and ONE
-    // whole-page run of the decision read model's assembly per read.
-    const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
-      decisions: rawDecisionReads });
+    // whole-page run of the decision read model's assembly per read. The raw
+    // owner was built before the Runtime dependencies for Q's `read_requests`.
     const mainSurface: MainSurfaceReadPort = {
       readMainPage: (ctx, input) => trackedCall(() => rawMainSurface.readMainPage(ctx, input), requestClosed),
       readRequestView: (ctx, input) => trackedCall(() => rawMainSurface.readRequestView(ctx, input), requestClosed),
@@ -2843,6 +3140,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       forwardMessage: (...args) => trackedCall(() => messageForwardingOwner.forwardMessage(...args), unavailable),
       disposeWait: (...args) => trackedCall(() => messageForwardingOwner.disposeWait(...args), unavailable),
     };
+    // LD-14: the member owner's one start-up recovery, published narrowly (the
+    // same owner the Runtime's create_member tool uses) and drained like every
+    // other owner call.
+    const memberCreations: Pick<MemberRequestPortV1, 'resumePendingMemberCreations'> = {
+      resumePendingMemberCreations: (...args) => trackedCall(
+        () => memberService.request.resumePendingMemberCreations(...args), unavailable),
+    };
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -2860,6 +3164,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
       // non-enumerable like the other internal owner groups.
       notes,
+      // N's ONE gate owner, the same instance the Workflow and the two
+      // overlap routes use. Internal like the other owner groups.
+      overlapGates: overlapGatePort,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.
@@ -2874,6 +3181,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       requestIntake, requestRounds, requestFacts, secretaryProfiles,
       // The main read and `requests/read` owner; internal like the request owners.
       mainSurface,
+      memberCreations,
       // The initialization binding read, the adoption operation owner and the installed-checks confirmation;
       // internal like the request owners.
       bindings, initializationAdoption, confirmInstalledChecks,
@@ -2976,7 +3284,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
-      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'sessionHandoff',
+      'overlapGates',
+      'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions'] as const) {

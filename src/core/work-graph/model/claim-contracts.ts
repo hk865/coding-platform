@@ -13,6 +13,7 @@ import type {
   ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
@@ -129,6 +130,8 @@ export type ApprovedReworkApplyV1 = {
   actor: Extract<ActorRef, { kind: 'agent' }>;
   provenance: DelegatedWriteProvenanceV1;
   commandId: string;
+  /** The person's card answer; the approved commit's formal proof is bound to it. */
+  answerRef: SessionMessageRef;
 };
 /**
  * E5 (§2.3 S:622, L-d): the already committed `TaskRequeue` of a `(Task,

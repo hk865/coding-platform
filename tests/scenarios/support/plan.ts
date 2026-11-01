@@ -34,6 +34,7 @@ import type { WorkflowHostConfiguration } from '../../../src/business/workflow/p
 import { createTargetPlatform } from '../../../src/composition/create-platform.js';
 import type { ActorRef } from '../../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../../src/contracts/core/task-claim.js';
 import type { ReadResult } from '../../../src/contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../../src/contracts/dispatch.js';
@@ -64,6 +65,7 @@ import { buildEffectiveTaskBasis } from '../../../src/core/work-graph/tasks/plan
 import { createTaskRequeueService } from '../../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../../src/core/work-graph/tasks/run-state-service.js';
 import { createScriptedModel, type ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
+import { seedPlatformLine } from '../../helpers/A2-restart-fixture.js';
 import { AG2B_GOAL_REF, AG2B_SCOPE, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { platformRecordSchemas, type FuzzStep } from '../../state/invariants.js';
 import {
@@ -251,29 +253,39 @@ function c6WorkspaceBindings(directory: string, revision: { value: number }): Wo
 }
 
 function c6RuntimeHost(scripted: ScriptedModel): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== c6ProjectId || context.workspaceId !== c6WorkspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'a2-c6-host-config@1',
+      model: { configuration: { revision: 'a2-c6-host-config@1', provider: 'deepseek', model: 'a2-c6-scripted',
+        baseUrl: 'http://127.0.0.1' },
+      client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+        tokenizer: 'a2-c6-counter' }) } },
+      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
+        maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 },
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 C6 trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../../vendor/coding-agent/resources/skills',
+        import.meta.url)), enabledIds: [] },
+      systemInstruction: 'A2 C6 trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== c6ProjectId || context.workspaceId !== c6WorkspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'a2-c6-host-config@1',
-        model: { configuration: { revision: 'a2-c6-host-config@1', provider: 'deepseek', model: 'a2-c6-scripted',
-          baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-          tokenizer: 'a2-c6-counter' }) } },
-        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
-          maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 },
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 C6 trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../../vendor/coding-agent/resources/skills',
-          import.meta.url)), enabledIds: [] },
-        systemInstruction: 'A2 C6 trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -354,6 +366,13 @@ async function c6OpenEnvironment(): Promise<C6Environment> {
   const applied = await platform.plans.applyPlanChange(host, { meta: { requestId: 'a2-c6-plan-apply', expected: [] },
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error('Plan adoption failed');
+  // A-25: the removed create step used to make one executor line per Task on its first `select_work`.
+  for (const task of c6PlanDraft().tasks.filter(candidate => candidate.taskKind === 'work')) {
+    await seedPlatformLine(platform, host, `a2-c6-line-${task.taskId}`, {
+      workspace: c6Scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+      targets: [{ projectId: c6ProjectId, goalId: c6GoalRef.goalId, taskId: task.taskId }],
+    });
+  }
   await c6Check(platform, 'seeded');
   return { platform, scripted, directory, p1: applied.value.ref };
 }
@@ -522,28 +541,38 @@ function c7WorkspaceBindings(directory: string, state: { revision: number }): Wo
 }
 
 function c7RuntimeHost(scripted: ScriptedModel): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== c7ProjectId || context.workspaceId !== c7WorkspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'a2-disposition-host-config@1',
+      model: { configuration: { revision: 'a2-disposition-host-config@1', provider: 'deepseek', model: 'a2-disposition-scripted',
+        baseUrl: 'http://127.0.0.1' },
+      client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+        tokenizer: 'a2-disposition-counter' }) } },
+      budget: c7RuntimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 disposition trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../../vendor/coding-agent/resources/skills',
+        import.meta.url)), enabledIds: [] },
+      systemInstruction: 'A2 disposition trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== c7ProjectId || context.workspaceId !== c7WorkspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'a2-disposition-host-config@1',
-        model: { configuration: { revision: 'a2-disposition-host-config@1', provider: 'deepseek', model: 'a2-disposition-scripted',
-          baseUrl: 'http://127.0.0.1' },
-        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-          tokenizer: 'a2-disposition-counter' }) } },
-        budget: c7RuntimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('A2 disposition trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../../vendor/coding-agent/resources/skills',
-          import.meta.url)), enabledIds: [] },
-        systemInstruction: 'A2 disposition trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -627,6 +656,11 @@ async function c7OpenEnvironment(replies: number): Promise<C7Environment> {
   const applied = await platform.plans.applyPlanChange(host, { meta: { requestId: 'a2-plan-apply', expected: [] },
     input: { proposalRef: proposedPlan.value.ref, expectedProposalRevision: proposedPlan.value.revision, decisionRefs: [] } });
   if (applied.status !== 'committed') throw new Error('Plan adoption failed');
+  // A-25: the removed create step used to make work-1's executor line on the first `select_work`.
+  await seedPlatformLine(platform, host, 'a2-disposition-line', {
+    workspace: c7Scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+    targets: [{ projectId: c7ProjectId, goalId: c7GoalRef.goalId, taskId: 'work-1' }],
+  });
   await c7Check(platform, 'seeded');
   return { platform, scripted, workspaceRoot, directory, workspace };
 }

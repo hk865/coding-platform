@@ -30,7 +30,7 @@ const EXISTING_DIGESTS = {
     'initial-planning-answer': '68dea8aeb3b5fa89e00c991bacc17648875fbe91b27822fd5947687cd73a69e6',
     base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
     'skill-platform-work': 'eb4bb377bcc4f98259878c47260d5c68ad01c2ce18fbe3b67e97c495a29719f1',
-    'skill-platform-secretary': 'fd4e0c37fc97bdc4e710b5c67a07b7374fa308db75e16eb24bd37939b80216e0',
+    'skill-platform-secretary': 'cb02659d41f8d91e430352da33b0a17154161a2edb30cb9d66e1823afa1da8d5',
     'skill-platform-adviser': '5f2163a75ed75a613e29a2f51139fe8f78b3ec73ab5a3084d7635c1d4407b296',
     'skill-platform-scribe': 'fd7b2ac9359d991e3181d8c2dd73d23334683601b5b6e459f161519ba76b103d',
     'skill-platform-reviewer': '275be65bdac92bc2e1cf1b11dede3e3f049f6e356eb897b4fa6b2a737b575983',

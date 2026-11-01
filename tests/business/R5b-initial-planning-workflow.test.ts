@@ -24,7 +24,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef } from '../../src/contracts/core/identity.js';
 import type { InitialPlanningResponseV2 } from '../../src/contracts/initial-planning.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
@@ -33,6 +33,7 @@ import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { InitialPlanningGoalInput, WorkflowAdvanceInput, WorkflowOperation, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
+import { seedPlatformLine } from '../helpers/A2-restart-fixture.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 
@@ -132,22 +133,32 @@ function runtimeHost(scripted: ReturnType<typeof createScriptedModel>): RuntimeH
     client: scripted.client,
     inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'r5b-iw-fixture-counter' }) },
   });
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'r5b-iw-work-host@1', model: model('r5b-iw-work-host@1', 'r5b-iw-scripted'),
+      budget: runtimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex(workInstruction) } : null,
+      tools: ['read'], writeScope: [], skills, systemInstruction: workInstruction, deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'r5b-iw-work-host@1', model: model('r5b-iw-work-host@1', 'r5b-iw-scripted'),
-        budget: runtimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex(workInstruction) } : null,
-        tools: ['read'], writeScope: [], skills, systemInstruction: workInstruction, deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
     async resolveQueryConfiguration() {
       return { status: 'ready', value: {
@@ -314,6 +325,11 @@ it('consumes the answer, adopts the candidate, then advances to a formal Goal co
       throw new Error(`adoption did not hand off to the Workflow: ${JSON.stringify(adopted)}`);
     }
 
+    // A-25: picking no longer makes a line, so the adopted Plan's two required Tasks share this one.
+    await seedPlatformLine(platform, ctx(), 'r5b-line', {
+      workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+      targets: ['work-1', 'work-2'].map(taskId => ({ projectId, goalId: goalRef.goalId, taskId })),
+    });
     // 3. The existing advanceWork loop runs the two real works through the
     // registered check and the independent gate until the formal GoalPhase.
     const advanced = await drive(platform, adopted.value.next.input);

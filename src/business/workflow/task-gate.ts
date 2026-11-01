@@ -18,9 +18,9 @@ import { isUnenteredReviewRoundForCancellation, reviewRoundEndedKnown } from '..
 import type {
   GoalWaitBasisV1, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview,
 } from './contracts.js';
-import type { WorkflowDependencies, WorkflowHostConfiguration } from './ports.js';
+import type { WorkflowDependencies, WorkflowHostConfiguration, PendingCardV1 } from './ports.js';
 import {
-  cancelReviewRoundStep, graphWrite, prepareStep, readyValue, requeueTaskStep, reverifyRoundStep, settleReviewStep, waiting,
+  cancelReviewRoundStep, graphWrite, prepareStep, readyValue, requeueTaskStep, reverifyRoundStep, settleReviewStep, waiting as waitingResult,
   type Base, type Binding, type Owned,
 } from './workflow.js';
 
@@ -55,7 +55,7 @@ export type TaskGateDependencies = {
    *  `deps.<port>` at call time, and the composition may set a field later (X/create-platform.ts:2446). */
   workflow: Pick<WorkflowDependencies,
     'unknownCallReviews' | 'sourceAuthority' | 'decisionMessages' | 'runtime' | 'claims' | 'evidence' | 'plans'
-    | 'taskInputs' | 'decisionReads'>;
+    | 'taskInputs' | 'decisionReads' | 'pendingMemberCreations' | 'pendingReworkRequests'>;
   bindingForRole(config: WorkflowHostConfiguration, projectId: string, workspaceId: string, role: string): Binding | null;
   isUnadmittedStarting(owned: Owned, runRef: RunRef): Promise<boolean>;
   claimContinuation(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask,
@@ -86,7 +86,7 @@ export type L46BlockV1 = {
   /** What the driver registers (§3.8 item 2): the card's source kinds plus `Goal`. */
   wakeBasis: GoalWaitBasisV1;
   /** The rework the card gates; the all-blocked reason names it. */
-  action: 'system_requeue' | 'auto_reverify';
+  action: 'system_requeue' | 'auto_reverify' | 'member_creation' | 'rework_request';
 };
 
 /** One Task waiting behind a block, directly or through the exact-input closure. */
@@ -485,6 +485,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     };
     return readyValue({
       state: 'waiting', receipt: null, next: null,
+      pick: null,
       reason: `automation_confirmation_required:${cause.action}`,
       waitBasis: goalWaitBasisOf(goal, [`automation_confirmation:${action}`], ['SessionMessage', 'TaskRequeue', 'Goal']),
       decisionCause: {
@@ -541,6 +542,55 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
         // The gate already composed this basis; take it as-is.
         wakeBasis: gated.value.waitBasis! });
     }
+    // The two pending card sources: M's awaiting-decision member operations and R's pending rework requests. Each
+    // read is one Goal-scoped page; a failed read is the existing read rejection, never "no cards". The card is
+    // re-read by its own source so a terminal card (applied, answered without application, closed) releases the
+    // block in this same pass, exactly as the automatic block above.
+    const pending: PendingCardV1[] = [];
+    if (deps.pendingMemberCreations !== undefined) {
+      const read = await deps.pendingMemberCreations(owned.ctx, { goalRef: goal.ref });
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read
+          : rejection(read.status === 'not_found' ? 'not_found' : 'incomplete',
+            read.status === 'not_found' ? 'the requested fact does not exist'
+              : 'the requested read is not ready at the required watermark');
+      }
+      pending.push(...read.value);
+    }
+    if (deps.pendingReworkRequests !== undefined) {
+      const read = await deps.pendingReworkRequests(owned.ctx, { goalRef: goal.ref });
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read
+          : rejection(read.status === 'not_found' ? 'not_found' : 'incomplete',
+            read.status === 'not_found' ? 'the requested fact does not exist'
+              : 'the requested read is not ready at the required watermark');
+      }
+      pending.push(...read.value);
+    }
+    for (const pendingCard of pending) {
+      const card = await deps.decisionReads?.readDecisionCard(owned.ctx, { source: pendingCard.source });
+      if (card?.status === 'not_found') continue;                       // the source resolved
+      if (card?.status === 'rejected') return card;
+      if (card?.status !== 'ready') return rejection('incomplete', 'the pending card is not ready');
+      if (card.value.state === 'applied' || card.value.state === 'answered_no_application'
+        || card.value.state === 'closed') continue;
+      const action = pendingCard.source.kind === 'member_creation' ? 'member_creation' : 'rework_request';
+      // Each base names exactly the kinds its unblocking commits carry. member: creation/recovery
+      // writes Session + CoreOperation; the answer/refusal writes SessionMessage; a requeue, plan
+      // change or Goal cancel invalidates. rework: the answer/application writes SessionMessage;
+      // requeue writes TaskRequeue; recheck writes VerificationRound; a plan change or Goal cancel
+      // invalidates. Every kind is in GOAL_WAIT_WAKE_AGGREGATE_TYPES after DRV (TaskRequeue,
+      // UnknownCallReview) and L1 (CoreOperation, NoteHead, NoteVersion, CurrentPointer,
+      // ModuleOverlapGate); Session, SessionMessage, VerificationRound, PlanRevision and Goal
+      // are already there.
+      const kinds = action === 'member_creation'
+        ? ['Session', 'CoreOperation', 'SessionMessage', 'TaskRequeue', 'PlanRevision', 'Goal'] as const
+        : ['SessionMessage', 'TaskRequeue', 'VerificationRound', 'PlanRevision', 'Goal'] as const;
+      const gated = waitingResult(null, `${action}_pending`, pendingCard.source,
+        goalWaitBasisOf(goal, [action], kinds));
+      if (gated.status !== 'ready') return gated;
+      blocks.push({ task: pendingCard.task, gate: gated, action, wakeBasis: gated.value.waitBasis! });
+    }
     const table = formalDependencies(graph.tasks, upstreams);
     const waiting = closeBranches(table, blocks,
       (taskId) => graph.tasks.find(candidate => candidate.ref.taskId === taskId)?.ref);
@@ -570,20 +620,20 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     if (operation.kind === 'requeue_task' && row.execution !== null && deps.unknownCallReviews !== undefined) {
       let read;
       try { read = await deps.unknownCallReviews.readReview(owned.ctx, { runRef: row.execution }); }
-      catch { return waiting(null, 'unknown_call_review_unreadable: the review record read failed; the requeue writes nothing',
+      catch { return waitingResult(null, 'unknown_call_review_unreadable: the review record read failed; the requeue writes nothing',
         undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:unreadable'], ['UnknownCallReview', 'Goal'])); }
       if (read.status === 'ready') {
         const record = read.value;
         if ((record.disposition?.hold ?? null) === 'held') {
-          return waiting(null, 'unknown_call_review_held: the selected Run\'s review record blocks this requeue',
+          return waitingResult(null, 'unknown_call_review_held: the selected Run\'s review record blocks this requeue',
             undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:held'], ['UnknownCallReview', 'Goal']));
         }
         if (record.status !== 'resolved') {
-          return waiting(null, 'unknown_call_review_pending: the selected Run\'s review record blocks this requeue',
+          return waitingResult(null, 'unknown_call_review_pending: the selected Run\'s review record blocks this requeue',
             undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:pending'], ['UnknownCallReview', 'Goal']));
         }
       } else if (read.status !== 'not_found') {
-        return waiting(null, 'unknown_call_review_unreadable: the selected Run\'s review record blocks this requeue',
+        return waitingResult(null, 'unknown_call_review_unreadable: the selected Run\'s review record blocks this requeue',
           undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:unreadable'], ['UnknownCallReview', 'Goal']));
       }
     }

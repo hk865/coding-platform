@@ -59,6 +59,7 @@ import type { WorkflowHostConfiguration } from '../../src/business/workflow/port
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import type { ActorRef, CommitCursor } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RoleBindingRefV1, RunRef } from '../../src/contracts/dispatch.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
@@ -781,30 +782,40 @@ export function ag2bWorkRuntime(model: () => ScriptedModel,
   // The Host's computed id: the double carries it so a run the Host prepared starts on it.
   options: { tools?: readonly string[]; queryModel?: ScriptedModel; workModelId?: string } = {}): RuntimeHostBindings {
   const queryModel = options.queryModel;
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (context.projectId !== AG2B_SCOPE.projectId || context.workspaceId !== AG2B_SCOPE.workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'ag2b-work-host@1',
+      model: { configuration: { revision: 'ag2b-work-model@1', provider: 'deepseek', model: 'ag2b-scripted-work',
+        baseUrl: 'http://127.0.0.1' }, client: model().client,
+        ...(options.workModelId === undefined ? {} : {
+          selection: { modelId: options.workModelId, promptPack: 'platform',
+            reasoningReplay: 'current_run' as const },
+        }),
+      inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
+      budget: AG2B_RUNTIME_BUDGET,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) } : null,
+      tools: [...(options.tools ?? AG2B_WORK_TOOLS)], writeScope: ['.'],
+      skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] }, systemInstruction: AG2B_WORK_INSTRUCTION,
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (context.projectId !== AG2B_SCOPE.projectId || context.workspaceId !== AG2B_SCOPE.workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'ag2b-work-host@1',
-        model: { configuration: { revision: 'ag2b-work-model@1', provider: 'deepseek', model: 'ag2b-scripted-work',
-          baseUrl: 'http://127.0.0.1' }, client: model().client,
-          ...(options.workModelId === undefined ? {} : {
-            selection: { modelId: options.workModelId, promptPack: 'platform',
-              reasoningReplay: 'current_run' as const },
-          }),
-        inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
-        budget: AG2B_RUNTIME_BUDGET,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) } : null,
-        tools: [...(options.tools ?? AG2B_WORK_TOOLS)], writeScope: ['.'],
-        skills: { resourceRoot: SKILLS_ROOT, enabledIds: [] }, systemInstruction: AG2B_WORK_INSTRUCTION,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
     ...(queryModel === undefined ? {} : {
       async resolveQueryConfiguration(context: CoreCallContext) {
@@ -868,11 +879,12 @@ export async function seedThroughOwners(platform: Platform, actor: WorkbenchActo
     'goals/create': (ctx, request) => platform.goals.createGoal(ctx, request),
     'plans/propose': (ctx, request) => platform.plans.proposePlan(ctx, request),
     'plans/apply': (ctx, request) => platform.plans.applyPlanChange(ctx, request),
+    'sessions/create': (ctx, request) => platform.runtime.createSession(ctx, request),
   };
   await seedAG2bWorkGraphThrough(async (suffix, body) => {
     const owner = owners[suffix];
     if (owner === undefined) throw new Error(`no in-process owner for the seed route ${suffix}`);
-    return owner(hostCtx(actor), body.request as never);
+    return owner(hostCtx(actor), ('request' in body ? body.request : body.input) as never);
   }, workIds);
 }
 
@@ -910,6 +922,8 @@ export type HostScenarioOptions = {
   actor?: WorkbenchActor;
   /** The seeded work Tasks (default the one AG2b work Task); `null` seeds nothing. */
   workIds?: readonly string[] | null;
+  /** The work Tasks the seed gives an executor line; the default is every one of `workIds`. */
+  lineTaskIds?: readonly string[];
   /**
    * Observe every committed batch (its records, events and receipt cursor) while
    * this scenario is open (lead refreeze §5). Additive: with no option the
@@ -1022,7 +1036,8 @@ export class HostScenario extends ScenarioBase {
       options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY, gitWorkspace, options.commitObserver, options.commitGate);
     scenario.backendWrapHeld = true;
     opened.push(scenario);
-    if (options.workIds !== null) await seedAG2bWorkGraph(first.host, options.workIds ?? [AG2B_WORK_TASK_ID]);
+    if (options.workIds !== null) await seedAG2bWorkGraph(first.host, options.workIds ?? [AG2B_WORK_TASK_ID],
+      options.lineTaskIds === undefined ? {} : { lineTaskIds: options.lineTaskIds });
     // Arm only after the seed: the option must fail the test's own call, not a seed write.
     if (options.failNextLookupCommitOnce === true) scenario.failNextLookupCommitOnce();
     return scenario;

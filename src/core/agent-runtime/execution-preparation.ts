@@ -19,7 +19,6 @@ import {
   renderUnknownCallReviewZh,
   type PreparedTaskExecution, type PreparedTaskManifestV1, type UnknownCallReviewInputV1,
 } from '../../contracts/core/prepared-execution.js';
-import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
@@ -49,6 +48,7 @@ import {
   promptTemplatePart, promptTemplateVersion, storePromptTexts, templatesToFreeze,
   trackPromptTexts, type PromptPartsV1,
 } from './prompt-set-texts.js';
+import { projectRunPermissions } from '../work-graph/tasks/pick-authorization.js';
 import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
 import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
@@ -228,31 +228,6 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
 }
 
-/** Intersect the Host's real tool grant with the Role ceiling. Absent Role spec
- * keeps the legacy semantics (Host grant is the only ceiling). */
-function intersectTools(hostTools: readonly string[], roleResolution: RoleSpecResolutionV1): string[] {
-  if (roleResolution.status !== 'resolved') return [...hostTools];
-  const ceiling = new Set(roleResolution.spec.permissions.tools);
-  return hostTools.filter(tool => ceiling.has(tool));
-}
-
-/** This batch supports exactly two write shapes: no writes, or an explicit Host
- * whole-workspace grant. A narrower path scope is unsupported, never widened. */
-function validateWriteScope(hostWriteScope: readonly string[], roleResolution: RoleSpecResolutionV1, hostShell: 'all_except_denied' | undefined): { ok: true; writeScope: string[] } | { ok: false; rejection: CoreRejection } {
-  const writeScope = [...hostWriteScope];
-  const wholeWorkspace = writeScope.length === 1 && writeScope[0] === '.';
-  if (writeScope.length !== 0 && !wholeWorkspace) {
-    return { ok: false, rejection: rejected('unsupported', 'a narrower write scope than the whole workspace is not supported by this runtime batch') };
-  }
-  if (roleResolution.status === 'resolved' && roleResolution.spec.permissions.writeScope === 'none' && writeScope.length !== 0) {
-    return { ok: false, rejection: rejected('forbidden', 'the Role spec is read-only but the Host grant allows writes') };
-  }
-  if (hostShell !== undefined && !wholeWorkspace) {
-    return { ok: false, rejection: rejected('unsupported', 'shell requires an explicit whole-workspace write grant') };
-  }
-  return { ok: true, writeScope };
-}
-
 /**
  * C3 / §6.1 contract (e): the Prepared value of a Run whose input is already
  * bound (Authorized, Entering or Revoked are all `starting`). Nothing is
@@ -399,38 +374,23 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           return rejected('forbidden', 'the Host legacy template does not match the Session legacy template');
         }
       }
-      const writeScopeResult = reviewPurpose !== undefined
-        ? { ok: true as const, writeScope: [] as string[] }
-        : validateWriteScope(hostConfig.writeScope, roleResolution, hostConfig.shellWorkspaceAccess);
-      if (!writeScopeResult.ok) return writeScopeResult.rejection;
-      // A member-created or inherited line may not prepare outside its creator's ceiling.
-      // An absent fragment is "no creator ceiling", never a default.
-      const ceiling = session.delegationCeiling ?? null;
-      if (ceiling !== null) {
-        const ceilingWrites = new Set(ceiling.writeScope);
-        if (writeScopeResult.writeScope.some(path => !ceilingWrites.has(path))) {
-          return rejected('forbidden', 'the prepared write scope is outside the creator ceiling');
-        }
-      }
       // L20: the proposal phase swaps only the one write tool.
       const reviewToolNames = reviewPurpose?.phase === 'proposal'
         ? UNKNOWN_CALL_PROPOSAL_ROUND_TOOL_NAMES : UNKNOWN_CALL_REVIEW_ROUND_TOOL_NAMES;
-      const grantedTools = reviewPurpose !== undefined ? [...reviewToolNames] : intersectTools(hostConfig.tools, roleResolution);
-      // The Host grant is false unless it explicitly sets createMember; a ceiling
-      // can only narrow it, and a secretary-created line is pinned false.
-      let createMember = hostConfig.createMember === true;
-      if (ceiling !== null) createMember = createMember && ceiling.createMember;
-      if (session.secretaryCreated === true) createMember = false;
-      const permissions: TaskEnvelopeV1['permissions'] = {
+      const projected = projectRunPermissions({
         policyRevision: run.roleBinding.policyRevision,
-        tools: ceiling === null ? grantedTools : grantedTools.filter(tool => ceiling.tools.includes(tool)),
-        writeScope: writeScopeResult.writeScope,
-        createMember,
-      };
-      const hasShell = permissions.tools.includes('shell');
-      if (hasShell && (hostConfig.shellWorkspaceAccess !== 'all_except_denied' || permissions.writeScope.length !== 1 || permissions.writeScope[0] !== '.')) {
-        return rejected('unsupported', 'shell requires Host shellWorkspaceAccess=all_except_denied, a shell grant and an explicit whole-workspace write scope');
-      }
+        host: {
+          tools: hostConfig.tools, writeScope: hostConfig.writeScope,
+          ...(hostConfig.shellWorkspaceAccess === undefined ? {} : { shellWorkspaceAccess: hostConfig.shellWorkspaceAccess }),
+          createMember: hostConfig.createMember === true,
+        },
+        roleResolution,
+        ceiling: session.delegationCeiling ?? null,
+        secretaryCreated: session.secretaryCreated === true,
+        ...(reviewPurpose === undefined ? {} : { reviewTools: reviewToolNames }),
+      });
+      if (!projected.ok) return projected.rejection;
+      const permissions = projected.permissions;
       if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled after the Host configuration read');
 
       // Ruling 14 item 2: resolve the pack ONCE, before anything renders. A
@@ -510,7 +470,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // `PromptSetV1.toolNames`. The read-only command gate is the one fact that
       // needs the Host workspace authorization; a failure leaves the tool out
       // and the start decides its own unavailable/forbidden answer.
-      const readOnly = writeScopeResult.writeScope.length === 0;
+      const readOnly = permissions.writeScope.length === 0;
       const readonlyRequested = readOnly && permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
       // The production Runtime always wires the workspace host; a direct
       // preparation without one cannot read the read policy, so it freezes the
@@ -649,7 +609,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // test `VerificationWorkspaceReader.capture` makes). A missing workspace
       // host or any baseline failure leaves the field absent/unavailable and
       // NEVER fails preparation; a cancellation still ends it (slice 8 §13.8).
-      const workspaceBaseline = writeScopeResult.writeScope.length === 0
+      const workspaceBaseline = permissions.writeScope.length === 0
         ? undefined
         : await recordWorkspaceBaseline(deps, owned, session.workspaceId, runRef, hostConfig.deniedPrefixes, sourceRefs);
       if (workspaceBaseline === 'cancelled') {

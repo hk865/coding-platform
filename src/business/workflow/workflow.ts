@@ -58,6 +58,10 @@ import { createDecisionActions, type DecisionActionsPort } from './decision-acti
 import { createActivityBackfill } from './activity-backfill.js';
 import { servingBinding } from './role-bindings.js';
 import { createSessionChooser, roleReusable, type SessionChoice } from './session-chooser.js';
+import type { PickBasisV1 } from '../../contracts/pick-basis.js';
+import type { ModuleOverlapTaskFactsV1, OverlapBasisV1 } from '../../core/work-graph/tasks/overlap-gates.js';
+import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../core/work-graph/tasks/overlap-gates.js';
+import { createDutyRecipient } from '../../core/work-graph/sessions/duty-recipient.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
 import { deriveSessionInputId, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import {
@@ -484,6 +488,8 @@ type WorkflowAdvanceValue = {
   state: 'advance' | 'waiting' | 'completed';
   receipt: WorkflowStepReceipt | null;
   next: AdvanceNext | null;
+  /** The pick basis behind this selection (LR7C-09); null when no picker ran or a continuation kept none. */
+  pick: PickBasisV1 | null;
   reason: string | null;
   /**
    * Slice 5 §4.5: an automatic refine/requeue/reverify step gated by the Goal's
@@ -513,17 +519,17 @@ export function readyValue(value: WorkflowAdvanceValue): WorkflowAdvanceResult {
   } };
 }
 function advancing(receipt: WorkflowStepReceipt | null, next: AdvanceNext,
-  reason: string | null = null): WorkflowAdvanceResult {
-  return readyValue({ state: 'advance', receipt, next, reason });
+  reason: string | null = null, pick: PickBasisV1 | null = null): WorkflowAdvanceResult {
+  return readyValue({ state: 'advance', receipt, next, reason, pick });
 }
 export function waiting(receipt: WorkflowStepReceipt | null, reason: string,
-  source?: DecisionSourceV1, waitBasis?: GoalWaitBasisV1): WorkflowAdvanceResult {
-  return readyValue({ state: 'waiting', receipt, next: null, reason,
+  source?: DecisionSourceV1, waitBasis?: GoalWaitBasisV1, pick: PickBasisV1 | null = null): WorkflowAdvanceResult {
+  return readyValue({ state: 'waiting', receipt, next: null, reason, pick,
     ...(source === undefined ? {} : { source }),
     ...(waitBasis === undefined ? {} : { waitBasis }) });
 }
 function completed(receipt: WorkflowStepReceipt | null, reason: string): WorkflowAdvanceResult {
-  return readyValue({ state: 'completed', receipt, next: null, reason });
+  return readyValue({ state: 'completed', receipt, next: null, reason, pick: null });
 }
 
 function readRejection(result: { status: 'not_found' } | { status: 'not_ready' } | CoreRejection): CoreRejection {
@@ -1437,6 +1443,61 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
   }
 
+  /**
+   * The picker's suggestion step. Resolving the Goal's adviser is the one duty
+   * recipient read; a rejected or unreadable read propagates and is never "no
+   * adviser". With an adviser the step sends one Host-system `action_request`;
+   * without one it builds M's `host_pick` member request instead. Both use the
+   * same command identity so a repeat is the original receipt.
+   */
+  const suggestionDutyRecipient = deps.sessionDuty === undefined ? null : createDutyRecipient({
+    findSessions: (ctx, input) => deps.sessions.findSessions(ctx, input),
+    dutyOfRole: (ctx, role) => deps.sessionDuty!(role, ctx),
+  });
+  type SuggestionSend = { toolName: 'send_session_message'; arguments: unknown };
+  type SuggestionStep =
+    | { operation: WorkflowOperation; send: SuggestionSend | null }
+    | { rejection: CoreRejection };
+  async function suggestStep(owned: Owned, goal: GoalSnapshot, task: RuntimeTask,
+    planRef: PlanRevisionRef): Promise<SuggestionStep> {
+    const taskRef: TaskTriple = { projectId: owned.projectId, goalId: goal.ref.goalId, taskId: task.taskId };
+    const text = `Task ${task.taskId} has no suitable member; create one executor line for this task.`;
+    const commandId = `pick-suggest:${task.taskId}:${planRef.planId}`;
+    // An uninstalled duty resolver seam is a narrow double's legacy, not an
+    // unreadable adviser read: it has no adviser to resolve.
+    let recipient: SessionRef | null = null;
+    if (suggestionDutyRecipient !== null) {
+      const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
+        workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser' });
+      if (adviser.status !== 'ready') return { rejection: readRejection(adviser) };
+      recipient = adviser.value;
+    }
+    if (recipient !== null) {
+      const request = {
+        input: {
+          recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
+          text, intent: 'action_request' as const, goalRef: goal.ref,
+        },
+        meta: { requestId: commandId, expected: [] },
+      };
+      return { operation: { kind: 'suggest_member', request }, send: { toolName: 'send_session_message', arguments: request.input } };
+    }
+    return { operation: { kind: 'host_pick_member', request: {
+      commandId, caller: { kind: 'host_pick' }, duty: 'executor',
+      scope: { kind: 'task', task: taskRef }, reason: text } }, send: null };
+  }
+
+  async function readSuggestionReceipt(owned: Owned, task: RuntimeTask, planRef: PlanRevisionRef,
+    send: { toolName: 'send_session_message'; arguments: unknown },
+  ): Promise<'committed' | 'not_committed' | 'undetermined'> {
+    const lookup = deps.messages?.lookupHostSendCommit;
+    if (lookup === undefined) return 'undetermined';
+    const result = await lookup(automationContext(owned), { ...send,
+      requestId: `pick-suggest:${task.taskId}:${planRef.planId}`,
+      scope: { projectId: owned.projectId, workspaceId: owned.workspaceId } });
+    return result.status === 'committed' ? 'committed' : result.status === 'not_committed' ? 'not_committed' : 'undetermined';
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -1522,7 +1583,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (collectedWaits.length === 0) return waiting(null, collectedReason);
       return waiting(null, collectedReason, undefined, mergeWaitBasis(collectedWaits));
     };
-    for (const task of ordered) {
+    // A-12 (`book-7c.md` §3.3 item 2): the candidates split stably by the module-overlap rule, and the
+    // non-overlapping segment keeps the whole existing order ahead of the gated one. The facts are aligned by
+    // `taskId`, never by the sorted array's index.
+    const facts: ModuleOverlapTaskFactsV1[] = graph.tasks.map(row => ({
+      task: row.ref, effectivePhase: row.effectivePhase,
+      moduleId: row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null }));
+    const factOf = new Map(facts.map(fact => [fact.task.taskId, fact] as const));
+    const order = splitNonOverlapping(ordered.map(candidate => ({ candidate,
+      overlap: moduleOverlapOf({ waiting: factOf.get(candidate.taskId)!, others: facts }) })));
+    for (const { candidate: task, overlap } of [...order.nonOverlapping, ...order.overlapping]) {
       if (base.taskId !== null && task.taskId !== base.taskId) continue;
       const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
       if (row === undefined) continue;
@@ -1663,11 +1733,79 @@ export function createWorkflow(deps: WorkflowDependencies & {
         return rejection('unsupported',
           `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
       }
+      const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
+      // §3.3 items 2, 5 and 6 (`book-7c.md`): an overlapping Task is dispatched only through its module gate.
+      // The non-overlapping segment was already tried; the gate is read at this Task's current basis before any
+      // Session is chosen. A conflicting Run without a real start cursor leaves the advance waiting/incomplete.
+      // The gate owner is an optional seam like the other narrow owner ports: without it an old world keeps the
+      // pre-gate selection, and the real composition installs N's port.
+      const overlapOwner = deps.overlap;
+      if (overlap.overlaps && overlapOwner !== undefined) {
+        const waitingAttempt = row.currentAttempt?.attemptId ?? 'none';
+        const planRevision = graph.plan.planRevision;
+        const running: OverlapBasisV1['running'] = [];
+        let incomplete: string | null = null;
+        for (const conflicting of graph.tasks) {
+          if (conflicting.effectivePhase !== 'running') continue;
+          if (conflicting.definition.scope.kind !== 'module'
+            || conflicting.definition.scope.moduleRef !== overlap.moduleId) continue;
+          const run = conflicting.execution;
+          if (run === null) {
+            incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
+            break;
+          }
+          let loaded;
+          try {
+            loaded = await deps.sourceAuthority.load(run);
+          } catch {
+            incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
+            break;
+          }
+          if (loaded.status !== 'found' || !('startedSince' in loaded.snapshot)) {
+            incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
+            break;
+          }
+          running.push({ task: conflicting.ref, run, startCursor: loaded.snapshot.startedSince });
+        }
+        // §3.3 item 7: the gate's wait names its own release plus the conflicting Run's end and the note reads.
+        const gateWait = (): GoalWaitBasisV1 => goalWaitBasisOf(goal, ['overlap_gate_pending'],
+          ['Run', 'TaskLease', 'NoteHead', 'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate']);
+        if (incomplete !== null) {
+          if (base.taskId !== null) return waiting(null, incomplete, undefined, gateWait());
+          rememberWaiting(incomplete, gateWait());
+          continue;
+        }
+        const digest = overlapBasisDigest({ planRevision, waitingAttempt, running });
+        const gate = { aggregateType: 'ModuleOverlapGate' as const, projectId: owned.projectId,
+          goalId: goal.ref.goalId, taskId: task.taskId, moduleId: overlap.moduleId };
+        const openStep: WorkflowOperation = { kind: 'open_overlap_gate', request: {
+          goalRef: goal.ref, task: taskRef, moduleId: overlap.moduleId, running, planRevision, waitingAttempt } };
+        const gateRead = await overlapOwner.readOverlapGate(automationContext(owned), { gate });
+        if (gateRead.status === 'not_found') return advancing(null, makePerform(base, openStep), null, null);
+        if (gateRead.status !== 'ready') return readRejection(gateRead);
+        if (gateRead.value.basisDigest !== digest) {
+          return advancing(null, makePerform(base, openStep), null, null);
+        }
+        const satisfaction = await overlapOwner.checkOverlapGate(automationContext(owned), { gate });
+        if (satisfaction.status !== 'ready') return readRejection(satisfaction);
+        if (satisfaction.value.status !== 'satisfied') {
+          if (gateRead.value.noteRequest === null) {
+            return advancing(null, makePerform(base, { kind: 'request_overlap_note', request: {
+              gate, revision: gateRead.value.revision, basisDigest: digest } }), null, null);
+          }
+          const reason = `overlap_gate_pending: module ${overlap.moduleId} waits for its note or release`;
+          if (base.taskId !== null) return waiting(null, reason, undefined, gateWait());
+          rememberWaiting(reason, gateWait());
+          continue;
+        }
+      }
       // A persisted yield fixes the originating Session before any default
       // selection. Reopening the Host must never create or choose a substitute.
       let consumedWait: ConsumedWaitV1 | undefined;
       let chosen: SessionChoice;
-      const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
+      // The chooser's basis is its own cross-type return value; the plain `SessionChoice`
+      // local drops it, so it is kept here and travels on the picker's ordinary exits.
+      let chosenBasis: PickBasisV1 | null = null;
       if (row.execution !== null) {
         // D11: the wait, not the latest Run, names the Run that yielded it. S's `wait` is the oldest
         // unconsumed Work wait of the line and its `runRef` is that wait's `originalRun`. Without the
@@ -1712,27 +1850,51 @@ export function createWorkflow(deps: WorkflowDependencies & {
         }
         chosen = { kind: 'reuse', card: original.value };
       } else {
-        chosen = await chooseSession(owned, goal, binding, base.sessionHint, taskRef);
+        const picked = await chooseSession(owned, goal, binding, base.sessionHint, taskRef,
+          row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null);
+        chosen = picked;
+        chosenBasis = picked.basis;
       }
       if (chosen.kind === 'rejection') return chosen.rejection;
       if (chosen.kind === 'waiting') {
         const basis = goalWaitBasisOf(goal, ['session_available'], ['Session']);
         if (base.taskId === null) { rememberWaiting(chosen.reason, basis); continue; }
-        return waiting(null, chosen.reason, undefined, basis);
+        return waiting(null, chosen.reason, undefined, basis, chosenBasis);
       }
       if (chosen.kind === 'create') {
-        const operation = createSessionStep(base, {
-          workspace: { projectId: owned.projectId, workspaceId: goal.workspaceRef.workspaceId },
-          role: binding.sessionRole, recommendedRefs: [],
-          initialLinks: [{ target: { kind: 'task', ref: taskRef }, relation: 'responsible' }],
-        }, taskRef, graph.plan.ref);
-        return advancing(null, makePerform(base, operation));
+        const suggestion = await suggestStep(owned, goal, task, graph.plan.ref);
+        if ('rejection' in suggestion) return suggestion.rejection;
+        if (suggestion.send === null && suggestion.operation.kind === 'host_pick_member') {
+          // An existing operation, in any stage, performs no step; the task waits.
+          const commit = deps.members === undefined ? { status: 'missing' as const }
+            : await deps.members.readMemberRequestCommit(automationContext(owned),
+              { commandId: suggestion.operation.request.commandId });
+          if (commit.status === 'unavailable') return rejection('unavailable', commit.reason);
+          if (commit.status === 'committed') {
+            const basis = goalWaitBasisOf(goal, ['member_creation_pending'],
+              ['Session', 'CoreOperation', 'SessionMessage', 'TaskRequeue', 'PlanRevision', 'Goal']);
+            if (base.taskId !== null) return waiting(null, 'member_creation: no step', undefined, basis);
+            rememberWaiting('member_creation: no step', basis);
+            continue;
+          }
+          return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
+        }
+        if (suggestion.send === null) return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
+        if (await readSuggestionReceipt(owned, task, graph.plan.ref, suggestion.send) === 'committed') {
+          const basis = goalWaitBasisOf(goal, ['suggestion_committed'], ['Session', 'CoreOperation']);
+          if (base.taskId !== null) {
+            return waiting(null, 'suggestion_committed: the repeated pass performs no step', undefined, basis);
+          }
+          rememberWaiting('suggestion_committed: the repeated pass performs no step', basis);
+          continue;
+        }
+        return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
       }
       const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
       const built = await buildClaimOperation(owned, base, goal, graph.plan.ref, task, binding,
         sessionRef.sessionId, chosen.card.record.revision, true, consumedWait);
       if ('rejection' in built) return built.rejection;
-      return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
+      return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation), null, chosenBasis);
     }
 
     // An explicit Task selection never advances the Goal-level gate/completion:
@@ -2525,6 +2687,52 @@ export function createWorkflow(deps: WorkflowDependencies & {
         });
         if (fallback !== null) return advancing(receipt, makePerform(base, fallback));
         return await claimAfterHandover(owned, base, operation, receipt);
+      }
+      case 'suggest_member': {
+        if (deps.messages === undefined) {
+          return rejection('unsupported', 'the mailbox does not publish sendMessage');
+        }
+        const result = await deps.messages.sendMessage(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'suggest_member', result };
+        if (result.status !== 'committed') {
+          return waiting(receipt, receiptReason(result, 'the suggestion message was not sent'));
+        }
+        return advancing(receipt, selectWorkStep(base));
+      }
+      case 'host_pick_member': {
+        if (deps.members === undefined) {
+          return rejection('unsupported', 'the member service does not publish requestMember');
+        }
+        const result = await deps.members.requestMember(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'host_pick_member', result };
+        // The card is committed: return to the selection, where the member block's own source/basis waits.
+        if (result.status === 'needs_decision') return advancing(receipt, selectWorkStep(base));
+        if (result.status === 'rejected') return waiting(receipt, `host_pick: ${result.reason}`);
+        if (result.status === 'pending') return waiting(receipt, 'the member creation child is pending');
+        return advancing(receipt, selectWorkStep(base));
+      }
+      case 'open_overlap_gate': {
+        if (deps.overlap === undefined) {
+          return rejection('unsupported', 'the overlap gate owner does not publish openOverlapGate');
+        }
+        const result = await deps.overlap.openOverlapGate(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'open_overlap_gate', result };
+        // `overlap.open` also records the one note request; a refusal waits with its own code and keeps the receipt.
+        if (result.status !== 'opened') return waiting(receipt, receiptReason(result, 'the overlap gate did not open'));
+        return advancing(receipt, selectWorkStep(base));
+      }
+      case 'request_overlap_note': {
+        if (deps.overlap === undefined) {
+          return rejection('unsupported', 'the overlap gate owner does not publish requestOverlapNote');
+        }
+        const result = await deps.overlap.requestOverlapNote(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'request_overlap_note', result };
+        if (result.status === 'sent' || result.status === 'none') return advancing(receipt, selectWorkStep(base));
+        if (result.status === 'rejected') {
+          return waiting(receipt, receiptReason(result, 'the overlap note request was not sent'));
+        }
+        // `unavailable` is not committed: the gate keeps waiting for a person's release.
+        return waiting(receipt, `the overlap note request was ${result.status}; the gate waits for a person's release`);
       }
     }
   }

@@ -14,13 +14,17 @@ import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
+import type { RunRef } from '../../contracts/dispatch.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type {
   ToolCall, ToolDefinition, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import {
-  createSessionMailboxTools, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES,
+  createSessionMailboxTools, SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES,
+  USER_DECISION_TOOL_NAMES,
 } from './communication-tools.js';
+import { createMemberTools, CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
+import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
@@ -29,8 +33,10 @@ import {
   createUnknownCallReviewTools, PROPOSE_SAFER_METHOD_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
 } from './unknown-call-review-tools.js';
 import { createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
+import { createReworkTools, REWORK_TOOL_NAMES } from './rework-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
+import { agentActorOf } from '../work-graph/model/tool-commit-arguments.js';
 import type { SessionMessageCommandPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
@@ -41,6 +47,8 @@ import type {
   ExecutionHistoryPage, GraphExecutionHistoryReadPort, TaskExecutionHistoryRequest,
 } from './execution-history-contracts.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
+import type { TaskClaimPort } from '../work-graph/model/claim-contracts.js';
+import type { EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type { ObservedModelRunOptions } from './observed-model-run.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
@@ -70,6 +78,9 @@ const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
  * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
  * such as `edit` stays unknown and is refused `unsupported` (KB-09). */
 const EXPLORATION_TOOL_NAME_SET = new Set<string>(EXPLORATION_TOOL_NAMES);
+/** L19's two rework adapters. They are built by one factory whose config needs
+ * both owners; a selected name without them stays `unsupported`, never dropped. */
+const REWORK_TOOL_NAME_SET = new Set<string>(REWORK_TOOL_NAMES);
 
 /** Builtin Kernel file/process tools. The platform coordination tools below are
  * extension tools and are never file/read/shell capabilities. */
@@ -84,13 +95,15 @@ export const RESERVED_TOOL_NAMES = new Set<string>([
 /**
  * Every tool name this Runtime can register: the builtin file/process tools,
  * the exploration tools, the platform coordination families and the platform
- * extension tools (read-only command, review/proposal and rerun). It is the one
+ * extension tools (read-only command, review/proposal, rerun and the two
+ * rework requests). It is the one
  * definition of "known to this Runtime": preparation drops any other selected
  * name and the start still rejects it, so the registration facts stay with the
  * start where the real owner wiring is known.
  */
 export const RUNTIME_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...BUILTIN_TOOL_NAMES, ...EXPLORATION_TOOL_NAMES, ...PLATFORM_COORDINATION_TOOL_NAMES,
+  CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME, ...REWORK_TOOL_NAMES,
   READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
   PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME,
 ]);
@@ -178,12 +191,18 @@ export type WorkToolGroupInput = {
   mailbox: SessionMessageCommandPort | undefined;
   /** Slice 5 §4.6 user-decision owner; absent makes the three tools unregisterable. */
   decisionMessages?: RuntimeExecutionDependencies['decisionMessages'];
-  /** Slice 5 §4.5/T-R2-1 plan-application receipt reader; absent keeps the old tool result shape. */
-  applicationReceipt?: RuntimeExecutionDependencies['applicationReceipt'];
+  /** M's one member request owner behind `create_member`; absent makes the name unregisterable. */
+  memberCreation?: RuntimeExecutionDependencies['memberCreation'];
+  /** The `request_rework` owner (`claims.requeueTask`); absent makes both rework names unregisterable. */
+  claims?: TaskClaimPort;
+  /** The `request_recheck` owner (`evidence.reverifyRound`); absent makes both rework names unregisterable. */
+  evidence?: Pick<EvidencePort, 'reverifyRound'>;
   sessions: SessionDirectoryPort;
   plans: PlanTaskPort;
   context: CoreCallContext;
   sessionRef: SessionRef;
+  /** The Run whose trusted identity the `create_member` caller records. */
+  runRef: RunRef;
   goalRef: GoalRef;
   requestIdForCall: (call: Readonly<ToolCall>) => string;
   /** Real registration seam for an explicit waitAfterSend; the Runtime owns the
@@ -219,6 +238,7 @@ export type WorkToolGroupInput = {
 export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<ToolGroup | null> {
   const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name)
     && !EXPLORATION_TOOL_NAME_SET.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
+    && name !== CREATE_MEMBER_TOOL_NAME && !REWORK_TOOL_NAME_SET.has(name)
     && !(input.extensionNames?.has(name) ?? false));
   if (unknown.length > 0) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
@@ -230,12 +250,25 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
+  const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
+  const reworkNames = REWORK_TOOL_NAMES.filter(name => wanted.has(name));
+  const members = input.memberCreation;
+  const reworkClaims = input.claims?.requeueTask;
+  const reworkEvidence = input.evidence?.reverifyRound;
   if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
-    && graphNames.length === 0 && noteNames.length === 0) {
+    && graphNames.length === 0 && noteNames.length === 0 && memberNames.length === 0 && reworkNames.length === 0) {
     return { ok: true, value: null };
   }
   if (decisionNames.length > 0 && input.decisionMessages === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
+  }
+  if (memberNames.length > 0 && members === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects create_member but no member-creation dependency is bound: ${memberNames.join(', ')}`) };
+  }
+  // The two rework tools come from ONE factory whose config requires both
+  // owners, so either absence keeps every selected name `unsupported`.
+  if (reworkNames.length > 0 && (reworkClaims === undefined || reworkEvidence === undefined)) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects rework tools but no rework dependency is bound: ${reworkNames.join(', ')}`) };
   }
   if (graphNames.length > 0 && input.graph === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
@@ -265,7 +298,6 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       context: input.context,
       goalRef: input.goalRef,
       requestIdForCall: input.requestIdForCall,
-      ...(input.applicationReceipt === undefined ? {} : { applicationReceipt: input.applicationReceipt }),
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
@@ -305,7 +337,35 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
-  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames];
+  if (memberNames.length > 0 && members !== undefined) {
+    // The Run's own trusted identity, never a model argument: the owner reads
+    // the Run back and compares it with the `work_run` principal.
+    handles.push(createMemberTools({
+      members,
+      context: input.context,
+      caller: {
+        kind: 'work',
+        actor: agentActorOf(input.sessionRef, input.runRef),
+        session: input.sessionRef,
+        run: input.runRef,
+      },
+      requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
+  }
+  if (reworkNames.length > 0 && reworkClaims !== undefined && reworkEvidence !== undefined) {
+    // The Run's own tool context is the caller; the factory supplies only the
+    // owner-bound command identity per call.
+    handles.push(createReworkTools({
+      claims: { requeueTask: reworkClaims },
+      evidence: { reverifyRound: reworkEvidence },
+      context: input.context,
+      requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
+  }
+  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames,
+    ...memberNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -522,6 +582,13 @@ export type FinalToolListInputV1 = {
     mailbox: boolean; decisionMessages: boolean; applicationReceipt: boolean;
     sessions: boolean; plans: boolean; graph: boolean; notes: boolean;
     unknownCallReviews: boolean; commandRerunRequests: boolean;
+    /** Optional so a preparation that freezes only the capability set keeps
+     * compiling; the start passes the real member-owner fact. */
+    memberCreation?: boolean;
+    /** `claims.requeueTask` behind `request_rework`; optional for the same reason. */
+    reworkRequests?: boolean;
+    /** `evidence.reverifyRound` behind `request_recheck`; optional for the same reason. */
+    recheckRequests?: boolean;
   };
   readonlyCommand: {
     requested: boolean;
@@ -554,13 +621,24 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (reviewToolName !== null && !owners.unknownCallReviews) {
     return { ok: false, rejection: rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool') };
   }
-  const mailboxNames = query ? [] : SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
+  // A secretary request round builds the four mailbox tools and
+  // `create_member`; every other Query keeps them out of its final list.
+  const secretary = input.noteAdmission.class === 'secretary';
+  const mailboxNames = query
+    ? secretary ? SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name)) : []
+    : SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
   const decisionNames = query ? [] : USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
   const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class === 'secretary'));
-  if ((mailboxNames.length > 0 || decisionNames.length > 0) && !owners.mailbox) {
+  const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) && (!query || secretary) ? [CREATE_MEMBER_TOOL_NAME] : [];
+  // Only the Work Runtime builds the rework tools; a Query's projection never reaches its factory.
+  const reworkNames = query ? [] : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
+  const requestNames = query && wanted.has(READ_REQUESTS_TOOL_NAME) ? [READ_REQUESTS_TOOL_NAME] : [];
+  // The Query mailbox names are built by the secretary Query branch, whose own
+  // build re-checks the real owner; the Work branch keeps the owner rejection.
+  if (!query && (mailboxNames.length > 0 || decisionNames.length > 0) && !owners.mailbox) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
   }
   if (decisionNames.length > 0 && !owners.decisionMessages) {
@@ -578,13 +656,23 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (noteNames.length > 0 && !owners.notes) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
   }
+  // The member owner is re-checked at start; a preparation that freezes only
+  // capabilities leaves the marker absent.
+  if (memberNames.length > 0 && owners.memberCreation === false) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects create_member but no member-creation dependency is bound: ${memberNames.join(', ')}`) };
+  }
+  // The one rework factory requires both owners, so either absence keeps every
+  // selected rework name `unsupported`; nothing is silently dropped.
+  if (reworkNames.length > 0 && (owners.reworkRequests === false || owners.recheckRequests === false)) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects rework tools but no rework dependency is bound: ${reworkNames.join(', ')}`) };
+  }
   // L19a: the rerun tool is registered only on a blocked ordinary Work Run.
   const rerun = input.callKind === 'work' && input.hasBlockedCommands && input.reviewPhase === null;
   if (rerun && (!owners.commandRerunRequests || !owners.unknownCallReviews)) {
     return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
   }
   const coordinationNames = [...mailboxNames, ...decisionNames, ...whiteboardNames,
-    ...discoveryNames, ...graphNames, ...noteNames];
+    ...discoveryNames, ...graphNames, ...noteNames, ...memberNames, ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }

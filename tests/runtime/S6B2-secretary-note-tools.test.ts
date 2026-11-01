@@ -151,7 +151,7 @@ describe('the Query note admission in a real round', () => {
         arguments: { op: 'withdraw', noteId: 'note-1', expectedVersion: 1 },
       };
       const requestId = config.requestIdForCall(call);
-      expect(requestId).toMatch(/^r5b-query-note:[0-9a-f]{64}$/);
+      expect(requestId).toMatch(/^r5b-query-tool:[0-9a-f]{64}$/);
       expect(config.requestIdForCall(call)).toBe(requestId);
       expect(config.requestIdForCall({ ...call, callId: 's6b-note-identity-2' })).not.toBe(requestId);
       const definition = captured.definitions.find(entry => entry.name === 'record_note');

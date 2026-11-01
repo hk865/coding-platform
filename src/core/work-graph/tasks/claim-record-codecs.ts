@@ -24,6 +24,7 @@ import type {
   DispatchOutboxRef, RunOutcome, TaskAttemptRef, TaskAttemptSnapshot, TaskAttemptStatus,
 } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import {
   TASK_REWORK_REASON_MAX_CHARS, TASK_REWORK_REFUSAL_CODES,
   type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
@@ -106,6 +107,8 @@ export type TaskRequeuedEvent = {
   requeue: TaskRequeueSnapshotV1;
   /** 7A §3.5: the acknowledged message; written only when the requeue carried one. */
   acknowledgement?: SessionMessageRef;
+  /** The approved card's formal change proof; present only on an approved application. */
+  proof?: DecisionChangeProofV1;
 };
 
 /**
@@ -785,7 +788,7 @@ export function taskRequeuedEventFromEvent(event: EncodedDomainEvent): DecodeRes
   const body = reworkEventBody(event, TASK_REQUEUED_EVENT_TYPE);
   if (typeof body === 'string') return invalid(body);
   if (!hasOnlyKeys(body, ['eventId', 'eventType', 'schemaVersion', 'occurredAt', 'identityKey', 'actor', 'fingerprint', 'requeue',
-    'acknowledgement'])) {
+    'acknowledgement', 'proof'])) {
     return invalid('TaskRequeued carries unknown fields');
   }
   const problem = taskRequeueSnapshotProblem(body['requeue']);

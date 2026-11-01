@@ -76,10 +76,11 @@ describe('X-secretary-sender: the round is the sender', () => {
     expect('waitAfterSend' in sent.message).toBe(false);
     // The ordinary Query mailbox tool is still not granted: the secretary
     // binding keeps `read` and `look_graph` only, and the tool-name table keeps
-    // its exact six mailbox names.
+    // its exact seven mailbox names.
     expect(SESSION_MAILBOX_TOOL_NAMES).toEqual([
       'send_session_message', 'read_session_inbox', 'read_session_message',
       'read_session_message_body', 'ack_session_message', 'respond_session_message',
+      'withdraw_session_message',
     ]);
     expect(sent.round.manifest.permissions.tools
       .filter(tool => (SESSION_MAILBOX_TOOL_NAMES as readonly string[]).includes(tool))).toEqual([]);

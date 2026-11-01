@@ -561,6 +561,11 @@ export async function openRealRunHarness(
     runtime: { async resolveConfiguration() {
       return { status: 'ready' as const,
         value: k3_35Configuration(['read'], [], {} as ResolvedRuntimeConfiguration['model']['client']) };
+    },
+    // A-07: the no-Run lookup returns the same trusted ready grant.
+    async resolveRoleConfiguration() {
+      return { status: 'ready' as const,
+        value: k3_35Configuration(['read'], [], {} as ResolvedRuntimeConfiguration['model']['client']) };
     } },
   };
   /**

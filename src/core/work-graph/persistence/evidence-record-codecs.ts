@@ -27,6 +27,7 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
     hasOnlyKeys, invalid, isRecord, nonEmpty, parseObject,
@@ -114,7 +115,7 @@ export type VerificationRoundEvent =
     })
     /** VR-14: `roundRef` and `result` are the new successor round (chain ordinal ≥ 2). */
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE; result: RoundSnapshot;
-        acknowledgement?: SessionMessageRef });
+        acknowledgement?: SessionMessageRef; proof?: DecisionChangeProofV1 });
 
 export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['eventType'][] = [
     VERIFICATION_ROUND_OPENED_EVENT_TYPE,

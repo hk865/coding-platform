@@ -10,11 +10,12 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import * as hostModule from '../../src/app/host.js';
 import { driveWorkflow } from './A2-restart-fixture.js';
 import { graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
-import type { S6AHostWorld } from './S6A-host-fixture.js';
-import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AWorldOptions } from './S6A-request-fixture.js';
+import type { S6AHostWorld, S6AToolCall } from './S6A-host-fixture.js';
+import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession, type S6AWorldOptions } from './S6A-request-fixture.js';
 import { openS7BWorld } from './S7B-fixture.js';
 import { createS6BLine } from './S6B1-fixture.js';
 import { checkConfiguration, committed, ready, sessionOf } from './S7A-fixture.js';
@@ -64,13 +65,39 @@ export async function adoptL46Plan(ws: S6ACardsWorkspace, goal: GoalRef,
   return plan;
 }
 
+/**
+ * The `openConsumeHostWorld` factory-wrapper shape: the L1 rework rows need the two tool names on the Work binding
+ * before the real Host factory copies its configuration at open. The wrapper stays installed until the world closes
+ * (or its open fails), so a SQLite reopen keeps the same grant. It patches no live Host and opens no second world.
+ */
+async function openL46ConfiguredHost(options: S6AWorldOptions): Promise<S6AHostWorld> {
+  const original = hostModule.createLocalWorkbenchHost;
+  const wrapper: typeof original = async hostOptions => {
+    const work = hostOptions.runtimeConfiguration?.bindings.find(binding => binding.id === 's6a-work-binding');
+    if (work === undefined) throw new Error('S7B3 L46: the Host was opened without its Work binding');
+    work.grant = { ...work.grant,
+      tools: [...new Set([...work.grant.tools, 'request_rework', 'request_recheck'])] };
+    return await original(hostOptions);
+  };
+  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: wrapper, configurable: true, writable: true });
+  const restore = () => {
+    if (hostModule.createLocalWorkbenchHost === wrapper) {
+      Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true });
+    }
+  };
+  const { world } = await openS7BWorld(options).catch(error => { restore(); throw error; });
+  const close = world.close.bind(world);
+  world.close = async () => { try { await close(); } finally { restore(); } };
+  return world;
+}
+
 /** E25: `legacyOnD: true` runs steps 1–6 (legacy revision before A starts); `false` runs 1, 2, 3, 5, 6. */
 export async function openS7BL46World(options: S6AWorldOptions & { legacyOnD?: boolean }) {
   const { legacyOnD = false, ...worldOptions } = options;
   const actor: { kind: 'human'; id: string } = worldOptions.actor !== undefined
     && worldOptions.actor.kind === 'human'
     ? { kind: 'human', id: worldOptions.actor.id } : { kind: 'human', id: OPERATOR.id };
-  const { world } = await openS7BWorld({
+  const world = await openL46ConfiguredHost({
     ...worldOptions,
     extraHostOptions: { checks: checkConfiguration(actor), ...(worldOptions.extraHostOptions ?? {}) },
   });
@@ -122,6 +149,74 @@ export function selectedL46Task(next: WorkflowAdvanceInput | null): string | nul
   if (next.operation.kind === 'create_session') return next.operation.taskRef.taskId;
   if (next.operation.kind !== 'claim_task') return null;
   return (next.operation.request.input as { taskId?: string }).taskId ?? null;
+}
+
+export type L46ReworkRequest = {
+  call: S6AToolCall;
+  execution: TaskExecutionRecord;
+  line: S6ASession;
+  receipts: WorkflowStepReceipt[];
+};
+
+/** The L46 line responsible for a Task, through the public Session directory. */
+async function responsibleL46Line(world: S6AHostWorld, taskId: string): Promise<S6ASession | null> {
+  for (const card of await world.listSessions()) {
+    const responsible = card.links.some(link => (link.until ?? null) === null && link.ref.relation === 'responsible'
+      && link.ref.target.kind === 'task' && link.ref.target.ref.taskId === taskId);
+    if (responsible) {
+      return { label: `S7B3 L46 ${taskId}`,
+        ref: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },
+        aggregateRef: card.record.ref, role: card.record.role, createdAt: card.record.createdAt };
+    }
+  }
+  return null;
+}
+
+/**
+ * The four real rework flows' common steps: one real Work Run of the L46 rework-capable line calls the real
+ * `request_rework` tool for A's ended Run, is held at the Kernel gate, and then runs on to `open_checks`.
+ * `reason` is the caller's literal because it is part of the owner's receipt fingerprint.
+ */
+export async function requestL46Rework(world: S6AHostWorld, input: {
+  goalRef: GoalRef; tasks: { A: TaskTriple; B: TaskTriple }; afterRun: RunRef;
+  label: string; reason: string; callId?: string;
+}): Promise<L46ReworkRequest> {
+  const line = await responsibleL46Line(world, input.tasks.B.taskId);
+  if (line === null) throw new Error('S7B3 L46: the B task has no responsible line');
+  const goal = ready<{ goal: { revision: number } }>(await world.post('goals/read', plain(S6A_SCOPE, input.goalRef)),
+    'the L46 Goal');
+  const failed = ready<TaskExecutionRecord>(await world.post('executions/read', plain(S6A_SCOPE, input.afterRun)),
+    'the L46 A Run');
+  await world.scripted.script(line, [
+    { kind: 'calls', calls: [{ callId: input.callId ?? `${input.label}-call`, name: 'request_rework', args: {
+      taskRef: input.tasks.A, afterRunRef: input.afterRun, reason: input.reason,
+      expected: [{ ref: input.goalRef, revision: goal.goal.revision },
+        { ref: input.afterRun, revision: failed.run.revision }],
+    } }] },
+    { kind: 'text', text: 'S7B3 L46: the rework request is recorded' },
+  ]);
+  const gate = await world.gates.toolCall(line, 'request_rework');
+  const receipts: WorkflowStepReceipt[] = [];
+  const driven = driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: input.goalRef, flowId: `${input.label}-drive`,
+    sessionHint: line.ref, kind: 'select_work', taskId: input.tasks.B.taskId }, { stopBefore: 'open_checks', receipts });
+  let call: S6AToolCall;
+  try {
+    call = await Promise.race([
+      gate.reached,
+      driven.then(steps => {
+        throw new Error(`S7B3 L46: the Work Run settled without request_rework: ${
+          JSON.stringify(steps.map(step => step.next?.kind ?? step.state))}`);
+      }),
+    ]);
+  } finally { gate.release(); }
+  await driven;
+  const claim = receipts.find(entry => entry.kind === 'claim_task');
+  if (claim === undefined || claim.result.status !== 'committed') {
+    throw new Error(`S7B3 L46: the rework caller was not claimed: ${JSON.stringify(receipts)}`);
+  }
+  const execution = ready<TaskExecutionRecord>(await world.post('executions/read',
+    plain(S6A_SCOPE, claim.result.value.runRef)), 'the rework caller Run');
+  return { call, execution, line, receipts };
 }
 
 /** The public card read: the queue's one `goal_cause` card by its `automation_confirmation_required` source. */

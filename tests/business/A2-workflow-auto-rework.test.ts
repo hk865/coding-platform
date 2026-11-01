@@ -289,7 +289,7 @@ it.each([
   const { workflow, calls } = workflowWith([rowOf('work-1', failureOf('work-1', REQUEUE))], { requeue: () => answer });
   const { next } = await requeueRequestOf(workflow, selectWork('work-1'));
   const result = await workflow.advanceWork(ctx, next);
-  expect(result).toEqual({ status: 'ready', value: { state: 'advance', reason: null, next: selectWork('work-1'),
+  expect(result).toEqual({ status: 'ready', value: { state: 'advance', reason: null, next: selectWork('work-1'), pick: null,
     receipt: { kind: 'requeue_task', result: answer } } });
   // TD-6: the owner is called once, as the Workflow automation actor in the same trusted scope and signal.
   expect(calls).toHaveLength(1);
@@ -309,7 +309,7 @@ it.each([
   const answer = rejected(code as CoreRejection['code'], reason);
   const { workflow } = workflowWith([rowOf('work-1', failureOf('work-1', REQUEUE))], { requeue: () => answer });
   const { next } = await requeueRequestOf(workflow, selectWork('work-1'));
-  expect(await workflow.advanceWork(ctx, next)).toEqual({ status: 'ready', value: { state: 'waiting', next: null,
+  expect(await workflow.advanceWork(ctx, next)).toEqual({ status: 'ready', value: { state: 'waiting', next: null, pick: null,
     reason: `${code}: ${reason}`, receipt: { kind: 'requeue_task', result: answer } } });
 });
 
@@ -345,7 +345,7 @@ it.each([
     eligibility: { eligible: true, reasons: [] } as never })], { executions, sessions });
   const result = await workflow.advanceWork(ctx, selectWork('work-1'));
   if (state === 'recoverable') {
-    expect(result).toEqual({ status: 'ready', value: { state: 'waiting', next: null, receipt: null,
+    expect(result).toEqual({ status: 'ready', value: { state: 'waiting', next: null, receipt: null, pick: null,
       reason: 'the afterRun claim Session is recoverable' } });
     expect(reads, 'no other Session is looked for').toEqual(['readExecution run-work-1', 'readSession claim-session-1']);
   } else {

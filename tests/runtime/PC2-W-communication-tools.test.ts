@@ -462,6 +462,48 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
     }
   },
   {
+    "name": "withdraw_session_message",
+    "description": "Withdraw a Session message you sent, before its recipient acts on it. A Work Run may withdraw only a message of its own Session, and only where send_session_message is granted; a secretary may withdraw a message of its own resolved request round. Give the message's full ref; do not send a revision, because the owner checks the sender and the current state itself and a message already answered is refused rather than withdrawn. A refusal is returned as the tool's result and does not mean the message was withdrawn.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "messageRef": {
+          "type": "object",
+          "properties": {
+            "aggregateType": {
+              "type": "string",
+              "const": "SessionMessage"
+            },
+            "projectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workspaceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "messageId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "aggregateType",
+            "projectId",
+            "workspaceId",
+            "messageId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "messageRef"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "send_user_message",
     "description": "User decision: send_user_message",
     "inputSchema": {
@@ -1569,6 +1611,7 @@ const changedDescriptions = {
   read_session_message_body: 'PC2-W changed read_session_message_body description',
   ack_session_message: 'PC2-W changed ack_session_message description',
   respond_session_message: 'PC2-W changed respond_session_message description',
+  withdraw_session_message: 'PC2-W changed withdraw_session_message description',
   send_user_message: 'PC2-W changed send_user_message description',
   read_user_decision: 'PC2-W changed read_user_decision description',
   record_decision_application: 'PC2-W changed record_decision_application description',

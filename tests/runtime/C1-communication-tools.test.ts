@@ -215,7 +215,7 @@ describe('C1 SessionMailbox tool adapter', () => {
       .find(candidate => candidate.name === 'send_session_message')!
       .handler.execute(toolCall('send_session_message', 'call-nobind', { recipient, text: 'x' }), { signal: signal() });
     expect(failed).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
-    expect(throwing.definitions).toHaveLength(6);
+    expect(throwing.definitions).toHaveLength(7);
   });
 });
 

@@ -17,7 +17,7 @@ import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { TaskRequeueOutcomeV1 } from '../../../contracts/task-requeue.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
-import type { EffectWriteResultV1 } from '../../../contracts/core/session-message.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { rejected, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
@@ -60,7 +60,8 @@ export type ReworkRequestReadPort = {
 };
 
 export type ReworkRequestService = ReworkRequestReadPort & {
-  applyApprovedReworkRequest(ctx: CoreCallContext, input: { request: ReworkRequestRef; commandId: string })
+  applyApprovedReworkRequest(ctx: CoreCallContext,
+    input: { request: ReworkRequestRef; commandId: string; answerRef: SessionMessageRef })
     : Promise<EffectWriteResultV1<ReworkRequestV1 | TaskRequeueOutcomeV1 | ReverifyOutcomeV1>>;
   closeReworkRequest(ctx: CoreCallContext,
     input: { request: ReworkRequestRef; commandId: string; outcome: 'rejected' | 'stale'; reason: string })
@@ -315,11 +316,11 @@ export function createReworkRequestService(deps: ReworkRequestServiceDependencie
 
   async function applyApprovedReworkRequest(
     ctx: CoreCallContext,
-    input: { request: ReworkRequestRef; commandId: string },
+    input: { request: ReworkRequestRef; commandId: string; answerRef: SessionMessageRef },
   ): Promise<EffectWriteResultV1<ReworkRequestV1 | TaskRequeueOutcomeV1 | ReverifyOutcomeV1>> {
     const raw = input as unknown as Record<string, unknown> | null | undefined;
-    if (!isRecord(raw) || !isRecord(raw['request']) || !nonEmpty(raw['commandId'])) {
-      return rejected('invalid', 'applyApprovedReworkRequest requires { request, commandId }');
+    if (!isRecord(raw) || !isRecord(raw['request']) || !nonEmpty(raw['commandId']) || !isRecord(raw['answerRef'])) {
+      return rejected('invalid', 'applyApprovedReworkRequest requires { request, commandId, answerRef }');
     }
     const commandId = raw['commandId'] as string;
     const requestRead = await readOneReworkRequest(ctx, { ref: raw['request'] as unknown as ReworkRequestRef });
@@ -364,6 +365,7 @@ export function createReworkRequestService(deps: ReworkRequestServiceDependencie
     const actor = record.requester.actor;
     const approval = {
       request: record.ref, revision: record.revision, actor, provenance, commandId,
+      answerRef: raw['answerRef'] as SessionMessageRef,
     };
     const meta = {
       requestId: commandId,

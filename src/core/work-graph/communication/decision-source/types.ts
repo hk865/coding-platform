@@ -9,6 +9,7 @@ import type { NoteDecisionSourcePort, S5RecordPort } from '../../model/decision-
 import type { ExecutionReadPort } from '../../model/execution-read-contracts.js';
 import type { KernelCommandReader } from '../../model/kernel-command-read-contracts.js';
 import type { UnknownCallReviewReadPort } from '../../model/unknown-call-review-contracts.js';
+import type { ReworkRequestReadPort } from '../../tasks/rework-requests.js';
 import type { WorkspaceToolsPort } from '../../../workspace/ports.js';
 
 /** The complete branch facts one decision-source handler returns. `goal` is null for a project subject: no Goal
@@ -44,6 +45,8 @@ export type SourceDependencies = {
   noteDecisions?: Pick<NoteDecisionSourcePort, 'readNoteDecision'>;
   unknownCallReviews?: Pick<UnknownCallReviewReadPort, 'readReview'>;
   commandRerunRequests?: Pick<CommandRerunRequestReadPort, 'listRequests' | 'readRequest'>;
+  /** R's rework request read (`rework-request.ts`), the frozen read port. */
+  reworkRequests?: Pick<ReworkRequestReadPort, 'readRequest'>;
   readKernelCommandFacts?: KernelCommandReader;
   commandRerunExecutions?: Pick<ExecutionReadPort, 'readExecution'>;
   workspace?: Pick<WorkspaceToolsPort, 'readWorkspace'>;

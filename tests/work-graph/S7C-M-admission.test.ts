@@ -6,14 +6,19 @@
  * the three-field `RolePayloadPermissionsV1` (a fourth field is a TypeScript error there), while the Work caller passes
  * the full envelope, so a Work render carries `createMember` and a Query render does not.
  *
- * DEFERRED (L1): the public-start half of M-admission — a real preparation handing out `createMember: true`, the Host
- * grant then narrowed, the next `workflow/advance` start refused through the public path — is L1's, because
- * `create-platform.ts:660-666` is L1's wiring. It is not faked here.
+ * The public-start half is the real preparation handing out `createMember: true`, the current Host grant then
+ * narrowed, and the next `workflow/advance` start refused through `createAuthorizeConfiguration`.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { TaskEnvelopeV1 } from '../../src/contracts/task-envelope.js';
+import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import { rolePayload, type RolePayloadPermissionsV1 } from '../../src/core/agent-runtime/context-fact-text.js';
 import { hostRolePermissionsAdmitted } from '../../src/core/work-graph/tasks/pick-authorization.js';
+import { advanceUntil, driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
+import { plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
+import { createS6BLine } from '../helpers/S6B1-fixture.js';
+import { openS7C1World, S7C1_CREATE_ROLE, type S7C1World } from '../helpers/S7C-member-fixture.js';
 
 const ROLE = { status: 'absent' as const, roleId: 'builder', reason: 'the trusted legacy template' };
 const queryPermissions: RolePayloadPermissionsV1 = { policyRevision: 'p', tools: ['read'], writeScope: [] };
@@ -78,5 +83,48 @@ describe('M-admission: the Query role projection', () => {
     const workPermissions: TaskEnvelopeV1['permissions'] = { ...queryPermissions, createMember: true };
     const work = rolePayload(ROLE, workPermissions, 'executor', 4_096);
     expect(work).toContain('{"policyRevision":"p","tools":["read"],"writeScope":[],"createMember":true}');
+  });
+});
+
+let world: S7C1World | undefined;
+afterEach(async () => { await world?.close(); world = undefined; });
+
+describe('M-admission: the public start after the Host grant narrows', () => {
+  it('prepares the module Task with createMember and refuses the start once the current grant is narrowed', async () => {
+    const hostGrant = { createMember: true };
+    world = await openS7C1World({ hostGrant });
+    const task = world.tasks[1]!;
+    // The module line is the creator Role; m2's Plan assignment is the create executor Role, and the picker
+    // requires the exact Role. This real line carries that Role and its createMember grant.
+    const line = await createS6BLine(world.main, { label: 's7c-admission', role: S7C1_CREATE_ROLE, tasks: [task] });
+    const claimInput = await advanceUntil(world.world.ag2b, { schemaVersion: 1, goalRef: world.goal,
+      flowId: 's7c-admission', sessionHint: line.ref, kind: 'select_work', taskId: task.taskId },
+    'claim_task');
+    const receipts: WorkflowStepReceipt[] = [];
+    const steps = await driveWorkflow(world.world.ag2b, claimInput, { stopBefore: 'start', receipts });
+
+    const claim = receipts.find(receipt => receipt.kind === 'claim_task');
+    if (claim === undefined || claim.result.status !== 'committed') {
+      throw new Error(`M-admission: the Task was not claimed: ${JSON.stringify(receipts)}`);
+    }
+    const runRef = claim.result.value.runRef;
+    const execution = await readExecution(world.world.ag2b, runRef);
+    expect(execution.run.ref).toEqual(runRef);
+
+    const prepare = receipts.find(receipt => receipt.kind === 'prepare');
+    if (prepare === undefined || prepare.result.status !== 'ready') {
+      throw new Error(`M-admission: the Task did not prepare: ${JSON.stringify(receipts)}`);
+    }
+    expect(prepare.result.value.envelope.permissions.createMember).toBe(true);
+
+    const startInput = steps[steps.length - 1]!.next;
+    if (startInput === null || startInput.kind !== 'perform' || startInput.operation.kind !== 'start') {
+      throw new Error(`M-admission: the Workflow did not stop before start: ${JSON.stringify(steps)}`);
+    }
+    hostGrant.createMember = false;
+    const started = await world.world.post('workflow/advance', plain(S6A_SCOPE, startInput));
+    expect(started.body).toMatchObject({ status: 'ready', value: { state: 'waiting', receipt: { kind: 'start',
+      result: { status: 'rejected', code: 'forbidden',
+        reason: 'the prepared permissions are not allowed by the current Host and Role ceilings' } } } });
   });
 });

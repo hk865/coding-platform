@@ -31,6 +31,9 @@ export const WAKE_LIMIT = 16;
 export const GOAL_WAIT_WAKE_AGGREGATE_TYPES: readonly AggregateRef['aggregateType'][] = Object.freeze([
   'SessionMessage', 'VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'PlanRevision', 'PlanProposal',
   'TaskLease', 'DispatchOutboxEntry', 'Run', 'Goal', 'Session', 'TaskRequeue', 'UnknownCallReview',
+  'CoreOperation',
+  'NoteHead',
+  'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate',
 ]);
 
 type GoalWaitRegistrationV1 = {

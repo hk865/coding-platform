@@ -1,0 +1,4 @@
+{
+  "description": "Read the main conversation's request history, read-only: `{ goalId, cursor? }` for one Goal or `goalId: null` for the no-goal view, newest first, 20 a page; or `{ requestRoot }` for one request. Any Goal of this workspace is readable. Each request shows its first round's words, its holder and why it is waiting, and each round's answer cut at 2 KiB with the pack's cut line. Cards and notices are not returned; nothing is marked seen.",
+  "parameters": {}
+}

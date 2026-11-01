@@ -65,6 +65,8 @@ export type MemberCreateActionV1 = {
       verdict: (typeof MEMBER_CREATION_VERDICTS)[number];
       cardKey: string | null;
       answer: (typeof MEMBER_CREATION_ANSWERS)[number] | null;
+      /** The person's card answer for a decided request; null for automatic/reused progress. */
+      answerRef: SessionMessageRef | null;
     } | null;
     createChild: OperationRef | null;
     outcome: { kind: 'reused' | 'created'; session: SessionRef } | null;
@@ -155,6 +157,7 @@ export const MemberCreateActionShape = defineShape({
         verdict: f.enumOf(MEMBER_CREATION_VERDICTS),
         cardKey: f.nullable(id),
         answer: f.nullable(f.enumOf(MEMBER_CREATION_ANSWERS)),
+        answerRef: f.nullable(f.ref(SessionMessageRefShape)),
       })),
       createChild: f.nullable(f.ref(OperationRefShape)),
       outcome: f.nullable(f.object({
@@ -179,7 +182,7 @@ export type MemberCreationStepV1 =
   | { kind: 'reused'; session: SessionRef }
   | { kind: 'rejected'; refusal: { code: string; reason: string } }
   | { kind: 'refused'; refusal: { code: string; reason: string } }
-  | { kind: 'decided'; answer: 'approve' | 'reject'; stale: boolean };
+  | { kind: 'decided'; answer: 'approve' | 'reject'; stale: boolean; answerRef: SessionMessageRef };
 
 /** The record shell's five phases, the same values `model/session-contracts.ts` stores. */
 type MemberCreationPhaseV1 = 'accepted' | 'running' | 'completed' | 'failed' | 'unknown';
@@ -213,14 +216,14 @@ export function advancedMemberCreation(
     case 'awaiting_decision':
       return {
         action: { ...action, progress: { ...progress, stage: 'awaiting_decision',
-          decision: { verdict: 'needs_decision', cardKey: step.cardKey, answer: null },
+          decision: { verdict: 'needs_decision', cardKey: step.cardKey, answer: null, answerRef: null },
           createChild: structuredClone(step.createChild) } },
         phase: 'running',
       };
     case 'creating':
       return {
         action: { ...action, progress: { ...progress, stage: 'creating',
-          decision: { verdict: 'automatic_notice', cardKey: null, answer: null },
+          decision: { verdict: 'automatic_notice', cardKey: null, answer: null, answerRef: null },
           createChild: structuredClone(step.createChild), noticeItemKey: step.noticeItemKey } },
         phase: 'running',
       };
@@ -233,7 +236,7 @@ export function advancedMemberCreation(
     case 'reused':
       return {
         action: { ...action, progress: { ...progress, stage: 'done',
-          decision: { verdict: 'automatic_notice', cardKey: null, answer: null },
+          decision: { verdict: 'automatic_notice', cardKey: null, answer: null, answerRef: null },
           outcome: { kind: 'reused', session: structuredClone(step.session) } } },
         phase: 'completed',
       };
@@ -249,7 +252,8 @@ export function advancedMemberCreation(
         phase,
       };
     case 'decided': {
-      const decision = { ...progress.decision!, answer: step.answer };
+      const decision = { ...progress.decision!, answer: step.answer,
+        answerRef: structuredClone(step.answerRef) };
       if (step.answer === 'reject') {
         return {
           action: { ...action, progress: { ...progress, stage: 'rejected', decision,

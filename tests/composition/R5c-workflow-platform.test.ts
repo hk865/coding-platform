@@ -29,12 +29,13 @@ import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
-import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef } from '../../src/contracts/core/identity.js';
 import type { WorkflowAdvanceInput, WorkflowOperation, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
+import { seedPlatformLine } from '../helpers/A2-restart-fixture.js';
 
 const AT = '2026-09-26T00:00:00.000Z';
 const projectId = 'r5c-platform-project';
@@ -58,6 +59,14 @@ afterEach(async () => { for (const directory of directories.splice(0)) await rm(
 function ctx(): CoreCallContext {
   return { projectId, workspaceId, principal: { kind: 'host', actor: hostActor },
     materialReader: { kind: 'host', projectId, workspaceId, actor: hostActor }, signal: new AbortController().signal };
+}
+
+/** A-25: the executor line the removed `select_work` create step used to make (open responsible to work-1). */
+function seedR5cLine(platform: Platform, requestId: string) {
+  return seedPlatformLine(platform, ctx(), requestId, {
+    workspace: scope, role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+    targets: [{ projectId, goalId: goalRef.goalId, taskId: 'work-1' }],
+  });
 }
 
 type HostState = { revision: number; readAllowed: boolean };
@@ -84,28 +93,38 @@ function runtimeHost(
   scripted: ReturnType<typeof createScriptedModel>,
   state: RuntimeState = { rejectConfiguration: false },
 ): RuntimeHostBindings {
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (context: CoreCallContext, role: RoleConfigurationRef) => {
+    if (state.rejectConfiguration) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the registered grant carries an unsupported project_source' };
+    }
+    if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'the runtime Host is not bound to this workspace' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 'r5c-host-config@1',
+      model: { configuration: { revision: 'r5c-host-config@1', provider: 'deepseek', model: 'r5c-local-scripted', baseUrl: 'http://127.0.0.1' },
+        client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'r5c-fixture-counter' }) } },
+      budget: runtimeBudget,
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: 'builder', revision: '1', digest: sha256Hex('R5c trusted static role guidance') } : null,
+      tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url)), enabledIds: [] },
+      systemInstruction: 'R5c trusted static role guidance', deniedPrefixes: [],
+      processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   return {
     async resolveConfiguration(context, request) {
-      if (state.rejectConfiguration) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the registered grant carries an unsupported project_source' };
-      }
-      if (context.projectId !== projectId || context.workspaceId !== workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'the runtime Host is not bound to this workspace' };
-      }
+      const resolved = resolveFor(context, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'the current Role binding is inadmissible' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 'r5c-host-config@1',
-        model: { configuration: { revision: 'r5c-host-config@1', provider: 'deepseek', model: 'r5c-local-scripted', baseUrl: 'http://127.0.0.1' },
-          client: scripted.client, inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'r5c-fixture-counter' }) } },
-        budget: runtimeBudget,
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: 'builder', revision: '1', digest: sha256Hex('R5c trusted static role guidance') } : null,
-        tools: ['read'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url)), enabledIds: [] },
-        systemInstruction: 'R5c trusted static role guidance', deniedPrefixes: [],
-        processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(context, input) {
+      return resolveFor(context, input.role);
     },
   };
 }
@@ -238,6 +257,7 @@ it.each(gatePlans)('advances two works and $name through public ports, reusing t
   });
   try {
     await bootstrap(platform, state, gatePlan);
+    await seedR5cLine(platform, 'r5c-platform-line');
     const advanced = await drive(platform, {
       schemaVersion: 1, goalRef, flowId: 'r5c-platform-flow', sessionHint: null, kind: 'select_work',
     });
@@ -328,6 +348,7 @@ it('resumes the original Run prepare after the Host configuration is restored', 
   });
   try {
     await bootstrap(platform, state, 'goal-only');
+    await seedR5cLine(platform, 'r5c-unprepared-line');
     const flowId = 'r5c-unprepared-flow';
     const select: WorkflowAdvanceInput = { schemaVersion: 1, goalRef, flowId, sessionHint: null, kind: 'select_work' };
 
@@ -504,6 +525,7 @@ it('resumes the original verification round for a completed Work Run across a di
   let platform = await createTargetPlatform(options);
   try {
     await bootstrap(platform, state, 'goal-only');
+    await seedR5cLine(platform, 'r5c-check-resume-line');
     expect(typeof platform.evidence.queryOriginalVerification,
       'the original-round read seam is published by composition').toBe('function');
 

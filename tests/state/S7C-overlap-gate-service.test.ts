@@ -19,7 +19,7 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contract
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { WriteNoteEnvelopeV1 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
-import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
+import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { ModuleOverlapGateV1 } from '../../src/core/work-graph/persistence/module-overlap-gate-codecs.js';
 import { MODULE_OVERLAP_GATE_SCHEMAS } from '../../src/core/work-graph/persistence/module-overlap-gate-codecs.js';
 import { compareCursors } from '../../src/contracts/ledger.js';
@@ -320,7 +320,6 @@ describe('N-owner', () => {
         };
         const firstStart = await prepare('s7c-run', base.runTask, base.runLine);
         const secondLine = await createS6BLine(base.ws, { label: 's7c-run2-line', role: S6A_WORK_ROLE, tasks: [secondTask] });
-        const secondStart = await prepare('s7c-run2', secondTask, secondLine);
         const hold = async (task: TaskTriple, line: Awaited<ReturnType<typeof createS6BLine>>,
           start: WorkflowAdvanceInput): Promise<RunHold> => {
           const session = await sessionOf(base.world, line);
@@ -341,7 +340,23 @@ describe('N-owner', () => {
             throw error;
           }
         };
+        // L1-23: the first Run starts and stays running; the second Run reaches its real module gate first.
         const firstRun = await hold(base.runTask, base.runLine, firstStart);
+        const gateReceipts: WorkflowStepReceipt[] = [];
+        await driveWorkflow(base.world.ag2b, { schemaVersion: 1, goalRef: base.goal, flowId: 's7c-run2-gate',
+          sessionHint: secondLine.ref, kind: 'select_work', taskId: secondTask.taskId },
+        { stopBefore: 'request_overlap_note', receipts: gateReceipts });
+        const openedGate = gateReceipts.find(receipt => receipt.kind === 'open_overlap_gate');
+        const gate = (openedGate as { result?: { gate?: ModuleOverlapGateV1 } } | undefined)?.result?.gate;
+        if (gate === undefined) throw new Error('S7C: the second Run did not open the module gate');
+        const released = await base.world.post('goals/overlap-release', plain(S6A_SCOPE, {
+          commandId: 's7c-run2-gate-release', gate: gate.ref, revision: gate.revision,
+          reason: 'S7C person releases the second Run',
+        }));
+        if ((released.body as { status?: string }).status !== 'released') {
+          throw new Error(`S7C: the person's gate release did not commit: ${JSON.stringify(released.body)}`);
+        }
+        const secondStart = await prepare('s7c-run2', secondTask, secondLine);
         const secondRun = await hold(secondTask, secondLine, secondStart);
         const input = basisInput(base, firstRun, plan.planRevision, await waitingAttemptOf(base.world, base.goal, base.waitTask.taskId));
         const twoRuns: OpenOverlapGateInputV1 = { ...input, running: [

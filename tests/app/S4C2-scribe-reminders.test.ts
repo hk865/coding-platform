@@ -28,7 +28,7 @@ import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { NoteScribeTodoPort, NoteScribeTodosV1 } from '../../src/core/work-graph/model/note-contracts.js';
-import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef } from '../../src/contracts/core/identity.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { RecordLookupRequest } from '../../src/core/record-store/lookup-ports.js';
 import type { EncodedRecord } from '../../src/core/record-store/ports.js';
@@ -418,32 +418,42 @@ function freshBackendControls(): BackendControls {
 function item2RuntimeHost(scopeOf: () => { projectId: string; workspaceId: string }):
   { host: RuntimeHostBindings; scripted: ScriptedModel } {
   const scripted = createScriptedModel([{ kind: 'text', text: 'S4C2 item 2 completes' }]);
+  // A-07: the one scope check and configuration body both resolutions share.
+  const resolveFor = (ctx: CoreCallContext, role: RoleConfigurationRef) => {
+    const bound = scopeOf();
+    if (ctx.projectId !== bound.projectId || ctx.workspaceId !== bound.workspaceId) {
+      return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'item 2 Host is not bound to this scope' };
+    }
+    return { status: 'ready' as const, value: {
+      configurationRevision: 's4c2-item2-host@1',
+      model: { configuration: { revision: 's4c2-item2-host@1', provider: 'deepseek', model: 's4c2-local-scripted',
+        baseUrl: 'http://127.0.0.1' }, client: scripted.client,
+        inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
+          tokenizer: 's4c2-item2-counter' }) } },
+      budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12,
+        maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
+      tools: [],
+      writeScope: [],
+      hostTemplate: role.kind === 'legacy_template'
+        ? { templateId: role.templateId, revision: role.templateRevision,
+          digest: sha256Hex('s4c2 item 2 host template') } : null,
+      skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [] },
+      systemInstruction: null,
+      deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    } };
+  };
   const host: RuntimeHostBindings = {
     async resolveConfiguration(ctx, request) {
-      const bound = scopeOf();
-      if (ctx.projectId !== bound.projectId || ctx.workspaceId !== bound.workspaceId) {
-        return { status: 'rejected', code: 'forbidden', reason: 'item 2 Host is not bound to this scope' };
-      }
+      const resolved = resolveFor(ctx, request.role);
+      if (resolved.status === 'rejected') return resolved;
       if (request.roleResolution.status === 'inadmissible') {
         return { status: 'rejected', code: 'forbidden', reason: 'item 2 Host refuses the current Role' };
       }
-      return { status: 'ready', value: {
-        configurationRevision: 's4c2-item2-host@1',
-        model: { configuration: { revision: 's4c2-item2-host@1', provider: 'deepseek', model: 's4c2-local-scripted',
-          baseUrl: 'http://127.0.0.1' }, client: scripted.client,
-          inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const,
-            tokenizer: 's4c2-item2-counter' }) } },
-        budget: { contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 12,
-          maxToolCalls: 16, timeoutMs: 30000, perResponseTokens: 512 },
-        tools: [],
-        writeScope: [],
-        hostTemplate: request.role.kind === 'legacy_template'
-          ? { templateId: request.role.templateId, revision: request.role.templateRevision,
-            digest: sha256Hex('s4c2 item 2 host template') } : null,
-        skills: { resourceRoot: C2_SKILL_ROOT, enabledIds: [] },
-        systemInstruction: null,
-        deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
-      } };
+      return resolved;
+    },
+    // A-07: the no-Run lookup the pre-claim check reads; without a Run it gets only the Role.
+    async resolveRoleConfiguration(ctx, input) {
+      return resolveFor(ctx, input.role);
     },
   };
   return { host, scripted };

@@ -393,8 +393,8 @@ export function ag2bPlanDraft(workIds: readonly string[] = [AG2B_WORK_TASK_ID]):
  * with one ordinary work plus the Goal gate. The automatic captures the seed starts settle before it
  * returns (`settleAutoCapture`) unless `settle: false` leaves them running. */
 export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string[] = [AG2B_WORK_TASK_ID],
-  options: { settle?: boolean } = {}): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
-  await seedAG2bWorkGraphThrough(async (suffix, body) => await (await corePost(host.base, suffix, host.token, body)).json() as unknown, workIds);
+  options: { settle?: boolean; lineTaskIds?: readonly string[] } = {}): Promise<{ workTarget: WorkLinkTarget; goalRef: GoalRef }> {
+  await seedAG2bWorkGraphThrough(async (suffix, body) => await (await corePost(host.base, suffix, host.token, body)).json() as unknown, workIds, options.lineTaskIds);
   if (options.settle !== false) await settleAutoCapture(host);
   return {
     workTarget: { kind: 'task', ref: { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: AG2B_WORK_TASK_ID } },
@@ -427,11 +427,12 @@ export async function settleAutoCapture(host: AG2bHost): Promise<void> {
 }
 
 /** One formal seed write: a core route suffix and its `graphWrite` body; answers the owner's result. */
-type AG2bSeedWrite = (suffix: string, body: ReturnType<typeof graphWrite>) => Promise<unknown>;
+type AG2bSeedWrite = (suffix: string, body: ReturnType<typeof graphWrite> | ReturnType<typeof plain>) => Promise<unknown>;
 
 /** The same seed through any writer: the HTTP routes above, or the owners in process (the scenario
  * harness's platform mode, tests/scenarios/harness.ts). Every write must commit. */
-export async function seedAG2bWorkGraphThrough(write: AG2bSeedWrite, workIds: readonly string[] = [AG2B_WORK_TASK_ID]): Promise<void> {
+export async function seedAG2bWorkGraphThrough(write: AG2bSeedWrite, workIds: readonly string[] = [AG2B_WORK_TASK_ID],
+  lineTaskIds: readonly string[] = workIds): Promise<void> {
   const committed = async (suffix: string, request: ReturnType<typeof graphWrite>): Promise<unknown> => {
     const body = await write(suffix, request);
     if (asRecord(body)['status'] !== 'committed') {
@@ -464,6 +465,17 @@ export async function seedAG2bWorkGraphThrough(write: AG2bSeedWrite, workIds: re
   await committed('plans/apply', graphWrite(AG2B_SCOPE, {
     proposalRef: asRecord(proposed)['ref'], expectedProposalRevision: asRecord(proposed)['revision'], decisionRefs: [],
   }, 'ag2b-plan-apply', []));
+  // A-25: picking no longer makes a line, so the seed holds one executor line per work Task, each with the removed
+  // create step's open responsible link (an occupied line cannot serve another Task).
+  for (const taskId of lineTaskIds) {
+    const line = await write('sessions/create', plain(AG2B_SCOPE, {
+      workspace: AG2B_SCOPE, role: AG2B_WORK_ROLE, recommendedRefs: [],
+      initialLinks: [{ target: { kind: 'task', ref: { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId } },
+        relation: 'responsible' }],
+      meta: { requestId: `ag2b-line-${taskId}`, expected: [] },
+    } satisfies CreateSessionRequest));
+    if (asRecord(line)['status'] !== 'completed') throw new Error(`the seeded line did not complete: ${JSON.stringify(line)}`);
+  }
 }
 
 type AG2bSession = { sessionRef: SessionRef; sessionAggregateRef: SessionRef; revision: number };

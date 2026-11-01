@@ -153,6 +153,7 @@
     "propose_future_plan": "tools/propose_future_plan.json",
     "create_member": "tools/create_member.json",
     "withdraw_session_message": "tools/withdraw_session_message.json",
+    "read_requests": "tools/read_requests.json",
     "request_rework": "tools/request_rework.json",
     "request_recheck": "tools/request_recheck.json",
     "record_note": "tools/record_note.json",

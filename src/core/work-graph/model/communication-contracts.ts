@@ -30,9 +30,9 @@ import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
 import type { DecisionChangeProofV1, MessageReleaseBlockV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, canonicalKey, sha256Hex } from '../../../contracts/fingerprint.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordCommitIdentityPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
-import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
+import type { ToolCommitLookup, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import type { MessageDutiesFactsPort } from './decision-contracts.js';
 import type { DispatchBasisFactsPort } from './dispatch-basis-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
@@ -311,6 +311,15 @@ export type MessageBody = {
   usage: 'message';
 };
 
+/** The Host send's own `requestId`, scope and exact arguments; never a Run origin. */
+export type HostSendCommitLookupInput = {
+  requestId: string; scope: { projectId: string; workspaceId: string };
+  toolName: 'send_session_message'; arguments: unknown;
+};
+/** The read-only Host-send committed-receipt lookup, answered from the original send's identity. */
+export type HostSendCommitLookup = (ctx: CoreCallContext, input: HostSendCommitLookupInput) =>
+  Promise<ToolCommitLookupResult>;
+
 /**
  * C1 narrow mailbox port. Reads never ack and never change status; ack/respond
  * are the only status transitions and each carries exactly one SessionMessage
@@ -401,6 +410,8 @@ export interface SessionMailboxPort {
    * `send_user_message`). It never writes and never reads a business fact.
    */
   lookupToolCommit?: ToolCommitLookup;
+  /** The Host send's own identity-only committed-receipt read (`send_session_message`); never the current recipient. */
+  lookupHostSendCommit?: HostSendCommitLookup;
 }
 /** The full command port; the historical `SessionMailboxPort` stays the narrow read/old-write port. */
 export interface SessionMessageCommandPort extends SessionMailboxPort {
@@ -471,6 +482,8 @@ export type SessionMailboxDependencies = {
   /** The three-version facts read (D's `createDispatchBasisReader`); absent: a NEW autonomy-controlled, goal-bearing
    *  `action_request` is `unsupported`; every other path is unchanged and never reads it. */
   dispatchBasis?: DispatchBasisFactsPort;
+  /** The store object's identity-only commit read; absent: the Host-send receipt lookup is `undetermined`. */
+  commitIdentities?: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
 };
 
 /** `messages/forward` (L(3), `book-7b.md:942`); `copyGoalRef` is the copy branch (§3.9 item 1, B-03). */
