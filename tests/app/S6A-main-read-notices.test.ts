@@ -38,6 +38,8 @@ type NoticeLine = NoticeItemV1 & { memberViews?: NoticeItemV1[] };
 type Page = { notices: NoticeLine[]; seenThrough: Record<string, unknown>; displayToken: string | null };
 
 const BACKENDS: readonly S6ABackend[] = ['memory', 'sqlite'];
+/** The fixed input time of every rework below: the expected `requestedAt` is this literal, never the notice read. */
+const REWORK_AT = '2026-10-30T12:34:56.000Z';
 const worlds: S6ANoticesWorld[] = [];
 
 afterEach(async () => {
@@ -50,6 +52,8 @@ afterEach(async () => {
 async function openWorld(backend: S6ABackend): Promise<S6ANoticesWorld> {
   const world = await openS6ANoticesWorld({ backend });
   worlds.push(world);
+  // The three reworks run at one literal input time, so their `requestedAt` is a known expectation.
+  world.world.clock.set(REWORK_AT);
   return world;
 }
 
@@ -74,7 +78,8 @@ function reworkNotices(seeded: S6AReworkNotices): [NoticeItemV1, NoticeItemV1, N
       summary: `自动返工 · ${rework.taskId} · 第 1 次（1/3）`, objects: [],
       rework: {
         operation: 'requeue', actorClass: 'system', taskRef: { projectId: ref.projectId, goalId: ref.goalId, taskId: ref.taskId },
-        count: 1, cap: 3, reason: 'auto-rework:run_failed#1', sourceRef: ref,
+        count: 1, cap: 3, reason: 'auto-rework:run_failed#1', sourceRef: ref, requestedAt: REWORK_AT,
+        taskCount: 1, counted: true,
       },
     };
   });

@@ -4,15 +4,16 @@
  * with its step-by-step caps and omissions, and the approved-method lines the
  * WorkGraph owner measures with this same function.
  *
- * It value-imports only the leaf `continuation-brief-base.ts`, `prompts/` and
- * `utf8.ts`, and takes the brief's types from `continuation-brief.ts` with
- * `import type` only: that module re-exports this one, so a value import back
+ * It value-imports only the leaf `continuation-brief-base.ts`, `prompts/`,
+ * `utf8.ts` and `validation/common.ts`, and takes the brief's types from
+ * `continuation-brief.ts` with `import type` only: that module re-exports this one, so a value import back
  * would form a load cycle, and a value of it read here at load time (as
  * `RENDER_TEXT_CAPS` reads the bounds) could still be uninitialized.
  */
 import type { SessionAnomalyAnchorV1 } from './session-anomaly.js';
 import type { ReworkActorClass, ReworkFailureClass, StopRequester } from './task-requeue.js';
 import { truncateUtf8 } from './utf8.js';
+import { utf8Bytes } from './validation/common.js';
 import { canonicalJson } from './fingerprint.js';
 import type { HandoffBriefMaterialV1, HandoffBriefNoteIndexV1, HandoffBriefTaskV1 } from './handoff-brief.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
@@ -174,7 +175,6 @@ export function templateToolNames(texts: PromptTextsV1, templateId: string): rea
 
 /** Successively shorter caps (UTF-16 code units) tried on every text before body items are left out. */
 const RENDER_TEXT_CAPS: readonly number[] = [CONTINUATION_BRIEF_LIMITS.textChars, 1000, 250, 60];
-const UTF8 = new TextEncoder();
 
 /** The arrays the template renders; every non-empty part carries the leading LF its joined layout had. */
 type ContinuationBriefTemplateParts = {
@@ -271,11 +271,11 @@ export function renderContinuationBriefZh(
     };
     if (blockedAll.length > blockedKeepMax) {
       const text = candidate(blockedKeepMax, true);
-      if (utf8Length(text) <= limit) return text;
+      if (utf8Bytes(text) <= limit) return text;
     }
     for (let keep = blockedKeepMax; keep >= 0; keep -= 1) {
       const text = candidate(keep, false);
-      if (utf8Length(text) <= limit) return text;
+      if (utf8Bytes(text) <= limit) return text;
     }
     // The whole section is gone and the brief is still over: only now do the
     // ordinary caps and omissions apply to the other optional parts.
@@ -291,7 +291,7 @@ export function renderContinuationBriefZh(
     const text = renderBriefTemplateZh(B, marker, {
       body, blockedOmission: note, bodyOmission: [], anomalies: anomaly, review: reviewLines, blocked: [],
     }, toolNames);
-    if (utf8Length(text) <= limit) return text;
+    if (utf8Bytes(text) <= limit) return text;
   }
   if (anomalies === undefined && review === null && blockedAll.length === 0) {
     // A brief without either mandatory section: the longest prefix of ordinary
@@ -304,7 +304,7 @@ export function renderContinuationBriefZh(
         body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept)],
         anomalies: [], review: [], blocked: [],
       }, toolNames);
-      if (utf8Length(text) <= limit) return text;
+      if (utf8Bytes(text) <= limit) return text;
     }
     throw new ContinuationBriefCapacityError(
       `the fixed text of the continuation brief does not fit in the ${String(limit)}-byte limit`);
@@ -327,7 +327,7 @@ export function renderContinuationBriefZh(
     let budgeted: string[] | null = null;
     for (let allowed = allPaths; allowed >= 0; allowed -= 1) {
       const candidate = anomalyLinesZh(B, brief, cap, allowed);
-      if (utf8Length(fixedCandidate(candidate, [])) <= limit) { budgeted = candidate; break; }
+      if (utf8Bytes(fixedCandidate(candidate, [])) <= limit) { budgeted = candidate; break; }
     }
     if (budgeted === null) {
       throw new ContinuationBriefCapacityError(
@@ -344,7 +344,7 @@ export function renderContinuationBriefZh(
       const anomalyCandidate = anomalyLinesZh(B, brief, cap, allowedAnomaly);
       for (let allowedReview = allReviewLines; allowedReview >= 0; allowedReview -= 1) {
         const reviewCandidate = unknownCallReviewLinesZh(B, brief, cap, allowedReview);
-        if (utf8Length(fixedCandidate(anomalyCandidate, reviewCandidate)) <= limit) {
+        if (utf8Bytes(fixedCandidate(anomalyCandidate, reviewCandidate)) <= limit) {
           chosen = { anomaly: anomalyCandidate, review: reviewCandidate };
           break;
         }
@@ -366,7 +366,7 @@ export function renderContinuationBriefZh(
       bodyOmission: [omittedNoteZh(B, body.length - kept + blockedOmitted)],
       anomalies: suffixMandatory.anomaly, review: suffixMandatory.review, blocked: [],
     }, toolNames);
-    if (utf8Length(text) <= limit) return text;
+    if (utf8Bytes(text) <= limit) return text;
   }
   return fixedCandidate(suffixMandatory.anomaly, suffixMandatory.review);
 }
@@ -463,14 +463,14 @@ export function renderHandoffBriefZh(material: HandoffBriefMaterialV1, texts: Pr
     renderTemplate(texts, templateId, { task_round: lines.join('\n') }, toolNames).text;
   for (const cap of RENDER_TEXT_CAPS) {
     const text = render(handoffBriefLinesZh(material, B, cap));
-    if (utf8Length(text) <= limit) return text;
+    if (utf8Bytes(text) <= limit) return text;
   }
   // Even the shortest per-text cap does not fit: keep the leading lines (the
   // tasks and facts that matter most) and state how many were left out.
   const lines = handoffBriefLinesZh(material, B, RENDER_TEXT_CAPS[RENDER_TEXT_CAPS.length - 1]!);
   for (let kept = lines.length - 1; kept >= 1; kept -= 1) {
     const text = render([omittedNoteZh(B, lines.length - kept), ...lines.slice(0, kept)]);
-    if (utf8Length(text) <= limit) return text;
+    if (utf8Bytes(text) <= limit) return text;
   }
   return render([omittedNoteZh(B, lines.length)]);
 }
@@ -478,9 +478,6 @@ export function renderHandoffBriefZh(material: HandoffBriefMaterialV1, texts: Pr
 function omittedNoteZh(B: BriefTexts, lines: number): string {
   return `${B.S('brief.omitted.prefix')}${String(CONTINUATION_BRIEF_LIMITS.renderedBytes)}`
     + `${B.S('brief.omitted.between')}${String(lines)}${B.S('brief.omitted.suffix')}`;
-}
-function utf8Length(text: string): number {
-  return UTF8.encode(text).length;
 }
 /**
  * K3 B3 item 7/9: the optional `### 被拦的命令` section. `keep` is the number of

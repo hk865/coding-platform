@@ -167,6 +167,8 @@ function emptyMailbox(): SessionMailboxPort {
     value: { items: [], nextCursor: null, sourceCursor: 'c0000000000' as never } });
   return {
     readInbox: page, readOutbox: page, readRoutedReplies: page,
+    async readHostSystemOutbox() { return { status: 'ready' as const, value: { items: [], next: null } }; },
+    async appendHostSystemOutbox() { throw new Error('the platform seam never appends to the Host system outbox'); },
     async readMessage() { return { status: 'rejected', code: 'not_found', reason: 'the platform seam reads no message' }; },
     async readMessageBody() { return { status: 'rejected', code: 'not_found', reason: 'the platform seam reads no body' }; },
     async sendMessage() { throw new Error('the platform seam never sends'); },

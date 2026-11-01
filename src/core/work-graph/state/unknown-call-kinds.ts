@@ -30,7 +30,7 @@ export const UNKNOWN_CALL_KIND_TABLE: readonly UnknownCallKindEntry[] = [
   // Row 4: platform record-changing tools.
   ...['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message',
     'record_decision_application', 'propose_future_plan', 'request_command_rerun', 'record_note',
-    'create_member', 'request_rework', 'request_recheck', 'withdraw_session_message']
+    'create_member', 'request_rework', 'request_recheck', 'withdraw_session_message', 'hand_off']
     .map((toolName) => ({ toolName, kind: 'platform' as const, contained: true })),
   // Row 5: the review tools (only present in a review round).
   ...['record_unknown_call_review', 'propose_safer_method']

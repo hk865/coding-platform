@@ -377,7 +377,7 @@ export function createHandoffApprovalApplicationAdapter(
   handoff: Pick<SessionHandoffPort, 'decideHandoff'>,
 ): DecisionApplicationAdapter {
   return {
-    async apply(ctx, { source, selection, requestId }) {
+    async apply(ctx, { answerRef, source, selection, requestId, expected }) {
       const optionId = selection.kind === 'option' ? selection.optionId : null;
       if (optionId !== 'approve' && optionId !== 'reject') {
         return { status: 'ready', value: { action: {
@@ -391,7 +391,7 @@ export function createHandoffApprovalApplicationAdapter(
         }, receipt: null } };
       }
       const result = await handoff.decideHandoff(ctx, { commandId: requestId, operation,
-        verdict: optionId === 'approve' ? 'approve' : 'reject' });
+        answerRef, expected, verdict: optionId === 'approve' ? 'approve' : 'reject' });
       if (result.status === 'committed') {
         return { status: 'ready', value: { action: null, receipt: result.receipt } };
       }

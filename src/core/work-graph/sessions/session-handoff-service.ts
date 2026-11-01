@@ -24,7 +24,7 @@ import type { SessionWorkLink } from '../../../contracts/core/session.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { DecisionApplicationReceiptV1 } from '../../../contracts/core/session-message.js';
+import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalKey, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
@@ -33,7 +33,7 @@ import { SESSION_ARCHIVE_AUTOMATION_ACTOR } from '../../../contracts/task-requeu
 import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
-import { OperationRefShape } from '../../../contracts/data-format-refs.js';
+import { OperationRefShape, SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordCommitIdentityPort,
@@ -108,8 +108,12 @@ export type HandoffAcceptResultV1 = WriteResult<{ operation: OperationRef; stage
 export interface SessionHandoffPort {
   acceptHandoff(ctx: CoreCallContext, input: HandoffAcceptInputV1): Promise<HandoffAcceptResultV1>;
   advanceHandoff(ctx: CoreCallContext, input: HandoffAdvanceInputV1): Promise<HandoffAdvanceResultV1>;
-  /** The one `handoff.decide` application of an approval card (the trusted application entry's command). */
-  decideHandoff(ctx: CoreCallContext, input: HandoffDecideInputV1): Promise<HandoffDecideResultV1>;
+  /** The one `handoff.decide` application of an approval card (the trusted application entry's command). The
+   *  application carries the answer it applies and the answer's captured pins; `answerRef` is absent on a direct
+   *  command whose commit is not a card application and therefore carries no proof. */
+  decideHandoff(ctx: CoreCallContext, input: HandoffDecideInputV1 & {
+    answerRef?: SessionMessageRef; expected?: readonly VersionPin[];
+  }): Promise<HandoffDecideResultV1>;
   /** The one committed-receipt lookup of the `hand_off` tool call (the tool-commit dispatcher's owner). */
   lookupToolCommit(ctx: CoreCallContext, input: ToolCommitLookupInput): Promise<ToolCommitLookupResult>;
 }
@@ -1619,6 +1623,12 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
         return rejected('invalid', 'a handoff decision requires a non-empty commandId');
       }
       const commandId = given['commandId'];
+      const answerRef = given['answerRef'];
+      if (answerRef !== undefined) {
+        const problem = checkShape(SessionMessageRefShape, answerRef, 'stored');
+        if (problem !== null) return rejected('invalid', `the handoff decision answerRef: ${problem}`);
+      }
+      const expected = Array.isArray(given['expected']) ? given['expected'] as VersionPin[] : [];
       const scope = trusted.scope;
       const principal = principalIdentity(ctx.principal);
       const state = verdict === 'approve' ? 'approved' as const : 'rejected' as const;
@@ -1650,10 +1660,20 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
           const record = decision.record;
           const at = deps.now();
           const next = decidedHandoffApproval(record, { state: decision.state, at, commandId });
+          // The answered card's formal change proof: the answer, its captured pins and this operation's own
+          // before/after. A direct command without an answer commits no application and carries none.
+          const proof = answerRef === undefined ? null : {
+            acknowledgementRef: answerRef as SessionMessageRef,
+            capturedPins: expected.map(pin => ({ ref: structuredClone(pin.ref), revision: pin.revision })),
+            changes: [{ before: { ref: structuredClone(operation), revision: record.revision },
+              after: { ref: structuredClone(operation), revision: next.revision } }],
+            basisRebases: [],
+          };
           const event = sessionHandoffRecordedCodec.encode({ eventId: eventIdOf(keys.identityKey, 'decide'),
             eventType: 'SessionHandoffRecorded', schemaVersion: 1, occurredAt: at, projectId: operation.projectId,
             workspaceId: record.workspaceId, operationRef: operation, revision: next.revision, phase: next.phase,
-            action: next.action });
+            action: next.action, actor: { kind: trusted.actor.kind, id: trusted.actor.id },
+            ...(proof === null ? {} : { proof }) });
           return { guards: [{ refKey: operationRefKey(operation), expectedRevision: record.revision }],
             records: [encodeSessionOperationRecord(next)], claims: [], events: [event] };
         },

@@ -59,6 +59,10 @@ export type S7CToolWorldOptions = {
   createMember?: boolean;
   attention?: readonly AttentionScopeV1[];
   backend?: S6ABackend;
+  /** The complete production grant (L2-wiring passes `localWorkbenchGrant`); the caller's tool list is then unused. */
+  grant?: WorkbenchRuntimeBinding['grant'];
+  /** L2-wiring: the real local workbench Role, so the grant's hostTemplate matches the binding. */
+  role?: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>;
 };
 
 /** One real started Run and the public facts the tool rows read from it. */
@@ -93,8 +97,8 @@ export type S7CToolWorld = {
   readonly narrowGrant: () => void;
 };
 
-function dutyWorkflowOf(id: string, duty: S7CDuty): WorkflowHostConfiguration['bindings'][number] {
-  const role = platformRoleProfile(duty).template;
+function dutyWorkflowOf(id: string, role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>):
+WorkflowHostConfiguration['bindings'][number] {
   const roleBinding: RoleBindingRefV1 = { schemaVersion: 1, bindingId: `${id}-workflow`,
     templateId: role.templateId, templateRevision: role.templateRevision, bindingVersion: 1,
     policyRevision: 'legacy-template' };
@@ -106,15 +110,18 @@ function dutyWorkflowOf(id: string, duty: S7CDuty): WorkflowHostConfiguration['b
 export async function openS7CToolWorld(options: S7CToolWorldOptions): Promise<S7CToolWorld> {
   const duty = options.duty;
   const backend = options.backend ?? 'memory';
-  const role = platformRoleProfile(duty).template;
+  const role = options.role ?? platformRoleProfile(duty).template;
   const instruction = `S7C T ${duty} trusted guidance`;
   const bindingId = duty === 'executor' ? 's7c-t-executor-binding'
     : duty === 'adviser' ? 's7a-adviser-binding' : 's6a-scribe-binding';
   const grantTools = [...options.grantTools];
   const createMember = options.createMember === true;
+  const binding = bindingOf(bindingId, role, instruction, grantTools);
   const extra: S6AExtraBinding = duty === 'executor'
-    ? { binding: bindingOf(bindingId, role, instruction, grantTools), workflow: dutyWorkflowOf(bindingId, duty) }
-    : { binding: bindingOf(bindingId, role, instruction, grantTools), mergeTools: grantTools };
+    ? { binding: options.grant === undefined ? binding : { ...binding, grant: structuredClone(options.grant) },
+      workflow: dutyWorkflowOf(bindingId, role) }
+    : { binding: options.grant === undefined ? binding : { ...binding, grant: structuredClone(options.grant) },
+      mergeTools: grantTools };
   let narrowed = false;
   let configuredBinding: WorkbenchRuntimeBinding | undefined;
 
@@ -144,7 +151,11 @@ export async function openS7CToolWorld(options: S7CToolWorldOptions): Promise<S7
       if (configuration === undefined) throw new Error('S7C T: the Host was opened without its runtime configuration');
       const binding = configuration.bindings.find(candidate => candidate.id === bindingId);
       if (binding === undefined) throw new Error(`S7C T: the Host configuration has no ${bindingId}`);
-      binding.grant = { ...binding.grant, platformDuty: duty, createMember };
+      // A custom complete grant (L2-wiring's localWorkbenchGrant) carries its own template facts; only the
+      // name-list grant takes the formal duty/creation markers the Work tool group reads.
+      binding.grant = options.grant === undefined
+        ? { ...binding.grant, platformDuty: duty, createMember }
+        : { ...binding.grant };
       configuredBinding = binding;
       return await original(hostOptions);
     });

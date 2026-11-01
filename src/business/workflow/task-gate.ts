@@ -7,6 +7,7 @@ import { canonicalJson, sameJson as sameCanonical, type JsonValue } from '../../
 import { rejected as rejection } from '../../contracts/core/rejections.js';
 import { isRecord } from '../../contracts/validation/common.js';
 import { decisionSourceKey, type DecisionSourceV1, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
+import type { DecisionCardV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
@@ -55,7 +56,8 @@ export type TaskGateDependencies = {
    *  `deps.<port>` at call time, and the composition may set a field later (X/create-platform.ts:2446). */
   workflow: Pick<WorkflowDependencies,
     'unknownCallReviews' | 'sourceAuthority' | 'decisionMessages' | 'runtime' | 'claims' | 'evidence' | 'plans'
-    | 'taskInputs' | 'decisionReads' | 'pendingMemberCreations' | 'pendingReworkRequests'>;
+    | 'taskInputs' | 'decisionReads' | 'pendingMemberCreations' | 'pendingReworkRequests'
+    | 'pendingHandoffApprovals'>;
   bindingForRole(config: WorkflowHostConfiguration, projectId: string, workspaceId: string, role: string): Binding | null;
   isUnadmittedStarting(owned: Owned, runRef: RunRef): Promise<boolean>;
   claimContinuation(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask,
@@ -86,7 +88,7 @@ export type L46BlockV1 = {
   /** What the driver registers (§3.8 item 2): the card's source kinds plus `Goal`. */
   wakeBasis: GoalWaitBasisV1;
   /** The rework the card gates; the all-blocked reason names it. */
-  action: 'system_requeue' | 'auto_reverify' | 'member_creation' | 'rework_request';
+  action: 'system_requeue' | 'auto_reverify' | 'member_creation' | 'rework_request' | 'handoff_approval';
 };
 
 /** One Task waiting behind a block, directly or through the exact-input closure. */
@@ -181,6 +183,52 @@ export function goalWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[],
 export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
   const deps = gate.workflow;
   const { bindingForRole, isUnadmittedStarting, claimContinuation } = gate;
+
+  /** §3.13 item 4: the ONE terminal-state judgment shared by the rework and handoff block arms. */
+  function blockCardReleased(state: DecisionCardV1['state']): boolean {
+    return state === 'applied' || state === 'answered_no_application' || state === 'closed';
+  }
+
+  /** One handed-over Task's waiting block; the same `waiting` shape `automationConfirmation` builds. */
+  function handoffBlockOf(card: DecisionCardV1, task: TaskTriple, wakeBasis: GoalWaitBasisV1): L46BlockV1 {
+    // `waiting` always answers ready; only the static union needs narrowing.
+    const gated = waitingResult(null, `handoff_approval_pending:${card.cardKey}`, card.source, wakeBasis) as
+      Extract<WorkflowAdvanceResult, { status: 'ready' }>;
+    return { task: { ...task }, gate: gated, action: 'handoff_approval', wakeBasis };
+  }
+
+  /**
+   * §3.9 L2-gate-handoff: a pending `handoff_approval` card blocks only the Tasks it hands over and their dependents.
+   * The source is H's own operation read, expanded by the composition to the handed-over Tasks of this Goal; the queue
+   * is never read. It lifts on the application's success, on a refusal, or when the source is invalid; an approval
+   * saved but not yet applied still blocks.
+   */
+  async function handoffBlocks(owned: Owned, goal: GoalSnapshot): Promise<ReadResult<L46BlockV1[]>> {
+    if (deps.decisionReads === undefined || deps.pendingHandoffApprovals === undefined) {
+      return { status: 'ready', value: [] };
+    }
+    const workspace = { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
+    const pending = await deps.pendingHandoffApprovals(owned.ctx, { workspace, goalRef: goal.ref });
+    if (pending.status !== 'ready') return pending;
+    const blocks: L46BlockV1[] = [];
+    // The card is read ONCE per source; the shared terminal judgment releases it in this same pass.
+    const cards = new Map<string, DecisionCardV1 | null>();
+    for (const pendingCard of pending.value) {
+      let card = cards.get(pendingCard.source.key);
+      if (card === undefined) {
+        const read = await deps.decisionReads.readDecisionCard(owned.ctx, { source: pendingCard.source });
+        if (read.status === 'not_found') card = null;               // source invalid: the block lifts
+        else if (read.status !== 'ready') return read;              // unreadable: the advance fails closed
+        else card = read.value;
+        cards.set(pendingCard.source.key, card);
+      }
+      if (card === null || blockCardReleased(card.state)) continue;
+      const wakeBasis = goalWaitBasisOf(goal, [`handoff_approval:${card.cardKey}`],
+        ['SessionMessage', 'CoreOperation', 'Goal']);
+      blocks.push(handoffBlockOf(card, pendingCard.task, wakeBasis));
+    }
+    return { status: 'ready', value: blocks };
+  }
 
   /**
    * K3 §3.4 UR table (U4, decision 72): the one finite result per Task,
@@ -527,16 +575,14 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       // and a formal answer not yet applied still block. `readDecisionCard` is the one card read; the source is the
       // gate's own (`automationConfirmation`'s `decisionCause.source`).
       const source = gated.value.decisionCause?.source;
-      if (deps.decisionReads !== undefined && source !== undefined) {
-        const card = await deps.decisionReads.readDecisionCard(owned.ctx, { source });
-        if (card.status === 'not_found') continue;
-        if (card.status === 'rejected') return card;
-        if (card.status !== 'ready') {
-          return rejection('incomplete', 'the block card is not ready at the required watermark');
-        }
-        if (card.value.state === 'applied' || card.value.state === 'answered_no_application'
-          || card.value.state === 'closed') continue;
+      const card = source === undefined ? undefined
+        : await deps.decisionReads?.readDecisionCard(owned.ctx, { source });
+      if (card?.status === 'not_found') continue;
+      if (card?.status === 'rejected') return card;
+      if (card !== undefined && card.status !== 'ready') {
+        return rejection('incomplete', 'the block card is not ready at the required watermark');
       }
+      if (card !== undefined && blockCardReleased(card.value.state)) continue;
       blocks.push({ task: row.ref, gate: gated,
         action: rework.kind === 'requeue_task' ? 'system_requeue' : 'auto_reverify',
         // The gate already composed this basis; take it as-is.
@@ -572,8 +618,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       if (card?.status === 'not_found') continue;                       // the source resolved
       if (card?.status === 'rejected') return card;
       if (card?.status !== 'ready') return rejection('incomplete', 'the pending card is not ready');
-      if (card.value.state === 'applied' || card.value.state === 'answered_no_application'
-        || card.value.state === 'closed') continue;
+      if (blockCardReleased(card.value.state)) continue;
       const action = pendingCard.source.kind === 'member_creation' ? 'member_creation' : 'rework_request';
       // Each base names exactly the kinds its unblocking commits carry. member: creation/recovery
       // writes Session + CoreOperation; the answer/refusal writes SessionMessage; a requeue, plan
@@ -591,6 +636,10 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       if (gated.status !== 'ready') return gated;
       blocks.push({ task: pendingCard.task, gate: gated, action, wakeBasis: gated.value.waitBasis! });
     }
+    // §3.9 L2-gate-handoff: after the rework loop, before the formal dependency closure.
+    const handoff = await handoffBlocks(owned, goal);
+    if (handoff.status !== 'ready') return handoff;
+    blocks.push(...handoff.value);
     const table = formalDependencies(graph.tasks, upstreams);
     const waiting = closeBranches(table, blocks,
       (taskId) => graph.tasks.find(candidate => candidate.ref.taskId === taskId)?.ref);

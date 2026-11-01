@@ -55,6 +55,11 @@ import {
   handoffApprovalSubjectOf, readHandoffApprovalOperation, readHandoffApprovalOperations,
   type HandoffApprovalOperationV1,
 } from '../core/work-graph/communication/decision-source/handoff-approval.js';
+import {
+  adviserCreationCard, adviserCreationKeyOf, readAdviserCreationCardByKey, readAdviserCreationCollection,
+  type AdviserCreationNoticeItemV1, type AdviserCreationSourceDependencies,
+} from '../core/work-graph/communication/decision-source/adviser-creation.js';
+import { createGoalSecretary } from '../core/work-graph/tasks/goal-secretary.js';
 import { createHandoffToolEntry } from '../business/workflow/handoff-tool-entry.js';
 import { createHandoffApprovalApplicationAdapter } from '../business/workflow/session-handoff.js';
 import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
@@ -65,7 +70,7 @@ import { createNoteReviewNoticeSource } from '../core/work-graph/views/note-revi
 import { createNoticePositionComparator } from '../core/work-graph/views/notice-position.js';
 import { createNoticeDisplayToken } from '../core/work-graph/views/notice-display-token.js';
 import type {
-  DecisionMessagePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
+  DecisionMessagePort, DecisionNoticeSourcePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
   RequestCandidatePort, WorkspaceDecisionSettingsPort,
   MessageReleaseCandidatesPort, MessageReleasePort, MessageReleasedActionsPort,
 } from '../core/work-graph/model/decision-contracts.js';
@@ -1194,12 +1199,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // §3.11: the one duty recipient resolver, shared by the notes surface and the Workflow's secretary lifecycle. Its
     // scribe arm is the old closure exactly: it pages the directory to its end, keeps active cards whose fixed duty is
     // `scribe`, sorts by `sessionId` and returns the first, with no health filter. A failed page is returned unchanged,
-    // as the old closure did. The adviser/secretary arms answer `unavailable` when a card's duty cannot be read, never
-    // "no recipient"; the scribe arm skips such a card, byte-identical to the old closure.
+    // as the old closure did. The adviser/secretary arms answer `unavailable` when a `role_spec` card's duty cannot be
+    // read, never "no recipient"; a `legacy_template` with no fixed duty is skipped, and the scribe arm skips every
+    // such card, byte-identical to the old closure.
     const dutyRecipient = createDutyRecipient({
       findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input),
       dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx),
     });
+    /** The one adviser/secretary duty read the Host, the notice source and the Workflow share. */
+    const resolveDutyRecipient = (ctx: CoreCallContext,
+      input: Parameters<typeof dutyRecipient.resolveDutyRecipient>[1]) =>
+      dutyRecipient.resolveDutyRecipient(ctx, input);
     // A-07's pre-claim check: the SAME current Host resolution and the Session's
     // own fixed Role, with no Run. An old composition without a trusted Host has
     // no port, so the chooser keeps today's order and no authorization filter.
@@ -1224,6 +1234,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // request facts fill a request card's `confirmedGoalRef` from it.
     const bindingReads = createInitializationBindingReader({ records: backend.records });
     const rawRequestFacts = createRequestFacts({ records: backend.records, bindings: bindingReads });
+    // The one Goal-secretary resolver the Host's rework notifier asks: the newest kept request owner, else the duty
+    // read. It shares the same request-facts instance and the same duty instance as the rest of the root.
+    const goalSecretary = createGoalSecretary({ ordered: backend.records, requestFacts: rawRequestFacts, duty: dutyRecipient });
+    const resolveGoalSecretary = (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+      goalSecretary.resolveGoalSecretary(ctx, input);
     const recipientExecutions = createRecipientExecutions({
       sessions: sessionFacts, executions: executionReader, records: backend.records });
     // The ONE dispatch-basis read: the mailbox's send facts and the graph reader's Goal cards share this instance, so
@@ -1366,6 +1381,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           reason: 'the note-decision source is not bound yet' })
         : boundNoteDecisionSource.readNoteDecision(ctx, input),
     };
+    // The one automatic-rework projector: the C3 adviser facts, its card source and the Host's tracked read all share
+    // this instance. Built before the C3 dependencies that read it (no use-before-declare).
+    const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
     const decisionSourceDependencies: DecisionSourceFactsDependencies = {
       records: backend.records, plans: planService, bindings: bindingReads,
       noteDecisions: noteDecisionSourcePort, unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace },
@@ -1373,6 +1391,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // command reader (the K L9 window) the card source uses.
       commandRerunRequests, commandRerunExecutions: executionReader,
       readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input),
+      // The same projection instance and duty resolver the rest of the root uses; without them the source is
+      // explicitly `unavailable`.
+      adviserCreation: { notices: automaticReworkNotices, resolveDutyRecipient },
     };
     const decisionSources = createDecisionSourceFacts(decisionSourceDependencies);
     // §4.5: the formal identity/fingerprint of a settings commit are persisted
@@ -1422,7 +1443,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       bindings: bindingReads });
     const goalCauseCards = createGoalCauseCardSource(goalDecisionCauseReader);
     const planningQuestionCards = createPlanningQuestionCardSource(planningQuestionReader);
-    const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
     // The `continuation` fact is the existing saved brief of a requeued Run that
     // actually entered; the callback reads the wrapped Runtime port built below.
     const continuationNotices = createContinuationNoticeSource({
@@ -1489,8 +1509,24 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           ? { item: read.value } : { closed, openedAt: read.value.requestedAt } };
       },
     });
+    // The `adviser_creation` card: the second-or-later counted rework of one Task with no adviser. It reuses the ONE
+    // rework projection and the ONE duty resolver; the generic adapter owns the answer/terminal overlay.
+    const adviserCreationDeps: AdviserCreationSourceDependencies = {
+      notices: automaticReworkNotices, resolveDutyRecipient,
+    };
+    const adviserCreationCards = createCollectionCardSource<AdviserCreationNoticeItemV1>({
+      kind: 'adviser_creation',
+      serves: ['goal'],
+      readCollection: (ctx, input) => readAdviserCreationCollection(adviserCreationDeps, ctx,
+        { workspace: input.workspace, subject: input.subject }),
+      project: adviserCreationCard,
+      keyOf: adviserCreationKeyOf,
+      closedReasonOf: (item) => item.closedReason,
+      readByKey: (ctx, input) => readAdviserCreationCardByKey(adviserCreationDeps, ctx,
+        { workspace: input.workspace, source: input.source }),
+    });
     const decisionCardSources = [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
-      commandRerunRequestCards, messageReleaseCards, handoffApprovalCards,
+      commandRerunRequestCards, messageReleaseCards, handoffApprovalCards, adviserCreationCards,
       createMemberCreationCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
@@ -1818,6 +1854,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // H: record 5's readiness read, over the SAME record backend and Session
         // operations owner the handoff lifecycle uses.
         handoffBriefs: createWorkHandoffBriefRead({ records: backend.records, operations: sessionDirectory }),
+        // T's Runtime port takes H's `requestHandoff` caller shape directly. H's one entry is built later in this root
+        // (it needs the note read model); the closure reads the constructed entry at Run start, never before.
+        handoffs: (ctx, input) => handoffEntry.requestHandoff(ctx, input),
         memoryMaterial,
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: continuationWorkspaceSource,
@@ -2052,6 +2091,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readMessageBody: (...args) => trackedCall(() => mailbox.readMessageBody(...args), unavailable),
       readInbox: (...args) => trackedCall(() => mailbox.readInbox(...args), unavailable),
       readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
+      // The Host system sender's own outbox: the read and the internal append are
+      // the SAME mailbox instance and drain through the one trackedCall. The
+      // append is Host-only in the owner and is bound by no HTTP route.
+      readHostSystemOutbox: (...args) => trackedCall(() => mailbox.readHostSystemOutbox(...args), unavailable),
+      appendHostSystemOutbox: (...args) => trackedCall(() => mailbox.appendHostSystemOutbox(...args), unavailable),
       respondMessage: (...args) => trackedCall(() => mailbox.respondMessage(...args), unavailable),
       // Slice 1 (spec §4.4): the read-only undelivered-reply source page.
       readUndeliveredReplies: (...args) => trackedCall(() => mailbox.readUndeliveredReplies!(...args), unavailable),
@@ -2680,6 +2724,26 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           cursor = page.value.nextCursor;
         }
       },
+      // H's pending handoff cards are its own operation read: every workspace operation with a still-valid approval,
+      // expanded to the handed-over Tasks of this Goal (project + goal). A null or rejected approval is not a pending
+      // card; the card's source is the same projection the queue source registers.
+      pendingHandoffApprovals: async (_ctx, input) => {
+        const read = await readHandoffApprovalOperations(backend.records, input.workspace);
+        if (read.status !== 'ready') return read;
+        const cards: PendingCardV1[] = [];
+        for (const operation of read.value) {
+          const approval = operation.action.progress.approval;
+          if (approval === null || approval.state === 'rejected') continue;
+          const source = handoffApprovalCard(operation).source;
+          for (const assignment of operation.action.input.assignments) {
+            for (const task of assignment.tasks) {
+              if (task.projectId !== input.goalRef.projectId || task.goalId !== input.goalRef.goalId) continue;
+              cards.push({ task, source });
+            }
+          }
+        }
+        return { status: 'ready', value: cards };
+      },
       overlap: overlapGates,
       // Book §3.8 item 3: the release owner, the bounded candidate page and the trusted answer entry. R's Host and the
       // approval hook arm the same queue; the Workflow only selects and performs.
@@ -2851,7 +2915,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const toolCommitLookup = createToolCommitLookup([
       mailbox.lookupToolCommit, rawDecisionMessages.lookupToolCommit, planService.lookupToolCommit,
       noteWrite.lookupToolCommit, commandRerunRequests.lookupToolCommit, memberService.lookupToolCommit,
-      requeueService.lookupToolCommit, rawEvidence.lookupToolCommit,
+      requeueService.lookupToolCommit, rawEvidence.lookupToolCommit, handoff.lookupToolCommit,
     ]);
     // K3 (Q3/L5): the classifier's and the attestation entry's workspace capture.
     // It reads the prepared manifest at `bundleRef`, takes its run-start
@@ -3231,6 +3295,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       resumePendingMemberCreations: (...args) => trackedCall(
         () => memberService.request.resumePendingMemberCreations(...args), unavailable),
     };
+    // C06: the Host's one narrow read of the automatic-rework projection, over the SAME instance the C3 source and its
+    // card source use. Tracked like every other published read; no second projection is built.
+    const reworkNotices: DecisionNoticeSourcePort = {
+      category: 'automatic_rework',
+      readPage: (ctx, input) => trackedCall(() => automaticReworkNotices.readPage(ctx, input), unavailable),
+    };
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -3265,7 +3335,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       requestIntake, requestRounds, requestFacts, secretaryProfiles,
       // The main read and `requests/read` owner; internal like the request owners.
       mainSurface,
-      memberCreations,
+      memberCreations, reworkNotices,
+      // The Host's two recipient resolvers (adviser and the Goal's current secretary): the SAME duty/goal-secretary
+      // instances the rest of the root uses, published as one internal read group through the close-tracking path.
+      recipients: {
+        resolveDutyRecipient: (...args: Parameters<typeof resolveDutyRecipient>) =>
+          trackedCall(() => resolveDutyRecipient(...args), unavailable),
+        resolveGoalSecretary: (...args: Parameters<typeof resolveGoalSecretary>) =>
+          trackedCall(() => resolveGoalSecretary(...args), unavailable),
+      },
       // The initialization binding read, the adoption operation owner and the installed-checks confirmation;
       // internal like the request owners.
       bindings, initializationAdoption, confirmInstalledChecks,
@@ -3370,6 +3448,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
+      'reworkNotices', 'recipients',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions'] as const) {

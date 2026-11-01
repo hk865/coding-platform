@@ -34,12 +34,14 @@ export const MEMBER_COMMIT_LOOKUP_TOOLS: readonly string[] = ['create_member'];
 export const REWORK_COMMIT_LOOKUP_TOOLS: readonly string[] = ['request_rework'];
 /** L3 row-4 name the evidence owner publishes the committed-recheck lookup for. */
 export const RECHECK_COMMIT_LOOKUP_TOOLS: readonly string[] = ['request_recheck'];
+/** L3 row-4 name H's handoff owner publishes the committed-handoff lookup for. */
+export const HANDOFF_COMMIT_LOOKUP_TOOLS: readonly string[] = ['hand_off'];
 
 /** The production owner order (`create-platform.ts`); the default for a plain array. */
 const DEFAULT_OWNER_TOOL_NAMES: readonly (readonly string[])[] = [
   MAILBOX_COMMIT_LOOKUP_TOOLS, DECISION_COMMIT_LOOKUP_TOOLS, PLAN_COMMIT_LOOKUP_TOOLS, NOTE_COMMIT_LOOKUP_TOOLS,
   COMMAND_RERUN_COMMIT_LOOKUP_TOOLS, MEMBER_COMMIT_LOOKUP_TOOLS, REWORK_COMMIT_LOOKUP_TOOLS,
-  RECHECK_COMMIT_LOOKUP_TOOLS,
+  RECHECK_COMMIT_LOOKUP_TOOLS, HANDOFF_COMMIT_LOOKUP_TOOLS,
 ];
 
 export function createToolCommitLookup(

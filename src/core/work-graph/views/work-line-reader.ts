@@ -109,7 +109,7 @@ export type WorkLineStore = GoalRecordTransactionPort & RecordLookupPort & Recor
 export type WorkLineReaderDeps = {
   records: WorkLineStore;
   dutyFor: SessionDutyReadPort;
-  undeliveredRepliesFor: (records: GoalRecordTransactionPort & RecordLookupPort) => SessionMailboxPort['readUndeliveredReplies'];
+  undeliveredRepliesFor: (records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort) => SessionMailboxPort['readUndeliveredReplies'];
   sessionAnomaliesFor: (records: GoalRecordTransactionPort & RecordLookupPort) => SessionAnomalyPort;
   historyReadBudget?: number;
   plans?: PlanTaskPort;

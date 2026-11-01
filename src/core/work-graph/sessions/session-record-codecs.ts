@@ -41,7 +41,7 @@ import type {
 import type { SessionCreateOperationRecord, SessionOperationRecord } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 import {
-  HandoffActionShape, SecretaryArchiveActionShape, upgradeSessionOperationActionV1,
+  ActorRefField, HandoffActionShape, SecretaryArchiveActionShape, upgradeSessionOperationActionV1,
 } from '../model/session-operation-arms.js';
 import {
   MemberCreateActionShape, checkMemberCreatedEventBody,
@@ -1185,11 +1185,20 @@ function createArmEventCodec<const E extends string, const F extends Fields>(for
   };
 }
 
-/** Every write of a handoff operation appends it with the record's new revision; the write's result reads it. */
+/** Every write of a handoff operation appends it with the record's new revision; the write's result reads it.
+ *  The decided event of an answered approval card carries the actual host actor and the formal
+ *  `DecisionChangeProofV1`; an advance or accept event carries neither. */
 export const sessionHandoffRecordedCodec = createArmEventCodec(defineEvent({
   name: 'SessionHandoffRecorded', eventType: 'SessionHandoffRecorded', schemaVersion: 1,
   fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
-    phase: f.enumOf(OPERATION_PHASES), action: f.ref(HandoffActionShape) },
+    phase: f.enumOf(OPERATION_PHASES), action: f.ref(HandoffActionShape),
+    actor: f.optional(ActorRefField), proof: f.optional(f.json()) },
+  rules: [(value) => {
+    if (!isRecord(value)) return 'SessionHandoffRecorded must be an object';
+    if (value['proof'] === undefined) return null;
+    if (value['actor'] === undefined) return 'a SessionHandoffRecorded with a proof must carry its actor';
+    return decisionChangeProofProblem(value['proof']);
+  }],
 }));
 /** The same for a secretary archive operation. */
 export const secretaryArchiveRecordedCodec = createArmEventCodec(defineEvent({
@@ -1359,6 +1368,11 @@ export function plainSessionRefToAggregate(ref: SessionRef): SessionAggregateRef
 /** The canonical-JSON key of a plain Session input: the Session record refKey, extra input fields dropped. */
 export function plainSessionRefKey(ref: SessionRef): string {
   return sessionAggregateRefKey(plainSessionRefToAggregate(ref));
+}
+/** A Session reference as its two identity fields: a directory card carries a `SessionAggregateRef`, while the Host's
+ *  send/outbox payloads reject the aggregate key, so callers hand out only `{projectId,sessionId}`. */
+export function plainSessionRef(ref: { projectId: string; sessionId: string }): SessionRef {
+  return { projectId: ref.projectId, sessionId: ref.sessionId };
 }
 
 export function encodeSessionOperationRecord(record: SessionOperationRecord): EncodedRecord {

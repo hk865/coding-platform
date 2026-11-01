@@ -46,7 +46,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { principalIdentity, type CoreCallContext, type CorePrincipal, type MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import { QueryJobRefShape, QueryRunRefShape } from '../../../contracts/data-format-refs.js';
+import { QueryJobRefShape, QueryRunRefShape, WorkspaceScopeShape } from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { DecisionHostSenderV1, MessageRecipient, MessageReleaseV1, SendRejectionV1, SessionMessageIntentV1,
   SessionMessageRef, UserMessageRecipientV1, DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
@@ -73,6 +73,9 @@ import {
 import { consultationQueryRefs, interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { HostSendCommitLookup, HostSendCommitLookupInput, MessageQueryAnswerSender, MessageSender, MessageWorkRunSender, SendMessageResultV1, SessionMailboxDependencies, SessionMailboxPort, SessionMessage, SessionMessageCommandPort, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1, SessionMessageRespondInputV1, SessionMessageSendInputV1, SessionMessageStatus, UndeliveredReplyV1 } from '../model/communication-contracts.js';
+import type {
+  HostOutboxItemV1, HostOutboxKeysetV1, HostOutboxStoredItemV1, HostSystemOutboxRef, SessionMessageHostOutboxV1,
+} from '../model/communication-contracts.js';
 import { deriveMessageDelivery, deriveSessionInputId, waitConsumedClaimKey } from '../model/communication-contracts.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { canonicalRefKey, decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
@@ -81,7 +84,7 @@ import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js
 import { commandKeys } from '../persistence/command-executor.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
-import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import { checkPlainSessionRef, decodeSessionRecord, encodeSessionRecord, isNonZeroPlatformCursor, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import {
   SESSION_ARCHIVE_REQUESTED_EVENT, sessionArchiveChangedEventFromEvent, type SessionArchiveChangedEventV1,
 } from '../sessions/lifecycle-record-codecs.js';
@@ -117,7 +120,11 @@ import {
   encodeSessionMessageAppliedEvent,
   encodeSessionMessageExpiredEvent,
   type SessionMessageEventV1,
+  decodeHostSystemOutboxRecord, encodeHostSystemOutboxAppendedEvent, encodeHostSystemOutboxRecord,
+  checkHostSystemOutboxBody,
+  S2C_HOST_OUTBOX_LOOKUP, type HostSystemOutboxAppendedEventV1, type HostSystemOutboxPendingV1,
 } from '../sessions/message-record-codecs.js';
+import { eventIdOf as trustedEventIdOf } from '../sessions/trusted-context.js';
 import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
 import { decodeNoticeOrigin, type NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
 import {
@@ -189,6 +196,29 @@ export function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRej
   return result.status === 'ready' ? result : result;
 }
 
+/** The Host outbox record is keyed by `(source.position, branch)`: a retry re-writes the same item, never a second. */
+function hostSystemOutboxRefOf(workspace: WorkspaceScope, item: HostOutboxStoredItemV1): HostSystemOutboxRef {
+  const key = canonicalJson({ position: item.source.position, branch: item.branch } as unknown as JsonValue);
+  return {
+    aggregateType: 'HostSystemOutbox', projectId: workspace.projectId, workspaceId: workspace.workspaceId,
+    outboxId: 'host-system-outbox-' + sha256Hex(key),
+  };
+}
+
+/** The read's `after` is the page's OWN `(order, refKey)` keyset; `null` reads from the start. */
+function hostOutboxAfterOf(raw: unknown):
+{ ok: true; value: HostOutboxKeysetV1 | null } | { ok: false; rejection: CoreRejection } {
+  if (raw === null || raw === undefined) return { ok: true, value: null };
+  if (!isObject(raw) || Object.keys(raw).some((key) => key !== 'order' && key !== 'refKey')) {
+    return { ok: false, rejection: reject('invalid', 'readHostSystemOutbox after must be a complete ordered keyset or null') };
+  }
+  const order = raw['order'];
+  if (!isNonZeroPlatformCursor(order) || !nonEmpty(raw['refKey'])) {
+    return { ok: false, rejection: reject('invalid', 'readHostSystemOutbox after must be a complete ordered keyset or null') };
+  }
+  return { ok: true, value: { order, refKey: raw['refKey'] as string } };
+}
+
 /**
  * The recipient line's three read-time facts (R7A1-09): `archived` is the lifecycle, `retired` the unavailable
  * health and `archiving` a pending archive request. A user recipient has no line; an absent or unreadable one is the
@@ -251,7 +281,7 @@ export async function readSessionMessageRecord(
  * re-binds it. Every current writer binds `since` at creation, so a record
  * without one is damaged, never silently re-encoded without a position.
  */
-export async function preservedNoticeOrigin(records: SessionMailboxDependencies['records'], refKey: string): Promise<
+export async function preservedNoticeOrigin(records: Pick<GoalRecordTransactionPort, 'readMany'>, refKey: string): Promise<
   { ok: true; value: NoticeOriginWireV1 } | { ok: false; rejection: CoreRejection }> {
   let read: StoreResult<RecordBatchRead>;
   try {
@@ -3442,6 +3472,149 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     return { status: 'ready', value: { items, releaseBlocks, cursors, nextCursor, sourceCursor: readThrough } };
   }
 
+  // ---- the Host system outbox --------------------------------------------
+
+  /**
+   * Read the Host system sender's own outbox in `since` order. The input is
+   * validated first, then only the trusted Host is admitted; the ordered index
+   * advances by the FULL `(order, refKey)` keyset, never the last cursor alone,
+   * and each decoded item carries its own `(since, ordinal)` page position. An
+   * empty page is a legal `{items: [], next: null}`; a damaged record is
+   * `unavailable` and a store failure maps through the existing mapping.
+   */
+  async function readHostSystemOutbox(ctx: CoreCallContext, input: {
+    workspace: WorkspaceScope; after: HostOutboxKeysetV1 | null; limit: number;
+  }): Promise<ReadResult<{ items: HostOutboxItemV1[]; next: HostOutboxKeysetV1 | null }>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const raw = input as unknown as Unknown | null | undefined;
+    if (!isObject(raw)) return reject('invalid', 'readHostSystemOutbox requires an input object');
+    if (Object.keys(raw).some((key) => key !== 'workspace' && key !== 'after' && key !== 'limit')) {
+      return reject('invalid', 'readHostSystemOutbox does not accept extra fields');
+    }
+    const workspaceProblem = checkShape(WorkspaceScopeShape, raw['workspace'], 'stored');
+    if (workspaceProblem !== null) {
+      return reject('invalid', `readHostSystemOutbox requires a complete WorkspaceScope: ${workspaceProblem}`);
+    }
+    if (owned.principal.kind !== 'host') {
+      return reject('forbidden', 'the Host system outbox is readable only by the trusted Host');
+    }
+    const workspace = structuredClone(raw['workspace']) as WorkspaceScope;
+    if (workspace.projectId !== owned.projectId || workspace.workspaceId !== owned.workspaceId) {
+      return reject('forbidden', 'the Host system outbox workspace is not the caller scope');
+    }
+    const limit = raw['limit'];
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+      return reject('invalid', 'readHostSystemOutbox limit must be an integer between 1 and 100');
+    }
+    const after = hostOutboxAfterOf(raw['after']);
+    if (!after.ok) return after.rejection;
+    if (owned.signal.aborted) return reject('cancelled', 'the Host system outbox read was cancelled');
+    let page;
+    try {
+      page = await records.lookupOrdered({
+        index: S2C_HOST_OUTBOX_LOOKUP,
+        values: [workspace.projectId, workspace.workspaceId],
+        direction: 'asc',
+        limit,
+        ...(after.value === null ? {} : { after: after.value }),
+      });
+    } catch {
+      return reject('unavailable', 'the Host system outbox lookup failed');
+    }
+    if (page.status !== 'ready') return mapStoreFailure(page);
+    const items: HostOutboxItemV1[] = [];
+    for (const record of page.value.records) {
+      const decoded = decodeHostSystemOutboxRecord(record);
+      if (decoded.status !== 'decoded') {
+        return reject('unavailable', `a Host system outbox candidate is damaged: ${decoded.reason}`);
+      }
+      const stored = decoded.value;
+      if (canonicalOf(stored.ref) !== record.refKey
+        || stored.ref.projectId !== workspace.projectId || stored.ref.workspaceId !== workspace.workspaceId) {
+        return reject('unavailable', 'a Host system outbox candidate disagrees with the requested workspace');
+      }
+      items.push({ ...stored.item, page: { cursor: stored.since, ordinal: stored.ordinal } });
+    }
+    return { status: 'ready', value: { items, next: page.value.next } };
+  }
+
+  /**
+   * Append one saved delivery item as one record commit. Only the trusted Host is
+   * admitted; the returned `WriteResult` is the Store's own, so a caller can
+   * tell "not committed" and must not send or advance. The record is written
+   * once, before the send/card read, with the saved input; there is no update
+   * path and no `delivered` flag.
+   */
+  async function appendHostSystemOutbox(ctx: CoreCallContext, request: GraphWrite<{
+    workspace: WorkspaceScope; item: HostOutboxStoredItemV1;
+  }>): Promise<WriteResult<SessionMessageHostOutboxV1>> {
+    const owned = ownContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    if (owned.principal.kind !== 'host') {
+      return reject('forbidden', 'the Host system outbox is writable only by the trusted Host');
+    }
+    if (owned.signal.aborted) return reject('cancelled', 'the Host system outbox append was cancelled before validation');
+    const write = ownWrite<{ workspace: WorkspaceScope; item: HostOutboxStoredItemV1 }>(request);
+    if (!write.ok) return write.rejection;
+    const raw = write.input as unknown as Unknown | null | undefined;
+    if (!isObject(raw)) return reject('invalid', 'appendHostSystemOutbox requires an input object');
+    if (Object.keys(raw).some((key) => key !== 'workspace' && key !== 'item')) {
+      return reject('invalid', 'appendHostSystemOutbox does not accept extra fields');
+    }
+    const workspaceProblem = checkShape(WorkspaceScopeShape, raw['workspace'], 'stored');
+    if (workspaceProblem !== null) {
+      return reject('invalid', `appendHostSystemOutbox requires a complete WorkspaceScope: ${workspaceProblem}`);
+    }
+    const workspace = structuredClone(raw['workspace']) as WorkspaceScope;
+    if (workspace.projectId !== owned.projectId || workspace.workspaceId !== owned.workspaceId) {
+      return reject('forbidden', 'the Host system outbox workspace is not the caller scope');
+    }
+    const item = structuredClone(raw['item']) as HostOutboxStoredItemV1;
+    const ref = hostSystemOutboxRefOf(workspace, item);
+    const record: HostSystemOutboxPendingV1 = { ref, schemaVersion: 1, revision: 1, workspace, item,
+      ordinal: 0, since: null };
+    const recordProblem = checkHostSystemOutboxBody(record, 'pending');
+    if (recordProblem !== null) return reject('invalid', `appendHostSystemOutbox item is invalid: ${recordProblem}`);
+    const refKey = canonicalJson(ref as unknown as JsonValue);
+    const senderIdentity = senderIdentityOf({ kind: 'host', actor: { ...owned.principal.actor } });
+    const identityKey = identityKeyOf('host-system-outbox', workspace, senderIdentity, write.requestId);
+    const fingerprint = fingerprintOf('host-system-outbox', workspace, senderIdentity, record, write.expected);
+    const guards: RecordGuard[] = [{ refKey, expectedRevision: null }];
+    for (const pin of write.expected) {
+      if (!isObject(pin) || !isObject(pin.ref) || !isNonNegativeInt(pin.revision)) {
+        return reject('invalid', 'appendHostSystemOutbox requires complete, non-negative-integer version pins');
+      }
+      const pinKey = canonicalOf(pin.ref);
+      if (pinKey === null) return reject('invalid', 'a Host system outbox version pin ref is not canonicalizable JSON');
+      guards.push({ refKey: pinKey, expectedRevision: pin.revision === 0 ? null : pin.revision });
+    }
+    const merged = mergeGuards(guards);
+    if (!merged.ok) return merged.rejection;
+    const event: HostSystemOutboxAppendedEventV1 = {
+      eventId: trustedEventIdOf(identityKey, 'HostSystemOutboxAppended'),
+      eventType: 'HostSystemOutboxAppended', schemaVersion: 1, occurredAt: deps.now(), hostOutbox: record,
+    };
+    const prepared: PreparedCommit = {
+      identityKey, fingerprint, guards: merged.guards,
+      records: [encodeHostSystemOutboxRecord(record)],
+      claims: [], indexGuards: [], indexChanges: [],
+      events: [encodeHostSystemOutboxAppendedEvent(event)],
+      commitCursorBindings: [{ refKey, field: 'since' }],
+    };
+    if (owned.signal.aborted) return reject('cancelled', 'the Host system outbox append was cancelled before commit');
+    let receipt;
+    try {
+      receipt = await records.commit(prepared);
+    } catch {
+      return reject('unavailable', 'the Host system outbox commit failed before completing');
+    }
+    if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+    return {
+      status: 'committed', value: { ...record, since: receipt.cursor }, replayed: receipt.replayed, cursor: receipt.cursor,
+    };
+  }
+
   // ---- ackMessage ---------------------------------------------------------
 
   async function ackMessage(ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>> {
@@ -5030,6 +5203,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   return { sendMessage, readMessage, readMessageBody, readInbox, readOutbox, ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted, sendUserMessage,
     disposeArchiveWait, readUndeliveredReplies, readRoutedReplies, lookupToolCommit, lookupHostSendCommit,
+    readHostSystemOutbox, appendHostSystemOutbox,
     withdrawMessage, releaseMessage, readMessageView, readInboxView };
 }
 

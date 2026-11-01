@@ -586,6 +586,21 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
         rework_request: createReworkRequestApplicationAdapter({
           reworks: deps.reworkApplications, applicationReceipt: deps.applicationReceipt }),
       }),
+      // The no-adviser second-rework card. Approving it needs 7D2's `role_line_add`, so the application is the explicit
+      // `unavailable` refusal (the answer itself is still committed by ①); rejecting answers and closes the card with
+      // no application result.
+      adviser_creation: {
+        apply: async (_adapterCtx, { selection }) => ({
+          status: 'ready',
+          value: {
+            action: selection.kind === 'option' && selection.optionId === 'approve'
+              ? { status: 'rejected', code: 'unavailable',
+                reason: 'role_line_action_unavailable: the role-line action is installed by 7D2' }
+              : null,
+            receipt: null,
+          },
+        }),
+      },
       ...deps.decisionApplications,
     };
     return applications;

@@ -258,6 +258,9 @@ export type WorkflowDependencies = {
   pendingMemberCreations?: PendingCardsPort;
   /** R's pending `rework_request` cards for the Task block source. */
   pendingReworkRequests?: PendingCardsPort;
+  /** H's pending `handoff_approval` cards for the Task block source: one per handed-over Task of this Goal. */
+  pendingHandoffApprovals?: (ctx: CoreCallContext, input: { workspace: WorkspaceScope; goalRef: GoalRef }) =>
+    Promise<ReadResult<readonly PendingCardV1[]>>;
 };
 
 /**

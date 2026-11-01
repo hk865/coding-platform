@@ -18,7 +18,7 @@
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SendRejectionV1,
   SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef,
@@ -27,9 +27,13 @@ import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.j
 import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
-import type { DecisionChangeProofV1, MessageReleaseBlockV1 } from '../../../contracts/goal-decisions.js';
+import type {
+  DecisionChangeProofV1, DecisionSourceV1, MessageReleaseBlockV1, NoticePositionV1,
+} from '../../../contracts/goal-decisions.js';
+import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
+import type { VerificationRoundRef } from '../../../contracts/verification.js';
 import { canonicalJson, canonicalKey, sha256Hex } from '../../../contracts/fingerprint.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPage, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordCommitIdentityPort } from '../../record-store/ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
 import type { ToolCommitLookup, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
@@ -321,6 +325,53 @@ export type HostSendCommitLookup = (ctx: CoreCallContext, input: HostSendCommitL
   Promise<ToolCommitLookupResult>;
 
 /**
+ * The Host system outbox: the Host's own record of one rework-notice delivery.
+ * `position` is the notice source's own position (the projection's
+ * `NoticeItemV1.position`), never a message id, a send cursor or a page cursor.
+ */
+export type HostOutboxSourceV1 =
+  | { kind: 'requeue'; ref: TaskRequeueRef; position: NoticePositionV1 }
+  | { kind: 'round'; ref: VerificationRoundRef; position: NoticePositionV1 };
+/** The outbox record's own paging position ONLY; never the source position. */
+export type HostOutboxPageV1 = { cursor: CommitCursor; ordinal: number };
+export type HostOutboxMessageItemV1 = {
+  source: HostOutboxSourceV1;
+  branch: 'notify_only' | 'adviser_delivery';
+  /** The saved send (`input` + `meta.requestId`), written BEFORE the send. The committed send is found by
+   *  `request.meta.requestId`; no `message` ref and no `delivered` flag are written after the send. */
+  request: SessionMessageSendInputV1;
+};
+export type HostOutboxCardItemV1 = {
+  source: HostOutboxSourceV1;
+  branch: 'no_adviser_card';
+  /** The full derived source, saved BEFORE the card read; recovery re-reads it by `key`. */
+  cardSource: DecisionSourceV1;
+};
+/** The record stores one branch item; the read DTO adds `page` to every branch (no `Omit` over a union). */
+export type HostOutboxStoredItemV1 = HostOutboxMessageItemV1 | HostOutboxCardItemV1;
+export type HostOutboxItemV1 =
+  | (HostOutboxMessageItemV1 & { page: HostOutboxPageV1 })
+  | (HostOutboxCardItemV1 & { page: HostOutboxPageV1 });
+/** The store's exclusive ordered keyset: commit cursor plus canonical record key. */
+export type HostOutboxKeysetV1 = NonNullable<RecordOrderedLookupPage['next']>;
+
+/**
+ * The persisted record (one per delivery). The Store binds `since` to this
+ * record's own commit cursor (`commitCursorFields: ['since']`). `ordinal` is the
+ * per-cursor item index (0-based, in commit order), written by the appender. The
+ * pair `(since, ordinal)` is the PAGE position only.
+ */
+export type SessionMessageHostOutboxV1 = {
+  ref: HostSystemOutboxRef; schemaVersion: 1; revision: number;
+  workspace: WorkspaceScope;
+  item: HostOutboxStoredItemV1;
+  ordinal: number;
+  since: CommitCursor;
+};
+export type HostSystemOutboxRef = { aggregateType: 'HostSystemOutbox'; projectId: string;
+  workspaceId: string; outboxId: string };
+
+/**
  * C1 narrow mailbox port. Reads never ack and never change status; ack/respond
  * are the only status transitions and each carries exactly one SessionMessage
  * revision pin in its `GraphWrite`.
@@ -356,6 +407,21 @@ export interface SessionMailboxPort {
       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
     },
   ): Promise<ReadResult<SessionMessageOutboxPageV1>>;
+  /** Trusted Host only: the Host system sender's own outbox, in `since` order. No other principal is admitted. */
+  readHostSystemOutbox(ctx: CoreCallContext, input: {
+    workspace: WorkspaceScope; after: HostOutboxKeysetV1 | null; limit: number;
+  }): Promise<ReadResult<{ items: HostOutboxItemV1[]; next: HostOutboxKeysetV1 | null }>>;
+  /**
+   * Trusted Host only: append ONE saved delivery item as one record commit. The
+   * caller gets the Store's real write result, so an uncommitted append never
+   * leads to a send or an advance; there is no update path and no `delivered`
+   * flag. A retry of the same `(source.position, branch)` names the same record
+   * and replays its receipt instead of writing a second item.
+   */
+  appendHostSystemOutbox(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ workspace: WorkspaceScope; item: HostOutboxStoredItemV1 }>,
+  ): Promise<WriteResult<SessionMessageHostOutboxV1>>;
   ackMessage(
     ctx: CoreCallContext,
     request: GraphWrite<{ messageRef: SessionMessageRef }>,
@@ -445,7 +511,8 @@ export interface RequestOwnerReadPort {
  * transaction-external boolean check.
  */
 export type SessionMailboxDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  /** The same store serves `lookup` and the Host system outbox's ordered `since` index. */
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   sessions: SessionDirectoryPort;
   executions: ExecutionReadPort;
   roles: RoleBindingFactsPort;

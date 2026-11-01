@@ -221,8 +221,14 @@ function entryOf(read: QueryRead): { hostConfigurationRevision: string; permissi
 }
 
 const localTools = ['read', 'look_graph', 'find_graph', 'run_readonly_command'];
-// The secretary's own grant: the three read tools and the note writer, always; never a file write scope or a command tool.
+// The secretary's Query projection: the three read tools and the note writer, always; never a file write scope or a
+// command tool. The ordinary semantic Query ceiling still strips every coordination name.
 const secretaryTools = ['read', 'look_graph', 'find_graph', 'record_note'];
+// The local secretary BINDING's own tool list: the Query projection above plus the six coordination names. The
+// binding's tools are the revision material, so the hash below uses this list while the Query assertion keeps the four.
+const secretaryBindingTools = [...secretaryTools,
+  'send_session_message', 'ack_session_message', 'respond_session_message', 'withdraw_session_message',
+  'create_member', 'read_requests'];
 
 // The revision material written out as canonical JSON text: keys in sorted
 // order (duty, modelRevision, residentBytes, scope, tools, writeScope; inside
@@ -235,7 +241,7 @@ function localRevision(scope: CoreScope, modelRevision: string): string {
   })).slice(0, 16)}`;
 }
 
-function secretaryRevision(scope: CoreScope, modelRevision: string, tools: string[] = secretaryTools): string {
+function secretaryRevision(scope: CoreScope, modelRevision: string, tools: string[] = secretaryBindingTools): string {
   return `local-secretary:s3@${sha256(JSON.stringify({
     duty: 'secretary', modelRevision, residentBytes: 4096,
     scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },

@@ -3,9 +3,11 @@
  *
  * The scribe arm is the old closure exactly (A-20): page the directory to its end, keep `lifecycle === 'active'`
  * cards whose fixed duty is `scribe`, sort by `sessionId`, return the first. It has no health filter, so an
- * unavailable scribe is still returned. `adviser`/`secretary` use the same active + duty filter; a duty read that is
- * rejected or answers `unknown` makes those arms `unavailable` (the card cannot be proven to be another duty), never
- * "no recipient". The scribe arm skips such a card. A failed `findSessions` page is returned unchanged.
+ * unavailable scribe is still returned. `adviser`/`secretary` use the same active + duty filter; a rejected read, or
+ * an `unknown` answer from a `role_spec` (which cannot be told apart from a failed read), makes those arms
+ * `unavailable` (the card cannot be proven to be another duty), never "no recipient". A `legacy_template` that answers
+ * `unknown` genuinely has no fixed duty and is skipped. The scribe arm skips every such card. A failed `findSessions`
+ * page is returned unchanged.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -13,6 +15,7 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { SessionDirectoryPort } from '../model/session-contracts.js';
+import { plainSessionRef } from './session-record-codecs.js';
 
 export type DutyRecipientDependencies = {
   findSessions: SessionDirectoryPort['findSessions'];
@@ -37,15 +40,20 @@ export function createDutyRecipient(deps: DutyRecipientDependencies): DutyRecipi
           if (card.record.lifecycle !== 'active') continue;
           const duty = await deps.dutyOfRole(ctx, card.record.role);
           if (input.duty === 'scribe') {
-            if (duty.status === 'ready' && duty.value === 'scribe') found.push(card.record.ref);
+            if (duty.status === 'ready' && duty.value === 'scribe') found.push(plainSessionRef(card.record.ref));
             continue;
           }
-          if (duty.status !== 'ready' || duty.value === 'unknown') {
-            const detail = duty.status === 'ready' ? 'no fixed platform duty'
-              : duty.status === 'rejected' ? duty.reason : `the card's duty read was ${duty.status}`;
+          if (duty.status !== 'ready') {
+            const detail = duty.status === 'rejected' ? duty.reason : `the card's duty read was ${duty.status}`;
             return rejected('unavailable', `a Session card's duty could not be read: ${detail}`);
           }
-          if (duty.value === input.duty) found.push(card.record.ref);
+          if (duty.value === 'unknown') {
+            // A legacy platform template genuinely has no fixed duty. A `role_spec` that answers `unknown` cannot be
+            // told apart from a failed read, so that arm stays `unavailable`.
+            if (card.record.role.kind === 'legacy_template') continue;
+            return rejected('unavailable', `a Session card's duty could not be read: no fixed platform duty`);
+          }
+          if (duty.value === input.duty) found.push(plainSessionRef(card.record.ref));
         }
         if (page.value.nextCursor === null) break;
         cursor = page.value.nextCursor;

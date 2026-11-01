@@ -389,6 +389,13 @@ export type NoticeItemV1 = {
     operation: 'requeue' | 'reverify'; actorClass: 'system' | 'agent';
     taskRef: TaskTriple; count: number; cap: number | null; reason: string;
     sourceRef: TaskRequeueRef | VerificationRoundRef;
+    /** The triggering fact's own stored time (the requeue's or the round's `requestedAt`). */
+    requestedAt: string;
+    /** The Task's counted reworks across both arms (requeue `autoCount` + reverify `chain.autoCount`); an automatic
+     *  recovery on either arm is excluded. */
+    taskCount: number;
+    /** This item's own arm counts: `automation.counted` for a requeue, `exemption === 'none'` for a reverify. */
+    counted: boolean;
   };
   /**
    * 4C-2 U9: a folded line's member set. Present only on a grouped line that

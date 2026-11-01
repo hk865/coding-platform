@@ -90,7 +90,7 @@ const sameQueryJob = (left: QueryJobRef, right: QueryJobRef): boolean =>
   left.aggregateType === right.aggregateType && left.projectId === right.projectId
   && left.workspaceId === right.workspaceId && left.queryJobId === right.queryJobId;
 
-function receiptOf<K extends WorkflowStepReceipt['kind']>(receipts: readonly WorkflowStepReceipt[], kind: K):
+export function receiptOf<K extends WorkflowStepReceipt['kind']>(receipts: readonly WorkflowStepReceipt[], kind: K):
 Extract<WorkflowStepReceipt, { kind: K }> | undefined {
   return receipts.find((receipt): receipt is Extract<WorkflowStepReceipt, { kind: K }> => receipt.kind === kind);
 }

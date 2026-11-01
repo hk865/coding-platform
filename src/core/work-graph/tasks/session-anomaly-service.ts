@@ -38,7 +38,9 @@ import {
 import type { SessionPage, SessionPageRequest } from '../model/session-contracts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { sessionArchiveChangedEventFromEvent } from '../sessions/lifecycle-record-codecs.js';
-import { decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import {
+  decodeSessionRecord, plainSessionRef, plainSessionRefToAggregate, sessionAggregateRefKey,
+} from '../sessions/session-record-codecs.js';
 import {
   deriveSessionAnomalyView, deriveTaskArchiveState, transitionSessionAnomaly,
   type TaskArchiveNextV1,
@@ -98,9 +100,6 @@ function unavailable(reason: string): CoreRejection { return reject('unavailable
 function invalid(reason: string): CoreRejection { return reject('invalid', reason); }
 function incomplete(reason: string): CoreRejection { return reject('incomplete', reason); }
 function mapReader(failure: Rejected): CoreRejection { return reject(failure.code, failure.reason); }
-function plainSessionRef(ref: { projectId: string; sessionId: string }): SessionRef {
-  return { projectId: ref.projectId, sessionId: ref.sessionId };
-}
 
 /**
  * A Session reference as it arrives on the anomaly port. The plain `SessionRef`

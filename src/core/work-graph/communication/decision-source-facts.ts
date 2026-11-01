@@ -30,6 +30,8 @@ import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
+import type { VerificationRoundRef } from '../../../contracts/verification.js';
 import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
@@ -57,6 +59,9 @@ import { readCommandRerunRequestSource } from './decision-source/command-rerun-r
 import { readMessageReleaseSource } from './decision-source/message-release.js';
 import { readMemberCreationSource } from './decision-source/member-creation.js';
 import { readHandoffApprovalSource } from './decision-source/handoff-approval.js';
+import {
+  readAdviserCreationSource, type AdviserCreationSourceDependencies,
+} from './decision-source/adviser-creation.js';
 import { readReworkRequestSource } from './decision-source/rework-request.js';
 import type { DecisionSourceBranchFacts } from './decision-source/types.js';
 
@@ -106,6 +111,12 @@ export type DecisionSourceFactsDependencies = {
    * absent, every file object's digest is `null`.
    */
   workspace?: Pick<WorkspaceToolsPort, 'readWorkspace'>;
+  /**
+   * The `adviser_creation` source's two reads: the automatic-rework projection and the one adviser resolver. OPTIONAL so the
+   * frozen old factories keep compiling; absent, the source is explicitly `unavailable`, never an empty card. The
+   * production root always passes the same projection and resolver it wired elsewhere.
+   */
+  adviserCreation?: AdviserCreationSourceDependencies;
   /** The initialization binding read a planning-question binding source checks. */
   bindings: InitializationBindingReadPort;
 };
@@ -143,10 +154,21 @@ export function createDecisionSourceFacts(
       } catch {
         return rejectedWithCurrent('invalid', 'the decision source key is not parseable JSON');
       }
+      let identity: DecisionSourceIdentityV1;
       if (!isRecord(parsed) || parsed['kind'] !== source.kind) {
-        return rejectedWithCurrent('invalid', 'the decision source key does not match its declared kind');
+        // `decisionSourceKey` keys an `adviser_creation` by its trigger arm alone (its natural identity carries no
+        // adviser operation). Rebuild that identity from the trigger and let the canonical key check below prove it.
+        if (source.kind !== 'adviser_creation' || !isRecord(parsed)
+          || (parsed['kind'] !== 'requeue' && parsed['kind'] !== 'round') || !isRecord(parsed['ref'])) {
+          return rejectedWithCurrent('invalid', 'the decision source key does not match its declared kind');
+        }
+        const trigger = parsed['kind'] === 'requeue'
+          ? { kind: 'requeue' as const, ref: parsed['ref'] as unknown as TaskRequeueRef }
+          : { kind: 'round' as const, ref: parsed['ref'] as unknown as VerificationRoundRef };
+        identity = { kind: 'adviser_creation', trigger };
+      } else {
+        identity = parsed as unknown as DecisionSourceIdentityV1;
       }
-      const identity = parsed as unknown as DecisionSourceIdentityV1;
       if (decisionSourceKey(identity) !== source.key) {
         return rejectedWithCurrent('invalid', 'the decision source key is not the canonical natural identity');
       }
@@ -203,6 +225,13 @@ export function createDecisionSourceFacts(
             return readReworkRequestSource(support, ctx, identity, deps, goalRef);
           case 'handoff_approval':
             return readHandoffApprovalSource(support, ctx, source, identity, deps, goalRef);
+          case 'adviser_creation': {
+            if (deps.adviserCreation === undefined) {
+              return rejectedWithCurrent('unavailable',
+                'the adviser creation source is not wired: its projection and adviser resolver are absent');
+            }
+            return readAdviserCreationSource(support, ctx, source, identity, deps.adviserCreation, goalRef);
+          }
           default:
             return rejectedWithCurrent('invalid', 'the decision source kind is not recognized');
         }

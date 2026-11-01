@@ -28,6 +28,7 @@
 | `message-release.ts` | `readMessageReleaseSource` | message release 来源的完整分支事实：消息记录、它的 Goal 与 `tasks/message-release-card.ts` 的卡片事实；派生块是读的 DTO，不在分支事实里。 |
 | `handoff-approval.ts` | `readHandoffApprovalSource`、`handoffApprovalSubjectOf`、`handoffApprovalCardFacts`、`handoffApprovalCard`、`handoffApprovalCardKey`、`handoffApprovalClosedReason`、`handoffApprovalSourceIdentity`、`handoffApprovalOperationOfSource`、`readHandoffApprovalOperation`、`readHandoffApprovalOperations`、`HandoffApprovalOperationV1`、`HandoffApprovalCardFactsV1` | `handoff_approval` 来源：按 identity 的 operation ref 重读一条 `handoff` 操作，只用它自己的 `progress.approval` 与 `requestedAt`；subject 由 `handoffApprovalSubjectOf` 按 `assignments` 的不同 Goal 数派生（恰好一个 Goal 是该 Goal，其余是项目），通知来源也调用同一份；所有阶段都列出，`approved`/`rejected`/已结束以 `source_resolved` 关闭。集合读遍历 workspace 五个阶段的操作并按 subject 筛选；唯一纯投影同时产出卡片事实和 `DecisionCardV1`，不另写第二份。 |
 
+| `adviser-creation.ts` | `adviserCreationOptions`、`adviserCreationIdentityOf`、`adviserCreationKeyOf`、`readAdviserCreationCollection`、`readAdviserCreationCardByKey`、`adviserCreationCard`、`readAdviserCreationSource`；类型 `AdviserCreationNoticeItemV1`、`AdviserCreationSourceDependencies` | `adviser_creation` 来源：按自动返工通知的只读投影读本条计次且累计至少两次的返工，没有 adviser 时派生决定卡；已有 adviser 时以 `source_resolved` 关闭；唯一纯投影产出卡片事实，不另写 rework 过滤或第二份卡。 |
 ## 不要做
 
 - 不要在 handler 里另写记录读取、解码、scope 检查或 pin 比较；用 `createSourceReadSupport` 和本文件夹的纯 helper。

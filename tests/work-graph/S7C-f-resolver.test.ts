@@ -8,20 +8,26 @@
  * a goal card draft, and `goals/confirm-draft` attributes that root to the new Goal afterwards.
  * Every read is the platform's real port; the goal-secretary factory gets the platform's own records port
  * (`platform.disconnect.records`, the same backend the platform reads) and its real `requestFacts`. The only
- * wrappers are the two named read faults.
+ * wrappers are the two named read faults; the failed RoleSpec read is the real store read itself failing.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createGoalSecretary } from '../../src/core/work-graph/tasks/goal-secretary.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { GoalConfirmDraftReceiptV1 } from '../../src/contracts/goal-card.js';
-import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { SessionRef, RoleConfigurationRef } from '../../src/contracts/core/identity.js';
+import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { workspaceOf } from '../../src/core/work-graph/tasks/request-service.js';
+import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { openS6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { dutyOf } from '../helpers/S7C-duty-fixture.js';
 import { createS6BLine, holdS6BRequestRound, openS6BProjectWorld } from '../helpers/S6B1-fixture.js';
 import { readQuery } from '../helpers/A2-restart-fixture.js';
+
+// The test's own in-memory backend is the A4 barrier's, so `failReads` can fail the real RoleSpec read.
+vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
+  (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
 
 const ADVISER = platformRoleProfile('adviser').template;
 const smallest = (refs: SessionRef[]): SessionRef =>
@@ -76,6 +82,45 @@ describe('F-resolver', () => {
     }
   });
 
+  it('a non-platform legacy template has no fixed duty: a real adviser wins and alone it is null; a failed duty read is unavailable', async () => {
+    const project = await openS6BProjectWorld({ backend: 'memory' });
+    try {
+      const world = project.world;
+      const ctx = world.humanContext();
+      const duty = dutyOf(world);
+      const legacy: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'f-resolver-off-platform', templateRevision: '1' };
+      await createS6BLine(project.main, { label: 'f-resolver-legacy', role: legacy });
+      const adviser = await createS6BLine(project.main, { label: 'f-resolver-legacy-adviser', role: ADVISER });
+      // The legacy Session answers `unknown`; a real adviser beside it is still the one adviser.
+      expect(await duty.resolveDutyRecipient(ctx, { workspace: workspaceOf(ctx), duty: 'adviser' }))
+        .toEqual({ status: 'ready', value: adviser.ref });
+      // Only the non-platform legacy Session in the other workspace: no fixed duty, so null (never unavailable).
+      const other = project.goalless.humanContext();
+      await createS6BLine(project.goalless, { label: 'f-resolver-legacy-only', role: legacy });
+      expect(await duty.resolveDutyRecipient(other, { workspace: workspaceOf(other), duty: 'adviser' }))
+        .toEqual({ status: 'ready', value: null });
+      // A role_spec whose duty read fails cannot be told apart from an unreadable one: still unavailable, and the
+      // skippable legacy card beside it does not swallow the failure. The real RoleSpec pin read throws.
+      const unprofiled = await world.createUnprofiledSecretary('f-resolver-role-spec');
+      if (unprofiled.role.kind !== 'role_spec') {
+        throw new Error('F-resolver: the unprofiled secretary does not carry a RoleSpec role');
+      }
+      const line = await createS6BLine(project.goalless, { label: 'f-resolver-role-spec-line', role: unprofiled.role });
+      const fault = commitBarrier.failReads(canonicalRefKey(unprofiled.role.pin.ref), 'throw-always');
+      try {
+        const failed = await duty.resolveDutyRecipient(other, { workspace: workspaceOf(other), duty: 'adviser' });
+        expect(fault.calls()).toBeGreaterThan(0);
+        expect(failed).toMatchObject({ status: 'rejected', code: 'unavailable' });
+        expect(failed.status === 'rejected' ? failed.reason : '').toContain('no fixed platform duty');
+      } finally { fault.release(); }
+      // Released: the same real read answers the RoleSpec's own duty, so the line is the workspace's secretary.
+      expect(await duty.resolveDutyRecipient(other, { workspace: workspaceOf(other), duty: 'secretary' }))
+        .toEqual({ status: 'ready', value: line.ref });
+    } finally {
+      await project.close();
+    }
+  });
+
   it('takes the newest kept root owner, else duty; a failed effective-goal or owner read is unavailable', async () => {
     const host = await openS6AHostWorld({ backend: 'memory' });
     try {
@@ -104,7 +149,9 @@ describe('F-resolver', () => {
       // No kept root at all: the workspace's secretary duty. The host seed has no Session, so the first
       // publicly created secretary is the duty answer (the directory's aggregate ref).
       expect(await goalSecretary.resolveGoalSecretary(ctx, { goalRef: host.goals.second }))
-        .toEqual({ status: 'ready', value: first.value.secretary.aggregateRef });
+        .toEqual({ status: 'ready', value: {
+          projectId: first.value.secretary.ref.projectId, sessionId: first.value.secretary.ref.sessionId,
+        } });
       await runRound('f-resolver-goal-b', goal.goalId);
       expect(await goalSecretary.resolveGoalSecretary(ctx, { goalRef: goal }))
         .toEqual({ status: 'ready', value: owners[1] });

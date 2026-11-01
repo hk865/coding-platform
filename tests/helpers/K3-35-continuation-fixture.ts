@@ -148,6 +148,8 @@ function emptyMailbox(): SessionMessageCommandPort {
   };
   return {
     readInbox: page, readOutbox: page, readRoutedReplies: page,
+    async readHostSystemOutbox() { return { status: 'ready' as const, value: { items: [], next: null } }; },
+    appendHostSystemOutbox: notUsed('appends to the Host system outbox'),
     async readMessage() { return { status: 'rejected', code: 'not_found', reason: 'the K3-35 record Run reads no message' }; },
     async readMessageBody() { return { status: 'rejected', code: 'not_found', reason: 'the K3-35 record Run reads no body' }; },
     async sendMessage() { throw new Error('the §5.1 mailbox seam never sends'); },

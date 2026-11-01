@@ -101,14 +101,14 @@
 | `parseMainReadInput` | `src/core/work-graph/views/main-surface-read-model.ts:215` | `main/read` 的输入：`goalId` 为 Goal id 或 null，`cursor` 为 null 或一页返回的游标形状 | 校验主对话读的输入时 |
 | `mainReadPhases`、`mainReadStart`、`mainPageStep` | `src/core/work-graph/views/main-surface-read-model.ts:103`、`src/core/work-graph/views/main-surface-read-model.ts:116`、`src/core/work-graph/views/main-surface-read-model.ts:123` | 主对话页的段（本 Goal 段，第一个 Goal 再接它之前的无 Goal 段）、游标从哪段续读、一页截到多少和下一页游标 | 改主对话分页时；不要另算段或游标 |
 | `requestCards`、`pageCards` | `src/core/work-graph/views/main-surface-read-model.ts:156`、`src/core/work-graph/views/main-surface-read-model.ts:174` | 一个请求的卡片（点名它的轮的卡，加它所在 Goal 自己的卡，即不点名任何请求的卡；同 Goal 别的请求的候选不算）；一页先列页面自己的卡（项目的和所选 Goal 的，保持决定队列顺序），再列各请求的，各列一次，请求按 key 引用 | 主对话页和 `requests/read` 挑卡时 |
-| `createAutomaticReworkNoticeSource` | `src/core/work-graph/views/automatic-rework-notices.ts:70` | `automatic_rework` 请知悉来源：返工与复核轮只留系统/Agent 返工 | 装配请知悉来源时 |
+| `createAutomaticReworkNoticeSource` | `src/core/work-graph/views/automatic-rework-notices.ts:73` | `automatic_rework` 请知悉来源：返工与复核轮只留系统/Agent 返工 | 装配请知悉来源时 |
 | `createNoteReviewNoticeSource` | `src/core/work-graph/views/note-review-notices.ts:51` | `note_review` 请知悉来源：三类版本流，按已看位置增量读；`goalId: null` 的版本是项目 subject 的行，Goal 过滤页不收 | 装配请知悉来源时 |
 | `createUndeliveredReplyNoticeSource` | `src/core/work-graph/views/undelivered-reply-notices.ts:62` | `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复 | 装配请知悉来源时 |
 | `createDisconnectNoticeSource` | `src/core/work-graph/views/disconnect-notices.ts:172` | `disconnect` 请知悉来源：等待两侧或发往已归档/停用线的消息，按已看位置增量读；Goal 过滤页只收该 Goal 的行 | 装配请知悉来源时 |
 | `createContinuationNoticeSource` | `src/core/work-graph/views/continuation-notices.ts:57` | `continuation` 请知悉来源：已入场、带接续说明且 `mode` 为 `resume_after_interruption` 的新 Run，一条；前一 Run 的 `takeover_unresolved`（RUN-25）不重复 | 装配请知悉来源时 |
 | `readDisconnectFacts` | `src/core/work-graph/views/disconnect-notices.ts:77` | 唯一的断开事实读：一次消息窗口、一次后继读，返回两侧与停用时间；不写、不取时钟 | 请知悉来源与 Host 的断开通知构建器共用，不要另扫 wait |
-| `readOrderedToEnd` | `src/core/work-graph/views/automatic-rework-notices.ts:93` | 从保存的提交位置把有序索引读到尾（可选下界，分页） | 请知悉来源要按提交位置做增量读时 |
-| `paginateAssembled` | `src/core/work-graph/views/automatic-rework-notices.ts:297` | 把已组装的一页按页宽和游标切片，三个请知悉来源共用的分页正本 | 请知悉来源分页时；不要另写副本 |
+| `readOrderedToEnd` | `src/core/work-graph/views/automatic-rework-notices.ts:96` | 从保存的提交位置把有序索引读到尾（可选下界，分页） | 请知悉来源要按提交位置做增量读时 |
+| `paginateAssembled` | `src/core/work-graph/views/automatic-rework-notices.ts:311` | 把已组装的一页按页宽和游标切片，三个请知悉来源共用的分页正本 | 请知悉来源分页时；不要另写副本 |
 | `createNoticePositionComparator` | `src/core/work-graph/views/notice-position.ts:37` | 把唯一顺序注入决定读模型 | 组装决定读模型时 |
 | `compareNoticePositions` | `src/core/work-graph/views/notice-position.ts:42` | 按 ledger 游标再按 `itemKey` 比较两个位置 | 任何需要通知顺序时；唯一允许解析 ledger 游标的位置 |
 | `mergeNoticePages` | `src/core/work-graph/views/notice-position.ts:56` | 把各来源已过滤的页稳定合并，截到 limit，返回每类已显示位置 | 决定队列合并请知悉来源时 |

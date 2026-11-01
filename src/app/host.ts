@@ -44,7 +44,10 @@ import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
-import type { SessionMailboxPort, SessionMessageSendInputV1 } from '../core/work-graph/model/communication-contracts.js';
+import type {
+  HostOutboxItemV1, HostOutboxKeysetV1, HostOutboxSourceV1, HostOutboxStoredItemV1,
+  SessionMailboxPort, SessionMessageSendInputV1,
+} from '../core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
@@ -52,7 +55,11 @@ import { acquireHostInstanceLease } from './host-instance-lease.js';
 import { announceDisconnect, announceInterruption, interventionClosingNoticeRequest, systemNotifyRequest } from './host-notices.js';
 import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
-import { DEFAULT_TASK_AUTOMATION_POLICY } from '../contracts/task-requeue.js';
+import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../contracts/task-requeue.js';
+import type { VerificationRoundRef } from '../contracts/verification.js';
+import { decisionSourceKey, type DecisionSourceV1, type NoticePositionV1 } from '../contracts/goal-decisions.js';
+import type { NoticeItemV1 } from '../core/work-graph/model/decision-contracts.js';
+import { compareNoticePositions } from '../core/work-graph/views/notice-position.js';
 import { createChangeFeed } from './change-feed.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
@@ -348,9 +355,12 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
  * graph tools. The local secretary gets these only. */
 const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES];
 
-/** The local secretary's tools: the read tools plus the note writer. `record_note` writes WorkGraph notes only, so it
- * needs no file write scope; the grant below keeps that scope empty. */
-const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES];
+/** The local secretary's tools: the read tools plus the note writer and the six coordination names (the mailbox
+ *  sender/ack/respond/withdraw, member creation and the request read). `record_note` writes WorkGraph notes only, so
+ *  the grant below keeps the file write scope empty. */
+const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
+  'send_session_message', 'ack_session_message', 'respond_session_message', 'withdraw_session_message',
+  'create_member', 'read_requests'];
 
 /** The local workbench secretary's binding identity. Its Role is the exact
  * platform secretary legacy template, which the Session duty resolver reads as
@@ -424,10 +434,13 @@ export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: 
     // RW-1 (4C): `record_note` is a coordination tool that writes WorkGraph
     // records, so it follows the same `writeAllowed` condition as the mailbox
     // tools; a read-only or Query ceiling still strips it.
+    // The executor also requests rework/recheck but never acks, responds or withdraws: those stay on the
+    // secretary grant below.
     tools: [...LOCAL_READ_TOOL_NAMES,
       ...(readonlyCommandsAllowed ? [READONLY_COMMAND_TOOL_NAME] : []),
       ...(writeAllowed ? ['write', 'record_note', 'send_session_message',
-        'read_session_inbox', 'read_session_message', 'read_session_message_body'] : []),
+        'read_session_inbox', 'read_session_message', 'read_session_message_body',
+        'request_rework', 'request_recheck'] : []),
       ...(commandsAllowed ? ['shell'] : [])],
     writeScope: writeAllowed ? ['.'] : [],
     skills: { resourceRoot: PLATFORM_SKILL_RESOURCE_ROOT, enabledIds: ['platform-work'] },
@@ -2009,20 +2022,186 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return 'clear';
   }
 
-  /** §11.5 step 5: send the pending request; on `committed` record it so the
-   * next period does not send it again. A thrown/failed send keeps `pendingSend`,
-   * so the next period retries the SAME requestId. */
+  /** One send of a pending notice through the caller's EXISTING sender (C19); the optional callback runs only on
+   *  `committed`, with the saved message ref. A thrown or non-committed send is `failed` and the caller keeps its
+   *  pending record for the next period. */
+  async function sendPendingNotice(
+    ctx: CoreCallContext,
+    send: SessionMailboxPort['sendMessage'],
+    input: SessionMessageSendInputV1,
+    onCommitted?: (ref: SessionMessageRef) => void,
+  ): Promise<'sent' | 'failed'> {
+    try {
+      const sent = await send(ctx, input);
+      if (sent.status !== 'committed') return 'failed';
+      onCommitted?.(sent.value.ref);
+      return 'sent';
+    } catch { return 'failed'; }
+  }
+
+  /** §11.5 step 5: send the pending request through the shared helper; on
+   * `committed` record it so the next period does not send it again. A
+   * thrown/failed send keeps `pendingSend`, so the next period retries the SAME
+   * requestId. */
   async function sendPendingScribeReminder(ctx: CoreCallContext, state: ScribeReminderState): Promise<void> {
     const pending = state.pendingSend;
     if (pending === null) return;
-    try {
-      const sent = await sendScribeReminder(ctx, pending);
-      if (sent.status === 'committed') {
-        state.pendingSend = null;
-        state.sentRequestId = pending.meta.requestId;
-        recipientMemory(state, pending.input.recipient).ref = sent.value.ref;
+    await sendPendingNotice(ctx, sendScribeReminder, pending, (ref) => {
+      state.pendingSend = null;
+      state.sentRequestId = pending.meta.requestId;
+      recipientMemory(state, pending.input.recipient).ref = ref;
+    });
+  }
+
+  /**
+   * The rework notifier's memory. One cursor per workspace holds the last confirmed SOURCE position; the person's
+   * watermark is never read. One saved-delivery map per workspace holds every outbox record keyed by source key +
+   * branch: the first notifier pass pages the Host system outbox to its end, and the lease-holding Host (the outbox's
+   * only writer) records each later commit into the same map. A start and a retry therefore replay the SAVED input,
+   * never a recipient or text recomputed from the current facts.
+   */
+  type SavedReworkDelivery = SessionMessageSendInputV1 | DecisionSourceV1;
+  type SavedReworkDeliveries = Map<string, SavedReworkDelivery>;
+  const reworkCursors = new Map<string, NoticePositionV1 | null>();
+  const savedReworkByScope = new Map<string, SavedReworkDeliveries>();
+  /** The projection's own canonical key of the trigger ref (the same key it uses for its item keys). */
+  const reworkSourceKeyOf = (source: HostOutboxSourceV1): string => canonicalJson(source.ref as unknown as JsonValue);
+  const savedDeliveryKeyOf = (source: HostOutboxSourceV1, branch: HostOutboxItemV1['branch']): string =>
+    `${reworkSourceKeyOf(source)}\u0000${branch}`;
+
+  /** The workspace's saved deliveries. A failed page returns `null` and is never cached, so the caller returns and
+   *  the next heartbeat reads the whole outbox again. */
+  async function savedReworkDeliveries(ctx: CoreCallContext, scope: CoreScope): Promise<SavedReworkDeliveries | null> {
+    const key = scopeKey(scope);
+    const existing = savedReworkByScope.get(key);
+    if (existing !== undefined) return existing;
+    const built: SavedReworkDeliveries = new Map();
+    let after: HostOutboxKeysetV1 | null = null;
+    for (;;) {
+      const page = await platform.messages.readHostSystemOutbox(ctx,
+        { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId }, after, limit: 100 });
+      if (page.status !== 'ready') return null;
+      for (const item of page.value.items) {
+        built.set(savedDeliveryKeyOf(item.source, item.branch),
+          item.branch === 'no_adviser_card' ? item.cardSource : item.request);
       }
-    } catch { /* a failed send stays pending for the next period */ }
+      if (page.value.next === null) break;
+      after = page.value.next;
+    }
+    savedReworkByScope.set(key, built);
+    return built;
+  }
+
+  /** One delivery = one outbox record, written ONCE, BEFORE the send on a message branch and BEFORE the card read on
+   *  the card branch, with the saved input. The Store's real result decides: a not-committed write sends nothing and
+   *  advances nothing. On commit the map the current pass reads learns the item, so a retry reuses the saved input and
+   *  there is no post-send write and no `delivered` flag. */
+  async function appendReworkDelivery(ctx: CoreCallContext, scope: CoreScope, item: NoticeItemV1,
+    source: HostOutboxSourceV1, branch: HostOutboxItemV1['branch'],
+    input: SessionMessageSendInputV1 | DecisionSourceV1, saved: SavedReworkDeliveries): Promise<boolean> {
+    const stored: HostOutboxStoredItemV1 = branch === 'no_adviser_card'
+      ? { source, branch, cardSource: input as DecisionSourceV1 }
+      : { source, branch, request: input as SessionMessageSendInputV1 };
+    const written = await platform.messages.appendHostSystemOutbox(ctx, {
+      input: { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId }, item: stored },
+      meta: { requestId: `rework-outbox:${item.itemKey}:${branch}`, expected: [] },
+    });
+    if (written.status !== 'committed') return false;
+    saved.set(savedDeliveryKeyOf(source, branch), input);
+    return true;
+  }
+
+  /**
+   * One counted automatic rework: a passive notify to the Goal's secretary always, and on the second (and each later)
+   * counted rework ALSO a notify to the Goal's adviser, or, when no adviser exists, the derived 要决定 card. Both
+   * extra arms are mutually exclusive. Every branch reads the saved input first; only a branch with no saved record
+   * resolves a recipient and builds its input, and the record is committed before the send/card read. Returns whether
+   * every branch of THIS source is confirmed; a failed/absent delivery or read leaves it for the next pass.
+   */
+  async function deliverReworkNotice(ctx: CoreCallContext, scope: CoreScope, item: NoticeItemV1,
+    saved: SavedReworkDeliveries): Promise<boolean> {
+    const rework = item.rework!;
+    const source: HostOutboxSourceV1 = rework.operation === 'requeue'
+      ? { kind: 'requeue', ref: rework.sourceRef as TaskRequeueRef, position: item.position }
+      : { kind: 'round', ref: rework.sourceRef as VerificationRoundRef, position: item.position };
+    // One counting chain across both arms: this item's OWN counted arm plus the Task's counted total. A recovery
+    // keeps the previous total, so the plain count can neither send the adviser arm nor derive another card.
+    const second = rework.counted && rework.taskCount >= 2;
+    // The automatic_rework projection always builds `subject.kind: 'goal'`; no project arm exists.
+    const goalRef = (item.subject as { kind: 'goal'; goalRef: GoalRef }).goalRef;
+    const sourceKey = reworkSourceKeyOf(source);
+
+    const notifyOnly = saved.get(savedDeliveryKeyOf(source, 'notify_only')) as SessionMessageSendInputV1 | undefined;
+    let request = notifyOnly;
+    if (request === undefined) {
+      const secretary = await platform.recipients.resolveGoalSecretary(ctx, { goalRef });
+      if (secretary.status !== 'ready') return false;                 // a failed read: retry next heartbeat
+      if (secretary.value === null) return false;                      // absent delivery: no advance
+      request = systemNotifyRequest({ recipient: secretary.value, text: item.summary,
+        requestId: `rework-notice:${sourceKey}` });
+      if (!(await appendReworkDelivery(ctx, scope, item, source, 'notify_only', request, saved))) return false;
+    }
+    if (await sendPendingNotice(ctx, platform.messages.sendMessage.bind(platform.messages), request) !== 'sent') {
+      return false;                                                    // the saved item stays; the next pass re-sends it
+    }
+    if (!second) return true;
+
+    const savedAdviser = saved.get(savedDeliveryKeyOf(source, 'adviser_delivery')) as
+      SessionMessageSendInputV1 | undefined;
+    const savedCard = saved.get(savedDeliveryKeyOf(source, 'no_adviser_card')) as DecisionSourceV1 | undefined;
+    if (savedAdviser !== undefined) {
+      return await sendPendingNotice(ctx, platform.messages.sendMessage.bind(platform.messages), savedAdviser) === 'sent';
+    }
+    if (savedCard !== undefined) {
+      const card = await platform.decisions.readDecisionCard(ctx, { source: savedCard });
+      return card.status === 'ready';                                  // readable is the card branch's confirmation
+    }
+    const adviser = await platform.recipients.resolveDutyRecipient(ctx,
+      { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId }, duty: 'adviser' });
+    if (adviser.status !== 'ready') return false;
+    if (adviser.value !== null) {
+      const adviserRequest = systemNotifyRequest({ recipient: adviser.value, text: item.summary,
+        requestId: `rework-notice-adviser:${sourceKey}` });
+      if (!(await appendReworkDelivery(ctx, scope, item, source, 'adviser_delivery', adviserRequest, saved))) return false;
+      return await sendPendingNotice(ctx, platform.messages.sendMessage.bind(platform.messages), adviserRequest) === 'sent';
+    }
+    // No adviser: the outbox carries the derived card's source only; the card itself is derived by the C3 facts
+    // handler. The key is `decisionSourceKey` of the identity arm, never a hand-built string.
+    const cardSource: DecisionSourceV1 = {
+      kind: 'adviser_creation',
+      key: decisionSourceKey({ kind: 'adviser_creation',
+        trigger: source.kind === 'requeue'
+          ? { kind: 'requeue', ref: source.ref }
+          : { kind: 'round', ref: source.ref } }),
+      subject: item.subject, pins: [],
+    };
+    if (!(await appendReworkDelivery(ctx, scope, item, source, 'no_adviser_card', cardSource, saved))) return false;
+    const card = await platform.decisions.readDecisionCard(ctx, { source: cardSource });
+    return card.status === 'ready';
+  }
+
+  /** One passive notify pass per workspace, over the tracked projection read (no `after`: the person's seen position
+   *  is never the notifier's cursor). The cursor advances only after every branch of the source is confirmed, and it
+   *  stores the SOURCE position. A failed outbox read or projection page returns and is retried next heartbeat. */
+  async function runReworkNoticeCheck(scope: CoreScope): Promise<void> {
+    const ctx: CoreCallContext = { ...reconcileContext(scope), signal: attentionAbort.signal };
+    const workspace = { projectId: scope.projectId, workspaceId: scope.workspaceId };
+    const saved = await savedReworkDeliveries(ctx, scope);
+    if (saved === null) return;
+    let cursor: string | undefined;
+    do {
+      const page = await platform.reworkNotices.readPage(ctx, { workspace,
+        page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
+      if (page.status !== 'ready') return;                             // failed page: retry next heartbeat
+      for (const item of page.value.items) {
+        if (item.rework === null) continue;
+        const confirmed = reworkCursors.get(scopeKey(scope)) ?? null;
+        if (confirmed !== null && compareNoticePositions(item.position, confirmed) <= 0) continue;
+        if (!(await deliverReworkNotice(ctx, scope, item, saved))) return;   // no advance on a failed/absent delivery
+        reworkCursors.set(scopeKey(scope), item.position);             // only after the whole source is confirmed
+      }
+      cursor = page.value.nextCursor ?? undefined;
+    } while (cursor !== undefined && !attentionAbort.signal.aborted);
   }
 
   async function runScribeReminderCheck(scope: CoreScope): Promise<void> {
@@ -2181,7 +2360,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (attentionAbort.signal.aborted) break;
         if (entry.observer.processed === null) entry.observer.prime(snapshot);
         const delivery = entry.observer.observe(snapshot, clockMs());
-        if (delivery === null || entry.scope.targetSession === null) continue;
+        // The Goal's adviser receives attention first; with no adviser the configured target keeps today's value. A
+        // failed adviser read leaves the input unprocessed and is retried next heartbeat.
+        let recipient: SessionRef | null = entry.scope.targetSession;
+        if (delivery !== null) {
+          const adviser = await platform.recipients.resolveDutyRecipient(hostCtx,
+            { workspace: scope, duty: 'adviser' });
+          if (adviser.status !== 'ready') continue;
+          if (adviser.value !== null) recipient = adviser.value;
+        }
+        if (delivery === null || recipient === null) continue;
         // Slice 3 C8 (§4.5): the notification text carries only the CHANGES of
         // this delivery, never the full snapshot or every file. The same
         // snapshot therefore renders the same text and the same requestId.
@@ -2203,19 +2391,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           feedbackIds: [...(feedbackSignal?.items ?? [])],
         });
         const requestId = 'attention:' + scope.workspaceId + ':' + sha256Hex(canonicalJson({
-          targetSession: entry.scope.targetSession, paths: entry.scope.paths,
+          targetSession: recipient, paths: entry.scope.paths,
           files: snapshot.files.map(file => ({ path: file.path, version: file.version })),
           graph: snapshot.graph,
           signals: delivery.signals.map(attentionSignalToJson),
         } as never));
-        try {
-          const sent = await platform.messages.sendMessage(hostCtx,
-            systemNotifyRequest({ recipient: entry.scope.targetSession, text, requestId }));
-          if (sent.status === 'committed') {
+        // C20: the send runs as the Host reconcile actor; the reads above keep the configured Host context. A
+        // rejected or thrown send is `failed`, so the input stays unprocessed and is retried next heartbeat.
+        const noticeCtx: CoreCallContext = { ...reconcileContext(scope), signal: attentionAbort.signal };
+        await sendPendingNotice(noticeCtx, platform.messages.sendMessage.bind(platform.messages),
+          systemNotifyRequest({ recipient, text, requestId }), (messageRef) => {
             entry.observer.markDelivered(snapshot, delivery.signals);
-            entry.pending.push({ signals: delivery.signals, sequence: ++entry.nextSequence, messageRef: sent.value.ref, snapshot });
-          }
-        } catch { /* a failed delivery leaves the input unprocessed and is retried */ }
+            entry.pending.push({ signals: delivery.signals, sequence: ++entry.nextSequence, messageRef, snapshot });
+          });
       }
       // Slice 4C-2 §11.5: every configured workspace, whether or not attention
       // or input consumers are configured. A failed check records nothing and
@@ -2223,6 +2411,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       for (const workspace of workspaces) {
         if (attentionAbort.signal.aborted) break;
         try { await runScribeReminderCheck(workspace.scope); } catch { /* retried next heartbeat */ }
+        try { await runReworkNoticeCheck(workspace.scope); } catch { /* retried next heartbeat */ }
       }
       await sleepUntilAbort(period, attentionAbort.signal);
     }

@@ -147,13 +147,6 @@ export const WORK_HANDOFF_BRIEF_CONSUMED_FORMAT = defineEvent({
   rules: [recordedBriefProblem],
 });
 
-export type HandoffBriefRecordedEvent = InferEvent<
-  typeof WORK_HANDOFF_BRIEF_RECORDED_EVENT_TYPE, typeof HANDOFF_BRIEF_EVENT_FIELDS
->;
-export type HandoffBriefConsumedEvent = InferEvent<
-  typeof WORK_HANDOFF_BRIEF_CONSUMED_EVENT_TYPE, typeof HANDOFF_BRIEF_EVENT_FIELDS
->;
-
 /**
  * The stored handoff operation facts readiness reads. Structurally typed so this
  * pure module does not import the operation model (the model imports state).

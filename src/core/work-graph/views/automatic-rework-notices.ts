@@ -24,7 +24,7 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
-import type { TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import type { OrderedLookupValue, RecordOrderedLookupPage, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
@@ -43,10 +43,13 @@ import {
   VERIFICATION_ROUND_ORIGINAL_LOOKUP,
 } from '../persistence/evidence-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { decodeRun } from '../persistence/run-record-codecs.js';
 import {
   decodeTaskRequeueSnapshot,
   S2A_REQUEUE_BY_PROJECT_LOOKUP,
+  taskRequeueRefKey,
 } from '../tasks/claim-record-codecs.js';
+import { priorRequeueAutoCount } from '../state/task-failure.js';
 import { roundChainHead } from '../state/verification-machine.js';
 import { compareNoticePositions } from './notice-position.js';
 import type { DecisionReadRecordsPort } from './goal-conflicts.js';
@@ -191,11 +194,12 @@ async function readAutomaticReworkPage(
       // RECOVERY, summarized with the saved exemption fact, never as a counted
       // "第 0 次" rework.
       const exempt = requeue.automation.automatic && !requeue.automation.counted;
+      const counted = requeue.automation.counted;
       // L16（决定 55）：触发这次返工的那一轮 = 这条重新入队覆盖的轮次（没有就不加这一句）。
-      const triggerCap = requeue.afterRoundRef === null
-        ? { ok: true as const, hit: null }
-        : await triggerRoundCapHit(records, requeue.afterRoundRef);
-      if (!triggerCap.ok) return triggerCap.rejection;
+      const trigger = requeue.afterRoundRef === null
+        ? { ok: true as const, hit: null, autoCount: 0 }
+        : await triggerRoundFacts(records, requeue.afterRoundRef);
+      if (!trigger.ok) return trigger.rejection;
       const cap = requeue.automation.cap;
       let summary: string;
       if (exempt) summary = recoverySummary(requeue.task);
@@ -211,8 +215,12 @@ async function readAutomaticReworkPage(
         objects: [],
         rework: { operation: 'requeue', actorClass, taskRef: requeue.task,
           count: requeue.automation.autoCount, cap: requeue.automation.cap, reason: requeue.reason,
-          sourceRef: requeue.ref },
-      }, triggerCap.hit));
+          sourceRef: requeue.ref, requestedAt: requeue.requestedAt,
+          // One counting chain across both arms: the requeue arm's own saved count plus the reverify count the failed
+          // round already carried. A recovery keeps its previous count, so it neither clears the arm nor adds one.
+          taskCount: requeue.automation.autoCount + trigger.autoCount,
+          counted },
+      }, trigger.hit));
     }
 
     // ---- reverify: the ordered index names the subject, the chain verifies -
@@ -253,6 +261,7 @@ async function readAutomaticReworkPage(
         const itemKey = `automatic_rework:${String(ordinal).padStart(4, '0')}:${refKey}`;
         const cap = candidate.cap;
         const count = round.chain?.autoCount ?? 0;
+        const counted = reverify.exemption === 'none';
         const summary = reverify.exemption !== 'none'
           ? `自动恢复 · ${round.subject.taskId}（不计次）`
           : reworkSummary(round.subject, count, cap);
@@ -262,7 +271,12 @@ async function readAutomaticReworkPage(
           position: noticePositionOf(candidate.since, itemKey),
           summary, objects: [],
           rework: { operation: 'reverify', actorClass: reverify.actorClass, taskRef: round.subject,
-            count, cap, reason: reverify.reason ?? '', sourceRef: round.ref },
+            count, cap, reason: reverify.reason ?? '', sourceRef: round.ref,
+            requestedAt: reverify.requestedAt,
+            // One counting chain across both arms: the round's own saved count plus the requeue count its subject Run
+            // names. A recovery keeps the previous count on its own arm.
+            taskCount: count + await savedRequeueAutoCount(records, round.subjectRunRef),
+            counted },
         }, firstResourceCapHitOf(predecessor)));
       }
     }
@@ -454,11 +468,12 @@ function firstResourceCapHitOf(round: RoundSnapshot): { memory: 'cap_hit'; memor
 /**
  * L16：重新入队那条按 `TaskRequeue.afterRoundRef` 按键读一次轮次。读失败、记录缺失和
  * 解码失败都按请知悉现有的读失败处理（`unavailable`），不当成“没有”。
+ * The round's own `chain.autoCount` is the reverify arm's count at the failure; the requeue's `taskCount` adds it.
  */
-async function triggerRoundCapHit(
+async function triggerRoundFacts(
   records: DecisionReadRecordsPort,
   ref: VerificationRoundRef,
-): Promise<{ ok: true; hit: { memory: 'cap_hit'; memoryCapMiB: number } | null }
+): Promise<{ ok: true; hit: { memory: 'cap_hit'; memoryCapMiB: number } | null; autoCount: number }
   | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } }> {
   const key = canonicalJson(ref as unknown as JsonValue);
   const read = await records.readMany([key]);
@@ -471,7 +486,52 @@ async function triggerRoundCapHit(
   if (decoded.status !== 'decoded') {
     return { ok: false, rejection: rejected('unavailable', `automatic rework trigger round: ${decoded.reason}`) };
   }
-  return { ok: true, hit: firstResourceCapHitOf(decoded.value) };
+  return { ok: true, hit: firstResourceCapHitOf(decoded.value), autoCount: decoded.value.chain.autoCount };
+}
+
+/**
+ * The other arm's already-saved count for a reverify: the Run the round ran on names a `TaskRequeue`, or the first
+ * `previousRun` ancestor that does (a continuation keeps the chain), and that snapshot's `automation.autoCount` is the
+ * requeue arm's total (a recovery keeps the previous value, never clears it). No `requeueRef` on the whole chain is a
+ * Run not started from a requeue, so that arm is 0; a missing or damaged record is a read failure.
+ */
+async function savedRequeueAutoCount(
+  records: DecisionReadRecordsPort,
+  subjectRunRef: RunRef,
+): Promise<number> {
+  const runs: RunSnapshot[] = [];
+  let currentRef: RunRef | null = subjectRunRef;
+  let requeue: TaskRequeueSnapshotV1 | undefined;
+  while (currentRef !== null && requeue === undefined) {
+    const runKey = canonicalJson(currentRef as unknown as JsonValue);
+    const runRead = await records.readMany([runKey]);
+    if (runRead.status !== 'ready') throw runRead;
+    const runRecord = runRead.value.records.find((record) => record.refKey === runKey);
+    if (runRecord === undefined) {
+      throw { code: 'unavailable', reason: `automatic rework subject Run ${runKey} is missing` };
+    }
+    const run = decodeRun(runRecord);
+    if (!run.ok) throw { code: 'unavailable', reason: `automatic rework subject Run: ${run.reason}` };
+    runs.push(run.value);
+    const requeueRef = run.value.requeueRef;
+    if (requeueRef === undefined) {
+      currentRef = run.value.previousRun;
+      continue;
+    }
+    const requeueKey = taskRequeueRefKey(requeueRef);
+    const requeueRead = await records.readMany([requeueKey]);
+    if (requeueRead.status !== 'ready') throw requeueRead;
+    const requeueRecord = requeueRead.value.records.find((record) => record.refKey === requeueKey);
+    if (requeueRecord === undefined) {
+      throw { code: 'unavailable', reason: `automatic rework requeue ${requeueKey} is missing` };
+    }
+    const decoded = decodeTaskRequeueSnapshot(requeueRecord);
+    if (decoded.status !== 'decoded') {
+      throw { code: 'unavailable', reason: `automatic rework requeue: ${decoded.reason}` };
+    }
+    requeue = decoded.value;
+  }
+  return priorRequeueAutoCount(runs[0]!, runs, requeue === undefined ? [] : [requeue]);
 }
 
 /** L16：有命中就在今天那一句后加“检查超出内存上限（当时上限 N MiB）”，并加操作。 */

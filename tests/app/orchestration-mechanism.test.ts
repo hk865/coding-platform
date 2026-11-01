@@ -161,6 +161,8 @@ function mailboxToolHarness(): {
     readMessage: notUsed('reads a message'),
     readMessageBody: notUsed('reads a body'),
     readInbox: notUsed('reads an inbox'),
+    async readHostSystemOutbox() { return { status: 'ready', value: { items: [], next: null } }; },
+    appendHostSystemOutbox: notUsed('appends to the Host system outbox'),
     ackMessage: notUsed('acks'),
     respondMessage: notUsed('responds'),
     withdrawMessage: notUsed('withdraws'),
@@ -355,7 +357,9 @@ it('delivers a real Host attention change into the original idle Session once', 
   try {
     host = await f.startAG2bHost(publicDir);
     await f.seedAG2bWorkGraph(host, undefined, { lineTaskIds: [] });
-    const member = await f.createAG2bSession(host, 'attention-recipient');
+    // The attention recipient must carry a readable fixed duty so the adviser-first resolution answers `ready null`;
+    // the AG2b work role is the world's Work binding role, so this row still means "no adviser, configured target wins".
+    const member = await f.createAG2bSession(host, 'attention-recipient', f.AG2B_WORK_ROLE);
     const { root, database } = host;
     await host.host.close();
     host = await f.startAG2bHost(publicDir, { root, database,

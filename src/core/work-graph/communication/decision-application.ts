@@ -37,7 +37,7 @@ import { decodePlanRevisionAcceptedEvent, decodePlanProposalRecordedEvent } from
 import { taskClaimedEventFromEvent, taskRequeuedEventFromEvent } from '../tasks/claim-record-codecs.js';
 import { unknownCallReviewChangedEventFromEvent } from '../tasks/unknown-call-review-codecs.js';
 import { commandRerunRequestChangedEventFromEvent } from '../tasks/command-rerun-request-codecs.js';
-import { decodeMemberCreatedEventFromEvent } from '../sessions/session-record-codecs.js';
+import { decodeMemberCreatedEventFromEvent, sessionHandoffRecordedCodec } from '../sessions/session-record-codecs.js';
 import {
   verificationRoundEventFromEvent, VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
   type VerificationRoundEvent,
@@ -127,6 +127,19 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof ?? null };
   },
   SessionMessageReleaseDecided: decodeMessageReleaseProofEvent,
+  // The handoff approval's decided event carries the host actor and the formal proof; accept/advance never do.
+  SessionHandoffRecorded: (event) => {
+    const decoded = sessionHandoffRecordedCodec.decode(event);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithCurrent('unavailable', `the SessionHandoffRecorded event is damaged: ${decoded.reason}`);
+    }
+    if (decoded.value.actor === undefined) {
+      return rejectedWithCurrent('unavailable', 'the SessionHandoffRecorded event carries no deciding actor');
+    }
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt,
+      proof: decoded.value.proof === undefined ? null
+        : decoded.value.proof as unknown as DecisionChangeProofV1 };
+  },
   // member_created -> the new Session aggregate; the party is the Run that initiated the request (absent for a
   // secretary Query run or a Host pick). The post-effect version is read from THIS commit, never from the event.
   MemberCreated: (event, commit) => {

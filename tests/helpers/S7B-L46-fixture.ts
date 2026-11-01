@@ -5,6 +5,7 @@
  */
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import { revisionAssignments } from '../../src/contracts/plan.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
@@ -22,38 +23,66 @@ import { checkConfiguration, committed, ready, sessionOf } from './S7A-fixture.j
 
 const TASKS = { A: 's7b3-a', B: 's7b3-b', C: 's7b3-c', D: 's7b3-d' } as const;
 
+/** The FT-1 adoption reuses the caller's own Task ids for A and B; the relation is the fixture's A/C/D one. */
+export type L46TaskIds = Partial<Record<keyof typeof TASKS, string>>;
+
 /** A/B/C/D, C's `gate-result` edge on A, D's advisory `expected_dependency`; the legacy revision adds D's input. */
-function l46Draft(input: { goalId: string; planId: string; planRevision: number; legacy?: ArtifactRef }): PlanRevisionDraft {
-  const work = [TASKS.A, TASKS.B, TASKS.D];
+function l46Draft(input: { goalId: string; planId: string; planRevision: number; legacy?: ArtifactRef;
+  ids?: L46TaskIds; current?: PlanRevisionSnapshot | null }): PlanRevisionDraft {
+  const ids = { ...TASKS, ...input.ids };
+  const work = [ids.A, ids.B, ids.D];
+  // A Goal that already has a Plan keeps every earlier Task and obligation in the revision; W1 never physically
+  // removes a Task, and a source obligation must keep its active carriers.
+  const here = new Set<string>([...work, ids.C]);
+  const carried = (input.current?.tasks ?? []).filter(task => !here.has(task.taskId));
+  const carriedIds = new Set(carried.map(task => task.taskId));
+  const carriedObligations = (input.current?.obligations ?? []).filter(obligation => obligation.obligationId !== 's7b3-obligation');
+  const currentTask = (taskId: string) => (input.current?.tasks ?? []).find(task => task.taskId === taskId);
+  const currentAssignment = (taskId: string) =>
+    revisionAssignments(input.current ?? {}).find(entry => entry.taskId === taskId);
   return {
     schemaVersion: 2, planId: input.planId, planRevision: input.planRevision, goalId: input.goalId, stages: [],
     tasks: [
-      ...work.map(taskId => ({ taskId, title: `S7B3 ${taskId} work`, requirementLevel: 'required' as const,
-        taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const,
-        scope: { kind: 'goal' as const }, executionIntent: 'request_execution' as const })),
-      { taskId: TASKS.C, title: 'S7B3 C gate', requirementLevel: 'required', taskKind: 'gate',
+      ...work.map(taskId => currentTask(taskId) === undefined
+        ? { taskId, title: `S7B3 ${taskId} work`, requirementLevel: 'required' as const,
+          taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const,
+          scope: { kind: 'goal' as const }, executionIntent: 'request_execution' as const }
+        : structuredClone(currentTask(taskId)!)),
+      { taskId: ids.C, title: 'S7B3 C gate', requirementLevel: 'required', taskKind: 'gate',
         disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
+      ...carried.map(task => structuredClone(task)),
     ],
-    assignments: work.map(taskId => ({ taskId, role: S6A_WORK_ROLE.templateId, instruction: `S7B3 ${taskId}` })),
-    obligations: [{ obligationId: 's7b3-obligation', title: 'S7B3 L46 work', requirementLevel: 'required',
-      taskIds: [...work, TASKS.C], verificationRequirements: [{ requirementId: 's7b3-static',
-        requirementLevel: 'required', kind: 'static', description: 'S7B3 static check' }] }],
+    assignments: [
+      ...work.map(taskId => currentAssignment(taskId) === undefined
+        ? { taskId, role: S6A_WORK_ROLE.templateId, instruction: `S7B3 ${taskId}` }
+        : structuredClone(currentAssignment(taskId)!)),
+      ...revisionAssignments(input.current ?? {}).filter(entry => carriedIds.has(entry.taskId)),
+    ],
+    obligations: [
+      ...carriedObligations.map(obligation => structuredClone(obligation)),
+      { obligationId: 's7b3-obligation', title: 'S7B3 L46 work', requirementLevel: 'required',
+        taskIds: [...work.filter(taskId => currentTask(taskId) === undefined || taskId === ids.A), ids.C],
+        verificationRequirements: [{ requirementId: 's7b3-static',
+          requirementLevel: 'required', kind: 'static', description: 'S7B3 static check' }] },
+    ],
     taskHierarchy: { parentOf: [] },
-    executionDag: { dependsOn: [{ taskId: TASKS.C, dependsOnId: TASKS.A,
+    executionDag: { dependsOn: [{ taskId: ids.C, dependsOnId: ids.A,
       requires: { kind: 'gate-result', label: 's7b3-gate-result-A' } }] },
-    taskRelations: [{ fromTaskId: TASKS.D, toTaskId: TASKS.A, kind: 'expected_dependency',
+    taskRelations: [{ fromTaskId: ids.D, toTaskId: ids.A, kind: 'expected_dependency',
       note: 'S7B3 D expects A; advisory, never a dispatch prerequisite' }],
     ...(input.legacy === undefined ? {} : { inputRequirements: [{ requirementId: 's7b3-legacy-A',
-      consumerTaskId: TASKS.D, kind: 'artifact' as const, artifactRef: input.legacy }] }),
+      consumerTaskId: ids.D, kind: 'artifact' as const, artifactRef: input.legacy }] }),
   };
 }
 
 /** `plans/propose` + `plans/apply` of the next revision; `legacy` is D's exact input on the legacy revision. */
 export async function adoptL46Plan(ws: S6ACardsWorkspace, goal: GoalRef,
-  input: { planId: string; label: string; legacy?: ArtifactRef }): Promise<PlanRevisionSnapshot> {
+  input: { planId: string; label: string; legacy?: ArtifactRef; ids?: L46TaskIds }): Promise<PlanRevisionSnapshot> {
   const current = await ws.activePlan(goal);
   const draft = l46Draft({ goalId: goal.goalId, planId: input.planId,
-    planRevision: (current?.planRevision ?? 0) + 1, ...(input.legacy === undefined ? {} : { legacy: input.legacy }) });
+    planRevision: (current?.planRevision ?? 0) + 1, current,
+    ...(input.ids === undefined ? {} : { ids: input.ids }),
+    ...(input.legacy === undefined ? {} : { legacy: input.legacy }) });
   const proposed = committed<{ ref: unknown; revision: number }>(await ws.post('plans/propose', graphWrite(ws.scope, {
     goalRef: goal, basedOn: current?.ref ?? null, draft, reason: { text: `S7B3 L46 ${input.label}`, sources: [] },
   }, `s7b3-l46-propose-${input.label}`)), `the Plan ${input.label}`);

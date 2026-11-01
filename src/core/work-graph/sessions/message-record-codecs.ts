@@ -26,11 +26,12 @@ import { DecisionSubjectShape } from '../../../contracts/goal-decisions.js';
 import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
 import {
-  QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionMessageRefShape, TaskTripleShape,
+  QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionMessageRefShape, TaskRequeueRefShape, TaskTripleShape,
+  VerificationRoundRefShape,
 } from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
-  hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, type UnknownRecord,
+  hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import type {
@@ -44,6 +45,9 @@ import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import { SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
+import type {
+  HostOutboxStoredItemV1, SessionMessageHostOutboxV1,
+} from '../model/communication-contracts.js';
 import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
@@ -227,6 +231,28 @@ export const S7B_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = 
   { name: S7B_DUE_WAITS_LOOKUP, aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'release', 'intent'], orderBy: { path: 'deadline', valueType: 'text' } },
 ];
+
+// --------------------------------------------------------------------------
+// Host system outbox (the Host's own delivery record)
+// --------------------------------------------------------------------------
+
+/** The Host system outbox record; `since` is the Store-bound page cursor (never the source position). */
+export const HOST_SYSTEM_OUTBOX_SCHEMA_ID = 'HostSystemOutbox@1';
+export const HOST_SYSTEM_OUTBOX_APPENDED_EVENT_TYPE = 'HostSystemOutboxAppended';
+/** One ordered index over the Host outbox record's own workspace and commit cursor. */
+export const S2C_HOST_OUTBOX_LOOKUP = 'host-system-outbox-by-workspace';
+export const HOST_OUTBOX_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  { name: S2C_HOST_OUTBOX_LOOKUP, aggregateType: 'HostSystemOutbox',
+    paths: ['workspace.projectId', 'workspace.workspaceId'], orderBy: { path: 'since', valueType: 'text' } },
+];
+
+/** The wire form before the Store binds `since` in the creating commit. */
+export type HostSystemOutboxPendingV1 = Omit<SessionMessageHostOutboxV1, 'since'> & { since: CommitCursor | null };
+/** The one replay event: it carries the whole outbox record it wrote, `since` still pending. */
+export type HostSystemOutboxAppendedEventV1 = {
+  eventId: string; eventType: 'HostSystemOutboxAppended'; schemaVersion: 1; occurredAt: string;
+  hostOutbox: HostSystemOutboxPendingV1;
+};
 
 // --------------------------------------------------------------------------
 // Event bodies (stable replay carriers)
@@ -1401,6 +1427,162 @@ function validateEvent(event: EncodedDomainEvent, eventType: string): DecodeResu
 }
 
 // --------------------------------------------------------------------------
+// Host system outbox: the record validator, its replay event and the codec
+// --------------------------------------------------------------------------
+
+/** The one notice-position shape a Host outbox source carries; the source position, never a page cursor. */
+function checkHostOutboxPosition(value: unknown): string | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'cursor', 'itemKey'])) {
+    return 'the Host outbox source position must carry exactly kind, cursor and itemKey';
+  }
+  if (value['kind'] !== 'commit') return 'the Host outbox source position must be a commit position';
+  if (!isNonZeroPlatformCursor(value['cursor'])) return 'the Host outbox source position cursor must be a ledger cursor';
+  return nonEmpty(value['itemKey']) ? null : 'the Host outbox source position itemKey must be a non-empty string';
+}
+
+function checkHostOutboxSource(value: unknown): string | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['kind', 'ref', 'position'])) {
+    return 'the Host outbox source must carry exactly kind, ref and position';
+  }
+  const kind = value['kind'];
+  if (kind !== 'requeue' && kind !== 'round') return 'the Host outbox source kind must be requeue or round';
+  const refProblem = checkShape(kind === 'requeue' ? TaskRequeueRefShape : VerificationRoundRefShape,
+    value['ref'], 'stored');
+  if (refProblem !== null) return `the Host outbox source ref is invalid: ${refProblem}`;
+  return checkHostOutboxPosition(value['position']);
+}
+
+/** The saved send's envelope: the GraphWrite identity (`meta.requestId`) and the bounded send input. */
+function checkHostOutboxSavedSend(value: unknown): string | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['input', 'meta'])) {
+    return 'the Host outbox saved send must carry exactly input and meta';
+  }
+  const meta = value['meta'];
+  if (!isRecord(meta) || !hasOnlyKeys(meta, ['requestId', 'expected'])) {
+    return 'the Host outbox saved send meta must carry exactly requestId and expected';
+  }
+  if (!nonEmpty(meta['requestId'])) return 'the Host outbox saved send needs meta.requestId';
+  if (!Array.isArray(meta['expected'])) return 'the Host outbox saved send needs meta.expected';
+  const input = value['input'];
+  if (!isRecord(input)) return 'the Host outbox saved send needs an input object';
+  const recipientProblem = checkPlainSessionRef(input['recipient']);
+  if (recipientProblem !== null) return `the Host outbox saved send recipient is invalid: ${recipientProblem}`;
+  return typeof input['text'] === 'string' && input['text'].length > 0
+    ? null : 'the Host outbox saved send text must be a non-empty string';
+}
+
+/** The card branch's saved derived source, checked before the card read and re-read by `key` on recovery. */
+function checkHostOutboxCardSource(value: unknown): string | null {
+  return checkDecisionSourceShape(value);
+}
+
+function checkHostOutboxStoredItem(value: unknown): string | null {
+  if (!isRecord(value)) return 'the Host outbox item is not an object';
+  const branch = value['branch'];
+  if (branch === 'no_adviser_card') {
+    if (!hasOnlyKeys(value, ['source', 'branch', 'cardSource'])) {
+      return 'the Host outbox card item carries unknown fields';
+    }
+    const sourceProblem = checkHostOutboxSource(value['source']);
+    if (sourceProblem !== null) return sourceProblem;
+    return checkHostOutboxCardSource(value['cardSource']);
+  }
+  if (branch !== 'notify_only' && branch !== 'adviser_delivery') {
+    return 'the Host outbox item branch is not recognized';
+  }
+  if (!hasOnlyKeys(value, ['source', 'branch', 'request'])) {
+    return 'the Host outbox message item carries unknown fields';
+  }
+  const sourceProblem = checkHostOutboxSource(value['source']);
+  if (sourceProblem !== null) return sourceProblem;
+  return checkHostOutboxSavedSend(value['request']);
+}
+
+/** `pending` is what the appender writes (`since: null`); `stored` is what the Store reads back (bound cursor). */
+export function checkHostSystemOutboxBody(value: unknown, phase: 'pending' | 'stored'): string | null {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ['ref', 'schemaVersion', 'revision', 'workspace', 'item', 'ordinal', 'since'])) {
+    return 'the Host system outbox record must carry exactly ref, schemaVersion, revision, workspace, item, ordinal and since';
+  }
+  const ref = value['ref'];
+  if (!isRecord(ref) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'workspaceId', 'outboxId'])
+    || ref['aggregateType'] !== 'HostSystemOutbox' || !nonEmpty(ref['projectId'])
+    || !nonEmpty(ref['workspaceId']) || !nonEmpty(ref['outboxId'])) {
+    return 'the Host system outbox ref is invalid';
+  }
+  if (value['schemaVersion'] !== 1) return 'the Host system outbox schemaVersion must be 1';
+  if (!isPos(value['revision'])) return 'the Host system outbox revision must be a positive integer';
+  const workspace = value['workspace'];
+  if (!isRecord(workspace) || !hasOnlyKeys(workspace, ['projectId', 'workspaceId'])
+    || !nonEmpty(workspace['projectId']) || !nonEmpty(workspace['workspaceId'])) {
+    return 'the Host system outbox workspace is invalid';
+  }
+  if (ref['projectId'] !== workspace['projectId'] || ref['workspaceId'] !== workspace['workspaceId']) {
+    return 'the Host system outbox ref disagrees with its workspace';
+  }
+  const itemProblem = checkHostOutboxStoredItem(value['item']);
+  if (itemProblem !== null) return itemProblem;
+  if (!isNonNeg(value['ordinal'])) return 'the Host system outbox ordinal must be a non-negative integer';
+  const since = value['since'];
+  if (phase === 'pending') return since === null ? null : 'the Host system outbox since must be pending null';
+  return isNonZeroPlatformCursor(since) ? null : 'the Host system outbox since must be its commit cursor';
+}
+
+/** Encode the pending record; the Store binds `since` and validates the stored form in the same commit. */
+export function encodeHostSystemOutboxRecord(record: HostSystemOutboxPendingV1): EncodedRecord {
+  const problem = checkHostSystemOutboxBody(record, 'pending');
+  if (problem !== null) throw new Error(problem);
+  return {
+    refKey: canonicalJson(record.ref as unknown as JsonValue),
+    schemaId: HOST_SYSTEM_OUTBOX_SCHEMA_ID,
+    revision: record.revision,
+    json: JSON.stringify(record),
+  };
+}
+
+/** Decode one stored outbox record; a damaged envelope or payload is `invalid` (the reader answers `unavailable`). */
+export function decodeHostSystemOutboxRecord(record: EncodedRecord): DecodeResult<SessionMessageHostOutboxV1> {
+  if (record.schemaId !== HOST_SYSTEM_OUTBOX_SCHEMA_ID) {
+    return invalid(`expected schemaId ${HOST_SYSTEM_OUTBOX_SCHEMA_ID}, got ${record.schemaId}`);
+  }
+  const parsed = parseJsonObject(record.json);
+  if (parsed.status === 'invalid') return invalid(`HostSystemOutbox record json is not an object: ${parsed.reason}`);
+  const body = parsed.value;
+  if (canonicalOf(body['ref']) !== record.refKey) {
+    return invalid('HostSystemOutbox refKey disagrees with the record body');
+  }
+  if (body['revision'] !== record.revision) {
+    return invalid('HostSystemOutbox record envelope revision disagrees with the body');
+  }
+  const problem = checkHostSystemOutboxBody(body, 'stored');
+  if (problem !== null) return invalid(`HostSystemOutbox record payload is invalid: ${problem}`);
+  return { status: 'decoded', value: body as unknown as SessionMessageHostOutboxV1 };
+}
+
+function validateHostSystemOutboxRecord(record: EncodedRecord): DecodeResult<EncodedRecord> {
+  const decoded = decodeHostSystemOutboxRecord(record);
+  return decoded.status === 'decoded' ? { status: 'decoded', value: record } : decoded;
+}
+
+export const hostSystemOutboxAppendedCodec = createEventCodec<HostSystemOutboxAppendedEventV1>({
+  eventType: HOST_SYSTEM_OUTBOX_APPENDED_EVENT_TYPE,
+  schemaVersion: 1,
+  jsonLabel: 'HostSystemOutboxAppended event',
+  bodyProblem: (value) => {
+    if (!isRecord(value)
+      || !hasOnlyKeys(value, ['eventId', 'eventType', 'schemaVersion', 'occurredAt', 'hostOutbox'])) {
+      return 'the HostSystemOutboxAppended event must carry exactly its record';
+    }
+    return checkHostSystemOutboxBody(value['hostOutbox'], 'pending');
+  },
+});
+
+/** Encode the one replay event; it carries the same pending record the commit writes. */
+export function encodeHostSystemOutboxAppendedEvent(event: HostSystemOutboxAppendedEventV1): EncodedDomainEvent {
+  return hostSystemOutboxAppendedCodec.encode(event);
+}
+
+// --------------------------------------------------------------------------
 // The single registration
 // --------------------------------------------------------------------------
 
@@ -1414,6 +1596,14 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       // adds the first-response position (spec §2.3 P02).
       commitCursorFields: ['since', 'responseSince'],
       validate: validateRecord,
+    },
+    {
+      aggregateType: 'HostSystemOutbox',
+      schemaId: HOST_SYSTEM_OUTBOX_SCHEMA_ID,
+      // The outbox record's page cursor is the commit that created it; the Store
+      // binds `since` before the stored-form validation.
+      commitCursorFields: ['since'],
+      validate: validateHostSystemOutboxRecord,
     },
   ],
   events: [
@@ -1444,10 +1634,12 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_APPLIED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_EXPIRED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_EXPIRED_EVENT_TYPE) },
+    hostSystemOutboxAppendedCodec.registration,
   ],
   lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES,
     ...K3_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7A2_RELEASE_CANDIDATE_LOOKUP_INDEXES,
-    ...S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7B_SESSION_MESSAGE_LOOKUP_INDEXES],
+    ...S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7B_SESSION_MESSAGE_LOOKUP_INDEXES,
+    ...HOST_OUTBOX_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------
