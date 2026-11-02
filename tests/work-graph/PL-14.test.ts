@@ -16,21 +16,25 @@
  * as `unavailable`, never folded into an empty list.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { S2B_ROUND_BY_GOAL_LOOKUP } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
-import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
+import { advanceUntil, driveWorkflow, post } from '../helpers/A2-restart-fixture.js';
 import { awaitPlanningAnswer } from '../helpers/IV-host-fixture.js';
 import {
   createS6BLine, lineBinding, openPLTaskbookWorld, twoStageDraft, type PLTaskbookWorld,
 } from '../helpers/PL-taskbook-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { plain } from '../helpers/AG2b-collaboration-fixture.js';
+import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { usageOf } from '../helpers/S6A-host-fixture.js';
-import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
-import { sessionOf } from '../helpers/S7A-fixture.js';
+import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { checkConfiguration, sessionOf } from '../helpers/S7A-fixture.js';
 
 // The gate-round read fault sits on the real record-store boundary (A2/A4):
 // `S2B_ROUND_BY_GOAL_LOOKUP` is the ordered lookup the notice source uses for
@@ -52,7 +56,10 @@ type Adopted = Awaited<ReturnType<PLTaskbookWorld['adopt']>>;
  * The real first segment and its stage gate, up to and including the gate's
  * committed `open_checks` receipt. The caller closes the world.
  */
-async function openGatedWorld(reply: { usage?: ReturnType<typeof usageOf> } = { usage: usageOf(100) }): Promise<{
+async function openGatedWorld(reply: { usage?: ReturnType<typeof usageOf> } = { usage: usageOf(100) },
+  options: { checks?: TrustedCheckConfiguration; isolation?: boolean;
+    beforeWork?: (world: PLTaskbookWorld) => Promise<void>;
+    between?: (world: PLTaskbookWorld) => Promise<void> } = {}): Promise<{
   world: PLTaskbookWorld;
   adopted: Adopted;
   gateReceipts: WorkflowStepReceipt[];
@@ -60,7 +67,8 @@ async function openGatedWorld(reply: { usage?: ReturnType<typeof usageOf> } = { 
 }> {
   const world = await openPLTaskbookWorld({ extraBindings: [
     lineBinding('pl14-adviser-binding', ADVISER_ROLE, 'PL-14 trusted adviser guidance'),
-  ] });
+  ], ...(options.checks === undefined ? {} : { checks: options.checks }),
+  ...(options.isolation === undefined ? {} : { isolation: options.isolation }) });
   try {
     const adopted = await world.adopt({ label: 'pl14', draft: twoStageDraft(world.goal, 'pl-14') });
     // The real line responsible for the stage's work and its stage gate. The two
@@ -72,6 +80,7 @@ async function openGatedWorld(reply: { usage?: ReturnType<typeof usageOf> } = { 
     });
     const session = await sessionOf(world.world, line);
 
+    if (options.beforeWork !== undefined) await options.beforeWork(world);
     // The real Workflow performs the stage work, then — with no explicit
     // taskId — its selection reaches `advanceGate`, which finalizes the real
     // stage-gate VerificationRound. One request with input 100 and output 0
@@ -81,6 +90,7 @@ async function openGatedWorld(reply: { usage?: ReturnType<typeof usageOf> } = { 
     ]);
     await driveWorkflow(world.world.ag2b, { schemaVersion: 1, goalRef: world.goal,
       flowId: 'pl14-work', sessionHint: line.ref, kind: 'select_work', taskId: 'stage-work' });
+    if (options.between !== undefined) await options.between(world);
     const gateReceipts: WorkflowStepReceipt[] = [];
     await driveWorkflow(world.world.ag2b, { schemaVersion: 1, goalRef: world.goal,
       flowId: 'pl14-gate', sessionHint: line.ref, kind: 'select_work' }, { receipts: gateReceipts });
@@ -222,6 +232,58 @@ describe('PL-14: stage end notice', () => {
       } finally {
         fault.release();
       }
+    } finally {
+      await world.close();
+    }
+  });
+
+  it('a gate stopped at the reverify cap still makes the adviser text answer a plan_notice', async () => {
+    const marker = 'pl14-gate-break';
+    const base = checkConfiguration({ ...OPERATOR, kind: 'human' });
+    const checks: TrustedCheckConfiguration = { ...base, checks: [
+      { ...base.checks[0]!, checkId: 'pl14-gate-check', taskIds: 'all',
+        command: `sh -c 'test -f ${marker} || { echo x >> check-runs.txt; false; }'` },
+    ] };
+    const { world, adopted } = await openGatedWorld({ usage: usageOf(100) }, {
+      checks, isolation: true,
+      // The work's check passes while the marker exists; it is removed before
+      // the gate, so each gate check fails and changes the source, which lets
+      // the real automatic re-verification run until the cap.
+      beforeWork: async current => {
+        await writeFile(join(current.settingsDirectory, 'taskbooks', marker), 'break\n');
+      },
+      between: async current => {
+        await rm(join(current.settingsDirectory, 'taskbooks', marker), { force: true });
+      },
+    });
+    try {
+      const rows = (await world.world.post('tasks/query', plain(S6A_SCOPE, { goalRef: world.goal }))).body as
+        { value?: { tasks?: Array<Record<string, unknown>> } };
+      const gateRow = rows.value?.tasks?.find(row => (row['ref'] as { taskId: string }).taskId === 'stage-gate');
+      expect(gateRow?.['failure']).toMatchObject({ automation: { verdict: {
+        kind: 'stopped', reason: 'auto_rework_cap_reached' } } });
+
+      const adviserLine = await createS6BLine(world.main, { label: 'pl14-gate-adviser', role: ADVISER_ROLE });
+      const adviser = await sessionOf(world.world, adviserLine);
+      const send = await advanceUntil(world.world.ag2b, { schemaVersion: 1, goalRef: world.goal,
+        flowId: 'pl14-gate-cap-send', sessionHint: null, kind: 'select_work' }, 'send_system_round');
+      if (send.kind !== 'perform' || send.operation.kind !== 'send_system_round') {
+        throw new Error(`PL-14: no deviation send was selected: ${JSON.stringify(send)}`);
+      }
+      expect(send.operation.request.round).toMatchObject({
+        kind: 'deviation', taskId: 'stage-gate', cause: 'stop', planRevision: adopted.plan.planRevision,
+      });
+      await world.world.post('workflow/advance', plain(S6A_SCOPE, send));
+      const requestId = `deviation:${world.goal.goalId}:stage-gate:stop:${String(adopted.plan.planRevision)}`;
+      const ref = systemRoundMessageRef(S6A_SCOPE, requestId);
+      if (ref.status !== 'ready') throw new Error('PL-14: the gate deviation ref is invalid');
+      await world.world.scripted.script(adviser, [{ kind: 'text', text: 'PL-14 gate cap: no plan change' }]);
+      await awaitPlanningAnswer(world.world, ref.value);
+      const notices = await world.readNotices();
+      const items = notices.main.filter(item =>
+        item['itemKey'] === `deviation-notice:${world.goal.goalId}:${requestId}`);
+      expect(items).toHaveLength(1);
+      expect(String(items[0]?.['summary'])).toContain('PL-14 gate cap: no plan change');
     } finally {
       await world.close();
     }

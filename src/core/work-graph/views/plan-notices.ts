@@ -1,31 +1,39 @@
 /**
- * `plan_notice` notice source (slice-PL-SPEC §5.8, §6.4.1, C-35), stage-end arm.
+ * `plan_notice` notice source (slice-PL-SPEC §5.8, §6.4.1/§6.4.2, C-35).
  *
- * A stage produces one "please be aware" item when its stage gate is satisfied
- * and that gate has a finalized `PASS` VerificationRound in this PlanRevision.
- * The item carries the six readings of §5.8, reusing `stageReadingOf` and
- * `stageOverLine`; a re-verification keeps the earliest round's `since`, so the
- * position never moves and a re-read never appends.
+ * Stage-end arm: a stage produces one "please be aware" item when its stage
+ * gate is satisfied and that gate has a finalized `PASS` VerificationRound in
+ * this PlanRevision. The item carries the six readings of §5.8, reusing
+ * `stageReadingOf` and `stageOverLine`; a re-verification keeps the earliest
+ * round's `since`, so the position never moves and a re-read never appends.
  *
- * The deviation arm ("the plan is not changed") is a later slice; this file
- * declares only the dependencies the stage-end read needs.
+ * Deviation arm: the adviser answered a `deviation:` round with plain text, so
+ * the plan is not changed. The arm enumerates the historical source messages R
+ * of every adopted PlanRevision (never the current `deviationsOfGoal` result),
+ * reuses the four facts R already stored, reads R's deterministic
+ * `intervention_planning` Query/Answer, and takes the reply commit cursor from
+ * the fixed `intervention:<messageKey>:respond` receipt. A legal plan/questions
+ * answer produces no item; a read failure is `unavailable`, never empty.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import type { RunRef } from '../../../contracts/dispatch.js';
-import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import {
-  DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1, type TaskSizeClassV1,
+  GROWTH_UNIT_TOKENS, growthUnitsOf, type PlanLoopLimitsV1, type TaskSizeClassV1,
 } from '../../../contracts/plan-loop-limits.js';
+import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
+import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
+import { systemRoundMessageRef } from '../../../contracts/plan-round.js';
+import type { RecordCommitIdentityPort } from '../../record-store/ports.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   DecisionNoticeSourcePort, DecisionSourcePageV1, NoticeItemV1, S5RecordPort,
 } from '../model/decision-contracts.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import {
@@ -39,12 +47,16 @@ import {
   decodePlanRevisionSnapshot, planRevisionRefKey, S2B_PLAN_REVISION_BY_GOAL_LOOKUP,
 } from '../persistence/plan-record-codecs.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
-import type { ActivityReadPort, RunActivityViewV1 } from './activity-read-model.js';
+import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import type { QueryJobPort } from '../queries/contracts.js';
+import type { ActivityReadPort } from './activity-read-model.js';
 import { readWatermark } from './activity-read-helpers.js';
 import { paginateAssembled, readOrderedToEnd } from './automatic-rework-notices.js';
 import { compareNoticePositions } from './notice-position.js';
 import { idsTextOf, noticeUnavailableOf, planNoticeGoalRefs } from './plan-adoption-notices.js';
 import { readGoal } from '../tasks/plan-readers.js';
+import { readTaskRunActivities } from '../tasks/goal-deviation-facts.js';
+import { respondReceiptIdentityOf } from '../communication/mailbox-service.js';
 import { stageIdOf } from '../notes/note-related-scope.js';
 
 export type PlanNoticeDependencies = {
@@ -52,6 +64,14 @@ export type PlanNoticeDependencies = {
   plans: Pick<PlanTaskPort, 'queryTaskGraph'>;
   runs: { listExecutions: NonNullable<ExecutionReadPort['listExecutions']> };
   activities: Pick<ActivityReadPort, 'readRunActivities'>;
+  /** The source message R and its stored body (the four facts R already carries). */
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+  /** R's deterministic `intervention_planning` Query and its formal answer. */
+  queries: Pick<QueryJobPort, 'readQueryJob' | 'readQueryAnswer'>;
+  /** The reply commit cursor of `intervention:<messageKey>:respond`. */
+  commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
+  /** The Host's effective §10.3 value, read per page (never frozen at construction). */
+  limits: () => PlanLoopLimitsV1;
 };
 
 /** §5.8: a next-stage placeholder without a size class is shown as 未分档. */
@@ -70,12 +90,10 @@ export type StageEndSummaryInputV1 = {
   limits: PlanLoopLimitsV1;
 };
 
-/** §10.5: one activity read takes at most 200 RunRefs. */
-const ACTIVITY_BATCH = 200;
-/** §10.5: one `listExecutions` page is at most 100 items. */
-const RUN_PAGE_LIMIT = 100;
+/** §7.1.1: the four `DeviationKindV1` arms, each one `deviation:` request id. */
+const DEVIATION_KINDS = ['growth', 'lines', 'budget', 'stop'] as const;
 
-/** Builds the `plan_notice` notice source, stage-end arm only. */
+/** Builds the `plan_notice` notice source: the stage-end and deviation arms. */
 export function createPlanNoticeSource(deps: PlanNoticeDependencies): DecisionNoticeSourcePort {
   return {
     category: 'plan_notice',
@@ -158,6 +176,9 @@ async function readStageEndPage(
   input: ReadPageInput,
 ): Promise<DecisionSourcePageV1<NoticeItemV1>> {
   const { projectId, workspaceId } = input.workspace;
+  // §10.3: the one effective value this page judges with; the same getter the
+  // shared deviation reader reads, never the construction-time defaults.
+  const limits = deps.limits();
   // The ordered index is by Goal, so a project-wide read enumerates the
   // workspace's Goals first (the same helper the adoption source uses).
   const planRecords: Awaited<ReturnType<typeof readOrderedToEnd>> = [];
@@ -205,7 +226,7 @@ async function readStageEndPage(
       const nextStageClasses = nextStage === undefined
         ? null
         : planOnlyClassesOf(graph.tasks, nextStage.stageId);
-      const overLine = stageOverLine(reading, DEFAULT_PLAN_LOOP_LIMITS);
+      const overLine = stageOverLine(reading, limits);
       const itemKey = `stage-end:${plan.ref.planId}:${String(plan.planRevision)}:${stage.stageId}`;
       items.push({
         itemKey,
@@ -226,12 +247,16 @@ async function readStageEndPage(
             + (row.rework?.entries.filter((entry) => entry.failureClass !== 'interrupted').length ?? 0), 0),
           nextStage: nextStageClasses === null ? null : { sizeClasses: nextStageClasses },
           overLine,
-          limits: DEFAULT_PLAN_LOOP_LIMITS,
+          limits,
         }),
         objects: [],
         rework: null,
       });
     }
+    // §6.4.2: the same source projects "the plan is not changed" from this
+    // PlanRevision's historical deviation source messages, not from the
+    // current `deviationsOfGoal` result.
+    items.push(...await deviationItemsOf(deps, ctx, plan, projectId, workspaceId));
   }
 
   items.sort((left, right) => compareNoticePositions(left.position, right.position));
@@ -289,61 +314,109 @@ function roundSinceOf(
   return undefined;
 }
 
-/** §5.8/§10.5: the stage's work Runs, in pages and 200-ref activity batches. */
+/** §5.8/§10.5: the stage's work Runs through the shared paging/activity reader. */
 async function stageReadingOfTasks(
   deps: PlanNoticeDependencies,
   ctx: CoreCallContext,
   goalRef: GoalRef,
   workTasks: readonly TaskRow[],
 ): Promise<StageReadingV1> {
-  const tasks: { estimatedLines?: number; readings: RunActivityViewV1['readings'][] }[] = [];
+  const tasks: { estimatedLines?: number;
+    readings: readonly { usage: StageReadingV1['usage']; lines: StageReadingV1['lines'] }[] }[] = [];
   for (const row of workTasks) {
-    const runRefs = await listTaskRuns(deps.runs, ctx, goalRef, row.ref.taskId);
-    const viewByRef = new Map<string, RunActivityViewV1>();
-    for (let index = 0; index < runRefs.length; index += ACTIVITY_BATCH) {
-      const batch = runRefs.slice(index, index + ACTIVITY_BATCH);
-      const read = await deps.activities.readRunActivities(ctx, { runRefs: batch });
-      if (read.status !== 'ready') throw noticeUnavailableOf(read);
-      for (const view of read.value) viewByRef.set(canonicalKey(view.runRef), view);
-    }
-    const readings: RunActivityViewV1['readings'][] = [];
-    for (const runRef of runRefs) {
-      const view = viewByRef.get(canonicalKey(runRef));
-      if (view === undefined) {
-        throw rejected('unavailable', `stage-end Run activity ${canonicalKey(runRef)} is missing`);
-      }
-      readings.push(view.readings);
-    }
+    const read = await readTaskRunActivities(deps, ctx, goalRef, row.ref.taskId);
+    if (read.status !== 'ready') throw noticeUnavailableOf(read);
     // A cancelled or superseded Task plans no lines: only a live Task without an estimate leaves the stage unknown.
     const estimate = row.definition.disposition === 'cancelled' || row.definition.disposition === 'superseded'
       ? 0 : row.definition.estimatedLines;
     tasks.push({
       ...(estimate === undefined ? {} : { estimatedLines: estimate }),
-      readings,
+      readings: read.value.readings,
     });
   }
   return stageReadingOf(tasks);
 }
 
-/** §10.5: page `listExecutions` to the end; a failed page is not an empty list. */
-async function listTaskRuns(
-  runs: PlanNoticeDependencies['runs'],
+/**
+ * §6.4.2: the deviation arm. It enumerates the history of this adopted
+ * PlanRevision (Task x the four kinds -> the deterministic request id), reads
+ * the source message R it finds, and projects one item per text-fallback
+ * answer. A legal plan/questions answer writes a candidate/card through the
+ * goal loop and produces no item here; every read failure stays `unavailable`.
+ */
+async function deviationItemsOf(
+  deps: PlanNoticeDependencies,
   ctx: CoreCallContext,
-  goalRef: GoalRef,
-  taskId: string,
-): Promise<RunRef[]> {
-  const refs: RunRef[] = [];
-  let afterCursor: string | null = null;
-  for (;;) {
-    const page = await runs.listExecutions(ctx, {
-      goalRef, taskId, page: { afterCursor, limit: RUN_PAGE_LIMIT },
-    });
-    if (page.status !== 'ready') throw noticeUnavailableOf(page);
-    for (const item of page.value.items) refs.push(item.run.ref);
-    if (page.value.nextCursor === null) break;
-    afterCursor = page.value.nextCursor;
+  plan: PlanRevisionSnapshot,
+  projectId: string,
+  workspaceId: string,
+): Promise<NoticeItemV1[]> {
+  const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId: plan.goalRef.goalId };
+  const scope = { projectId, workspaceId };
+  const items: NoticeItemV1[] = [];
+  for (const task of plan.tasks) {
+    for (const kind of DEVIATION_KINDS) {
+      const requestId = `deviation:${goalRef.goalId}:${task.taskId}:${kind}:${String(plan.planRevision)}`;
+      const messageRef = systemRoundMessageRef(scope, requestId);
+      if (messageRef.status !== 'ready') throw messageRef;
+      const message = await deps.messages.readMessage(ctx, messageRef.value);
+      if (message.status === 'not_found') continue;
+      if (message.status !== 'ready') throw noticeUnavailableOf(message);
+      const body = await deps.messages.readMessageBody(ctx,
+        { messageRef: messageRef.value, part: 'message' });
+      if (body.status !== 'ready') throw noticeUnavailableOf(body);
+      const queryRefs = interventionPlanningQueryRefs(messageRef.value);
+      const job = await deps.queries.readQueryJob(ctx, queryRefs.queryJobRef);
+      if (job.status === 'not_found') continue;
+      if (job.status !== 'ready') throw noticeUnavailableOf(job);
+      const answerRef = job.value.job.job.answerRefs.at(-1);
+      if (answerRef === undefined) continue;
+      const answer = await deps.queries.readQueryAnswer(ctx, answerRef);
+      if (answer.status !== 'ready') throw noticeUnavailableOf(answer);
+      const answerText = answer.value.answer.answer;
+      // §6.4.2: only the text fallback says "the plan is not changed"; an empty
+      // stored answer has nothing to show.
+      if (answerText.length === 0) continue;
+      if (parseInitialPlanningResponseV2(answerText).status === 'parsed') continue;
+      const identity = await respondReceiptIdentityOf(ctx, deps.records, messageRef.value,
+        `intervention:${sessionMessageRefKey(messageRef.value)}:respond`);
+      if (identity.status === 'not_found') continue;
+      if (identity.status !== 'ready') throw noticeUnavailableOf(identity);
+      const receipt = await deps.commitIdentities.readCommitByIdentity(identity.value);
+      if (receipt.status !== 'ready') {
+        if (receipt.code === 'not_found') continue;
+        throw rejected('unavailable', receipt.reason);
+      }
+      const itemKey = `deviation-notice:${goalRef.goalId}:${requestId}`;
+      items.push({
+        itemKey,
+        category: 'plan_notice',
+        subject: { kind: 'goal', goalRef },
+        position: { kind: 'commit', cursor: receipt.value.receipt.cursor, itemKey },
+        summary: `${storedFactsOf(body.value.text)}${growthUnitsLineOf(body.value.text)}`
+          + ` · 参谋不改计划 · ${answerText}`,
+        objects: [],
+        rework: null,
+      });
+    }
   }
-  return refs;
+  return items;
+}
+
+/** §6.4.2: R's first line is the request id; the rest are its four stored facts. */
+function storedFactsOf(body: string): string {
+  const newline = body.indexOf('\n');
+  return newline === -1 ? body : body.slice(newline + 1);
+}
+
+/**
+ * §10.5: the 64-token growth-unit calibration is a conversion beside the token
+ * figure, never a second threshold. A body whose growth is unknown gets none.
+ */
+function growthUnitsLineOf(body: string): string {
+  const match = /^growth: (?:at least )?(\d+)/m.exec(body);
+  if (match === null) return '';
+  return ` · 增长当量 ${String(growthUnitsOf(Number(match[1])))}（${String(GROWTH_UNIT_TOKENS)} token/单位）`;
 }
 
 /** The next stage's `plan_only` placeholders, unique size classes in task order. */

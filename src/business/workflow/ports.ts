@@ -19,6 +19,7 @@ import type {
 } from '../../contracts/plan-round.js';
 import type { CheckCapabilityV1 } from '../../contracts/verification.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
+import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
@@ -52,6 +53,7 @@ import type { SessionHandoffWorkflowPort } from '../../core/work-graph/model/ses
 import type { SessionMaintenancePort } from './session-maintenance.js';
 import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
+import type { DeviationInputV1 } from '../../contracts/plan-deviation.js';
 import type { RequestSubmitPort } from './request-intake.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
@@ -150,6 +152,15 @@ export type WorkflowDependencies = {
   responsibilities?: SessionResponsibilityPort;
   sessionAnomalies?: SessionAnomalyPort;
   controls?: RunControlPort;
+  /**
+   * PL §7.1.4/§7.5: the one deviation facts read the selection and the
+   * `goal_cause/no_adviser` source share. The composition binds the SAME owner
+   * both read, bound here to this advance's own call context (the card source
+   * passes its own). Absent, the deviation arm selects nothing (an old narrow
+   * double), never an empty deviation.
+   */
+  readDeviationFacts?: (ctx: CoreCallContext, goalRef: GoalRef, rows?: readonly TaskRow[]) =>
+    Promise<ReadResult<DeviationInputV1>>;
   /** Binds the existing Host `resolveUnknownRun`; never a browser input (§3.3). */
   attestUnknownRun?: (
     ctx: CoreCallContext, request: GraphWrite<{ runRef: RunRef; reason: string }>,

@@ -128,6 +128,13 @@ export type WorkflowCalls = {
    */
   cancel_review_round: RunControlPort['submitControl'];
   /**
+   * PL §7.3.1: the Workflow automation's one cancel of a yielded Run before it
+   * adopts a candidate that replaces that Run's Task. The identity names the
+   * candidate and the Run (never the Run revision); the pin carries the read
+   * Run revision. The control owner itself is unchanged.
+   */
+  cancel_yielded_wait: RunControlPort['submitControl'];
+  /**
    * K3 §3.4 UR7/UR7b (L19, ruling 9): run ② (the adapter table) and ③ on an
    * already answered review card, keyed by the answer's captured source kind.
    * The coordinator replays ② by the answer-derived identity; no second answer.
@@ -156,6 +163,10 @@ export type WorkflowCalls = {
   // The adviser's one Host-system `sendMessage`, released directly: the only send on this
   // step. No person or secretary send.
   suggest_member: SessionMailboxPort['sendMessage'];
+  // PL §7.1.3 row 3: the reminder line's ordinary `notify`, deduped by Goal,
+  // Task and the triggering plan revision. It is not a system round and opens
+  // no Query; the execution body is the same ordinary send as `suggest_member`.
+  notify_plan_reminder: SessionMailboxPort['sendMessage'];
   // The no-adviser path: M's own member request, no Session, Run or message; `host_pick` is
   // always `needs_decision` and shows the existing `member_creation` card.
   host_pick_member: MemberRequestPortV1['requestMember'];

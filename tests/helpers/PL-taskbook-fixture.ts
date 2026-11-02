@@ -21,6 +21,7 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contract
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import {
   AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, graphWrite, plain,
 } from './AG2b-collaboration-fixture.js';
@@ -44,6 +45,8 @@ export type PLTaskbookOptions = {
    * root and the batch must fail before writing anything.
    */
   isolation?: boolean;
+  /** The trusted check configuration (default: the S7A passing static check). */
+  checks?: TrustedCheckConfiguration;
 };
 
 export type PLTaskbookWorld = {
@@ -188,7 +191,7 @@ export async function openPLTaskbookWorld(options: PLTaskbookOptions = {}): Prom
 
   const world = await withConfiguredHost(
     () => openS6AHostWorld({ backend: 'memory',
-      extraHostOptions: { checks: checkConfiguration({ ...OPERATOR, kind: 'human' }),
+      extraHostOptions: { checks: options.checks ?? checkConfiguration({ ...OPERATOR, kind: 'human' }),
         ...(consumerProfileId === undefined ? {}
           : { inputConsumers: [consumerOf(consumerProfileId, 'pl-taskbook')] }) },
       ...(options.extraBindings === undefined ? {} : { extraBindings: options.extraBindings }) }),

@@ -158,6 +158,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 
 Run 活动、track/timeline 背后的活动记录、回填和复核轮；写入走 `RunActivity`/evidence 的公共 owner。
 
+- `PL-deviation-fixture.ts` — PL P7 的偏差世界：`openPLDeviationWorld` 复用 `openPLReadingsWorld`，按 `sizeClass`/`estimatedLines` 经公开 `plans/propose`+`plans/apply` 重采一次未执行的 Plan；`deviationFactsOf` 用生产 `createDeviationFactsReader`、`createGoalExecutedFilesReader` 和 `createActivityReadModel` 读真实 Goal/Plan/执行/活动，`runRevisionOf` 走公开 `executions/read`；P8 在此追加偏差发送与通知步骤；`tests/work-graph/PL-13-run-budget-deviation.test.ts`、`PL-38-no-adviser-deviation.test.ts` 在用。
 - `PL-readings-fixture.ts` — PL R3 的公开世界：`openPLReadingsWorld` 在 memory Host 上用 `withConfiguredHost` 给 Work binding 真实 write/shell 授权，经 `governS6B`/`adoptS6BPlan`/`createS6BLine` 建 Plan 和线；返回 `line`、`runTask`（脚本回复，claim 并驱动到结束）、`readRuns`（公开 `activity/runs`）与 `close`，`runView` 从答案里取一条；不读写 store、不为 Run 造调用上下文；`tests/work-graph/PL-12-activity-runs-readings.test.ts`、`PL-20-same-session-usage.test.ts` 在用。
 - `S2B-activity-fixture.ts` — 真实 Store + claim/entry + 可拨平台时钟，`RunActivity` 只经公共服务写，配 evidence schema；`tests/app/S2B-r2-backfill-identity.test.ts` 在用。
 - `S2B-r2-activity-support.ts` — R4/R5/R7/R8 修补：`seedActivityRun`/`authorizeOnlyRun` 造 V2 授权、只有 position 没 activity、authorized 未 enter 的 Run，其余走公共读/服务；`tests/work-graph/S2B-r2-workspace-binding.test.ts` 在用。

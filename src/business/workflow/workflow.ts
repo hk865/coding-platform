@@ -65,7 +65,13 @@ import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../
 import { createDutyRecipient } from '../../core/work-graph/sessions/duty-recipient.js';
 import { decidePlanCandidate, type PlanCandidateFactsV1, type PlanCandidateSourceV1 } from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
-import { systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1 } from '../../contracts/plan-round.js';
+import { systemRoundContext, systemRoundOfText, systemRoundRequestId, hostMessageId,
+  systemRoundMessageRef, type SystemRoundV1 } from '../../contracts/plan-round.js';
+import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal,
+  type TaskReminderV1 } from '../../contracts/plan-deviation.js';
+import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service.js';
+import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
+import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
 import type { PlanProposal } from '../../core/work-graph/model/plan-contracts.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
 import { deriveSessionInputId, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
@@ -250,6 +256,29 @@ export function cancelReviewRoundStep(base: Base, run: RunSnapshot): WorkflowOpe
     { runRef: run.ref, kind: 'cancel' as const,
       reason: 'the review record was held before the round entered; cancel the review round' },
     [{ ref: run.ref, revision: run.revision }]) };
+}
+/**
+ * PL §7.3.1: the one automation cancel before adopting a candidate that
+ * replaces the Task of a yielded Run. The fixed identity names the candidate
+ * (`proposalId`, `proposalRevision`) and the Run, and deliberately not the Run
+ * revision: the same intent is read back even after the Run moved, so a
+ * recovery never creates a second identity. The Run pin still carries the
+ * exact revision this judgment read.
+ */
+export function cancelYieldedWaitStep(
+  base: Base,
+  proposal: Pick<PlanProposal, 'ref' | 'revision'>,
+  run: RunSnapshot,
+  reason: string,
+): WorkflowOperation {
+  const requestId = 'wf-auto:cancel-yielded:' + sha256Hex(canonicalJson({
+    schemaVersion: 1, goalRef: base.goalRef,
+    proposalId: proposal.ref.proposalId, proposalRevision: proposal.revision, runRef: run.ref,
+  } as unknown as JsonValue));
+  return { kind: 'cancel_yielded_wait', request: {
+    input: { runRef: run.ref, kind: 'cancel' as const, reason },
+    meta: { requestId, expected: [{ ref: run.ref, revision: run.revision }] },
+  } };
 }
 /** VD-7: a work round opens under the Goal's CURRENT adopted Plan, not the Plan the Run was claimed under. */
 function openWorkChecksStep(base: Base, run: RunSnapshot, planRef: PlanRevisionRef): WorkflowOperation {
@@ -1528,6 +1557,23 @@ export function createWorkflow(deps: WorkflowDependencies & {
 
   type PlanCandidateWait = { reason: string; basis: GoalWaitBasisV1; source?: DecisionSourceV1; inFlight?: true };
 
+  /**
+   * §5.1.4: the required active `plan_only` work of the current plan, as the
+   * wait reasons the refinement send is built from. Shared by the ordinary
+   * selection and the pass that decides whether a refinement send is due.
+   */
+  function planOnlyWait(goal: GoalSnapshot, graph: TaskGraph): GoalWaitBasisV1 | null {
+    const reasons: string[] = [];
+    for (const task of graph.plan.tasks) {
+      if (task.requirementLevel !== 'required' || task.disposition !== 'active'
+        || task.taskKind !== 'work' || task.executionIntent !== 'plan_only') continue;
+      reasons.push(task.scope.kind === 'goal'
+        ? `plan_only_task:${task.taskId}` : `plan_only:${task.scope.stageId}`);
+    }
+    const unique = [...new Set(reasons)];
+    return unique.length === 0 ? null : goalWaitBasisOf(goal, unique, ['SessionMessage']);
+  }
+
   async function selectOrdinary(
     owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot, graph: TaskGraph,
     candidateWait: PlanCandidateWait | null,
@@ -1568,23 +1614,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
      * real block reason, every collected wait, the candidate wait and the
      * plan_only marker all survive; no branch is replaced by another.
      */
-    const planOnlyWait = (): GoalWaitBasisV1 | null => {
-      const reasons: string[] = [];
-      for (const task of graph.plan.tasks) {
-        if (task.requirementLevel !== 'required' || task.disposition !== 'active'
-          || task.taskKind !== 'work' || task.executionIntent !== 'plan_only') continue;
-        reasons.push(task.scope.kind === 'goal'
-          ? `plan_only_task:${task.taskId}` : `plan_only:${task.scope.stageId}`);
-      }
-      const unique = [...new Set(reasons)];
-      return unique.length === 0 ? null : goalWaitBasisOf(goal, unique, ['SessionMessage']);
-    };
     const attachRefinement = async (result: WorkflowAdvanceResult): Promise<WorkflowAdvanceResult> => {
       if (result.status !== 'ready' || result.value.state !== 'waiting') return result;
       const bases: GoalWaitBasisV1[] = [];
       if (result.value.waitBasis !== undefined) bases.push(result.value.waitBasis);
       if (candidateWait !== null) bases.push(candidateWait.basis);
-      const planOnly = planOnlyWait();
+      const planOnly = planOnlyWait(goal, graph);
       if (planOnly !== null) bases.push(planOnly);
       if (bases.length === 0) return result;
       const basis = mergeWaitBasis(bases);
@@ -2059,6 +2094,215 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return rejection('incomplete', `the candidate reply ended ${answered.status}`);
   }
 
+  /** PL §7.1.3: whether the deterministic Host message of one request id already exists. */
+  async function hostSendCommitted(
+    owned: Owned, ref: SessionMessageRef,
+  ): Promise<'sent' | 'unsent' | CoreRejection> {
+    if (deps.messages === undefined) {
+      return rejection('unsupported', 'the mailbox does not publish readMessage');
+    }
+    const read = await deps.messages.readMessage(owned.ctx, ref);
+    if (read.status === 'ready') return 'sent';
+    if (read.status === 'not_found') return 'unsent';
+    return readRejection(read);
+  }
+
+  /** PL §7.1 row 3: the ordinary notify's identity, deduped by Goal, Task and triggering revision. */
+  function reminderMessageRef(owned: Owned, reminder: TaskReminderV1):
+  { status: 'ready'; value: SessionMessageRef } | CoreRejection {
+    const requestId = `plan-reminder:${reminder.goalRef.goalId}:${reminder.taskRef.taskId}:${reminder.planRevision}`;
+    const id = hostMessageId({ projectId: owned.projectId, workspaceId: owned.workspaceId },
+      WORKFLOW_AUTOMATION_ACTOR, requestId);
+    if (id.status !== 'ready') return id;
+    return { status: 'ready', value: {
+      aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
+      messageId: id.value,
+    } };
+  }
+
+  /**
+   * §5.1.4 + the book's main flow: the plan_only `refine:` round is sent before
+   * the deviation path. `selectOrdinary` only sends it at the gap, so an
+   * ordinary step can be selected first; this says whether that pending refine is
+   * still uncommitted. It predicts no Gate (the book has no covered-Gate
+   * exception); the caller skips it when an in-flight candidate suppresses the
+   * refine, so the deviation is never starved by a round that cannot go out.
+   */
+  async function planOnlyRefineUnsent(
+    owned: Owned, goal: GoalSnapshot, graph: TaskGraph,
+  ): Promise<boolean> {
+    const planOnly = planOnlyWait(goal, graph);
+    if (planOnly === null) return false;
+    const target = planOnlyTargetOf(planOnly);
+    const round = refinementRoundOf({ basis: planOnly, goalRef: goal.ref,
+      planRevision: graph.plan.planRevision, target: target ?? null });
+    if (round === null) return false;
+    const requestId = systemRoundRequestId(round);
+    if (requestId.status !== 'ready') return false;
+    const ref = systemRoundMessageRef({ projectId: owned.projectId, workspaceId: owned.workspaceId }, requestId.value);
+    if (ref.status !== 'ready') return false;
+    return await hostSendCommitted(owned, ref.value) === 'unsent';
+  }
+
+  /**
+   * PL §7.1.4/§7.5: after the ordinary selection finds the Goal's gap, the one
+   * deviation/reminder selection. Each round is returned through the existing
+   * `send_system_round`; the reminder is the ordinary `notify`. The committed
+   * Host message is the only dedupe. With no adviser, nothing is sent (the
+   * shared `goal_cause/no_adviser` card carries the fact) and selection goes on.
+   */
+  async function deviationSelection(
+    owned: Owned, base: Base, goal: GoalSnapshot, graph: TaskGraph,
+  ): Promise<WorkflowAdvanceResult | null> {
+    if (deps.readDeviationFacts === undefined) return null;
+    const facts = await deps.readDeviationFacts(owned.ctx, goal.ref, graph.tasks);
+    if (facts.status !== 'ready') return readRejection(facts);
+    const deviations = deviationsOfGoal(facts.value);
+    const reminders = taskRemindersOfGoal(facts.value);
+    if (deviations.length === 0 && reminders.length === 0) return null;
+    if (suggestionDutyRecipient === null) return null;
+    const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
+      workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser',
+    });
+    if (adviser.status !== 'ready') return readRejection(adviser);
+    // §7.1.3: never the secretary; the derived card is the no-adviser exit.
+    if (adviser.value === null) return null;
+    for (const deviation of deviations) {
+      const requestId = deviationRequestId(deviation);
+      const ref = systemRoundMessageRef({ projectId: owned.projectId, workspaceId: owned.workspaceId }, requestId);
+      if (ref.status !== 'ready') return ref;
+      const sent = await hostSendCommitted(owned, ref.value);
+      if (typeof sent !== 'string') return sent;
+      if (sent === 'sent') continue;
+      const round: SystemRoundV1 = { kind: 'deviation', goalRef: goal.ref,
+        taskId: deviation.taskRef.taskId, cause: deviation.kind, planRevision: deviation.planRevision };
+      return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
+        round, recipient: adviser.value, text: `${requestId}\n${deviationText(deviation, null)}`,
+        taskRef: deviation.taskRef,
+      } }));
+    }
+    for (const reminder of reminders) {
+      const ref = reminderMessageRef(owned, reminder);
+      if (ref.status !== 'ready') return ref;
+      const sent = await hostSendCommitted(owned, ref.value);
+      if (typeof sent !== 'string') return sent;
+      if (sent === 'sent') continue;
+      const requestId = `plan-reminder:${reminder.goalRef.goalId}:${reminder.taskRef.taskId}:${reminder.planRevision}`;
+      return advancing(null, makePerform(base, { kind: 'notify_plan_reminder', request: {
+        input: {
+          recipient: adviser.value,
+          text: `${requestId}\n提醒（不需要开轮或改计划）：任务 ${reminder.taskRef.taskId} 在计划版本 `
+            + `${reminder.planRevision} 的上下文增长量已达 ${reminder.growthTokens} tokens（${reminder.sizeClass} 档）。`,
+          intent: 'notify' as const, needsReply: false,
+        },
+        meta: { requestId, expected: [] },
+      } }));
+    }
+    return null;
+  }
+
+  /** §6.1.4's card/wait exit: the candidate keeps waiting and another branch may still advance. */
+  async function candidateWaitAfterCancel(
+    owned: Owned, base: Base, goal: GoalSnapshot, proposal: PlanProposal, reason: string,
+  ): Promise<WorkflowAdvanceResult> {
+    let source: DecisionSourceV1 | undefined;
+    if (deps.readCandidateCard !== undefined) {
+      const card = await deps.readCandidateCard(goal.ref, proposal.ref);
+      if (card.status === 'not_found') return advancing(null, selectWorkStep(base));
+      if (card.status !== 'ready') return readRejection(card);
+      source = card.value.card.source;
+    }
+    return await selectNext(owned, base, {
+      reason,
+      basis: planWaitBasisOf(goal, ['plan_candidate_waiting']),
+      ...(source === undefined ? {} : { source }),
+    });
+  }
+
+  /**
+   * PL §7.3.1: before the adopt step of a candidate that replaces the Task of a
+   * yielded Run still waiting on the candidate's source chain, read the pointer
+   * and the existing cancel intent first. A person's stop comes first; a queued
+   * or applied intent already fences the continuation; only a completed
+   * `not_found` submits the one fixed identity. The Run pin is the revision this
+   * judgment read.
+   */
+  async function cancelBeforeAdoption(
+    owned: Owned, base: Base, goal: GoalSnapshot, graph: TaskGraph, proposal: PlanProposal,
+  ): Promise<WorkflowAdvanceResult | null> {
+    const source = proposal.sourceMessageRef;
+    if (source === null) return null;
+    const affected = proposal.reason.affectedTaskIds ?? [];
+    const replacedTasks = proposal.draft.tasks.filter(task => task.disposition === 'superseded'
+      && task.replacedByTaskId !== undefined && task.replacedByTaskId !== null
+      && affected.includes(task.taskId));
+    if (replacedTasks.length === 0) return null;
+    // Only a Run whose continuation waits on this source chain's root is the
+    // one to cancel; another replaced Task (for example one that never ran)
+    // must not end the search.
+    const yielded: { task: RuntimeTask; run: RunSnapshot }[] = [];
+    for (const candidate of replacedTasks) {
+      const row = graph.tasks.find(task => task.ref.taskId === candidate.taskId);
+      if (row === undefined || row.execution === null) continue;
+      const execution = await deps.executions.readExecution(owned.ctx, row.execution);
+      if (execution.status !== 'ready') return readRejection(execution);
+      const candidateRun = execution.value.run;
+      if (candidateRun.outcome !== 'yielded' || candidateRun.continuation === undefined
+        || candidateRun.continuation.kind !== 'wait_reply'
+        || candidateRun.continuation.task.taskId !== candidate.taskId) continue;
+      yielded.push({ task: candidate, run: candidateRun });
+    }
+    if (yielded.length === 0) return null;
+    const mailbox = deps.messages;
+    const queries = deps.consultations?.queries;
+    if (mailbox === undefined || queries === undefined) {
+      return rejection('unsupported', 'the yielded-run cancel needs the mailbox and the planning Query read');
+    }
+    const lineage = await planSourceLineageOf(owned.ctx,
+      { messages: mailbox, queries, plans: deps.plans }, source);
+    if (lineage.status !== 'ready') return readRejection(lineage);
+    const waiting = yielded.find(entry =>
+      sameRef(entry.run.continuation!.messageRef, lineage.value.rootMessage));
+    if (waiting === undefined) return null;
+    const replaced = waiting.task;
+    const run = waiting.run;
+    if (run.continuation === undefined) return null;
+    const wait = await mailbox.readMessage(owned.ctx, run.continuation.messageRef);
+    if (wait.status !== 'ready') return readRejection(wait);
+    if (wait.value.response !== null
+      || waitStateOf(wait.value, waitFactsOfRecord(wait.value)).state !== 'open') return null;
+    const controls = deps.controls;
+    if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
+    // §7.3.1 step 2: a person's pause/cancel is never overwritten. A pointer read
+    // failure keeps its real exit and submits nothing.
+    const pointerRef = run.controlState?.intentRef;
+    let pointer: ControlIntentSnapshotV1 | null = null;
+    if (pointerRef !== undefined) {
+      const pointerRead = await controls.readControl(owned.ctx, pointerRef);
+      if (pointerRead.status === 'ready') pointer = pointerRead.value;
+      else if (pointerRead.status !== 'not_found') return readRejection(pointerRead);
+    }
+    if (run.controlState?.desiredState === 'cancelled') return null;
+    if (reworkFenceOf(run, pointer) === 'human_only') {
+      return await candidateWaitAfterCancel(owned, base, goal, proposal,
+        'plan_candidate_waiting: a person stopped this Run; the platform does not cancel it');
+    }
+    // §7.3.1 step 3: read the one fixed intent before submitting; `not_found` alone submits.
+    const step = cancelYieldedWaitStep(base, proposal, run,
+      `task ${replaced.taskId} is superseded by plan candidate ${proposal.ref.proposalId}@${proposal.revision}`);
+    if (step.kind !== 'cancel_yielded_wait') return rejection('invalid', 'the cancel step kind changed');
+    const intent = await controls.readControl(owned.ctx,
+      controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR,
+        { projectId: owned.projectId, workspaceId: owned.workspaceId }, step.request.meta.requestId));
+    if (intent.status === 'ready') {
+      if (intent.value.status === 'queued' || intent.value.status === 'applied') return null;
+      return await candidateWaitAfterCancel(owned, base, goal, proposal,
+        `plan_candidate_waiting: the cancel intent is ${intent.value.status}`);
+    }
+    if (intent.status !== 'not_found') return readRejection(intent);
+    return advancing(null, makePerform(base, step));
+  }
+
   /** Read-only deterministic first-step selection shared by `select_work`. */
   async function selectNext(owned: Owned, base: Base, adoptWait?: PlanCandidateWait): Promise<WorkflowAdvanceResult> {
     const config = deps.configuration;
@@ -2276,6 +2520,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
             } }), null, null, candidateBasis('plan_fix_pending'));
           }
           if (decision.action === 'adopt') {
+            // §7.3.1: a candidate that replaces a yielded Run's waiting Task
+            // fences that continuation first; only then may the adoption apply.
+            const cancelled = await cancelBeforeAdoption(owned, base, goal, graph, proposal);
+            if (cancelled !== null) return cancelled;
             // §6.1.4: the fixed request id makes a retry the original adoption.
             return advancing(null, makePerform(base, { kind: 'adopt_plan', request: {
               input: { proposalRef: proposal.ref, expectedProposalRevision: proposal.revision, decisionRefs: [] },
@@ -2304,10 +2552,36 @@ export function createWorkflow(deps: WorkflowDependencies & {
       }
     }
     const selected = await selectOrdinary(owned, base, config, goal, graph, candidateWait);
-    if (selected.status === 'ready' && candidateWait?.source !== undefined) {
-      return { ...selected, value: { ...selected.value, source: candidateWait.source } };
+    const withCandidateSource = (result: WorkflowAdvanceResult): WorkflowAdvanceResult =>
+      result.status === 'ready' && candidateWait?.source !== undefined
+        ? { ...result, value: { ...result.value, source: candidateWait.source } }
+        : result;
+    // PL §7.1.4/§7.5: the deviation/reminder line is selected from the ordinary
+    // selection's result, so a waiting candidate no longer hides a due deviation.
+    // The shared close-out's refine stays first (the book's main flow), an
+    // `adoptWait` candidate pass keeps its own order, and a completion, a
+    // rejection or an explicit Task selection returns as it is.
+    if (selected.status !== 'ready') return withCandidateSource(selected);
+    const next = selected.value.next;
+    const refineAdvance = selected.value.state === 'advance' && next !== null && next.kind === 'perform'
+      && next.operation.kind === 'send_system_round' && next.operation.request.round.kind === 'refine';
+    if (selected.value.state === 'completed' || refineAdvance
+      || base.taskId !== null || adoptWait !== undefined) return withCandidateSource(selected);
+    // The book's main flow sends a pending plan_only `refine:` before the
+    // deviation path. Only a ready ordinary step can defer it: when the ordinary
+    // selection is already waiting (a stopped Gate, or a candidate whose
+    // in-flight refine cannot go out), the deviation must still be reachable.
+    if (selected.value.state === 'advance' && candidateWait?.inFlight !== true
+      && await planOnlyRefineUnsent(owned, goal, graph)) {
+      return withCandidateSource(selected);
     }
-    return selected;
+    const deviation = await deviationSelection(owned, base, goal, graph);
+    if (deviation === null) return withCandidateSource(selected);
+    if (deviation.status !== 'ready') return deviation;
+    // The deviation replaces the selection but keeps the basis the ordinary
+    // selection had already merged (candidate, plan_only and the real block).
+    const waitBasis = selected.value.waitBasis;
+    return waitBasis === undefined ? deviation : { ...deviation, value: { ...deviation.value, waitBasis } };
   }
 
   /**
@@ -2668,6 +2942,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return `${code}: ${reason}`;
   }
 
+  /** PL §7.1 row 3 / §3.4: the one ordinary Host `sendMessage` body shared by
+   * `suggest_member` and the reminder's `notify_plan_reminder`. */
+  async function sendOrdinaryMessage(
+    owned: Owned, request: Parameters<NonNullable<WorkflowDependencies['messages']>['sendMessage']>[1],
+  ): Promise<Awaited<ReturnType<NonNullable<WorkflowDependencies['messages']>['sendMessage']>>> {
+    if (deps.messages === undefined) {
+      return rejection('unsupported', 'the mailbox does not publish sendMessage');
+    }
+    return await deps.messages.sendMessage(automationContext(owned), request);
+  }
+
   async function performStep(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult> {
     // §4.5 (rule 16): `perform` shares the automation policy with `select_work`.
     // A gated automatic rework waits with its formal cause and performs nothing.
@@ -2966,6 +3251,28 @@ export function createWorkflow(deps: WorkflowDependencies & {
         }
         return waiting(receipt, `${result.code}: ${result.reason}`);
       }
+      case 'cancel_yielded_wait': {
+        const controls = deps.controls;
+        if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
+        // PL §7.3.1: the same automation actor and the fixed identity; a queued
+        // intent already fences the yielded continuation, so the next selection
+        // may adopt. A conflict goes back to the selection, which re-reads the
+        // same intent and the fresh Run pin.
+        const result = await controls.submitControl(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'cancel_yielded_wait', result };
+        if (result.status === 'committed' || result.code === 'revision_conflict') {
+          return advancing(receipt, selectWorkStep(base));
+        }
+        // §7.3.1 step 6: a cancel that did not commit never adopts. The
+        // candidate stays a card; this pass continues ordinary selection and
+        // never retries a second cancel identity.
+        const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+        if (goalRead.status !== 'ready') return readRejection(goalRead);
+        return await selectNext(owned, base, {
+          reason: `cancel_rejected: ${result.code}: ${result.reason}`,
+          basis: planWaitBasisOf(goalRead.value.goal, ['plan_candidate_waiting']),
+        });
+      }
       case 'apply_review_disposition': {
         // K3 L19/UR7/UR7b: ② runs as the Workflow automation actor (the answer
         // derives its identity, so a replay writes nothing new); ③ is booked
@@ -3039,13 +3346,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
         return await claimAfterHandover(owned, base, operation, receipt);
       }
       case 'suggest_member': {
-        if (deps.messages === undefined) {
-          return rejection('unsupported', 'the mailbox does not publish sendMessage');
-        }
-        const result = await deps.messages.sendMessage(automationContext(owned), operation.request);
+        const result = await sendOrdinaryMessage(owned, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'suggest_member', result };
         if (result.status !== 'committed') {
           return waiting(receipt, receiptReason(result, 'the suggestion message was not sent'));
+        }
+        return advancing(receipt, selectWorkStep(base));
+      }
+      case 'notify_plan_reminder': {
+        // PL §7.1 row 3: an ordinary `notify` to the adviser; it opens no Query
+        // and asks for no reply. The committed message is the one dedupe.
+        const result = await sendOrdinaryMessage(owned, operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'notify_plan_reminder', result };
+        if (result.status !== 'committed') {
+          return waiting(receipt, receiptReason(result, 'the plan reminder was not sent'));
         }
         return advancing(receipt, selectWorkStep(base));
       }

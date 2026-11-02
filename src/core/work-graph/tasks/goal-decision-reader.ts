@@ -33,6 +33,7 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { decodeRun } from '../persistence/run-record-codecs.js';
 import type { GoalDecisionCauseReadV1 } from '../model/decision-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
+import { deviationsOfGoal, type DeviationInputV1 } from '../../../contracts/plan-deviation.js';
 import { automationConfirmationCause, gateFixInProgress, pausedAutomationAction } from '../state/decision-policy.js';
 import type { GoalDisplayCauseV1 } from '../state/goal-machine.js';
 import { modelServiceOf } from '../state/task-failure.js';
@@ -69,6 +70,17 @@ export type GoalDecisionCauseReaderDependencies = {
    * fabricated when the recipient cannot be read).
    */
   recipients?: Pick<DutyRecipientPort, 'resolveDutyRecipient'>;
+  /**
+   * §5.5.3 / §7.5: the ONE shared deviation facts read (`readDeviationFacts`)
+   * for the deviation-need arm. Optional so an old narrow construction keeps
+   * compiling; absent, the reader keeps only the refinement arm and never
+   * fabricates the deviation need.
+   */
+  readDeviationFacts?: (
+    ctx: CoreCallContext,
+    goalRef: GoalRef,
+    rows: readonly TaskRow[],
+  ) => Promise<ReadResult<DeviationInputV1>>;
 };
 
 /** §4.2: the concrete persisted decision causes of one Goal, read-only. */
@@ -466,7 +478,19 @@ export function createGoalDecisionCauseReader(
       && row.definition.requirementLevel === 'required'
       && row.definition.executionIntent === 'plan_only'
       && row.disposition === 'active');
-    if (!refinement) return { ok: true, causes: [] };
+    // §5.5.3 / §7.5: the second need is the SAME shared deviation judgment the
+    // Workflow's selection uses (all four kinds). A read failure is returned and
+    // is never folded into "no deviation" (which would hide the card).
+    let deviationNeed = false;
+    if (!refinement && deps.readDeviationFacts !== undefined) {
+      const facts = await deps.readDeviationFacts(ctx, goal.ref, [...rows.values()]);
+      if (facts.status !== 'ready') {
+        if (facts.status === 'rejected') return { ok: false, rejection: facts };
+        return { ok: false, rejection: unavailable(`the deviation facts are not readable (${facts.status})`) };
+      }
+      deviationNeed = deviationsOfGoal(facts.value).length > 0;
+    }
+    if (!refinement && !deviationNeed) return { ok: true, causes: [] };
     if (deps.recipients === undefined) return { ok: true, causes: [] };
     const workspace: WorkspaceScope = {
       projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId,

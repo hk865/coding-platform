@@ -38,7 +38,10 @@ import { driveWorkflow } from './A2-restart-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import type { S6AHostWorld } from './S6A-host-fixture.js';
 import { openConsumeHostWorld } from './S7B2-consumable-sessions.js';
-import { S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession } from './S6A-request-fixture.js';
+import { withConfiguredHost } from './S7C-member-fixture.js';
+import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
+import { checkConfiguration } from './S7A-fixture.js';
+import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession } from './S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
 import { sendS7BWaitingInquiry } from './S7B-fixture.js';
 import { approveS7A2Message, readS7A2DispatchBasis } from './S7A2-fixture.js';
@@ -112,6 +115,18 @@ export function installPLAdvanceHook(): PLAdvanceHook {
   return hook;
 }
 
+/**
+ * The one injectable failing-check seam: the world's real trusted check keeps its
+ * configuration and real command runner, and only its command exits non-zero. The
+ * caller passes the returned configuration as `openPLConsumptionWorld`'s `checks`;
+ * without this call a world keeps the base check, so the default is unchanged.
+ */
+export function installPLFailingCheck(): TrustedCheckConfiguration {
+  const configuration = checkConfiguration({ ...OPERATOR, kind: 'human' });
+  return { ...configuration,
+    checks: configuration.checks.map(check => ({ ...check, command: 'false' })) };
+}
+
 /** The adviser binding on its default window, or on the window a large planning input needs. */
 function adviserBindingOf(contextWindowTokens: number | undefined): S6AExtraBinding {
   if (contextWindowTokens === undefined) return ADVISER_BINDING;
@@ -127,22 +142,44 @@ const WORK_TOOLS: S6AExtraBinding = {
   mergeTools: ['send_session_message', 'respond_session_message'],
 };
 
+type HostFactory = typeof import('../../src/app/host.js').createLocalWorkbenchHost;
+
+/** PL-48/PL-51: the readings world's Work grant, installed for one real Host start. */
+function writeWorkHostFactory(original: HostFactory): HostFactory {
+  return async hostOptions => {
+    const work = hostOptions.runtimeConfiguration?.bindings.find(binding => binding.id === 's6a-work-binding');
+    if (work === undefined) throw new Error('PL: the Host was opened without its Work binding');
+    work.grant = { ...work.grant, tools: [...new Set([...work.grant.tools, 'write', 'shell'])],
+      writeScope: ['.'], shellWorkspaceAccess: 'all_except_denied' };
+    return await original(hostOptions);
+  };
+}
+
 /**
  * The real Host consume world with the adviser line's profile installed, one consumer for the scope, and the
  * governance seeded once. `settleHost` (IV) runs the two empty passes before a row sends.
  */
 export async function openPLConsumptionWorld(options: {
   backend?: 'memory' | 'sqlite'; label?: string; contextWindowTokens?: number;
+  /** PL-48/PL-51: the real write/edit/shell grant on the Work binding (the readings world's rule). */
+  write?: boolean;
+  /** A normally ended Work Run needs a trusted check configuration; an object replaces the readings default. */
+  checks?: boolean | import('../../src/contracts/verification.js').TrustedCheckConfiguration;
 } = {}): Promise<S6AHostWorld> {
   const label = options.label ?? 'pl';
-  const world = await openConsumeHostWorld({
+  const openWorld = () => openConsumeHostWorld({
     backend: options.backend ?? 'memory',
     extraBindings: [adviserBindingOf(options.contextWindowTokens), WORK_TOOLS],
-    extraHostOptions: { inputConsumers: [{ scope: S6A_SCOPE,
-      sessionRef: { projectId: S6A_SCOPE.projectId, sessionId: `${label}-consumer` },
-      goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: `${label}-consumer` },
-      queryProfileId: PL_ADVISER_PROFILE_ID, heartbeatMs: 25 }] },
+    extraHostOptions: { ...(options.checks === undefined || options.checks === false ? {}
+      : { checks: options.checks === true ? checkConfiguration({ ...OPERATOR, kind: 'human' }) : options.checks }),
+      inputConsumers: [{ scope: S6A_SCOPE,
+        sessionRef: { projectId: S6A_SCOPE.projectId, sessionId: `${label}-consumer` },
+        goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: `${label}-consumer` },
+        queryProfileId: PL_ADVISER_PROFILE_ID, heartbeatMs: 25 }] },
   });
+  const world = options.write === true
+    ? await withConfiguredHost(openWorld, original => writeWorkHostFactory(original))
+    : await openWorld();
   try {
     await governS6B(world, s6aCardsWorkspace(world, S6A_SCOPE), world.goals);
     return world;

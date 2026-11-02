@@ -53,6 +53,10 @@ async function open(dir: string, failPush: { next: boolean } = { next: false }):
 async function storedFile(dir: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(join(dir, 'host-settings.json'), 'utf8')) as Record<string, unknown>;
 }
+const PLAN_LOOP_DEFAULTS = { schemaVersion: 1 as const,
+  taskReminderTokens: { small: 1_000_000, medium: 2_500_000, large: 4_000_000, explore: 4_000_000 },
+  taskTwoTimesTokens: { small: 2_000_000, medium: 5_000_000, large: 8_000_000, explore: 8_000_000 },
+  lineMultiplier: 2, stageLineBudget: 2_000, stageTokenBudget: 600_000_000 };
 const saveModel = { label: 'Model A', provider: 'openai' as const, model: 'model-a' };
 
 describe('Host setting automation (C8)', () => {
@@ -65,7 +69,8 @@ describe('Host setting automation (C8)', () => {
     expect(await settings.call('snapshot', {})).toEqual({ status: 'ready', value: { models: [], workspaces: [],
       automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'ask' }, resourceCaps:
       expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
-      workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 } } });
+      workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 },
+      planLoopLimits: { saved: null, effective: PLAN_LOOP_DEFAULTS, defaults: PLAN_LOOP_DEFAULTS } } });
   });
 
   it('a Host without a settings file reads the defaults', async () => {
@@ -145,7 +150,8 @@ describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
       // RL L13: resourceCaps is always published; its content is RL-40's.
       expect(saved).toEqual({ status: 'ready', value: { models: expectedModels, workspaces: [], automation: policy,
         resourceCaps: expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
-        workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 } } });
+        workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 },
+        planLoopLimits: { saved: null, effective: PLAN_LOOP_DEFAULTS, defaults: PLAN_LOOP_DEFAULTS } } });
       expect(pushed).toHaveLength(before + 1);
       expect(pushed.at(-1)?.automation).toEqual(policy);
       expect((await storedFile(dir))['automation']).toEqual(policy);

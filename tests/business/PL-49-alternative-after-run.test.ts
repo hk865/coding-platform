@@ -17,16 +17,20 @@
 import { afterEach, expect, it } from 'vitest';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { RuntimeTask } from '../../src/contracts/plan.js';
+import { deviationsOfGoal } from '../../src/contracts/plan-deviation.js';
 import { advanceUntil, controlGoal, driveWorkflow, post, readExecution } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
+import { deviationFactsOf } from '../helpers/PL-deviation-fixture.js';
 import { awaitCandidate, readProposal, waitForResponse } from '../helpers/IV-host-fixture.js';
+import { usage } from '../helpers/PL-readings-fixture.js';
 import { checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import {
   adoptPLTwoStageSkeleton, createPLReviewerLine, holdPLTaskRequest, openPLWorkflowWorld, plPlanChangeDraft,
-  performOne, plSystemRoundRef, plToolPlanOf, satisfyPLTask, type PLWorkflowWorld,
+  performOne, plSystemRoundRef, plToolPlanOf, PL_PROPOSE_FUTURE_TOOLS, satisfyPLTask, satisfyPLTaskWithPropose,
+  type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 
 let opened: PLWorkflowWorld | null = null;
@@ -200,4 +204,70 @@ it('PL-49: the loop adopts a disposition-only replacement and A2 starts its Run'
   // Both sit at their own adoption commit.
   expect(byLoop?.['position']).toMatchObject({ kind: 'commit', cursor: adopted.result.cursor });
   expect(byPerson?.['position']).toMatchObject({ kind: 'commit', cursor: (applied as { cursor?: string }).cursor });
+});
+
+it('PL-49: a waiting candidate does not starve a budget deviation behind an unsent placeholder refine', async () => {
+  const workflow = opened = await openPLWorkflowWorld({ label: 'pl-49-starve',
+    extraBindings: [PL_PROPOSE_FUTURE_TOOLS],
+    extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
+  const skeleton = await adoptPLTwoStageSkeleton(workflow.main, workflow.goal, {
+    label: 'pl-49-starve', stageOneTaskIds: ['pl-a', 'pl-b'],
+  });
+  await setS7AAutonomy(workflow.world, workflow.goal, 'after_plan_confirmation');
+  const line = await sessionOf(workflow.world, await createS6BLine(workflow.main, {
+    label: 'pl-49-starve-line', role: S6A_WORK_ROLE,
+    tasks: skeleton.tasks.filter(task => task.taskId === 'pl-a' || task.taskId === 'pl-b'),
+  }));
+  const adviser = await createPLAdviserLine(workflow.world, 'pl-49-starve-adviser');
+  const reviewer = await createPLReviewerLine(workflow.world, workflow.main, 'pl-49-starve-reviewer');
+  await workflow.world.scripted.script(adviser, [{ kind: 'text', text: 'PL-49 starvation adviser idle' }]);
+  const placeholder = skeleton.plan.tasks.find(task => task.taskId === 'pl-placeholder-pl-stage-2');
+  if (placeholder === undefined) throw new Error('PL-49 starvation: the stage-2 placeholder is missing');
+  // A's Work Run proposes the future revision through the real tool; the current
+  // plan keeps the stage-2 placeholder, whose refine round is still unsent.
+  const future = plPlanChangeDraft(skeleton.plan, workflow.goal, {
+    planId: 'pl-plan-pl-49-starve-future',
+    tasks: skeleton.plan.tasks.map(task => task.taskId === placeholder.taskId
+      ? { ...task, executionIntent: 'request_execution' as const, estimatedLines: 20, sizeClass: 'small' as const }
+      : task),
+    assignments: [...(skeleton.plan.assignments ?? []), { taskId: placeholder.taskId,
+      role: S6A_WORK_ROLE.templateId, instruction: 'PL-49 starvation stage 2' }],
+    obligations: skeleton.plan.obligations,
+  });
+  await satisfyPLTaskWithPropose(workflow.world, workflow.goal, 'pl-a', line, 'pl49starve', {
+    basedOn: skeleton.plan.ref, draft: future, reasonText: 'PL-49 starvation future revision',
+  });
+  // The loop sends the one `planreview:` and leaves it unanswered, so the
+  // candidate wait carries `inFlight` and suppresses the placeholder refine.
+  const reviewSend = await performOne(workflow, 'pl-49-starve-review', 'send_system_round');
+  expect(reviewSend).toMatchObject({ status: 'ready', value: { receipt: { kind: 'send_system_round',
+    result: { status: 'committed' } } } });
+  // B's real Run exhausts its budget: the hard budget fact the deviation needs.
+  expect(await workflow.world.settings('run-budget/save', { workRunTokenBudget: 100_000 }))
+    .toMatchObject({ status: 'ready' });
+  await workflow.world.scripted.script(line, [{ kind: 'text', text: 'PL-49 starvation b', usage: usage(150_000, 0) }]);
+  const held = await holdPLTaskRequest(workflow.world, workflow.goal, 'pl-b', line, 'pl49starve',
+    { stopBefore: 'open_checks' });
+  await held.release();
+  expect((await readExecution(workflow.world.ag2b, held.run)).run.outcome).toBe('budget_exhausted');
+  const facts = await deviationFactsOf({ world: workflow.world }).read(workflow.main.humanContext(), workflow.goal);
+  expect(deviationsOfGoal(facts)).toContainEqual(expect.objectContaining({
+    kind: 'budget', taskRef: expect.objectContaining({ taskId: 'pl-b' }),
+  }));
+  // The next Goal pass has a waiting candidate, an unsent placeholder refine and
+  // no covered Gate: the deviation round must still be the selected send.
+  const steps = await driveWorkflow(workflow.world.ag2b, { schemaVersion: 1, goalRef: workflow.goal,
+    flowId: 'pl-49-starve-select', sessionHint: null, kind: 'select_work' });
+  const deviationSend = steps.find(step => {
+    const next = step.next;
+    return next !== null && next.kind === 'perform' && next.operation.kind === 'send_system_round'
+      && next.operation.request.round.kind === 'deviation';
+  });
+  expect(deviationSend, JSON.stringify(steps.at(-1))).toBeDefined();
+  expect(deviationSend?.waitBasis?.reasons).toEqual(expect.arrayContaining(['plan_review_pending']));
+  const sent = steps.find(step => {
+    const receipt = step.receipt;
+    return receipt !== null && receipt.kind === 'send_system_round' && receipt.result.status === 'committed';
+  });
+  expect(sent, JSON.stringify(steps.at(-1))).toBeDefined();
 });

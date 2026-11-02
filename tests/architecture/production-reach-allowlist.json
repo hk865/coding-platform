@@ -1394,9 +1394,6 @@
     {"file": "src/core/work-graph/views/role-scope-reader.ts", "name": "EffectiveScopeReaderDependencies", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
     {"file": "src/core/work-graph/views/role-scope-reader.ts", "name": "createEffectiveScopeReader", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
     {"file": "src/core/work-graph/views/role-scope-reader.ts", "name": "SESSION_READ_TEMPLATES", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/contracts/plan-loop-limits.ts", "name": "GROWTH_UNIT_TOKENS", "reason": "kept-for", "note": "waits for PL-2's P8, the plan loop judgment in docs/MVP-BEHAVIOR.md"},
-    {"file": "src/contracts/plan-loop-limits.ts", "name": "growthUnitsOf", "reason": "kept-for", "note": "waits for PL-2's P8, the plan loop judgment in docs/MVP-BEHAVIOR.md"},
-    {"file": "src/core/work-graph/communication/mailbox-service.ts", "name": "respondReceiptIdentityOf", "reason": "kept-for", "note": "waits for PL-2's P8, the plan loop judgment in docs/MVP-BEHAVIOR.md"},
     {"file": "src/ui/runtime.ts", "name": "DCLogic.setState", "reason": "kept-for", "note": "called only by the frozen board logic after it is compiled at runtime (slice 9 of the orchestration design, E3-1 page shell); static reach analysis cannot see the generated class"}
   ]
 }

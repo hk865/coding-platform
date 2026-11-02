@@ -24,6 +24,7 @@
 - `module-overlap-gate.ts` — `ModuleOverlapGateRef`：模块重叠闸门（记录 4）的 ref；值类型和唯一的字段表在 `core/work-graph/persistence/module-overlap-gate-codecs.ts`。
 - `pick-basis.ts` — `PickBasisV1`：推进结果的依据（`rank`、`incomplete`、`candidates`），只在返回值里，不存记录；`rank` 没有 `hint`。
 - `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`。
+- `plan-deviation.ts` — 偏差纯表（§7.5、§13.2.4）：`DeviationKindV1`（growth/lines/budget/stop）、`DeviationV1`（含改动文件与 `minTokenBudgetExclusive` 两个只读事实）、`DeviationInputV1`/`DeviationTaskFactsV1`（任务级聚合读数与触发依据）、`deviationsOfGoal`、`deviationRequestId`、`deviationText`、`lineOverrun` 与提醒描述 `taskRemindersOfGoal`/`TaskReminderV1`。Workflow 的选择和 WorkGraph 的卡来源共用这一份；不读 I/O。
 - `plan-loop-limits.ts` — 规划环的上限（§10.3）：`TaskSizeClassV1`/`PlanLoopLimitsV1`、按任务档位的提醒与两倍 token、任务行倍数和两个阶段预算；`DEFAULT_PLAN_LOOP_LIMITS` 是纯默认值，`GROWTH_UNIT_TOKENS`（64）与 `growthUnitsOf`（token ÷ 64，不取整）是 §10.5 的增长单位换算。生效值由 Host 设置层发布。
 - `plan-review.ts` — 计划审阅回答（§6.1.3、§6.2、§6.3.3）：固定的 verdict/finding/form 形状、`planReviewAnswerText`（工具写出的唯一 JSON 正文，`findings` 总是写出）与 `parsePlanReviewAnswer`（唯一严格解析：一个 JSON 对象、无多余成员、`fix` 至少一条意见）。候选环把解析不了的回答当 `terminal_invalid`。
 - `plan-round.ts` — 系统轮契约（§5.2.2、§5.2.5–§5.2.6、§5.3.5、§5.6）：五种轮形状、`SYSTEM_ROUND_ACTOR`（固定 `host:plan-round` 发送方）、`systemRoundContext`（Host scope 上下文）、每种的 `systemRoundRequestId` 与 `hostMessageId`/`systemRoundMessageRef` 的身份、从正文首行读回的 `systemRoundOfText` 与 `planResumeOriginalQueryOfText`，以及 `planningReplyTextOf`（按冻结的回答形状取短回复）。只 import 契约，不发送、不选细化、不建 Query。

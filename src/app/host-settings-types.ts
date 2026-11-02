@@ -4,6 +4,7 @@ import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
 import type { ResumeOnStartupMode, TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
 import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.js';
+import type { PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
 import type {
   PromptPackProblemV1, TemplateSlotTableV1, ToolTextV1,
 } from '../contracts/prompts/prompt-pack.js';
@@ -59,7 +60,20 @@ export type HostSettingsSnapshot = {
    * once and the next Work Run uses it; a Run already claimed keeps its budget.
    */
   workRunTokenBudget: { saved: number | null; effective: number; max: number };
+  /**
+   * PL/§10.3: the plan-loop limits as stored (`saved: null` means none was
+   * saved), the effective table (`saved ?? defaults`) the next deviation
+   * judgment uses, and the frozen defaults. The backend publishes it since
+   * `plan-loop-limits/save`.
+   */
+  planLoopLimits: { saved: PlanLoopLimitsV1 | null; effective: PlanLoopLimitsV1; defaults: PlanLoopLimitsV1 };
 };
+/**
+ * PL/§10.3: the whole `plan-loop-limits` setting. `null` clears the saved table
+ * and restores `DEFAULT_PLAN_LOOP_LIMITS`; any other value is one complete
+ * schema-1 table, never filled from the defaults.
+ */
+export type SavePlanLoopLimitsSettings = { planLoopLimits: PlanLoopLimitsV1 | null };
 /**
  * L13: the resource-cap setting projection. `memoryMaxMiB`/`tasksMax` are the
  * STORED values (`null` means the default); `defaults` is the L13 formula over
@@ -172,6 +186,7 @@ export type SettingsRoutes = {
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
   'run-budget/save': { input: SaveWorkRunTokenBudgetSettings; value: HostSettingsSnapshot };
+  'plan-loop-limits/save': { input: SavePlanLoopLimitsSettings; value: HostSettingsSnapshot };
   'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };
   'prompts/packs/create': { input: { packId: string }; value: PromptPackCreateV1 };
   'prompts/templates/read': { input: { packId: string; templateId: string }; value: PromptTemplateReadV1 };

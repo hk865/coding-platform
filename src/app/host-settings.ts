@@ -33,7 +33,7 @@ import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 
 import { homedir, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
-import { isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../contracts/validation/common.js';
+import { hasOnlyKeys, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../contracts/validation/common.js';
 import {
   checksConfigurationPinProblem,
 } from '../contracts/validation/initialization-adoption.js';
@@ -52,6 +52,9 @@ import {
 } from '../contracts/resource-caps.js';
 import { RESOURCE_CAP_NONE_TEXT } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapCapability } from '../../vendor/coding-agent/dist/public-api.js';
+import {
+  DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1, type TaskSizeClassV1,
+} from '../contracts/plan-loop-limits.js';
 import type { BootstrapResponse, CoreScope } from './core-http-types.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type {
@@ -83,7 +86,7 @@ import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
-  'resource-caps/save', 'run-budget/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
+  'resource-caps/save', 'run-budget/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save',
 ] as const satisfies readonly SettingsRoute[];
 
@@ -181,6 +184,12 @@ export type HostSettingsPrivateSnapshot = {
    * enters the runtime configuration version, so a Run already claimed keeps
    * the budget it started with. */
   workRunTokenBudget: number;
+  /** PL/§10.3: the effective plan-loop limits. The Host installs them from
+   * `plan-loop-limits/save` and hands them to the shared deviation judgment, so
+   * the next judgment uses the saved table while an already claimed Run keeps
+   * the budget it started with. Every settings push carries them, and so does
+   * the pre-settings seed snapshot (`host.ts`'s initial bindings). */
+  planLoopLimits: PlanLoopLimitsV1;
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -397,6 +406,11 @@ type PersistedSettingsV1 = {
    * was cleared; it stays absent on the next save of another setting and reads
    * as `DEFAULT_WORK_RUN_TOKEN_BUDGET`. */
   workRunTokenBudget?: number;
+  /** PL/§10.3 Host setting `planLoopLimits`. Absent in files written before PL
+   * and in a file whose value was cleared; it stays absent on the next save of
+   * another setting and reads as `DEFAULT_PLAN_LOOP_LIMITS`. A present but
+   * invalid table refuses Host startup instead of reading the defaults. */
+  planLoopLimits?: PlanLoopLimitsV1;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -510,6 +524,49 @@ function parseStoredWorkRunTokenBudget(value: unknown): number {
   return value;
 }
 
+/**
+ * PL/§10.3: one `planLoopLimits` table is schema 1 with both complete four-tier
+ * tables (exactly the `TaskSizeClassV1` keys the default table names), every
+ * value a positive safe integer, each tier's two-times line at or above its
+ * reminder line, and a line multiplier of at least 1. Anything else is refused
+ * as it stands: it is never filled from the defaults, and a stored value is
+ * never migrated.
+ */
+function planLoopLimitsOf(value: unknown): PlanLoopLimitsV1 | null {
+  if (!isRecord(value) || value['schemaVersion'] !== 1) return null;
+  const sizeClasses = Object.keys(DEFAULT_PLAN_LOOP_LIMITS.taskReminderTokens) as TaskSizeClassV1[];
+  const reminder = value['taskReminderTokens'];
+  const twoTimes = value['taskTwoTimesTokens'];
+  if (!isRecord(reminder) || !isRecord(twoTimes)
+    || !hasOnlyKeys(reminder, sizeClasses) || !hasOnlyKeys(twoTimes, sizeClasses)) return null;
+  const taskReminderTokens = {} as Record<TaskSizeClassV1, number>;
+  const taskTwoTimesTokens = {} as Record<TaskSizeClassV1, number>;
+  for (const sizeClass of sizeClasses) {
+    const reminderLine = reminder[sizeClass];
+    const twoTimesLine = twoTimes[sizeClass];
+    if (!isPos(reminderLine) || !isPos(twoTimesLine) || twoTimesLine < reminderLine) return null;
+    taskReminderTokens[sizeClass] = reminderLine;
+    taskTwoTimesTokens[sizeClass] = twoTimesLine;
+  }
+  const { lineMultiplier, stageLineBudget, stageTokenBudget } = value;
+  if (!isPos(lineMultiplier) || !isPos(stageLineBudget) || !isPos(stageTokenBudget)) return null;
+  return { schemaVersion: 1, taskReminderTokens, taskTwoTimesTokens, lineMultiplier, stageLineBudget, stageTokenBudget };
+}
+
+/** A stored table must be valid; a present but invalid one fails Host start-up. */
+function parseStoredPlanLoopLimits(value: unknown): PlanLoopLimitsV1 {
+  const limits = planLoopLimitsOf(value);
+  if (limits === null) throw new Error('the private host settings file is invalid');
+  return limits;
+}
+
+/** The published/saved tables never share a mutable object with the defaults. */
+const copyPlanLoopLimits = (limits: Readonly<PlanLoopLimitsV1>): PlanLoopLimitsV1 => ({
+  ...limits,
+  taskReminderTokens: { ...limits.taskReminderTokens },
+  taskTwoTimesTokens: { ...limits.taskTwoTimesTokens },
+});
+
 type SettingsRejection = Extract<SettingsResponse<never>, { status: 'rejected' }>;
 const invalid = (reason: string): SettingsRejection => ({ status: 'rejected', code: 'invalid', reason });
 const notFound = (reason: string): SettingsRejection => ({ status: 'rejected', code: 'not_found', reason });
@@ -573,7 +630,9 @@ function parsePersisted(text: string): PersistedSettingsV1 {
     ...(raw['automation'] === undefined ? {} : { automation: parseStoredAutomation(raw['automation']) }),
     ...(raw['resourceCaps'] === undefined ? {} : { resourceCaps: parseStoredResourceCaps(raw['resourceCaps']) }),
     ...(raw['workRunTokenBudget'] === undefined
-      ? {} : { workRunTokenBudget: parseStoredWorkRunTokenBudget(raw['workRunTokenBudget']) }) };
+      ? {} : { workRunTokenBudget: parseStoredWorkRunTokenBudget(raw['workRunTokenBudget']) }),
+    ...(raw['planLoopLimits'] === undefined
+      ? {} : { planLoopLimits: parseStoredPlanLoopLimits(raw['planLoopLimits']) }) };
 }
 
 function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredModel {
@@ -628,7 +687,12 @@ export async function createHostSettings(
   /** The Work Run token budget as stored (absent is the default) until
    * `run-budget/save` writes it; `null` on that route clears it again. */
   let workRunTokenBudget: number | undefined = persisted.workRunTokenBudget;
+  /** PL/§10.3: the plan-loop limits as stored (absent is the defaults) until
+   * `plan-loop-limits/save` writes them; `null` on that route clears them. */
+  let planLoopLimitSetting: PlanLoopLimitsV1 | undefined = persisted.planLoopLimits;
   const effectiveWorkRunTokenBudget = (): number => workRunTokenBudget ?? DEFAULT_WORK_RUN_TOKEN_BUDGET;
+  const effectivePlanLoopLimits = (): Readonly<PlanLoopLimitsV1> =>
+    planLoopLimitSetting ?? DEFAULT_PLAN_LOOP_LIMITS;
   const totalMemoryBytes = totalmem();
   const capDefaults = defaultResourceCapSettings(totalMemoryBytes);
   const memoryUpperMiB = Math.floor(totalMemoryBytes / MIB);
@@ -665,13 +729,15 @@ export async function createHostSettings(
       tasksMax: effectiveResourceCaps().tasksMax,
     },
     workRunTokenBudget: effectiveWorkRunTokenBudget(),
+    planLoopLimits: copyPlanLoopLimits(effectivePlanLoopLimits()),
   });
 
   const persist = async (): Promise<void> => {
     const payload: PersistedSettingsV1 = { schemaVersion: 1, models, selection, workspaces,
       ...(automation === undefined ? {} : { automation }),
       ...(resourceCapSetting === undefined ? {} : { resourceCaps: resourceCapSetting }),
-      ...(workRunTokenBudget === undefined ? {} : { workRunTokenBudget }) };
+      ...(workRunTokenBudget === undefined ? {} : { workRunTokenBudget }),
+      ...(planLoopLimitSetting === undefined ? {} : { planLoopLimits: planLoopLimitSetting }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });
@@ -787,6 +853,11 @@ export async function createHostSettings(
       saved: workRunTokenBudget ?? null,
       effective: effectiveWorkRunTokenBudget(),
       max: MAX_WORK_RUN_TOKEN_BUDGET,
+    },
+    planLoopLimits: {
+      saved: planLoopLimitSetting === undefined ? null : copyPlanLoopLimits(planLoopLimitSetting),
+      effective: copyPlanLoopLimits(effectivePlanLoopLimits()),
+      defaults: copyPlanLoopLimits(DEFAULT_PLAN_LOOP_LIMITS),
     },
   });
 
@@ -1296,6 +1367,40 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  /**
+   * PL/§10.3: the whole `planLoopLimits` setting. `null` removes the stored key
+   * and restores `DEFAULT_PLAN_LOOP_LIMITS`. The write is validated, persisted
+   * and pushed exactly like `run-budget/save`; a present but invalid table is
+   * refused as it stands, never filled from the defaults or migrated.
+   */
+  async function savePlanLoopLimitsRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input) || !('planLoopLimits' in input)) {
+      return invalid('plan-loop-limits/save requires a planLoopLimits value');
+    }
+    const value = input['planLoopLimits'];
+    let next: PlanLoopLimitsV1 | undefined;
+    if (value !== null) {
+      const limits = planLoopLimitsOf(value);
+      if (limits === null) {
+        return invalid('planLoopLimits must be null or one complete schema-1 table with both four-tier tables, '
+          + 'positive safe integers, each two-times line at or above its reminder line and a multiplier of at least 1');
+      }
+      next = limits;
+    }
+    const previous = planLoopLimitSetting;
+    planLoopLimitSetting = next;
+    try { await persist(); }
+    catch {
+      planLoopLimitSetting = previous;
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the plan loop limits were saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
   // -------------------------------------------------------------------------
   // Prompt-pack editing routes. They read the disk tree at
   // `<settings directory>/prompts`, validate the whole resulting chain before
@@ -1571,6 +1676,7 @@ export async function createHostSettings(
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);
       case 'run-budget/save': return await saveRunBudgetRoute(input);
+      case 'plan-loop-limits/save': return await savePlanLoopLimitsRoute(input);
       case 'prompts/packs/list': return await packsListRoute();
       case 'prompts/packs/create': return await packsCreateRoute(input);
       case 'prompts/templates/read': return await templateReadRoute(input);

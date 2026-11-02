@@ -32,6 +32,8 @@ import { createGoalSettingsService } from '../core/work-graph/tasks/goal-setting
 import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
 import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
 import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
+import { createDeviationFactsReader } from '../core/work-graph/tasks/goal-deviation-facts.js';
+import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
 import {
   createActivityReadModel, type ActivityReadPort,
 } from '../core/work-graph/views/activity-read-model.js';
@@ -423,6 +425,14 @@ export type TargetPlatformOptions = {
    */
   systemRoundSend?: (messages: Pick<SessionMessageCommandPort, 'sendMessage' | 'lookupHostSendCommit'>) =>
     NonNullable<WorkflowDependencies['send']>;
+  /**
+   * PL §10.3/§7.5: the Host's live effective plan-loop limits. The SAME getter
+   * feeds the shared deviation reader (here) and the stage notice; the Host
+   * updates its holder on every settings push, so a judgment never reads a
+   * value frozen at construction. Absent keeps the pure defaults (a test that
+   * builds the platform directly).
+   */
+  planLoopLimits?: () => PlanLoopLimitsV1;
   /**
    * PL §5.3.4/§6.4.3: the Host's read-only taskbook probe, already rooted in its
    * settings directory. Absent is an explicit `unavailable` for the adoption
@@ -1370,12 +1380,25 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           reason: 'the note-decision source is not bound yet' })
         : boundNoteDecisionSource.readNoteDecision(ctx, input),
     };
+    // PL §7.1.4/§7.5: the ONE deviation facts reader. It reuses the same records,
+    // execution list, activity read and executed-files owner as the rest of the
+    // root; the limits getter is the Host's live value. The closures name owners
+    // declared later in this block, so they run only after composition.
+    const readDeviationFacts: NonNullable<WorkflowDependencies['readDeviationFacts']> =
+      (ctx, goalRef, rows) => createDeviationFactsReader(ctx, {
+        records: backend.records,
+        runs: { listExecutions: (...args) => executionReader.listExecutions!(...args) },
+        activities: { readRunActivities: (...args) => activityReads.readRunActivities(...args) },
+        files: goalExecutedFiles,
+        limits: options.planLoopLimits ?? (() => DEFAULT_PLAN_LOOP_LIMITS),
+      })(goalRef, rows);
     // §5.5.3 / DR-P5-01: the ONE Goal-cause reader with the real duty recipient.
     // The answer-card recheck and the queue source both read this instance; a
     // private reader without `recipients` could never see the derived `no_adviser`.
     const goalDecisionCauseReader = createGoalDecisionCauseReader({
       records: backend.records, plans: planService,
       recipients: { resolveDutyRecipient },
+      readDeviationFacts,
     });
     // The one automatic-rework projector: the C3 adviser facts, its card source and the Host's tracked read all share
     // this instance. Built before the C3 dependencies that read it (no use-before-declare).
@@ -1488,6 +1511,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       plans: planService,
       runs: { listExecutions: (...args) => executionReader.listExecutions!(...args) },
       activities: { readRunActivities: (...args) => activityReads.readRunActivities(...args) },
+      // §6.4.2: the deviation arm reads the historical source message R, its
+      // deterministic Query/Answer and the reply commit receipt; the stage arm
+      // reads the SAME effective limits getter as the shared deviation reader.
+      messages: { readMessage: (...args) => mailbox.readMessage(...args),
+        readMessageBody: (...args) => mailbox.readMessageBody(...args) },
+      queries: { readQueryJob: (...args) => queryJobs.readQueryJob(...args),
+        readQueryAnswer: (...args) => queryJobs.readQueryAnswer(...args) },
+      commitIdentities: rawBackend.commitIdentities,
+      limits: options.planLoopLimits ?? (() => DEFAULT_PLAN_LOOP_LIMITS),
     });
     // The card-source list is the decision read model's ONE registration point. M's member source exists on this
     // tree; R's rework source is pushed below once its owner is built (the read model holds this array by reference,
@@ -2917,6 +2949,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // an empty result. `planReadersOwner` is declared below: these closures
       // run only after composition and keep the raw owner, not a second reader.
       ...(options.systemRoundSend === undefined ? {} : { send: options.systemRoundSend(mailbox) }),
+      // PL §7.1.4: the selection reads the SAME facts instance the card source does.
+      readDeviationFacts,
       latestAgentCandidate: (goalRef) => planReadersOwner.latestAgentCandidate(goalRef),
       completedFixes: (goalRef, basedOn) => planReadersOwner.completedFixes(goalRef, basedOn),
       planFixRead: (goalRef, proposalRef, revision) =>

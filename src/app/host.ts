@@ -113,6 +113,7 @@ import type {
 import {
   DEFAULT_WORK_RUN_TOKEN_BUDGET,
 } from './host-settings-types.js';
+import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
 import { createInitializationAdoptionHost, type InitializationAdoptionDependencies } from './initialization-adoption.js';
 import {
   createWorkbenchRuntimeHostBindings,
@@ -587,6 +588,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     memoryMaxBytes: capDefaults.memoryMaxMiB * MIB,
     tasksMax: capDefaults.tasksMax,
   };
+  /** PL §10.3/§7.5: the effective plan-loop limits, held live beside the caps.
+   * The composition's one deviation reader reads this getter, so a settings
+   * push changes the next judgment without a restart; an already claimed Run
+   * keeps the budget in its own record. */
+  let planLoopLimits: PlanLoopLimitsV1 = structuredClone(DEFAULT_PLAN_LOOP_LIMITS);
   const resourceCaps: ResourceCapSource = { current: () => ({ ...resourceCapsRequest }) };
   /** The effective Work Run token budget. It is Host state, not part of a
    * runtime configuration version: an already claimed Run keeps its budget and
@@ -624,7 +630,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
-          workRunTokenBudget })), runtimeNarrowing));
+          workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits) })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -770,6 +776,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       exportBooks: input => readTaskbookExport({
         root: settingsDirectory ?? null, plan: input.plan, scope: input.scope,
       }),
+      // PL §10.3/§7.5: the one live effective-limits getter the shared deviation
+      // reader reads. The settings restore/reload below replaces the holder.
+      planLoopLimits: () => planLoopLimits,
       // L-02 §6.4.3: an automatic adoption runs through the SAME wrapper at the
       // commit itself; the published `platform.plans` stays raw (the route binding
       // already wraps it, so wrapping both would export one adoption twice).
@@ -1385,6 +1394,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // already-built platform, Runtime and workbench page read `current()` live,
     // so the next command of an already-running execution uses the new values.
     resourceCapsRequest = { memoryMaxBytes: snapshot.resourceCaps.memoryMaxBytes, tasksMax: snapshot.resourceCaps.tasksMax };
+    // PL §10.3: the same one holder for the plan-loop limits; the reader's getter
+    // already points at it, so this push reaches the next judgment.
+    planLoopLimits = structuredClone(snapshot.planLoopLimits ?? DEFAULT_PLAN_LOOP_LIMITS);
     // The Work Run token budget is installed here, on the first settings push and
     // every later one. The platform's Workflow configuration reads the binding
     // live, so re-registering each scope with the new budget makes the next Work
