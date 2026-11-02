@@ -40,6 +40,9 @@ import {
   ownContext, readProgress, readSessionMessageRecord, refusalOf, releaseDecidedResult, releasedMessageCompanions,
   sameBasis, type Owned,
 } from './mailbox-service.js';
+import { releaseCandidateBlockedReason } from './mailbox-basis.js';
+
+export { releaseCandidateBlockedReason } from './mailbox-basis.js';
 
 export type MessageReleaseOwnerDependencies = {
   /** The one backend; `lookupOrdered` reads the R-idx index. */
@@ -350,17 +353,4 @@ export function releaseCandidatePageInput(input: { goalRef: GoalRef | null; afte
     return { ok: false, rejection: reject('invalid', 'the release-candidate cursor does not belong to this page') };
   }
   return { ok: true, after };
-}
-
-/** One candidate's block reason (candidate read item 5). It never returns `activity_conflict`. */
-export function releaseCandidateBlockedReason(
-  message: Pick<SessionMessage, 'intent' | 'pins'>,
-  goal: { desiredState: GoalSnapshot['desiredState']; currentValues: DispatchBasisV1 | null },
-): Exclude<MessageReleaseCandidateV1['blockedReason'], 'activity_conflict'> {
-  if (goal.desiredState !== 'active') return 'goal_not_active';
-  if (message.intent === 'action_request'
-    && (message.pins === null || goal.currentValues === null || !sameBasis(message.pins, goal.currentValues))) {
-    return 'stale_pins';
-  }
-  return null;
 }
