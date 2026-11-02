@@ -104,6 +104,8 @@ export type ReachReport = {
 };
 
 const CLI_ENTRY = 'src/app/main.ts';
+/** 页面运行时是产品入口，由 scripts/build-ui.mjs 打包。 */
+const PAGE_ENTRY = 'src/ui/boot.ts';
 const PORT_NAME = /Port$/;
 const SERVICE_FACTORY = /^create\w*Service$/;
 const IMPLICIT_MEMBERS = new Set(['constructor', 'toString', 'toJSON', 'valueOf', 'then']);
@@ -133,7 +135,11 @@ function sourceOfBuilt(path: string): string | undefined {
 
 /** The production entry points of the project at `root` (see the file header). */
 export function productionEntries(root: string): ProductionEntry[] {
-  const entries: ProductionEntry[] = [{ file: CLI_ENTRY, exports: 'none', via: 'workbench CLI: node dist/app/main.js <config> (README, WORKBENCH_CLI_USAGE)' }];
+  const entries: ProductionEntry[] = [
+    { file: CLI_ENTRY, exports: 'none', via: 'workbench CLI: node dist/app/main.js <config> (README, WORKBENCH_CLI_USAGE)' },
+  ];
+  if (existsSync(join(root, PAGE_ENTRY)))
+    entries.push({ file: PAGE_ENTRY, exports: 'all', via: 'page runtime: bundled by scripts/build-ui.mjs into support.js' });
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Record<string, unknown>;
   for (const field of ['bin', 'main', 'exports'] as const) {
     for (const target of stringsOf(manifest[field])) {
@@ -159,13 +165,19 @@ export function productionEntries(root: string): ProductionEntry[] {
   return entries;
 }
 
-function createSourceProgram(root: string, config: string, include: (file: string) => boolean): ts.Program {
-  const configPath = join(root, config);
-  const read = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (read.error !== undefined) throw new Error(ts.flattenDiagnosticMessageText(read.error.messageText, '\n'));
-  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, root, undefined, configPath);
-  const rootNames = parsed.fileNames.filter(name => include(relative(root, name).split(sep).join('/')));
-  return ts.createProgram({ rootNames, options: { ...parsed.options, noEmit: true } });
+function createSourceProgram(root: string, config: string, include: (file: string) => boolean,
+  extraConfigs: readonly string[] = []): ts.Program {
+  const rootNames = new Set<string>();
+  let options: ts.CompilerOptions = {};
+  for (const name of [config, ...extraConfigs.filter(candidate => existsSync(join(root, candidate)))]) {
+    const configPath = join(root, name);
+    const read = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (read.error !== undefined) throw new Error(ts.flattenDiagnosticMessageText(read.error.messageText, '\n'));
+    const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, root, undefined, configPath);
+    options = { ...options, ...parsed.options };
+    for (const file of parsed.fileNames) if (include(relative(root, file).split(sep).join('/'))) rootNames.add(file);
+  }
+  return ts.createProgram({ rootNames: [...rootNames], options: { ...options, noEmit: true } });
 }
 
 type OwnerDeclaration = ts.ClassDeclaration | ts.InterfaceDeclaration | ts.TypeAliasDeclaration;
@@ -283,7 +295,7 @@ export function analyzeProductionReach(root: string): ReachReport {
   const projectRoot = resolve(root);
   const relativePath = (fileName: string) => relative(projectRoot, fileName).split(sep).join('/');
   const entries = productionEntries(projectRoot);
-  const mainProgram = createSourceProgram(projectRoot, 'tsconfig.json', file => file.startsWith('src/'));
+  const mainProgram = createSourceProgram(projectRoot, 'tsconfig.json', file => file.startsWith('src/'), ['tsconfig.ui.json']);
   const ownSourceFiles = (program: ts.Program, own: (file: string) => boolean) => program.getSourceFiles()
     .filter(sourceFile => !sourceFile.isDeclarationFile && own(relativePath(sourceFile.fileName)));
   const programs = [

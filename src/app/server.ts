@@ -62,6 +62,18 @@ const STATIC_CONTENT_TYPES: Record<string, string> = {
   'main.js': 'text/javascript; charset=utf-8',
   'views.js': 'text/javascript; charset=utf-8',
   'styles.css': 'text/css; charset=utf-8',
+  'ArchOverview.dc.html': 'text/html; charset=utf-8',
+  'Chain.dc.html': 'text/html; charset=utf-8',
+  'Decide.dc.html': 'text/html; charset=utf-8',
+  'Done.dc.html': 'text/html; charset=utf-8',
+  'Goals.dc.html': 'text/html; charset=utf-8',
+  'Main.dc.html': 'text/html; charset=utf-8',
+  'Member.dc.html': 'text/html; charset=utf-8',
+  'Phone.dc.html': 'text/html; charset=utf-8',
+  'Plan.dc.html': 'text/html; charset=utf-8',
+  'TaskMap.dc.html': 'text/html; charset=utf-8',
+  'kit.css': 'text/css; charset=utf-8',
+  'support.js': 'text/javascript; charset=utf-8',
 };
 
 export type WorkbenchAddress = { host: string; port: number; url: string };

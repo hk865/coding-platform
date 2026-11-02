@@ -205,6 +205,11 @@
       "path": "src/core/record-store/",
       "document": "modules/core/record-store.md",
       "dependencies": []
+    },
+    {
+      "id": "Ui",
+      "path": "src/ui/",
+      "dependencies": []
     }
   ]
 }

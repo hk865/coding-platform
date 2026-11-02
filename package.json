@@ -7,8 +7,8 @@
   },
   "scripts": {
     "check:architecture": "node scripts/check-boundaries.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "node scripts/build-platform-prompts.mjs --check && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",
+    "build": "node scripts/build-platform-prompts.mjs --check && tsc -p tsconfig.build.json && node scripts/build-ui.mjs",
     "test": "vitest run --maxWorkers=1",
     "test:scale": "vitest run --config vitest.scale.config.ts --maxWorkers=1",
     "verify:isolated": "node scripts/verify-isolated.mjs"

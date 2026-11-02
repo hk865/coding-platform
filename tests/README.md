@@ -20,6 +20,7 @@
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（148 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（123 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景；S6B3-goal-cards、S6B3-copy、S6B3-adoption 是 6B-3 的验收场景 G-01、G-02、R-14，在 memory 上用 `S6B3-fixture.ts` 的步骤把目标卡确认、复制和初始化采用串成人看到的流程；S7B-V-intervention、S7B-V-restart、S7B-V-wait-kept 是 7B-3 V 的干预、重启与等待保持场景）。
 - `tests/state/` — 状态机、编解码、查询和恢复不变量（57 个），例如 `K3-14-conclusion-pure.test.ts`。
+- `tests/ui/` — 冻结画板运行时的七条 E31 行：解析/指令、§1.5 计数、示例数据首渲染、事件绑定与 `setState` 重算、`componentDidUpdate(prevProps)` 的提交后调用、挂载后的 DOM 提交（浏览器入口 `fetch` 原始页、事件名、按键就地更新、`value`/`checked`/`disabled`）、入口页的 `/workbench/` 链接（7 个文件；纯 Node，`tests/ui/helpers/dom.ts` 提供假 DOM，无 jsdom）。
 - `tests/work-graph/` — WorkGraph 域服务和读模型（402 个），是夹具使用最密集的文件夹；`PL-12-activity-runs-readings.test.ts`、`PL-20-same-session-usage.test.ts` 经 `PL-readings-fixture.ts` 核对 `activity/runs` 的三个 Run 读数。
 
 ## tests/helpers/ 的夹具
