@@ -258,7 +258,7 @@ export function createUndeliveredReplyNoticeSource(
 
 ## 5. 测试（2026-10-13 lead 重写：按 TDD，测试由 DSH 一条一条写）
 
-**做法。** 用 Matt Pocock 的 TDD skill（`mattpocock/skills` 的 `engineering/tdd`，MIT；副本里在 `.dsh-ref/tdd/`）。
+**做法。** 用 Matt Pocock 的 TDD skill（`mattpocock/skills` 的 `engineering/tdd`，MIT）。
 - **测试入口先定。** 测试入口已由用户 2026-10-13 确认（§5.1），不在别的入口写测试。
 - **一条一条做。** DSH 按 §5.2 的验收行为一条一条做：先写一个会失败的测试（RED），再写刚好让它通过的实现（GREEN），再做下一条。不先把全部测试写完。
 - **不重构。** 重构不在这个循环里，留给审查。

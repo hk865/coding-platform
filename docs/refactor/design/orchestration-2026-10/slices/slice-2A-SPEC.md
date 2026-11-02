@@ -304,7 +304,7 @@ export interface RecordOrderedLookupPort {                // 单独一个端口�
 ## 5. 测试（TDD，测试由 DSH 一条一条写）
 
 做法同 K 片 §5：
-- 用 `.dsh-ref/tdd/` 的 TDD skill，在确认过的入口上一条一条先写失败测试，再写实现；
+- 用 Matt Pocock 的 TDD skill（`mattpocock/skills` 的 `engineering/tdd`），在确认过的入口上一条一条先写失败测试，再写实现；
 - 不读数据库核对；
 - 期望值来自规格或手算例子。**期望的标识、顺序、计数都在夹具或测试里写成字面值，不用产品的比较函数算**（包括 `compareNoticePositions` 和 L1 的排序）。“同今天”只是保留的指引，不当期望的来源；
 - 测试名以行号开头；

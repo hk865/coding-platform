@@ -742,7 +742,7 @@ export type RoleCapacityEpisodeV1 = {
 - 7D2 联动补验：`change_duty` 的自治断言：今天两档一律 `needs_decision`；拆成长期线（秘书、参谋、书记、模块维护线）仍 `change_duty`、两档都出卡，短期线（其余执行者）改成新动作 `short_change_duty`（「每步确认」出卡、「方案确认后自动」直接做、进请知悉）（L40）。（决定 60-10；审查二第 18 条）
 - 7D2 联动补验：长期线不自动归档的测试（第 1 片 §2.8、IT09、接线包 1 L16）：改成参谋、书记闲满 `ROLE_LINE_IDLE_ARCHIVE_MS` 归档、每种职责保留最后一条（L38）；接线包 1 L16 只属于执行者/模块维护关系，不给区域参谋永不归档资格。（决定 60-3、60-7、60-8；审查二第 18 条）**（决定 91 修改：长期线不按空闲时间归档，原来“长期线不自动归档”的测试按决定 91 保留，不改。）**
 - Goal 驱动碰到要确认的卡就停整个目标的旧测试（`workflow.ts:1263/1359`、`collaboration-driver.ts:844`）：改成跳过在等卡的那个任务、接着选同目标下一个能做的任务，只停这个任务和依赖它的（L46）。（决定 62-5）
-- 根路径 `.` 的旧测试（8A）：最长前缀匹配里 `.` 要匹配所有相对路径、长度 0、优先级最低（`goal-conflicts.ts:470/492`、`graph-index.ts:96`、`architecture-record-codecs.ts:265`；源码映射的 `safeRelativePath` 只额外收 `.`）；“未细分” = 路径是 `.`、没有子模块的模块，读出来标，不加目录字段。（8A）
+- 根路径 `.` 的旧测试（8A）：最长前缀匹配里 `.` 要匹配所有相对路径、长度 0、优先级最低（`goal-conflicts.ts:470/492`、`graph-index.ts:96`、`architecture-record-codecs.ts:265`；源码映射的 `safeRelativePath` 只额外收 `.`）；“未细分” = 目录里只有这一个模块、路径正好是 `['.']`（`isUndividedModule`，`src/contracts/architecture-catalog.ts:94-100`），读出来标，不加目录字段。（8A；决定 61-2）
 - 模块改名/换身份的旧测试（8C L5）：改显示名走 `set_module_name`、保留 `moduleId` 和负责关系、不触发删除限制、不算结构改动、不要去向、旧锚点不读“模块已删”；只有 `remove_module`/换身份才查删除限制、处置去向、旧锚点读作已删；换身份 = 删加，带 `responsibilityMoves`；被开着的负责关系引用时缺去向 → `invalid/responsibility_destination_missing`；被没终结任务引用的照旧不能删（`module_in_use`）。（8C；审查二第 14 条）
 
 ## 6. 文件（第一稿；第一轮审查第 18 条改成仓库路径）

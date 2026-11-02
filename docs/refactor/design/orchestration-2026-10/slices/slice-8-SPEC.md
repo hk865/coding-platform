@@ -2,10 +2,12 @@
 
 **后注（8B-2、8C、8E 规格冻结，lead 2026-11-02）：** 三片的开工裁定都已冻结，代码都还没落地；和正文冲突时以本后注为准。
 
-- **8B-2（v5）：** 开工裁定 v5 冻结（`impl/s8b/8b2-start-rulings.v5.md`），两轮完整审查加一次快速核对。改动：formal 请求是第五个 operation 臂 `MaintainerAssignmentActionV1`，书的“不加记录”照旧；`since = requestedAt`；`done` 是两个提交（link+claim 一个、`done` 阶段一个，唯一事件 `MaintainerAssignmentRecorded`），和 member 一样，`applyMaintainerAssignmentDecision` 是普通 owner 函数。偏差：LR8-06 写 Opus 写夹具，不照做，组自己写（用户 11-01 的额度决定）。演练：Codex 在 `w6-u2` 上走 M、R 两组，9、11 条，lead 裁定全收（`frozen/8b2-drill-rulings.md`）；“7D1 落地后核对”的名字都核过，成立。两条 lead 定的规则：旧库按 79-1 不迁移、不补 claim；L9 的“执行者线”按建线时存的席位算，`not_counted` 的线不因后来的绑定变成执行者线，只有 `sessions/create` 用没绑定的角色带初始 module 链接、再绑定这个角色才走得到，`sessions/link` 在 duty 未知时已经拒绝（`src/core/work-graph/sessions/session-responsibility-service.ts:152`），后果是该模块的 hover 走“两 owner”拒绝；不加机制。module hand-over 的目的线不是执行者线 → `guard_failed`、`unavailable`。书 §7 第 1 问照字面，等用户。
+- **8B-2（v5）：** 开工裁定 v5 冻结（`impl/s8b/8b2-start-rulings.v5.md`），两轮完整审查加一次快速核对。改动：formal 请求是第五个 operation 臂 `MaintainerAssignmentActionV1`，书的“不加记录”照旧；`since = requestedAt`；`done` 是两个提交（link+claim 一个、`done` 阶段一个，唯一事件 `MaintainerAssignmentRecorded`），和 member 一样，`applyMaintainerAssignmentDecision` 是普通 owner 函数。偏差：LR8-06 写 Opus 写夹具，不照做，组自己写（用户 11-01 的额度决定）。演练：Codex 在 `w6-u2` 上走 M、R 两组，9、11 条，lead 裁定全收（`frozen/8b2-drill-rulings.md`）；“7D1 落地后核对”的名字都核过，成立。两条 lead 定的规则：旧库按 79-1 不迁移、不补 claim；L9 的“执行者线”按当前职责解析结果判断，不看建线时保存的席位；职责为 `unknown` 的线不算执行者线，职责读取失败则拒绝这次维护。`sessions/link` 在 duty 未知时已经拒绝（`src/core/work-graph/sessions/session-responsibility-service.ts:152`）。module hand-over 的目的线不是执行者线 → `guard_failed`、`unavailable`。书 §7 第 1 问照字面，等用户。
 - **8C（v5）：** 开工裁定冻结（`impl/s8c/8c-start-rulings.v5.md`），审查 20 条、6 条、快速核对 1 条。偏差：`repair_approval`、`structural_proposal` 的 source 都放 `views`（`repair-approval-source.ts`、`structural-proposal-source.ts`），书放在 `communication` 是放置偏差：`communication` 不能 import `notes`、`architecture`，先例是 PL 的两个通知 source。`mapExecutedFilesToModules` 下移到 `model/architecture-footprint.ts`。③ 由配置操作者记（`redriveRepairAnswers` 用 `hostScopeContext`；启动步时 `hostContext` 还没声明）。查出的真问题：第三稿下，人拒绝且 ② 没提交时注记会被激活；改成需卡且没有 `approve` 就 `approval_pending`。产品含义已定：足迹证据缺失时人批准就算数；证实的越界批准了也是 `forbidden`。
 - **8E（v5）：** 开工裁定冻结（`impl/s8c/8e-start-rulings.v5.md`），审查 22 条、9 条，快速核对无发现。`record_note` 的说明 lead 审过，写法是“8C 的全文 + link 段”，F1 再加 flow 段。
 - 8C、8E 两份规格都要在 8B-2、8C 落地的树上重指后开工。
+
+**后注（8B-2 落地、未细分收窄、书 §7 第 1 问关闭，lead 2026-11-02）：** 8B-2 已落地（`906728ab`）：执行者线还开着的 module 负责链接就是该模块的维护者，键是 `module-maintainer:` + `{projectId, moduleId}`，一个模块一个 owner，链接和 claim 同一笔提交；人经卡或路由、成员经 `assign_module_maintainer` 指定或搬迁。归档时执行者的 module 链接必须有 choice：自动维护的 `handoff_complete` 默认转给第一条合格接续（活动的执行者线），没有就放下，不沿接续链往下追；人直接归档按其保存的 `transfer`/`drop` choice 处理，可以明确指定目的线；参谋、书记的 module 链接不要 choice，由归档计划关闭（`src/core/work-graph/state/session-archive-release.ts:37-40`）。`wiring-1-SPEC.md:325` 的 HM04 读作“没有合格接续”：维护只认活动的执行者线，按当前职责解析结果判断；职责为 `unknown` 的线不算合格接续，职责读取失败则拒绝这次维护。**“未细分”收窄（决定 61-2 原话，用户问后 lead 定）：** 只有目录里只有这一个模块、路径正好是 `['.']` 才显示（`src/contracts/architecture-catalog.ts:94-100`）；不再按“path 是 `.` 且没有子模块”判。书 §7 第 1 问就此关闭。正文和 §4 第 12 条按下面两条改；其余写“path `.` 且没有子模块”的地方（AE4、B-05、§4 末尾清单）按这一条读。
 
 **后注（8C 开工裁定待落，lead 2026-11-01，决定 109-3）：** 足迹证据缺失时，人的批准就是足够的依据：`approve` 带上来就当足迹过了；证实的越界不算，批准了也是 `forbidden`/`outside_footprint`。理由是人走 `architecture/revise` 本来不受足迹限制。`footprint_unknown` 卡提前出现（卡是读时投影，执行还在跑时读出来就是证据缺失）也归这条裁定：足迹一项只在这条注记绑定的轮次定案 PASS 之后才算，Run 还在跑时没有卡。另外两处也进开工裁定：激活的触发挪到任务完成提交之后，否则修补删自己任务声明的模块时会被 `module_in_use` 挡住；恢复和驱动启动加按目标的重试入口，规格 `:128`、`:440` 的“恢复后重试”才走得到。这些是 8C 的开工裁定要落的，**代码还没有**，8C 还没开工。正文原样保留。
 
@@ -59,7 +61,7 @@
 > - 依据：HANDOFF 决定 12、20、21、25、35（Q12、Q23）、49、56；DESIGN §1.3 自治表（L160–177）、J11（L475）、§4.9 按模块分组（L941）、§8.2 第 8 行（L1251）；MODEL R47；第 4 片规格草稿（修补暂存、作废、注记卡）。
 > - 第一轮审查（Codex，2026-10-15）14 条由 lead 2026-10-15 逐条裁；本稿照裁定改，改动行带（第一轮审查第 n 条）。（第一轮审查第 1–14 条）
 > - 第二轮审查（Codex，2026-10-15）6 条由 lead 2026-10-15 逐条裁；本稿照裁定改，改动行带（第二轮审查第 n 条）。（第二轮审查第 1–6 条）
-> - 最后核对（Codex，2026-10-15，`.dsh-ref/s8specquick.out.md`）6 条必须改，lead 2026-10-15 全部按原样收下；本稿照改，改动行带（最后核对第 n 条）。（最后核对第 1–6 条）
+> - 最后核对（Codex，2026-10-15）6 条必须改，lead 2026-10-15 全部按原样收下；本稿照改，改动行带（最后核对第 n 条）。（最后核对第 1–6 条）
 
 ## 0. 冻结说明（lead）
 
@@ -178,7 +180,7 @@
   - 提计划时：`catalogPin` 不是 null，每个任务的 `moduleRef` 必须在这份 `catalogPin` 里存在；`catalogPin` 是 null 时这项成员检查推迟到采用（第二轮审查第 4 条）。
   - 采用时：不是 null 的对着采用时活动的目录核一次；提案 `catalogPin` 是 null 的（还没有活动目录的初次采用）由治理决定选出目录、对着这个选中的目录核并绑定它。不存在 → 退回 `invalid`、原因 `unknown_module`，列出任务。没有验收的未来意图也一样核对。（第一轮审查第 11 条；第二轮审查第 4 条；最后核对第 2 条）
   - 初次采用：`catalogPin` 是 null（还没有活动目录），绑定的就是这次治理决定选中的目录（第二轮审查第 4 条）。
-  - 最小初始架构（61-2）：整个工作区一个根模块，paths 是 `['.']`。没摸清之前也能采用第一个计划（例如“摸清现状”的探索任务），之后再拆；采用前必须有初始架构这条不变。**“未细分”是读出来的**：一个模块 path 是 `.` 且没有子模块，读的时候标“未细分”；不加目录字段（目录的精确键校验会拒绝新字段）。
+  - 最小初始架构（61-2）：整个工作区一个根模块，paths 是 `['.']`。没摸清之前也能采用第一个计划（例如“摸清现状”的探索任务），之后再拆；采用前必须有初始架构这条不变。**“未细分”是读出来的**：只有目录里只有这一个模块、且它的路径正好是 `['.']` 时才标“未细分”（决定 61-2 的原话；8B-2 落地时收窄）；不加目录字段（目录的精确键校验会拒绝新字段）。
   - 已经采用的旧计划不回头核。
   - 这是引用检查，不是派工闸门（决定 49）。
 - **L11 冷启动声明包含关系（8B）。**【lead 定，待审】初始化的回答格式里加可选的 `containment.parentOf`（F9 的契约已有）；没给就是“不知道”，不当成“全是平的”；不按目录猜上下级。**区域 = 一个模块加 containment 下的全部子模块（containment 子树）**（读法；7D1 L23 的 `RoleScopeV1` region）；**有效负责范围不等于 containment 子树：统一按 7D1 L23 减去同职责更深的负责区域**（审查二第 6 条）；**containment 不知道时区域只算这个模块自己，不推断子孙**。
@@ -389,7 +391,7 @@ listFiles(ctx, input: { captureRef: ObservedCaptureRef; cursor: string | null })
 9. 根路径统一 `.`：path 是 `.` 的模块覆盖所有相对路径，最长前缀匹配里长度算 0、优先级最低（L7、L12）。
 10. 区域 = 模块加 containment 下的全部子模块（containment 子树，L11）；有效负责范围统一按 7D1 L23 减去同职责更深的负责区域；区域参谋只做判断，模块维护者才是负责人。（审查二第 6 条）
 11. 结构修订提议（agent 用 `propose_architecture_revision` 提、你批、第 8 片 8C 的修订写入方（`architecture/revise` 的服务）按冻结的 `baseCatalogPin` 落实）不走修补的 PASS 和足迹门槛；提议时校验同 `architecture/revise`，不过当场回 `invalid`、不出卡；**展示批准前冻结 `ArchitectureProposalBatchV1`（完整成员、`baseCatalogPin`、合并 ops、`responsibilityMoves`、摘要），批准绑定批次、一次提交落实全部，冲突不覆盖、各自成批；晚到提议另成批、内容或 pin 变了不复用旧批准**；批准时按冻结的 `baseCatalogPin` 再核，目录变了回 `source_stale`、卡读作“已过时，要重提”、不落实；冷启动同批提议合成一个批次、一张卡；拒绝不落实（L6）。（审查二第 12 条）
-12. “未细分”读出来（模块 path 是 `.`、没有子模块），不新增目录字段（L10）。
+12. “未细分”读出来（目录里只有这一个模块、路径正好是 `['.']`，`isUndividedModule`，`src/contracts/architecture-catalog.ts:94-100`），不新增目录字段（L10）。
 13. 8D：C/C++、Python 的引用关系按 8A 的 `ArchitectureLanguageProviderV1` 从捕获 owner 冻结的 `ProjectSourceAccess` 材料接现有解析器（C/C++ 靠项目的 `compile_commands.json`，要系统 Python 和 libclang，可注入 `libraryPath`、`pythonPath`；Python 要 `.local/source-analyzers`）；按同一 `expectedSnapshot` 翻到底、去重、保留 unresolved；本机分析器装不上或没有配置时这门语言 `failed`、部分失败照实汇总，不影响别的语言；Rust、Go 留接口、不在这一轮做（L13；决定 63；审查二第 15、16 条）。
 
 ## 5. 测试（TDD，测试由 DSH 一条一条写）

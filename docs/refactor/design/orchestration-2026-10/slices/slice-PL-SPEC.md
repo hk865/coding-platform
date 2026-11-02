@@ -7,6 +7,26 @@ lead，2026-11-01。设计唯一依据：`plan-loop-design.md`（v4 定稿，685
 
 **后注（L 提前，lead 2026-11-02）：** L（接线组）提前开在 `pw-u1` 上，不等 P4s、P5s：P3、P4、P5 的第二次返工要靠它才能验证，P3t、P4s、P5s 都等 L。`plu-m5` 是 P1–P6 的现状合并；`pw-u1` 是 PL 并到 7D1 `w6-u2` 的树（六个文件冲突）；`pw-u2`、`pw-u3` 带上 Z 和 `44aab2a`（`pw-u2` 是并入 `w7-u1` 的 `221c0c6` 之后的 `69f2b6f`，无冲突）；7D1 落地时缺的两处小改也一起带上。L 问过两次，都由 lead 裁：P6 的项目级通知读原来用 `[projectId]` 调按目标索引，L 修（两个 P6 文件进 L 白名单，`goalRef` 为空时枚举目标逐个读）；`InterventionInput` 的两臂按 lead 裁的写法写不过去，P4r 用单对象加真实 Query 值，P4s 再收窄。A-05、A-09、PL-23、PL-14 是 P4 审查的 01、02，等 P4s。
 
+**后注（PL-1 落地，lead 2026-11-02）：** PL-1 已落地（`939a6474`；和 MR 同树 `0052c40` 上的全量 1,231 个文件、13,676 项过、3 项跳过、1,334.17 秒，规模批 15 个文件 44 项、1,095.01 秒）。收尾查出并修好的生产缺陷：`closeQueryTurn` 接上 K 片 L10（只关 `intervention_planning` 和带 consultation 的 `semantic_query`）；人直接发给审阅线的消息不再按 duty 冻成 `plan_review`；规划轮 propose 被拒且下一趟改变不了时走第二种结局 `invalid_plan`（只走干预规划路径；请求初始化的首方案仍按解析、规范化或采用拒绝返回，不走这条“消息回复 + 固定通知”的收尾）；候选物理删任务在 propose 就拒绝；采用得到 `busy` 算候选在途（`inFlight`），不再和细化轮抢；四份提示词写明阶段 gate 规则。规模：src 69 个文件 +5,724/−593，测试 131 个文件 +16,183/−99（约生产的 2.8 倍，超过“测试不超过生产”的规矩，按验收行逐项补观察，如实记），README 18 个文件 +203/−158，其他 8 个文件 +96/−13。下面是 PL-1 的偏差表全文（逐行照抄）：
+>
+> | 行或节 | 现在的做法 | 为什么 |
+> |---|---|---|
+> | §5.1.4、PL-16 | 候选在途不发 `refine:`；候选在卡上时照发 | 细化和候选争同一占位 |
+> | PL-02 | 第二种结局 `invalid_plan` | 原来永远不结束 |
+> | 新 | 候选物理删任务在 propose 就拒绝 | 原来每趟审阅准备都失败，人看不到 |
+> | PL-41 (a) | 崩溃丢掉审阅轮时走无答案收尾，候选到卡上 | 模型请求随旧 Host 消失，没有回答可读 |
+> | PL-42、PL-44 的具名变异 | 依据改 `['Goal']` 是等价变异，改用“不登记” | 变异不红不是测试少 |
+> | PL-07 的具名变异 | 真正的闸门在 `intervention.ts` 的中断检查 | 规格写错位置 |
+> | PL-07 测试 | `crash()` 不停旧 Host，改 `reopen()` | 两个 Host 抢同一轮 |
+> | PL-25 | `held` 不进卡字段 | lead 裁定 |
+> | 等待语义 | `isWaitMessage`/`WAIT_INTENTS`，到期只对 inquiry | 只有 inquiry 存期限 |
+> | PL-52、PL-53 | 只查接线 | 真实模型验收在第 5、6 步 |
+> | PL-44 | “不新建 Query”按“不为这次恢复新建”读 | 恢复后计划往下走会有成员请求 |
+> | PL-22 `main/read` | 审阅的 QueryJob 本身读失败时 `readPlanningQuestions` 让整页 `rejected unavailable`，和 PL-14 一致 | 只有答案记录读失败时才出“审阅结论读不到”行 |
+> | §13.2.3 | “不全（超出保留上限）”写成“不全” | 阶段读数没有 `omitted`，不加字段 |
+> | A-06 | 16 KiB 量的是协议文本，正文最多 16,324 字节 | 按现在的钉住 |
+> | §5.4、§6.3.2 | 提示词文本加阶段 gate，审阅第 7 问限“这一版写到的每一段” | 模板第 5 行冻结“已采用的段不要重审” |
+
 - **偏差（`kept-for: P8`，L-12）：** 允许清单里有 `kept-for: P8` 一行。书说 PL-1 没有豁免；记偏差。
 - **偏差（模块环）：** `sessions → tasks` 是环。冻结裁定让 `sessions` 导入 `tasks/plan-readers` 会成环；改成 `sessions/session-targets.ts` 的 `readGoalRecord`，直接读 Goal 记录再用 `decodeGoalSnapshot` 解码（`src/core/work-graph/sessions/session-targets.ts:71-100`），`session-responsibility-service.ts:67` 引用它，`sessions` 里没有文件导入 `tasks`。记偏差。
 

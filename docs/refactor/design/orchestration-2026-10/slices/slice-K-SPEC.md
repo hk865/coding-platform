@@ -4,6 +4,8 @@
 
 **后注（2C 合入，lead 2026-10-16）：** L8 的退路（另建接续 Session）对仍负责被中断任务的 RUN-19、RUN-23 Work 线走不到。2C 起复用的 Session 领取时也开负责关系；维护在 L7 关闭确定失败以后照今天的逻辑按退役归档（决定 42 第 2 条），重新领取走普通选择（决定 43）。Workflow 新建的线本来就是这样。暂停中重启、由人点继续的线照旧走 L8。§9 表里 A8-3n 那一行的断言随之改，见 [2C 规格 §16](slice-2C-SPEC.md)。L7、L8 的正文不改。
 
+**后注（L10 的 Query 线关闭已接上，lead 2026-11-02）：** K 片 L10 留给第 6 片的“Query 线关闭”已由 PL-1 的 `closeQueryTurn` 接上（`939a6474`；`src/core/agent-runtime/runtime.ts:489-508`）。L10 正文“Query 线本片不关”按当时的分片成立，不改；现在的读法：只关 `intervention_planning` 和带 consultation 的 `semantic_query`（`src/composition/create-platform.ts:3084-3100`），启动核对在 Q-04 之后调（`src/app/startup-reconcile.ts:458`），Q-04 与关闭之间崩溃的下一次启动补做（`:447`），人经 QRR-06 认定后也调（`create-platform.ts:3264`）；其余 Query 和只读副本仍照 A8 Q-01、KA-16 不关。L11 的 `continueHistory` reason 里“Query 线照旧换新 Session”只对剩下的 Query 成立。
+
 > **状态：已冻结（lead，2026-10-13）。** 测试入口已确认（决定 50）；按 Codex 两轮审查改过（`D:/cc-lead-notes/codex2/kspecrev.out.md` 16 条、`kspecrev2.out.md` 9 条）；U1 用户选丙（决定 51）。2026-10-14 加 §9 冻结后的修正（A 部分 M1–M9：写旧测试改动时核对出；B 部分 M10–M12：验收审查之后），以 §9 为准。
 > - 代码基线：6c63f069（第 0、1、3、5 片和接线包 1 已合入；接线包 2 在施工，不碰本片的文件，除了 §0.3 列的几处）。
 > - 依据：
@@ -397,7 +399,7 @@ allowReadonlyCommands?: boolean;               // 默认 true，L18
 
 ## 5. 测试（TDD，测试由 DSH 一条一条写）
 
-做法同接线包 2 §5：用 `.dsh-ref/tdd/` 的 TDD skill，在确认过的入口上一条一条先写失败测试，再写实现。规则：
+做法同接线包 2 §5：用 TDD skill（`mattpocock/skills` 的 `engineering/tdd`），在确认过的入口上一条一条先写失败测试，再写实现。规则：
 - 不读数据库核对；
 - 期望值来自规格或手算例子，不从被测系统读回来；
 - 测试名以行号开头；

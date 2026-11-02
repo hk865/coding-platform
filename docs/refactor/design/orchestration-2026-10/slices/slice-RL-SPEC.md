@@ -710,7 +710,7 @@ WorkbenchCommandSnapshot.resourceCaps: ResourceCapsReportV1 | null;
 ## 5. 测试（TDD，测试由 DSH 一条一条写）
 
 做法同 K 片 §5、2B §5：
-- 用 `.dsh-ref/tdd/` 的 TDD skill，在确认过的入口上一条一条先写失败的测试，再写刚好通过的实现；
+- 用 Matt Pocock 的 TDD skill（`mattpocock/skills` 的 `engineering/tdd`），在确认过的入口上一条一条先写失败的测试，再写刚好通过的实现；
 - 不读数据库核对；期望值来自规格或手算的例子，不从被测系统读回来；
 - 测试名以行号开头；一行里列了几种情况的，每种都要有断言；
 - 生产代码里不加只给测试用的口子。机器条件用真机、环境变量（`CODING_AGENT_SYSTEMD_RUN_PATH`、`CODING_AGENT_BWRAP_PATH`）和 Kernel 模块边界的替身来造。经可信的可执行路径设置换进来的假 systemd-run 是依赖替换，不是测试口子（Codex 第一轮审查确认）；前提是生产代码里没有为假程序写的分支，也不读夹具的文件。
