@@ -60,6 +60,7 @@ import { readCommandRerunRequestSource } from './decision-source/command-rerun-r
 import { readMessageReleaseSource } from './decision-source/message-release.js';
 import { readMemberCreationSource } from './decision-source/member-creation.js';
 import { readHandoffApprovalSource } from './decision-source/handoff-approval.js';
+import { readMaintainerAssignmentSource } from './decision-source/module-maintainer-assignment.js';
 import {
   readAdviserCreationSource, type AdviserCreationSourceDependencies,
 } from './decision-source/adviser-creation.js';
@@ -205,7 +206,11 @@ export function createDecisionSourceFacts(
           if (identity.kind === 'handoff_approval') {
             return readHandoffApprovalSource(support, ctx, source, identity, deps, null);
           }
-          return rejectedWithCurrent('invalid', 'a project subject serves only a note_review or handoff_approval source');
+          if (identity.kind === 'module_maintainer_assignment') {
+            return readMaintainerAssignmentSource(support, source, identity);
+          }
+          return rejectedWithCurrent('invalid',
+            'a project subject serves only a note_review, handoff_approval or module_maintainer_assignment source');
         }
         switch (identity.kind) {
           case 'message':

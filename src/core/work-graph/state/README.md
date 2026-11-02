@@ -15,7 +15,9 @@
 做 Session 生命周期、占用、责任交接、请求轮与控制意图的去这组。
 
 - `session-activity.ts` — Session 活动记录的纯规则与记录构造都在这里：`latestActivityAt`（线卡时钟，`src/core/work-graph/state/session-activity.ts:25`；`tasks/line-clock.ts` 只再导出）与 `nextSessionActivity`（`src/core/work-graph/state/session-activity.ts:41`；一次提交事实之后的下一条记录：revision 递增、时刻不回退、迟到的旧事实不改 kind/source）。
+- `assign-maintainer.ts` — `modules/assign-maintainer` 命令的唯一纯决定 `assignMaintainerDecision`：按目录成员、执行者线、现有维护者三态排序冻结检查，返回打开本线链接、移动既有 owner 的链接或拒绝（含 `already_owner` 带原链接）；入参 `AssignMaintainerFactsV1` 不含 caller，受信证明由 owner 在这些事实之前核对。
 - `member-creation.ts` — 记录 1 的 `member_create` 分支：调用者/输入/进度的字段表、跨字段规则 `memberCreateInputProblem`（任务属于调用者的工作区和项目、reason 1..2000 UTF-8 字节）、纯 progress 步骤与阶段迁移 `acceptedMemberCreation`/`advancedMemberCreation`（接已存 action 与事实，返回下一个 action 和 phase，不读时钟），以及 `MemberCreationAccepted`/`MemberCreationDecided`/`MemberCreated` 三个事件的纯体格式；MemberCreated 只留字段表和事件形状，正式 proof 由 `sessions/session-record-codecs.ts` 调 `decisionChangeProofProblem`，Store 信封与 typed 解码也在那里。
+- `module-maintainer-assignment.ts` — 记录 1 的 `maintainer_assignment` 分支的纯半边（§3.13）：阶段/回答/裁定三张表、字段表 `MaintainerAssignmentActionShape`（跨字段规则：reason 1..2000 UTF-8 字节）和两个纯步骤 `acceptedMaintainerAssignment`、`advancedMaintainerAssignment`；Store 信封、操作 codec 分支和 `MaintainerAssignmentRecorded` 事件在 `sessions/session-record-codecs.ts`。输入里的调用者只是归属，不是可信命令分支。
 - `session-availability.ts` — Session 机器：lifecycle × health × occupancy、生命周期记录构造、占用/分派/可用性三类准入；分派准入把已消费等待按消息、原 Run 与任务三元匹配（`SessionConsumedWaitStateV1`），`intervention` 在旁边运行、不消费等待。
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
 - `role-scope.ts` — 角色范围的纯规则：`regionContains`/`moduleDepth`/`deepestContainingRegion`（从 `notes/scribe-scope.ts` 搬来的唯一副本）、`effectiveRegions`（同职责更深 region 扣除后的生效模块）、`responsibilityClaimChanges`/`foldRoleScopeClaimChanges` 与 `EffectiveScopeReadPort`/`RegionClaimV1`/`EffectiveScopeV1`；不读存储、不写。
@@ -92,7 +94,10 @@
 | `decideActivityOutcome` | `src/core/work-graph/state/activity-replacement.ts:23` | 按 L4 判定本次活动写是 created/replaced/unchanged | 回填或 Run 结束要写 Run.activity 时 |
 | `MemberCreateActionShape`、`memberCreateInputProblem` | `src/core/work-graph/state/member-creation.ts:139`、`:99` | `member_create` 的字段表与跨字段规则（任务/调用者在同一项目、reason 1..2000 UTF-8 字节，`done` 必须有 outcome） | 编解码 member 操作、建事件、M-records 的纯规则行 |
 | `MEMBER_CREATION_STAGES`、`MEMBER_CREATION_ANSWERS`、`MEMBER_CREATION_VERDICTS`、`memberCreationAcceptedEventFormat`、`memberCreationDecidedEventFormat`、`memberCreatedEventFormat`、`checkMemberCreatedEventBody` | `src/core/work-graph/state/member-creation.ts:35`、`:37`、`:39`、`:283`、`:303`、`:341`、`:366` | 成员创建的固定阶段/答复/判定值，以及三个事件的纯体格式与 Created 的字段/形状校验（正式 proof 在 sessions 层） | 建成员事件、校验成员进度与答复时 |
+| `assignMaintainerDecision`、`AssignMaintainerFactsV1` | `src/core/work-graph/state/assign-maintainer.ts:37`、`:17` | 维护者指定的纯决定：模块不在目录 → `not_found`；目标不是 active 执行者线 → `invalid`；无维护者 → 打开本线链接；已有别的 owner → 一次提交关闭旧链接并打开新链接；同一 owner → `already_owner` 带原链接 | 维护者命令 owner 在读完目录/职责/维护者之后调用；不要另写检查顺序 |
 | `MemberCreationStepV1`、`acceptedMemberCreation`、`advancedMemberCreation` | `src/core/work-graph/state/member-creation.ts:176`、`:190`、`:207` | 成员创建的纯 progress 步骤与阶段迁移：接已存 action 和事实，返回下一个 action 与 phase；revision/时刻/编码/提交由 `tasks/member-service.ts` 写 | 写 accepted、决定、建线、拒绝或恢复进度时；不要另写阶段或 phase 判断 |
+| `MAINTAINER_ASSIGNMENT_STAGES`、`MAINTAINER_ASSIGNMENT_ANSWERS`、`MAINTAINER_ASSIGNMENT_VERDICTS`、`MaintainerAssignmentActionShape` | `src/core/work-graph/state/module-maintainer-assignment.ts:21`、`:24`、`:26`、`:74` | `maintainer_assignment` 的三张表（五个阶段、人的 `approve`/`reject`、`automatic`/`needs_decision`）与字段表（reason 1..2000 UTF-8 字节） | 操作 codec 分支与维护者 owner；不要另写 |
+| `MaintainerAssignmentStepV1`、`acceptedMaintainerAssignment`、`advancedMaintainerAssignment` | `src/core/work-graph/state/module-maintainer-assignment.ts:108`、`:121`、`:138` | 维护者操作的纯 progress 步骤与阶段迁移：接已存 action 和 phase，返回下一对；revision 和时间由写入者加 | 维护者 owner 写每一步；调用者不自定阶段、phase 或结果 |
 | `newArchitectureCaptureRequestRecord` | `src/core/work-graph/state/architecture-capture.ts:37` | 建 status=requested 的捕获请求记录（revision/requestSeq 递增） | 接受一次自动捕获触发时 |
 | `architectureAutoCaptureState` | `src/core/work-graph/state/architecture-capture.ts:56` | 自动捕获的公开投影，pending 由 satisfiedRequestSeq 算出 | 判断是否该触发捕获 |
 | `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:231` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
@@ -204,17 +209,17 @@
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |
-| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:338` | 建 Session 记录；可选的 `delegationCeiling`/`secretaryCreated` 从创建意图带进记录 | 新建 Session |
-| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:369` | 在下一代 generation 上取得占用 | 运行开始 |
-| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:393` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
-| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:425` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
-| `transitionSession` | `src/core/work-graph/state/session-availability.ts:631` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
-| `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:297` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
-| `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:254` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
-| `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:238` | 下一次占用代数 | 取占用时 |
-| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:689` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
-| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:707` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
-| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:535` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
+| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:344` | 建 Session 记录；可选的 `delegationCeiling`/`secretaryCreated` 从创建意图带进记录 | 新建 Session |
+| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:375` | 在下一代 generation 上取得占用 | 运行开始 |
+| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:399` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
+| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:431` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
+| `transitionSession` | `src/core/work-graph/state/session-availability.ts:637` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
+| `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:304` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
+| `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:259` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
+| `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:243` | 下一次占用代数 | 取占用时 |
+| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:695` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
+| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:713` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
+| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:541` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
 | `transitionResponsibility` | `src/core/work-graph/state/session-responsibility.ts:33` | 责任转移/关闭：关源链接、开目标链接 | 责任交接 |
 | `destinationEligible` | `src/core/work-graph/state/session-responsibility.ts:111` | 转移/换挂靠目的地的唯一资格谓词：`active` + `available` + 无 `archiveRequest` + 不是只读副本 | 服务的三处调用（`:421`、`:441`、`:640`）和 `planReanchor` 共用；不要另写第二份 |
 | `admitHandoff`、`newHandoffOperationRecord` | `src/core/work-graph/state/session-handoff.ts:77`、`:100` | 交接的拒绝顺序（`read: null` 只查前三步）；接受时的记录：revision 1、`accepted`，每个分配和每个任务各一条进度，其余步骤为 `null` | 交接 owner 的接受：读之前先查前三步，命令里带读到的事实再查一遍 |

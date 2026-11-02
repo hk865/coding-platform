@@ -110,7 +110,8 @@ export type LineRowV1 = {
   doneTasks: { tasks: LineTaskBriefV1[]; omitted: LineCountV1 } | null;    // 已做完的悬停卡：最新 21 条里 terminal 的前 20 项（L1a、T8 补充）
   retired: { conclusion: SessionHealthConclusion | null; history: 'readable' | 'not_readable';
     since: CommitCursor | null } | null;                                   // since = Session 的 unavailableSince（提交位置，不是时刻）；旧记录没有时为 null
-  groups: { duty: PlatformDutyV1 | 'unknown'; module: ModuleRef | null; task: TaskTriple | null };
+  groups: { duty: PlatformDutyV1 | 'unknown'; module: ModuleRef | null; task: TaskTriple | null;
+    alsoMaintains: ModuleRef[] };
   sessionCount: LineCountV1;                                               // 前任超过 32 个时 partial（atLeast 34）
   chainSessions: SessionRef[];                                             // 线头在前，至多 33 个（L2）；给 2B 的 sessionRefs 用
   pinned: boolean; pinnedBy: SessionRef[];
@@ -230,8 +231,8 @@ export type GroupHoverV1 = {                                               // �
   owners: LineBriefV1[];                                                    // 目标：秘书线（L20 的口径）；阶段：空（原型：阶段没有单一的线）
 };
 export type ModuleHoverV1 = {                                              // 每个架构目录里的模块，含子模块
-  module: ModuleRef; parent: ModuleRef | null; name: string; paths: string[]; responsibility: string;
-  maintainer: { status: 'none' };                                           // 第 8 片之前都是 none
+  module: ModuleRef; parent: ModuleRef | null; undivided: boolean; name: string; paths: string[]; responsibility: string;
+  maintainer: { status: 'none' } | { status: 'assigned'; line: LineBriefV1 };
   unfinishedTasks: LineCountV1; workingLines: LineCountV1; lines: LineCountV1;   // 按计划：本模块和它声明的子模块
   changedByLines: FromExecutedFilesV1<LineCountV1>;                         // “n 条工作线改过这里的文件”（L15）
   files: FromExecutedFilesV1<ModuleFileV1[]>;                               // 按路径去重，按路径的 UTF-8 字节序（L15）

@@ -346,6 +346,13 @@ export type RuntimeExecutionDependencies = {
   /** H's one handoff entry; absent fails a Run selecting `hand_off` closed before the model. */
   handoffs?: import('./handoff-tools.js').HandoffRequestPort;
   /**
+   * The adviser's one maintainer assignment entry (`requestAssignment`); absent
+   * fails a Run selecting `assign_module_maintainer` closed before the model.
+   * The owner keeps the stored operation and its proof; the tool only maps.
+   */
+  maintainerAssignments?: Pick<import('../work-graph/model/module-maintainer-contracts.js').ModuleMaintainerPort,
+    'requestAssignment'>;
+  /**
    * K3 L14: the SAME UnknownCallReview owner the routes publish. The review
    * round's `record_unknown_call_review` tool binds the record and the
    * `work_run` round to it; the read half supplies the current record revision

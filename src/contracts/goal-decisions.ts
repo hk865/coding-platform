@@ -105,7 +105,8 @@ export type DecisionSourceV1 = {
   kind: 'message' | 'goal_cause' | 'candidate' | 'note_review'
     | 'planning_question' | 'goal_conflict' | 'message_release'
     | 'unknown_call_review' | 'command_rerun_request'
-    | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation';
+    | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation'
+    | 'module_maintainer_assignment';
   key: string; subject: DecisionSubjectV1; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
@@ -139,7 +140,7 @@ export type DecisionActionV1 =
   | 'minor_semantic_patch' | 'structural_patch' | 'change_goal'
   | 'exceed_budget' | 'escalate' | 'secretary_action' | 'secretary_inquiry'
   | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty'
-  | 'create_member' | 'role_line_add';
+  | 'create_member' | 'role_line_add' | 'module_maintainer';
 
 // ------------------------------------------------------------------------ //
 // Exact content bases, control rebases, footprints and change proofs (§2.8) //
@@ -233,6 +234,7 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'member_creation'; operationRef: OperationRef }
   | { kind: 'rework_request'; requestRef: ReworkRequestRef }
   | { kind: 'handoff_approval'; operationRef: OperationRef }
+  | { kind: 'module_maintainer_assignment'; operationRef: OperationRef }
   | { kind: 'adviser_creation'; trigger:
       { kind: 'requeue'; ref: TaskRequeueRef } | { kind: 'round'; ref: VerificationRoundRef } };
 
@@ -294,6 +296,8 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
       return canonicalJson({ kind: 'rework_request', requestRef: identity.requestRef } as never);
     case 'handoff_approval':
       return canonicalJson({ kind: 'handoff_approval', operationRef: identity.operationRef } as never);
+    case 'module_maintainer_assignment':
+      return canonicalJson({ kind: 'module_maintainer_assignment', operationRef: identity.operationRef } as never);
     case 'adviser_creation':
       // No adviser-operation ref exists: its key is the triggering requeue/round arm's canonical JSON (§3.9 item 3).
       return canonicalJson(identity.trigger as never);

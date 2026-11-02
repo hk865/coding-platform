@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "93176cb7a8b5bf361fef467f93fb7180c8267da7d09a37da0cb74b3fedd6589a"
+    "sha256": "35fc9e33463fc1df7a32f225538845fa88e8fa066f25ddb27c9f5685af4d04af"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -141,7 +141,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "a396cc8ee564f5bbd7f96ea3b22b54cc3ecffb90c00850e5a1eae6cc1dd24b79"
+    "sha256": "0eb7a06e205ac4530e3ec9261ba7ec697482804236a5388c7e344e8f4edb235b"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -166,6 +166,10 @@
   {
     "path": "resources/prompts/platform/tools/create_member.json",
     "sha256": "62c0c9d45ffd2a281df2acf5f8b5fb69e414127ec878322d5edac5c618290b8e"
+  },
+  {
+    "path": "resources/prompts/platform/tools/assign_module_maintainer.json",
+    "sha256": "250b26074155c533c07bcc7638ace207c9da28c7fee8e2770999e188fbefc7ad"
   },
   {
     "path": "resources/prompts/platform/tools/withdraw_session_message.json",

@@ -20,7 +20,10 @@ export function openScopeLinkOf(links: readonly Pick<SessionWorkLink, 'ref' | 'u
     if (link.until !== null || link.ref.relation !== 'responsible') continue;
     const kind = link.ref.target.kind;
     if (kind === 'goal' || kind === 'project') return kind;
-    if (kind === 'module' && (duty === 'adviser' || duty === 'scribe')) return 'module';
+    // The executor arm is a scope link too: its archive choice closes or moves it before the plan;
+    // `planArchiveRelease`'s automatic-close list stays adviser/scribe only.
+    if (kind === 'module' && (duty === 'adviser' || duty === 'scribe'
+      || roleLineDutyOf(duty) === 'executor')) return 'module';
   }
   return false;
 }

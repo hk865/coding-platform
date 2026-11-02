@@ -178,7 +178,8 @@ export const CLAIM_CASES: readonly ClaimCase[] = [
     open: [{ link: CLAIM_REGION_SCRIBE, duty: 'scribe' }] },
   { name: 'a secretary project link takes none', close: [], expected: [],
     open: [{ link: CLAIM_PROJECT_SECRETARY, duty: 'secretary' }] },
-  { name: 'an executor module link takes none', close: [], expected: [],
+  { name: 'an executor module link takes the maintainer claim', close: [], expected: [
+    { duty: 'executor', target: REGION_TARGET, expectedOwner: null, nextOwner: CLAIM_MODULE_EXECUTOR }],
     open: [{ link: CLAIM_MODULE_EXECUTOR, duty: 'executor' }] },
   { name: 'a task link takes none', close: [], expected: [],
     open: [{ link: CLAIM_TASK_A, duty: 'adviser' }] },

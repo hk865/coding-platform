@@ -18,17 +18,19 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
-import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { RoleConfigurationRef, ModuleRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { roleLineDutyOf } from '../../../contracts/role-lines.js';
 import type { GoalRef, WorkspaceLineSettingsV1, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { EncodedRecord, GoalRecordTransactionPort, StoreFailure } from '../../record-store/ports.js';
+import { compareRefKeys } from '../../record-store/lookup-index.js';
 import type {
   RecordCountPort, RecordCountRequest, RecordLookupPort, RecordLookupRequest,
   RecordOrderedLookupPort, OrderedLookupRequest,
@@ -670,7 +672,7 @@ async function assembleOneLine(
           history: isHistoryNotReadable(headRecord) ? 'not_readable' : 'readable',
           since: headRecord.unavailableSince ?? null }
       : null,
-    groups: deriveGroups(duty, name, taskFacts),
+    groups: deriveGroups(duty, name, taskFacts, openLinks.otherLinks),
     sessionCount,
     chainSessions: chain.map((entry) => entry.session),
     pinned: pinnedBy.length > 0,
@@ -727,10 +729,28 @@ function deriveDoneTasks(facts: LineFactsV1, taskFacts: Map<string, LineTaskFact
   return { tasks: briefs, omitted };
 }
 
-function deriveGroups(duty: LineFactsV1['duty'], name: LineNameV1, taskFacts: Map<string, LineTaskFactV1>) {
+/**
+ * By-module groups (§3.11): only an executor line's open module links are
+ * maintainer links (an adviser/scribe module link is a region scope, not a
+ * maintainer). The maintained module with the smallest `moduleId` in UTF-8
+ * order groups the line; the rest ride as `alsoMaintains` in that same order.
+ * A line with a maintained module and tasks groups by the maintained module.
+ */
+function deriveGroups(duty: LineFactsV1['duty'], name: LineNameV1, taskFacts: Map<string, LineTaskFactV1>,
+  otherLinks: readonly { session: SessionRef; link: SessionWorkLink }[]) {
   const task = name.tasks[0];
   const fact = task === undefined ? undefined : taskFacts.get(taskCanonicalKey(task));
-  return { duty, module: fact?.module ?? null, task: task ?? null };
+  const maintained: ModuleRef[] = roleLineDutyOf(duty) === 'executor'
+    ? otherLinks
+      .flatMap((entry) => entry.link.ref.target.kind === 'module' ? [entry.link.ref.target.ref] : [])
+      .sort((left, right) => compareRefKeys(left.moduleId, right.moduleId))
+    : [];
+  return {
+    duty,
+    module: maintained[0] ?? fact?.module ?? null,
+    task: task ?? null,
+    alsoMaintains: maintained.slice(1),
+  };
 }
 
 // -------------------------------------------------------------------------- //

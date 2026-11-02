@@ -24,7 +24,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { AggregateRef, GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type { ModuleRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple, DispatchOutboxRef } from '../../../contracts/dispatch.js';
-import type { ModuleContainment, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
+import { isUndividedModule, type AdoptedArchitecture, type ModuleContainment, type ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GraphNodeRefV1 } from '../../../contracts/graph-context.js';
 import { canonicalKey as keyOf } from '../../../contracts/fingerprint.js';
@@ -40,6 +40,7 @@ import type { NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult } from '
 import type { GoalExecutedFilesPort } from '../model/decision-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import type { NodeDetailReadPort } from '../model/work-line-contracts.js';
+import type { ModuleMaintainerPort } from '../model/module-maintainer-contracts.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import {
@@ -73,6 +74,12 @@ export type NodeDetailReaderDeps = {
   executedFiles: GoalExecutedFilesPort;
   /** P4: the line assembly deps; the hover's owners go through the same function as lines/list. */
   line: WorkLineReaderDeps;
+  /**
+   * The one maintainer read (§3.11): every catalog module is resolved before the
+   * one brief assembly, so a maintained line absent from the task graph still
+   * gets its brief. A failed read is the read's rejection, never `none`.
+   */
+  maintainerOf: ModuleMaintainerPort['maintainerOf'];
   /** The `notes/list` read (the same `platform.notes` surface). */
   notes?: NodeNotesLookup;
 };
@@ -719,18 +726,50 @@ async function buildLineIndexes(
 // Modules                                                                    //
 // -------------------------------------------------------------------------- //
 
-type ModuleCatalog = { modules: ModuleDefinition[]; containment: ModuleContainment };
+type ModuleCatalog = {
+  adopted: AdoptedArchitecture;
+  modules: ModuleDefinition[];
+  containment: ModuleContainment;
+};
 
 async function readCatalog(deps: NodeDetailReaderDeps, ctx: CoreCallContext): Promise<ModuleCatalog | null> {
   const read = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
   // No adopted architecture is a legitimate empty catalog (§3.12), not a read failure.
-  if (read.status === 'not_found') return { modules: [], containment: { parentOf: [] } };
+  const empty: AdoptedArchitecture = { modules: [], dependencies: [], requireDag: true };
+  if (read.status === 'not_found') return { adopted: empty, modules: [], containment: { parentOf: [] } };
   if (read.status === 'rejected') {
-    return read.code === 'not_found' ? { modules: [], containment: { parentOf: [] } } : null;
+    return read.code === 'not_found' ? { adopted: empty, modules: [], containment: { parentOf: [] } } : null;
   }
   if (read.status === 'not_ready') return null;
+  // L10: keep the REAL AdoptedArchitecture; `isUndividedModule` reads its modules.
   const adopted = read.value.catalog.catalog;
-  return { modules: adopted.modules, containment: adopted.containment ?? { parentOf: [] } };
+  return { adopted, modules: adopted.modules, containment: adopted.containment ?? { parentOf: [] } };
+}
+
+type ModuleMaintainerFact = { status: 'none' } | { status: 'assigned'; line: SessionRef };
+type ModuleMaintainerIndex = Map<string, ModuleMaintainerFact>;
+
+/**
+ * R-03: the same maintainer collection for the hover and the module summary.
+ * `maintainerOf` returns the link's actual SessionRef; the callers pass those
+ * refs through `extraSessions` to the one brief assembly.
+ */
+async function readMaintainers(
+  deps: NodeDetailReaderDeps, ctx: CoreCallContext, scope: WorkspaceScope, catalog: ModuleCatalog,
+): Promise<ReadResult<ModuleMaintainerIndex>> {
+  const found: ModuleMaintainerIndex = new Map();
+  for (const module of catalog.modules) {
+    const read = await deps.maintainerOf(ctx, { workspace: scope, module: module.ref });
+    if (read.status !== 'ready') return read;
+    found.set(keyOf(module.ref), read.value.status === 'assigned'
+      ? { status: 'assigned', line: read.value.line }
+      : { status: 'none' });
+  }
+  return { status: 'ready', value: found };
+}
+
+function maintainerLines(index: ModuleMaintainerIndex): SessionRef[] {
+  return [...index.values()].flatMap((fact) => fact.status === 'assigned' ? [fact.line] : []);
 }
 
 // RW-13/RW-16: the same all-module longest-prefix rule as `mapExecutedFilesToModules`
@@ -788,6 +827,7 @@ async function moduleHover(
   deps: NodeDetailReaderDeps, ctx: CoreCallContext, scope: WorkspaceScope, module: ModuleDefinition,
   catalog: ModuleCatalog, graph: Graph, runs: TaskRuns, facts: ExecutedFilesFacts,
   ownerIndex: Map<string, LineBriefV1[]>, sessionBriefs: Map<string, LineBriefV1[]>, runClaimer: Map<string, SessionRef>,
+  maintainers: ModuleMaintainerIndex,
 ): Promise<ModuleHoverV1> {
   const ownership = ownershipScopeOf(module, catalog);
   const inScope = [module, ...childrenOf(module, catalog)];
@@ -816,8 +856,16 @@ async function moduleHover(
     changedByLines = { availability: 'available', value: count, possiblyIncomplete: facts.possiblyIncomplete, sourceCursor: facts.sourceCursor };
   }
 
-  return { module: module.ref, parent: parentOf(module, catalog.containment), name: module.name,
-    paths: module.paths, responsibility: module.responsibility, maintainer: { status: 'none' },
+  // R-03: the maintainer brief comes from the one `assembleLineBriefs`; the
+  // actual owner SessionRef was passed through `extraSessions`, never a second index.
+  const maintainerFact = maintainers.get(keyOf(module.ref)) ?? { status: 'none' };
+  const maintainer: ModuleHoverV1['maintainer'] = maintainerFact.status === 'assigned'
+    ? { status: 'assigned', line: (sessionBriefs.get(keyOf(maintainerFact.line)) ?? [])[0]! }
+    : { status: 'none' };
+  return { module: module.ref, parent: parentOf(module, catalog.containment),
+    undivided: isUndividedModule(catalog.adopted, module.ref), name: module.name,
+    paths: module.paths, responsibility: module.responsibility,
+    maintainer,
     unfinishedTasks: { status: 'exact', value: unfinished.length },
     workingLines: { status: 'exact', value: working }, lines: { status: 'exact', value: lines.size },
     changedByLines, files: moduleFiles(module, ownership, facts) };
@@ -875,12 +923,17 @@ async function assembleHover(deps: NodeDetailReaderDeps, ctx: CoreCallContext, g
   const runs = runsRead.value.runs;
   const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef);
   const line = memoDuty(deps.line);
-  const indexes = await buildLineIndexes(deps, ctx, scope, goalRef, graph, runs, line, new Map());
-  if (indexes.status !== 'ready') return indexes;
-  const { ownerIndex, participationIndex, participationProblem, goalOwners, sessionBriefs, runClaimer, problems } = indexes.value;
-
+  // §3.11/R-03: read the catalog and every maintainer BEFORE the one brief
+  // assembly, so a maintainer-only line reaches `extraSessions` and gets its brief.
   const catalog = await readCatalog(deps, ctx);
   if (catalog === null) return { status: 'rejected', code: 'unavailable', reason: 'the architecture catalog read failed' };
+  const maintainersRead = await readMaintainers(deps, ctx, scope, catalog);
+  if (maintainersRead.status !== 'ready') return maintainersRead;
+  const maintainers = maintainersRead.value;
+  const indexes = await buildLineIndexes(deps, ctx, scope, goalRef, graph, runs, line, new Map(),
+    maintainerLines(maintainers));
+  if (indexes.status !== 'ready') return indexes;
+  const { ownerIndex, participationIndex, participationProblem, goalOwners, sessionBriefs, runClaimer, problems } = indexes.value;
 
   // §3.12 / L1b shared cost: one per-Goal anchor index; `readTaskArchiveState`
   // is called from the index only for Tasks with an outstanding anchor. A
@@ -905,7 +958,7 @@ async function assembleHover(deps: NodeDetailReaderDeps, ctx: CoreCallContext, g
 
   const moduleHovers: ModuleHoverV1[] = [];
   for (const module of catalog.modules) {
-    moduleHovers.push(await moduleHover(deps, ctx, scope, module, catalog, graph, runs, facts, ownerIndex, sessionBriefs, runClaimer));
+    moduleHovers.push(await moduleHover(deps, ctx, scope, module, catalog, graph, runs, facts, ownerIndex, sessionBriefs, runClaimer, maintainers));
   }
 
   const files = filesView(facts, (entries) => {
@@ -1203,6 +1256,18 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
   const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef);
   const line = memoDuty(deps.line);
   const extraSessions = input.node.kind === 'session' ? [input.node.ref] : [];
+  // R-03: the module summary collects the maintainers BEFORE its one brief
+  // assembly; a maintainer-only line with no task relation must get its brief.
+  let catalog: ModuleCatalog | null = null;
+  let maintainers: ModuleMaintainerIndex = new Map();
+  if (input.node.kind === 'module') {
+    catalog = await readCatalog(deps, ctx);
+    if (catalog === null) return { status: 'rejected', code: 'unavailable', reason: 'the architecture catalog read failed' };
+    const maintainersRead = await readMaintainers(deps, ctx, scope, catalog);
+    if (maintainersRead.status !== 'ready') return maintainersRead;
+    maintainers = maintainersRead.value;
+    extraSessions.push(...maintainerLines(maintainers));
+  }
   const indexes = await buildLineIndexes(deps, ctx, scope, goalRef, graph, runs, line, new Map(), extraSessions);
   if (indexes.status !== 'ready') return indexes;
   const { ownerIndex, participationIndex, goalOwners, sessionBriefs, runClaimer, problems } = indexes.value;
@@ -1250,13 +1315,13 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
   }
 
   if (input.node.kind === 'module') {
-    const catalog = await readCatalog(deps, ctx);
-    if (catalog === null) return { status: 'rejected', code: 'unavailable', reason: 'the architecture catalog read failed' };
-    const module = catalog.modules.find((candidate) => keyOf(candidate.ref) === keyOf(input.node.kind === 'module' ? input.node.ref : null));
+    const moduleCatalog = catalog;
+    if (moduleCatalog === null) return { status: 'rejected', code: 'unavailable', reason: 'the architecture catalog read failed' };
+    const module = moduleCatalog.modules.find((candidate) => keyOf(candidate.ref) === keyOf(input.node.kind === 'module' ? input.node.ref : null));
     if (module === undefined) return { status: 'not_found' };
     return { status: 'ready', value: {
       section: 'summary', node: input.node, pin: pinOf(module.ref), task: null, group: null, goal: null,
-      module: await moduleHover(deps, ctx, scope, module, catalog, graph, runs, facts, ownerIndex, sessionBriefs, runClaimer),
+      module: await moduleHover(deps, ctx, scope, module, moduleCatalog, graph, runs, facts, ownerIndex, sessionBriefs, runClaimer, maintainers),
       line: null,
       notes: await nodeNotesOf(deps, ctx, input.node, goalRef, graph.plan.planRevision, input.page.limit),
       fileRisks: filesView(facts, () => ({ riskCount: { status: 'exact', value: 0 } })), sourceCursor: ZERO_CURSOR,

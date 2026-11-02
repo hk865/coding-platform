@@ -75,11 +75,11 @@ describe('G2-residual', () => {
     expect(residualResponsibilityOf([goal], [], 'executor')).toBe('scope');
     expect(residualResponsibilityOf([project], [], 'executor')).toBe('scope');
     expect(residualResponsibilityOf([module], [], 'adviser')).toBe('scope');
-    expect(residualResponsibilityOf([module], [], 'executor')).toBe(false);
+    expect(residualResponsibilityOf([module], [], 'executor')).toBe('scope');
     expect(openScopeLinkOf([goal], 'executor')).toBe('goal');
     expect(openScopeLinkOf([project], 'executor')).toBe('project');
     expect(openScopeLinkOf([module], 'adviser')).toBe('module');
-    expect(openScopeLinkOf([module], 'executor')).toBe(false);
+    expect(openScopeLinkOf([module], 'executor')).toBe('module');
 
     const driven = await driveS6BHandoff(scope.world.world, { operation: scope.operation });
     expect(driven.progress).toMatchObject({ stage: 'finished', phase: 'completed', archived: true, lastRefusal: null });

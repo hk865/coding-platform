@@ -29,6 +29,7 @@ import type {
   MessageForwardingPort, SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
+import type { ModuleMaintainerPort } from '../core/work-graph/model/module-maintainer-contracts.js';
 import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
@@ -96,7 +97,9 @@ import {
   type CoreRouteSuffix,
   type CoreScope,
   type DecisionsCandidateCardRead,
+  type AssignMaintainerRouteEntry,
   type K3CoreRouteDto,
+  type MaintainerCoreRouteDto,
   type MessagesCoreRouteDto,
   type OverlapCoreRouteDto,
   type WaitsCoreRouteDto,
@@ -153,6 +156,8 @@ export type CoreRouteBindings = {
   archiveSession: SessionLifecyclePort['archiveSession'];
   reactivateSession: SessionLifecyclePort['reactivateSession'];
   linkSessionWork: SessionLifecyclePort['linkSessionWork'];
+  /** The person-only module maintainer assignment; the port's third argument is bound by the route. */
+  assignMaintainer: AssignMaintainerRouteEntry;
   sendMessage: SessionMailboxPort['sendMessage'];
   readInbox: SessionMailboxPort['readInbox'];
   readMessage: SessionMailboxPort['readMessage'];
@@ -349,6 +354,8 @@ export type CoreRoutePlatform = {
   workspace: WorkspaceToolsPort;
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>
     & Pick<SessionLifecyclePort, 'archiveSession' | 'reactivateSession' | 'linkSessionWork' | 'releaseSessionArchiveRequest'>;
+  /** The module maintainer owner the person-only `modules/assign-maintainer` route binds. */
+  moduleMaintainers: Pick<ModuleMaintainerPort, 'assignModuleMaintainer'>;
   executions: Pick<ExecutionReadPort, 'readExecution'> & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   runtime: Pick<RuntimeExecutionPort,
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
@@ -473,7 +480,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof MessagesCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
-  | keyof RoleLineCoreRouteDto,
+  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -512,6 +519,7 @@ export const CORE_ROUTE_SPECS: Record<
   'sessions/archive': { kind: 'graph_write', binding: 'archiveSession', owner: 'sessions.archiveSession' },
   'sessions/reactivate': { kind: 'graph_write', binding: 'reactivateSession', owner: 'sessions.reactivateSession' },
   'sessions/link': { kind: 'graph_write', binding: 'linkSessionWork', owner: 'sessions.linkSessionWork' },
+  'modules/assign-maintainer': { kind: 'graph_write', binding: 'assignMaintainer', owner: 'moduleMaintainers.assignModuleMaintainer' },
   'messages/send': { kind: 'graph_write', binding: 'sendMessage', owner: 'messages.sendMessage' },
   'messages/inbox': { kind: 'plain', binding: 'readInbox', owner: 'messages.readInbox' },
   'messages/outbox': { kind: 'plain', binding: 'readOutbox', owner: 'messages.readOutbox' },
@@ -894,6 +902,11 @@ export function createPlatformCoreRouteBindings(
     archiveSession: platform.sessions.archiveSession.bind(platform.sessions),
     reactivateSession: platform.sessions.reactivateSession.bind(platform.sessions),
     linkSessionWork: platform.sessions.linkSessionWork.bind(platform.sessions),
+    // The route supplies the person caller itself; the port's trusted branch is
+    // never reachable from HTTP.
+    assignMaintainer: async (ctx, request) => personOnly(ctx)
+      ? platform.moduleMaintainers.assignModuleMaintainer(ctx, request, { kind: 'person' })
+      : forbiddenPerson(),
     sendMessage: platform.messages.sendMessage.bind(platform.messages),
     readInbox: platform.messages.readInbox.bind(platform.messages),
     readOutbox: platform.messages.readOutbox.bind(platform.messages),
@@ -1386,6 +1399,7 @@ export async function dispatchCoreRoute(
       case 'sessions/archive': return bindings.archiveSession(ctx, graphWrite.request as never);
       case 'sessions/reactivate': return bindings.reactivateSession(ctx, graphWrite.request as never);
       case 'sessions/link': return bindings.linkSessionWork(ctx, graphWrite.request as never);
+      case 'modules/assign-maintainer': return bindings.assignMaintainer(ctx, graphWrite.request as never);
       case 'messages/send': return bindings.sendMessage(ctx, graphWrite.request as never);
       case 'messages/inbox': return bindings.readInbox(ctx, plain.input as never);
       case 'messages/outbox': return bindings.readOutbox(ctx, plain.input as never);

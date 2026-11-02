@@ -31,6 +31,7 @@ import {
   createModuleOnlyRetiredFixture,
   createOccupiedPredecessorFixture,
   createOtherResponsibilityFixture,
+  createRetiredModuleLineFixture,
   createReusablePredecessorFixture,
   createRoleMismatchHandoverFixture,
   createStillResponsibleRetiredFixture,
@@ -42,6 +43,12 @@ type Workflow = HandoverComposition['workflow'];
 type AdvanceResult = Awaited<ReturnType<Workflow['advanceWork']>>;
 type ReadyAdvance = Extract<AdvanceResult, { status: 'ready' }>;
 type PerformNext = Extract<WorkflowAdvanceInput, { kind: 'perform' }>;
+
+/** The open module responsibilities on a card the public Session read returned. */
+function openModuleLinks(card: { links: readonly SessionWorkLink[] }): SessionWorkLink[] {
+  return card.links.filter(link => link.ref.relation === 'responsible' && link.ref.target.kind === 'module'
+    && link.until === null);
+}
 
 /** Assert the Workflow advanced (not waiting/rejected) and narrow the result. */
 function advanced(result: AdvanceResult): ReadyAdvance {
@@ -536,6 +543,52 @@ describe('wiring 1 retired-line maintenance handover', () => {
       });
       expect(await f.observations.session(f.P)).toMatchObject({ record: { lifecycle: 'archived' } });
       expect(await f.observations.anchors()).toEqual([]);
+      // The handoff moves the module responsibility to the continuation.
+      expect(openModuleLinks(await f.observations.session(f.P))).toEqual([]);
+      expect(openModuleLinks(await f.observations.session(f.C))).toHaveLength(1);
+    } finally { await f.close(); }
+  });
+
+  // Only an executor line maintains a module (a reviewer counts as one), so only its archive carries a choice: the
+  // first active executor continuation takes it over, with none it drops. An adviser's or scribe's link closes with
+  // the archive plan. `heir` is the index of the continuation that ends up maintaining the module.
+  it.each([
+    { name: 'adviser, adviser continuation', duty: 'adviser', continuations: [{ duty: 'adviser' }],
+      mode: 'handoff_complete', heir: null },
+    { name: 'scribe, scribe continuation', duty: 'scribe', continuations: [{ duty: 'scribe' }],
+      mode: 'handoff_complete', heir: null },
+    { name: 'reviewer, reviewer continuation', duty: 'reviewer', continuations: [{ duty: 'reviewer' }],
+      mode: 'handoff_complete', heir: 0 },
+    { name: 'executor, no continuation', duty: 'executor', continuations: [], mode: 'retired', heir: null },
+    { name: 'executor, its continuation retired and archived', duty: 'executor',
+      continuations: [{ duty: 'executor', archived: true }], mode: 'handoff_complete', heir: null },
+    { name: 'executor, its continuation not an executor', duty: 'executor', continuations: [{ duty: 'adviser' }],
+      mode: 'handoff_complete', heir: null },
+    { name: 'executor, an archived continuation ahead of an active one', duty: 'executor',
+      continuations: [{ duty: 'executor' }, { duty: 'executor', archived: true }], mode: 'handoff_complete', heir: 0 },
+  ] as const)('a retired line archives and its module link closes: $name', async ({
+    duty, continuations, mode, heir,
+  }) => {
+    const f = await createRetiredModuleLineFixture({ duty, continuations });
+    try {
+      expect(openModuleLinks(await f.observations.session(f.line))).toHaveLength(1);
+      const result = await f.workflow.maintainSessions(f.ctx, f.maintenanceInput);
+      expect(result).toMatchObject({ status: 'ready', value: { archived: [f.line], pending: [], failures: [] } });
+      expect(f.observations.archiveRequests(f.line)[0]).toMatchObject({ mode });
+      const card = await f.observations.session(f.line);
+      expect(card).toMatchObject({ record: { lifecycle: 'archived' } });
+      expect(openModuleLinks(card)).toEqual([]);
+      for (const [index, successor] of f.successors.entries()) {
+        expect(openModuleLinks(await f.observations.session(successor))).toHaveLength(index === heir ? 1 : 0);
+      }
+      if (heir !== null) {
+        expect(await f.observations.maintainer()).toMatchObject({ status: 'assigned', line: f.successors[heir] });
+      } else {
+        expect(await f.observations.maintainer()).toEqual({ status: 'none' });
+        // The `module-maintainer:` claim is free: another executor line opens the link.
+        const next = await f.takeModule();
+        expect(await f.observations.maintainer()).toMatchObject({ status: 'assigned', line: next });
+      }
     } finally { await f.close(); }
   });
 });

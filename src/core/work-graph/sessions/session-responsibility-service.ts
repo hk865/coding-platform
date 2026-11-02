@@ -25,7 +25,7 @@ import { canonicalKey, canonicalOf } from '../../../contracts/fingerprint.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import {
-  roleLineDutyOf, roleScopeClaimKey, roleScopeOfTarget,
+  moduleMaintainerKey, roleLineDutyOf, roleScopeClaimKey, roleScopeOfTarget,
   type RoleLineDutyV1, type RoleScopeClaimChangeV1,
 } from '../../../contracts/role-lines.js';
 import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
@@ -705,6 +705,22 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       if (link !== null && 'status' in link) return link;
       destinationLink = link;
     }
+    // A module hand-over's destination must be an active executor line; `destinationEligible` checks only the
+    // Session's lifecycle, health, archive request and readonly-copy provenance, never the line duty. The read is
+    // this choice's one destination-duty read and also supplies the destination claim change below.
+    let destinationDuty: RoleLineDutyV1 | null = null;
+    if (transfer !== null && target.kind === 'module' && destination !== null) {
+      const resolved = await duty(destination.role, ctx);
+      if (resolved.status !== 'ready') {
+        return resolved.status === 'rejected' ? resolved
+          : reject('unavailable', `the destination Session duty is ${resolved.status}`);
+      }
+      const counted = roleLineDutyOf(resolved.value);
+      if (counted !== 'executor') {
+        return reject('unavailable', 'the destination Session is not an active executor line');
+      }
+      destinationDuty = counted;
+    }
     const basisResult = await basis.readResponsibilityBasis(ctx, { sessionRef: step.sessionRef, target });
     if (basisResult.status !== 'ready') return mapReadFailure(basisResult);
     const proof = basisResult.value;
@@ -733,6 +749,17 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       closed: effect.closed, opened: effect.opened, openedBound: effect.openedBound,
       archiveStep: step, basis: proof.basis, eventId: identity.eventId,
     });
+    // §5.2: a drop releases only the source claim; a module hand-over releases the source and takes the
+    // destination's claim, and the one fold covers both lists. No second duty read: the destination duty came
+    // from the hand-over check above.
+    const closeChanges = await scopeClaimChangesOf(ctx, duty, effect.source, [effect.closed.ref], []);
+    if (!closeChanges.ok) return closeChanges.rejection;
+    const openChanges = destinationDuty !== null && effect.opened !== null && effect.openedBound !== null
+      ? responsibilityClaimChanges({ projectRef: { projectId: scope.projectId }, close: [],
+        open: [{ link: effect.opened.ref, duty: destinationDuty }] })
+      : [];
+    const claimChanges = foldRoleScopeClaimChanges({ projectId: scope.projectId },
+      [...closeChanges.changes, ...openChanges]);
     const prepared = writePrepared({
       identityKey: identity.identityKey, fingerprint: identity.fingerprint, eventId: identity.eventId,
       event: responsibilityEvent, source: effect.source, destination: effect.destination,
@@ -741,7 +768,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       basisGuards: proof.guards,
       expectedSource: source.revision, expectedDestination: destination?.revision ?? null,
       expectedSourceLink: sourceLink?.revision ?? null, expectedDestinationLink: destinationLink?.revision ?? null,
-      claimChanges: [],
+      claimChanges,
     });
     if (!prepared.ok) return prepared.rejection;
     if (ctx.signal?.aborted) return reject('cancelled', 'the responsibility disposal was cancelled before commit');
@@ -997,9 +1024,14 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       session: plan.sessions[0]!,
       closed: plan.events.map((event) => event.closed),
       opened: plan.events.flatMap((event) => event.opened === null ? [] : [event.opened]),
+      // The public projection uses the same key mapping as the commit contribution: an
+      // executor's region target is the module-maintainer claim, every other change the
+      // role-scope claim. An old reanchor replay keeps its stored `owners: []`.
       owners: plan.claimChanges.filter((change) => change.nextOwner !== null).map((change) => ({
         link: change.nextOwner!,
-        claimKey: roleScopeClaimKey({ projectRef: { projectId }, duty: change.duty, target: change.target }),
+        claimKey: change.duty === 'executor' && change.target.kind === 'region'
+          ? moduleMaintainerKey(change.target.moduleRef)
+          : roleScopeClaimKey({ projectRef: { projectId }, duty: change.duty, target: change.target }),
       })),
     };
   }

@@ -127,7 +127,7 @@
 - `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:45`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
 - `actorRefProblem` 是 actor 字段形状的正本；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换；sessions 的 `checkCreationActor` 包装已删除（S05、FP-17）。
 - `canonicalRefKey` 委托 `src/contracts/fingerprint.ts:59` 的 `canonicalKey`；`configuration/role-record-codecs.ts` 的旧副本已删除，不要恢复。
-- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:174` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
+- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:180` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
 - 不要复制 Store 失败 switch；按 owner 语义选现有映射，request 尾/收件冲突先单独处理（M1-30、M1-10）。
 - 不要把 `lookupAll`/`readAllOrdered` 当成有界队列步；完整集与遍历预算是两个契约（M1-13）。
 - 不要重建事件 codec 管线、改校验顺序或把持久化 JSON 换成 canonical-key 序列化（M1-37）。

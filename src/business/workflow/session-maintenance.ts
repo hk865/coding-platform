@@ -9,9 +9,10 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef, WorkLinkTarget, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SessionRecord, SessionWorkLink } from '../../contracts/core/session.js';
-import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
+import type { ArchiveTaskChoiceV1, RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
+import { roleLineDutyOf } from '../../contracts/role-lines.js';
 import { SESSION_ARCHIVE_AUTOMATION_ACTOR } from '../../contracts/task-requeue.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
@@ -19,7 +20,9 @@ import type { SessionMessage } from '../../core/work-graph/model/communication-c
 import type { SessionFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import { executorArchiveDue, openResponsibleLinkOf } from '../../core/work-graph/state/session-availability.js';
+import { destinationEligible } from '../../core/work-graph/state/session-responsibility.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../../core/work-graph/sessions/lifecycle-record-codecs.js';
+import { plainSessionRef } from '../../core/work-graph/sessions/session-record-codecs.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { WorkflowDependencies } from './ports.js';
 import type { WorkflowCalls, WorkflowCloseEventReader } from './contracts.js';
@@ -512,6 +515,32 @@ export function createSessionMaintenanceService(
     return 'unknown';
   }
 
+  /**
+   * HM04: the continuation that takes an executor's module link is the first, in order, that passes the hand-over's own
+   * destination check (`session-responsibility-service.ts:708`), the same two facts. `null` is "none can", so the link
+   * drops; the chain is not followed past a continuation. A read that did not answer refuses, it never drops.
+   */
+  async function moduleSuccessorOf(
+    ctx: CoreCallContext,
+    sessions: NonNullable<SessionMaintenanceDependencies['sessions']>,
+    continuations: readonly SessionRef[],
+  ): Promise<{ status: 'ready'; value: SessionRef | null } | CoreRejection> {
+    for (const continuation of continuations) {
+      const ref = plainSessionRef(continuation);
+      const card = await sessions.readSession(ctx, ref);
+      if (card.status !== 'ready') {
+        return card.status === 'rejected' ? card : reject('incomplete', 'the continuation Session is not ready');
+      }
+      if (!destinationEligible(card.value.record)) continue;
+      const duty = await deps.sessionDuty!(card.value.record.role, ctx);
+      if (duty.status !== 'ready') {
+        return duty.status === 'rejected' ? duty : reject('unavailable', `the continuation Session duty is ${duty.status}`);
+      }
+      if (roleLineDutyOf(duty.value) === 'executor') return { status: 'ready', value: ref };
+    }
+    return { status: 'ready', value: null };
+  }
+
   return {
     async maintainSessions(ctx, input): Promise<ReadResult<SessionMaintenanceResultV1>> {
       let isolated: unknown;
@@ -611,8 +640,8 @@ export function createSessionMaintenanceService(
             // W1-AUTO-01 (L12): a retired line that already has a continuation
             // is handed over. Once its own terminal responsibility links are
             // closed, a remaining open task/work relation means the handover is
-            // not finished (HM02) and the line stays put; an open module link is
-            // not a responsibility to dispose (HM04). Otherwise the continuation
+            // not finished (HM02) and the line stays put; an executor's open module
+            // link is handed over to the continuation (HM04). Otherwise the continuation
             // took the work and this line is archived as `handoff_complete`.
             if (facts.continuations.length > 0) {
               if (openResponsibleLinkOf(links) !== false) continue;
@@ -677,10 +706,27 @@ export function createSessionMaintenanceService(
 
           const internal = internalArchive();
           if (internal === undefined) { failures.push({ sessionRef, rejection: reject('unsupported', 'the internal archive composition is not installed') }); continue; }
-          const tasks = openResponsibleLinks(record, links).map((link) => ({
-            target: { kind: 'task' as const, ref: link.ref.target.kind === 'task' ? link.ref.target.ref : { projectId: record.ref.projectId, goalId: '', taskId: '' } },
-            disposition: { kind: 'drop' as const },
-          })).filter((choice) => choice.target.ref.goalId.length > 0);
+          // A handoff moves an executor's module responsibility to the first continuation that can take it; every
+          // other archive, and a handoff with none, drops it, with the same choice shape the archive admission
+          // requires for an executor's open module link (book-8b.md:434). A refused transfer stays an existing
+          // `failures` entry. An adviser's or scribe's module link takes no choice: the archive plan closes it
+          // (book-8b.md:396).
+          const responsible = openResponsibleLinks(record, links);
+          const maintainer = responsible.some((link) => link.ref.target.kind === 'module')
+            && roleLineDutyOf(await dutyOf(ctx, record)) === 'executor';
+          const successor = maintainer && mode === 'handoff_complete'
+            ? await moduleSuccessorOf(ctx, sessions, facts.continuations) : { status: 'ready' as const, value: null };
+          if (successor.status === 'rejected') { failures.push({ sessionRef, rejection: successor }); continue; }
+          const tasks: ArchiveTaskChoiceV1[] = [];
+          for (const link of responsible) {
+            const target = link.ref.target;
+            if (target.kind === 'module' && maintainer) {
+              tasks.push({ target: { kind: 'module', ref: target.ref },
+                disposition: successor.value !== null ? { kind: 'transfer', to: successor.value } : { kind: 'drop' } });
+            } else if (target.kind === 'task') {
+              tasks.push({ target: { kind: 'task', ref: target.ref }, disposition: { kind: 'drop' } });
+            }
+          }
           const requestId = `s1-maintenance-archive:${record.ref.projectId}:${sessionRef.sessionId}:${mode}:${record.revision}`;
           const request: GraphWrite<RequestSessionArchiveInput> = {
             input: { sessionRef, reason, tasks, wait: null, mode },

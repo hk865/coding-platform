@@ -105,9 +105,13 @@ export type SessionGuardContext = {
   /**
    * Only for `work_linked`. `pin` is the caller's link version pin; the owner
    * service keeps it as the link's guard in the same commit (the machine has
-   * no current link revision to compare it with).
+   * no current link revision to compare it with). `sameOwner` is the zero-effect
+   * fact of an executor's own open module maintainer link (L9 idempotence): the
+   * owner has already established that the open + claim invariant holds, so the
+   * machine writes no Session revision, link revision, cursor binding or event.
    */
-  link: null | { exists: boolean; open: boolean; targetValid: boolean; pin: number | null };
+  link: null | { exists: boolean; open: boolean; targetValid: boolean; pin: number | null;
+    sameOwner?: boolean | undefined };
   /** Slice 1 §3.5: only the new archive rows read it. */
   archive?: SessionArchiveGuardV1;
   /** Slice 1 §3.5: only the new dispatch admission reads it. */
@@ -998,6 +1002,10 @@ function workLinked(state: ActiveState, active: boolean, ctx: SessionGuardContex
     if (!link.exists) return reject('guard_failed', 'not_found', 'there is no existing work link to close');
     if (!link.open) return reject('illegal', 'invalid', 'the work link is already closed');
   }
+  // The same owner writing its already-open link again is a no-op, like the
+  // matching pending archive request above: no revision, no bound field, no
+  // event. It sits before the stale pin because it writes nothing to guard.
+  if (active && link.sameOwner === true) return done(state);
   if (stalePin(state, ctx)) return reject('stale', 'revision_conflict', 'the Session changed since the caller read it');
   return done({ ...state, revision: state.revision + 1 }, [
     { kind: 'bump_session_revision' }, { kind: 'write_work_link', bound: active ? 'since' : 'until' },

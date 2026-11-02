@@ -66,8 +66,8 @@ afterEach(async () => {
 
 const SCOPE = { projectId: 's1-routes', workspaceId: 'w' };
 
-/** The eleven suffixes the slice adds (`CoreRouteSuffix` is declared in core-http-types.ts). */
-const NEW_ROUTES = SLICE1_ROUTES satisfies readonly CoreRouteSuffix[];
+/** The eleven slice-1 suffixes plus the maintainer assignment (`CoreRouteSuffix` is declared in core-http-types.ts). */
+const NEW_ROUTES = [...SLICE1_ROUTES, 'modules/assign-maintainer'] as const satisfies readonly CoreRouteSuffix[];
 
 /** Spec §4.4: kind, binding and documented owner of each new suffix (row 40's shared expected table). */
 const EXPECTED: Record<(typeof NEW_ROUTES)[number], { kind: CoreRouteKind; binding: keyof CoreRouteBindings; owner: string }> =

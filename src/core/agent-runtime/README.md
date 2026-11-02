@@ -66,6 +66,7 @@
 - `note-tool.ts` — `record_note` 工具。`NoteToolsConfig` 的 `kinds`/`withdraw` 决定声明：写入种类枚举正好是 `kinds`，`review` 只在完整 Work 种类集（含 `repair`）下才建，`withdraw` 只在被准可时才建；空 `kinds` 在构造时抛错，不注册一个只能被拒的工具。
 - `whiteboard-tools.ts` — 白板/未来计划工具。
 - `communication-tools.ts` — SessionMailbox 与用户决策工具。`SessionMailboxToolsConfig.mailbox` 是完整 `SessionMessageCommandPort`；`SESSION_MAILBOX_TOOL_NAMES` 的第七个名字是 `withdraw_session_message`（`{ messageRef }`，owner 自己钉当前版本），`SECRETARY_QUERY_MAILBOX_TOOL_NAMES` 是秘书请求轮可选的四个（`send`/`ack`/`respond`/`withdraw`）；`send_session_message` 带 `expected`/`taskRef`/`followupOf`/`deadlineMs`，没有 `goalRef`；`respond_session_message` 是扁平的两臂 `{ messageRef, expectedRevision, text } | { messageRef, expectedRevision, reject: true, reason }`。
+- `maintainer-tools.ts` — `assign_module_maintainer` 的模型适配器。`ASSIGN_MODULE_MAINTAINER_TOOL_NAME` 与 `AssignMaintainerToolsConfig` 绑定 owner 的 `requestAssignment`、可信 Work caller（无 proof）、上下文和命令身份；严格 schema 只要 `moduleRef`、`sessionRef` 和 `reason`，证明与分支由 owner 在真实授权点产生；结果原样是 `assigned`（目标线）、`needs_decision`（卡 key）或 `CoreRejection`。
 - `member-tools.ts` — `create_member` 的模型适配器。`CREATE_MEMBER_TOOL_NAME` 与 `CreateMemberToolsConfig` 绑定 M 的 `requestMember`、可信上下文、Work Run 或秘书轮的 caller 和命令身份；严格 schema 只要 `duty`、`scope.task`、`reason` 和可选的 `acknowledgement`，字节上限和准入都在 member service；四种成功结果原样交给 `success`，`rejected` 保留原码。
 - `handoff-tools.ts` — `hand_off` 的模型适配器。`HANDOFF_TOOL_NAMES` 只是 `HAND_OFF_TOOL_NAME` 的单名清单；`HandoffRequestPort` 是 H 的 `requestHandoff` 的结构端口（`caller` 带 agent actor、session、run、duty），`createHandoffTools` 从可信 `work_run` 上下文快照 principal，用 `agentActorOf` 派生 caller actor，把 `{commandId, caller, source, assignments, reason}` 原样交给 owner，并把 `incomplete`/`accepted`/`needs_decision`、`CoreRejection`、取消与抛错映射到冻结的 Kernel 结果；它不加批准、理解检查或状态规则。
 - `request-read-tools.ts` — 秘书的只读 `read_requests` 适配器（`READ_REQUESTS_TOOL_NAME`、`READ_REQUESTS_TOOL_NAMES`）。经 `MainSurfaceReadPort.readMainPage` 读一个 Goal 或无目标视图（一页 20 个）或经 `readRequestView` 读一个 `requestRoot`；只投影请求字段，每轮答案按共用的 2 KiB 截断并附包内省略行；不读卡片、通知或已读位置，也不写。
@@ -112,6 +113,7 @@
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:232` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:219` | 一次 fresh QueryRun 驱动；秘书轮按准入多建注记、邮箱、成员和请求读组 | 正式 Query 启动 |
 | `createMemberTools` | `src/core/agent-runtime/member-tools.ts:84` | `create_member` 的模型适配器；可信 caller 与命令身份由工厂绑定 | Work Run 或秘书轮注册成员工具时 |
+| `createAssignMaintainerTools`、`ASSIGN_MODULE_MAINTAINER_TOOL_NAME` | `src/core/agent-runtime/maintainer-tools.ts:56`、`:24` | `assign_module_maintainer` 的模型适配器与工具名；可信 Work caller 和命令身份由工厂绑定，准入与证明留在 owner | 装配 adviser 的 Work 工具组时 |
 | `createReworkTools` | `src/core/agent-runtime/rework-tools.ts:155` | `request_rework`/`request_recheck` 的 Work 适配器：只把调用交 `claims.requeueTask` 与 `evidence.reverifyRound`，命令身份由工厂绑定 | Work Run 注册两个返工工具时 |
 | `createHandoffTools` | `src/core/agent-runtime/handoff-tools.ts:79` | `hand_off` 的模型适配器；可信 caller、命令身份和四个结果臂由工厂/owner 决定 | Work Run 注册 `hand_off` 时（组合根经 `RuntimeExecutionDependencies.handoffs` 传入） |
 | `createReadRequestTools` | `src/core/agent-runtime/request-read-tools.ts:69` | 秘书的只读请求历史适配器；一页/单请求，答案按 2 KiB 截断 | 秘书轮注册 `read_requests` 时 |
@@ -159,13 +161,13 @@
 | `selectPromptSkills` | `src/core/agent-runtime/prompt-set-texts.ts:333` | 按选择取 Skill 内容 | prepare 冻结 Skill |
 | `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
 | `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
-| `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:243` | 按 grant/配置选 Work 工具组 | 驱动装配 |
-| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:620` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
+| `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:247` | 按 grant/配置选 Work 工具组 | 驱动装配 |
+| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:649` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
 | `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:133` | 图历史读端口的工具代理 | 工具需要图历史 |
 | `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:238` | `project_source` 冻结模式工具 | 源码工具组 |
 | `duplicates`（`project_source` 的 compare 选项） | `src/core/agent-runtime/project-source-tool.ts:120` | `duplicates: true` 让同一次 compare 在 after 材料上列出重复候选；缺省时结果与字节不变 | 模型要在一次比较里同时拿重复候选时 |
 | `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |
-| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:543` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
+| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:570` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
 | `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
 | `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
 | `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |

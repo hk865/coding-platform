@@ -14,7 +14,7 @@
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（26 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 169 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 170 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（15 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（148 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
@@ -58,7 +58,7 @@ Session 目录、生命周期、归档和交接；事实由正式 owner 写，�
 - `S1-session-facts-fixture.ts` — fx2 的生产入口前置：公共 Session 创建/观察和 `observeStore`，不调用模型；`tests/work-graph/S1-session-facts.test.ts` 在用。
 - `S1-workflow-archive-fixture.ts` — FX3 owner、注入时钟、逐次 commit 的不变量观察，claim/entry 沿用现有夹具，域写入走生产 writer；`tests/business/S1-archive-flow.test.ts` 在用。
 - `S7C-duty-fixture.ts` — F1 的 duty resolver 装配：在真实 Host 目录上按 Session 的固定 duty 解析 adviser/secretary/scribe，取最小的 active `sessionId`，没有则 null；`configuration` 给 Slice-1 的 executor 回退，其余 duty 来自 Session 自己的 role 事实；只导出 `dutyOf`，经 `createSessionDutyResolver` 和 `createDutyRecipient` 走公开读；`tests/state/S7C-overlap-gate-service.test.ts`、`tests/work-graph/S7C-f-resolver.test.ts` 在用。
-- `WP1-handover-fixture.ts` — 五套交接世界（中断、Role 不匹配、别的责任、被占/被归档前任），每套经 claim/link/enter/terminal/requeue/archive 公共步骤；`tests/business/WP1-continuation-handover.test.ts` 在用。
+- `WP1-handover-fixture.ts` — 五套交接世界（中断、Role 不匹配、别的责任、被占/被归档前任），每套经 claim/link/enter/terminal/requeue/archive 公共步骤；另有一组不走 Run 的退役模块线（真实建线和链接，把 Kernel 数据库移走再移回，记录真实 probe 的回答）；`tests/business/WP1-continuation-handover.test.ts` 在用。
 - `WP1-units-fixture.ts` — DU09 duty-maintenance、GC03/GC04/AN08 的 assembler facts、WF01/WF02 的 start 拒绝工作流；`tests/composition/WP1-session-duty.test.ts` 在用。
 - `graph-session-fixture.ts` — 真实 Project/Workspace/CompletionPolicy + 真实 Session 目录，link/archive/reactivate 全走正式服务；`tests/work-graph/A1-independent-review.test.ts` 在用。
 - `S7C1-p-directory-delta.ts` — P 的目录 delta（`openS7C1DirectoryDelta`）：在 `openS7B2DirectoryWorld`（memory 或 SQLite）上只用公共步骤补归档线、别的职责线、带 module 责任链接的线、一条真实结束的 Work Run、九跳等待链与一条仅等待线、请求归档线；并给出 chooser 的真实依赖（Host 发布的目录/事实/责任端口、Work 绑定、世界自己的上下文、真实 `goals/read`）；`tests/business/S7C1-P-rank.test.ts`、`S7C1-P-reads.test.ts`、`S7C1-P-suggest.test.ts` 在用。
@@ -83,6 +83,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S5-decision-fixture.ts` — 真实 Store 上建 P/W、Goal A/B/C、Plan 指针、Session 和 claim→enter Run 的完整 slice-5 世界；`tests/scenarios/K3-29-startup-reconcile-2b.test.ts` 在用。
 - `S8A-L8-prepare.ts` — 经 `runtime.prepareExecution` + `materials.openArtifact` 的公开 `historical_explanation` 读拿到 prepared 和 manifest body；`tests/work-graph/S8A-L8-chunk-scope.test.ts` 在用。
 - `S8B-catalog-steps.ts` — 冻结，只能在末尾追加导出；计划上的模块规则和候选 catalog pin 的公开步骤：S8D 平台世界加三项 Host 输入（Kernel store、脚本模型的 query runtime、秘书 profile 端口），Agent 一侧用 W2 白板世界；每个 pin 都取自刚做的公开读，缺状态就抛错；`tests/work-graph/S8B-plan-catalog.test.ts`、`tests/work-graph/R5b-initial-plan.test.ts` 在用。
+- `S8B-maintainer-world.ts` — M 写、R 只读的唯一维护者世界，显式提供 W0（`p1` 的 `M`/`M2`/`N` 与 L1/L2/L3/A1、成员主体）、W4（固定 `root`/`src`/`src/a`/`src/a/x`/`docs` 目录与包含关系）、平铺世界（`root`/`flat2`）和单根世界（只有 `root`）；全部经 7D1 的真实职责事实和公开步骤，导出 `openMaintainerWorld0`/`openMaintainerWorld0PrivateUse`/`openMaintainerWorld4`/`openMaintainerWorldFlat`/`openMaintainerWorldRoot`，以及 `post`/`dispatch`/`createLine`/`createRoleSpecLine`/`readCard`/`readLink`/`link`/`transfer`/`archiveLine`/`continueArchive`/`handoff`/`findByTarget`/`reopenHost`；`tests/work-graph/S8B-maintainer-writers.test.ts`、`tests/work-graph/S8B-maintainer-reads.test.ts`、`tests/app/S8B-assign-maintainer.test.ts`、`tests/work-graph/S7D1-g2-reanchor-action.test.ts` 在用。
 - `WP1-entry-fixture.ts` — GE01–GE07 的 goal-content entry：真实 claim/prepare/assembler/graph，含 unbound、换 Plan、RUN-16 等分支；`tests/work-graph/WP1-goal-content-entry.test.ts` 在用。
 - `ordered-lookup-forward.ts` — 给 Query 执行 owner 的 `records` 依赖转发真实 backend 的 `lookupOrdered`（请求轮的事实按有序查找读），其余成员在调用时转给原 port；`S1-session-facts-fixture.ts`、`S1-workflow-archive-fixture.ts`、`S2B-track-fixture.ts`、`S2C-L-runs-support.ts`、`WP2-notices-fixture.ts` 和 `tests/work-graph/PC-query-record-usage.test.ts`、`S3-graph-context.test.ts`、`S3-prepared-context-admission.test.ts` 在用。
 - `task-claim-fixture.ts` — R4c.1：真实 Project/Workspace/governance + Goal/接受 Plan + 映射 Session，claim 只由 `TaskClaimPort` 产生；`tests/scenarios/A7-control.test.ts` 在用。
@@ -140,7 +141,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `S2B-r2-track-support.ts` — 经公开 fixture 流为每条 track 任务造真实 Run，用低 `readRecordCap` 区分分页读和全窗扫；`tests/work-graph/S2B-r3-consultation-cap.test.ts` 在用。
 - `S2B-task-timeline-fixture.ts` — 真实 Store + 公共 Plan/claim/entry，注册 evidence/control/anomaly/lifecycle/catalog/completion/Session 活动 schema，给 task timeline；`tests/app/S2B-35-activity-routes.test.ts` 在用。
 - `S2B-track-fixture.ts` — 真实 Store + 公共 Plan/claim/entry，只注册 track 读需要的 schema，用可拨时钟造 Run；`tests/app/S2B-35-activity-routes.test.ts` 在用。
-- `S2C-D-node-support.ts` — 完整 schema 的真实后端，可信 scope/Goal/Plan/catalog/Session/responsibility links 走 owner，给 node-detail/hover；`tests/work-graph/S2C-node-detail-task.test.ts` 在用。
+- `S2C-D-node-support.ts` — 完整 schema 的真实后端，可信 scope/Goal/Plan/catalog/Session/responsibility links 走 owner，给 node-detail/hover；`nodeReaderOf` 可注入 `maintainerOf`（夹具默认 `ready`/`none`，缺失时生产不静默降级）；`tests/work-graph/S2C-node-detail-task.test.ts`、`tests/work-graph/S2C-lines-walk.test.ts`、`tests/work-graph/S4C-node-notes.test.ts`、`tests/work-graph/S4C-path-ownership-callers.test.ts` 在用。
 - `S2C-K-scenario-support.ts` — K1 的 LE4 Host 场景读写层，基于 `openHostScenario`/`restart()`/`direct()` 的真实路由；`tests/scenarios/S2C-K2-paused-transfer.test.ts` 在用。
 - `S2C-K2-scenario-support.ts` — K2 在 K1 之上的 Host 场景 helper 和暂停用 `PAUSE_ON_SECOND_REPLY`；`tests/scenarios/S2C-K2-paused-transfer.test.ts` 在用。
 - `S2C-L-check-support.ts` — 与 line fixture 同 Store 的真实 Evidence/completion：policy、可检查 Goal/Plan、workspace、check 流程；`tests/app/S2C-line-routes.test.ts` 经 `S2C-L-line-support.ts` 在用。

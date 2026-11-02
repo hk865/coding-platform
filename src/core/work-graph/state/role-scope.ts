@@ -92,9 +92,11 @@ export function responsibilityClaimChanges(input: { projectRef: ProjectScope;
 }
 function claimOf(link: SessionWorkLinkRef, duty: RoleLineDutyV1): RoleScopeClaimChangeV1 | null {
   if (link.relation !== 'responsible') return null;               // every caller reuses this predicate
-  if (duty !== 'adviser' && duty !== 'scribe') return null;       // the executor module arm is added by a later slice
+  if (duty !== 'adviser' && duty !== 'scribe' && duty !== 'executor') return null;
   const target = roleScopeOfTarget(link.target);                  // task/work → null: dispatch history
-  return target === null ? null : { duty, target, expectedOwner: null, nextOwner: link };
+  if (target === null) return null;
+  if (duty === 'executor' && target.kind !== 'region') return null;   // executor + module only
+  return { duty, target, expectedOwner: null, nextOwner: link };
 }
 export function foldRoleScopeClaimChanges(projectRef: ProjectScope,
   entries: readonly RoleScopeClaimChangeV1[]): RoleScopeClaimChangeV1[] {

@@ -67,6 +67,9 @@ export function decisionActionPolicy(input: {
     case 'role_line_add':
       // B2-01: the card always waits for the person; both autonomy levels are `needs_decision`.
       return 'needs_decision';
+    case 'module_maintainer':
+      // The adviser's assignment asks under every-step; after plan confirmation the owner applies it directly.
+      return everyStep ? 'needs_decision' : 'automatic';
     default:
       return unreachable(input.action, 'decision action');
   }

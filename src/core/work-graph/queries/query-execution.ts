@@ -1182,7 +1182,7 @@ export async function currentUnderstandingOperations(
     guards.push({ refKey: key, expectedRevision: record.revision });
     operations.push({
       operation: operationRef,
-      generation: currentUnderstandingGeneration(operation),
+      generation: currentUnderstandingGeneration({ action: operation.action }),
       source: operation.action.input.source,
       ownsRoot: owner !== null && sameRef(owner, operation.action.input.source),
     });

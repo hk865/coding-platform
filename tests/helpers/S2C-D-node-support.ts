@@ -711,6 +711,8 @@ export function nodeReaderOf(fixture: NodeFixture, options: {
   executedFiles?: GoalExecutedFilesPort; duty?: 'executor' | 'secretary';
   dutyByRole?: Record<string, 'executor' | 'secretary'>; anomalies?: SessionAnomalyPort;
   dutyFor?: SessionDutyReadPort; records?: WorkLineStore;
+  /** The module maintainer read; the fixture default is the real `ready/none`. */
+  maintainerOf?: NodeDetailReaderDeps['maintainerOf'];
 } = {}) {
   const records = options.records ?? fixture.records;
   const lineDeps = { records,
@@ -722,6 +724,7 @@ export function nodeReaderOf(fixture: NodeFixture, options: {
     records, plans: fixture.plans, catalog: fixture.catalog, anomalies: options.anomalies ?? fixture.anomalies,
     executedFiles: options.executedFiles ?? scriptedExecutedFiles({ availability: 'not_available', files: [], possiblyIncomplete: true, sourceCursor: null }),
     line: lineDeps,
+    maintainerOf: options.maintainerOf ?? (async () => ({ status: 'ready' as const, value: { status: 'none' as const } })),
   };
   return { reader: createNodeDetailReader(deps), line: createWorkLineReader(lineDeps) };
 }

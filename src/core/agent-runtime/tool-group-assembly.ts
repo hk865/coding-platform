@@ -35,6 +35,7 @@ import {
 } from './unknown-call-review-tools.js';
 import { createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { createReworkTools, REWORK_TOOL_NAMES } from './rework-tools.js';
+import { createAssignMaintainerTools, ASSIGN_MODULE_MAINTAINER_TOOL_NAME } from './maintainer-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
 import { agentActorOf } from '../work-graph/model/tool-commit-arguments.js';
@@ -105,6 +106,7 @@ export const RESERVED_TOOL_NAMES = new Set<string>([
 export const RUNTIME_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...BUILTIN_TOOL_NAMES, ...EXPLORATION_TOOL_NAMES, ...PLATFORM_COORDINATION_TOOL_NAMES,
   CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME, ...REWORK_TOOL_NAMES,
+  ASSIGN_MODULE_MAINTAINER_TOOL_NAME,
   READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
   PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME,
 ]);
@@ -223,6 +225,8 @@ export type WorkToolGroupInput = {
   notes?: RuntimeExecutionDependencies['notes'];
   /** H's one trusted entry; absent makes a selected `hand_off` unregisterable. */
   handoffs?: RuntimeExecutionDependencies['handoffs'];
+  /** The adviser's one maintainer assignment entry; absent makes the name unregisterable. */
+  maintainerAssignments?: RuntimeExecutionDependencies['maintainerAssignments'];
   /** The formal Session duty the start resolved; `hand_off` is executor/adviser only. */
   duty?: 'executor' | 'adviser';
   /** Names this Runtime handles outside the coordination factories (the
@@ -244,6 +248,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const unknown = input.selected.filter(name => !BUILTIN_TOOL_NAMES.has(name)
     && !EXPLORATION_TOOL_NAME_SET.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
     && name !== CREATE_MEMBER_TOOL_NAME && !REWORK_TOOL_NAME_SET.has(name)
+    && name !== ASSIGN_MODULE_MAINTAINER_TOOL_NAME
     && !(input.extensionNames?.has(name) ?? false));
   if (unknown.length > 0) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
@@ -257,13 +262,16 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
   const handoffNames = HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
+  const maintainerNames = wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
+    ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
   const reworkNames = REWORK_TOOL_NAMES.filter(name => wanted.has(name));
   const members = input.memberCreation;
+  const maintainers = input.maintainerAssignments;
   const reworkClaims = input.claims?.requeueTask;
   const reworkEvidence = input.evidence?.reverifyRound;
   if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
     && graphNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
-    && memberNames.length === 0 && reworkNames.length === 0) {
+    && memberNames.length === 0 && maintainerNames.length === 0 && reworkNames.length === 0) {
     return { ok: true, value: null };
   }
   if (decisionNames.length > 0 && input.decisionMessages === undefined) {
@@ -271,6 +279,9 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (memberNames.length > 0 && members === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects create_member but no member-creation dependency is bound: ${memberNames.join(', ')}`) };
+  }
+  if (maintainerNames.length > 0 && maintainers === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects assign_module_maintainer but no maintainer-assignment dependency is bound: ${maintainerNames.join(', ')}`) };
   }
   // The two rework tools come from ONE factory whose config requires both
   // owners, so either absence keeps every selected name `unsupported`.
@@ -363,6 +374,22 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
+  if (maintainerNames.length > 0 && maintainers !== undefined) {
+    // The Run's own trusted Work identity, never a model argument: the owner
+    // stores it in the operation and rebuilds the checker binding from there.
+    handles.push(createAssignMaintainerTools({
+      maintainers,
+      context: input.context,
+      caller: {
+        kind: 'work',
+        actor: agentActorOf(input.sessionRef, input.runRef),
+        session: input.sessionRef,
+        run: input.runRef,
+      },
+      requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
+  }
   if (reworkNames.length > 0 && reworkClaims !== undefined && reworkEvidence !== undefined) {
     // The Run's own tool context is the caller; the factory supplies only the
     // owner-bound command identity per call.
@@ -380,7 +407,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }) }));
   }
   const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames,
-    ...handoffNames, ...memberNames, ...reworkNames];
+    ...handoffNames, ...memberNames, ...maintainerNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -604,6 +631,8 @@ export type FinalToolListInputV1 = {
     reworkRequests?: boolean;
     /** `evidence.reverifyRound` behind `request_recheck`; optional for the same reason. */
     recheckRequests?: boolean;
+    /** The adviser's maintainer assignment entry; optional for the same reason. */
+    maintainerAssignments?: boolean;
   };
   readonlyCommand: {
     requested: boolean;
@@ -649,6 +678,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none'));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) && (!query || secretary) ? [CREATE_MEMBER_TOOL_NAME] : [];
+  // Only the Work Runtime builds the maintainer tool; Query has no adviser duty.
+  const maintainerNames = !query && wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
+    ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
   // Only the Work Runtime builds the rework tools; a Query's projection never reaches its factory.
   const reworkNames = query ? [] : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
   const requestNames = query && wanted.has(READ_REQUESTS_TOOL_NAME) ? [READ_REQUESTS_TOOL_NAME] : [];
@@ -677,6 +709,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (memberNames.length > 0 && owners.memberCreation === false) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects create_member but no member-creation dependency is bound: ${memberNames.join(', ')}`) };
   }
+  if (maintainerNames.length > 0 && owners.maintainerAssignments === false) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects assign_module_maintainer but no maintainer-assignment dependency is bound: ${maintainerNames.join(', ')}`) };
+  }
   // The one rework factory requires both owners, so either absence keeps every
   // selected rework name `unsupported`; nothing is silently dropped.
   if (reworkNames.length > 0 && (owners.reworkRequests === false || owners.recheckRequests === false)) {
@@ -688,7 +723,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
     return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
   }
   const coordinationNames = [...mailboxNames, ...handoffNames, ...decisionNames, ...whiteboardNames,
-    ...discoveryNames, ...graphNames, ...noteNames, ...memberNames, ...reworkNames, ...requestNames];
+    ...discoveryNames, ...graphNames, ...noteNames, ...memberNames, ...maintainerNames, ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }

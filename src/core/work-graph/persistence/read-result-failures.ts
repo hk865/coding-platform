@@ -14,7 +14,7 @@ import { rejected, rejectedWithCurrent, rejectedWithNonEmptyCurrent } from '../.
 import { CORE_ERRORS, type CoreRejection, type ReadResult } from '../../../contracts/core/results.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
-import { scopeOwnedDetailOfSlot } from '../../../contracts/role-lines.js';
+import { maintainerClaimConflictOf, scopeOwnedDetailOfSlot } from '../../../contracts/role-lines.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { StoreFailure } from '../../record-store/ports.js';
 
@@ -102,7 +102,8 @@ export function sessionStoreFailureToRejection(failure: StoreFailure): CoreRejec
       return rejectedWithNonEmptyCurrent('revision_conflict', failure.reason, current);
     }
     case 'unique_conflict':
-      return scopeOwnedRejectionOf(failure)
+      return maintainerClaimConflictOf(failure.current)
+        ?? scopeOwnedRejectionOf(failure)
         ?? rejected('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
     case 'unsupported': return rejected('unsupported', failure.reason);
     case 'corrupt': return rejected('unavailable', `the record store reported damage: ${failure.reason}`);

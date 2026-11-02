@@ -8,7 +8,7 @@ import { canonicalKey } from '../../../contracts/fingerprint.js';
 import { encodePendingSessionWorkLink, sessionWorkLinkRefKey } from './session-record-codecs.js';
 import { roleLineAllocationCodec } from './role-line-record-codecs.js';        // G1-1's one codec
 import { mergeGuards } from '../persistence/record-guards.js';
-import { roleScopeClaimKey, type RoleLineAllocationV1, type RoleLineAllocationPendingV1,
+import { moduleMaintainerKey, roleScopeClaimKey, type RoleLineAllocationV1, type RoleLineAllocationPendingV1,
   type RoleLineBindingIntentV1, type RoleScopeClaimChangeV1 } from '../../../contracts/role-lines.js';
 export type RoleLineCommitInputV1 = { projectRef: ProjectScope;
   records: readonly EncodedRecord[]; guards: readonly RecordGuard[];
@@ -21,7 +21,9 @@ export function roleLineCommitContribution(input: RoleLineCommitInputV1, allocat
   const allocationKey = input.allocation === null ? null : canonicalKey(input.allocation.ref);
   if (input.allocation !== null) records.push(roleLineAllocationCodec.encode(input.allocation));
   const claims = input.claimChanges.map((change) => ({
-    claimKey: roleScopeClaimKey({ projectRef: input.projectRef, duty: change.duty, target: change.target }),
+    claimKey: change.duty === 'executor' && change.target.kind === 'region'
+      ? moduleMaintainerKey(change.target.moduleRef)
+      : roleScopeClaimKey({ projectRef: input.projectRef, duty: change.duty, target: change.target }),
     expectedOwner: change.expectedOwner === null ? null : sessionWorkLinkRefKey(change.expectedOwner),
     nextOwner: change.nextOwner === null ? null : sessionWorkLinkRefKey(change.nextOwner) }));
   const bindings: CommitCursorBinding[] = input.bindings.map((b) => ({ refKey: sessionWorkLinkRefKey(b.link), field: b.field }));

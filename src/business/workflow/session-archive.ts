@@ -14,6 +14,8 @@ import type {
   ArchiveStepRefV1, RequestSessionArchiveInput, SessionArchiveConditionV1, SessionArchiveRequestV1,
 } from '../../contracts/core/session-archive.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
+import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
+import { roleLineDutyOf } from '../../contracts/role-lines.js';
 import type { RunRef, RunSnapshot } from '../../contracts/dispatch.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { ArchiveChangedFilesV1, ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../contracts/session-anomaly.js';
@@ -280,8 +282,9 @@ export function createSessionArchiveService(
    * §4.1 step 1 / §2.3 S:240 (E1): read the open responsible links and the
    * current Task projection at first acceptance. An unfinished responsibility
    * without a matching archive choice is refused `invalid/archive_disposal_required`
-   * with zero commits; a Task already terminal may be ignored, and module links
-   * never block an archive (§2.4).
+   * with zero commits; a Task already terminal may be ignored. Goal and project
+   * links never block an archive; an executor's module link does, while an
+   * adviser/scribe module link stays with the archive plan (§2.4).
    */
   async function firstAcceptanceResponsibilityProblem(
     ctx: CoreCallContext, sessionRef: SessionRef, input: RequestSessionArchiveInput,
@@ -294,10 +297,28 @@ export function createSessionArchiveService(
       const key = canonical(choice.target);
       if (key !== null) chosen.add(key);
     }
+    let duty: PlatformDutyV1 | 'unknown' | null = null;
     for (const link of card.value.links) {
       if (link.ref.relation !== 'responsible' || link.until !== null) continue;
       const target = link.ref.target;
-      if (target.kind === 'module' || target.kind === 'goal' || target.kind === 'project') continue;
+      if (target.kind === 'goal' || target.kind === 'project') continue;
+      if (target.kind === 'module') {
+        if (duty === null) {
+          if (deps.sessionDuty === undefined) return reject('unavailable', 'the Session duty is not available');
+          const resolved = await deps.sessionDuty(card.value.record.role, ctx);
+          if (resolved.status !== 'ready') {
+            return resolved.status === 'rejected' ? resolved
+              : reject('unavailable', `the Session duty is ${resolved.status}`);
+          }
+          if (roleLineDutyOf(resolved.value) === null) {
+            return reject('unavailable', 'the Session duty is unknown');
+          }
+          duty = resolved.value;
+        }
+        // An executor's open module link is a responsibility the archive must dispose; an adviser's or
+        // scribe's is released by the archive plan itself.
+        if (roleLineDutyOf(duty) !== 'executor') continue;
+      }
       const key = canonical(target);
       if (key !== null && chosen.has(key)) continue;
       if (target.kind === 'task' && await taskTerminal(ctx, target.ref) === true) continue;

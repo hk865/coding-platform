@@ -383,15 +383,37 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       currentLink = decodedLink.value;
     }
 
+    // L9 idempotence: an executor's own open module maintainer link is a zero-effect
+    // result. The open link and its maintainer claim share one commit, so the claim
+    // owner is this line and no claim is read; the receipt lookup above already ran.
+    let sameOwner = false;
+    if (input.active && currentLink !== null && currentLink.until === null
+        && linkRef.relation === 'responsible' && input.target.kind === 'module') {
+      const resolved = await dutyRead(session.role, ctx);
+      if (resolved.status !== 'ready') {
+        return reject('unavailable', resolved.status === 'rejected' ? resolved.reason : 'the Session duty is not ready');
+      }
+      sameOwner = roleLineDutyOf(resolved.value) === 'executor';
+    }
+
     // SES-15/SES-16. A new link's target is checked only once the machine has
     // accepted, with the target check's own codes, where it always was (§8.6:
     // the machine's `not_found` for an invalid target is its backstop). The link
     // pin stays the link record's guard in the commit.
     const linkPin = expectedLink === undefined || expectedLink.revision === 0 ? null : expectedLink.revision;
     const verdict = decide(session, linked, { link: {
-      exists: currentLink !== null, open: currentLink !== null && currentLink.until === null, targetValid: true, pin: linkPin,
+      exists: currentLink !== null, open: currentLink !== null && currentLink.until === null, targetValid: true,
+      pin: linkPin, sameOwner,
     } });
     if (!verdict.ok) return reject(verdict.code, verdict.detail);
+    // The owner short-circuits before `sessionWrite`: no Session revision, link
+    // revision, `since` rebind, event or receipt. The existing link's real `since`
+    // is the result's cursor, as the idempotent branch of the maintainer writer
+    // must answer (`replayed: true`, never a fabricated commit).
+    if (sameOwner && currentLink !== null) {
+      return { status: 'committed', replayed: true, cursor: currentLink.since as CommitCursor,
+        value: { ref: linkRef, revision: currentLink.revision, since: currentLink.since, until: currentLink.until } };
+    }
     const targetGuards: RecordGuard[] = [];
     if (input.active) {
       const checked = await validateWorkLinkTarget(records, ctx, scope, input.target);
@@ -887,8 +909,8 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       const target = choice['target'] as WorkLinkTarget;
       const targetProblem = checkTarget(target);
       if (targetProblem !== null) return { code: 'invalid', reason: `archive_input_invalid: ${targetProblem}` };
-      if (target.kind !== 'task' && target.kind !== 'work') {
-        return { code: 'invalid', reason: 'archive_input_invalid: an archive Task choice must be a Task or Work target' };
+      if (target.kind !== 'task' && target.kind !== 'work' && target.kind !== 'module') {
+        return { code: 'invalid', reason: 'archive_input_invalid: an archive choice must be a Task, Work or module target' };
       }
       const key = canonicalOf(target);
       if (key === null) return { code: 'invalid', reason: 'archive_input_invalid: the target cannot be canonically encoded' };

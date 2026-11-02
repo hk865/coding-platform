@@ -15,6 +15,9 @@ import type { ActorRef } from '../contracts/command-event.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef } from '../contracts/core/identity.js';
+import type { SessionWorkLink } from '../contracts/core/session.js';
+import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
+import type { AssignMaintainerInputV1 } from '../core/work-graph/model/module-maintainer-contracts.js';
 // The two secretary lifecycle commands' own input and result shapes: the accept inputs and the progress the Workflow
 // reads back after driving it. Derived from the frozen contracts and ports, never restated here.
 import type {
@@ -193,6 +196,7 @@ export type CoreRouteSuffix =
   | 'sessions/archive'
   | 'sessions/reactivate'
   | 'sessions/link'
+  | 'modules/assign-maintainer'
   | 'messages/send'
   | 'messages/inbox'
   | 'messages/read'
@@ -595,6 +599,20 @@ export type Slice2CCoreRouteDto = {
   'lines/pin': { body: LinesPinBody; response: LinesPinResponse };
   'graph/hover': { body: GraphHoverBody; response: GraphHoverResponse };
   'graph/detail': { body: GraphDetailBody; response: GraphDetailResponse };
+};
+
+/**
+ * `modules/assign-maintainer` is R2's person-only graph write. The port method
+ * has three arguments (the third is the caller), so the HTTP derivation uses a
+ * TWO-argument entry: the route supplies `{kind:'person'}` itself.
+ */
+export type AssignMaintainerRouteEntry =
+  (ctx: CoreCallContext, request: GraphWrite<AssignMaintainerInputV1>) => Promise<WriteResult<SessionWorkLink>>;
+export type ModulesAssignMaintainerBody = GraphWriteBody<AssignMaintainerRouteEntry>;
+export type ModulesAssignMaintainerResponse = RouteResponse<AssignMaintainerRouteEntry>;
+/** The typed assembly of the one maintainer route; `CORE_ROUTE_SPECS` names it. */
+export type MaintainerCoreRouteDto = {
+  'modules/assign-maintainer': { body: ModulesAssignMaintainerBody; response: ModulesAssignMaintainerResponse };
 };
 
 // ---------------------------------------------------------------------------

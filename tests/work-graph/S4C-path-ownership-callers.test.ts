@@ -58,6 +58,7 @@ function nodeReaderOverCatalog(fixture: NodeFixture, catalog: AdoptedArchitectur
     executedFiles: scriptedExecutedFiles({ availability: 'available', possiblyIncomplete: false, sourceCursor: null,
       files: files.map(path => ({ runRef, path, certainty: 'definite' as const })) }),
     line: lineDeps,
+    maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }),
   });
   return reader;
 }

@@ -31,7 +31,7 @@ const EXISTING_DIGESTS = {
     base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
     'skill-platform-work': 'eb4bb377bcc4f98259878c47260d5c68ad01c2ce18fbe3b67e97c495a29719f1',
     'skill-platform-secretary': 'cb02659d41f8d91e430352da33b0a17154161a2edb30cb9d66e1823afa1da8d5',
-    'skill-platform-adviser': 'a396cc8ee564f5bbd7f96ea3b22b54cc3ecffb90c00850e5a1eae6cc1dd24b79',
+    'skill-platform-adviser': '0eb7a06e205ac4530e3ec9261ba7ec697482804236a5388c7e344e8f4edb235b',
     'skill-platform-scribe': 'fd7b2ac9359d991e3181d8c2dd73d23334683601b5b6e459f161519ba76b103d',
     'skill-platform-reviewer': '4fa780b2a47de2e01145fef5363a2cac93409fc49f220ed63b1c9e77b474fc9a',
 } as const;

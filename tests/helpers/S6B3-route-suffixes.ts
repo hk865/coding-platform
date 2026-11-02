@@ -59,6 +59,9 @@ export const EXPECTED_ROUTE_ROWS = {
   // The two person commands on F's forwarding owner.
   'messages/forward': { kind: 'plain', binding: 'forwardMessage', owner: 'messages.forwardMessage' },
   'waits/dispose': { kind: 'plain', binding: 'disposeWait', owner: 'waits.disposeWait' },
+  // The person's maintainer assignment graph write.
+  'modules/assign-maintainer': { kind: 'graph_write', binding: 'assignMaintainer',
+    owner: 'moduleMaintainers.assignModuleMaintainer' },
 } as const;
 
 /** The eleven slice-1 suffixes, in the order `tests/app/S1-session-routes.test.ts` checks them. */

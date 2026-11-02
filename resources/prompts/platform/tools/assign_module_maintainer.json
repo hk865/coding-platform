@@ -1,0 +1,8 @@
+{
+  "description": "Assign an executor line as the maintainer of one module. The line must be an executor line in the same project; if another line already maintains the module, the maintainer role transfers to the named line. Under every-step confirmation the call stops at a waiting operation and answers needs_decision with a maintainer_assignment cardKey for the person; under automatic confirmation it assigns the line and answers assigned. Parameters: moduleRef names the module, sessionRef names the executor line, and reason says why that line should maintain it (1-2000 UTF-8 bytes).",
+  "parameters": {
+    "moduleRef": "The module to maintain: {projectId, moduleId}; both ids are non-empty strings.",
+    "sessionRef": "The executor line to assign: {projectId, sessionId}; both ids are non-empty strings.",
+    "reason": "Why this line should maintain the module; 1-2000 UTF-8 bytes."
+  }
+}

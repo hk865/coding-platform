@@ -1070,7 +1070,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if (operation.action.kind !== 'handoff') {
       return rejected('invalid', 'the understanding command names an operation that is not a handoff');
     }
-    if (currentUnderstandingGeneration(operation) !== command.generation) {
+    if (currentUnderstandingGeneration({ action: operation.action }) !== command.generation) {
       return rejected('busy', "the command generation is not the operation's current understanding generation");
     }
     const source = operation.action.input.source;

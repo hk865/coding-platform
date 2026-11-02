@@ -11,7 +11,7 @@ import type { CoreCallContext } from './core/call-context.js';
 import type { ModuleRef, ProjectScope, SessionRef, SessionWorkLinkRef, WorkLinkTarget } from './core/identity.js';
 import type { GoalRef } from './ledger.js';
 import type { OperationRef } from './core/operations.js';
-import type { ReadResult } from './core/results.js';
+import type { CoreRejection, ReadResult } from './core/results.js';
 import type { SessionProvenanceV1 } from './core/session.js';
 import type { SessionArchiveRequestV1 } from './core/session-archive.js';
 import type { SessionMessageRef } from './core/session-message.js';
@@ -21,7 +21,7 @@ import {
 import {
   ActorRefField, id, OperationRefShape, ProjectScopeShape, SessionRefShape,
 } from './data-format-refs.js';
-import { canonicalKey } from './fingerprint.js';
+import { canonicalJson, canonicalKey } from './fingerprint.js';
 import { DecisionSubjectShape } from './goal-decisions.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import { hasOnlyKeys, isRecord, nonEmpty } from './validation/common.js';
@@ -69,6 +69,31 @@ export type RoleScopeClaimChangeV1 = {
 export type RoleLineBindingIntentV1 = { link: SessionWorkLinkRef; field: 'since' | 'until' };
 export function roleScopeClaimKey(input: { projectRef: ProjectScope; duty: RoleLineDutyV1; target: RoleScopeV1 }): string {
   return ROLE_SCOPE_CLAIM_PREFIX + canonicalKey({ projectId: input.projectRef.projectId, duty: input.duty, target: input.target });
+}
+export const MODULE_MAINTAINER_PREFIX = 'module-maintainer:';
+export function moduleMaintainerKey(module: ModuleRef): string {
+  return MODULE_MAINTAINER_PREFIX + canonicalJson({ projectId: module.projectId, moduleId: module.moduleId });
+}
+/** The one narrow mapping of a store `unique_conflict` on the `module-maintainer:` slot; never re-reads a record. */
+export function maintainerClaimConflictOf(
+  current: readonly { claimKey: string; owner: string | null }[],
+): CoreRejection | null {
+  for (const slot of current) {
+    if (!slot.claimKey.startsWith(MODULE_MAINTAINER_PREFIX)) continue;
+    let parsed: unknown;
+    try { parsed = JSON.parse(slot.claimKey.slice(MODULE_MAINTAINER_PREFIX.length)); } catch { continue; }
+    if (!isRecord(parsed)) continue;
+    const projectId = parsed['projectId'], moduleId = parsed['moduleId'];
+    if (typeof projectId !== 'string' || projectId === '' || typeof moduleId !== 'string' || moduleId === '') continue;
+    const moduleRef: ModuleRef = { projectId, moduleId };
+    const target: RoleScopeV1 = { kind: 'region', moduleRef };
+    const holder = sessionRefOfClaimOwner(slot.owner);
+    return { status: 'rejected', code: 'revision_conflict',
+      scopeOwned: { duty: 'executor', target, holder },
+      reason: `scope_owned: the executor scope ${canonicalKey(target)} is held by ` +
+        `${holder === null ? 'an undecodable owner' : holder.sessionId}` };
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------------ //
@@ -217,7 +242,19 @@ export type MaintainerCallBranchV1 = { branch: 'approved_answer'; proof: Trusted
   | { branch: 'current_authorization'; authorization: { kind: 'maintainer_assignment'; projectRef: ProjectScope;
     operation: OperationRef; moduleRef: ModuleRef; line: SessionRef; since: string } };
 export type MaintainerCallBindingV1 = { operation: OperationRef; moduleRef: ModuleRef; line: SessionRef };
-export declare function maintainerCallBindingOf(branch: MaintainerCallBranchV1, binding: MaintainerCallBindingV1): ReadResult<MaintainerCallBindingV1>;
+export function maintainerCallBindingOf(
+  branch: MaintainerCallBranchV1, binding: MaintainerCallBindingV1,
+): ReadResult<MaintainerCallBindingV1> {
+  const call = branch.branch === 'approved_answer' ? branch.proof : branch.authorization;
+  const differing =
+    canonicalJson(call.operation) !== canonicalJson(binding.operation) ? 'operation'
+    : canonicalJson(call.moduleRef) !== canonicalJson(binding.moduleRef) ? 'moduleRef'
+    : canonicalJson(call.line) !== canonicalJson(binding.line) ? 'line'
+    : null;
+  return differing === null ? { status: 'ready', value: binding }
+    : { status: 'rejected', code: 'forbidden',
+        reason: `maintainer_call_mismatch: the maintainer call names a different ${differing}` };
+}
 
 // ------------------------------------------------------------------------ //
 // R1 envelopes: limits change and project notice                            //

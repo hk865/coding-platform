@@ -69,7 +69,7 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
-  | 'memberCreation' | 'handoffs'
+  | 'memberCreation' | 'handoffs' | 'maintainerAssignments'
   | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
@@ -552,6 +552,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           unknownCallReviews: deps.unknownCallReviews !== undefined,
           commandRerunRequests: deps.commandRerunRequests !== undefined,
           memberCreation: deps.memberCreation !== undefined,
+          maintainerAssignments: deps.maintainerAssignments !== undefined,
           reworkRequests: deps.claims.requeueTask !== undefined,
           recheckRequests: deps.evidence?.reverifyRound !== undefined,
         },
@@ -634,6 +635,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         }),
         ...(deps.notes === undefined ? {} : { notes: deps.notes }),
         ...(deps.handoffs === undefined ? {} : { handoffs: deps.handoffs }),
+        ...(deps.maintainerAssignments === undefined ? {} : {
+          maintainerAssignments: deps.maintainerAssignments,
+        }),
         ...(hostConfig.platformDuty === 'executor' || hostConfig.platformDuty === 'adviser'
           ? { duty: hostConfig.platformDuty } : {}),
         texts: toolTexts,

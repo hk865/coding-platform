@@ -232,7 +232,7 @@ export type S7C1World = {
   readonly close: () => Promise<void>;
 };
 
-function claimOf(receipts: readonly WorkflowStepReceipt[]) {
+export function claimOf(receipts: readonly WorkflowStepReceipt[]) {
   const claim = receipts.find(receipt => receipt.kind === 'claim_task');
   if (claim === undefined || claim.result.status !== 'committed') {
     throw new Error('S7C: the first s6a-core task was not claimed');

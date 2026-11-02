@@ -153,9 +153,9 @@
 | `requestAssignmentRow` **正本** | `request-service.ts:765` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
 | `readLiveGoal` **正本** | `request-service.ts:464` | 请求与追问 append 前的唯一 Goal 复核：存在、属于本工作区、且不是 `cancelled`；`active` 与 `paused` 都放行（DESIGN :341、slice-6 :213） | submit 与 follow-up；不要另写一份 live 判断 |
 | `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等（F 行副本的正本）；`src/core/work-graph/state/ref-equality.ts:2` 的 `sameRef` 是按结构逐字段比较，不等价 | 判等引用/内容时；不要另写副本 |
-| `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1332` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
-| `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1342` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
-| `plainSessionRef` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1347` | 普通 Session 引用投影成 `{projectId, sessionId}`，丢掉额外字段 | 目录卡/聚合 ref 要变成普通 SessionRef（职责解析、异常记录）；不要另写一份 |
+| `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1381` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
+| `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1391` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
+| `plainSessionRef` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1396` | 普通 Session 引用投影成 `{projectId, sessionId}`，丢掉额外字段 | 目录卡/聚合 ref 要变成普通 SessionRef（职责解析、异常记录）；不要另写一份 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 取 `Error.message`，否则 `String(error)`；转换抛错不吞 | 错误文案；本目录旧副本已删除，不要再写（M1-38） |
 | `sessionRefProblem` **正本** | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整 `{projectId, sessionId}` 引用 | 校验 SessionRef；不要另写形状检查 |
 | `storeFailureToRejection` **正本** | `src/core/work-graph/persistence/read-result-failures.ts:45` | 按 owner 语义把 Store 失败映射成 `CoreRejection` | 处理 store 失败；owner 写入用同文件的 `ownerWriteStoreFailureToRejection`，读用 `ownerReadStoreFailureToRejection` |
@@ -283,11 +283,11 @@
 - `readClaimedAtForRun` 的正本在 `line-clock.ts:190`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:190` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
 - `readOwnerRecord`（`owner-record-read.ts:22`）是单条 owner 读的正本；`request-service.ts:403` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:646` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。
 - `lookupCommit` 只有 `src/core/record-store/ports.ts:194` 这个端口；`lookupCommittedReceipt`（`src/core/work-graph/persistence/receipt-lookup.ts:18`，`src/core/work-graph/queries/query-job-service.ts:431` 转出）是带失败分类的唯一包装。claim/control 等 owner 直接调用端口时也要自己分类失败，不要复制整套重试与分类逻辑。
-- `sessionAggregateRefKey` 与 `plainSessionRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1332`/`:1342` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:78`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是 `sessionAggregateRefKey` 的副本，不要改写成它。
+- `sessionAggregateRefKey` 与 `plainSessionRefKey` 只有 `src/core/work-graph/sessions/session-record-codecs.ts:1381`/`:1342` 这一份；`secretaryIntakeKey`（`src/core/work-graph/model/request-contracts.ts:78`）仍内联序列化、带 `secretary-intake:` 前缀，是认领槽键（S10），不是 `sessionAggregateRefKey` 的副本，不要改写成它。
 - `storeFailureToRejection` 只有 `src/core/work-graph/persistence/read-result-failures.ts:48`；owner 用同文件的 `ownerWriteStoreFailureToRejection`（`src/core/work-graph/persistence/read-result-failures.ts:136`），`request-service` 的本地 store 失败 switch 已改为调用它，不要恢复手写映射。
 - `rejected` 只有 `src/contracts/core/rejections.ts:5` 这一份；`request-service` 的本地 `rejection` 已删，不要恢复。
 - `messageOf` 只有 `src/contracts/error-message.ts:2` 这一份；本目录与 `record-store`、`agent-runtime` 的旧副本已删除，不要恢复（M1-38）。
-- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:174` 的 `checkPlainSessionRef` 是 planned SessionRef 输入的报错适配器（S06，两种固定文字），不能换成 `sessionRefProblem`；不要新增形状检查副本。
+- `sessionRefProblem` 正本在 `src/core/work-graph/persistence/rework-codecs.ts:154`；`src/core/work-graph/sessions/session-record-codecs.ts:180` 的 `checkPlainSessionRef` 是 planned SessionRef 输入的报错适配器（S06，两种固定文字），不能换成 `sessionRefProblem`；不要新增形状检查副本。
 - 不要把失败的读取变成空事实、`not_found` 或普通 blocked；`unavailable`/`incomplete` 原样返回（FP-05、M1-12、MH-06）。
 - 不要手改受保护字段或只写生命周期的一半：Run、Attempt、Lease、Outbox、Session 占用、Task/Goal reduction 都经 `state/` 的构造函数，并在同一 commit 里写齐（M1-01、M1-05、M1-36）。
 - 不要先读现状再查 receipt：重放与丢失 ack 的恢复都先 `lookupCommit`/`replayCommittedReceipt`，绝不按今天的快照重建原答案（M1-14、M1-15、M1-25、M1-26）。

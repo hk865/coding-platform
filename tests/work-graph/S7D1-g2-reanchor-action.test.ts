@@ -28,6 +28,7 @@ import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import { s6b2Backend, s6b2Duty, type S6B2Captured } from '../helpers/S6B2-handoff-scene.js';
+import { openMaintainerWorld0, type MaintainerWorld } from '../helpers/S8B-maintainer-world.js';
 
 const ADVISER_ROLE = platformRoleProfile('adviser').template;
 const CORE = 's6a-core';
@@ -47,8 +48,10 @@ vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOrigi
 });
 
 const worlds: S6AHostWorld[] = [];
+const maintainers: MaintainerWorld[] = [];
 afterEach(async () => {
   for (const world of worlds.splice(0)) await world.close().catch(() => undefined);
+  for (const world of maintainers.splice(0)) await world.close().catch(() => undefined);
 });
 
 const moduleLink = (card: SessionCard, moduleId: string) =>
@@ -130,4 +133,47 @@ describe('G2-reanchor-action', () => {
       expect(goalLinkOf(after)?.since).not.toBeNull();
       expect(goalLinkOf(after)?.until).toBeNull();
     });
+});
+
+describe('M-09', () => {
+  it('M-09 (memory): an executor reanchor projects the new module maintainer key and releases the old one', async () => {
+    const world = await openMaintainerWorld0({ backend: 'memory' });
+    maintainers.push(world);
+    const source = world.lines.L1;
+    const from = world.module('M');
+    const to = world.module('M2');
+    const opened = await world.link({ line: source, target: from, requestId: 'm09-open' });
+    if (opened.result.status !== 'committed') throw new Error(`the M link did not commit: ${JSON.stringify(opened.result)}`);
+    const before = await world.readCard(source);
+
+    const moved = await world.platform.responsibilities.reanchorSessionResponsibility(world.ctx, {
+      input: {
+        session: source.ref,
+        close: [opened.result.value.ref],
+        open: [{ target: to }],
+        reason: 'human_scope_change',
+      },
+      meta: {
+        requestId: 'm09-reanchor',
+        expected: [
+          { ref: before.record.ref, revision: before.record.revision },
+          { ref: opened.result.value.ref, revision: opened.result.value.revision },
+        ],
+      },
+    });
+    if (moved.status !== 'committed') throw new Error(`the M-09 reanchor was not committed: ${JSON.stringify(moved)}`);
+    expect(moved.value.closed).toEqual([opened.result.value.ref]);
+    expect(moved.value.owners).toEqual([{
+      link: responsibleLinkRef(source.ref, to),
+      claimKey: 'module-maintainer:{"moduleId":"M2","projectId":"p1"}',
+    }]);
+
+    // The old M key is released: another executor's real link open now commits, and the M2 key stays held.
+    const released = await world.link({ line: world.lines.L3, target: from, requestId: 'm09-m-released' });
+    expect(released.result).toMatchObject({ status: 'committed', replayed: false });
+    const held = await world.link({ line: world.lines.L2, target: to, requestId: 'm09-m2-held' });
+    expect(held.result).toMatchObject({ status: 'rejected', code: 'revision_conflict',
+      scopeOwned: { duty: 'executor', target: { kind: 'region',
+        moduleRef: { projectId: 'p1', moduleId: 'M2' } }, holder: source.ref } });
+  });
 });

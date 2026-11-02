@@ -14,6 +14,7 @@ import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { RoleLineAllocationRef, RoleLineAllocationReportV1, RoleLineDutyV1 } from '../../../contracts/role-lines.js';
 import type { HandoffActionV1, SecretaryArchiveActionV1 } from './session-operation-arms.js';
 import type { MemberCreateActionV1 } from '../state/member-creation.js';
+import type { MaintainerAssignmentActionV1 } from '../state/module-maintainer-assignment.js';
 import type { GraphWrite } from './task-contracts.js';
 
 export type { GraphWrite } from './task-contracts.js';
@@ -96,9 +97,10 @@ export interface ConsultationCreateReadPort {
   readConsultationCreate(ctx: CoreCallContext, input: { operationRef: OperationRef }):
     Promise<ReadResult<ConsultationCreateV1>>;
 }
-/** The four arms of a `CoreOperation` record; every reader judges `kind` first. */
+/** The five arms of a `CoreOperation` record; every reader judges `kind` first. */
 export type SessionOperationActionV1 =
-  | SessionCreateActionV1 | HandoffActionV1 | SecretaryArchiveActionV1 | MemberCreateActionV1;
+  | SessionCreateActionV1 | HandoffActionV1 | SecretaryArchiveActionV1 | MemberCreateActionV1
+  | MaintainerAssignmentActionV1;
 export type SessionOperationRecordOf<A extends SessionOperationActionV1> = {
   ref: OperationRef;
   revision: number;
@@ -118,6 +120,7 @@ export type SessionOperationRecordOf<A extends SessionOperationActionV1> = {
 };
 export type SessionOperationRecord = SessionOperationRecordOf<SessionOperationActionV1>;
 export type SessionCreateOperationRecord = SessionOperationRecordOf<SessionCreateActionV1>;
+export type MaintainerAssignmentOperationV1 = SessionOperationRecordOf<MaintainerAssignmentActionV1>;
 export type SessionCreationResult = {
   operationRef: OperationRef;
   sessionRef: SessionRef;

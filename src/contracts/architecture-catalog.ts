@@ -86,6 +86,18 @@ export function moduleMappingsOf(catalog: AdoptedArchitecture): ArchitectureSour
   }));
 }
 
+/**
+ * A module is "未细分" when it is the catalog's one module and its only declared
+ * path is the repository root (decision 61-2: the whole workspace is one root
+ * module). One module has no children, so containment plays no part.
+ */
+export function isUndividedModule(catalog: AdoptedArchitecture, module: ModuleRef): boolean {
+  const [only, ...others] = catalog.modules;
+  return only !== undefined && others.length === 0
+    && only.ref.projectId === module.projectId && only.ref.moduleId === module.moduleId
+    && only.paths.length === 1 && only.paths[0] === '.';
+}
+
 import { defineShape, f, type ShapeRule } from './data-format.js';
 import { id } from './data-format-refs.js';
 

@@ -9,7 +9,7 @@ import type { QueryRunRef } from '../query-job.js';
 import type { RunRef, TaskAttemptRef } from '../dispatch.js';
 
 export type ArchiveTaskChoiceV1 = {
-  target: Extract<WorkLinkTarget, { kind: 'task' | 'work' }>;
+  target: Extract<WorkLinkTarget, { kind: 'task' | 'work' | 'module' }>;
   disposition: { kind: 'drop' } | { kind: 'transfer'; to: SessionRef };
 };
 export type ArchiveWaitChoiceV1 =

@@ -58,19 +58,19 @@
 
 | 要做什么 | 去哪个文件夹（必要时到文件） | 先看的可复用能力（含位置） |
 | --- | --- | --- |
-| 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1328`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:701`） |
-| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:469`）、`createTargetPlatform`（`src/composition/create-platform.ts:935`） |
+| 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1341`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:709`） |
+| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:469`）、`createTargetPlatform`（`src/composition/create-platform.ts:940`） |
 | 加一种记录或索引 | `src/core/record-store/`（`lookup-ports.ts`、`ports.ts`） | `RecordLookupIndex`（`src/core/record-store/lookup-ports.ts:5`）、`RecordLookupPort`（`src/core/record-store/lookup-ports.ts:35`） |
 | 加一种事件/记录编解码 | `src/core/work-graph/persistence/` | `createEventCodec`（`src/core/work-graph/persistence/event-codec-factory.ts:42`）、`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:81`） |
 | 状态迁移 | `src/core/work-graph/state/`（按聚合分文件） | `transitionRun`（`src/core/work-graph/state/run-machine.ts:1395`）、`transitionTask`（`src/core/work-graph/state/task-machine.ts:797`） |
-| 加一个读模型 | `src/core/work-graph/views/` | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3032`）、`createCollectionCardSource`（`src/core/work-graph/views/decision-read-model.ts:344`） |
+| 加一个读模型 | `src/core/work-graph/views/` | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3052`）、`createCollectionCardSource`（`src/core/work-graph/views/decision-read-model.ts:344`） |
 | 改提示词模板或渲染 | `src/contracts/prompts/` | `renderTemplate`（`src/contracts/prompts/render-template.ts:387`）、`resolvePromptPackV1`（`src/contracts/prompts/resolve-pack.ts:79`） |
 | Kernel 补丁（vendor 冻结） | 脚本 `scripts/build-kernel-patch.mjs`；适配 `src/core/agent-runtime/`（`observed-model-run.ts`） | `runObservedModel`（`src/core/agent-runtime/observed-model-run.ts:207`） |
 | Workflow 的驱动和唤醒 | `src/business/workflow/` | `createWorkflow`（`src/business/workflow/workflow.ts:815`）、`createRequestIntake`（`src/business/workflow/request-intake.ts:193`） |
 | 请求和秘书 | `src/core/work-graph/tasks/`（`request-service.ts`、`secretary-selection.ts`、`initialization-pointers.ts`）、`src/core/work-graph/views/`（`secretary-preparation-facts.ts`） | `admitRequestSecretary`（`src/core/work-graph/tasks/secretary-selection.ts:191`）、`createRequestRoundService`（`src/core/work-graph/tasks/request-service.ts:885`）、`createSecretaryPreparationFacts`（`src/core/work-graph/views/secretary-preparation-facts.ts:549`）、`readInitializationPointers`（`src/core/work-graph/tasks/initialization-pointers.ts:46`） |
 | Session 生命周期 | `src/core/work-graph/sessions/` | `createSessionLifecycleService`（`src/core/work-graph/sessions/session-lifecycle.ts:273`）、`createSessionDirectory`（`src/core/work-graph/sessions/session-directory.ts:646`） |
 | Session 创建与 Kernel 历史读取 | `src/core/agent-runtime/`（`session-operations.ts`、`observation-recovery.ts`） | `createSessionOperations`（`src/core/agent-runtime/session-operations.ts:540`）、`createExecutionHistoryReader`（`src/core/agent-runtime/observation-recovery.ts:242`） |
-| 工作线读取 | `src/core/work-graph/views/`（`work-line-reader.ts`） | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3032`）、`assembleLineBriefs`（`src/core/work-graph/views/work-line-reader.ts:239`） |
+| 工作线读取 | `src/core/work-graph/views/`（`work-line-reader.ts`） | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3052`）、`assembleLineBriefs`（`src/core/work-graph/views/work-line-reader.ts:239`） |
 | 附件和材料 | `src/core/work-graph/materials/` | `createMaterialService`（`src/core/work-graph/materials/material-service.ts:116`）、`createMaterialApplicability`（`src/core/work-graph/materials/applicability.ts:23`） |
 | 架构图/正式架构 | `src/core/work-graph/architecture/` | `createObservedArchitecture`（`src/core/work-graph/architecture/architecture-service.ts:904`）、`readCurrentCatalogWindow`（`src/core/work-graph/architecture/catalog-service.ts:368`）、`catalogPinOf`（`src/core/work-graph/architecture/catalog-service.ts:443`） |
 | 笔记（注记） | `src/core/work-graph/notes/` | `createNoteService`（`src/core/work-graph/notes/note-service.ts:480`）、`createNoteReadModel`（`src/core/work-graph/notes/note-read-model.ts:357`） |
@@ -82,7 +82,7 @@
 | 证据与验证轮 | `src/core/work-graph/evidence/` | `createEvidenceService`（`src/core/work-graph/evidence/evidence-service.ts:874`）、`compileVerificationPlan`（`src/core/work-graph/evidence/verification-plan.ts:61`） |
 | 消息与决定答复 | `src/core/work-graph/communication/` | `createSessionMailbox`（`src/core/work-graph/communication/mailbox-service.ts:1706`）、`createDecisionMessageService`（`src/core/work-graph/communication/decision-service.ts:198`） |
 | 模块依赖检查 | `docs/refactor/module-target.json`（`npm run check:architecture`）；跨层共享契约放 `src/core/work-graph/model/` | `GraphWrite`（`src/core/work-graph/model/task-contracts.ts:28`） |
-| 工具注册/工具组 | `src/core/agent-runtime/`（`tool-group-assembly.ts`） | `selectWorkToolGroup`（`src/core/agent-runtime/tool-group-assembly.ts:243`）、`finalToolNamesOf`（`src/core/agent-runtime/tool-group-assembly.ts:620`） |
+| 工具注册/工具组 | `src/core/agent-runtime/`（`tool-group-assembly.ts`） | `selectWorkToolGroup`（`src/core/agent-runtime/tool-group-assembly.ts:247`）、`finalToolNamesOf`（`src/core/agent-runtime/tool-group-assembly.ts:649`） |
 | 上下文装配 | `src/core/agent-runtime/`（`context-assembler.ts`、`context-rendering.ts`、`context-secretary-recipe.ts`） | `createContextAssembler`（`src/core/agent-runtime/context-assembler.ts:27`）、`renderContext`（`src/core/agent-runtime/context-rendering.ts:424`）、`assembleSecretaryContext`（`src/core/agent-runtime/context-secretary-recipe.ts:192`） |
 | 模型调用 permit | `src/core/work-graph/tasks/`（`model-call-service.ts`、`model-call-contracts.ts`） | `createModelCallService`（`src/core/work-graph/tasks/model-call-service.ts:154`）、`modelRequestPermitIdFor`（`src/core/work-graph/tasks/model-call-contracts.ts:80`） |
 | Goal/Plan | `src/core/work-graph/tasks/`（`task-service.ts`、`plan-service.ts`） | `admitGoalCreation`（`src/core/work-graph/tasks/task-service.ts:156`）、`createPlanService`（`src/core/work-graph/tasks/plan-service.ts:1051`） |

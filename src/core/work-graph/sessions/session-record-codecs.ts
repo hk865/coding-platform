@@ -3,8 +3,9 @@
  *
  * The WorkGraph owns this closed schemaId list; the RecordStore only selects a
  * codec from the aggregateType of the full ref and applies mechanical CAS,
- * claims, cursor binding and one transaction. This file performs no I/O, no
- * admission, no fold and no transaction.
+ * claims, cursor binding and one transaction. The codecs perform no I/O; the
+ * one point read of a stored `maintainer_assignment` operation is the shared
+ * read below, so the card source and the owner never write a second copy.
  *
  * Frozen rules enforced here:
  *   - `plannedSessionRef` is an ordinary `SessionRef` (no `aggregateType`); the
@@ -34,10 +35,14 @@ import type {
 } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import { SESSION_HEALTH_CONCLUSIONS, type HandoffSeatFactsV1, type PendingSessionWorkLink, type SessionRecord, type SessionWorkLink } from '../../../contracts/core/session.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
+import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type {
-  DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
+  DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import type { SessionCreateOperationRecord, SessionOperationRecord } from '../model/session-contracts.js';
+import type {
+  MaintainerAssignmentOperationV1, SessionCreateOperationRecord, SessionOperationRecord,
+} from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
 import {
   ActorRefField, HandoffActionShape, SecretaryArchiveActionShape, upgradeSessionOperationActionV1,
@@ -47,6 +52,7 @@ import {
   memberCreationAcceptedEventFormat, memberCreationDecidedEventFormat, memberCreatedEventFormat,
   type MemberCreatedEventV1,
 } from '../state/member-creation.js';
+import { MaintainerAssignmentActionShape } from '../state/module-maintainer-assignment.js';
 import {
   WORK_HANDOFF_BRIEF_CONSUMED_FORMAT, WORK_HANDOFF_BRIEF_FORMAT, WORK_HANDOFF_BRIEF_RECORDED_FORMAT,
 } from '../state/work-handoff-brief.js';
@@ -55,6 +61,7 @@ import { createEventCodec as createEnvelopeEventCodec } from '../persistence/eve
 import { createEventCodec, createRecordCodec, formatSchemas, type EventCodec } from '../persistence/field-table-codec.js';
 import { checkTarget, checkWorkLinkRef, decisionChangeProofProblem, isWorkLinkRelation, versionPinProblem } from '../persistence/decision-record-codecs.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
+import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 
 export { checkTarget, checkWorkLinkRef, isWorkLinkRelation };
 export type { HandoffSeatFactsV1, PendingSessionWorkLink };
@@ -466,8 +473,8 @@ export function checkSessionCreationIntent(value: unknown): Problem {
 function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
   if (!isRecord(value) || !hasOnlyKeys(value, ['target', 'disposition'])) return 'archive task choice carries unknown fields';
   const target = value['target'];
-  if (!isRecord(target) || (target['kind'] !== 'task' && target['kind'] !== 'work')) {
-    return 'archive task choice target must be a task or work target';
+  if (!isRecord(target) || (target['kind'] !== 'task' && target['kind'] !== 'work' && target['kind'] !== 'module')) {
+    return 'archive task choice target must be a task, work or module target';
   }
   const targetRef = target['ref'];
   if (!isRecord(targetRef)) return 'archive task choice target ref must be an object';
@@ -475,6 +482,11 @@ function checkArchiveTaskChoice(value: unknown, ownProjectId: string): Problem {
     if (!hasOnlyKeys(targetRef, ['projectId', 'goalId', 'taskId'])
       || !nonEmpty(targetRef['projectId']) || !nonEmpty(targetRef['goalId']) || !nonEmpty(targetRef['taskId'])) {
       return 'archive task choice target must be a complete TaskTriple';
+    }
+  } else if (target['kind'] === 'module') {
+    if (!hasOnlyKeys(targetRef, ['projectId', 'moduleId'])
+      || !nonEmpty(targetRef['projectId']) || !nonEmpty(targetRef['moduleId'])) {
+      return 'archive task choice target must be a complete ModuleRef';
     }
   } else if (!hasOnlyKeys(targetRef, ['aggregateType', 'projectId', 'workspaceId', 'workId'])
     || targetRef['aggregateType'] !== 'WorkContextBinding' || !nonEmpty(targetRef['projectId'])
@@ -728,7 +740,8 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
     : kind === 'handoff' ? checkShape(HandoffActionShape, action, 'stored')
       : kind === 'secretary_archive' ? checkShape(SecretaryArchiveActionShape, action, 'stored')
         : kind === 'member_create' ? checkShape(MemberCreateActionShape, action, 'stored')
-          : 'action.kind is not recognized';
+          : kind === 'maintainer_assignment' ? checkShape(MaintainerAssignmentActionShape, action, 'stored')
+            : 'action.kind is not recognized';
   if (arm !== null) return arm;
   // The archive arm names no workspace: the top-level field is its only one.
   const armWorkspace = kind === 'create' ? (action['workspace'] as UnknownRecord)['workspaceId']
@@ -1176,6 +1189,41 @@ export const secretaryArchiveRecordedCodec = createArmEventCodec(defineEvent({
     phase: f.enumOf(OPERATION_PHASES), action: f.ref(SecretaryArchiveActionShape) },
 }));
 /**
+ * The maintainer assignment's one applied event. The approved-answer stage carries both `actor` and the formal
+ * `DecisionChangeProofV1` (`proof`), the auto stage writes the actor without a proof. The proof is the operation's own
+ * before/after, never the trusted call that admitted the assignment.
+ */
+const maintainerAssignmentRecordedFormat = defineEvent({
+  name: 'MaintainerAssignmentRecorded', eventType: 'MaintainerAssignmentRecorded', schemaVersion: 1,
+  fields: { projectId: id, workspaceId: id, operationRef: f.ref(OperationRefShape), revision: f.integer({ min: 1 }),
+    phase: f.enumOf(OPERATION_PHASES), action: f.ref(MaintainerAssignmentActionShape),
+    actor: f.optional(ActorRefField), proof: f.optional(f.json()) },
+  rules: [(value) => {
+    if (!isRecord(value)) return 'MaintainerAssignmentRecorded must be an object';
+    if (value['proof'] === undefined) return null;
+    if (value['actor'] === undefined) return 'a MaintainerAssignmentRecorded with a proof must carry its actor';
+    return decisionChangeProofProblem(value['proof']);
+  }],
+});
+export type MaintainerAssignmentRecordedEventV1 = InferEvent<'MaintainerAssignmentRecorded',
+  typeof maintainerAssignmentRecordedFormat.fields>;
+const maintainerAssignmentRecordedEnvelope = createEnvelopeEventCodec<MaintainerAssignmentRecordedEventV1>({
+  eventType: 'MaintainerAssignmentRecorded', schemaVersion: SESSION_EVENT_SCHEMA_VERSION,
+  jsonLabel: maintainerAssignmentRecordedFormat.name,
+  bodyProblem: value => checkShape(maintainerAssignmentRecordedFormat, value, 'stored'),
+});
+export const maintainerAssignmentRecordedCodec = {
+  encode(event: MaintainerAssignmentRecordedEventV1): EncodedDomainEvent {
+    return maintainerAssignmentRecordedEnvelope.encode(event);
+  },
+  decode(event: EncodedDomainEvent): DecodeResult<MaintainerAssignmentRecordedEventV1> {
+    const decoded = maintainerAssignmentRecordedEnvelope.decodeBody(event);
+    return decoded.status === 'decoded'
+      ? { status: 'decoded', value: decoded.value as unknown as MaintainerAssignmentRecordedEventV1 } : decoded;
+  },
+  registration: maintainerAssignmentRecordedEnvelope.registration,
+};
+/**
  * The member arm's three events. Accepted and decided carry the whole stored action, like the handoff arm. The proof
  * event carries only the effect: the new Session aggregate (tagged, so its commit refKey matches), the post-effect
  * version, the actual initiator Run, the acknowledgement and the formal change proof. The state field table and the
@@ -1275,6 +1323,7 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
     },
     sessionHandoffRecordedCodec.registration,
     secretaryArchiveRecordedCodec.registration,
+    maintainerAssignmentRecordedCodec.registration,
     memberCreationAcceptedCodec.registration,
     memberCreationDecidedCodec.registration,
     memberCreatedCodec.registration,
@@ -1391,6 +1440,38 @@ export function decodeSessionOperationRecord(record: EncodedRecord): DecodeResul
   const checked = validateOperationRecord(record);
   if (checked.status !== 'decoded') return checked;
   return { status: 'decoded', value: checked.value as unknown as SessionOperationRecord };
+}
+
+/**
+ * The one stored `maintainer_assignment` operation read: the operation key's point read through the operation codec,
+ * never the host-gated `getSessionOperation`. A real absence is `null`, a damaged record is `unavailable`, and an
+ * operation of another action kind is `null` (the caller names the kind it wanted). The card source and the assign
+ * owner both read through this one function; neither adds a second index or record.
+ */
+export async function readMaintainerAssignmentOperation(
+  records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  ref: OperationRef,
+): Promise<ReadResult<MaintainerAssignmentOperationV1 | null>> {
+  const key = operationRefKey(ref);
+  let read: Awaited<ReturnType<GoalRecordTransactionPort['readMany']>>;
+  try {
+    read = await records.readMany([key]);
+  } catch (error) {
+    return storeFailureToRejection(error);
+  }
+  if (read.status !== 'ready') return storeFailureToRejection(read);
+  const found = read.value.records.find((record) => record.refKey === key);
+  if (found === undefined) {
+    return read.value.missing.includes(key)
+      ? { status: 'ready', value: null }
+      : rejectedWithCurrent('unavailable', `the maintainer assignment operation ${key} was not read`);
+  }
+  const decoded = decodeSessionOperationRecord(found);
+  if (decoded.status !== 'decoded') {
+    return rejectedWithCurrent('unavailable', `the maintainer assignment operation is damaged: ${decoded.reason}`);
+  }
+  if (decoded.value.action.kind !== 'maintainer_assignment') return { status: 'ready', value: null };
+  return { status: 'ready', value: decoded.value as MaintainerAssignmentOperationV1 };
 }
 
 export function decodeSessionRecord(record: EncodedRecord): DecodeResult<SessionRecord> {

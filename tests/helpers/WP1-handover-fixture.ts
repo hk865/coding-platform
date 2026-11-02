@@ -15,6 +15,8 @@
  * createStillResponsibleRetiredFixture -> HM02 -> attested retired P, continuation C, T retained.
  * createUnknownOccupiedRetiredFixture -> HM03 -> entered/unknown/retired P, continuation C.
  * createModuleOnlyRetiredFixture -> HM04 -> module link before retirement, C, T transfer.
+ * createRetiredModuleLineFixture -> retired module rows -> a line of one duty, its module link, its continuations,
+ *   retired by moving the Kernel database aside and recording the real probe's answer.
  * bumpSessionRevision -> HO08 -> public participates link to the existing fx3-work module.
  *
  * HO02/06/08/12 start with the HO01 builder; HO07 starts with HO03. The test
@@ -36,17 +38,19 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin,
   WorkLinkRelation, WorkLinkTarget, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
-import type { SessionWorkLink } from '../../src/contracts/core/session.js';
+import type { SessionProvenanceV1, SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { TaskRequeueSnapshotV1 } from '../../src/contracts/task-requeue.js';
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
-import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
+import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
+import { createSessionHistoryCursorOwner, createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createExecutionHistoryReader } from '../../src/core/agent-runtime/observation-recovery.js';
 import { createGraphExecutionHistoryReader } from '../../src/core/agent-runtime/graph-execution-history.js';
@@ -65,8 +69,9 @@ import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/ses
 import { createSessionResponsibilityBasisReader, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
-import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
+import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
+import { createModuleMaintainer } from '../../src/core/work-graph/sessions/module-maintainer-service.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { sessionWorkLinkRefKey, decodeSessionWorkLink }
   from '../../src/core/work-graph/sessions/session-record-codecs.js';
@@ -82,6 +87,7 @@ import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY, type WorkflowDependencies, type WorkflowHostConfiguration }
   from '../../src/business/workflow/ports.js';
 import type { WorkflowAdvanceBase, WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
+import { moveKernelAside, restoreKernel } from './A2-restart-fixture.js';
 import { createB2ExecutionFixture, unknownWork, retireSession, type B2ExecutionFixture, type B2Records }
   from './S1-workflow-archive-fixture.js';
 import { createRuntimeHostDouble, createScriptedModel } from './B2-runtime-fixture.js';
@@ -188,13 +194,17 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
       readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
   });
   const sessionFacts = createSessionFactsService({ records });
-  const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now, duty: unknownSessionDuty });
   const sessionDuty = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec,
     configuration: options.configuration });
+  const responsibilities = createSessionResponsibilityService({ records, lookups: records,
+    basis: createSessionResponsibilityBasisReader(records), now, duty: sessionDuty });
   const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: sessionDuty });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const forbiddenCheck = async () => { throw new Error('WP1 given must not start a check'); };
+  // Only the one maintainer read the module hover shows; nothing here assigns a maintainer.
+  const maintainers = createModuleMaintainer({ findSessions: base.sessionsPort.findSessions, records, duty: sessionDuty,
+    executions: reads, catalog: { readArchitectureRevision: forbiddenCheck }, notifyProject: forbiddenCheck,
+    goalSettings: { readGoalSettings: forbiddenCheck } });
   const deps: WorkflowDependencies = {
     tasks: base.goals, plans: base.plans, sessions: base.sessionsPort, claims, executions: reads,
     runtime: { ...runtime.port, createSession: sessionOperations.createSession },
@@ -210,8 +220,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
         ? { status: 'ready' as const, value: { cursor: at.value.cursor, event: at.value.event } }
         : { status: 'rejected' as const, code: 'unavailable' as const, reason: at.reason };
     } },
-    sessionDuty: options.sessionDuty ?? (async role => ({ status: 'ready', value:
-      role.kind === 'legacy_template' && role.templateId === 'builder' ? 'executor' : 'unknown' })),
+    sessionDuty: options.sessionDuty ?? sessionDuty,
   };
   const workflow = createWorkflow(deps);
   const { archiveLine, continueArchiveLine, maintainSessions } = workflow;
@@ -220,7 +229,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   }
   return { workflow: { ...workflow, archiveLine, continueArchiveLine, maintainSessions }, ctx: base.ctx, configuration: options.configuration,
     deps, records, claims, reads, sessionFacts, sessionLifecycle, sessionAnomalies, responsibilities,
-    sessionOperations, finalArchiveConflicts: () => finalArchiveConflicts };
+    sessionOperations, kernelStores, maintainers, finalArchiveConflicts: () => finalArchiveConflicts };
 }
 export type HandoverComposition = Awaited<ReturnType<typeof createHandoverWorkflow>>;
 
@@ -243,7 +252,8 @@ async function createBase() {
   const P = b2.claim.sessionRef;
   const T = b2.claim.task;
   const target: WorkLinkTarget = { kind: 'task', ref: T };
-  const moduleTarget: WorkLinkTarget = { kind: 'module', ref: { projectId: base.scope.projectId, moduleId: 'fx3-work' } };
+  const moduleRef = { projectId: base.scope.projectId, moduleId: 'fx3-work' };
+  const moduleTarget: WorkLinkTarget = { kind: 'module', ref: moduleRef };
   let requestSequence = 0;
   const requestId = (label: string) => `wp1-given-${label}-${++requestSequence}`;
   const advanceBase: WorkflowAdvanceBase = { schemaVersion: 1, goalRef: base.goalRef,
@@ -326,6 +336,9 @@ async function createBase() {
       return found?.until === null ? found : null;
     },
     async facts(ref: SessionRef = P) { return ready(await composition1.sessionFacts.readSessionFacts(base.ctx, ref)); },
+    async maintainer() {
+      return ready(await composition1.maintainers.maintainerOf(base.ctx, { workspace: base.scope, module: moduleRef }));
+    },
     async sessions() { return ready(await base.sessionsPort.findSessions(base.ctx,
       { workspace: base.scope, includeArchived: true, page: { limit: 100 } })); },
     async task(task: TaskTriple = T) {
@@ -566,6 +579,61 @@ export async function createHandedOverRetiredFixture() { return retiredContinuat
 export async function createStillResponsibleRetiredFixture() { return retiredContinuation('responsible'); }
 export async function createUnknownOccupiedRetiredFixture() { return retiredContinuation('unknown'); }
 export async function createModuleOnlyRetiredFixture() { return retiredContinuation('module'); }
+
+/**
+ * The same two calls as `startup-reconcile.ts:380`, the probe's answer as returned. Moving the Kernel database aside and
+ * back is A1 (precedent `tests/composition/WP2-wiring.test.ts:130`); under H-04 a restart cannot retire an idle line.
+ */
+async function retireByMissingKernel(f: HandoverBase, ref: SessionRef): Promise<void> {
+  const { record } = await f.observations.session(ref);
+  const aside = await moveKernelAside(f.base.directory);
+  try {
+    const probe = await createSessionHistoryCursorOwner({ kernelStores: f.composition1.kernelStores })
+      .probe({ session: record, signal: f.ctx.signal });
+    const health = createSessionHealthService({ records: f.base.records,
+      hostInstance: { hostInstanceId: 'fx3-host', lease: 'owned' }, now: f.now, eventId: () => f.requestId('health-event') });
+    const observed = await health.recordSessionHealth(f.ctx, { sessionRef: ref, probe });
+    if (observed.status !== 'observed') throw new Error(`WP1 retirement: ${JSON.stringify(observed)}`);
+  } finally { await restoreKernel(f.base.directory, aside); }
+}
+
+async function createLine(f: HandoverBase, duty: PlatformDutyV1, provenance?: SessionProvenanceV1): Promise<SessionRef> {
+  const created = await f.composition1.sessionOperations.createSession(f.ctx, {
+    workspace: f.scope, role: platformRoleProfile(duty).template, recommendedRefs: [], initialLinks: [],
+    ...(provenance === undefined ? {} : { provenance }),
+    meta: { requestId: f.requestId('line'), expected: [] },
+  });
+  if (created.status !== 'completed') throw new Error(`WP1 line setup: ${JSON.stringify(created)}`);
+  return { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
+}
+
+/** A retired line of one duty with an open module responsibility and its continuations, in order. No Run. */
+export async function createRetiredModuleLineFixture(input: { duty: PlatformDutyV1;
+  continuations: readonly { readonly duty: PlatformDutyV1; readonly archived?: boolean }[] }) {
+  const f = await createBase();
+  try {
+    const line = await createLine(f, input.duty);
+    await f.addLink(line, f.moduleTarget);
+    const successors: SessionRef[] = [];
+    for (const continuation of input.continuations) {
+      const successor = await createLine(f, continuation.duty,
+        { schemaVersion: 1, kind: 'continuation', from: line, reason: 'interrupted', task: f.T });
+      if (continuation.archived === true) {
+        await retireByMissingKernel(f, successor);
+        await f.archive(successor);
+      }
+      successors.push(successor);
+    }
+    await retireByMissingKernel(f, line);
+    f.setClock(T1);
+    async function takeModule(): Promise<SessionRef> {
+      const next = await createLine(f, 'executor');
+      await f.addLink(next, f.moduleTarget);
+      return next;
+    }
+    return { ...f, composition: f.composition1, workflow: f.workflow1, line, successors, takeModule };
+  } catch (error) { await f.close(); throw error; }
+}
 
 /** HO08: invoke only after the test itself performed create_session. */
 export async function bumpSessionRevision(f: HandoverBase, C: SessionRef): Promise<number> {

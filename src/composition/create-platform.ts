@@ -48,6 +48,7 @@ import {
   candidateCardFacts, createCollectionCardSource, createCommandRerunRequestCardSource, createDecisionReadModel,
   createGoalCauseCardSource, createMemberCreationCardSource, createNoteReviewCardSource,
   createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createMessageReleaseCardSource,
+  createMaintainerAssignmentCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createPlanAdoptionNoticeSource } from '../core/work-graph/views/plan-adoption-notices.js';
 import { createPlanNoticeSource } from '../core/work-graph/views/plan-notices.js';
@@ -91,6 +92,7 @@ import { servingBinding, servedRoleIds } from '../business/workflow/role-binding
 import {
   createCommandRerunRequestApplicationAdapter, createMemberCreationApplicationAdapter,
   createMessageReleaseApplicationAdapter, createReworkRequestApplicationAdapter,
+  createMaintainerAssignmentApplicationAdapter,
 } from '../business/workflow/decision-actions.js';
 import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
@@ -280,7 +282,10 @@ import { lookupAll } from '../core/work-graph/persistence/lookup-all.js';
 // The one unfinished-operation index the lifecycle queue and the handoff's automatic entry both read.
 import {
   CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord,
+  readMaintainerAssignmentOperation,
 } from '../core/work-graph/sessions/session-record-codecs.js';
+import type { ModuleMaintainerPort } from '../core/work-graph/model/module-maintainer-contracts.js';
+import { createModuleMaintainer } from '../core/work-graph/sessions/module-maintainer-service.js';
 import type { VersionPin } from '../contracts/core/identity.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
@@ -1537,7 +1542,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     });
     const decisionCardSources = [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
       commandRerunRequestCards, messageReleaseCards, handoffApprovalCards, adviserCreationCards,
-      createMemberCreationCardSource({ records: backend.records })];
+      createMemberCreationCardSource({ records: backend.records }),
+      createMaintainerAssignmentCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: decisionCardSources,
@@ -1639,6 +1645,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       },
       reuse: memberReuse,
       now, eventId: randomUUID,
+    });
+    // R2 L9: the ONE module maintainer owner. `executions` and `goalSettings`
+    // are the same readers built above; the notice is the one project notice
+    // command. The tracked wrapper below publishes it under `moduleMaintainers`.
+    const moduleMaintainerOwner = createModuleMaintainer({
+      findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input),
+      records: backend.records,
+      duty: sessionDutyResolver,
+      catalog,
+      notifyProject: (input) => notifyProject({ records: backend.records, now }, input),
+      executions: executionReader,
+      goalSettings: rawGoalSettings,
     });
     const executionHistory = createExecutionHistoryReader({ history: sessionOperations });
     const historyWriter = createExecutionHistoryService({ records: backend.records, now, eventId: randomUUID });
@@ -1789,6 +1807,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readTaskInputs: (...args) => trackedCall(() => taskInputsOwner.readTaskInputs(...args), unavailable),
       readTaskInputPage: (...args) => trackedCall(() => taskInputsOwner.readTaskInputPage(...args), unavailable),
     };
+    // Every published owner call drains through the one close-tracking path: the
+    // route, the hover's maintainer read and the adviser's tool all use this
+    // object, so `close()` waits for an in-flight assignment.
+    const moduleMaintainers: ModuleMaintainerPort = {
+      maintainerOf: (...args) =>
+        trackedCall(() => moduleMaintainerOwner.maintainerOf(...args), unavailable),
+      assignModuleMaintainer: (...args) =>
+        trackedCall(() => moduleMaintainerOwner.assignModuleMaintainer(...args), unavailable),
+      requestAssignment: (...args) =>
+        trackedCall(() => moduleMaintainerOwner.requestAssignment(...args), unavailable),
+      applyMaintainerAssignmentDecision: (...args) =>
+        trackedCall(() => moduleMaintainerOwner.applyMaintainerAssignmentDecision(...args), unavailable),
+    };
     let resultWriter: Pick<ExecutionEntryPort, 'recordRunResult'> | undefined;
     // The note read model is built after the Runtime dependencies object, so the
     // secretary recipe receives this stable holder and reads the ONE material
@@ -1837,6 +1868,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // port, Q's read-only request view, and L8's evidence owner (only the
         // one method the recheck tool calls). No second instance exists.
         memberCreation: memberService.request,
+        // R2: the adviser's `assign_module_maintainer` entry, the SAME tracked
+        // maintainer owner the route binds.
+        maintainerAssignments: moduleMaintainers,
         mainSurface: rawMainSurface,
         evidence: rawEvidence,
         // Ruling 30: the Work permit read over the SAME record backend. The pack
@@ -2838,6 +2872,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           reworks: reworkRequestService, applicationReceipt }),
         // The `handoff_approval` row: the person's answer becomes `handoff.decide` under the application commandId.
         handoff_approval: createHandoffApprovalApplicationAdapter(handoff),
+        // The `module_maintainer_assignment` row: the stored operation read and the owner's one decision entry.
+        // `createDecisionActions` on this tree only receives `decisionApplications` (its `maintainerDecisions`
+        // seam is not forwarded by `WorkflowDependencies`), so the same deps object is bound here.
+        module_maintainer_assignment: createMaintainerAssignmentApplicationAdapter({
+          readOperation: (ref) => readMaintainerAssignmentOperation(backend.records, ref),
+          maintainers: moduleMaintainers,
+        }),
       },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
@@ -3254,6 +3295,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       anomalies: sessionAnomalies,
       executedFiles: goalExecutedFiles,
       line: workLineDeps,
+      // R2: the same maintainer read the assign owner uses; the hover and the
+      // module summary pass its line refs through their one brief assembly.
+      maintainerOf: moduleMaintainers.maintainerOf,
       notes: listNotes,
     });
     const lineSettings: WorkLineSettingsPort = createLineSettingsService({
@@ -3456,6 +3500,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The project role-limits owner (read/set), the allocation read, and the one project-notice writer.
       // Internal like the other owner groups: the route table reads them by property.
       roleLimits, roleLineAllocation, projectNoticeWriter,
+      // The module maintainer owner (read + assign + the operation entries); the
+      // route table binds `modules/assign-maintainer` to it. Internal like the
+      // other owner groups, and every call drains through `trackedCall` above.
+      moduleMaintainers,
       // The Host's two recipient resolvers (adviser and the Goal's current secretary): the SAME duty/goal-secretary
       // instances the rest of the root uses, published as one internal read group through the close-tracking path.
       recipients: {
@@ -3581,6 +3629,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter',
+      'moduleMaintainers',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard'] as const) {

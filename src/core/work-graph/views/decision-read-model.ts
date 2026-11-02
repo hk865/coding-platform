@@ -53,6 +53,9 @@ import {
   memberCreationCardFacts, memberCreationClosedReason, memberCreationSourceIdentity,
   type MemberOperationRecordV1,
 } from '../communication/decision-source/member-creation.js';
+import {
+  maintainerAssignmentCardSourceSpec,
+} from '../communication/decision-source/module-maintainer-assignment.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
@@ -186,7 +189,7 @@ type CardAction = DecisionCardV1['actions'][number];
 const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
   'unknown_call_review', 'command_rerun_request',
-  'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation',
+  'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation', 'module_maintainer_assignment',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
@@ -1722,6 +1725,7 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
     // The four new sources carry the same project/workspace ids in their own refs.
     case 'member_creation':
     case 'handoff_approval':
+    case 'module_maintainer_assignment':
       return foreignRef(identity.operationRef) ? forbidden : null;
     case 'rework_request':
       return foreignRef(identity.requestRef) ? forbidden : null;
@@ -2255,6 +2259,18 @@ export function createMemberCreationCardSource(
       return { status: 'ready', value: { item: member } };
     },
   }, (goalRef) => readGoalForBasis(deps.records, goalRef));
+}
+
+/**
+ * The `module_maintainer_assignment` card source, registered on the generic collection adapter. The one operation
+ * index is scanned over all five phases and the source keeps only the pending card; `readByKey` rebuilds the same
+ * facts from the one recorded operation. The source serves the project: the card's subject is its operation's project
+ * and no Goal record is loaded for it.
+ */
+export function createMaintainerAssignmentCardSource(
+  deps: { records: DecisionReadRecordsPort },
+): DecisionCardSourcePort {
+  return createCollectionCardSource(maintainerAssignmentCardSourceSpec(deps.records));
 }
 
 // -------------------------------------------------------------------------- //

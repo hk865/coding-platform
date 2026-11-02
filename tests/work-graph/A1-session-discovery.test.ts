@@ -123,7 +123,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 target-indexed discovery over r
     for (let index = 0; index < 3; index += 1) {
       const session = await fixture.createSession(`page-session-${index}`);
       sessions.push(session);
-      await link(fixture, session, moduleTarget(fixture, GRAPH_MODULE_ONE), 'responsible', `page-link-${index}-a`);
+      await link(fixture, session, moduleTarget(fixture, GRAPH_MODULE_ONE), 'investigated', `page-link-${index}-a`);
       await link(fixture, session, moduleTarget(fixture, GRAPH_MODULE_ONE), 'participates', `page-link-${index}-b`);
     }
     const expected = ids(fixture, ...sessions);
@@ -158,7 +158,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 target-indexed discovery over r
     for (let index = 0; index < 2; index += 1) {
       const session = await fixture.createSession(`measured-linked-${index}`);
       linked.push(session);
-      await link(fixture, session, target, 'responsible', `measured-link-${index}`);
+      await link(fixture, session, target, 'investigated', `measured-link-${index}`);
     }
     for (let index = 0; index < 40; index += 1) await fixture.createSession(`unrelated-a-${index}`);
 
@@ -186,7 +186,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 target-indexed discovery over r
     const f = await make(kind);
     await f.adopt('cursor-adopt');
     const target = moduleTarget(f, GRAPH_MODULE_ONE);
-    for (let i = 0; i < 2; i++) await link(f, await f.createSession(`cursor-${i}`), target, 'responsible', `cursor-link-${i}`);
+    for (let i = 0; i < 2; i++) await link(f, await f.createSession(`cursor-${i}`), target, 'investigated', `cursor-link-${i}`);
     const first = await findTarget(f, target, false, 1);
     expect(first.status).toBe('ready');
     if (first.status !== 'ready') return;

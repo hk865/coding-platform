@@ -50,7 +50,8 @@ const executedFilesStub = {
 
 function nodeReaderOf(f: LineFixture): NodeDetailReadPort {
   return createNodeDetailReader({ records: f.records, plans: f.base.plans, catalog: catalogStub,
-    anomalies: anomaliesStub, executedFiles: executedFilesStub, line: f.deps });
+    anomalies: anomaliesStub, executedFiles: executedFilesStub, line: f.deps,
+    maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }) });
 }
 
 describe.each(['memory', 'sqlite'] as const)('2C-10 one executor line walked (%s)', (kind) => {

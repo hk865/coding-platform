@@ -5,7 +5,7 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import {
-  createGraphSessionFixture, GRAPH_MODULE_ONE, linkRequest,
+  createGraphSessionFixture, linkRequest,
   type GraphSessionFixture,
 } from '../helpers/graph-session-fixture.js';
 
@@ -64,9 +64,14 @@ describe.each(['memory', 'sqlite'] as const)('A1 independent %s review', kind =>
   it('paginates distributed relations without rescanning the complete target on every page', async () => {
     const f = await make(kind);
     expect(await f.adopt('bounded-pages-adopt')).toMatchObject({ status: 'committed' });
-    // The real executor admission counts every created line; this row really creates 64.
-    await f.setOpenLimit('executor', 100);
-    const target = { kind: 'module' as const, ref: f.moduleRef(GRAPH_MODULE_ONE) };
+    // The seed adopts the same catalog: route that call to the committed baseline so it replays.
+    const adopt = f.adopt.bind(f);
+    f.adopt = async (requestId, overrides, ctxOverride) =>
+      await adopt(requestId === 'a1-seed-accepted-architecture' ? 'bounded-pages-adopt' : requestId, overrides, ctxOverride);
+    const seed = await f.seedAcceptedTask();
+    f.adopt = adopt;
+    await f.setOpenLimit('executor', 100);       // the real admission counts every created line; this row makes 64
+    const target = { kind: 'goal' as const, ref: seed.goalRef }; // an executor Goal link takes no claim
     const expected = new Set<string>();
     const relations = ['responsible', 'participates', 'investigated'] as const;
     for (let i = 0; i < 64; i++) {

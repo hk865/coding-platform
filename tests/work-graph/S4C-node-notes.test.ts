@@ -126,6 +126,7 @@ describe('S4C R-02 node-detail notes column and hover counts', () => {
       executedFiles: scriptedExecutedFiles({ availability: 'not_available', files: [], possiblyIncomplete: true,
         sourceCursor: null }),
       line: lineDeps,
+      maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }),
       notes: async () => ({ status: 'rejected', code: 'unavailable', reason: 'the note store is down' }),
     });
     const node = { kind: 'task' as const, ref: fixture.tasks['task-a']!, planRef: fixture.planRef };

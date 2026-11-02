@@ -22,7 +22,7 @@ import type { VersionPin } from '../../contracts/core/identity.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { OperationRef } from '../../contracts/core/operations.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
-import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { DecisionApplicationReceiptV1, SessionMessageRef, UserMessageResponseV1 } from '../../contracts/core/session-message.js';
 import type { DecisionSelectionV1, DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import type { ReworkRequestRef } from '../../contracts/rework-request.js';
@@ -38,6 +38,10 @@ import { commandRerunRequestRefOfSource } from '../../core/work-graph/tasks/comm
 import { nestedSourceObject, parseDecisionSourceKey } from '../../core/work-graph/tasks/decision-source-identity.js';
 import type { MemberDecisionPortV1 } from '../../core/work-graph/tasks/member-service.js';
 import type { ReworkRequestService } from '../../core/work-graph/tasks/rework-requests.js';
+import type { MaintainerAssignmentOperationV1 } from '../../core/work-graph/model/session-contracts.js';
+import type { ModuleMaintainerPort } from '../../core/work-graph/model/module-maintainer-contracts.js';
+import { maintainerBindingOfOperation } from '../../core/work-graph/model/module-maintainer-contracts.js';
+import { maintainerCallBindingOf, type MaintainerCallBranchV1, type TrustedMaintainerCallV1 } from '../../contracts/role-lines.js';
 import type {
   DecisionMessagePort,
   GoalExecutedFilesPort,
@@ -114,6 +118,8 @@ export type DecisionActionDependencies = {
    */
   memberDecisions?: Pick<MemberDecisionPortV1, 'applyMemberDecision'>;
   reworkApplications?: Pick<ReworkRequestService, 'applyApprovedReworkRequest' | 'closeReworkRequest' | 'readRequest'>;
+  /** The maintainer assignment's ② row: the stored operation read and the owner's one decision entry. */
+  maintainerDecisions?: MaintainerAssignmentApplicationDependencies;
 };
 
 /** The shared ②-then-③ result (the coordinator owns the exact public narrowing). */
@@ -389,6 +395,90 @@ export function createMemberCreationApplicationAdapter(
 }
 
 /**
+ * The `module_maintainer_assignment` step ② adapter: the person's answer becomes the trusted `approved_answer`
+ * branch over the STORED operation input. The admission proof carries the stored operation/module/line and the
+ * answer's own refs; the checker compares it against the stored binding before the owner writes anything. A `done`
+ * result hands its stage receipt to ③; reject/stale/owner refusals stay the real results.
+ */
+export type MaintainerAssignmentApplicationDependencies = {
+  readOperation: (ref: OperationRef) => Promise<ReadResult<MaintainerAssignmentOperationV1 | null>>;
+  maintainers: Pick<ModuleMaintainerPort, 'applyMaintainerAssignmentDecision'>;
+};
+
+/** Parse one `module_maintainer_assignment` source key into its operation ref; null when the key carries no ref. */
+function maintainerOperationOfSource(source: DecisionSourceV1): OperationRef | null {
+  if (source.kind !== 'module_maintainer_assignment') return null;
+  const parsed = parseDecisionSourceKey(source);
+  if (parsed === null || parsed.kind !== 'module_maintainer_assignment') return null;
+  const ref = nestedSourceObject(parsed.body, 'operationRef');
+  if (ref === null || checkShape(OperationRefShape, ref, 'stored') !== null) return null;
+  return ref as unknown as OperationRef;
+}
+
+export function createMaintainerAssignmentApplicationAdapter(
+  deps: MaintainerAssignmentApplicationDependencies,
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answer, answerRef, source, selection, requestId }) {
+      const optionId = selection.kind === 'option' ? selection.optionId : null;
+      if (optionId !== 'approve' && optionId !== 'reject') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'a module_maintainer_assignment card answers approve or reject',
+        }, receipt: null } };
+      }
+      const operationRef = maintainerOperationOfSource(source);
+      if (operationRef === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'the answer source is not a module_maintainer_assignment card',
+        }, receipt: null } };
+      }
+      const read = await deps.readOperation(operationRef);
+      if (read.status !== 'ready') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'unavailable',
+          reason: read.status === 'rejected' ? read.reason : 'the maintainer assignment operation is not readable',
+        }, receipt: null } };
+      }
+      const operation = read.value;
+      if (operation === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'the maintainer assignment operation was not found',
+        }, receipt: null } };
+      }
+      const response = answer.response as UserMessageResponseV1;
+      const binding = maintainerBindingOfOperation(operation);
+      const callProof: TrustedMaintainerCallV1 = {
+        kind: 'maintainer_assignment', cardKey: source.key, answerMessageRef: answerRef,
+        operation: binding.operation, moduleRef: binding.moduleRef, line: binding.line,
+        approvedBy: response.sender.actor, revision: answer.revision,
+      };
+      const branch: MaintainerCallBranchV1 = { branch: 'approved_answer', proof: callProof };
+      const checked = maintainerCallBindingOf(branch, binding);
+      if (checked.status !== 'ready') {
+        return { status: 'ready', value: { action: checked.status === 'rejected'
+          ? checked : { status: 'rejected', code: 'forbidden', reason: 'the maintainer call is not admitted' },
+        receipt: null } };
+      }
+      const result = await deps.maintainers.applyMaintainerAssignmentDecision(ctx, {
+        commandId: requestId, operation: operation.ref, answer: answerRef, verdict: optionId,
+      }, { kind: 'trusted', proof: branch });
+      if (result.status === 'done') {
+        return { status: 'ready', value: { action: null, receipt: result.receipt } };
+      }
+      if (result.status === 'stale') {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'source_stale', reason: 'the maintainer assignment is stale',
+        }, receipt: null } };
+      }
+      return { status: 'ready', value: { action: result, receipt: null } };
+    },
+  };
+}
+
+/**
  * The `rework_request` step ② adapter (`R-03`): the person's approve applies through R's one trusted entry, which
  * rebuilds the requester's provenance from the persisted Run and re-runs the owner's fences (a `source_stale` there
  * is already committed as the request's stale close). A committed result's `proofReceipt` is the official receipt;
@@ -581,6 +671,9 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
       // `decisionApplications` entries still win (last spread), so no second dispatch table exists.
       ...(deps.memberDecisions === undefined ? {} : {
         member_creation: createMemberCreationApplicationAdapter(deps.memberDecisions),
+      }),
+      ...(deps.maintainerDecisions === undefined ? {} : {
+        module_maintainer_assignment: createMaintainerAssignmentApplicationAdapter(deps.maintainerDecisions),
       }),
       ...(deps.reworkApplications === undefined ? {} : {
         rework_request: createReworkRequestApplicationAdapter({

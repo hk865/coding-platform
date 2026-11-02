@@ -779,7 +779,7 @@ describe('SES-11 session_archived / SES-14 session_reactivated', () => {
     expect(openScopeLinkOf([link(goal, 'responsible', true), link(project, 'responsible', true)], 'executor')).toBe('goal');
     expect(openScopeLinkOf([link(project, 'responsible', true), link(goal, 'responsible', true)], 'executor')).toBe('project');
     expect(openScopeLinkOf([link(goal, 'responsible', false), link(project, 'participates', true)], 'executor')).toBe(false);
-    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'executor')).toBe(false);
+    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'executor')).toBe('module');
     expect(openScopeLinkOf([link(mod, 'responsible', true)], 'secretary')).toBe(false);
     expect(openScopeLinkOf([link(mod, 'responsible', true)], 'adviser')).toBe('module');
     expect(openScopeLinkOf([link(mod, 'responsible', true)], 'scribe')).toBe('module');
