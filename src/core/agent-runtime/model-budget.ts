@@ -44,6 +44,8 @@ export function taskBudgetDeadlineRemaining(taskBudget: ModelTokenBudget | null 
 export class ModelBudget {
   readonly entries: MeterEntry[] = [];
   exhausted = false;
+  /** The last retryable provider failure, kept to replay when a retry is blocked by budget. */
+  private lastRetryableProviderError: Extract<ModelEvent, { type: 'error' }> | null = null;
   /**
    * B2 adds the persistent Run's own cumulative constraint. It is optional so
    * every existing component keeps its exact behavior. When present, every model
@@ -79,6 +81,20 @@ export class ModelBudget {
       this.exhausted = true;
       throw new BudgetExceeded('持久任务累计 Token 预算不足，未发送下一次请求');
     }
+  }
+  /**
+   * MR (lead ruling 2026-11-02): a retry the budget refuses is not a new protocol
+   * failure. Replay the last retryable provider error under the refused request's
+   * own id as non-retryable and mark the account exhausted, so the Runner stops at
+   * once with the model-service code and the person handles the budget when
+   * continuing. A first request with no previous failure returns null (the old
+   * throw stays).
+   */
+  private budgetBlockedRetry(requestId: string): ModelEvent | null {
+    const previous = this.lastRetryableProviderError;
+    if (previous === null) return null;
+    this.exhausted = true;
+    return { schemaVersion: 1, requestId, sequence: 1, type: 'error', error: { ...previous.error, retryable: false } };
   }
   /**
    * The one side-effect-free measurement shared by `preview`, `wrap` and the
@@ -120,10 +136,21 @@ export class ModelBudget {
       const measured = await self.measure(request, totals);
       const { outgoing, output, inputBytes, measurement, fits } = measured;
       const input = measurement.tokens;
-      if ((self.limits.maxRequests !== null && self.entries.length >= self.limits.maxRequests) || (self.limits.inputTokens !== null && totals.input + input > self.limits.inputTokens) || output <= 0) { self.exhausted = true; throw new BudgetExceeded('累计调用预算不足，未发送下一次请求'); }
+      if ((self.limits.maxRequests !== null && self.entries.length >= self.limits.maxRequests) || (self.limits.inputTokens !== null && totals.input + input > self.limits.inputTokens) || output <= 0) {
+        const blocked = self.budgetBlockedRetry(request.requestId);
+        if (blocked !== null) { yield blocked; return; }
+        self.exhausted = true; throw new BudgetExceeded('累计调用预算不足，未发送下一次请求');
+      }
       // The persistent Run budget is a stronger cumulative guard than the
       // Kernel's post-usage maxTotalTokens: refuse the reservation first.
-      self.assertTaskBudgetAdmissible(input, output);
+      try {
+        self.assertTaskBudgetAdmissible(input, output);
+      } catch (error) {
+        if (!(error instanceof BudgetExceeded)) throw error;
+        const blocked = self.budgetBlockedRetry(request.requestId);
+        if (blocked !== null) { yield blocked; return; }
+        throw error;
+      }
       const inputDigest = createHash('sha256').update(JSON.stringify(outgoing)).digest('hex');
       if (!fits) throw new ContextCapacityExceeded({ input: measurement, outputReserve: output, contextWindow: self.limits.contextWindowTokens, inputBytes, inputDigest });
       beforeReserve?.(measured);
@@ -134,6 +161,8 @@ export class ModelBudget {
       try {
         for await (const event of client.stream(outgoing, options)) {
           if (event.type === 'usage_snapshot') usage = event.usage;
+          if (event.type === 'error' && event.error.retryable) self.lastRetryableProviderError = event;
+          else if (event.type === 'completed') self.lastRetryableProviderError = null;
           if (['error', 'cancelled', 'truncated'].includes(event.type)) providerFailed = true;
           yield event;
         }

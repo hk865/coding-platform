@@ -170,6 +170,10 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
   const settled = new Map<string, AgentEvent>();
   const unknownResult = new Set<string>();
   const requestStarts: { requestId: string; at: string }[] = [];
+  // MR (lead ruling 2026-11-02): a failed attempt without usage is retried as the
+  // same request flow and is not counted; a failed attempt that already reported
+  // usage keeps it, so its real tokens are not dropped.
+  const failedRequests = new Set<string>();
   const usageByRequest = new Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number; costUsdMicros: number | null }[]>();
   for (const item of events) {
     const event = item.event;
@@ -183,6 +187,8 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
       unknownResult.add((event.payload as { callId: string }).callId);
     } else if (event.type === 'model.request_started') {
       requestStarts.push({ requestId: (event.payload as { requestId: string }).requestId, at: event.meta.occurredAt });
+    } else if (event.type === 'model.request_failed') {
+      failedRequests.add((event.payload as { requestId: string }).requestId);
     } else if (event.type === 'model.usage_recorded') {
       const recorded = event.payload as { requestId: string; delta: { inputTokens: number; outputTokens: number;
         cachedInputTokens: number; costUsdMicros: number | null } };
@@ -272,6 +278,7 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
 
   const requests: RunModelUsageRequestV1[] = [];
   for (const start of requestStarts) {
+    if (failedRequests.has(start.requestId) && !usageByRequest.has(start.requestId)) continue;
     const deltas = usageByRequest.get(start.requestId) ?? [];
     if (deltas.length === 0) {
       requests.push({ requestId: start.requestId, startedAt: start.at, usageStatus: 'unknown',

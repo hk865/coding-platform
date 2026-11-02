@@ -90,6 +90,7 @@ import type { RoleBindingRefV1 } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { roleSpecContentDigest, type RoleSpecContentV1 } from '../../src/contracts/role-spec.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import {
@@ -179,7 +180,7 @@ const BINDING_OF_PROFILE: Record<string, string> = {
 };
 
 function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfileOrder, scribe: boolean,
-  extraBindings: readonly S6AExtraBinding[] = []): WorkbenchRuntimeConfiguration {
+  extraBindings: readonly S6AExtraBinding[] = [], workBudget?: Partial<RuntimeBudget>): WorkbenchRuntimeConfiguration {
   const skillsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
   const binding = (id: string, role: Extract<RoleConfigurationRef, { kind: 'legacy_template' }>, instruction: string,
     tools: string[] = ['read']): WorkbenchRuntimeBinding => ({
@@ -224,6 +225,11 @@ function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfi
     }
     built.bindings.push(structuredClone(entry.binding));
     if (entry.queryProfile !== undefined) built.queryProfiles.push(structuredClone(entry.queryProfile));
+  }
+  if (workBudget !== undefined) {
+    const work = built.bindings.find(entry => entry.id === 's6a-work-binding');
+    if (work === undefined) throw new Error('S6A: the Work binding is missing');
+    work.grant = { ...work.grant, budget: { ...work.grant.budget, ...workBudget } };
   }
   return built;
 }
@@ -339,6 +345,8 @@ export type S6AWorldOptions = {
   scribe?: boolean;
   /** Applied to the Host's traced configuration; never replaces a fixture binding and never duplicates one. */
   extraBindings?: readonly S6AExtraBinding[];
+  /** Merged over the fixture Work binding's runtime budget; the MR row sets a lower request cap. */
+  workBudget?: Partial<RuntimeBudget>;
   /** Cold start: omit the startup `workflow` option, so only a binding registered through a route later exists. */
   omitStartupWorkflow?: true;
 };
@@ -563,7 +571,7 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
       architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
       kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
         databasePath: join(database, 'kernel.sqlite') }] },
-      runtimeConfiguration: runtimeConfigurationOf(configuration, order, scribe, options.extraBindings ?? []),
+      runtimeConfiguration: runtimeConfigurationOf(configuration, order, scribe, options.extraBindings ?? [], options.workBudget),
       ...(workflow === undefined ? {} : { workflow }),
       publicDir,
       now: () => clock.now(),

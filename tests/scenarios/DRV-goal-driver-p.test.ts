@@ -183,7 +183,13 @@ describe('DRV §5.1 P/T/I rows (memory)', () => {
     expect(afterRestart.display.causes).toContainEqual(expect.objectContaining({
       code: 'interrupted_pending_resume' }));
 
-    world.scriptReplies([{ kind: 'error', code: 'provider_unavailable' }]);
+    world.scriptReplies([
+      { kind: 'error', code: 'provider_unavailable', retryable: true },
+      { kind: 'error', code: 'provider_unavailable', retryable: true },
+      { kind: 'error', code: 'provider_unavailable', retryable: true },
+      { kind: 'error', code: 'provider_unavailable', retryable: true },
+      { kind: 'error', code: 'provider_unavailable', retryable: true },
+    ]);
     // The explicit Task start does not call onStarted; only the task watch runs.
     await startTaskDriver(world, goal, TASK, 'drv-i');
     await waitDriver(world, goal, TASK, snapshot => snapshot.state !== 'running',
@@ -196,6 +202,7 @@ describe('DRV §5.1 P/T/I rows (memory)', () => {
     expect(after.failure?.failureClass).toBe('interrupted');
     expect(after.failure?.automation.verdict).toMatchObject({ kind: 'stopped',
       reason: 'interrupted_pending_resume' });
+    expect(world.model.calls(), 'five retryable failures, no sixth request').toBe(5);
 
     // The person's real requeue, exactly as SMK3B-model-service.test.ts writes it.
     const goalRead = ready<{ goal: { revision: number } }>(

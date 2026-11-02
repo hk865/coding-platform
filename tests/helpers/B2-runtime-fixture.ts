@@ -58,10 +58,11 @@ import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } 
 
 export const B2_AT = '2026-09-26T00:00:00.000Z';
 
+export type ScriptedUsage = { inputTokens: number; outputTokens: number; cachedInputTokens: number; costUsdMicros: number | null };
 export type ScriptedReply =
-  | { kind: 'text'; text: string }
-  | { kind: 'calls'; calls: ReadonlyArray<{ callId: string; name: string; args: Record<string, unknown> }> }
-  | { kind: 'error'; code: string };
+  | { kind: 'text'; text: string; usage?: ScriptedUsage }
+  | { kind: 'calls'; calls: ReadonlyArray<{ callId: string; name: string; args: Record<string, unknown> }>; usage?: ScriptedUsage }
+  | { kind: 'error'; code: string; retryable?: boolean; usage?: ScriptedUsage };
 
 export type ScriptedModel = {
   client: ModelClientPort;
@@ -86,6 +87,9 @@ export function createScriptedModel(replies: readonly ScriptedReply[], beforeRep
       if (!reply) throw new Error(`B2 scripted model ran out of replies at round ${index}`);
       const base = { schemaVersion: 1 as const, requestId: request.requestId };
       let sequence = 0;
+      if ('usage' in reply && reply.usage !== undefined) {
+        yield { ...base, sequence: ++sequence, type: 'usage_snapshot', usage: { ...reply.usage } };
+      }
       if (reply.kind === 'text') {
         yield { ...base, sequence: ++sequence, type: 'text_delta', delta: reply.text };
         yield { ...base, sequence: ++sequence, type: 'completed', reason: 'final_answer' };
@@ -93,7 +97,7 @@ export function createScriptedModel(replies: readonly ScriptedReply[], beforeRep
       }
       if (reply.kind === 'error') {
         yield { ...base, sequence: ++sequence, type: 'error',
-          error: { code: reply.code, message: `scripted ${reply.code}`, retryable: false } };
+          error: { code: reply.code, message: `scripted ${reply.code}`, retryable: reply.retryable ?? false } };
         return;
       }
       for (const [ordinal, call] of reply.calls.entries()) {

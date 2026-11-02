@@ -91,5 +91,11 @@ export interface HostContextInputs {
     readonly reasoningReplay?: ReasoningReplay;
     readonly previewRequest?: ContextPreview;
     readonly onContextSelected?: (report: ContextSelectionReport) => void;
+    /**
+     * MR (lead ruling 2026-11-02): the Runner's optional retry wait. Absent keeps
+     * the real 2/4/8/16 s waits; tests inject a no-op so a real-Host row does not
+     * sit out 30 s.
+     */
+    readonly retryDelay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
 }
 //# sourceMappingURL=composition-contracts.d.ts.map

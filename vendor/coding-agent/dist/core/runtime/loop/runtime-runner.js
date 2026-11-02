@@ -19,6 +19,28 @@ import { outcomeUnknownPayload } from "../tool-outcome-unknown.js";
 import { createInitialRunState, deriveRunPhase, isTerminalRunStatus, runStateSchema, } from "../state/run-state.js";
 import { consumeModelStream } from "./model-stream-consumer.js";
 import { EventDeliveryCoordinator, RequiredSinkError, } from "../event_delivery/event-delivery-coordinator.js";
+/**
+ * MR (lead ruling 2026-11-02): one initial request plus four retries; the waits
+ * before them are 2, 4, 8 and 16 seconds. Cancellation ends the wait at once and
+ * the Runner commits the existing `run.cancelled` on the next check.
+ */
+function defaultRetryDelay(delayMs, signal) {
+    return new Promise((resolve) => {
+        if (signal.aborted) {
+            resolve();
+            return;
+        }
+        const timer = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+        }, delayMs);
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+    });
+}
 class SystemClock {
     now() {
         return new Date();
@@ -89,6 +111,7 @@ export class RuntimeRunner {
     #ids;
     #toolBatchPolicy;
     #maxModelRetries;
+    #retryDelay;
     #onTextDelta;
     #onReasoningDelta;
     #toolEffectClass;
@@ -110,6 +133,7 @@ export class RuntimeRunner {
         if (!Number.isSafeInteger(this.#maxModelRetries) || this.#maxModelRetries < 0) {
             throw new RangeError("maxModelRetries 必须是非负安全整数");
         }
+        this.#retryDelay = dependencies.retryDelay ?? defaultRetryDelay;
         this.#onTextDelta = dependencies.onTextDelta;
         this.#onReasoningDelta = dependencies.onReasoningDelta;
         this.#toolEffectClass = dependencies.toolEffectClass ?? (() => "process");
@@ -526,6 +550,14 @@ export class RuntimeRunner {
                     failure: modelFailure,
                 });
                 if (modelFailure.retryable && retryCount < this.#maxModelRetries) {
+                    // MR: the wait comes before the retry; cancellation during it ends the
+                    // Run as cancelled, never as a failed model request.
+                    await this.#retryDelay(2_000 * 2 ** retryCount, context.cancellation.signal);
+                    if (context.cancellation.signal.aborted) {
+                        return this.#commit(state, context, "run.cancelled", {
+                            reason: context.cancellation.reason ?? "caller_requested",
+                        });
+                    }
                     retryCount += 1;
                     retryOfRequestId = requestId;
                     continue;

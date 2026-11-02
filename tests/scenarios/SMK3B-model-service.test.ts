@@ -61,11 +61,18 @@ it('SMK3B-4: a model-service failure interrupts the work (one Run, a stopped Tas
   const taskRow = async (): Promise<TaskRow> => taskRowOf((await world.post('tasks/query', plain(S6A_SCOPE,
     { goalRef: goal }))).body as ReadResult<{ tasks: TaskRow[] }>, TASK);
 
-  world.scriptReplies([{ kind: 'error', code: 'provider_unavailable' }]);
+  world.scriptReplies([
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+  ]);
   expect((await world.post('workflow/driver-start', plain(S6A_SCOPE, { advance: {
     schemaVersion: 1, goalRef: goal, flowId: 'smk3b-model-service', sessionHint: null, kind: 'select_work', taskId: TASK,
   }, queryProfileIds: [] }))).body).toMatchObject({ status: 'ready' });
   await waitFor(() => driverSettled(world, goal), settled => settled, 'the interrupted driver to settle');
+  expect(world.model.calls(), 'five retryable failures, no sixth request').toBe(5);
 
   const listed = await runs();
   expect(listed, 'no automatic rework starts a second Run').toHaveLength(1);
@@ -117,7 +124,13 @@ it('R2-01: a paused every_step Goal shows no automation-confirmation card for a 
   await createS6BLine(main, { label: 'smk3b-model-service-paused-line', role: S6A_WORK_ROLE, tasks });
   await setS7AAutonomy(world, goal, 'every_step');
 
-  world.scriptReplies([{ kind: 'error', code: 'provider_unavailable' }]);
+  world.scriptReplies([
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+  ]);
   expect((await world.post('workflow/driver-start', plain(S6A_SCOPE, { advance: {
     schemaVersion: 1, goalRef: goal, flowId: 'smk3b-model-service-paused', sessionHint: null, kind: 'select_work', taskId: TASK,
   }, queryProfileIds: [] }))).body).toMatchObject({ status: 'ready' });
@@ -127,6 +140,7 @@ it('R2-01: a paused every_step Goal shows no automation-confirmation card for a 
   expect(failed.failure).toMatchObject({ failureClass: 'interrupted', automation: { verdict: {
     kind: 'stopped', reason: 'interrupted_pending_resume',
     detail: { source: 'model_service', code: 'provider_unavailable' } } } });
+  expect(world.model.calls(), 'five retryable failures, no sixth request').toBe(5);
 
   await pauseS7AGoal(world, goal);
   const cards = await main.readCards(goal);
@@ -138,7 +152,13 @@ it('SMK3B-7: a secretary round on a Session with no script closes failed and its
   const world = await openS6AHostWorld({ backend: 'memory', extraHostOptions: { requestDriver: 'on' } });
   worlds.push(world);
   await initializeProject(world);
-  world.scriptReplies([{ kind: 'error', code: 'provider_unavailable' }]);
+  world.scriptReplies([
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+    { kind: 'error', code: 'provider_unavailable', retryable: true },
+  ]);
   const round = await submitRound(world, {
     commandId: 'smk3b-model-service-secretary', goalId: null, text: 'SMK3B secretary round fails on the model service',
   });
@@ -148,4 +168,5 @@ it('SMK3B-7: a secretary round on a Session with no script closes failed and its
   expect(ended.status).toBe('ended');
   expect(ended.closeCode).toBe('failed');
   expect(ended.closeMessage?.startsWith('provider_unavailable')).toBe(true);
+  expect(world.model.calls(), 'five retryable failures, no sixth request').toBe(5);
 }, 240_000);

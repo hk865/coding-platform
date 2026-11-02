@@ -168,6 +168,11 @@ export interface RuntimeRunnerDependencies {
   readonly idGenerator?: RuntimeIdGenerator;
   readonly toolBatchPolicy?: ToolBatchPolicy;
   readonly maxModelRetries?: number;
+  /**
+   * MR (lead ruling 2026-11-02): the wait before a retryable model request is
+   * sent again. Defaults to a real wait; tests inject a recorder instead.
+   */
+  readonly retryDelay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
   readonly eventSinkTimeoutMs?: number;
   readonly onTextDelta?: (delta: string, requestId: string) => void;
   readonly onReasoningDelta?: (delta: string, requestId: string) => void;
@@ -188,6 +193,29 @@ export interface RuntimeRunnerDependencies {
    * 工具组边界显式 unsupported，绝不悄悄忽略后继续执行工具。
    */
   readonly toolGroupBarrier?: ToolGroupBarrier;
+}
+
+/**
+ * MR (lead ruling 2026-11-02): one initial request plus four retries; the waits
+ * before them are 2, 4, 8 and 16 seconds. Cancellation ends the wait at once and
+ * the Runner commits the existing `run.cancelled` on the next check.
+ */
+function defaultRetryDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 class SystemClock implements RuntimeClock {
@@ -300,6 +328,7 @@ export class RuntimeRunner {
   readonly #ids: RuntimeIdGenerator;
   readonly #toolBatchPolicy: ToolBatchPolicy;
   readonly #maxModelRetries: number;
+  readonly #retryDelay: (delayMs: number, signal: AbortSignal) => Promise<void>;
   readonly #onTextDelta: ((delta: string, requestId: string) => void) | undefined;
   readonly #onReasoningDelta: ((delta: string, requestId: string) => void) | undefined;
   readonly #toolEffectClass: (call: Readonly<ToolCall>) => ToolEffectClass;
@@ -326,6 +355,7 @@ export class RuntimeRunner {
     if (!Number.isSafeInteger(this.#maxModelRetries) || this.#maxModelRetries < 0) {
       throw new RangeError("maxModelRetries 必须是非负安全整数");
     }
+    this.#retryDelay = dependencies.retryDelay ?? defaultRetryDelay;
     this.#onTextDelta = dependencies.onTextDelta;
     this.#onReasoningDelta = dependencies.onReasoningDelta;
     this.#toolEffectClass = dependencies.toolEffectClass ?? (() => "process");
@@ -829,6 +859,14 @@ export class RuntimeRunner {
           failure: modelFailure,
         });
         if (modelFailure.retryable && retryCount < this.#maxModelRetries) {
+          // MR: the wait comes before the retry; cancellation during it ends the
+          // Run as cancelled, never as a failed model request.
+          await this.#retryDelay(2_000 * 2 ** retryCount, context.cancellation.signal);
+          if (context.cancellation.signal.aborted) {
+            return this.#commit(state, context, "run.cancelled", {
+              reason: context.cancellation.reason ?? "caller_requested",
+            });
+          }
           retryCount += 1;
           retryOfRequestId = requestId;
           continue;

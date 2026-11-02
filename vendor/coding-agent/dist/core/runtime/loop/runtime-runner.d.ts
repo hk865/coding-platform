@@ -98,6 +98,11 @@ export interface RuntimeRunnerDependencies {
     readonly idGenerator?: RuntimeIdGenerator;
     readonly toolBatchPolicy?: ToolBatchPolicy;
     readonly maxModelRetries?: number;
+    /**
+     * MR (lead ruling 2026-11-02): the wait before a retryable model request is
+     * sent again. Defaults to a real wait; tests inject a recorder instead.
+     */
+    readonly retryDelay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
     readonly eventSinkTimeoutMs?: number;
     readonly onTextDelta?: (delta: string, requestId: string) => void;
     readonly onReasoningDelta?: (delta: string, requestId: string) => void;

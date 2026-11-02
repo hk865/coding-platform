@@ -22,7 +22,8 @@
  * - The Session a Kernel run belongs to: a delegating spy on the Kernel's `runCodingAgent` (the Runtime's Kernel
  *   entry, `src/core/agent-runtime/observed-model-run.ts`), installed while a host world is open. It forwards the
  *   real call unchanged inside an async context naming the run's Kernel Session, which the router reads; it is
- *   also where gate (d) and the tool holds sit.
+ *   also where gate (d) and the tool holds sit, and it injects the Runner's no-op retry wait (`retryDelay`) so a
+ *   real-Host row with retryable failures does not sit out the production 2/4/8/16 s.
  * - Gates (rule sheet A3: each holds one real step and then lets it go on unchanged), independent per Session:
  *   (a) the claim commit of a Query on a Session (`r5b-query-execution:claimed:`), so after an `assigned` commit
  *   the round is not yet claimed; (b) the bind-prepared commit (`…:prepared:`), so the round is claimed and not yet
@@ -243,7 +244,7 @@ function installKernelEntry(): void {
         return hold === undefined ? tool : heldTool(tool, hold);
       }),
     };
-    return runScope.run({ kernelSessionId, served: null }, () => real(forwarded));
+    return runScope.run({ kernelSessionId, served: null }, () => real({ ...forwarded, retryDelay: async () => {} }));
   });
 }
 

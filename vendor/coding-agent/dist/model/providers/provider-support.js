@@ -32,7 +32,9 @@ export function classifyProviderError(providerId, error) {
             retryable: true,
         };
     }
-    return { code: "provider_request_failed", message: `${providerId} 请求失败`, retryable: false };
+    // MR (lead ruling 2026-11-02): a transport error without an HTTP status is a
+    // connection failure and is retried; a status-bearing 4xx stays non-retryable.
+    return { code: "provider_request_failed", message: `${providerId} 请求失败`, retryable: status === null };
 }
 export function zeroCostUsage(inputTokens, outputTokens, cachedInputTokens = 0) {
     return {
