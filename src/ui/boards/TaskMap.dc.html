@@ -3999,6 +3999,9 @@ class Component extends DCLogic {
      realVals both read `state.view`, so the first loading frame already shows
      the outline tab selected. */
   currentView() { const v = (this.state || {}).view; return v === 'lanes' ? 'lanes' : v === 'outline' ? 'outline' : 'dag'; }
+  /* E3-3 ruling item 5: while the change stream is down (or a reread failed) the
+     top bar carries the text `boot` published; the data underneath stays. */
+  barWhy() { const read = this.props.readState; return read && read.stale && read.staleText ? String(read.staleText) : ''; }
   realShell(read, theme) {
     const status = read && read.status ? read.status : 'empty';
     let text = '这个视图还没有接上真实数据。'; let canRetry = false; let retry = () => {};
@@ -4015,7 +4018,7 @@ class Component extends DCLogic {
     return Object.assign(this.shellVals(theme, view), {
       blank: { show: true, text: text, canRetry: canRetry, retry: retry },
       goalName: goal ? goal.name : '', goalSq: goal ? this.sqAt(goal.st) : '', goalWord: goal ? goal.word : '',
-      barWhy: '', isDag: false, isOutline: false, isLanes: false, noDet: false, hasDet: false
+      barWhy: this.barWhy(), isDag: false, isOutline: false, isLanes: false, noDet: false, hasDet: false
     });
   }
   realVals(theme) {
@@ -4053,7 +4056,7 @@ class Component extends DCLogic {
     })() : null;
     const data = this.props.data;
     return Object.assign(this.shellVals(theme, 'outline'), {
-      goalName: data.goal.name, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word, barWhy: '',
+      goalName: data.goal.name, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word, barWhy: this.barWhy(),
       isOutline: true, ol: ol,
       noDet: !det, hasDet: !!det, det: det || {},
       blank: { show: false, text: '', canRetry: false, retry: noop }

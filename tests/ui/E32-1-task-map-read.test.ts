@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { EventBinding, VNode } from '../../src/ui/render.js';
 import { BoardView } from '../../src/ui/runtime.js';
-import { bootBoardPage, readTaskMap } from '../../src/ui/boot.js';
+import { readTaskMap } from '../../src/ui/boot.js';
 import { isFinishedGoalDisplayPhase } from '../../src/ui/adapters/task-map.js';
 import { createHostClient } from '../../src/ui/host-client.js';
 import { loadBoard } from './helpers/board-files.js';
@@ -14,7 +13,7 @@ import {
 } from '../helpers/S6A-request-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { governS6B } from '../helpers/S6B1-fixture.js';
-import { FakeElement, installFakeDom, restoreFakeDom } from './helpers/dom.js';
+import { bootPage, type BootedPage } from './helpers/boot-page.js';
 
 /**
  * E32-1/2/3 (ruling rows E32-1..3, items 6, 7, 8): the real Host routes are read
@@ -24,66 +23,6 @@ import { FakeElement, installFakeDom, restoreFakeDom } from './helpers/dom.js';
  */
 const WORKING_BOARDS = fileURLToPath(new URL('../../src/ui/boards/', import.meta.url));
 const stageName = 'E32 阶段';
-
-const BOARD_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const BOOT_PAGE_URL = 'http://host/workbench/TaskMap.dc.html';
-
-type BootPage = ReturnType<typeof installFakeDom> & {
-  title: string;
-  readyState: string;
-  head: FakeElement;
-  addEventListener(): void;
-  querySelector(selector: string): FakeElement | null;
-};
-
-/** The board page as the Host serves it: the working copy as page text, the token
- * in the meta, a relative route URL forwarded to the real Host origin. */
-async function bootHostPage(world: S6ARequestWorld, search: string): Promise<FakeElement> {
-  const source = readFileSync(`${BOARD_ROOT}src/ui/boards/TaskMap.dc.html`, 'utf8');
-  const dom = installFakeDom();
-  const page = dom as unknown as BootPage;
-  const root = new FakeElement('x-dc');
-  const meta = new FakeElement('meta');
-  meta.setAttribute('content', world.token);
-  page.title = '任务图';
-  page.readyState = 'loading';
-  page.head = new FakeElement('head');
-  page.addEventListener = () => {};
-  page.querySelector = (selector) => {
-    if (selector === 'x-dc') return root;
-    if (selector === 'meta[name="platform-token"]') return meta;
-    return null;
-  };
-  const createElement = dom.createElement;
-  dom.createElement = (tag) => {
-    const element = createElement(tag);
-    if (tag === 'template') {
-      Object.defineProperty(element, 'content', { get: () => createElement('#fragment') });
-    }
-    return element;
-  };
-
-  const savedFetch = globalThis.fetch;
-  const savedLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  const origin = new URL(world.base).origin;
-  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
-    const url = String(input);
-    if (url === BOOT_PAGE_URL) return { text: async () => source } as unknown as Response;
-    if (url.startsWith('/')) return savedFetch(origin + url, init);
-    return savedFetch(url, init);
-  }) as typeof fetch;
-  Object.defineProperty(globalThis, 'location', {
-    value: { href: BOOT_PAGE_URL, search }, configurable: true,
-  });
-  try {
-    await bootBoardPage();
-  } finally {
-    globalThis.fetch = savedFetch;
-    if (savedLocation) Object.defineProperty(globalThis, 'location', savedLocation);
-    else delete (globalThis as { location?: unknown }).location;
-  }
-  return root;
-}
 
 function textOf(node: VNode): string {
   return node.kind === 'text' ? node.text : node.children.map(textOf).join('');
@@ -159,7 +98,7 @@ afterAll(async () => {
 
 async function realView(goalId: string = S6A_GOAL_1.goalId): Promise<BoardView> {
   const client = createHostClient(world!.token, new URL(world!.base).origin);
-  const data = await readTaskMap(client, goalId);
+  const { data } = await readTaskMap(client, goalId);
   expect(data).not.toBeNull();
   const board = loadBoard('TaskMap', WORKING_BOARDS);
   return new BoardView(board, { ...board.defaults, data, readState: { status: 'ready' }, dataVersion: 1 });
@@ -214,7 +153,7 @@ describe('E32-3 an empty world shows the empty state', () => {
     const empty = await openS6ARequestWorld({ backend: 'memory', defaultGoals: false });
     try {
       const client = createHostClient(empty.token, new URL(empty.base).origin);
-      expect(await readTaskMap(client, null)).toBeNull();
+      expect((await readTaskMap(client, null)).data).toBeNull();
       const board = loadBoard('TaskMap', WORKING_BOARDS);
       const view = new BoardView(board, { ...board.defaults, readState: { status: 'empty' } });
       const html = serializeTree(view.render());
@@ -239,10 +178,13 @@ describe('R1 a nonexistent goal is a read error with retry', () => {
       expect((error as Error).message).toContain('not_found');
       expect((error as Error).message).not.toContain('undefined');
 
-      let root: FakeElement | undefined;
+      let page: BootedPage | undefined;
       try {
-        root = await bootHostPage(opened, '?goal=no-such-goal');
-        const text = root.textContent;
+        page = await bootPage({
+          name: 'TaskMap', search: '?goal=no-such-goal', token: opened.token,
+          request: async (url, init, realFetch) => realFetch(new URL(url, opened.base).href, init),
+        });
+        const text = page.root.textContent;
         expect(text).toContain('找不到这个目标。');
         expect(text).toContain('重试');
         expect(text).not.toContain('not_found');
@@ -250,7 +192,7 @@ describe('R1 a nonexistent goal is a read error with retry', () => {
         expect(text).not.toContain('undefined');
         expect(text).not.toContain('运行中');
       } finally {
-        restoreFakeDom();
+        await page?.restore();
       }
     } finally {
       await opened.close();
@@ -263,15 +205,18 @@ describe('R2 a goal without an adopted Plan is an empty outline, not an error', 
     const opened = await openS6ARequestWorld({ backend: 'memory' });
     try {
       const client = createHostClient(opened.token, new URL(opened.base).origin);
-      const data = await readTaskMap(client, S6A_GOAL_1.goalId);
+      const { data } = await readTaskMap(client, S6A_GOAL_1.goalId);
       expect(data?.planMissing).toBe(true);
       expect(data?.goal.name).toBe('S6A goal one');
       expect(data?.goal.word).toBe('规划中');
 
-      let root: FakeElement | undefined;
+      let page: BootedPage | undefined;
       try {
-        root = await bootHostPage(opened, `?goal=${S6A_GOAL_1.goalId}`);
-        const text = root.textContent;
+        page = await bootPage({
+          name: 'TaskMap', search: `?goal=${S6A_GOAL_1.goalId}`, token: opened.token,
+          request: async (url, init, realFetch) => realFetch(new URL(url, opened.base).href, init),
+        });
+        const text = page.root.textContent;
         expect(text).toContain('S6A goal one');
         expect(text).toContain('规划中');
         expect(text).toContain('这个目标还没有采用的计划。');
@@ -279,7 +224,7 @@ describe('R2 a goal without an adopted Plan is an empty outline, not an error', 
         expect(text).not.toContain('读取失败');
         expect(text).not.toContain('重试');
       } finally {
-        restoreFakeDom();
+        await page?.restore();
       }
     } finally {
       await opened.close();

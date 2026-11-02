@@ -10,10 +10,11 @@
 | `board.ts` | `parseBoard`（整份 `.dc.html`）和 `parseBoardParts`（各部分）：取出 `<helmet>`、模板、`data-dc-script` 逻辑和 `data-props` 默认值；浏览器入口和测试共用。 |
 | `render.ts` | `renderBoardTemplate`：在根作用域和 `sc-for` 循环作用域上求值模板，得到可在 Node 里检查的渲染树，并接线事件/`ref` 绑定。缺失的点号路径渲染为空串（画板上没有 `undefined` 兜底）。 |
 | `runtime.ts` | `DCLogic` 基类（`props`/`state`/浅合并 `setState`/`componentDidUpdate`）、`BoardView`（编译逻辑脚本、`render`、`updateProps`、浏览器 `mount`、按模板位置定键就地更新、事件与 `ref` 接线）；`domEventName` 把模板的事件属性换成浏览器派发的名字，`value` 写属性，`checked`/`disabled` 走同一处布尔属性写入。 |
-| `host-client.ts` | 浏览器调 Host 的唯一出口：`PLATFORM_TOKEN_META_NAME`、`readPlatformToken`（从令牌 meta 读，空串算没有）、`createHostClient`（同源 `POST /api/real/core/<route>` 和 `GET bootstrap`，令牌进 `x-platform-token` 头）、`readyRouteValue`（读取只在 `ready` 时取值；失败抛 `RouteReadError`，带路由、码/状态和 `reason`）、`fetchPageText`（取页面原文）；`CoreScope`、`RouteReply`、`BootstrapReply` 是路由的结构类型。HTTP 状态和返回体的 `status` 都检查。 |
+| `host-client.ts` | 浏览器调 Host 的唯一出口：`PLATFORM_TOKEN_META_NAME`、`readPlatformToken`（从文档的令牌 meta 读，空串算没有）、`readPlatformTokenText`（从页面原文读同一个 meta，重连时用来取 Host 新令牌）、`createHostClient`（同源 `POST /api/real/core/<route>` 和 `GET bootstrap`，令牌进 `x-platform-token` 头）、`readyRouteValue`（读取只在 `ready` 时取值；失败抛 `RouteReadError`，带路由、码/状态和 `reason`）、`fetchPageText`（取页面原文）；`CoreScope`、`RouteReply`、`BootstrapReply` 是路由的结构类型。HTTP 状态和返回体的 `status` 都检查。 |
+| `refresh.ts` | 自动刷新环：`createAutoRefresh` 拿「读一次」和「发布结果」，合并通知、串行重读、每次连接成功补读一次、断连 2 秒重连；不碰 DOM、不认板名。 |
 | `values.ts` | `asRecord` / `asText`：`boot.ts` 和纯适配层共用的 JSON 值守卫；不碰 DOM、网络或 `src/app`。 |
 | `adapters/task-map.ts` | 纯适配：`adaptTaskMap` 把 `goals/read`、`goals/display` 和 `tasks/query` 的值转成 `TaskMapData`；Goal 的状态词和方格来自展示状态；不碰 DOM、不碰网络、不引用 `src/app`。 |
-| `boot.ts` | 浏览器入口 `bootBoardPage`（`boot.ts:16`）：等 `DOMContentLoaded`，取 `x-dc` 根，`fetchPageText(location.href)` 读原始 `.dc.html` 并交给 `parseBoard`（浏览器会把属性名改成小写，不能读 `innerHTML`）；把 `<helmet>` 提到 `<head>`，挂载 `BoardView`；打包成 `support.js`。有令牌且页面在 `BOARD_READERS`（目前只有 `TaskMap`）时挂载后调用一次 `readTaskMap`，再用 `updateProps` 传入完整 props；没有令牌或不在表里的板照旧挂载示例数据。读取失败时按 `RouteReadError` 的码查 `READ_ERROR_TEXT` 给页面文字，原始路由、码和 `reason` 只进 `console.error`，页面仍走 `readState: error` 和重试。 |
+| `boot.ts` | 浏览器入口 `bootBoardPage`（`boot.ts:29`）：等 `DOMContentLoaded`，取 `x-dc` 根，`fetchPageText(location.href)` 读原始 `.dc.html` 并交给 `parseBoard`（浏览器会把属性名改成小写，不能读 `innerHTML`）；把 `<helmet>` 提到 `<head>`，挂载 `BoardView`；打包成 `support.js`。有令牌且页面在 `BOARD_READERS`（目前只有 `TaskMap`）时把 `readTaskMap`（返回 `{data, cursor}`，`cursor` 是这次读的 bootstrap `changesHead`）、`createAutoRefresh` 的发布和 `subscribeChanges` 接成一条自动刷新环：通知后合并重读、`dataVersion` 递增、断连显示 `barWhy` 并在 2 秒后重连重读（重连先重取页面原文里的令牌并重建客户端，再读和订阅）；没有令牌或不在表里的板照旧挂载示例数据。读取失败时按 `RouteReadError` 的码查 `READ_ERROR_TEXT` 给页面文字，原始路由、码和 `reason` 只进 `console.error`；第一次读失败走 `readState: error` 和重试且不订阅，已有数据时保留数据。 |
 
 ## 可复用的能力
 
@@ -21,7 +22,7 @@
 - `renderBoardTemplate`：纯模板求值。
 - `DCLogic` / `BoardView` / `bootBoardPage`：一块画板的实例、更新、挂载和浏览器入口。
 - `asRecord` / `asText`：路由 JSON 边界上共用的值守卫。
-- `readPlatformToken` / `createHostClient` / `readyRouteValue` / `RouteReadError` / `fetchPageText` / `readTaskMap` / `adaptTaskMap`：从页面令牌到真实 `TaskMap` 数据的读取链；测试可以只拿 `adaptTaskMap` 做纯转换。
+- `readPlatformToken` / `readPlatformTokenText` / `createHostClient` / `readyRouteValue` / `RouteReadError` / `fetchPageText` / `readTaskMap` / `adaptTaskMap`：从页面令牌到真实 `TaskMap` 数据的读取链；`subscribeChanges` / `createAutoRefresh` 是变更流和自动刷新环；测试可以只拿 `adaptTaskMap` 做纯转换。
 
 ## 边界
 
