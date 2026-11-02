@@ -23,7 +23,7 @@
 | `composition/` | 唯一装配根：`createTargetPlatform` 把受信任配置和各 owner 接成平台。 |
 | `contracts/` | 最外层纯契约：身份、结果、提示词、校验；不放 I/O 或状态机。 |
 | `core/` | 核心：`agent-runtime/`、`record-store/`、`workspace/`、`work-graph/`。 |
-| `ui/` | 冻结画板的最小运行时：读 `.dc.html`、求值模板、挂载；只用画板自己的示例数据。 |
+| `ui/` | 画板运行时：读 `.dc.html`、求值模板、挂载；`TaskMap` 工作副本经 `host-client`/`boot` 接真实 Host，其余九块和没有令牌时用示例数据。 |
 
 ### 有 README 的文件夹
 
@@ -54,7 +54,8 @@
 | `core/work-graph/communication/decision-source/` | 每种决定来源一个 handler，从正式记录重建该分支的完整事实 | [core/work-graph/communication/decision-source/README.md](core/work-graph/communication/decision-source/README.md) |
 | `core/work-graph/views/` | 只读投影：工作线、图、轨道、活动、决定队列与请知悉 | [core/work-graph/views/README.md](core/work-graph/views/README.md) |
 | `core/workspace/` | 文件/Git/源码捕获、路径边界、TS/Python/C++ 索引 | [core/workspace/README.md](core/workspace/README.md) |
-| `ui/` | 冻结画板的解析、模板求值、`setState`/更新和浏览器入口；不接后端 | [ui/README.md](ui/README.md) |
+| `ui/` | 画板的解析、模板求值、`setState`/更新、浏览器入口和第一块接后端的 `TaskMap` 读取链 | [ui/README.md](ui/README.md) |
+| `ui/adapters/` | 路由返回值到画板 props 的纯适配 | [ui/adapters/README.md](ui/adapters/README.md) |
 
 ## 要做什么 → 去哪里
 

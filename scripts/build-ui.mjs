@@ -2,21 +2,32 @@
  * Build the board shell into the Host's existing static directory.
  *
  * `src/ui/boot.ts` becomes `support.js` (the file every frozen board already
- * loads); the ten boards and `kit.css` are copied byte-identical from the
- * reference directory; `index.html` lists the boards so `/workbench/` shows
- * them. esbuild is already a dev dependency; nothing is added.
+ * loads); each of the ten boards is copied byte-identical from its working
+ * copy under `src/ui/boards/` when one exists, otherwise from the reference
+ * directory, and `kit.css` from the reference directory; `index.html` lists
+ * the boards so `/workbench/` shows them. esbuild is already a dev dependency;
+ * nothing is added.
  */
 import { build } from 'esbuild';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const boardsDir = join(root, 'docs/ui-reference/workbench-2026-10');
+const workBoardsDir = join(root, 'src/ui/boards');
 const outDir = join(root, 'dist/app/public/workbench');
 
 const boards = (await readdir(boardsDir)).filter((name) => name.endsWith('.dc.html')).sort();
 if (boards.length !== 10) throw new Error(`expected 10 .dc.html boards, found ${boards.length}`);
+
+// A board with a working copy under `src/ui/boards/` is built from that copy;
+// the remaining boards still come from the frozen reference directory.
+const sources = new Map(boards.map((name) => {
+  const workingCopy = join(workBoardsDir, name);
+  return [name, existsSync(workingCopy) ? workingCopy : join(boardsDir, name)];
+}));
 
 await mkdir(outDir, { recursive: true });
 await build({
@@ -28,11 +39,11 @@ await build({
   outfile: join(outDir, 'support.js'),
   logLevel: 'warning',
 });
-for (const name of boards) await cp(join(boardsDir, name), join(outDir, name));
+for (const name of boards) await cp(sources.get(name), join(outDir, name));
 await cp(join(boardsDir, 'kit.css'), join(outDir, 'kit.css'));
 
 const items = await Promise.all(boards.map(async (name) => {
-  const html = await readFile(join(boardsDir, name), 'utf8');
+  const html = await readFile(sources.get(name), 'utf8');
   const title = /<title>([\s\S]*?)<\/title>/.exec(html)?.[1]?.trim() ?? name;
   return `      <li><a href="/workbench/${name}">${escapeHtml(title)}</a></li>`;
 }));

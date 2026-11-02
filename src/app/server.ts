@@ -55,6 +55,12 @@ const DEFAULT_MAX_CHANGE_STREAM_BACKLOG_BYTES = 64 * 1024;
 /** After `end()` a stream that cannot flush is destroyed so close never hangs. */
 const CHANGE_STREAM_END_GRACE_MS = 1_000;
 
+/** E3-2 ruling item 4: the meta name a served board carries its per-response
+ * token under. The Ui module cannot import `src/app` and this file may not
+ * import `src/ui`, so the literal is kept once here and once in
+ * `src/ui/host-client.ts`. */
+const PLATFORM_TOKEN_META_NAME = 'platform-token';
+
 /** The only static asset names the workbench publishes. A path outside this
  * closed set is a 404, so no directory traversal is expressible. */
 const STATIC_CONTENT_TYPES: Record<string, string> = {
@@ -222,7 +228,15 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     if (contentType === undefined || name === 'index.html') { sendJson(response, 404, { status: 'rejected', code: 'not_found', reason: 'unknown workbench asset' }); return; }
     try {
       const body = await readFile(`${publicDir}/${name}`);
-      sendText(response, 200, contentType, body.toString('utf8'), 'no-cache');
+      const text = body.toString('utf8');
+      // E3-2 ruling item 4: only a served board HTML gets the token meta and
+      // `no-store`; every other asset is unchanged. The token is never written
+      // back to the file or into the build.
+      if (name.endsWith('.dc.html')) {
+        const meta = `<meta name="${PLATFORM_TOKEN_META_NAME}" content="${options.token}">`;
+        const headEnd = text.indexOf('</head>');
+        sendText(response, 200, contentType, `${text.slice(0, headEnd)}${meta}${text.slice(headEnd)}`, 'no-store');
+      } else sendText(response, 200, contentType, text, 'no-cache');
     } catch {
       sendJson(response, 404, { status: 'rejected', code: 'not_found', reason: 'workbench asset is missing' });
     }

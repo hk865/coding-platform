@@ -1397,7 +1397,6 @@
     {"file": "src/contracts/plan-loop-limits.ts", "name": "GROWTH_UNIT_TOKENS", "reason": "kept-for", "note": "waits for PL-2's P8, the plan loop judgment in docs/MVP-BEHAVIOR.md"},
     {"file": "src/contracts/plan-loop-limits.ts", "name": "growthUnitsOf", "reason": "kept-for", "note": "waits for PL-2's P8, the plan loop judgment in docs/MVP-BEHAVIOR.md"},
     {"file": "src/core/work-graph/communication/mailbox-service.ts", "name": "respondReceiptIdentityOf", "reason": "kept-for", "note": "waits for PL-2's P8, the plan loop judgment in docs/MVP-BEHAVIOR.md"},
-    {"file": "src/ui/runtime.ts", "name": "DCLogic.setState", "reason": "kept-for", "note": "called only by the frozen board logic after it is compiled at runtime (slice 9 of the orchestration design, E3-1 page shell); static reach analysis cannot see the generated class"},
-    {"file": "src/ui/runtime.ts", "name": "BoardView.updateProps", "reason": "kept-for", "note": "waits for the E3 wiring group's first caller (slice 9 of the orchestration design); remove this entry when it lands"}
+    {"file": "src/ui/runtime.ts", "name": "DCLogic.setState", "reason": "kept-for", "note": "called only by the frozen board logic after it is compiled at runtime (slice 9 of the orchestration design, E3-1 page shell); static reach analysis cannot see the generated class"}
   ]
 }

@@ -59,7 +59,7 @@
 | --- | --- | --- | --- |
 | `createLocalWorkbenchHost` | `src/app/host.ts:467` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
 | `consumeStatus` | `src/app/host.ts:245` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
-| `createWorkbenchServer` | `src/app/server.ts:199` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
+| `createWorkbenchServer` | `src/app/server.ts:205` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，给画板 HTML 注入令牌 meta 并 `no-store`，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
 | `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:780` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
 | `dispatchCoreRoute` | `src/app/core-routes.ts:1341` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
 | `parseCoreRouteRequest` | `src/app/core-routes.ts:696` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
