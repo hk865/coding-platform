@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 11-01 的决定（20–109）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-02 的决定（20–110）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -1042,7 +1042,7 @@
       - 欠的后注：BD 的六条“裁定对树”的更正（`rulings/BD-rulings.md:26`）；QB 的修正（SR4 输入上的 `readThrough`、可为空的围栏）；L4 的身份类别（`rulings/AH-rulings.md:49–50`）；L9 进决定表（H 的说明书没改，`rulings/OC-rulings.md:55–57`）；SR11 的盘点漏了那个红文件（上面）；6B-2 夹具规格的六个没用步骤在合入时删了。
       - 清理单：`acceptSecretaryHandoff` 的 `target`、`tasks` 和 `'manual'` 分支现在到不了（唯一的调用方只传 `too_long`）；`S6B1-fixture.ts` 的 `S6BLine` 现在是文件内的；`A8-host-restart-entry` 在负载下又失败过一次（单独跑 8/8 过）；I1 第 3 轮改了 `src/business/workflow/README.md:57`（在它的切片之外）。
       - 6B-1 的清单里结掉的：D 的第 16 行（关闭/重开后两个后端都读回 `SessionActivity`）。
-    - **用量。** DSH：6B-2 的 38 次运行共 144,612 秒、约 5.9 亿 token（大部分是缓存读取；裁定稿 3 次 4,846 秒、约 9,660 万，D/H 说明书 5 次 6,912 秒、约 2.34 亿，其余见上面各组记录）。Codex/Astra：28 次（22 次 sol：R1、Q1、BD、BH、QB、RB、P2、FX、FX2、FX3、AR、AD、AM、AH、AH2–AH4、AI1、AI2、AI3（被 AI3a 取代）、OD、OM；6 次 Astra：AD1、AD2、AI3a、AI4、AI5、AI6）。Opus：H 的修补（13 分钟）、OP-F1、合入前那次只读核对（6 个 agent、54 分钟、150 万子 agent token）、AD2 和两张表的核对、D91 的盘点和重画、AI6 的测试修补；其余的 Opus 数字【待 lead 补】。Claude 周额度（所有模型）：10-27 01:46 是 94%（15:00 重置）；从此时到重置，lead 不再开新的 Opus 子 agent，核对交给 Codex。
+    - **用量。** DSH：6B-2 的 38 次运行共 144,612 秒、约 5.9 亿 token（大部分是缓存读取；裁定稿 3 次 4,846 秒、约 9,660 万，D/H 说明书 5 次 6,912 秒、约 2.34 亿，其余见上面各组记录）。Codex/Astra：28 次（22 次 sol：R1、Q1、BD、BH、QB、RB、P2、FX、FX2、FX3、AR、AD、AM、AH、AH2–AH4、AI1、AI2、AI3（被 AI3a 取代）、OD、OM；6 次 Astra：AD1、AD2、AI3a、AI4、AI5、AI6）。Opus：H 的修补（13 分钟）、OP-F1、合入前那次只读核对（6 个 agent、54 分钟、150 万子 agent token）、AD2 和两张表的核对、D91 的盘点和重画、AI6 的测试修补；其余的 Opus 数字未记。Claude 周额度（所有模型）：10-27 01:46 是 94%（15:00 重置）；从此时到重置，lead 不再开新的 Opus 子 agent，核对交给 Codex。
     - 证据在 `D:\1.project\Software\agent-next-archive\docs\refactor\reviews\slice6b2-2026-10-27\`（509 个文件，5.4 MB：`books/`、`codex/`、`rulings/`、`replies/`、`checks/`、`lead/`；`lead/` 下还有 `merge/` 和 `fix/`）。
     - **92-1 10-26、10-27 的四项用户决定。**
       - **Opus 核对层先放回来（10-26 12:01）。** 周额度 82%，到 10-27 15:00 重置前放回 Opus 做完那层核对，返工仍交 DSH。到重置就结束。
@@ -1889,6 +1889,51 @@
           - **7D1 波次。** W1 G1-1 → W2 G1-2 → W3 G3-1 ∥ G4 ∥ G2-2a → W4 G2-1 ∥ G3-2 → W5 G2-2b → W6 W → W7 CL。
           - **其他。** §6 选项 b、只读报告见证（B06）各一片，在 MVP 门之前；K2 不是 MVP 门槛。下一轮真实模型冒烟用核对表 v4，要核 provider 收不收 131072 或 64000 的 `max_tokens`。
           - 来源：`docs-land1101d/facts-land1101d.md` §5、§6；`7c/status-7c.md:545`。
+
+      - **110 7D1 落地，PS、B06、8B-2、8C、8E 冻结，PL 的合并树和 L 提前，通宵的做法和下一步（11-02）。**
+        - **110-1 7D1 合入，7D1 组做完。** 提交 `7de15292`（7D1：角色线的席位、上限和分配，模块和目标的责任链接，范围 claim，部分和完整交接的范围子步骤，归档的释放计划，项目级决定卡和请知悉，同项目转发，有效范围读），落地树 `58575f1`（`w7-u3`）；它和 lead 分支的 src、tests、resources、scripts、vendor、`runtime-assets.json`、`package.json`、`package-lock.json` 逐个哈希相同。
+          - **组和轮次：** G1-1、G1-2、G3-1、G4、G2-2a、G2-1、G3-2、G2-2b、W、Z。Z 是收尾组，把 CL 并进来，收全量 20 项红、W 和 G3-2 的审查、留下的变异。
+          - **规模。** src 75 个文件 +4,247/−1,183，测试 137 个文件 +5,298/−288，README 18 个文件 +173/−130。
+          - **检查。** 全量（bubblewrap，`221c0c6`）1,150 个文件、13,314 项过、3 项跳过、1,097.66 秒；规模批 14 个文件 42 项、893.44 秒。落地树另带 `dc09e6d` 上 `44aab2a` 的两处小改（`savedRequeueAutoCount` 去掉没有裁定要求的防环、测试复用 `nextOf`；7D1 的合并树开在 `u3-t1`，所以缺这两处）；`S7C-T-01`、`S7C-T-02` 9/9，tsc 0；`readme-check` 25 个目录 0 个问题。
+          - **W 上的红。** 全量 15 个文件红、20 项红，分类后全是旧测试的前置过时或已知缺口，没有新生产 bug：8 项 `at_cap` 迁移、2 项 W-02、HR9、R6-host、resolver 文字、production-reach 4、`G2-full-handoff-cap` 2、G3-2 的 facts 2。查出来的真 bug 都已修：G2-2b 的保存 scope 恢复丢最后一个 receipt（`session-handoff-service.ts`）、G2-1-01、G3-2-01。
+          - **删的行和改的种子。** 两条具名延后的行删了（retired-held 的 memory 格、allocation-read 的 damaged 行）：要篡改存储才能触发（AGENTS 第 4 条）。HR9 的种子改成部分交接，`phase === 'running'`、`stage === 'transfer'`（`session-handoff-service.ts` 的 transfer 拒绝标记）；书 `:1176-1180` 说借座不占 reservation、holder、cap，完整交接不会被 cap 拒绝，旧行过时。
+          - **裁定的读法。** L3.16 留 `session-responsibility-service.ts` 第一处 `proof.task.projectId` 检查，后两处删（开工裁定写全删，Z 的裁定更新，照 Z）。`session-duty.ts` 的私有 `legacyTemplateDutyOf` 删了，用 `query-execution.ts:119` 的正本。
+          - **未证明的两条，如实记。** G2-2b 03 的退休 guard（W 的 `G2-archive-release` 观察不到）；G4-scope-read 的“恢复 `readSession`”变异（这行的第二工作区线是 project 链接，走不到 `regionClaims` 的 Session 读）。变异：Z 跑 15 条，lead 补跑 G4 的 5 条，4 红 1 不红，记录在 lead 笔记 `impl/s7d1/z01-mutations.txt`。Codex 对 Z 的复审 2 条：Z-01 由 lead 跑变异闭合，Z-02 是回复的事实错，只记。
+          - 来源：`docs-land1102/facts-land1102.md` §1；`s7d1/land/msg-7d1.txt:1-9`；`s7d1/status-7d1.md:29`、`:31`；`night-1102.md:38`、`:83-85`、`:88-89`。
+        - **110-2 PS、B06 冻结。** 两份规格已冻结提交，代码都没动。
+          - **PS。** `slices/slice-PS-SPEC.md`，提交 `4bbcf9fb`。§6 的选项 b 就是 PS（决定 102-4）；放在 PL-1 之后、6C 之前。人采纳之前先停受影响的 Run。
+          - **B06。** 提交 `c1f2650f`，只读报告见证；放在第 9 片之后、E3 之前。
+          - 来源：`docs-land1102/facts-land1102.md` §2；`night-1102.md:7`、`:43`。
+        - **110-3 8B-2 冻结、演练和开工。**
+          - **冻结。** 开工裁定 v5 冻结（lead 笔记 `impl/s8b/8b2-start-rulings.v5.md`），两轮完整审查加一次快速核对。
+          - **改过的地方。** formal 请求是第五个 operation 臂 `MaintainerAssignmentActionV1`，书的“不加记录”照旧；`since = requestedAt`；`done` 是两个提交（link+claim 一个、`done` 阶段一个，唯一事件 `MaintainerAssignmentRecorded`），和 member 一样；`applyMaintainerAssignmentDecision` 是普通 owner 函数。
+          - **偏差。** LR8-06 写 Opus 写夹具，不照做，组自己写（用户 11-01 的额度决定）。
+          - **演练。** Codex 在 `w6-u2` 上走 M、R 两组，9、11 条，lead 裁定全收（`s8b/frozen/8b2-drill-rulings.md`）；“7D1 落地后核对”的名字都核过，成立。
+          - **两条 lead 定的规则。** 旧库按 79-1 不迁移，不补 claim。L9 的“执行者线”按建线时存的席位算，`not_counted` 的线不因后来的绑定变成执行者线；只有 `sessions/create` 用没绑定的角色带初始 module 链接、再绑定这个角色才走得到，`sessions/link` 在 duty 未知时已拒绝；后果是该模块的 hover 走“两 owner”拒绝。不加机制。module hand-over 的目的线不是执行者线 → `guard_failed`、`unavailable`。
+          - **开工。** 这批省了 DSH 试搭，直接开工，有问题走 ask 通道。R 第一段 08:0x 开在 `pw-u2`；R 的第一个提交带 `C/core/session-archive.ts` 的类型臂。
+          - **等用户。** 书 §7 第 1 问（根模块旁边有别的模块时还显示“未细分”吗）照字面，等用户。
+          - 来源：`docs-land1102/facts-land1102.md` §3；`s8b/frozen/8b2-drill-rulings.md:3-5`、`:9-16`；`night-1102.md:13-14`、`:54`、`:56-57`、`:63-66`、`:72-77`。
+        - **110-4 8C、8E 冻结。**
+          - **8C。** 开工裁定冻结（`impl/s8c/8c-start-rulings.v5.md`），审查 20 条、6 条，快速核对 1 条。
+          - **8C 改的地方。** `repair_approval`、`structural_proposal` 的 source 都放 `views`（`repair-approval-source.ts`、`structural-proposal-source.ts`）；书放在 `communication` 是放置偏差，`communication` 不能 import `notes`、`architecture`，先例是 PL 的两个通知 source。`mapExecutedFilesToModules` 下移到 `model/architecture-footprint.ts`。③ 由配置操作者记（`redriveRepairAnswers` 用 `hostScopeContext`；启动步时 `hostContext` 还没声明）。
+          - **8C 查出的真问题。** 第三稿下，人拒绝且 ② 没提交时注记会被激活；改成需卡且没有 `approve` 就 `approval_pending`。产品含义（决定 109-3 已记）：足迹证据缺失时人批准就算数；证实的越界批准了也是 `forbidden`。
+          - **8E。** 开工裁定冻结（`impl/s8c/8e-start-rulings.v5.md`），审查 22 条、9 条，快速核对无发现。`record_note` 的说明 lead 审过，写法是“8C 的全文 + link 段”，F1 再加 flow 段。
+          - **重指。** 两份都要在 8B-2、8C 落地的树上重指后开工。
+          - 来源：`docs-land1102/facts-land1102.md` §4；`s8c/8c-rulings-3.md:1-4`、`:6-21`、`:25-39`；`s8c/8e-rulings-3.md:1-3`、`:8-9`；`night-1102.md:50-53`、`:59-61`、`:68-70`、`:78-80`。
+        - **110-5 PL 的合并树、L 提前。**
+          - **树。** P1–P6 现状合并 `plu-m5`；`pw-u1` = PL 并到 7D1 `w6-u2`（六个文件冲突）；`pw-u2`、`pw-u3` 带上 Z 和 `44aab2a`。
+          - **L 提前。** L（接线组）提前开在 `pw-u1`：P3、P4、P5 的第二次返工要靠它才能验证。P3t、P4s、P5s 等 L。
+          - **L 问过的两处。** P6 的项目级通知读用 `[projectId]` 调按目标索引，L 修（两个 P6 文件进白名单，枚举目标逐个读）；A-05、A-09、PL-23、PL-14 是 P4 审查的 01、02，等 P4s。
+          - **偏差两处。** `kept-for: P8` 一行（L-12）：书说 PL-1 无豁免，记偏差。模块环：`sessions → tasks` 是环，`readGoalRecord` 替掉一个冻结 import，记偏差。
+          - **写不过去的一条。** `InterventionInput` 两臂：lead 裁的写不过去，P4r 用单对象加真实 Query 值，P4s 收窄。
+          - 来源：`docs-land1102/facts-land1102.md` §5；`night-1102.md:15`、`:39`、`:46`、`:73`。
+        - **110-6 通宵的做法、失误和下一步。**
+          - **做法。** 用户 00:29：今晚不设限，不等他决定；产品问题按已有决定定，写进文档，早上报。W 和 G2-2b 并行（原 W5→W6）；`w4-u1` 用没审过的第一轮搭。8C、8E、8B-2 的规格阶段都是两轮完整审查加一次快速核对。
+          - **失误。** Bash 里 `cd` 三次（马上退回）；G2-1r 收尾删了 `roleLineDutyOf` import；给 Codex 的 8B-2 核对提示写错一句（done 是两个提交）；7D1 落地前才发现缺 `44aab2a`。
+          - **下一步。** PL-1（L → P3t、P4s、P5s → 54 行）∥ 8B-2（R 第一段 → M → R 第二段）→ 8C → 8E-1 → 8E-2 → PL-2[P7＋P8] → 7D2-1 → 6C（PS 在 PL-1 之后、6C 之前）→ 第 9 片 → B06 → E3。
+          - **推送。** 远端 `feat/orchestration-slices` 是 `28bece35`，推送等用户。
+          - **文档。** 本批 10 份文档已按 lead 审改和 Codex 的 14 条核对落地：`STATE-MACHINES-SPEC.md`（新增 §21）、`slice-7-SPEC.md`、`slice-PL-SPEC.md`、`slice-8-SPEC.md`、`MVP-BEHAVIOR.md`、`DESIGN.md`、`E3-UI-ITEMS.md`、`DSH-WORKFLOW.md`、`IMPLEMENTED-CAPABILITIES.md`、`CORE-DATA-OPERATIONS.md`；HANDOFF、DECISIONS、STATUS、根 AGENTS.md 同步。
+          - 来源：`docs-land1102/facts-land1102.md` §6；`night-1102.md:1-3`、`:9`、`:22-27`、`:82-90`。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

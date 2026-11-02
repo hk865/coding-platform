@@ -23,6 +23,8 @@
 
 **后注（L2 落地，lead 2026-11-01）：** L2 已落地（`61deb845`）：`handoffs` 已绑进执行依赖（`src/composition/create-platform.ts:1859`），真实 `hand_off` 调用到 H，审批卡（`handoff_approval`）的应用行接通，H-01、H-02 的公开链路行已跑；允许清单里 `HandoffBriefRecordedEvent`、`HandoffBriefConsumedEvent` 两行去掉。Host 加系统发件箱（存储和发布）、提醒路径、返工通知，本地工作台的授权带上 `request_rework`、`request_recheck` 两个返工工具。职责收件人读真实目录：没有固定职责的 `legacy_template` Session 跳过，职责读不到按失败重试，不投给兜底。自动返工通知的 `taskCount` 现在合计两臂：接续 Run 没有 `requeueRef`，计数沿 `previousRun` 找到后面的 requeue，否则答复接续后参谋的第二张通知会丢；全量 `e38bc2a` 1,122 个文件、13,106 项过、3 项跳过、762.65 秒；规模批 14 个文件 42 项、594.77 秒。之后只动第三次复审的两处小改（`savedRequeueAutoCount` 去掉没有裁定要求的防环、测试复用 `nextOf`），两个测试文件 11/11，`readme-check` 25 个目录 0 个问题。7C-2 到此做完，7C 整段做完。
 
+**后注（7D1 落地，lead 2026-11-02）：** 7D1 已落地（`7de15292`，union `58575f1`；落地树另带 `dc09e6d` 上 `44aab2a` 的两处小改：`savedRequeueAutoCount` 去掉没有裁定要求的防环、测试复用 `nextOf`，因为 7D1 的合并树开在 `u3-t1`，缺这两处）。十组 G1-1、G1-2、G3-1、G4、G2-2a、G2-1、G3-2、G2-2b、W、Z 全部合入；Z 是收尾组，把 CL 并进来，收全量红项、W 和 G3-2 的审查、留下的变异。规模：src 75 个文件 +4,247/−1,183，测试 137 个文件 +5,298/−288，README 18 个文件 +173/−130。全量（bubblewrap，`221c0c6`）1,150 个文件、13,314 项过、3 项跳过、1,097.66 秒；规模批 14 个文件 42 项、893.44 秒；落地树上 `S7C-T-01`、`S7C-T-02` 9/9，tsc 0，`readme-check` 25 个目录 0 个问题。W 上的全量是 15 个文件红、20 项红，分类后全是旧测试的前置过时或已知缺口（8 项 `at_cap` 迁移、2 项 W-02、HR9、R6-host、resolver 文字、production-reach 4、`G2-full-handoff-cap` 2、G3-2 的 facts 2），没有新生产 bug；查出来的真 bug 都已修（G2-2b 保存的 scope 恢复丢最后一个 receipt，`session-handoff-service.ts`；G2-1-01、G3-2-01）。两条具名延后的行删了（retired-held 的 memory 格、allocation-read 的 damaged 行）：要篡改存储才能触发。HR9 的种子改成部分交接，`phase === 'running'`、`stage === 'transfer'`（书 `:1176-1180`：借座不占 reservation、holder、cap，完整交接不会被 cap 拒绝）。L3.16 留 `session-responsibility-service.ts` 第一处 `taskBasis.task.projectId` 检查（`:501`），后两处（`:711-716`、`:886-890`）删了（照 Z 的裁定，不是开工裁定）。`session-duty.ts` 的私有 `legacyTemplateDutyOf` 删了，用 `query-execution.ts:119` 的正本。未证明的两条如实记：G2-2b 03 的退休 guard（W 的 `G2-archive-release` 观察不到）、G4-scope-read 的“恢复 `readSession`”变异（这一行的第二工作区线是 project 链接，走不到 `regionClaims` 的 Session 读）。变异：Z 跑 15 条，lead 补跑 G4 的 5 条，4 红 1 不红，记录在 lead 笔记 `impl/s7d1/z01-mutations.txt`。
+
 **后注（决定 89，lead 2026-10-24）：** 决定 89（并行成员防重复）的五段 skill 正文和落地顺序在 [HANDOFF 决定 89](../../../HANDOFF.md)；其中和能力 B 有关的一段留给 7B，施工时按下面写进 7B 的任务书：
 - **加什么。** `project_source` 的 `compare` 加一个选项，列出重复候选：只给候选，判断留给 agent（和 PRODUCT 写定的做法一致，`PRODUCT.md:198`：冲突检查放在数据结构的工具里，由编排的 agent 决定）。
 - **候选池。** 只取同一次比较之后的那份材料、只在授权范围之内；“新加的”按比较前的那份材料判。不再扫描活动工作区，避免混进比较之后才发生的新变化。
@@ -219,7 +221,7 @@
   - 步骤：建新 Session（两段式，建完才往下）→ 旧写者停下（工具在旧线的执行里调，换手排在这次执行结束以后做）→ 负责关系转移（关旧开新，原子）→ 旧线全部交出、没有等待就归档；只交出一部分就保留。中途重启按已存的 `handoff` operation 接着做。
   - 可以只交出选中的任务（拆），按 `assignments` 一条一个目标；交给已有的线时，那条线的来历不改，用新的负责关系表示“接手”，并保留它原来的 origin（合）。
   - 接任者的 continuation brief 列出交出的任务和理解指针。
-  - 换手的接任者按 L31 在前任的名额下登记（受换手围栏保护），最后交接那次提交把持有从前任移给接任者；负责关系含 goal/project 范围（`assignments` 只管任务，范围走 L25）；`creator` 跟完整换手（L34）。（决定 60-7、62-2）
+  - 换手的接任者按 L31 在前任的名额下登记（受换手围栏保护）；借席的持有在来源线的正式归档提交里移动；负责关系含 goal/project 范围（`assignments` 只管任务，完整交接的范围在 `transfer` 阶段的 `scope:plan`、`scope:<n>` 子步骤里逐个目标移交，部分交接保留范围和 holder）；`creator` 跟完整换手（L34）。（决定 60-7、62-2）
 - **L19 返工和重新检查的工具（F10）。**【lead 定，待审】（第一轮审查第 13 条）工具 `request_rework`、`request_recheck`：给执行者、参谋；包已有的服务；「每步确认」下出一张卡（决定来源 `rework_request`，选项 approve/reject）而不是回 `forbidden`；批准落实按 `commandId` 重放；和自动返工共用上限；你批准过的返工算 agent 发起的（进同一个上限）。每次都通知（决定 42）。
 - **L20 参谋、书记、秘书的确认和回复工具。**【lead 定，待审】（第一轮审查第 10 条）把已有的邮箱确认、回复适配器（F10）授权给参谋、书记。第 7 片为秘书的查询调用种类注册发信、确认、回复、撤回（`send_session_message`、`ack_session_message`、`respond_session_message`、新的 `withdraw_session_message`），只对秘书这一档解除 `FORBIDDEN_QUERY_TOOL_NAMES`（`src/core/agent-runtime/query-preparation.ts:141`）；可信发信方是 QueryRun principal，并且必须是这个请求的当前归属者。秘书查询的工具白名单加 `create_member`（只对秘书这一档解除限制，见 L42）。（决定 60-10）
 - **L21 注意力和返工通知（决定 42；DESIGN §1.3、§2.4）。**【lead 定，待审】（第一轮审查第 15 条）注意力增量发给这个目标的当前参谋（按 L35 找），阈值可配置。每次自动返工给这个目标当前归属的秘书发一条通知（意图 `notify`，被动、不开新的一轮）；同一来源（requeue 或轮次 ref）去重；第二次返工另告诉参谋（没有参谋就进“要决定”，建议建一个）；自动重新检查也含在通知里。
@@ -236,7 +238,7 @@
   模块维护者用 8B 的 `module-maintainer:`。同一模块同一职责只能一个；嵌套（上级区域和下级区域各有一条）可以，开线和改范围时提示。
   冲突回 `revision_conflict/scope_owned`，带现在的负责线。
 - **L25 换挂靠（60-7）。**【lead 定】`planReanchor` 是 `src/core/work-graph/state/` 下的纯迁移：输入是已读的快照和版本、授权事实、
-  本次提交拟建的 Goal 或目录；返回完整的提交贡献（guards、records、claims、events、commit cursor 绑定）。调用的 owner 把它并进自己的一次
+  本次提交拟建的 Goal 或目录；返回领域计划 `sessions、links、claimChanges、bindings、events`；owner 补守卫、编码并构造提交贡献，再并进自己的一次
   `PreparedCommit`，同一记录、同一占位只留最后一个变化；新目标、新模块按这次拟提交的状态验证。单独用时是动作
   `reanchorSessionResponsibility({ session, close, open, reason })`，`reason` ∈ `human_scope_change | goal_continued | architecture_revision |
   split | reuse | standby | queue_assign | project_scope_moved`。`transferSessionResponsibility` 保留“同目标、换 Session”的意思，但要扩：
@@ -275,9 +277,9 @@
     提交同时守上限版本和分配版本。建线开始时取预留（预留属于这次操作），登记那次提交里预留转持有。调用失败或取消不等于创建操作终结：仍可恢复登记的子操作
     保留预留；释放必须与持久终结该操作、禁止后续登记同次提交。登记重放核实原预留或合法换手名额。episode 与准入统一使用持有＋预留；预留转持有不关闭 episode。
     归档在正式归档提交里释放持有；重新启用重新准入。调低上限不撤销已有的，但降到新上限以下之前不再加。同职责完整换手：接任者在前任的名额下登记（受换手围栏保护），
-    最后交接那次提交把持有从前任移给接任者；部分交出多出一条线，要另外准入；换职责（L40）按目标职责准入。所有建线入口都走这一步：开局线、你开、
+    借席的持有在来源线的正式归档提交里移动；部分交出多出一条线，要另外准入；换职责（L40）按目标职责准入。所有建线入口都走这一步：开局线、你开、
     平台加、提议拆分、秘书建执行者、参谋建成员、换手。（审查二第 1 条）
-    **旧线的持有【lead 定】**：7D1 合入时已有的线没有 `RoleLineAllocationV1`。某个（项目、职责）第一次准入时，在那次提交里按“必须不存在”建出这条记录：`holders` = 这个项目里这种职责、没归档的全部 Session（含待命、退役未归档；`since` 记建记录的游标），`reservations` 为空；读口没有记录时按同样的规则读出、不写。持有超过上限照“调低上限”办：不撤销，降到上限以下之前不再加。（审查二 lead 补）
+    **旧线的持有【lead 定】：** 7D1 合入时已有的线没有 `RoleLineAllocationV1`。旧库按决定 79-1 重建，不迁移、不补持有；第一次准入不扫描旧 Session 建记录，读口读到缺失的分配记录按空集合（0 个 holder、0 个预留），不写。持有超过上限照“调低上限”办：不撤销，降到上限以下之前不再加。（审查二 lead 补）
   - **同时运行上限**：持租约的 Host 里设一个所有模型入口共用的准入器，按 (项目, 职责) 串行地查和预留，再异步开始。计数组只有四个（决定 62-2）：秘书、参谋、书记、执行者。审阅线（`reviewer`）只经 `role_line_add` 建，运行准入并入执行者组；保留名额沿用现有准入，不新增第五组初值/数字。
     映射：独立审阅者（`reviewer`）算执行者组；只读副本、咨询（问一问）算它复制的那条线的职责组；7D1 之前建的旧线（读作 `openedBy: 'legacy'`）按它的固定职责算；没有映射的调用一律拒绝启动
     （`invalid/no_running_group`），不绕过上限。准入器接在真实的共同启动路径上：Run 和 Query 都已有持久身份（准备之后、交给 Kernel 之前），在这一步过准入。
@@ -502,7 +504,7 @@ export type RoleScopeV1 =
   | { kind: 'goal'; goalRef: GoalRef }
   | { kind: 'region'; moduleRef: ModuleRef };   // L23：子树减去同职责更深的负责区域
 // resolveDutyRecipient（src/core/work-graph/sessions/duty-recipient.ts）的 duty 联合：'adviser' | 'secretary' | 'scribe' | 'reviewer'。
-export type RoleLineDutyV1 = 'secretary' | 'adviser' | 'scribe' | 'executor' | 'reviewer';   // duty 五种；运行准入仍四组，reviewer 并入 executor
+export type RoleLineDutyV1 = 'secretary' | 'adviser' | 'scribe' | 'executor';   // duty 四种；reviewer 经 roleLineDutyOf 计入 executor
 export type RoleLineOpenDutyV1 = 'secretary' | 'adviser' | 'scribe';            // role-lines/open 只收这三种；审阅者只经 role_line_add
 
 export type SessionRoleFactsV1 = {             // 每条线一份，在登记平台 Session 的那次提交里写
@@ -619,7 +621,7 @@ export type RoleCapacityEpisodeV1 = {
 | S7-RL-03（7D2 联动补验；审查二第 18 条；决定 60-7） | 待命 → `scoped`（复用，`role_line_reuse`） | 新范围的占位空；按 L39 挑选（闲着、不太长、以前管过的模块有交集、最近活动）；未归档、已持有名额的待命线复用不新增预留、不要求总数低于上限，已归档线先走重新启用准入（L31） | 平台规则 / 人 | 用 L25 开新范围链接、占占位；`RoleLineOperationV1` action `role_line_reuse` | `revision_conflict/scope_owned` | 同一提交（审查二第 1 条） |
 | S7-RL-04（7D2 联动补验；审查二第 18 条；决定 60-3、60-7、60-8；**决定 91 改写**） | `scoped`/待命 → archived（闲置归档） | 参谋、书记闲满 `ROLE_LINE_IDLE_ARCHIVE_MS = 86_400_000`（L38 的“闲”事实读全）；每种职责保留最后一条不归档 | Host / 平台 | 归档、释放 `role-scope:` 占位和持有；项目范围按 `project_scope_moved` 挪给同职责里负担最轻的线 | 无 | 释放同一提交；重启按事实重算 |
 | S7-RL-05（7D1 可验；审查二第 18 条；决定 62-2） | `RoleLineAllocationV1`：取预留 | 开线开始时取预留（预留属于这次操作）；持有 + 预留 < `open` 上限；同一次提交守上限版本和分配版本 | 所有建线入口 | `reservations` 加一项（`operationRef`、`reservedAt`）；登记那次提交预留转 `holders`（`since` 记游标） | `capacity/at_cap` | 名额和建线同一提交；崩则一起回滚 |
-| S7-RL-06（7D1 可验；审查二第 18 条；决定 62-2） | `RoleLineAllocationV1`：持有 → 释放或移交 | 归档在正式归档提交释放持有；重新启用重新准入；同职责完整换手时接任者在前任的名额下登记（受换手围栏保护），最后交接那次提交把持有从前任移给接任者；部分交出多出一条线要另外准入；换职责按目标职责准入 | Host / 平台 | `holders` 移除或 old→new；释放 `role-scope:` | 无 | 同一提交；不多算 |
+| S7-RL-06（7D1 可验；审查二第 18 条；决定 62-2） | `RoleLineAllocationV1`：持有 → 释放或移交 | 归档在正式归档提交释放持有；重新启用重新准入；同职责完整换手时接任者在前任的名额下登记（受换手围栏保护），借席的持有在来源线的正式归档提交里移动；部分交出多出一条线要另外准入；换职责按目标职责准入 | Host / 平台 | `holders` 移除或 old→new；释放 `role-scope:` | 无 | 同一提交；不多算 |
 | S7-RL-07（7D2 联动补验；审查二第 18 条；决定 62-1） | 无 → 队尾（`GoalAdviserQueueV1.entries`） | 目标确认要目标参谋；没有负责不到 `MAX_GOALS_PER_ADVISER = 3` 个、负担最轻的参谋，且到保留上限开不了线；守队列 revision | 平台规则 | 追加 entry（`enqueuedAt`、`screening`）；数组顺序就是排位；目标栏显示“排队等参谋 · 第 n 位” | `capacity/at_cap` | 同一提交；已分过的重放不再分 |
 | S7-RL-08（7D2 联动补验；审查二第 18 条；决定 62-1、62-2） | 队内 → 分派（`goal_queue_assign`） | 有参谋空出来（目标完成、取消、暂停、上限调高、范围挪走、线归档、Host 启动），或人 `assign`（可以超过 3 个）；守队列 revision | 平台规则 / 人 | 从队列取（默认队首）分给某条参谋线，用 L25 开范围链接、占占位；从队里移除；按 L36 判出不出卡 | `revision_conflict/scope_owned` | 同一 `commandId` 重放；不重复分派 |
 | S7-RL-09（7D2 联动补验；审查二第 18 条；决定 62-3、62-4） | 无 → 规则 `active` | 只认人；`actions` 只能是 `RuleActionV1`，否则 `invalid/rule_action_fixed`；`limits.open` 每种职责不超过项目的保留上限，否则 `invalid/rule_limit_over_cap`；`scope`、`actions` 非空；每次建、撤、改把 `AutonomyRuleSetV1.revision` 加一 | 人（`autonomy-rules/create`） | 写 `AutonomyRuleV1`、`state: 'active'`、`approvedBy`、`approvedFrom` | `invalid/rule_action_fixed`、`invalid/rule_limit_over_cap` | 单次提交，重放 |
@@ -699,7 +701,7 @@ export type RoleCapacityEpisodeV1 = {
 - RL-03（TE8，7D2 联动补验：要 `role-lines/open`；审查二第 18 条；审查二 lead 补）占位冲突：参谋 A 负责区域 M；再开一条负责 M 的参谋线 → `revision_conflict/scope_owned`，带现在的负责线；嵌套（上级区域和下级区域各有一条）可以，只在开线和改范围时提示。（决定 60-5）
 - RL-04（TE8，7D2 联动补验；审查二第 18 条）手算例子：保留上限参谋 2、A、B 各负责 3 个进行中的 small 目标、都是「方案确认后自动」、没有别的可用参谋；确认 G7、G8（初筛都是 `small`）→ 两个目标都建成、队列 `[G7, G8]`、只有一张 `role_capacity` 卡（主体 `project`）；把上限调到 3 → 平台开参谋 C、按排空依次把 G7、G8 分给 C、队列空、A/B/C 负责 3/3/2 个目标；用固定的事件时间推进过一个汇总窗口 → 请知悉按主体分别汇总：主体 `project` 一行“开 C”，G7、G8 各一行分派（L43），固定事件时间让分组唯一；任一阶段重启、重放都不多出线、分派或请知悉。（决定 60-8、62-1、62-2；审查二第 19 条）
 - RL-05（TE8，7D1 可验；审查二第 18 条）并发降限和最后一个预留：保留上限参谋 8、持有 7、预留 0（名额只剩 1）；一条建线先取走最后一个预留（持有 7 + 预留 1 = 8）；和一次把上限降到 2 交错提交，断言确切顺序和最后结果——降限先成 → 建线的预留守卫按新上限重判、回 `capacity/at_cap`、预留不取（最后持有 7、预留 0）；预留先成 → 降限照写不撤销已有的（最后持有 7、预留 1，登记后持有 8），之后再加线一律 `capacity/at_cap`；不会因为空着一个旧号就加上；两个 `projects/role-limits/set` 带同一个 `expectedRevision` → 一个成功、另一个 `revision_conflict`；每次写审计事件 `ProjectRoleLimitsChanged { from, to, actor }`。（决定 62-2；审查二第 19 条）
-- RL-06（TE8，7D1 可验；审查二第 18 条）满额下完整换手：保留上限满、同职责完整换手 → 接任者在前任的名额下登记（受换手围栏保护），最后交接那次提交把持有从前任移给接任者；不出现两倍计数、不多占名额；中途重启按换手操作接着做。（决定 62-2）
+- RL-06（TE8，7D1 可验；审查二第 18 条）满额下完整换手：保留上限满、同职责完整换手 → 接任者在前任的名额下登记（受换手围栏保护），借席的持有在来源线的正式归档提交里移动；不出现两倍计数、不多占名额；中途重启按换手操作接着做。（决定 62-2）
 - RL-07（TE8，7D1 可验；审查二第 18 条）满额下部分换手：只交出部分任务 → 多出一条线，要另外走 L31 准入；到上限 → `capacity/at_cap`，不借前任的名额。（决定 62-2）
 - RL-08（TE8，7D2 联动补验；审查二第 18 条）重新启用：线归档（正式归档提交释放持有）后重新启用 → 重新准入（取预留、登记转持有）；名额满 → `capacity/at_cap`，不出卡、直接回。（决定 62-2）
 - RL-09（TE8，7D1 可验；审查二第 18 条）退役未归档照算：一条线退役但还没归档 → 仍算在持有里，`role-lines/allocation` 读得到；调高上限前不加新线。（决定 62-2）

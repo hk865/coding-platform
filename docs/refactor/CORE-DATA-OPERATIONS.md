@@ -56,7 +56,9 @@ type ModuleRef = { projectId: string; moduleId: string };
 type WorkLinkTarget =
   | { kind: 'task'; ref: TaskRef }
   | { kind: 'work'; ref: WorkContextRef }
-  | { kind: 'module'; ref: ModuleRef };
+  | { kind: 'module'; ref: ModuleRef }
+  | { kind: 'goal'; ref: GoalRef }   // contracts/ledger.ts:47
+  | { kind: 'project'; ref: ProjectScope };
 type WorkLinkRelation = 'responsible' | 'participates' | 'investigated';
 type SessionWorkLinkRef = SessionRef & {
   aggregateType: 'SessionWorkLink';
@@ -360,10 +362,14 @@ availability `idle/busy/recoverable/unavailable` 由 occupancy 和 health 解释
 | `handoffBriefConsumptionForCommit`（简报唯一消费；写，并入第一次进入提交；2026-11-01 补注，7C-2 H） | Run、claim、时间 | 只在 Run 的冻结 manifest 带 `handoffBrief` 且不是 requeue 时读记录 5；记录必须仍是 manifest 冻结的 binding/material，`consumedBy` 为 null 或就是本 Run；返回记录和 CAS guard，由第一次记录进入的提交（含 `recordRunResult` 的进入对账）合并，不另写事件、没有独立路由；没进入或准备失败不消费，留给下一次 Run。入口 `src/core/work-graph/tasks/execution-entry-service.ts:374`、`:421`、`:1973`、`:2195`，对账 `src/core/work-graph/tasks/run-reconcile-service.ts:752`。已消费且不是本 Run → `unavailable`；记录与 manifest 不符 → `invalid`；读失败 → 既有失败出口。 |
 | `readSessionHistory` | sessionRef、afterCursor/throughCursor、limit | 原记录引用、必要正文、来源 sequence；按需读取，不复制整条日志；跨主题筛选走平台searchHistory再定位 |
 | `createSession` | 角色/Skill/Kernel 配置、workspace、初始关联、requestId | 稳定 SessionRef 与 Kernel 映射；失败可按同请求核对 |
+| `admitSessionCreation`（创建前的准入；写；2026-11-02 补注，7D1） | workspace、角色、初始链接、requestId | 按项目、按职责判席位：`holders + reservations < open`，到上限拒 `capacity`；完整交接的第一个创建可按父操作借源线席位（不预留）；只读副本和 `unknown` 职责判 `not_counted`；把 `CreateSeatDecisionV1` 存进创建操作并写预留。注册那次提交把预留换成持有，同次写 Session 记录、初始链接和它们的 claim。入口 `src/core/work-graph/sessions/session-directory.ts:951`（`decideSeat` 在 `:897`，借席在 `:851`、`:919`）；上限判定 `src/core/work-graph/sessions/allocation-read.ts:35` |
+| `readEffectiveScope` / `effectiveRegionOf`（有效范围读；读；7D1） | Session；或项目、职责、模块 | 项目链接答 `{kind:'project'}`；目标链接各一条；区域链接按职责给项目级条目，减去同一职责更深的链接；没有包含时只有模块自己。读失败、过期、越权是读自己的拒绝，不当空数组。入口 `src/core/work-graph/views/role-scope-reader.ts:50`，纯表 `src/core/work-graph/state/role-scope.ts:67`，范围映射 `src/contracts/role-lines.ts:56`；**没有路由** |
+| `reanchorSessionResponsibility`（换挂靠；写；7D1） | session、要关的链接、要开的链接、原因 | 一源零或多目的；`[]` 只关，多个即拆分，源只关一次；任一拒绝整次不写。链接的 claim 用同一个钩子，游标随提交绑定。不是 R2 命令、**没有路由**。入口 `src/core/work-graph/sessions/session-responsibility-service.ts:1055`，纯迁移 `src/core/work-graph/state/reanchor.ts:47` |
+| `readRoleLimits` / `setRoleLimits` / `readRoleLineAllocation`（上限和分配；读/写；7D1） | 项目；写再带 `expectedRevision` 和 `running`/`open` 的部分记录 | 读上限给记录或默认值（0 = 默认）；写只认人，值都是正整数，`open` 可低于现有持有（调低不撤），写记录和一条 `ProjectRoleLimitsChanged`（谁、何时、从几到几），版本不符 `revision_conflict`。分配读答四个职责的持有、预留和上限，分配记录缺失时持有、预留为空，上限优先取已有项目上限设置，设置记录也缺失时才用默认值，不扫描；损坏或读失败 `unavailable`。路由 `projects/role-limits`、`projects/role-limits/set`、`role-lines/allocation`（前两个只认人）。入口 `src/core/work-graph/sessions/role-limits-service.ts:29`、`src/core/work-graph/views/role-line-allocation-reader.ts:44`、`src/core/work-graph/sessions/allocation-read.ts:35`；路由 `src/app/core-routes.ts:652`、`:653`、`:654` |
 | `continueSession` | 已领取admission、prepareExecution结果、请求身份/expected | 消费已有Run/QueryRun与Session占用进入同一driver；本方法不再claim |
 | `compactSession` | sessionRef、记录范围、保留义务/决定引用、理由 | Kernel 支持时执行压缩，记录 before/after cursor、summaryRef、来源范围 |
 | `regroupSessions` | 来源 Session 引用、目标角色/任务、交接引用及关系变更 | 新关联/Session 与交接记录；不把原日志修改成另一人的历史 |
-| `archiveSession` / `reactivateSession` | sessionRef、expected、理由 | 改变活跃管理状态；保留映射、来源及历史关联 |
+| `archiveSession` / `reactivateSession` | sessionRef、expected、理由 | 归档改变活跃管理状态，并在同一次提交释放责任：关开着的负责 goal/project 链接、参谋和书记的 module 区域链接，释放 `role-scope:` claim 和席位；借席的完整交接把持有换给接任者。重新启用同一次提交重新准入并加回持有，不写预留，到上限拒 `capacity`。保留映射、来源及历史关联。入口 `src/core/work-graph/state/session-archive-release.ts:27`、合并 `src/core/work-graph/sessions/session-lifecycle.ts:655`；重新启用入口 `src/core/work-graph/sessions/session-directory.ts:593`（`reactivationSeatOf`）、合并 `src/core/work-graph/sessions/session-lifecycle.ts:779` |
 
 `prepareExecution` 是AgentRuntime的执行准备入口：从WorkGraph解析平台材料、定位版本、装配Skill与本轮必要输入，返回准备结果及缺口。Kernel内部按绑定的已完成历史边界进行Context选择与预算检查，平台不再实现一套历史选择器。连续执行沿用真实Kernel Session与存储实例；旧bundle必需字段不能假填，正文格式演进按Runtime骨架迁移。普通查询和历史读取不经这个准备流程。
 
@@ -427,7 +433,7 @@ Run 结束不等于 Task 完成；暂停请求不等于暂停成功；一次工�
 | `readSessionFacts` / `readWait`（等待读口，2026-10-30 补注，7B-1） | `readSessionFacts`：SessionRef；`readWait`：消息 ref | `SessionFactsV1.waits` 是这条 Session 发出的所有 open/answered/expired 的已放行 inquiry（按 `since`，最早的在前），`wait` 是第一条自己的 Run 真让出过的等待；`readWait` 按消息读一条等待。发送方 Session 的查找走 `S7B_WAITS_BY_SENDER_SESSION_LOOKUP`（等值 project、workspace、sender Session、intent，按 `since` 排序），预算读完是 `incomplete`，不当“没有等待”。`sessions/facts` 是 `readSessionFacts` 的路由；`readWait` 没有路由（Host 发件箱门和 Workflow 回复事实用）。拒绝：消息或 Run 读不到/坏了 → unavailable；翻页预算读完 → incomplete |
 | `readReleasedActions`（已放行动作读；读，不写） | workspace scope、`after`、`limit` | 已放行、未撤回、未处理的 `action_request` 的 Goal，按批准顺序升序；读失败原样是失败，不当空页。入口：平台 `platform.messageRelease.readReleasedActions`；**没有路由**。代码：`src/core/work-graph/communication/message-release.ts:291`，发布 `src/composition/create-platform.ts:1098`。测试：`tests/app/S7B2-WK-restart.test.ts:69` |
 | `readDisconnectFacts`（断开通知的派生读；读，不写） | workspace scope | 一条已放行、`waitAfterSend` 的未消费等待（open/answered/expired）的两侧、发往已归档/退役线的未送达消息、仍未转发的复制干预，只有该方已归档或退役才出一行；每行带 `operationKey`、`occurredAt`、`messageRef`、`side`、`party`/`counterparty`、`successor`、`goalRef`，复制项另带 `copyGoal` pin；Host 系统发的 `notify` 不算新的未送达事实；不存通知。入口：`createDisconnectNoticeSource` 的 `disconnect` 页（登记在决策读模型的 notice sources，`src/composition/create-platform.ts:1295`），Host 的 `announceDisconnect` 读同一事实。**没有单独路由**（`decisions/queue` 的请知悉页）。代码：`src/core/work-graph/views/disconnect-notices.ts:77`、`:172`。测试：`tests/app/S7B3-disconnect-notices.test.ts:45`、`:112`、`:151`。错误：Session 读失败 → unavailable（整次拒绝）；记录不在 → 跳过该侧；scope 不可信 → forbidden |
-| `forwardMessage` / `disposeWait`（转发和处置；写） | 转发：人发消息 ref、目的地、可选 `copyGoalRef`；处置：等待消息 ref、`cancel` 或 `transfer` 加目标 Session | 转发一次提交写新消息、原消息 `transferredTo` 和 `forwarded:` claim（同目标重放回 `existing`、异目标回 `busy`）；处置的转移只写 `replyHandler`、取消只写 `waitCancelledAt`，不改正文。入口：owner `createMessageForwardingOwner`；路由 `messages/forward`、`waits/dispose`（plain body、只限人，非人回 `forbidden`），发布 `platform.messageForwarding`（`src/composition/create-platform.ts:2839`）。代码：`src/core/work-graph/communication/message-forwarding.ts:105`、`:351`、`:360`；规则 `:65`。测试：`tests/work-graph/S7B-F-forward.test.ts:74`、`tests/work-graph/S7B-F-dispose.test.ts:53`、`tests/work-graph/S7B-F-forward-rules.test.ts:84`、`tests/app/S7B3-L-routes.test.ts:26` |
+| `forwardMessage` / `disposeWait`（转发和处置；写） | 转发：人发消息 ref、目的地、可选 `copyGoalRef`；处置：等待消息 ref、`cancel` 或 `transfer` 加目标 Session | 转发一次提交写新消息、原消息 `transferredTo` 和 `forwarded:` claim（同目标重放回 `existing`、异目标回 `busy`）；处置的转移只写 `replyHandler`、取消只写 `waitCancelledAt`，不改正文。7D1 起，转发只在同一项目内允许另一个工作区的收件线：副本写在收件工作区、正文取原消息；另一个项目的收件线仍是 `invalid`/`cross_workspace_forward`；`waits/dispose` 仍要求同一工作区。入口：owner `createMessageForwardingOwner`；路由 `messages/forward`、`waits/dispose`（plain body、只限人，非人回 `forbidden`），发布 `platform.messageForwarding`（`src/composition/create-platform.ts:3263`）。代码：`src/core/work-graph/communication/message-forwarding.ts:105`、`:114`、`:374`、`:383`；规则 `:65`。测试：`tests/work-graph/S7B-F-forward.test.ts:74`、`tests/work-graph/S7B-F-dispose.test.ts:53`、`tests/work-graph/S7B-F-forward-rules.test.ts:84`、`tests/work-graph/S7D1-G4-forward.test.ts`、`tests/app/S7B3-L-routes.test.ts:26` |
 | `readConsultationCreate`（咨询创建读；读，不写） | create 操作的 `operationRef` | create 臂冻结的 `ConsultationCreateV1` 原样（克隆）；非 create 或没有 consultation 回 `not_found`，不造替身载荷。入口：`readConsultationCreate(directory)`，准备时经 `src/core/agent-runtime/query-preparation.ts:386` 调一次（`:154` 建读口）；**没有路由**。代码：`src/core/work-graph/model/session-contracts.ts:78`（端口）、`src/core/work-graph/queries/platform-facts.ts:10`。测试：落地树上没有直接的公开用例；CS 合入时由 `tests/app/S7B3-CS-consult.test.ts` 证明 |
 | `createSession`（咨询创建与模式判断，2026-10-31 补注，7B-3 CS） | 一条已保存的单独提问（isolated inquiry）和源线的创建操作 | 受理归档/退役源线；先按 `stableSessionCreationIdentity` 读同一创建操作，找到冻结的 `consultation` 就原样复用、不再采集；否则读完成边界和它指向的结构化历史窗口：可读（含真空）→ `kernel`；边界或窗口确认缺失/损坏 → `platform_facts` 并采集一次；瞬时的 `unavailable` 仍等待。载荷 `{ messageRef, mode, facts, reason, sourceRef, boundary }` 经 create 的 `consultation` 字段写进创建操作，Query 的 `execution.consultation.operation` 指向它；重放不重采集。模式决定和采集：`src/business/workflow/consultation-facts.ts:25`、`src/core/work-graph/queries/platform-facts.ts:229`；写入：`src/business/workflow/consultation.ts:433`、`:449`；编解码：`src/core/work-graph/sessions/session-record-codecs.ts:764`。测试：`tests/app/S7B3-CS-consult.test.ts:157`、`:173`、`:192`。错误：— |
 | `readDecisionCard`（决定卡读；读，不写；2026-11-01 补注，7C-1 F1） | `decisions/card` 的卡来源；`main/read` 的 scope | 每张卡带 `openedAt`，取来源事实自己存的时间：消息 `createdAt`、注记 `head.createdAt`、计划问题 `job.submittedAt`、未知调用复核 `record.createdAt`、命令重跑 `request.createdAt`、放行卡 `message.createdAt`。候选卡、`goal_cause`、`goal_conflict` 没有存的时间，都是 `null`。已答的卡在补读来源时间失败时保留原回答卡（`answered_pending_application` 和它的 `openedAt`），不变成拒绝；来源还在且有存的时间时，用来源的时间覆盖回答卡的 `openedAt`。有来源时间的关闭卡带来源时间。代码：`src/core/work-graph/model/decision-contracts.ts:372`（`DecisionCardV1.openedAt`）、`:441`（`readDecisionCard` 口）；`src/core/work-graph/views/decision-read-model.ts:1490`、`:1545`（回答卡补时间、失败保留）、`:348`、`:368`（关闭卡）、`:1801`、`:1819`（消息）、`:1855`（候选 null）、`:973`（goal_cause null）；`src/core/work-graph/views/goal-conflicts.ts:345`（goal_conflict null）；`src/core/work-graph/notes/note-decision-source.ts:108`（注记）、`src/core/work-graph/tasks/planning-question-reader.ts:190`（计划问题）、`src/core/work-graph/tasks/unknown-call-review-card.ts:187`（复核）、`src/core/work-graph/tasks/command-rerun-request-card.ts:216`（命令重跑）、`src/core/work-graph/tasks/message-release-card.ts:74`（放行卡）；路由 `decisions/card`（`src/app/core-routes.ts:583`）。测试：`tests/work-graph/S6B-subject-sources.test.ts:215`、`:343`；`tests/work-graph/S4C2-D-rows.test.ts:205` |
@@ -486,6 +492,16 @@ Artifact 保留 contentType/digest/sizeBytes/source；引用记录保留对应 T
 
 生命周期调用这些能力装配输入，但不拥有知识的所有读写入口。普通 Agent、秘书和人工界面都可以按能力使用同一工具；不能为了工具复用强迫所有访问经过生命周期策略。
 
+**角色线和席位（7D1，2026-11-02）。** 三条新记录。
+
+- `ProjectRoleLimits@1`：`ref`（项目）、`running`/`open` 各四个职责的整数、`revision`。没有记录就是默认值（`src/contracts/role-lines.ts:190`）。读写都只认人；写带 `expectedRevision`，允许部分记录，`open` 可以低于现有持有（调低不撤），并记 `ProjectRoleLimitsChanged`（谁、何时、从几到几）。
+- `RoleLineAllocation@1`：`ref`（项目 + 职责）、`holders`（Session 和 `since`）、`reservations`（操作和 `reservedAt`）、`revision`。两个游标都随提交绑定，不是读值；分配记录缺失时持有、预留为空，上限优先取已有项目上限设置，设置记录也缺失时才用默认值。
+- `ProjectNotice@1`：`ref`（项目 + noticeId）、`subject`、`kind`、`summary`、`operation`、`since`、`revision: 1`。id 是 (subject, kind, operation) 的哈希，重放不再写；写者是固定系统主体 `workflow:project-notice`，没有调用者身份和 `ctx`；lookup 是 `project-notices-by-project`，按 `since` 升序；`project_notice` 是一个通知类别。
+
+创建操作的必有字段 `seatDecision`（`CreateSeatDecisionV1`）保存准入那一次的决定：职责、`reserved`/`borrowed`/`not_counted`、不计席位的理由、分配记录 ref、借席的父操作和来源线、时间；注册只读它，不再解析职责（`src/core/work-graph/model/session-contracts.ts:35`、`:66`）。
+
+操作：`readRoleLimits` / `setRoleLimits`（`src/core/work-graph/sessions/role-limits-service.ts:29`）、`readRoleLineAllocation`（`src/core/work-graph/views/role-line-allocation-reader.ts:44`）、`notifyProject`（`src/core/work-graph/communication/project-notice-service.ts:37`，7D1 只发布、没有生产者）。
+
 复用：[角色配置](../../coding-platform/src/contracts/role-spec.ts)、[记忆契约](../../coding-platform/src/contracts/memory.ts)、[记忆写入](../../coding-platform/src/control/control-engine/memory.ts)、[现有记忆查看](../../coding-platform/src/data/read-model-index/memory-view.ts)。
 
 ## 12. 跨结构更新协议
@@ -501,6 +517,9 @@ Artifact 保留 contentType/digest/sizeBytes/source；引用记录保留对应 T
 | 修改源码 | 文件变更实际结果不能和 DB 假装同事务；登记精确观测 | 受影响源码索引、反向依赖、架构差异；标明 capture/version |
 | 接受输入 / 记到期（2026-10-30 补注，7B-1） | 消息的 `acceptedInputs`（`consumesWait`）、`part: 'message'` 的 `delivery: 'delivered'` 和 `deliveryEvidence`、`wait-consumed:` claim 同一提交；`message.recordExpiry` 的 `expiredAt` 和 `SessionMessageExpired` 同一提交 | 页游标、到期候选页和收件索引；Host 心跳读页失败下次重试，不当“没有到期” |
 | 归档/重组 Session | 目录、责任/关联变更与交接记录 | 卡片/搜索索引；Kernel 操作结果确认后才登记实际状态 |
+| 准入创建 Session（2026-11-02 补注，7D1） | 创建操作里的席位决定和分配记录的预留项同一提交；上限和分配两条记录带 revision 守卫 | 注册那次提交把预留换成持有，同次写 Session 记录、初始链接和它们的 claim；索引稍后 |
+| 交接的范围子步骤（7D1） | 一条目标链接的关闭和打开、`role-scope:` claim 的转移、两侧游标绑定同一提交；输入先存 | 席位不在这一步换；完整交接的持有移动在源线归档那次提交 |
+| 归档 / 重新启用（7D1） | 归档：链接关闭、claim 释放、持有释放或换给借席的接任者、归档状态同一提交；重新启用：重新准入并加回持有，同一提交 | 卡片/搜索索引；上限调高后的唤醒由 Host 的提交订阅处理 |
 
 索引异常时保留正式记录和推进位置，只重试受影响的页/对象；不能让图修改成功而索引落后看起来像数据丢失。无需所有读取等待整个系统投影追平，只保证它请求的数据和版本。
 

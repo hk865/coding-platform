@@ -5,6 +5,11 @@ lead，2026-11-01。设计唯一依据：`plan-loop-design.md`（v4 定稿，685
 
 **后注（R3 落地，lead 2026-11-01）：** R3 已落地（`1f3fb923`）：`RunActivity` 加 `changedLines`，每次编辑按 `contracts/line-delta.ts` 的唯一规则计数；副作用已确认的失败编辑把计数标为不全；a-b-a 记 added 2、deleted 2。`RUN_ACTIVITY_RULE_VERSION` 从 1 升到 2，`RunActivity@1`、`QueryActivity@1` 和 schemaVersion 不变。`plan-loop-readings.ts` 的三个读数 `runGrowthOf`、`runUsageOf`、`lineReadingOf` 读已存事实，不另存；`activity/runs` 的读投影已经在用 `runUsageOf`、`lineReadingOf`（`runGrowthOf` 由 `runUsageOf` 调）；规划的决定还没有用它们，PL-1 后面的组才用。数字：src 10 个文件 +267/−81，测试 22 个文件 +395/−31，README 6 个文件 +15/−11；全量和规模批在 `e38bc2a` 上：1,122 个文件、13,106 项过、3 项跳过、762.65 秒；规模批 14 个文件 42 项、594.77 秒。
 
+**后注（L 提前，lead 2026-11-02）：** L（接线组）提前开在 `pw-u1` 上，不等 P4s、P5s：P3、P4、P5 的第二次返工要靠它才能验证，P3t、P4s、P5s 都等 L。`plu-m5` 是 P1–P6 的现状合并；`pw-u1` 是 PL 并到 7D1 `w6-u2` 的树（六个文件冲突）；`pw-u2`、`pw-u3` 带上 Z 和 `44aab2a`（`pw-u2` 是并入 `w7-u1` 的 `221c0c6` 之后的 `69f2b6f`，无冲突）；7D1 落地时缺的两处小改也一起带上。L 问过两次，都由 lead 裁：P6 的项目级通知读原来用 `[projectId]` 调按目标索引，L 修（两个 P6 文件进 L 白名单，`goalRef` 为空时枚举目标逐个读）；`InterventionInput` 的两臂按 lead 裁的写法写不过去，P4r 用单对象加真实 Query 值，P4s 再收窄。A-05、A-09、PL-23、PL-14 是 P4 审查的 01、02，等 P4s。
+
+- **偏差（`kept-for: P8`，L-12）：** 允许清单里有 `kept-for: P8` 一行。书说 PL-1 没有豁免；记偏差。
+- **偏差（模块环）：** `sessions → tasks` 是环。冻结裁定让 `sessions` 导入 `tasks/plan-readers` 会成环；改成 `sessions/session-targets.ts` 的 `readGoalRecord`，直接读 Goal 记录再用 `decodeGoalSnapshot` 解码（`src/core/work-graph/sessions/session-targets.ts:71-100`），`session-responsibility-service.ts:67` 引用它，`sessions` 里没有文件导入 `tasks`。记偏差。
+
 ---
 ## 0. 一页说明（给用户）
 **一句话。** 计划从“人采用一次”变成闭环：执行中发现缺口或偏差，参谋写下一段或改计划；候选先过机械诊断，再过审阅；目标循环按自治级别自动采用或转成候选卡；采用后回到执行。人能看到每一段的任务书、改动和用量。

@@ -1,5 +1,12 @@
 # 第 8 片规格：架构随工作演进
 
+**后注（8B-2、8C、8E 规格冻结，lead 2026-11-02）：** 三片的开工裁定都已冻结，代码都还没落地；和正文冲突时以本后注为准。
+
+- **8B-2（v5）：** 开工裁定 v5 冻结（`impl/s8b/8b2-start-rulings.v5.md`），两轮完整审查加一次快速核对。改动：formal 请求是第五个 operation 臂 `MaintainerAssignmentActionV1`，书的“不加记录”照旧；`since = requestedAt`；`done` 是两个提交（link+claim 一个、`done` 阶段一个，唯一事件 `MaintainerAssignmentRecorded`），和 member 一样，`applyMaintainerAssignmentDecision` 是普通 owner 函数。偏差：LR8-06 写 Opus 写夹具，不照做，组自己写（用户 11-01 的额度决定）。演练：Codex 在 `w6-u2` 上走 M、R 两组，9、11 条，lead 裁定全收（`frozen/8b2-drill-rulings.md`）；“7D1 落地后核对”的名字都核过，成立。两条 lead 定的规则：旧库按 79-1 不迁移、不补 claim；L9 的“执行者线”按建线时存的席位算，`not_counted` 的线不因后来的绑定变成执行者线，只有 `sessions/create` 用没绑定的角色带初始 module 链接、再绑定这个角色才走得到，`sessions/link` 在 duty 未知时已经拒绝（`src/core/work-graph/sessions/session-responsibility-service.ts:152`），后果是该模块的 hover 走“两 owner”拒绝；不加机制。module hand-over 的目的线不是执行者线 → `guard_failed`、`unavailable`。书 §7 第 1 问照字面，等用户。
+- **8C（v5）：** 开工裁定冻结（`impl/s8c/8c-start-rulings.v5.md`），审查 20 条、6 条、快速核对 1 条。偏差：`repair_approval`、`structural_proposal` 的 source 都放 `views`（`repair-approval-source.ts`、`structural-proposal-source.ts`），书放在 `communication` 是放置偏差：`communication` 不能 import `notes`、`architecture`，先例是 PL 的两个通知 source。`mapExecutedFilesToModules` 下移到 `model/architecture-footprint.ts`。③ 由配置操作者记（`redriveRepairAnswers` 用 `hostScopeContext`；启动步时 `hostContext` 还没声明）。查出的真问题：第三稿下，人拒绝且 ② 没提交时注记会被激活；改成需卡且没有 `approve` 就 `approval_pending`。产品含义已定：足迹证据缺失时人批准就算数；证实的越界批准了也是 `forbidden`。
+- **8E（v5）：** 开工裁定冻结（`impl/s8c/8e-start-rulings.v5.md`），审查 22 条、9 条，快速核对无发现。`record_note` 的说明 lead 审过，写法是“8C 的全文 + link 段”，F1 再加 flow 段。
+- 8C、8E 两份规格都要在 8B-2、8C 落地的树上重指后开工。
+
 **后注（8C 开工裁定待落，lead 2026-11-01，决定 109-3）：** 足迹证据缺失时，人的批准就是足够的依据：`approve` 带上来就当足迹过了；证实的越界不算，批准了也是 `forbidden`/`outside_footprint`。理由是人走 `architecture/revise` 本来不受足迹限制。`footprint_unknown` 卡提前出现（卡是读时投影，执行还在跑时读出来就是证据缺失）也归这条裁定：足迹一项只在这条注记绑定的轮次定案 PASS 之后才算，Run 还在跑时没有卡。另外两处也进开工裁定：激活的触发挪到任务完成提交之后，否则修补删自己任务声明的模块时会被 `module_in_use` 挡住；恢复和驱动启动加按目标的重试入口，规格 `:128`、`:440` 的“恢复后重试”才走得到。这些是 8C 的开工裁定要落的，**代码还没有**，8C 还没开工。正文原样保留。
 
 **后注（SMK3b，lead 2026-10-29，决定 97-9）：** “启动时自动续做”（`automation.resumeOnStartup`）改成 `auto`/`ask`/`off` 三档，默认 `ask`（决定 97-5）。§13.3 和 §13.11 说的“开着”读作 `auto` 或 `ask`：两档都在启动时重试抓取；“关着”读作 `off`：启动只做核对，不重试，还在等的工作区等下一个触发或 `architecture/capture`；“开着（默认）”的默认现在是 `ask`（`src/app/host.ts:1556`）。正文原样保留。

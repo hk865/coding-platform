@@ -10,7 +10,7 @@
 
 ### 0.1 覆盖范围
 
-- **对象：** Goal（展示归约）、PlanProposal/PlanRevision、Task（投影；含 TaskRequeue、策略拒绝记录 `TaskReworkRefusal`、失败事实读模型 `TaskFailureFactsV1` 与自动化判定 `TaskAutomationVerdictV1`）、TaskAttempt（含 TaskLease、DispatchOutbox）、Run（含进入子状态、控制指针，以及接续说明 `ContinuationBriefV1` 的绑定）、ControlIntent、Session（lifecycle × health × occupancy → availability）、VerificationRound（轮次与单项检查，含后继轮次链 `RoundSnapshot.chain`）、Message。QueryRun 只覆盖崩溃恢复与 Session 释放。自动返工策略 `TaskAutomationPolicyV1`（Host 设置 `automation.autoReworkLimit`、`automation.resumeOnStartup`）是配置，不是状态机。
+- **对象：** Goal（展示归约）、PlanProposal/PlanRevision、Task（投影；含 TaskRequeue、策略拒绝记录 `TaskReworkRefusal`、失败事实读模型 `TaskFailureFactsV1` 与自动化判定 `TaskAutomationVerdictV1`）、TaskAttempt（含 TaskLease、DispatchOutbox）、Run（含进入子状态、控制指针，以及接续说明 `ContinuationBriefV1` 的绑定）、ControlIntent、Session（lifecycle × health × occupancy → availability）、VerificationRound（轮次与单项检查，含后继轮次链 `RoundSnapshot.chain`）、Message。QueryRun 只覆盖崩溃恢复与 Session 释放。自动返工策略 `TaskAutomationPolicyV1`（Host 设置 `automation.autoReworkLimit`、`automation.resumeOnStartup`）是配置，不是状态机。7D1 另加 `ProjectRoleLimitsV1`、`RoleLineAllocationV1` 和 `role-scope:` claim 三组独立记录，以及交接的范围子步骤和归档释放；它们不改 Session 的状态枚举，见 §21。
 - **迁移行：** 共 190 行（GOAL 30、PLAN 9、TASK 30、ATT 37、RUN 24、CTL 10、SES 19、QRR 6、VR 15、MSG 10）。A.1b 新增 GOAL-29/30、TASK-26..30、RUN-24、VR-14/15，CTL-08 增加情形 (f)。每行写明守卫、同事务副作用、幂等处理、原文编号、现状，以及实现位置和测试（各节 N.6）。
 - **判定表：** §4 TD-8 失败类别表 FC-*，TD-9 工作 Task 自动化判定表 AV-* 与 gate 判定表 GV-*。它们是只读投影，不是新的可变状态。
 - **其余内容：** 22 条跨状态机不变量（§11，新增 I-16..I-22）；67 行崩溃恢复矩阵（§12，新增 W-20..W-25、CI-11、G-04..G-06、C-05、C-06），覆盖 A8 的三个崩溃点、暂停中被重启打断的 Run、QueryRun、执行中的检查、遗留的控制意图、Session health、Goal 扇出和两个 Host 同时打开，§12.1 另有启动后重新驱动（lead 决定 LA-6（2026-10-03））；无进展防护（§13，新增 ND-6..ND-9、示例 #15..#26，以及 13.7 重新检查的防护）；“状态只经 `state/` 写入”的自动检查（§14）；A.2 的实现顺序与逐行对照（§15）；剩余缺口（§16）：原 GAP-01..GAP-45 中 GAP-02、09、10、11、12、13 本次关闭，GAP-18 并入 GAP-46；GAP-05、GAP-17 改写；新增 GAP-46..GAP-54 与 GAP-56，不设 GAP-55（改为守卫，lead 决定 LA-3（2026-10-03））。
@@ -85,11 +85,13 @@ lead 已裁定的实现层决定（L-1..L-16），以及 brief 中没有单独�
 
 ### 0.6 章节导航
 
-§1 通用约定｜§2 Goal｜§3 PlanProposal/PlanRevision｜§4 Task（含失败事实与自动化判定）｜§5 TaskAttempt｜§6 Run｜§7 ControlIntent｜§8 Session（含 QueryRun 恢复）｜§9 VerificationRound（含后继轮次）｜§10 Message｜§11 跨状态机不变量｜§12 崩溃恢复矩阵｜§13 无进展防护（含 13.7 重新检查的防护）｜§14 自动检查｜§15 实现顺序与对照汇总｜§16 剩余缺口｜§17 编排各片新增的行｜§18 目标驱动（内存状态）｜附录 A 决定全文（2026-10-03 已确认）｜附录 B lead 决定｜附录 C 设计决定 D-1..D-18（文中的“brief”）
+§1 通用约定｜§2 Goal｜§3 PlanProposal/PlanRevision｜§4 Task（含失败事实与自动化判定）｜§5 TaskAttempt｜§6 Run｜§7 ControlIntent｜§8 Session（含 QueryRun 恢复）｜§9 VerificationRound（含后继轮次）｜§10 Message｜§11 跨状态机不变量｜§12 崩溃恢复矩阵｜§13 无进展防护（含 13.7 重新检查的防护）｜§14 自动检查｜§15 实现顺序与对照汇总｜§16 剩余缺口｜§17 编排各片新增的行｜§18 目标驱动（内存状态）｜§19 7C-1 的新记录｜§20 7C-2 的交接简报与交接审批卡｜§21 7D1 的席位、分配、范围 claim、交接范围子步骤和归档释放｜附录 A 决定全文（2026-10-03 已确认）｜附录 B lead 决定｜附录 C 设计决定 D-1..D-18（文中的“brief”）
 
 2026-10-09：加 §17“编排各片新增的行”（第 1 片 S1-* 19 行、第 3 片 CTX-01..03 三行补充守卫，以及它们的文件和用例对照）。第 5 片的行等它合入后再补。
 
 2026-10-31：加 §18“目标驱动（内存状态）”（决定 99-3：照代码写现在的样子，Codex 只读核对）。18.7 列出照代码发现的问题：P1–P6 是真的，要不要改代码由用户定；其余只是写法或不是问题。
+
+2026-11-02：加 §21“7D1 的席位、分配、范围 claim、交接范围子步骤和归档释放”（照落地树 `58575f1`）。它写 7D1 新加的三组独立记录、交接的范围子步骤和归档释放；不是 `transition*` 形态，代码里没有的项逐条写“没有”。
 
 ### 0.7 本次修订（A.1b）要点
 
@@ -3701,7 +3703,7 @@ stateDiagram-v2
 
 **入口。** `createMessageForwardingOwner`（`src/core/work-graph/communication/message-forwarding.ts:129`）给出两个 R2 命令：`message.forward`（person 的 `messages/forward`，复制 owner 的 `forwardCopiedIntervention` 只走复制臂）和 `message.disposeWait`（person 的 `waits/dispose`）。person 检查在读之前（`:255-260`、`:390-392`）。
 
-**目的地读。** 先比项目：别的项目的 Session 直接 `not_found`，不读记录（`:140-143`）；再读 Session 记录，归档、`unavailable` 或有归档请求就是 `invalid/destination_gone`（`:155-158`）；跨工作区按记录的真实 `workspaceId` 判，回 `invalid/cross_workspace_forward`（`:159`、`state/message-machine.ts:1237-1241`）；职责表：`notify` 任意、`inquiry` 任意可回复职责、`action_request` 只给 executor/adviser/scribe（`:88-93`、`:162-175`）。
+**目的地读。** 先比项目：转发到别的项目回 `invalid/cross_workspace_forward`，等待处置仍是 `not_found`（`:118-124`）；再读 Session 记录，归档、`unavailable` 或有归档请求就是 `invalid/destination_gone`（`:155-158`）；转发在同一项目内可以跨工作区，等待转移仍限同工作区（`:159`、`state/message-machine.ts:1237-1241`）；职责表：`notify` 任意、`inquiry` 任意可回复职责、`action_request` 只给 executor/adviser/scribe（`:88-93`、`:162-175`）。
 
 **转发一次提交。** 新消息由 `createSessionMessageRecord` 建，带 `originalRef`、复制臂的新 Goal、`taskRef:null`，并原样带 `intent/needsReply/waitAfterSend/deadlineMs/deadline/release`；旧消息写 `transferredTo`，claim `forwarded:<消息键>` 记目的地；同 `commandId` 重放原回执，同目的地的第二条命令回 `existing`，别的目的地 `busy`，已接受的原消息 `busy`（`:290-358`；`state/message-machine.ts:1264-1303`）。
 
@@ -3723,7 +3725,7 @@ stateDiagram-v2
 
 **路由。** `messages/forward` 与 `waits/dispose` 是 `plain` 路由（body 为 `{scope, input}`），只过 `personOnly` 后直接调用 F 的 `forwardMessage` / `disposeWait`；没有路由级的转发或处置规则（`core-routes.ts:504-505`、`:886-890`；`core-http-types.ts:439-456`）。
 
-**发布。** 组合根把 `messageForwarding` 与 `disconnect: {records, sessions}` 装进 `platform`，并列入不可枚举成员；发布本身不改消息状态（`create-platform.ts:2842`、`:2850`、`:2981`）。Host 的生命周期 drain 在 `continueUnfinished` 之后分页读 `findSessions({includeArchived:true})`，对 `availability === 'unavailable'` 的线调 `announceDisconnect`（`host.ts:1001-1017`）。认领的干预分支用 Host 系统身份（`reconcileContext(scope)`）调 `announceInterruption`（`host.ts:1851`）。两处 90-8 的通知改用 `systemNotifyRequest`：书记提醒（`host.ts:2087`）与注意力递送（`host.ts:2206`）。
+**发布。** 组合根把 `messageForwarding` 与 `disconnect: {records, sessions}` 装进 `platform`，并列入不可枚举成员；发布本身不改消息状态（`create-platform.ts:3263`）。Host 的生命周期 drain 在 `continueUnfinished` 之后分页读 `findSessions({includeArchived:true})`，对 `availability === 'unavailable'` 的线调 `announceDisconnect`（`host.ts:1001-1017`）。认领的干预分支用 Host 系统身份（`reconcileContext(scope)`）调 `announceInterruption`（`host.ts:1851`）。两处 90-8 的通知改用 `systemNotifyRequest`：书记提醒（`host.ts:2087`）与注意力递送（`host.ts:2206`）。
 
 **送达判定（IV2，2026-11-01）。** `consultationFacts` 给 `part:'message'` 的 `delivered` 现在是 `message.response !== null || accepted(deriveSessionInputId(message.ref, 'message'))`（`model/communication-contracts.ts:84-92`，判定在 `:91`）：一条已有回复的消息，即使收件执行从未记录 `part:'message'` 的 `input_accepted`，也算已送达、不再供给；回复本身就是这条消息的消费事实（`:88-89`）。这是供给判定，不是持久字段：`SessionMessage.delivery` 仍只由 `part:'message'` 的接受提交写成 `delivered`（§10.7），两者不合并成一个状态。
 
@@ -6196,6 +6198,127 @@ schema 是 `HandoffBrief@1`（`:31`）；按 Session 的 lookup 是 `work-handof
 ### 20.4 H-01、H-02 与 L2
 
 `createHandoffToolEntry` 每个平台建一个入口（`src/composition/create-platform.ts:2505`；工厂 `src/business/workflow/handoff-tool-entry.ts:249-250`），`hand_off` 的名字已在工具集合里（`src/core/agent-runtime/handoff-tools.ts:19`；包条目 `src/contracts/prompts/platform-pack.generated.ts:1182`）。`handoffs` 仍是可选的 Runtime 端口（`src/core/agent-runtime/execution-contracts.ts:346-347`），端口缺失时选中 `hand_off` 的 Run 仍在模型调用前以 `unsupported` 关门（`src/core/agent-runtime/tool-group-assembly.ts:286-288`）。L2 已在组合根把端口绑到 H 的入口（`src/composition/create-platform.ts:1859`），真实 `hand_off` 调用到 H，H-01、H-02 的公开链路行已跑（`tests/app/S7C-L2.test.ts:240-300`；`tests/scenarios/S7C-H-entered.test.ts:149-235`）。审批卡的应用行也接通：`handoff_approval` 的适配器注册在 `src/composition/create-platform.ts:2820`，答案经 `handoff.decide` 应用（`src/business/workflow/session-handoff.ts:376-406`；`tests/app/S7C-L2.test.ts:315`）。（行号按落地树 `44aab2a`。）
+
+## 21. 7D1 的席位、分配、范围 claim、交接范围子步骤和归档释放（2026-11-02）
+
+7D1 已落地（`7de15292`，union `58575f1`）。本节写它新加的三组记录、一组子步骤和归档释放的一个贡献。它们不改 §2–§10 的状态枚举和迁移行：`ProjectRoleLimitsV1`、`RoleLineAllocationV1` 和 `role-scope:` claim 是独立聚合；分配、claim 和链接的写入都经 `roleLineCommitContribution` 进一笔提交（`src/core/work-graph/sessions/role-scope-commit.ts:18-38`），上限记录由自己的服务直接写 `ProjectRoleLimitsChanged`（`sessions/role-limits-service.ts:79-97`）；交接的范围子步骤落在 6B 已有的 `transfer` 阶段里，没有新阶段；归档释放是合并进两个既有归档提交的一个贡献。本节记录的写入者是 owner，不是 `transition*` 形态：没有事件联合类型，也没有穷尽检查。行号按落地树 `58575f1`。
+
+### 21.1 席位：一个保存的决定，没有独立记录
+
+**没有 `Seat` 记录、没有席位状态枚举、没有 `transitionSeat`、也没有专门的席位读口。** 席位是创建操作上的一个字段 `CreateSeatDecisionV1`（`src/core/work-graph/model/session-contracts.ts:35-43`），保存在 `SessionCreateOperationRecord.action.seatDecision`（`:66`），编解码在 `src/core/work-graph/sessions/session-record-codecs.ts:337`、`:866-889`。注册只读这个保存的决定，不再解析一次职责（`session-directory.ts:1218-1237`）。
+
+| mode | 何时 | 写什么 | 代码 |
+| --- | --- | --- | --- |
+| `reserved` | 计数职责（`reviewer` 经 `roleLineDutyOf` 算执行者），普通创建 | 读分配和上限；`holders + reservations < open` 才收；分配记录 `revision+1`，`reservations` 加本操作，`reservedAt` 由这次提交绑定 | `decideSeat`（`session-directory.ts:897-946`） |
+| `borrowed` | 父操作是交接、两侧职责相同、这是父操作的第一个 create、来源线扣掉这次交接的具名任务后没有剩余的 task/work 责任 | 不收预留、不加 holder、不读分配和上限；决定里存 `handoff` 和 `source`；holder 在来源线的归档提交里移过来 | `seatInheritanceOf`（`state/session-handoff-contracts.ts:23-41`）、`decideSeat` `:919-923` |
+| `not_counted` | `readonly_copy`，或职责读成 `unknown` | `allocationRef: null`，`notCountedReason` 恰好是这两种之一；不读分配和上限 | `decideSeat` `:902-905`、`:913-914` |
+
+- **拒绝。** 职责读失败 → `unavailable`，不降成 `unknown`，也不跳过；满额 → `capacity/at_cap`，文字是 `at_cap: <duty> has <n> holder(s) and <m> reservation(s) against open limit <k>`（`sessions/allocation-read.ts:35-40`）。
+- **不借席的臂。** `seatInheritanceOf` 的 `none` 有五种理由：没有父操作、不是本父操作、职责不同、不是第一个 create、来源还剩 task/work 责任；每一种都落到普通预留，不是拒绝（`state/session-handoff-contracts.ts:23-41`）。
+- **重新启用。** `sessions/reactivate` 走同一个上限规则，但它是单笔提交、直接加 holder、不收预留（`reactivationSeatOf`，`session-directory.ts:593-608`；`session-lifecycle.ts:779-797`）。
+- **保存值的编解码。** `seatDecision` 在创建动作的键表里（`session-record-codecs.ts:337`）；校验 `mode` 三种、`notCountedReason` 两种、理由恰好随 `not_counted` 出现、`allocationRef` 是分配记录的 ref 或 null（`:866-889`）。
+
+### 21.2 分配和上限
+
+**分配** `RoleLineAllocationV1` 每个（项目, 职责）一条，只有两个集合：`holders[{sessionRef, since}]`、`reservations[{operationRef, reservedAt}]`（`src/contracts/role-lines.ts:181-187`）。没有状态枚举；`revision` 每次写入 +1。两个游标都是提交绑定目标，写入时占位 `null`，由这次提交填（`role-scope-commit.ts:29-32`）。
+
+**上限** `ProjectRoleLimitsV1` 每项目一条：`open`、`running` 各四个正整数，默认 `open` 是 `{secretary 8, adviser 8, scribe 4, executor 16}`、`running` 是 `{secretary 4, adviser 4, scribe 2, executor 8}`（`role-lines.ts:190-191`）。`/set` 是部分合并，`expectedRevision` 对不上 → `revision_conflict`；**降低 `open` 不回撤任何 holder 或 reservation**（`state/role-limits.ts:30-33`）。`running` 只存、只合并、只校验，**7D1 没有任何准入判它**：代码里没有读 `limits.running` 的判定，运行准入是 7D2 的。
+
+分配的写入（准入、注册、重新启用、两个归档提交）最多试四次；只有冲突的全部 observed 版本都是分配和上限这两条记录时才重读，最后一次仍冲突答 `busy`，不答 `revision_conflict`（`sessions/allocation-retry.ts:28-41`）。上限的 `/set` 是单次 CAS：`expectedRevision` 对不上直接 `revision_conflict`。
+
+| # | from | 变更 | guard | to | 同一笔写什么 | 幂等 | 原文编号 | 代码 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| RL-01 | 该职责没有分配记录，或记录里没有本操作 | `reserve` | 收据未命中；同一笔读分配和上限；`holders + reservations < open` | 分配 `revision+1`，`reservations` 加本操作 | 创建操作（带 `seatDecision`）、分配记录、`SessionCreationAdmitted`；绑 `reservations[].reservedAt` | 准入回执命中时 `decideSeat` 整段不跑；同 `operationRef` 已在预留里就不重复加 | 新增（7D1 L31） | `session-directory.ts:926-944` |
+| RL-02 | 有本操作的预留 | `convert` | 注册收据未命中；读分配；记录存在 | 删该预留，`holders` 加这个 Session | Session、角色事实、链接、分配；绑 `holders[].since` | 注册回执命中时重放；holder 已在就不重复加 | 新增（7D1 L31） | `session-directory.ts:1218-1237` |
+| RL-03 | 已归档的线，`sessions/reactivate` | `add_holder` | 上限；分配 revision（或不存在）、上限 revision（或不存在） | 分配 `revision+1`，加 holder | Session 状态、`SessionReactivated`、分配；绑 `holders[].since` | 生命周期回执重放；不留预留 | 新增（7D1 L31） | `session-lifecycle.ts:779-797`、`session-directory.ts:593-608` |
+| RL-04 | 有 holder；直接归档，或归档步骤没有借席的后继 | `release_holder` | 归档提交的守卫 | 删这个 holder | 归档记录、`SessionArchived`、关闭的链接、claim 变更、分配 | 归档回执重放 | 新增（7D1 L-04、L-06） | `state/session-archive-release.ts:41`、`session-lifecycle.ts:763`、`:1448` |
+| RL-05 | 有 holder；归档步骤有借席的后继 | `move_holder` | 同上 | holder 的 `sessionRef` 换成后继，保留原 `since`；后继已是 holder 就不动 | 同上 | 同上 | 新增（7D1 L-04、L-06） | `state/session-archive-release.ts:42` |
+| RL-06 | 有预留 | `cancel_reservation` | — | 删该预留 | — | 按 `operationRef` 去重 | 新增（7D1 L31） | **没有写入者**：`allocationNext` 有这个分支（`state/role-line-allocation.ts:40-41`），7D1 没有取消预留的路由或调用 |
+
+**读口。** `role-lines/allocation` 按职责返回 `limit`、`revision`、`holders`、`reservations`；没有分配记录时 holder 和预留为空，上限先取项目已存的上限设置，设置记录也缺失时才用默认值；读不写、不扫（`views/role-line-allocation-reader.ts:44`、`:199-205`；路由 `app/core-routes.ts:654`）。读失败或记录损坏是 `unavailable` 并保留原因，不是空报告。上限的两个路由是 `projects/role-limits`、`projects/role-limits/set`（`core-routes.ts:652-653`）。
+
+### 21.3 范围 claim（`role-scope:`）
+
+**键和 owner。** `role-scope:` + `canonicalKey({ projectId, duty, target })`（`src/contracts/role-lines.ts:64`、`:70-72`）；owner 是 `SessionWorkLink` 的 ref 键，不是 Session，所以一条线持几个范围时能说出是哪一个（`role-scope-commit.ts:23-26`）。`RoleScopeClaimChangeV1` 是 `{ duty, target, expectedOwner, nextOwner }`，两个 owner 都是链接 ref 或 null（`role-lines.ts:65-68`）。`target` 有五个臂：`task`/`work` 不是角色范围，返回 null（`:56-63`）。
+
+**谁产生。** 代码的 `claimOf` 只为 `adviser`、`scribe` 产出变更（`state/role-scope.ts:93-98`）：参谋和书记的 goal/project/module 链接各占一个范围；秘书完全不进；执行者的 module 链接不进，`module-maintainer:` 分支是 8B-2 加的；`task`/`work` 不进。执行者的 goal/project 链接同样没有 claim。有效范围读是读时投影（`state/role-scope.ts:67-84`，`views/role-scope-reader.ts`），不存，不是状态行；**没有读 claim 的端口**。
+
+| # | from | 变更 | guard | to | 同一笔写什么 | 幂等 | 原文编号 | 代码 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CLM-01 | 该键没有 owner | 开：`expectedOwner: null, nextOwner: link` | 链接是 `responsible`；目标不是 task/work；职责是 adviser/scribe 且读到了 | 该键 owner=link | 链接与 claim 同一笔提交 | 同键已在同一个提交里被命名两次 → store 答 `invalid`（`record-store/commit-extensions.ts:97`） | 新增（7D1 L24） | `state/role-scope.ts:85-98`；写者见下 |
+| CLM-02 | 该键 owner=link | 关：`expectedOwner: link, nextOwner: null` | 同上 | 该键空 | 链接的 `until` 置 null 与 claim 同一笔提交 | 重放由各写者的回执恢复 | 新增（7D1 L24） | 同上 |
+| CLM-03 | 该键 owner=A 的链接 | 移交：close A + open B 折叠成一条 `expectedOwner: A, nextOwner: B` | 同一笔；A、B 的职责可以不同（不同职责就是两个键，一次释放、一次取得） | owner=B | 来源链接关、目的链接开、claim 改 owner，同一笔 | 折叠后首尾相同就不写（`:99-109`） | 新增（7D1 L24） | `session-responsibility-service.ts:524-531` |
+| CLM-04 | 任何 | 折叠后第一条的 `expectedOwner` 等于最后一条的 `nextOwner` | — | 不写 claim | 只写链接 | — | 新增（7D1 L24） | `state/role-scope.ts:99-109` |
+| CLM-05 | 该键 owner 是别的线 | 任一写入 | store 对 `expectedOwner` 做精确比较（`record-store/commit-extensions.ts:116`） | 拒绝 | 零写入 | — | 新增（7D1 L24） | `revision_conflict` 带 `scopeOwned`：`persistence/read-result-failures.ts:83-91`，详情是 `{duty, target, holder}`（`role-lines.ts:78`、`:88-97`），reason 是 `scope_owned: the <duty> scope <key> is held by <sessionId>` |
+
+**写者。** 创建时的初始链接（`session-directory.ts:1291-1298`，用保存的计数职责，不再读一次）、`sessions/link` 的开和关（`session-lifecycle.ts:433-455`）、transfer（`session-responsibility-service.ts:524-531`）、`reanchorSessionResponsibility`（`:1055`，纯计划在 `state/reanchor.ts:47`，八种 reason）、两个正式归档提交的释放（`state/session-archive-release.ts:38-39`，见 21.5）。终点关闭的 `claimChanges` 是空数组（`session-responsibility-service.ts:910-918`），因为它只接受 task 基础的链接；goal/project/module 的关闭走归档释放或 reanchor。
+
+### 21.4 交接的范围子步骤
+
+**不是新阶段。** 交接的阶段仍是 6B 的 11 个：`accepted`、`understanding`、`fence`、`wait_writer`、`recheck`、`successor`、`transfer`、`routing`、`archive`、`notice`、`finished`（`model/session-operation-arms.ts:221-222`）。范围子步骤是 `transfer` 阶段里的两种 item：先一笔 `scope:plan`，再每个目标一笔 `scope:<n>`（`session-handoff-service.ts:564-566`、`:607-609` 解析尾部序号）。
+
+- **计划。** 来源线还开着的范围链接（goal/project，以及参谋/书记的 module）连同 revision 一次读出并写进 `progress.scope = { targets, entries }`，每个 entry 的 `input`、`receipt` 先为 null；此后不再从来源的当前链接重 derive（`:1388-1398`）。目标顺序就是来源链接的顺序。
+- **只在完整交接跑。** 先算 `residualOf`（`residualResponsibilityOf`，`:872-873`）：扣掉这次交接的具名任务后，来源若还剩开着的 task/work 责任就停，操作仍是 `phase: 'running'`、`stage: 'transfer'`，`item` 是 `-`，拒绝令牌用 `phase: 'refused'`；`lastRefusal` 是 `{code:'incomplete', reason:'the source still owns work the handoff does not name'}`，`next: null`，不写范围子步骤（`:1029-1041`、`:1383-1385`）。部分交接的来源因此保留它的范围、claim 和 holder。
+- **一次一个目标。** `SavedTransferInputV1` 只带一个 `target` 和四个 expected pin：`fromSession`、`toSession`、`sourceLink`、`destinationLink`（`session-responsibility-service.ts:70-73`）。claim 的移交在这一次 transfer 的提交里（`:524-531`），不是另开一笔。
+- **先存后调。** before 写先读目的 Session 和目的链接的 revision，把 `{requestId, from, to, target, expected}` 存进这个 entry，再带四个守卫提交（来源 Session、目的 Session、来源链接、目的链接；目的链接不存在时 pin 为 null）：`requestId` 是 `<operationId>:transfer:<successorIndex>:scope:<n>`，`successorIndex` 是真实的 assignment 下标（`:1407-1441`）。after 写只记这次子调用的 receipt（`:1451-1460`）。
+- **恢复状态（每个 entry 都可达）。**
+
+| 状态 | 含义 | 代码 |
+| --- | --- | --- |
+| `scope === null` | 还没走到 `transfer`，或来源没有要移交的范围；无需范围转移时保持 `scope: null`，直接走出口 | `:1387`、`:1462-1468` |
+| `input === null && receipt === null` | 计划了，还没保存子调用 | `:1407-1441` |
+| `input !== null && receipt === null` | 保存了 before 写、还没记下子调用回执；先查回执，命中补 after，`not_found` 就重放保存的 before 写 | `:1445-1459` |
+| `receipt !== null` | 这个目标已提交，跳过 | `:1405-1406` |
+
+- **出口。** 每个 entry 的 receipt 都记下后，`transfer` 阶段的出口按秘书/非秘书进 `routing` 或 `archive`（`:1463-1466`）。holder 的移动不在这里，在来源线的归档提交里（21.5）。
+- **没有。** 没有新的交接阶段；交接里没有第二条范围移动路径（`planReanchor` 不用于交接的范围子步骤）；部分交接没有范围子步骤；执行者的 module 链接不在这里，是 8B-2 的。
+
+### 21.5 归档释放
+
+**一个纯计划，两个提交。** `planArchiveRelease`（`state/session-archive-release.ts:27-46`）返回 `{ allocation, claimChanges, close, bindings }`；同一个贡献合并进两个正式归档提交：直接 `sessions/archive`（`session-lifecycle.ts:763`）和归档步骤（`:1448`）。两条路径共享同一份规则，没有第三条释放路径。
+
+| # | 路径 | 输入 | guard | 计划 | 代码 |
+| --- | --- | --- | --- | --- | --- |
+| ARL-01 | 直接 `sessions/archive` | 本线的链接、职责、分配；`successor: null` | 归档机允许；直接归档不解析后继，传 null | 关开着的负责 goal/project 链接（以及参谋/书记的 module 链接）、释放它们的 claim、`release_holder` | `session-lifecycle.ts:763`、`state/session-archive-release.ts:37-44` |
+| ARL-02 | 归档步骤，后继借了席 | 同上；`successor` 从保存的交接解析 | 目的线是这条来源线借席的 create | 同上，但 holder 是 `move_holder`，`since` 保留 | `session-lifecycle.ts:586-627`（`borrowingSuccessorOf`）、`:1444-1450` |
+| ARL-03 | 归档步骤，后继是既有线 | 同上；`successor: null` | 保存的交接里没有借这条线席位的 create | 只释放，不移动、不加 holder | `session-lifecycle.ts:586-627`、`state/session-archive-release.ts:41` |
+| ARL-04 | 纯任务、无席位 | `openScopeLinkOf === false`、`allocation === null` | — | 空计划：不写分配、不写 claim、不关链接，提交保持原形 | `state/session-archive-release.ts:29-30` |
+| ARL-05 | 职责读成 `unknown` 且不是 ARL-04 | — | 有范围链接或分配 | 拒绝 `unavailable`，reason 是 `the Session duty cannot be read` | `state/session-archive-release.ts:31-32` |
+
+- **关哪些。** 还开着、`relation === 'responsible'` 的 goal/project 链接，加上参谋/书记还开着的 module 链接；执行者的 module 链接不算范围（`openScopeLinkOf`，`:19-26`）。`close` 里的链接同笔写 `until: null`，`bindings` 就是这些链接的 `until`。
+- **claim。** 由上表的 close 链接经同一个 `responsibilityClaimChanges`/`foldRoleScopeClaimChanges` 得到（`:38-39`）；执行者的 goal/project 链接关闭时没有 claim 要释放，因为它本来不产生。
+- **后继。** 只有归档步骤解析后继：读归档请求条件指向的父操作，再读它的 assignments 保存的 create，找 `seatDecision.mode === 'borrowed'`、`source` 是这条线、`handoff` 是父操作的那一个（`borrowingSuccessorOf`，`session-lifecycle.ts:586-627`）。直接归档传 null，只释放。借席的后继 → 移动 holder；既有线后继 → 不移动（它自己的席位在它自己的准入里）。
+- **`successor.duty` 没被读。** 纯计划只用 `successor.session`（`:41-42`）；可达路径上借席的后继与来源同职责，由交接准入和借席规则保证（`state/session-handoff-contracts.ts:23-41`）。
+- **对已有行的影响。** §8.3 的 SES-01、SES-11、SES-14、SES-15、SES-16 和 §17.1 的 S1-SES-04 的状态、守卫和事件都不变；同一笔提交多带本节的东西：SES-01 是登记提交，做 reserved 席位转持有，并取得初始负责范围链接的 claim（参谋／书记的 goal、project、module）；SES-15/SES-16 多带 `role-scope:` claim（只对参谋/书记的 goal/project/module 链接），两个归档提交多带 21.5 的释放计划，SES-14 多带 `add_holder`（计数职责且没到上限时）。SES-11 effects 里的“不改 links”只指它守卫读的 task/work 链接。
+- **没有。** 没有独立的释放记录或事件（释放写在归档记录和关闭链接里）；没有绕过两个正式归档提交的释放；执行者的 module 处置是 8B-2 的。
+
+### 21.6 实现对照
+
+| 内容 | 文件 |
+| --- | --- |
+| 席位决定与创建、注册的转换、重新启用 | `src/core/work-graph/model/session-contracts.ts`、`src/core/work-graph/sessions/session-directory.ts`、`src/core/work-graph/sessions/session-record-codecs.ts` |
+| 分配记录、上限记录、默认值、编解码 | `src/contracts/role-lines.ts`、`src/core/work-graph/state/role-line-allocation.ts`、`src/core/work-graph/state/role-limits.ts`、`src/core/work-graph/sessions/role-line-record-codecs.ts` |
+| 准入的两条记录读、`at_cap`、四次上限 | `src/core/work-graph/sessions/allocation-read.ts`、`src/core/work-graph/sessions/allocation-retry.ts` |
+| 范围 claim 的纯规则、键、冲突详情 | `src/core/work-graph/state/role-scope.ts`、`src/contracts/role-lines.ts`、`src/core/work-graph/persistence/read-result-failures.ts` |
+| claim 的唯一提交构造器 | `src/core/work-graph/sessions/role-scope-commit.ts` |
+| 交接的范围子步骤 | `src/core/work-graph/state/session-handoff-contracts.ts`、`src/core/work-graph/model/session-operation-arms.ts`、`src/core/work-graph/sessions/session-handoff-service.ts` |
+| 归档释放的纯计划 | `src/core/work-graph/state/session-archive-release.ts` |
+| 两个正式归档提交与后继解析 | `src/core/work-graph/sessions/session-lifecycle.ts` |
+| 读口 | `src/core/work-graph/views/role-line-allocation-reader.ts`、`src/core/work-graph/views/role-scope-reader.ts`、`src/app/core-routes.ts` |
+| 测试 | `tests/work-graph/S7D1-allocation-cap.test.ts`、`S7D1-allocation-reserve-convert.test.ts`、`S7D1-g2-link-claim.test.ts`、`S7D1-g2-transfer.test.ts`、`S7D1-G2-residual.test.ts`、`S7D1-g2-archive-release.test.ts`、`S7D1-G3-allocation-read.test.ts`、`S7D1-G4-scope-read.test.ts` |
+
+### 21.7 明确没有的项（不要按别的写法补）
+
+- 没有 `Seat` 记录、席位枚举、`transitionSeat`、席位读口；席位只是创建操作上的 `seatDecision`。
+- `cancel_reservation` 有纯分支、没有写入者；7D1 不取消预留，预留留在分配报告里可见。
+- `running` 上限只存、只校验，7D1 没有判定者。
+- 执行者的 module 链接不产生 claim，也不在 7D1 交接或归档里移动/处置；`module-maintainer:` 和 module 臂是 8B-2 的。
+- 交接没有新的阶段；范围子步骤只在 `transfer` 里，item 是 `scope:plan` 和 `scope:<n>`。
+- 部分交接没有范围子步骤；来源保留范围、claim 和 holder。
+- 没有读 claim 的端口；有效范围读是读时投影，不存。
+- 归档释放没有独立记录或事件，也没有第三个正式归档提交。
+- `planArchiveRelease` 不判 `successor.duty`；只有可达路径上的同职责保证。
+- 没有旧库迁移或补 claim：旧库按决定 79-1 重建。
 
 ## 附录 A　决定全文（2026-10-03 已确认）
 
