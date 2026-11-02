@@ -1931,7 +1931,7 @@
           - **做法。** 用户 00:29：今晚不设限，不等他决定；产品问题按已有决定定，写进文档，早上报。W 和 G2-2b 并行（原 W5→W6）；`w4-u1` 用没审过的第一轮搭。8C、8E、8B-2 的规格阶段都是两轮完整审查加一次快速核对。
           - **失误。** Bash 里 `cd` 三次（马上退回）；G2-1r 收尾删了 `roleLineDutyOf` import；给 Codex 的 8B-2 核对提示写错一句（done 是两个提交）；7D1 落地前才发现缺 `44aab2a`。
           - **下一步。** PL-1（L → P3t、P4s、P5s → 54 行）∥ 8B-2（R 第一段 → M → R 第二段）→ 8C → 8E-1 → 8E-2 → PL-2[P7＋P8] → 7D2-1 → 6C（PS 在 PL-1 之后、6C 之前）→ 第 9 片 → B06 → E3。
-          - **推送。** 远端 `feat/orchestration-slices` 是 `28bece35`，推送等用户。
+          - **推送。** 远端 `feat/orchestration-slices` 是 `1f3fb923`（用户 11-01 23:37 推的），之后的提交等用户推，`next-main` 不动。
           - **文档。** 本批 10 份文档已按 lead 审改和 Codex 的 14 条核对落地：`STATE-MACHINES-SPEC.md`（新增 §21）、`slice-7-SPEC.md`、`slice-PL-SPEC.md`、`slice-8-SPEC.md`、`MVP-BEHAVIOR.md`、`DESIGN.md`、`E3-UI-ITEMS.md`、`DSH-WORKFLOW.md`、`IMPLEMENTED-CAPABILITIES.md`、`CORE-DATA-OPERATIONS.md`；HANDOFF、DECISIONS、STATUS、根 AGENTS.md 同步。
           - 来源：`docs-land1102/facts-land1102.md` §6；`night-1102.md:1-3`、`:9`、`:22-27`、`:82-90`。
 
