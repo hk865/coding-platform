@@ -179,7 +179,13 @@ describe('request activity producers (memory)', () => {
   });
 
   it('the drain writes the assigned owner input with the routing round', async () => {
-    const world = await openWorld('memory', { secretaryOpenCap: 2 });
+    const world = await openWorld('memory');
+    const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+      { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+    expect(capLimits.status).toBe('ready');
+    const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6b2-act-drain-open',
+      expectedRevision: capLimits.value.revision, open: { secretary: 2 } }))).body as { status: string };
+    expect(capSet.status).toBe('committed');
     const { waiting, b, committer, secretary } = await drainScene(world);
     expect(secretary).toBeNull();
     const drained = await drainOf(world);
@@ -341,7 +347,13 @@ async function drainOf(world: S6AHostWorld) {
 
 describe('request activity retry (memory)', () => {
   it('a one-shot activity-key revision conflict is re-read and retried by the request owner', async () => {
-    const world = await openWorld('memory', { secretaryOpenCap: 2 });
+    const world = await openWorld('memory');
+    const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+      { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+    expect(capLimits.status).toBe('ready');
+    const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6b2-act-retry-once-open',
+      expectedRevision: capLimits.value.revision, open: { secretary: 2 } }))).body as { status: string };
+    expect(capSet.status).toBe('committed');
     const { waiting, a } = await drainScene(world);
     const injections = failActivityCommit(latestBackend(), 'once');
     const drained = await drainOf(world);
@@ -352,7 +364,13 @@ describe('request activity retry (memory)', () => {
   });
 
   it('only an exhausted activity-key conflict returns the failure', async () => {
-    const world = await openWorld('memory', { secretaryOpenCap: 2 });
+    const world = await openWorld('memory');
+    const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+      { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+    expect(capLimits.status).toBe('ready');
+    const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6b2-act-retry-always-open',
+      expectedRevision: capLimits.value.revision, open: { secretary: 2 } }))).body as { status: string };
+    expect(capSet.status).toBe('committed');
     const { a } = await drainScene(world);
     const injections = failActivityCommit(latestBackend(), 'always');
     const drained = await drainOf(world);

@@ -20,6 +20,7 @@ import type { SessionMailboxDependencies } from '../../src/core/work-graph/model
 import { decodeGoalSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
@@ -90,7 +91,7 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now: f.now });
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
-    records, sessions: createSessionDirectory({ records, lookups: records }),
+    records, sessions: createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records }), roles, materials, systemActor: { ...OPERATOR },
     now: f.now, newId: f.newId,
     duties: ({

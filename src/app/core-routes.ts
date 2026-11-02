@@ -33,7 +33,8 @@ import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
-import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
+import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
+import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 // The two secretary lifecycle commands' accept owners; the body and progress types are the DTOs derived from them.
 import type { SessionHandoffPort, SessionSecretaryArchivePort } from '../core/work-graph/sessions/session-handoff-service.js';
@@ -99,6 +100,7 @@ import {
   type OverlapCoreRouteDto,
   type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
+  type RoleLineCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
   type SecretariesHandoffBody,
@@ -308,6 +310,10 @@ export type CoreRouteBindings = {
   // Workflow's own read of that operation.
   acceptHandoff: (ctx: CoreCallContext, input: SecretariesHandoffBody['input']) => Promise<SecretariesHandoffResponse>;
   acceptArchive: (ctx: CoreCallContext, input: SecretariesArchiveBody['input']) => Promise<SecretariesArchiveResponse>;
+  // The project role limits and the project role-line allocation: the two limits entries are person-only.
+  readRoleLimits: RoleLimitsPort['readRoleLimits'];
+  setRoleLimits: RoleLimitsPort['setRoleLimits'];
+  readRoleLineAllocation: RoleLineAllocationReadPort['readRoleLineAllocation'];
   // The two Goal-card commands and the initialization adoption are person-only, so their binding can answer a
   // `forbidden` rejection; the copy preview is a read like the other reads.
   confirmGoalDraft: GoalConfirmPort['confirmDraft'];
@@ -421,6 +427,10 @@ export type CoreRoutePlatform = {
    * `sessionHandoff`, published beside them. */
   sessionHandoff?: Pick<SessionHandoffPort, 'acceptHandoff'>;
   sessionArchive?: Pick<SessionSecretaryArchivePort, 'acceptArchive'>;
+  /** The project role-limits owner and the allocation read port; internal like the other owner groups, so a narrow
+   *  platform without them answers `unsupported`. */
+  roleLimits?: RoleLimitsPort;
+  roleLineAllocation?: RoleLineAllocationReadPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -457,7 +467,8 @@ export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
   | keyof MessagesCoreRouteDto
   | keyof OverlapCoreRouteDto
-  | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto,
+  | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
+  | keyof RoleLineCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -636,6 +647,11 @@ export const CORE_ROUTE_SPECS: Record<
   // drives the Workflow's advance right after it.
   'secretaries/handoff': { kind: 'plain', binding: 'acceptHandoff', owner: 'sessionHandoff.acceptHandoff' },
   'secretaries/archive': { kind: 'plain', binding: 'acceptArchive', owner: 'sessionArchive.acceptArchive' },
+  // The project role limits (read/set) and the project role-line allocation read. All three are `plain`; the two
+  // limits entries are person-only at the route layer, the allocation read is open like the other reads.
+  'projects/role-limits': { kind: 'plain', binding: 'readRoleLimits', owner: 'roleLimits.readRoleLimits' },
+  'projects/role-limits/set': { kind: 'plain', binding: 'setRoleLimits', owner: 'roleLimits.setRoleLimits' },
+  'role-lines/allocation': { kind: 'plain', binding: 'readRoleLineAllocation', owner: 'roleLineAllocation.readRoleLineAllocation' },
 };
 
 export type ParsedCoreRequest =
@@ -1181,6 +1197,17 @@ export function createPlatformCoreRouteBindings(
         if (accepted.status !== 'committed') return accepted;
         return owner.manualArchive(ctx, { operation: accepted.value.operation });
       },
+    // The project role-limits owner and the allocation read. The two limits entries are person-only: a member or a
+    // system actor is `forbidden` BEFORE the owner runs; the allocation read is open like the other reads.
+    readRoleLimits: platform.roleLimits === undefined
+      ? unsupported('the platform does not publish the role-limits owner (readRoleLimits)')
+      : personEntry(platform.roleLimits.readRoleLimits.bind(platform.roleLimits)),
+    setRoleLimits: platform.roleLimits === undefined
+      ? unsupported('the platform does not publish the role-limits owner (setRoleLimits)')
+      : personEntry(platform.roleLimits.setRoleLimits.bind(platform.roleLimits)),
+    readRoleLineAllocation: platform.roleLineAllocation === undefined
+      ? unsupported('the platform does not publish the role-line allocation read (readRoleLineAllocation)')
+      : platform.roleLineAllocation.readRoleLineAllocation.bind(platform.roleLineAllocation),
     // The Goal service's three card owners; the Host's adoption owner arrives as the sixth argument.
     confirmGoalDraft: personEntry(platform.goals.confirmDraft.bind(platform.goals)),
     readGoalCopyDraft: platform.goals.readGoalCopyDraft.bind(platform.goals),
@@ -1458,6 +1485,10 @@ export async function dispatchCoreRoute(
       // The two secretary lifecycle commands.
       case 'secretaries/handoff': return bindings.acceptHandoff(ctx, plain.input as never);
       case 'secretaries/archive': return bindings.acceptArchive(ctx, plain.input as never);
+      // The project role limits and the allocation read.
+      case 'projects/role-limits': return bindings.readRoleLimits(ctx, plain.input as never);
+      case 'projects/role-limits/set': return bindings.setRoleLimits(ctx, plain.input as never);
+      case 'role-lines/allocation': return bindings.readRoleLineAllocation(ctx, plain.input as never);
       // The two Goal-card commands, the copy preview and the initialization adoption.
       case 'goals/confirm-draft': return bindings.confirmGoalDraft(ctx, plain.input as never);
       case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);

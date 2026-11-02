@@ -77,6 +77,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
 import type { RunReconcileReport } from '../../src/core/agent-runtime/run-reconcile.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
@@ -398,7 +399,7 @@ export async function openRealRunHarness(
   const kernelStores = await createKernelStoreRegistry({ entries: [kernelEntry] });
   const reads = createRunStateReader({ records });
   const facts = createSessionFactsService({ records });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts });
+  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
   let minute = 8;
   const now = options.now ?? ((): string => at(minute));
   let seq = 0;

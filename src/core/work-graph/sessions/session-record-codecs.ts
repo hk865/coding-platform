@@ -16,7 +16,6 @@
  *     prepared record carries `since: null`; the Store binds the real commit
  *     cursor in the same transaction. A typed read requires `since` to be bound.
  */
-import type { CommitCursor } from '../../../contracts/command-event.js';
 import {
   defineEvent, f, type EventFormat, type Fields, type InferEvent,
 } from '../../../contracts/data-format.js';
@@ -34,7 +33,7 @@ import type {
   SessionAggregateRef, SessionRef, SessionWorkLinkRef, WorkLinkRelation,
 } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
-import { SESSION_HEALTH_CONCLUSIONS, type SessionRecord, type SessionWorkLink } from '../../../contracts/core/session.js';
+import { SESSION_HEALTH_CONCLUSIONS, type HandoffSeatFactsV1, type PendingSessionWorkLink, type SessionRecord, type SessionWorkLink } from '../../../contracts/core/session.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
@@ -54,8 +53,11 @@ import {
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { createEventCodec as createEnvelopeEventCodec } from '../persistence/event-codec-factory.js';
 import { createEventCodec, createRecordCodec, formatSchemas, type EventCodec } from '../persistence/field-table-codec.js';
-import { decisionChangeProofProblem, versionPinProblem } from '../persistence/decision-record-codecs.js';
+import { checkTarget, checkWorkLinkRef, decisionChangeProofProblem, isWorkLinkRelation, versionPinProblem } from '../persistence/decision-record-codecs.js';
 import { actorRefProblem } from '../persistence/rework-codecs.js';
+
+export { checkTarget, checkWorkLinkRef, isWorkLinkRelation };
+export type { HandoffSeatFactsV1, PendingSessionWorkLink };
 
 // --------------------------------------------------------------------------
 // Fixed registration identifiers
@@ -86,6 +88,8 @@ export const S2C_SESSION_BY_KIND_FROM_LOOKUP = 's2c-session-by-kind-from';
 export const S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP = 's2c-session-by-lifecycle-kind';
 export const S2C_SESSION_ARCHIVED_AT_LOOKUP = 's2c-session-archived-at';
 export const S2C_OPEN_LINKS_BY_SESSION_LOOKUP = 's2c-open-links-by-session';
+export const SESSION_LINKS_BY_GOAL_LOOKUP = 'session-links-by-goal';
+export const SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP = 'session-links-by-project-target';
 export const S2C_CLOSED_TASK_LINKS_LOOKUP = 's2c-closed-task-links';
 
 /** The only three accepted work-link relations, in the fixed order the target
@@ -127,14 +131,6 @@ export type SessionCreatedEvent = {
   workspaceId: string;
   operationRef: OperationRef;
   session: SessionRecord;
-};
-
-/** Pre-bind work-link body: the Store fills `since` from the commit cursor. */
-export type PendingSessionWorkLink = {
-  ref: SessionWorkLinkRef;
-  revision: number;
-  since: CommitCursor | null;
-  until: CommitCursor | null;
 };
 
 // --------------------------------------------------------------------------
@@ -242,40 +238,6 @@ export function checkRole(value: unknown): Problem {
   return 'role kind must be role_spec or legacy_template';
 }
 
-function relation(value: unknown): boolean {
-  return value === 'responsible' || value === 'participates' || value === 'investigated';
-}
-
-export function checkTarget(value: unknown): Problem {
-  if (!isRecord(value)) return 'work link target must be an object';
-  const ref = value['ref'];
-  if (!isRecord(ref)) return 'work link target.ref must be an object';
-  if (value['kind'] === 'module') {
-    if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['projectId', 'moduleId'])) return 'module target must be a ModuleRef';
-    if (!nonEmpty(ref['projectId']) || !nonEmpty(ref['moduleId'])) return 'module target requires projectId and moduleId';
-    return null;
-  }
-  if (value['kind'] === 'task') {
-    if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['projectId', 'goalId', 'taskId'])) return 'task target must be a TaskTriple';
-    if (!nonEmpty(ref['projectId']) || !nonEmpty(ref['goalId']) || !nonEmpty(ref['taskId'])) {
-      return 'task target requires projectId, goalId and taskId';
-    }
-    return null;
-  }
-  if (value['kind'] === 'work') {
-    if (!hasOnlyKeys(value, ['kind', 'ref']) ||
-      !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'workspaceId', 'workId'])) {
-      return 'work target must be a WorkContextRef';
-    }
-    if (ref['aggregateType'] !== 'WorkContextBinding' || !nonEmpty(ref['projectId']) ||
-      !nonEmpty(ref['workspaceId']) || !nonEmpty(ref['workId'])) {
-      return 'work target is not a valid WorkContextRef';
-    }
-    return null;
-  }
-  return 'work link target kind must be module, task or work';
-}
-
 const SOURCE_KINDS: readonly string[] = ['plan-revision', 'workspace', 'governance', 'artifact', 'memory'];
 
 function checkSourceRef(value: unknown): Problem {
@@ -364,24 +326,6 @@ function checkFailure(value: unknown): Problem {
   return null;
 }
 
-export function checkWorkLinkRef(value: unknown): Problem {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'sessionId', 'target', 'relation'])) {
-    return 'work link ref carries unknown fields';
-  }
-  if (value['aggregateType'] !== 'SessionWorkLink' || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
-    return 'work link ref is not a valid SessionWorkLinkRef';
-  }
-  const targetValue = value['target'];
-  const target = checkTarget(targetValue);
-  if (target !== null) return target;
-  if (isRecord(targetValue) && isRecord(targetValue['ref']) &&
-    value['projectId'] !== targetValue['ref']['projectId']) {
-    return 'work link target project disagrees with the link ref project';
-  }
-  if (!relation(value['relation'])) return 'work link relation is not recognized';
-  return null;
-}
-
 // --------------------------------------------------------------------------
 // Aggregate body checks
 // --------------------------------------------------------------------------
@@ -390,7 +334,7 @@ const OPERATION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'workspaceId', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
 ];
 const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'parentOperation', 'workspace', 'kernelStore', 'role',
-  'recommendedRefs', 'initialLinks', 'provenance', 'creation', 'consultation'];
+  'recommendedRefs', 'initialLinks', 'provenance', 'creation', 'consultation', 'seatDecision'];
 const OPERATION_PHASES = ['accepted', 'running', 'completed', 'failed', 'unknown'] as const;
 const SESSION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
@@ -918,6 +862,31 @@ function checkCreateAction(body: UnknownRecord, action: UnknownRecord): Problem 
   }
   const consultationProblem = checkConsultationCreate(action['consultation']);
   if (consultationProblem !== null) return `operation consultation: ${consultationProblem}`;
+  // The admission saves the seat it decided once on the create operation; it is required (no absent→null default).
+  const seatDecision = action['seatDecision'];
+  if (seatDecision !== null) {
+    if (!isRecord(seatDecision) || !hasOnlyKeys(seatDecision,
+      ['duty', 'mode', 'notCountedReason', 'allocationRef', 'handoff', 'source', 'decidedAt'])) {
+      return 'operation seatDecision must be null or {duty,mode,notCountedReason,allocationRef,handoff,source,decidedAt}';
+    }
+    const mode = seatDecision['mode'];
+    if (mode !== 'reserved' && mode !== 'borrowed' && mode !== 'not_counted') {
+      return 'operation seatDecision mode is not recognized';
+    }
+    const notCountedReason = seatDecision['notCountedReason'];
+    if (notCountedReason !== null && notCountedReason !== 'unknown_duty' && notCountedReason !== 'readonly_copy') {
+      return 'operation seatDecision notCountedReason is not recognized';
+    }
+    if ((mode === 'not_counted') !== (notCountedReason !== null)) {
+      return 'operation seatDecision notCountedReason is set exactly when mode is not_counted';
+    }
+    const allocationRef = seatDecision['allocationRef'];
+    if (allocationRef !== null
+      && (!isRecord(allocationRef) || allocationRef['aggregateType'] !== 'RoleLineAllocation')) {
+      return 'operation seatDecision allocationRef must be null or a RoleLineAllocation ref';
+    }
+    if (!nonEmpty(seatDecision['decidedAt'])) return 'operation seatDecision decidedAt must be a non-empty string';
+  }
   // Slice 6A §3.4.7: the current format always records the line intent, `null`
   // for a creation that opens no line.
   const creationProblem = checkSessionCreationIntent(action['creation']);
@@ -934,7 +903,7 @@ function checkCreateAction(body: UnknownRecord, action: UnknownRecord): Problem 
     if (!isRecord(entry) || !hasOnlyKeys(entry, ['target', 'relation'])) return 'initialLink must be {target,relation}';
     const target = checkTarget(entry['target']);
     if (target !== null) return `initialLink target: ${target}`;
-    if (!relation(entry['relation'])) return 'initialLink relation is not recognized';
+    if (!isWorkLinkRelation(entry['relation'])) return 'initialLink relation is not recognized';
   }
   return null;
 }
@@ -1343,6 +1312,10 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
       orderBy: { path: 'archivedAt', valueType: 'text' } },
     { name: S2C_OPEN_LINKS_BY_SESSION_LOOKUP, aggregateType: 'SessionWorkLink',
       paths: ['ref.projectId', 'ref.sessionId', 'ref.relation', 'until'] },
+    { name: SESSION_LINKS_BY_GOAL_LOOKUP, aggregateType: 'SessionWorkLink',
+      paths: ['ref.projectId', 'ref.target.kind', 'ref.target.ref.goalId', 'ref.relation', 'until'] },
+    { name: SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, aggregateType: 'SessionWorkLink',
+      paths: ['ref.projectId', 'ref.target.kind', 'ref.relation', 'until'] },
     { name: S2C_CLOSED_TASK_LINKS_LOOKUP, aggregateType: 'SessionWorkLink',
       paths: ['ref.projectId', 'ref.sessionId', 'ref.relation', 'ref.target.kind'],
       orderBy: { path: 'until', valueType: 'text' } },

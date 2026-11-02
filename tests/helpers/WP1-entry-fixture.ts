@@ -77,6 +77,7 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/quer
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createTaskContextInputService } from '../../src/core/work-graph/tasks/context-input-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -385,7 +386,7 @@ export async function openAnomalyReaderFixture(kind: ClaimFixtureKind): Promise<
     const { base, ctx, claim } = execution;
     const sessionFacts = createSessionFactsService({ records: base.records });
     const anomalies = createSessionAnomalyService({ records: base.records, lookups: base.records, sessionFacts, now });
-    const lifecycle = createSessionLifecycleService({ records: base.records, lookups: base.records, sessionFacts });
+    const lifecycle = createSessionLifecycleService({ records: base.records, lookups: base.records, sessionFacts, duty: unknownSessionDuty });
     await execution.enter();
     const target = { kind: 'task' as const, ref: claim.task };
     const linkRef: SessionWorkLinkRef = { ...claim.sessionRef, aggregateType: 'SessionWorkLink', target, relation: 'responsible' };

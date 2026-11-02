@@ -44,6 +44,7 @@ import { createRunActivityService, type RunActivityPort } from '../../src/core/w
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
@@ -290,7 +291,7 @@ export async function openS2BActivityFixture(
   }
 
   /** The real Session lifecycle owner (`linkSessionWork`), over the same store. */
-  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords });
+  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, duty: unknownSessionDuty });
 
   /** Opens or closes one real `responsible` SessionWorkLink on the gate task. */
   async function setResponsible(sessionRef: SessionRef, taskId: string, active: boolean): Promise<void> {

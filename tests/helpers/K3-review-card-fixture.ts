@@ -43,6 +43,7 @@ import type { DecisionCardSourcePort, DecisionReadPort } from '../../src/core/wo
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
@@ -307,7 +308,7 @@ export async function openK3ReviewCardWorld(
   let decisionSequence = 0;
   const nextDecisionId = (): string => `k3-review-card-decision-${String(++decisionSequence)}`;
   // The ONE real Session directory this world's mailbox and the DRV platform share.
-  const sessions = createSessionDirectory({ records: decisionRecords, lookups: fixture.records });
+  const sessions = createSessionDirectory({ records: decisionRecords, lookups: fixture.records, duty: unknownSessionDuty });
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records: decisionRecords, materials, now: () => T, newId: nextDecisionId,

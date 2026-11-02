@@ -22,7 +22,7 @@
  *   (`platformRoleProfile('scribe').template`, duty `scribe`) whose grant adds `record_note`, and the Workflow
  *   binding for that role, so a Plan task assigned to it runs on a scribe line through `workflow/advance`.
  *   `scriptReplies` queues replies (text or tool calls) on the one scripted model for the runs a test drives itself.
- * - `extraHostOptions`: Host options 6A adds (`secretaryOpenCap`) do not exist yet; they are spread, untyped,
+ * - `extraHostOptions`: extra real Host options (e.g. `requestDriver: 'on'`) are spread, untyped,
  *   into the real Host options on open and on every reopen (a reopen may pass a new value). An extra key that
  *   would replace a fixture option is refused.
  * - The request driver (the Host's wake loop that claims and runs request rounds on its own) is OFF in every
@@ -324,7 +324,7 @@ export type S6AWorldOptions = {
   configuration?: S6AConfiguration;
   /** Default `secretary_first`; only meaningful with `with_secretary`. */
   order?: S6AProfileOrder;
-  /** 6A Host options that do not exist yet (e.g. `{ secretaryOpenCap: 2 }`), spread untyped into the Host options. */
+  /** Extra real Host options (e.g. `{ requestDriver: 'on' }`), spread untyped into the Host options. */
   extraHostOptions?: Record<string, unknown>;
   /** The Host's HTTP actor; default the human operator. */
   actor?: WorkbenchActor;
@@ -576,7 +576,7 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     for (const key of Object.keys(extraHostOptions)) {
       if (key in base) throw new Error(`S6A: the extra Host option ${key} would replace a fixture option`);
     }
-    // The 6A options are not in today's Host type; they pass through untyped until 6A-1 group H adds them.
+    // The extra options pass through untyped so a test can name the Host option it needs.
     const started = await startCapturingPlatform(
       { requestDriver: 'off', ...extraHostOptions, ...base } as LocalWorkbenchHostOptions);
     try {

@@ -28,7 +28,7 @@ const service = (bodies: RawArtifactStorePort) => createMaterialService({ bodies
   now: () => '2026-09-24T00:00:00Z' });
 const historical = { ref, usage: 'historical_explanation' as const };
 
-it('lets a Host read its own newly stored platform artifact but keeps project and workspace scope exact', async () => {
+it('lets a Host read its own newly stored platform artifact but keeps project scope exact, and another workspace of the project is readable', async () => {
   let stored: RawArtifactRecord | undefined;
   const raw: RawArtifactStorePort = {
     put: async input => {
@@ -48,7 +48,7 @@ it('lets a Host read its own newly stored platform artifact but keeps project an
   expect(await materials.openArtifact(ctx('other-project', 'owner-workspace'), historical))
     .toMatchObject({ status: 'rejected', code: 'forbidden' });
   expect(await materials.openArtifact(ctx('owner-project', 'other-workspace'), historical))
-    .toMatchObject({ status: 'rejected', code: 'forbidden' });
+    .toMatchObject({ status: 'ready', value: { body, ref } });
 });
 
 it('uses the material reader identity at call admission even if its object mutates during raw I/O', async () => {

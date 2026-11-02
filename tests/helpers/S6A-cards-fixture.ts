@@ -42,9 +42,10 @@
  *   requests on the first goal last. `goals/create` returns the creation commit's cursor; each request's commit
  *   position is the `since` of its round in the request read. Task ids come from the Plan draft a caller proposes and
  *   a task is keyed by its goal, so two goals' Plans may name the same task id (the notices world's `ag2b-work`).
- * - Many requests (`submitMany`): the intake has no rate limit; with no `secretaryOpenCap` and the driver off every
- *   new request finds the earlier secretaries busy with their waiting rounds and opens a new line (21 requests: about
- *   0.6 s on memory, 1.6 s on SQLite); with a cap the rest wait unassigned.
+ * - Many requests (`submitMany`): the intake has no rate limit; the request rows raise the project's open secretary
+ *   limit first, and with the driver off every new request finds the earlier secretaries busy with their waiting
+ *   rounds and opens a new line (21 requests: about 0.6 s on memory, 1.6 s on SQLite); once the limit is reached the
+ *   rest wait unassigned.
  * - Automatic-rework notices (`seedReworkNotices`): the Workflow (`workflow/advance` of `select_work` on a named
  *   task, the Work Session as hint) runs the task; the Work Session's scripted model calls the real `read` tool once
  *   and then the provider fails, so the Run fails (`run_failed`) and the Workflow itself performs the automatic
@@ -673,4 +674,46 @@ export async function openS6ANoticesWorld(options: S6AHostWorldOptions): Promise
     await world.close().catch(() => undefined);
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// FX-7D1-06: the two-workspace drain world (W-drain)
+// ---------------------------------------------------------------------------
+
+/** The world the W-drain row starts from: both queues wait at the project's open secretary limit. */
+export type S7D1DrainWorld = {
+  readonly world: S6ACardsWorld;
+  /** The two secretary lines that fill the cap before the raise; both are busy with a claimed Query. */
+  readonly seats: readonly [S6ASession, S6ASession];
+  /** The waiting request submitted in the main workspace and in the second workspace. */
+  readonly mainRequest: S6ARequest;
+  readonly secondRequest: S6ARequest;
+};
+
+/**
+ * FX-7D1-06: `openS6ACardsWorld` with the request driver on, the project's open secretary limit publicly set
+ * to 2, two occupied secretary seats, one waiting request per workspace, and then the limit raised to 4.
+ * Every write is the person's public route and every expected revision is the one the previous read returned.
+ */
+export async function openS7D1DrainWorld(): Promise<S7D1DrainWorld> {
+  const cards = await openS6ACardsWorld({ backend: 'memory', extraHostOptions: { requestDriver: 'on' } });
+  const world = cards.world;
+  const limits = readyValue<{ revision: number }>((await world.post('projects/role-limits', plain(S6A_SCOPE,
+    { projectRef: { projectId: S6A_SCOPE.projectId } }))).body, 'the project limits');
+  committedBody((await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's7d1-drain-open-2',
+    expectedRevision: limits.revision, open: { secretary: 2 } }))).body, 'the open secretary limit 2');
+  const first = await world.createSecretary('s7d1-drain-a');
+  const second = await world.createSecretary('s7d1-drain-b');
+  await world.occupy(first);
+  await world.occupy(second);
+  const mainRequest = await cards.main.submit({ label: 's7d1-drain-main', goalId: null });
+  const secondRequest = await cards.second.submit({ label: 's7d1-drain-second', goalId: null });
+  if (mainRequest.secretary !== null || secondRequest.secretary !== null) {
+    throw new Error(`S7D1: a drain request was assigned before the raise: ${JSON.stringify({ mainRequest, secondRequest })}`);
+  }
+  const raised = readyValue<{ revision: number }>((await world.post('projects/role-limits', plain(S6A_SCOPE,
+    { projectRef: { projectId: S6A_SCOPE.projectId } }))).body, 'the project limits after the seats');
+  committedBody((await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's7d1-drain-open-4',
+    expectedRevision: raised.revision, open: { secretary: 4 } }))).body, 'the open secretary limit 4');
+  return { world: cards, seats: [first, second], mainRequest, secondRequest };
 }

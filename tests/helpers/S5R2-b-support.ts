@@ -23,6 +23,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
@@ -53,7 +54,7 @@ export async function assembleB(f: S5DecisionFixture) {
   const { authority } = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies: f.bodies, authority, now: f.now });
   const executions = createRunStateReader({ records });
-  const sessions = createSessionDirectory({ records, lookups: records });
+  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
   const settings = createGoalSettingsService({ records, now: f.now, newId: f.newId, operatorActor: f.operatorActor });
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
     materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });

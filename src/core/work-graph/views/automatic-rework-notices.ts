@@ -82,7 +82,7 @@ export function createAutomaticReworkNoticeSource(
   };
 }
 
-type ReadPageInput = {
+export type ReadPageInput = {
   workspace: { projectId: string; workspaceId: string };
   goalRef?: { aggregateType: 'Goal'; projectId: string; goalId: string };
   after?: NoticeItemV1['position'];

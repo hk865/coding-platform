@@ -3,6 +3,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type {
   RunSnapshot,
   TaskAttemptRef,
@@ -43,6 +44,8 @@ import type {
   StoreResult,
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
+import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import { readArchitectureCatalogRef } from '../architecture/catalog-record-codecs.js';
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
 import {
@@ -2229,18 +2232,26 @@ export async function readOriginPlans(
   return { status: 'ready', value: { plansByRefKey, missing, readThrough: read.batch.readThrough } };
 }
 
+/** The module facts' own catalog guard names the incrementing catalog version; the catalog record's revision stays 1. */
+function catalogRevisionOf(guards: readonly RecordGuard[]): number {
+  return guards
+    .map((guard) => readArchitectureCatalogRef(parseJsonObject(guard.refKey)))
+    .find((catalog) => catalog !== null)!.revision;
+}
+
 /**
  * Slice 1 §3.3/§3.4: the trusted Session-responsibility basis reader. It builds
  * the canonical Task facts and their `RecordGuard`s in `tasks` and publishes
  * them through the narrow `SessionResponsibilityBasisPort` the composition
  * injects into `sessions` (no `sessions` → `tasks` import).
  *
- * `terminal` is the CURRENT Task projection (`effectivePhase==='satisfied'` or a
- * cancelled/superseded disposition), never a finished Run. `finishedAt` is the
- * terminal closing fact: the formal reduction's `reducedAt` for satisfied, the
- * first terminal disposition Plan's `acceptedAt` otherwise. `writerStopped`
- * means the Task's old writer has no live occupancy. A `work` (or `module`)
- * target cannot be mapped to a Task and stays `incomplete`.
+ * The task arm's `terminal` is the CURRENT Task projection
+ * (`effectivePhase==='satisfied'` or a cancelled/superseded disposition), never a
+ * finished Run. `finishedAt` is the terminal closing fact: the formal reduction's
+ * `reducedAt` for satisfied, the first terminal disposition Plan's `acceptedAt`
+ * otherwise. `writerStopped` means the Task's old writer has no live occupancy.
+ * A `work` target has no basis and stays `incomplete`; the goal/project/module
+ * arms never read a Plan and answer `terminal: false, writerStopped: true`.
  */
 export function createSessionResponsibilityBasisReader(
   records: GoalRecordTransactionPort & RecordLookupPort,
@@ -2263,6 +2274,39 @@ export function createSessionResponsibilityBasisReader(
         return { status: 'rejected', code: 'forbidden', reason: 'the Session belongs to another project' };
       }
       const target = raw.target as Record<string, unknown>;
+      if (target['kind'] === 'goal') {
+        const goalRef = target['ref'] as GoalRef;
+        if (goalRef.projectId !== bound.projectId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'the Goal belongs to another project' };
+        }
+        const goalRead = await readGoal(records, goalRef);
+        if (goalRead.status !== 'ready') return goalRead;
+        return { status: 'ready', value: {
+          basis: { kind: 'goal', goalRef, goalRevision: goalRead.goal.revision },
+          terminal: false, writerStopped: true,
+          guards: [{ refKey: canonicalJson(goalRef as unknown as JsonValue), expectedRevision: goalRead.goal.revision }],
+          sourceCursor: goalRead.readThrough,
+        } };
+      }
+      if (target['kind'] === 'project') {
+        const { projectId } = target['ref'] as { projectId: string };
+        if (projectId !== bound.projectId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'the project scope belongs to another project' };
+        }
+        return { status: 'ready', value: {
+          basis: { kind: 'project', projectRef: { projectId } },
+          terminal: false, writerStopped: true, guards: [], sourceCursor: null,
+        } };
+      }
+      if (target['kind'] === 'module') {
+        const moduleRead = await readCatalogModuleFacts(records, ctx, target['ref'] as ModuleRef);
+        if (moduleRead.status !== 'ready') return moduleRead;
+        return { status: 'ready', value: {
+          basis: { kind: 'module', moduleRef: moduleRead.value.module.ref,
+            catalogRevision: catalogRevisionOf(moduleRead.value.guards) },
+          terminal: false, writerStopped: true, guards: moduleRead.value.guards, sourceCursor: null,
+        } };
+      }
       if (target['kind'] !== 'task') {
         return incomplete('work_responsibility_unresolved: this work link has no Task basis');
       }
@@ -2341,12 +2385,14 @@ export function createSessionResponsibilityBasisReader(
         }]),
       ];
       return { status: 'ready', value: {
-        task: { projectId: task['projectId'], goalId: task['goalId'], taskId: task['taskId'] },
-        planRef: plan.ref,
+        basis: {
+          kind: 'task',
+          task: { projectId: task['projectId'], goalId: task['goalId'], taskId: task['taskId'] },
+          planRef: plan.ref,
+          terminalCause,
+          finishedAt,
+        },
         terminal: terminalCause !== null,
-        finishedAt,
-        terminalCause,
-        sourceRun: selectedRun,
         writerStopped,
         guards,
         sourceCursor: facts.readThrough,

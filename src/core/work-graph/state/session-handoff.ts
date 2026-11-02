@@ -117,7 +117,7 @@ export function newHandoffOperationRecord<Ref, Input extends {
         assignments: facts.input.assignments.map(assignment => ({ successor: null, createOperation: null,
           createInput: null,
           transfers: assignment.tasks.map(task => ({ task: task as Task, input: null, receipt: null })) })),
-        coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
+        scope: null, coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
         approval: null, lastRefusal: null,
       },
     },

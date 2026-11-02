@@ -24,7 +24,7 @@ import {
   openS6ARequestWorld, S6A_GOAL_1, S6A_GOAL_2, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ARequestWorld, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
+import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { post } from '../helpers/A2-restart-fixture.js';
 
 // ---------------------------------------------------------------------------
@@ -272,8 +272,14 @@ for (const backend of BACKENDS) {
      * candidate and the new line is refused by the cap.
      */
     async function waitingRequest(commandId: string) {
-      const capped = await openS6ARequestWorld({ backend, extraHostOptions: { secretaryOpenCap: 1 } });
+      const capped = await openS6ARequestWorld({ backend });
       extraWorlds.push(capped);
+      const capLimits = (await capped.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await capped.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-service-wait-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const busy = await capped.createSecretary('busy-secretary');
       await capped.occupy(busy);
       const submitted = await capped.platform.requestIntake.submitRequest(capped.humanContext(),

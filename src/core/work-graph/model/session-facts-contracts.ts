@@ -9,12 +9,13 @@
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef, WorkLinkTarget } from '../../../contracts/core/identity.js';
+import type { ModuleRef, ProjectScope, SessionRef, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { MessageRecipient, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord, SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
-import type { RunRef, RunSnapshot, RunStatus, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, RunStatus, TaskTriple } from '../../../contracts/dispatch.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryExecutionStateV1, QueryJobRef, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
@@ -104,17 +105,27 @@ export interface SessionFactsPort {
 // Responsibility basis port (implementation: tasks/plan-readers.ts)         //
 // ------------------------------------------------------------------------ //
 
-export type SessionResponsibilityBasisV1 = {
-  task: TaskTriple; planRef: PlanRevisionRef;
-  terminal: boolean; finishedAt: string | null;
-  terminalCause: 'satisfied' | 'cancelled' | 'superseded' | null;
-  sourceRun: RunSnapshot | null; writerStopped: boolean;
-  guards: readonly RecordGuard[]; sourceCursor: CommitCursor;
+export type ResponsibilityBasisV1 =
+  | { kind: 'task'; task: TaskTriple; planRef: PlanRevisionRef;
+      terminalCause: 'satisfied' | 'cancelled' | 'superseded' | null; finishedAt: string | null }
+  | { kind: 'goal'; goalRef: GoalRef; goalRevision: number }
+  | { kind: 'project'; projectRef: ProjectScope }
+  | { kind: 'module'; moduleRef: ModuleRef; catalogRevision: number };
+export type ResponsibilityBasisAnswerV1 = {
+  basis: ResponsibilityBasisV1;
+  /** Task arm only; `false` for the three scope arms. */
+  terminal: boolean;
+  /** Task arm only; `true` for the three scope arms. */
+  writerStopped: boolean;
+  /** The records the reader's own read pinned. */
+  guards: readonly RecordGuard[];
+  /** Where the reader's read started; `null` when the arm read no record. */
+  sourceCursor: CommitCursor | null;
 };
 export interface SessionResponsibilityBasisPort {
   readResponsibilityBasis(ctx: CoreCallContext, input: {
     sessionRef: SessionRef; target: WorkLinkTarget;
-  }): Promise<ReadResult<SessionResponsibilityBasisV1>>;
+  }): Promise<ReadResult<ResponsibilityBasisAnswerV1>>;
 }
 
 // ------------------------------------------------------------------------ //

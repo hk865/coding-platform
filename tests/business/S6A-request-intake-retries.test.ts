@@ -28,7 +28,7 @@ import { createProjectSecretaryScope, createSecretarySelection } from '../../src
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService, REQUEST_TAIL_PREFIX } from '../../src/core/work-graph/tasks/request-service.js';
 import {
-  createAlwaysAdmitCapacity, createLineCreation, type LineCreationPort,
+  createLineCreation, type LineCreationPort,
 } from '../../src/business/workflow/line-creation.js';
 import {
   createRequestIntake, type RequestIntakePort, type RequestSubmitResultV1,
@@ -39,7 +39,7 @@ import {
   type S6ARequestWorld, type S6AWorldOptions,
 } from '../helpers/S6A-request-fixture.js';
 import { commitBarrier, byClaimMove } from '../helpers/S6A-commit-barrier.js';
-import { AG2B_CONSUMER_ID } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 
 // ---------------------------------------------------------------------------
 // The two backend factories: remember the shared records port (A4) and keep the
@@ -121,7 +121,6 @@ function faultyIntake(world: S6ARequestWorld, fault: {
     // the return with the platform's closing rejection.
     sessions: { createSession: world.platform.runtime.createSession as SessionOperationsPort['createSession'] },
     operations: world.platform.sessions,
-    capacity: createAlwaysAdmitCapacity(),
   });
   let lineFault = fault.line ?? null;
   const lineCreation: LineCreationPort = {
@@ -253,9 +252,15 @@ for (const backend of BACKENDS) {
 
     it.each(FAULTS)('a waiting follow-up whose profile read answers %s is unavailable, not no_secretary_binding', async kind => {
       // The request waits under the real Host cap (1): its only secretary is busy.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-retry-wait-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const root = requestRootOf(await world.platform.requestIntake.submitRequest(ctx,
         submitInput(`mh-wait-root-${kind}`, 'first')));
@@ -290,9 +295,15 @@ for (const backend of BACKENDS) {
     it.each(FAULTS)('a drain whose profile read answers %s is unavailable, never blocked', async kind => {
       // Waiting under the real cap; then the only secretary is archived, so the
       // drain has no candidate and reads the profile for a new line.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-retry-drain-profile-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const root = requestRootOf(await world.platform.requestIntake.submitRequest(ctx,
         submitInput(`mh-drain-profile-${kind}`, 'first')));
@@ -310,12 +321,25 @@ for (const backend of BACKENDS) {
 
     it.each(FAULTS)('a drain whose line lookup answers %s is unavailable and assigns nobody', async kind => {
       // Waiting under the real cap; an idle secretary exists when the drain runs.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-retry-drain-line-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const root = requestRootOf(await world.platform.requestIntake.submitRequest(ctx,
         submitInput(`mh-drain-line-${kind}`, 'first')));
+      const raisedLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(raisedLimits.status).toBe('ready');
+      const raisedSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE,
+        { commandId: 's6a-retry-drain-line-seat', expectedRevision: raisedLimits.value.revision,
+          open: { secretary: 2 } }))).body as { status: string };
+      expect(raisedSet.status).toBe('committed');
       await world.createSecretary('secretary-b');
       await world.finishQuery(aBusy);
       const intake = faultyIntake(world, { line: kind });

@@ -30,7 +30,7 @@ import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution
 import { createMemberService, type MemberServiceV1 } from '../../src/core/work-graph/tasks/member-service.js';
 import { createSecretaryQueryRun } from '../../src/core/work-graph/tasks/secretary-query-run.js';
 import { createDutyRecipient } from '../../src/core/work-graph/sessions/duty-recipient.js';
-import { createLineCreation, createAlwaysAdmitCapacity } from '../../src/business/workflow/line-creation.js';
+import { createLineCreation } from '../../src/business/workflow/line-creation.js';
 import { createSessionChooser } from '../../src/business/workflow/session-chooser.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
@@ -397,8 +397,7 @@ export function createS7C1MemberService(world: S6AHostWorld): MemberServiceV1 {
   };
   const lineCreation = createLineCreation({
     sessions: { createSession: (...args) => world.platform.runtime.createSession(...args) },
-    operations: { getSessionOperation: (...args) => world.platform.sessions.getSessionOperation(...args) },
-    capacity: createAlwaysAdmitCapacity() });
+    operations: { getSessionOperation: (...args) => world.platform.sessions.getSessionOperation(...args) } });
   // P's one reuse body over the Host's own real owners; the member service consumes the port, never a second filter.
   const reuse = {
     reusable: createSessionChooser({

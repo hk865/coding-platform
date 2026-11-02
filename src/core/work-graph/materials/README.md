@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | `createMaterialService` | `src/core/work-graph/materials/material-service.ts:116` | 唯一 `MaterialPort`：存材料、开材料；Host current 读无可信 pin 时 `source_stale` | composition 装配材料端口；不要另写存取 |
 | `createMaterialApplicability` | `src/core/work-graph/materials/applicability.ts:23` | 材料适用性判定：Host 需 `historical_explanation`，Run 只能读自己的且不能 current | 打开材料前的准入；别处不要另写适用性规则 |
-| `materialOwnerFromOrigin` | `src/core/work-graph/materials/applicability.ts:93` | 从 raw origin 取记录下来的 Run/QueryRun owner，或 null | 判断材料归属 |
+| `materialOwnerFromOrigin` | `src/core/work-graph/materials/applicability.ts:85` | 从 raw origin 取记录下来的 Run/QueryRun owner，或 null | 判断材料归属 |
 | `createMaterialRecordReaders` | `src/core/work-graph/materials/record-readers.ts:135` | 用注入的 `readMany` 实现 `MaterialAuthorityReads.load`；miss 与失败分开 | composition 提供材料权威读 |
 | `materialRecordSchemas` | `src/core/work-graph/materials/record-readers.ts:95` | Goal schema 加 Run/QueryRun 的完整记录 schema 集 | 注册后端 schema；不要另加一套 |
 | `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:334` | 唯一的 `QueryRunSnapshot@1` 校验；queries 复用它 | 解码/校验 QueryRun 记录 |

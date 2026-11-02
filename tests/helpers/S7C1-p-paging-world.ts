@@ -30,6 +30,7 @@ import type { WorkLineReadPort } from '../../src/core/work-graph/model/work-line
 import type { SessionActivityReadPort } from '../../src/core/work-graph/model/session-activity-contracts.js';
 import { plainSessionRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { openS6AHostWorld } from './S6A-host-fixture.js';
+import { setS7D1Open } from './S7D1-allocation-world.js';
 import type { S6AHostWorld } from './S6A-host-fixture.js';
 import { S6A_AT, S6A_SCOPE, type S6ASession, type S6AWorldOptions } from './S6A-request-fixture.js';
 
@@ -78,6 +79,7 @@ export async function openS7C1PagingWorld(options: {
 }): Promise<S7C1PagingWorld> {
   const mode = options.mode ?? 'bound';
   const world = await openS6AHostWorld({ backend: options.backend });
+  await setS7D1Open(world, 'executor', 401, 0, 's7c1-paging-executors');
   const platform = world.platform;
 
   const armed = new Map<S7C1FaultTarget, S7C1FaultKind>();

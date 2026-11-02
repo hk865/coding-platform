@@ -97,7 +97,7 @@ import type {
 // over its own records/Session/role owners.
 import { createRequestIntake, type RequestIntakePort } from '../business/workflow/request-intake.js';
 import {
-  createAlwaysAdmitCapacity, createLineCreation, type LineCapacityPort,
+  createLineCreation,
 } from '../business/workflow/line-creation.js';
 import { createRequestFacts } from '../core/work-graph/tasks/request-facts.js';
 import { createDispatchBasisReader } from '../core/work-graph/tasks/dispatch-basis.js';
@@ -193,7 +193,13 @@ import { readSecretaryHandoffBasis } from '../core/work-graph/tasks/secretary-ha
 // The two secretary lifecycle commands' Workflow dependency bag: the composite stays the Workflow's, this root only
 // fills what it injects.
 import type { HandoffWorkflowDependencies } from '../business/workflow/contracts.js';
-import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
+import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
+import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../core/work-graph/sessions/role-line-record-codecs.js';
+import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits-service.js';
+import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
+import { createProjectNoticeSource } from '../core/work-graph/views/project-notice-notices.js';
+import { notifyProject } from '../core/work-graph/communication/project-notice-service.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
   sessionAggregateRefKey, HANDOFF_BRIEF_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
 import {
@@ -443,13 +449,6 @@ export type TargetPlatformOptions = {
    * never invents a profile.
    */
   secretaryProfiles?: SecretaryProfilePort;
-  /**
-   * The secretary open cap. Unset keeps `createAlwaysAdmitCapacity`: no
-   * reservation cap exists without it. A positive
-   * integer counts the workspace's live secretary Sessions (lifecycle `active`,
-   * duty `secretary`) and refuses a new line at the cap.
-   */
-  secretaryOpenCap?: number;
   /**
    * The Host's request wake sink. `createRequestIntake` calls it after a
    * request command's commit RETURNS (never on a replay), so the Host's wake
@@ -870,60 +869,6 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
 }
 
 /**
- * The Host's `secretaryOpenCap` adapter. It counts the workspace's LIVE
- * secretary Sessions — lifecycle `active` and the trusted duty resolver says
- * `secretary` — at admission time and refuses a fresh line at the cap. A replay
- * never reaches this port (`createLineCreation` looks the operation up first);
- * in-flight creations are not counted, because the directory cannot enumerate
- * creation operations. A line this admission replaces (`input.replaces`) and a
- * line an active handoff successor names in its provenance are not counted: the
- * pair is one line until the source is archived, so a saturated cap still
- * admits exactly one successor. The successor's own card carries that
- * provenance, so no extra read is made; the keys are collected across pages.
- * Any read failure is `unavailable`, never an admitted line.
- */
-export function createSecretaryOpenCapCapacity(deps: {
-  limit: number;
-  sessions: Pick<SessionDirectoryPort, 'findSessions'>;
-  duty: SessionDutyResolver;
-}): LineCapacityPort {
-  return {
-    async admit(ctx, input) {
-      // The option caps secretary lines only; a line of another duty is admitted.
-      if (input.duty !== 'secretary') return { status: 'admitted' };
-      if (!Number.isSafeInteger(deps.limit) || deps.limit < 1) {
-        return { status: 'unavailable', reason: 'the secretary open cap is not a positive integer' };
-      }
-      const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
-      const open = new Set<string>();
-      const replaced = new Set<string>();
-      let cursor: string | null = null;
-      do {
-        const page = await deps.sessions.findSessions(ctx, {
-          workspace, includeArchived: false, page: { limit: 200, ...(cursor === null ? {} : { cursor }) },
-        });
-        if (page.status !== 'ready') {
-          return { status: 'unavailable', reason: page.status === 'rejected'
-            ? `the secretary line count could not be read: ${page.reason}`
-            : 'the secretary line count is not available' };
-        }
-        for (const card of page.value.items) {
-          if (card.record.lifecycle !== 'active') continue;
-          // A live handoff successor names the line it replaced: that source counts as this one successor.
-          if (card.record.provenance.kind === 'handoff') replaced.add(plainSessionRefKey(card.record.provenance.from));
-          const duty = await deps.duty(card.record.role, ctx);
-          if (duty.status === 'ready' && duty.value === 'secretary') open.add(plainSessionRefKey(card.record.ref));
-        }
-        cursor = page.value.nextCursor;
-      } while (cursor !== null);
-      if (input.replaces !== null) replaced.add(plainSessionRefKey(input.replaces));
-      const used = [...open].filter(key => !replaced.has(key)).length;
-      return used >= deps.limit ? { status: 'full', limit: deps.limit, used } : { status: 'admitted' };
-    },
-  };
-}
-
-/**
  * The Goal understanding read the Goal copy pins, over the note read model. A missing pointer or a null
  * pointer revision is `revision: null` with no head and no note; an existing empty pointer keeps its revision; a
  * pointer naming a missing note is `unavailable`.
@@ -961,12 +906,6 @@ const readGoalUnderstandingFrom = (notes: NoteReadPort): GoalUnderstandingReadPo
  * supplied. No business bootstrap/claim API is invented by the storage factory. */
 export async function createTargetPlatform(options: TargetPlatformOptions) {
   const now = options.now ?? (() => new Date().toISOString());
-  // A cap is a positive integer or absent. A malformed value
-  // fails the platform build instead of silently admitting every line.
-  if (options.secretaryOpenCap !== undefined
-    && (!Number.isSafeInteger(options.secretaryOpenCap) || options.secretaryOpenCap < 1)) {
-    throw new Error('secretaryOpenCap must be a positive integer when present');
-  }
   // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
   const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
   const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
@@ -1002,7 +941,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...GOAL_INTERRUPTION_SCHEMAS.records,
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
       ...REWORK_REQUEST_RECORD_SCHEMAS.records,
-      ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records],
+      ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
+      ...ROLE_LINE_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1019,7 +959,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...GOAL_INTERRUPTION_SCHEMAS.events,
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
       ...REWORK_REQUEST_RECORD_SCHEMAS.events,
-      ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events],
+      ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
+      ...ROLE_LINE_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1037,7 +978,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
-      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? []],
+      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -1084,6 +1025,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
       deniedPrefixes: WORKSPACE_DENIED_PREFIXES });
     const roleService = createRoleConfigurationService({ records: backend.records, now, eventId: randomUUID });
+    // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
+    // this narrow port, and the Workflow uses the SAME resolver instance (the
+    // composition root injects one result, never a second resolver). Slice 4A P5:
+    // the notes service shares this instance too. The configuration is read
+    // through the live dependency, so a binding registered after startup counts.
+    const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
+      readRoleSpec: roleService.readRoleSpec.bind(roleService),
+      configuration: () => workflowDependencies.configuration,
+    });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
     // production Host injects `operatorActor` from its trusted start snapshot,
@@ -1102,7 +1052,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const sessionResponsibility = createSessionResponsibilityService({
       records: backend.records, lookups: backend.records,
       // The trusted Task basis stays in `tasks` and arrives through the narrow port.
-      basis: responsibilityBasis, now,
+      basis: responsibilityBasis, duty: sessionDutyResolver, now,
     });
     const sessionAnomalies = createSessionAnomalyService({
       records: backend.records, lookups: backend.records, sessionFacts, now,
@@ -1177,16 +1127,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       recognize: commandRecognizer,
       now, eventId: randomUUID,
     });
-    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records });
-    // Slice 2C L7: the WorkGraph line read resolves a Session's duty through
-    // this narrow port, and the Workflow uses the SAME resolver instance (the
-    // composition root injects one result, never a second resolver). Slice 4A P5:
-    // the notes service shares this instance too. The configuration is read
-    // through the live dependency, so a binding registered after startup counts.
-    const sessionDutyResolver: SessionDutyResolver = options.sessionDutyResolver ?? createSessionDutyResolver({
-      readRoleSpec: roleService.readRoleSpec.bind(roleService),
-      configuration: () => workflowDependencies.configuration,
-    });
+    const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
+      duty: sessionDutyResolver });
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
@@ -1532,7 +1474,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records,
       cardSources: decisionCardSources,
       noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices,
-        createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts }), continuationNotices],
+        createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts }), continuationNotices,
+        createProjectNoticeSource({ records: backend.records })],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
@@ -1573,20 +1516,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // a commit without its condition.
     let archiveCondition: SecretaryArchiveConditionPort | null = null;
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
-      sessionFacts, archiveCondition: { check: async (ctx, input) => archiveCondition === null
+      sessionFacts, duty: sessionDutyResolver, archiveCondition: { check: async (ctx, input) => archiveCondition === null
         ? { status: 'rejected', code: 'unavailable', reason: 'the archive condition is not wired' }
         : archiveCondition.check(ctx, input) } });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
     const sessionOperations = createSessionOperations({ sessions: sessionDirectory, kernelStores });
-    // ONE capacity adapter and ONE line-creation entry shared by the request commands, the handoff successor and
-    // the member service's child line: a member-created line is admitted through the same cap and admission.
-    const requestCapacity: LineCapacityPort = options.secretaryOpenCap === undefined
-      ? createAlwaysAdmitCapacity()
-      : createSecretaryOpenCapCapacity({ limit: options.secretaryOpenCap, sessions: sessionDirectory, duty: sessionDutyResolver });
+    // ONE line-creation entry shared by the request commands, the handoff successor and the member service's
+    // child line: every line is admitted through the directory's own counted admission.
     const requestLineCreation = createLineCreation({
-      sessions: sessionOperations, operations: sessionDirectory, capacity: requestCapacity,
+      sessions: sessionOperations, operations: sessionDirectory,
     });
     // M's ONE member owner: the request and decision ports over the SAME records, identity read, Session directory,
     // line admission, request facts, secretary rounds, duty resolver and Run read the rest of the platform uses.
@@ -2590,6 +2530,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       transferSessionResponsibility: sessionResponsibility.transferSessionResponsibility.bind(sessionResponsibility),
       disposeArchiveResponsibility: sessionResponsibility.disposeArchiveResponsibility.bind(sessionResponsibility),
       closeTerminalResponsibility,
+      reanchorSessionResponsibility: sessionResponsibility.reanchorSessionResponsibility.bind(sessionResponsibility),
       readTransferReceipt: sessionResponsibility.readTransferReceipt.bind(sessionResponsibility),
     };
     // The approval hook's receive side: G calls it; R's Host binds the sink to `armMessageRelease(scope)`.
@@ -3301,6 +3242,20 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       category: 'automatic_rework',
       readPage: (ctx, input) => trackedCall(() => automaticReworkNotices.readPage(ctx, input), unavailable),
     };
+    // The two project role-limits commands and the one project allocation read. The limits owner and the
+    // allocation reader are the only implementations of their ports; `setRoleLimits` and `notifyProject` are the
+    // two R2 commands this root owns. The notice writer is published with no route and no producer.
+    const roleLimitsOwner = createRoleLimitsService({ records: backend.records, now: () => new Date(now()) });
+    const roleLimits: RoleLimitsPort = {
+      readRoleLimits: (...args) => trackedCall(() => roleLimitsOwner.readRoleLimits(...args), unavailable),
+      setRoleLimits: (...args) => trackedCall(() => roleLimitsOwner.setRoleLimits(...args), unavailable),
+    };
+    const allocationReader = createRoleLineAllocationReader({ records: backend.records, lookups: backend.records });
+    const roleLineAllocation: RoleLineAllocationReadPort = {
+      readRoleLineAllocation: (...args) => trackedCall(() => allocationReader.readRoleLineAllocation(...args), unavailable),
+    };
+    const projectNoticeWriter = (input: Parameters<typeof notifyProject>[1]): ReturnType<typeof notifyProject> =>
+      trackedCall(() => notifyProject({ records: backend.records, now }, input), unavailable);
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -3336,6 +3291,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The main read and `requests/read` owner; internal like the request owners.
       mainSurface,
       memberCreations, reworkNotices,
+      // The project role-limits owner (read/set), the allocation read, and the one project-notice writer.
+      // Internal like the other owner groups: the route table reads them by property.
+      roleLimits, roleLineAllocation, projectNoticeWriter,
       // The Host's two recipient resolvers (adviser and the Goal's current secretary): the SAME duty/goal-secretary
       // instances the rest of the root uses, published as one internal read group through the close-tracking path.
       recipients: {
@@ -3448,7 +3406,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
-      'reworkNotices', 'recipients',
+      'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions'] as const) {

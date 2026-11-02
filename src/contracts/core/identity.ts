@@ -43,7 +43,9 @@ export type ExecutionRef = import('../dispatch.js').RunRef | import('../query-jo
 export type WorkLinkTarget =
   | { kind: 'task'; ref: TaskRef }
   | { kind: 'work'; ref: import('../context-continuity.js').WorkContextRef }
-  | { kind: 'module'; ref: ModuleRef };
+  | { kind: 'module'; ref: ModuleRef }
+  | { kind: 'goal'; ref: import('../ledger.js').GoalRef }
+  | { kind: 'project'; ref: ProjectScope };
 export type WorkLinkRelation = 'responsible' | 'participates' | 'investigated';
 export type SessionWorkLinkRef = SessionRef & { aggregateType: 'SessionWorkLink'; target: WorkLinkTarget; relation: WorkLinkRelation };
 export type RoleConfigurationRef =

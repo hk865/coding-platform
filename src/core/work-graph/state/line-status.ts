@@ -70,7 +70,7 @@ export type LineFactsV1 = {
     | null;
   latestWork: (LineRunFactsV1 & { waitRecipient: SessionRef | 'user' | null }) | null;   // 没有占用时才填；generation 最大的那次
   responsibleOpen: LineTaskFactV1[];                  // 链上开着的 task 负责链接，去重
-  responsibleOpenOther: ('work' | 'module')[];        // 链上开着的 work、module 负责链接
+  responsibleOpenOther: ('work' | 'module' | 'goal' | 'project')[];   // 链上开着的 work、module、goal、project 负责链接
   doneEvidence: LineDoneEvidenceV1;                   // L1a；不是执行者、或现在负责的任务没全终结时 not_applicable
   pausedTasks: LinePausedTaskFactsV1[];               // L16：每个暂停中断的任务一项，给“继续”和 T0、T3(c) 用
   lineCards: LineCardFactV1[];                        // 发卡 Session 在线上、或转来的原消息发信 Session 在线上的 waiting_answer 卡

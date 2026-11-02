@@ -58,6 +58,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS, sessionResponsibilityChangedEventFromEvent } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -210,9 +211,9 @@ export async function openDutyMaintenanceFixture(
     const task1 = { projectId: scope.projectId, goalId: goalRef.goalId, taskId: taskIds[0]! };
     const task2 = { projectId: scope.projectId, goalId: goalRef.goalId, taskId: taskIds[1]! };
     const facts = createSessionFactsService({ records });
-    const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts });
+    const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
     const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-      basis: createSessionResponsibilityBasisReader(records), now: () => T0 });
+      basis: createSessionResponsibilityBasisReader(records), now: () => T0, duty: unknownSessionDuty });
     const executions = createRunStateReader({ records });
     // Stable real source capture, outside the changing Kernel/ledger files.
     const root = join(base.directory, 'wp1-cu-verification');

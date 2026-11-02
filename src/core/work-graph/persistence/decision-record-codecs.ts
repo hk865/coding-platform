@@ -31,6 +31,7 @@ import {
 } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { InitializationBindingRefShape } from '../../../contracts/initialization-binding.js';
+import type { WorkLinkRelation } from '../../../contracts/core/identity.js';
 import {
   goalSettingsProblem,
   goalSnapshotValueProblem,
@@ -38,7 +39,7 @@ import {
 } from './record-codecs.js';
 import { createEventCodec, type EventFormat } from './event-codec-factory.js';
 import { eventBodyProblem } from './event-validation.js';
-import { noticeOriginFieldsProblem, type NoticeOriginWireV1 } from './rework-codecs.js';
+import { noticeOriginFieldsProblem, type NoticeOriginWireV1, type Problem } from './rework-codecs.js';
 export type { NoticeOriginWireV1 } from './rework-codecs.js';
 
 // --------------------------------------------------------------------------
@@ -135,6 +136,7 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   ArchitectureBaselineRevision: { strings: ['projectId', 'baselineId'], integers: ['revision'] },
   ProjectCompletionPolicyActive: { strings: ['projectId'] },
   ProjectArchitectureBaselineActive: { strings: ['projectId'] },
+  ProjectRoleLimits: { strings: ['projectId'] },
   PlanRevision: { strings: ['projectId', 'planId'] },
   TaskLease: { strings: ['projectId', 'goalId', 'taskId'] },
   TaskAttempt: { strings: ['projectId', 'goalId', 'taskId', 'attemptId'] },
@@ -202,32 +204,66 @@ export function aggregateRefProblem(value: unknown): string | null {
   for (const field of rule.objects ?? []) {
     if (!isRecord(value[field])) return `an aggregate ref ${aggregateType} requires an object ${field}`;
   }
-  return aggregateType === 'SessionWorkLink' ? sessionWorkLinkPinProblem(value) : null;
+  return aggregateType === 'SessionWorkLink' ? checkWorkLinkRef(value) : null;
 }
 
-/** #22 (lead): the closed `WorkLinkTarget` ref fields per kind (`contracts/core/identity.ts`). */
-const WORK_LINK_TARGET_REF_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  task: ['projectId', 'goalId', 'taskId'],
-  module: ['projectId', 'moduleId'],
-  work: ['aggregateType', 'projectId', 'workspaceId', 'workId'],
-};
+export function isWorkLinkRelation(value: unknown): value is WorkLinkRelation {
+  return value === 'responsible' || value === 'participates' || value === 'investigated';
+}
 
-/** #22 (lead): a SessionWorkLink pin names a real relation and a well-formed target in its own project. */
-function sessionWorkLinkPinProblem(value: UnknownRecord): string | null {
-  const relation = value['relation'];
-  if (relation !== 'responsible' && relation !== 'participates' && relation !== 'investigated') {
-    return 'an aggregate ref SessionWorkLink requires a known relation';
+export function checkTarget(value: unknown): Problem {
+  if (!isRecord(value)) return 'work link target must be an object';
+  const ref = value['ref'];
+  if (!isRecord(ref)) return 'work link target.ref must be an object';
+  if (value['kind'] === 'module') {
+    if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['projectId', 'moduleId'])) return 'module target must be a ModuleRef';
+    if (!nonEmpty(ref['projectId']) || !nonEmpty(ref['moduleId'])) return 'module target requires projectId and moduleId';
+    return null;
   }
-  const target = value['target'] as UnknownRecord;
-  const kind = target['kind'];
-  const fields = typeof kind === 'string' ? WORK_LINK_TARGET_REF_FIELDS[kind] : undefined;
-  const ref = target['ref'];
-  if (fields === undefined || !hasOnlyKeys(target, ['kind', 'ref']) || !isRecord(ref) || !hasOnlyKeys(ref, fields)
-    || fields.some((field) => !nonEmpty(ref[field]))
-    || (kind === 'work' && ref['aggregateType'] !== 'WorkContextBinding')) {
-    return 'an aggregate ref SessionWorkLink requires a task, work or module target';
+  if (value['kind'] === 'task') {
+    if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['projectId', 'goalId', 'taskId'])) return 'task target must be a TaskTriple';
+    if (!nonEmpty(ref['projectId']) || !nonEmpty(ref['goalId']) || !nonEmpty(ref['taskId'])) {
+      return 'task target requires projectId, goalId and taskId';
+    }
+    return null;
   }
-  if (ref['projectId'] !== value['projectId']) return 'an aggregate ref SessionWorkLink target belongs to another project';
+  if (value['kind'] === 'work') {
+    if (!hasOnlyKeys(value, ['kind', 'ref']) ||
+      !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'workspaceId', 'workId'])) {
+      return 'work target must be a WorkContextRef';
+    }
+    if (ref['aggregateType'] !== 'WorkContextBinding' || !nonEmpty(ref['projectId']) ||
+      !nonEmpty(ref['workspaceId']) || !nonEmpty(ref['workId'])) {
+      return 'work target is not a valid WorkContextRef';
+    }
+    return null;
+  }
+  if (value['kind'] === 'goal') {
+    if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'goalId'])) return 'goal target must be a GoalRef';
+    return ref['aggregateType'] === 'Goal' && nonEmpty(ref['projectId']) && nonEmpty(ref['goalId']) ? null : 'goal target is not a valid GoalRef';
+  }
+  if (value['kind'] === 'project') {
+    if (!hasOnlyKeys(value, ['kind', 'ref']) || !hasOnlyKeys(ref, ['projectId'])) return 'project target must be a ProjectScope';
+    return nonEmpty(ref['projectId']) ? null : 'project target requires projectId';
+  }
+  return 'work link target kind must be module, task, work, goal or project';
+}
+
+export function checkWorkLinkRef(value: unknown): Problem {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['aggregateType', 'projectId', 'sessionId', 'target', 'relation'])) {
+    return 'work link ref carries unknown fields';
+  }
+  if (value['aggregateType'] !== 'SessionWorkLink' || !nonEmpty(value['projectId']) || !nonEmpty(value['sessionId'])) {
+    return 'work link ref is not a valid SessionWorkLinkRef';
+  }
+  const targetValue = value['target'];
+  const target = checkTarget(targetValue);
+  if (target !== null) return target;
+  if (isRecord(targetValue) && isRecord(targetValue['ref']) &&
+    value['projectId'] !== targetValue['ref']['projectId']) {
+    return 'work link target project disagrees with the link ref project';
+  }
+  if (!isWorkLinkRelation(value['relation'])) return 'work link relation is not recognized';
   return null;
 }
 

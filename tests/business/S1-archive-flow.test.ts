@@ -36,6 +36,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import type { GraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import type { ArchiveSessionInput, LinkSessionWorkInput } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ARCHIVED_EVENT } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { decodeSessionWorkLink, sessionWorkLinkRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
@@ -212,10 +213,10 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
   const sessionFacts = createSessionFactsService({ records });
   // The trusted basis is the REAL reader, never a fake.
   createSessionResponsibilityService({
-    records, lookups: records, basis: createSessionResponsibilityBasisReader(records), now,
+    records, lookups: records, basis: createSessionResponsibilityBasisReader(records), duty: unknownSessionDuty, now,
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
-  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });
+  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
   const controls = createRunControlService({
     records, authority: createMaterialRecordReaders(records).authority, reads, now, eventId,
   });

@@ -20,7 +20,7 @@
 `note-batch-reader.ts` — 批量读当前指针与被指 head，缺指针/缺 head 的语义由调用方选。
 `note-decision-source.ts` — 注记复核决定卡来源（communication/business 消费的对象）：Goal 的 bucket，或项目 subject 的无 Goal bucket `[projectId, null, 'pending_review']`。
 `note-scribe-todos.ts` — 书记待办：`updateDue`、`pending`、`immediate` 三类。
-`scribe-scope.ts` — 书记范围事实、写准入、管理范围与按范围计数。
+`scribe-scope.ts` — 书记范围事实、写准入、管理范围与按范围计数；包含判定、模块深度与最深包含 region 的纯规则在 `state/role-scope.ts`（本文件只导入 `regionContains`/`deepestContainingRegion`，不另留副本）。只有目标链接的书记是逐 Session 的 `unavailable`/`goal_scope_pending`：写准入答 `unavailable`，`manages` 答拒绝，按范围计数不把它当成持有所求范围；其他书记与调用方照旧。
 `note-version-lists.ts` — 计划版本与目录版本的分页列表。
 `note-memory-material.ts` — 记忆材料端口的薄适配；无 Goal 的项目材料由读模型组装。
 `note-rendering.ts` — 理解正文的五段渲染。
@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | `createNoteService` | `src/core/work-graph/notes/note-service.ts:468` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点 | 注入给 composition；所有注记写入与处置走它 |
 | `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:357` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空） | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
-| `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:263` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
+| `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:228` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
 | `createNoteDecisionSource` | `src/core/work-graph/notes/note-decision-source.ts:114` | 注记复核决定卡来源：`readNoteDecisions` 按 `subject` 读 Goal 或项目的卡（项目桶无 Goal 窗口、无 cancelled 门，批读与理由读同一套）、按 pin 读一张（`goalId: null` 走项目卡；开着、关了都带回注记自己的 subject，读的一方先比 subject 再看开关）、应用决定 | 装配决定队列/决定应用 |
 | `createNoteScribeTodos` | `src/core/work-graph/notes/note-scribe-todos.ts:76` | 书记待办：`pending`、`updateDueTodos`、`immediate`，复用同一锚点读 | Host 提醒/书记心跳 |
 | `createVersionLists` | `src/core/work-graph/notes/note-version-lists.ts:69` | 计划版本/目录版本列表：新到旧、每页 ≤50、游标绑定请求 | 版本页；不要另写分页 |

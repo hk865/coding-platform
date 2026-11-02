@@ -1283,6 +1283,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
               out.push(taskNodeOf(universe.plan, target.ref.taskId));
             }
             if (target.kind === 'module') out.push({ kind: 'module', ref: target.ref });
+            if (target.kind === 'goal' && universe.goal !== null
+              && target.ref.goalId === universe.goal.ref.goalId) out.push({ kind: 'goal', ref: universe.goal.ref });
           }
           if (universe.goal !== null && card.record.lastExecutionRef !== null
             && card.record.lastExecutionRef.aggregateType === 'Run') {
@@ -1311,7 +1313,16 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         }
         break;
       }
-      case 'goal':
+      case 'goal': {
+        for (const card of universe.sessionCards) {
+          for (const link of card.links) {
+            if (link.ref.target.kind !== 'goal' || link.ref.target.ref.goalId !== node.ref.goalId) continue;
+            out.push({ kind: 'session',
+              ref: { projectId: node.ref.projectId, sessionId: card.record.ref.sessionId } });
+          }
+        }
+        break;
+      }
       case 'stage':
         break;
     }

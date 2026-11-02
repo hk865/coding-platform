@@ -186,23 +186,14 @@ export type LocalWorkbenchHostOptions = {
   /** Trusted Workflow advancement policy, forwarded unchanged. */
   workflow?: TargetPlatformOptions['workflow'];
   /**
-   * Slice 6A §3.4.7 (book ruling 4.7): the open-secretary cap. Unset means no
-   * real cap in 6A (the production adapter always admits). A positive integer
-   * selects the adapter that counts the workspace's live secretary Sessions
-   * (lifecycle `active`, duty `secretary`) and refuses a new line at the cap.
-   * A change is a Host restart with a new option value (the next Host's own
-   * profile list and cap are what that open uses).
-   */
-  secretaryOpenCap?: number;
-  /**
    * The request driver switch. Absent means `'on'`: under the instance lease
    * the Host runs a wake loop and two request queues per workspace, so a
    * submitted round advances without any Query route call. `'off'` builds no
    * loop and no queue at all, so a round waits where the command left it, for
    * the Query routes (`queries/claim|prepare|start`) or a later Host with the
-   * driver on. Like `secretaryOpenCap` it is a start option — a change is a
-   * Host restart — with no settings field and no screen: a caller that drives
-   * a round by hand must not race a Host that claims and runs it on its own.
+   * driver on. It is a start option — a change is a Host restart — with no
+   * settings field and no screen: a caller that drives a round by hand must not
+   * race a Host that claims and runs it on its own.
    */
   requestDriver?: 'on' | 'off';
   /** Host-internal controlled-provider seam for the normal-chain acceptance.
@@ -498,12 +489,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ? undefined : structuredClone(options.runtimeConfiguration);
   const checks: TargetPlatformOptions['checks'] = options.checks === undefined ? undefined : structuredClone(options.checks);
   const workflow: TargetPlatformOptions['workflow'] = options.workflow === undefined ? undefined : structuredClone(options.workflow);
-  // Slice 6A §3.4.7: a cap is a positive integer or absent (no cap). A bad
-  // value fails startup instead of silently admitting everything.
-  if (options.secretaryOpenCap !== undefined
-    && (!Number.isSafeInteger(options.secretaryOpenCap) || options.secretaryOpenCap < 1)) {
-    throw new Error('secretaryOpenCap must be a positive integer when present');
-  }
   // The request driver is a two-valued start switch; an unreadable value fails
   // the start instead of silently driving rounds or silently dropping them.
   if (options.requestDriver !== undefined && options.requestDriver !== 'on' && options.requestDriver !== 'off') {
@@ -730,7 +715,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(checks === undefined ? {} : { checks }),
       ...(workflow === undefined ? {} : { workflow }),
       secretaryProfiles,
-      ...(options.secretaryOpenCap === undefined ? {} : { secretaryOpenCap: options.secretaryOpenCap }),
       sourcePolicyFor,
       resourceCaps,
       operatorActor: actor,
@@ -916,7 +900,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // start-up workspaces in `start` and a later one in `addWorkspace`.
     loop.register(REQUEST_ROUNDS_QUEUE, queues.rounds,
       { aggregateTypes: ['QueryJob', 'QueryRun', 'Session', 'SessionMessage'] });
-    loop.register(REQUEST_UNASSIGNED_QUEUE, queues.unassigned);
+    loop.register(REQUEST_UNASSIGNED_QUEUE, queues.unassigned,
+      { aggregateTypes: ['QueryJob', 'QueryRun', 'Session', 'ProjectRoleLimits'] });
     // A request command's commit reaches every queue of its workspace: the round it appended needs a claim or a
     // drain, a waiting request needs the unassigned pass, and an arming command reaches the lifecycle work at once.
     requestWakeSink = (scope, source) => {

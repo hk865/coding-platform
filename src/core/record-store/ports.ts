@@ -18,6 +18,7 @@
  * non-empty input instead of accepting it and silently ignoring it.
  */
 import type { CommitCursor, CommandFingerprint } from "../../contracts/command-event.js";
+import { BOUND_CURSOR_FIELDS, type BoundCursorField } from "../../contracts/data-format.js";
 import type { VersionedRef } from "../../contracts/ledger.js";
 import type { RecordLookupIndex } from './lookup-ports.js';
 
@@ -91,11 +92,14 @@ export type UniqueClaimChange = {
 export type CommitCursorBinding = {
   refKey: string;
   /**
-   * The closed set of bindable top-level cursor fields (spec §2.3):
-   * the two notice positions extend the original `since`/`until` pair.
+   * The closed set of bindable cursor fields (spec §2.3): the top-level names
+   * and the two nested array element paths.
    */
-  field: "since" | "until" | "unavailableSince" | "responseSince" | "startedSince";
+  field: BoundCursorField;
 };
+
+/** The one copy of the bindable cursor field set, used by the binder and the schema registration. */
+export const COMMIT_CURSOR_FIELDS = BOUND_CURSOR_FIELDS;
 
 export type StoredVersion = { refKey: string; revision: number };
 
@@ -154,8 +158,8 @@ export type RecordBatchRead = {
 export type EncodedRecordSchema = {
   readonly schemaId: string;
   readonly aggregateType: string;
-  /** Explicit top-level fields eligible for commit cursor binding. */
-  readonly commitCursorFields?: readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[];
+  /** Explicit fields eligible for commit cursor binding. */
+  readonly commitCursorFields?: readonly BoundCursorField[];
   validate(record: EncodedRecord): DecodeResult<EncodedRecord>;
 };
 

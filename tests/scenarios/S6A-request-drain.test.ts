@@ -112,6 +112,14 @@ async function blockedThenAssignable(world: S6ARequestWorld): Promise<{
   const later = await submit(world, 's6a-blocked-later');
   expect(later).toMatchObject({ status: 'queued', assignment: 'unassigned', secretary: null,
     waitReason: 'secretary_open_cap' });
+  // The failed line's reservation keeps its seat until a retry converts it, so the later request needs one
+  // more open seat to create its own line.
+  const raisedLimits = expectObject((await world.post('projects/role-limits',
+    body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+  expect(raisedLimits['status']).toBe('ready');
+  expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-drain-blocked-seat',
+    expectedRevision: expectObject(raisedLimits['value'])['revision'], open: { secretary: 3 } }))).body)['status'])
+    .toBe('committed');
   // Free A's line, then archive A: B stays busy, one active secretary remains.
   await world.finishQuery(aBusy);
   await world.archive(busyA);
@@ -126,7 +134,13 @@ async function blockedThenAssignable(world: S6ARequestWorld): Promise<{
 
 describe.each(['memory', 'sqlite'] as const)('SE1 cap, drain and archived owner (%s)', backend => {
   it('cap 2: a request and its follow-up wait; one drain writes one assigned round, replay writes none', async () => {
-    const world = await open(backend, { secretaryOpenCap: 2 });
+    const world = await open(backend);
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-drain-cap-open',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { earlier, later } = await pair(world);
     const earlierBusy = await world.occupy(earlier);
     await world.occupy(later);
@@ -200,7 +214,13 @@ describe.each(['memory', 'sqlite'] as const)('SE1 cap, drain and archived owner 
   });
 
   it('R-01a: an earlier line_pending request does not stop the drain; the later request is assigned', async () => {
-    const world = await open(backend, { secretaryOpenCap: 2 });
+    const world = await open(backend);
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-drain-blocked-open',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { blockedRoot, laterRoot, busy } = await blockedThenAssignable(world);
 
     const drained = await drain(world);
@@ -227,7 +247,13 @@ describe.each(['memory', 'sqlite'] as const)('SE1 cap, drain and archived owner 
   });
 
   it('R-01a: maxRequests 1 returns a continuation that crosses the blocked request and wraps', async () => {
-    const world = await open(backend, { secretaryOpenCap: 2 });
+    const world = await open(backend);
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-drain-continuation-open',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { blockedRoot, laterRoot, busy } = await blockedThenAssignable(world);
 
     // The first request is the only one in the page: its blocked pick ends the
@@ -257,7 +283,13 @@ describe.each(['memory', 'sqlite'] as const)('SE1 cap, drain and archived owner 
 
 describe('SQLite only: the cap after reopen', () => {
   it('SQLite only: reopening with secretaryOpenCap 3 and draining creates a new line C', async () => {
-    const world = await open('sqlite', { secretaryOpenCap: 2 });
+    const world = await open('sqlite');
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-reopen-cap-open-2',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { earlier, later } = await pair(world);
     const first = await submit(world, 's6a-reopen-1');
     expect(sessionOf(first['secretary'])).toEqual(later.ref);
@@ -268,7 +300,13 @@ describe('SQLite only: the cap after reopen', () => {
     const waitingRoot = waiting['requestRoot'] as QueryJobRef;
     expect(await world.listSessions()).toHaveLength(2);
 
-    await world.reopen({ extraHostOptions: { secretaryOpenCap: 3 } });
+    await world.reopen();
+    const raisedLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(raisedLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-reopen-cap-open-3',
+      expectedRevision: expectObject(raisedLimits['value'])['revision'], open: { secretary: 3 } }))).body)['status'])
+      .toBe('committed');
     // Both owners' pending rounds survive the reopen, so the raised cap is what
     // lets the drain create the third line for the waiting request.
     expect((await requestView(world, first['requestRoot'] as QueryJobRef)).owner).toEqual(later.ref);

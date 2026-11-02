@@ -85,10 +85,14 @@ const workRef = z.object({
   aggregateType: z.literal('WorkContextBinding'),
   projectId: identifier, workspaceId: identifier, workId: identifier,
 }).strict();
+const goalRef = z.object({ aggregateType: z.literal('Goal'), projectId: identifier, goalId: identifier }).strict();
+const projectRef = z.object({ projectId: identifier }).strict();
 const targetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('task'), ref: taskRef }).strict(),
   z.object({ kind: z.literal('module'), ref: moduleRef }).strict(),
   z.object({ kind: z.literal('work'), ref: workRef }).strict(),
+  z.object({ kind: z.literal('goal'), ref: goalRef }).strict(),
+  z.object({ kind: z.literal('project'), ref: projectRef }).strict(),
 ]);
 const sessionSchema = z.object({ projectId: identifier, sessionId: identifier }).strict();
 const pageSchema = z.object({

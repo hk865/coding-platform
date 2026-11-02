@@ -273,7 +273,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/find_related_sessions.json",
-    "sha256": "dabd7f37eee3ace82eda3b550f1663a57ca1417c5225a67b1e06f8344ade848c"
+    "sha256": "50ad2519060a05e085275cfd2e1cb1949c3e196dd183d49f7e1bdb704d367fe5"
   },
   {
     "path": "resources/prompts/platform/tools/read_session_card.json",

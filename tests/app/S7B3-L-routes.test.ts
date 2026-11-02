@@ -23,7 +23,7 @@ const worlds: S6ARequestWorld[] = [];
 afterEach(async () => { for (const world of worlds.splice(0)) await world.close().catch(() => undefined); });
 
 describe('L-routes: messages/forward and waits/dispose over the real Host', () => {
-  it('forwards an undelivered message, disposes a transferred wait, and refuses a non-person, a foreign workspace and a gone destination', async () => {
+  it('forwards an undelivered message (also to another workspace of the project), disposes a transferred wait, and refuses a non-person, a foreign project and a gone destination', async () => {
     const opened = await openS6ATwoWorkspaceWorld({ backend: 'memory',
       extraBindings: [S7A_REPLY_TOOLS, { ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] }] });
     const world = opened.world as S6AHostWorld;
@@ -62,16 +62,30 @@ describe('L-routes: messages/forward and waits/dispose over the real Host', () =
     }))).body).toEqual({ status: 'rejected', code: 'invalid', reason: 'destination_gone' });
     expect(await readS7BMessage(world, toGone.ref)).toEqual(goneBefore);
 
-    // ---- a real Session in the second workspace: cross_workspace_forward, not not_found.
+    // ---- a target of another project keeps cross_workspace_forward, not not_found.
     const crossRecipient = await sessionOf(world,
       await createS6BLine(main, { label: 'l-routes-cross-recipient', role: S6A_WORK_ROLE }));
     const cross = await sendS7A2PersonMessage(world, { label: 'cross', recipient: crossRecipient.ref });
     await world.archive(crossRecipient);
     const crossBefore = await readS7BMessage(world, cross.ref);
     expect((await world.post('messages/forward', plain(S6A_SCOPE, {
-      commandId: 'l-routes-cross-forward', messageRef: cross.ref, to: secondLine.ref,
+      commandId: 'l-routes-cross-project-forward', messageRef: cross.ref,
+      to: { projectId: 'another-project', sessionId: secondLine.ref.sessionId },
     }))).body).toEqual({ status: 'rejected', code: 'invalid', reason: 'cross_workspace_forward' });
     expect(await readS7BMessage(world, cross.ref)).toEqual(crossBefore);
+
+    // ---- the same-project forward to the second workspace is delivered, and its copy lands there with the
+    // original body ref, readable by the receiving workspace's own Host context.
+    const crossed = (await world.post('messages/forward', plain(S6A_SCOPE, {
+      commandId: 'l-routes-cross-forward', messageRef: cross.ref, to: secondLine.ref,
+    }))).body as ForwardMessageResultV1;
+    expect(crossed).toMatchObject({ status: 'forwarded', replayed: false });
+    if (crossed.status !== 'forwarded') throw new Error(`L-routes: ${JSON.stringify(crossed)}`);
+    expect(crossed.message).toMatchObject({ recipient: secondLine.ref,
+      ref: { projectId: S6A_SCOPE.projectId, workspaceId: second.scope.workspaceId } });
+    expect(ready<{ text: string }>(await world.dispatch('messages/body', second.humanContext(),
+      plain(second.scope, { messageRef: crossed.message.ref, part: 'message' })), 'the forwarded body').text)
+      .toBe('S7A2 cross message');
 
     // ---- a non-person caller: the route's person guard answers before the owner, so nothing is written.
     const liveBefore = await inboxOf(inboxWorld, live.ref);

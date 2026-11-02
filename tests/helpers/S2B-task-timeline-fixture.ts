@@ -61,6 +61,7 @@ import { createEvidenceService } from '../../src/core/work-graph/evidence/eviden
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -188,7 +189,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
     now, eventId });
   const runReads = createRunStateReader({ records: baseRecords });
   const sessionFacts = createSessionFactsService({ records: baseRecords });
-  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, sessionFacts });
+  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, sessionFacts, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records: baseRecords, lookups: baseRecords, sessionFacts, now });
   const authority = createMaterialRecordReaders(baseRecords).authority;
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });

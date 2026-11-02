@@ -19,6 +19,7 @@ import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from '../helpers/S
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6AWorldOptions } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B, holdS6BRequestRound } from '../helpers/S6B1-fixture.js';
 import { openS7B2RoundWorld } from '../helpers/S7B2-secretary-rounds.js';
+import { setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import { jsonOf } from '../helpers/S7C-member-fixture.js';
 import { S7A_REPLY_TOOLS, sessionOf } from '../helpers/S7A-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
@@ -134,6 +135,7 @@ describe('Q-read-requests: the secretary reads the main request history', () => 
     const paging = await openS7B2RoundWorld(options);
     try {
       const world = paging.world;
+      await setS7D1Open(world, 'secretary', 32, 0, 's7c1-q-read-secretaries');
       const ws = s6aCardsWorkspace(world, S6A_SCOPE);
       const goalId = (await ws.createGoal('q-read-goal', 'Q read Goal')).ref.goalId;
       // C is the oldest of the Goal's requests.

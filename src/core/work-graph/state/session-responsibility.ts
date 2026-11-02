@@ -92,7 +92,7 @@ export function transitionResponsibility(
  * unchanged and binds nothing; a closed one is reopened at revision + 1 and
  * rebound.
  */
-function openDestination(
+export function openDestination(
   existing: SessionWorkLink | null, to: SessionRef, target: SessionWorkLink['ref']['target'],
 ): { opened: PendingResponsibleLinkV1; openedBound: 'since' | null } {
   if (existing !== null && existing.until === null) return { opened: existing, openedBound: null };
@@ -105,4 +105,12 @@ function openDestination(
   };
   if (existing === null) return { opened: { ref, revision: 1, since: null, until: null }, openedBound: 'since' };
   return { opened: { ...existing, revision: existing.revision + 1, since: null, until: null }, openedBound: 'since' };
+}
+
+/** §3.2 S1-LINK-01: the destination may not be retired, archived, archiving or a readonly copy. */
+export function destinationEligible(session: SessionRecord): boolean {
+  if (session.lifecycle !== 'active') return false;
+  if (session.health !== 'available') return false;
+  if (session.archiveRequest !== undefined && session.archiveRequest !== null) return false;
+  return session.provenance.kind !== 'readonly_copy';
 }

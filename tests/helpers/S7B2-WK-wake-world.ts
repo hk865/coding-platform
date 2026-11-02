@@ -26,6 +26,7 @@ import { basisOf } from './S7B2-WK-basis.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from './S6A-request-fixture.js';
 import type { S6AHostWorld } from './S6A-host-fixture.js';
 import { adoptS6BPlan, createS6BLine } from './S6B1-fixture.js';
+import { setS7D1Open } from './S7D1-allocation-world.js';
 import { approveS7A2Message, driveS7A2Release, readS7A2DispatchBasis } from './S7A2-fixture.js';
 import { sessionOf, setS7AAutonomy } from './S7A-fixture.js';
 
@@ -100,6 +101,7 @@ export type S7B2RestartWorld = {
  */
 export async function restartGoalWaits(options: { backend: 'sqlite' }): Promise<S7B2RestartWorld> {
   const { world, clock } = await openS7BWorld(options);
+  await setS7D1Open(world, 'executor', 40, 0, 's7b2-wk-restart-executors');
   const waits: Awaited<ReturnType<typeof runS7BWait>>[] = [];
   for (let index = 1; index <= 19; index += 1) {
     waits.push(await runS7BWait(world, { label: `s7b2-wk-restart-${String(index).padStart(2, '0')}` }));

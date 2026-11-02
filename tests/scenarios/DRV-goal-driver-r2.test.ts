@@ -10,6 +10,7 @@ import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine } from '../helpers/S6B1-fixture.js';
 import { openS7B2ConsumeWorld, type S7B2ConsumeWorld } from '../helpers/S7B2-consumable-sessions.js';
+import { setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import { committed, ready, sameRun, sessionOf } from '../helpers/S7A-fixture.js';
 import { limitHold } from '../helpers/hold-limit.js';
 import { driverRead, runsOf, startTaskDriver } from '../helpers/DRV-fixture.js';
@@ -26,6 +27,7 @@ describe('DRV goal driver person intervention on an idle line (memory)', () => {
     const consume = await openS7B2ConsumeWorld();
     worlds.push(consume);
     const { world } = consume;
+    await setS7D1Open(world, 'executor', 40, 0, 'drv-r2-executors');
     // Three measured passes settle the consume world's own setup turns, so the
     // four below observe only this row's intervention.
     world.scriptReplies(Array.from({ length: 30 }, (_, index) => ({

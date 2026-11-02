@@ -11,7 +11,9 @@
  * crash that re-reads a newer revision cannot collide on idempotency.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef, VersionPin, WorkLinkTarget, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type {
+  SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkTarget, WorkspaceScope,
+} from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type {
@@ -19,17 +21,27 @@ import type {
 } from '../../../contracts/core/session-archive.js';
 import { deriveArchiveStepCommitIdentityV1 } from '../../../contracts/core/session-archive.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
-import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { canonicalKey, canonicalOf } from '../../../contracts/fingerprint.js';
+import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
+import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import {
+  roleLineDutyOf, roleScopeClaimKey, roleScopeOfTarget,
+  type RoleLineDutyV1, type RoleScopeClaimChangeV1,
+} from '../../../contracts/role-lines.js';
 import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
-  CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
+  CommitCursorBinding, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { GraphWrite } from '../model/task-contracts.js';
-import type { SessionResponsibilityBasisPort, SessionResponsibilityBasisV1 } from '../model/session-facts-contracts.js';
+import type {
+  ResponsibilityBasisV1, SessionResponsibilityBasisPort,
+} from '../model/session-facts-contracts.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import { readCurrentCatalogWindow } from '../architecture/catalog-service.js';
 import {
-  checkPlainSessionRef, checkTarget, decodeSessionRecord, decodeSessionWorkLink,
+  checkPlainSessionRef, checkTarget, checkWorkLinkRef, decodeSessionRecord, decodeSessionWorkLink,
   encodePendingSessionWorkLink, encodeSessionRecord, plainSessionRefToAggregate,
   sessionAggregateRefKey, sessionWorkLinkRefKey,
 } from './session-record-codecs.js';
@@ -43,14 +55,33 @@ import {
   sessionResponsibilityChangedEventFromEvent, type SessionResponsibilityChangedEventV1,
 } from './lifecycle-record-codecs.js';
 import {
-  transitionResponsibility, type PendingResponsibleLinkV1, type ResponsibilityGuardV1,
+  destinationEligible, transitionResponsibility, type PendingResponsibleLinkV1, type ResponsibilityGuardV1,
   type ResponsibilityStateV1,
 } from '../state/session-responsibility.js';
+import {
+  planReanchor, REANCHOR_REASONS, type ReanchorCatalogFactsV1, type ReanchorGoalFactsV1,
+  type ReanchorPlanV1, type ReanchorReasonV1,
+} from '../state/reanchor.js';
+import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from '../state/role-scope.js';
+import { roleLineCommitContribution } from './role-scope-commit.js';
+import { readGoalRecord } from './session-targets.js';
 
 /** The saved four numbers of one handoff transfer plus the task it moves. */
 export type SavedTransferInputV1 = {
   requestId: string; from: SessionRef; to: SessionRef; target: WorkLinkTarget;
   expected: { fromSession: number; toSession: number; sourceLink: number; destinationLink: number };
+};
+export type ReanchorInputV1 = {
+  session: SessionRef;
+  close: readonly SessionWorkLinkRef[];
+  open: readonly { target: WorkLinkTarget }[];
+  reason: ReanchorReasonV1;
+};
+export type ReanchorResultV1 = {
+  session: SessionRecord;
+  closed: readonly SessionWorkLinkRef[];
+  opened: readonly SessionWorkLinkRef[];
+  owners: readonly { link: SessionWorkLinkRef; claimKey: string }[];
 };
 export interface SessionResponsibilityReceiptReadPort {
   /** Read only, never attempts: the committed transfer under the saved identity, or `not_found`. */
@@ -66,23 +97,18 @@ export interface SessionResponsibilityPort {
   closeTerminalResponsibility(ctx: CoreCallContext, request: GraphWrite<{
     sessionRef: SessionRef; target: WorkLinkTarget;
   }>): Promise<WriteResult<SessionWorkLink>>;
+  reanchorSessionResponsibility(ctx: CoreCallContext, request: GraphWrite<ReanchorInputV1>):
+    Promise<WriteResult<ReanchorResultV1>>;
 }
 
 export type SessionResponsibilityStores = {
   records: GoalRecordTransactionPort;
   lookups: RecordLookupPort;
   basis: SessionResponsibilityBasisPort;
+  duty: SessionDutyReadPort;
   now(): string;
 };
 
-/** The shared map takes a version-pin `current`; a `unique_conflict` carries a claim slot instead. */
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  return sessionStoreFailureToRejection({
-    code: failure.code,
-    reason: failure.reason,
-    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
-  });
-}
 function mapReadFailure<T>(result: ReadResult<T>): CoreRejection {
   if (result.status === 'rejected') return result;
   if (result.status === 'not_found') return reject('not_found', 'the responsibility facts do not exist');
@@ -104,6 +130,43 @@ export function responsibleLinkRef(session: SessionRef, target: WorkLinkTarget) 
   return { ...session, aggregateType: 'SessionWorkLink' as const, target, relation: 'responsible' as const };
 }
 
+/** The shared claim adapter: only a `responsible` link naming a role scope takes part in a claim. */
+export async function scopeClaimChangesOf(
+  ctx: CoreCallContext, duty: SessionDutyReadPort, session: SessionRecord,
+  close: readonly SessionWorkLinkRef[], open: readonly SessionWorkLinkRef[],
+): Promise<{ ok: true; duty: PlatformDutyV1 | null; changes: readonly RoleScopeClaimChangeV1[] }
+  | { ok: false; rejection: CoreRejection }> {
+  const closeScopes = close.filter((link) => link.relation === 'responsible' && roleScopeOfTarget(link.target) !== null);
+  const openScopes = open.filter((link) => link.relation === 'responsible' && roleScopeOfTarget(link.target) !== null);
+  if (closeScopes.length === 0 && openScopes.length === 0) return { ok: true, duty: null, changes: [] };
+  const resolved = await duty(session.role, ctx);
+  if (resolved.status !== 'ready') {
+    return {
+      ok: false,
+      rejection: reject('unavailable',
+        resolved.status === 'rejected' ? resolved.reason : 'the Session duty is not ready'),
+    };
+  }
+  const counted = roleLineDutyOf(resolved.value);
+  if (resolved.value === 'unknown' || counted === null) {
+    return { ok: false, rejection: reject('unavailable', 'the Session duty is unknown') };
+  }
+  return {
+    ok: true,
+    duty: resolved.value,
+    changes: responsibilityClaimChanges({
+      projectRef: { projectId: session.ref.projectId },
+      close: closeScopes.map((link) => ({ link, duty: counted })),
+      open: openScopes.map((link) => ({ link, duty: counted })),
+    }),
+  };
+}
+
+/** A `0` pin means the caller read an absent link; the store's CAS spells that `null`, never a revision the row never had. */
+function cas(revision: number | null): number | null {
+  return revision === null || revision === 0 ? null : revision;
+}
+
 function targetProblem(target: unknown, scope: WorkspaceScope): string | null {
   const problem = checkTarget(target);
   if (problem !== null) return problem;
@@ -115,17 +178,9 @@ function targetProblem(target: unknown, scope: WorkspaceScope): string | null {
   return null;
 }
 
-/** §3.2 S1-LINK-01: the destination may not be retired, archived, archiving or a readonly copy. */
-function destinationEligible(session: SessionRecord): boolean {
-  if (session.lifecycle !== 'active') return false;
-  if (session.health !== 'available') return false;
-  if (session.archiveRequest !== undefined && session.archiveRequest !== null) return false;
-  return session.provenance.kind !== 'readonly_copy';
-}
-
 export function createSessionResponsibilityService(stores: SessionResponsibilityStores):
   SessionResponsibilityPort & SessionResponsibilityReceiptReadPort {
-  const { records, basis, now } = stores;
+  const { records, basis, duty, now } = stores;
 
   function linkAt(recordsIn: readonly { refKey: string; json: string }[], key: string): SessionWorkLink | null | CoreRejection {
     const found = recordsIn.find((entry) => entry.refKey === key);
@@ -144,7 +199,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     opened: PendingResponsibleLinkV1 | null;
     openedBound: 'since' | null;
     archiveStep: ArchiveStepRefV1 | null;
-    basis: SessionResponsibilityBasisV1;
+    basis: ResponsibilityBasisV1;
     eventId: string;
   }): SessionResponsibilityChangedEventV1 {
     return {
@@ -161,12 +216,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       opened: args.opened,
       openedBound: args.openedBound,
       archiveStep: args.archiveStep,
-      taskBasis: {
-        task: args.basis.task,
-        planRef: args.basis.planRef,
-        terminalCause: args.basis.terminalCause,
-        finishedAt: args.basis.finishedAt,
-      },
+      basis: args.basis,
     };
   }
 
@@ -178,12 +228,10 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     basisGuards: readonly RecordGuard[];
     expectedSource: number; expectedDestination: number | null;
     expectedSourceLink: number | null; expectedDestinationLink: number | null;
-  }): PreparedCommit {
+    claimChanges: readonly RoleScopeClaimChangeV1[];
+  }): { ok: true; prepared: PreparedCommit } | { ok: false; rejection: CoreRejection } {
     const guards = new Map<string, RecordGuard>();
     for (const guard of args.basisGuards) guards.set(guard.refKey, guard);
-    // A `0` pin means the caller read an absent link; the store's CAS spells
-    // that `null`, never a revision the row never had.
-    const cas = (revision: number | null): number | null => revision === null || revision === 0 ? null : revision;
     guards.set(args.sourceKey, { refKey: args.sourceKey, expectedRevision: cas(args.expectedSource) });
     guards.set(args.sourceLinkKey, { refKey: args.sourceLinkKey, expectedRevision: cas(args.expectedSourceLink) });
     if (args.destinationKey !== null) {
@@ -200,16 +248,27 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       recordsToWrite.push(encodePendingSessionWorkLink(args.opened));
       bindings.push({ refKey: args.destinationLinkKey, field: 'since' });
     }
-    return {
-      identityKey: args.identityKey,
-      fingerprint: args.fingerprint,
-      guards: [...guards.values()],
+    const contribution = roleLineCommitContribution({
+      projectRef: { projectId: args.source.ref.projectId },
       records: recordsToWrite,
-      claims: [],
-      indexGuards: [],
-      indexChanges: [],
+      guards: [...guards.values()],
+      links: [],
+      claimChanges: args.claimChanges,
+      bindings: [],
       events: [encodeSessionResponsibilityChangedEvent(args.event)],
-      commitCursorBindings: bindings,
+      allocation: null,
+    }, null);
+    if (!contribution.ok) return { ok: false, rejection: contribution.rejection };
+    return {
+      ok: true,
+      prepared: {
+        identityKey: args.identityKey,
+        fingerprint: args.fingerprint,
+        indexGuards: [],
+        indexChanges: [],
+        ...contribution.fragment,
+        commitCursorBindings: bindings,
+      },
     };
   }
 
@@ -229,7 +288,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       return reject('unavailable', 'the recorded responsibility receipt does not name exactly one event');
     }
     const at = await records.eventAt(receipt.cursor);
-    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
     if (String(at.value.cursor) !== String(receipt.cursor)) {
       return reject('unavailable', 'the recorded responsibility cursor disagrees with the receipt');
     }
@@ -315,7 +374,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     if (ctx.signal?.aborted) return reject('cancelled', 'the responsibility transfer was cancelled before lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return readTransferResult(existing.value, scope, fromKey);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
     const attempt = await runTransferAttempt({
       ctx, scope, input, expected, fromKey, toKey, sourceLinkKey, destinationLinkKey, identityKey, fingerprint,
@@ -323,7 +382,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const again = await records.lookupCommit({ identityKey, fingerprint });
     if (again.status === 'ready') return readTransferResult(again.value, scope, fromKey);
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return attempt;
   }
 
@@ -383,7 +442,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const { ctx, scope, input, expected, fromKey, toKey, sourceLinkKey, destinationLinkKey, identityKey, fingerprint } = args;
     const pins = expected.value;
     const read = await records.readMany([fromKey, toKey, sourceLinkKey, destinationLinkKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const source = await sessionFromRead(read.value.records, fromKey, scope);
     if ('status' in source) return source;
     if (source.workspaceId !== scope.workspaceId) {
@@ -438,14 +497,15 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const basisResult = await basis.readResponsibilityBasis(ctx, { sessionRef: input.from, target: input.target });
     if (basisResult.status !== 'ready') return mapReadFailure(basisResult);
     const proof = basisResult.value;
-    if (proof.task.projectId !== scope.projectId) {
+    const taskBasis = proof.basis.kind === 'task' ? proof.basis : null;
+    if (taskBasis !== null && taskBasis.task.projectId !== scope.projectId) {
       return reject('forbidden', 'archive_scope: the responsibility Task belongs to another project');
     }
     const guard: ResponsibilityGuardV1 = {
       sameScope: destination.workspaceId === scope.workspaceId,
       targetValid: true,
-      taskTerminal: proof.terminal,
-      writerStopped: proof.writerStopped,
+      taskTerminal: taskBasis === null ? false : proof.terminal,
+      writerStopped: taskBasis === null ? true : proof.writerStopped,
       destinationEligible: destinationEligible(destination),
       pinsMatch,
     };
@@ -460,10 +520,19 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     if (effect === undefined || effect.kind !== 'write_responsibility') {
       throw new Error('a transfer must write the responsibility links');
     }
+    // The claim hand-over: the source duty releases the closed claim, the
+    // destination duty takes the opened one, and one fold covers both lists.
+    const closeChanges = await scopeClaimChangesOf(ctx, duty, effect.source, [effect.closed.ref], []);
+    if (!closeChanges.ok) return closeChanges.rejection;
+    const openChanges = effect.opened !== null && effect.openedBound !== null
+      ? await scopeClaimChangesOf(ctx, duty, destination, [], [effect.opened.ref]) : null;
+    if (openChanges !== null && !openChanges.ok) return openChanges.rejection;
+    const claimChanges = foldRoleScopeClaimChanges({ projectId: scope.projectId },
+      [...closeChanges.changes, ...(openChanges?.changes ?? [])]);
     const event = buildEvent({
       scope, mode: 'transfer', source: effect.source, destination: effect.destination,
       closed: effect.closed, opened: effect.opened, openedBound: effect.openedBound,
-      archiveStep: null, basis: proof, eventId: eventIdOf(identityKey, 'responsibility'),
+      archiveStep: null, basis: proof.basis, eventId: eventIdOf(identityKey, 'responsibility'),
     });
     const prepared = writePrepared({
       identityKey, fingerprint, eventId: event.eventId, event,
@@ -473,15 +542,17 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       basisGuards: proof.guards,
       expectedSource: pins.fromSession.revision, expectedDestination: pins.toSession.revision,
       expectedSourceLink: pins.sourceLink.revision, expectedDestinationLink: pins.destinationLink.revision,
+      claimChanges,
     });
+    if (!prepared.ok) return prepared.rejection;
     if (ctx.signal?.aborted) return reject('cancelled', 'the responsibility transfer was cancelled before commit');
     let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
     try {
-      committed = await records.commit(prepared);
+      committed = await records.commit(prepared.prepared);
     } catch {
       return reject('unavailable', 'the responsibility transfer commit failed before completing');
     }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
     if (committed.replayed) return readTransferResult(committed, scope, fromKey);
     return {
       status: 'committed', replayed: false, cursor: committed.cursor,
@@ -519,10 +590,10 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     });
     if (found.status !== 'ready') {
       if (found.code === 'not_found') return reject('not_found', 'the archive request receipt was not found');
-      return mapStoreFailure(found);
+      return sessionStoreFailureToRejection(found);
     }
     const at = await records.eventAt(found.value.cursor);
-    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
     if (String(at.value.cursor) !== String(found.value.cursor)) {
       return reject('unavailable', 'the archive request cursor disagrees with its receipt');
     }
@@ -588,12 +659,12 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     }
     const existing = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
     if (existing.status === 'ready') return readEventResult(existing.value, scope, sessionAggregateRefKey(plainSessionRefToAggregate(ownedStep.sessionRef)));
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     const attempt = await runDisposeAttempt({ ctx, scope, step: ownedStep, request, choice, identity });
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const again = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
     if (again.status === 'ready') return readEventResult(again.value, scope, sessionAggregateRefKey(plainSessionRefToAggregate(ownedStep.sessionRef)));
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return attempt;
   }
 
@@ -610,7 +681,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const destinationLinkKey = transfer === null ? null : sessionWorkLinkRefKey(responsibleLinkRef(transfer, target));
     const refs = [fromKey, sourceLinkKey, ...(toKey === null ? [] : [toKey]), ...(destinationLinkKey === null ? [] : [destinationLinkKey])];
     const read = await records.readMany(refs);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const source = await sessionFromRead(read.value.records, fromKey, scope);
     if ('status' in source) return source;
     // §4.1 step 8 / D10: a receipt replay is handled above; a NEW commit is only
@@ -637,14 +708,12 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const basisResult = await basis.readResponsibilityBasis(ctx, { sessionRef: step.sessionRef, target });
     if (basisResult.status !== 'ready') return mapReadFailure(basisResult);
     const proof = basisResult.value;
-    if (proof.task.projectId !== scope.projectId) {
-      return reject('forbidden', 'archive_scope: the responsibility Task belongs to another project');
-    }
+    const taskBasis = proof.basis.kind === 'task' ? proof.basis : null;
     const guard: ResponsibilityGuardV1 = {
       sameScope: destination === null || destination.workspaceId === scope.workspaceId,
       targetValid: true,
-      taskTerminal: proof.terminal,
-      writerStopped: proof.writerStopped,
+      taskTerminal: taskBasis === null ? false : proof.terminal,
+      writerStopped: taskBasis === null ? true : proof.writerStopped,
       destinationEligible: destination === null || destinationEligible(destination),
       pinsMatch: true,
     };
@@ -662,7 +731,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const responsibilityEvent = buildEvent({
       scope, mode, source: effect.source, destination: effect.destination,
       closed: effect.closed, opened: effect.opened, openedBound: effect.openedBound,
-      archiveStep: step, basis: proof, eventId: identity.eventId,
+      archiveStep: step, basis: proof.basis, eventId: identity.eventId,
     });
     const prepared = writePrepared({
       identityKey: identity.identityKey, fingerprint: identity.fingerprint, eventId: identity.eventId,
@@ -672,15 +741,17 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       basisGuards: proof.guards,
       expectedSource: source.revision, expectedDestination: destination?.revision ?? null,
       expectedSourceLink: sourceLink?.revision ?? null, expectedDestinationLink: destinationLink?.revision ?? null,
+      claimChanges: [],
     });
+    if (!prepared.ok) return prepared.rejection;
     if (ctx.signal?.aborted) return reject('cancelled', 'the responsibility disposal was cancelled before commit');
     let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
     try {
-      committed = await records.commit(prepared);
+      committed = await records.commit(prepared.prepared);
     } catch {
       return reject('unavailable', 'the responsibility disposal commit failed before completing');
     }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
     if (committed.replayed) return readEventResult(committed, scope, fromKey);
     return {
       status: 'committed', replayed: false, cursor: committed.cursor,
@@ -729,7 +800,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       if (restored.status !== 'committed') return restored;
       return { status: 'committed', value: restored.value.closed, replayed: true, cursor: existing.value.cursor };
     }
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     const attempt = await runTerminalAttempt({ ctx, scope, input, sessionKey, linkKey, expected, identityKey, fingerprint });
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const again = await records.lookupCommit({ identityKey, fingerprint });
@@ -738,7 +809,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       if (restored.status !== 'committed') return restored;
       return { status: 'committed', value: restored.value.closed, replayed: true, cursor: again.value.cursor };
     }
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return attempt;
   }
 
@@ -773,7 +844,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
   }): Promise<WriteResult<SessionWorkLink>> {
     const { ctx, scope, input, sessionKey, linkKey, expected, identityKey, fingerprint } = args;
     const read = await records.readMany([sessionKey, linkKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const source = await sessionFromRead(read.value.records, sessionKey, scope);
     if ('status' in source) return source;
     // A9/§3.4 S:612: the source Session's workspace is part of the leading
@@ -812,12 +883,11 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const basisResult = await basis.readResponsibilityBasis(ctx, { sessionRef: input.sessionRef, target: input.target });
     if (basisResult.status !== 'ready') return mapReadFailure(basisResult);
     const proof = basisResult.value;
-    if (proof.task.projectId !== scope.projectId) {
-      return reject('forbidden', 'archive_scope: the responsibility Task belongs to another project');
-    }
+    const taskBasis = proof.basis.kind === 'task' ? proof.basis : null;
     const guard: ResponsibilityGuardV1 = {
       sameScope: source.workspaceId === scope.workspaceId, targetValid: true,
-      taskTerminal: proof.terminal, writerStopped: proof.writerStopped,
+      taskTerminal: taskBasis === null ? false : proof.terminal,
+      writerStopped: taskBasis === null ? true : proof.writerStopped,
       destinationEligible: true,
       pinsMatch,
     };
@@ -834,7 +904,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     }
     const event = buildEvent({
       scope, mode: 'terminal', source: effect.source, destination: null,
-      closed: effect.closed, opened: null, openedBound: null, archiveStep: null, basis: proof,
+      closed: effect.closed, opened: null, openedBound: null, archiveStep: null, basis: proof.basis,
       eventId: eventIdOf(identityKey, 'responsibility'),
     });
     const prepared = writePrepared({
@@ -844,21 +914,289 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       basisGuards: proof.guards,
       expectedSource: expected.session.revision, expectedDestination: null,
       expectedSourceLink: expected.link.revision, expectedDestinationLink: null,
+      claimChanges: [],
     });
+    if (!prepared.ok) return prepared.rejection;
     if (ctx.signal?.aborted) return reject('cancelled', 'the terminal responsibility close was cancelled before commit');
     let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
     try {
-      committed = await records.commit(prepared);
+      committed = await records.commit(prepared.prepared);
     } catch {
       return reject('unavailable', 'the terminal responsibility close commit failed before completing');
     }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
     if (committed.replayed) {
       const restored = await readEventResult(committed, scope, sessionKey);
       if (restored.status !== 'committed') return restored;
       return { status: 'committed', value: restored.value.closed, replayed: true, cursor: committed.cursor };
     }
     return { status: 'committed', value: boundClosed(effect.closed, committed.cursor), replayed: false, cursor: committed.cursor };
+  }
+
+  // ------------------------------------------------------------------------
+  // reanchorSessionResponsibility (public GraphWrite)
+  // ------------------------------------------------------------------------
+
+  type ReanchorFactReadV1 = {
+    duty: RoleLineDutyV1;
+    goals: ReadonlyMap<string, ReanchorGoalFactsV1>;
+    catalog: ReanchorCatalogFactsV1;
+    guards: readonly RecordGuard[];
+  };
+
+  async function readReanchorFacts(
+    ctx: CoreCallContext, scope: WorkspaceScope, session: SessionRecord,
+    close: readonly WorkLinkTarget[], open: readonly WorkLinkTarget[],
+  ): Promise<ReanchorFactReadV1 | CoreRejection> {
+    const resolved = await duty(session.role, ctx);
+    if (resolved.status !== 'ready') {
+      return reject('unavailable',
+        resolved.status === 'rejected' ? resolved.reason : 'the Session duty is not ready');
+    }
+    const counted = roleLineDutyOf(resolved.value);
+    if (counted === null) return reject('unavailable', 'the Session duty is unknown');
+    const goals = new Map<string, ReanchorGoalFactsV1>();
+    const guards: RecordGuard[] = [];
+    // One Goal read per named goal, close sources and open destinations included.
+    for (const target of [...close, ...open]) {
+      if (target.kind !== 'goal') continue;
+      if (goals.has(target.ref.goalId)) continue;
+      const read = await readGoalRecord(records, target.ref);
+      if (read.status === 'ready') {
+        goals.set(target.ref.goalId, {
+          state: 'present', ref: target.ref, snapshot: read.goal,
+          version: { ref: target.ref, revision: read.goal.revision },
+        });
+        guards.push({ refKey: canonicalKey(target.ref), expectedRevision: read.goal.revision });
+      } else if (read.code === 'not_found') {
+        goals.set(target.ref.goalId, { state: 'absent', ref: target.ref });
+      } else {
+        return mapReadFailure(read);
+      }
+    }
+    // The catalog is read only for a module destination; every other move
+    // passes the explicit none arm (L3.12).
+    let catalog: ReanchorCatalogFactsV1 = { state: 'none', revision: 0 };
+    if (open.some((target) => target.kind === 'module')) {
+      const window = await readCurrentCatalogWindow(records, scope.projectId);
+      if (window.status === 'not_found') {
+        catalog = { state: 'none', revision: 0 };
+      } else if (window.status !== 'ready') {
+        return window;
+      } else {
+        catalog = { state: 'present', revision: window.activeRevision, catalog: window.catalog.catalog };
+        guards.push(...window.guards);
+      }
+    }
+    return { duty: counted, goals, catalog, guards };
+  }
+
+  function resultOf(plan: ReanchorPlanV1): ReanchorResultV1 {
+    const projectId = plan.sessions[0]!.ref.projectId;
+    return {
+      session: plan.sessions[0]!,
+      closed: plan.events.map((event) => event.closed),
+      opened: plan.events.flatMap((event) => event.opened === null ? [] : [event.opened]),
+      owners: plan.claimChanges.filter((change) => change.nextOwner !== null).map((change) => ({
+        link: change.nextOwner!,
+        claimKey: roleScopeClaimKey({ projectRef: { projectId }, duty: change.duty, target: change.target }),
+      })),
+    };
+  }
+
+  async function readReanchorResult(
+    receipt: Extract<Awaited<ReturnType<GoalRecordTransactionPort['commit']>>, { status: 'committed' }>,
+    scope: WorkspaceScope,
+    sessionRef: SessionRef,
+  ): Promise<WriteResult<ReanchorResultV1>> {
+    if (receipt.eventIds.length === 0) return reject('unavailable', 'the recorded reanchor receipt names no event');
+    let lastSequence: number;
+    try {
+      lastSequence = seqOfCommitCursor(receipt.cursor);
+    } catch (error) {
+      return reject('unavailable', `the recorded reanchor cursor is not a ledger cursor: ${String(error)}`);
+    }
+    const firstSequence = lastSequence - (receipt.eventIds.length - 1);
+    if (firstSequence < 1) return reject('unavailable', 'the recorded reanchor receipt has no room for its events');
+    const closed: SessionWorkLinkRef[] = [];
+    const opened: SessionWorkLinkRef[] = [];
+    let session: SessionRecord | null = null;
+    for (const [index, eventId] of receipt.eventIds.entries()) {
+      const cursor = makeCommitCursor(firstSequence + index);
+      const at = await records.eventAt(cursor);
+      if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
+      if (String(at.value.cursor) !== String(cursor) || at.value.event.eventId !== eventId) {
+        return reject('unavailable', 'the recorded reanchor receipt disagrees with its events');
+      }
+      const decoded = sessionResponsibilityChangedEventFromEvent(at.value.event);
+      if (decoded.status !== 'decoded') {
+        return reject('unavailable', `the recorded reanchor event is not decodable: ${decoded.reason}`);
+      }
+      const event = decoded.value;
+      if (event.projectId !== scope.projectId || event.workspaceId !== scope.workspaceId) {
+        return reject('unavailable', 'the recorded reanchor event belongs to another scope');
+      }
+      if (event.source.ref.projectId !== scope.projectId || event.source.ref.sessionId !== sessionRef.sessionId) {
+        return reject('unavailable', 'the recorded reanchor event belongs to another Session');
+      }
+      if (session === null) session = event.source;
+      else if (session.revision !== event.source.revision || canonicalOf(session.ref) !== canonicalOf(event.source.ref)) {
+        return reject('unavailable', 'the recorded reanchor events disagree on the committed Session');
+      }
+      closed.push(event.closed.ref);
+      if (event.opened !== null) opened.push(event.opened.ref);
+    }
+    return {
+      status: 'committed', replayed: true, cursor: receipt.cursor,
+      value: { session: session!, closed, opened, owners: [] },
+    };
+  }
+
+  async function reanchorSessionResponsibility(
+    ctx: CoreCallContext, request: GraphWrite<ReanchorInputV1>,
+  ): Promise<WriteResult<ReanchorResultV1>> {
+    const trusted = trustedContext(ctx, 'a Session responsibility call');
+    if (!trusted.ok) return trusted.rejection;
+    const { scope, actor } = trusted;
+    if (ctx.signal?.aborted) return reject('cancelled', 'the scope reanchor was cancelled before validation');
+    const owned = ownRequest(request, 'reanchorSessionResponsibility');
+    if (!owned.ok) return reject('invalid', owned.reason);
+    const input = owned.input;
+    if (!isObject(input)) return reject('invalid', 'reanchorSessionResponsibility requires an input object');
+    const sessionProblem = checkPlainSessionRef(input.session);
+    if (sessionProblem !== null) return reject('invalid', `reanchor session: ${sessionProblem}`);
+    if (input.session.projectId !== scope.projectId) {
+      return reject('forbidden', 'the reanchor Session belongs to another project');
+    }
+    if (!(REANCHOR_REASONS as readonly unknown[]).includes(input.reason)) {
+      return reject('invalid', 'reanchorSessionResponsibility requires a recognized reason');
+    }
+    if (!Array.isArray(input.close) || !Array.isArray(input.open)) {
+      return reject('invalid', 'reanchorSessionResponsibility requires close and open arrays');
+    }
+    for (const source of input.close) {
+      const problem = checkWorkLinkRef(source);
+      if (problem !== null) return reject('invalid', `reanchor close: ${problem}`);
+      if (source.projectId !== scope.projectId) {
+        return reject('forbidden', 'the reanchor close link belongs to another project');
+      }
+      if (source.sessionId !== input.session.sessionId) {
+        return reject('invalid', 'the reanchor close link belongs to another Session');
+      }
+      if (source.relation !== 'responsible') return reject('invalid', 'the reanchor close link is not a responsible link');
+      if (roleScopeOfTarget(source.target) === null) return reject('invalid', 'the reanchor close target is not a role scope');
+    }
+    for (const entry of input.open) {
+      if (!isObject(entry)) return reject('invalid', 'reanchorSessionResponsibility requires an open entry object');
+      const problem = checkTarget(entry.target);
+      if (problem !== null) return reject('invalid', `reanchor open: ${problem}`);
+      if ((entry.target as WorkLinkTarget).ref.projectId !== scope.projectId) {
+        return reject('forbidden', 'the reanchor open target belongs to another project');
+      }
+    }
+    const sources = input.close;
+    const sourceKeys = sources.map(sessionWorkLinkRefKey);
+    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.session));
+    const destinationRefs: SessionWorkLinkRef[] = input.open.map((entry) => ({
+      ...input.session, aggregateType: 'SessionWorkLink' as const, target: entry.target, relation: 'responsible' as const,
+    }));
+    const identityKey = identityKeyOf('session-responsibility-reanchor:', actor, scope, owned.requestId);
+    const fingerprint = fingerprintOf('session-responsibility-reanchor-request', actor, scope,
+      { session: input.session, close: input.close, open: input.open, reason: input.reason }, owned.expected);
+    if (ctx.signal?.aborted) return reject('cancelled', 'the scope reanchor was cancelled before lookup');
+    const existing = await records.lookupCommit({ identityKey, fingerprint });
+    if (existing.status === 'ready') return readReanchorResult(existing.value, scope, input.session);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
+    const reanchorAttempt = async (): Promise<WriteResult<ReanchorResultV1>> => {
+      const read = await records.readMany([sessionKey, ...sourceKeys, ...destinationRefs.map(sessionWorkLinkRefKey)]);
+      if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+      const session = await sessionFromRead(read.value.records, sessionKey, scope);
+      if ('status' in session) return session;
+      const factsLinks = new Map<string, SessionWorkLink>();
+      for (const [index, source] of sources.entries()) {
+        const key = sourceKeys[index]!;
+        const link = linkAt(read.value.records, key);
+        if (link !== null && 'status' in link) return link;
+        if (link === null || link.until !== null) return reject('not_found', 'the reanchor source link is not open');
+        factsLinks.set(key, link);
+      }
+      for (const key of destinationRefs.map(sessionWorkLinkRefKey)) {
+        const link = linkAt(read.value.records, key);
+        if (link !== null && 'status' in link) return link;
+        if (link !== null) factsLinks.set(key, link);
+      }
+      const destinationGuards = destinationRefs.map((ref) => {
+        const key = sessionWorkLinkRefKey(ref);
+        return {
+          refKey: key,
+          expectedRevision: cas(read.value.records.find((entry) => entry.refKey === key)?.revision ?? null),
+        };
+      });
+      const facts = await readReanchorFacts(ctx, scope, session,
+        sources.map((ref) => ref.target), input.open.map((entry) => entry.target));
+      if ('status' in facts) return facts;
+      const plan = planReanchor({
+        projectRef: { projectId: scope.projectId }, duty: facts.duty,
+        moves: sources.map((source) => ({
+          duty: facts.duty, source,
+          destinations: input.open.map((entry, i) => ({ link: destinationRefs[i]!, target: entry.target })),
+        })),
+        facts: {
+          sessions: new Map([[input.session.sessionId, session]]), links: factsLinks,
+          goals: facts.goals, catalog: facts.catalog,
+        },
+        authorization: { actor, scope: [{ kind: 'project' }] },
+        proposed: null,
+      });
+      if (!plan.ok) return plan.refusals[0]!;
+      const basisBySource = new Map<string, ResponsibilityBasisV1>();
+      for (const source of sources) {
+        const proof = await basis.readResponsibilityBasis(ctx, { sessionRef: input.session, target: source.target });
+        if (proof.status !== 'ready') return mapReadFailure(proof);
+        basisBySource.set(sessionWorkLinkRefKey(source), proof.value.basis);
+      }
+      const contribution = roleLineCommitContribution({
+        projectRef: { projectId: scope.projectId },
+        records: plan.plan.sessions.map(encodeSessionRecord),
+        guards: [...owned.expected.map((pin) => ({
+          refKey: canonicalKey(pin.ref), expectedRevision: cas(pin.revision),
+        })), ...destinationGuards, ...facts.guards],
+        links: plan.plan.links, claimChanges: plan.plan.claimChanges, bindings: plan.plan.bindings,
+        events: plan.plan.events.map((event, index) => encodeSessionResponsibilityChangedEvent(buildEvent({
+          scope, mode: event.opened === null ? 'drop' : 'transfer',
+          source: plan.plan.sessions[0]!, destination: plan.plan.sessions[0]!,
+          closed: plan.plan.links.find((entry) => canonicalKey(entry.link) === canonicalKey(event.closed))!.next!,
+          opened: event.opened === null ? null
+            : plan.plan.links.find((entry) => canonicalKey(entry.link) === canonicalKey(event.opened))?.next
+              ?? factsLinks.get(sessionWorkLinkRefKey(event.opened)) ?? null,
+          openedBound: event.openedBound, archiveStep: null,
+          basis: basisBySource.get(sessionWorkLinkRefKey(event.closed))!,
+          eventId: eventIdOf(identityKey, `responsibility:${index}`),
+        }))),
+        allocation: null,
+      }, null);
+      if (!contribution.ok) return contribution.rejection;
+      let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
+      try {
+        committed = await records.commit({ identityKey, fingerprint, indexGuards: [], indexChanges: [], ...contribution.fragment });
+      } catch {
+        return reject('unavailable', 'the scope reanchor commit failed before completing');
+      }
+      if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
+      if (committed.replayed) return readReanchorResult(committed, scope, input.session);
+      return {
+        status: 'committed', replayed: false, cursor: committed.cursor,
+        value: resultOf(plan.plan),
+      };
+    };
+    const refused = await reanchorAttempt();
+    if (refused.status !== 'rejected' || refused.code === 'cancelled') return refused;
+    // One same-identity/fingerprint receipt recheck for the whole post-lookup refusal path: a commit that
+    // landed but lost its answer is restored here; a true miss keeps the attempt's own refusal.
+    const again = await records.lookupCommit({ identityKey, fingerprint });
+    if (again.status === 'ready') return readReanchorResult(again.value, scope, input.session);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
+    return refused;
   }
 
   async function readTransferReceipt(
@@ -884,7 +1222,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const found = await records.lookupCommit({ identityKey, fingerprint });
     if (found.status === 'ready') return readTransferResult(found.value, scope, fromKey);
     if (found.code === 'not_found') return reject('not_found', 'the transfer receipt has not been committed');
-    return mapStoreFailure(found);
+    return sessionStoreFailureToRejection(found);
   }
 
   return {
@@ -892,5 +1230,6 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     readTransferReceipt,
     disposeArchiveResponsibility,
     closeTerminalResponsibility,
+    reanchorSessionResponsibility,
   };
 }

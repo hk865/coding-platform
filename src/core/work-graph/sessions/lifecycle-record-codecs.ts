@@ -13,8 +13,7 @@
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
-import type { TaskTriple } from '../../../contracts/dispatch.js';
-import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import type { ResponsibilityBasisV1 } from '../model/session-facts-contracts.js';
 import {
   hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
@@ -22,7 +21,7 @@ import type {
   DecodeResult, EncodedDomainEvent, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import {
-  checkPlainSessionRef, checkSessionBody, checkWorkLinkBody, checkWorkLinkRef,
+  checkPlainSessionRef, checkSessionBody, checkTarget, checkWorkLinkBody, checkWorkLinkRef,
   type PendingSessionWorkLink, type Problem,
 } from './session-record-codecs.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
@@ -104,9 +103,7 @@ export type SessionResponsibilityChangedEventV1 = Slice1EventHeaderV1 & {
   closed: PendingSessionWorkLink; opened: PendingSessionWorkLink | null;
   openedBound: 'since' | null;
   archiveStep: ArchiveStepRefV1 | null;
-  taskBasis: { task: TaskTriple; planRef: PlanRevisionRef;
-    terminalCause: 'satisfied' | 'cancelled' | 'superseded' | null;
-    finishedAt: string | null };
+  basis: ResponsibilityBasisV1;
 };
 
 /** Event type selectors of the three slice-1 replay events. */
@@ -246,7 +243,7 @@ const ARCHIVE_CHANGED_EVENT_KEYS: readonly string[] = [
 ];
 const RESPONSIBILITY_CHANGED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
-  'mode', 'source', 'destination', 'closed', 'opened', 'openedBound', 'archiveStep', 'taskBasis',
+  'mode', 'source', 'destination', 'closed', 'opened', 'openedBound', 'archiveStep', 'basis',
 ];
 const ARCHIVE_STEP_KINDS: readonly string[] = [
   'stop', 'anchor', 'requeue', 'responsibility', 'reply_handler', 'wait_cancel', 'archive',
@@ -285,6 +282,55 @@ function checkTaskTriple(value: unknown): Problem {
     return 'task must be a complete TaskTriple';
   }
   return null;
+}
+function checkGoalBasis(value: UnknownRecord): Problem {
+  if (!hasOnlyKeys(value, ['kind', 'goalRef', 'goalRevision'])) {
+    return 'SessionResponsibilityChanged basis goal carries unknown fields';
+  }
+  const ref = checkTarget({ kind: 'goal', ref: value['goalRef'] });
+  if (ref !== null) return `SessionResponsibilityChanged basis goalRef: ${ref}`;
+  const revision = value['goalRevision'];
+  return typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 1
+    ? null : 'SessionResponsibilityChanged basis goalRevision must be a positive integer';
+}
+function checkProjectBasis(value: UnknownRecord): Problem {
+  if (!hasOnlyKeys(value, ['kind', 'projectRef'])) {
+    return 'SessionResponsibilityChanged basis project carries unknown fields';
+  }
+  const ref = checkTarget({ kind: 'project', ref: value['projectRef'] });
+  return ref === null ? null : `SessionResponsibilityChanged basis projectRef: ${ref}`;
+}
+function checkModuleBasis(value: UnknownRecord): Problem {
+  if (!hasOnlyKeys(value, ['kind', 'moduleRef', 'catalogRevision'])) {
+    return 'SessionResponsibilityChanged basis module carries unknown fields';
+  }
+  const ref = checkTarget({ kind: 'module', ref: value['moduleRef'] });
+  if (ref !== null) return `SessionResponsibilityChanged basis moduleRef: ${ref}`;
+  const revision = value['catalogRevision'];
+  return typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0
+    ? null : 'SessionResponsibilityChanged basis catalogRevision must be a non-negative integer';
+}
+function checkResponsibilityBasis(value: unknown): Problem {
+  if (!isRecord(value) || !nonEmpty(value['kind'])) {
+    return 'SessionResponsibilityChanged basis requires a kind';
+  }
+  if (value['kind'] === 'goal') return checkGoalBasis(value);
+  if (value['kind'] === 'project') return checkProjectBasis(value);
+  if (value['kind'] === 'module') return checkModuleBasis(value);
+  if (value['kind'] !== 'task') return 'SessionResponsibilityChanged basis kind is not recognized';
+  if (!hasOnlyKeys(value, ['kind', 'task', 'planRef', 'terminalCause', 'finishedAt'])) {
+    return 'SessionResponsibilityChanged basis task carries unknown fields';
+  }
+  const task = checkTaskTriple(value['task']);
+  if (task !== null) return `SessionResponsibilityChanged basis task: ${task}`;
+  const plan = checkPlanRef(value['planRef']);
+  if (plan !== null) return `SessionResponsibilityChanged basis planRef: ${plan}`;
+  const cause = value['terminalCause'];
+  if (cause !== null && cause !== 'satisfied' && cause !== 'cancelled' && cause !== 'superseded') {
+    return 'SessionResponsibilityChanged basis terminalCause is not recognized';
+  }
+  return value['finishedAt'] === null || nonEmpty(value['finishedAt'])
+    ? null : 'SessionResponsibilityChanged basis finishedAt must be null or a string';
 }
 function checkArchiveChangedBody(body: UnknownRecord, eventType: string): Problem {
   if (!hasOnlyKeys(body, ARCHIVE_CHANGED_EVENT_KEYS)) return 'Session archive event carries unknown fields';
@@ -358,23 +404,16 @@ function checkResponsibilityChangedBody(body: UnknownRecord): Problem {
     const step = checkArchiveStep(body['archiveStep']);
     if (step !== null) return `SessionResponsibilityChanged archiveStep: ${step}`;
   }
-  const taskBasis = body['taskBasis'];
-  if (!isRecord(taskBasis) || !hasOnlyKeys(taskBasis, ['task', 'planRef', 'terminalCause', 'finishedAt'])) {
-    return 'SessionResponsibilityChanged taskBasis carries unknown fields';
-  }
-  const task = checkTaskTriple(taskBasis['task']);
-  if (task !== null) return `SessionResponsibilityChanged taskBasis task: ${task}`;
-  const plan = checkPlanRef(taskBasis['planRef']);
-  if (plan !== null) return `SessionResponsibilityChanged taskBasis planRef: ${plan}`;
-  const cause = taskBasis['terminalCause'];
-  if (cause !== null && cause !== 'satisfied' && cause !== 'cancelled' && cause !== 'superseded') {
-    return 'SessionResponsibilityChanged taskBasis terminalCause is not recognized';
-  }
-  if (!(taskBasis['finishedAt'] === null || nonEmpty(taskBasis['finishedAt']))) {
-    return 'SessionResponsibilityChanged taskBasis finishedAt must be null or a string';
-  }
-  if (body['mode'] === 'terminal' && cause === null) {
-    return 'a terminal responsibility change requires a terminal cause';
+  const basisProblem = checkResponsibilityBasis(body['basis']);
+  if (basisProblem !== null) return basisProblem;
+  const basis = body['basis'] as ResponsibilityBasisV1;
+  if (body['mode'] === 'terminal') {
+    if (basis.kind !== 'task') {
+      return 'a terminal responsibility change requires a task basis';
+    }
+    if (basis.terminalCause === null) {
+      return 'a terminal responsibility change requires a terminal cause';
+    }
   }
   return null;
 }

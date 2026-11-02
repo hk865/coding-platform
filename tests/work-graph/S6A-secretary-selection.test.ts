@@ -17,7 +17,7 @@
  * The pure half (sorting and the clock) lives in
  * `S6A-secretary-selection-pure.test.ts`. Awaiting later work (book §5.2
  * R-01a): `ranGoal`, a real `busy` pending request round and an `inputTokens`
- * usage need `requests/submit`; `secretaryOpenCap` needs the Host option. Those
+ * usage need `requests/submit` and the request driver. Those
  * halves are NOT faked; this file asserts only what the public path can
  * produce now.
  */

@@ -14,14 +14,13 @@
  * `R3c-task-graph.test.ts`; it is intentionally not duplicated here.
  */
 import { expect, it } from 'vitest';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import type { EncodedRecord } from '../../src/core/record-store/ports.js';
 import { evaluateEligibility } from '../../src/core/work-graph/tasks/eligibility.js';
 import {
   decodePlanRevisionSnapshot,
   encodePlanRevisionSnapshot,
 } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
+import { encodedRecord } from '../helpers/record-envelope.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'r3c-boundaries';
@@ -54,11 +53,6 @@ function snapshotBody(extra: Record<string, unknown> = {}): Record<string, unkno
     executionDag: { dependsOn: [] },
     ...extra,
   };
-}
-
-function encodedRecord(schemaId: string, body: Record<string, unknown>): EncodedRecord {
-  return { refKey: canonicalJson(body['ref'] as JsonValue), schemaId,
-    revision: body['revision'] as number, json: JSON.stringify(body) };
 }
 
 it('does not treat an absent canonical task phase as pending', () => {

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { SessionLifecyclePort } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { encodeSessionRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createGraphSessionFixture, lifecycleRequest, linkRequest,
@@ -44,7 +45,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session independent %s races', 
         return missed;
       },
     };
-    const raced = await submit(createSessionLifecycleService({ records, lookups: records }));
+    const raced = await submit(createSessionLifecycleService({ records, lookups: records, duty: unknownSessionDuty }));
     expect(injected).toBe(true);
     expect(original).toMatchObject({ status: 'committed', replayed: false });
     expect(raced).toEqual({ ...original, replayed: true });
@@ -70,7 +71,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session independent %s races', 
         return page;
       },
     };
-    const directory = createSessionDirectory({ records, lookups: records });
+    const directory = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
     const result = await directory.findSessions(f.ctx,
       { workspace: f.scope, target, includeArchived: false, page: { limit: 5 } });
     expect(closed).toBe(true);
@@ -104,7 +105,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session independent %s races', 
         return missed;
       },
     };
-    const raced = await createSessionLifecycleService({ records, lookups: records }).linkSessionWork(f.ctx, opening);
+    const raced = await createSessionLifecycleService({ records, lookups: records, duty: unknownSessionDuty }).linkSessionWork(f.ctx, opening);
     expect(injected).toBe(true);
     expect(original).toMatchObject({ status: 'committed', replayed: false });
     expect(raced).toEqual({ ...original, replayed: true });

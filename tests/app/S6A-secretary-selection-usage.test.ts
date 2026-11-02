@@ -395,7 +395,13 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
   it('reads a Run whose last model request reported no usage as its last known input', async () => {
     const world = remember(await openS6AHostWorld({ backend,
       secretaryBudget: { contextWindowTokens: WINDOW_TOKENS },
-      extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 1 } }));
+      extraHostOptions: { requestDriver: 'on' } }));
+    const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+      { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+    expect(capLimits.status).toBe('ready');
+    const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-r1b-last-usage-open',
+      expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+    expect(capSet.status).toBe('committed');
     await ensureProjectPointers(world);
     const p = await world.createSecretary('p');
     // P's too-long round starts the automatic handoff; its accept is held, so P keeps no successor in this row.
@@ -429,7 +435,13 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
   it('counts a measured input many runs old, after runs that report none', async () => {
     const world = remember(await openS6AHostWorld({ backend,
       secretaryBudget: { contextWindowTokens: WINDOW_TOKENS },
-      extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 1 } }));
+      extraHostOptions: { requestDriver: 'on' } }));
+    const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+      { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+    expect(capLimits.status).toBe('ready');
+    const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-r1b-old-usage-open',
+      expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+    expect(capSet.status).toBe('committed');
     await ensureProjectPointers(world);
     const q = await world.createSecretary('q');
     // Q's too-long round starts the automatic handoff; its accept is held, so Q stays live and keeps no successor.
@@ -554,7 +566,13 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
     async () => {
       // Driver off in the old Host: its two lines are taken by rounds the test advances
       // itself through the public Query steps, and the restart's driver takes over.
-      const world = remember(await openS6AHostWorld({ backend: 'sqlite', extraHostOptions: { secretaryOpenCap: 2 } }));
+      const world = remember(await openS6AHostWorld({ backend: 'sqlite' }));
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-r1b-restart-open-2',
+        expectedRevision: capLimits.value.revision, open: { secretary: 2 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       // Both pointers present: the round the restart's driver runs on B is the ordinary
       // secretary round, whose answer this row scripts.
       await ensureProjectPointers(world);
@@ -609,7 +627,7 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
       // Host's start, so that claim is held from before the crash and the row can read the
       // waiting request while both lines are busy.
       const newClaim = commitBarrier.hold(queryStepCommitOn('claimed', b.ref), 'the claim of B new attempt');
-      await world.crash({ extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 2 } });
+      await world.crash({ extraHostOptions: { requestDriver: 'on' } });
 
       // S0's tool call had no result when the Host was abandoned: the start-up reconcile
       // proves the Run has no terminal (QRR-05), reads it `unknown`, and the attempt keeps
@@ -653,7 +671,13 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
   it('runs one execution round for both inputs when it restarts between assigned and the claim (SQLite only)',
     async () => {
       const world = remember(await openS6AHostWorld({ backend: 'sqlite',
-        extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 2 } }));
+        extraHostOptions: { requestDriver: 'on' } }));
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-r1b-merged-open-2',
+        expectedRevision: capLimits.value.revision, open: { secretary: 2 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       // The project's two pointers through their governance: the merged round is the ordinary
       // secretary round (not the initial-coordination branch), so its scripted answer is valid.
       await ensureProjectPointers(world);
@@ -706,7 +730,7 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
       ]);
       // The old Host's one unfinished step is the claim held at gate (a); with S0 idle and the
       // request owned by B, the abandoned Host has nothing else it could still write.
-      await world.crash({ extraHostOptions: { requestDriver: 'on', secretaryOpenCap: 2 } });
+      await world.crash({ extraHostOptions: { requestDriver: 'on' } });
 
       const merged = await world.waitForRequest(first.requestRoot,
         view => view.rounds.filter(round => round.kind !== 'routing')

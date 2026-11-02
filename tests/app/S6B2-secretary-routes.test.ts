@@ -92,7 +92,13 @@ describe('the two secretary lifecycle routes', () => {
   });
 
   it('counts a live handoff source and its successor as one line at the open cap', async () => {
-    const world = await openRouteWorld({ secretaryOpenCap: 2 });
+    const world = await openRouteWorld();
+    const capLimits = asRecord((await world.world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(asRecord((await world.world.post('projects/role-limits/set', body({ commandId: 's6b2-route-cap-open',
+      expectedRevision: asRecord(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     // A real request opens the source secretary A: it stays processing on it and is the handoff's routing item.
     const first = await world.world.submit({ commandId: 's6b2-route-cap-a', goalId: null, text: 'S6B2 cap A' });
     if (first.status !== 'queued' || first.secretary === null) throw new Error(`S6B2: no source: ${JSON.stringify(first)}`);

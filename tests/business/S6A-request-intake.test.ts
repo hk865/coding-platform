@@ -25,7 +25,7 @@ import {
   type RequestFactsReader,
 } from '../../src/core/work-graph/tasks/request-service.js';
 import {
-  createAlwaysAdmitCapacity, createLineCreation,
+  createLineCreation,
 } from '../../src/business/workflow/line-creation.js';
 import {
   createRequestIntake, type RequestIntakePort, type RequestSubmitResultV1,
@@ -42,7 +42,7 @@ import {
 } from '../helpers/S6A-request-fixture.js';
 import { commitBarrier, byClaimMove } from '../helpers/S6A-commit-barrier.js';
 import { registrationDouble } from '../helpers/S6A-registration-double.js';
-import { AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, plain } from '../helpers/AG2b-collaboration-fixture.js';
 
 // ---------------------------------------------------------------------------
 // The two backend factories: remember the shared records port (A4) and keep the
@@ -210,7 +210,6 @@ async function harnessOf(world: S6ARequestWorld, options: {
     // only widens the return with the platform's closing rejection.
     sessions: { createSession: world.platform.runtime.createSession as SessionOperationsPort['createSession'] },
     operations: world.platform.sessions,
-    capacity: createAlwaysAdmitCapacity(),
   });
   let sequence = 0;
   const rounds = createRequestRoundService({
@@ -510,9 +509,15 @@ for (const backend of BACKENDS) {
       // MH-12: the real Host `secretaryOpenCap` over the real Session state, not
       // a scripted capacity array. The only secretary is busy (a claimed Query),
       // so the pick has no candidate and a new line is refused by the cap.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const secretary = await world.createSecretary('secretary-a');
       const busy = await world.occupy(secretary);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-intake-follow-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const intake = world.platform.requestIntake;
       const sessionsBefore = (await world.listSessions()).length;
@@ -622,9 +627,15 @@ for (const backend of BACKENDS) {
     it('a retried drain replaying a created line reads its current revision', async () => {
       // MH-03's drain half: the line creation committed before the `assigned`
       // append failed; the line then moved, and the retried drain replays it.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const secretary = await world.createSecretary('secretary-a');
       const busy = await world.occupy(secretary);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-intake-drain-line-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const waiting = await world.platform.requestIntake.submitRequest(ctx, submitInput('m2-drain-line', 'first'));
       const root = requestRootOf(waiting);
@@ -657,12 +668,25 @@ for (const backend of BACKENDS) {
       // MH-12: the request is waiting because the real Host cap (1) is full and
       // its only secretary is busy; a second, idle secretary is created through
       // the public Session route, then the drain assigns it.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-intake-drain-1-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const waiting = await world.platform.requestIntake.submitRequest(ctx, submitInput('m2-drain-1', 'first'));
       const requestRoot = requestRootOf(waiting);
+      const raisedLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(raisedLimits.status).toBe('ready');
+      const raisedSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE,
+        { commandId: 's6a-intake-drain-1-seat', expectedRevision: raisedLimits.value.revision,
+          open: { secretary: 2 } }))).body as { status: string };
+      expect(raisedSet.status).toBe('committed');
       const b = await world.createSecretary('secretary-b');
       await world.finishQuery(aBusy);
 
@@ -689,9 +713,15 @@ for (const backend of BACKENDS) {
       // MH-12: the older request's line registration fails once (the frozen
       // registration double), so it is blocked; the newer one creates its line
       // with the real Host cap and progresses. Both waited under the real cap.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-intake-blocked-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const older = await world.platform.requestIntake.submitRequest(ctx, submitInput('m2-blocked-older', 'first'));
       const olderRoot = requestRootOf(older);
@@ -699,6 +729,15 @@ for (const backend of BACKENDS) {
       const newerRoot = requestRootOf(newer);
       await world.finishQuery(aBusy);
       await world.archive(a);
+      // The failed registration keeps its reservation until it retries, and the real admission counts it:
+      // one reservation plus the newer request's line need two secretary seats.
+      const raisedLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(raisedLimits.status).toBe('ready');
+      const raisedSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, {
+        commandId: 's6a-intake-blocked-seat', expectedRevision: raisedLimits.value.revision,
+        open: { secretary: 2 } }))).body as { status: string };
+      expect(raisedSet.status).toBe('committed');
       registrationDouble.failNext(1);
 
       const drained = await world.platform.requestIntake.drainUnassigned(world.systemContext(), S6A_SCOPE,
@@ -989,9 +1028,15 @@ for (const backend of BACKENDS) {
       // MH-06/L4: the second request's facts read throws after the first request
       // was assigned; the drain answers `unavailable` (never `ready`/`blocked`)
       // and the committed routing round remains.
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-intake-read-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const older = await world.platform.requestIntake.submitRequest(ctx, submitInput('m2-read-older', 'first'));
       const olderRoot = requestRootOf(older);
@@ -1008,9 +1053,15 @@ for (const backend of BACKENDS) {
     });
 
     it.each(['selection', 'profile'] as const)('a failed %s read during the drain is unavailable, never blocked', async kind => {
-      const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+      const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
+      const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+        { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+      expect(capLimits.status).toBe('ready');
+      const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-intake-selection-open',
+        expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+      expect(capSet.status).toBe('committed');
       const ctx = world.humanContext();
       const waiting = await world.platform.requestIntake.submitRequest(ctx, submitInput('m2-read', 'first'));
       const root = requestRootOf(waiting);

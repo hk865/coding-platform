@@ -49,7 +49,13 @@ import {
   SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
+import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
+import { createRoleLimitsService } from '../../src/core/work-graph/sessions/role-limits-service.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
+import type { RoleLineDutyV1 } from '../../src/contracts/role-lines.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
+import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import type {
@@ -97,6 +103,7 @@ type GraphSessionConnection = {
   catalog: ArchitectureCatalogPort;
   lifecycle: SessionLifecyclePort;
   sessionsPort: SessionDirectoryPort;
+  duty: SessionDutyReadPort;
 };
 
 export type GraphSessionFixture = {
@@ -108,6 +115,7 @@ export type GraphSessionFixture = {
   catalog: ArchitectureCatalogPort;
   lifecycle: SessionLifecyclePort;
   sessionsPort: SessionDirectoryPort;
+  duty: SessionDutyReadPort;
   ctx: CoreCallContext;
   scope: WorkspaceScope;
   projectId: string;
@@ -124,6 +132,7 @@ export type GraphSessionFixture = {
     selection: 'current' | ArchitectureBaselineRevisionRef,
     ctxOverride?: CoreCallContext,
   ): Promise<ReadResult<ArchitectureRevision>>;
+  setOpenLimit(duty: RoleLineDutyV1, limit: number): Promise<void>;
   createSession(
     requestId: string,
     initialLinks?: { target: WorkLinkTarget; relation: WorkLinkRelation }[],
@@ -249,6 +258,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...TASK_CLAIM_RECORD_SCHEMAS.records,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records,
+      ...ROLE_LINE_RECORD_SCHEMAS.records,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records,
       ...materialRecordSchemas().records.filter(schema => schema.aggregateType === 'Run'),
@@ -263,6 +273,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...TASK_CLAIM_RECORD_SCHEMAS.events,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events,
+      ...ROLE_LINE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
       ...CONTROL_RECORD_SCHEMAS.events,
       { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
@@ -274,6 +285,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
       ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
       ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
+      ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? []),
       ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
     ],
   };
@@ -300,6 +312,15 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
     materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal,
   };
   const role = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
+  // The Host's trusted Work binding for this world's one role: the real resolver reads the exact sessionRole
+  // and counts the line as the executor pool (no fabricated duty).
+  const workflowConfiguration = {
+    consumerId: 'a1-graph-session',
+    bindings: [{ workspace: scope, sessionRole: role, roleBinding: {
+      schemaVersion: 1 as const, bindingId: 'a1-graph-binding', templateId: role.templateId,
+      templateRevision: role.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template',
+    }, budget: { tokenBudget: 1_000_000, deadline: null } }],
+  };
   const kernelAdapterId = 'a1-graph-kernel';
   const kernelStoreKey = 'a1-graph-kernel-store';
 
@@ -342,17 +363,23 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
   if (activated.status !== 'committed') throw new Error(`A1 policy activation failed: ${JSON.stringify(activated)}`);
 
   // ---- real services over the real backend ----------------------------------
+  let roleEventSeq = 0;
+  let seedSeq = 0;
+  let limitsSeq = 0;
+  let limitsRevision = 0;
   const spy = emptySpy();
   let wrapped = wrapRecords(backend.records, spy);
+  let roles = createRoleConfigurationService({ records: wrapped, now: () => GRAPH_FIXTURE_AT,
+    eventId: () => `a1-graph-role-event-${String(++roleEventSeq)}` });
+  let duty: SessionDutyReadPort = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec,
+    configuration: workflowConfiguration });
   let catalog: ArchitectureCatalogPort = createArchitectureCatalogService({ records: wrapped });
-  let lifecycle: SessionLifecyclePort = createSessionLifecycleService({ records: wrapped, lookups: wrapped });
-  let sessionsPort: SessionDirectoryPort = createSessionDirectory({ records: wrapped, lookups: wrapped });
+  let lifecycle: SessionLifecyclePort = createSessionLifecycleService({ records: wrapped, lookups: wrapped, duty });
+  let sessionsPort: SessionDirectoryPort = createSessionDirectory({ records: wrapped, lookups: wrapped, duty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: kernelAdapterId, storeKey: kernelStoreKey, workspace: scope,
     databasePath: join(directory, 'kernel.sqlite'),
   }] });
-
-  let seedSeq = 0;
 
   async function commitRaw(recordsToWrite: readonly EncodedRecord[],
     guards: readonly RecordGuard[] = []): Promise<StoreCommitReceipt> {
@@ -367,6 +394,16 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
     return backend.records.commit({ identityKey: `a1-graph-seed-${sequence}`,
       fingerprint: `a1-graph-seed-fingerprint-${sequence}`, guards: allGuards,
       records: [...recordsToWrite], events: [event], claims: [], indexGuards: [], indexChanges: [] });
+  }
+
+  async function setOpenLimit(roleDuty: RoleLineDutyV1, limit: number): Promise<void> {
+    const limits = createRoleLimitsService({ records: wrapped, now: () => new Date(GRAPH_FIXTURE_AT) });
+    const result = await limits.setRoleLimits(ctx, {
+      commandId: `a1-graph-limits-${String(++limitsSeq)}`, expectedRevision: limitsRevision,
+      open: { [roleDuty]: limit },
+    });
+    if (result.status !== 'committed') throw new Error(`A1 role-limits set failed: ${JSON.stringify(result)}`);
+    limitsRevision = result.value.revision;
   }
 
   async function createSession(requestId: string,
@@ -440,11 +477,11 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
   }
 
   function buildConnection(): GraphSessionConnection {
-    return { records: wrapped, catalog, lifecycle, sessionsPort };
+    return { records: wrapped, catalog, lifecycle, sessionsPort, duty };
   }
 
   const fixture: GraphSessionFixture = {
-    kind, directory, ledgerPath, records: wrapped, spy, catalog, lifecycle, sessionsPort,
+    kind, directory, ledgerPath, records: wrapped, spy, catalog, lifecycle, sessionsPort, duty,
     ctx, scope, projectId, workspaceId, projectRef, workspaceRef,
     moduleRef(moduleId: string): ModuleRef { return { projectId, moduleId }; },
     async adopt(requestId, overrides = {}, ctxOverride) {
@@ -465,6 +502,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
         : { selection: { kind: 'revision', ref: selection } };
       return catalog.readArchitectureRevision(ctxOverride ?? ctx, input);
     },
+    setOpenLimit,
     createSession,
     seedAcceptedTask,
     commitRaw,
@@ -476,14 +514,18 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       await backend.close();
       backend = createSqliteRecordBackend({ path: ledgerPath, schemas, beforeWrite });
       wrapped = wrapRecords(backend.records, spy);
+      roles = createRoleConfigurationService({ records: wrapped, now: () => GRAPH_FIXTURE_AT,
+        eventId: () => `a1-graph-role-event-${String(++roleEventSeq)}` });
+      duty = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: workflowConfiguration });
       catalog = createArchitectureCatalogService({ records: wrapped });
-      lifecycle = createSessionLifecycleService({ records: wrapped, lookups: wrapped });
-      sessionsPort = createSessionDirectory({ records: wrapped, lookups: wrapped });
+      lifecycle = createSessionLifecycleService({ records: wrapped, lookups: wrapped, duty });
+      sessionsPort = createSessionDirectory({ records: wrapped, lookups: wrapped, duty });
       // Keep the top-level fixture accessors pointing at the reopened backend.
       fixture.records = wrapped;
       fixture.catalog = catalog;
       fixture.lifecycle = lifecycle;
       fixture.sessionsPort = sessionsPort;
+      fixture.duty = duty;
       return buildConnection();
     },
     async close() {

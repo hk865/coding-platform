@@ -37,6 +37,7 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
 import { mapStoreFailure } from './store-failures.js';
 import { pathOwnershipOf } from './note-path-ownership.js';
+import { deepestContainingRegion, regionContains } from '../state/role-scope.js';
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 
 export type ScribeScopeDependencies = {
@@ -99,48 +100,14 @@ export function moduleOfAnchor(catalog: AdoptedArchitecture | null, anchor: Note
   return ownership.status === 'owner' ? ownership.owner : null;
 }
 
-/** P6(b): the region of `root` is the containment subtree (or the module alone when no containment is declared). */
-function regionContains(catalog: AdoptedArchitecture | null, root: string, moduleId: string): boolean {
-  if (root === moduleId) return true;
-  if (catalog?.containment === undefined) return false;
-  const children = new Map<string, string[]>();
-  for (const edge of catalog.containment.parentOf) {
-    const list = children.get(edge.parent.moduleId) ?? [];
-    list.push(edge.child.moduleId);
-    children.set(edge.parent.moduleId, list);
-  }
-  const stack = [...(children.get(root) ?? [])];
-  const seen = new Set<string>();
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (current === moduleId) return true;
-    if (seen.has(current)) continue;
-    seen.add(current);
-    stack.push(...(children.get(current) ?? []));
-  }
-  return false;
-}
-
-function moduleDepth(catalog: AdoptedArchitecture | null, moduleId: string): number {
-  if (catalog?.containment === undefined) return 0;
-  const parents = new Map<string, string>();
-  for (const edge of catalog.containment.parentOf) parents.set(edge.child.moduleId, edge.parent.moduleId);
-  let depth = 0;
-  let current = moduleId;
-  const seen = new Set<string>();
-  while (parents.has(current) && !seen.has(current)) {
-    seen.add(current);
-    current = parents.get(current)!;
-    depth += 1;
-  }
-  return depth;
-}
-
+/** A goal-only scribe's own row cannot resolve until the goal scope exists; every other row is known. */
+type SessionScopeFactsV1 = { state: 'known'; scopes: readonly NoteScopeV1[] }
+  | { state: 'unavailable'; reason: 'goal_scope_pending' };
 type ScribeFacts = {
   catalog: AdoptedArchitecture | null;
   regions: Set<string>;
   project: boolean;
-  scopesBySession: Map<string, NoteScopeV1[]>;
+  scopesBySession: Map<string, SessionScopeFactsV1>;
 };
 
 /** Item 3 fix 7: `null` catalog is a real "no catalog adopted"; a failure is separate. */
@@ -173,7 +140,7 @@ async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies):
   const catalogRead = await readCatalog(ctx, deps);
   if (!catalogRead.ok) return { ok: false, code: catalogRead.code, reason: catalogRead.reason };
   const regions = new Set<string>();
-  const scopesBySession = new Map<string, NoteScopeV1[]>();
+  const scopesBySession = new Map<string, SessionScopeFactsV1>();
   let project = false;
   let cursor: string | undefined;
   for (;;) {
@@ -193,8 +160,8 @@ async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies):
     for (const card of page.value.items) {
       // Item 3 should-fix 1 / spec §4: a duty resolution that is rejected or
       // throws is a read failure, never a silent `'unknown'` that drops the
-      // Session from every scope calculation. A READY `'unknown'` stays as it is
-      // (R12: the frozen resolver maps a failed RoleSpec read to `'unknown'`).
+      // Session from every scope calculation. A READY `'unknown'` stays as it
+      // is: the resolver's own arms decide when that answer is lawful.
       let duty: string;
       try {
         const resolved = await deps.duties(card.record.role, ctx);
@@ -206,15 +173,22 @@ async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies):
         return { ok: false, code: 'unavailable', reason: 'the session duty cannot be read' };
       }
       if (duty !== 'scribe') continue;
+      const links = card.links;
       const scopes: NoteScopeV1[] = [];
-      for (const link of card.links) {
+      for (const link of links) {
         if (link.until !== null || link.ref.relation !== 'responsible' || link.ref.target.kind !== 'module') continue;
         const moduleId = link.ref.target.ref.moduleId;
         scopes.push({ kind: 'region', moduleId });
         regions.add(moduleId);
       }
-      if (scopes.length === 0) { scopes.push({ kind: 'project' }); project = true; }
-      scopesBySession.set(card.record.ref.sessionId, scopes);
+      const projectLink = links.some(l => l.until === null && l.ref.relation === 'responsible' && l.ref.target.kind === 'project');
+      const goalLink = links.some(l => l.until === null && l.ref.relation === 'responsible' && l.ref.target.kind === 'goal');
+      const entry: SessionScopeFactsV1 = projectLink ? { state: 'known', scopes: [{ kind: 'project' }] }
+        : scopes.length > 0 ? { state: 'known', scopes }
+        : goalLink ? { state: 'unavailable', reason: 'goal_scope_pending' }        // only this session's row
+        : { state: 'known', scopes: [{ kind: 'project' }] };
+      if (entry.state === 'known' && entry.scopes.some((scope) => scope.kind === 'project')) project = true;
+      scopesBySession.set(card.record.ref.sessionId, entry);
     }
     if (page.value.nextCursor === null) break;
     cursor = page.value.nextCursor;
@@ -245,16 +219,7 @@ function managingScopeOfAnchors(facts: ScribeFacts, anchors: readonly NoteAnchor
     modules.push(moduleId);
   }
   if (modules.length === 0) return { kind: 'project' };
-  let best: string | null = null;
-  let bestDepth = -1;
-  for (const root of facts.regions) {
-    if (!modules.every(moduleId => regionContains(facts.catalog, root, moduleId))) continue;
-    const depth = moduleDepth(facts.catalog, root);
-    if (depth > bestDepth || (depth === bestDepth && (best === null || root.localeCompare(best) < 0))) {
-      best = root;
-      bestDepth = depth;
-    }
-  }
+  const best = deepestContainingRegion(facts.catalog, [...facts.regions], modules);
   return best === null ? { kind: 'project' } : { kind: 'region', moduleId: best };
 }
 
@@ -352,7 +317,7 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       // P1/item 10a: a scope with no scribe manages nothing (count 0). Its notes
       // count for the scope they go up to. A failed read is still unavailable.
       const held = [...factsRead.facts.scopesBySession.values()]
-        .some(list => list.some(scope => sameScope(scope, input.scope)));
+        .some(entry => entry.state === 'known' && entry.scopes.some(scope => sameScope(scope, input.scope)));
       if (!held) return result({ scope: input.scope, current: 0 });
       const headsRead = await currentHeads(ctx);
       if (!headsRead.ok) return { status: 'rejected', code: headsRead.code, reason: headsRead.reason };
@@ -371,7 +336,10 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       // Item 3 fix 7: a failed scope-fact read refuses with `unavailable`.
       if (!factsRead.ok) return { code: 'unavailable', reason: factsRead.reason };
       const facts = factsRead.facts;
-      const scopes = facts.scopesBySession.get(sessionRef.sessionId) ?? [];
+      const entry = facts.scopesBySession.get(sessionRef.sessionId);
+      if (entry === undefined) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
+      if (entry.state === 'unavailable') return { code: 'unavailable', reason: entry.reason };
+      const scopes = entry.scopes;
       if (scopes.length === 0) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
       if (scopes.some(scope => scope.kind === 'project')) return null;
       for (const anchor of anchors) {
@@ -387,8 +355,10 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
     async manages(ctx, sessionRef, scope, call) {
       const factsRead = await factsFor(call, ctx);
       if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
-      const scopes = factsRead.facts.scopesBySession.get(sessionRef.sessionId) ?? [];
-      return result(scopes.some(candidate => sameScope(candidate, scope)));
+      const entry = factsRead.facts.scopesBySession.get(sessionRef.sessionId);
+      if (entry === undefined) return result(false);
+      if (entry.state === 'unavailable') return { status: 'rejected', code: 'unavailable', reason: entry.reason };
+      return result(entry.scopes.some(candidate => sameScope(candidate, scope)));
     },
 
     async managingScopeOf(ctx, head, call) {

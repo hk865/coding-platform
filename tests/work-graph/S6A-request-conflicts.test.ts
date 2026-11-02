@@ -24,7 +24,7 @@ import { createSessionDutyResolver } from '../../src/composition/session-duty.js
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService, SECRETARY_INTAKE_PREFIX } from '../../src/core/work-graph/tasks/request-service.js';
-import { createAlwaysAdmitCapacity, createLineCreation } from '../../src/business/workflow/line-creation.js';
+import { createLineCreation } from '../../src/business/workflow/line-creation.js';
 import {
   createRequestIntake, type RequestIntakePort, type RequestSubmitResultV1,
 } from '../../src/business/workflow/request-intake.js';
@@ -35,7 +35,7 @@ import {
 } from '../helpers/S6A-request-fixture.js';
 import { commitBarrier, byClaimMove } from '../helpers/S6A-commit-barrier.js';
 import { deferred, type Deferred } from '../helpers/A2-restart-fixture.js';
-import { AG2B_CONSUMER_ID } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 
 // ---------------------------------------------------------------------------
 // The two backend factories: remember the shared records port (A4) and keep the
@@ -137,7 +137,6 @@ function gatedIntake(world: S6ARequestWorld): Gated {
       // the return with the platform's closing rejection.
       sessions: { createSession: world.platform.runtime.createSession as SessionOperationsPort['createSession'] },
       operations: world.platform.sessions,
-      capacity: createAlwaysAdmitCapacity(),
     }),
     profiles, sessionFacts: world.platform.sessionFacts,
   });
@@ -250,7 +249,13 @@ for (const backend of BACKENDS) {
       it('a drain whose pick is archived before the assigned re-check leaves the request blocked, then re-picks', async () => {
         // Waiting under the real Host cap (1): the only secretary is busy; it is
         // then archived, and two idle secretaries are created.
-        const world = await open({ extraHostOptions: { secretaryOpenCap: 1 } });
+        const world = await open();
+        const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+          { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+        expect(capLimits.status).toBe('ready');
+        const capSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's6a-conflict-drain-open',
+          expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
+        expect(capSet.status).toBe('committed');
         const a = await world.createSecretary('secretary-a');
         const aBusy = await world.occupy(a);
         const ctx = world.humanContext();
@@ -258,6 +263,13 @@ for (const backend of BACKENDS) {
           submitInput('conflict-drain-root', 'first')));
         await world.finishQuery(aBusy);
         await world.archive(a);
+        const raisedLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
+          { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+        expect(raisedLimits.status).toBe('ready');
+        const raisedSet = (await world.post('projects/role-limits/set', plain(S6A_SCOPE,
+          { commandId: 's6a-conflict-drain-raise', expectedRevision: raisedLimits.value.revision,
+            open: { secretary: 2 } }))).body as { status: string };
+        expect(raisedSet.status).toBe('committed');
         const c = await world.createSecretary('secretary-c', { at: '2026-10-23T09:01:00.000Z' });
         const b = await world.createSecretary('secretary-b', { at: '2026-10-23T09:02:00.000Z' });
         const { intake, gate } = gated(world);

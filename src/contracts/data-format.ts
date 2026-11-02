@@ -25,9 +25,14 @@ export type Lookup = {
   text?: readonly string[];
 };
 
-/** The five top-level fields the Store may fill with the commit cursor (the closed `commitCursorFields` set). */
+/** The five top-level cursor names the Store may fill with the commit cursor. */
 type BoundCursorName = 'since' | 'until' | 'unavailableSince' | 'responseSince' | 'startedSince';
-const BOUND_CURSOR_NAMES: readonly string[] = ['since', 'until', 'unavailableSince', 'responseSince', 'startedSince'];
+const BOUND_CURSOR_NAMES: readonly BoundCursorName[] = ['since', 'until', 'unavailableSince', 'responseSince', 'startedSince'];
+/** The two nested array element cursors a role-line record binds. */
+type RoleLineCursorField = 'holders[].since' | 'reservations[].reservedAt';
+/** Every field the Store may fill with the commit cursor: a top-level name or a nested array element path. */
+export type BoundCursorField = BoundCursorName | RoleLineCursorField;
+export const BOUND_CURSOR_FIELDS: readonly BoundCursorField[] = Object.freeze([...BOUND_CURSOR_NAMES, 'holders[].since', 'reservations[].reservedAt']);
 /** The four envelope keys every event carries outside its own fields. */
 const ENVELOPE_KEYS: readonly string[] = ['eventId', 'eventType', 'schemaVersion', 'occurredAt'];
 
@@ -46,7 +51,7 @@ export type Field =
   | { readonly kind: 'boolean' }
   | { readonly kind: 'ref'; readonly shape: Shape<Fields> }
   | { readonly kind: 'cursor'; readonly cursor: 'ledger' | 'ledgerNonZero' | 'kernel' }
-  | { readonly kind: 'boundCursor'; readonly field: BoundCursorName }
+  | { readonly kind: 'boundCursor'; readonly field: BoundCursorField }
   | { readonly kind: 'isoTime' }
   | { readonly kind: 'optional'; readonly field: Field }
   | { readonly kind: 'nullable'; readonly field: Field }
@@ -90,9 +95,12 @@ type InferField<T, P extends FieldPhase> =
   : T extends { kind: 'optional'; field: infer I } ? InferField<I, P>
   : T extends { kind: 'nullable'; field: infer I } ? InferField<I, P> | null
   : T extends { kind: 'array'; element: infer E } ? InferField<E, P>[]
-  : T extends { kind: 'object'; fields: infer F extends Fields } ? InferShape<F>
+  : T extends { kind: 'object'; fields: infer F extends Fields }
+    ? P extends 'stored' ? InferShape<F> : ShapeOf<F, P>
   : T extends { kind: 'union'; branches: infer B extends { readonly [branch: string]: Fields } }
-    ? { [N in keyof B]: InferShape<B[N]> }[keyof B]
+    ? P extends 'stored'
+      ? { [N in keyof B]: InferShape<B[N]> }[keyof B]
+      : { [N in keyof B]: ShapeOf<B[N], P> }[keyof B]
   : T extends { kind: 'json' } ? JsonValue
   : never;
 /**
@@ -187,8 +195,8 @@ export const f = {
   ref: <F extends Fields>(shape: Shape<F>) => ({ kind: 'ref' as const, shape }),
   /** A ledger cursor (`c` and ten digits), one that is not `c0000000000`, or an opaque non-empty Kernel cursor. */
   cursor: <K extends 'ledger' | 'ledgerNonZero' | 'kernel'>(cursor: K) => ({ kind: 'cursor' as const, cursor }),
-  /** A top-level cursor the Store fills from the commit cursor; it sits under its own name. */
-  boundCursor: <N extends BoundCursorName>(field: N) => ({ kind: 'boundCursor' as const, field }),
+  /** A cursor the Store fills from the commit cursor: a top-level name under its own key, or a nested array element path. */
+  boundCursor: <N extends BoundCursorField>(field: N) => ({ kind: 'boundCursor' as const, field }),
   /** A UTC time ending in `Z` that `Date.parse` reads. */
   isoTime: () => ({ kind: 'isoTime' as const }),
   /** The key may be absent; a key present with `undefined` is refused. */
@@ -226,21 +234,26 @@ function holdsBoundCursor(field: Field): boolean {
     default: return false;
   }
 }
+const NESTED_CURSOR_PATHS: Readonly<Record<string, { array: string; element: string }>> = {
+  'holders[].since': { array: 'holders', element: 'since' }, 'reservations[].reservedAt': { array: 'reservations', element: 'reservedAt' } };
 /**
- * The Store fills a bound cursor only on a record's top-level field of the same name (`commitCursorFields`), so it
- * may sit only there, directly or under `f.nullable` (the only way to store `null` there), never under `f.optional`.
+ * The Store fills a bound cursor on a record's top-level field of the same name or on an array element's known nested
+ * path (`commitCursorFields`), so it may sit only there, directly or under `f.nullable` (the only way to store `null`
+ * there), never under `f.optional` and never at another depth.
  */
 function checkBoundCursors(what: string, fields: Fields, recordTop: boolean): void {
   for (const [key, field] of Object.entries(fields)) {
     const direct = field.kind === 'nullable' ? field.field : field;
+    const nested = field.kind === 'array' && field.element.kind === 'object'
+      ? Object.entries(field.element.fields).filter(([, inner]) => inner.kind === 'boundCursor') : [];
     if (recordTop && direct.kind === 'boundCursor') {
-      if (!BOUND_CURSOR_NAMES.includes(direct.field)) invalidDescription(what, `${String(direct.field)} is not a bound cursor field`);
+      if (!(BOUND_CURSOR_NAMES as readonly string[]).includes(direct.field)) invalidDescription(what, `${String(direct.field)} is not a known cursor field`);
       if (direct.field !== key) invalidDescription(what, `bound cursor ${direct.field} is under the key ${key}`);
-    } else if (recordTop && field.kind === 'optional' && holdsBoundCursor(field)) {
-      invalidDescription(what, `bound cursor ${key} is optional`);
-    } else if (holdsBoundCursor(field)) {
-      invalidDescription(what, `bound cursor ${key} is not at a record's top level`);
-    }
+    } else if (recordTop && field.kind === 'optional' && holdsBoundCursor(field)) invalidDescription(what, `bound cursor ${key} is optional`);
+    else if (recordTop && field.kind === 'array' && nested.length > 0) {
+      for (const [innerKey] of nested) if (NESTED_CURSOR_PATHS[`${key}[].${innerKey}`] === undefined)
+        invalidDescription(what, `bound cursor ${key}[].${innerKey} is not a known cursor field`);
+    } else if (holdsBoundCursor(field)) invalidDescription(what, `bound cursor ${key} is not at a record's top level`);
   }
 }
 function checkName(what: string, key: string, value: unknown): void {

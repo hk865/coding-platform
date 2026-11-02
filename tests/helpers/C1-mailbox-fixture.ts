@@ -19,6 +19,7 @@ import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey
 import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRecipientExecutions } from '../../src/core/work-graph/sessions/recipient-executions.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -127,7 +128,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   if (claimResult.status !== 'committed') throw new Error(`C1 fixture claim failed: ${JSON.stringify(claimResult)}`);
   const claim = claimResult.value;
 
-  const sessions = createSessionDirectory({ records: fixture.records, lookups: fixture.records });
+  const sessions = createSessionDirectory({ records: fixture.records, lookups: fixture.records, duty: unknownSessionDuty });
   const busySession: SessionRef = { projectId: claim.sessionRef.projectId, sessionId: claim.sessionRef.sessionId };
   const idleSession: SessionRef = { projectId: fixture.sessions.second.projectId, sessionId: fixture.sessions.second.sessionId };
   const runKey = key(claim.runRef);
@@ -190,7 +191,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
     const openExecutions = recipientReader === undefined ? createRecipientExecutions({
       sessions: createSessionFactsService({ records }), executions: createRunStateReader({ records }), records,
     }) : recipientReader;
-    return { records, sessions: createSessionDirectory({records,lookups:records}), executions: createRunStateReader({records}),
+    return { records, sessions: createSessionDirectory({records,lookups:records, duty: unknownSessionDuty}), executions: createRunStateReader({records}),
       roles: createRoleConfigurationService({records,now,eventId}), materials: materialPort, systemActor,
       // SR11 / Decided 12: this fixture's own inquiries name their duration; the
       // owner has no second default.
@@ -208,7 +209,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   }
   const mailbox = makeMailbox();
   let secondary: Awaited<ReturnType<TaskClaimFixture['reopenService']>> | undefined;
-  const lifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records });
+  const lifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
   const ctxHost: CoreCallContext = { projectId: busySession.projectId, workspaceId: currentRun.workspaceSnapshot.workspaceId,
     principal: { kind: 'host', actor: { kind: 'human', id: 'c1-host' } },
     materialReader: { kind: 'host', projectId: busySession.projectId, workspaceId: currentRun.workspaceSnapshot.workspaceId, actor: { kind: 'human', id: 'c1-host' } },

@@ -25,6 +25,9 @@ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
+import { projectRoleLimitsChangedCodec, projectRoleLimitsCodec,
+  sessionRoleFactsCodec } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -48,10 +51,12 @@ const creation = (requestId: string, kernelStore = { adapterId: 'workspace-kerne
 });
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
-    ...PLAN_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
+    ...PLAN_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
+    sessionRoleFactsCodec.registration, projectRoleLimitsCodec.registration],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
     ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+    ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
+    projectRoleLimitsChangedCodec.registration],
   lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
     ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
@@ -108,7 +113,8 @@ async function open(kind: 'memory' | 'sqlite') {
     ] },
   });
   if (adopted.status !== 'committed') throw new Error(`architecture adoption failed: ${JSON.stringify(adopted)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records,
+    duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),

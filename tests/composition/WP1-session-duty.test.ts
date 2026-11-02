@@ -111,21 +111,24 @@ it('DU03 a pinned role_spec without platformDuty outside the Work bindings is un
   expect(await resolver(role, ctx)).toEqual({ status: 'ready', value: 'unknown' });
 });
 
-it('DU04 role_spec read failures are a ready unknown, never a rejection or a throw', async () => {
+it('DU04 an attempted read that did not answer is unavailable; no platform duty stays unknown', async () => {
   const role = roleSpecRef('r-du04');
   const configuration = configurationWith([role]);
   const notFound = createSessionDutyResolver({ configuration,
     readRoleSpec: async (): Promise<ReadResult<RoleSpecRevisionSnapshot>> => ({ status: 'not_found' }) });
-  expect(await notFound(role, ctx)).toEqual({ status: 'ready', value: 'unknown' });
+  expect(await notFound(role, ctx)).toEqual({ status: 'rejected', code: 'unavailable',
+    reason: 'the pinned RoleSpec read is not_found' });
 
   const unavailable = createSessionDutyResolver({ configuration,
     readRoleSpec: async (): Promise<ReadResult<RoleSpecRevisionSnapshot>> =>
       ({ status: 'rejected', code: 'unavailable', reason: 'du-unavailable' }) });
-  expect(await unavailable(role, ctx)).toEqual({ status: 'ready', value: 'unknown' });
+  expect(await unavailable(role, ctx)).toEqual({ status: 'rejected', code: 'unavailable',
+    reason: 'du-unavailable' });
 
   const throws = createSessionDutyResolver({ configuration,
     readRoleSpec: async (): Promise<ReadResult<RoleSpecRevisionSnapshot>> => { throw new Error('du-boom'); } });
-  await expect(throws(role, ctx)).resolves.toEqual({ status: 'ready', value: 'unknown' });
+  expect(await throws(role, ctx)).toEqual({ status: 'rejected', code: 'unavailable',
+    reason: 'the pinned RoleSpec read failed: du-boom' });
 });
 
 it('DU05 the exact platform-reviewer@s3.1 legacy template resolves to reviewer', async () => {

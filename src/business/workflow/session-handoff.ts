@@ -6,7 +6,7 @@
  * archive selects by `condition.kind`/`mode`, never by requester.
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
+import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type { OperationRef } from '../../contracts/core/operations.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import { rejected } from '../../contracts/core/rejections.js';
@@ -24,7 +24,7 @@ import {
   type SessionHandoffPort,
 } from '../../core/work-graph/sessions/session-handoff-service.js';
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
-import { transferPinsOf } from '../../core/work-graph/sessions/session-responsibility-service.js';
+import { transferPinsOf, type SavedTransferInputV1 } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import { HANDOFF_SYSTEM_PRINCIPAL } from '../../core/work-graph/model/request-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
@@ -83,9 +83,7 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
       return rejected('invalid', `the create child answered ${String(created.status)}`);
     }
     if (write.stage === 'transfer' && (saved as { kind: string }).kind === 'transfer') {
-      const input = saved as { requestId: string; from: SessionRef; to: SessionRef;
-        target: { kind: 'task'; ref: { projectId: string; goalId: string; taskId: string } };
-        expected: { fromSession: number; toSession: number; sourceLink: number; destinationLink: number } };
+      const input = saved as SavedTransferInputV1;
       const pins = transferPinsOf(input);
       const writeResult = await deps.responsibilities.transferSessionResponsibility(savedCtx, {
         input: { from: input.from, to: input.to, target: input.target },

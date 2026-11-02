@@ -22,6 +22,7 @@ import {MODEL_REQUEST_RECORD_SCHEMAS} from '../../src/core/work-graph/tasks/mode
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import {createSqliteRawArtifactStore} from '../../src/core/record-store/sqlite-body-store.js';
 import {createSessionDirectory} from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import {createPlanService} from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import {roleSpecContentDigest,type RoleSpecContentV1} from '../../src/contracts/role-spec.js';
@@ -246,7 +247,7 @@ export async function createB2RuntimeFixture(options: {
     const reads=createMaterialRecordReaders(records);
     const materials=createMaterialService({bodies,authority:reads.authority,now});
     const plans=createPlanService({records,bindings:createInitializationBindingReader({records}),materials,now,eventId});
-    const sessions=createSessionDirectory({records,lookups:records});
+    const sessions=createSessionDirectory({records,lookups:records, duty: unknownSessionDuty});
     const selectedKernelStores=overrides.kernelStores??kernelStores;
     const sessionOperations=createSessionOperations({sessions,kernelStores:selectedKernelStores});
     const activity=createExecutionHistoryReader({history:sessionOperations});

@@ -27,6 +27,7 @@ import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.
 import { decodeGoalSnapshot } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -68,7 +69,7 @@ export async function w2ClaimStack(f: S5DecisionFixture): Promise<ManyTaskWorldC
     hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('s5 trusted builder template') },
   };
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
-  const sessionsPort = createSessionDirectory({ records: f.records, lookups: f.records });
+  const sessionsPort = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
   const claimService = createTaskClaimService({ records: f.records, roles, now: f.now, newId: f.newId });
   const reads = createRunStateReader({ records: f.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 's5-kernel', storeKey: 's5-kernel-store',

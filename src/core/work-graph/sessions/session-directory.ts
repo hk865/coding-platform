@@ -34,11 +34,17 @@ import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type {
-  RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget,
+  ProjectScope, RoleConfigurationRef, SessionRef, WorkspaceScope, WorkLinkRelation, WorkLinkTarget,
 } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionRecord, SessionWorkLink, SessionProvenanceV1 } from '../../../contracts/core/session.js';
+import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import {
+  roleLineDutyOf, type ProjectRoleLimitsV1, type RoleLineAllocationV1, type RoleLineDutyV1,
+} from '../../../contracts/role-lines.js';
+import type {
+  HandoffSeatFactsV1, SessionProvenanceV1, SessionRecord, SessionWorkLink,
+} from '../../../contracts/core/session.js';
 import { makeCommitCursor, seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
@@ -53,14 +59,17 @@ import {
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
-  ConsultationCreateV1, SessionCard, SessionCreateOperationRecord, SessionCreationInput, SessionCreationIntentV1,
-  SessionCreationResult, SessionDirectoryPort, SessionOperationRecord, SessionPage,
+  ConsultationCreateV1, CreateSeatDecisionV1, SessionCard, SessionCreateOperationRecord, SessionCreationInput,
+  SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord, SessionPage,
 } from '../model/session-contracts.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import type { CommitFragment } from '../persistence/command-executor.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   SESSION_BY_WORKSPACE_LOOKUP, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
   SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP,
-  SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_MODULE_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
+  SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_GOAL_LOOKUP, SESSION_LINKS_BY_MODULE_LOOKUP,
+  SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
   SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS,
   checkArtifactRef, checkOperationRef,
   checkPlainSessionRef, checkRole, checkSessionCreationIntent, checkSessionProvenance, checkTarget,
@@ -73,6 +82,14 @@ import {
   type SessionCreatedEvent,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import { allocationNext } from '../state/role-line-allocation.js';
+import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from '../state/role-scope.js';
+import { seatInheritanceOf } from '../state/session-handoff-contracts.js';
+import { openLimitOf, createAllocationRead, seatAtCap } from './allocation-read.js';
+import { allocationOnlyConflict, retryAllocationCommit } from './allocation-retry.js';
+import { roleLineAllocationCodec } from './role-line-record-codecs.js';
+import { roleFactsContribution } from './role-line-facts-writer.js';
+import { roleLineCommitContribution } from './role-scope-commit.js';
 import type { MemberCreateActionV1, MemberCreatedEventV1 } from '../state/member-creation.js';
 import {
   createSessionRecord, deriveAvailability, sessionMachineStateOf, transitionSession,
@@ -87,6 +104,8 @@ export type { HostActor } from './trusted-context.js';
 export type SessionDirectoryStores = {
   records: GoalRecordTransactionPort;
   lookups: RecordLookupPort;
+  /** Required: an admission that cannot read the duty may not count, so it may not admit. */
+  duty: SessionDutyReadPort;
 };
 
 // --------------------------------------------------------------------------
@@ -108,14 +127,6 @@ function relation(value: unknown): value is WorkLinkRelation {
 function isRunRef(value: unknown): value is RunRef {
   return isObject(value) && value['aggregateType'] === 'Run'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']) && nonEmpty(value['runId']);
-}
-/** The shared map takes a version-pin `current`; a `unique_conflict` carries a claim slot instead. */
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  return sessionStoreFailureToRejection({
-    code: failure.code,
-    reason: failure.reason,
-    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
-  });
 }
 function ownRequest<T>(value: unknown, what: string): { ok: true; value: T } | { ok: false; reason: string } {
   try {
@@ -534,6 +545,7 @@ function compareSessionIds(left: string, right: string): number {
 
 /** The exact candidate index for one (target kind, relation) stream. */
 function targetRelationPlan(scope: WorkspaceScope, target: WorkLinkTarget, relation: WorkLinkRelation): LookupPlan {
+  // The five arms; goal/project pass `until: null` because their registered paths carry it.
   if (target.kind === 'module') {
     return { index: SESSION_LINKS_BY_MODULE_LOOKUP,
       values: [scope.projectId, 'module', target.ref.moduleId, relation] };
@@ -542,8 +554,55 @@ function targetRelationPlan(scope: WorkspaceScope, target: WorkLinkTarget, relat
     return { index: SESSION_LINKS_BY_TASK_LOOKUP,
       values: [scope.projectId, 'task', target.ref.goalId, target.ref.taskId, relation] };
   }
+  if (target.kind === 'goal') {
+    return { index: SESSION_LINKS_BY_GOAL_LOOKUP,
+      values: [scope.projectId, 'goal', target.ref.goalId, relation, null] };
+  }
+  if (target.kind === 'project') {
+    return { index: SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP,
+      values: [scope.projectId, 'project', relation, null] };
+  }
   return { index: SESSION_LINKS_BY_WORK_LOOKUP,
     values: [scope.projectId, target.ref.workspaceId, 'work', target.ref.workId, relation] };
+}
+
+/** The projection `state/session-handoff-contracts.ts` reads: the operation record's own handoff facts, with the
+ * saved create input narrowed to the one command id the seat rule compares. No model record reaches `state/`. */
+function handoffSeatFactsOf(operation: SessionOperationRecord): HandoffSeatFactsV1 | null {
+  const action = operation.action;
+  if (action.kind !== 'handoff') return null;
+  return {
+    ref: operation.ref,
+    phase: operation.phase,
+    action: { kind: 'handoff', input: {
+      source: action.input.source,
+      assignments: action.input.assignments.map((assignment) => ({ target: assignment.target })),
+    } },
+    progress: { assignments: action.progress.assignments.map((assignment) => ({
+      successor: assignment.successor,
+      createInput: assignment.createInput === null ? null : { commandId: assignment.createInput.commandId },
+    })) },
+  };
+}
+
+/** The one-commit re-admission's seat (book :1231-1240): no reservation, no two-phase create. */
+export type ReactivationSeatV1 =
+  | { status: 'seat'; record: EncodedRecord; guard: RecordGuard; limitsGuard: RecordGuard; binding: 'holders[].since' }
+  | { status: 'none'; reason: 'unknown_duty' | 'readonly_copy' }
+  | { status: 'refused'; rejection: CoreRejection };
+export function reactivationSeatOf(input: { projectRef: ProjectScope; session: SessionRecord;
+  duty: PlatformDutyV1 | 'unknown'; allocation: RoleLineAllocationV1 | null;
+  limits: ProjectRoleLimitsV1 | null; limitsGuard: RecordGuard }): ReactivationSeatV1 {
+  if (input.session.provenance.kind === 'readonly_copy') return { status: 'none', reason: 'readonly_copy' };
+  const duty = roleLineDutyOf(input.duty);
+  if (duty === null) return { status: 'none', reason: 'unknown_duty' };
+  const atCap = seatAtCap({ duty, open: openLimitOf(input.limits, duty), holders: input.allocation?.holders.length ?? 0,
+    reservations: input.allocation?.reservations.length ?? 0 });
+  if (atCap !== null) return { status: 'refused', rejection: atCap };
+  const record = roleLineAllocationCodec.encode(allocationNext({ projectRef: input.projectRef, duty,
+    current: input.allocation, change: { kind: 'add_holder', sessionRef: input.session.ref } }));
+  return { status: 'seat', record, limitsGuard: input.limitsGuard, binding: 'holders[].since',
+    guard: { refKey: record.refKey, expectedRevision: input.allocation?.revision ?? null } };
 }
 
 // --------------------------------------------------------------------------
@@ -585,7 +644,9 @@ function directoryCandidatePlan(scope: WorkspaceScope, role: RoleConfigurationRe
 // --------------------------------------------------------------------------
 
 export function createSessionDirectory(stores: SessionDirectoryStores): SessionDirectoryPort {
-  const { records, lookups } = stores;
+  const { records, lookups, duty } = stores;
+  // The one read is bound once; each seat decision and each registration attempt calls it, never each entry.
+  const allocationRead = createAllocationRead({ records });
 
   // ------------------------------------------------------------------------
   // Replay restore
@@ -737,7 +798,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       seen.add(current.sessionId);
       const key = sessionAggregateRefKey(plainSessionRefToAggregate(current));
       const read = await records.readMany([key]);
-      if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+      if (read.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(read) };
       const record = read.value.records.find((entry) => entry.refKey === key);
       if (record === undefined) {
         return { ok: false, rejection: reject('not_found', `the provenance predecessor Session ${current.sessionId} does not exist`) };
@@ -768,6 +829,119 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       };
     }
     return { ok: true, guards };
+  }
+
+  // ------------------------------------------------------------------------
+  // The seat: reserved, borrowed, or not counted
+  // ------------------------------------------------------------------------
+
+  type SeatOutcome = { ok: true; decision: CreateSeatDecisionV1; fragment: CommitFragment | null;
+    bindings: readonly CommitCursorBinding[]; internal: readonly string[] }
+    | { ok: false; rejection: CoreRejection };
+  type InheritedSeatOutcome = { ok: true; kind: 'borrow'; source: SessionRef }
+    | { ok: true; kind: 'none';
+      reason: 'no_parent' | 'not_our_parent' | 'other_duty' | 'not_full' | 'not_first_create' }
+    | { ok: false; rejection: CoreRejection };
+
+  /**
+   * The borrow arm's four reads: the parent operation, the source Session, its links and the source's real duty.
+   * Only a `borrow` takes no reservation; every other answer falls through to normal reservation. A source duty
+   * that is not ready never forges a borrow.
+   */
+  async function inheritedSeat(
+    parentOperation: OperationRef, ctx: CoreCallContext, platformDuty: PlatformDutyV1,
+    createCommandId: string,
+  ): Promise<InheritedSeatOutcome> {
+    const parentRead = await getSessionOperation(ctx, parentOperation);
+    if (parentRead.status !== 'ready') {
+      if (parentRead.status === 'rejected') return { ok: false, rejection: parentRead };
+      if (parentRead.status === 'not_found') {
+        return { ok: false, rejection: reject('not_found', 'the parent Session operation does not exist') };
+      }
+      return { ok: false, rejection: reject('unavailable', 'the parent Session operation is not ready') };
+    }
+    const parent = parentRead.value;
+    if (parent.action.kind !== 'handoff') return { ok: true, kind: 'none', reason: 'not_our_parent' };
+    const source = parent.action.input.source;
+    const sourceRead = await readSession(ctx, source);
+    if (sourceRead.status !== 'ready') {
+      if (sourceRead.status === 'rejected') return { ok: false, rejection: sourceRead };
+      if (sourceRead.status === 'not_found') {
+        return { ok: false, rejection: reject('not_found', 'the handoff source Session does not exist') };
+      }
+      return { ok: false, rejection: reject('unavailable', 'the handoff source Session read is not ready') };
+    }
+    const { record: sourceSession, links: sourceLinks } = sourceRead.value;
+    const sourceDuty = await duty(sourceSession.role, ctx);
+    if (sourceDuty.status !== 'ready') {
+      if (sourceDuty.status === 'rejected') return { ok: false, rejection: sourceDuty };
+      if (sourceDuty.status === 'not_found') {
+        return { ok: false, rejection: reject('unavailable', 'the handoff source Session duty is not found') };
+      }
+      return { ok: false, rejection: reject('unavailable', 'the handoff source Session duty is not ready') };
+    }
+    const inherited = seatInheritanceOf({ parentOperation, operation: handoffSeatFactsOf(parent),
+      duty: platformDuty, sourceDuty: sourceDuty.value,
+      namedTasks: parent.action.input.assignments.flatMap((assignment) => assignment.tasks),
+      sourceLinks, createCommandId });
+    return inherited.kind === 'borrow'
+      ? { ok: true, kind: 'borrow', source: inherited.source }
+      : { ok: true, kind: 'none', reason: inherited.reason };
+  }
+
+  /**
+   * The seat after the receipt miss: a replay never runs this. A `readonly_copy` and an `unknown` duty are not
+   * counted; a duty read failure keeps its own rejection; a handoff parent may borrow; every other new line takes
+   * the reservation under the allocation and limits guards.
+   */
+  async function decideSeat(args: { ctx: CoreCallContext; scope: WorkspaceScope; role: RoleConfigurationRef;
+    provenance: SessionProvenanceV1; parentOperation: OperationRef | null; plannedSessionRef: SessionRef;
+    operationRef: OperationRef; requestId: string }): Promise<SeatOutcome> {
+    const decidedAt = new Date().toISOString();
+    const projectRef: ProjectScope = { projectId: args.scope.projectId };
+    const notCountedSeat = (reason: 'unknown_duty' | 'readonly_copy'): SeatOutcome => ({ ok: true, internal: [],
+      decision: { duty: 'unknown', mode: 'not_counted', notCountedReason: reason, allocationRef: null,
+        handoff: null, source: null, decidedAt }, fragment: null, bindings: [] });
+    if (args.provenance.kind === 'readonly_copy') return notCountedSeat('readonly_copy');
+    const resolved = await duty(args.role, args.ctx);
+    if (resolved.status !== 'ready') {
+      // The read's own rejection, never a downgrade to `unknown` and never a normal reservation.
+      if (resolved.status === 'rejected') return { ok: false, rejection: resolved };
+      return { ok: false, rejection: reject('unavailable',
+        resolved.status === 'not_found' ? 'the Session duty is not found' : 'the Session duty is not ready') };
+    }
+    const counted = roleLineDutyOf(resolved.value);           // reviewer -> executor; unknown -> null
+    if (counted === null) return notCountedSeat('unknown_duty');
+    if (args.parentOperation !== null) {
+      const seat = await inheritedSeat(args.parentOperation, args.ctx,
+        resolved.value as PlatformDutyV1, args.requestId);
+      if (!seat.ok) return seat;                              // every failure is `unavailable` (§10)
+      if (seat.kind === 'borrow') {
+        return { ok: true, internal: [], fragment: null, bindings: [],
+          decision: { duty: counted, mode: 'borrowed', notCountedReason: null,
+            allocationRef: { aggregateType: 'RoleLineAllocation', projectId: projectRef.projectId, duty: counted },
+            handoff: args.parentOperation, source: seat.source, decidedAt } };
+      }
+    }
+    const current = await allocationRead.readAllocationForCommit(args.ctx, { projectRef, duty: counted });
+    if (current.status !== 'ready') {
+      return { ok: false, rejection: current.status === 'rejected' ? current
+        : reject('unavailable', 'the role-line allocation read answered not_found') };
+    }
+    const { allocation, allocationGuard, limitsGuard } = current.value;
+    const internal = [allocationGuard.refKey, limitsGuard.refKey];
+    const atCap = seatAtCap({ duty: counted, open: openLimitOf(current.value.limits, counted),
+      holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0 });
+    if (atCap !== null) return { ok: false, rejection: atCap };
+    const pending = allocationNext({ projectRef, duty: counted, current: allocation,
+      change: { kind: 'reserve', operationRef: args.operationRef } });
+    const contribution = roleLineCommitContribution({ projectRef, records: [], guards: [],
+      links: [], claimChanges: [], bindings: [], events: [], allocation: pending }, allocation);
+    if (!contribution.ok) return { ok: false, rejection: contribution.rejection };
+    return { ok: true, internal, bindings: contribution.fragment.commitCursorBindings ?? [],
+      decision: { duty: counted, mode: 'reserved', notCountedReason: null, allocationRef: pending.ref,
+        handoff: null, source: null, decidedAt },
+      fragment: { ...contribution.fragment, guards: [...contribution.fragment.guards, limitsGuard] } };
   }
 
   // ------------------------------------------------------------------------
@@ -832,112 +1006,123 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       ...(input.consultation === null ? {} : { consultation: input.consultation }),
     } as unknown as JsonValue));
 
-    const existing = await records.lookupCommit({ identityKey, fingerprint });
-    if (existing.status === 'ready') {
-      const expectedRef = operationRefKey(operationRef);
-      const restored = await readOriginalOperation(existing.value, expectedRef, scope, plannedSessionRef);
-      if (!restored.ok) return restored.rejection;
-      return { status: 'committed', value: restored.value, replayed: true, cursor: existing.value.cursor };
-    }
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    let internal: readonly string[] = [];
+    const allocateAttempt = async (_index: number): Promise<WriteResult<SessionCreateOperationRecord> | { storeFailure: StoreFailure }> => {
+      const existing = await records.lookupCommit({ identityKey, fingerprint });
+      if (existing.status === 'ready') {
+        const expectedRef = operationRefKey(operationRef);
+        const restored = await readOriginalOperation(existing.value, expectedRef, scope, plannedSessionRef);
+        if (!restored.ok) return restored.rejection;
+        return { status: 'committed', value: restored.value, replayed: true, cursor: existing.value.cursor };
+      }
+      if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
-    // ONE canonical read of the formal scope. The CAS guards below are required
-    // regardless of whether the caller supplied an empty `expected` list.
-    const projectKey = canonicalOf({ aggregateType: 'Project', projectId: scope.projectId });
-    const workspaceKey = canonicalOf({ aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId });
-    if (projectKey === null || workspaceKey === null) return reject('invalid', 'session scope cannot be canonically encoded');
-    const scopeRead = await records.readMany([projectKey, workspaceKey]);
-    if (scopeRead.status !== 'ready') {
-      if (scopeRead.code === 'not_found') return reject('not_found', 'the session scope does not exist');
-      return mapStoreFailure(scopeRead);
-    }
-    const present = new Map(scopeRead.value.records.map((record) => [record.refKey, record]));
-    const project = present.get(projectKey);
-    const workspace = present.get(workspaceKey);
-    if (project === undefined || workspace === undefined) {
-      return reject('not_found', `the session scope ${scope.projectId}/${scope.workspaceId} does not exist`);
-    }
-    if (pins.value.project !== undefined && pins.value.project !== project.revision) {
-      return reject('revision_conflict', 'the supplied Project pin does not match the version read in this call',
-        [{ ref: { aggregateType: 'Project', projectId: scope.projectId }, revision: project.revision }]);
-    }
-    if (pins.value.workspace !== undefined && pins.value.workspace !== workspace.revision) {
-      return reject('revision_conflict', 'the supplied Workspace pin does not match the version read in this call',
-        [{ ref: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, revision: workspace.revision }]);
-    }
+      // ONE canonical read of the formal scope. The CAS guards below are required
+      // regardless of whether the caller supplied an empty `expected` list.
+      const projectKey = canonicalOf({ aggregateType: 'Project', projectId: scope.projectId });
+      const workspaceKey = canonicalOf({ aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId });
+      if (projectKey === null || workspaceKey === null) return reject('invalid', 'session scope cannot be canonically encoded');
+      const scopeRead = await records.readMany([projectKey, workspaceKey]);
+      if (scopeRead.status !== 'ready') {
+        if (scopeRead.code === 'not_found') return reject('not_found', 'the session scope does not exist');
+        return sessionStoreFailureToRejection(scopeRead);
+      }
+      const present = new Map(scopeRead.value.records.map((record) => [record.refKey, record]));
+      const project = present.get(projectKey);
+      const workspace = present.get(workspaceKey);
+      if (project === undefined || workspace === undefined) {
+        return reject('not_found', `the session scope ${scope.projectId}/${scope.workspaceId} does not exist`);
+      }
+      if (pins.value.project !== undefined && pins.value.project !== project.revision) {
+        return reject('revision_conflict', 'the supplied Project pin does not match the version read in this call',
+          [{ ref: { aggregateType: 'Project', projectId: scope.projectId }, revision: project.revision }]);
+      }
+      if (pins.value.workspace !== undefined && pins.value.workspace !== workspace.revision) {
+        return reject('revision_conflict', 'the supplied Workspace pin does not match the version read in this call',
+          [{ ref: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, revision: workspace.revision }]);
+      }
 
-    // S1-SES-01: a named predecessor must exist in this scope and must not close
-    // a provenance loop. This runs only after the receipt miss, so a replay of the
-    // original admission never depends on the predecessor still being readable.
-    let provenanceGuards: RecordGuard[] = [];
-    if (providedProvenance !== undefined && (createdProvenance as { kind: string }).kind !== 'new') {
-      const predecessor = (createdProvenance as { from: SessionRef }).from;
-      const chain = await provenanceChainGuards(predecessor, plannedSessionRef.sessionId, scope);
-      if (!chain.ok) return chain.rejection;
-      provenanceGuards = chain.guards;
-    }
+      // S1-SES-01: a named predecessor must exist in this scope and must not close
+      // a provenance loop. This runs only after the receipt miss, so a replay of the
+      // original admission never depends on the predecessor still being readable.
+      let provenanceGuards: RecordGuard[] = [];
+      if (providedProvenance !== undefined && (createdProvenance as { kind: string }).kind !== 'new') {
+        const predecessor = (createdProvenance as { from: SessionRef }).from;
+        const chain = await provenanceChainGuards(predecessor, plannedSessionRef.sessionId, scope);
+        if (!chain.ok) return chain.rejection;
+        provenanceGuards = chain.guards;
+      }
 
-    const now = new Date().toISOString();
-    const operation: SessionCreateOperationRecord = {
-      ref: operationRef,
-      revision: 1,
-      workspaceId: input.workspace.workspaceId,
-      action: {
-        kind: 'create',
-        plannedSessionRef,
-        parentOperation: input.parentOperation,
-        workspace: input.workspace,
-        kernelStore: input.kernelStore,
-        role: input.role,
-        recommendedRefs: input.recommendedRefs,
-        initialLinks: input.initialLinks,
-        provenance: createdProvenance,
-        creation: input.creation,
-        consultation: input.consultation,
-      },
-      phase: 'accepted',
-      requestedAt: now,
-      updatedAt: now,
-      observation: null,
-      failure: null,
+      const seat = await decideSeat({ ctx, scope, role: input.role, provenance: createdProvenance,
+        parentOperation: input.parentOperation, plannedSessionRef, operationRef, requestId });
+      if (!seat.ok) return seat.rejection;
+      internal = seat.internal;
+
+      const now = new Date().toISOString();
+      const operation: SessionCreateOperationRecord = {
+        ref: operationRef,
+        revision: 1,
+        workspaceId: input.workspace.workspaceId,
+        action: {
+          kind: 'create',
+          plannedSessionRef,
+          parentOperation: input.parentOperation,
+          workspace: input.workspace,
+          kernelStore: input.kernelStore,
+          role: input.role,
+          recommendedRefs: input.recommendedRefs,
+          initialLinks: input.initialLinks,
+          provenance: createdProvenance,
+          creation: input.creation,
+          consultation: input.consultation,
+          seatDecision: seat.decision,
+        },
+        phase: 'accepted',
+        requestedAt: now,
+        updatedAt: now,
+        observation: null,
+        failure: null,
+      };
+      const event = {
+        eventId: deriveEventId(identityKey, 'admitted'),
+        eventType: 'SessionCreationAdmitted' as const,
+        schemaVersion: 1 as const,
+        occurredAt: now,
+        projectId: scope.projectId,
+        workspaceId: scope.workspaceId,
+        operationRef: operation.ref,
+        operation,
+      };
+      const guards: RecordGuard[] = [
+        { refKey: projectKey, expectedRevision: project.revision },
+        { refKey: workspaceKey, expectedRevision: workspace.revision },
+        { refKey: operationRefKey(operation.ref), expectedRevision: null },
+        { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(plannedSessionRef)), expectedRevision: null },
+        ...provenanceGuards,
+      ];
+      const prepared: PreparedCommit = {
+        identityKey,
+        fingerprint,
+        guards: [...guards, ...(seat.fragment?.guards ?? [])],
+        records: [encodeSessionOperationRecord(operation), ...(seat.fragment?.records ?? [])],
+        claims: seat.fragment?.claims ?? [],
+        indexGuards: [],
+        indexChanges: [],
+        events: [encodeSessionCreationAdmittedEvent(event), ...(seat.fragment?.events ?? [])],
+        ...(seat.bindings.length > 0 ? { commitCursorBindings: seat.bindings } : {}),
+      };
+
+      if (ctx.signal?.aborted) return reject('cancelled', 'session admission was cancelled before commit');
+      const committed = await records.commit(prepared);
+      if (committed.status !== 'committed') return { storeFailure: committed };
+      if (!committed.replayed) {
+        return { status: 'committed', value: operation, replayed: false, cursor: committed.cursor };
+      }
+      const restored = await readOriginalOperation(committed, operationRefKey(operation.ref), scope, plannedSessionRef);
+      return restored.ok ? { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor }
+        : restored.rejection;
     };
-    const event = {
-      eventId: deriveEventId(identityKey, 'admitted'),
-      eventType: 'SessionCreationAdmitted' as const,
-      schemaVersion: 1 as const,
-      occurredAt: now,
-      projectId: scope.projectId,
-      workspaceId: scope.workspaceId,
-      operationRef: operation.ref,
-      operation,
-    };
-    const guards: RecordGuard[] = [
-      { refKey: projectKey, expectedRevision: project.revision },
-      { refKey: workspaceKey, expectedRevision: workspace.revision },
-      { refKey: operationRefKey(operation.ref), expectedRevision: null },
-      { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(plannedSessionRef)), expectedRevision: null },
-      ...provenanceGuards,
-    ];
-    const prepared: PreparedCommit = {
-      identityKey,
-      fingerprint,
-      guards,
-      records: [encodeSessionOperationRecord(operation)],
-      claims: [],
-      indexGuards: [],
-      indexChanges: [],
-      events: [encodeSessionCreationAdmittedEvent(event)],
-    };
-
-    if (ctx.signal?.aborted) return reject('cancelled', 'session admission was cancelled before commit');
-    const committed = await records.commit(prepared);
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
-    if (!committed.replayed) {
-      return { status: 'committed', value: operation, replayed: false, cursor: committed.cursor };
-    }
-    const restored = await readOriginalOperation(committed, operationRefKey(operation.ref), scope, plannedSessionRef);
-    if (!restored.ok) return restored.rejection;
-    return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
+    return retryAllocationCommit(allocateAttempt, (failure) => allocationOnlyConflict(failure, internal));
   }
 
   // ------------------------------------------------------------------------
@@ -969,7 +1154,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     // same-project different-workspace caller can never receive an old receipt.
     const opKey = operationRefKey(registration.operationRef);
     const operationRead = await records.readMany([opKey]);
-    if (operationRead.status !== 'ready') return mapStoreFailure(operationRead);
+    if (operationRead.status !== 'ready') return sessionStoreFailureToRejection(operationRead);
     const operationRecord = operationRead.value.records.find((record) => record.refKey === opKey);
     if (operationRecord === undefined) {
       return reject('not_found', 'the admitted Session operation does not exist');
@@ -989,13 +1174,15 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (storedOperation.action.kind !== 'create') {
       return reject('unavailable', `the operation is a ${storedOperation.action.kind} operation, not a Session creation`);
     }
-    if (canonicalOf(storedOperation.action.plannedSessionRef) === null ||
-      canonicalOf(storedOperation.action.plannedSessionRef) !== canonicalOf(registration.sessionRef)) {
+    const createAction = storedOperation.action;
+    if (canonicalOf(createAction.plannedSessionRef) === null ||
+      canonicalOf(createAction.plannedSessionRef) !== canonicalOf(registration.sessionRef)) {
       return reject('invalid', 'the admitted operation plans another Session reference');
     }
-    if (registration.adapterId !== storedOperation.action.kernelStore.adapterId) {
+    if (registration.adapterId !== createAction.kernelStore.adapterId) {
       return reject('invalid', 'the registration adapter does not match the pinned Kernel store');
     }
+    const operationAcceptedAt1 = storedOperation.revision === 1 && storedOperation.phase === 'accepted';
 
     const identityKey = sessionRegisterIdentityKey(actor, scope.projectId, requestId);
     // `observedAt` is an observation timestamp, not request content: it is
@@ -1012,220 +1199,270 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       historyCursor: null,
     } as unknown as JsonValue));
 
-    const existing = await records.lookupCommit({ identityKey, fingerprint });
-    if (existing.status === 'ready') {
-      const restored = await readOriginalSession(existing.value, registration, scope);
-      if (!restored.ok) return restored.rejection;
-      return { status: 'committed', value: restored.value, replayed: true, cursor: existing.value.cursor };
-    }
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
-
-    // SES-01: the operation is judged before the planned Session is read.
-    const operationAcceptedAt1 = storedOperation.revision === 1 && storedOperation.phase === 'accepted';
-    const admitted = registrationVerdict(null, operationAcceptedAt1);
-    if (!admitted.ok) return reject(admitted.code, admitted.detail);
-
-    const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(registration.sessionRef));
-    const sessionRead = await records.readMany([sessionKey]);
-    if (sessionRead.status !== 'ready') return mapStoreFailure(sessionRead);
-    const existingSession = sessionRead.value.records.find((record) => record.refKey === sessionKey);
-    let present: SessionRecord | null = null;
-    if (existingSession !== undefined) {
-      const decodedExisting = decodeSessionRecord(existingSession);
-      if (decodedExisting.status !== 'decoded') {
-        return reject('unavailable', `the existing Session record is damaged: ${decodedExisting.reason}`);
+    let internal: readonly string[] = [];
+    const registrationAttempt = async (): Promise<WriteResult<SessionRecord> | { storeFailure: StoreFailure }> => {
+      const existing = await records.lookupCommit({ identityKey, fingerprint });
+      if (existing.status === 'ready') {
+        const restored = await readOriginalSession(existing.value, registration, scope);
+        if (!restored.ok) return restored.rejection;
+        return { status: 'committed', value: restored.value, replayed: true, cursor: existing.value.cursor };
       }
-      present = decodedExisting.value;
-    }
-    const registered = registrationVerdict(present, operationAcceptedAt1);
-    if (!registered.ok) {
-      return reject(registered.code, registered.detail,
-        present === null ? undefined : [{ ref: present.ref, revision: present.revision }]);
-    }
+      if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
-    // Validate every requested initial link against its real canonical target
-    // before writing anything: a Task against the current Plan, a Module against
-    // the current architecture directory, while WorkContext has no canonical
-    // provider and fails explicitly instead of writing a fake association.
-    const targetGuards = new Map<string, RecordGuard>();
-    const pendingLinks: PendingSessionWorkLink[] = [];
-    for (const link of storedOperation.action.initialLinks) {
-      // The one shared formal target check: a Task through Goal + active Plan
-      // membership, a Module through the current adopted catalog, WorkContext
-      // still unsupported. Creation never writes a fabricated association.
-      const checked = await validateWorkLinkTarget(records, ctx, scope, link.target);
-      if (!checked.ok) return checked.rejection;
-      for (const guard of checked.guards) targetGuards.set(guard.refKey, guard);
-      pendingLinks.push({
-        ref: {
-          aggregateType: 'SessionWorkLink',
-          projectId: scope.projectId,
-          sessionId: registration.sessionRef.sessionId,
-          target: link.target,
-          relation: link.relation,
-        },
-        revision: 1,
-        since: null,
-        until: null,
+      // The conversion is rebuilt on every attempt: a lost allocation-only race re-reads the same reservation and
+      // converts it; an existing receipt above never reaches this read.
+      const seated = createAction.seatDecision;
+      const projectRef: ProjectScope = { projectId: scope.projectId };
+      let conversion: CommitFragment | null = null;
+      let conversionBindings: readonly CommitCursorBinding[] = [];
+      if (seated !== null && seated.mode === 'reserved') {
+        // A reserved seat's saved duty is a RoleLineDutyV1, never a second read.
+        const counted = seated.duty as RoleLineDutyV1;
+        const current = await allocationRead.readAllocationForCommit(ctx, { projectRef, duty: counted });
+        if (current.status !== 'ready') {
+          return current.status === 'rejected' ? current
+            : reject('unavailable', 'the role-line allocation read answered not_found');
+        }
+        if (current.value.allocation === null) {
+          return reject('unavailable', 'the reserved Session has no allocation record');
+        }
+        const contribution = roleLineCommitContribution({ projectRef, records: [], guards: [],
+          links: [], claimChanges: [], bindings: [], events: [],
+          allocation: allocationNext({ projectRef, duty: counted, current: current.value.allocation,
+            change: { kind: 'convert', operationRef: registration.operationRef,
+              sessionRef: registration.sessionRef } }) }, current.value.allocation);
+        if (!contribution.ok) return contribution.rejection;
+        conversion = contribution.fragment;
+        conversionBindings = contribution.fragment.commitCursorBindings ?? [];
+      }
+      internal = conversion === null ? [] : conversion.guards.map((guard) => guard.refKey);
+
+      // SES-01: the operation is judged before the planned Session is read.
+      const admitted = registrationVerdict(null, operationAcceptedAt1);
+      if (!admitted.ok) return reject(admitted.code, admitted.detail);
+
+      const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(registration.sessionRef));
+      const sessionRead = await records.readMany([sessionKey]);
+      if (sessionRead.status !== 'ready') return sessionStoreFailureToRejection(sessionRead);
+      const existingSession = sessionRead.value.records.find((record) => record.refKey === sessionKey);
+      let present: SessionRecord | null = null;
+      if (existingSession !== undefined) {
+        const decodedExisting = decodeSessionRecord(existingSession);
+        if (decodedExisting.status !== 'decoded') {
+          return reject('unavailable', `the existing Session record is damaged: ${decodedExisting.reason}`);
+        }
+        present = decodedExisting.value;
+      }
+      const registered = registrationVerdict(present, operationAcceptedAt1);
+      if (!registered.ok) {
+        return reject(registered.code, registered.detail,
+          present === null ? undefined : [{ ref: present.ref, revision: present.revision }]);
+      }
+
+      // Validate every requested initial link against its real canonical target
+      // before writing anything: a Task against the current Plan, a Module against
+      // the current architecture directory, while WorkContext has no canonical
+      // provider and fails explicitly instead of writing a fake association.
+      const targetGuards = new Map<string, RecordGuard>();
+      const pendingLinks: PendingSessionWorkLink[] = [];
+      for (const link of createAction.initialLinks) {
+        // The one shared formal target check: a Task through Goal + active Plan
+        // membership, a Module through the current adopted catalog, WorkContext
+        // still unsupported. Creation never writes a fabricated association.
+        const checked = await validateWorkLinkTarget(records, ctx, scope, link.target);
+        if (!checked.ok) return checked.rejection;
+        for (const guard of checked.guards) targetGuards.set(guard.refKey, guard);
+        pendingLinks.push({
+          ref: {
+            aggregateType: 'SessionWorkLink',
+            projectId: scope.projectId,
+            sessionId: registration.sessionRef.sessionId,
+            target: link.target,
+            relation: link.relation,
+          },
+          revision: 1,
+          since: null,
+          until: null,
+        });
+      }
+
+      // The initial open responsible goal/project links take their claims in this same commit, with the saved
+      // counted duty and no second duty read.
+      const initialChanges = seated === null || seated.duty === 'unknown' ? []
+        : foldRoleScopeClaimChanges(projectRef, responsibilityClaimChanges({
+            projectRef, close: [],
+            open: pendingLinks.map((link) => ({ link: link.ref, duty: seated.duty as RoleLineDutyV1 })),
+          }));
+      const initial = roleLineCommitContribution({ projectRef, records: [], guards: [], links: [],
+        claimChanges: initialChanges, bindings: [], events: [], allocation: null }, null);
+      if (!initial.ok) return initial.rejection;
+
+      const createdAt = new Date().toISOString();
+      // Slice 1 §2.2: the accepted operation's normalized provenance is the only
+      // source, and the codec requires it.
+      const acceptedProvenance = createAction.provenance;
+      const creation = createAction.creation;
+      const session = createSessionRecord({
+        ref: plainSessionRefToAggregate(registration.sessionRef),
+        kernel: { adapterId: registration.adapterId, kernelSessionId: registration.kernelSessionId },
+        role: createAction.role,
+        workspaceId: scope.workspaceId,
+        createdAt,
+        provenance: acceptedProvenance,
+        // The ceiling and secretary pin are written once, in the creation commit.
+        ...(creation?.delegationCeiling === undefined ? {} : { delegationCeiling: creation.delegationCeiling }),
+        ...(creation?.secretaryCreated === undefined ? {} : { secretaryCreated: creation.secretaryCreated }),
       });
-    }
+      const completedOperation: SessionOperationRecord = {
+        ...storedOperation,
+        revision: 2,
+        phase: 'completed',
+        updatedAt: createdAt,
+        observation: {
+          observedAt: registration.observedAt,
+          adapterId: registration.adapterId,
+          kernelSessionId: registration.kernelSessionId,
+          beforeCursor: null,
+          afterCursor: null,
+          resultRef: null,
+        },
+        failure: null,
+      };
+      const event: SessionCreatedEvent = {
+        eventId: deriveEventId(identityKey, 'created'),
+        eventType: SESSION_CREATED_EVENT_TYPE,
+        schemaVersion: 1,
+        occurredAt: createdAt,
+        projectId: scope.projectId,
+        workspaceId: scope.workspaceId,
+        operationRef: registration.operationRef,
+        session,
+      };
+      // A member-created Session rides its parent's effect in the SAME creation commit. The parent is the stored
+      // operation's `parentOperation`; only a member_create parent whose `createChild` is this create operation is the
+      // member arm (a handoff successor has a handoff parent and writes no such event). The proof is present only when
+      // the creation carried an acknowledgement, because without one no message can ever cite the effect.
+      let memberEvent: MemberCreatedEventV1 | null = null;
+      const parentRef = createAction.parentOperation;
+      if (parentRef !== null) {
+        const parentKey = operationRefKey(parentRef);
+        const parentRead = await records.readMany([parentKey]);
+        if (parentRead.status !== 'ready') return sessionStoreFailureToRejection(parentRead);
+        const parentRecord = parentRead.value.records.find((entry) => entry.refKey === parentKey);
+        if (parentRecord === undefined) {
+          return reject('unavailable', 'the parent operation of the Session creation does not exist');
+        }
+        const decodedParent = decodeSessionOperationRecord(parentRecord);
+        if (decodedParent.status !== 'decoded') {
+          return reject('unavailable', `the parent Session operation is damaged: ${decodedParent.reason}`);
+        }
+        const parent = decodedParent.value;
+        const parentAction = (parent.action as { kind: string }).kind === 'member_create'
+          ? parent.action as unknown as MemberCreateActionV1 : null;
+        if (parentAction !== null
+          && parentAction.progress.createChild !== null
+          && operationRefKey(parentAction.progress.createChild) === operationRefKey(storedOperation.ref)) {
+          // A human-approved creation cites the card answer it was decided by; an automatic or reused one keeps the
+          // request's original acknowledgement.
+          const acknowledgement = parentAction.progress.decision?.answerRef
+            ?? parentAction.input.acknowledgement;
+          const proof: MemberCreatedEventV1['proof'] = acknowledgement === null ? null : {
+            acknowledgementRef: acknowledgement,
+            // The new Session is the only changed aggregate; it had no prior version. The answer's captured source pins
+            // are checked when the answer itself is applied, so they are not replayed here.
+            capturedPins: [],
+            changes: [{ before: { ref: session.ref, revision: 0 }, after: { ref: session.ref, revision: session.revision } }],
+            basisRebases: [],
+          };
+          memberEvent = {
+            eventId: deriveEventId(identityKey, 'member-created'),
+            eventType: MEMBER_CREATED_EVENT_TYPE,
+            schemaVersion: 1,
+            occurredAt: createdAt,
+            projectId: scope.projectId,
+            workspaceId: scope.workspaceId,
+            operationRef: parent.ref,
+            sessionRef: session.ref,
+            sessionRevision: session.revision,
+            initiatorRun: parentAction.input.caller.kind === 'work' ? parentAction.input.caller.run : null,
+            actor,
+            ...(acknowledgement === null ? {} : { acknowledgement }),
+            proof,
+          };
+        }
+      }
+      const guardByKey = new Map<string, RecordGuard>();
+      guardByKey.set(opKey, { refKey: opKey, expectedRevision: 1 });
+      guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: null });
+      const recordsToWrite: EncodedRecord[] = [];
+      const events: EncodedDomainEvent[] = [];
+      const linkBindings: CommitCursorBinding[] = [];
+      const roleFacts = await roleFactsContribution(records, {
+        session, operation: { ...storedOperation, action: createAction }, principal: ctx.principal });
+      if (roleFacts.status !== 'ready') return reject('unavailable', 'the role facts could not be read');
+      if (roleFacts.value !== null) {
+        recordsToWrite.push(roleFacts.value.record);
+        guardByKey.set(roleFacts.value.guard.refKey, roleFacts.value.guard);
+      }
+      for (const effect of registered.effects) {
+        switch (effect.kind) {
+          case 'create_session':
+            recordsToWrite.push(encodeSessionRecord(session));
+            break;
+          case 'complete_creation_operation':
+            recordsToWrite.push(encodeSessionOperationRecord(completedOperation));
+            break;
+          case 'write_initial_links':
+            for (const link of pendingLinks) {
+              const linkKey = sessionWorkLinkRefKey(link.ref);
+              recordsToWrite.push(encodePendingSessionWorkLink(link));
+              guardByKey.set(linkKey, { refKey: linkKey, expectedRevision: null });
+              linkBindings.push({ refKey: linkKey, field: 'since' });
+            }
+            break;
+          case 'emit_event':
+            // SES-01 names the event; this write encodes only that one.
+            if (effect.eventType !== event.eventType) {
+              throw new Error(`session_created emits ${event.eventType}, not ${effect.eventType}`);
+            }
+            events.push(encodeSessionCreatedEvent(event));
+            break;
+          default:
+            throw new Error(`session_created has no ${effect.kind} effect`);
+        }
+      }
+      // The proof decoder reads the receipt's LAST event, so the member event is appended after every effect event.
+      if (memberEvent !== null) events.push(memberCreatedCodec.encode(memberEvent));
+      for (const guard of targetGuards.values()) guardByKey.set(guard.refKey, guard);
+      const claims: UniqueClaimChange[] = [{
+        claimKey: kernelSessionClaimKey(registration.adapterId, registration.kernelSessionId),
+        expectedOwner: null,
+        nextOwner: sessionKey,
+      }, ...(conversion?.claims ?? []), ...initial.fragment.claims];
+      const bindings = [...conversionBindings, ...linkBindings];
+      const prepared: PreparedCommit = {
+        identityKey,
+        fingerprint,
+        guards: [...guardByKey.values(), ...(conversion?.guards ?? []), ...initial.fragment.guards],
+        records: [...recordsToWrite, ...(conversion?.records ?? []), ...initial.fragment.records],
+        claims,
+        indexGuards: [],
+        indexChanges: [],
+        events: [...events, ...(conversion?.events ?? []), ...initial.fragment.events],
+        ...(bindings.length > 0 ? { commitCursorBindings: bindings } : {}),
+      };
 
-    const createdAt = new Date().toISOString();
-    // Slice 1 §2.2: the accepted operation's normalized provenance is the only
-    // source, and the codec requires it.
-    const acceptedProvenance = storedOperation.action.provenance;
-    const creation = storedOperation.action.creation;
-    const session = createSessionRecord({
-      ref: plainSessionRefToAggregate(registration.sessionRef),
-      kernel: { adapterId: registration.adapterId, kernelSessionId: registration.kernelSessionId },
-      role: storedOperation.action.role,
-      workspaceId: scope.workspaceId,
-      createdAt,
-      provenance: acceptedProvenance,
-      // The ceiling and secretary pin are written once, in the creation commit.
-      ...(creation?.delegationCeiling === undefined ? {} : { delegationCeiling: creation.delegationCeiling }),
-      ...(creation?.secretaryCreated === undefined ? {} : { secretaryCreated: creation.secretaryCreated }),
-    });
-    const completedOperation: SessionOperationRecord = {
-      ...storedOperation,
-      revision: 2,
-      phase: 'completed',
-      updatedAt: createdAt,
-      observation: {
-        observedAt: registration.observedAt,
-        adapterId: registration.adapterId,
-        kernelSessionId: registration.kernelSessionId,
-        beforeCursor: null,
-        afterCursor: null,
-        resultRef: null,
-      },
-      failure: null,
+      if (ctx.signal?.aborted) return reject('cancelled', 'session registration was cancelled before commit');
+      const committed = await records.commit(prepared);
+      if (committed.status !== 'committed') return { storeFailure: committed };
+      if (!committed.replayed) {
+        return { status: 'committed', value: session, replayed: false, cursor: committed.cursor };
+      }
+      const restored = await readOriginalSession(committed, registration, scope);
+      return restored.ok ? { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor }
+        : restored.rejection;
     };
-    const event: SessionCreatedEvent = {
-      eventId: deriveEventId(identityKey, 'created'),
-      eventType: SESSION_CREATED_EVENT_TYPE,
-      schemaVersion: 1,
-      occurredAt: createdAt,
-      projectId: scope.projectId,
-      workspaceId: scope.workspaceId,
-      operationRef: registration.operationRef,
-      session,
-    };
-    // A member-created Session rides its parent's effect in the SAME creation commit. The parent is the stored
-    // operation's `parentOperation`; only a member_create parent whose `createChild` is this create operation is the
-    // member arm (a handoff successor has a handoff parent and writes no such event). The proof is present only when
-    // the creation carried an acknowledgement, because without one no message can ever cite the effect.
-    let memberEvent: MemberCreatedEventV1 | null = null;
-    const parentRef = storedOperation.action.parentOperation;
-    if (parentRef !== null) {
-      const parentKey = operationRefKey(parentRef);
-      const parentRead = await records.readMany([parentKey]);
-      if (parentRead.status !== 'ready') return mapStoreFailure(parentRead);
-      const parentRecord = parentRead.value.records.find((entry) => entry.refKey === parentKey);
-      if (parentRecord === undefined) {
-        return reject('unavailable', 'the parent operation of the Session creation does not exist');
-      }
-      const decodedParent = decodeSessionOperationRecord(parentRecord);
-      if (decodedParent.status !== 'decoded') {
-        return reject('unavailable', `the parent Session operation is damaged: ${decodedParent.reason}`);
-      }
-      const parent = decodedParent.value;
-      const parentAction = (parent.action as { kind: string }).kind === 'member_create'
-        ? parent.action as unknown as MemberCreateActionV1 : null;
-      if (parentAction !== null
-        && parentAction.progress.createChild !== null
-        && operationRefKey(parentAction.progress.createChild) === operationRefKey(storedOperation.ref)) {
-        // A human-approved creation cites the card answer it was decided by; an automatic or reused one keeps the
-        // request's original acknowledgement.
-        const acknowledgement = parentAction.progress.decision?.answerRef
-          ?? parentAction.input.acknowledgement;
-        const proof: MemberCreatedEventV1['proof'] = acknowledgement === null ? null : {
-          acknowledgementRef: acknowledgement,
-          // The new Session is the only changed aggregate; it had no prior version. The answer's captured source pins
-          // are checked when the answer itself is applied, so they are not replayed here.
-          capturedPins: [],
-          changes: [{ before: { ref: session.ref, revision: 0 }, after: { ref: session.ref, revision: session.revision } }],
-          basisRebases: [],
-        };
-        memberEvent = {
-          eventId: deriveEventId(identityKey, 'member-created'),
-          eventType: MEMBER_CREATED_EVENT_TYPE,
-          schemaVersion: 1,
-          occurredAt: createdAt,
-          projectId: scope.projectId,
-          workspaceId: scope.workspaceId,
-          operationRef: parent.ref,
-          sessionRef: session.ref,
-          sessionRevision: session.revision,
-          initiatorRun: parentAction.input.caller.kind === 'work' ? parentAction.input.caller.run : null,
-          actor,
-          ...(acknowledgement === null ? {} : { acknowledgement }),
-          proof,
-        };
-      }
-    }
-    const guardByKey = new Map<string, RecordGuard>();
-    guardByKey.set(opKey, { refKey: opKey, expectedRevision: 1 });
-    guardByKey.set(sessionKey, { refKey: sessionKey, expectedRevision: null });
-    const recordsToWrite: EncodedRecord[] = [];
-    const events: EncodedDomainEvent[] = [];
-    const bindings: CommitCursorBinding[] = [];
-    for (const effect of registered.effects) {
-      switch (effect.kind) {
-        case 'create_session':
-          recordsToWrite.push(encodeSessionRecord(session));
-          break;
-        case 'complete_creation_operation':
-          recordsToWrite.push(encodeSessionOperationRecord(completedOperation));
-          break;
-        case 'write_initial_links':
-          for (const link of pendingLinks) {
-            const linkKey = sessionWorkLinkRefKey(link.ref);
-            recordsToWrite.push(encodePendingSessionWorkLink(link));
-            guardByKey.set(linkKey, { refKey: linkKey, expectedRevision: null });
-            bindings.push({ refKey: linkKey, field: 'since' });
-          }
-          break;
-        case 'emit_event':
-          // SES-01 names the event; this write encodes only that one.
-          if (effect.eventType !== event.eventType) {
-            throw new Error(`session_created emits ${event.eventType}, not ${effect.eventType}`);
-          }
-          events.push(encodeSessionCreatedEvent(event));
-          break;
-        default:
-          throw new Error(`session_created has no ${effect.kind} effect`);
-      }
-    }
-    // The proof decoder reads the receipt's LAST event, so the member event is appended after every effect event.
-    if (memberEvent !== null) events.push(memberCreatedCodec.encode(memberEvent));
-    for (const guard of targetGuards.values()) guardByKey.set(guard.refKey, guard);
-    const claims: UniqueClaimChange[] = [{
-      claimKey: kernelSessionClaimKey(registration.adapterId, registration.kernelSessionId),
-      expectedOwner: null,
-      nextOwner: sessionKey,
-    }];
-    const prepared: PreparedCommit = {
-      identityKey,
-      fingerprint,
-      guards: [...guardByKey.values()],
-      records: recordsToWrite,
-      claims,
-      indexGuards: [],
-      indexChanges: [],
-      events,
-      ...(bindings.length > 0 ? { commitCursorBindings: bindings } : {}),
-    };
-
-    if (ctx.signal?.aborted) return reject('cancelled', 'session registration was cancelled before commit');
-    const committed = await records.commit(prepared);
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
-    if (!committed.replayed) {
-      return { status: 'committed', value: session, replayed: false, cursor: committed.cursor };
-    }
-    const restored = await readOriginalSession(committed, registration, scope);
-    if (!restored.ok) return restored.rejection;
-    return { status: 'committed', value: restored.value, replayed: true, cursor: committed.cursor };
+    return retryAllocationCommit(registrationAttempt, (failure) => allocationOnlyConflict(failure, internal));
   }
 
   // ------------------------------------------------------------------------
@@ -1244,7 +1481,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (ref.projectId !== scope.projectId) return { status: 'not_found' };
     const key = operationRefKey(ref);
     const read = await records.readMany([key]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const record = read.value.records.find((entry) => entry.refKey === key);
     if (record === undefined) return { status: 'not_found' };
     const decoded = decodeSessionOperationRecord(record);
@@ -1336,7 +1573,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     if (actorKey === null) return { ok: false, result: reject('invalid', 'the work_run read identity cannot be canonically encoded') };
     const scope: WorkspaceScope = { projectId, workspaceId };
     const read = await records.readMany([runKey]);
-    if (read.status !== 'ready') return { ok: false, result: mapStoreFailure(read) };
+    if (read.status !== 'ready') return { ok: false, result: sessionStoreFailureToRejection(read) };
     const record = read.value.records.find((entry) => entry.refKey === runKey);
     if (record === undefined) return { ok: false, result: { status: 'not_found' } };
     const decoded = decodeRun(record);
@@ -1367,7 +1604,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const sessionRef: SessionRef = { projectId: owned['projectId'], sessionId: owned['sessionId'] };
     const key = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
     const read = await records.readMany([key]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const record = read.value.records.find((entry) => entry.refKey === key);
     if (record === undefined) return { status: 'not_found' };
     const decoded = decodeSessionRecord(record);
@@ -1392,7 +1629,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       limit: want,
     };
     const page = await lookups.lookup(request);
-    if (page.status !== 'ready') return { ok: false, rejection: mapStoreFailure(page) };
+    if (page.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(page) };
     return { ok: true, value: page.value };
   }
 
@@ -1473,7 +1710,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         ...(after === null ? {} : { after }),
         limit: 1,
       });
-      if (page.status !== 'ready') return mapStoreFailure(page);
+      if (page.status !== 'ready') return sessionStoreFailureToRejection(page);
       observeWater(page.value.readThrough);
       if (stale || water.failure !== null) return null;
       if (page.value.records.length === 0) { exhausted[relation] = true; return null; }
@@ -1529,7 +1766,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       const sessionKey = sessionAggregateRefKey(
         plainSessionRefToAggregate({ projectId: scope.projectId, sessionId: minSessionId }));
       const read = await records.readMany([sessionKey]);
-      if (read.status !== 'ready') return mapStoreFailure(read);
+      if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
       observeWater(read.value.readThrough);
       if (stale) return reject('source_stale', 'the Session was read at a different water level than the target stream');
       const record = read.value.records.find((entry) => entry.refKey === sessionKey);

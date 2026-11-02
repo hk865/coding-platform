@@ -16,6 +16,7 @@ import type { GraphWrite } from '../../src/core/work-graph/model/session-contrac
 import type { ArchiveSessionInput, LinkSessionWorkInput } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
+import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
 const at = '2026-09-25T00:00:00.000Z';
@@ -29,6 +30,13 @@ const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host'
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const target: WorkLinkTarget = { kind: 'module', ref: { projectId, moduleId: 'source-tools' } };
 const role = { kind: 'legacy_template' as const, templateId: 'source-investigator', templateRevision: '1' };
+// The Host's trusted Work binding for this world's one role: the real resolver turns the exact sessionRole into
+// the executor pool, so the counted admission and the Module link both run on real evidence.
+const workflow: WorkflowHostConfiguration = { consumerId: 'a1-platform-session',
+  bindings: [{ workspace: scope, sessionRole: role, roleBinding: {
+    schemaVersion: 1, bindingId: 'a1-platform-binding', templateId: role.templateId,
+    templateRevision: role.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template',
+  }, budget: { tokenBudget: 1_000_000, deadline: null } }] };
 const directories: string[] = [];
 
 afterEach(async () => {
@@ -48,7 +56,7 @@ it('creates before a baseline, discovers module-linked Sessions, and preserves i
     async authorize() { return { status: 'rejected', code: 'forbidden', reason: 'no source grant is needed' }; },
   };
   const options = { storage: { kind: 'sqlite' as const, directory }, workspace: workspaceBindings,
-    now: () => at, kernelStores: { entries: [{ adapterId: 'a1-platform-kernel',
+    now: () => at, workflow, kernelStores: { entries: [{ adapterId: 'a1-platform-kernel',
       storeKey: 'a1-platform-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] } };
   let platform = await createTargetPlatform(options);
   try {
@@ -239,7 +247,7 @@ it('revises the adopted catalog with explicit containment, links the new module,
     async authorize() { return { status: 'rejected', code: 'forbidden', reason: 'no source grant is needed' }; },
   };
   const options = { storage: { kind: 'sqlite' as const, directory }, workspace: workspaceBindings,
-    now: () => at, kernelStores: { entries: [{ adapterId: 'a1-revise-kernel',
+    now: () => at, workflow, kernelStores: { entries: [{ adapterId: 'a1-revise-kernel',
       storeKey: 'a1-revise-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] } };
   let platform = await createTargetPlatform(options);
   try {

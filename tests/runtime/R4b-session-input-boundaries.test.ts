@@ -11,6 +11,7 @@ import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/sessi
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations, type CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
@@ -56,7 +57,7 @@ async function open() {
     meta: { requestId: 'boundary-register-workspace', expected: [
       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } });
   if (registered.status !== 'committed') throw Error(`workspace bootstrap failed: ${JSON.stringify(registered)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),

@@ -37,7 +37,7 @@ import {
   nextSessionMessageRecord, transitionMessage, type MessageEvent, type MessageGuardContext,
   type MessageTransition, type SessionMessageRecord,
 } from '../state/message-machine.js';
-import { S5_DECISION_ANSWER_BY_SOURCE, decodeSessionMessageRecord,
+import { S5_DECISION_ANSWER_BY_PROJECT_SOURCE, S5_DECISION_ANSWER_BY_SOURCE, decodeSessionMessageRecord,
   sessionMessageFromEvent, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { decodeStoredUserDecisionBody, encodeUserDecisionBody } from '../sessions/message-body-envelope.js';
 import { decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
@@ -367,10 +367,22 @@ export function createDecisionMessageService(
     return null;
   }
 
+  /**
+   * §3.11 item 3: exactly the shape the relaxation admits — a project-subject
+   * synthetic answer of this project.
+   */
+  function isProjectAnswerOf(message: SessionMessage, projectId: string): boolean {
+    const decision = message.decision;
+    return decision !== undefined && decision.syntheticAnswer === true && message.status === 'responded'
+      && decision.source.subject.kind === 'project' && decision.source.subject.projectRef.projectId === projectId;
+  }
+
   async function loadMessage(owned: Owned, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>> {
     const key = canonicalOf(ref);
     if (key === null) return rejectedWithCurrent('invalid', 'the message ref is not canonicalizable JSON');
-    if (ref.projectId !== owned.projectId || ref.workspaceId !== owned.workspaceId) {
+    const sameScope = ref.projectId === owned.projectId && ref.workspaceId === owned.workspaceId;
+    if (!sameScope && ref.projectId !== owned.projectId) {
+      // Another PROJECT: no read at all.
       return rejectedWithCurrent('forbidden', 'the message ref is outside the bound project/workspace');
     }
     let read: Awaited<ReturnType<S5RecordPort['readMany']>>;
@@ -387,6 +399,9 @@ export function createDecisionMessageService(
     }
     const decoded = decodeSessionMessageRecord(record);
     if (decoded.status !== 'decoded') return rejectedWithCurrent('unavailable', `the message record is damaged: ${decoded.reason}`);
+    if (!sameScope && !isProjectAnswerOf(decoded.value, owned.projectId)) {
+      return rejectedWithCurrent('forbidden', 'the message ref is outside the bound project/workspace');
+    }
     return { status: 'ready', value: decoded.value };
   }
 
@@ -611,13 +626,15 @@ export function createDecisionMessageService(
   }
 
   async function findAnswerForSource(owned: Owned, source: DecisionSourceV1): Promise<ReadOutcome<SessionMessage | null>> {
+    // §3.11 item 2: the answer's identity is project+source for a project subject, so its read is.
+    const project = source.subject.kind === 'project' ? source.subject.projectRef.projectId : null;
     let page: Awaited<ReturnType<S5RecordPort['lookup']>>;
     try {
-      page = await records.lookup({
-        index: S5_DECISION_ANSWER_BY_SOURCE,
-        values: [owned.projectId, owned.workspaceId, source.kind, source.key],
-        limit: 25,
-      });
+      page = await records.lookup(project === null
+        ? { index: S5_DECISION_ANSWER_BY_SOURCE,
+          values: [owned.projectId, owned.workspaceId, source.kind, source.key], limit: 25 }
+        : { index: S5_DECISION_ANSWER_BY_PROJECT_SOURCE,
+          values: [owned.projectId, source.kind, source.key], limit: 25 });
     } catch {
       return { ok: false, rejection: rejectedWithCurrent('unavailable', 'the decision answer index could not be read') };
     }

@@ -55,10 +55,15 @@ function decodeRecord<F extends Fields>(format: RecordFormat<F>, record: Encoded
 }
 
 export function createRecordCodec<const F extends Fields>(format: RecordFormat<F>): RecordCodec<F> {
-  // A top-level bound cursor (directly or under f.nullable) is declared to the Store so a commit may fill it.
+  // A top-level bound cursor (directly or under f.nullable) and a bound cursor in an array element object are
+  // declared to the Store so a commit may fill them.
   const commitCursorFields = Object.values(format.fields).flatMap(field => {
     const direct = field.kind === 'nullable' ? field.field : field;
-    return direct.kind === 'boundCursor' ? [direct.field] : [];
+    if (direct.kind === 'boundCursor') return [direct.field];
+    if (field.kind === 'array' && field.element.kind === 'object') {
+      return Object.values(field.element.fields).flatMap(inner => inner.kind === 'boundCursor' ? [inner.field] : []);
+    }
+    return [];
   });
   return {
     check: (value, phase = 'stored') => checkShape(format, value, phase),

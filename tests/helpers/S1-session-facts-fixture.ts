@@ -32,6 +32,7 @@ import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/conf
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -166,8 +167,8 @@ export type StoreObservation = Awaited<ReturnType<typeof observeStore>>;
 export function sessionOwners(base: TaskClaimFixture) {
   const records = base.records;
   const facts = createSessionFactsService({ records });
-  const directory = createSessionDirectory({ records, lookups: records });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts });
+  const directory = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
   return { facts, directory, lifecycle };
 }
 

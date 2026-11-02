@@ -26,6 +26,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
@@ -134,15 +135,15 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies,
     authorizeConfiguration, now, eventId: id, newId: id });
   const sessionFacts = createSessionFactsService({ records });
-  const lifecycleOn = (port = records) => createSessionLifecycleService({ records: port, lookups: port, sessionFacts });
+  const lifecycleOn = (port = records) => createSessionLifecycleService({ records: port, lookups: port, sessionFacts, duty: unknownSessionDuty });
   const lifecycle = lifecycleOn();
   const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now });
+    basis: createSessionResponsibilityBasisReader(records), now, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const controlsOn = (port = records) => createRunControlService({ records: port,
     authority: createMaterialRecordReaders(port).authority, reads: createRunStateReader({ records: port }), now, eventId: id });
   const controls = controlsOn();
-  const sessions = createSessionDirectory({ records, lookups: records });
+  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
   const healthOn = (port = records) => createSessionHealthService({ records: port,
     hostInstance: { hostInstanceId: 'fx1-host', lease: 'owned' }, now, eventId: id });
   function mailboxOn() {

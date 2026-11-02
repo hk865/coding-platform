@@ -11,6 +11,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { RoleLineAllocationRef, RoleLineAllocationReportV1, RoleLineDutyV1 } from '../../../contracts/role-lines.js';
 import type { HandoffActionV1, SecretaryArchiveActionV1 } from './session-operation-arms.js';
 import type { MemberCreateActionV1 } from '../state/member-creation.js';
 import type { GraphWrite } from './task-contracts.js';
@@ -29,6 +30,16 @@ export type SessionCreationIntentV1 = {
   creator: ActorRef;
   delegationCeiling?: { tools: string[]; writeScope: string[]; createMember: boolean };
   secretaryCreated?: true;
+};
+/** The admission saves what it decided once, on the create operation; registration reads it and never re-resolves. */
+export type CreateSeatDecisionV1 = {
+  duty: RoleLineDutyV1 | 'unknown';                    // the counted duty; reviewer is saved as executor
+  mode: 'reserved' | 'borrowed' | 'not_counted';       // how the seat was taken
+  notCountedReason: 'unknown_duty' | 'readonly_copy' | null;   // exactly when mode is 'not_counted'
+  allocationRef: RoleLineAllocationRef | null;         // the counted record; null only for not_counted
+  handoff: OperationRef | null;                        // the parent, when the seat was borrowed
+  source: SessionRef | null;                           // the borrowed seat's line
+  decidedAt: string;
 };
 export type SessionCreationInput = {
   workspace: WorkspaceScope;
@@ -50,7 +61,9 @@ export type SessionCreateActionV1 = { kind: 'create'; plannedSessionRef: Session
   & Omit<SessionCreationInput, 'provenance' | 'creation' | 'parentOperation' | 'consultation'>
   & { provenance: SessionProvenanceV1; creation: SessionCreationIntentV1 | null;
       /** Required; `null` on every create that is not a consultation copy. */
-      consultation: ConsultationCreateV1 | null };
+      consultation: ConsultationCreateV1 | null;
+      /** Required; the construction object supplies it (`null` for a caller that supplies no decision). */
+      seatDecision: CreateSeatDecisionV1 | null };
 /** §3.15 item 4 / §3.17 (B-14): one collected fact, frozen with its actual body, never a locator stand-in. */
 export type ConsultationFactRefV1 =
   | { kind: 'task'; planRevision: PlanRevisionRef; taskId: string }
@@ -128,4 +141,9 @@ export interface SessionDirectoryPort {
     workspace: WorkspaceScope; target?: WorkLinkTarget; role?: RoleConfigurationRef;
     includeArchived: boolean; page: SessionPageRequest & { afterSessionKey?: string };
   }): Promise<ReadResult<SessionPage<SessionCard>>>;
+}
+/** The allocation report read: declared beside the directory port, never a member of it. */
+export interface RoleLineAllocationReadPort {
+  readRoleLineAllocation(ctx: CoreCallContext, input: Record<string, never>):
+    Promise<ReadResult<RoleLineAllocationReportV1>>;
 }

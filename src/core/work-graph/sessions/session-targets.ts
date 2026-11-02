@@ -6,8 +6,11 @@
  * adopted catalog and returns the exact record guards the caller must join into
  * its own CAS. A `task` target is the single Goal + active accepted Plan
  * membership check R4b already owned, extracted here so creation and later
- * `linkSessionWork` use exactly one implementation. A WorkContext target stays
- * `unsupported`. There is no second module authority and no provider framework.
+ * `linkSessionWork` use exactly one implementation. A `goal` target proves the
+ * Goal is in this project and returns its revision guard; no workspace, Plan or
+ * lifecycle check applies. A `project` target proves the project id only and
+ * adds no guard. A WorkContext target stays `unsupported`. There is no second
+ * module authority and no provider framework.
  *
  * Closing an EXISTING link does not call this module: a formerly valid target
  * may be absent now and the closure must still be recordable.
@@ -16,8 +19,9 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope, WorkLinkTarget } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
-import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
@@ -65,6 +69,46 @@ function planContainsTask(planJson: string, projectId: string, goalId: string, t
   return tasks.some((task) => isRecord(task) && task['taskId'] === taskId);
 }
 
+/**
+ * The one Goal record read inside `sessions`: canonical key, one `readMany`, then the existing
+ * `decodeGoalSnapshot`. Both the target check and the reanchor facts call this, so no `sessions` file
+ * imports `tasks`.
+ */
+export async function readGoalRecord(records: GoalRecordTransactionPort, goalRef: GoalRef):
+  Promise<{ status: 'ready'; goal: GoalSnapshot } | CoreRejection> {
+  const goalKey = canonicalJson(goalRef as unknown as JsonValue);
+  const read = await records.readMany([goalKey]);
+  // The same exit as `readGoal`'s `readBatch`: a Goal read answers `incomplete` for an unsupported read
+  // window and `unavailable` with the code for every other non-ready answer, never the write-failure mapping.
+  if (read.status !== 'ready') {
+    if (read.code === 'not_found') return rejected('not_found', read.reason);
+    if (read.code === 'invalid') return rejected('invalid', read.reason);
+    if (read.code === 'unsupported') return rejected('incomplete', read.reason);
+    return rejected('unavailable', `${read.code}: ${read.reason}`);
+  }
+  const record = read.value.records.find((entry) => entry.refKey === goalKey);
+  if (record === undefined) return rejected('not_found', `goal ${goalRef.goalId} does not exist`);
+  const decoded = decodeGoalSnapshot(record);
+  if (decoded.status !== 'decoded') {
+    return rejected('unavailable', `goal ${goalRef.goalId} is corrupt: ${decoded.reason}`);
+  }
+  return { status: 'ready', goal: decoded.value };
+}
+
+/** The Goal target read both arms use: the one shared record read, then the project equality. */
+type GoalTargetFacts = { goal: GoalSnapshot; guard: RecordGuard };
+
+async function readGoalTarget(records: GoalRecordTransactionPort, scope: WorkspaceScope, goalRef: GoalRef):
+  Promise<{ ok: true; value: GoalTargetFacts } | { ok: false; rejection: CoreRejection }> {
+  const no = (rejection: CoreRejection) => ({ ok: false as const, rejection });
+  const goalKey = canonicalOf(goalRef);
+  if (goalKey === null) return no(rejected('invalid', 'the Goal target ref cannot be canonically encoded'));
+  const read = await readGoalRecord(records, goalRef);
+  if (read.status !== 'ready') return no(read);
+  if (read.goal.ref.projectId !== scope.projectId) return no(rejected('forbidden', 'the Goal target is foreign'));
+  return { ok: true, value: { goal: read.goal, guard: { refKey: goalKey, expectedRevision: read.goal.revision } } };
+}
+
 /** Canonical Task target validation (Goal + active accepted Plan), returning the
  * exact Goal/Plan guards the caller must CAS. */
 export async function validateTaskTarget(
@@ -72,26 +116,15 @@ export async function validateTaskTarget(
   scope: WorkspaceScope,
   taskRef: { projectId: string; goalId: string; taskId: string },
 ): Promise<TargetCheck> {
-  const goalKey = canonicalOf({ aggregateType: 'Goal', projectId: scope.projectId, goalId: taskRef.goalId });
-  if (goalKey === null) return { ok: false, rejection: rejected('invalid', 'the Task target Goal ref cannot be canonically encoded') };
-  const goalRead = await records.readMany([goalKey]);
-  if (goalRead.status !== 'ready') return { ok: false, rejection: mapStoreFailure(goalRead) };
-  const goalRecord = goalRead.value.records.find((record) => record.refKey === goalKey);
-  if (goalRecord === undefined) {
-    return { ok: false, rejection: rejected('not_found', `the Task target Goal ${taskRef.goalId} does not exist`) };
-  }
-  const goal = decodeGoalSnapshot(goalRecord);
-  if (goal.status !== 'decoded') {
-    return { ok: false, rejection: rejected('unavailable', `the Task target Goal is damaged: ${goal.reason}`) };
-  }
-  if (goal.value.ref.projectId !== scope.projectId) {
-    return { ok: false, rejection: rejected('forbidden', 'the Task target Goal belongs to another project') };
-  }
-  if (goal.value.workspaceRef.projectId !== scope.projectId ||
-    goal.value.workspaceRef.workspaceId !== scope.workspaceId) {
+  const goal = await readGoalTarget(records, scope, {
+    aggregateType: 'Goal', projectId: scope.projectId, goalId: taskRef.goalId,
+  });
+  if (!goal.ok) return goal;
+  if (goal.value.goal.workspaceRef.projectId !== scope.projectId ||
+    goal.value.goal.workspaceRef.workspaceId !== scope.workspaceId) {
     return { ok: false, rejection: rejected('forbidden', 'the Task target Goal belongs to another workspace') };
   }
-  const active = goal.value.activePlanRevision;
+  const active = goal.value.goal.activePlanRevision;
   if (active === null) {
     return { ok: false, rejection: rejected('not_found', 'the Task target Goal has no active accepted Plan revision') };
   }
@@ -116,7 +149,7 @@ export async function validateTaskTarget(
   return {
     ok: true,
     guards: [
-      { refKey: goalKey, expectedRevision: goalRecord.revision },
+      goal.value.guard,
       { refKey: planKey, expectedRevision: planRecord.revision },
     ],
   };
@@ -146,6 +179,12 @@ export async function validateWorkLinkTarget(
     }
     return { ok: false, rejection: facts };
   }
+  if (target.kind === 'goal') {
+    const goal = await readGoalTarget(records, scope, target.ref);
+    if (!goal.ok) return goal;
+    return { ok: true, guards: [goal.value.guard] };
+  }
+  if (target.kind === 'project') return { ok: true, guards: [] };
   if (target.kind === 'task') return validateTaskTarget(records, scope, target.ref);
   return {
     ok: false,

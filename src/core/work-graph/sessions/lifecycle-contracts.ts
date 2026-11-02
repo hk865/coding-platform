@@ -20,6 +20,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 
 /** The existing Session directory stores; this service adds no store of its own. */
 export type SessionLifecycleStores = {
@@ -27,6 +28,8 @@ export type SessionLifecycleStores = {
   lookups: RecordLookupPort;
   /** Slice 1 §3.3: injected by the composition root; absent leaves the new archive entries unsupported. */
   sessionFacts?: SessionFactsPort;
+  /** The one fixed-duty read the link claim and archive release use; never a second resolver. */
+  duty: SessionDutyReadPort;
 };
 
 export type LinkSessionWorkInput = {

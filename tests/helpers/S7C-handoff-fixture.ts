@@ -39,6 +39,7 @@ import { adoptS6BPlan, createS6BLine, holdS6BRequestRound, understandingPointer 
 import { understandingNote } from './S4C2-note-card-fixture.js';
 import { openS7B2ConsumeWorld, type S7B2ConsumeWorld } from './S7B2-consumable-sessions.js';
 import { ready, sessionOf, S7A_REPLY_TOOLS, committed } from './S7A-fixture.js';
+import { setS7D1Open } from './S7D1-allocation-world.js';
 
 const CREATOR_ROLE: Extract<RoleConfigurationRef, { kind: 'legacy_template' }> =
   { kind: 'legacy_template', templateId: 's7c-handoff-creator', templateRevision: '1' };
@@ -186,6 +187,7 @@ export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
   if (builtEntry === null) throw new Error('S7C: the platform built no handoff tool entry');
   const world = consume.world;
   try {
+    await setS7D1Open(world, 'executor', 40, 0, 's7c-handoff-open-executors');
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
     const goal = world.goals.first;
     const plan = await main.activePlan(goal);

@@ -29,6 +29,7 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createUnknownCallReviewCardSource } from '../../src/core/work-graph/views/decision-read-model.js';
 import type { WorkspaceFile, WorkspaceToolsPort } from '../../src/core/workspace/ports.js';
@@ -201,7 +202,7 @@ function digestDecisions(world: K3ReviewCardWorld, workspace: Pick<WorkspaceTool
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records: f.records, materials, now: () => FIXTURE_T, newId: nextId, systemActor: f.operatorActor,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
+    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: () => FIXTURE_T, eventId: nextId }),
     duties: { async readMessageDutiesFacts() { return { status: 'ready' as const, value: {

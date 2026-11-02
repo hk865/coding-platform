@@ -297,7 +297,7 @@ export function createSessionArchiveService(
     for (const link of card.value.links) {
       if (link.ref.relation !== 'responsible' || link.until !== null) continue;
       const target = link.ref.target;
-      if (target.kind === 'module') continue;
+      if (target.kind === 'module' || target.kind === 'goal' || target.kind === 'project') continue;
       const key = canonical(target);
       if (key !== null && chosen.has(key)) continue;
       if (target.kind === 'task' && await taskTerminal(ctx, target.ref) === true) continue;

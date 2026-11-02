@@ -27,6 +27,7 @@ import type { Disposition, Phase, PlanRevisionDraft, PlanRevisionRef } from '../
 import type { LookupValue } from '../../src/core/record-store/lookup-ports.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
@@ -41,6 +42,7 @@ import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/conf
 import { createRunSupport, L_HOST, runKey, type RunSupport } from './S2C-L-runs-support.js';
 import { createLineCheckSupport, type LineCheckSupport } from './S2C-L-check-support.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
@@ -85,6 +87,8 @@ export type LineFixture = {
   ctx: CoreCallContext;
   scope: WorkspaceScope;
   deps: WorkLineReaderDeps;
+  /** The real resolver over this world's trusted Work binding (the write-side duty). */
+  sessionDuty: SessionDutyReadPort;
   reader: WorkLineReadPort;
   /** Real Run/Query phase owners over the same records (LE3). */
   runs: RunSupport;
@@ -186,28 +190,35 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records,
-      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records],
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records,
+      ...ROLE_LINE_RECORD_SCHEMAS.records],
     events: [...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events,
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
       ...QUERY_JOB_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...CONTROL_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events,
-      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ROLE_LINE_RECORD_SCHEMAS.events],
     lookups: [...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
       ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []), ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []),
       ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
       ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []), ...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []),
-      ...(PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [])],
+      ...(PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? [])],
   });
   const records = base.records as unknown as WorkLineStore;
+  const roleEvents = createRoleConfigurationService({ records: base.records, now: () => CLAIM_FIXTURE_AT,
+    eventId: (() => { let seq = 0; return () => `s2c-l-role-event-${++seq}`; })() });
+  const sessionDuty = createSessionDutyResolver({ readRoleSpec: roleEvents.readRoleSpec,
+    configuration: { consumerId: 's2c-l-line', bindings: [{
+      workspace: base.scope, sessionRole: defaultRole, roleBinding: base.roleBinding, budget: base.budget,
+    }] } });
   const runs = createRunSupport(base);
   const sessionFacts = createSessionFactsService({ records: base.records });
   const lifecycle = createSessionLifecycleService({ records: base.records, lookups: base.records,
-    sessionFacts });
+    sessionFacts, duty: sessionDuty });
   const anomalies = createSessionAnomalyService({ records: base.records, lookups: base.records,
     sessionFacts, now: () => new Date().toISOString() });
   const responsibility = createSessionResponsibilityService({ records: base.records, lookups: base.records,
-    basis: createSessionResponsibilityBasisReader(base.records), now: () => new Date().toISOString() });
+    basis: createSessionResponsibilityBasisReader(base.records), now: () => new Date().toISOString(), duty: sessionDuty });
   const lineSettings = createLineSettingsService({ records: base.records,
     sessionRead: base.sessionsPort.readSession, now: () => new Date().toISOString(),
     ...(base.ctx.principal.kind === 'host' ? { operatorActor: base.ctx.principal.actor } : {}) });
@@ -501,7 +512,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
   });
 
   return {
-    kind, base, records, ctx, scope, deps, runs,
+    kind, base, records, ctx, scope, deps, runs, sessionDuty,
     reader: createWorkLineReader(deps),
     readerWith: (target, budget) => lineReaderOver(base, target, () => 'executor', budget),
     queueReader, writeAnchors,

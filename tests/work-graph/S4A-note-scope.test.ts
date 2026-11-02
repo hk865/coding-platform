@@ -9,6 +9,10 @@ import type { ArchiveTaskChoiceV1 } from '../../src/contracts/core/session-archi
 import type { NoteDraftAnchorV1, NoteDraftV1 } from '../../src/contracts/note.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createS4ANoteScopeFixture, type S4ANoteScopeFixture, type S4ANoteScopeFixtureKind } from '../helpers/S4A-note-scope-fixture.js';
+import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
+import { S6A_SCRIBE_ROLE } from '../helpers/S6A-request-fixture.js';
+import { createS6BLine, openS6BProjectWorld, understandingPointer } from '../helpers/S6B1-fixture.js';
+import { understandingNote } from '../helpers/S4C2-note-card-fixture.js';
 
 const KINDS: readonly S4ANoteScopeFixtureKind[] = ['memory', 'sqlite'];
 
@@ -497,5 +501,49 @@ describe('S4A N-10 scribe scope cases and the per-scope count', () => {
       expect(a).toMatchObject({ status: 'ready', value: { scope: { kind: 'region', moduleId: 'A' }, current: 1 } });
       expect(project).toMatchObject({ status: 'ready', value: { scope: { kind: 'project' }, current: 0 } });
     });
+  });
+});
+
+describe('S7D1 G1-scribe-scope: a goal-only scribe is one unavailable entry', () => {
+  it('goal_scope_pending stays on its own row; another scribe and the count caller resolve', async () => {
+    const opened = await openS6BProjectWorld({ backend: 'memory', goalOnlyScribe: true });
+    try {
+      expect(opened.goalLink?.link).toMatchObject({ ref: { target: { kind: 'goal', ref: opened.scribe.goal },
+        relation: 'responsible' }, until: null });
+      // Only the goal-only scribe exists: a project count is a ready zero, not a workspace-wide rejection.
+      expect(await opened.world.platform.notes.countCurrentNotes(opened.main.humanContext(),
+        { scope: { kind: 'project' } })).toMatchObject({ status: 'ready', value: { current: 0 } });
+
+      // Its own project-understanding write is refused on its own row with the pending reason.
+      const pointer = await understandingPointer(opened.world, { kind: 'project' });
+      const draft = understandingNote({ anchor: { kind: 'project' }, topic: 's6b-understanding',
+        conclusion: 'goal-only scribe attempt', structural: false,
+        replaces: pointer.noteId === null ? [] : [pointer.noteId] });
+      if (draft.kind !== 'understanding') throw new Error('G1-scribe-scope: the attempt is not an understanding');
+      const before = opened.world.model.calls();
+      opened.world.scriptReplies([
+        { kind: 'calls', calls: [{ callId: 'g1-scribe-goal-only', name: 'record_note', args: {
+          op: 'write', kind: draft.kind, topic: draft.topic, conclusion: draft.conclusion, anchor: draft.anchor,
+          sections: draft.sections, structural: draft.structural, replaces: draft.replaces,
+          expectedPointerRevision: pointer.revision } }] },
+        { kind: 'text', text: 'G1 scribe goal-only attempt' },
+      ]);
+      await driveWorkflow(opened.world.ag2b, { schemaVersion: 1, goalRef: opened.scribe.goal,
+        flowId: 'g1-scribe-goal-only', sessionHint: opened.scribe.line.ref, kind: 'select_work',
+        taskId: opened.scribe.nextTask().taskId });
+      expect(opened.world.model.calls()).toBe(before + 2);
+      expect(JSON.stringify(opened.world.model.lastRequest())).toContain('goal_scope_pending');
+
+      // Another scribe (no goal link, so project scope) resolves: the person's project note is managed by it.
+      await createS6BLine(opened.main, { label: 'g1-scribe-second', role: S6A_SCRIBE_ROLE });
+      const personNote = general({ anchor: { kind: 'project' } });
+      const written = await opened.main.route('notes/write', { commandId: 'g1-scribe-person-note', goalId: null,
+        expectedPointerRevision: pointer.revision, note: personNote });
+      expect((written as { write?: { status?: string } }).write?.status).toBe('accepted');
+      expect(await opened.world.platform.notes.countCurrentNotes(opened.main.humanContext(),
+        { scope: { kind: 'project' } })).toMatchObject({ status: 'ready', value: { current: 1 } });
+    } finally {
+      await opened.close();
+    }
   });
 });

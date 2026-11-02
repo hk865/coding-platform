@@ -111,7 +111,7 @@ describe('F-resolver', () => {
         const failed = await duty.resolveDutyRecipient(other, { workspace: workspaceOf(other), duty: 'adviser' });
         expect(fault.calls()).toBeGreaterThan(0);
         expect(failed).toMatchObject({ status: 'rejected', code: 'unavailable' });
-        expect(failed.status === 'rejected' ? failed.reason : '').toContain('no fixed platform duty');
+        expect(failed.status === 'rejected' ? failed.reason : '').toContain('duty could not be read');
       } finally { fault.release(); }
       // Released: the same real read answers the RoleSpec's own duty, so the line is the workspace's secretary.
       expect(await duty.resolveDutyRecipient(other, { workspace: workspaceOf(other), duty: 'secretary' }))

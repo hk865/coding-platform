@@ -173,8 +173,7 @@ Promise<{ ok: true; value: Caller } | { ok: false; rejection: Rejected }> {
       : rejected('unavailable', 'the caller Run is not readable') };
   }
   // A resolver rejection or a throw is a read failure, never
-  // `forbidden`; only a ready `'unknown'` (R12: the frozen resolver maps a
-  // failed RoleSpec read to `'unknown'`) stays `forbidden`.
+  // `forbidden`; only a ready `'unknown'` stays `forbidden`.
   let resolved: Awaited<ReturnType<NoteServiceDependencies['duties']>>;
   try {
     resolved = await deps.duties(facts.value.role, ctx);

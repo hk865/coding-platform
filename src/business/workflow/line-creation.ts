@@ -4,10 +4,9 @@
  * A caller asks for a Session line with a stable `commandId`. The entry reads
  * the admitted Session-creation operation by the SAME stable identity the
  * Session directory derives (`stableSessionCreationIdentity`), replays it when
- * it exists, checks the injected capacity port only for a fresh line, and
- * admits through the real `createSession`. Duty, scope, reason and the creator
- * from the trusted call context go into the first-phase admission; the creator
- * is never taken from the caller's input.
+ * it exists, and admits through the real `createSession`. Duty, scope, reason
+ * and the creator from the trusted call context go into the first-phase
+ * admission; the creator is never taken from the caller's input.
  *
  * `findLine` is the read-only half a retried request command uses before it
  * picks a secretary: it finds the operation's stored input, or `none`.
@@ -58,26 +57,11 @@ export interface LineCreationPort {
   findLine(ctx: CoreCallContext, input: { commandId: string }): Promise<ReadResult<LineCreationLookupV1>>;
 }
 
-export interface LineCapacityPort {
-  admit(ctx: CoreCallContext, input: { duty: PlatformDutyV1; plannedSessionRef: SessionRef; replaces: SessionRef | null }):
-    Promise<{ status: 'admitted' } | { status: 'full'; limit: number; used: number } | { status: 'unavailable'; reason: string }>;
-}
-
-/**
- * Slice 6A's production adapter: no real reservation cap exists before 7D1, so
- * every line is admitted. A Host `secretaryOpenCap` adapter (H, ruling 4.7)
- * replaces it at the composition root.
- */
-export function createAlwaysAdmitCapacity(): LineCapacityPort {
-  return { admit: async () => ({ status: 'admitted' }) };
-}
-
 export type LineCreationDependencies = {
   /** The real Session creation entry (`SessionOperationsPort.createSession`). */
   sessions: Pick<SessionOperationsPort, 'createSession'>;
   /** The directory's operation read; the same store admission writes. */
   operations: Pick<SessionDirectoryPort, 'getSessionOperation'>;
-  capacity: LineCapacityPort;
 };
 
 function rejectedResult(rejection: CoreRejection): LineCreationResultV1 {
@@ -132,6 +116,7 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         session: { projectId: receipt.value.ref.projectId, sessionId: receipt.value.ref.sessionId },
       };
     }
+    if (receipt.code === 'capacity') return { status: 'capacity_blocked', duty: input.duty };
     return rejectedResult(receipt);
   }
 
@@ -143,7 +128,7 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         || typeof input.commandId !== 'string' || input.commandId.length === 0) {
         return { status: 'rejected', code: 'invalid', reason: 'a line creation requires a non-empty commandId' };
       }
-      // A line names either the project or one Task; refused before any capacity count.
+      // A line names either the project or one Task; refused before any write.
       const scope: unknown = input.scope;
       const taskScope = typeof scope === 'object' && scope !== null
         && (scope as { kind?: unknown }).kind === 'task' ? (scope as { task?: unknown }).task : null;
@@ -182,15 +167,6 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
       }
       if (existing.status !== 'not_found') return rejectedResult(existing);
 
-      let capacity: Awaited<ReturnType<LineCapacityPort['admit']>>;
-      try {
-        capacity = await deps.capacity.admit(ctx, { duty: input.duty, plannedSessionRef: stable.plannedSessionRef,
-          replaces: input.replaces ?? null });
-      } catch (error) {
-        return { status: 'rejected', code: 'unavailable', reason: `line capacity could not be decided: ${errorReason(error)}` };
-      }
-      if (capacity.status === 'full') return { status: 'capacity_blocked', duty: input.duty };
-      if (capacity.status === 'unavailable') return { status: 'rejected', code: 'unavailable', reason: capacity.reason };
       return admit(ctx, trusted.actor, input, false);
     },
 

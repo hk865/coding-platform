@@ -154,7 +154,7 @@ export const S7A_REPLY_TOOLS: S6AExtraBinding = {
 const worlds = new WeakSet<S6ARequestWorld>();
 
 /** The full Session handle of a line the 6B-1 step created (`sessions/read`). */
-export async function sessionOf(world: S6AHostWorld, line: Awaited<ReturnType<typeof createS6BLine>>): Promise<S6ASession> {
+export async function sessionOf(world: Pick<S6AHostWorld, 'readSession'>, line: Awaited<ReturnType<typeof createS6BLine>>): Promise<S6ASession> {
   const card = await world.readSession(line.ref);
   return { label: line.label, ref: line.ref, aggregateRef: card.record.ref,
     role: structuredClone(card.record.role), createdAt: card.record.createdAt };

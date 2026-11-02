@@ -49,6 +49,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { createRunActivityService } from '../../src/core/work-graph/tasks/run-activity-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
@@ -216,7 +217,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
   });
 
   /** The real Session lifecycle owner (`linkSessionWork`), over the same store. */
-  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords });
+  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, duty: unknownSessionDuty });
 
   /**
    * The real requeue owner. Its `messages` seam is only reached for a

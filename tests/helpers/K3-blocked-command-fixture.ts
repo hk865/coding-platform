@@ -51,6 +51,7 @@ import { createModelCallService } from '../../src/core/work-graph/tasks/model-ca
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
@@ -274,7 +275,7 @@ async function seedBlockedRun(
   const executions = createRunStateReader({ records });
   const roles = createRoleConfigurationService({ records, now,
     eventId: () => `k3-blocked-role-event-${String(next())}` });
-  const sessions = createSessionDirectory({ records, lookups: records });
+  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
   const materialReaders = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies: fixture.bodies, authority: materialReaders.authority, now });
   const sessionOperations = createSessionOperations({ sessions, kernelStores });

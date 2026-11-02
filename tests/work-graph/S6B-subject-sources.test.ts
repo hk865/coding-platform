@@ -508,14 +508,14 @@ describe('row 9: every source construction and subject comparison keeps its subj
     { entry: 'Workflow Goal cause', observe: workflowGoalCauseSource, expected: { source: HOST_1 } },
     { entry: 'note review card, answered and re-read', observe: noteReviewCard,
       expected: { card: HOST_1, source: HOST_1 } },
-    // `goalless: []` is hand-derived from the code's rules, not a spec line: the answer history is per workspace (the
-    // answer message belongs to the main workspace) and the accepted note has left the pending bucket.
+    // The answer is shared across the project (decision 104-1, G4 design note (i)): another workspace reads the same
+    // applied project card; the accepted note has left the pending bucket.
     { entry: 'project note card, answered in the main workspace and re-read in both', observe: projectNoteCard,
       expected: { read: { card: HOST_PROJECT_SUBJECT, source: HOST_PROJECT_SUBJECT },
         answer: { status: 'ready', answer: 'committed', state: 'applied' },
         note: [{ goalId: null, version: 2, storedState: 'accepted' }],
         main: [{ state: 'applied', card: HOST_PROJECT_SUBJECT, source: HOST_PROJECT_SUBJECT }],
-        goalless: [] } },
+        goalless: [{ state: 'applied', card: HOST_PROJECT_SUBJECT, source: HOST_PROJECT_SUBJECT }] } },
     { entry: 'note cards answered after the world clock moved keep the note\'s stored time',
       observe: answeredNoteCardTime,
       expected: { project: { card: HOST_PROJECT_SUBJECT, source: HOST_PROJECT_SUBJECT },

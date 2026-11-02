@@ -65,6 +65,8 @@ import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/ses
 import { createSessionResponsibilityBasisReader, readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
+import { unknownSessionDuty } from './session-duty-double.js';
+import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { sessionWorkLinkRefKey, decodeSessionWorkLink }
   from '../../src/core/work-graph/sessions/session-record-codecs.js';
@@ -73,6 +75,7 @@ import { SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ARCHIVED_EVENT, SESSION_ARCHI
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
@@ -89,7 +92,7 @@ const ROLE_Y: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'bui
 const ROLE_X: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '2' };
 const bundles = [SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_ANOMALY_RECORD_SCHEMAS,
   SESSION_MESSAGE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS,
-  UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS];
+  UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS, ROLE_LINE_RECORD_SCHEMAS];
 const SCHEMAS: RecordBackendSchemas = {
   records: bundles.flatMap(bundle => bundle.records), events: bundles.flatMap(bundle => bundle.events),
   lookups: bundles.flatMap(bundle => bundle.lookups ?? []),
@@ -186,8 +189,10 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   });
   const sessionFacts = createSessionFactsService({ records });
   const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now });
-  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });
+    basis: createSessionResponsibilityBasisReader(records), now, duty: unknownSessionDuty });
+  const sessionDuty = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec,
+    configuration: options.configuration });
+  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: sessionDuty });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const forbiddenCheck = async () => { throw new Error('WP1 given must not start a check'); };
   const deps: WorkflowDependencies = {

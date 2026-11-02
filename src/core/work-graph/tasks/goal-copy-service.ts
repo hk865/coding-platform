@@ -19,7 +19,7 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { defineEvent, defineShape, f, type InferEvent } from '../../../contracts/data-format.js';
 import {
-  GoalRefShape, PlanRevisionRefShape, SessionMessageRefShape, WorkspaceRefShape, id,
+  ActorRefField, GoalRefShape, PlanRevisionRefShape, SessionMessageRefShape, WorkspaceRefShape, id,
 } from '../../../contracts/data-format-refs.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -36,7 +36,6 @@ import type {
 import type { SessionMessageCommandPort } from '../model/communication-contracts.js';
 import type { CopyInterventionReadPort, CopyInterventionRetractionPort } from '../model/goal-copy-contracts.js';
 import type { GoalCopyPort, GoalUnderstandingReadPort } from '../model/goal-card-contracts.js';
-import { ActorRefField } from '../model/session-operation-arms.js';
 import type { MessageForwardingPort } from '../model/communication-contracts.js';
 import { FORWARD_DESTINATION_GONE } from '../state/message-machine.js';
 import { compileGoalCreate } from '../persistence/commit-compiler.js';

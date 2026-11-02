@@ -11,6 +11,7 @@ import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memo
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
@@ -18,6 +19,7 @@ import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-s
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import type { SessionHistoryEntry } from '../../src/core/agent-runtime/session-operations.js';
 import { createR4HistoryWorld } from '../helpers/R4-history-turn-support.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -34,10 +36,11 @@ const creation = (requestId: string) => ({
   meta: { requestId, expected: [] },
 });
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
+  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
-  lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ROLE_LINE_RECORD_SCHEMAS.events],
+  // The two link lookups arrive with SESSION_RECORD_SCHEMAS; the notice lookup with the R1 bundle.
+  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -62,7 +65,7 @@ async function open(kind: 'memory' | 'sqlite') {
     meta: { requestId: 'session-register-workspace', expected: [
       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } });
   if (registered.status !== 'committed') throw new Error(`workspace bootstrap failed: ${JSON.stringify(registered)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),
@@ -118,7 +121,7 @@ describe('R4b SQLite recovery and raw history acceptance', () => {
     } finally { await first.backend.close(); }
     const backend = createSqliteRecordBackend({ schemas, path: first.ledgerPath });
     try {
-      const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+      const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
       const recovered = await createSessionOperations({ sessions, kernelStores: first.kernelStores }).createSession(ctx, request);
       expect(recovered.status).toBe('completed');
       if (recovered.status !== 'completed') return;
@@ -152,7 +155,7 @@ describe('R4b SQLite recovery and raw history acceptance', () => {
 
     const backend = createSqliteRecordBackend({ schemas, path: first.ledgerPath });
     try {
-      const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+      const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
       const changedDefault = await createKernelStoreRegistry({ entries: [{
         adapterId: 'replacement-kernel', storeKey: 'replacement-key', workspace, databasePath: replacementPath,
       }] });

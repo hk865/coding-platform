@@ -14,6 +14,7 @@ import type { SessionMessage } from '../model/communication-contracts.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import {
   decodeSessionMessageRecord,
+  S5_DECISION_ANSWER_BY_PROJECT_SOURCE,
   S5_DECISION_ANSWER_BY_SOURCE,
 } from '../sessions/message-record-codecs.js';
 
@@ -31,8 +32,14 @@ export async function findAnswerMessage(
   workspace: WorkspaceScope,
   source: DecisionSourceV1,
 ): Promise<SessionMessage | null> {
-  const batch = await lookupAll(records, S5_DECISION_ANSWER_BY_SOURCE,
-    [workspace.projectId, workspace.workspaceId, source.kind, source.key]);
+  // §3.11 item 2: a project subject's answer identity is project+source, so its index drops the workspace;
+  // a goal subject keeps the workspace-bound stream.
+  const project = source.subject.kind === 'project';
+  const batch = project
+    ? await lookupAll(records, S5_DECISION_ANSWER_BY_PROJECT_SOURCE,
+      [workspace.projectId, source.kind, source.key])
+    : await lookupAll(records, S5_DECISION_ANSWER_BY_SOURCE,
+      [workspace.projectId, workspace.workspaceId, source.kind, source.key]);
   for (const record of batch.items) {
     const decoded = decodeSessionMessageRecord(record);
     if (decoded.status !== 'decoded') {

@@ -77,3 +77,19 @@ export const WorkspaceScopeShape = defineShape({ name: 'WorkspaceScope', fields:
 export const CurrentPointerRefShape = defineShape({
   name: 'CurrentPointerRef', fields: { aggregateType: f.literal('CurrentPointer'), projectId: id, anchorKey: id },
 });
+
+const HumanActorFields = { kind: f.literal('human'), id };
+const SystemActorFields = { kind: f.literal('system'), id };
+/** `ActorRef` (`src/contracts/command-event.ts`): a saved command actor, never a filter. */
+export const ActorRefField = f.union('kind', {
+  human: HumanActorFields, system: SystemActorFields,
+  agent: { kind: f.literal('agent'), id, runRef: f.ref(RunRefShape) },
+});
+/** The `WorkContextBinding` wire shape a `work` link target carries. */
+export const WorkContextRefField = f.object({ aggregateType: f.literal('WorkContextBinding'), projectId: id,
+  workspaceId: id, workId: id });
+/** `WorkLinkTarget` (`src/contracts/core/identity.ts`) in the order task, module, work, goal, project. */
+export const WorkLinkTargetField = f.union('kind', {
+  task: { kind: f.literal('task'), ref: f.ref(TaskTripleShape) }, module: { kind: f.literal('module'), ref: f.ref(ModuleRefShape) },
+  work: { kind: f.literal('work'), ref: WorkContextRefField }, goal: { kind: f.literal('goal'), ref: f.ref(GoalRefShape) },
+  project: { kind: f.literal('project'), ref: f.ref(ProjectScopeShape) } });

@@ -3,7 +3,7 @@
 ## 负责什么，不负责什么
 - L2，允许依赖 `model`、`state`、`persistence`；另用 `workspace` 与 `record-store` 的端口。不得 import `sessions/queries/tasks/notes/evidence/communication/views`、`src/core/agent-runtime`、`src/app`、`src/business`、`src/composition`。
 - 管两个不同的面：观测架构是某一次有界源捕获的证据，永远不是正式 baseline；正式 catalog 是已采用的模块/依赖结构，有单独的 `baselineId`/`revision` 和 active pointer。正式架构的初始接受（`adoptInitialArchitecture`）和修订由 `catalog-service.ts` 负责；`architecture-service.ts` 只做观测捕获/查询/比较，不做正式接受。
-- 写入只经注入的 `GoalRecordTransactionPort`（`src/core/record-store/ports.ts:188`）一次提交，记录/事件编解码复用 `persistence/`；自动捕获请求/失败的受保护状态经 `state/architecture-capture.ts` 构造，状态迁移只经 `state/`（根 `AGENTS.md` 第 9 条）。
+- 写入只经注入的 `GoalRecordTransactionPort`（`src/core/record-store/ports.ts:192`）一次提交，记录/事件编解码复用 `persistence/`；自动捕获请求/失败的受保护状态经 `state/architecture-capture.ts` 构造，状态迁移只经 `state/`（根 `AGENTS.md` 第 9 条）。
 - 记录/图 DTO 的正本在 `src/contracts/architecture-*.ts`、`src/contracts/governance.ts` 与 `src/contracts/core/`（身份/结果/拒绝）；本层只声明端口和转出的 `GraphWrite`（`src/core/work-graph/architecture/contracts.ts:16` 只是转出；正本在 `src/core/work-graph/model/task-contracts.ts:28`），不另建平行身份或结果类型。
 - 只做形状、身份、版本与纯图算法：不抓源码（`WorkspaceTools` 做）、不写 SQL/事务、不做 UI 读模型、不做决定/迁移门。
 - 读失败、损坏或缺失保持 `unavailable`/`rejected`，不猜空目录；路径和名字只是标签，不能证明语义移动或依赖关系。

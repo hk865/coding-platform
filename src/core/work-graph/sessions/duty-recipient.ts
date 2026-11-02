@@ -5,7 +5,8 @@
  * cards whose fixed duty is `scribe`, sort by `sessionId`, return the first. It has no health filter, so an
  * unavailable scribe is still returned. `adviser`/`secretary` use the same active + duty filter; a rejected read, or
  * an `unknown` answer from a `role_spec` (which cannot be told apart from a failed read), makes those arms
- * `unavailable` (the card cannot be proven to be another duty), never "no recipient". A `legacy_template` that answers
+ * `unavailable` (the card cannot be proven to be another duty), never "no recipient". The scribe arm returns a
+ * non-ready duty read unchanged; a `legacy_template` that answers
  * `unknown` genuinely has no fixed duty and is skipped. The scribe arm skips every such card. A failed `findSessions`
  * page is returned unchanged.
  */
@@ -40,7 +41,9 @@ export function createDutyRecipient(deps: DutyRecipientDependencies): DutyRecipi
           if (card.record.lifecycle !== 'active') continue;
           const duty = await deps.dutyOfRole(ctx, card.record.role);
           if (input.duty === 'scribe') {
-            if (duty.status === 'ready' && duty.value === 'scribe') found.push(plainSessionRef(card.record.ref));
+            // The scribe branch never shortens the list on a failed read: the non-ready result is the answer.
+            if (duty.status !== 'ready') return duty;
+            if (duty.value === 'scribe') found.push(plainSessionRef(card.record.ref));
             continue;
           }
           if (duty.status !== 'ready') {

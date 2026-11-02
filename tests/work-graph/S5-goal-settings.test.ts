@@ -31,6 +31,7 @@ import type { GoalConflictReadV1, GoalSettingsPort } from '../../src/core/work-g
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { decodeGoalSettingsChangedEvent } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
@@ -209,7 +210,7 @@ async function adoptFreeTasks(x: Ctx, taskIds: readonly string[]): Promise<void>
 /** The selected PB2 Task is unclaimed; each real Session belongs to P/W. */
 async function freeClaim(x: Ctx, requestId: string, taskId = FREE_TASK) {
   const session: SessionRef = await x.f.createS5Session(`${requestId}-session`);
-  const sessionRead = await createSessionDirectory({ records: x.f.records, lookups: x.f.records }).readSession(x.f.ctx, session);
+  const sessionRead = await createSessionDirectory({ records: x.f.records, lookups: x.f.records, duty: unknownSessionDuty }).readSession(x.f.ctx, session);
   if (sessionRead.status !== 'ready') throw new Error(`S5 free Session: ${JSON.stringify(sessionRead)}`);
   expect(sessionRead.value.record.workspaceId).toBe('W');
   expect(sessionRead.value.record.occupancy).toBeNull();
@@ -293,7 +294,7 @@ function decisions(x: Ctx) {
   const materials = createMaterialService({ bodies: f.bodies, authority: readers.authority, now: f.now });
   const deps: SessionMailboxDependencies = { records: f.records,
     defaultInquiryDeadlineMs: 86_400_000,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
+    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     materials, systemActor: f.operatorActor, now: f.now, newId: f.newId };

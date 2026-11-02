@@ -17,6 +17,7 @@ import {
   type SecretaryArchiveAdvanceDependencies, type SessionHandoffAdvanceDependencies,
 } from '../../src/core/work-graph/sessions/session-handoff-service.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { readSecretaryHandoffBasis } from '../../src/core/work-graph/tasks/secretary-handoff-basis.js';
 import type { S6AHostWorldOptions } from './S6A-host-fixture.js';
@@ -212,7 +213,7 @@ export function s6b2Facts(world: S6B2WorldValue, captured: S6B2Captured,
 export function s6b2Transfers(world: S6B2WorldValue, captured: S6B2Captured,
   records: S6B2Backend['records'] = s6b2Backend(captured).records) {
   return createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now: () => world.clock.now() });
+    basis: createSessionResponsibilityBasisReader(records), now: () => world.clock.now(), duty: unknownSessionDuty });
 }
 
 export function s6b2Basis(records: S6B2Backend['records']) {

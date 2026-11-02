@@ -20,6 +20,7 @@ import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine } from '../helpers/S6B1-fixture.js';
 import { openS7B2ConsumeWorld, type S7B2ConsumeWorld } from '../helpers/S7B2-consumable-sessions.js';
+import { setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import { committed, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { listed, readS7BMessage, runS7BWait } from '../helpers/S7B-fixture.js';
 
@@ -55,6 +56,7 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
   const consume = await openS7B2ConsumeWorld();
   worlds.push(consume);
   const { world, eligible, notify, unmatchedRole, goalLess } = consume;
+  await setS7D1Open(world, 'executor', 40, 0, 's7b2-h-consume-executors');
   // Every consultation and intervention answers from the world's scripted provider; the count is its `calls()`.
   world.scriptReplies(Array.from({ length: 30 }, (_, index) => ({
     kind: 'text' as const, text: `S7B2 consume answer ${index + 1}` })));

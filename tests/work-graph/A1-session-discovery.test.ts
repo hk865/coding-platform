@@ -151,6 +151,8 @@ describe.each(['memory', 'sqlite'] as const)('A1 target-indexed discovery over r
   it('reads with volume that tracks target candidates, not all workspace Sessions', async () => {
     const fixture = await make(kind);
     await fixture.adopt('adopt-read-count');
+    // The real executor admission counts every created line; this row really creates 82.
+    await fixture.setOpenLimit('executor', 100);
     const target = moduleTarget(fixture, GRAPH_MODULE_ONE);
     const linked: SessionRef[] = [];
     for (let index = 0; index < 2; index += 1) {

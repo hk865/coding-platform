@@ -115,6 +115,7 @@
 | `createReworkTools` | `src/core/agent-runtime/rework-tools.ts:155` | `request_rework`/`request_recheck` 的 Work 适配器：只把调用交 `claims.requeueTask` 与 `evidence.reverifyRound`，命令身份由工厂绑定 | Work Run 注册两个返工工具时 |
 | `createHandoffTools` | `src/core/agent-runtime/handoff-tools.ts:79` | `hand_off` 的模型适配器；可信 caller、命令身份和四个结果臂由工厂/owner 决定 | Work Run 注册 `hand_off` 时（组合根经 `RuntimeExecutionDependencies.handoffs` 传入） |
 | `createReadRequestTools` | `src/core/agent-runtime/request-read-tools.ts:69` | 秘书的只读请求历史适配器；一页/单请求，答案按 2 KiB 截断 | 秘书轮注册 `read_requests` 时 |
+| `createSessionDiscoveryTools` | `src/core/agent-runtime/session-discovery-tools.ts:108` | 已弃用的 Session 发现工具；`find_related_sessions` 的 `target` 接受 task/module/work/goal/project 五种目标，描述取自生成的平台包 | 已绑定的旧 Run 显式调用；新授权用 `look_graph`/`find_graph` |
 | `createQueryObservation` | `src/core/agent-runtime/query-observation.ts:287` | Query 原历史观察与终态提交；request round 的回答检查结果放在终态观察的 `answerCheck`，回答带解析出的 `screening` 与 `planDraftIndex` | observe QueryRun |
 | `mapOutcome` | `src/core/agent-runtime/query-observation.ts:121` | Kernel 终态到 Query 结局的映射：transcript 有冻结清单里的收下提交时，`yielded`/`completed`/`failed`/`limit_exceeded` 记 `answered`，`cancelled` 仍 `cancelled`；无收下提交按各自旧映射 | Query observer 的终态读取；重启的 Q-03 也走同一函数 |
 | `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:122` | 安全点 pause/cancel 协调与退出证明；关闭中的 Host 在每个在跑 Run 的下一个安全点暂停（无 intent、不 abort 控制器） | 投递控制意图；Host 关闭时由关闭信号驱动 |

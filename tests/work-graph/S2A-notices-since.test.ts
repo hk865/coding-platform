@@ -13,6 +13,7 @@ import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.j
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
@@ -72,7 +73,7 @@ describe.each(['memory', 'sqlite'] as const)('S2A archive wait disposal keeps si
     await yieldRunForUser(f, f.claimRA, waiting.message.ref);
 
     const sessionFacts = createSessionFactsService({ records: f.records });
-    const lifecycle = createSessionLifecycleService({ records: f.records, lookups: f.records, sessionFacts });
+    const lifecycle = createSessionLifecycleService({ records: f.records, lookups: f.records, sessionFacts, duty: unknownSessionDuty });
     const sessionRef = f.claimRA.sessionRef;
     const registered = committed(await lifecycle.requestSessionArchive(f.ctx, { input: { sessionRef,
       reason: 'Archive the waiting line', tasks: [], wait: { kind: 'cancel', runRef: f.claimRA.runRef,

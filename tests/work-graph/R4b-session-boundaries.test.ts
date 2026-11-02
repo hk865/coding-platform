@@ -14,6 +14,7 @@ import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/recor
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations, type CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -113,7 +114,7 @@ async function open(kind: 'memory' | 'sqlite') {
     ] },
   });
   if (adopted.status !== 'committed') throw new Error(`architecture adoption failed: ${JSON.stringify(adopted)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),
@@ -192,7 +193,7 @@ describe.each(['memory', 'sqlite'] as const)('R4b %s scope and identity boundari
         revision: 1, workspaceId,
         action: { kind: 'create', plannedSessionRef: { projectId, sessionId: 'schema-source-session' }, parentOperation: null,
           workspace, kernelStore: { adapterId: 'workspace-kernel', storeKey: 'workspace-key' }, role,
-          recommendedRefs: [], initialLinks: [], creation: null, consultation: null },
+          recommendedRefs: [], initialLinks: [], creation: null, consultation: null, seatDecision: null },
         phase: 'accepted', requestedAt: at, updatedAt: at, observation: null, failure: null,
       };
       const mismatches = [

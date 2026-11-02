@@ -80,6 +80,7 @@ import {
 import {
   decodeSessionMessageRecord,
   S2A_USER_MESSAGES_LOOKUP,
+  S5_PROJECT_ANSWERS_LOOKUP,
   S7A2_RELEASE_BY_GOAL_LOOKUP,
   sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
@@ -175,7 +176,7 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
-  'continuation', 'disconnect',
+  'continuation', 'disconnect', 'project_notice',
 ];
 const CARD_ACTIONS: readonly CardAction[] = ['answer', 'ask_secretary', 'apply', 'record_application',
   'adopt', 'regenerate', 'abandon', 'adopt_architecture', 'adopt_completion_policy'];
@@ -1141,12 +1142,15 @@ async function readDecisionQueueWindow(
 
   // ---- messages (source 1 and the built-in member notifications) ------------
   let messages: SessionMessage[] = [];
+  let projectAnswers: { answers: SessionMessage[]; watermark: CommitCursor | null } | null = null;
   if (wantsCards || wantsNotices) {
     try {
       const loaded = await loadWorkspaceMessages(deps.records, workspace,
         deps.lookupPageLimit);
       messages = loaded.messages;
       watermark = later(watermark, loaded.watermark);
+      projectAnswers = wantsCards ? await loadProjectAnswers(deps.records, workspace, deps.lookupPageLimit) : null;
+      if (projectAnswers !== null) watermark = later(watermark, projectAnswers.watermark);
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
     }
@@ -1161,7 +1165,11 @@ async function readDecisionQueueWindow(
 
   // ---- source 1 message + the synthetic answers of the other cards ----------
   if (wantsCards) {
-    for (const message of messages) {
+    const seenAnswers = new Set<string>();
+    for (const message of [...messages, ...(projectAnswers?.answers ?? [])]) {
+      const answerKey = sessionMessageRefKey(message.ref);
+      if (seenAnswers.has(answerKey)) continue;
+      seenAnswers.add(answerKey);
       if (!isUserMessageRecipient(message.recipient) || message.decision === undefined) continue;
       if (message.decision.syntheticAnswer) {
         if (message.status !== 'responded' || !isUserDecisionResponse(message.response)) continue;
@@ -2270,6 +2278,29 @@ async function loadWorkspaceMessages(
   return { messages, watermark: batch.watermark };
 }
 
+/**
+ * §3.11 item 2 / §17 L4.4: the project subject's synthetic answers are listed once for the whole project, so a
+ * workspace whose own message window lacks the answer does not show its card as waiting again.
+ */
+async function loadProjectAnswers(
+  records: DecisionReadRecordsPort,
+  workspace: WorkspaceScope,
+  /** The page width of the shared lookup; absent keeps lookupAll's default 200. */
+  pageLimit?: number,
+): Promise<{ answers: SessionMessage[]; watermark: CommitCursor | null }> {
+  const batch = await lookupAll(records, S5_PROJECT_ANSWERS_LOOKUP, [workspace.projectId, true, 'project'],
+    { ...(pageLimit === undefined ? {} : { pageLimit }) });
+  const answers: SessionMessage[] = [];
+  for (const record of batch.items) {
+    const decoded = decodeSessionMessageRecord(record);
+    if (decoded.status !== 'decoded') {
+      throw { status: 'rejected', code: 'unavailable',
+        reason: `project answer ${record.refKey}: ${decoded.reason}` } as CoreRejection;
+    }
+    answers.push(decoded.value);
+  }
+  return { answers, watermark: batch.watermark };
+}
 
 async function findCandidateProposal(
   records: DecisionReadRecordsPort,

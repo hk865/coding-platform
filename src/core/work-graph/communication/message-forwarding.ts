@@ -84,7 +84,7 @@ function dutyBinding(role: RoleConfigurationRef): RoleBindingRefV1 {
 
 type ForwardReadFacts =
   | { kind: 'transferred'; existing: SessionMessage; sameDestination: boolean }
-  | { kind: 'fresh'; before: SessionMessage; facts: ForwardFactsV1 };
+  | { kind: 'fresh'; before: SessionMessage; receivingWorkspaceId: string; facts: ForwardFactsV1 };
 
 function copyGoalOf(input: ForwardMessageInputV1): GoalRef | null {
   return input.copyGoalRef === undefined || input.copyGoalRef === null ? null : input.copyGoalRef;
@@ -107,15 +107,18 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
 
   /**
    * The one destination read both commands use (§3.9 item 3). A gone line is refused before its role or workspace is
-   * used, so a duty read cannot turn "gone" into another answer. The cross-workspace comparison is the real
-   * `SessionRecord.workspaceId` against the bound context, never the caller's `SessionRef` (which has no workspace).
+   * used, so a duty read cannot turn "gone" into another answer. A forward may receive in another workspace of the
+   * same project (7D1's same-project lift); a dispose keeps today's cross-workspace answer. The comparison is the real
+   * `SessionRecord.workspaceId`, never the caller's `SessionRef` (which has no workspace).
    */
   async function readDestination(owned: Owned, ctx: CoreCallContext, to: SessionRef,
-    intent: SessionMessageIntentV1 | undefined): Promise<
-    { ok: true; value: ForwardFactsV1['destination'] } | { ok: false; rejection: CoreRejection }> {
-    // Another project's Session is not found, as the directory's own read answers it (book §3.9 item 3: same project).
+    intent: SessionMessageIntentV1 | undefined, receiving: 'forward' | 'dispose'): Promise<
+    { ok: true; value: ForwardFactsV1['destination']; receivingWorkspaceId: string } | { ok: false; rejection: CoreRejection }> {
+    // Only another PROJECT is refused by the destination read; a dispose keeps its existing not-found answer.
     if (to.projectId !== owned.projectId) {
-      return { ok: false, rejection: reject('not_found', 'the destination Session does not exist') };
+      return { ok: false, rejection: receiving === 'forward'
+        ? reject('invalid', 'cross_workspace_forward')
+        : reject('not_found', 'the destination Session does not exist') };
     }
     const target = await readOwnerRecord({
       store: records,
@@ -132,9 +135,13 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
       || (target.value.archiveRequest ?? null) !== null) {
       return { ok: false, rejection: reject('invalid', FORWARD_DESTINATION_GONE) };
     }
-    if (target.value.workspaceId !== owned.workspaceId) {
-      return { ok: true, value: { sameWorkspace: false, eligible: false, dutyAllows: true } };
+    if (receiving === 'dispose' && target.value.workspaceId !== owned.workspaceId) {
+      return { ok: true, receivingWorkspaceId: target.value.workspaceId,
+        value: { sameWorkspace: false, eligible: false, dutyAllows: true } };
     }
+    // A forward reads the target's own line: the TARGET's workspace is the receiving scope, so the one eligibility
+    // rule and the one duty read run on that line rather than on the caller's workspace.
+    const receivingOwned: Owned = { ...owned, workspaceId: target.value.workspaceId };
     let dutyAllows = true;
     if (intent !== undefined && intent !== 'notify') {
       if (deps.duties === undefined) {
@@ -142,16 +149,17 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
       }
       let facts: ReadResult<{ duties: PlatformDutyV1[] }>;
       try {
-        facts = await deps.duties.readMessageDutiesFacts(ctx, { sessionRef: to, roleBinding: dutyBinding(target.value.role) });
+        facts = await deps.duties.readMessageDutiesFacts({ ...ctx, workspaceId: target.value.workspaceId },
+          { sessionRef: to, roleBinding: dutyBinding(target.value.role) });
       } catch {
         return { ok: false, rejection: reject('unavailable', 'the destination duties could not be read') };
       }
       if (facts.status !== 'ready') return { ok: false, rejection: mapReadResult(facts) as CoreRejection };
       dutyAllows = forwardDutyAllows(intent, facts.value.duties);
     }
-    return { ok: true, value: {
-      sameWorkspace: true,
-      eligible: replyTargetEligible(owned, target.value),
+    return { ok: true, receivingWorkspaceId: target.value.workspaceId, value: {
+      sameWorkspace: receiving === 'forward' || target.value.workspaceId === owned.workspaceId,
+      eligible: replyTargetEligible(receivingOwned, target.value),
       dutyAllows,
     } };
   }
@@ -173,10 +181,23 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
     if (!recipientLine.ok) return recipientLine.rejection;
     const delivery: MessageDeliveryStateV1 = deriveMessageDelivery(before, recipientLine.value).delivery;
 
-    // The ruling's read list includes the sender line; a Host message has no Session line to read.
+    // The ruling's read list includes the sender line; a Host message has no Session line to read. The sender's
+    // `SessionRef` carries no workspace, so the record is read by ref first and the ONE line-facts read runs with that
+    // record's workspace (finding 22). The general `readSession` boundary is unchanged.
     const sender = messageSenderSessionOf(before);
     if (sender !== null) {
-      const senderLine = await recipientLineFacts(deps, ctx, sender);
+      const senderRecord = await readOwnerRecord({
+        store: records,
+        refKey: sessionAggregateRefKey(plainSessionRefToAggregate(sender)),
+        decode: decodeSessionRecord,
+        readError: () => reject('unavailable', 'the sender Session could not be read'),
+      });
+      if (!senderRecord.ok) {
+        return 'notFound' in senderRecord
+          ? reject('not_found', 'the sender Session does not exist')
+          : senderRecord.rejection;
+      }
+      const senderLine = await recipientLineFacts(deps, { ...ctx, workspaceId: senderRecord.value.workspaceId }, sender);
       if (!senderLine.ok) return senderLine.rejection;
     }
 
@@ -208,7 +229,7 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
       };
     }
 
-    const destination = await readDestination(owned, ctx, input.to, before.intent);
+    const destination = await readDestination(owned, ctx, input.to, before.intent, 'forward');
     if (!destination.ok) return destination.rejection;
 
     const facts: ForwardFactsV1 = {
@@ -221,7 +242,8 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
       destination: destination.value,
       ...(copy === undefined ? {} : { copy }),
     };
-    return { status: 'ready', facts: { kind: 'fresh', before, facts } };
+    return { status: 'ready', facts: { kind: 'fresh', before,
+      receivingWorkspaceId: destination.receivingWorkspaceId, facts } };
   }
 
   async function forward(ctx: CoreCallContext, input: ForwardMessageInputV1, copyOnly: boolean):
@@ -243,7 +265,7 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
     };
 
     const command: WriteCommand<ForwardReadFacts,
-      { before: SessionMessage; copyGoalRef: GoalRef | null }, ForwardMessageResultV1,
+      { before: SessionMessage; copyGoalRef: GoalRef | null; receivingWorkspaceId: string }, ForwardMessageResultV1,
       SessionMessage, SessionMessage> = {
       operation: 'message.forward',
       scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
@@ -258,16 +280,17 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
         }
         const problem = forwardMessageProblem(facts.facts);
         if (problem !== null) return { refuse: problem };
-        return { decision: { before: facts.before, copyGoalRef } };
+        return { decision: { before: facts.before, copyGoalRef, receivingWorkspaceId: facts.receivingWorkspaceId } };
       },
       build: async (decision, keys) => {
         const at = deps.now();
         const before = decision.before;
         const messageId = 'session-message-forward-' + sha256Hex(canonicalJson({
-          projectId: owned.projectId, workspaceId: owned.workspaceId, original: messageRef, to,
+          projectId: owned.projectId, workspaceId: decision.receivingWorkspaceId, original: messageRef, to,
         } as unknown as JsonValue));
+        // The copy is written in the RECEIVING workspace; its body ref is the original's, never re-stored.
         const newRef: SessionMessageRef = {
-          aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId, messageId,
+          aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: decision.receivingWorkspaceId, messageId,
         };
         const newRecord: SessionMessageRecord = createSessionMessageRecord({
           ref: newRef,
@@ -394,7 +417,7 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
         }
         let destination: DisposeFactsV1['destination'] = null;
         if (mode === 'transfer') {
-          const read = await readDestination(owned, ctx, to as SessionRef, before.intent);
+          const read = await readDestination(owned, ctx, to as SessionRef, before.intent, 'dispose');
           if (!read.ok) return read.rejection;
           destination = read.value;
         }

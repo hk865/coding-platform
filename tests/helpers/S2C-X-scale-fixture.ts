@@ -232,7 +232,8 @@ function realDeps(f: LineFixture, records: WorkLineStore, budget: number | undef
   const bodies = new RawArtifactBodyStore();
   const now = () => AT;
   const sessionFacts = createSessionFactsService({ records });
-  const dutyFor: SessionDutyReadPort = async () => ({ status: 'ready', value: 'executor' });
+  // The world's real resolver over its trusted Work binding (the same one the write side uses).
+  const dutyFor: SessionDutyReadPort = f.sessionDuty;
   return {
     records,
     dutyFor,

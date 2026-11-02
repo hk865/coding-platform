@@ -22,7 +22,7 @@ import { AG2B_CONSUMER_ID, graphWrite, plain } from '../helpers/AG2b-collaborati
 import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import { driveS6BHandoff, seedS6BTooLongSecretary } from '../helpers/S6B2-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
-import { createAlwaysAdmitCapacity, createLineCreation } from '../../src/business/workflow/line-creation.js';
+import { createLineCreation } from '../../src/business/workflow/line-creation.js';
 import {
   s6b2Accept, s6b2Advance, s6b2Archive, s6b2Backend, s6b2Basis, s6b2FailCommit, s6b2Scene, s6b2Workspace,
   type S6B2Backend, type S6B2Captured, type S6B2WorldValue,
@@ -1064,7 +1064,7 @@ describe('rejects: a refusal for an item the parent record shows finished', () =
       const saved = before.write.savedInput;
       if (saved?.kind !== 'create') throw new Error('the successor before write saved no create input');
       // The composite's own create owner, called with the exact input the parent saved: the real Session is created.
-      const lines = createLineCreation({ sessions: world.platform.runtime, operations: world.platform.sessions, capacity: createAlwaysAdmitCapacity() });
+      const lines = createLineCreation({ sessions: world.platform.runtime, operations: world.platform.sessions });
       expect((await lines.ensureLine(world.humanContext(), saved.input)).status).toBe('created');
       expect((await step()).write).toMatchObject({ stage: 'successor', item: 'assignment:0', phase: 'after' });
       // One assignment is filled while the other still waits: the stage is this one and item 0 is finished.
@@ -1102,8 +1102,8 @@ describe('L8: a successor whose create child is only accepted is not finished', 
     if (before.write.savedInput?.kind !== 'create') throw new Error('the successor before write saved no create input');
     // A3 gate: the create child's admission lands and its register commit is held, so the child is only accepted.
     const hold = commitBarrier.hold(byIdentityPrefix('session-register:'), 'the create register commit');
-    const created = createLineCreation({ sessions: world.platform.runtime, operations: world.platform.sessions,
-      capacity: createAlwaysAdmitCapacity() }).ensureLine(world.humanContext(), before.write.savedInput.input);
+    const created = createLineCreation({ sessions: world.platform.runtime, operations: world.platform.sessions })
+      .ensureLine(world.humanContext(), before.write.savedInput.input);
     await hold.reached;
     const pending = await step();
     expect([pending.write.item, pending.stop]).toEqual(['-', 'refused']);

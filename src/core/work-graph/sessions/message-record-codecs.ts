@@ -89,6 +89,10 @@ export const SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP = 'session-message-by-reques
 export const S5_USER_MESSAGE_BY_GOAL = 's5-user-message-by-goal';
 export const S5_MESSAGE_BY_WORKSPACE_STATUS = 's5-message-by-workspace-status';
 export const S5_DECISION_ANSWER_BY_SOURCE = 's5-decision-answer-by-source';
+/** §3.11 item 2: the same decision answer without `ref.workspaceId`, for a project subject's project-wide identity. */
+export const S5_DECISION_ANSWER_BY_PROJECT_SOURCE = 's5-decision-answer-by-project-source';
+/** §17 L4.4: the project subject's synthetic answers, enumerated once for the whole project. */
+export const S5_PROJECT_ANSWERS_LOOKUP = 's5-project-answers';
 /** Slice 2A L2: messages addressed to the user in one workspace. */
 export const S2A_USER_MESSAGES_LOOKUP = 's2a-user-messages';
 /** K3 L28: every decision answer of one source kind for one Goal (the UR7b index). */
@@ -180,6 +184,16 @@ export const S5_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
     name: S5_DECISION_ANSWER_BY_SOURCE,
     aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'decision.source.kind', 'decision.source.key'],
+  },
+  {
+    name: S5_DECISION_ANSWER_BY_PROJECT_SOURCE,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'decision.source.kind', 'decision.source.key'],
+  },
+  {
+    name: S5_PROJECT_ANSWERS_LOOKUP,
+    aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'decision.syntheticAnswer', 'decision.source.subject.kind'],
   },
 ];
 

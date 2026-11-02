@@ -428,7 +428,7 @@ export async function ensureProjectPointers(world: S6AMemoryWorld, governance?: 
   return owner;
 }
 
-const refOf = (session: S6ASession | SessionRef): SessionRef =>
+export const refOf = (session: S6ASession | SessionRef): SessionRef =>
   'aggregateRef' in session ? { projectId: session.ref.projectId, sessionId: session.ref.sessionId }
     : { projectId: session.projectId, sessionId: session.sessionId };
 
@@ -814,3 +814,5 @@ export function callPublishedOwnerAsHost(world: S6AHostWorld, prefix: string, ca
   });
   return (method as (ctx: CoreCallContext, input: unknown) => Promise<unknown>).call(target, ctx, input);
 }
+
+export { asRecord };

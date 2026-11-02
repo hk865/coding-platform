@@ -22,6 +22,7 @@ import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SendRejectionV1, SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import { SESSION_MESSAGE_CONTENT_TYPE } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import type { SessionMessageCommandPort, SessionMessageSendInputV1, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import type { ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
@@ -341,7 +342,7 @@ describe.each(KINDS)('C1 SessionMailbox tools against the real %s mailbox', kind
 
   it('does not change the Session record or open a model when the factory is built', async () => {
     const h = await openReal(kind);
-    const sessions = createSessionDirectory({ records: h.backend.records, lookups: h.backend.records });
+    const sessions = createSessionDirectory({ records: h.backend.records, lookups: h.backend.records, duty: unknownSessionDuty });
     const before = await sessions.readSession(h.ctxHost, h.busySession);
     expect(before).toMatchObject({ status: 'ready' });
     if (before.status !== 'ready') return;

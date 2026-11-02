@@ -22,6 +22,7 @@ import { createMessageDutiesFactsAdapter,
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import type { MessageDutiesFactsPort } from '../../src/core/work-graph/model/decision-contracts.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { T, openS5DecisionFixture, type S5DecisionFixture, type S5FixtureKind, type S5Records } from '../helpers/S5-decision-fixture.js';
 import { wp2LegacyDuty, wp2RoleContent } from '../helpers/WP2-duties-fixture.js';
 
@@ -49,7 +50,7 @@ async function openHarness(kind: S5FixtureKind = 'memory'): Promise<Harness> {
   const base = await openS5DecisionFixture(kind);
   fixtures.push(base);
   const roles = createRoleConfigurationService({ records: base.records, now: base.now, eventId: base.newId });
-  const sessions = createSessionDirectory({ records: base.records, lookups: base.records });
+  const sessions = createSessionDirectory({ records: base.records, lookups: base.records, duty: unknownSessionDuty });
   const adapter = createMessageDutiesFactsAdapter({ roles, sessions, legacyDuty: wp2LegacyDuty });
   return { base, records: base.records, roles, sessions, adapter, ctx: base.ctx };
 }

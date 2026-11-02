@@ -55,6 +55,7 @@ import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persis
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
@@ -733,7 +734,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
     createArchitectureCatalogService({ records: readerRecords });
   const readerPlans = createPlanService({ records: readerRecords, bindings: createInitializationBindingReader({ records: readerRecords }),
     now, eventId });
-  const sessionDirectory = createSessionDirectory({ records: readerRecords, lookups: readerRecords });
+  const sessionDirectory = createSessionDirectory({ records: readerRecords, lookups: readerRecords, duty: unknownSessionDuty });
   const sessionSpy: SessionSpy = { findSessionsCalls: 0, readSessionCalls: 0, contexts: [] };
   const sessions = {
     async findSessions(callCtx: CoreCallContext, input: Parameters<typeof sessionDirectory.findSessions>[1]) {

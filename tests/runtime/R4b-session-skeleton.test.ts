@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { sessionRecordSchema } from '../../vendor/coding-agent/dist/public-api.js';
 
 const directories: string[] = [];
@@ -69,7 +70,7 @@ describe('R4b Session skeleton', () => {
   });
 
   it('rejects unbound callers before accessing persistence or Kernel', async () => {
-    const sessions = createSessionDirectory({ records: {} as never, lookups: {} as never });
+    const sessions = createSessionDirectory({ records: {} as never, lookups: {} as never, duty: unknownSessionDuty });
     const result = await sessions.admitSessionCreation({} as never, {} as never);
     expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
     const registry = await createKernelStoreRegistry({ entries: [] });

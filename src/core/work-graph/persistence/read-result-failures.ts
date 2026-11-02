@@ -13,7 +13,10 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejected, rejectedWithCurrent, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import { CORE_ERRORS, type CoreRejection, type ReadResult } from '../../../contracts/core/results.js';
 import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
+import { scopeOwnedDetailOfSlot } from '../../../contracts/role-lines.js';
 import { isRecord } from '../../../contracts/validation/common.js';
+import type { StoreFailure } from '../../record-store/ports.js';
 
 /**
  * §4.1 line 772: the whole read must have observed at least the caller's
@@ -68,22 +71,39 @@ export function pinsFromStoreCurrent(
   return pins;
 }
 
+/** The claim-slot conflict arm; its `current` is a `{claimKey, owner}` list, not a version pin. */
+export type SlotConflictFailure = Extract<StoreFailure, { code: 'unique_conflict' }>;
+/** The version-conflict arm; its `current` is the version-pin list. */
+export type VersionConflictFailure = Extract<StoreFailure, { code: 'revision_conflict' }>;
+
+/**
+ * A claim-slot conflict that names a role-scope slot becomes the structured
+ * `scopeOwned` rejection; any other slot conflict stays the generic one.
+ */
+export function scopeOwnedRejectionOf(failure: SlotConflictFailure): CoreRejection | null {
+  for (const slot of failure.current) {
+    const detail = scopeOwnedDetailOfSlot(slot);
+    if (detail === null) continue;
+    return { status: 'rejected', code: 'revision_conflict', scopeOwned: detail,
+      reason: `scope_owned: the ${detail.duty} scope ${canonicalKey(detail.target)} is held by ` +
+        `${detail.holder === null ? 'an undecodable owner' : detail.holder.sessionId}` };
+  }
+  return null;
+}
+
 /** The Session owner's write-failure mapping. */
-export function sessionStoreFailureToRejection(failure: import('../../record-store/ports.js').StoreFailure | {
-  code: string;
-  reason: string;
-  current?: readonly { refKey: string; revision: number | null }[];
-}): CoreRejection {
+export function sessionStoreFailureToRejection(failure: StoreFailure): CoreRejection {
   switch (failure.code) {
     case 'invalid': return rejected('invalid', failure.reason);
     case 'not_found': return rejected('not_found', failure.reason);
     case 'idempotency_conflict': return rejected('idempotency_conflict', failure.reason);
     case 'revision_conflict': {
-      const current = pinsFromStoreCurrent(failure.current ?? []);
+      const current = pinsFromStoreCurrent(failure.current);
       return rejectedWithNonEmptyCurrent('revision_conflict', failure.reason, current);
     }
     case 'unique_conflict':
-      return rejected('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
+      return scopeOwnedRejectionOf(failure)
+        ?? rejected('revision_conflict', `${failure.reason} (the unique slot is held by another owner)`);
     case 'unsupported': return rejected('unsupported', failure.reason);
     case 'corrupt': return rejected('unavailable', `the record store reported damage: ${failure.reason}`);
     default: return rejected('unavailable', failure.reason);

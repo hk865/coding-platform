@@ -32,6 +32,7 @@ import { createInitializationBindingReader } from '../../src/core/work-graph/tas
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
@@ -228,7 +229,7 @@ function assemble(world: K3ReviewCardWorld, options: {
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
+    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
       roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),
     executions: createRunStateReader({ records: f.records }),

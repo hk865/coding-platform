@@ -18,7 +18,7 @@ import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { SessionFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
-import { executorArchiveDue } from '../../core/work-graph/state/session-availability.js';
+import { executorArchiveDue, openResponsibleLinkOf } from '../../core/work-graph/state/session-availability.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../../core/work-graph/sessions/lifecycle-record-codecs.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { WorkflowDependencies } from './ports.js';
@@ -172,7 +172,7 @@ export function createSessionMaintenanceService(
 
   /**
    * E2 (§4.2 S:827): the executor due clock is the terminal close event's
-   * `taskBasis.finishedAt`, never the last `Run.endedAt`. An old close event
+   * `basis.finishedAt`, never the last `Run.endedAt`. An old close event
    * without that proof is recovered through the trusted responsibility-basis
    * reader (`satisfied` → `reducedAt`; cancelled/superseded → the first
    * terminal Plan's `acceptedAt`). EVERY closed terminal link must be proven;
@@ -183,9 +183,11 @@ export function createSessionMaintenanceService(
   ): Promise<{ terminal: boolean; finishedAt: string | null } | null> {
     if (deps.responsibilityBasis === undefined) return null;
     try {
-      const basis = await deps.responsibilityBasis.readResponsibilityBasis(ctx, { sessionRef, target });
-      if (basis.status !== 'ready') return null;
-      return { terminal: basis.value.terminal, finishedAt: basis.value.finishedAt };
+      const read = await deps.responsibilityBasis.readResponsibilityBasis(ctx, { sessionRef, target });
+      if (read.status !== 'ready') return null;
+      const answer = read.value;
+      const finishedAt = answer.basis.kind === 'task' ? answer.basis.finishedAt : null;
+      return { terminal: answer.terminal, finishedAt };
     } catch {
       return null;
     }
@@ -198,7 +200,7 @@ export function createSessionMaintenanceService(
     if (closed.length === 0) return { value: null, incomplete: null };
     let latest: string | null = null;
     for (const link of closed) {
-      // First read the close event itself: its `taskBasis.finishedAt` is the
+      // First read the close event itself: its `basis.finishedAt` is the
       // primary proof. A non-terminal close (transfer/drop) is not a due fact.
       let event: { terminal: boolean; finishedAt: string | null } | null = null;
       if (deps.records !== undefined) {
@@ -208,7 +210,7 @@ export function createSessionMaintenanceService(
           if (decoded.status === 'decoded') {
             event = decoded.value.mode !== 'terminal'
               ? { terminal: false, finishedAt: null }
-              : { terminal: true, finishedAt: decoded.value.taskBasis.finishedAt };
+              : { terminal: true, finishedAt: decoded.value.basis.kind === 'task' ? decoded.value.basis.finishedAt : null };
           }
         }
       }
@@ -613,7 +615,7 @@ export function createSessionMaintenanceService(
             // not a responsibility to dispose (HM04). Otherwise the continuation
             // took the work and this line is archived as `handoff_complete`.
             if (facts.continuations.length > 0) {
-              if (openResponsibleLinks(record, links).some((link) => link.ref.target.kind !== 'module')) continue;
+              if (openResponsibleLinkOf(links) !== false) continue;
               mode = 'handoff_complete';
               reason = 'the retired line was handed over to its continuation';
             } else {

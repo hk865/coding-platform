@@ -20,6 +20,7 @@ import { createInitializationBindingReader } from '../../src/core/work-graph/tas
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
@@ -180,13 +181,13 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     const source = f.messages.decision.decision!.source;
     await answer(source);
     await f.settleRunRA();
-    const directory = createSessionDirectory({ records: f.records, lookups: f.records });
+    const directory = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
     const session = ready(await directory.readSession(f.ctx, f.sessionS)).record;
     expect(session.occupancy).toBeNull();
     // The lifecycle owner uses Date directly, so freeze only its clock.
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(T);
     try {
-      committed(await createSessionLifecycleService({ records: f.records, lookups: f.records }).archiveSession(f.ctx,
+      committed(await createSessionLifecycleService({ records: f.records, lookups: f.records, duty: unknownSessionDuty }).archiveSession(f.ctx,
         { input: { sessionRef: f.sessionS, reason: 'DQ04 sender archived' }, meta: { requestId: f.newId(), expected: [{ ref: session.ref, revision: session.revision }] } }));
     } finally { vi.useRealTimers(); }
     const after = await q();

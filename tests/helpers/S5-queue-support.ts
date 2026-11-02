@@ -23,6 +23,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -118,7 +119,7 @@ export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDepende
       ? { status: 'ready', value: { configurationRevision: 's5-host-config-1', permissions, hostTemplate: template } }
       : { status: 'rejected', code: 'forbidden', reason: 'not the shared S5 mailbox grant' };
   };
-  return { records: f.records, sessions: createSessionDirectory({ records: f.records, lookups: f.records }),
+  return { records: f.records, sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     materials: materialsFor(f), runtimeAdmission: { bodies: f.bodies, authorizeConfiguration },

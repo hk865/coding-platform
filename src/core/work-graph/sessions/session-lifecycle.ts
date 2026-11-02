@@ -52,12 +52,14 @@ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../..
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { reservedDutyOf, roleLineDutyOf, type RoleLineAllocationV1 } from '../../../contracts/role-lines.js';
 import { hasOnlyKeys, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import { mergeGuards } from '../persistence/record-guards.js';
+import type { CommitFragment } from '../persistence/command-executor.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type {
   ConditionCheckV1, SecretaryArchiveConditionCommitV1, SecretaryArchiveConditionPort,
@@ -68,9 +70,9 @@ import type {
   SessionLifecycleStores,
 } from './lifecycle-contracts.js';
 import {
-  checkPlainSessionRef, checkSessionArchiveRequest, checkTarget, decodeSessionRecord,
-  decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionRecord,
-  plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey,
+  checkPlainSessionRef, checkSessionArchiveRequest, checkTarget, decodeSessionOperationRecord,
+  decodeSessionRecord, decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionRecord,
+  operationRefKey, plainSessionRef, plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey,
   type PendingSessionWorkLink,
 } from './session-record-codecs.js';
 import {
@@ -82,6 +84,12 @@ import {
 } from './lifecycle-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import { readSessionWorkLinks } from './session-links.js';
+import { scopeClaimChangesOf } from './session-responsibility-service.js';
+import { roleLineCommitContribution } from './role-scope-commit.js';
+import { createAllocationRead } from './allocation-read.js';
+import { allocationOnlyConflict, retryAllocationCommit } from './allocation-retry.js';
+import { reactivationSeatOf } from './session-directory.js';
+import { planArchiveRelease, type ArchiveReleaseInputV1 } from '../state/session-archive-release.js';
 import {
   eventIdOf, fingerprintOf, identityKeyOf, ownRequest, trustedContext,
   type HostActor, type OwnedRequest, type TrustedContext,
@@ -97,15 +105,6 @@ import {
 // --------------------------------------------------------------------------
 // Preamble helpers
 // --------------------------------------------------------------------------
-
-/** The shared map takes a version-pin `current`; a `unique_conflict` carries a claim slot instead. */
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  return sessionStoreFailureToRejection({
-    code: failure.code,
-    reason: failure.reason,
-    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
-  });
-}
 
 /** A6: the complete RunRef the wait choice requires, before any store read. */
 function waitRunRefProblem(value: unknown): string | null {
@@ -275,6 +274,9 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   const lookups: RecordLookupPort = stores.lookups;
   // Slice 1 §3.3: the injected Session facts port the archive entries use.
   const sessionFacts = stores.sessionFacts;
+  // The one fixed-duty read and the one allocation read the scope writes merge.
+  const dutyRead = stores.duty;
+  const allocationRead = createAllocationRead({ records });
 
   async function readSessionLinks(projectId: string, sessionId: string): Promise<LinkRead> {
     const read = await readSessionWorkLinks(lookups, projectId, sessionId);
@@ -295,7 +297,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       return reject('unavailable', 'the recorded link receipt does not name exactly one event');
     }
     const at = await records.eventAt(receipt.cursor);
-    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
     if (String(at.value.cursor) !== String(receipt.cursor)) {
       return reject('unavailable', 'the recorded link event cursor disagrees with the receipt');
     }
@@ -344,7 +346,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   ): Promise<WriteResult<SessionWorkLink> | null> {
     const again = await records.lookupCommit({ identityKey, fingerprint });
     if (again.status === 'ready') return readLinkReplay(again.value, scope, input, linkRef);
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return null;
   }
 
@@ -367,7 +369,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
     const linkKey = sessionWorkLinkRefKey(linkRef);
     const read = await records.readMany([sessionKey, linkKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const linked: SessionEvent = { kind: 'work_linked', active: input.active };
     const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, linked);
     if ('status' in session) return session;
@@ -424,17 +426,40 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     guardMap.set(sessionKey, expectedSession.revision);
     guardMap.set(linkKey, linkPin);
     for (const guard of targetGuards) guardMap.set(guard.refKey, guard.expectedRevision);
-    const prepared: PreparedCommit = {
-      identityKey,
-      fingerprint,
-      guards: [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision })),
-      records: [encodeSessionRecord(nextSession), encodePendingSessionWorkLink(nextLink)],
-      claims: [],
-      indexGuards: [],
-      indexChanges: [],
-      events: [encodeSessionWorkLinkChangedEvent(event)],
-      commitCursorBindings: [{ refKey: linkKey, field: boundField }],
-    };
+    // A link takes part in a scope claim only while it actually opens or closes an adviser/scribe scope. An
+    // already-open link takes no claim, and a task/work link reads no duty at all.
+    const opening = input.active && (currentLink === null || currentLink.until !== null) ? [linkRef] : [];
+    const closing = input.active ? [] : [linkRef];
+    const claims = await scopeClaimChangesOf(ctx, dutyRead, session, closing, opening);
+    if (!claims.ok) return claims.rejection;
+    let prepared: PreparedCommit;
+    if (claims.duty === null) {
+      // The task/work path: no duty read and no claim, exactly as before.
+      prepared = {
+        identityKey,
+        fingerprint,
+        guards: [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision })),
+        records: [encodeSessionRecord(nextSession), encodePendingSessionWorkLink(nextLink)],
+        claims: [],
+        indexGuards: [],
+        indexChanges: [],
+        events: [encodeSessionWorkLinkChangedEvent(event)],
+        commitCursorBindings: [{ refKey: linkKey, field: boundField }],
+      };
+    } else {
+      const contribution = roleLineCommitContribution({
+        projectRef: { projectId: scope.projectId },
+        records: [encodeSessionRecord(nextSession)],
+        guards: [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision })),
+        links: [{ link: linkRef, next: nextLink }],
+        claimChanges: claims.changes,
+        bindings: [{ link: linkRef, field: boundField }],
+        events: [encodeSessionWorkLinkChangedEvent(event)],
+        allocation: null,
+      }, null);
+      if (!contribution.ok) return contribution.rejection;
+      prepared = { identityKey, fingerprint, indexGuards: [], indexChanges: [], ...contribution.fragment };
+    }
 
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session link was cancelled before commit');
     let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
@@ -443,7 +468,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     } catch {
       return reject('unavailable', 'the Session link commit failed before completing');
     }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
     if (committed.replayed) return readLinkReplay(committed, scope, input, linkRef);
     const result: SessionWorkLink = boundField === 'since'
       ? { ref: linkRef, revision: nextLink.revision, since: committed.cursor, until: null }
@@ -488,7 +513,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
 
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return readLinkReplay(existing.value, scope, input, linkRef);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session link was cancelled during lookup');
 
     const attempt = await runLinkAttempt({
@@ -515,7 +540,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       return reject('unavailable', 'the recorded lifecycle receipt does not name exactly one event');
     }
     const at = await records.eventAt(receipt.cursor);
-    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
     if (String(at.value.cursor) !== String(receipt.cursor)) {
       return reject('unavailable', 'the recorded lifecycle event cursor disagrees with the receipt');
     }
@@ -549,11 +574,122 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   ): Promise<WriteResult<SessionRecord> | null> {
     const again = await records.lookupCommit({ identityKey, fingerprint });
     if (again.status === 'ready') return readLifecycleReplay(again.value, scope, sessionRef, expectedEvent);
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return null;
   }
 
-  /** The post-lookup archive/reactivate attempt; no identity lookup of its own. */
+  /**
+   * The borrowing successor a saved handoff names: one read of the operation the stored archive request's
+   * condition points at, then one read of the assignments' saved create operations. A direct archive, a
+   * non-handoff condition, or a handoff whose assignment did not borrow this line's seat answers `null`.
+   */
+  async function borrowingSuccessorOf(session: SessionRecord):
+    Promise<{ ok: true; successor: ArchiveReleaseInputV1['successor'] } | { ok: false; rejection: CoreRejection }> {
+    const condition = session.archiveRequest?.condition ?? null;
+    if (condition === null) return { ok: true, successor: null };
+    const parentKey = operationRefKey(condition.operation);
+    const read = await records.readMany([parentKey]);
+    if (read.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(read) };
+    const parentRecord = read.value.records.find((record) => record.refKey === parentKey);
+    if (parentRecord === undefined) {
+      return { ok: false, rejection: reject('unavailable', 'the archive condition operation does not exist') };
+    }
+    const parent = decodeSessionOperationRecord(parentRecord);
+    if (parent.status !== 'decoded') {
+      return { ok: false, rejection: reject('unavailable', `the archive condition operation is damaged: ${parent.reason}`) };
+    }
+    if (parent.value.action.kind !== 'handoff') return { ok: true, successor: null };
+    const assignments = parent.value.action.progress.assignments;
+    const createKeys = [...new Set(assignments.flatMap((assignment) =>
+      assignment.createOperation === null ? [] : [operationRefKey(assignment.createOperation)]))];
+    if (createKeys.length === 0) return { ok: true, successor: null };
+    const creates = await records.readMany(createKeys);
+    if (creates.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(creates) };
+    const byKey = new Map(creates.value.records.map((record) => [record.refKey, record]));
+    for (const assignment of assignments) {
+      if (assignment.createOperation === null || assignment.successor === null) continue;
+      const record = byKey.get(operationRefKey(assignment.createOperation));
+      if (record === undefined) {
+        return { ok: false, rejection: reject('unavailable', 'the borrowing create operation does not exist') };
+      }
+      const create = decodeSessionOperationRecord(record);
+      if (create.status !== 'decoded') {
+        return { ok: false, rejection: reject('unavailable', `the borrowing create operation is damaged: ${create.reason}`) };
+      }
+      if (create.value.action.kind !== 'create') continue;
+      const seat = create.value.action.seatDecision;
+      if (seat === null || seat.mode !== 'borrowed' || seat.source === null || seat.handoff === null) continue;
+      if (canonicalOf(seat.handoff) !== canonicalOf(condition.operation)) continue;
+      if (seat.source.projectId !== session.ref.projectId || seat.source.sessionId !== session.ref.sessionId) continue;
+      return { ok: true, successor: { session: assignment.successor, duty: seat.duty } };
+    }
+    return { ok: true, successor: null };
+  }
+
+  /**
+   * The one archive release contribution. Both formal archive commits merge it: the line's open responsible
+   * goal/project links (and an adviser's or scribe's open module region links) close with their claims, and the
+   * holder is released — or moved to the successor the caller resolved from a saved full handoff. A task-only,
+   * seatless line gets the empty plan, so its commit keeps today's shape.
+   */
+  async function archiveReleaseOf(ctx: CoreCallContext, scope: WorkspaceScope, session: SessionRecord,
+    links: readonly SessionWorkLink[], successor: ArchiveReleaseInputV1['successor']):
+    Promise<{ ok: true; fragment: CommitFragment; allocationKeys: readonly string[] }
+      | { ok: false; rejection: CoreRejection }> {
+    const resolved = await dutyRead(session.role, ctx);
+    if (resolved.status !== 'ready') {
+      return { ok: false, rejection: reject('unavailable',
+        resolved.status === 'rejected' ? resolved.reason : 'the Session duty is not ready') };
+    }
+    const duty = resolved.value;
+    const projectRef = { projectId: scope.projectId };
+    const counted = roleLineDutyOf(duty);
+    let currentAllocation: RoleLineAllocationV1 | null = null;
+    let allocationKeys: readonly string[] = [];
+    if (counted !== null) {
+      const allocation = await allocationRead.readAllocationForCommit(ctx, { projectRef, duty: counted });
+      if (allocation.status !== 'ready') return { ok: false, rejection: mapReadFailure(allocation) };
+      currentAllocation = allocation.value.allocation;
+      allocationKeys = [allocation.value.allocationGuard.refKey];
+    }
+    const plan = planArchiveRelease({
+      // The allocation's holder is the plain SessionRef; the record's ref carries the aggregate tag.
+      session: plainSessionRef(session.ref), links, duty, allocation: currentAllocation, successor,
+    });
+    if (!plan.ok) return { ok: false, rejection: plan.refusals[0]! };
+    const closeKeys = new Set(plan.plan.close.map(sessionWorkLinkRefKey));
+    const closingLinks = links.filter((link) => closeKeys.has(sessionWorkLinkRefKey(link.ref)));
+    const closing = closingLinks.map((link) => ({ link: link.ref, next: { ...link, revision: link.revision + 1, until: null } }));
+    const contribution = roleLineCommitContribution({
+      projectRef,
+      records: [],
+      guards: closingLinks.map((link) => ({ refKey: sessionWorkLinkRefKey(link.ref), expectedRevision: link.revision })),
+      links: closing,
+      claimChanges: plan.plan.claimChanges,
+      bindings: plan.plan.bindings,
+      events: [],
+      allocation: plan.plan.allocation,
+    }, currentAllocation);
+    if (!contribution.ok) return { ok: false, rejection: contribution.rejection };
+    return { ok: true, fragment: contribution.fragment, allocationKeys };
+  }
+
+  /** Merge the one release fragment into an archive commit; the empty plan leaves the commit as it was. */
+  function mergeArchiveRelease(prepared: PreparedCommit, fragment: CommitFragment):
+    { ok: true; prepared: PreparedCommit } | { ok: false; rejection: CoreRejection } {
+    const merged = mergeGuards([...prepared.guards, ...fragment.guards]);
+    if (!merged.ok) return merged;
+    return { ok: true, prepared: {
+      ...prepared,
+      guards: merged.guards,
+      records: [...prepared.records, ...fragment.records],
+      claims: [...prepared.claims, ...fragment.claims],
+      events: [...prepared.events, ...fragment.events],
+      ...(fragment.commitCursorBindings === undefined || fragment.commitCursorBindings.length === 0 ? {}
+        : { commitCursorBindings: [...(prepared.commitCursorBindings ?? []), ...fragment.commitCursorBindings] }),
+    } };
+  }
+
   async function runTransitionAttempt(args: {
     ctx: CoreCallContext;
     scope: WorkspaceScope;
@@ -566,65 +702,113 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   }): Promise<WriteResult<SessionRecord>> {
     const { ctx, scope, input, kind, expectedEvent, expectedSession, identityKey, fingerprint } = args;
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
-    const read = await records.readMany([sessionKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
-    const lifecycleEvent: SessionEvent = kind === 'archive' ? { kind: 'session_archived' } : { kind: 'session_reactivated' };
-    const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, lifecycleEvent);
-    if ('status' in session) return session;
+    let internal: readonly string[] = [];
+    const lifecycleAttempt = async (): Promise<WriteResult<SessionRecord> | { storeFailure: StoreFailure }> => {
+      // Every attempt restores its own receipt first, so an allocation-only retry re-reads and a landed
+      // commit whose answer was lost is never re-derived.
+      const existing = await recheckLifecycleAfterMiss(identityKey, fingerprint, scope, input.sessionRef, expectedEvent);
+      if (existing !== null) return existing;
+      const read = await records.readMany([sessionKey]);
+      if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+      const lifecycleEvent: SessionEvent = kind === 'archive' ? { kind: 'session_archived' } : { kind: 'session_reactivated' };
+      const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, lifecycleEvent);
+      if ('status' in session) return session;
 
-    // SES-11/SES-14. The machine first judges the Session itself (links not
-    // read yet); only an archive it accepts reads the responsible links, so a
-    // link-read failure never hides `invalid`/`busy`, as before. The machine
-    // then judges the archive again with them.
-    let verdict = decide(session, lifecycleEvent, { openResponsibleLink: false });
-    if (verdict.ok && kind === 'archive') {
-      const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
-      if (!links.ok) return links.rejection;
-      verdict = decide(session, lifecycleEvent, { openResponsibleLink: openResponsibleLinkOf(links.links) });
-    }
-    if (!verdict.ok) {
-      // Slice 1 SV20 / §5.3: the final archive of a Session whose responsible
-      // Task obligation is still open is the archive's own `busy`. The pure
-      // machine keeps its generic `dependency_blocked` (STATE-MACHINES-SPEC
-      // §8.3, locked by tests/state/session-availability.test.ts); the archive
-      // owner translates it to the slice-1 refusal the archive table names.
-      if (kind === 'archive' && verdict.code === 'dependency_blocked') {
-        return reject('busy', verdict.detail);
+      // SES-11/SES-14. The machine first judges the Session itself (links not
+      // read yet); only an archive it accepts reads the responsible links, so a
+      // link-read failure never hides `invalid`/`busy`, as before. The machine
+      // then judges the archive again with them.
+      let archiveLinks: readonly SessionWorkLink[] = [];
+      let verdict = decide(session, lifecycleEvent, { openResponsibleLink: false });
+      if (verdict.ok && kind === 'archive') {
+        const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
+        if (!links.ok) return links.rejection;
+        archiveLinks = links.links;
+        verdict = decide(session, lifecycleEvent, { openResponsibleLink: openResponsibleLinkOf(links.links) });
       }
-      return reject(verdict.code, verdict.detail);
-    }
-    const { session: nextSession } = sessionWrite(session, verdict.effects, expectedEvent);
+      if (!verdict.ok) {
+        // Slice 1 SV20 / §5.3: the final archive of a Session whose responsible
+        // Task obligation is still open is the archive's own `busy`. The pure
+        // machine keeps its generic `dependency_blocked` (STATE-MACHINES-SPEC
+        // §8.3, locked by tests/state/session-availability.test.ts); the archive
+        // owner translates it to the slice-1 refusal the archive table names.
+        if (kind === 'archive' && verdict.code === 'dependency_blocked') {
+          return reject('busy', verdict.detail);
+        }
+        return reject(verdict.code, verdict.detail);
+      }
+      const { session: nextSession } = sessionWrite(session, verdict.effects, expectedEvent);
 
-    const event: SessionLifecycleChangedEventV1 = {
-      eventId: eventIdOf(identityKey, kind),
-      eventType: expectedEvent,
-      schemaVersion: 1,
-      occurredAt: new Date().toISOString(),
-      projectId: scope.projectId,
-      session: nextSession,
-      reason: input.reason,
-    };
-    const prepared: PreparedCommit = {
-      identityKey,
-      fingerprint,
-      guards: [{ refKey: sessionKey, expectedRevision: expectedSession.revision }],
-      records: [encodeSessionRecord(nextSession)],
-      claims: [],
-      indexGuards: [],
-      indexChanges: [],
-      events: [encodeSessionLifecycleChangedEvent(event)],
-    };
+      const event: SessionLifecycleChangedEventV1 = {
+        eventId: eventIdOf(identityKey, kind),
+        eventType: expectedEvent,
+        schemaVersion: 1,
+        occurredAt: new Date().toISOString(),
+        projectId: scope.projectId,
+        session: nextSession,
+        reason: input.reason,
+      };
+      let prepared: PreparedCommit = {
+        identityKey,
+        fingerprint,
+        guards: [{ refKey: sessionKey, expectedRevision: expectedSession.revision }],
+        records: [encodeSessionRecord(nextSession)],
+        claims: [],
+        indexGuards: [],
+        indexChanges: [],
+        events: [encodeSessionLifecycleChangedEvent(event)],
+      };
+      if (kind === 'archive') {
+        // The direct `sessions/archive` only releases: a borrowing successor is the formal archive step's.
+        const release = await archiveReleaseOf(ctx, scope, session, archiveLinks, null);
+        if (!release.ok) return release.rejection;
+        internal = release.allocationKeys;
+        const merged = mergeArchiveRelease(prepared, release.fragment);
+        if (!merged.ok) return merged.rejection;
+        prepared = merged.prepared;
+      } else {
+        // Re-admission in the same commit (book :1231-1240): the seat's record, its two guards and the
+        // bound cursor are merged, never a reservation or a second write.
+        const resolved = await dutyRead(session.role, ctx);
+        if (resolved.status !== 'ready') {
+          if (resolved.status === 'rejected') return resolved;
+          return reject('unavailable', resolved.status === 'not_found'
+            ? 'the Session duty is not found' : 'the Session duty is not ready');
+        }
+        // A readonly copy and an unknown duty take no seat, so they read no allocation or limits.
+        const pool = reservedDutyOf({ duty: resolved.value, provenance: session.provenance, borrowedFrom: null });
+        if (pool.kind === 'pool') {
+          const projectRef = { projectId: scope.projectId };
+          const allocation = await allocationRead.readAllocationForCommit(ctx, { projectRef, duty: pool.duty });
+          if (allocation.status !== 'ready') return mapReadFailure(allocation);
+          // The allocation's holder stores the plain SessionRef; the record's ref carries the aggregate tag.
+          const seat = reactivationSeatOf({ projectRef, duty: resolved.value,
+            session: { ...session, ref: plainSessionRef(session.ref) } as SessionRecord,
+            allocation: allocation.value.allocation, limits: allocation.value.limits,
+            limitsGuard: allocation.value.limitsGuard });
+          if (seat.status === 'refused') return seat.rejection;
+          if (seat.status === 'seat') {
+            internal = [seat.guard.refKey, seat.limitsGuard.refKey];
+            const merged = mergeGuards([...prepared.guards, seat.guard, seat.limitsGuard]);
+            if (!merged.ok) return merged.rejection;
+            prepared = { ...prepared, guards: merged.guards, records: [...prepared.records, seat.record],
+              commitCursorBindings: [{ refKey: seat.record.refKey, field: seat.binding }] };
+          }
+        }
+      }
 
-    if (ctx.signal?.aborted) return reject('cancelled', `the Session ${kind} was cancelled before commit`);
-    let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
-    try {
-      committed = await records.commit(prepared);
-    } catch {
-      return reject('unavailable', `the Session ${kind} commit failed before completing`);
-    }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
-    if (committed.replayed) return readLifecycleReplay(committed, scope, input.sessionRef, expectedEvent);
-    return { status: 'committed', value: nextSession, replayed: false, cursor: committed.cursor };
+      if (ctx.signal?.aborted) return reject('cancelled', `the Session ${kind} was cancelled before commit`);
+      let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
+      try {
+        committed = await records.commit(prepared);
+      } catch {
+        return reject('unavailable', `the Session ${kind} commit failed before completing`);
+      }
+      if (committed.status !== 'committed') return { storeFailure: committed };
+      if (committed.replayed) return readLifecycleReplay(committed, scope, input.sessionRef, expectedEvent);
+      return { status: 'committed', value: nextSession, replayed: false, cursor: committed.cursor };
+    };
+    return retryAllocationCommit(lifecycleAttempt, (failure) => allocationOnlyConflict(failure, internal));
   }
 
   /** The archive/reactivate flow (named apart from the state/ machine's `transitionSession`, §8.6). */
@@ -658,9 +842,6 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     // The replay check needs the event type before the machine is asked; the
     // machine's `emit_event` must name the same one (`sessionWrite`).
     const expectedEvent = kind === 'archive' ? SESSION_ARCHIVED_EVENT : SESSION_REACTIVATED_EVENT;
-    const existing = await records.lookupCommit({ identityKey, fingerprint });
-    if (existing.status === 'ready') return readLifecycleReplay(existing.value, scope, input.sessionRef, expectedEvent);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
 
     const attempt = await runTransitionAttempt({
       ctx, scope, input, kind, expectedEvent, expectedSession: expected.session, identityKey, fingerprint,
@@ -788,7 +969,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     const key = canonicalOf(ref);
     if (key === null) return reject('invalid', 'the archive execution reference cannot be canonically encoded');
     const read = await records.readMany([key]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const record = read.value.records.find((entry) => entry.refKey === key);
     if (record === undefined) return reject('not_found', `the archive execution record ${key} does not exist`);
     return { ref, revision: record.revision };
@@ -815,7 +996,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     // A4/S1-SES-06: an unreadable, missing or undecodable Run cannot be proven
     // free of a queued stop, so the read failure is propagated and R is kept
     // instead of releasing on a default `stopQueued: false`.
-    if (runRead.status !== 'ready') return mapStoreFailure(runRead);
+    if (runRead.status !== 'ready') return sessionStoreFailureToRejection(runRead);
     const runRecord = runRead.value.records.find((entry) => entry.refKey === runKey);
     if (runRecord === undefined) return reject('not_found', `the archive execution Run ${runKey} does not exist`);
     const run = decodeRun(runRecord);
@@ -870,7 +1051,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
         const claimKey = canonicalOf(claim.outboxRef);
         if (claimKey !== null) {
           const claimRead = await records.readMany([claimKey]);
-          if (claimRead.status !== 'ready') return mapStoreFailure(claimRead);
+          if (claimRead.status !== 'ready') return sessionStoreFailureToRejection(claimRead);
           const claimRecord = claimRead.value.records.find((entry) => entry.refKey === claimKey);
           if (claimRecord === undefined) {
             return reject('incomplete', 'session_facts_page_limit: the latest Work claim record is missing');
@@ -913,7 +1094,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       return reject('unavailable', 'the recorded archive event receipt does not name exactly one event');
     }
     const at = await records.eventAt(receipt.cursor);
-    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
     if (String(at.value.cursor) !== String(receipt.cursor)) {
       return reject('unavailable', 'the recorded archive event cursor disagrees with the receipt');
     }
@@ -943,7 +1124,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   ): Promise<WriteResult<SessionRecord> | null> {
     const again = await records.lookupCommit({ identityKey, fingerprint });
     if (again.status === 'ready') return readArchiveChangedReplay(again.value, scope, sessionRef, SESSION_ARCHIVE_REQUESTED_EVENT);
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return null;
   }
 
@@ -955,7 +1136,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     const { ctx, scope, actor, input, mode, requestId, identityKey, fingerprint, expectedSession } = args;
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
     const read = await records.readMany([sessionKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, { kind: 'session_archived' });
     if ('status' in session) return session;
     const derived = await deriveExecutionAndPins(ctx, session, input);
@@ -1019,7 +1200,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     } catch {
       return reject('unavailable', 'the Session archive request commit failed before completing');
     }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
     if (committed.replayed) return readArchiveChangedReplay(committed, scope, input.sessionRef, SESSION_ARCHIVE_REQUESTED_EVENT);
     return { status: 'committed', value: nextSession, replayed: false, cursor: committed.cursor };
   }
@@ -1064,7 +1245,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     if (ctx.signal?.aborted) return reject('cancelled', 'the Session archive request was cancelled before lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return readArchiveChangedReplay(existing.value, scope, input.sessionRef, SESSION_ARCHIVE_REQUESTED_EVENT);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     const attempt = await runArchiveRequestAttempt({
       ctx, scope, actor, input, mode, requestId: owned.requestId, identityKey, fingerprint,
       expectedSession: expected.session,
@@ -1105,7 +1286,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     }, owned.expected);
     const found = await records.lookupCommit({ identityKey, fingerprint });
     if (found.status !== 'ready') {
-      if (found.code !== 'not_found') return mapStoreFailure(found);
+      if (found.code !== 'not_found') return sessionStoreFailureToRejection(found);
       return reject('not_found', 'archive_request_receipt_not_found: no archive request was committed under this identity');
     }
     const replay = await readArchiveChangedReplay(found.value, scope, input.sessionRef, SESSION_ARCHIVE_REQUESTED_EVENT);
@@ -1123,10 +1304,10 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     });
     if (found.status !== 'ready') {
       if (found.code === 'not_found') return reject('not_found', 'the archive request receipt was not found');
-      return mapStoreFailure(found);
+      return sessionStoreFailureToRejection(found);
     }
     const at = await records.eventAt(found.value.cursor);
-    if (at.status !== 'ready') return mapStoreFailure(at);
+    if (at.status !== 'ready') return sessionStoreFailureToRejection(at);
     if (String(at.value.cursor) !== String(found.value.cursor)) {
       return reject('unavailable', 'the archive request cursor disagrees with its receipt');
     }
@@ -1192,77 +1373,96 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   }): Promise<WriteResult<SessionRecord>> {
     const { ctx, scope, step, request, identity } = args;
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(step.sessionRef));
-    const read = await records.readMany([sessionKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
-    const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, { kind: 'session_archived' });
-    if ('status' in session) return session;
-    const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
-    if (!links.ok) return links.rejection;
-    if (sessionFacts === undefined) return reject('unsupported', 'the Session facts reader is not injected');
-    const factsResult = await sessionFacts.readSessionFacts(ctx, step.sessionRef);
-    if (factsResult.status !== 'ready') return mapReadFailure(factsResult);
-    const wait = factsResult.value.wait === null ? 'not_waiting' : 'waiting';
-    const retired = session.health === 'unavailable';
-    const verdict = decide(session, { kind: 'session_archived' }, {
-      openResponsibleLink: openResponsibleLinkOf(links.links),
-      archive: {
-        requestMatches: true, choicesValid: true, authorityValid: true, wait, retired,
-        sourceExecutionStopped: true, stopQueued: false, failedDisposal: false,
-      },
-    });
-    if (!verdict.ok) return reject(verdict.code, verdict.detail);
-    // `archiveSessionRecord` (S1-SES-04) clears a present archiveRequest in the
-    // same revision+1 record; the `clear_archive_request` effect is that clear.
-    const nextSession = archiveSessionRecord(session, new Date().toISOString());
-    const occurredAt = new Date().toISOString();
-    // Final archive condition: the stored condition is re-checked on the final commit and contributes exactly one
-    // fragment — its guards (the source and the `SessionActivity` revision), its
-    // fence claim and its first read horizon as `ledgerHorizon`, never as a guard.
-    const condition = request.condition ?? null;
-    let conditionCommit: SecretaryArchiveConditionCommitV1 | null = null;
-    if (condition !== null) {
-      const checked = await readArchiveConditionCheck(ctx, step.sessionRef, condition);
-      if ('status' in checked) return checked;
-      if (!checked.ok) return reject('revision_conflict', `archive_condition_failed: ${checked.reason}`);
-      conditionCommit = checked.commit;
-    }
-    const merged = mergeGuards([
-      { refKey: sessionKey, expectedRevision: session.revision },
-      ...(conditionCommit === null ? [] : conditionCommit.guards),
-    ]);
-    if (!merged.ok) return merged.rejection;
-    const claims: UniqueClaimChange[] = conditionCommit === null || conditionCommit.fence === null
-      ? [] : [conditionCommit.fence];
-    const event: SessionLifecycleChangedEventV1 = {
-      eventId: identity.eventId,
-      eventType: SESSION_ARCHIVED_EVENT,
-      schemaVersion: 1,
-      occurredAt,
-      projectId: scope.projectId,
-      session: nextSession,
-      reason: request.reason,
+    let internal: readonly string[] = [];
+    const archiveAttempt = async (): Promise<WriteResult<SessionRecord> | { storeFailure: StoreFailure }> => {
+      // Every attempt restores its own receipt first, so an allocation-only retry re-reads and a landed
+      // commit whose answer was lost is never re-derived.
+      const existing = await recheckLifecycleAfterMiss(identity.identityKey, identity.fingerprint, scope,
+        step.sessionRef, SESSION_ARCHIVED_EVENT);
+      if (existing !== null) return existing;
+      const read = await records.readMany([sessionKey]);
+      if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+      const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, { kind: 'session_archived' });
+      if ('status' in session) return session;
+      const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
+      if (!links.ok) return links.rejection;
+      if (sessionFacts === undefined) return reject('unsupported', 'the Session facts reader is not injected');
+      const factsResult = await sessionFacts.readSessionFacts(ctx, step.sessionRef);
+      if (factsResult.status !== 'ready') return mapReadFailure(factsResult);
+      const wait = factsResult.value.wait === null ? 'not_waiting' : 'waiting';
+      const retired = session.health === 'unavailable';
+      const verdict = decide(session, { kind: 'session_archived' }, {
+        openResponsibleLink: openResponsibleLinkOf(links.links),
+        archive: {
+          requestMatches: true, choicesValid: true, authorityValid: true, wait, retired,
+          sourceExecutionStopped: true, stopQueued: false, failedDisposal: false,
+        },
+      });
+      if (!verdict.ok) return reject(verdict.code, verdict.detail);
+      // `archiveSessionRecord` (S1-SES-04) clears a present archiveRequest in the
+      // same revision+1 record; the `clear_archive_request` effect is that clear.
+      const nextSession = archiveSessionRecord(session, new Date().toISOString());
+      const occurredAt = new Date().toISOString();
+      // Final archive condition: the stored condition is re-checked on the final commit and contributes exactly one
+      // fragment — its guards (the source and the `SessionActivity` revision), its
+      // fence claim and its first read horizon as `ledgerHorizon`, never as a guard.
+      const condition = request.condition ?? null;
+      let conditionCommit: SecretaryArchiveConditionCommitV1 | null = null;
+      if (condition !== null) {
+        const checked = await readArchiveConditionCheck(ctx, step.sessionRef, condition);
+        if ('status' in checked) return checked;
+        if (!checked.ok) return reject('revision_conflict', `archive_condition_failed: ${checked.reason}`);
+        conditionCommit = checked.commit;
+      }
+      const merged = mergeGuards([
+        { refKey: sessionKey, expectedRevision: session.revision },
+        ...(conditionCommit === null ? [] : conditionCommit.guards),
+      ]);
+      if (!merged.ok) return merged.rejection;
+      const claims: UniqueClaimChange[] = conditionCommit === null || conditionCommit.fence === null
+        ? [] : [conditionCommit.fence];
+      const event: SessionLifecycleChangedEventV1 = {
+        eventId: identity.eventId,
+        eventType: SESSION_ARCHIVED_EVENT,
+        schemaVersion: 1,
+        occurredAt,
+        projectId: scope.projectId,
+        session: nextSession,
+        reason: request.reason,
+      };
+      let prepared: PreparedCommit = {
+        identityKey: identity.identityKey,
+        fingerprint: identity.fingerprint,
+        guards: merged.guards,
+        records: [encodeSessionRecord(nextSession)],
+        claims,
+        indexGuards: [],
+        indexChanges: [],
+        events: [encodeSessionLifecycleChangedEvent(event)],
+        ...(conditionCommit === null ? {} : { ledgerHorizon: conditionCommit.ledgerHorizon }),
+      };
+      // The formal archive step resolves the saved handoff's borrowing successor itself; the direct
+      // `sessions/archive` never does.
+      const borrowing = await borrowingSuccessorOf(session);
+      if (!borrowing.ok) return borrowing.rejection;
+      const release = await archiveReleaseOf(ctx, scope, session, links.links, borrowing.successor);
+      if (!release.ok) return release.rejection;
+      internal = release.allocationKeys;
+      const released = mergeArchiveRelease(prepared, release.fragment);
+      if (!released.ok) return released.rejection;
+      prepared = released.prepared;
+      if (ctx.signal?.aborted) return reject('cancelled', 'the Session archive step was cancelled before commit');
+      let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
+      try {
+        committed = await records.commit(prepared);
+      } catch {
+        return reject('unavailable', 'the Session archive step commit failed before completing');
+      }
+      if (committed.status !== 'committed') return { storeFailure: committed };
+      if (committed.replayed) return readLifecycleReplay(committed, scope, step.sessionRef, SESSION_ARCHIVED_EVENT);
+      return { status: 'committed', value: nextSession, replayed: false, cursor: committed.cursor };
     };
-    const prepared: PreparedCommit = {
-      identityKey: identity.identityKey,
-      fingerprint: identity.fingerprint,
-      guards: merged.guards,
-      records: [encodeSessionRecord(nextSession)],
-      claims,
-      indexGuards: [],
-      indexChanges: [],
-      events: [encodeSessionLifecycleChangedEvent(event)],
-      ...(conditionCommit === null ? {} : { ledgerHorizon: conditionCommit.ledgerHorizon }),
-    };
-    if (ctx.signal?.aborted) return reject('cancelled', 'the Session archive step was cancelled before commit');
-    let committed: Awaited<ReturnType<GoalRecordTransactionPort['commit']>>;
-    try {
-      committed = await records.commit(prepared);
-    } catch {
-      return reject('unavailable', 'the Session archive step commit failed before completing');
-    }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
-    if (committed.replayed) return readLifecycleReplay(committed, scope, step.sessionRef, SESSION_ARCHIVED_EVENT);
-    return { status: 'committed', value: nextSession, replayed: false, cursor: committed.cursor };
+    return retryAllocationCommit(archiveAttempt, (failure) => allocationOnlyConflict(failure, internal));
   }
 
   async function finishSessionArchive(
@@ -1309,14 +1509,11 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       const detail = error instanceof Error ? error.message : String(error);
       return reject('invalid', `the archive step does not belong to its request: ${detail}`);
     }
-    const existing = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
-    if (existing.status === 'ready') return readLifecycleReplay(existing.value, scope, ownedStep.sessionRef, SESSION_ARCHIVED_EVENT);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
     const attempt = await runArchiveStepAttempt({ ctx, scope, step: ownedStep, request, identity });
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const again = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
     if (again.status === 'ready') return readLifecycleReplay(again.value, scope, ownedStep.sessionRef, SESSION_ARCHIVED_EVENT);
-    if (again.code !== 'not_found') return mapStoreFailure(again);
+    if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
     return attempt;
   }
 
@@ -1354,11 +1551,11 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     if (existing.status === 'ready') {
       return readArchiveChangedReplay(existing.value, scope, input.sessionRef, SESSION_ARCHIVE_REQUEST_RELEASED_EVENT);
     }
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
     const read = await records.readMany([sessionKey]);
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const session = targetSession(read.value.records.find((record) => record.refKey === sessionKey), scope, { kind: 'session_archived' });
     if ('status' in session) return session;
     const pending = session.archiveRequest;
@@ -1416,7 +1613,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     } catch {
       return reject('unavailable', 'the archive request release commit failed before completing');
     }
-    if (committed.status !== 'committed') return mapStoreFailure(committed);
+    if (committed.status !== 'committed') return sessionStoreFailureToRejection(committed);
     if (committed.replayed) {
       return readArchiveChangedReplay(committed, scope, input.sessionRef, SESSION_ARCHIVE_REQUEST_RELEASED_EVENT);
     }

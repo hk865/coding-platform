@@ -8,8 +8,9 @@
  */
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
 import {
-  CurrentPointerRefShape, GoalRefShape, id, OperationRefShape, QueryJobAnswerRefShape, QueryJobRefShape, QueryRunRefShape,
-  RunRefShape, SessionAggregateRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape, WorkspaceScopeShape,
+  ActorRefField, CurrentPointerRefShape, GoalRefShape, id, OperationRefShape, QueryJobAnswerRefShape, QueryJobRefShape, QueryRunRefShape,
+  RunRefShape, SessionAggregateRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape, WorkLinkTargetField,
+  WorkspaceScopeShape,
 } from '../../../contracts/data-format-refs.js';
 import { CORE_ERRORS } from '../../../contracts/core/results.js';
 import { HANDOFF_TRIGGERS } from '../../../contracts/handoff.js';
@@ -20,11 +21,7 @@ import { sameRef } from '../state/ref-equality.js';
 
 const HumanActorFields = { kind: f.literal('human'), id };
 const SystemActorFields = { kind: f.literal('system'), id };
-/** `ActorRef` (`src/contracts/command-event.ts`). */
-export const ActorRefField = f.union('kind', {
-  human: HumanActorFields, system: SystemActorFields,
-  agent: { kind: f.literal('agent'), id, runRef: f.ref(RunRefShape) },
-});
+export { ActorRefField };
 /** A saved trusted actor: an agent is never a command principal. */
 const SavedActorField = f.union('kind', { human: HumanActorFields, system: SystemActorFields });
 /** A work Run or a QueryRun. */
@@ -108,6 +105,14 @@ const ArchiveRequestField = f.nullable(f.object({
   savedInput: f.nullable(SessionArchiveGraphWriteField),
   receipt: f.nullable(f.object({ identityKey: id, fingerprint: id })),
 }));
+/** The exact saved arm of one scope sub-operation: its target is stored, so a resume never rebuilds it. */
+const SavedTransferInputField = f.object({
+  requestId: id,
+  from: f.ref(SessionRefShape), to: f.ref(SessionRefShape),
+  target: WorkLinkTargetField,
+  expected: f.object({ fromSession: f.integer({ min: 0 }), toSession: f.integer({ min: 0 }),
+    sourceLink: f.integer({ min: 0 }), destinationLink: f.integer({ min: 0 }) }),
+});
 /** The last refusal a step met, kept so the next advance can read why it stopped. */
 const LastRefusalField = <const S extends readonly [string, ...string[]]>(stages: S) => f.nullable(f.object({
   stage: f.enumOf(stages), code: f.enumOf(CORE_ERRORS), reason: id, at: f.isoTime(),
@@ -152,7 +157,10 @@ function handoffReceiptProblem(value: unknown): string | null {
     if (early >= 0) return `HandoffAction.progress.assignments[${index}].transfers[${early}].receipt has no saved input`;
   }
   const early = progress.routing?.roots.findIndex(root => root.receipt !== null && root.input === null) ?? -1;
-  return early >= 0 ? `HandoffAction.progress.routing.roots[${early}].receipt has no saved input` : null;
+  if (early >= 0) return `HandoffAction.progress.routing.roots[${early}].receipt has no saved input`;
+  const earlyScope = progress.scope?.entries.findIndex(entry => entry.receipt !== null && entry.input === null) ?? -1;
+  if (earlyScope >= 0) return `HandoffAction.progress.scope.entries[${earlyScope}].receipt has no saved input`;
+  return null;
 }
 
 /**
@@ -276,6 +284,15 @@ export const HandoffActionShape = defineShape({ name: 'HandoffAction', fields: {
         receipt: f.nullable(f.object({ cursor: f.cursor('ledgerNonZero') })),
       })),
     })),
+    // One entry per remaining scope link, in the source's link order; `null` before the plan write.
+    scope: f.nullable(f.object({
+      targets: f.array(f.object({ target: WorkLinkTargetField, revision: f.integer({ min: 1 }) })),
+      entries: f.array(f.object({
+        target: WorkLinkTargetField,
+        input: f.nullable(SavedTransferInputField),
+        receipt: f.nullable(f.object({ cursor: f.cursor('ledgerNonZero') })),
+      })),
+    })),
     // A secretary source only.
     coverage: f.nullable(f.object({
       horizon: f.nullable(f.cursor('ledger')), activityRevision: f.integer({ min: 0 }),
@@ -367,13 +384,15 @@ export function upgradeSessionOperationActionV1(value: unknown): unknown {
       : progress['understanding'];
     const approval = Object.hasOwn(progress, 'approval')
       ? progress['approval'] : (() => { changed = true; return null; })();
+    const scope = Object.hasOwn(progress, 'scope')
+      ? progress['scope'] : (() => { changed = true; return null; })();
     const archive = progress['archiveRequest'];
     const archiveRequest = isRecord(archive) && !Object.hasOwn(archive, 'savedInput')
       ? (() => { changed = true; return { ...archive, savedInput: null }; })()
       : archive;
     if (!changed) return value;
     return { ...value, input: nextInput,
-      progress: { ...progress, assignments, understanding, approval, archiveRequest } };
+      progress: { ...progress, assignments, understanding, approval, archiveRequest, scope } };
   }
   if (value['kind'] === 'secretary_archive') {
     let changed = false;

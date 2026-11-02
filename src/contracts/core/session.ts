@@ -4,6 +4,7 @@ import type { SessionMessageRef } from './session-message.js';
 import type { SessionArchiveRequestV1 } from './session-archive.js';
 import type { ExecutionRef, RoleConfigurationRef, SessionAggregateRef, SessionRef, SessionWorkLinkRef } from './identity.js';
 import type { OperationRef } from './operations.js';
+import type { PlatformDutyV1 } from '../platform-duty.js';
 export type SessionOccupancy =
   | { kind: 'execution'; executionRef: ExecutionRef; generation: number }
   | { kind: 'maintenance'; operationRef: OperationRef; generation: number };
@@ -55,3 +56,8 @@ export type SessionRecord = {
   unavailableSince?: CommitCursor | null;
 };
 export type SessionWorkLink = { ref: SessionWorkLinkRef; revision: number; since: CommitCursor; until: CommitCursor | null };
+export type PendingSessionWorkLink = { ref: SessionWorkLinkRef; revision: number; since: CommitCursor | null; until: CommitCursor | null };
+export type HandoffSeatFactsV1 = { ref: OperationRef; phase: 'accepted' | 'running' | 'completed' | 'failed' | 'unknown';
+  action: { kind: 'handoff'; input: { source: SessionRef; assignments: readonly {
+    target: { kind: 'create'; duty: PlatformDutyV1 } | { kind: 'existing'; session: SessionRef } }[] } };
+  progress: { assignments: readonly { successor: SessionRef | null; createInput: { commandId: string } | null }[] } };

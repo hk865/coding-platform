@@ -199,6 +199,19 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   // The Goal interruption record: every field is written only by the state layer.
   { file: 'src/contracts/goal-interruption.ts', name: 'GoalInterruptionV1', kind: 'record', fields: 'all',
     use: 'state/goal-interruption.ts pendingGoalInterruption or resumedGoalInterruption' },
+  // Slice 7D1 G1-1: the four role-line records are inferred from their field tables and built only by their writer.
+  { file: 'src/contracts/role-lines.ts', name: 'SessionRoleFactsV1', kind: 'record',
+    fields: ['revision', 'sessionRef', 'name', 'creator', 'openedBy', 'originOperation'],
+    use: 'state/role-facts.ts sessionRoleFactsRecord' },
+  { file: 'src/contracts/role-lines.ts', name: 'RoleLineAllocationV1', kind: 'record',
+    fields: ['revision', 'projectRef', 'duty', 'holders', 'reservations'],
+    use: 'state/role-line-allocation.ts allocationNext' },
+  { file: 'src/contracts/role-lines.ts', name: 'ProjectRoleLimitsV1', kind: 'record',
+    fields: ['revision', 'projectRef', 'running', 'open'],
+    use: 'state/role-limits.ts projectRoleLimitsNext' },
+  { file: 'src/contracts/role-lines.ts', name: 'ProjectNoticeV1', kind: 'record',
+    fields: ['subject', 'kind', 'summary', 'operation', 'since', 'revision'],
+    use: 'state/project-notice.ts projectNoticeNext' },
 ];
 
 // -------------------------------------------------------------------------- //

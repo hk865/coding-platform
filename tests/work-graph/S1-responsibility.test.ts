@@ -30,6 +30,7 @@ import { createSessionLifecycleService } from '../../src/core/work-graph/session
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { commitBarrier } from '../helpers/graph-session-fixture.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import {
   type B2ExecutionFixture, type B2Records,
 } from '../helpers/B2-execution-fixture.js';
@@ -136,8 +137,8 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   const now = () => clock;
   const sessionFacts = createSessionFactsService({ records });
   const basis = createSessionResponsibilityBasisReader(records);
-  const responsibilities = createSessionResponsibilityService({ records, lookups: records, basis, now });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });
+  const responsibilities = createSessionResponsibilityService({ records, lookups: records, basis, duty: unknownSessionDuty, now });
+  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
   const S = base.sessions.first;
   const D = base.sessions.second;
   const A = base.tasks.first;
@@ -383,7 +384,7 @@ describe.each(['memory', 'sqlite'] as const)('the Session responsibility owner (
     const barrier = commitBarrier(f.records);
     const service = createSessionResponsibilityService({
       records: barrier.records, lookups: barrier.records,
-      basis: createSessionResponsibilityBasisReader(barrier.records), now: () => t0,
+      basis: createSessionResponsibilityBasisReader(barrier.records), duty: unknownSessionDuty, now: () => t0,
     });
     const countsBefore = await f.audit.counts();
     const [toD, toE] = await Promise.all([

@@ -22,7 +22,7 @@ const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: to
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
     "name": "find_related_sessions",
-    "description": "List the current Session cards linked to a required Task/Module/WorkContext target. Only open links and active Sessions are returned; archived Sessions are excluded. Read-only discovery: it starts no Run, loads no history and wakes no Session.",
+    "description": "List the current Session cards linked to a required Task/Module/WorkContext/Goal/Project target. Only open links and active Sessions are returned; archived Sessions are excluded. Read-only discovery: it starts no Run, loads no history and wakes no Session.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -130,6 +130,70 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
                     "projectId",
                     "workspaceId",
                     "workId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "ref"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "goal"
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "aggregateType": {
+                      "type": "string",
+                      "const": "Goal"
+                    },
+                    "projectId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "goalId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "aggregateType",
+                    "projectId",
+                    "goalId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "ref"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "project"
+                },
+                "ref": {
+                  "type": "object",
+                  "properties": {
+                    "projectId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "projectId"
                   ],
                   "additionalProperties": false
                 }

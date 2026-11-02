@@ -4,7 +4,7 @@
  * The backend owns the transaction and calls these functions only inside that
  * transaction. They deliberately have no I/O and no domain callbacks: they only
  * validate mechanical shapes, compare owners/horizons observed in the current
- * transaction and rewrite registered top-level cursor fields.
+ * transaction and rewrite registered cursor fields.
  *
  * No backend may guess the next cursor: {@link bindCommitCursor} receives the
  * real last-event cursor the caller obtained inside its write transaction, and
@@ -12,14 +12,37 @@
  * any failure after the first write the backend rolls its transaction back.
  */
 import type { CommitCursor } from "../../contracts/command-event.js";
-import type { CommitCursorBinding, DecodeResult, EncodedRecord, StoreFailure, UniqueClaimChange } from "./ports.js";
+import type { BoundCursorField } from "../../contracts/data-format.js";
+import {
+  COMMIT_CURSOR_FIELDS, type CommitCursorBinding, type DecodeResult, type EncodedRecord, type StoreFailure,
+  type UniqueClaimChange,
+} from "./ports.js";
 import { isRecord as isObject } from "../../contracts/validation/common.js";
 
 export type ClaimConflict = { claimKey: string; owner: string | null };
 
-/** The only top-level fields a commit cursor may ever be bound to. */
-export const COMMIT_CURSOR_FIELDS: readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] =
-  Object.freeze(["since", "until", "unavailableSince", "responseSince", "startedSince"]);
+/** A top-level field is a null placeholder at its own key; a nested field needs at least one null element. */
+export function hasNullCursorPlaceholder(value: Record<string, unknown>, field: BoundCursorField): boolean {
+  const separator = field.indexOf('[].');
+  if (separator < 0) return value[field] === null;
+  const array = field.slice(0, separator);
+  const element = field.slice(separator + 3);
+  const holders = value[array];
+  return Array.isArray(holders) && holders.some(holder => isObject(holder) && holder[element] === null);
+}
+
+/** Fill only the null placeholders: a top-level field, or each null element of the named array. */
+export function fillCommitCursor(value: Record<string, unknown>, field: BoundCursorField, cursor: CommitCursor): void {
+  const separator = field.indexOf('[].');
+  if (separator < 0) {
+    value[field] = cursor;
+    return;
+  }
+  const array = field.slice(0, separator);
+  const element = field.slice(separator + 3);
+  const holders = value[array] as unknown[];
+  for (const holder of holders) if (isObject(holder) && holder[element] === null) holder[element] = cursor;
+}
 
 /**
  * Thrown by a backend INSIDE its write transaction when a mechanically valid
@@ -111,7 +134,7 @@ export function bindCommitCursor(
   records: readonly EncodedRecord[],
   bindings: readonly CommitCursorBinding[],
   cursor: CommitCursor,
-  allowedFields: (schemaId: string) => readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[],
+  allowedFields: (schemaId: string) => readonly BoundCursorField[],
 ): DecodeResult<readonly EncodedRecord[]> {
   if (!Array.isArray(records)) return { status: "invalid", reason: "records must be an array" };
   if (!Array.isArray(bindings)) return { status: "invalid", reason: "commitCursorBindings must be an array" };
@@ -130,7 +153,7 @@ export function bindCommitCursor(
   }
 
   const seen = new Set<string>();
-  const fieldsByRefKey = new Map<string, ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[]>();
+  const fieldsByRefKey = new Map<string, BoundCursorField[]>();
   for (const raw of bindings) {
     if (!isObject(raw)) return { status: "invalid", reason: "every CommitCursorBinding must be an object" };
     const refKey = raw["refKey"];
@@ -144,7 +167,7 @@ export function bindCommitCursor(
         reason: `CommitCursorBinding.field must be one of ${COMMIT_CURSOR_FIELDS.join(", ")}`,
       };
     }
-    const cursorField = field as (typeof COMMIT_CURSOR_FIELDS)[number];
+    const cursorField = field as BoundCursorField;
     const bindingKey = `${refKey}\u0000${cursorField}`;
     if (seen.has(bindingKey)) {
       return { status: "invalid", reason: `duplicate commit cursor binding for ${refKey}.${cursorField}` };
@@ -160,7 +183,7 @@ export function bindCommitCursor(
     }
     const parsed = parseRecordObject(record.json);
     if (parsed.status === "invalid") return parsed;
-    if (parsed.value[cursorField] !== null) {
+    if (!hasNullCursorPlaceholder(parsed.value, cursorField)) {
       return { status: "invalid", reason: `record ${refKey} commit cursor field ${cursorField} is not a null placeholder` };
     }
     const fields = fieldsByRefKey.get(refKey) ?? [];
@@ -177,7 +200,7 @@ export function bindCommitCursor(
     }
     const parsed = parseRecordObject(record.json);
     if (parsed.status === "invalid") return parsed;
-    for (const field of fields) parsed.value[field] = cursor;
+    for (const field of fields) fillCommitCursor(parsed.value, field, cursor);
     bound.push({ ...record, json: JSON.stringify(parsed.value) });
   }
   return { status: "decoded", value: bound };

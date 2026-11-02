@@ -21,6 +21,7 @@ import {
   openS6ARequestWorld, S6A_GOAL_1, S6A_SCOPE,
   type S6ABackend, type S6ARequestWorld,
 } from '../helpers/S6A-request-fixture.js';
+import { stableSessionCreationIdentity } from '../../src/core/work-graph/sessions/session-directory.js';
 import {
   byIdentityPrefix, commitBarrier,
 } from '../helpers/S6A-commit-barrier.js';
@@ -242,12 +243,23 @@ describe.each(['memory', 'sqlite'] as const)('SE1 request concurrency and replay
     expect(registrationDouble.injected).toBe(1);
     expect(registrationDouble.forwarded).toBe(0);
     expect(await world.listSessions()).toHaveLength(0);
+    // G3-1: admission committed before the registration; its reservation is still standing, not lost.
+    const principal = world.humanContext().principal;
+    if (principal.kind !== 'host') throw new Error('the world has no Host actor');
+    const admitted = stableSessionCreationIdentity(principal.actor, S6A_SCOPE.projectId, `${input.commandId}:line`);
+    expect((await world.post('sessions/operation', body(admitted.operationRef))).body).toMatchObject({
+      status: 'ready', value: { phase: 'accepted', action: { seatDecision: {
+        duty: 'secretary', mode: 'reserved', notCountedReason: null,
+        allocationRef: { aggregateType: 'RoleLineAllocation', projectId: S6A_SCOPE.projectId, duty: 'secretary' } } } } });
     // Nothing was committed: the drain has no waiting request to visit.
     const emptyDrain = await drain(world);
     expect(emptyDrain).toEqual({ progressed: 0, more: false, continuation: null, wrapped: true, blocked: 0 });
 
     const retry = expectObject((await world.post('requests/submit', body(input))).body);
+    // The same admission operation is replayed: it registers the line and converts the kept reservation.
     expect(retry).toMatchObject({ status: 'queued', assignment: 'assigned', created: true, waitReason: null });
+    expect((await world.post('sessions/operation', body(admitted.operationRef))).body).toMatchObject({
+      status: 'ready', value: { phase: 'completed' } });
     expect(registrationDouble.forwarded).toBe(1);
     expect(registrationDouble.armed).toBe(0);
     const sessions = await world.listSessions();

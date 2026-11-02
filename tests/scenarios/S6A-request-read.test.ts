@@ -158,7 +158,13 @@ async function waitingRequestRoutedToB(world: S6ARequestWorld) {
 
 describe.each(['memory', 'sqlite'] as const)('SE1 route: a waiting request takes the oldest pending round (%s)', backend => {
   it('manual route to B writes one routing round, puts the intake on the oldest pending round and reads owner B', async () => {
-    const world = await open(backend, { secretaryOpenCap: 2 });
+    const world = await open(backend);
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-read-route-open',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { a, b, root, rootRound, followRound, routingRound } = await waitingRequestRoutedToB(world);
 
     const facts = await factsOf(world, root);
@@ -185,7 +191,13 @@ describe.each(['memory', 'sqlite'] as const)('SE1 route: a waiting request takes
 
 describe.each(['memory', 'sqlite'] as const)('rejects: a new request to the secretary a manual route chose (%s)', backend => {
   it('requests/submit with @ B after a manual route to B is busy and leaves the request and the Sessions unchanged', async () => {
-    const world = await open(backend, { secretaryOpenCap: 2 });
+    const world = await open(backend);
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-read-at-b-open',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { b, root } = await waitingRequestRoutedToB(world);
     const before = { view: await requestView(world, root), sessions: await world.listSessions() };
 
@@ -229,7 +241,13 @@ describe.each(['memory', 'sqlite'] as const)('SE1 R-06a: a new round after a rea
   });
 
   it('a continues follow-up on the same root waits at the open cap and still reads processing', async () => {
-    const world = await open(backend, { secretaryOpenCap: 2 });
+    const world = await open(backend);
+    const capLimits = expectObject((await world.post('projects/role-limits',
+      body({ projectRef: { projectId: S6A_SCOPE.projectId } }))).body);
+    expect(capLimits['status']).toBe('ready');
+    expect(expectObject((await world.post('projects/role-limits/set', body({ commandId: 's6a-read-drop-cap-open',
+      expectedRevision: expectObject(capLimits['value'])['revision'], open: { secretary: 2 } }))).body)['status'])
+      .toBe('committed');
     const { a, b } = await twoBusySecretaries(world);
     const rootResult = await submit(world, 's6a-after-drop-cap');
     expect(rootResult).toMatchObject({ status: 'queued', assignment: 'unassigned', secretary: null,

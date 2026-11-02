@@ -26,7 +26,8 @@
  */
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
-import type { RoleConfigurationRef, SessionAggregateRef, SessionRef } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionAggregateRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkTarget } from '../../src/contracts/core/identity.js';
+import type { SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { NoteAnchorV1 } from '../../src/contracts/note.js';
@@ -230,11 +231,28 @@ export async function resolveS6BProjectNote(ws: S6ACardsWorkspace, input: { note
 }
 
 /** The project world (see the header): the scribe in the main workspace, the second workspace with no goal. */
-export async function openS6BProjectWorld(options: { backend: S6ABackend }) {
+export async function openS6BProjectWorld(options: { backend: S6ABackend; goalOnlyScribe?: boolean }) {
   const { world } = await openS6ATwoWorkspaceWorld({ backend: options.backend, scribe: true });
   try {
     const scribe = await seedS6BScribe(world);
-    return { world, main: scribe.main, goalless: s6aCardsWorkspace(world, S6A_SECOND_SCOPE), scribe,
+    // 01d: an explicitly requested step on the opened world; the default project scribe keeps project scope.
+    let goalLink: { target: WorkLinkTarget; link: SessionWorkLink; pins: VersionPin[] } | null = null;
+    if (options.goalOnlyScribe === true) {
+      const target: WorkLinkTarget = { kind: 'goal', ref: scribe.goal };
+      const card = await world.readSession(scribe.line.ref);
+      const linkRef: SessionWorkLinkRef = { ...card.record.ref, aggregateType: 'SessionWorkLink',
+        target, relation: 'responsible' };
+      const pins: VersionPin[] = [{ ref: card.record.ref, revision: card.record.revision },
+        { ref: linkRef, revision: 0 }];
+      const linked = await scribe.main.post('sessions/link', graphWrite(scribe.main.scope, {
+        sessionRef: scribe.line.ref, target, relation: 'responsible', active: true,
+      }, 's6b-goal-only-scribe-link', pins));
+      if (field(linked, 'status') !== 'committed') {
+        throw new Error(`S6B: the goal-only scribe link did not commit: ${JSON.stringify(linked)}`);
+      }
+      goalLink = { target, link: field(linked, 'value') as SessionWorkLink, pins };
+    }
+    return { world, main: scribe.main, goalless: s6aCardsWorkspace(world, S6A_SECOND_SCOPE), scribe, goalLink,
       close: () => world.close() };
   } catch (error) {
     await world.close().catch(() => undefined);

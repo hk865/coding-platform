@@ -52,6 +52,7 @@ import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sess
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import type { SessionLifecyclePort } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { taskRequeueRefKey } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
@@ -145,7 +146,7 @@ async function open(kind: ClaimFixtureKind, withCompletion = false): Promise<Ope
   const now = () => clock;
   const sessionFacts = createSessionFactsService({ records });
   const anomaly = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });
+  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
   const reads = createRunStateReader({ records });
   const session: SessionRef = { projectId: base.scope.projectId, sessionId: base.sessions.first.sessionId };
 

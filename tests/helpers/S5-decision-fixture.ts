@@ -86,7 +86,7 @@ import { createRequestRoundService } from '../../src/core/work-graph/tasks/reque
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRequestIntake } from '../../src/business/workflow/request-intake.js';
-import { createAlwaysAdmitCapacity, createLineCreation } from '../../src/business/workflow/line-creation.js';
+import { createLineCreation } from '../../src/business/workflow/line-creation.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import type { SecretaryProfilePort, SecretaryProfileV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import type { SubmitQueryJobInput } from '../../src/core/work-graph/queries/contracts.js';
@@ -99,6 +99,7 @@ import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/d
 import { S5_PLAN_PROPOSAL_BY_REQUEST } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { S5_QUERY_JOB_BY_GOAL } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createSessionDirectory, kernelSessionClaimKey } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
@@ -642,7 +643,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   }
 
   // ---- real Sessions S / second --------------------------------------------
-  const sessionsPort: SessionDirectoryPort = createSessionDirectory({ records, lookups: records });
+  const sessionsPort: SessionDirectoryPort = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 's5-kernel', storeKey: 's5-kernel-store', workspace: WORKSPACE_SCOPE, databasePath: join(directory, 's5-kernel.sqlite'),
   }] });
@@ -1078,7 +1079,6 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const requestLineCreation = createLineCreation({
     sessions: createSessionOperations({ sessions: sessionsPort, kernelStores }),
     operations: sessionsPort,
-    capacity: createAlwaysAdmitCapacity(),
   });
   let requestSeedJobId: string | null = null;
   let requestIdSeq = 0;

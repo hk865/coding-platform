@@ -895,7 +895,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "parameters": {},
     },
     "find_related_sessions": {
-      "description": "List the current Session cards linked to a required Task/Module/WorkContext target. Only open links and active Sessions are returned; archived Sessions are excluded. Read-only discovery: it starts no Run, loads no history and wakes no Session.",
+      "description": "List the current Session cards linked to a required Task/Module/WorkContext/Goal/Project target. Only open links and active Sessions are returned; archived Sessions are excluded. Read-only discovery: it starts no Run, loads no history and wakes no Session.",
       "parameters": {},
     },
     "read_session_card": {

@@ -25,7 +25,8 @@ import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
-import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
+import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
+import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
@@ -321,6 +322,10 @@ export type CoreRouteSuffix =
   // secretary with one choice per open request. Both stay internal in the public key list.
   | 'secretaries/handoff'
   | 'secretaries/archive'
+  // The project role limits (read/set) and the project role-line allocation read.
+  | 'projects/role-limits'
+  | 'projects/role-limits/set'
+  | 'role-lines/allocation'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
   | 'goals/dispatch-basis'
   // The person's overlap-gate release and the Goal's gate page.
@@ -643,6 +648,22 @@ export type SecretariesHandoffBody = { scope: CoreScope; input: HandoffBodyInput
 export type SecretariesHandoffResponse = RouteResponse<SessionHandoffWorkflowPort['advance']>;
 export type SecretariesArchiveBody = { scope: CoreScope; input: ArchiveBodyInput };
 export type SecretariesArchiveResponse = RouteResponse<SessionHandoffWorkflowPort['manualArchive']>;
+
+// The project role limits and the project role-line allocation: the two limits reads/writes derive from
+// `RoleLimitsPort`, the allocation read from its own read port. `projects/role-limits` takes `{ projectRef }`;
+// `role-lines/allocation` takes `{}` (its owner method carries the explicit empty input).
+export type ProjectsRoleLimitsBody = PlainBody<RoleLimitsPort['readRoleLimits']>;
+export type ProjectsRoleLimitsResponse = RouteResponse<RoleLimitsPort['readRoleLimits']>;
+export type ProjectsRoleLimitsSetBody = PlainBody<RoleLimitsPort['setRoleLimits']>;
+export type ProjectsRoleLimitsSetResponse = RouteResponse<RoleLimitsPort['setRoleLimits']>;
+export type RoleLinesAllocationBody = PlainBody<RoleLineAllocationReadPort['readRoleLineAllocation']>;
+export type RoleLinesAllocationResponse = RouteResponse<RoleLineAllocationReadPort['readRoleLineAllocation']>;
+/** The typed assembly of the three suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type RoleLineCoreRouteDto = {
+  'projects/role-limits': { body: ProjectsRoleLimitsBody; response: ProjectsRoleLimitsResponse };
+  'projects/role-limits/set': { body: ProjectsRoleLimitsSetBody; response: ProjectsRoleLimitsSetResponse };
+  'role-lines/allocation': { body: RoleLinesAllocationBody; response: RoleLinesAllocationResponse };
+};
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */
 export type SecretaryLifecycleCoreRouteDto = {

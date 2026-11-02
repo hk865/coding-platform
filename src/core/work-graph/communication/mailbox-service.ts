@@ -96,7 +96,7 @@ import type { DecisionMessagePort, MessageCommandWritePort, SessionMessageCommit
 import {
   executeWriteCommand, type CommandResult, type CommittedReceipt, type Keys, type WriteCommand,
 } from '../persistence/command-executor.js';
-import type { GoalRecordTransactionPort, RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreFailure, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
@@ -182,14 +182,6 @@ function isRoleBindingRef(value: unknown): boolean {
     && nonEmpty(value['bindingId']) && nonEmpty(value['templateId']) && nonEmpty(value['templateRevision'])
     && isPositiveInt(value['bindingVersion']) && nonEmpty(value['policyRevision']);
 }
-/** The Session store-failure map; a `unique_conflict` also carries a claim slot, not a version pin. */
-function mapStoreFailure(failure: StoreFailure): CoreRejection {
-  return sessionStoreFailureToRejection({
-    code: failure.code,
-    reason: failure.reason,
-    ...(failure.code === 'revision_conflict' ? { current: failure.current } : {}),
-  });
-}
 export function mapReadResult<T>(result: ReadResult<T>): ReadResult<T> | CoreRejection {
   if (result.status === 'not_found') return reject('not_found', 'the requested record does not exist');
   if (result.status === 'not_ready') return reject('incomplete', 'the requested record is not readable at the required watermark');
@@ -264,7 +256,7 @@ export async function readSessionMessageRecord(
   } catch {
     return reject('unavailable', 'the message record could not be read');
   }
-  if (read.status !== 'ready') return mapStoreFailure(read);
+  if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
   const record = read.value.records.find((candidate) => candidate.refKey === key);
   if (record === undefined) {
     return read.value.missing.includes(key)
@@ -289,7 +281,7 @@ export async function preservedNoticeOrigin(records: Pick<GoalRecordTransactionP
   } catch {
     return { ok: false, rejection: reject('unavailable', 'the notice origin could not be read') };
   }
-  if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+  if (read.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(read) };
   const record = read.value.records.find((candidate) => candidate.refKey === refKey);
   if (record === undefined) return { ok: false, rejection: reject('unavailable', 'the updated record is missing') };
   const decoded = decodeNoticeOrigin(record);
@@ -335,7 +327,7 @@ async function replaySessionMessageReceipt(
   } catch {
     return reject('unavailable', 'the recorded mailbox event could not be read');
   }
-  if (located.status !== 'ready') return mapStoreFailure(located);
+  if (located.status !== 'ready') return sessionStoreFailureToRejection(located);
   if (String(located.value.cursor) !== String(receipt.cursor)) {
     return reject('unavailable', 'the recorded mailbox event cursor disagrees with the receipt');
   }
@@ -375,7 +367,7 @@ async function recheckSessionMessageReceipt(
     return reject('unavailable', 'the mailbox idempotency receipt could not be re-checked');
   }
   if (again.status === 'ready') return replaySessionMessageReceipt(records, again.value);
-  if (again.code !== 'not_found') return mapStoreFailure(again);
+  if (again.code !== 'not_found') return sessionStoreFailureToRejection(again);
   return null;
 }
 
@@ -637,7 +629,7 @@ async function commitPreparedSessionMessage(
   }
   if (receipt.status !== 'committed') {
     const restored = await recheckSessionMessageReceipt(records, spec.identityKey, spec.fingerprint);
-    return restored ?? mapStoreFailure(receipt);
+    return restored ?? sessionStoreFailureToRejection(receipt);
   }
   if (receipt.replayed) return replaySessionMessageReceipt(records, receipt);
   return { status: 'committed', value: bindMessageResponseCursor(spec.message, receipt.cursor), replayed: false, cursor: receipt.cursor };
@@ -1508,7 +1500,7 @@ async function readCurrentWorkspaceSource(records: SessionMailboxDependencies['r
   } catch {
     return { ok: false, rejection: reject('unavailable', 'the workspace source revision could not be read') };
   }
-  if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+  if (read.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(read) };
   const record = read.value.records.find((candidate) => candidate.refKey === key);
   if (record === undefined) return { ok: false, rejection: reject('unavailable', 'the workspace source record is missing') };
   const decoded = decodeWorkspaceSnapshot(record);
@@ -1976,7 +1968,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the Goal record could not be read');
     }
-    if (read.status !== 'ready') return mapStoreFailure(read);
+    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
     const record = read.value.records.find((candidate) => candidate.refKey === key);
     if (record === undefined) {
       return read.value.missing.includes(key)
@@ -2092,7 +2084,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return { ok: false, rejection: reject('unavailable', 'a decision object could not be read') };
     }
-    if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
+    if (read.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(read) };
     const record = read.value.records.find((candidate) => candidate.refKey === key);
     if (record === undefined) {
       return read.value.missing.includes(key)
@@ -2219,7 +2211,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return { ok: false, failure: reject('unavailable', 'the Query record could not be read') };
     }
-    if (read.status !== 'ready') return { ok: false, failure: mapStoreFailure(read) };
+    if (read.status !== 'ready') return { ok: false, failure: sessionStoreFailureToRejection(read) };
     const record = read.value.records.find((candidate) => candidate.refKey === key);
     if (record === undefined) {
       return { ok: false, failure: read.value.missing.includes(key) ? { missing: true } : reject('unavailable', 'the record store neither returned nor reported missing the Query record') };
@@ -2728,7 +2720,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return sendStatusOf(await replayMessage(existing.value));
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
     // The secretary's one admission, only after the receipt miss: the resolved
     // round must be this QueryRun, in this scope, and it supplies the persisted
@@ -3199,7 +3191,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the inbox lookup failed');
     }
-    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    if (pageResult.status !== 'ready') return sessionStoreFailureToRejection(pageResult);
     const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
     if (!progress.ok) return progress.result;
     const readThrough = progress.readThrough;
@@ -3345,7 +3337,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       } catch {
         return reject('unavailable', 'the outbox lookup failed');
       }
-      if (result.status !== 'ready') return mapStoreFailure(result);
+      if (result.status !== 'ready') return sessionStoreFailureToRejection(result);
       const progress = readProgress(result.value.readThrough, atLeast.atLeast);
       if (!progress.ok) return progress.result;
       const items: SessionMessage[] = [];
@@ -3424,7 +3416,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the outbox lookup failed');
     }
-    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    if (pageResult.status !== 'ready') return sessionStoreFailureToRejection(pageResult);
     const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
     if (!progress.ok) return progress.result;
     const readThrough = progress.readThrough;
@@ -3522,7 +3514,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the Host system outbox lookup failed');
     }
-    if (page.status !== 'ready') return mapStoreFailure(page);
+    if (page.status !== 'ready') return sessionStoreFailureToRejection(page);
     const items: HostOutboxItemV1[] = [];
     for (const record of page.value.records) {
       const decoded = decodeHostSystemOutboxRecord(record);
@@ -3609,7 +3601,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the Host system outbox commit failed before completing');
     }
-    if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+    if (receipt.status !== 'committed') return sessionStoreFailureToRejection(receipt);
     return {
       status: 'committed', value: { ...record, since: receipt.cursor }, replayed: receipt.replayed, cursor: receipt.cursor,
     };
@@ -3644,7 +3636,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (owned.signal.aborted) return reject('cancelled', 'the acknowledgement was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     const authorized = await authorizeNewWorkRunAction({
       owned, principal: owned.principal, operationToolName: 'ack_session_message',
     });
@@ -3718,7 +3710,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     const authorized = await authorizeNewWorkRunAction({
       owned, principal: owned.principal, operationToolName: 'respond_session_message',
     });
@@ -3829,7 +3821,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (owned.signal.aborted) return reject('cancelled', 'the answer association was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     // The single response slot (first come with MSG-04/05) is judged after the
     // lookup, so this identity's committed receipt replays; the pin is the
     // commit's message CAS.
@@ -3875,7 +3867,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       { messageRef: normalized.ref, derivation }, write.expected);
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     // MSG-09: the first derivation wins; its shape is the codec's at commit.
     const read = await loadMessageForWrite(owned, normalized.ref);
     if (!read.ok) return read.rejection;
@@ -3947,7 +3939,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       { messageRef: normalized.ref, part, executionRef, kernel }, []);
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     // MSG-07/08. The execution facts are read only for an existing message (an
     // absent one is refused first); their read failures keep today's rejections.
     const read = await loadMessageForWrite(owned, normalized.ref);
@@ -4079,7 +4071,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (found.status !== 'ready') {
       if (found.code === 'not_found') return { ok: false, rejection: reject('not_found', 'the archive request receipt was not found') };
-      return { ok: false, rejection: mapStoreFailure(found) };
+      return { ok: false, rejection: sessionStoreFailureToRejection(found) };
     }
     let at: StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>;
     try {
@@ -4087,7 +4079,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return { ok: false, rejection: reject('unavailable', 'the archive request event could not be read') };
     }
-    if (at.status !== 'ready') return { ok: false, rejection: mapStoreFailure(at) };
+    if (at.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(at) };
     if (String(at.value.cursor) !== String(found.value.cursor)) {
       return { ok: false, rejection: reject('unavailable', 'the archive request cursor disagrees with its receipt') };
     }
@@ -4193,7 +4185,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     if (receipt.status !== 'committed') {
       const restored = await recheckAfterMiss(args.identityKey, args.fingerprint);
-      return restored ?? mapStoreFailure(receipt);
+      return restored ?? sessionStoreFailureToRejection(receipt);
     }
     if (receipt.replayed) return replayMessage(receipt);
     return { status: 'committed', value: message, replayed: false, cursor: receipt.cursor };
@@ -4225,7 +4217,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     }
     const existing = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
     // A NEW commit still needs the matching CURRENT request on the Session.
     const durable = await readDurableArchiveRequest(owned, ownedStep);
@@ -4373,7 +4365,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the routed-reply lookup failed');
     }
-    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    if (pageResult.status !== 'ready') return sessionStoreFailureToRejection(pageResult);
     const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
     if (!progress.ok) return progress.result;
     const readThrough = progress.readThrough;
@@ -4460,7 +4452,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
       } catch {
         return reject('unavailable', 'the Session continuation lookup failed');
       }
-      if (continuationRead.status !== 'ready') return mapStoreFailure(continuationRead);
+      if (continuationRead.status !== 'ready') return sessionStoreFailureToRejection(continuationRead);
       hasContinuation = continuationRead.value.records.length > 0;
     }
     const request: RecordLookupRequest = {
@@ -4475,7 +4467,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     } catch {
       return reject('unavailable', 'the undelivered-reply lookup failed');
     }
-    if (pageResult.status !== 'ready') return mapStoreFailure(pageResult);
+    if (pageResult.status !== 'ready') return sessionStoreFailureToRejection(pageResult);
     const progress = readProgress(pageResult.value.readThrough, atLeast.atLeast);
     if (!progress.ok) return progress.result;
     const readThrough = progress.readThrough;
@@ -4612,7 +4604,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the idempotency lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return replayMessage(existing.value);
-    if (existing.code !== 'not_found') return mapStoreFailure(existing);
+    if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
     // S5-MSG-01: the legacy work_run admission still runs; a refused admission
     // never reads the Goal or the duties facts.
@@ -5327,7 +5319,7 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       }
       const existing = await records.lookupCommit({ identityKey, fingerprint });
       if (existing.status === 'ready') return replayReceipt(existing.value);
-      if (existing.code !== 'not_found') return mapStoreFailure(existing);
+      if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
       const next = input['next'] as SessionMessage;
       if (!isObject(next) || !isObject(next.ref)) return reject('invalid', 'persist requires the next SessionMessage');

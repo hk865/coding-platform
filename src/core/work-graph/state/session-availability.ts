@@ -281,9 +281,9 @@ export function deriveAvailability(session: {
 }
 
 /**
- * SES-11's link fact (formerly inline in `session-lifecycle.ts`): the target
- * kind of the first open `responsible` task/work link, false without one.
- * Module relations are lookup history, not unfinished work, and never block.
+ * SES-11's link facts (formerly inline in `session-lifecycle.ts`): `openResponsibleLinkOf`
+ * is the first open responsible task/work link; `openScopeLinkOf` is the same fact for a
+ * goal/project link, or an adviser's or scribe's module region. Module relations never block.
  */
 export function openResponsibleLinkOf(links: readonly Pick<SessionWorkLink, 'ref' | 'until'>[]): 'task' | 'work' | false {
   for (const link of links) {
@@ -294,6 +294,8 @@ export function openResponsibleLinkOf(links: readonly Pick<SessionWorkLink, 'ref
   return false;
 }
 
+/** The scope half of the same link fact: one rule, re-exported rather than copied. */
+export { openScopeLinkOf } from './session-archive-release.js';
 /** The machine state of a decoded record; a missing record is `absent`. */
 export function sessionMachineStateOf(record: SessionRecord | null): SessionMachineState {
   if (record === null) return 'absent';

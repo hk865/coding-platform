@@ -6,6 +6,7 @@ import type { RequestSessionArchiveInput } from '../../src/contracts/core/sessio
 import type { GraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 import { commitBarrier } from '../helpers/graph-session-fixture.js';
 import { t0, ready, committed, key, s1Schemas, observeStore, sessionOwners, workHistory,
@@ -79,7 +80,7 @@ describe.each(['memory', 'sqlite'] as const)('S1 direct dispatch guards (%s)', k
     const barrier = commitBarrier(f.base.records, 2);
     const claims = f.base.makeService(barrier.records, () => t0);
     const lifecycle = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records,
-      sessionFacts: createSessionFactsService({ records: barrier.records }) });
+      sessionFacts: createSessionFactsService({ records: barrier.records }), duty: unknownSessionDuty });
     const claim = await f.base.buildRequest();
     claim.input.consumedWait = { kind: 'wait_reply', originalRun: f.b2.claim.runRef, messageRef: message.ref, responseRef: message.response.bodyRef };
     const archive: GraphWrite<RequestSessionArchiveInput> = {

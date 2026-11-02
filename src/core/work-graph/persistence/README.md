@@ -47,13 +47,14 @@
 | `lookupCommittedReceipt` | `src/core/work-graph/persistence/receipt-lookup.ts:18` | 按 identity/fingerprint 精确 `lookupCommit` 并分类回执：found/missing/conflict/invalid/unavailable，抛错记为 unavailable；`CommittedReceipt`、`ReceiptLookup` 随函数一起导出 | 需要幂等回执查找或严格重放的起点；旧的 query 模块已改为再导出，调用点不变 |
 | `commandIdentity`、`commandKeys` | `src/core/work-graph/persistence/command-executor.ts:31`、`:43` | 一次写的 R2 identity 和 fingerprint：identity 只由 operation、scope、principal、commandId 决定，fingerprint 只由 operation 和该写的冻结输入决定 | `executeWriteCommand` 与 H 的 `advanceWriteKeys` 共用；重放只用 `commandIdentity`，不要另写一份哈希 |
 | `lookupCommittedReceiptByIdentity`、`ReceiptByIdentityLookup` | `src/core/work-graph/persistence/receipt-lookup.ts:54`、`:42` | 只按 identity 读已提交回执和提交时的 fingerprint：found/missing/invalid/unavailable；`corrupt` 行归 unavailable | 父写入按 commandId 重放时；不要用当前输入或伪造 fingerprint 代替 |
-| `storeFailureCode` | `src/core/work-graph/persistence/read-result-failures.ts:35` | 把 Store 失败码收窄为 `CoreRejection['code']` | 需要判断失败类别时 |
+| `storeFailureCode` | `src/core/work-graph/persistence/read-result-failures.ts:39` | 把 Store 失败码收窄为 `CoreRejection['code']` | 需要判断失败类别时 |
 | `storeFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:45` | 通用 Store 失败→`CoreRejection`，可带 `current`；**正本** | 没有 owner 特有语义的读写失败；request-service 的旧映射已删，见“不要做” |
 | `pinsFromStoreCurrent` | `src/core/work-graph/persistence/read-result-failures.ts:54` | 从 Store 的 conflict `current` 解出可回填的 version pins | 映射 revision conflict 时 |
-| `sessionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:72` | Session 写失败映射：unique 冲突转 revision conflict | Session 目录/生命周期写失败时 |
-| `executionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:94` | 执行/owner 写失败映射：unique 冲突转 busy | 执行入口或 owner 写失败时 |
-| `ownerWriteStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:116` | owner 写失败的窄映射 | 一般 owner 写入时 |
-| `ownerReadStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:130` | owner 读失败的窄映射 | 一般 owner 读取时 |
+| `scopeOwnedRejectionOf` | `src/core/work-graph/persistence/read-result-failures.ts:83` | 只把命名 `role-scope:` slot 的 unique 冲突转成 `scopeOwned`；其余返回 null，由调用方保留旧 reason | Session/owner 的 unique 冲突映射 |
+| `sessionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:95` | Session 写失败映射：unique 冲突转 revision conflict | Session 目录/生命周期写失败时 |
+| `executionStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:114` | 执行/owner 写失败映射：unique 冲突转 busy | 执行入口或 owner 写失败时 |
+| `ownerWriteStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:136` | owner 写失败的窄映射 | 一般 owner 写入时 |
+| `ownerReadStoreFailureToRejection` | `src/core/work-graph/persistence/read-result-failures.ts:150` | owner 读失败的窄映射 | 一般 owner 读取时 |
 | `mergeGuards` | `src/core/work-graph/persistence/record-guards.ts:11` | 按 refKey 合并 guards：同 key 不同 revision 返回 `revision_conflict` | 任何提交合并读依赖的 guards 时；`tasks/execution-entry-service.ts` 仅保留再导出 |
 | `atLeastCursorResult` | `src/core/work-graph/persistence/read-result-failures.ts:22` | 比较观察到的 watermark 与要求的 `atLeastCursor`，不足则给真实 `not_ready` | 索引读承诺新鲜度时 |
 | `lookupAll` | `src/core/work-graph/persistence/lookup-all.ts:32` | 把一个等值索引读到结尾，窗口变化最多重试 4 次，返回 watermark 且 `truncated` 恒为 false | 契约要求完整等值事实集时 |
@@ -74,14 +75,15 @@
 | `sessionRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整的普通 `{projectId,sessionId}` SessionRef；**正本** | 普通 SessionRef 输入及嵌套字段；旧副本见“不要做”（CS-11、M1-31） |
 | `taskTripleProblem` | `src/core/work-graph/persistence/rework-codecs.ts:107` | 校验 Task 三元组（project/goal/task） | 需要 Task 身份时 |
 | `aggregateRefProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:183` | 校验已知聚合判别式与全部身份字段 | VersionedRef/card 引用 |
-| `versionPinProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:238` | VersionPin 的唯一校验：`{ref,revision}` 的 ref 已知、revision 为正整数；`allowAbsence` 允许 0（变更证明的 before） | 需要校验 `{ref,revision}` pin 时；不要另写本地 pin 检查 |
-| `decisionChangeProofProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:307` | 校验决定变更证明 | 编码/解码决定写事件时 |
-| `decodeNoticeOrigin` | `src/core/work-graph/persistence/decision-record-codecs.ts:393` | 解码 wire-only 的 notice origin | SessionMessage/TaskRequeue/轮次共享 |
+| `isWorkLinkRelation`、`checkTarget`、`checkWorkLinkRef` | `src/core/work-graph/persistence/decision-record-codecs.ts:210`、`src/core/work-graph/persistence/decision-record-codecs.ts:214`、`src/core/work-graph/persistence/decision-record-codecs.ts:252` | 五个 `WorkLinkTarget` 臂的关系/目标/完整 ref 校验 | 会话链接与角色线目标校验；不要另写本地判别 |
+| `versionPinProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:275` | VersionPin 的唯一校验：`{ref,revision}` 的 ref 已知、revision 为正整数；`allowAbsence` 允许 0（变更证明的 before） | 需要校验 `{ref,revision}` pin 时；不要另写本地 pin 检查 |
+| `decisionChangeProofProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:344` | 校验决定变更证明 | 编码/解码决定写事件时 |
+| `decodeNoticeOrigin` | `src/core/work-graph/persistence/decision-record-codecs.ts:430` | 解码 wire-only 的 notice origin | SessionMessage/TaskRequeue/轮次共享 |
 | `runControlStateProblem` | `src/core/work-graph/persistence/control-record-codecs.ts:85` | 校验 Run 的 controlState 形状；不判断能否执行 | Run 记录读取器 |
 | `createEventCodec` | `src/core/work-graph/persistence/event-codec-factory.ts:42` | 由一份事件描述生成 encode/decode/注册，固定校验顺序与首错 | 新增兼容事件格式时 |
-| `createRecordCodec` | `src/core/work-graph/persistence/field-table-codec.ts:57` | 由字段表记录格式生成 check/encode/decode/注册/lookup：键是完整 ref 的 `canonicalJson`，encode 先按 pending 检查、不排序不补值，decode 先核对信封（`decodeRefKey`、`decodeRecordBody`）再按 stored 检查 | 新记录格式；顶层可绑定游标自动声明为 `commitCursorFields` |
-| `createEventCodec` | `src/core/work-graph/persistence/field-table-codec.ts:104` | 由字段表事件格式生成 codec：encode 先检查再原样交给信封编码，decode 走事件 codec 工厂的固定管线后做字段检查 | 新事件格式；同名的事件 codec 工厂（`event-codec-factory.ts`）是它复用的管线，旧事件仍直接用工厂 |
-| `formatSchemas` | `src/core/work-graph/persistence/field-table-codec.ts:124` | 把字段表 codec 汇成两个后端共用的 `RecordBackendSchemas`；重复的 schemaId、aggregateType 或 事件 type@version 抛错 | 注册新格式时 |
+| `createRecordCodec` | `src/core/work-graph/persistence/field-table-codec.ts:57` | 由字段表记录格式生成 check/encode/decode/注册/lookup：键是完整 ref 的 `canonicalJson`，encode 先按 pending 检查、不排序不补值，decode 先核对信封（`decodeRefKey`、`decodeRecordBody`）再按 stored 检查 | 新记录格式；顶层字段和数组元素里的可绑定游标（含 `holders[].since`、`reservations[].reservedAt`）自动声明为 `commitCursorFields` |
+| `createEventCodec` | `src/core/work-graph/persistence/field-table-codec.ts:109` | 由字段表事件格式生成 codec：encode 先检查再原样交给信封编码，decode 走事件 codec 工厂的固定管线后做字段检查 | 新事件格式；同名的事件 codec 工厂（`event-codec-factory.ts`）是它复用的管线，旧事件仍直接用工厂 |
+| `formatSchemas` | `src/core/work-graph/persistence/field-table-codec.ts:129` | 把字段表 codec 汇成两个后端共用的 `RecordBackendSchemas`；重复的 schemaId、aggregateType 或 事件 type@version 抛错 | 注册新格式时 |
 | `moduleOverlapGateCodec`、`NOTE_REQUEST_FIELDS`、`moduleOverlapGateOpenedCodec`、`moduleOverlapNoteRequestedCodec`、`moduleOverlapGateReleasedCodec`、`MODULE_OVERLAP_GATE_SCHEMAS` | `src/core/work-graph/persistence/module-overlap-gate-codecs.ts:67`、`:10`、`:81`、`:82`、`:83`、`:85` | `ModuleOverlapGate@1` 的字段表 codec（check/encode/decode/注册）、两个 `noteRequest` 共用的字段对象、门的开/注记请求/释放三条事件 codec 与两后端注册组（一条记录、三个事件、`overlap-gate-by-goal` lookup）；`noteRequest` 只接受两臂 | 组合根注册模块重叠门记录与事件、读写门时；不要另写字段校验或重复注册 |
 | `initializationBindingCodec` | `src/core/work-graph/persistence/initialization-binding-codecs.ts:8` | 初始化绑定记录的 check/encode/decode/注册/两条 lookup；encode 先按 pending 检查，decode 核对信封后按 stored 检查 | 写或读初始化绑定时；不要手写它的字段校验 |
 | `INITIALIZATION_BINDING_SCHEMAS` | `src/core/work-graph/persistence/initialization-binding-codecs.ts:9` | 绑定格式的两后端注册（一条记录、零事件、两条 lookup） | 组合根注册 schema 时；不要另拼一份 |

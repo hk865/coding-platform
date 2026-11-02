@@ -47,6 +47,7 @@ import { readQuery } from '../helpers/A2-restart-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import { S6A_GOAL_1, S6A_SCOPE, type S6ABackend, type S6ASession } from '../helpers/S6A-request-fixture.js';
 
 // The frozen commit barrier (tests/helpers/S6A-commit-barrier.ts): the two
@@ -288,6 +289,7 @@ describe.each(['memory', 'sqlite'] as const)('the request-rounds pass over a liv
     it('carries the live attempts past the advance cap and launches them on the next pass', async () => {
       const world = await openS6AHostWorld({ backend });
       worlds.push(world);
+      await setS7D1Open(world, 'secretary', 96, 0, 's6a-round-cap-open');
       await ensureProjectPointers(world);
       // 51 lines, each with one claimed request round: 51 live attempts, one more
       // than a pass may launch (REQUEST_ADVANCES_PER_PASS is 50).

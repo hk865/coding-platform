@@ -31,6 +31,7 @@ import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-se
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
@@ -113,7 +114,7 @@ function assemble(fixture: S5DecisionFixture, goalSettings: GoalSettingsPort, cl
     tasks: createGoalService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }).tasks,
     plans: createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
       now: fixture.now, eventId: fixture.newId }),
-    sessions: createSessionDirectory({ records: fixture.records, lookups: fixture.records }),
+    sessions: createSessionDirectory({ records: fixture.records, lookups: fixture.records, duty: unknownSessionDuty }),
     claims,
     executions: createRunStateReader({ records: fixture.records }),
     runtime, evidence, checks,
@@ -135,7 +136,7 @@ function selectWork(
 /** A real P/W Session nobody claims; §5.4 WF02: the same idle Session can take both pending advances. */
 async function createIdleSession(fixture: S5DecisionFixture): Promise<SessionRef> {
   const ref = await fixture.createS5Session('s5-wf02-idle');
-  const sessions = createSessionDirectory({ records: fixture.records, lookups: fixture.records });
+  const sessions = createSessionDirectory({ records: fixture.records, lookups: fixture.records, duty: unknownSessionDuty });
   expect(ready(await sessions.readSession(fixture.ctx, ref)).record).toMatchObject({ lifecycle: 'active', occupancy: null });
   return ref;
 }

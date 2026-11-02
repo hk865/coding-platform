@@ -3,7 +3,6 @@ import type { MaterialReader } from '../../../contracts/core/call-context.js';
 import type { MaterialOrigin } from '../../record-store/body-ports.js';
 import type { MaterialAuthorityReads } from './record-ports.js';
 export type { MaterialAuthorityReads } from './record-ports.js';
-import type { RunSnapshot } from '../../../contracts/dispatch.js';
 import { sameArtifactOwnerRunRef } from '../../../contracts/material-access.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 
@@ -43,15 +42,11 @@ async function hostAdmission(
   }
   const origin = input.origin;
   // A platform operation records its own trusted scope at write time; a Host may
-  // read it back directly without inventing a Run. A workspace-restricted Host
-  // never crosses workspace, and material with no trusted workspace association
-  // is unreadable for it.
+  // read it back directly without inventing a Run. Within one project, stored
+  // platform material has no workspace limit; another project's stays unreadable.
   if (origin.kind === 'platform_operation') {
     if (origin.projectId !== reader.projectId) {
       return rejected('forbidden', 'the platform material belongs to another project');
-    }
-    if (reader.workspaceId !== undefined && reader.workspaceId !== origin.workspaceId) {
-      return rejected('forbidden', 'the workspace-restricted Host cannot read platform material outside its workspace');
     }
     return { status: 'allowed', applicability: 'historical_explanation' };
   }
@@ -60,17 +55,14 @@ async function hostAdmission(
   if (canonical.status !== 'found') {
     return rejected('forbidden', 'the canonical material owner could not be loaded');
   }
-  // Only the requested full canonical ref may vouch for a workspace: a load that
+  // Only the requested full canonical ref may vouch for an owner: a load that
   // answers with a different ref is not the owner's scope.
   const canonicalRef = (canonical.snapshot as { ref?: ArtifactOwnerRunRef }).ref ?? null;
   if (!sameArtifactOwnerRunRef(canonicalRef, owner)) {
     return rejected('forbidden', 'the canonical owner load did not return the requested full ref');
   }
-  const sourceWorkspaceId = owner.aggregateType === 'Run'
-    ? (canonical.snapshot as RunSnapshot).workspaceSnapshot.workspaceId
-    : owner.workspaceId;
-  if (owner.projectId !== reader.projectId || (reader.workspaceId !== undefined && reader.workspaceId !== sourceWorkspaceId)) {
-    return rejected('forbidden', 'the material owner is outside the trusted Host project/workspace scope');
+  if (owner.projectId !== reader.projectId) {
+    return rejected('forbidden', 'the material owner is outside the trusted Host project scope');
   }
   return { status: 'allowed', applicability: 'historical_explanation' };
 }

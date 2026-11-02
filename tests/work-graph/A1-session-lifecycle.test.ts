@@ -227,7 +227,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
     const linkInput = await linkRequest(fixture, session, target, 'investigated', true, 'compete-link');
     const archiveInput = await lifecycleRequest(fixture, session, 'compete-archive');
     const barrier = commitBarrier(fixture.records);
-    const service = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records });
+    const service = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records, duty: fixture.duty });
     const [link, archive] = await Promise.all([
       barrier.run(() => service.linkSessionWork(fixture.ctx, linkInput)),
       barrier.run(() => service.archiveSession(fixture.ctx, archiveInput)),
@@ -271,7 +271,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
     const sessionRef = await f.createSession('claim-race');
     const archive = await lifecycleRequest(f, sessionRef, 'race-archive');
     const barrier = commitBarrier(f.records);
-    const service = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records });
+    const service = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records, duty: f.duty });
     const roles = createRoleConfigurationService({ records: barrier.records,
       now: () => '2026-09-25T00:00:00.000Z', eventId: randomUUID });
     const claims = createTaskClaimService({ records: barrier.records, roles,
@@ -325,7 +325,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
     const records = { ...f.records,
       async lookupCommit(input: Parameters<typeof f.records.lookupCommit>[0]) { mutate(); return f.records.lookupCommit(input); },
       async readMany(keys: readonly string[]) { mutate(); return f.records.readMany(keys); } };
-    const service = createSessionLifecycleService({ records, lookups: records });
+    const service = createSessionLifecycleService({ records, lookups: records, duty: f.duty });
     const result = await service.linkSessionWork(f.ctx, request);
     expect(mutated).toBe(true);
     expect(result).toMatchObject({ status: 'committed', value: { ref: { target: original.input.target }, until: null } });

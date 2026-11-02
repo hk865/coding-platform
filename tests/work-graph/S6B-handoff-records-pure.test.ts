@@ -33,7 +33,7 @@ const handoff = { ...shell, ref: op('h1'), action: { kind: 'handoff',
   progress: { stage: 'accepted', advanceGeneration: 1, fence: null, stoppedWriter: null,
     assignments: [{ successor: null, createOperation: null, createInput: null, transfers: [transfer('a'), transfer('b')] },
       { successor: null, createOperation: null, createInput: null, transfers: [] }],
-    coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
+    scope: null, coverage: null, understanding: [], brief: null, routing: null, archiveRequest: null, noticeItemKey: null,
     approval: null, lastRefusal: null } } };
 const item = (queryJobId: string) => ({ requestRoot: root(queryJobId), input: null, outcome: null, routingRound: null,
   reason: null, cursor: null });
@@ -44,7 +44,8 @@ const archive = { ...shell, ref: op('a1'), action: { kind: 'secretary_archive',
 const create = { ...shell, ref: op('c1'), action: { kind: 'create', plannedSessionRef: session('s3'), parentOperation: op('h1'),
   workspace: { projectId: P, workspaceId: W }, kernelStore: { adapterId: 'k', storeKey: 'ks' },
   role: { kind: 'legacy_template', templateId: 't', templateRevision: '1' }, recommendedRefs: [], initialLinks: [],
-  provenance: { schemaVersion: 1, kind: 'handoff', from: session('s1') }, creation: null, consultation: null } };
+  provenance: { schemaVersion: 1, kind: 'handoff', from: session('s1') }, creation: null, consultation: null,
+  seatDecision: null } };
 
 type Body = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const edit = (record: object, change: (body: Body) => void): Body => {

@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
-import { adoptS6BPlan, seedS6BArchiveSource } from '../helpers/S6B1-fixture.js';
+import { adoptS6BPlan, createS6BLine, seedS6BArchiveSource } from '../helpers/S6B1-fixture.js';
 import { understandingNote } from '../helpers/S4C2-note-card-fixture.js';
 import {
   s6b2Accept, s6b2Scene, s6b2Workspace, type S6B2Captured, type S6B2WorldValue,
 } from '../helpers/S6B2-handoff-scene.js';
-import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import { S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import { usageOf } from '../helpers/S6A-host-fixture.js';
 import { AG2B_CONSUMER_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
@@ -408,12 +408,21 @@ describe('the Host lifecycle wiring', () => {
   });
 
   it('stores a stable successor refusal once and still calls the child on a later subscribed commit', async () => {
-    // The cap counts the lines this admission does not replace: the non-source secretary already fills it, so the real
-    // successor-capacity child refuses through the published composite (no fault wrapper); the first line is the source.
-    const opened = await scene.open('memory', { secretaryOpenCap: 1, requestDriver: 'on' });
-    await s6b2Workspace(opened.world);
-    const first = await opened.world.createSecretary('hr9-first', { at: '2026-10-26T00:00:00.000Z' });
+    // A partial handoff: the source keeps one unassigned task, so the successor must take its own seat. The
+    // non-source secretary fills the other seat under the cap; the real successor-capacity child refuses.
+    const opened = await scene.open('memory', { requestDriver: 'on' });
+    const ws = await s6b2Workspace(opened.world);
+    const { tasks } = await adoptS6BPlan(ws, opened.world.goals.first, { label: 'hr9',
+      taskIds: ['hr9-assigned', 'hr9-residual'], role: S6A_WORK_ROLE.templateId });
+    const first = await createS6BLine(ws, { label: 'hr9-first', role: S6A_SECRETARY_ROLE, tasks });
     const second = await opened.world.createSecretary('hr9-second', { at: '2026-10-26T00:00:01.000Z' });
+    const capLimits = (await opened.world.post('projects/role-limits', plain(S6A_SCOPE,
+      { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
+    expect(capLimits.status).toBe('ready');
+    const capSet = (await opened.world.post('projects/role-limits/set', plain(S6A_SCOPE,
+      { commandId: 's6b2-wake-hr9-open', expectedRevision: capLimits.value.revision, open: { secretary: 2 } })))
+      .body as { status: string };
+    expect(capSet.status).toBe('committed');
 
     const owner = opened.world.platform.workflow.sessionHandoff!;
     const realContinue = owner.continueHandoff;
@@ -444,7 +453,8 @@ describe('the Host lifecycle wiring', () => {
       return result;
     };
     try {
-      const handoff = await s6b2Accept(opened.world, { commandId: 'hr9-handoff', source: first.ref });
+      const handoff = await s6b2Accept(opened.world, { commandId: 'hr9-handoff', source: first.ref,
+        tasks: [tasks[0]!] });
       const readHandoff = async (): Promise<SessionOperationRecordOf<HandoffActionV1>> => {
         const record = await opened.world.platform.sessions.getSessionOperation(opened.world.systemContext(), handoff);
         if (record.status !== 'ready' || record.value.action.kind !== 'handoff') {
@@ -477,9 +487,10 @@ describe('the Host lifecycle wiring', () => {
       // Free the counted line through the public manual archive; its Session commit is the genuine subscription
       // the lifecycle queue acts on, and the child now creates the successor.
       await opened.world.archive(second);
-      await awaitState(async () => (await readHandoff()).phase === 'completed');
+      await awaitState(async () => (await readHandoff()).action.progress.assignments[0]?.successor !== null);
       const done = await readHandoff();
-      expect(done.phase).toBe('completed');
+      expect(done.phase).toBe('running');
+      expect(done.action.progress.stage).toBe('transfer');
       expect(done.action.progress.assignments.map(entry => entry.successor).filter(successor => successor !== null))
         .toHaveLength(1);
     } finally {

@@ -30,15 +30,15 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `GoalRecordTransactionPort` | `src/core/record-store/ports.ts:188` | 记录存储端口：`readMany`/`lookupCommit`/`commit`/`eventAt`。 | WorkGraph/AgentRuntime 声明记录依赖时只依赖端口，不依赖具体 backend。 |
-| `readMany`、`RecordBatchRead` | `src/core/record-store/ports.ts:189`、`src/core/record-store/ports.ts:138` | 一次读多个完整 key，返回 records/missing/readThrough。 | 需要成组事实时；不要另写 batch reader，也不要把 missing 当成功空事实（FP-05、M1-28）。 |
-| `lookupCommit` **正本** | `src/core/record-store/ports.ts:190` | 按 identityKey+fingerprint 找已提交回执。 | 重放、提交抛错后的恢复；不要重跑提交或从今天的快照重建结果（M1-14、M1-15、M1-26）。 |
+| `readMany`、`RecordBatchRead` | `src/core/record-store/ports.ts:193`、`src/core/record-store/ports.ts:142` | 一次读多个完整 key，返回 records/missing/readThrough。 | 需要成组事实时；不要另写 batch reader，也不要把 missing 当成功空事实（FP-05、M1-28）。 |
+| `lookupCommit` **正本** | `src/core/record-store/ports.ts:194` | 按 identityKey+fingerprint 找已提交回执。 | 重放、提交抛错后的恢复；不要重跑提交或从今天的快照重建结果（M1-14、M1-15、M1-26）。 |
 | `RecordCommitIdentityPort`、`readCommitByIdentity` | `src/core/record-store/ports.ts:206`、`src/core/record-store/in-memory-record-store.ts:468`、`src/core/record-store/sqlite-record-store.ts:553` | 只读一个已提交 identity 行的回执和提交时的 fingerprint；缺行 `not_found`，坏行 `corrupt`。 | 按 commandId 重放父写入、不能拿当前输入重算 fingerprint 时；它是 store 对象上 `records` 之外的独立成员。 |
-| `commit`、`eventAt` | `src/core/record-store/ports.ts:194`、`src/core/record-store/ports.ts:195` | 原子提交一个 `PreparedCommit`；按游标精确读一条事件。 | 所有记录写入与原始结果重放；不要从事件头扫描或倒推 cursor。 |
-| `PreparedCommit`、`RecordGuard`、`UniqueClaimChange`、`StoreCommitReceipt` | `src/core/record-store/ports.ts:110`、`src/core/record-store/ports.ts:82`、`src/core/record-store/ports.ts:85`、`src/core/record-store/ports.ts:127` | 一次提交的全部机械内容：guard、记录、claim、事件、回执。 | 把一组耦合写入合成一个 commit；`expectedRevision:null` 表示必须不存在，数字（含 0）表示必须存在且等于该 revision。 |
+| `commit`、`eventAt` | `src/core/record-store/ports.ts:198`、`src/core/record-store/ports.ts:199` | 原子提交一个 `PreparedCommit`；按游标精确读一条事件。 | 所有记录写入与原始结果重放；不要从事件头扫描或倒推 cursor。 |
+| `PreparedCommit`、`RecordGuard`、`UniqueClaimChange`、`StoreCommitReceipt` | `src/core/record-store/ports.ts:114`、`src/core/record-store/ports.ts:83`、`src/core/record-store/ports.ts:86`、`src/core/record-store/ports.ts:131` | 一次提交的全部机械内容：guard、记录、claim、事件、回执。 | 把一组耦合写入合成一个 commit；`expectedRevision:null` 表示必须不存在，数字（含 0）表示必须存在且等于该 revision。 |
 | `StoreFailure`、`StoreResult`、`StoreError`、`DecodeResult` | `src/core/record-store/ports.ts:38`、`src/core/record-store/ports.ts:62`、`src/core/record-store/ports.ts:28`、`src/core/record-store/ports.ts:64` | 机械失败/结果/解码结果；conflict 带事务内观察到的 current。 | 保留 `revision_conflict`/`unique_conflict` 的现场，不要重读最新版本替换它。 |
-| `EncodedRecord`、`EncodedDomainEvent`、`StoredVersion`、`CommitCursorBinding` | `src/core/record-store/ports.ts:72`、`src/core/record-store/ports.ts:102`、`src/core/record-store/ports.ts:100`、`src/core/record-store/ports.ts:91` | 存储 DTO；可绑定的游标字段只有 since/until/unavailableSince/responseSince。 | 编译 commit 与读取结果时。 |
-| `EncodedRecordSchema`、`EncodedEventSchema`、`RecordBackendSchemas` | `src/core/record-store/ports.ts:154`、`src/core/record-store/ports.ts:162`、`src/core/record-store/ports.ts:168` | 注册 record/event codec、lookup 定义和可绑定字段白名单。 | 组合根建 backend 时；注册的 validate 是调用方的纯校验，不是本层的领域判断。 |
-| `PersistedIdempotencyRecord` | `src/core/record-store/ports.ts:222` | 旧库幂等行的字节兼容形状。 | 只在 store 内做 idempotency 编解码/回执恢复；上层不要解析这一行。 |
+| `EncodedRecord`、`EncodedDomainEvent`、`StoredVersion`、`CommitCursorBinding` | `src/core/record-store/ports.ts:73`、`src/core/record-store/ports.ts:106`、`src/core/record-store/ports.ts:104`、`src/core/record-store/ports.ts:91` | 存储 DTO；可绑定的游标字段只有 since/until/unavailableSince/responseSince。 | 编译 commit 与读取结果时。 |
+| `EncodedRecordSchema`、`EncodedEventSchema`、`RecordBackendSchemas` | `src/core/record-store/ports.ts:158`、`src/core/record-store/ports.ts:166`、`src/core/record-store/ports.ts:172` | 注册 record/event codec、lookup 定义和可绑定字段白名单。 | 组合根建 backend 时；注册的 validate 是调用方的纯校验，不是本层的领域判断。 |
+| `PersistedIdempotencyRecord` | `src/core/record-store/ports.ts:226` | 旧库幂等行的字节兼容形状。 | 只在 store 内做 idempotency 编解码/回执恢复；上层不要解析这一行。 |
 | `RecordLookupPort`、`lookup` | `src/core/record-store/lookup-ports.ts:35` | 注册索引的 keyset 翻页，带 next 与 readThrough。 | 有界列表/队列；转发 continuation，不要在每页重复去重（M1-11、M1-13）。 |
 | `RecordOrderedLookupPort`、`lookupOrdered` | `src/core/record-store/lookup-ports.ts:67` | 按 (order, refKey) 有序翻页，可带 direction/bound；`lowerBound` 是不分方向的下界，倒序续页要停在某个值之上时用它。 | 需要稳定顺序与续页时；不要扫描无界页来凑一页过滤结果，也不要先探测再在读的一侧比对停止行。 |
 | `RecordCountPort`、`countLookup` | `src/core/record-store/lookup-ports.ts:88` | 相等条件计数或 distinct 计数。 | 只要数量时；不要用翻页自行计数。 |
@@ -63,13 +63,14 @@
 | `textMatches` | `src/core/record-store/text-scan.ts:67` | all/any 子串匹配。 | 全文扫描与 read model 复核。 |
 | `decodeTextSearchAfter` | `src/core/record-store/lookup-index.ts:751` | 续页 key 必须是本 aggregateType 的完整 canonical refKey。 | 全文检索续页。 |
 | `messageOf` | `src/contracts/error-message.ts:2` | `Error.message`，否则 `String(error)`；转换抛错不吞。 | 本层与上层拼 reason；直接 import contracts，不要为它 import RecordStore。 |
-| `bindPreparedRecords` | `src/core/record-store/record-codec.ts:695` | 事务内把真实末事件 cursor 绑到注册的 null 字段，再做最终 schema 校验。 | 只有两个 backend 在 commit 内调用；上层写 null 占位 + bindings，不要自己填 since/until（CS-01、CS-08、CS-10）。 |
-| `bindCommitCursor` | `src/core/record-store/commit-extensions.ts:113` | 机械绑定：形状、重复、白名单、null 占位检查。 | 同上，事务内；不要绕过它手改记录 JSON。 |
+| `bindPreparedRecords` | `src/core/record-store/record-codec.ts:697` | 事务内把真实末事件 cursor 绑到注册的 null 字段，再做最终 schema 校验。 | 只有两个 backend 在 commit 内调用；上层写 null 占位 + bindings，不要自己填 since/until（CS-01、CS-08、CS-10）。 |
+| `bindCommitCursor` | `src/core/record-store/commit-extensions.ts:134` | 机械绑定：形状、重复、白名单、null 占位检查。 | 同上，事务内；不要绕过它手改记录 JSON。 |
+| `COMMIT_CURSOR_FIELDS`、`hasNullCursorPlaceholder`、`fillCommitCursor` | `src/core/record-store/ports.ts:102`、`src/core/record-store/commit-extensions.ts:25`、`src/core/record-store/commit-extensions.ts:35` | 可绑定游标字段的唯一闭集，以及占位检查和填写：顶层按同名 null，嵌套数组只填 null 元素、已绑定的保留原值。 | 事务内绑定与提交前检查；不要另写字段白名单或手改记录 JSON。 |
 
 ## 内部用
 - `body-codec.ts`：`ArtifactBodyCodecError`、`artifactBodyKey`、`encodeArtifactBodyRow`、`readEncodedArtifactRef`、`decodeArtifactBodyRow`。
 - `body-store.ts`：`ArtifactBodyRows`（持久化 seam，只由两种正文实现提供）。
-- `commit-extensions.ts`：`COMMIT_CURSOR_FIELDS`、`RejectedInsideTransaction`、`validateUniqueClaims`、`findClaimConflicts`、`ledgerHorizonMatches`。
+- `commit-extensions.ts`：`RejectedInsideTransaction`、`validateUniqueClaims`、`findClaimConflicts`、`ledgerHorizonMatches`。
 - `guarded-revision.ts`：`decodeGuardedRevision`。
 - `lookup-index.ts`：`AGGREGATE_TYPE_PATTERN`、`RecordLookupRegistrationError`、`createRecordLookupRegistry`、`decodeLookupRequest`、`decodeOrderedLookupRequest`、`decodeCountRequest`、`orderedRangePlanOf`、`encodeLookupValues`、`lookupIndexKeyOf`、`distinctLookupValueKeyOf`、`orderedLookupCandidateOf`、`lookupMatcherOf`、`compareOrderedValues`、`matchesOrderedRequest`、`decodeTextSearchRequest`。
 - `migrations.ts`：`CORE_TABLE_DDL`、`checkRecordStoreSchema`、`initRecordStoreSchema`。

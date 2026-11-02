@@ -32,6 +32,7 @@ import type { GraphWrite } from '../../src/core/work-graph/model/session-contrac
 import type { SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { LinkSessionWorkInput } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { decodeSessionWorkLink, sessionWorkLinkRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS, sessionResponsibilityChangedEventFromEvent } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -215,10 +216,11 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   const sessionFacts = createSessionFactsService({ records });
   // ':83–91' correction: the trusted basis is the real reader, never a fake.
   const responsibilities = createSessionResponsibilityService({
-    records, lookups: records, basis: createSessionResponsibilityBasisReader(records), now,
+    records, lookups: records, basis: createSessionResponsibilityBasisReader(records), now,duty: unknownSessionDuty,
+  
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
-  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts });
+  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
   const materialReads = createMaterialRecordReaders(records);
   const mailbox = createSessionMailbox({
     defaultInquiryDeadlineMs: 86_400_000,
@@ -357,7 +359,8 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
     if (event.status !== 'ready') throw new Error(JSON.stringify(event));
     const closed = sessionResponsibilityChangedEventFromEvent(event.value.event);
     if (closed.status !== 'decoded') throw new Error(closed.reason);
-    expect({ mode: closed.value.mode, task: closed.value.taskBasis.task, finishedAt: closed.value.taskBasis.finishedAt })
+    if (closed.value.basis.kind !== 'task') throw new Error('the terminal close is not a Task basis');
+    expect({ mode: closed.value.mode, task: closed.value.basis.task, finishedAt: closed.value.basis.finishedAt })
       .toEqual({ mode: 'terminal', task, finishedAt: at });
   }
 

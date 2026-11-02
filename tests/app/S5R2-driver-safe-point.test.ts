@@ -5,6 +5,7 @@ import { makeCommitCursor, type GoalRef } from '../../src/contracts/ledger.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { CollaborationDriver, CollaborationStartInput } from '../../src/app/collaboration-driver.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import {
   GOAL_A, GOAL_B, T, openS5DecisionFixture, type S5DecisionFixture,
 } from '../helpers/S5-decision-fixture.js';
@@ -52,7 +53,7 @@ function observed(calls: RecordedAdvance[]) {
 }
 async function idleSession(f: S5DecisionFixture) {
   const ref = await f.createS5Session('s5r2-d-idle');
-  const card = ready(await createSessionDirectory({ records: f.records, lookups: f.records }).readSession(f.ctx, ref));
+  const card = ready(await createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }).readSession(f.ctx, ref));
   expect(card.record).toMatchObject({ lifecycle: 'active', occupancy: null });
   return ref;
 }

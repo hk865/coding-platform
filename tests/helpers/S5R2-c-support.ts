@@ -22,6 +22,7 @@ import type { GoalSettingsPort, MessageDutiesFactsPort } from '../../src/core/wo
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import { decodeGoalSettingsChangedEvent } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
@@ -62,7 +63,7 @@ export function assembleS5R2C(f: S5DecisionFixture) {
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
   const { authority } = createMaterialRecordReaders(f.records);
   const materials = createMaterialService({ bodies: f.bodies, authority, now: f.now });
-  const sessions = createSessionDirectory({ records: f.records, lookups: f.records });
+  const sessions = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
   const executions = createRunStateReader({ records: f.records });
   const duties = ({
     async readMessageDutiesFacts(_ctx, input) {

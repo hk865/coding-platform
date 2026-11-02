@@ -484,7 +484,13 @@ async function assembleOneLine(
   const history = await readHistoryParts(deps, ctx, workspace, chain, headRecord, state);
   const earlyProblem = lineState.problem ?? history.problem;
 
-  const duty = await resolveDuty(deps.dutyFor, ctx, headRecord.role);
+  const resolvedDuty = await resolveDuty(deps.dutyFor, ctx, headRecord.role);
+  if (resolvedDuty.status !== 'ready') {
+    noteProblem(lineState, resolvedDuty.status === 'rejected'
+      ? { code: resolvedDuty.code, reason: resolvedDuty.reason }
+      : { code: 'unavailable', reason: `the Session duty read is ${resolvedDuty.status}` });
+  }
+  const duty = resolvedDuty.status === 'ready' ? resolvedDuty.value : ('unknown' as const);
   const openLinks = earlyProblem === null ? await readOpenResponsibleLinks(deps.records, workspace, chain, lineState,
     deps.lookupPageLimit ?? 200) : emptyOpenLinks();
   const responsibleTriples = dedupeTasks(openLinks.taskLinks.map((entry) => entry.link.ref.target as { ref: TaskTriple }).map((target) => target.ref));
@@ -522,7 +528,10 @@ async function assembleOneLine(
   const responsibleOpen: LineTaskFactV1[] = responsibleTriples
     .map((task) => taskFacts.get(taskCanonicalKey(task)))
     .filter((task): task is LineTaskFactV1 => task !== undefined);
-  const responsibleOpenOther = openLinks.otherLinks.map((entry) => entry.link.ref.target.kind === 'work' ? 'work' : 'module');
+  // `otherLinks` holds only non-task links by construction (readOpenResponsibleLinks), so the kind is the real one.
+  const responsibleOpenOther = openLinks.otherLinks.map(
+    (entry): 'work' | 'module' | 'goal' | 'project' =>
+      entry.link.ref.target.kind as 'work' | 'module' | 'goal' | 'project');
   // L16: the Run's Goal desired state (D-9) comes from the same task-graph read.
   if (holder !== null && holder.kind === 'run') holder.run.goalDesiredState = goalDesiredStateIn(shared, holder.run.run.task.goalId);
   if (latestWork !== null) latestWork.goalDesiredState = goalDesiredStateIn(shared, latestWork.run.task.goalId);
@@ -814,8 +823,7 @@ function chainEntry(session: SessionRecord): LineChainEntryV1 {
 }
 
 async function resolveDuty(dutyFor: SessionDutyReadPort, ctx: CoreCallContext, role: RoleConfigurationRef) {
-  const resolved = await dutyFor(role, ctx);
-  return resolved.status === 'ready' ? resolved.value : ('unknown' as const);
+  return await dutyFor(role, ctx);
 }
 
 // --- open responsible links (L1 table; index 4) ---------------------------- //

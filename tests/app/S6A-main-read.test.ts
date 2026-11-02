@@ -174,6 +174,10 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
   it('R-12: 21 requests on one goal read as a page of 20 and a page of 1', async () => {
     const cards = await openWorld(backend);
     const goal = cards.world.goals.second;
+    const limits = ready<{ revision: number }>(await cards.main.route('projects/role-limits',
+      { projectRef: { projectId: cards.main.scope.projectId } }), 'the project limits');
+    expect(asRecord(await cards.main.route('projects/role-limits/set', { commandId: 's6a-main-read-open-21',
+      expectedRevision: limits.revision, open: { secretary: 96 } }))['status']).toBe('committed');
     const made = await cards.main.submitMany({ label: 'twenty-one', goalId: goal.goalId, count: 21 });
     const twentiethSince = await sinceOf(cards.main, made[1]!);
 
@@ -204,6 +208,10 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
     expect(roots(await readMain(workspace, null))).toEqual(rootsOf(order.after));
 
     // 18 requests on the first goal: its page holds them, then the two newest pre-goal requests (20 in all).
+    const limits = ready<{ revision: number }>(await workspace.route('projects/role-limits',
+      { projectRef: { projectId: workspace.scope.projectId } }), 'the project limits');
+    expect(asRecord(await workspace.route('projects/role-limits/set', { commandId: 's6a-main-read-open-18',
+      expectedRevision: limits.revision, open: { secretary: 96 } }))['status']).toBe('committed');
     const onFirst = await workspace.submitMany({ label: 'on-first', goalId: order.first.ref.goalId, count: 18 });
     const lastShownSince = await sinceOf(workspace, early[1]!);
     const page1 = await readMain(workspace, order.first.ref.goalId);
@@ -219,6 +227,10 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
   it('R-12: a no-goal cursor taken before the first goal existed continues to nothing older than that goal', async () => {
     const cards = await openWorld(backend);
     const workspace = cards.second;
+    const limits = ready<{ revision: number }>(await workspace.route('projects/role-limits',
+      { projectRef: { projectId: workspace.scope.projectId } }), 'the project limits');
+    expect(asRecord(await workspace.route('projects/role-limits/set', { commandId: 's6a-main-read-open-21-pre',
+      expectedRevision: limits.revision, open: { secretary: 96 } }))['status']).toBe('committed');
     const made = await workspace.submitMany({ label: 'before-any-goal', goalId: null, count: 21 });
     const twentiethSince = await sinceOf(workspace, made[1]!);
     const page1 = await readMain(workspace, null);
@@ -294,6 +306,10 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
     it('a main/read without its cursor field is invalid', async () => {
       const cards = await openWorld(backend);
       const goal = cards.world.goals.second;
+      const limits = ready<{ revision: number }>(await cards.main.route('projects/role-limits',
+        { projectRef: { projectId: cards.main.scope.projectId } }), 'the project limits');
+      expect(asRecord(await cards.main.route('projects/role-limits/set', { commandId: 's6a-main-read-open-cursor',
+        expectedRevision: limits.revision, open: { secretary: 96 } }))['status']).toBe('committed');
       const made = await cards.main.submitMany({ label: 'reject-cursor', goalId: goal.goalId, count: 21 });
       const page1 = await readMain(cards.main, goal.goalId);
       const answer = asRecord(await cards.main.route('main/read', { goalId: goal.goalId }));

@@ -19,6 +19,7 @@ import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
@@ -47,7 +48,7 @@ export type OverboundNoticesWorld = {
 
 /** Real Session creation without the kernel-store file (the listing never reads it). */
 async function createNoticeSession(f: S5DecisionFixture, requestKey: string): Promise<SessionRef> {
-  const directory = createSessionDirectory({ records: f.records, lookups: f.records });
+  const directory = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
   const admitted = await directory.admitSessionCreation(f.ctx, { meta: { requestId: `qa10-admit-${requestKey}`, expected: [] },
     input: { workspace: f.base.scope,
       kernelStore: { adapterId: 's5-kernel', storeKey: 's5-kernel-store' },
@@ -173,7 +174,7 @@ export async function buildOverboundNoticesWorld(
   }
 
   const undelivered = createUndeliveredReplyNoticeSource({ records: f.records,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records }), messages: mailbox,
+    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }), messages: mailbox,
     ...(config.readPageLimit === undefined ? {} : { readPageLimit: config.readPageLimit }) });
   return { sourceSession, undelivered, expected: { sessions: created.length, memberNotices: config.memberNotices,
     undeliveredReplies: config.replies, memberTailKey, replyTailKey } };

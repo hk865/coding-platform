@@ -13,6 +13,7 @@ import { createDecisionMessageService } from '../../src/core/work-graph/communic
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -49,7 +50,7 @@ export function realOwners(f: S5DecisionFixture, duties: readonly PlatformDutyV1
   const deps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records, materials, now, newId, systemActor: f.operatorActor,
-    sessions: createSessionDirectory({ records, lookups: records }),
+    sessions: createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records }),
     roles: createRoleConfigurationService({ records, now, eventId: newId }),
     ...(duties === null ? {} : { duties: {

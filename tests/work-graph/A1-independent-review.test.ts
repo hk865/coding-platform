@@ -64,6 +64,8 @@ describe.each(['memory', 'sqlite'] as const)('A1 independent %s review', kind =>
   it('paginates distributed relations without rescanning the complete target on every page', async () => {
     const f = await make(kind);
     expect(await f.adopt('bounded-pages-adopt')).toMatchObject({ status: 'committed' });
+    // The real executor admission counts every created line; this row really creates 64.
+    await f.setOpenLimit('executor', 100);
     const target = { kind: 'module' as const, ref: f.moduleRef(GRAPH_MODULE_ONE) };
     const expected = new Set<string>();
     const relations = ['responsible', 'participates', 'investigated'] as const;

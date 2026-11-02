@@ -27,7 +27,7 @@ import { makeCommitCursor } from '../../src/contracts/ledger.js';
 import type { QueryRunRef } from '../../src/contracts/query-job.js';
 import {
   archiveSessionRecord, createSessionRecord, deriveAvailability, nextOccupancyGeneration,
-  observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, openResponsibleLinkOf, ownsOccupancy, ownsQuery,
+  observeSessionHealthRecord, occupancyAdmissionProblem, occupySessionRecord, openResponsibleLinkOf, openScopeLinkOf, ownsOccupancy, ownsQuery,
   reactivateSessionRecord, releaseSessionRecord, sessionMachineStateOf, transitionSession,
   type HolderPhase, type SessionArchiveGuardV1, type SessionDispatchGuardV1, type SessionEffect, type SessionEvent,
   type SessionGuardContext, type SessionHealth,
@@ -765,6 +765,26 @@ describe('SES-11 session_archived / SES-14 session_reactivated', () => {
     expect(openResponsibleLinkOf([link(mod, 'responsible', true), link(work, 'responsible', true), link(task, 'responsible', true)]))
       .toBe('work');
     expect(openResponsibleLinkOf([link(task, 'responsible', true), link(work, 'responsible', true)])).toBe('task');
+  });
+
+  it('the scope link fact: goal/project, and a module only for an adviser or scribe', () => {
+    const mod: WorkLinkTarget = { kind: 'module', ref: { projectId: 'p1', moduleId: 'm1' } };
+    const goal: WorkLinkTarget = { kind: 'goal', ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' } };
+    const project: WorkLinkTarget = { kind: 'project', ref: { projectId: 'p1' } };
+    const link = (target: WorkLinkTarget, relation: WorkLinkRelation, open: boolean): Pick<SessionWorkLink, 'ref' | 'until'> => ({
+      ref: { aggregateType: 'SessionWorkLink', projectId: 'p1', sessionId: 's1', target, relation },
+      until: open ? null : makeCommitCursor(3),
+    });
+    expect(openScopeLinkOf([], 'executor')).toBe(false);
+    expect(openScopeLinkOf([link(goal, 'responsible', true), link(project, 'responsible', true)], 'executor')).toBe('goal');
+    expect(openScopeLinkOf([link(project, 'responsible', true), link(goal, 'responsible', true)], 'executor')).toBe('project');
+    expect(openScopeLinkOf([link(goal, 'responsible', false), link(project, 'participates', true)], 'executor')).toBe(false);
+    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'executor')).toBe(false);
+    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'secretary')).toBe(false);
+    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'adviser')).toBe('module');
+    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'scribe')).toBe('module');
+    expect(openScopeLinkOf([link(mod, 'responsible', true)], 'unknown')).toBe(false);
+    expect(openScopeLinkOf([link(mod, 'responsible', true), link(goal, 'responsible', true)], 'unknown')).toBe('goal');
   });
 
   it('guard order: archived → occupied → links → pin', () => {

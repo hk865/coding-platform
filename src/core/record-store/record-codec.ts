@@ -17,12 +17,14 @@
  * `GOAL_RECORD_SCHEMAS`); this module only enforces the mechanical envelope.
  */
 import { canonicalJson, type JsonValue } from "../../contracts/fingerprint.js";
+import type { BoundCursorField } from "../../contracts/data-format.js";
 import type { CommitCursor, CommandFingerprint } from "../../contracts/command-event.js";
 import { seqOfCommitCursor } from "../../contracts/ledger.js";
 import type { AggregateRef, VersionedRef } from "../../contracts/ledger.js";
 import { messageOf } from "../../contracts/error-message.js";
 import type { CommitCursorBinding, DecodeResult, EncodedDomainEvent, EncodedEventSchema, EncodedRecord, EncodedRecordSchema, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordGuard, StoreCommitReceipt, StoreFailure, StoredVersion, UniqueClaimChange } from "./ports.js";
-import { bindCommitCursor, COMMIT_CURSOR_FIELDS, validateUniqueClaims } from "./commit-extensions.js";
+import { bindCommitCursor, hasNullCursorPlaceholder, validateUniqueClaims } from "./commit-extensions.js";
+import { COMMIT_CURSOR_FIELDS } from "./ports.js";
 
 // --------------------------------------------------------------------------
 // Failure and small helpers
@@ -115,16 +117,16 @@ function registrationError(message: string): never {
 function validateCommitCursorFields(
   schemaId: string,
   raw: unknown,
-): readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] | undefined {
+): readonly BoundCursorField[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) registrationError(`record schema ${schemaId} commitCursorFields must be an array`);
   const seen = new Set<string>();
-  const fields: ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] = [];
+  const fields: BoundCursorField[] = [];
   for (const field of raw) {
     if (!(COMMIT_CURSOR_FIELDS as readonly unknown[]).includes(field)) {
       registrationError(`record schema ${schemaId} commitCursorFields may only contain ${COMMIT_CURSOR_FIELDS.join(", ")}`);
     }
-    const cursorField = field as (typeof COMMIT_CURSOR_FIELDS)[number];
+    const cursorField = field as BoundCursorField;
     if (seen.has(cursorField)) registrationError(`record schema ${schemaId} has duplicate commit cursor field ${cursorField}`);
     seen.add(cursorField);
     fields.push(cursorField);
@@ -591,7 +593,7 @@ export function planPreparedCommit(
           reason: `CommitCursorBinding.field must be one of ${COMMIT_CURSOR_FIELDS.join(", ")}`,
         };
       }
-      const cursorField = field as (typeof COMMIT_CURSOR_FIELDS)[number];
+      const cursorField = field as BoundCursorField;
       const bindingKey = `${refKey}\u0000${cursorField}`;
       if (seenBindings.has(bindingKey)) {
         return { status: "invalid", reason: `duplicate commit cursor binding for ${refKey}.${cursorField}` };
@@ -612,7 +614,7 @@ export function planPreparedCommit(
       if (!allowed.includes(cursorField)) {
         return { status: "invalid", reason: `record schema ${schema.schemaId} does not allow commit cursor field ${cursorField}` };
       }
-      if (target.parsed[cursorField] !== null) {
+      if (!hasNullCursorPlaceholder(target.parsed, cursorField)) {
         return { status: "invalid", reason: `record ${refKey} commit cursor field ${cursorField} is not a null placeholder` };
       }
       commitCursorBindings.push({ refKey, field: cursorField });
@@ -699,7 +701,7 @@ export function bindPreparedRecords(
   registry: RecordSchemaRegistry,
 ): DecodeResult<readonly DecodedRecordEnvelope[]> {
   if (bindings.length === 0) return { status: "decoded", value: records };
-  const allowedFields = (schemaId: string): readonly ("since" | "until" | "unavailableSince" | "responseSince" | "startedSince")[] =>
+  const allowedFields = (schemaId: string): readonly BoundCursorField[] =>
     registry.recordBySchemaId(schemaId)?.commitCursorFields ?? [];
   const bound = bindCommitCursor(
     records.map((entry) => entry.record),

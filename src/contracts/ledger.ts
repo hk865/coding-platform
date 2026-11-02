@@ -35,6 +35,10 @@ export type ProjectRef = {
     aggregateType: "Project";
     projectId: string;
 };
+export type ProjectRoleLimitsRef = {
+    aggregateType: "ProjectRoleLimits";
+    projectId: string;
+};
 export type WorkspaceRef = {
     aggregateType: "Workspace";
     projectId: string;
@@ -45,7 +49,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef | import('./session-activity.js').SessionActivityRef | import('./initialization-binding.js').InitializationBindingRef | InitializationAdoptionRef | DispatchCounterRef | import('./goal-interruption.js').GoalInterruptionRef | ReworkRequestRef | ModuleOverlapGateRef | HandoffBriefRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | ProjectRoleLimitsRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | UserDecisionSnapshot["ref"] | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef | import('./session-activity.js').SessionActivityRef | import('./initialization-binding.js').InitializationBindingRef | InitializationAdoptionRef | DispatchCounterRef | import('./goal-interruption.js').GoalInterruptionRef | ReworkRequestRef | ModuleOverlapGateRef | HandoffBriefRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;

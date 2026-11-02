@@ -16,6 +16,7 @@ import { createLineSettingsService } from '../../src/core/work-graph/configurati
 import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-settings-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 const at = '2026-09-24T00:00:00.000Z', projectId = 'replay-project', workspaceId = 'workspace-main';
@@ -72,7 +73,7 @@ it.each(['memory', 'sqlite'] as const)('%s: replay restores the original Goal ev
     // Session via the Session Runtime entry, then the public line-pin owner adds
     // it. The Project stays at the revision createProject wrote.
     const kernelDir = await mkdtemp(join(tmpdir(), 'next-r3a-kernel-')); dirs.push(kernelDir);
-    const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+    const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
     const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r3a-kernel',
       storeKey: 'r3a-kernel-store', workspace: { projectId, workspaceId },
       databasePath: join(kernelDir, 'kernel.sqlite') }] });

@@ -67,6 +67,7 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
@@ -283,9 +284,9 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
   const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
     materials: materialsPort, now, eventId });
   const catalog = createArchitectureCatalogService({ records: backend.records });
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records });
+  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
   const lifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
-    sessionFacts: createSessionFactsService({ records: backend.records }) });
+    sessionFacts: createSessionFactsService({ records: backend.records }), duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records: backend.records, lookups: backend.records,
     sessionFacts: createSessionFactsService({ records: backend.records }), now });
   const roles = createRoleConfigurationService({ records: backend.records, now, eventId });
@@ -613,7 +614,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
     const archive = createSessionArchiveService({
       sessionLifecycle: lifecycle, sessionFacts: createSessionFactsService({ records: backend.records }),
       responsibilities: createSessionResponsibilityService({ records: backend.records, lookups: backend.records,
-        basis: createSessionResponsibilityBasisReader(backend.records), now }),
+        basis: createSessionResponsibilityBasisReader(backend.records), now, duty: unknownSessionDuty }),
       sessionAnomalies: anomalies, controls: steps.controls, plans, executions, sessions, messages: mailbox,
       claims: { ...claims, requeueTask: requeues.requeueTask, readTaskRequeue: requeues.readTaskRequeue },
       runtime: { ...steps.runtime.port,

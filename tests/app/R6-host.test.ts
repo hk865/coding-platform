@@ -413,11 +413,7 @@ describe('R6.1a domain routes (expected red until phase 2)', () => {
   // every later Kernel/message/reopen step is unreached and is reported as such.
   it('carries a real Session, Host message and original Kernel history through an explicit reopen', async () => {
     const role: RoleConfigurationRef = {
-      kind: 'role_spec',
-      pin: {
-        ref: { aggregateType: 'RoleSpecRevision', projectId: scope.projectId, roleId: 'r6-builder', revision: 1 },
-        digest: 'a'.repeat(64),
-      },
+      kind: 'legacy_template', templateId: 'builder', templateRevision: '1',
     };
     const root = await mkdtemp(join(tmpdir(), 'r6b-host-ws-'));
     const database = await mkdtemp(join(tmpdir(), 'r6b-host-db-'));
