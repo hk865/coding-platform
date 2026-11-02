@@ -699,9 +699,9 @@ export class PlanBoard {
    * One core route over HTTP, served by the Host's route layer on this board's platform: `createWorkbenchServer`
    * with `createPlatformCoreRouteBindings` (the route table `host.ts:1116` binds), the operator as the startup
    * actor, so the owner is called with the Host call context the server builds (`createHostCoreCallContext`).
-   * Any answer: a refusal is a non-200 carrying its rejection body.
+   * Any answer, status included: a refusal is a non-200 carrying its rejection body.
    */
-  async route<T>(suffix: string, body: unknown): Promise<T> {
+  async routeResponse(suffix: string, body: unknown): Promise<Response> {
     if (this.routes === null) {
       const token = 'plan-board-route-token';
       const server = createWorkbenchServer({ token, bindings: createPlatformCoreRouteBindings(this.platform), actor: { ...SCENARIO_OPERATOR },
@@ -711,8 +711,12 @@ export class PlanBoard {
       const address = await server.listen(0);
       this.routes = { base: `http://${address.host}:${address.port}`, token };
     }
-    const response = await corePost(this.routes.base, suffix, this.routes.token, body);
-    return await response.json() as T;
+    return await corePost(this.routes.base, suffix, this.routes.token, body);
+  }
+
+  /** `routeResponse`'s JSON body; a refusal is its non-200 rejection body. */
+  async route<T>(suffix: string, body: unknown): Promise<T> {
+    return await (await this.routeResponse(suffix, body)).json() as T;
   }
 }
 

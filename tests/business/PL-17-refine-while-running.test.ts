@@ -10,16 +10,15 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
-import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { checkConfiguration, ready } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
-import { awaitProposal, proposalRefOf, readBody, readProposal } from '../helpers/IV-host-fixture.js';
+import { awaitProposal, proposalRefOf, readBody } from '../helpers/IV-host-fixture.js';
 import { sessionOf } from '../helpers/S7A-fixture.js';
 import {
-  adoptPLTwoStageSkeleton, holdPLTaskRequest, openPLWorkflowWorld, plSupersedeDraft, plSystemRoundRef,
+  adoptPLTwoStageSkeleton, holdPLTaskRequest, openPLWorkflowWorld, plSystemRoundRef,
   plToolPlanOf, plStageTwoDraft, satisfyPLTask, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
@@ -82,19 +81,6 @@ it('PL-17: refine is sent while the last first-stage Run is still entered', asyn
     const written = await awaitProposal(workflow.world, proposalRefOf(refine, workflow.goal));
     expect(written).toMatchObject({ status: 'ready', value: { status: 'candidate', basedOn: skeleton.plan.ref } });
     if (written.status !== 'ready') throw new Error('PL-17: the refine candidate is not readable');
-
-    // Adoption is judged at adoption: a candidate that touches the running A answers `busy`.
-    const touching = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft: plSupersedeDraft(skeleton.plan, workflow.goal, 'pl-17'),
-      reason: { text: 'PL-17 supersede the running A', sources: [], affectedTaskIds: ['pl-a'] },
-    }, 'pl-17-propose'))) as { status: string; value: PlanProposal };
-    expect(touching.status, JSON.stringify(touching)).toBe('committed');
-    const busy = await workflow.main.post('plans/apply', graphWrite(S6A_SCOPE, {
-      proposalRef: touching.value.ref, expectedProposalRevision: touching.value.revision, decisionRefs: [],
-    }, 'pl-17-apply-busy'));
-    expect(busy, JSON.stringify(busy)).toMatchObject({ status: 'rejected', code: 'busy' });
-    expect((await workflow.main.activePlan(workflow.goal))?.ref).toEqual(skeleton.plan.ref);
-    expect((await readProposal(workflow.world, touching.value.ref)).status).toBe('candidate');
 
     const refineApply = await workflow.main.post('plans/apply', graphWrite(S6A_SCOPE, {
       proposalRef: written.value.ref, expectedProposalRevision: written.value.revision, decisionRefs: [],

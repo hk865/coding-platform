@@ -1499,9 +1499,12 @@ export class HostFuzz {
     const answer = await write();
     const outcome = outcomeOf(answer);
     if (quiet && (outcome.startsWith('rejected:') || outcome.endsWith(':replayed'))) {
-      const written = ledgerWrites(ledger) - before;
-      if (written !== 0) throw new Error(`${what}: ${outcome}${reasonOf(answer)} yet ${written} ledger write(s) were made\n${this.replayText()}`);
-      this.counts.add(`zero-write-refusal:checked`);
+      // PS §3.5: stopping affected work is an exit that writes, so that refusal owes no zero-write check.
+      if (!reasonOf(answer).includes('stopping_affected_work')) {
+        const written = ledgerWrites(ledger) - before;
+        if (written !== 0) throw new Error(`${what}: ${outcome}${reasonOf(answer)} yet ${written} ledger write(s) were made\n${this.replayText()}`);
+        this.counts.add(`zero-write-refusal:checked`);
+      }
     }
     return answer;
   }

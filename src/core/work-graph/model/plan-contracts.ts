@@ -6,7 +6,7 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
-import type { TaskTriple, TaskAttemptRef, RunRef, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
+import type { TaskTriple, TaskAttemptRef, RunRef, RunSnapshot, TaskBudgetV1, TaskEligibility } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { AdoptionGovernancePinsV1 } from '../../../contracts/initialization-adoption.js';
@@ -296,10 +296,30 @@ export interface PlanTaskPort {
 }
 
 /**
+ * PS §3.2: the Tasks a future candidate changes only in disposition (the same
+ * `dispositionOnlyTaskIds` TASK-19 guard 1 reads) and every Run each of them has
+ * across all Plans. A Task with no Run is omitted: it cannot be stopped.
+ */
+export type AdoptionStopTargetsV1 = {
+  tasks: readonly {
+    taskId: string;
+    runs: readonly RunSnapshot[];
+  }[];
+};
+
+/**
  * The REAL Plan service surface. `PlanTaskPort` keeps the seam optional only for
  * the older read-only Port doubles; `createPlanService` always publishes it, so
  * the composition root and every real consumer see the required method.
  */
 export type PlanServicePort = PlanTaskPort
   & Required<Pick<PlanTaskPort, 'proposeInitialPlanFromAnswer' | 'queryGoalDisplay' | 'queryGoalLiveRuns'
-    | 'queryGoalResumeContinuations'>>;
+    | 'queryGoalResumeContinuations'>>
+  & {
+    /**
+     * PS §3.2 read-only seam: the affected disposition-only Tasks and their Runs,
+     * for the adoption-stop wrapper. It reuses the public proposal read's
+     * authorization and never writes.
+     */
+    readAdoptionStopTargets(ctx: CoreCallContext, proposalRef: PlanProposalRef): Promise<ReadResult<AdoptionStopTargetsV1>>;
+  };

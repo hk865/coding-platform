@@ -173,6 +173,7 @@ import { decisionSourceKey, decisionSubjectKey } from '../contracts/goal-decisio
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
+import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalRunsForCount, readTaskClosure, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
@@ -430,8 +431,8 @@ export type TargetPlatformOptions = {
   exportBooks?: TaskbookExportReadPort['read'];
   /**
    * L-02 §6.4.3: the Host's one adoption wrapper, applied to the `plans.applyPlanChange`
-   * the Workflow receives. The published `platform.plans` stays raw: the route binding
-   * already wraps it, and wrapping both would export one adoption twice.
+   * the Workflow receives. The published `platform.plans` is already PS-wrapped: this
+   * option wraps only the Workflow binding, so one adoption is never exported twice.
    */
   wrapPlanChange?: (raw: WorkflowDependencies['plans']['applyPlanChange']) =>
     WorkflowDependencies['plans']['applyPlanChange'];
@@ -2108,10 +2109,24 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }, unavailable),
       readArchitectureRevision: (...args) => trackedCall(() => catalog.readArchitectureRevision(...args), unavailable),
     };
+    // The human adoption wrapper is built here, while `runtime.port` and the RAW control owner are
+    // already final: the whole adopt call (raw apply, target read, controls and delivery) is one
+    // drained unit. The Workflow keeps the raw `planService` binding, so automatic adoption never
+    // enters this wrapper. The new public target read is drained separately.
+    const adoptAfterStop = createPlanAdoptionStop({
+      apply: planService.applyPlanChange,
+      readTargets: planService.readAdoptionStopTargets,
+      controls: rawControls,
+      runtime: runtime.port,
+      readRun: executionReader.readExecution,
+    });
     // Drain these Plan calls before closing the stores (initial planning also reads
     // the answer body), preserving the service's synchronous input snapshot.
     const plans: typeof planService = {
       ...planService,
+      applyPlanChange: (...args) => trackedCall(() => adoptAfterStop(...args), unavailable),
+      readAdoptionStopTargets: (...args) =>
+        trackedCall(() => planService.readAdoptionStopTargets(...args), unavailable),
       proposeInitialPlanFromAnswer: (...args) =>
         trackedCall(() => planService.proposeInitialPlanFromAnswer(...args), unavailable),
       queryGoalDisplay: (...args) => trackedCall(() => planService.queryGoalDisplay(...args), unavailable),

@@ -237,10 +237,10 @@ it('C7 interleavings in both orders (sequential): TASK-19 first → requeue inva
   expect((await readRun(platform, run2Ref)).run).toMatchObject({ status: 'starting', requeueRef, planRef: plans['c7-order-p5']!.ref });
   before = writes();
   const busy = await setDisposition('c7-order-p6', 'deferred');
-  expect(busy).toMatchObject({ status: 'rejected', code: 'busy',
-    reason: `task work-1 still has an unfinished execution: run ${run2Ref.runId} is starting` });
+  expect(busy).toMatchObject({ status: 'rejected', code: 'busy', reason: 'stopping_affected_work' });
   expect(await activePlanRef(platform)).toEqual(plans['c7-order-p5']!.ref);
-  expect(eventTypesIn(directory).slice(before), 'only the candidate was recorded').toEqual(['PlanProposalRecorded']);
+  expect(eventTypesIn(directory).slice(before), 'the candidate and the stop control were recorded')
+    .toEqual(['PlanProposalRecorded', 'ControlIntentSubmitted']);
 
   // R3e-evidence-coverage: Run 1's FAIL evidence (anchored on P1) and the same evidence anchored on the deferred
   // version are APPLICABLE on the reactivated version; a changed definition would make it OUT_OF_SCOPE.
@@ -403,8 +403,10 @@ it('C7 races with a commit barrier (§3.6 PLAN-05): a control in TASK-19\'s wind
   expect(events(), 'the conflicted deferral wrote nothing').toBe(claimedInside.events);
   await check(platform, 'race 3b: the deferral lost to the claim');
   expect(await apply(platform, 'c7-race-p10-apply-2', deferral5)).toMatchObject({ status: 'rejected', code: 'busy',
-    reason: `task work-1 still has an unfinished execution: run ${claimed.value.runRef.runId} is starting` });
-  expect((await readRun(platform, claimed.value.runRef)).run).toMatchObject({ status: 'starting', requeueRef, planRef: p9 });
+    reason: 'stopping_affected_work' });
+  expect((await readRun(platform, claimed.value.runRef)).run).toMatchObject({ status: 'ended', outcome: 'cancelled',
+    controlState: { desiredState: 'cancelled' } });
+  expect(await activePlan()).toEqual(p9);
   expect(c7Case.phasesOf(platform)).not.toContain('FAILED');
 }, 120_000);
 

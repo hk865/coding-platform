@@ -107,6 +107,7 @@ import type {
   TaskPage,
   TaskPlanningDiagnostic,
   TaskRow,
+  AdoptionStopTargetsV1,
 } from '../model/plan-contracts.js';
 import type { AdoptionGovernancePinsV1 } from '../../../contracts/initialization-adoption.js';
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
@@ -1862,6 +1863,33 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return { status: 'ready', value: read.proposal };
   }
 
+  /**
+   * PS §3.2: the Tasks this future candidate changes only in disposition and
+   * every Run each has. The public proposal read is the authorization path (no
+   * checks are copied here); the rest is the same source/delta/facts sequence
+   * `applyFutureRevision` runs before TASK-19, so it names exactly the Tasks
+   * guard 1 judges. A candidate with no source (the initial/request slot) has
+   * no affected Task and no Run to stop.
+   */
+  async function readAdoptionStopTargets(ctx: CoreCallContext,
+    proposalRef: PlanProposalRef): Promise<ReadResult<AdoptionStopTargetsV1>> {
+    const proposalRead = await readPlanProposal(ctx, proposalRef);
+    if (proposalRead.status !== 'ready') return proposalRead;
+    const proposal = proposalRead.value;
+    if (proposal.basedOn === null) return { status: 'ready', value: { tasks: [] } };
+    const sourceRead = await readPlan(records, proposal.basedOn);
+    if (sourceRead.status !== 'ready') return sourceRead;
+    const source = sourceRead.plan;
+    const delta = deriveFuturePlanDelta(source, proposal.draft);
+    if (delta.status !== 'supported') return rejected('unsupported', delta.reason);
+    const facts = await readDispositionChangeTaskFacts(records, proposal.goalRef, source,
+      delta.delta.dispositionOnlyTaskIds);
+    if (facts.status !== 'ready') return facts;
+    return { status: 'ready', value: { tasks: facts.tasks
+      .map(entry => ({ taskId: entry.facts.taskId, runs: entry.facts.runs }))
+      .filter(entry => entry.runs.length > 0) } };
+  }
+
   async function queryTaskGraph(
     ctx: CoreCallContext,
     input: { goalRef: GoalRef; planRef?: PlanRevisionRef; atLeastCursor?: CommitCursor },
@@ -2278,7 +2306,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
   }
 
   return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
-    readInitialPlanAnswerFacts,
+    readInitialPlanAnswerFacts, readAdoptionStopTargets,
     queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations,
     lookupToolCommit };
 }
