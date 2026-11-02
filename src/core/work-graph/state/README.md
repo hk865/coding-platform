@@ -55,6 +55,7 @@
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
+- `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`/`reviewer_not_supported`，`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
 - `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
 - `decision-policy.ts` — 自主级别动作表（含 `create_member` 的两档值与两档都为 `needs_decision` 的 `role_line_add`）、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）。
@@ -66,7 +67,7 @@
 做注记、消息、通知已读、命令、上下文守卫、未知调用、架构捕获与 ref 比较的去这组。
 
 - `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
-- `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:31`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
+- `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:39`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
 - `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。
 - `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
 - `goal-interruption.ts` — 目标中断记录的地址 `interruptionRefOf`（每个目标一条）和两个纯迁移：`pendingGoalInterruption`（缺失/`resumed` → revision+1 的 `pending`，已 `pending` → null 保留）与 `resumedGoalInterruption`（`pending` → `resumed`，缺失/已 `resumed` → null）；返回记录与 `expectedRevision`，不构造 guard。
@@ -134,19 +135,20 @@
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
 | `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:741` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
-| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1601` | SessionMessage 主迁移 | 消息读/回/派生 |
-| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1767` | 建新消息记录 | 收到用户或系统消息 |
-| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1848` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
+| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1607` | SessionMessage 主迁移 | 消息读/回/派生 |
+| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1773` | 建新消息记录 | 收到用户或系统消息 |
+| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1854` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
 | `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:1060` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
 | `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1068` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
 | `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:1074` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
-| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:1091` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
-| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1214` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
-| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:1145` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
-| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1322`、`:1323`、`:1324` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
-| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:175`、`:485`、`:309`、`:1488` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
-| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1182` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
-| `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1264`、`:1305`、`:1239`、`:1237` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
+| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:1099` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
+| `WAIT_INTENTS`、`isWaitMessage` | `src/core/work-graph/state/message-machine.ts:1092`、`src/core/work-graph/state/message-machine.ts:1095` | 可等待意图的闭集（`inquiry`/`action_request`）与一条消息是否成等待（`waitAfterSend` 且意图在这个闭集里） | 等待处置、到期与转发判定共用这一份；不要另写意图列表 |
+| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1222` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
+| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:1153` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
+| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1328`、`:1329`、`:1330` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
+| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:175`、`:485`、`:309`、`:1494` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
+| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1190` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
+| `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1272`、`:1313`、`:1247`、`:1245` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
 | `noProgressKey` | `src/core/work-graph/state/no-progress.ts:175` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
@@ -156,7 +158,9 @@
 | `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:365` | 建注记版本 | 追加注记版本 |
 | `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:221` | 由处置关系算用户复查原因 | 注记复查 |
 | `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:131`、`src/core/work-graph/state/note-machine.ts:102` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
-| `secretaryNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:31` | 纯：一轮 Query 的注记准入——没有请求根（普通 Query、副本）是 `none`；秘书请求轮是 `secretary`，写入种类正好是六个通用种类加 `understanding`（`review` 不是写入种类，`repair` 被拒），带 `withdraw: true` 和只含 Goal id 的授权集 | 准备与开始检查都只经这条规则定类；工具声明和注记工具组只消费这个值，调用方不要各自判类 |
+| `secretaryNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:39` | 纯：一轮 Query 的注记准入——没有请求根（普通 Query、副本）是 `none`；秘书请求轮是 `secretary`，写入种类正好是六个通用种类加 `understanding`（`review` 不是写入种类，`repair` 被拒），带 `withdraw: true` 和只含 Goal id 的授权集 | 准备与开始检查都只经这条规则定类；工具声明和注记工具组只消费这个值，调用方不要各自判类 |
+| `planningNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:61` | 纯：非请求的规划 Query 的注记准入——`plan_round`/`plan_review` 形状是 `planning`（六个通用写入种类、`withdraw: true`、不授 Goal）；`text` 形状只在冻结来源是 Host 系统 `action_request` 且有有效 Goal 时才是 `planning`，`planRef` 不决定类别 | 规划轮的注记工具声明与写入；不要另判轮次类别 |
+| `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:86`、`src/core/work-graph/state/plan-candidate.ts:126` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求必须有已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
 | `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:122`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
 | `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:191` | 提案的读取结论（含 Goal 状态） | 读计划提案 |

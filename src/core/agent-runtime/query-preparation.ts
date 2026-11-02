@@ -16,12 +16,19 @@ import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import { isRequestRound, queryExecutionBindingOf } from '../../contracts/query-job.js';
+import {
+  interventionPlanningQueryRefs, isRequestRound, queryAnswerShapeOf, queryExecutionBindingOf,
+} from '../../contracts/query-job.js';
+import { planResumeOriginalQueryOfText, systemRoundOfText } from '../../contracts/plan-round.js';
+import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import { sha256Hex, canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
+import type { QueryJobAnswerRef } from '../../contracts/query-job.js';
+import { decisionSourceKey } from '../../contracts/goal-decisions.js';
+import type { DecisionCardV1 } from '../work-graph/model/decision-contracts.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.js';
 import { promptSelectionOf } from '../../contracts/prompts/prompt-set.js';
@@ -32,7 +39,7 @@ import type { ConsultationCreateV1, ConsultationFactsV1 } from '../work-graph/mo
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
-import { secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
+import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
 import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
@@ -43,9 +50,12 @@ import { queryPreparedSectionOrder } from './context-rendering.js';
 import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
 import type { ConsultationResolvedFactV1 } from './consultation-facts-text.js';
 import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
-import { answerToolsOf } from './answer-tools.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextQueryHistoryInputV1 } from './context-types.js';
+import type { PlanningQuestionReader } from '../work-graph/tasks/planning-question-reader.js';
+import type { PlanProposal } from '../work-graph/model/plan-contracts.js';
+import { deriveFuturePlanDelta, type FuturePlanDelta } from '../work-graph/tasks/plan-validation.js';
+import { queryPlanSummary } from './context-fact-text.js';
 import {
   promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
   promptTemplatePart, promptTemplateVersion, storePromptTexts, templatesToFreeze,
@@ -98,6 +108,62 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
   if (result.status === 'not_found') return rejected('not_found', 'the required Query fact was not found');
   if (result.status === 'not_ready') return rejected('incomplete', 'the required Query fact is not readable at the required watermark');
   return { status: 'rejected', code: result.code, reason: result.reason, ...(result.current === undefined ? {} : { current: result.current }) };
+}
+
+/**
+ * The review candidate's own full text (spec §6.3.2): the changed tasks'
+ * complete instructions and fields, the new/changed obligations, and the three
+ * dependency differences against the adopted plan. It renders the draft
+ * verbatim and never reads a task card from the adopted universe.
+ */
+function reviewCandidateText(
+  base: PlanRevisionSnapshot,
+  proposal: PlanProposal,
+  changedIds: ReadonlySet<string>,
+  groups: FuturePlanDelta,
+): string {
+  const draft = proposal.draft;
+  const lines: string[] = [
+    `proposal: ${proposal.ref.proposalId}@${String(proposal.revision)}`,
+    `basedOn: ${proposal.basedOn === null ? '(none)' : proposal.basedOn.planId}`,
+  ];
+  const group = (label: string, ids: readonly string[]): void => {
+    if (ids.length > 0) lines.push(`${label}: ${ids.join(', ')}`);
+  };
+  group('added taskIds', groups.addedTaskIds);
+  group('changed taskIds', groups.changedTaskIds);
+  group('cancelled taskIds', groups.cancelledTaskIds);
+  group('disposition-only taskIds', groups.dispositionOnlyTaskIds);
+  for (const task of draft.tasks) {
+    if (!changedIds.has(task.taskId)) continue;
+    const assignment = (draft.assignments ?? []).find(candidate => candidate.taskId === task.taskId);
+    lines.push('', `## task ${task.taskId}: ${task.title}`);
+    if (task.estimatedLines !== undefined) lines.push(`estimatedLines: ${String(task.estimatedLines)}`);
+    if (task.sizeClass !== undefined) lines.push(`sizeClass: ${task.sizeClass}`);
+    if (task.replacedByTaskId !== undefined && task.replacedByTaskId !== null) {
+      lines.push(`replacedByTaskId: ${task.replacedByTaskId}`);
+    }
+    if (assignment !== undefined) lines.push(`instruction:\n${assignment.instruction}`);
+  }
+  const baseObligations = new Map(base.obligations.map(obligation =>
+    [obligation.obligationId, canonicalJson(obligation as unknown as JsonValue)] as const));
+  for (const obligation of draft.obligations) {
+    const carried = obligation.taskIds.some(taskId => changedIds.has(taskId));
+    const text = canonicalJson(obligation as unknown as JsonValue);
+    if (carried || baseObligations.get(obligation.obligationId) !== text) {
+      lines.push(`obligation: ${text}`);
+    }
+  }
+  const difference = (label: string, before: readonly unknown[], after: readonly unknown[]): void => {
+    const left = new Set(before.map(value => canonicalJson(value as unknown as JsonValue)));
+    const right = new Set(after.map(value => canonicalJson(value as unknown as JsonValue)));
+    for (const value of right) if (!left.has(value)) lines.push(`${label} added: ${value}`);
+    for (const value of left) if (!right.has(value)) lines.push(`${label} removed: ${value}`);
+  };
+  difference('dependsOn', base.executionDag.dependsOn, draft.executionDag.dependsOn);
+  difference('taskRelations', base.taskRelations ?? [], draft.taskRelations ?? []);
+  difference('inputRequirements', base.inputRequirements ?? [], draft.inputRequirements ?? []);
+  return lines.join('\n');
 }
 
 /** Per-field intersection of two runtime budgets: null means "no limit", so a
@@ -159,6 +225,8 @@ export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
   promptPacks?: PromptPackSourcePort;
   /** SR3 item 6/§8.3: the SAME hand-off facts owner H publishes, read once for a successor round's brief. */
   handoff?: Pick<SecretaryHandoffFactsPort, 'readBriefState'>;
+  /** The saved planning-question read a `planresume:` preparation assembles from. */
+  planningQuestions?: PlanningQuestionReader;
 };
 
 export function createQueryPreparation(deps: QueryPreparationDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
@@ -334,11 +402,43 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           if (brief.value.state === 'ready') handoff = { kind: 'brief', brief: brief.value.brief };
         }
       }
-      const noteAdmission: QueryNoteAdmissionV1 = secretaryNoteAdmission({
-        requestRoot: secretaryFacts === null ? record.job.job.requestRoot : secretaryFacts.request.requestRoot,
-        effectiveGoalId: secretaryFacts === null ? record.job.job.requestGoalId : secretaryFacts.request.effectiveGoalId,
-        grantedGoalIds: secretaryFacts === null ? [] : secretaryFacts.request.understandingGrants,
-      });
+      // The one frozen shape (spec §5.2.7): computed once here, written to the
+      // tool list and the manifest. Note admission is a separate question
+      // (§5.2.8): a request round keeps the secretary rule; every other Query
+      // takes the planning rule, with only a shape-null planning Query reading
+      // its source message to recognise the trusted Host system round.
+      const shape = queryAnswerShapeOf(
+        execution, secretaryFacts === null ? null : secretaryFacts.executionKind);
+      let hostSystemPlanningSource = false;
+      if (shape === null && execution.kind === 'intervention_planning') {
+        if (deps.messages === undefined) {
+          return rejected('unavailable', 'the planning source read is not bound');
+        }
+        let source;
+        try {
+          source = await deps.messages.readMessage(owned, execution.sourceMessageRef!);
+        } catch (error) {
+          return rejected('unavailable', `the planning source message read failed: ${messageOf(error)}`);
+        }
+        if (source.status !== 'ready') {
+          return rejected('unavailable', 'the planning source message could not be read');
+        }
+        const message = source.value;
+        hostSystemPlanningSource = message.sender.kind === 'host'
+          && message.sender.actor.kind === 'system' && message.intent === 'action_request';
+      }
+      const noteAdmission: QueryNoteAdmissionV1 = secretaryFacts === null
+        ? planningNoteAdmission({
+            answerShape: shape,
+            effectiveGoalId: goal === null ? null : goal.ref.goalId,
+            planRef: focusPlan === null ? null : focusPlan.ref,
+            hostSystemPlanningSource,
+          })
+        : secretaryNoteAdmission({
+            requestRoot: secretaryFacts.request.requestRoot,
+            effectiveGoalId: secretaryFacts.request.effectiveGoalId,
+            grantedGoalIds: secretaryFacts.request.understandingGrants,
+          });
       const finalNames = finalToolNamesOf({
         callKind: 'query',
         noteAdmission,
@@ -353,7 +453,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         materialTools: false,
         // The frozen answer shape follows the request round's own execution
         // kind, never the Host grant or the Role ceiling.
-        answerTools: secretaryFacts === null ? null : answerToolsOf(secretaryFacts.executionKind),
+        answerTools: shape,
         // Preparation freezes the CAPABILITY set; the actual owner wiring is
         // re-checked by the same function at start.
         // Query builds graph/read-only tools and secretary-admitted note tools.
@@ -376,20 +476,142 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // semantic Query never reads it, so an unused declaration stays unused.
       // A secretary round renders its own answer format in the input, so the
       // guide is never appended a second time there.
-      let question = record.job.job.intent.question;
-      if (!requestRound && (execution.kind === 'initial_coordination' || execution.kind === 'intervention_planning')) {
-        if (tracked.texts.templates['initial-planning-answer'] === undefined) {
-          return rejected('invalid', 'the resolved prompt pack has no initial-planning-answer template');
+      const requestQuestion = record.job.job.intent.question;
+      let question = requestQuestion;
+      const appendGuide = (templateId: string, slots: Readonly<Record<string, string>>): CoreRejection | null => {
+        if (tracked.texts.templates[templateId] === undefined) {
+          return rejected('invalid', `the resolved prompt pack has no ${templateId} template`);
         }
-        let planningGuide: string;
         try {
-          planningGuide = renderTemplate(tracked.texts, 'initial-planning-answer', {}, toolNames).text;
+          question = `${question}\n\n${renderTemplate(tracked.texts, templateId, slots, toolNames).text}`;
         } catch (error) {
           const renderProblem = promptRenderProblem(error, pack.manifest.packId);
           if (renderProblem !== null) return renderProblem;
           throw error;
         }
-        question = `${question}\n\n${planningGuide}`;
+        return null;
+      };
+      if (shape === 'plan_round') {
+        const guideProblem = appendGuide('initial-planning-answer', {});
+        if (guideProblem !== null) return guideProblem;
+      } else if (shape === 'plan_review') {
+        // The review round's candidate identity comes only from the request
+        // head; no body parser and no fallback to the adopted plan or a latest
+        // candidate (spec §6.3.2).
+        const head = systemRoundOfText(requestQuestion);
+        if (head === null || head.kind !== 'planreview') {
+          return rejected('invalid', 'the review request does not name a plan proposal');
+        }
+        const proposalRef = { aggregateType: 'PlanProposal' as const, projectId: queryRunRef.projectId,
+          workspaceId: queryRunRef.workspaceId, proposalId: head.proposalId };
+        let proposalRead;
+        try {
+          proposalRead = await deps.plans.readPlanProposal(owned, proposalRef);
+        } catch (error) {
+          return rejected('unavailable', `the review candidate read failed: ${messageOf(error)}`);
+        }
+        if (proposalRead.status !== 'ready') return proposalRead;
+        const proposal = proposalRead.value;
+        if (proposal.revision !== head.proposalRevision) {
+          return rejected('not_found', 'the review candidate is not the requested revision');
+        }
+        if (focusPlan === null) return rejected('not_found', 'the review round has no adopted plan to compare against');
+        const delta = deriveFuturePlanDelta(focusPlan, proposal.draft);
+        if (delta.status !== 'supported') {
+          return rejected('invalid', `the review candidate delta cannot be derived: ${delta.reason}`);
+        }
+        const changedIds = new Set([
+          ...delta.delta.addedTaskIds, ...delta.delta.changedTaskIds,
+          ...delta.delta.dispositionOnlyTaskIds,
+        ]);
+        const candidate = reviewCandidateText(focusPlan, proposal, changedIds, delta.delta);
+        const guideProblem = appendGuide('plan-review-input', {
+          goal: goal === null ? '' : goal.objective,
+          plan: `${queryPlanSummary(focusPlan, tracked.texts)}\n${canonicalJson({
+            stages: focusPlan.stages,
+            tasks: focusPlan.tasks.map(task => ({
+              taskId: task.taskId, title: task.title, scope: task.scope, disposition: task.disposition,
+            })),
+            obligations: focusPlan.obligations,
+            executionDag: focusPlan.executionDag,
+            inputRequirements: focusPlan.inputRequirements ?? [],
+          } as unknown as JsonValue)}`,
+          candidate,
+          message: requestQuestion,
+        });
+        if (guideProblem !== null) return guideProblem;
+      } else if (!requestRound && execution.kind === 'initial_coordination') {
+        const guideProblem = appendGuide('initial-planning-answer', {});
+        if (guideProblem !== null) return guideProblem;
+      }
+      // A `planresume:` Query carries only the head and the original Query ref;
+      // the original question and the per-card answers are assembled here from
+      // the saved facts (spec §5.3.5 #8). No source is rebuilt and no second
+      // scan is added.
+      const resumeOriginal = execution.kind === 'intervention_planning'
+        ? planResumeOriginalQueryOfText(requestQuestion) : null;
+      if (resumeOriginal !== null) {
+        if (deps.planningQuestions === undefined) {
+          return rejected('unsupported', 'the planning question reader is not bound');
+        }
+        if (deps.decisionMessages === undefined) {
+          return rejected('unsupported', 'the decision answer read is not bound');
+        }
+        if (goal === null) return rejected('invalid', 'no goal');
+        const originalRefs = interventionPlanningQueryRefs(resumeOriginal);
+        const original = await deps.queryExecution.readQueryExecution(owned, originalRefs.queryRunRef);
+        if (original.status !== 'ready') return original;
+        const answerRef = original.value.job.job.answerRefs.at(-1);
+        if (answerRef === undefined) return rejected('not_found', 'the original planning round has no answer');
+        const answerRead = await deps.queryExecution.readQueryAnswer(owned, answerRef);
+        if (answerRead.status !== 'ready') return answerRead;
+        const parsed = parseInitialPlanningResponseV2(answerRead.value.answer.answer);
+        if (parsed.status !== 'parsed' || parsed.response.kind !== 'needs_decision') {
+          return rejected('not_found', 'the original planning answer carries no questions');
+        }
+        const questions = parsed.response.questions;
+        const indexOfKey = new Map<string, number>();
+        for (const [index] of questions.entries()) {
+          indexOfKey.set(decisionSourceKey({ kind: 'planning_question', answerRef, questionIndex: index }), index);
+        }
+        const cards: { index: number; card: DecisionCardV1 }[] = [];
+        let cursor: string | undefined;
+        for (;;) {
+          let page;
+          try {
+            page = await deps.planningQuestions.readPlanningQuestions(owned, {
+              goalRef: goal.ref,
+              page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) },
+            });
+          } catch (error) {
+            return rejected('unavailable', `the planning question read failed: ${messageOf(error)}`);
+          }
+          if (page.status !== 'ready') return page;
+          if (page.value.availability !== 'available') {
+            return rejected('unsupported', 'the saved planning questions are not available');
+          }
+          for (const card of page.value.items) {
+            if (card.source.kind !== 'planning_question') continue;
+            const index = indexOfKey.get(card.source.key);
+            if (index !== undefined) cards.push({ index, card });
+          }
+          if (page.value.nextCursor === null) break;
+          cursor = page.value.nextCursor;
+        }
+        if (cards.length === 0) {
+          return rejected('not_found', 'no saved planning question card matches the original answer');
+        }
+        cards.sort((left, right) => left.index - right.index);
+        const saved: string[] = [];
+        for (const { index, card } of cards) {
+          const answerBody = await deps.decisionMessages.readDecisionAnswer(owned, { source: card.source });
+          if (answerBody.status !== 'ready') return answerBody;
+          if (answerBody.value.body === null) {
+            return rejected('not_found', 'a saved planning answer body is missing');
+          }
+          saved.push(`Question ${String(index + 1)}: ${questions[index]}\nAnswer: ${answerBody.value.body.text}`);
+        }
+        question = `${question}\n\nOriginal planning question:\n${original.value.job.job.intent.question}\n\n${saved.join('\n\n')}`;
       }
       // §3.15 item 5: read the frozen consultation payload ONCE from the create
       // operation; a `platform_facts` copy never re-collects mode or facts.
@@ -554,6 +776,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           briefRef: secretaryFacts.request.briefRef,
           understandingGrants: secretaryFacts.request.understandingGrants,
         },
+        answerShape: shape,
         workspace: { ref: workspace.ref, revision: workspaceRevision },
         focusPlan: focusPlan === null ? null : { ref: focusPlan.ref, revision: focusPlan.planRevision },
         permissions: projected.permissions,

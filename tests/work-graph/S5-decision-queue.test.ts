@@ -18,6 +18,13 @@ import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/g
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import type { PlanSourceLineageDeps } from '../../src/core/work-graph/tasks/plan-lineage.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
@@ -37,7 +44,8 @@ const ACCEPT: DecisionSelectionV1 = { kind: 'option', optionId: 'accept' };
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closers.splice(0)) await close(); });
 
-function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTaskPort) {
+function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTaskPort,
+  lineage: PlanSourceLineageDeps) {
   return createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(createGoalDecisionCauseReader({ records, plans })),
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans,
@@ -45,7 +53,8 @@ function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTas
     noticeSources: [createAutomaticReworkNoticeSource({ records })],
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
-    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
+    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage });
 }
 function mustCard(cards: readonly DecisionCardV1[], sourceKey: string): DecisionCardV1 {
   const found = cards.filter(card => card.source.key === sourceKey);
@@ -57,9 +66,10 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
   if (reopen && kind === 'sqlite') await f.reopen();
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
     materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
-  const reads = readers(f.records, plans);
   const mailboxDeps = mailboxDependencies(f);
   const mailbox = createSessionMailbox(mailboxDeps);
+  const queryJobs = createQueryJobService({ records: f.records, now: f.now, eventId: f.newId });
+  const reads = readers(f.records, plans, { messages: mailbox, queries: queryJobs, plans });
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: OPERATOR,
     messages: mailbox, materials: mailboxDeps.materials,
     messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
@@ -167,7 +177,20 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     const f = await openUninitializedQueue(kind); closers.push(f.close);
     expect(await createArchitectureCatalogService({ records: f.records }).readArchitectureRevision(f.ctx, { selection: { kind: 'current' } }))
       .toMatchObject({ status: 'not_found' });
-    const read = ready(await readers(f.records, f.plans).queryDecisionQueue(f.ctx,
+    const lineageMailbox = createSessionMailbox({
+      records: f.records,
+      sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
+      executions: createRunStateReader({ records: f.records }),
+      roles: createRoleConfigurationService({ records: f.records, now: () => T, eventId: () => 'dq03-lineage' }),
+      materials: createMaterialService({ bodies: new RawArtifactBodyStore(),
+        authority: createMaterialRecordReaders(f.records).authority, now: () => T }),
+      systemActor: OPERATOR, now: () => T, newId: () => 'dq03-lineage',
+    });
+    const read = ready(await readers(f.records, f.plans, {
+      messages: lineageMailbox,
+      queries: createQueryJobService({ records: f.records, now: () => T, eventId: () => 'dq03-lineage' }),
+      plans: f.plans,
+    }).queryDecisionQueue(f.ctx,
       { workspace: WORKSPACE_SCOPE, goalRef: GOAL_B, sections: SECTIONS, page: { limit: 50 } }));
     const architecture = read.waitingAnswer.filter(c => c.source.kind === 'goal_cause' && c.actions.includes('adopt_architecture'));
     expect(architecture).toHaveLength(1);

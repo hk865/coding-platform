@@ -97,18 +97,57 @@ function foldedLine(goal: GoalRef, members: readonly NoticeItemV1[]): NoticeLine
   };
 }
 
+/**
+ * L's one `plan_adoption` item (spec §6.4.2): the adopted PlanRevision's v1
+ * line, the future delta, the candidate's declared impact, the pre-accept
+ * review state and the taskbook probe (this Plan has no stages, so the probe
+ * adds no line). The two proposal ids are this fixture's deterministic
+ * candidates; the goal revision is the adoption's own revision 2.
+ */
+function planAdoptionLine(goal: GoalRef, input: {
+  planId: string; cursor: string; summary: string; proposalId: string;
+}): NoticeItemV1 {
+  const itemKey = `plan-adoption:${input.planId}:1`;
+  return {
+    itemKey, category: 'plan_adoption', subject: { kind: 'goal', goalRef: goal },
+    position: { kind: 'commit', cursor: input.cursor as NoticePositionV1['cursor'], itemKey },
+    summary: input.summary,
+    objects: [
+      { kind: 'aggregate', label: 'adopted-plan',
+        pin: { ref: { aggregateType: 'PlanRevision', projectId: goal.projectId, planId: input.planId }, revision: 1 } },
+      { kind: 'aggregate', label: 'candidate',
+        pin: { ref: { aggregateType: 'PlanProposal', projectId: goal.projectId,
+          workspaceId: 'ag2b-collab-workspace', proposalId: input.proposalId }, revision: 2 } },
+      { kind: 'aggregate', label: 'goal', pin: { ref: goal, revision: 2 } },
+    ],
+    rework: null,
+  };
+}
+
 describe.each(BACKENDS)('main/read notices (%s)', backend => {
   it('R-12: one rework line per goal with its member views; goal 1 shows 1 and 3, so the mark reaches 1', async () => {
     const world = await openWorld(backend);
     const [n1, n2, n3] = reworkNotices(await world.seedReworkNotices());
     const { first, second } = world.world.goals;
+    // One adopted PlanRevision per Goal: goal 1's page shows its one adoption
+    // before the folds; goal 2 has its own separate adoption item.
+    const adoption1 = planAdoptionLine(first, {
+      planId: 's6a-cards-plan-goal-1', cursor: 'c0000000014',
+      summary: '已采用 · 计划 v1 · 改 3 个任务（ag2b-work、s6a-cards-work-2、ag2b-gate） · 影响 无 · 尚未审阅',
+      proposalId: 'plan-proposal-ef93b8e18e0aa8a7a3787556cddf7d90',
+    });
+    const adoption2 = planAdoptionLine(second, {
+      planId: 's6a-cards-plan-goal-2', cursor: 'c0000000016',
+      summary: '已采用 · 计划 v1 · 改 2 个任务（ag2b-work、ag2b-gate） · 影响 无 · 尚未审阅',
+      proposalId: 'plan-proposal-d1e41ce0b79b767cb45fa7f11ca6153d',
+    });
 
     const goal1 = await readMain(world, first);
-    expect(goal1.notices).toEqual([foldedLine(first, [n1, n3])]);
-    expect(goal1.seenThrough).toEqual({ automatic_rework: n1.position });
+    expect(goal1.notices).toEqual([adoption1, foldedLine(first, [n1, n3])]);
+    expect(goal1.seenThrough).toEqual({ plan_adoption: adoption1.position, automatic_rework: n1.position });
     expect(typeof goal1.displayToken).toBe('string');
     const goal2 = await readMain(world, second);
-    expect(goal2.notices).toEqual([foldedLine(second, [n2])]);
+    expect(goal2.notices).toEqual([adoption2, foldedLine(second, [n2])]);
     expect(goal2.seenThrough).toEqual({});
     // Reading wrote nothing: the queue still shows the three notices, one by one.
     expect((await world.main.readNotices()).notices).toEqual([n1, n2, n3]);
@@ -117,8 +156,8 @@ describe.each(BACKENDS)('main/read notices (%s)', backend => {
     expect(marked['status']).toBe('committed');
     expect((await world.main.readNotices()).notices).toEqual([n2, n3]);
     const goal2After = await readMain(world, second);
-    expect(goal2After.notices).toEqual([foldedLine(second, [n2])]);
-    expect(goal2After.seenThrough).toEqual({ automatic_rework: n2.position });
+    expect(goal2After.notices).toEqual([adoption2, foldedLine(second, [n2])]);
+    expect(goal2After.seenThrough).toEqual({ plan_adoption: adoption2.position, automatic_rework: n2.position });
     expect((await readMain(world, first)).notices).toEqual([foldedLine(first, [n3])]);
   });
 

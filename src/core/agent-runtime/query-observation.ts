@@ -16,12 +16,10 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
-import {
-  isRequestRound, type QueryJobAnswerV1, type QueryRunRef, type SecretaryRequestManifestV1,
-} from '../../contracts/query-job.js';
+import type { QueryAnswerShapeV1, QueryJobAnswerV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import {
-  answerSubmitNamesIn, buildAnswerText, submittedAnswerArgumentsOf,
+  answerBoundBytes, answerSubmitNamesIn, buildAnswerText, submittedAnswerArgumentsOf,
 } from './answer-tools.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -48,6 +46,8 @@ export type QueryObservationPort = {
 /** Bounded per-call pagination: a Turn is reconstructed page by page, never by an unbounded scan. */
 const MAX_OBSERVATION_PAGES = 64;
 export const MAX_ANSWER_BYTES = 16 * 1024;
+/** The one planning answer bound: only an accepted `submit_plan_round` text may reach it. */
+export const PLANNING_MAX_ANSWER_BYTES = 256 * 1024;
 const MAX_SOURCES = 64;
 
 type DecodedRecord = { position: number; record: KernelSessionRecord };
@@ -166,8 +166,6 @@ function extractAnswer(state: RunState): FinalText {
 }
 
 type AnswerCheck = NonNullable<Extract<QueryHistoryObservation['observation'], { kind: 'terminal' }>['answerCheck']>;
-/** The answer format a request round's manifest froze. */
-type RequestAnswerFormat = { executionKind: SecretaryRequestManifestV1['executionKind']; hasGoal: boolean };
 type FormalAnswer =
   | {
     kind: 'answer'; text: string; ideas: QueryJobAnswerV1['ideas'];
@@ -184,24 +182,33 @@ type FormalAnswer =
  * round with that reason and no answer, and the formal answer text is the
  * parsed body with its ideas, the drafts and the draft its plan names.
  */
-function formalAnswerOf(final: FinalText, request: RequestAnswerFormat | null): FormalAnswer {
-  if (request === null) {
-    return final.kind === 'text'
-      ? { kind: 'answer', text: final.text, ideas: [], goalCardDrafts: [], planDraftIndex: null }
-      : { kind: 'gap' };
+export function formalAnswerOf(
+  final: FinalText,
+  shape: QueryAnswerShapeV1 | null,
+  request: { executionKind: 'semantic_query' | 'initial_coordination'; hasGoal: boolean } | null,
+): FormalAnswer {
+  if (shape === 'secretary' || shape === 'initial') {
+    if (request === null) {
+      return { kind: 'invalid', check: { detail: 'protocol', reason: 'the request round manifest carries no request facts' } };
+    }
+    if (final.kind === 'empty') {
+      return { kind: 'invalid', check: { detail: 'empty', reason: 'the secretary turn ended without answer text' } };
+    }
+    if (final.kind === 'too_long') {
+      return { kind: 'invalid', check: { detail: 'too_long', reason: 'the secretary answer is over the 16 KiB answer bound' } };
+    }
+    const parsed = parseSecretaryAnswer(final.text, { kind: request.executionKind, hasGoal: request.hasGoal });
+    if (!parsed.ok) return { kind: 'invalid', check: { detail: parsed.detail, reason: parsed.reason } };
+    return {
+      kind: 'answer', text: parsed.body, ideas: parsed.ideas, goalCardDrafts: parsed.goalCardDrafts,
+      planDraftIndex: parsed.planDraftIndex,
+    };
   }
-  if (final.kind === 'empty') {
-    return { kind: 'invalid', check: { detail: 'empty', reason: 'the secretary turn ended without answer text' } };
-  }
-  if (final.kind === 'too_long') {
-    return { kind: 'invalid', check: { detail: 'too_long', reason: 'the secretary answer is over the 16 KiB answer bound' } };
-  }
-  const parsed = parseSecretaryAnswer(final.text, { kind: request.executionKind, hasGoal: request.hasGoal });
-  if (!parsed.ok) return { kind: 'invalid', check: { detail: parsed.detail, reason: parsed.reason } };
-  return {
-    kind: 'answer', text: parsed.body, ideas: parsed.ideas, goalCardDrafts: parsed.goalCardDrafts,
-    planDraftIndex: parsed.planDraftIndex,
-  };
+  // A plain Query and both planning shapes keep the bounded text verbatim; the
+  // plan/review answer is parsed later by its own consumer, not here.
+  return final.kind === 'text'
+    ? { kind: 'answer', text: final.text, ideas: [], goalCardDrafts: [], planDraftIndex: null }
+    : { kind: 'gap' };
 }
 
 /** Real successful `project_source` tool results only; model-reported sources never count. */
@@ -418,7 +425,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     }
     const record = await deps.queryExecution.readQueryExecution(owned, queryRunRef);
     if (record.status !== 'ready') return record;
-    const { job, run, session } = record.value;
+    const { run, session } = record.value;
     const state = run.run.executionState;
     if (state === undefined || state.entry === null) return { status: 'ready', value: record.value };
     if (state.phase === 'settled' || run.run.status === 'answered' || run.run.status === 'closed') {
@@ -472,8 +479,14 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     }
     const manifest = await loadPersistedManifest(deps.bodies, state.prepared?.bundleRef);
     if (manifest === null) return rejected('unavailable', 'the persisted Query manifest could not be read for the terminal answer');
-    // Only a request round can hold an accepted submit: the names come from the
-    // list preparation froze, never from the whole submit family.
+    // The frozen shape decides the accepted-answer bound and the formal reading.
+    const shape = manifest.answerShape;
+    if (!(shape === null || shape === 'secretary' || shape === 'initial'
+      || shape === 'plan_round' || shape === 'plan_review')) {
+      return rejected('unavailable', 'the persisted Query manifest has no valid answerShape');
+    }
+    // Only a round whose frozen list holds a submit tool can hold an accepted
+    // submit: the names come from the list preparation froze, never the family.
     const submitNames = answerSubmitNamesIn(manifest.promptSet.toolNames);
     const submitted = submitNames.length === 0 ? null : submittedAnswerArgumentsOf(runState, submitNames);
     const terminalStatus = mapOutcome(runState.status, submitted !== null)!;
@@ -484,25 +497,24 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     let answer: QueryJobAnswerV1 | null = null;
     let answerCheck: AnswerCheck | null = null;
     if (outcome === 'answered') {
-      let request: RequestAnswerFormat | null = null;
-      if (isRequestRound(job)) {
-        // Preparation freezes a request round's facts into its manifest; without them the format is unknown.
-        if (manifest.request === null) return rejected('invalid', 'the request round manifest carries no request facts');
-        request = { executionKind: manifest.request.executionKind, hasGoal: manifest.goal !== null };
-      }
-      // A request round whose frozen list holds a submit tool takes the answer
-      // from the first successful submit's arguments; no accepted submit keeps
-      // today's final-text reading, and any later assistant text is ignored.
+      const request = shape === 'secretary' || shape === 'initial'
+        ? manifest.request === null
+          ? null
+          : { executionKind: manifest.request.executionKind, hasGoal: manifest.goal !== null }
+        : null;
+      // A round whose frozen list holds a submit tool takes the answer from the
+      // first successful submit's arguments; no accepted submit keeps the final
+      // text reading, and any later assistant text is ignored.
       let final: FinalText;
       if (submitted === null) {
         final = extractAnswer(runState);
       } else {
-        // Rebuild the exact text the accepted handler built.
-        const text = buildAnswerText(request!.executionKind, submitted,
-          { projectId: queryRunRef.projectId });
-        final = { kind: 'text', text };
+        // Rebuild the exact text the accepted handler built, bounded by shape.
+        const text = buildAnswerText(shape!, submitted, { projectId: queryRunRef.projectId });
+        final = Buffer.byteLength(text, 'utf8') > answerBoundBytes(shape)
+          ? { kind: 'too_long' } : { kind: 'text', text };
       }
-      const formal = formalAnswerOf(final, request);
+      const formal = formalAnswerOf(final, shape, request);
       if (formal.kind === 'gap') {
         outcome = 'gap';
       } else if (formal.kind === 'invalid') {

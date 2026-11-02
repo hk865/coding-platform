@@ -575,7 +575,7 @@ function answerIssues(value: unknown, expectedRef: QueryJobAnswerRef | null): st
     issues.push('answer.roundIndex must be a non-negative safe integer');
   }
   if (typeof value['answer'] !== 'string') issues.push('answer.answer must be a string');
-  else if (Buffer.byteLength(value['answer'] as string, 'utf8') > 16 * 1024) issues.push('answer.answer exceeds 16 KiB');
+  else if (Buffer.byteLength(value['answer'] as string, 'utf8') > 256 * 1024) issues.push('answer.answer exceeds 256 KiB');
   const sources = value['sources'];
   if (!Array.isArray(sources)) issues.push('answer.sources must be an array');
   else if (sources.length > 64) issues.push('answer.sources exceeds 64 witnesses');
@@ -747,6 +747,13 @@ function executionStateIssues(value: unknown): string[] {
  */
 export function queryManifestProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'the Query manifest must be an object';
+  // Every new manifest writes the frozen answer shape (spec §5.2.7); a missing
+  // or unknown value is a damaged manifest, never an old format to infer.
+  const answerShape = value['answerShape'];
+  if (!(answerShape === null || answerShape === 'secretary' || answerShape === 'initial'
+    || answerShape === 'plan_round' || answerShape === 'plan_review')) {
+    return 'the Query manifest answerShape is not a valid answer shape';
+  }
   const assembly = value['contextAssembly'];
   const callKind = isRecord(assembly) ? assembly['callKind'] : undefined;
   const goal = value['goal'];

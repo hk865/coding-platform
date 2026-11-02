@@ -34,7 +34,8 @@ import {
   encodePlanProposal,
   encodePlanRevisionAcceptedEvent,
   encodePlanRevisionSnapshot,
-  type NoticeOriginWireV1,
+  planProposalRefKey,
+  type PlanProposalOriginWireV1,
 } from '../persistence/plan-record-codecs.js';
 
 export type VerifiedGovernance = {
@@ -118,11 +119,24 @@ export type InitialPlanAdoptionInput = {
   decisionProof?: PlanAcceptanceDecisionProofV1 | null;
   /**
    * Slice 5 §2.5/T-R2-2: the accepted proposal record's preserved wire-only
-   * creation origin (`since`). The adopt write copies it, never rebinds.
+   * origin (`since`). The adopt write copies it and adds `until: null` for this
+   * commit's cursor binding (§6.4.2); it never rebinds `since`.
    */
-  origin?: NoticeOriginWireV1;
+  origin?: PlanProposalOriginWireV1;
 };
-export type CompiledPlanAdoption = { snapshot: PlanRevisionSnapshot; prepared: PreparedCommit };
+export type CompiledPlanAdoption = {
+  snapshot: PlanRevisionSnapshot;
+  prepared: PreparedCommit;
+  /** §6.4.2: this adoption commit's cursor fills the accepted record's `until`. */
+  commitCursorBindings: NonNullable<PreparedCommit['commitCursorBindings']>;
+};
+
+/** §6.4.2: the adoption commit (and only it) binds the accepted record's `until`. */
+function adoptionCursorBinding(
+  proposal: Extract<PlanProposal, { kind: 'candidate_v2' }>,
+): NonNullable<PreparedCommit['commitCursorBindings']>[number] {
+  return { refKey: planProposalRefKey(proposal.ref), field: 'until' };
+}
 
 function buildPlanRevisionSnapshot(input: {
   draft: PlanRevisionDraft;
@@ -242,14 +256,15 @@ export function compileInitialPlanAdoption(input: InitialPlanAdoptionInput): Com
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
     guards: input.commit.guards,
-    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal, input.origin)],
+    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot),
+      encodePlanProposal(acceptedProposal, { ...input.origin, until: null })],
     claims: input.requestSlot === null || input.requestSlot === undefined ? [] : [input.requestSlot.claim],
     indexGuards: [],
     indexChanges: [],
     events: [encodePlanRevisionAcceptedEvent(event)],
     ledgerHorizon: input.ledgerHorizon,
   };
-  return { snapshot, prepared };
+  return { snapshot, prepared, commitCursorBindings: [adoptionCursorBinding(acceptedProposal)] };
 }
 
 // --------------------------------------------------------------------------
@@ -288,9 +303,10 @@ export type FuturePlanAdoptionInput = {
   decisionProof?: PlanAcceptanceDecisionProofV1 | null;
   /**
    * Slice 5 §2.5/T-R2-2: the accepted proposal record's preserved wire-only
-   * creation origin (`since`). The adopt write copies it, never rebinds.
+   * origin (`since`). The adopt write copies it and adds `until: null` for this
+   * commit's cursor binding (§6.4.2); it never rebinds `since`.
    */
-  origin?: NoticeOriginWireV1;
+  origin?: PlanProposalOriginWireV1;
 };
 
 export type FuturePlanAdoptionCompile =
@@ -433,11 +449,13 @@ export function compileFuturePlanAdoption(input: FuturePlanAdoptionInput): Futur
     identityKey: input.identityKey,
     fingerprint: input.fingerprint,
     guards: input.commit.guards,
-    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot), encodePlanProposal(acceptedProposal, input.origin)],
+    records: [encodeGoalSnapshot(nextGoal), encodePlanRevisionSnapshot(snapshot),
+      encodePlanProposal(acceptedProposal, { ...input.origin, until: null })],
     claims: input.requestSlot === null || input.requestSlot === undefined ? [] : [input.requestSlot.claim],
     indexGuards: [],
     indexChanges: [],
     events: [encodePlanRevisionAcceptedEvent(event)],
   };
-  return { status: 'compiled', value: { snapshot, prepared } };
+  return { status: 'compiled',
+    value: { snapshot, prepared, commitCursorBindings: [adoptionCursorBinding(acceptedProposal)] } };
 }

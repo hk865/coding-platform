@@ -15,7 +15,7 @@ import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/f
 import type { UserDecisionBodyV1 } from '../../../contracts/goal-decisions.js';
 import { hasOnlyKeys, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
-import { SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES, type Problem } from './message-record-codecs.js';
+import { SESSION_MESSAGE_CONTENT_TYPE, sessionMessageTextBound, type Problem } from './message-record-codecs.js';
 
 /** The two parts of a message that each have a stored body. */
 export type MessageBodyPart = 'message' | 'response';
@@ -175,7 +175,8 @@ export function decodeStoredUserDecisionBody(
  * cannot be given: the message's body ref and source, the stored ref
  * (contentType, digest, size, source) and provenance, then the envelope (it
  * names this message, this part and the part's sender) and its text (non-empty,
- * at most `SESSION_MESSAGE_MAX_TEXT_BYTES`).
+ * within `sessionMessageTextBound`: the `message` part by this sender, the
+ * `response` part always 16 KiB).
  */
 export function decodeStoredMessageBody(
   message: SessionMessage, part: MessageBodyPart, stored: StoredMessageBody,
@@ -205,6 +206,9 @@ export function decodeStoredMessageBody(
   }
   const fields = envelope as Record<string, unknown>;
   const expectedSender = part === 'message' ? message.sender : message.response?.sender;
+  if (expectedSender === undefined) {
+    return { reason: 'the stored message body envelope disagrees with the message record' };
+  }
   if (fields['schemaVersion'] !== 1
     || fields['projectId'] !== message.ref.projectId
     || fields['workspaceId'] !== message.ref.workspaceId
@@ -214,7 +218,8 @@ export function decodeStoredMessageBody(
     return { reason: 'the stored message body envelope disagrees with the message record' };
   }
   const text = fields['text'];
-  if (typeof text !== 'string' || text.length === 0 || Buffer.byteLength(text, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
+  const bound = sessionMessageTextBound({ sender: expectedSender, part, original: null });
+  if (typeof text !== 'string' || text.length === 0 || Buffer.byteLength(text, 'utf8') > bound) {
     return { reason: 'the stored message body text is invalid' };
   }
   return { text };

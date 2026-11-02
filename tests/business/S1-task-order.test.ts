@@ -22,7 +22,7 @@ import type { WorkflowDependencies } from '../../src/business/workflow/ports.js'
 import { orderTasksByDependency } from '../../src/business/workflow/task-order.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
-import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 
 type Edge = RuntimeExecutionDAG['dependsOn'][number];
 
@@ -46,7 +46,7 @@ const ids = (tasks: readonly RuntimeTask[]): string[] => tasks.map((entry) => en
 
 const ORDER_PROJECT = S6A_SCOPE.projectId;
 const ORDER_WORKSPACE = S6A_SCOPE.workspaceId;
-const ORDER_GOAL = 's1-order-goal';
+const ORDER_GOAL = S6A_GOAL_1.goalId;
 const ORDER_PLAN_REF = { aggregateType: 'PlanRevision' as const, projectId: ORDER_PROJECT, planId: 's1-order-plan' };
 const ORDER_ROLE = S6A_WORK_ROLE;
 
@@ -95,6 +95,7 @@ async function selectNextTask(
   const deps: WorkflowDependencies = {
     tasks: untouched('tasks'),
     sessions: orderWorld.platform.sessions,
+    ...orderWorld.platform.planReaders,
     executions: untouched('executions'), runtime: untouched('runtime'), evidence: untouched('evidence'),
     checks: untouched('checks'), sourceAuthority: { ...untouched<WorkflowDependencies['sourceAuthority']>('sourceAuthority'),
       load: async () => ({ status: 'found', snapshot: {

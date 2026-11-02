@@ -1088,6 +1088,14 @@ export type MessageWaitVerdict =
  * shared consumption rule runs first, so a withdrawn or unreleased message is
  * refused with the predicate's own code before the status switch.
  */
+/** The two intents a Run can wait on: an inquiry, or an executor's `action_request` to its adviser (PL §5.5). */
+export const WAIT_INTENTS = ['inquiry', 'action_request'] as const;
+
+/** A wait's shape: the sender's Run yields on this message until its reply arrives. */
+export function isWaitMessage(message: Pick<SessionMessageRecord, 'intent' | 'waitAfterSend'>): boolean {
+  return message.waitAfterSend === true && (WAIT_INTENTS as readonly (string | undefined)[]).includes(message.intent);
+}
+
 export function messageSatisfiesWait(
   state: MessageMachineState, consumedWait: MessageWaitFactsV1,
 ): MessageWaitVerdict {
@@ -1303,9 +1311,7 @@ export type DisposeFactsV1 = {
 
 /** The fixed order of §3.2.2(3): wait shape, delivery, open state, then a transfer's line and destination. */
 export function disposeWaitProblem(facts: DisposeFactsV1): CoreRejection | null {
-  if (facts.message.intent !== 'inquiry' || facts.message.waitAfterSend !== true) {
-    return rejected('invalid', 'not_a_wait');
-  }
+  if (!isWaitMessage(facts.message)) return rejected('invalid', 'not_a_wait');
   if (facts.delivery === 'undelivered') return rejected('invalid', 'forward_required');
   if (facts.wait.state === 'consumed' || facts.wait.state === 'answered') {
     return rejected('busy', 'the wait was already answered or consumed');

@@ -80,4 +80,6 @@ export type InitialPlanningResponseV2 =
   | { schemaVersion: 2; kind: 'needs_decision'; summary: string; questions: string[] }
   | { schemaVersion: 2; kind: 'plan'; summary: string; plan: InitialPlanningResponsePlanV2;
       /** Optional additive setup proposal; absent keeps the old v2 exactly. */
-      setup?: InitialPlanningSetupV2 };
+      setup?: InitialPlanningSetupV2;
+      /** The model's optional change reason; the parser keeps it and the platform never invents it. */
+      reason?: { text: string; affectedTaskIds?: string[] } };

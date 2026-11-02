@@ -20,6 +20,14 @@ export const DEFAULT_RUNTIME_BUDGET: RuntimeBudget = { contextWindowTokens: 1280
 /** Explicit single-call capacity; applies equally to ordinary and read-only work. */
 export const MAX_RESPONSE_TOKENS = 393216;
 /**
+ * The one output reserve of a planning Query: 256 KiB of plan text is about
+ * 131,072 tokens, and a call may never reserve more than half the window.
+ * The window itself is not changed.
+ */
+export function planningOutputReserveTokens(contextWindowTokens: number): number {
+  return Math.min(131072, Math.floor(contextWindowTokens / 2));
+}
+/**
  * Normalize an untrusted budget value from the HTTP layer.
  *   - a missing value means "no cumulative limit" (declared capacities only);
  *   - cumulative fields may be null at any layer, and stay null: nothing here

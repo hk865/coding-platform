@@ -42,7 +42,7 @@ import {
 import { runControlNodeOf } from '../state/run-machine.js';
 import { sameRef } from '../state/ref-equality.js';
 import {
-  messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  WAIT_INTENTS, isWaitMessage, messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
 } from '../state/message-machine.js';
 import {
   QUERY_RUN_BY_SESSION_LOOKUP, SESSION_BY_PROVENANCE_LOOKUP, WORK_EXECUTION_BY_SESSION_LOOKUP,
@@ -229,7 +229,7 @@ export async function readWaitMessage(records: SessionFactsStores['records'], si
  * the sender Session the wait index names; such a message is not a wait.
  */
 function readWaitRow(root: SessionMessage, tail: SessionMessage, complete: boolean): SessionWaitV1 | null {
-  if (tail.intent !== 'inquiry' || tail.waitAfterSend !== true) return null;
+  if (!isWaitMessage(tail)) return null;
   if (tail.sender.kind === 'host') return null;
   return {
     messageRef: tail.ref,
@@ -315,22 +315,24 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
       // Waits: one sender Session's inquiries, oldest `since` first. The ordered
       // index pages by its own `{order, refKey}`; a page-budget hit is
       // `incomplete`, never "no wait".
-      const waitWindow = await readLookupWindow(records, {
-        kind: 'ordered', index: S7B_WAITS_BY_SENDER_SESSION_LOOKUP,
-        values: [scope.projectId, scope.workspaceId, scope.sessionId, 'inquiry'],
-      });
-      if (waitWindow.status !== 'ready') return waitWindow.rejection;
-      if (waitWindow.budgetHit) {
-        return incomplete(`session_facts_page_limit: the wait scan of Session ${scope.sessionId} did not finish`);
-      }
-      watermark = laterCursor(watermark, waitWindow.readThrough);
       const decodedWaits: { message: SessionMessage; record: EncodedRecord }[] = [];
-      for (const record of waitWindow.records) {
-        const decoded = decodeSessionMessageRecord(record);
-        if (decoded.status !== 'decoded') {
-          return unavailable(`the wait message ${record.refKey} is damaged: ${decoded.reason}`);
+      for (const intent of WAIT_INTENTS) {
+        const waitWindow = await readLookupWindow(records, {
+          kind: 'ordered', index: S7B_WAITS_BY_SENDER_SESSION_LOOKUP,
+          values: [scope.projectId, scope.workspaceId, scope.sessionId, intent],
+        });
+        if (waitWindow.status !== 'ready') return waitWindow.rejection;
+        if (waitWindow.budgetHit) {
+          return incomplete(`session_facts_page_limit: the wait scan of Session ${scope.sessionId} did not finish`);
         }
-        decodedWaits.push({ message: decoded.value, record });
+        watermark = laterCursor(watermark, waitWindow.readThrough);
+        for (const record of waitWindow.records) {
+          const decoded = decodeSessionMessageRecord(record);
+          if (decoded.status !== 'decoded') {
+            return unavailable(`the wait message ${record.refKey} is damaged: ${decoded.reason}`);
+          }
+          decodedWaits.push({ message: decoded.value, record });
+        }
       }
       // A forwarded tail is not a second root: every ref some candidate names as
       // `transferredTo` is reached by walking its own root, not started again.

@@ -53,7 +53,7 @@ import type {
   WorkflowAdvanceInternal,
   WorkflowAdvanceResult,
 } from '../business/workflow/contracts.js';
-import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { GoalWaitDrainPort, WorkflowPort } from '../business/workflow/ports.js';
 import type { WorkbenchQueryProfile } from './runtime-configuration.js';
 import type { GoalWaitWakes } from './goal-wait-wakes.js';
 
@@ -155,6 +155,9 @@ export type CollaborationDriverDependencies = {
   onStarted?: (ctx: CoreCallContext, goalRef: GoalRef) => Promise<unknown>;
   /** H's resolver over the Host's one `GoalWaitWakes` per workspace scope; absent keeps today's exact-message poll. */
   goalWaits?: (scope: WorkspaceScope) => Pick<GoalWaitWakes, 'register' | 'leave'>;
+  /** slice-PL-SPEC §6.1.2 steps 7–8, §5.1.4 action 1: one pass of the Host's goal-wait queue
+   * between the register and the send; absent on a driver the Host has not bound. */
+  drainGoalWaits?: GoalWaitDrainPort;
   /** The Host's observed commit head, sampled immediately BEFORE the advance that can return `waiting`;
    * absent keeps today's poll. */
   observedCursor?: () => CommitCursor | null;
@@ -175,6 +178,14 @@ function isRunRef(value: unknown): value is RunRef {
 function isGoalRef(value: unknown): value is GoalRef {
   return isRecord(value) && value['aggregateType'] === 'Goal'
     && nonEmpty(value['projectId']) && nonEmpty(value['goalId']);
+}
+/**
+ * slice-PL-SPEC §6.1.4: a candidate wait also observes `Session`, so a review or adviser line
+ * created after the Goal started still wakes it. Both registration sites merge the same kind.
+ */
+function withSessionWaitKind(basis: GoalWaitBasisV1): GoalWaitBasisV1 {
+  return basis.recordKinds.includes('Session') ? basis
+    : { ...basis, recordKinds: [...basis.recordKinds, 'Session'] };
 }
 /**
  * §4.6 recipient narrowing: the widened `MessageRecipient` union is a Session
@@ -1118,11 +1129,13 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
             if (woken !== null) { input = woken; driver.current = woken; continue; }
             if (driver.stopRequested) return;
             if (value.waitBasis !== undefined && cursorAtRead !== null) {
-              const waits = dependencies.goalWaits?.({ projectId: value.waitBasis.projectId,
-                workspaceId: driver.workspaceId });
+              const scope = { projectId: value.waitBasis.projectId, workspaceId: driver.workspaceId };
+              const waits = dependencies.goalWaits?.(scope);
               if (waits !== undefined) {
-                waits.register(value.waitBasis, cursorAtRead);
+                waits.register(withSessionWaitKind(value.waitBasis), cursorAtRead);
                 driver.registered = true;
+                // slice-PL-SPEC §5.5.1 steps 5–6: register, drain the Host's queue once, then park.
+                await dependencies.drainGoalWaits?.(scope);
                 driver.state = 'waiting_for_reply';
               } else {
                 driver.state = 'waiting';
@@ -1135,6 +1148,17 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           }
           if (value.next === null) {
             driver.state = 'waiting'; driver.reason = 'the Workflow returned no next step'; break;
+          }
+          // §6.1.2 steps 7–8 / DR-P5-11: the plan-round gap step registers the wait BEFORE it sends,
+          // using the one cursor sampled before the read that produced this basis. The send's own
+          // commit must not be the only thing that wakes the Goal.
+          if (value.waitBasis !== undefined && cursorAtRead !== null
+            && value.next.kind === 'perform' && value.next.operation.kind === 'send_system_round') {
+            const scope = { projectId: value.waitBasis.projectId, workspaceId: driver.workspaceId };
+            const waits = dependencies.goalWaits?.(scope);
+            waits?.register(withSessionWaitKind(value.waitBasis), cursorAtRead);
+            // slice-PL-SPEC §5.1.4 action 1 / §5.5.1 steps 5–6: only after the drain does the send run.
+            await dependencies.drainGoalWaits?.(scope);
           }
           input = value.next;
           observingCompletedStep = value.receipt?.kind === 'complete_task'

@@ -24,6 +24,9 @@
 - `module-overlap-gate.ts` — `ModuleOverlapGateRef`：模块重叠闸门（记录 4）的 ref；值类型和唯一的字段表在 `core/work-graph/persistence/module-overlap-gate-codecs.ts`。
 - `pick-basis.ts` — `PickBasisV1`：推进结果的依据（`rank`、`incomplete`、`candidates`），只在返回值里，不存记录；`rank` 没有 `hint`。
 - `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`。
+- `plan-loop-limits.ts` — 规划环的上限（§10.3）：`TaskSizeClassV1`/`PlanLoopLimitsV1`、按任务档位的提醒与两倍 token、任务行倍数和两个阶段预算；`DEFAULT_PLAN_LOOP_LIMITS` 是纯默认值，`GROWTH_UNIT_TOKENS`（64）与 `growthUnitsOf`（token ÷ 64，不取整）是 §10.5 的增长单位换算。生效值由 Host 设置层发布。
+- `plan-review.ts` — 计划审阅回答（§6.1.3、§6.2、§6.3.3）：固定的 verdict/finding/form 形状、`planReviewAnswerText`（工具写出的唯一 JSON 正文，`findings` 总是写出）与 `parsePlanReviewAnswer`（唯一严格解析：一个 JSON 对象、无多余成员、`fix` 至少一条意见）。候选环把解析不了的回答当 `terminal_invalid`。
+- `plan-round.ts` — 系统轮契约（§5.2.2、§5.2.5–§5.2.6、§5.3.5、§5.6）：五种轮形状、`SYSTEM_ROUND_ACTOR`（固定 `host:plan-round` 发送方）、`systemRoundContext`（Host scope 上下文）、每种的 `systemRoundRequestId` 与 `hostMessageId`/`systemRoundMessageRef` 的身份、从正文首行读回的 `systemRoundOfText` 与 `planResumeOriginalQueryOfText`，以及 `planningReplyTextOf`（按冻结的回答形状取短回复）。只 import 契约，不发送、不选细化、不建 Query。
 - `reduction.ts` — `TaskReductionRef`、归因码与完成审计快照。
 - `rework-request.ts` — `ReworkRequestRef`：返工请求（记录 3）的 ref；记录的值类型和字段表在 `core/work-graph/persistence/rework-request-codecs.ts`。
 - `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定；`permissions.createMember` 是必填布尔（Work 的委托），两个 Query 配方只用三字段投影。
@@ -125,14 +128,14 @@
 | `ActorRefField`、`WorkContextRefField`、`WorkLinkTargetField` | `src/contracts/data-format-refs.ts:84`、`src/contracts/data-format-refs.ts:89`、`src/contracts/data-format-refs.ts:92` | actor、工作上下文绑定和五臂 `WorkLink` 目标的字段表。 | 角色事实、会话链接和上下文绑定的字段表；不要另写一份联合。 |
 | `SessionActivityFormat`、`SessionActivityRefShape` | `src/contracts/session-activity.ts:40`、`src/contracts/session-activity.ts:37` | Session 活动记录的字段表和它的 ref；两条规则：`session` 与 ref 同一个 Session、`source` 在同一项目且种类对得上。 | 写或读 Session 的最后活动；类型用 `SessionActivityV1`，不要手写。 |
 | `SessionActivityRef`、`SessionActivityV1`、`SessionActivityKindV1`、`SessionActivitySourceV1` | `src/contracts/session-activity.ts:60`、`src/contracts/session-activity.ts:61`、`src/contracts/session-activity.ts:62`、`src/contracts/session-activity.ts:64` | 由字段表推导的活动引用、记录、类别和来源类型。 | 供活动状态、codec 和读取使用。 |
-| `GoalScreeningShape`、`GoalScreeningV1` | `src/contracts/query-job.ts:217`、`src/contracts/query-job.ts:226` | 目标卡草稿的筛选：模块、规模、冲突/依赖 Goal、紧急度、从 0 起的建议位次、≤512 UTF-8 字节的说明。 | 目标卡草稿的 `screening` 和绑定记录的 `screening`；没有筛选时为 null，不要自己补一个。 |
+| `GoalScreeningShape`、`GoalScreeningV1` | `src/contracts/query-job.ts:241`、`src/contracts/query-job.ts:250` | 目标卡草稿的筛选：模块、规模、冲突/依赖 Goal、紧急度、从 0 起的建议位次、≤512 UTF-8 字节的说明。 | 目标卡草稿的 `screening` 和绑定记录的 `screening`；没有筛选时为 null，不要自己补一个。 |
 | `InitializationBindingFormat`、`InitializationBindingV1`、`InitializationBindingRefShape`、`InitializationBindingRef`、`INITIALIZATION_BINDING_BY_ANSWER_DRAFT_LOOKUP`、`INITIALIZATION_BINDING_BY_GOAL_LOOKUP` | `src/contracts/initialization-binding.ts:52`、`src/contracts/initialization-binding.ts:71`、`src/contracts/initialization-binding.ts:46`、`src/contracts/initialization-binding.ts:70`、`src/contracts/initialization-binding.ts:50`、`src/contracts/initialization-binding.ts:51` | 初始化绑定记录和它的类型、它的 ref 形状和 ref 类型、两条规则和两个查找名（回答+草稿五条路径、按 Goal 两条路径）。 | 确认所有者写绑定、按回答或 Goal 读绑定；类型用 `InitializationBindingV1`，不要另写字段表。 |
 | `InitializationAdoptionRefShape`、`InitializationAdoptionRef` | `src/contracts/initialization-adoption.ts:13` | P11 初始化采用的聚合 ref（`aggregateType: 'InitializationAdoption'`、`projectId`、`operationId`）和推导出的 ref 类型；也是 `AggregateRef` 的联合成员。 | 写/读采用记录、操作进度和 `Ledger` 的 ref 时；不要另写只查 `aggregateType` 的 ref 检查。 |
 | `INITIALIZATION_ADOPT_STAGES`、`InitializationAdoptStageV1` | `src/contracts/initialization-adoption.ts:35` | 八个采用阶段的唯一有序列表（`admission`…`apply`）和阶段字面量类型。 | 记录进度、判断完成前缀和恢复读时；不要另写阶段数组。 |
 | `initializationAdoptionOperationId` | `src/contracts/initialization-adoption.ts:21` | 采用操作定位：scope、source 与 expected Goal 的 ref 的规范 JSON 的 SHA-256；不含 `commandId`、generation 或单独的 `goalId`。 | `accept` 与新一次授权提交找同一操作；不要另写定位配方。 |
 | `InitializationSourceShape`、`InitializationSourceV1` | `src/contracts/initial-planning.ts:38`、`src/contracts/initial-planning.ts:44` | 初始化计划的来源：`binding`（回答 + 草稿号）或 `prepared_goal`（回答）。 | 读取/采用初始化计划时指定来源；不要从回答文本猜来源。 |
 | `InitialPlanOriginSourceV1`、`InterventionAnswerSourceV1` | `src/contracts/initial-planning.ts:14`、`src/contracts/initial-planning.ts:21` | 初始 Plan 的 origin 来源选择：`binding`/`prepared_goal`/`plain`/`intervention` 四臂，以及干预臂的 `{ kind: 'intervention', messageRef }`。 | 规范化写 origin、读取/采用重核时；干预选择器只校验完整消息 ref，不比较 `answerRef`。 |
-| `InitialPlanSourceResolutionV1`、`InitialPlanAnswerFacts` | `src/contracts/query-job.ts:636`、`src/contracts/query-job.ts:644` | 来源与 Goal 只解析一次的产物：plain/binding/prepared_goal/`intervention` 四臂，`bindingRef`、Goal 与 `goalRevision`；干预臂带回 `InterventionAnswerSourceV1`。 | 初始 Plan 的规范化、提案与采用重核；不要另写来源解析。 |
+| `InitialPlanSourceResolutionV1`、`InitialPlanAnswerFacts` | `src/contracts/query-job.ts:678`、`src/contracts/query-job.ts:686` | 来源与 Goal 只解析一次的产物：plain/binding/prepared_goal/`intervention` 四臂，`bindingRef`、Goal 与 `goalRevision`；干预臂带回 `InterventionAnswerSourceV1`。 | 初始 Plan 的规范化、提案与采用重核；不要另写来源解析。 |
 | `GoalContinuationV1` | `src/contracts/ledger.ts:81` | 接续来源：被接续的 Goal、它当时的 revision 和可选的理解注记版本。 | Goal 的 `continuedFrom`；不接续时为 null。 |
 | `CanonicalJsonError` | `src/contracts/fingerprint.ts:18` | 规范 JSON 编码失败的错误类型。 | 需要捕获并区分不可编码值时。 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 把 unknown 错误转成可读文本：`Error.message`，否则 `String(error)`；转换抛错不吞。 | 统一错误文本；不要再另写一份副本。 |
@@ -141,17 +144,18 @@
 | `commandIdentityKey` | `src/contracts/command-event.ts:108` | 命令幂等身份键：projectId、actor、idempotencyKey、agentPrincipal。 | 命令幂等/replay 查重；不要退回只比 idempotencyKey。 |
 | `commandFingerprint` | `src/contracts/command-event.ts:90` | `CreateGoalCommand` 的内容指纹（JCS + SHA-256）。 | Goal 创建命令的幂等/replay；其他命令用自己的配方。 |
 | `normalizeObjective` | `src/contracts/command-event.ts:86` | Unicode NFC + 首尾空白裁剪。 | 指纹与存储 Goal 目标之前。 |
-| `queryJobRefFor` | `src/contracts/query-job.ts:208` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
-| `RequestUnderstandingCommandV1` | `src/contracts/query-job.ts:63` | 内部 `request_understanding` 命令的唯一格式：操作、代、请求根、每个 Goal 的指针与检查版本、checkedRound 与 live/closed/consumed。 | 交接的 understanding 代写、准备/启动读取与 Runtime 模板；不要另写一份命令形状。 |
-| `QueryJobV1` 的 `understanding`、`SecretaryRoundMaterialV1` 的 `command` | `src/contracts/query-job.ts:401`、`src/contracts/query-job.ts:30` | 一次存储一次投影：Job 上的 `understanding` 是唯一副本（其余 Query 与历史记录为 null），材料的 `command` 由 `round.job.understanding` 投影。 | 存/读 understanding 命令；不要另存第二份，也不要另拼一份命令形状。 |
+| `queryJobRefFor` | `src/contracts/query-job.ts:232` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
+| `RequestUnderstandingCommandV1` | `src/contracts/query-job.ts:87` | 内部 `request_understanding` 命令的唯一格式：操作、代、请求根、每个 Goal 的指针与检查版本、checkedRound 与 live/closed/consumed。 | 交接的 understanding 代写、准备/启动读取与 Runtime 模板；不要另写一份命令形状。 |
+| `QueryJobV1` 的 `understanding`、`SecretaryRoundMaterialV1` 的 `command` | `src/contracts/query-job.ts:443`、`src/contracts/query-job.ts:30` | 一次存储一次投影：Job 上的 `understanding` 是唯一副本（其余 Query 与历史记录为 null），材料的 `command` 由 `round.job.understanding` 投影。 | 存/读 understanding 命令；不要另存第二份，也不要另拼一份命令形状。 |
 | `SecretaryRequestManifestV1` 的 `briefRef`、`understandingGrants` | `src/contracts/query-job.ts:45` | 请求清单冻结的两项：后继者的简报操作（没有则 null）和仍有效的 understanding 授予（按轮次再按批次顺序、每个 Goal 一条）。 | 准备与启动读取、Runtime 清单；冻结一次，不在原地替换。 |
-| `RequestCommandReceiptV1` 的 `understanding` 臂 | `src/contracts/query-job.ts:231` | 内部 `request_understanding` append 的回执：`{ kind: 'understanding'; round }`。 | 写/重放内部命令时；不要借用 `route` 臂或写空回执。 |
-| `consultationQueryRefs` | `src/contracts/query-job.ts:90` | 由 `SessionMessageRef` 派生咨询 QueryJob/QueryRun 引用。 | 消息驱动的咨询 Query；外层重试因此落在同一对记录上。 |
-| `interventionPlanningQueryRefs` | `src/contracts/query-job.ts:104` | 由真实来源消息 ref 派生 `intervention_planning` 的 QueryJob/QueryRun 固定 id（含 `intervention-planning-` 前缀）。 | 创建/重试这条计划 Query 时；重试落在同一对记录上，不要手拼 id。 |
-| `validQueryExecution` | `src/contracts/query-job.ts:354` | 校验 Query 意图的 execution 绑定。 | 接受 Query 意图前做纯输入校验。 |
-| `isRequestRound` | `src/contracts/query-job.ts:492` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
+| `RequestCommandReceiptV1` 的 `understanding` 臂 | `src/contracts/query-job.ts:255` | 内部 `request_understanding` append 的回执：`{ kind: 'understanding'; round }`。 | 写/重放内部命令时；不要借用 `route` 臂或写空回执。 |
+| `consultationQueryRefs` | `src/contracts/query-job.ts:114` | 由 `SessionMessageRef` 派生咨询 QueryJob/QueryRun 引用。 | 消息驱动的咨询 Query；外层重试因此落在同一对记录上。 |
+| `interventionPlanningQueryRefs` | `src/contracts/query-job.ts:128` | 由真实来源消息 ref 派生 `intervention_planning` 的 QueryJob/QueryRun 固定 id（含 `intervention-planning-` 前缀）。 | 创建/重试这条计划 Query 时；重试落在同一对记录上，不要手拼 id。 |
+| `validQueryExecution` | `src/contracts/query-job.ts:388` | 校验 Query 意图的 execution 绑定。 | 接受 Query 意图前做纯输入校验。 |
+| `isRequestRound` | `src/contracts/query-job.ts:534` | 唯一判别：`job.roundKind !== null`。 | 所有 request round 分支；不要另写判别。 |
+| `queryAnswerShapeOf`、`validSessionMessageRef` | `src/contracts/query-job.ts:67`、`src/contracts/query-job.ts:337` | 回答形状的唯一映射（请求轮，或 `intervention_planning` 冻结的 `plan_round`/`plan_review`），以及完整 `SessionMessageRef` 的形状校验。 | 准备/启动读回答形状、读计划来源消息；不要另写映射或 ref 检查。 |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18` | 初始规划 v2 回答的外层协议：一个 JSON 对象、`schemaVersion` 2、`plan` 或 `needs_decision` 的外形；不修补模型的计划，计划内容由 Plan 校验器判断。 | 读初始规划回答或秘书 `initial_coordination` 回答；不要另写 v2 JSON 解析。 |
-| `queryExecutionBindingOf` | `src/contracts/query-job.ts:503` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
+| `queryExecutionBindingOf` | `src/contracts/query-job.ts:545` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
 | `decisionSourceKey` | `src/contracts/goal-decisions.ts:257` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
 | `DecisionSubjectShape`、`DecisionSubjectV1` | `src/contracts/goal-decisions.ts:94`、`src/contracts/goal-decisions.ts:100` | 决定来源/卡片/请知悉的 subject 字段表与推导类型：`{ kind: 'goal', goalRef }` 或 `{ kind: 'project', projectRef }`，旁边不再有第二个 `goalRef` 字段。 | 构造或读 `subject`；不要另写一份只认 Goal 的 subject 形状。 |
 | `decisionSubjectKey` | `src/contracts/goal-decisions.ts:102` | subject 的带标签规范键。 | 读侧按 subject 分组/排序；不要手拼字符串。 |
@@ -178,7 +182,8 @@
 | `sameArtifactRef` | `src/contracts/material-access.ts:85` | 按 contentType/digest/size 比较 artifact 引用。 | artifact 去重与身份比较；artifact 引用只按这三个字段比。 |
 | `sameArtifactOwnerRunRef` | `src/contracts/material-access.ts:88` | 比较 artifact 的 Run/QueryRun 所有者。 | 归属与读取授权判断。 |
 | `defaultResourceCapSettings` | `src/contracts/resource-caps.ts:25` | 按本机内存算默认 memory 上限与 tasksMax。 | Host 未配置资源上限时的默认值。 |
-| `validateRuntimeBudget` | `src/contracts/runtime-budget.ts:29` | 归一/校验不可信预算；累积上限保持 null。 | HTTP 或边界接受预算时。 |
+| `validateRuntimeBudget` | `src/contracts/runtime-budget.ts:37` | 归一/校验不可信预算；累积上限保持 null。 | HTTP 或边界接受预算时。 |
+| `planningOutputReserveTokens` | `src/contracts/runtime-budget.ts:27` | 计划 Query 的唯一输出预留：131,072 token 与半个窗口取小，窗口本身不变。 | 计划 profile 与 Host 上限共用；不要另算一份。 |
 | `provenNotEnteredKernel` | `src/contracts/run-activity.ts:146` | 判定已结束 Run 是否可证明未进入 Kernel。 | 无进展/返工判断；running 必须当作不完整。 |
 | `unknownFacts` | `src/contracts/run-activity.ts:122` | 带规则版本的显式 unknown 活动读数，detail 截到 500 字；唯一构造。 | Runtime 读窗口失败、WorkGraph 收尾提交没拿到 tally 时；不要写 0，也不要另写构造。 |
 | `isAutomationActor` | `src/contracts/task-requeue.ts:57` | 判断 actor 是否为平台自动化 actor。 | 归因分类与权限判断。 |
@@ -195,8 +200,11 @@
 | `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
 | `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
 | `renderNoteHeader` | `src/contracts/note.ts:115` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
-| `planValidationError` | `src/contracts/plan.ts:303` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
-| `revisionAssignments` | `src/contracts/plan.ts:309` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
+| `planValidationError` | `src/contracts/plan.ts:307` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
+| `revisionAssignments` | `src/contracts/plan.ts:313` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
+| `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:18`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
+| `planReviewAnswerText`、`parsePlanReviewAnswer` | `src/contracts/plan-review.ts:44`、`src/contracts/plan-review.ts:58` | 审阅回答的唯一正文构造（一个 JSON 对象，`findings` 总是写出）与唯一严格解析（无多余成员，`fix` 至少一条意见）。 | `submit_plan_review` 写正文、候选环读回审阅结论；不要另写解析。 |
+| `SYSTEM_ROUND_ACTOR`、`systemRoundContext`、`systemRoundRequestId`、`hostMessageId`、`systemRoundMessageRef`、`systemRoundOfText`、`planResumeOriginalQueryOfText`、`planningReplyTextOf` | `src/contracts/plan-round.ts:47`、`src/contracts/plan-round.ts:50`、`src/contracts/plan-round.ts:70`、`src/contracts/plan-round.ts:112`、`src/contracts/plan-round.ts:130`、`src/contracts/plan-round.ts:152`、`src/contracts/plan-round.ts:197`、`src/contracts/plan-round.ts:213` | 系统轮的固定发送方、Host 上下文、每种的 request id 与消息身份、正文首行读回，以及按冻结回答形状取短回复。 | Workflow、Host、AgentRuntime、WorkGraph 共用；发送、细化选择与 Query 创建留在各自的包。 |
 | `moduleMappingsOf` | `src/contracts/architecture-catalog.ts:81` | 从架构目录取模块到路径映射。 | 检查/比较架构归属。 |
 | `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape` | `src/contracts/architecture-catalog.ts:93`、`src/contracts/architecture-catalog.ts:98`、`src/contracts/architecture-catalog.ts:112` | 架构 baseline/catalog 引用与完整 `ArchitectureCatalogPinV1` 的 R1 字段表形状；pin 形状要求 `catalogRef` 的 project/baseline/revision 与 `baseline.ref` 一致。 | 字段表里校验已存的架构 pin；不要另写形状或同源检查。 |
 | `isAutoCaptureTrigger` | `src/contracts/architecture-observation.ts:23` | 校验自动捕获触发名。 | 读记录或请求时。 |
@@ -225,6 +233,7 @@
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:29` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:186`、`src/contracts/unknown-call-review.ts:195` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
 | `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:14` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
+| `compileVerificationCoverage` | `src/contracts/verification.ts:315` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
 | `CopyInterventionStateV1`、`CopyInterventionCandidateV1` | `src/contracts/goal-copy-retraction.ts:4`、`src/contracts/goal-copy-retraction.ts:11` | 复制取消的候选状态闭集（`withdrawn`/`applied`/`rejected`/`copied`/`delivered`/`not_delivered`）与候选 DTO（消息 ref、版本、状态、可选/可撤回及各自原因）。 | 候选规则与 copy 端口引用候选类型时；不要另写候选形状。 |
 
 ## 内部用

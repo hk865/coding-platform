@@ -40,6 +40,7 @@ import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/g
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
@@ -288,7 +289,7 @@ function resolveReq(requestId: string, answer: AnsweredConflict, bRevision: numb
   return { input: { source: answer.source, selection: answer.selection, decisionMessageRef: answer.message.ref },
     meta: { requestId, expected: [GA(), GB(bRevision)] } };
 }
-function decisions(x: Ctx) {
+function mailboxFor(x: Ctx) {
   const { f } = x;
   const readers = createMaterialRecordReaders(f.records);
   const materials = createMaterialService({ bodies: f.bodies, authority: readers.authority, now: f.now });
@@ -298,8 +299,13 @@ function decisions(x: Ctx) {
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     materials, systemActor: f.operatorActor, now: f.now, newId: f.newId };
+  return { deps, mailbox: createSessionMailbox(deps), materials };
+}
+function decisions(x: Ctx) {
+  const { f } = x;
+  const { deps, mailbox, materials } = mailboxFor(x);
   return createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: f.operatorActor,
-    messages: createSessionMailbox(deps), materials, messageWrites: createMessageWriteOwner(deps),
+    messages: mailbox, materials, messageWrites: createMessageWriteOwner(deps),
     sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
 }
 async function conflicts(x: Ctx): Promise<GoalConflictReadV1> {
@@ -307,7 +313,9 @@ async function conflicts(x: Ctx): Promise<GoalConflictReadV1> {
     conflicts: createGoalConflictAssembler({ records: x.f.records,
       catalog: createArchitectureCatalogService({ records: x.f.records }),
       executedFiles: createGoalExecutedFilesReader({ records: x.f.records }) }),
-    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
+    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage: { messages: mailboxFor(x).mailbox,
+      queries: createQueryJobService({ records: x.f.records, now: x.f.now, eventId: x.f.newId }), plans: plans(x) } });
   const before = await x.f.storeSnapshot();
   const read = await reads.queryGoalConflicts(x.f.ctx, { workspace: WORKSPACE_SCOPE });
   expect(read.status).toBe('ready');

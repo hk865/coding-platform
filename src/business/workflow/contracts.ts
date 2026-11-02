@@ -46,6 +46,7 @@ import type { SessionHandoffPort, SessionHandoffAdvancePort }
   from '../../core/work-graph/sessions/session-handoff-service.js';
 import type { LineCreationPort } from './line-creation.js';
 import type { DecisionActionsPort } from './decision-actions.js';
+import type { WorkflowDependencies } from './ports.js';
 
 /**
  * Slice 5 §4.5 (F48): the finite decision-resolution DTOs are declared ONCE in
@@ -162,6 +163,14 @@ export type WorkflowCalls = {
   // also records one note request, and the note request on an already opened basis.
   open_overlap_gate: OverlapGatePort['openOverlapGate'];
   request_overlap_note: OverlapGatePort['requestOverlapNote'];
+  /**
+   * PL §3.4/§5.2.5: the general system-round send step. The two-argument port
+   * shape is exactly `WorkflowDependencies['send']`; L binds it to
+   * `sendSystemRound`. The execution arm belongs to the workflow package.
+   */
+  send_system_round: NonNullable<WorkflowDependencies['send']>;
+  /** PL §6.1.4/§6.7.1: adoption through the existing Plan owner method. */
+  adopt_plan: PlanTaskPort['applyPlanChange'];
 };
 
 export type WorkflowStepKind = keyof WorkflowCalls;

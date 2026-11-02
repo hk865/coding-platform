@@ -24,9 +24,10 @@ import {
   type GoalDecisionBasisV1,
 } from '../../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
+import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { DutyRecipientPort } from '../sessions/duty-recipient.js';
 import { atLeastCursorResult } from '../persistence/read-result-failures.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { decodeRun } from '../persistence/run-record-codecs.js';
@@ -61,6 +62,13 @@ export type GoalDecisionCauseReaderDependencies = {
    */
   plans: Pick<PlanTaskPort, 'queryGoalDisplay' | 'readInitialPlanAnswerFacts'>
     & Partial<Pick<PlanTaskPort, 'queryTaskGraph'>>;
+  /**
+   * §5.5.3: the ONE duty recipient resolver (`sessions/duty-recipient.ts`).
+   * Optional only so the old read-only doubles keep compiling; a missing
+   * dependency is `unsupported`, never "no adviser" (the card must not be
+   * fabricated when the recipient cannot be read).
+   */
+  recipients?: Pick<DutyRecipientPort, 'resolveDutyRecipient'>;
 };
 
 /** §4.2: the concrete persisted decision causes of one Goal, read-only. */
@@ -438,6 +446,42 @@ export function createGoalDecisionCauseReader(
     return { ok: true, causes };
   }
 
+  /**
+   * §5.5.3 / C-28: the refinement-need `no_adviser` cause. It is DERIVED, never
+   * persisted: an `active` Goal whose adopted Plan still has a required, active,
+   * `plan_only` work row needs refinement, and only an authoritative `null` from
+   * the adviser recipient resolver means nobody can be sent that request. A
+   * recipient read failure is returned as the original rejection and is never
+   * folded into "no adviser"; a reader with no resolver injected runs no derived
+   * arm, so its old display/automation result stays untouched. P7 appends the
+   * separate deviation-need arm; this one is only the
+   * refinement arm. The Goal pin comes from `cause()`.
+   */
+  async function noAdviserCauses(
+    ctx: CoreCallContext, goal: GoalSnapshot, rows: Map<string, TaskRow>,
+  ): Promise<CauseReadResult> {
+    if (goal.desiredState !== 'active') return { ok: true, causes: [] };
+    const refinement = [...rows.values()].some((row) =>
+      row.definition.taskKind === 'work'
+      && row.definition.requirementLevel === 'required'
+      && row.definition.executionIntent === 'plan_only'
+      && row.disposition === 'active');
+    if (!refinement) return { ok: true, causes: [] };
+    if (deps.recipients === undefined) return { ok: true, causes: [] };
+    const workspace: WorkspaceScope = {
+      projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId,
+    };
+    const read = await deps.recipients.resolveDutyRecipient(ctx, { workspace, duty: 'adviser' });
+    if (read.status !== 'ready') {
+      if (read.status === 'rejected') return { ok: false, rejection: read };
+      return { ok: false, rejection: unavailable(`the adviser recipient could not be read (${read.status})`) };
+    }
+    if (read.value !== null) return { ok: true, causes: [] };
+    return { ok: true, causes: [cause({
+      goal, code: 'no_adviser', action: null, affected: [], taskRef: null, runRef: null,
+    })] };
+  }
+
   return {
     async readGoalDecisionCauses(ctx: CoreCallContext, input: { goalRef: GoalRef; atLeastCursor?: CommitCursor }) {
       if (input.goalRef.projectId !== ctx.projectId) return forbidden('the Goal belongs to another project');
@@ -459,7 +503,9 @@ export function createGoalDecisionCauseReader(
       if (!displayed.ok) return displayed.rejection;
       const automated = await automationCauses(goal, rows.rows);
       if (!automated.ok) return automated.rejection;
-      const causes = [...governance.causes, ...displayed.causes, ...automated.causes];
+      const noAdviser = await noAdviserCauses(ctx, goal, rows.rows);
+      if (!noAdviser.ok) return noAdviser.rejection;
+      const causes = [...governance.causes, ...displayed.causes, ...automated.causes, ...noAdviser.causes];
 
       // The same cause code may appear twice (e.g. two pending causes); the §3.3
       // identity de-duplicates by code + affected refs, so only the first wins.

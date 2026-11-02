@@ -56,7 +56,7 @@ export const DEFAULT_GOAL_SETTINGS_V1: GoalSettingsV1 = {
 export type NoticeCategoryV1 =
   | 'member_notice' | 'second_expiry' | 'handoff' | 'note_review'
   | 'undelivered_reply' | 'automatic_rework' | 'continuation' | 'disconnect'
-  | 'member_created' | 'project_notice';
+  | 'member_created' | 'project_notice' | 'plan_adoption' | 'plan_notice';
 
 export type NoticePositionV1 = { kind: 'commit'; cursor: CommitCursor; itemKey: string };
 

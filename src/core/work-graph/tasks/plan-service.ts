@@ -169,6 +169,7 @@ import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } fro
 import {
   deriveFuturePlanDelta,
   planPhaseGuardReasons,
+  removedTaskProblem,
   type FuturePlanDelta,
   unknownModuleRejection,
   unknownModuleTasksOf,
@@ -1219,6 +1220,13 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       requestSlotEffect = commit.requestSlot;
       commitGuards = commit.guards;
     }
+    if (input.basedOn !== null) {
+      const sourceRead = await readPlan(records, input.basedOn);
+      if (sourceRead.status === 'ready') {
+        const removed = removedTaskRefusal(sourceRead.plan, input.draft);
+        if (removed !== null) return removed;
+      }
+    }
 
     const identity = { projectId: goalRef.projectId, actor: input.actor, idempotencyKey: input.requestId };
     const derived = deriveCommandIds(identity, 'plan-propose');
@@ -1666,7 +1674,14 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         decisionProof,
         origin: read.origin,
       });
-      const committed = await records.commit(compiled.prepared);
+      // §6.4.2: the adoption commit's own cursor fills the accepted record's `until`.
+      const committed = await records.commit({
+        ...compiled.prepared,
+        commitCursorBindings: [
+          ...(compiled.prepared.commitCursorBindings ?? []),
+          ...compiled.commitCursorBindings,
+        ],
+      });
       if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, compiled.prepared.claims.length > 0);
       if (!committed.replayed) return { status: 'committed', value: compiled.snapshot, replayed: false, cursor: committed.cursor };
       const restored = await restoreAcceptedPlan(records, committed, receiptExpected);
@@ -3111,7 +3126,14 @@ async function applyFutureRevision(input: {
     origin: input.read.origin,
   });
   if (compiled.status !== 'compiled') return rejected('unsupported', compiled.reason);
-  const committed = await records.commit(compiled.value.prepared);
+  // §6.4.2: the adoption commit's own cursor fills the accepted record's `until`.
+  const committed = await records.commit({
+    ...compiled.value.prepared,
+    commitCursorBindings: [
+      ...(compiled.value.prepared.commitCursorBindings ?? []),
+      ...compiled.value.commitCursorBindings,
+    ],
+  });
   if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, compiled.value.prepared.claims.length > 0);
   if (!committed.replayed) {
     return { status: 'committed', value: compiled.value.snapshot, replayed: false, cursor: committed.cursor };
@@ -3218,6 +3240,14 @@ async function recheckApply(
  * failure re-reads the same-identity receipt so a concurrent winner that
  * committed before a later revoke is replayed instead of re-acted.
  */
+/** A physically removed Task stops at propose, where its author still hears why; adoption and review could only refuse it. */
+function removedTaskRefusal(source: PlanRevisionSnapshot, draft: PlanRevisionDraft): Rejection | null {
+  // A draft with no task list stays a recorded candidate with its issues (PLAN-01).
+  if (!Array.isArray(draft.tasks)) return null;
+  const reason = removedTaskProblem(source, new Set(draft.tasks.map((task) => task.taskId)));
+  return reason === null ? null : rejected('unsupported', reason);
+}
+
 async function proposePlanAsAgent(
   deps: PlanServiceDependencies,
   records: GoalRecordTransactionPort & RecordLookupPort,
@@ -3390,6 +3420,8 @@ async function proposePlanAsAgent(
         head: { proposalRef: input.replaces!.proposalRef, revision: input.replaces!.revision },
         replaces: input.replaces!, requestRef: input.requestRef! }, ctxFacts);
     if (!decided.ok) return refusalOf(decided);
+    const removed = removedTaskRefusal(source, input.draft);
+    if (removed !== null) return removed;
     const commit = planCommitOf(decided, { scope: scoped.scope, actor: writer.actor, agentAdmission: admission.guards });
     if (commit.status !== 'ready') return commit;
     const candidate = commit.proposal;

@@ -50,6 +50,7 @@ import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
 import { createTaskGate, goalWaitBasisOf } from './task-gate.js';
+import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
@@ -62,11 +63,18 @@ import type { PickBasisV1 } from '../../contracts/pick-basis.js';
 import type { ModuleOverlapTaskFactsV1, OverlapBasisV1 } from '../../core/work-graph/tasks/overlap-gates.js';
 import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../core/work-graph/tasks/overlap-gates.js';
 import { createDutyRecipient } from '../../core/work-graph/sessions/duty-recipient.js';
+import { decidePlanCandidate, type PlanCandidateFactsV1, type PlanCandidateSourceV1 } from '../../core/work-graph/state/plan-candidate.js';
+import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
+import { systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1 } from '../../contracts/plan-round.js';
+import type { PlanProposal } from '../../core/work-graph/model/plan-contracts.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
 import { deriveSessionInputId, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import {
-  effectiveReplyHandler, messageFactsOfRecord, type DeliveryFactsV1, type DeliveryResponseWaitV1,
+  effectiveReplyHandler, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  type DeliveryFactsV1, type DeliveryResponseWaitV1,
 } from '../../core/work-graph/state/message-machine.js';
+import { interventionPlanningQueryRefs } from '../../contracts/query-job.js';
+import { planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import { createInterventionHandler } from './intervention.js';
@@ -519,8 +527,10 @@ export function readyValue(value: WorkflowAdvanceValue): WorkflowAdvanceResult {
   } };
 }
 function advancing(receipt: WorkflowStepReceipt | null, next: AdvanceNext,
-  reason: string | null = null, pick: PickBasisV1 | null = null): WorkflowAdvanceResult {
-  return readyValue({ state: 'advance', receipt, next, reason, pick });
+  reason: string | null = null, pick: PickBasisV1 | null = null,
+  waitBasis?: GoalWaitBasisV1): WorkflowAdvanceResult {
+  return readyValue({ state: 'advance', receipt, next, reason, pick,
+    ...(waitBasis === undefined ? {} : { waitBasis }) });
 }
 export function waiting(receipt: WorkflowStepReceipt | null, reason: string,
   source?: DecisionSourceV1, waitBasis?: GoalWaitBasisV1, pick: PickBasisV1 | null = null): WorkflowAdvanceResult {
@@ -539,6 +549,15 @@ function readRejection(result: { status: 'not_found' } | { status: 'not_ready' }
 }
 /** Book §3.8 item 3 (`book-7a.md:385`): one bounded candidate page — the port's own maximum (`decision-contracts.ts:531`). */
 const RELEASE_CANDIDATE_PAGE_LIMIT = 100;
+/**
+ * §6.1.5's one candidate-wait basis: the same record kinds for every
+ * candidate wait, so a wait and a card are registered by the same facts.
+ */
+const PLAN_CANDIDATE_WAIT_KINDS = ['PlanProposal', 'PlanRevision', 'SessionMessage', 'Session',
+  'Run', 'TaskLease', 'VerificationRound', 'Evidence', 'TaskRequeue'] as const;
+function planWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[]): GoalWaitBasisV1 {
+  return goalWaitBasisOf(goal, reasons, PLAN_CANDIDATE_WAIT_KINDS);
+}
 
 function receiptReason(result: unknown, fallback: string): string {
   if (isRecord(result) && typeof result['reason'] === 'string' && result['reason'].length > 0) return result['reason'];
@@ -1174,8 +1193,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if ('waiting' in head) return waiting(null, head.waiting, undefined, waitBasis);
     const continued = await continueRoundChain(owned, base, waitBasis, head.read);
     if (continued !== null) return continued;
+    const covered = gateCoveredTaskIds(graph.plan.tasks, gateTask);
     const producer = graph.tasks.find((row) => row.definition.taskKind === 'work'
-      && row.effectivePhase === 'satisfied' && row.execution !== null);
+      && row.effectivePhase === 'satisfied' && row.execution !== null
+      && (gateTask.scope.kind === 'goal' || covered.includes(row.ref.taskId)));
     if (producer === undefined || producer.execution === null) {
       return waiting(null, `the goal gate ${gateTask.taskId} has no ended ordinary producer Run yet`, undefined, waitBasis);
     }
@@ -1454,7 +1475,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     findSessions: (ctx, input) => deps.sessions.findSessions(ctx, input),
     dutyOfRole: (ctx, role) => deps.sessionDuty!(role, ctx),
   });
-  type SuggestionSend = { toolName: 'send_session_message'; arguments: unknown };
+  type SuggestionSend = { toolName: 'send_session_message'; arguments: unknown; requestId: string };
   type SuggestionStep =
     | { operation: WorkflowOperation; send: SuggestionSend | null }
     | { rejection: CoreRejection };
@@ -1480,79 +1501,37 @@ export function createWorkflow(deps: WorkflowDependencies & {
         },
         meta: { requestId: commandId, expected: [] },
       };
-      return { operation: { kind: 'suggest_member', request }, send: { toolName: 'send_session_message', arguments: request.input } };
+      return { operation: { kind: 'suggest_member', request },
+        send: { toolName: 'send_session_message', arguments: request.input, requestId: commandId } };
     }
     return { operation: { kind: 'host_pick_member', request: {
       commandId, caller: { kind: 'host_pick' }, duty: 'executor',
       scope: { kind: 'task', task: taskRef }, reason: text } }, send: null };
   }
 
-  async function readSuggestionReceipt(owned: Owned, task: RuntimeTask, planRef: PlanRevisionRef,
-    send: { toolName: 'send_session_message'; arguments: unknown },
+  /**
+   * The one Host-send committed-receipt read (`book-pl-frozen.md` §7.2 List B;
+   * `mailbox-service.ts`'s identity-only `lookupHostSendCommit`). The identity and
+   * arguments are the caller's own send, never a current payload; `undetermined`
+   * is never a refusal.
+   */
+  async function readHostSendReceipt(ctx: CoreCallContext, send: { requestId: string; arguments: unknown },
   ): Promise<'committed' | 'not_committed' | 'undetermined'> {
     const lookup = deps.messages?.lookupHostSendCommit;
     if (lookup === undefined) return 'undetermined';
-    const result = await lookup(automationContext(owned), { ...send,
-      requestId: `pick-suggest:${task.taskId}:${planRef.planId}`,
-      scope: { projectId: owned.projectId, workspaceId: owned.workspaceId } });
-    return result.status === 'committed' ? 'committed' : result.status === 'not_committed' ? 'not_committed' : 'undetermined';
+    const result = await lookup(ctx, { toolName: 'send_session_message',
+      requestId: send.requestId, arguments: send.arguments,
+      scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' } });
+    return result.status === 'committed' ? 'committed'
+      : result.status === 'not_committed' ? 'not_committed' : 'undetermined';
   }
 
-  /** Read-only deterministic first-step selection shared by `select_work`. */
-  async function selectNext(owned: Owned, base: Base): Promise<WorkflowAdvanceResult> {
-    const config = deps.configuration;
-    if (config === undefined) return rejection('unsupported', 'no trusted Workflow configuration is registered');
-    const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
-    if (goalRead.status !== 'ready') return readRejection(goalRead);
-    const goal = goalRead.value.goal;
-    if (goal.workspaceRef.projectId !== owned.projectId) return rejection('forbidden', 'the Goal belongs to another project');
-    // D-9 (§2.6): a paused or cancelled Goal selects no work; the claim would be `busy` anyway.
-    if (goal.desiredState !== 'active') {
-      return waiting(null, `the Goal is ${goal.desiredState}; no work is selected while the Goal is not active`,
-        undefined, goalWaitBasisOf(goal, ['goal_state'], ['Goal']));
-    }
-    // `book-7a.md:380–:381`: the release step sits AFTER the active check and BEFORE the no-plan return; selection
-    // stays read-only. A page with nothing releasable falls through (`:386–:388`).
-    const releaseStep = await releaseCandidatePerform(owned, base);
-    if (releaseStep !== null) return releaseStep;
-    if (goal.activePlanRevision === null) {
-      return waiting(null, 'the Goal has no adopted Plan; no work was selected',
-        undefined, goalWaitBasisOf(goal, ['plan_adoption'], ['PlanRevision', 'PlanProposal']));
-    }
-    // P's trigger (§3.14 item 2): a continued Goal whose first Plan is adopted forwards its copied interventions once,
-    // before task selection; the `forwarded:` claim makes a repeat a no-op. A composition without the owner skips the
-    // trigger — the original no-trigger behavior.
-    const forward = deps.copyForwarding;
-    if (goal.continuedFrom !== null && forward !== undefined) {
-      const forwarded = await forward(owned.ctx, { goalRef: goal.ref });
-      if (forwarded !== null) return forwarded;
-    }
-    const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
-    if (graphRead.status !== 'ready') return readRejection(graphRead);
-    const graph = graphRead.value;
-    if (graph.completion !== undefined && graph.completion.status === 'recorded'
-      && graph.completion.selectedPlanMatches && graph.completion.snapshot.phase === 'COMPLETED') {
-      return completed(null, 'the Goal is formally COMPLETED');
-    }
+  type PlanCandidateWait = { reason: string; basis: GoalWaitBasisV1; source?: DecisionSourceV1; inFlight?: true };
 
-    // An explicit Task selection ends THIS work handle once that Task is
-    // satisfied; it never silently switches to another Task of the same Goal.
-    if (base.taskId !== null) {
-      const selectedRow = graph.tasks.find(candidate => candidate.ref.taskId === base.taskId);
-      if (selectedRow !== undefined && selectedRow.effectivePhase === 'satisfied') {
-        return completed(null, `the selected Task ${base.taskId} is satisfied`);
-      }
-      // L-15 (§9 VD-11, C7): a non-active selected Task is never advanced. A cancelled or
-      // superseded one ends this work handle; a deferred one waits for a plan change.
-      const selectedTask = graph.plan.tasks.find(candidate => candidate.taskId === base.taskId);
-      if (selectedTask !== undefined && selectedTask.disposition !== 'active') {
-        const notActive = `task_not_active: the selected Task ${base.taskId} is ${selectedTask.disposition}`;
-        return selectedTask.disposition === 'deferred'
-          ? waiting(null, `${notActive}; it waits until a plan change makes it active again`,
-            undefined, goalWaitBasisOf(goal, ['plan_change'], ['PlanRevision']))
-          : completed(null, `${notActive}; it carries no work any more`);
-      }
-    }
+  async function selectOrdinary(
+    owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot, graph: TaskGraph,
+    candidateWait: PlanCandidateWait | null,
+  ): Promise<WorkflowAdvanceResult> {
     // 1. The first eligible active ordinary work in required-first / plan order.
     const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
     // L46 §3.13 item 1: one pass after the ordering and before the loop; a failed read is the advance's failure.
@@ -1578,10 +1557,74 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (collectedReason === null) collectedReason = reason;
       if (basis !== undefined) collectedWaits.push(basis);
     };
-    const collectedWaiting = (): WorkflowAdvanceResult | null => {
-      if (collectedReason === null) return null;
-      if (collectedWaits.length === 0) return waiting(null, collectedReason);
-      return waiting(null, collectedReason, undefined, mergeWaitBasis(collectedWaits));
+    const gapWaitBasis = (): GoalWaitBasisV1 => mergeWaitBasis([
+      goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
+        ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
+          'Evidence', 'TaskEvidenceIndex']),
+      ...collectedWaits,
+    ]);
+    /**
+     * §5.1.4: the Goal-level waiting exits carry the refinement trigger. The
+     * real block reason, every collected wait, the candidate wait and the
+     * plan_only marker all survive; no branch is replaced by another.
+     */
+    const planOnlyWait = (): GoalWaitBasisV1 | null => {
+      const reasons: string[] = [];
+      for (const task of graph.plan.tasks) {
+        if (task.requirementLevel !== 'required' || task.disposition !== 'active'
+          || task.taskKind !== 'work' || task.executionIntent !== 'plan_only') continue;
+        reasons.push(task.scope.kind === 'goal'
+          ? `plan_only_task:${task.taskId}` : `plan_only:${task.scope.stageId}`);
+      }
+      const unique = [...new Set(reasons)];
+      return unique.length === 0 ? null : goalWaitBasisOf(goal, unique, ['SessionMessage']);
+    };
+    const attachRefinement = async (result: WorkflowAdvanceResult): Promise<WorkflowAdvanceResult> => {
+      if (result.status !== 'ready' || result.value.state !== 'waiting') return result;
+      const bases: GoalWaitBasisV1[] = [];
+      if (result.value.waitBasis !== undefined) bases.push(result.value.waitBasis);
+      if (candidateWait !== null) bases.push(candidateWait.basis);
+      const planOnly = planOnlyWait();
+      if (planOnly !== null) bases.push(planOnly);
+      if (bases.length === 0) return result;
+      const basis = mergeWaitBasis(bases);
+      const target = planOnlyTargetOf(basis);
+      // A candidate still on its way to adoption answers the same placeholders; a second round would compete with it.
+      const round = candidateWait?.inFlight === true ? null : refinementRoundOf({
+        basis, goalRef: goal.ref, planRevision: graph.plan.planRevision, target: target ?? null });
+      if (round !== null && suggestionDutyRecipient !== null) {
+        const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
+          workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser',
+        });
+        if (adviser.status !== 'ready') return readRejection(adviser);
+        if (adviser.value !== null) {
+          const requestId = systemRoundRequestId(round);
+          if (requestId.status !== 'ready') return requestId;
+          const text = `${requestId.value}\n细化${target!.kind === 'stage'
+            ? `阶段 ${target!.stageId}` : `目标级占位任务 ${target!.taskId}`}；只输出这一段/这一版。`;
+          // Build the send from the one `systemRoundSendInput` original so the receipt
+          // read uses the system round's own identity and arguments.
+          const request = systemRoundSendInput({ round, recipient: adviser.value, text });
+          if (request.status !== 'ready') return request;
+          if (await readHostSendReceipt(
+            systemRoundContext({ projectId: owned.projectId, workspaceId: owned.workspaceId }, owned.ctx.signal),
+            { requestId: request.value.meta.requestId, arguments: request.value.input },
+          ) === 'committed') {
+            // The round is already committed: keep the complete merge basis and wait.
+            // The next pass sees the same gap and skips it; no self-wake guard is written.
+            const pending = 'plan_refine_pending: the refinement round is already committed';
+            return waiting(null, candidateWait === null ? pending : `${pending}; ${candidateWait.reason}`, undefined, basis);
+          }
+          return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
+            round, recipient: adviser.value, text,
+          } }), null, null, basis);
+        }
+      }
+      const reason = candidateWait === null
+        ? result.value.reason ?? 'the Goal is waiting'
+        : `${result.value.reason ?? 'the Goal is waiting'}; ${candidateWait.reason}`;
+      return waiting(result.value.receipt, reason,
+        (result.value.source ?? candidateWait?.source) ?? undefined, basis);
     };
     // A-12 (`book-7c.md` §3.3 item 2): the candidates split stably by the module-overlap rule, and the
     // non-overlapping segment keeps the whole existing order ahead of the gated one. The facts are aligned by
@@ -1822,7 +1865,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
           }
           const wait = facts.value.wait;
           if (wait === null) {
-            return waiting(null, 'the continuation line has no unconsumed Work wait');
+            // A send still awaiting its release is no wait yet: the Goal goes on with its other Tasks.
+            const basis = goalWaitBasisOf(goal, ['wait_reply'], ['SessionMessage', 'Run', 'TaskLease']);
+            if (base.taskId === null) {
+              rememberWaiting('the continuation line has no unconsumed Work wait', basis);
+              continue;
+            }
+            return waiting(null, 'the continuation line has no unconsumed Work wait', undefined, basis);
           }
           priorRunRef = wait.runRef;
         }
@@ -1880,7 +1929,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
           return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
         }
         if (suggestion.send === null) return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
-        if (await readSuggestionReceipt(owned, task, graph.plan.ref, suggestion.send) === 'committed') {
+        if (await readHostSendReceipt(automationContext(owned), suggestion.send) === 'committed') {
           const basis = goalWaitBasisOf(goal, ['suggestion_committed'], ['Session', 'CoreOperation']);
           if (base.taskId !== null) {
             return waiting(null, 'suggestion_committed: the repeated pass performs no step', undefined, basis);
@@ -1905,18 +1954,6 @@ export function createWorkflow(deps: WorkflowDependencies & {
           ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
             'Evidence', 'TaskEvidenceIndex']));
     }
-    // L46 §3.13 item 3: every candidate this pass could start is inside a block → the Goal waits with all bases.
-    const candidates = ordered.filter(task => {
-      if (task.taskKind !== 'work' || task.disposition !== 'active'
-        || task.executionIntent === 'plan_only') return false;
-      const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
-      return row !== undefined && row.effectivePhase !== 'satisfied';
-    });
-    if (blocks.length > 0 && candidates.length > 0 && candidates.every(task => branch.has(task.taskId))) {
-      // The union of the blocks' bases; the Goal identity is this Goal's.
-      return waiting(null, `l46_blocked: ${blocks.map(block => block.task.taskId).join(', ')}`, undefined,
-        mergeWaitBasis(blocks.map(block => block.wakeBasis)));
-    }
     // 2. While any required ordinary work is still unsatisfied (including a
     //    required plan_only future node) the real gap stays; the Goal gate is
     //    never scheduled ahead of unfinished ordinary work. L-15 (§9 VD-11, C7):
@@ -1929,21 +1966,45 @@ export function createWorkflow(deps: WorkflowDependencies & {
     };
     const required = graph.plan.tasks.filter((task) => task.requirementLevel === 'required' && carriesWork(task));
     const unfinishedWork = required.filter((task) => task.taskKind === 'work' && unsatisfied(task));
+    // §5.1.3: a stage/module gate whose required coverage has no unfinished
+    // work runs before the goal-wide unfinishedWork gate. `gateCoveredTaskIds`
+    // is the one coverage derivation (never `gateFixInProgress`).
+    const coveredGate = required.find((task) => task.taskKind === 'gate'
+      && task.scope.kind !== 'goal'
+      && task.disposition === 'active'
+      && unsatisfied(task)
+      && !gateCoveredTaskIds(graph.plan.tasks, task)
+        .some((taskId) => unfinishedWork.some((work) => work.taskId === taskId))
+      && !(base.taskId === null && base.activeTaskIds?.has(task.taskId) === true));
+    if (coveredGate !== undefined) {
+      return await advanceGate(owned, base, roundWaitBasis, graph, coveredGate);
+    }
+    // L46 §3.13 item 3: every candidate this pass could start is inside a block → the Goal waits with all bases.
+    const candidates = ordered.filter(task => {
+      if (task.taskKind !== 'work' || task.disposition !== 'active'
+        || task.executionIntent === 'plan_only') return false;
+      const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
+      return row !== undefined && row.effectivePhase !== 'satisfied';
+    });
+    if (blocks.length > 0 && candidates.length > 0 && candidates.every(task => branch.has(task.taskId))) {
+      // The block roots stay the Goal's reason; their bases join the common close-out (DR-P4-07).
+      return attachRefinement(waiting(null, `l46_blocked: ${blocks.map(block => block.task.taskId).join(', ')}`, undefined,
+        mergeWaitBasis([...blocks.map(block => block.wakeBasis), gapWaitBasis()])));
+    }
     if (unfinishedWork.length > 0) {
-      const collected = collectedWaiting();
-      if (collected !== null) return collected;
       const gap = describeGap(ordered, graph);
-      return waiting(null, unfinishedWork.every((task) => task.disposition === 'deferred')
-        ? `required_task_deferred: ${gap}` : gap, undefined,
-        goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
-          ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
-            'Evidence', 'TaskEvidenceIndex']));
+      const gapReason = unfinishedWork.every((task) => task.disposition === 'deferred')
+        ? `required_task_deferred: ${gap}` : gap;
+      return attachRefinement(waiting(null, collectedReason ?? gapReason, undefined,
+        gapWaitBasis()));
     }
 
     // 3. Only a fully satisfied required ordinary set may produce the gate
     //    evidence from an already-ended ordinary Run (no gate Run is invented).
     // §3.1: a gate a live Run watch is already advancing is skipped like any other Task.
-    const gateTask = required.find((task) => task.taskKind === 'gate' && unsatisfied(task));
+    // §5.1.3: this arm is only the goal gate; stage/module gates were selected above.
+    const gateTask = required.find((task) => task.taskKind === 'gate' && task.scope.kind === 'goal'
+      && unsatisfied(task));
     if (gateTask !== undefined && !(base.taskId === null && base.activeTaskIds?.has(gateTask.taskId) === true)) {
       return await advanceGate(owned, base, roundWaitBasis, graph, gateTask);
     }
@@ -1952,12 +2013,301 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (required.every((task) => !unsatisfied(task))) {
       return advancing(null, makePerform(base, completeGoalStep(base, owned.projectId, goal, graph.completion)));
     }
-    const collected = collectedWaiting();
-    if (collected !== null) return collected;
-    return waiting(null, describeGap(ordered, graph), undefined,
-      goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
-        ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
-          'Evidence', 'TaskEvidenceIndex']));
+    return attachRefinement(waiting(null, collectedReason ?? describeGap(ordered, graph), undefined, gapWaitBasis()));
+  }
+
+  /**
+   * §6.1.4 / §6.3.1: a candidate's formal Answer becomes the executor M's one
+   * reply through P2's associate path. R is the candidate's source message; M is
+   * its Query's `repliesToMessageRef` or the chain root found by the one lineage
+   * walk. Both the ordinary adoption and the recovery scan read M first: a wait
+   * that is closed or already answered is skipped, never overwritten. A
+   * rejection passes through.
+   */
+  async function associateCandidateReply(
+    owned: Owned, sourceMessageRef: SessionMessageRef,
+  ): Promise<'skipped' | 'responded' | CoreRejection> {
+    const mailbox = deps.messages;
+    if (mailbox === undefined) {
+      return rejection('unsupported', 'the mailbox does not publish readMessage');
+    }
+    const queries = deps.consultations?.queries;
+    if (queries === undefined) {
+      return rejection('unsupported', 'the planning Query owner is not wired');
+    }
+    const lineage = await planSourceLineageOf(owned.ctx,
+      { messages: mailbox, queries, plans: deps.plans }, sourceMessageRef);
+    if (lineage.status !== 'ready') return readRejection(lineage);
+    const query = await queries.readQueryJob(owned.ctx,
+      interventionPlanningQueryRefs(sourceMessageRef).queryJobRef);
+    if (query.status !== 'ready') return readRejection(query);
+    const replyTo = query.value.job.job.intent.execution.repliesToMessageRef
+      ?? lineage.value.rootMessage;
+    const message = await mailbox.readMessage(owned.ctx, replyTo);
+    if (message.status !== 'ready') return readRejection(message);
+    if (message.value.response !== null
+      || waitStateOf(message.value, waitFactsOfRecord(message.value)).state !== 'open') {
+      return 'skipped';
+    }
+    // §5.6: the closing's associate arm reads only the message and the two closing fields;
+    // the planning Query's execution profile is not part of it.
+    const answered = await intervention.handleIntervention(owned.ctx, {
+      messageRef: sourceMessageRef, completion: 'associate_answer', replyToOriginal: true,
+    });
+    if (answered.status === 'responded') return 'responded';
+    if (answered.status === 'rejected') return answered;
+    return rejection('incomplete', `the candidate reply ended ${answered.status}`);
+  }
+
+  /** Read-only deterministic first-step selection shared by `select_work`. */
+  async function selectNext(owned: Owned, base: Base, adoptWait?: PlanCandidateWait): Promise<WorkflowAdvanceResult> {
+    const config = deps.configuration;
+    if (config === undefined) return rejection('unsupported', 'no trusted Workflow configuration is registered');
+    const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+    if (goalRead.status !== 'ready') return readRejection(goalRead);
+    const goal = goalRead.value.goal;
+    if (goal.workspaceRef.projectId !== owned.projectId) return rejection('forbidden', 'the Goal belongs to another project');
+    // D-9 (§2.6): a paused or cancelled Goal selects no work; the claim would be `busy` anyway.
+    if (goal.desiredState !== 'active') {
+      return waiting(null, `the Goal is ${goal.desiredState}; no work is selected while the Goal is not active`,
+        undefined, goalWaitBasisOf(goal, ['goal_state'], ['Goal']));
+    }
+    // `book-7a.md:380–:381`: the release step sits AFTER the active check and BEFORE the no-plan return; selection
+    // stays read-only. A page with nothing releasable falls through (`:386–:388`).
+    const releaseStep = await releaseCandidatePerform(owned, base);
+    if (releaseStep !== null) return releaseStep;
+    if (goal.activePlanRevision === null) {
+      return waiting(null, 'the Goal has no adopted Plan; no work was selected',
+        undefined, goalWaitBasisOf(goal, ['plan_adoption'], ['PlanRevision', 'PlanProposal']));
+    }
+    // P's trigger (§3.14 item 2): a continued Goal whose first Plan is adopted forwards its copied interventions once,
+    // before task selection; the `forwarded:` claim makes a repeat a no-op. A composition without the owner skips the
+    // trigger — the original no-trigger behavior.
+    const forward = deps.copyForwarding;
+    if (goal.continuedFrom !== null && forward !== undefined) {
+      const forwarded = await forward(owned.ctx, { goalRef: goal.ref });
+      if (forwarded !== null) return forwarded;
+    }
+    const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
+    if (graphRead.status !== 'ready') return readRejection(graphRead);
+    const graph = graphRead.value;
+    if (graph.completion !== undefined && graph.completion.status === 'recorded'
+      && graph.completion.selectedPlanMatches && graph.completion.snapshot.phase === 'COMPLETED') {
+      return completed(null, 'the Goal is formally COMPLETED');
+    }
+
+    // An explicit Task selection ends THIS work handle once that Task is
+    // satisfied; it never silently switches to another Task of the same Goal.
+    if (base.taskId !== null) {
+      const selectedRow = graph.tasks.find(candidate => candidate.ref.taskId === base.taskId);
+      if (selectedRow !== undefined && selectedRow.effectivePhase === 'satisfied') {
+        return completed(null, `the selected Task ${base.taskId} is satisfied`);
+      }
+      // L-15 (§9 VD-11, C7): a non-active selected Task is never advanced. A cancelled or
+      // superseded one ends this work handle; a deferred one waits for a plan change.
+      const selectedTask = graph.plan.tasks.find(candidate => candidate.taskId === base.taskId);
+      if (selectedTask !== undefined && selectedTask.disposition !== 'active') {
+        const notActive = `task_not_active: the selected Task ${base.taskId} is ${selectedTask.disposition}`;
+        return selectedTask.disposition === 'deferred'
+          ? waiting(null, `${notActive}; it waits until a plan change makes it active again`,
+            undefined, goalWaitBasisOf(goal, ['plan_change'], ['PlanRevision']))
+          : completed(null, `${notActive}; it carries no work any more`);
+      }
+    }
+    // §6.1.2 step 3b / step 3: the Goal loop reads this Goal's planning
+    // questions and latest agent candidate before the ordinary selection. A
+    // candidate's card/wait row never blocks the other branches: it only
+    // remembers its basis and lets the same pass continue selecting.
+    let candidateWait: PlanCandidateWait | null = adoptWait ?? null;
+    if (base.taskId === null && adoptWait === undefined) {
+      if (deps.planCandidates === undefined) {
+        return rejection('unsupported', 'planCandidates is not wired');
+      }
+      const candidates = await deps.planCandidates(
+        { projectId: owned.projectId, workspaceId: owned.workspaceId }, owned.ctx, base.goalRef);
+      if (candidates.status !== 'ready') return readRejection(candidates);
+      for (const entry of candidates.value.goals) {
+        for (const group of entry.questionGroups) {
+          // §6.1.2 step 3b: every question answered and no `planresume:` yet.
+          if (!group.allAnswered || group.resumeMessageExists) continue;
+          const round: SystemRoundV1 = {
+            kind: 'planresume', goalRef: goal.ref,
+            queryJobId: group.queryJobRef.queryJobId, originalMessageRef: group.originalMessageRef,
+          };
+          const requestId = systemRoundRequestId(round);
+          if (requestId.status !== 'ready') return requestId;
+          if (deps.messages === undefined) {
+            return rejection('unsupported', 'the mailbox does not publish readMessage');
+          }
+          const original = await deps.messages.readMessage(owned.ctx, group.originalMessageRef);
+          if (original.status !== 'ready') return readRejection(original);
+          const recipient = original.value.recipient as SessionRef;
+          return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
+            round, recipient, text: requestId.value, followupOf: group.originalMessageRef,
+          } }), null, null, planWaitBasisOf(goal, ['plan_resume_pending']));
+        }
+      }
+      // §6.1.2 step 3 / §7.3.1: a crash after adoption can leave the candidate's
+      // executor M unanswered. Every accepted candidate is read back; only an M
+      // still open with no reply gets the same association. This pass never
+      // adopts, proposes, builds a Query or re-sends.
+      if (deps.acceptedCandidatesOf === undefined) {
+        return rejection('unsupported', 'acceptedCandidatesOf is not wired');
+      }
+      const accepted = await deps.acceptedCandidatesOf(goal.ref);
+      if (accepted.status !== 'ready') return readRejection(accepted);
+      for (const acceptedProposal of accepted.value) {
+        if (acceptedProposal.sourceMessageRef === null) continue;
+        const associated = await associateCandidateReply(owned, acceptedProposal.sourceMessageRef);
+        if (typeof associated !== 'string') return readRejection(associated);
+        // The candidate wait stays with the pass: an ordinary step still wins, and
+        // only a pass with no step waits on the merged basis.
+        if (associated === 'responded') {
+          candidateWait = {
+            reason: 'plan_candidate_waiting: the accepted candidate reply',
+            basis: planWaitBasisOf(goal, ['plan_candidate_waiting']),
+          };
+        }
+      }
+      if (deps.latestAgentCandidate === undefined) {
+        return rejection('unsupported', 'latestAgentCandidate is not wired');
+      }
+      const latest = await deps.latestAgentCandidate(goal.ref);
+      if (latest.status !== 'ready') return readRejection(latest);
+      if (latest.value !== null) {
+        const candidateBasis = (reason: string): GoalWaitBasisV1 => planWaitBasisOf(goal, [reason]);
+        /** `null` keeps the ordinary selection going (card/wait/not_found). */
+        const planCandidateWaitStep = async (proposal: PlanProposal): Promise<WorkflowAdvanceResult | null> => {
+          if (deps.readCandidateCard === undefined) {
+            return rejection('unsupported', 'readCandidateCard is not wired');
+          }
+          const cardRead = await deps.readCandidateCard(goal.ref, proposal.ref);
+          // The candidate is gone (replaced or adopted): it is not a card, and
+          // the same pass continues selecting; the next pass re-reads it.
+          if (cardRead.status === 'not_found') return null;
+          if (cardRead.status !== 'ready') return readRejection(cardRead);
+          if (cardRead.value.exactReview.status !== 'ready') return readRejection(cardRead.value.exactReview);
+          const review = cardRead.value.exactReview.value;
+          if (deps.completedFixes === undefined) {
+            return rejection('unsupported', 'completedFixes is not wired');
+          }
+          const fixes = await deps.completedFixes(goal.ref, proposal.basedOn);
+          if (fixes.status !== 'ready') return readRejection(fixes);
+          let fix = null;
+          if (review.status === 'decided' && review.verdict === 'fix' && fixes.value < 3) {
+            if (deps.planFixRead === undefined) return rejection('unsupported', 'planFixRead is not wired');
+            const fixRead = await deps.planFixRead(goal.ref, proposal.ref, proposal.revision);
+            if (fixRead.status !== 'ready') return readRejection(fixRead);
+            fix = fixRead.value;
+          }
+          // §6.3.1: the review line is the existing duty recipient resolver;
+          // a missing resolver is an unwired narrow double, not "no line".
+          if (suggestionDutyRecipient === null) {
+            return rejection('unsupported', 'the Session duty resolver is not wired');
+          }
+          const reviewerRead = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
+            workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'reviewer',
+          });
+          if (reviewerRead.status !== 'ready') return readRejection(reviewerRead);
+          const reviewer = reviewerRead.value;
+          let source: PlanCandidateSourceV1 = 'agent_proposal';
+          if (proposal.sourceMessageRef !== null) {
+            if (deps.messages === undefined) {
+              return rejection('unsupported', 'the mailbox does not publish readMessageBody');
+            }
+            const body = await deps.messages.readMessageBody(owned.ctx,
+              { messageRef: proposal.sourceMessageRef, part: 'message' });
+            if (body.status !== 'ready') return readRejection(body);
+            const head = systemRoundOfText(body.value.text);
+            source = head === null ? 'other'
+              : head.kind === 'refine' ? 'refine'
+                : head.kind === 'planfix' ? 'fix'
+                  : head.kind === 'planresume' ? 'planresume' : 'other';
+          }
+          const diagnosis = cardRead.value.diagnosis;
+          const diagnosisText = diagnosis === null ? '检查覆盖读不到'
+            : diagnosis.length === 0 ? '无'
+              : diagnosis.map(finding => `${finding.obligationId}/${finding.requirementId}: ${finding.message}`).join('\n');
+          const findingsText = review.status === 'decided' && review.findings.length > 0
+            ? review.findings.map(finding => `${finding.taskId ?? '计划级'}: ${finding.text}`).join('\n') : '无';
+          const decision = decidePlanCandidate({
+            proposal: {
+              ref: proposal.ref, revision: proposal.revision, basedOn: proposal.basedOn,
+              source, affectedTaskIds: proposal.reason.affectedTaskIds ?? [],
+            },
+            review,
+            fix,
+            completedFixes: fixes.value,
+            adoptionPolicy: decisionActionPolicy({
+              autonomy: goal.settings.autonomy, action: 'refine_future', actorClass: 'system',
+              countedNext: null, cap: 0,
+            }),
+            hasReviewLine: reviewer !== null,
+            diagnosis,
+          } satisfies PlanCandidateFactsV1);
+          if (decision.action === 'request_review') {
+            const round: SystemRoundV1 = {
+              kind: 'planreview', goalRef: goal.ref,
+              proposalId: proposal.ref.proposalId, proposalRevision: proposal.revision,
+            };
+            return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
+              round, recipient: reviewer as SessionRef,
+              text: `${decision.requestId}\n审这一版计划候选；结论只能是 pass 或 fix。\n机械诊断：${diagnosisText}\n请用 submit_plan_review 填结论。`,
+            } }), null, null, candidateBasis('plan_review_pending'));
+          }
+          if (decision.action === 'request_fix') {
+            const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
+              workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser',
+            });
+            if (adviser.status !== 'ready') return readRejection(adviser);
+            if (adviser.value === null) {
+              // §6.1.4 line 1139: no adviser line -> the candidate is a card, never a send.
+              candidateWait = { reason: 'review_fix: the Goal has no adviser line',
+                basis: candidateBasis('plan_candidate_waiting:review_fix'), source: cardRead.value.card.source };
+              return null;
+            }
+            const round: SystemRoundV1 = {
+              kind: 'planfix', goalRef: goal.ref,
+              proposalId: proposal.ref.proposalId, proposalRevision: proposal.revision,
+            };
+            return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
+              round, recipient: adviser.value,
+              text: `${decision.requestId}\n按审阅意见改这一版候选；返修上限 3。\n审阅意见：${findingsText}\n机械诊断：${diagnosisText}\n答案用 submit_plan_round 填。`,
+            } }), null, null, candidateBasis('plan_fix_pending'));
+          }
+          if (decision.action === 'adopt') {
+            // §6.1.4: the fixed request id makes a retry the original adoption.
+            return advancing(null, makePerform(base, { kind: 'adopt_plan', request: {
+              input: { proposalRef: proposal.ref, expectedProposalRevision: proposal.revision, decisionRefs: [] },
+              meta: {
+                requestId: `plan-adopt:${proposal.ref.proposalId}:${proposal.revision}`,
+                expected: [
+                  { ref: goal.ref, revision: goal.revision },
+                  { ref: proposal.ref, revision: proposal.revision },
+                ],
+              },
+            } }));
+          }
+          if (decision.action === 'wait') {
+            const label = decision.reason === 'busy' ? 'plan_adoption_busy'
+              : decision.reason === 'review' ? 'plan_review_pending' : 'plan_fix_sent';
+            candidateWait = { reason: `${label}: the plan candidate is ${decision.reason}`,
+              basis: candidateBasis(label), inFlight: true };
+            return null;
+          }
+          candidateWait = { reason: `plan_candidate_waiting: ${decision.reason}`,
+            basis: candidateBasis('plan_candidate_waiting'), source: cardRead.value.card.source };
+          return null;
+        };
+        const candidateResult = await planCandidateWaitStep(latest.value);
+        if (candidateResult !== null) return candidateResult;
+      }
+    }
+    const selected = await selectOrdinary(owned, base, config, goal, graph, candidateWait);
+    if (selected.status === 'ready' && candidateWait?.source !== undefined) {
+      return { ...selected, value: { ...selected.value, source: candidateWait.source } };
+    }
+    return selected;
   }
 
   /**
@@ -2733,6 +3083,92 @@ export function createWorkflow(deps: WorkflowDependencies & {
         }
         // `unavailable` is not committed: the gate keeps waiting for a person's release.
         return waiting(receipt, `the overlap note request was ${result.status}; the gate waits for a person's release`);
+      }
+      case 'send_system_round': {
+        if (deps.send === undefined) {
+          return rejection('unsupported', 'the system-round send is not wired');
+        }
+        // §5.2.5: the one sender identity; the mailbox replays a repeated request id.
+        const result = await deps.send(
+          systemRoundContext({ projectId: owned.projectId, workspaceId: owned.workspaceId }, owned.ctx.signal),
+          operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'send_system_round', result };
+        if (result.status === 'rejected') {
+          const round = operation.request.round;
+          if (round.kind === 'planreview' || round.kind === 'planfix') {
+            // §5.2.5's send-rejection exit: the review/fix round turns the
+            // candidate into its card, keeps the full send receipt, and never
+            // blocks the other branches — only a pass with no step waits.
+            if (deps.readCandidateCard === undefined) {
+              return rejection('unsupported', 'readCandidateCard is not wired');
+            }
+            const goalRead = await deps.plans.queryGoal(owned.ctx, round.goalRef);
+            if (goalRead.status !== 'ready') return readRejection(goalRead);
+            const cardRead = await deps.readCandidateCard(round.goalRef, {
+              aggregateType: 'PlanProposal', projectId: owned.projectId,
+              workspaceId: owned.workspaceId, proposalId: round.proposalId,
+            });
+            if (cardRead.status !== 'ready') return readRejection(cardRead);
+            const selected = await selectNext(owned, base, {
+              reason: `review_fix:${result.code}:${result.reason}`,
+              basis: planWaitBasisOf(goalRead.value.goal, ['plan_candidate_waiting:review_fix']),
+              source: cardRead.value.card.source,
+            });
+            if (selected.status !== 'ready') return selected;
+            return { ...selected, value: { ...selected.value, receipt } };
+          }
+          return result;
+        }
+        // `committed`/`replayed` and `skipped` both mean this round is already
+        // sent: continue the ordinary selection, which reads the same
+        // deterministic message/Query, and never re-perform this send step.
+        return advancing(receipt, selectWorkStep(base));
+      }
+      case 'adopt_plan': {
+        // §6.1.4: the request carries the fixed request id and the two expected pins.
+        const result = await deps.plans.applyPlanChange(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'adopt_plan', result };
+        if (result.status === 'committed') {
+          // §6.1.4 line 1131 / §7.3.1 step 5: the committed candidate's formal
+          // Answer becomes the executor M's one reply before the same selection.
+          const committedProposal = await deps.plans.readPlanProposal(
+            owned.ctx, operation.request.input.proposalRef);
+          if (committedProposal.status !== 'ready') return readRejection(committedProposal);
+          if (committedProposal.value.sourceMessageRef !== null) {
+            const associated = await associateCandidateReply(
+              owned, committedProposal.value.sourceMessageRef);
+            if (typeof associated !== 'string') return readRejection(associated);
+          }
+          return advancing(receipt, selectWorkStep(base));
+        }
+        const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+        if (goalRead.status !== 'ready') return readRejection(goalRead);
+        const goal = goalRead.value.goal;
+        if (result.code === 'busy') {
+          // §6.1.4: keep the candidate and retry on the related Run/wait facts.
+          return await selectNext(owned, base, {
+            reason: 'plan_adoption_busy: the plan adoption is busy',
+            basis: planWaitBasisOf(goal, ['plan_adoption_busy']),
+            inFlight: true,
+          });
+        }
+        if (result.code === 'not_found') return advancing(receipt, selectWorkStep(base));
+        // §6.1.4 line 1131: a candidate whose basedOn is no longer the active
+        // plan is gone, not rejected; re-select and let the loop re-read it.
+        const proposalRead = await deps.plans.readPlanProposal(owned.ctx, operation.request.input.proposalRef);
+        if (proposalRead.status === 'not_found') return advancing(receipt, selectWorkStep(base));
+        if (proposalRead.status !== 'ready') return readRejection(proposalRead);
+        const candidateGone = goal.activePlanRevision === null || proposalRead.value.basedOn === null
+          || !sameRef(proposalRead.value.basedOn, goal.activePlanRevision);
+        if (candidateGone) return advancing(receipt, selectWorkStep(base));
+        // §6.1.4 line 1130: every other refusal turns the candidate into its card.
+        const cardRead = await deps.readCandidateCard!(goal.ref, operation.request.input.proposalRef);
+        if (cardRead.status !== 'ready') return readRejection(cardRead);
+        return await selectNext(owned, base, {
+          reason: `adoption_rejected: ${result.code}: ${result.reason}`,
+          basis: planWaitBasisOf(goal, ['plan_candidate_waiting:adoption_rejected']),
+          source: cardRead.value.card.source,
+        });
       }
     }
   }

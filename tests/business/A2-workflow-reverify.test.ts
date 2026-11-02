@@ -25,10 +25,12 @@
  * `tests/app/A2-automation-verdict.test.ts` (work) and `tests/scenarios/C5-gate-fix.test.ts`
  * (gate).
  */
-import { expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import type { WorkflowAdvanceInput, WorkflowOperation } from '../../src/business/workflow/contracts.js';
 import type { WorkflowDependencies } from '../../src/business/workflow/ports.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
+import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { S6A_GOAL_1, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { CoreRejection, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
@@ -41,7 +43,7 @@ import type { ReverifyOutcomeV1, ReverifyRoundInput } from '../../src/core/work-
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 
-const P = 'a2-reverify-wf-project', W = 'a2-reverify-wf-workspace', G = 'a2-reverify-wf-goal';
+const P = S6A_SCOPE.projectId, W = S6A_SCOPE.workspaceId, G = S6A_GOAL_1.goalId;
 const actor = { kind: 'human' as const, id: 'a2-reverify-wf-operator' };
 const signal = new AbortController().signal;
 const ctx: CoreCallContext = { projectId: P, workspaceId: W, principal: { kind: 'host', actor },
@@ -113,6 +115,11 @@ function untouched<T extends object>(name: string): T {
   return new Proxy({}, { get: (_target, member) => () => { throw new Error(`${name}.${String(member)} must not be called`); } }) as T;
 }
 type ReverifyCall = { ctx: CoreCallContext; request: GraphWrite<ReverifyRoundInput> };
+let world: S6AHostWorld;
+beforeAll(async () => {
+  world = await openS6AHostWorld({ backend: 'memory' });
+});
+afterAll(async () => { if (world !== undefined) await world.close(); });
 function workflowWith(rows: TaskRow[], options: {
   reverify?: (request: GraphWrite<ReverifyRoundInput>) => WriteResult<ReverifyOutcomeV1>; noReverifyPort?: boolean;
   evidence?: Partial<WorkflowDependencies['evidence']>; executions?: WorkflowDependencies['executions'];
@@ -130,6 +137,7 @@ function workflowWith(rows: TaskRow[], options: {
   }
   const deps: WorkflowDependencies = {
     tasks: untouched('tasks'), sessions: untouched('sessions'), executions: options.executions ?? untouched('executions'),
+    ...world.platform.planReaders,
     runtime: untouched('runtime'), evidence, checks: untouched('checks'), sourceAuthority: untouched('sourceAuthority'),
     plans: { ...untouched<WorkflowDependencies['plans']>('plans'),
       queryGoal: async () => ({ status: 'ready', value: { goal } }) as never,

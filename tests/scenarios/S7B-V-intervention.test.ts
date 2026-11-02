@@ -73,7 +73,7 @@ describe('V-intervention: no task + an active Goal', () => {
     const adopted = await driveS7BIntervention(world, messageRef, profile, claimed);
     expect(adopted).toMatchObject({ status: 'claimed', branch: 'no_task' });
     const taskId = (adopted as { claim: { task: { taskId: string } } }).claim.task.taskId;
-    expect(taskId).toBe('aaa-s7b3-v-auto');
+    expect(taskId).toBe('ag2b-work');
     const graph = ready<{ tasks: Array<{ ref: { taskId: string }; disposition: string }>; pendingProposal: unknown }>(
       await world.post('tasks/query', plain(S6A_SCOPE, { goalRef })), 'the graph');
     expect(graph.pendingProposal).toBeUndefined();

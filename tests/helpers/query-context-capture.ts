@@ -6,6 +6,7 @@
  */
 import { vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import * as noteTools from '../../src/core/agent-runtime/note-tool.js';
 import * as toolGroupAssembly from '../../src/core/agent-runtime/tool-group-assembly.js';
 
 export function captureQueryContexts(): { latest(): CoreCallContext; restore(): void } {
@@ -15,12 +16,18 @@ export function captureQueryContexts(): { latest(): CoreCallContext; restore(): 
     contexts.push(structuredClone(input.context));
     return original(input);
   });
+  // A round granted no graph tool (the planning adviser) opens only the note group.
+  const originalNotes = noteTools.createNoteTools;
+  const noteSpy = vi.spyOn(noteTools, 'createNoteTools').mockImplementation(input => {
+    contexts.push(structuredClone(input.context));
+    return originalNotes(input);
+  });
   return {
     latest() {
       const last = contexts.at(-1);
       if (last === undefined) throw new Error('S6B: the round opened no Query context');
       return last;
     },
-    restore: () => spy.mockRestore(),
+    restore: () => { spy.mockRestore(); noteSpy.mockRestore(); },
   };
 }

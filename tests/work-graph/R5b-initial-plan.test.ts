@@ -432,11 +432,13 @@ it('keeps the old v2 plan compatible and recovers the optional setup proposal fr
 
 // The frozen literal of the platform pack's `initial-planning-answer` guide
 // (today's value; its production export was removed by J-07).
-const INITIAL_COORDINATION_RESPONSE_GUIDE = `Return exactly one JSON object as your entire final answer, with schemaVersion 2 and kind "plan" or "needs_decision": no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.
+const INITIAL_COORDINATION_RESPONSE_GUIDE = `This round's answer has one of two forms; use the form the round provides.
+
+When the round does not provide this tool, return exactly one JSON object as your entire final answer, with schemaVersion 2 and kind "plan" or "needs_decision": no preface, no trailing note, no commentary and no markdown or code fences. The platform parses that one object strictly and never extracts or repairs JSON out of surrounding text.
 For needs_decision, provide summary and questions (a non-empty array of strings); ask only the real product or authorization decisions the request leaves open. Do not invent authorization.
 For plan, provide summary and plan with schemaVersion 2 and the following fields:
 - stages: array of {stageId, title, description?}. A task references a stage only through its own stageId.
-- tasks: array of {taskId, stageId?, title, requirementLevel, taskKind, disposition, phase, scope, executionIntent?}. requirementLevel is "required" or "optional". taskKind is "work" or "gate". disposition is "active", "deferred", "cancelled" or "superseded". phase is "pending", "ready", "running", "verifying", "blocked", "satisfied" or "failed"; every task of a NEW plan starts "pending". scope is {kind:"goal"}, {kind:"stage",stageId} or {kind:"module",stageId,moduleRef}. Task scope.moduleRef is a non-empty STRING containing the moduleId, NOT the {projectId,moduleId} object used in the architecture catalog. executionIntent is "plan_only" or "request_execution" and may appear on a work task only.
+- tasks: array of {taskId, stageId?, title, requirementLevel, taskKind, disposition, phase, scope, executionIntent?}. requirementLevel is "required" or "optional". taskKind is "work" or "gate". disposition is "active", "deferred", "cancelled" or "superseded". phase is "pending", "ready", "running", "verifying", "blocked", "satisfied" or "failed"; every task of a NEW plan starts "pending". scope is {kind:"goal"}, {kind:"stage",stageId} or {kind:"module",stageId,moduleRef}. Task scope.moduleRef is a non-empty STRING containing the moduleId, NOT the {projectId,moduleId} object used in the architecture catalog. executionIntent is "plan_only" or "request_execution" and may appear on a work task only. sizeClass (optional) is "small", "medium", "large" or "explore"; a placeholder task carries it too. estimatedLines (optional) is a positive integer line estimate; when unsure, say so or leave it out instead of inventing a precise number.
 - assignments: array of {taskId, role, instruction}. A work task with executionIntent "request_execution" needs exactly one assignment whose role is one of the AVAILABLE roles/templateId shown in this context; a work task with executionIntent "plan_only" may omit it; a gate task must never carry an assignment or an executionIntent, because a gate conclusion comes from the formal evidence reduction, not from an execution run. A future work task with executionIntent "plan_only" may omit assignment, obligations/acceptance and dependencies; its incompleteness alone is not a reason to return needs_decision.
 - obligations: array of {obligationId, title, requirementLevel, taskIds, verificationRequirements}. taskIds lists only work/gate tasks of this same plan. Every verificationRequirements entry is {requirementId, requirementLevel, kind, description}; requirementLevel is "required" or "optional" and kind must be one of the requirementKinds of the effective CompletionPolicy shown in this context. A required obligation needs at least the policy's minimum number of required verification requirements.
 - taskHierarchy: {parentOf:[{parentTaskId, childTaskId}]}. It only expresses display grouping.
@@ -447,8 +449,10 @@ You MAY also add an OPTIONAL top-level "setup" sibling of "plan"; it is a SUGGES
 - completionPolicy: {schemaVersion:1, requirementKinds:[...], minimumRequiredRequirementsPerObligation:N}. Copy the requirementKinds of the effective CompletionPolicy shown in this context. When no policy is shown, propose the smallest REAL policy this request needs; never emit an empty policy whose vacuously satisfied obligations would auto-PASS.
 - checks: array of {checkId, kind, command, cwd, timeoutMs, taskIds}. "kind" is exactly a policy requirement kind ("static" or "dynamic") and maps directly to the requirement.kind it satisfies; there is NO coverage field and never add one. taskIds is "all" or the real task ids. Use only a command that must really run for this request: never assume a test file exists, never copy an unrelated command, and never invent an empty check list to force a PASS.
 Omit "setup" entirely when you have no real architecture/policy/check to propose.
+When the request asks for only this segment, output only that segment's stages, tasks, assignments, obligations and dependencies; do not restate other segments, and the platform merges this segment into the plan.
 Do not include planId, planRevision, goalId or origin: the platform derives identity from the saved Job project/goal/intentId and provenance from the real Goal/Workspace revisions and the actual answer digest.
-Choose every stage, task, scope, role, instruction, obligation, verification requirement and dependency from the actual request and the real sources. Never invent a gate, dependency, assignment, acceptance, verification requirement or role binding the request did not ask for, and never fill a genuinely missing decision with a default; ask that decision through needs_decision instead.
+Every stage of the plan has exactly one stage gate: a required task with taskKind "gate" and scope {kind:"stage",stageId}, listed in the taskIds of the obligation that is this stage's acceptance. It is yours to include: the reviewer checks for it and the platform never adds it for you. A segment keeps its stage's existing gate and obligation unchanged; a new stage brings its own.
+Choose every stage, task, scope, role, instruction, obligation, verification requirement and dependency from the actual request and the real sources. Apart from those stage gates and their obligations, never invent a gate, dependency, assignment, acceptance, verification requirement or role binding the request did not ask for, and never fill a genuinely missing decision with a default; ask that decision through needs_decision instead.
 The JSON example below is a SHAPE SAMPLE only: it shows the exact field names and legal enum values. It is NOT authorization for any task, role, acceptance, dependency, architecture, policy or check of this request. Do not copy its ids, projectId, role, tasks, obligations or dependencies; replace every value with the real one from this request.
 BEGIN_INITIAL_PLAN_EXAMPLE
 {
@@ -464,6 +468,9 @@ BEGIN_INITIAL_PLAN_EXAMPLE
       { "taskId": "sample-work", "stageId": "sample-stage", "title": "Shape sample executable work",
         "requirementLevel": "required", "taskKind": "work", "disposition": "active", "phase": "pending",
         "scope": { "kind": "stage", "stageId": "sample-stage" }, "executionIntent": "request_execution" },
+      { "taskId": "sample-stage-gate", "stageId": "sample-stage", "title": "Shape sample stage gate",
+        "requirementLevel": "required", "taskKind": "gate", "disposition": "active", "phase": "pending",
+        "scope": { "kind": "stage", "stageId": "sample-stage" } },
       { "taskId": "sample-gate", "title": "Shape sample goal gate",
         "requirementLevel": "required", "taskKind": "gate", "disposition": "active", "phase": "pending",
         "scope": { "kind": "goal" } },
@@ -477,7 +484,7 @@ BEGIN_INITIAL_PLAN_EXAMPLE
     ],
     "obligations": [
       { "obligationId": "sample-obligation", "title": "Shape sample acceptance obligation",
-        "requirementLevel": "required", "taskIds": ["sample-work", "sample-gate"],
+        "requirementLevel": "required", "taskIds": ["sample-work", "sample-stage-gate", "sample-gate"],
         "verificationRequirements": [
           { "requirementId": "sample-requirement", "requirementLevel": "required", "kind": "static",
             "description": "Shape sample verification: replace with the real check from this request" }

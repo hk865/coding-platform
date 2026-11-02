@@ -22,9 +22,14 @@ import type {
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CompletionPolicyContentV1 } from '../../contracts/governance.js';
 import type {
-  GoalCardDraftV1, GoalScreeningV1, QueryJobAnswerV1, QueryRunRef, SecretaryRequestManifestV1,
+  GoalCardDraftV1, GoalScreeningV1, QueryAnswerShapeV1, QueryJobAnswerV1, QueryRunRef,
+  SecretaryRequestManifestV1,
 } from '../../contracts/query-job.js';
-import type { PlanRevisionDraft, RuntimeTask } from '../../contracts/plan.js';
+import type { PlanRevisionDraft, RuntimeTask, TaskInputRequirementV2 } from '../../contracts/plan.js';
+import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
+import {
+  planReviewAnswerText, parsePlanReviewAnswer, type PlanReviewFormV1,
+} from '../../contracts/plan-review.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
@@ -50,16 +55,17 @@ import {
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { success, rejectedResult } from './graph-tools.js';
 import type { ToolGroup } from './tool-group-assembly.js';
-import { MAX_ANSWER_BYTES } from './query-observation.js';
+import { MAX_ANSWER_BYTES, PLANNING_MAX_ANSWER_BYTES } from './query-observation.js';
 
-/** The three submit tool names, in the order the initial kind freezes them. */
+/** The submit tool names, in the order the answer shapes freeze them. */
 export const ANSWER_TOOL_NAMES = [
   'submit_secretary_answer', 'submit_initial_plan', 'submit_initial_questions',
+  'submit_plan_round', 'submit_plan_review',
 ] as const;
 
 export type AnswerToolName = (typeof ANSWER_TOOL_NAMES)[number];
-/** The answer kind the frozen manifest names: a semantic or an initial-coordination round. */
-export type AnswerToolKind = 'secretary' | 'initial';
+/** The frozen `manifest.answerShape` is the answer-tool family (spec §5.2.7). */
+export type AnswerToolKind = QueryAnswerShapeV1;
 
 /** The submit names a frozen tool list holds, in their declared order. */
 export function answerSubmitNamesIn(toolNames: readonly string[]): readonly AnswerToolName[] {
@@ -67,9 +73,23 @@ export function answerSubmitNamesIn(toolNames: readonly string[]): readonly Answ
   return ANSWER_TOOL_NAMES.filter(name => frozen.has(name));
 }
 
-/** The answer-tool family a frozen execution kind selects. */
-export function answerToolsOf(kind: SecretaryRequestManifestV1['executionKind']): AnswerToolKind {
-  return kind === 'semantic_query' ? 'secretary' : 'initial';
+/** The submit names one answer shape builds, in the frozen `ANSWER_TOOL_NAMES` order. */
+export function answerToolNamesOf(kind: AnswerToolKind | null): readonly AnswerToolName[] {
+  if (kind === 'secretary') return ['submit_secretary_answer'];
+  if (kind === 'initial') return ['submit_initial_plan', 'submit_initial_questions'];
+  if (kind === 'plan_round') return ['submit_plan_round'];
+  if (kind === 'plan_review') return ['submit_plan_review'];
+  return [];
+}
+
+/**
+ * The answer bound by shape and submit name (spec §5.3.5 #5): only
+ * `submit_plan_round` gets 256 KiB; every other tool answer is 16 KiB. Without
+ * a name, a `plan_round` shape is the accepted planning answer.
+ */
+export function answerBoundBytes(shape: QueryAnswerShapeV1 | null, name?: string): number {
+  return shape === 'plan_round' && (name === undefined || name === 'submit_plan_round')
+    ? PLANNING_MAX_ANSWER_BYTES : MAX_ANSWER_BYTES;
 }
 
 /** One form value the platform fills before writing the protocol text. */
@@ -89,14 +109,17 @@ type ArchitectureForm = Omit<AdoptInitialArchitectureInput, 'catalog'> & { catal
 type CompletionPolicyForm = Omit<CompletionPolicyContentV1, 'schemaVersion'>;
 type SetupForm = Omit<InitialPlanningSetupV2, 'architecture' | 'completionPolicy'> & {
   architecture: ArchitectureForm; completionPolicy: CompletionPolicyForm };
-type PlanTaskForm = Omit<RuntimeTask, 'phase' | 'replacedByTaskId'>;
+type PlanTaskForm = Omit<RuntimeTask, 'phase'>;
 type PlanForm = Pick<PlanRevisionDraft,
   'stages' | 'assignments' | 'obligations' | 'taskHierarchy' | 'executionDag' | 'taskRelations'>
-  & { tasks: PlanTaskForm[] };
+  & { tasks: PlanTaskForm[]; inputRequirements?: TaskInputRequirementV2[] };
 export type InitialPlanForm = { summary: string; plan: PlanForm; setup: SetupForm;
   goalCardDrafts?: DraftForm[]; planDraftIndex?: number };
+/** The planning round's one-tool form: exactly one of `plan`/`questions` per `answerKind`. */
+export type PlanRoundForm = { answerKind: 'plan' | 'questions'; summary: string;
+  plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[] } };
 /** One submit form as the Kernel parsed it against the per-Run schema. */
-export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm;
+export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm | PlanRoundForm | PlanReviewFormV1;
 
 function filledScreening(projectId: string, screening: ScreeningForm | null | undefined): Record<string, unknown> | null {
   if (screening === null || screening === undefined) return null;
@@ -149,17 +172,32 @@ function filledSetup(projectId: string, setup: SetupForm): FilledSetup {
  * every consumer parses JSON.
  */
 export function buildAnswerText(
-  kind: SecretaryRequestManifestV1['executionKind'],
+  shape: QueryAnswerShapeV1,
   form: Readonly<Record<string, unknown>>,
   ctx: AnswerTextContext,
 ): string {
-  if (kind === 'semantic_query') {
+  if (shape === 'secretary') {
     const answer = form as SemanticForm;
     return JSON.stringify({
       schemaVersion: 1,
       body: answer.body,
       ideas: answer.ideas,
       goalCardDrafts: (answer.goalCardDrafts ?? []).map(draft => filledDraft(ctx.projectId, draft)),
+    });
+  }
+  if (shape === 'plan_review') return planReviewAnswerText(form as PlanReviewFormV1);
+  if (shape === 'plan_round') {
+    const round = form as PlanRoundForm;
+    if (round.answerKind === 'questions') {
+      return JSON.stringify({
+        schemaVersion: 2, kind: 'needs_decision', summary: round.summary,
+        questions: round.questions ?? [],
+      });
+    }
+    return JSON.stringify({
+      schemaVersion: 2, kind: 'plan', summary: round.summary,
+      ...(round.plan === undefined ? {} : { plan: filledPlan(round.plan) }),
+      ...(round.reason === undefined ? {} : { reason: round.reason }),
     });
   }
   const initial = form as InitialPlanForm | QuestionsForm;
@@ -262,6 +300,9 @@ function planSchema(texts: ToolTextV1['parameters']): z.ZodType {
     requirementLevel: z.enum(['required', 'optional']),
     disposition: z.enum(['active', 'deferred', 'cancelled', 'superseded']),
     scope: scopeSchema(),
+    sizeClass: z.enum(['small', 'medium', 'large', 'explore']).optional(),
+    estimatedLines: z.number().int().min(1).optional(),
+    replacedByTaskId: z.string().min(1).nullable().optional(),
   };
   const taskSchema = z.discriminatedUnion('taskKind', [
     z.object({
@@ -310,6 +351,18 @@ function planSchema(texts: ToolTextV1['parameters']): z.ZodType {
     fromTaskId: z.string().min(1), toTaskId: z.string().min(1),
     kind: z.enum(['coordination', 'expected_dependency']), note: z.string(),
   }).strict();
+  const artifactSourceSchema = z.object({
+    kind: z.enum(['plan-revision', 'workspace', 'governance', 'artifact', 'memory']),
+    refId: z.string().min(1), revision: z.string().min(1), digest: z.string().min(1).optional(),
+  }).strict();
+  const artifactRefSchema = z.object({
+    kind: z.literal('artifact'), contentType: z.string().min(1), digest: z.string().min(1),
+    sizeBytes: z.number().int().min(1), source: artifactSourceSchema,
+  }).strict();
+  const inputRequirementSchema = z.object({
+    requirementId: z.string().min(1), consumerTaskId: z.string().min(1),
+    kind: z.literal('artifact'), artifactRef: artifactRefSchema,
+  }).strict();
   return z.object({
     stages: textField(z.array(stageSchema), texts, 'plan.stages'),
     tasks: textField(z.array(taskSchema), texts, 'plan.tasks'),
@@ -318,6 +371,7 @@ function planSchema(texts: ToolTextV1['parameters']): z.ZodType {
     taskHierarchy: textField(hierarchySchema, texts, 'plan.taskHierarchy'),
     executionDag: textField(dagSchema, texts, 'plan.executionDag'),
     taskRelations: textField(z.array(relationSchema).optional(), texts, 'plan.taskRelations'),
+    inputRequirements: textField(z.array(inputRequirementSchema).optional(), texts, 'plan.inputRequirements'),
   }).strict();
 }
 
@@ -379,11 +433,34 @@ function initialPlanSchema(goalLess: boolean, texts: ToolTextV1['parameters']): 
   }).strict();
 }
 
+function planRoundSchema(texts: ToolTextV1['parameters']): z.ZodType {
+  return z.object({
+    answerKind: textField(z.enum(['plan', 'questions']), texts, 'answerKind'),
+    summary: textField(z.string(), texts, 'summary'),
+    plan: textField(planSchema(texts).optional(), texts, 'plan'),
+    questions: textField(z.array(z.string().min(1)).min(1).optional(), texts, 'questions'),
+    reason: textField(z.object({
+      text: z.string(), affectedTaskIds: z.array(z.string().min(1)).optional(),
+    }).strict().optional(), texts, 'reason'),
+  }).strict();
+}
+
+function planReviewSchema(): z.ZodType {
+  return z.object({
+    verdict: z.enum(['pass', 'fix']),
+    findings: z.array(z.object({
+      taskId: z.string().nullable(), text: z.string(),
+    }).strict()).optional(),
+  }).strict();
+}
+
 function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTextV1['parameters']): z.ZodType {
   switch (name) {
     case 'submit_secretary_answer': return semanticSchema(goalLess, texts);
     case 'submit_initial_plan': return initialPlanSchema(goalLess, texts);
     case 'submit_initial_questions': return questionsSchema(goalLess, texts);
+    case 'submit_plan_round': return planRoundSchema(texts);
+    case 'submit_plan_review': return planReviewSchema();
   }
 }
 
@@ -397,14 +474,38 @@ export type AnswerProblem = { section: string; reason: string };
 
 /** Every problem one answer has, in section order; empty means accepted. */
 export function answerProblems(
-  kind: SecretaryRequestManifestV1['executionKind'],
+  shape: QueryAnswerShapeV1,
   form: AnswerForm,
   built: string,
-  facts: SecretaryPreparationFactsV1,
+  facts: SecretaryPreparationFactsV1 | null,
 ): AnswerProblem[] {
-  void built;
+  // The planning round's one format gate is the v2 parser; it also enforces the
+  // non-empty `needs_decision` questions and the plan body. The only extra rule
+  // is the short summary the reply derives from.
+  if (shape === 'plan_round') {
+    const round = form as PlanRoundForm;
+    const problems: AnswerProblem[] = [];
+    if (round.answerKind === 'plan') {
+      if (round.questions !== undefined) problems.push({ section: 'questions', reason: 'the plan answer must not carry questions' });
+    } else {
+      if (round.plan !== undefined) problems.push({ section: 'plan', reason: 'the questions answer must not carry a plan' });
+    }
+    const parsed = parseInitialPlanningResponseV2(built);
+    if (parsed.status !== 'parsed') problems.push({ section: 'answer', reason: parsed.reason });
+    if (round.summary.length === 0
+      || Buffer.byteLength(round.summary, 'utf8') > 16 * 1024) {
+      problems.push({ section: 'summary', reason: 'the plan summary must be non-empty and at most 16 KiB of UTF-8' });
+    }
+    return problems;
+  }
+  if (shape === 'plan_review') {
+    const parsed = parsePlanReviewAnswer(built);
+    if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
+    return [];
+  }
+  const requestFacts = facts as SecretaryPreparationFactsV1;
   const problems: AnswerProblem[] = [];
-  const projectId = facts.request.requestRoot.projectId;
+  const projectId = requestFacts.request.requestRoot.projectId;
   const drafts = 'goalCardDrafts' in form ? form.goalCardDrafts ?? [] : [];
 
   // Layer 2: this answer alone, with adoption's own rules. Checks collect first;
@@ -417,21 +518,22 @@ export function answerProblems(
     const checked = goalCardDraftCheck(filledDraft(projectId, draft), index);
     if (typeof checked === 'string') problems.push({ section: 'goalCardDrafts', reason: checked });
   }
-  if (kind === 'initial_coordination' && 'plan' in form) {
-    const plan = form.plan;
-    if (facts.request.effectiveGoalId === null) {
+  if (shape === 'initial' && 'plan' in form) {
+    const initial = form as InitialPlanForm;
+    const plan = initial.plan;
+    if (requestFacts.request.effectiveGoalId === null) {
       if (drafts.length === 0) {
         problems.push({ section: 'goalCardDrafts',
           reason: 'a plan answer on a request without a goal must carry at least one goal card draft' });
       } else {
-        const result = planDraftIndexOf({ ...form, kind: 'plan' }, false, drafts.length);
+        const result = planDraftIndexOf({ ...initial, kind: 'plan' }, false, drafts.length);
         if (typeof result === 'string') problems.push({ section: 'planDraftIndex', reason: result });
       }
     }
-    const setup = filledSetup(projectId, form.setup);
+    const setup = filledSetup(projectId, initial.setup);
     // The effective policy is the project's own; only a first install judges the answer's proposal.
     let policy: CompletionPolicyContentV1 | null = null;
-    if (facts.completionPolicy === null) {
+    if (requestFacts.completionPolicy === null) {
       const contentProblem = completionPolicyContentProblem(setup.completionPolicy);
       if (contentProblem === null) policy = setup.completionPolicy;
       else problems.push({ section: 'setup', reason: contentProblem });
@@ -442,7 +544,7 @@ export function answerProblems(
     for (const reason of validatePlanAssignments(plan)) {
       problems.push({ section: 'assignments', reason });
     }
-    let catalog: AdoptedArchitecture | null = facts.architecture?.catalog ?? null;
+    let catalog: AdoptedArchitecture | null = requestFacts.architecture?.catalog ?? null;
     if (catalog === null) {
       const adopted = validateAdoptedArchitecture(setup.architecture.catalog, projectId);
       if (adopted.status === 'ok') catalog = adopted.value;
@@ -458,18 +560,18 @@ export function answerProblems(
   }
 
   // Layer 3: against current state, with the same facts the round's preparation read.
-  if (kind === 'initial_coordination' && 'plan' in form) {
-    const served = facts.executionRoles;
-    for (const role of new Set(unservedRoles(form.plan.assignments, served))) {
+  if (shape === 'initial' && 'plan' in form) {
+    const served = requestFacts.executionRoles;
+    for (const role of new Set(unservedRoles((form as InitialPlanForm).plan.assignments, served))) {
       problems.push({ section: 'assignments', reason: `assignment role ${role} is not served `
         + `by this workspace (served: ${served.join(', ') || '(none)'})` });
     }
   }
-  const catalogIds = facts.architecture === null
-    ? null : facts.architecture.catalog.modules.map(module => module.ref.moduleId);
+  const catalogIds = requestFacts.architecture === null
+    ? null : requestFacts.architecture.catalog.modules.map(module => module.ref.moduleId);
   const validModules = catalogIds === null ? null : catalogIds.join(', ') || '(none)';
-  const goalIds = new Set(facts.goals.map(goal => goal.goalId));
-  const validGoals = facts.goals.map(goal => goal.goalId).join(', ') || '(none)';
+  const goalIds = new Set(requestFacts.goals.map(goal => goal.goalId));
+  const validGoals = requestFacts.goals.map(goal => goal.goalId).join(', ') || '(none)';
   for (const draft of drafts) {
     const screening = draft.screening;
     if (screening === null || screening === undefined) continue;
@@ -499,17 +601,19 @@ export function answerProblems(
 export type AnswerToolsConfig = {
   /** The trusted `query_run` context; the project id is the fill source. */
   context: CoreCallContext;
-  /** The trusted Host context the start holds, used only for the facts read. */
+  /** The trusted Host context the start holds, used only for the request facts read. */
   hostContext: CoreCallContext;
   queryRunRef: QueryRunRef;
-  /** The frozen `manifest.request.executionKind`. */
-  kind: SecretaryRequestManifestV1['executionKind'];
-  /** `manifest.goal !== null`: the observer's own answer-format gate. */
-  hasGoal: boolean;
-  /** `manifest.request.effectiveGoalId === null`: the form carries drafts. */
-  goalLess: boolean;
-  /** `deps.secretaryFacts`: the same read preparation used, at submit time. */
-  secretaryFacts: SecretaryPreparationFactsPort;
+  /** The frozen `manifest.answerShape`; it selects the tools and their bounds. */
+  shape: QueryAnswerShapeV1;
+  /** The frozen `manifest.request.executionKind`; read only by the two request shapes. */
+  kind?: SecretaryRequestManifestV1['executionKind'];
+  /** `manifest.goal !== null`: the observer's own answer-format gate (request shapes). */
+  hasGoal?: boolean;
+  /** `manifest.request.effectiveGoalId === null`: the form carries drafts (request shapes). */
+  goalLess?: boolean;
+  /** `deps.secretaryFacts`: the same read preparation used, at submit time (request shapes only). */
+  secretaryFacts?: SecretaryPreparationFactsPort;
   /** CallIds this round's handler accepted; the barrier yields on one of them. */
   acceptedCallIds: Set<string>;
   /** The submit names the frozen tool list selected. */
@@ -561,34 +665,48 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
   const names = answerSubmitNamesIn(config.names);
   const fixedProjectId = config.context.projectId;
   const accepted = config.acceptedCallIds;
+  const requestShape = config.shape === 'secretary' || config.shape === 'initial';
 
   async function executeSubmit(
     call: Readonly<ToolCall>, signal: AbortSignal,
   ): Promise<ToolResult> {
     const callId = call.callId;
-    // 1. Build today's protocol text and hold it to the formal 16 KiB answer bound.
-    const text = buildAnswerText(config.kind, call.arguments, { projectId: fixedProjectId });
-    if (Buffer.byteLength(text, 'utf8') > MAX_ANSWER_BYTES) {
+    // 1. Build the frozen shape's protocol text and hold it to that shape's bound.
+    const text = buildAnswerText(config.shape, call.arguments, { projectId: fixedProjectId });
+    const bound = answerBoundBytes(config.shape, call.name);
+    if (Buffer.byteLength(text, 'utf8') > bound) {
+      const kib = bound / 1024;
       return rejectedResult(callId, { status: 'rejected', code: 'capacity',
-        reason: 'the answer over the 16 KiB answer bound; shorten the body or the plan' },
-      'the form builds an answer over the 16 KiB answer bound');
+        reason: `the answer over the ${String(kib)} KiB answer bound; shorten the body or the plan` },
+      `the form builds an answer over the ${String(kib)} KiB answer bound`);
     }
-    // 2. The content checks against the same facts read the round's preparation used.
-    const facts = await config.secretaryFacts.read({ ...config.hostContext, signal },
-      { queryRunRef: config.queryRunRef });
-    if (facts.status !== 'ready') {
-      return rejectedResult(callId, facts,
-        'the current project facts could not be read; the answer was not checked');
+    // 2. Request shapes check against the same facts read preparation used; the
+    // planning shapes never read project facts.
+    let factsValue: SecretaryPreparationFactsV1 | null = null;
+    if (requestShape) {
+      if (config.secretaryFacts === undefined) {
+        return rejectedResult(callId, { status: 'rejected', code: 'unavailable',
+          reason: 'the secretary facts read is not bound' }, 'the request answer cannot be checked');
+      }
+      const facts = await config.secretaryFacts.read({ ...config.hostContext, signal },
+        { queryRunRef: config.queryRunRef });
+      if (facts.status !== 'ready') {
+        return rejectedResult(callId, facts,
+          'the current project facts could not be read; the answer was not checked');
+      }
+      factsValue = facts.value;
     }
-    const problems = answerProblems(config.kind, call.arguments as unknown as AnswerForm, text, facts.value);
+    const problems = answerProblems(config.shape, call.arguments as unknown as AnswerForm, text, factsValue);
     if (problems.length > 0) {
       return rejectedResult(callId, { status: 'rejected', code: 'invalid', problems },
         'the answer has problems; fix every one and call the tool again in this round');
     }
     // 3. The observer's own gate, so acceptance implies the observer accepts.
-    const parsed = parseSecretaryAnswer(text, { kind: config.kind, hasGoal: config.hasGoal });
-    if (!parsed.ok) {
-      return rejectedResult(callId, { status: 'rejected', code: 'invalid', reason: parsed.reason }, parsed.reason);
+    if (requestShape) {
+      const parsed = parseSecretaryAnswer(text, { kind: config.kind!, hasGoal: config.hasGoal! });
+      if (!parsed.ok) {
+        return rejectedResult(callId, { status: 'rejected', code: 'invalid', reason: parsed.reason }, parsed.reason);
+      }
     }
     // 4. Accepted: the barrier sees this callId and ends the round.
     accepted.add(callId);
@@ -597,7 +715,7 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
 
   function answerToolDefinitionOf(name: AnswerToolName): ToolDefinition {
     const text = config.texts[name]!;
-    const schema = answerSchemaFor(name, config.goalLess, text.parameters);
+    const schema = answerSchemaFor(name, config.goalLess === true, text.parameters);
     return {
       name,
       description: text.description,

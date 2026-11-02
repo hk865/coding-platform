@@ -14,7 +14,7 @@
  * Only `plans.queryGoal` and `plans.queryTaskGraph` answer; every other port throws if touched. The real
  * platform path is tests/scenarios/C7-supersede-failed-task.test.ts and C7-defer-reactivate.test.ts.
  */
-import { expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import type { WorkflowDependencies } from '../../src/business/workflow/ports.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
@@ -23,8 +23,10 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { Disposition, Phase, RuntimeTask } from '../../src/contracts/plan.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
+import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { S6A_GOAL_1, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 
-const P = 'a2-l15-project', W = 'a2-l15-workspace', G = 'a2-l15-goal';
+const P = S6A_SCOPE.projectId, W = S6A_SCOPE.workspaceId, G = S6A_GOAL_1.goalId;
 const actor = { kind: 'human' as const, id: 'a2-l15-operator' };
 const ctx: CoreCallContext = { projectId: P, workspaceId: W, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId: P, workspaceId: W, actor }, signal: new AbortController().signal };
@@ -53,11 +55,17 @@ function rowOf(shape: Shape): TaskRow {
 function untouched<T extends object>(name: string): T {
   return new Proxy({}, { get: (_target, member) => () => { throw new Error(`${name}.${String(member)} must not be called`); } }) as T;
 }
+let world: S6AHostWorld;
+beforeAll(async () => {
+  world = await openS6AHostWorld({ backend: 'memory' });
+});
+afterAll(async () => { if (world !== undefined) await world.close(); });
 function workflowWith(shapes: Shape[]) {
   const rows = shapes.map(rowOf);
   const tasks = rows.map(row => row.definition);
   const deps: WorkflowDependencies = {
     tasks: untouched('tasks'), sessions: untouched('sessions'), executions: untouched('executions'), runtime: untouched('runtime'),
+    ...world.platform.planReaders,
     evidence: untouched('evidence'), checks: untouched('checks'), sourceAuthority: untouched('sourceAuthority'),
     plans: { ...untouched<WorkflowDependencies['plans']>('plans'),
       queryGoal: async () => ({ status: 'ready', value: { goal } }) as never,

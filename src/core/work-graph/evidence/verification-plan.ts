@@ -16,10 +16,10 @@
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { EvidenceCoverageV1 } from '../../../contracts/evidence.js';
+import { compileVerificationCoverage } from '../../../contracts/verification.js';
 import type {
     ChangeScopeV1, CheckCapabilityV1, SemanticChangeClassification,
-    VerificationCheckKind, VerificationCheckPlan, VerificationIssue, VerificationPlanV1,
+    VerificationIssue, VerificationPlanV1,
 } from '../../../contracts/verification.js';
 
 export type VerificationPlanRejectionCode =
@@ -72,35 +72,14 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
         return rejected('invalid', [{ path: 'obligations', message: 'the adopted Plan has no required acceptance obligation' }]);
     }
 
-    const checks = new Map<string, VerificationCheckPlan>();
-    const uncovered: { obligationId: string; requirementId: string; kind: VerificationCheckKind }[] = [];
-    const knownKinds = new Set(input.policy.requirementKinds);
-    for (const obligation of requiredObligations) {
-        const requiredRequirements = obligation.verificationRequirements
-            .filter(requirement => requirement.requirementLevel === 'required');
-        if (requiredRequirements.length === 0) {
-            return rejected('invalid', [{ path: obligation.obligationId,
-                message: `required obligation ${obligation.obligationId} has no required verification requirement` }]);
-        }
-        for (const requirement of requiredRequirements) {
-            const covering = input.checkCapabilities
-                .filter(capability => capability.coversKinds.includes(requirement.kind));
-            if (covering.length === 0 || !knownKinds.has(requirement.kind)) {
-                uncovered.push({ obligationId: obligation.obligationId, requirementId: requirement.requirementId,
-                    kind: requirement.kind as VerificationCheckKind });
-                continue;
-            }
-            const coverage: EvidenceCoverageV1 = { obligationId: obligation.obligationId, requirementId: requirement.requirementId };
-            for (const capability of covering) {
-                const existing = checks.get(capability.checkId);
-                if (existing === undefined) {
-                    checks.set(capability.checkId, { checkId: capability.checkId, kind: capability.kind,
-                        satisfiesKind: requirement.kind, coverage: [coverage], satisfactionPath: 'predicate' });
-                } else {
-                    existing.coverage.push(coverage);
-                }
-            }
-        }
+    const coverage = compileVerificationCoverage({
+        obligations: plan.obligations,
+        requirementKinds: input.policy.requirementKinds,
+        checks: input.checkCapabilities,
+    });
+    if (coverage.emptyRequiredObligation !== null) {
+        return rejected('invalid', [{ path: coverage.emptyRequiredObligation,
+            message: `required obligation ${coverage.emptyRequiredObligation} has no required verification requirement` }]);
     }
 
     const content = {
@@ -115,8 +94,8 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
             changedFiles: [...input.changeScope.changedFiles], writeSummary: input.changeScope.writeSummary },
         semanticChange: input.semanticChange,
         risks: [],
-        checks: [...checks.values()],
-        ...(uncovered.length > 0 ? { uncovered } : {}),
+        checks: coverage.checks,
+        ...(coverage.uncovered.length > 0 ? { uncovered: coverage.uncovered } : {}),
         ...(input.configurationDigest === undefined ? {} : { configurationDigest: input.configurationDigest }),
     };
     let planDigest: string;

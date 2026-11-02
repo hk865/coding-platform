@@ -99,7 +99,7 @@ async function readPage(world: S6AHostWorld, after: string | null,
   const platform = world.platform;
   const result = await createConsumableSessions({
     directory: platform.sessions, executions: platform.executions, queries: platform.queries,
-    messages: platform.messages, eligibility: platform.workflow,
+    messages: platform.messages, plans: platform.plans, eligibility: platform.workflow,
   }).readConsumableSessions(world.humanContext(), { workspace: S6A_SCOPE, after, limit });
   return ready<ConsumableSessionsPageV1>(result, 'the consumable read');
 }

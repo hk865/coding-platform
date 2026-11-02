@@ -50,6 +50,7 @@ import {
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { messageAt } from '../helpers/S5-application-support.js';
+import { workflowPlanReads } from '../helpers/S1-workflow-archive-fixture.js';
 import {
   GOAL_B, WORKSPACE_SCOPE,
 } from '../helpers/S5-decision-fixture.js';
@@ -226,9 +227,12 @@ function assemble(world: K3ReviewCardWorld, options: {
     now: f.now, eventId: f.newId });
   const goalSettings = createGoalSettingsService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: f.operatorActor });
+  const planReads = workflowPlanReads({ records: f.records, messages: world.mailbox, plans,
+    now: f.now, newId: f.newId, decisions: world.decisions });
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans,
+    ...planReads,
     sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
       roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),

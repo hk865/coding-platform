@@ -31,6 +31,7 @@ import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/g
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -86,6 +87,7 @@ export async function assembleB(f: S5DecisionFixture) {
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage: { messages: mailbox, queries: createQueryJobService({ records, now: f.now, eventId: f.newId }), plans },
   });
 
   // A real, isolated source root, separate from the fixture's changing ledger/body

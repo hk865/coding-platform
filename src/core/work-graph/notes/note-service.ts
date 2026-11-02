@@ -43,7 +43,8 @@ import type {
   NoteDecisionApplicationInputV1, NoteDecisionApplyPort, NoteDispositionResult, NoteDutyResolver, NoteErrorCode,
   NoteExistingTopicV1, NoteWritePort, WriteNoteInput, WriteNoteResult,
 } from '../model/note-contracts.js';
-import type { SecretaryQueryRunPort, SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
+import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
+import type { NoteQueryRunSourcePort, PlanningQueryRunV1 } from '../tasks/planning-query-run.js';
 import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import {
   NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES, NOTE_EXISTING_TOPICS_MAX,
@@ -90,8 +91,11 @@ export type NoteServiceDependencies = {
   plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   duties: NoteDutyResolver;
   runFacts: NoteRunFactResolver;
-  /** The one trusted resolver for a running secretary QueryRun (§3.4 item 2). */
-  secretaryQueryRun: SecretaryQueryRunPort;
+  /**
+   * The one trusted source for a running QueryRun: the unchanged secretary
+   * resolver, or the planning resolver it dispatches to (§5.2.8(2)).
+   */
+  queryRun: NoteQueryRunSourcePort;
   workspace: NoteAnchorWorkspace;
   workspaceMaxFileBytes: number;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
@@ -135,25 +139,33 @@ type Caller = {
   sessionRef: SessionRef | null;
   /** The Run-bound plan for a work_run caller, the Plan frozen at preparation for a secretary QueryRun, `null` for a user. */
   planRef: PlanRevisionRef | null;
-  /** The trusted facts of a secretary QueryRun caller, `null` for every other caller. */
-  queryRun: SecretaryQueryRunV1 | null;
+  /** The trusted facts of a secretary or planning QueryRun caller, `null` for every other caller. */
+  queryRun: SecretaryQueryRunV1 | PlanningQueryRunV1 | null;
 };
 
 async function resolveCaller(ctx: CoreCallContext, input: WriteNoteInput, deps: NoteServiceDependencies):
 Promise<{ ok: true; value: Caller } | { ok: false; rejection: Rejected }> {
   const principal = ctx.principal;
   if (principal.kind === 'query_run') {
-    // A running secretary QueryRun is admitted only through the trusted resolver;
-    // a plain Query or a read-only copy stays refused there (§3.4 item 2).
-    const resolved = await deps.secretaryQueryRun.resolveSecretaryQueryRun(ctx);
+    // A running QueryRun is admitted only through the trusted source: the
+    // secretary resolver, or the planning resolver the source dispatches to
+    // for a trusted planning round (§5.2.8(2)). A plain Query or a read-only
+    // copy stays refused there.
+    const resolved = await deps.queryRun.resolveNoteQueryRun(ctx);
     if (resolved.status === 'rejected') {
       return { ok: false, rejection: rejected(resolved.code === 'forbidden' ? 'forbidden' : 'unavailable',
         resolved.reason) };
     }
-    const round = resolved.value;
+    const { kind, round } = resolved.value;
+    // N11: a planning round writes only the six general note kinds; the two
+    // request-understanding kinds are refused before the scope is entered.
+    if (kind === 'planning'
+      && (input.note.kind === 'understanding' || input.note.kind === 'repair')) {
+      return { ok: false, rejection: forbidden('a planning round cannot write an understanding or repair note') };
+    }
     return { ok: true, value: { source: { kind: 'agent', sessionRef: round.session, runRef: null,
-      queryRunRef: round.run, duty: 'secretary' }, isUser: false, goalId: round.effectiveGoalId,
-      duty: 'secretary', sessionRef: round.session, planRef: round.planRef, queryRun: round } };
+      queryRunRef: round.run, duty: round.duty }, isUser: false, goalId: round.effectiveGoalId,
+      duty: round.duty, sessionRef: round.session, planRef: round.planRef, queryRun: round } };
   }
   if (principal.kind === 'host') {
     const actor = principal.actor;

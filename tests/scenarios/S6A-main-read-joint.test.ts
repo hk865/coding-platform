@@ -162,11 +162,12 @@ describe.each(BACKENDS)('R-12 joined: the notices, the seen position and the act
 
     // The goal's page folds the two rework notices into one line that carries their member views.
     const page = await readPage(main, first.goalId, null);
-    expect(page.notices).toHaveLength(1);
-    expect(page.notices[0]).toMatchObject({ category: 'automatic_rework' });
-    expect(page.notices[0]!.memberViews?.map(notice => notice.itemKey)).toEqual([n1!.notice.itemKey, n3!.notice.itemKey]);
-    expect(page.notices[0]!.members).toHaveLength(2);
-    expect(page.seenThrough).toEqual({ automatic_rework: n1!.notice.position });
+    // The first plan's adoption notice stands beside the rework line.
+    const reworkLines = page.notices.filter(notice => notice.category === 'automatic_rework');
+    expect(reworkLines).toHaveLength(1);
+    expect(reworkLines[0]!.memberViews?.map(notice => notice.itemKey)).toEqual([n1!.notice.itemKey, n3!.notice.itemKey]);
+    expect(reworkLines[0]!.members).toHaveLength(2);
+    expect(page.seenThrough).toMatchObject({ automatic_rework: n1!.notice.position });
     expect(typeof page.displayToken).toBe('string');
     // Reading wrote nothing: the queue still shows all three, and a second read answers the same position.
     expect((await main.readNotices()).notices).toHaveLength(3);

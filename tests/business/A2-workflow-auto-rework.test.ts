@@ -26,10 +26,12 @@
  * Only the owners a step reads answer; every other port throws if touched. The
  * real platform path is `tests/scenarios/A1-rework-same-session.test.ts`.
  */
-import { expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import type { WorkflowAdvanceInput, WorkflowOperation } from '../../src/business/workflow/contracts.js';
 import type { WorkflowDependencies } from '../../src/business/workflow/ports.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
+import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { S6A_GOAL_1, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { CoreRejection, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1 } from '../../src/contracts/dispatch.js';
@@ -41,7 +43,7 @@ import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.
 import type { RequeueTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 
-const P = 'a2-rework-project', W = 'a2-rework-workspace', G = 'a2-rework-goal';
+const P = S6A_SCOPE.projectId, W = S6A_SCOPE.workspaceId, G = S6A_GOAL_1.goalId;
 const actor = { kind: 'human' as const, id: 'a2-rework-operator' };
 const signal = new AbortController().signal;
 const ctx: CoreCallContext = { projectId: P, workspaceId: W, principal: { kind: 'host', actor },
@@ -87,6 +89,11 @@ function untouched<T extends object>(name: string): T {
   return new Proxy({}, { get: (_target, member) => () => { throw new Error(`${name}.${String(member)} must not be called`); } }) as T;
 }
 type RequeueCall = { ctx: CoreCallContext; request: GraphWrite<RequeueTaskInput> };
+let world: S6AHostWorld;
+beforeAll(async () => {
+  world = await openS6AHostWorld({ backend: 'memory' });
+});
+afterAll(async () => { if (world !== undefined) await world.close(); });
 function workflowWith(rows: TaskRow[], options: {
   requeue?: (request: GraphWrite<RequeueTaskInput>) => WriteResult<TaskRequeueOutcomeV1>; noRequeuePort?: boolean;
   executions?: WorkflowDependencies['executions']; evidence?: WorkflowDependencies['evidence'];
@@ -96,6 +103,7 @@ function workflowWith(rows: TaskRow[], options: {
   const tasks = rows.map(row => row.definition);
   const deps: WorkflowDependencies = {
     tasks: untouched('tasks'), sessions: options.sessions ?? untouched('sessions'), executions: options.executions ?? untouched('executions'),
+    ...world.platform.planReaders,
     runtime: untouched('runtime'), evidence: options.evidence ?? untouched('evidence'), checks: untouched('checks'),
     sourceAuthority: untouched('sourceAuthority'),
     plans: { ...untouched<WorkflowDependencies['plans']>('plans'),

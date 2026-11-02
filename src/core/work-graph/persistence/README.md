@@ -95,7 +95,8 @@
 | `actorProblem` | `src/core/work-graph/persistence/event-validation.ts:40` | 通用 actor 形状校验 | 事件 body 含 actor 时 |
 | `eventBodyProblem` | `src/core/work-graph/persistence/event-validation.ts:57` | 校验事件 body 的通用字段与 actor | 事件 body 校验 |
 | `isRunExecutionHistoryV1` | `src/core/work-graph/persistence/execution-history-codecs.ts:73` | 纯 `RunExecutionHistoryV1` 形状/范围校验 | Run 记录与写入规则共用时 |
-| `compareProposalChainPositions` | `src/core/work-graph/persistence/plan-record-codecs.ts:128` | 比较 proposal 链位置 | 需要 proposal 顺序时 |
+| `compareProposalChainPositions` | `src/core/work-graph/persistence/plan-record-codecs.ts:141` | 比较 proposal 链位置 | 需要 proposal 顺序时 |
+| `PLAN_PROPOSAL_COMMIT_CURSOR_FIELDS` | `src/core/work-graph/persistence/plan-record-codecs.ts:77` | 候选记录的两个提交游标字段（`since` 由创建提交绑定，`until` 只由采用提交绑定）；PlanProposal schema 的 `commitCursorFields` 用它 | 注册或核对 PlanProposal schema 时；不要另列游标字段 |
 | `RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:26` | `RunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 Run 记录 schema 时 |
 | `QUERY_RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:27` | `QueryRunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 QueryRun 记录 schema 时 |
 | `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:190` | 唯一的 `RunSnapshot@1` 编码校验（含 `consumedWait` 三臂与 required `previousRun` 的链接检查）；不判断业务准入 | Run 记录读取/解码；不要再写一份 |

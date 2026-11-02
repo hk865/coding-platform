@@ -45,10 +45,13 @@ import { createUndeliveredReplyNoticeSource } from '../core/work-graph/views/und
 import { createDisconnectNoticeSource } from '../core/work-graph/views/disconnect-notices.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
-  createCollectionCardSource, createCommandRerunRequestCardSource, createDecisionReadModel,
+  candidateCardFacts, createCollectionCardSource, createCommandRerunRequestCardSource, createDecisionReadModel,
   createGoalCauseCardSource, createMemberCreationCardSource, createNoteReviewCardSource,
   createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createMessageReleaseCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
+import { createPlanAdoptionNoticeSource } from '../core/work-graph/views/plan-adoption-notices.js';
+import { createPlanNoticeSource } from '../core/work-graph/views/plan-notices.js';
+import type { TaskbookExportReadPort } from '../contracts/plan-round.js';
 import { reworkRequestCardSourceSpec } from '../core/work-graph/communication/decision-source/rework-request.js';
 import {
   handoffApprovalCard, handoffApprovalCardKey, handoffApprovalClosedReason, handoffApprovalOperationOfSource,
@@ -62,7 +65,9 @@ import {
 import { createGoalSecretary } from '../core/work-graph/tasks/goal-secretary.js';
 import { createHandoffToolEntry } from '../business/workflow/handoff-tool-entry.js';
 import { createHandoffApprovalApplicationAdapter } from '../business/workflow/session-handoff.js';
-import { createGoalConflictAssembler } from '../core/work-graph/views/goal-conflicts.js';
+import {
+  createGoalConflictAssembler, listWorkspaceGoals, readGoalTerminalState,
+} from '../core/work-graph/views/goal-conflicts.js';
 import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
 import { createContinuationNoticeSource } from '../core/work-graph/views/continuation-notices.js';
@@ -111,6 +116,7 @@ import {
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
 import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-query-run.js';
+import { createPlanningQueryRun } from '../core/work-graph/tasks/planning-query-run.js';
 import { createRecipientExecutions } from '../core/work-graph/sessions/recipient-executions.js';
 import type { SecretaryProfilePort } from '../core/work-graph/model/request-contracts.js';
 
@@ -167,7 +173,7 @@ import { createPlanService, createRequestCandidateService } from '../core/work-g
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalRunsForCount, readTaskClosure, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalRunsForCount, readTaskClosure, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -277,6 +283,7 @@ import {
 } from '../core/work-graph/sessions/session-record-codecs.js';
 import type { VersionPin } from '../contracts/core/identity.js';
 import type { GoalRef } from '../contracts/ledger.js';
+import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
 import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
@@ -402,6 +409,27 @@ export type TargetPlatformOptions = {
    * providers and the exploration tools and adds no public platform member.
    */
   sourceAnalyzers?: RuntimeExecutionDependencies['sourceAnalyzers'];
+  /**
+   * PL §5.2.5/§6.7.1: the Host's own `sendSystemRound` wrapper, bound to the ONE
+   * mailbox this root owns. Composition may not import the Host layer, so the
+   * Host supplies the factory; absent leaves the optional Workflow `send` read
+   * unwired (the Workflow answers `unsupported`).
+   */
+  systemRoundSend?: (messages: Pick<SessionMessageCommandPort, 'sendMessage' | 'lookupHostSendCommit'>) =>
+    NonNullable<WorkflowDependencies['send']>;
+  /**
+   * PL §5.3.4/§6.4.3: the Host's read-only taskbook probe, already rooted in its
+   * settings directory. Absent is an explicit `unavailable` for the adoption
+   * notice, never `not_configured` (which means only "no settings directory").
+   */
+  exportBooks?: TaskbookExportReadPort['read'];
+  /**
+   * L-02 §6.4.3: the Host's one adoption wrapper, applied to the `plans.applyPlanChange`
+   * the Workflow receives. The published `platform.plans` stays raw: the route binding
+   * already wraps it, and wrapping both would export one adoption twice.
+   */
+  wrapPlanChange?: (raw: WorkflowDependencies['plans']['applyPlanChange']) =>
+    WorkflowDependencies['plans']['applyPlanChange'];
   /** Optional frozen trusted checks configuration. Without it the platform has
    * no registered check and the fresh evidence/check entry stays unsupported;
    * existing history reads keep working. Never defaulted to full access. */
@@ -1001,6 +1029,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const bodies = options.storage.kind === 'memory' ? new RawArtifactBodyStore()
       : createSqliteRawArtifactStore(join(options.storage.directory, 'artifacts.sqlite'));
     if ('close' in bodies) closeBodies = () => bodies.close();
+    // §6.4.3: the Host's rooted probe; a missing one is an explicit
+    // `unavailable`, never "no settings directory".
+    const exportBooksPort: TaskbookExportReadPort['read'] = options.exportBooks
+      ?? (async () => ({ status: 'unavailable', reason: 'the taskbook export probe is not wired' }));
     // The one Workspace access factory, shared by the workspace tools and the
     // observed architecture below. The material source provider is kept but not
     // constructed (decision 34): slice 3 of the orchestration design may need it.
@@ -1199,6 +1231,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis,
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
+    // §5.2.8(2): the note owner's ONE QueryRun source. The dispatcher sends a
+    // plan_round/plan_review round (or a Host system `action_request` with no
+    // shape) to the planning resolver and every other round to the unchanged
+    // secretary resolver; it never builds a second read chain.
+    const noteQueryRun = createPlanningQueryRun({
+      records: backend.records, duties: sessionDutyResolver, bodies, secretaryQueryRun,
+      // The resolver's own trusted fact read: the mailbox's `query_run` read right is the secretary round's alone.
+      messages: { readMessage: (_ctx, ref) => mailbox.readMessage(lifecycleReadContext(ref), ref) },
+    });
     // G's L46 upstream read and P's copy-forward trigger share the ONE mailbox, records and duties owner; no second
     // records/mailbox/forwarding instance is built here.
     const messageForwardingOwner = createMessageForwardingOwner({
@@ -1323,12 +1364,22 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           reason: 'the note-decision source is not bound yet' })
         : boundNoteDecisionSource.readNoteDecision(ctx, input),
     };
+    // §5.5.3 / DR-P5-01: the ONE Goal-cause reader with the real duty recipient.
+    // The answer-card recheck and the queue source both read this instance; a
+    // private reader without `recipients` could never see the derived `no_adviser`.
+    const goalDecisionCauseReader = createGoalDecisionCauseReader({
+      records: backend.records, plans: planService,
+      recipients: { resolveDutyRecipient },
+    });
     // The one automatic-rework projector: the C3 adviser facts, its card source and the Host's tracked read all share
     // this instance. Built before the C3 dependencies that read it (no use-before-declare).
     const automaticReworkNotices = createAutomaticReworkNoticeSource({ records: backend.records });
     const decisionSourceDependencies: DecisionSourceFactsDependencies = {
       records: backend.records, plans: planService, bindings: bindingReads,
       noteDecisions: noteDecisionSourcePort, unknownCallReviews, workspace: { readWorkspace: workspace.tools.readWorkspace },
+      // The SAME formal cause reader the queue source uses, so the card answer
+      // verifies the same derived causes (including `no_adviser`).
+      goalCauses: goalDecisionCauseReader,
       // K3 L19a: the SAME CRR owner, original-Run execution read and Kernel
       // command reader (the K L9 window) the card source uses.
       commandRerunRequests, commandRerunExecutions: executionReader,
@@ -1380,7 +1431,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // `DecisionCardSourcePort` seam. The remaining card kinds have no adapter
     // factory yet and are reported `not_available` by the read model; the
     // automatic-rework projector is the one notice source built here.
-    const goalDecisionCauseReader = createGoalDecisionCauseReader({ records: backend.records, plans: planService });
     const planningQuestionReader = createPlanningQuestionReader({ records: backend.records, plans: planService,
       bindings: bindingReads });
     const goalCauseCards = createGoalCauseCardSource(goalDecisionCauseReader);
@@ -1415,6 +1465,24 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The handoff notices are a read projection of the handoff operations' own saved writes: one item per operation,
     // no stored notice and no new writer.
     const handoffNotices = createHandoffNoticeSource({ records: backend.records });
+    // PL §6.4.2/§6.4.3: the two "please be aware" projections. Both are pure
+    // reads registered in the read model's ONE notice list; the adoption source
+    // reads P5's accepted candidates and exact review and P6's export probe, and
+    // the stage-end source reads the plan, the runs and the activity readings.
+    // The plan-reader owner is declared below; these closures run only after
+    // composition, and they are the same raw reader the Workflow receives.
+    const planAdoptionNotices = createPlanAdoptionNoticeSource({
+      records: backend.records,
+      exports: { read: exportBooksPort },
+      acceptedCandidatesOf: (goalRef) => planReadersOwner.acceptedCandidatesOf(goalRef),
+      reviews: { read: (ctx, input) => planReadersOwner.readPlanReview(ctx, input) },
+    });
+    const planNotices = createPlanNoticeSource({
+      records: backend.records,
+      plans: planService,
+      runs: { listExecutions: (...args) => executionReader.listExecutions!(...args) },
+      activities: { readRunActivities: (...args) => activityReads.readRunActivities(...args) },
+    });
     // The card-source list is the decision read model's ONE registration point. M's member source exists on this
     // tree; R's rework source is pushed below once its owner is built (the read model holds this array by reference,
     // so both pending-card reads answer `ready` and the Task block sources work). No second card projection exists.
@@ -1474,11 +1542,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records,
       cardSources: decisionCardSources,
       noticeSources: [automaticReworkNotices, undeliveredReplyNotices, noteReviewNotices, handoffNotices,
+        planAdoptionNotices, planNotices,
         createDisconnectNoticeSource({ records: backend.records, sessions: sessionFacts }), continuationNotices,
         createProjectNoticeSource({ records: backend.records })],
       conflicts: goalConflicts,
       positions: noticePositions,
       displayTokens,
+      // §6.3.1: the source-lineage walk over the SAME mailbox/Query/Plan owners
+      // the plan readers were built from; no second reader is created here.
+      lineage: { messages: mailbox, queries: queryJobs, plans: planService },
     });
     // The main read and `requests/read`'s ONE whole-page run of the decision read model's assembly. It is built
     // before the Runtime dependencies because Q's `read_requests` tool receives this owner.
@@ -1755,7 +1827,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const entry = createExecutionEntryService(entryDependencies);
       resultWriter = entry;
       const modelRequests = createModelCallService(entryDependencies);
-      const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff'> & {
+      const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff' | 'planningQuestions'> & {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
         /** H: record 5's readiness read into Work preparation. */
         handoffBriefs: WorkHandoffBriefReadPort;
@@ -1825,6 +1897,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // card source and shell hook use; the request tool and the shell hook
         // read them at Run start (no second parser or reader).
         commandRerunRequests, commandRecognizer,
+        // The saved questions a `planresume:` preparation assembles its input from.
+        planningQuestions: planningQuestionReader,
         ...(host.readonlyCommandAccess === undefined ? {}
           : { readonlyCommandAccess: (input: ReadonlyCommandAccessInput) => host.readonlyCommandAccess!(input) }),
         host, kernel, resourceCaps, now, newId: randomUUID,
@@ -2351,7 +2425,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       plans: planService,
       runFacts: noteRunFacts,
       duties: sessionDutyResolver,
-      secretaryQueryRun,
+      queryRun: noteQueryRun,
       workspace: noteWorkspace,
       workspaceMaxFileBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes,
       architecture: catalog,
@@ -2592,7 +2666,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const workflowDependencies: WorkflowDependencies & {
       sessionHandoff?: HandoffWorkflowDependencies;
     } = {
-      tasks: rawGoals, plans: planService, sessions: sessionDirectory,
+      tasks: rawGoals,
+      // L-02 §6.4.3: an automatic adoption registers its export at the commit itself,
+      // before the later candidate read and reply association can fail.
+      plans: options.wrapPlanChange === undefined ? planService
+        : { ...planService, applyPlanChange: options.wrapPlanChange(planService.applyPlanChange) },
+      sessions: sessionDirectory,
       claims: { ...claimService, requeueTask: requeueService.requeueTask,
         readTaskRequeue: requeueService.readTaskRequeue,
         readTaskRequeueByIdentity: requeueService.readTaskRequeueByIdentity },
@@ -2775,6 +2854,28 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         responsibilities: sessionResponsibility, requests: rawRequestRounds,
         unfinishedOperations: (ctx) => readUnfinishedOperations(ctx),
       } satisfies HandoffWorkflowDependencies,
+      // PL §3.4/§6.7.1: the nine optional Workflow reads the real composition
+      // supplies. `send` is the Host's app-layer wrapper bound here to the ONE
+      // mailbox; the rest are this root's owners. The optional port shape stays
+      // for old doubles; a missing implementation answers `unsupported`, never
+      // an empty result. `planReadersOwner` is declared below: these closures
+      // run only after composition and keep the raw owner, not a second reader.
+      ...(options.systemRoundSend === undefined ? {} : { send: options.systemRoundSend(mailbox) }),
+      latestAgentCandidate: (goalRef) => planReadersOwner.latestAgentCandidate(goalRef),
+      completedFixes: (goalRef, basedOn) => planReadersOwner.completedFixes(goalRef, basedOn),
+      planFixRead: (goalRef, proposalRef, revision) =>
+        planReadersOwner.planFixRead(goalRef, proposalRef, revision),
+      planChecks: (scope) => planReadersOwner.planChecks(scope),
+      planCandidates: (scope, ctx, goalRef) => planReadersOwner.planCandidates(scope, ctx, goalRef),
+      acceptedCandidatesOf: (goalRef) => planReadersOwner.acceptedCandidatesOf(goalRef),
+      exportBooks: exportBooksPort,
+      readCandidateCard: (goalRef, proposalRef) => candidateCardFacts({
+        records: backend.records,
+        planReaders: planReadersOwner,
+        decisions: rawDecisionReads,
+        exportBooks: exportBooksPort,
+      }, lifecycleReadContext({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId }),
+      { goalRef, proposalRef }),
     };
     const rawWorkflow = createWorkflow(workflowDependencies);
     /**
@@ -2836,6 +2937,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const consumableSessionsOwner = createConsumableSessions({
       directory: sessionDirectory, executions: executionReader, queries: queryJobs,
       messages: mailbox,
+      // §5.5.2: the one candidate read the settlement offer needs, over the same
+      // Plan service the rest of the root injects.
+      plans: planService,
       eligibility: { readDeliveryEligibilityFacts: (...args) => rawWorkflow.readDeliveryEligibilityFacts!(...args) },
     });
     const consumableSessions: Pick<ConsumableSessionsPort, 'readConsumableSessions'> = {
@@ -2931,6 +3035,24 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         sample: captured.sample, notVisible: captured.capture.notVisible,
         notVisibleOmitted: captured.capture.notVisibleOmitted };
     };
+    /**
+     * A planning round or a consultation runs on a line that keeps working, so losing it closes the Turn and hands the
+     * line back (K L10); its source message then takes the ordinary no-answer ending. Any other Query line keeps the
+     * old rule (A8 Q-01, KA-16). The problem text, or null.
+     */
+    const closeQueryLineTurn = async (ctx: CoreCallContext, queryRunRef: QueryRunRef): Promise<string | null> => {
+      const close = runtime.port.closeQueryTurn;
+      if (close === undefined || queryExecution === undefined) return null;
+      const read = await queryExecution.readQueryExecution(ctx, queryRunRef);
+      if (read.status !== 'ready') return `the QueryRun is not readable (${read.status})`;
+      const { job: { job: { intent: { execution } } }, session } = read.value;
+      if (session.provenance.kind === 'readonly_copy' || !(execution.kind === 'intervention_planning'
+        || (execution.kind === 'semantic_query' && execution.consultation !== undefined))) return null;
+      const closed = await close.call(runtime.port, ctx, { queryRunRef,
+        sessionRef: { projectId: session.ref.projectId, sessionId: session.ref.sessionId } });
+      if ('reason' in closed) return closed.reason;
+      return closed.health === 'available' ? null : 'the health was not written';
+    };
     const reconcile = {
       candidates: reconcileCandidates,
       // K3 L28 step 2b/6b: the SAME `UnknownCallReview` owner the routes and the
@@ -2978,6 +3100,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           return reconcileQueryRunAtStartup({ owner: historyOwner, messages: classifierMessages, queries: queryExecution,
             observeQuery: (callCtx, request) => observeQuery(callCtx, request) }, ctx, input);
         }, () => ({ queryRunRef: input.record.run.ref, row: 'Q-*', status: 'failed' as const, reason: 'platform is closing' })),
+      closeQueryLineTurn: (ctx: CoreCallContext, queryRunRef: QueryRunRef) =>
+        trackedCall(() => closeQueryLineTurn(ctx, queryRunRef), () => 'platform is closing'),
       readQueryExecution: (ctx: CoreCallContext, ref: QueryRunRef) => trackedCall(() => queryExecution === undefined
         ? Promise.resolve<CoreRejection>({ status: 'rejected', code: 'unsupported', reason: 'no trusted Query binding' })
         : queryExecution.readQueryExecution(ctx, ref), unavailable),
@@ -3092,9 +3216,12 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         session: read.value.session, executionRef: queryRunRef, kernel: state!.entry!.kernel,
         startPosition: state!.history?.startPosition ?? null });
       if (!facts.ok) return facts.rejection;
-      return queryExecution.resolveUnknownQueryRun(ctx, { input: { queryRunRef, reason: input.reason,
+      const resolved = await queryExecution.resolveUnknownQueryRun(ctx, { input: { queryRunRef, reason: input.reason,
         kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed, activity: facts.activity },
         meta: request.meta });
+      // A closure that fails here is retried by the next start's step 3; the attestation stands.
+      if (resolved.status === 'committed') await closeQueryLineTurn(ctx, queryRunRef);
+      return resolved;
     }
     // Slice 2C (spec §2, L1b, L13, L15): the ONE line read model, the ONE
     // node-detail read model, the pin write owner and the Host conversation
@@ -3256,6 +3383,40 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const projectNoticeWriter = (input: Parameters<typeof notifyProject>[1]): ReturnType<typeof notifyProject> =>
       trackedCall(() => notifyProject({ records: backend.records, now }, input), unavailable);
+    // PL §6.7.1: the ONE goal-loop reader factory, built from the owners above. The Host's restart
+    // rebuild reads it; the plan routes (L) share the same instance. Internal like the other owner groups.
+    const planReadersOwner = createPlanReaders({
+      records: backend.records,
+      messages: mailbox,
+      queries: queryJobs,
+      plans: planService,
+      questions: planningQuestionReader,
+      decisions: rawDecisionMessages,
+      goals: {
+        listWorkspaceGoals: workspace => listWorkspaceGoals(backend.records, workspace),
+        readGoalTerminalState: goal => readGoalTerminalState(backend.records, goal),
+      },
+      // The same scope map `readInstalledChecks` reads: `null` is "no configuration at all", while a
+      // configuration with zero checks keeps the empty array (plan-readers' `planChecks` contract).
+      checks: async scope => {
+        const configuration = currentCheckConfiguration(scope);
+        return { status: 'ready', value: configuration === undefined ? null : [...configuration.checks] };
+      },
+    });
+    // PL L-03 (§AGENTS 3): each published goal-loop read joins the close drain
+    // through the ONE trackedCall path; the internal injections above keep the
+    // raw owner so an in-flight call is never refused after close begins.
+    const publishedPlanReaders: PlanReaders = {
+      latestAgentCandidate: (...args) =>
+        trackedCall(() => planReadersOwner.latestAgentCandidate(...args), unavailable),
+      completedFixes: (...args) => trackedCall(() => planReadersOwner.completedFixes(...args), unavailable),
+      planCandidates: (...args) => trackedCall(() => planReadersOwner.planCandidates(...args), unavailable),
+      planChecks: (...args) => trackedCall(() => planReadersOwner.planChecks(...args), unavailable),
+      planFixRead: (...args) => trackedCall(() => planReadersOwner.planFixRead(...args), unavailable),
+      acceptedCandidatesOf: (...args) =>
+        trackedCall(() => planReadersOwner.acceptedCandidatesOf(...args), unavailable),
+      readPlanReview: (...args) => trackedCall(() => planReadersOwner.readPlanReview(...args), unavailable),
+    };
     let closing: Promise<void> | undefined;
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
@@ -3269,6 +3430,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 1 (spec §4.4): the new owner groups the route layer binds. They are
       // the same instances injected into `sessions`, `queries` and the Workflow.
       sessionFacts, responsibilities, sessionAnomalies,
+      planReaders: publishedPlanReaders,
       runActivity, activity, timeline,
       // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
       // non-enumerable like the other internal owner groups.
@@ -3326,6 +3488,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }, unavailable),
       readSecretaryHandoffBasis: (ctx: CoreCallContext, session: SessionRef) =>
         trackedCall(() => readHandoffBasis(ctx, session), unavailable),
+      /**
+       * PL §6.4.1/§6.7.1: the candidate card's four facts as the frozen
+       * `decisions/candidate-card` read. Member reads fail independently; the
+       * card read itself is the only all-or-nothing member.
+       */
+      readCandidateCard: (ctx: CoreCallContext, input: { goalRef: GoalRef; proposalRef: PlanProposalRef }) =>
+        trackedCall(() => candidateCardFacts({
+          records: backend.records,
+          planReaders: planReadersOwner,
+          decisions: rawDecisionReads,
+          exportBooks: exportBooksPort,
+        }, ctx, input), unavailable),
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */
       resolveUnknownRun: (...args: Parameters<typeof resolveUnknownRun>) => trackedCall(() => resolveUnknownRun(...args), unavailable),
@@ -3400,7 +3574,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // internal owners) follows the same rule (integration fix).
     // Slice 5 (rebase, lead): the five decision ports the route table reads are
     // internal owners by the same rule; the frozen public key list stays exact.
-    for (const key of ['sessionFacts', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
+    for (const key of ['sessionFacts', 'planReaders', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
@@ -3409,7 +3583,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
-      'consumableSessions'] as const) {
+      'consumableSessions', 'readCandidateCard'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

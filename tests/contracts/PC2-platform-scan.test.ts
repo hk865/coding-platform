@@ -62,14 +62,14 @@ type ExemptionV1 = { templateId: string; word: string; line: number; reason: str
  * is not a whole-name match for `check`. The list holds the hits that remain.
  */
 const EXEMPTIONS: readonly ExemptionV1[] = [
-    { templateId: 'initial-planning-answer', word: 'check', line: 14, reason: "planning answer's checks field sentence" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 15, reason: "planning answer's plain 'check' (what to propose)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 18, reason: "planning answer's plain 'check' (shape sample disclaimer)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 49, reason: "planning answer's plain 'check' (sample verification text)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 79, reason: "planning answer's checks sample field" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 16, reason: "planning answer's checks field sentence" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 17, reason: "planning answer's plain 'check' (what to propose)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 22, reason: "planning answer's plain 'check' (shape sample disclaimer)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 56, reason: "planning answer's plain 'check' (sample verification text)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 86, reason: "planning answer's checks sample field" },
     { templateId: 'skill-platform-work', word: 'check', line: 47, reason: 'record_note receipt field, not the reserved Kernel tool' },
     { templateId: 'skill-platform-secretary', word: 'check', line: 42, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-adviser', word: 'check', line: 53, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-adviser', word: 'check', line: 65, reason: 'record_note receipt field, not the reserved Kernel tool' },
     { templateId: 'skill-platform-scribe', word: 'check', line: 32, reason: 'record_note receipt field, not the reserved Kernel tool' },
 ];
 

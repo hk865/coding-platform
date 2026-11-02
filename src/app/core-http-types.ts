@@ -12,6 +12,7 @@
  *   - `AbortSignal` and every internal handle stay out of the JSON DTO.
  */
 import type { ActorRef } from '../contracts/command-event.js';
+import type { GoalRef } from '../contracts/ledger.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef } from '../contracts/core/identity.js';
 // The two secretary lifecycle commands' own input and result shapes: the accept inputs and the progress the Workflow
@@ -45,7 +46,7 @@ import type {
   ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
-import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
+import type { PlanProposalRef, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type {
   DecisionMessagePort,
   DecisionReadPort,
@@ -60,6 +61,7 @@ import type { MaterialSourceScope } from '../contracts/material-access.js';
 import type { PlanRevisionDraft } from '../contracts/plan.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
 import type { ActivityReadPort } from '../core/work-graph/views/activity-read-model.js';
+import type { CandidateCardFactsV1 } from '../core/work-graph/views/decision-read-model.js';
 import type { TrackReadPort } from '../core/work-graph/views/track-read-model.js';
 import type { TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
 import type { QueryJobIntentV1 } from '../contracts/query-job.js';
@@ -279,6 +281,7 @@ export type CoreRouteSuffix =
   | 'plans/abandon'
   | 'decisions/queue'
   | 'decisions/card'
+  | 'decisions/candidate-card'
   | 'decisions/answer'
   | 'decisions/application'
   | 'decisions/notices/seen'
@@ -510,6 +513,18 @@ export type DecisionsQueueBody = PlainBody<DecisionReadPort['queryDecisionQueue'
 export type DecisionsQueueResponse = RouteResponse<DecisionReadPort['queryDecisionQueue']>;
 export type DecisionsCardBody = PlainBody<DecisionReadPort['readDecisionCard']>;
 export type DecisionsCardResponse = RouteResponse<DecisionReadPort['readDecisionCard']>;
+/**
+ * PL C-23/§6.4.1: the frozen `decisions/candidate-card` read. The platform
+ * publishes the composite `candidateCardFacts` value as one tracked method;
+ * the DTO derives from that method, so it adds no card field and no second
+ * card type.
+ */
+export type DecisionsCandidateCardRead = (
+  ctx: CoreCallContext,
+  input: { goalRef: GoalRef; proposalRef: PlanProposalRef },
+) => Promise<ReadResult<CandidateCardFactsV1>>;
+export type DecisionsCandidateCardBody = PlainBody<DecisionsCandidateCardRead>;
+export type DecisionsCandidateCardResponse = RouteResponse<DecisionsCandidateCardRead>;
 /** `decisions/answer` is the finite Workflow coordination (§4.5), not a bare owner. */
 export type DecisionsAnswerBody = GraphWriteBody<NonNullable<WorkflowPort['resolveDecision']>>;
 export type DecisionsAnswerResponse = RouteResponse<NonNullable<WorkflowPort['resolveDecision']>>;

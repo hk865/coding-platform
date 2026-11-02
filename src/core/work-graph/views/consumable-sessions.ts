@@ -10,17 +10,20 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import { queryJobRefFor } from '../../../contracts/query-job.js';
+import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
+import { interventionPlanningQueryRefs, queryJobRefFor } from '../../../contracts/query-job.js';
 import type { SessionAvailability } from '../state/session-availability.js';
 import type { SessionCard, SessionDirectoryPort, SessionPageRequest } from '../model/session-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import { consultationFacts, type SessionMessage } from '../model/communication-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { QueryJobPort } from '../queries/contracts.js';
 import type { DeliveryEligibilityFactsPort } from '../model/session-facts-contracts.js';
-import { deliveryEligibility } from '../state/message-machine.js';
+import { deliveryEligibility, waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
 import { plainSessionRefKey } from '../sessions/session-record-codecs.js';
-import { compareSessionInputCandidates } from '../sessions/message-record-codecs.js';
+import { compareSessionInputCandidates, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { planProposalIdFor } from '../tasks/plan-service.js';
 
 /** The five kinds an offer can name; `notify` is listed but never opens a turn. */
 export type ConsumableSessionKindV1 =
@@ -52,8 +55,10 @@ export type ConsumableSessionsPageV1 = {
 export type ConsumableSessionsDependencies = {
   directory: Pick<SessionDirectoryPort, 'findSessions'>;
   executions: Pick<ExecutionReadPort, 'readExecution'>;
-  queries: Pick<QueryJobPort, 'readQueryJob'>;
+  queries: Pick<QueryJobPort, 'readQueryJob' | 'readQueryAnswer'>;
   messages: Pick<SessionMailboxPort, 'readInbox' | 'readOutbox' | 'readMessage'>;
+  /** The one candidate read `settlementOfferOf` needs; it never writes a record. */
+  plans: Pick<PlanTaskPort, 'readPlanProposal'>;
   /** The delivery-eligibility facts the offer rule reads (`session-facts-contracts.ts:79`). */
   eligibility: DeliveryEligibilityFactsPort;
 };
@@ -83,6 +88,10 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     if (message.intent === 'inquiry') return 'inquiry';
     if (message.intent === 'decision_request') return null;
     if (message.sender.kind === 'host' && message.sender.actor.kind === 'human') return 'person_message';
+    // A Host system round is a real planning request; it is not an agent's released request (no `release`
+    // check) and never a person's message. Occupancy, health and archive still decide through `busyReasonOf`.
+    if (message.sender.kind === 'host' && message.sender.actor.kind === 'system'
+      && message.intent === 'action_request') return 'action_request';
     if ((message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round')
       && message.intent === 'action_request' && message.release === 'released') return 'action_request';
     return null;
@@ -136,11 +145,82 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     return ready(kind === null ? null : { kind, message, cursor });
   }
 
+  /**
+   * §5.5.2's recovery read: the settlement offer of one traversed inbox source. It derives that source's one
+   * deterministic intervention Query, and offers the source again only while the Query is terminal and the
+   * source's close-out is still missing. Both the Query and its candidate are read by identity; Session
+   * occupancy is never consulted and nothing is written or re-delivered. Only an executor M whose wait is still
+   * open has its candidate/questions close-out deferred (C-25); its accepted-candidate reply belongs to the adopted
+   * recovery (6.1.6), so it gets no settlement offer in that class either. A consumed wait, a message that did not
+   * wait, a person's message and a Host system R always get the close-out.
+   */
+  async function settlementOfferOf(ctx: CoreCallContext, source: SessionMessage, scope: WorkspaceScope):
+    Promise<ReadResult<ConsumableSessionKindV1 | 'deferred' | null>> {
+    const refs = interventionPlanningQueryRefs(source.ref);
+    const read = await deps.queries.readQueryJob(ctx, refs.queryJobRef);
+    if (read.status === 'not_found') return ready(null);
+    if (read.status !== 'ready') return read;
+    const record = read.value;
+    const execution = record.job.job.intent.execution;
+    if (execution.kind !== 'intervention_planning') return ready(null);
+    // The commit entry admits an intervention Query only with its source and a real Goal (`query-job.ts:394`,
+    // `query-job-service.ts:259`), so both are present on every stored record this read can see.
+    const storedSource = execution.sourceMessageRef as SessionMessageRef;
+    if (sessionMessageRefKey(storedSource) !== sessionMessageRefKey(source.ref)) return ready(null);
+    const jobStatus = record.job.job.status;
+    const runEnded = record.run.run.status === 'closed'
+      || record.run.run.executionState?.phase === 'settled';
+    if (jobStatus !== 'answered' && jobStatus !== 'closed' && !runEnded) return ready(null);
+    // The source already has its one reply slot filled, or was withdrawn: the settlement is written (or another
+    // writer won first). A withdrawn source is never offered again.
+    if (source.response !== null || source.withdrawnAt !== null) return ready(null);
+    const answerRef = record.job.job.answerRefs.at(-1);
+    if (answerRef === undefined) {
+      // A formally closed Query without an Answer is the `no_answer` ending; a withdrawn source is already settled.
+      if (jobStatus !== 'closed' && !runEnded) return ready(null);
+      return ready('action_request');
+    }
+    const answer = await deps.queries.readQueryAnswer(ctx, answerRef);
+    if (answer.status !== 'ready') return answer;
+    let terminal: 'settled' | 'candidate' | 'questions' | 'adopted' = 'settled';
+    if (execution.answerShape !== 'plan_review') {
+      const parsed = parseInitialPlanningResponseV2(answer.value.answer.answer);
+      if (parsed.status === 'parsed' && parsed.response.kind === 'needs_decision') {
+        terminal = 'questions';
+      } else if (parsed.status === 'parsed' && parsed.response.kind === 'plan') {
+        // The candidate's deterministic identity is the intervention's propose identity for this source.
+        const goalId = record.job.job.goalId as string;
+        const proposal = await deps.plans.readPlanProposal(ctx, {
+          aggregateType: 'PlanProposal', projectId: scope.projectId, workspaceId: scope.workspaceId,
+          proposalId: planProposalIdFor({ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId,
+            requestId: `intervention:${sessionMessageRefKey(source.ref)}:propose` }),
+        });
+        if (proposal.status !== 'ready' && proposal.status !== 'not_found') return proposal;
+        // A candidate that is not written yet is the same `plan` class: the handler writes it from the same Query.
+        // A stored `candidate` whose `basedOn` moved on is the same class (the handler's proposal read derives it).
+        if (proposal.status === 'ready' && proposal.value.status === 'candidate') terminal = 'candidate';
+        // An accepted candidate only completes R here; the executor M's one reply belongs to the adopted-candidate
+        // recovery (6.1.6), exactly as §5.5.2 class 1 says.
+        if (proposal.status === 'ready' && proposal.value.status === 'accepted') terminal = 'adopted';
+      }
+    }
+    const executorSender = source.sender.kind === 'work_run' || source.sender.kind === 'secretary_round';
+    const executorWait = executorSender
+      && source.waitAfterSend
+      && waitStateOf(source, waitFactsOfRecord(source)).state === 'open';
+    // The executor M's accepted-candidate reply belongs to the adopted recovery (6.1.6); only a wait that is still
+    // open defers its candidate/questions close-out. A consumed wait or a message that did not wait is offered.
+    if (executorSender && terminal === 'adopted') return ready(null);
+    if (executorWait && (terminal === 'candidate' || terminal === 'questions')) return ready('deferred');
+    return ready('action_request');
+  }
+
   /** The inbox and the Session's whole outbox, walked to the end; person offers first, then commit order. */
   async function offersOf(ctx: CoreCallContext, record: SessionCard['record']):
     Promise<ReadResult<OfferSet>> {
     // The mailbox ports take a plain SessionRef; the record's ref carries `aggregateType` for the store.
     const session: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
+    const workspace: WorkspaceScope = { projectId: record.ref.projectId, workspaceId: record.workspaceId };
     const offers: CandidateOffer[] = [];
     let inboxCursor: string | undefined;
     for (;;) {
@@ -153,7 +233,21 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
         if (message.intent === 'inquiry' && message.status === 'responded') continue;
         const offer = await offerOf(ctx, message, 'message', session, () => page.cursors[index]!);
         if (offer.status !== 'ready') return offer;
-        if (offer.value !== null) offers.push(offer.value);
+        if (offer.value !== null && offer.value.kind !== 'action_request') {
+          offers.push(offer.value);
+          continue;
+        }
+        // §5.5.2: a terminal Query whose source close-out is still missing is offered again from the same source;
+        // the ordinary delivery rule above no longer offers a delivered message. A deferred executor M stays
+        // undelivered while its wait is open, and its answered Query makes it no new input: it never heads the queue.
+        const settlement = await settlementOfferOf(ctx, message, workspace);
+        if (settlement.status !== 'ready') return settlement;
+        if (settlement.value === 'deferred') continue;
+        if (offer.value !== null) {
+          offers.push(offer.value);
+        } else if (settlement.value !== null) {
+          offers.push({ kind: settlement.value, message, cursor: () => page.cursors[index]! });
+        }
       }
       const next = page.nextCursor ?? undefined;
       if (next === undefined) break;

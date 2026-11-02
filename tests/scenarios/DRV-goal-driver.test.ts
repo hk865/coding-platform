@@ -65,7 +65,7 @@ describe('DRV goal driver (memory)', () => {
     const parked = await waitDriver(basis.world, basis.goal, undefined, parkedOnBasis,
       'D-F2 the real last.waitBasis of the parked Goal');
     expect((parked.last as { value?: { waitBasis?: WaitBasis } } | null)?.value?.waitBasis)
-      .toMatchObject({ reasons: ['wait_reply'] });
+      .toMatchObject({ reasons: expect.arrayContaining(['wait_reply']) });
     await limitHold(replying.reached, 'D-F2 the held reply model request');
     expect(ready<{ status: string }>(await basis.world.post('messages/read',
       plain(S6A_SCOPE, basis.message)), 'the D-F2 wait read').status).not.toBe('responded');

@@ -24,6 +24,8 @@ import type {
 import type { DecisionSourceV1, NoticeCategoryV1 } from '../../src/contracts/goal-decisions.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import type { PlanSourceLineageDeps } from '../../src/core/work-graph/tasks/plan-lineage.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { readCanonicalTaskFacts, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { K3_UCR_BY_GOAL_STATUS_LOOKUP } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
@@ -91,7 +93,10 @@ describe('K3-20 review card source paging', () => {
     // The fixture wires only the review source; the empty stubs below mark the
     // sources this case does not exercise as available, so `countsComplete`
     // reports the wiring fact (all sources present) rather than paging.
-    const readModel = completeReadModel(f.records, [cardSource]);
+    const lineage = { messages: world.mailbox,
+      queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),
+      plans: f.b2.base.plans };
+    const readModel = completeReadModel(f.records, [cardSource], lineage);
 
     // The source itself: pageLimit 2 -> four items over TWO offset pages.
     const attemptBefore = { cache: new Map<string, unknown>() };
@@ -185,7 +190,7 @@ describe('K3-20 review card source paging', () => {
       now: () => T, eventId: () => 'k3-20-mid-read' });
     const wrappedCards = createUnknownCallReviewCardSource({ records: wrappedRecords, reviews: reviewsForQueue,
       pageLimit: 2 });
-    const wrappedReads = completeReadModel(wrappedRecords, [wrappedCards]);
+    const wrappedReads = completeReadModel(wrappedRecords, [wrappedCards], lineage);
     const { cards: afterCards, final: afterFinal } = await allQueuePages(wrappedReads, 2);
     expect(midReadDone).toBe(true);
     expect(records).toHaveLength(5);
@@ -288,9 +293,11 @@ type ReadRecords = K3ReviewCardWorld['records'];
  * wired as empty, always-available adapters. They contribute no cards and no
  * notices; production wires the real adapters instead.
  */
-function completeReadModel(records: ReadRecords, cardSources: readonly DecisionCardSourcePort[]) {
+function completeReadModel(records: ReadRecords, cardSources: readonly DecisionCardSourcePort[],
+  lineage: PlanSourceLineageDeps) {
   return createDecisionReadModel({
     records,
+    lineage,
     cardSources: [...cardSources,
       emptyCardSource('goal_cause'), emptyCardSource('note_review'),
       emptyCardSource('planning_question'), emptyCardSource('message_release'),
@@ -298,7 +305,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
       emptyCardSource('member_creation'), emptyCardSource('rework_request'),
       emptyCardSource('handoff_approval'), emptyCardSource('adviser_creation')],
     noticeSources: (['second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
-      'continuation', 'disconnect', 'project_notice'] as const).map(emptyNoticeSource),
+      'continuation', 'disconnect', 'project_notice', 'plan_adoption', 'plan_notice'] as const).map(emptyNoticeSource),
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(),

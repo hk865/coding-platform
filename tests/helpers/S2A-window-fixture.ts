@@ -29,6 +29,9 @@ import type { S5DecisionFixture, S5Records } from './S5-decision-fixture.js';
 import { GOAL_C, PLAN_C1 } from './S5-decision-fixture.js';
 import { startRun, sendUserDecision } from './S2A-queue-fixture.js';
 import { workContext } from './S5-user-message-support.js';
+import { mailboxDependencies } from './S5-queue-support.js';
+import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 
 /**
@@ -52,6 +55,8 @@ export function windowReadModel(f: S5DecisionFixture, records: S5Records): Decis
     conflicts: createGoalConflictAssembler({ records: inner,
       catalog: createArchitectureCatalogService({ records: inner }),
       executedFiles: createGoalExecutedFilesReader({ records: inner }) }),
+    lineage: { messages: createSessionMailbox(mailboxDependencies(f)),
+      queries: createQueryJobService({ records: inner, now: f.now, eventId: f.newId }), plans },
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
 }
 

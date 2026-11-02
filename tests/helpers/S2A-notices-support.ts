@@ -26,6 +26,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -82,6 +83,9 @@ export function noticesHarness(f: S5DecisionFixture, sources: readonly DecisionN
     // Notice-only requests never call the unrelated conflict assembler.
     conflicts: { async queryGoalConflicts() { throw new Error('notice-only reads must not query conflicts'); } },
     positions, displayTokens,
+    lineage: { messages: createSessionMailbox(mailboxDependencies(f)),
+      queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),
+      plans: f.b2.base.plans },
     ...(widths.sourcePageLimit === undefined ? {} : { sourcePageLimit: widths.sourcePageLimit }),
     ...(widths.lookupPageLimit === undefined ? {} : { lookupPageLimit: widths.lookupPageLimit }) });
   const page = async (options: { categories?: NoticeCategoryV1[]; limit?: number; cursor?: string } = {}) =>

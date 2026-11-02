@@ -20,7 +20,7 @@ import type { MaterialAccessGrantRef, MaterialBasisV1 } from '../material-access
 import type { RoleSpecResolutionV1 } from '../role-spec-materials.js';
 import type { TaskEnvelopeV1 } from '../task-envelope.js';
 import type { RoleConfigurationRef, SessionRef } from './identity.js';
-import type { QueryRunRef, SecretaryRequestManifestV1 } from '../query-job.js';
+import type { QueryRunRef, QueryAnswerShapeV1, SecretaryRequestManifestV1 } from '../query-job.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../ledger.js';
 import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
@@ -299,6 +299,8 @@ export type PreparedQueryManifestV1 = {
   goal: { ref: GoalSnapshot['ref']; revision: number } | null;
   /** The frozen request facts; null for every non-request Query. */
   request: SecretaryRequestManifestV1 | null;
+  /** The frozen submit-tool shape (spec §5.2.7); every new manifest writes it. */
+  answerShape: QueryAnswerShapeV1 | null;
   workspace: { ref: WorkspaceSnapshot['ref']; revision: number };
   focusPlan: { ref: PlanRevisionSnapshot['ref']; revision: number } | null;
   permissions: { tools: string[]; writeScope: [] };

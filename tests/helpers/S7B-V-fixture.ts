@@ -64,7 +64,8 @@ Promise<S7BCompletedGoal> {
   return { world, goalRef };
 }
 
-export type S7BVWorkProfile = Pick<InterventionInput, 'roleBinding' | 'runtimeBudget' | 'budget' | 'consumerId'>;
+export type S7BVWorkProfile = Pick<Extract<InterventionInput, { completion?: undefined }>,
+  'roleBinding' | 'runtimeBudget' | 'budget' | 'consumerId'>;
 
 export function s7bVWorkProfile(): S7BVWorkProfile {
   return { roleBinding: S6A_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET,

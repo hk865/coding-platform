@@ -95,6 +95,7 @@ import {
   type CoreRouteKind,
   type CoreRouteSuffix,
   type CoreScope,
+  type DecisionsCandidateCardRead,
   type K3CoreRouteDto,
   type MessagesCoreRouteDto,
   type OverlapCoreRouteDto,
@@ -253,6 +254,8 @@ export type CoreRouteBindings = {
   abandonPlanProposal: RequestCandidatePort['abandonPlanProposal'];
   queryDecisionQueue: DecisionReadPort['queryDecisionQueue'];
   readDecisionCard: DecisionReadPort['readDecisionCard'];
+  /** PL §6.4.1/§6.7.1: the candidate card's four facts; the platform publishes it as a tracked method. */
+  readCandidateCard: DecisionsCandidateCardRead;
   resolveDecision: NonNullable<WorkflowPort['resolveDecision']>;
   recordDecisionApplication: DecisionMessagePort['recordDecisionApplication'];
   markNoticesSeen: WorkspaceDecisionSettingsPort['markNoticesSeen'];
@@ -375,6 +378,8 @@ export type CoreRoutePlatform = {
   workspaceDecisionSettings: WorkspaceDecisionSettingsPort;
   decisionMessages: DecisionMessagePort;
   decisions: DecisionReadPort;
+  /** PL §6.4.1/§6.7.1: optional so a narrow platform answers `unsupported`; the composed platform publishes it. */
+  readCandidateCard?: DecisionsCandidateCardRead;
   requestCandidates: RequestCandidatePort;
   workflow: WorkflowPort & Required<Pick<WorkflowPort, 'consumeConsultation'>>;
   /** Slice 1 (spec §4.4): the Session-facts read owner (the same instance injected into sessions/queries). */
@@ -604,6 +609,8 @@ export const CORE_ROUTE_SPECS: Record<
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
   'decisions/card': { kind: 'plain', binding: 'readDecisionCard', owner: 'decisions.readDecisionCard' },
+  // PL §6.4.1/§6.7.1: the candidate card's four facts (card, diagnosis, exact review, export read).
+  'decisions/candidate-card': { kind: 'plain', binding: 'readCandidateCard', owner: 'platform.readCandidateCard' },
   'decisions/answer': { kind: 'graph_write', binding: 'resolveDecision', owner: 'workflow.resolveDecision' },
   'decisions/application': { kind: 'graph_write', binding: 'recordDecisionApplication', owner: 'decisionMessages.recordDecisionApplication' },
   'decisions/notices/seen': { kind: 'graph_write', binding: 'markNoticesSeen', owner: 'workspaceDecisionSettings.markNoticesSeen' },
@@ -1069,6 +1076,12 @@ export function createPlatformCoreRouteBindings(
       : platform.decisions.queryDecisionQueue.bind(platform.decisions),
     readDecisionCard: platform.decisions === undefined ? unsupported('the platform does not publish decisions.readDecisionCard')
       : platform.decisions.readDecisionCard.bind(platform.decisions),
+    // The candidate-card read is a top-level platform method, not a group member;
+    // read it when the route is called so a platform without the owner keeps the
+    // explicit `unsupported` gap and binding the table touches no owner.
+    readCandidateCard: platform.readCandidateCard === undefined
+      ? unsupported('the platform does not publish readCandidateCard')
+      : (ctx, input) => platform.readCandidateCard!.call(platform, ctx, input),
     resolveDecision: platform.workflow.resolveDecision === undefined
       ? unsupported('the Workflow does not publish the finite decision coordinator (resolveDecision)')
       : platform.workflow.resolveDecision.bind(platform.workflow),
@@ -1449,6 +1462,7 @@ export async function dispatchCoreRoute(
       case 'plans/abandon': return bindings.abandonPlanProposal(ctx, graphWrite.request as never);
       case 'decisions/queue': return bindings.queryDecisionQueue(ctx, plain.input as never);
       case 'decisions/card': return bindings.readDecisionCard(ctx, plain.input as never);
+      case 'decisions/candidate-card': return bindings.readCandidateCard(ctx, plain.input as never);
       case 'decisions/answer': return bindings.resolveDecision(ctx, graphWrite.request as never);
       case 'decisions/application': return bindings.recordDecisionApplication(ctx, graphWrite.request as never);
       case 'decisions/notices/seen': return bindings.markNoticesSeen(ctx, graphWrite.request as never);

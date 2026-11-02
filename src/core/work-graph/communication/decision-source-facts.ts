@@ -41,6 +41,7 @@ import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { KernelCommandReader } from '../model/kernel-command-read-contracts.js';
 import type { PlanProposalRef, PlanTaskPort } from '../model/plan-contracts.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
+import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import { createGoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import { readProposal } from '../tasks/plan-readers.js';
 import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
@@ -119,6 +120,12 @@ export type DecisionSourceFactsDependencies = {
   adviserCreation?: AdviserCreationSourceDependencies;
   /** The initialization binding read a planning-question binding source checks. */
   bindings: InitializationBindingReadPort;
+  /**
+   * §5.5.3 / DR-P5-01: the SAME formal Goal-cause reader the queue source uses.
+   * The answer-card recheck must see the derived `no_adviser` cause too. When
+   * present it is used instead of building a private reader here.
+   */
+  goalCauses?: GoalDecisionCauseReader;
 };
 
 /** Builds the canonical source/application facts reader. */
@@ -130,8 +137,8 @@ export function createDecisionSourceFacts(
   // every `goal_cause` source is verified against the real derived cause. When
   // it is absent (the frozen `{ records }` construction), only the named-code
   // check plus the affected-object reads below apply.
-  const goalCauses = deps.plans === undefined
-    ? null : createGoalDecisionCauseReader({ records, plans: deps.plans });
+  const goalCauses = deps.goalCauses ?? (deps.plans === undefined
+    ? null : createGoalDecisionCauseReader({ records, plans: deps.plans }));
 
   return {
     async readSource(ctx: CoreCallContext, source: DecisionSourceV1): Promise<ReadResult<{

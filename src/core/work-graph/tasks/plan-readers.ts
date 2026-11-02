@@ -10,7 +10,7 @@ import type {
   TaskLeaseSnapshot,
   TaskTriple,
 } from '../../../contracts/dispatch.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isNonNeg as isSafeRevision, isRecord, nonEmpty, parseObject as parseJsonObject } from '../../../contracts/validation/common.js';
 import { completionPolicyContentDigest } from '../../../contracts/governance.js';
 import type {
@@ -21,6 +21,8 @@ import type {
   CompletionPolicyRevisionRef,
 } from '../../../contracts/governance.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import type { Phase, PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
@@ -28,7 +30,14 @@ import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-ph
 import type { TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
-import type { QueryJobRef } from '../../../contracts/query-job.js';
+import { interventionPlanningQueryRefs, isRequestRound, type QueryJobAnswerRef, type QueryJobRef } from '../../../contracts/query-job.js';
+import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
+import { parsePlanReviewAnswer, type PlanReviewReadV1 } from '../../../contracts/plan-review.js';
+import {
+  systemRoundContext, systemRoundMessageRef, systemRoundOfText, systemRoundRequestId,
+  type PlanFixReadV1, type PlanningQuestionGroupV1,
+} from '../../../contracts/plan-round.js';
+import type { CheckCapabilityV1, RegisteredCommandCheck } from '../../../contracts/verification.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -47,6 +56,7 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
 import { readArchitectureCatalogRef } from '../architecture/catalog-record-codecs.js';
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
+import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.js';
 import {
   derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1, type TracedTaskFactsV1,
@@ -62,7 +72,13 @@ import {
   decodeVerificationRoundSnapshot,
 } from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
-import type { PlanProposal, PlanProposalRef, TaskUnknownCallReview } from '../model/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef, PlanTaskPort, TaskUnknownCallReview } from '../model/plan-contracts.js';
+import type { SessionMailboxPort, HostSendCommitLookup } from '../model/communication-contracts.js';
+import type { DecisionCardV1, DecisionMessagePort } from '../model/decision-contracts.js';
+import type { PlanningQuestionReader } from './planning-question-reader.js';
+import { planSourceLineageOf, type PlanSourceLineageDeps, type PlanSourceLineageV1 } from './plan-lineage.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import type { QueryJobPort, QueryJobRecord } from '../queries/contracts.js';
 import type { NoteRunTaskResolver, NoteUpdateDueTriggerV1 } from '../model/note-contracts.js';
 import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
 import { unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
@@ -502,12 +518,14 @@ export async function readProposal(
  * read separately from the public DTO so a replace/accept/abandon rewrites the
  * record with the SAME `since` (never rebinds). A record without `since` is
  * invalid (the creating commit binds it), and a damaged origin is `unavailable`,
- * never silently absent.
+ * never silently absent. A decoded origin always carries `since`
+ * (plan-record-codecs.ts:1045-1047); the shared wire type's optional field only
+ * covers pre-slice records.
  */
 export async function readProposalOrigin(
   records: GoalRecordTransactionPort,
   ref: PlanProposalRef,
-): Promise<{ status: 'ready'; origin: NoticeOriginWireV1; readThrough: CommitCursor | null } | Rejected> {
+): Promise<{ status: 'ready'; origin: NoticeOriginWireV1 & { since: CommitCursor }; readThrough: CommitCursor | null } | Rejected> {
   const key = planProposalRefKey(ref);
   const read = await readBatch(records, [key]);
   if (read.status !== 'ready') return read;
@@ -659,7 +677,7 @@ export async function readRequestCandidateHead(
 export async function enumerateGoalCandidates(
   records: GoalRecordTransactionPort & RecordLookupPort,
   goalRef: GoalRef,
-  options?: { lookupPageLimit?: number },
+  options?: { lookupPageLimit?: number; status?: PlanProposal['status'] | 'any' },
 ): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
   const values = [goalRef.projectId, goalRef.goalId];
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
@@ -675,10 +693,12 @@ export async function enumerateGoalCandidates(
       const decoded = decodePlanProposalRecord(record);
       if (decoded.status !== 'decoded') continue;
       const proposal = decoded.value;
-      // §4.2 source 3: the live candidates of one Goal (each request's head plus
-      // the independent candidates). Terminal (accepted/not_adopted) and legacy
-      // rows are history, not candidates.
-      if (proposal.kind !== 'candidate_v2' || proposal.status !== 'candidate') continue;
+      // §4.2 source 3: the candidates of one Goal. The default stays the live
+      // `candidate` set; explicit status filters serve `acceptedCandidatesOf`,
+      // `completedFixes` and the successor walk. Legacy rows are never candidates.
+      const wantedStatus = options?.status ?? 'candidate';
+      if (proposal.kind !== 'candidate_v2') continue;
+      if (wantedStatus !== 'any' && proposal.status !== wantedStatus) continue;
       if (proposal.goalRef.projectId !== goalRef.projectId || proposal.goalRef.goalId !== goalRef.goalId) continue;
       proposals.push(proposal);
     }
@@ -2397,6 +2417,493 @@ export function createSessionResponsibilityBasisReader(
         guards,
         sourceCursor: facts.readThrough,
       } };
+    },
+  };
+}
+
+// --------------------------------------------------------------------------
+// PL-25: the goal loop's six narrow reads and `readPlanReview`
+// (§6.1.2 steps 3b/5/5b, §6.1.6, §6.7.1)
+// --------------------------------------------------------------------------
+
+/** The read-only record subset the goal-loop reads reuse. */
+export type PlanReadersRecords = GoalRecordTransactionPort & RecordLookupPort;
+
+/** The two existing Goal reads (views/goal-conflicts), injected so `tasks/` never imports `views/`. */
+export type PlanGoalReads = {
+  listWorkspaceGoals(workspace: WorkspaceScope): Promise<{
+    goals: GoalSnapshot[]; watermark: CommitCursor | null; truncated: boolean;
+  }>;
+  readGoalTerminalState(goal: GoalSnapshot): Promise<ReadResult<{ cancelled: boolean; completed: boolean }>>;
+};
+
+/** The installed-check resolver the composition adapts from the Host's `confirmInstalledChecks`. */
+export type PlanCheckResolver = (
+  scope: WorkspaceScope,
+) => Promise<ReadResult<readonly RegisteredCommandCheck[] | null>>;
+
+export type PlanReadersDependencies = {
+  records: PlanReadersRecords;
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>
+    & { lookupHostSendCommit?: HostSendCommitLookup };
+  /** The raw mailbox's Host-send receipt read; the composition injects the same owner. */
+  hostSendReceipt?: HostSendCommitLookup;
+  queries: Pick<QueryJobPort, 'readQueryJob' | 'readQueryAnswer'>;
+  plans: Pick<PlanTaskPort, 'readPlanProposal'>;
+  /** The same saved planning-question reader the decision card source uses. */
+  questions?: Pick<PlanningQuestionReader, 'readPlanningQuestions'>;
+  /** The one saved decision-answer read the card source uses. */
+  decisions?: Pick<DecisionMessagePort, 'readDecisionAnswer'>;
+  goals?: PlanGoalReads;
+  checks?: PlanCheckResolver;
+};
+
+export type PlanCandidatesReadV1 = {
+  goals: readonly {
+    goalRef: GoalRef;
+    pending: { proposalRef: PlanProposalRef; basedOn: PlanRevisionRef | null } | null;
+    questionGroups: readonly PlanningQuestionGroupV1[];
+    readThrough: CommitCursor | null;
+  }[];
+};
+
+export interface PlanReaders {
+  latestAgentCandidate(goalRef: GoalRef): Promise<ReadResult<PlanProposal | null>>;
+  completedFixes(goalRef: GoalRef, basedOn: PlanRevisionRef | null): Promise<ReadResult<number>>;
+  planCandidates(scope: WorkspaceScope, ctx: CoreCallContext, goalRef?: GoalRef): Promise<ReadResult<PlanCandidatesReadV1>>;
+  planChecks(scope: WorkspaceScope): Promise<ReadResult<readonly CheckCapabilityV1[] | null>>;
+  planFixRead(goalRef: GoalRef, proposalRef: PlanProposalRef, revision: number): Promise<ReadResult<PlanFixReadV1>>;
+  acceptedCandidatesOf(goalRef: GoalRef): Promise<ReadResult<readonly PlanProposal[]>>;
+  readPlanReview(ctx: CoreCallContext, input: {
+    goalRef: GoalRef; proposalRef: PlanProposalRef; revision: number;
+  }): Promise<ReadResult<PlanReviewReadV1>>;
+}
+
+/** One Host-scope read context for the reads whose frozen signature carries no ctx. */
+function planReadContext(scope: WorkspaceScope): CoreCallContext {
+  return systemRoundContext(scope, new AbortController().signal);
+}
+
+function unsupportedRead(read: string): Rejected {
+  return { status: 'rejected', code: 'unsupported', reason: `${read} is not wired` };
+}
+
+/** The identity-only Host-send receipt read, on the fixed `host:plan-round` identity. */
+type SendReceiptRead = { status: 'committed' } | { status: 'not_committed' } | Rejected;
+async function hostSendReceipt(
+  ctx: CoreCallContext,
+  messages: Pick<SessionMailboxPort, 'readMessage'>,
+  lookup: HostSendCommitLookup | undefined,
+  scope: WorkspaceScope,
+  requestId: string,
+): Promise<SendReceiptRead> {
+  if (lookup === undefined) return unsupportedRead('the Host send receipt read');
+  const ref = systemRoundMessageRef(scope, requestId);
+  if (ref.status !== 'ready') return ref;
+  // The lookup validates the send's own argument shape but finds the commit by
+  // request identity alone. The committed message's recipient is the existing
+  // plain `SessionRef`; a workspaceId here is not part of that shape and made
+  // the real lookup answer `invalid_arguments` for every round.
+  const source = await messages.readMessage(ctx, ref.value);
+  if (source.status === 'not_found') return { status: 'not_committed' };
+  if (source.status === 'not_ready') {
+    return { status: 'rejected', code: 'unavailable', reason: 'the round message is not ready' };
+  }
+  if (source.status === 'rejected') return source;
+  const recipient = source.value.recipient;
+  if (!('sessionId' in recipient)) return { status: 'not_committed' };
+  try {
+    const result = await lookup(ctx, {
+      requestId,
+      scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
+      toolName: 'send_session_message',
+      arguments: { recipient, text: requestId },
+    });
+    if (result.status === 'committed') return { status: 'committed' };
+    if (result.status === 'not_committed') return { status: 'not_committed' };
+    return { status: 'rejected', code: 'unavailable', reason: result.reason };
+  } catch (error) {
+    return { status: 'rejected', code: 'unavailable',
+      reason: `the Host send receipt read failed: ${messageOf(error)}` };
+  }
+}
+
+function queryJobPinOfCard(card: DecisionCardV1): QueryJobRef | null {
+  for (const pin of card.source.pins) {
+    if (pin.ref.aggregateType === 'QueryJob') return pin.ref as QueryJobRef;
+  }
+  return null;
+}
+
+/**
+ * The parent proposal identities of every successor among one Goal's already
+ * enumerated candidates: a candidate whose source lineage crossed a `planfix:`
+ * round repaired that round's base, whether written directly or through a
+ * resume. Successor existence alone replaces the old candidate; the successor's
+ * own terminal state is irrelevant (§6.3.1). One enumeration pass feeds this
+ * set; callers that already enumerated pass their proposals here.
+ */
+export async function successorParentsOf(
+  ctx: CoreCallContext,
+  deps: PlanSourceLineageDeps,
+  proposals: readonly PlanProposal[],
+): Promise<ReadResult<Set<string>>> {
+  const parents = new Set<string>();
+  for (const proposal of proposals) {
+    if (proposal.sourceMessageRef === null) continue;
+    const lineage = await planSourceLineageOf(ctx, deps, proposal.sourceMessageRef);
+    if (lineage.status !== 'ready') return lineage;
+    if (lineage.value.fixBase !== null) parents.add(planProposalRefKey(lineage.value.fixBase.ref));
+  }
+  return { status: 'ready', value: parents };
+}
+
+/** Builds the goal-loop readers; the factory itself never throws. */
+export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
+  const lineageDeps = { messages: deps.messages, queries: deps.queries, plans: deps.plans };
+  const receiptLookup = deps.hostSendReceipt ?? deps.messages.lookupHostSendCommit;
+
+  /** The source message of a round, used for the close-out fact. */
+  async function roundSettled(ctx: CoreCallContext, source: SessionMessageRef): Promise<ReadResult<boolean>> {
+    const message = await deps.messages.readMessage(ctx, source);
+    if (message.status !== 'ready') return message;
+    return { status: 'ready', value: message.value.response !== null || message.value.withdrawnAt !== null };
+  }
+
+  /** `resumeMessageExists`: the deterministic `planresume:` message or its Query already exists. */
+  async function resumeExists(
+    ctx: CoreCallContext, goalRef: GoalRef, queryJobId: string, originalMessageRef: SessionMessageRef,
+  ): Promise<ReadResult<boolean>> {
+    const request = systemRoundRequestId({
+      kind: 'planresume', goalRef, queryJobId, originalMessageRef,
+    });
+    if (request.status !== 'ready') return request;
+    const scope = { projectId: goalRef.projectId, workspaceId: originalMessageRef.workspaceId };
+    const message = systemRoundMessageRef(scope, request.value);
+    if (message.status !== 'ready') return message;
+    const receipt = await hostSendReceipt(planReadContext(scope), deps.messages, receiptLookup, scope, request.value);
+    if ('status' in receipt && receipt.status === 'rejected') return receipt;
+    if (receipt.status === 'committed') return { status: 'ready', value: true };
+    const query = await deps.queries.readQueryJob(ctx,
+      interventionPlanningQueryRefs(message.value).queryJobRef);
+    if (query.status === 'ready') return { status: 'ready', value: true };
+    if (query.status === 'not_found') return { status: 'ready', value: false };
+    return query;
+  }
+
+  /** The question groups of one Goal that carry this loop's own source. */
+  async function questionGroupsOf(ctx: CoreCallContext, goalRef: GoalRef):
+  Promise<ReadResult<{ groups: PlanningQuestionGroupV1[]; readThrough: CommitCursor | null }>> {
+    if (deps.questions === undefined) return unsupportedRead('the planning question reader');
+    if (deps.decisions === undefined) return unsupportedRead('the decision answer read');
+    const cards: DecisionCardV1[] = [];
+    let watermark: CommitCursor | null = null;
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await deps.questions.readPlanningQuestions(ctx, {
+        goalRef,
+        page: { limit: LOOKUP_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) },
+      });
+      if (page.status !== 'ready') return page;
+      if (page.value.availability !== 'available') return unsupportedRead('the planning question reader');
+      cards.push(...page.value.items);
+      watermark = laterCursor(watermark, page.value.sourceCursor);
+      if (page.value.nextCursor === null) break;
+      cursor = page.value.nextCursor;
+    }
+    type Group = { queryJobRef: QueryJobRef; originalMessageRef: SessionMessageRef; cards: DecisionCardV1[] };
+    const byJob = new Map<string, Group>();
+    for (const card of cards) {
+      if (card.source.kind !== 'planning_question') continue;
+      const jobRef = queryJobPinOfCard(card);
+      if (jobRef === null) continue;
+      const job = await deps.queries.readQueryJob(ctx, jobRef);
+      if (job.status !== 'ready') return job;
+      const execution = job.value.job.job.intent.execution;
+      // Only this loop's own planning rounds join a group; an initialization or
+      // ordinary question keeps its original read and never becomes an error.
+      if (execution.kind !== 'intervention_planning') continue;
+      if (execution.sourceMessageRef === undefined) continue;
+      const key = canonicalJson(jobRef as unknown as JsonValue);
+      const existing = byJob.get(key);
+      if (existing === undefined) {
+        byJob.set(key, { queryJobRef: jobRef, originalMessageRef: execution.sourceMessageRef, cards: [card] });
+      } else {
+        existing.cards.push(card);
+      }
+    }
+    const groups: PlanningQuestionGroupV1[] = [];
+    for (const key of [...byJob.keys()].sort()) {
+      const group = byJob.get(key)!;
+      let answered = 0;
+      for (const card of group.cards) {
+        const answer = await deps.decisions.readDecisionAnswer(ctx, { source: card.source });
+        if (answer.status !== 'ready') return answer;
+        if (answer.value.body !== null) answered += 1;
+      }
+      const allAnswered = group.cards.length > 0 && answered === group.cards.length;
+      const resumed = await resumeExists(ctx, goalRef, group.queryJobRef.queryJobId, group.originalMessageRef);
+      if (resumed.status !== 'ready') return resumed;
+      groups.push({
+        queryJobRef: group.queryJobRef, originalMessageRef: group.originalMessageRef,
+        total: group.cards.length, answered, allAnswered, resumeMessageExists: resumed.value,
+      });
+    }
+    return { status: 'ready', value: { groups, readThrough: watermark } };
+  }
+
+  return {
+    async latestAgentCandidate(goalRef) {
+      const goalRead = await readGoal(deps.records, goalRef);
+      if (goalRead.status !== 'ready') return goalRead;
+      const ctx = planReadContext({ projectId: goalRef.projectId, workspaceId: goalRead.goal.workspaceRef.workspaceId });
+      const enumerated = await enumerateGoalCandidates(deps.records, goalRef, { status: 'any' });
+      if (enumerated.status !== 'ready') return enumerated;
+      // The successor relation comes from the SAME lineage walk the candidate
+      // card uses: a candidate whose fix round repaired an older candidate
+      // replaces it, whether that fix was written directly or through a resume.
+      const successorParents = await successorParentsOf(ctx, lineageDeps, enumerated.proposals);
+      if (successorParents.status !== 'ready') return successorParents;
+      const candidates: PlanProposal[] = [];
+      for (const proposal of enumerated.proposals) {
+        if (proposal.status !== 'candidate') continue;
+        // A first plan and a request-slot head are not agent candidates.
+        if (proposal.basedOn === null) continue;
+        if (successorParents.value.has(planProposalRefKey(proposal.ref))) continue;
+        const request = candidateRequestRef(proposal);
+        if (request !== null) {
+          const job = await deps.queries.readQueryJob(ctx, request);
+          if (job.status === 'ready') {
+            if (isRequestRound(job.value.job)) continue;
+          } else if (job.status !== 'not_found') {
+            return job;
+          }
+        }
+        candidates.push(proposal);
+      }
+      let latest: { proposal: PlanProposal; position: { refKey: string; since: CommitCursor } } | null = null;
+      for (const proposal of candidates) {
+        const origin = await readProposalOrigin(deps.records, proposal.ref);
+        if (origin.status !== 'ready') return origin;
+        const position = { refKey: planProposalRefKey(proposal.ref), since: origin.origin.since };
+        if (latest === null || compareProposalChainPositions(latest.position, position) < 0) {
+          latest = { proposal, position };
+        }
+      }
+      return { status: 'ready', value: latest === null ? null : latest.proposal };
+    },
+
+    async completedFixes(goalRef, basedOn) {
+      const goalRead = await readGoal(deps.records, goalRef);
+      if (goalRead.status !== 'ready') return goalRead;
+      const ctx = planReadContext({ projectId: goalRef.projectId, workspaceId: goalRead.goal.workspaceRef.workspaceId });
+      const enumerated = await enumerateGoalCandidates(deps.records, goalRef, { status: 'any' });
+      if (enumerated.status !== 'ready') return enumerated;
+      const rounds = new Set<string>();
+      for (const proposal of enumerated.proposals) {
+        if (proposal.sourceMessageRef === null) continue;
+        const lineage = await planSourceLineageOf(ctx, lineageDeps, proposal.sourceMessageRef);
+        if (lineage.status !== 'ready') return lineage;
+        const fixBase = lineage.value.fixBase;
+        if (lineage.value.fixRound === null || fixBase === null) continue;
+        if (!samePlanRevisionPointer(fixBase.basedOn, basedOn)) continue;
+        // Directly written candidates and resume-written candidates of one fix
+        // round carry the same `planfix:` message identity and count once.
+        rounds.add(canonicalJson(lineage.value.fixRound as unknown as JsonValue));
+      }
+      return { status: 'ready', value: rounds.size };
+    },
+
+    async planCandidates(scope, ctx, goalRef) {
+      if (deps.goals === undefined) return unsupportedRead('the Goal enumeration read');
+      let goals: GoalSnapshot[];
+      let watermark: CommitCursor | null = null;
+      if (goalRef !== undefined) {
+        if (goalRef.projectId !== scope.projectId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'the Goal belongs to another project' };
+        }
+        const goalRead = await readGoal(deps.records, goalRef);
+        if (goalRead.status !== 'ready') return goalRead;
+        if (goalRead.goal.workspaceRef.workspaceId !== scope.workspaceId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'the Goal belongs to another workspace' };
+        }
+        goals = [goalRead.goal];
+        watermark = goalRead.readThrough;
+      } else {
+        const listed = await deps.goals.listWorkspaceGoals(scope);
+        if (listed.truncated) return incomplete('the workspace Goal enumeration was truncated');
+        goals = listed.goals;
+        watermark = listed.watermark;
+      }
+      const out: {
+        goalRef: GoalRef;
+        pending: { proposalRef: PlanProposalRef; basedOn: PlanRevisionRef | null } | null;
+        questionGroups: readonly PlanningQuestionGroupV1[];
+        readThrough: CommitCursor | null;
+      }[] = [];
+      for (const goal of goals) {
+        const terminal = await deps.goals.readGoalTerminalState(goal);
+        if (terminal.status !== 'ready') return terminal;
+        if (terminal.value.cancelled || terminal.value.completed) continue;
+        const pending = await findPendingProposal(deps.records, goal.ref, {
+          revision: goal.revision, activePlanRevision: goal.activePlanRevision,
+        });
+        if (pending.status !== 'ready') return pending;
+        const groups = await questionGroupsOf(ctx, goal.ref);
+        if (groups.status !== 'ready') return groups;
+        out.push({
+          goalRef: goal.ref,
+          pending: pending.proposal === null
+            ? null
+            : { proposalRef: pending.proposal.ref, basedOn: pending.proposal.basedOn },
+          questionGroups: groups.value.groups,
+          readThrough: laterCursor(laterCursor(watermark, pending.readThrough), groups.value.readThrough),
+        });
+      }
+      return { status: 'ready', value: { goals: out } };
+    },
+
+    async planChecks(scope) {
+      if (deps.checks === undefined) return unsupportedRead('the installed-check configuration read');
+      const read = await deps.checks(scope);
+      if (read.status === 'ready') {
+        if (read.value === null) return { status: 'ready', value: null };
+        return { status: 'ready', value: read.value.map(check => ({
+          checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false,
+        })) };
+      }
+      if (read.status === 'rejected') return read;
+      if (read.status === 'not_ready') return read;
+      return unavailable('the installed-check configuration is missing');
+    },
+
+    async planFixRead(goalRef, proposalRef, revision) {
+      const scope: WorkspaceScope = { projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId };
+      const ctx = planReadContext(scope);
+      const request = systemRoundRequestId({
+        kind: 'planfix', goalRef, proposalId: proposalRef.proposalId, proposalRevision: revision,
+      });
+      if (request.status !== 'ready') return request;
+      const message = systemRoundMessageRef(scope, request.value);
+      if (message.status !== 'ready') return message;
+      const receipt = await hostSendReceipt(ctx, deps.messages, receiptLookup, scope, request.value);
+      if ('status' in receipt && receipt.status === 'rejected') return receipt;
+      const first = await deps.queries.readQueryJob(ctx,
+        interventionPlanningQueryRefs(message.value).queryJobRef);
+      if (first.status === 'not_found') {
+        // `not_sent` is ONLY the uncommitted receipt plus the absent original
+        // planfix Query; a committed receipt whose Query is not built yet waits.
+        return { status: 'ready', value: { status: receipt.status === 'not_committed' ? 'not_sent' : 'waiting' } };
+      }
+      if (first.status !== 'ready') return first;
+      let current: QueryJobRecord = first.value;
+      let sourceRef: SessionMessageRef = message.value;
+      for (;;) {
+        const job = current.job.job;
+        if (job.status === 'pending' || job.status === 'running') {
+          return { status: 'ready', value: { status: 'waiting' } };
+        }
+        const answerRef: QueryJobAnswerRef | undefined = job.answerRefs.at(-1);
+        let parsed: ReturnType<typeof parseInitialPlanningResponseV2> | null = null;
+        if (answerRef !== undefined) {
+          const answer = await deps.queries.readQueryAnswer(ctx, answerRef);
+          if (answer.status !== 'ready') return answer;
+          parsed = parseInitialPlanningResponseV2(answer.value.answer.answer);
+        }
+        if (parsed !== null && parsed.status === 'parsed' && parsed.response.kind === 'needs_decision') {
+          const groups = await questionGroupsOf(ctx, goalRef);
+          if (groups.status !== 'ready') return groups;
+          const group = groups.value.groups.find(entry => sameJson(entry.queryJobRef, current.job.ref));
+          if (group === undefined) {
+            return { status: 'rejected', code: 'not_found',
+              reason: 'the questions of this fix round are not readable' };
+          }
+          if (!group.allAnswered) return { status: 'ready', value: { status: 'waiting' } };
+          const nextRequest = systemRoundRequestId({
+            kind: 'planresume', goalRef, queryJobId: job.queryJobId,
+            originalMessageRef: group.originalMessageRef,
+          });
+          if (nextRequest.status !== 'ready') return nextRequest;
+          const nextMessage = systemRoundMessageRef(scope, nextRequest.value);
+          if (nextMessage.status !== 'ready') return nextMessage;
+          const next = await deps.queries.readQueryJob(ctx,
+            interventionPlanningQueryRefs(nextMessage.value).queryJobRef);
+          // The cards are answered but the continuation has not been created:
+          // the round still waits, it is not terminal.
+          if (next.status === 'not_found') return { status: 'ready', value: { status: 'waiting' } };
+          if (next.status !== 'ready') return next;
+          current = next.value;
+          sourceRef = nextMessage.value;
+          continue;
+        }
+        // The last round is terminal. Its own source message must have been
+        // closed out (the candidate written or the answer associated, or the
+        // no-answer withdrawal); the original planfix Query's end never decides.
+        const settled = await roundSettled(ctx, sourceRef);
+        if (settled.status !== 'ready') return settled;
+        if (!settled.value) return { status: 'ready', value: { status: 'waiting' } };
+        const enumerated = await enumerateGoalCandidates(deps.records, goalRef, { status: 'any' });
+        if (enumerated.status !== 'ready') return enumerated;
+        const successors = await successorParentsOf(ctx, lineageDeps, enumerated.proposals);
+        if (successors.status !== 'ready') return successors;
+        const hasSuccessor = successors.value.has(planProposalRefKey(proposalRef));
+        return { status: 'ready', value: { status: hasSuccessor ? 'waiting' : 'terminal' } };
+      }
+    },
+
+    async acceptedCandidatesOf(goalRef) {
+      const goalRead = await readGoal(deps.records, goalRef);
+      if (goalRead.status !== 'ready') return goalRead;
+      const enumerated = await enumerateGoalCandidates(deps.records, goalRef, { status: 'accepted' });
+      if (enumerated.status !== 'ready') return enumerated;
+      // Every accepted candidate of the Goal, never only the active Plan's
+      // version: an earlier accepted candidate's reply may still be pending.
+      return { status: 'ready', value: enumerated.proposals };
+    },
+
+    async readPlanReview(ctx, input) {
+      const { goalRef, proposalRef, revision } = input;
+      const scope: WorkspaceScope = { projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId };
+      const request = systemRoundRequestId({
+        kind: 'planreview', goalRef, proposalId: proposalRef.proposalId, proposalRevision: revision,
+      });
+      if (request.status !== 'ready') return request;
+      const message = systemRoundMessageRef(scope, request.value);
+      if (message.status !== 'ready') return message;
+      try {
+        const receipt = await hostSendReceipt(systemRoundContext(scope, ctx.signal), deps.messages, receiptLookup, scope, request.value);
+        if ('status' in receipt && receipt.status === 'rejected') return receipt;
+        const query = await deps.queries.readQueryJob(ctx,
+          interventionPlanningQueryRefs(message.value).queryJobRef);
+        if (query.status === 'not_found') {
+          // The message is committed but its Query is not built yet: still
+          // waiting. Only an uncommitted receipt proves the request was never sent.
+          return { status: 'ready', value: { status: receipt.status === 'committed' ? 'waiting' : 'not_sent' } };
+        }
+        if (query.status !== 'ready') return query;
+        const job = query.value.job.job;
+        if (job.status === 'pending' || job.status === 'running') {
+          return { status: 'ready', value: { status: 'waiting' } };
+        }
+        const answerRef = job.answerRefs.at(-1);
+        if (answerRef === undefined) {
+          return { status: 'ready', value: {
+            status: 'terminal_invalid', reason: 'the review Query closed without an answer',
+          } };
+        }
+        const answer = await deps.queries.readQueryAnswer(ctx, answerRef);
+        if (answer.status !== 'ready') return answer;
+        const parsed = parsePlanReviewAnswer(answer.value.answer.answer);
+        if (parsed.status === 'parsed') {
+          return { status: 'ready', value: {
+            status: 'decided', verdict: parsed.verdict, findings: parsed.findings,
+          } };
+        }
+        return { status: 'ready', value: { status: 'terminal_invalid', reason: parsed.reason } };
+      } catch (error) {
+        // PL-25/27: a Store read that throws is this read's own explicit rejection.
+        return storeFailureToRejection(error);
+      }
     },
   };
 }

@@ -225,7 +225,9 @@ it('RT06 decisions/notices/seen with a mismatched display token is invalid and c
     const reads = createDecisionReadModel({ records, cardSources: [],
       noticeSources: [createAutomaticReworkNoticeSource({ records })], displayTokens, positions,
       conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
-        executedFiles: createGoalExecutedFilesReader({ records }) }) });
+        executedFiles: createGoalExecutedFilesReader({ records }) }),
+      // The real platform's own mailbox/Query/Plan owners over this same ledger.
+      lineage: { messages: composed.messages, queries: composed.queries, plans: composed.plans } });
     const settings = createDecisionSettingsService({ records, displayTokens, positions,
       operatorActor: OPERATOR, now: () => T, newId: randomUUID });
     const realBindings = createPlatformCoreRouteBindings({ ...composed, decisions: reads, workspaceDecisionSettings: settings });

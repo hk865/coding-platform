@@ -24,6 +24,7 @@ import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/g
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createSessionAnomalyService, type SessionAnomalyPort } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createContextExtensionsReader } from '../../src/core/work-graph/views/context-extensions.js';
@@ -75,6 +76,11 @@ function realDecisionQueue(f: S5DecisionFixture,
       executedFiles: createGoalExecutedFilesReader({ records: f.records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32).fill(2)),
+    lineage: {
+      messages: createSessionMailbox(mailboxDependencies(f)),
+      queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),
+      plans: f.b2.base.plans,
+    },
   });
 }
 

@@ -340,7 +340,7 @@ describe('the stored request manifest’s required fields', () => {
   };
   const FACTS = { ...BASE, briefRef: null, understandingGrants: [] };
   const manifest = (request: unknown) => ({
-    contextAssembly: { callKind: 'secretary' }, goal: null, focusPlan: null, request,
+    contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary', goal: null, focusPlan: null, request,
   });
 
   it.each([

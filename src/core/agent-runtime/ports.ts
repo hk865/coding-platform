@@ -124,6 +124,9 @@ export interface RuntimeExecutionPort {
     | { status: 'refused'; reason: 'lease' | 'not_closable_run' | 'continuation_not_authorized' | 'archived'
         | 'archive_requested' | 'occupied' | 'handed_over' | 'health' }
     | { status: 'unsupported' | 'unreadable' | 'mismatch' | 'conflict' | 'transient'; reason: string }>;
+  /** The same closure for a settled QueryRun whose line still names it (K L10); published beside `closeOpenTurn`. */
+  closeQueryTurn?(ctx: CoreCallContext, input: { sessionRef: SessionRef; queryRunRef: QueryRunRef }):
+    ReturnType<NonNullable<RuntimeExecutionPort['closeOpenTurn']>>;
   /**
    * K3 (§2 L4 item 5; G6): the read-only capability check behind RUN-25's
    * `closure_unsupported`: this Runtime publishes the closure, this Host holds

@@ -15,6 +15,7 @@ import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identit
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { UserMessageResponseV1 } from '../../../contracts/core/session-message.js';
 import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import {
   decisionSubjectGoalRef,
@@ -65,10 +66,14 @@ import { messageReleaseBlockEligible, messageReleaseCardFacts,
   type MessageReleaseCardFactsV1 } from '../tasks/message-release-card.js';
 import { releaseCandidateBlockedReason } from '../communication/message-release.js';
 import { dispatchCurrentOf } from '../communication/mailbox-service.js';
-import type { PlanProposal } from '../model/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
+import { diagnosePlanCandidate } from '../state/plan-candidate.js';
+import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../../contracts/plan-review.js';
+import type { TaskbookExportReadPort, TaskbookExportReadV1 } from '../../../contracts/plan-round.js';
 import {
   decodePlanProposalOrigin,
   decodePlanProposalRecord,
+  planProposalRefKey,
   S5_PLAN_PROPOSAL_BY_REQUEST,
 } from '../persistence/plan-record-codecs.js';
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
@@ -92,8 +97,11 @@ import { commandIdentity, readCommittedEvent } from '../persistence/command-exec
 import { lookupCommittedReceipt } from '../persistence/receipt-lookup.js';
 import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import type { PlanningQuestionReader } from '../tasks/planning-question-reader.js';
-import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoalPlanWindow,
-  readTaskClosure, terminalProposalOf, type TaskClosureV1 } from '../tasks/plan-readers.js';
+import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoal as readGoalRecord,
+  readGoalPlanWindow, readPinnedCompletionPolicy, readPlan, readProposal,
+  readTaskClosure, successorParentsOf, terminalProposalOf, type PlanReaders, type PlanReadersRecords,
+  type TaskClosureV1 } from '../tasks/plan-readers.js';
+import type { PlanSourceLineageDeps } from '../tasks/plan-lineage.js';
 import { findAnswerMessage } from '../tasks/decision-answer-lookup.js';
 import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts, unknownCallReviewTargetPaths,
   type UnknownCallReviewCardFactsV1 } from '../tasks/unknown-call-review-card.js';
@@ -135,6 +143,12 @@ export type DecisionReadModelDependencies = {
   conflicts: GoalConflictAssemblerPort;
   positions: NoticePositionComparatorPort;
   displayTokens: NoticeDisplayTokenPort;
+  /**
+   * §6.3.1: the one source-lineage walk the plan readers also use. A `planfix:`
+   * round's successor replaces its parent candidate, so a parent that has one is
+   * absent from the queue and from every single-card read.
+   */
+  lineage: PlanSourceLineageDeps;
   /** The page width of one source read batch (default SOURCE_PAGE_LIMIT = 200). */
   sourcePageLimit?: number;
   /** The page width of one shared lookup batch and both candidate enumerations (default 200). */
@@ -176,7 +190,7 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
-  'continuation', 'disconnect', 'project_notice',
+  'continuation', 'disconnect', 'project_notice', 'plan_adoption', 'plan_notice',
 ];
 const CARD_ACTIONS: readonly CardAction[] = ['answer', 'ask_secretary', 'apply', 'record_application',
   'adopt', 'regenerate', 'abandon', 'adopt_architecture', 'adopt_completion_policy'];
@@ -198,7 +212,7 @@ const WINDOW_MOVED: unique symbol = Symbol('decision-read-model.window-moved');
 const enumerateCandidates = enumerateGoalCandidates as unknown as (
   records: DecisionReadRecordsPort,
   goalRef: GoalRef,
-  options?: { lookupPageLimit?: number },
+  options?: { lookupPageLimit?: number; status?: PlanProposal['status'] | 'any' },
 ) => ReturnType<typeof enumerateGoalCandidates>;
 
 /**
@@ -1196,15 +1210,10 @@ async function readDecisionQueueWindow(
       }
       if (candidateRead.status !== 'ready') return candidateRead;
       watermark = later(watermark, candidateRead.readThrough);
-      for (const proposal of candidateRead.proposals) {
-        const card = candidateCard(proposal, goal);
-        if (card !== null) add(card);
-      }
-    }
-    // §4.2 source 3 CLOSED history: `accepted`/`not_adopted` request candidates
-    // keep the same per-request card identity as their live card, so an answered
-    // card merges with its closure instead of vanishing from `history`.
-    for (const goal of scopedGoals) {
+      // §4.2 source 3 CLOSED history: `accepted`/`not_adopted` request
+      // candidates keep the same per-request card identity as their live card,
+      // so an answered card merges with its closure instead of vanishing from
+      // `history`.
       let closedRead: Awaited<ReturnType<typeof enumerateClosedGoalCandidates>>;
       try {
         closedRead = await enumerateClosedCandidates(deps.records, goal.ref,
@@ -1214,9 +1223,20 @@ async function readDecisionQueueWindow(
       }
       if (closedRead.status !== 'ready') return closedRead;
       watermark = later(watermark, closedRead.readThrough);
-      for (const proposal of closedRead.proposals) {
+      // §6.3.1: ONE lineage pass over this Goal's already-read candidates. A
+      // candidate with a `planfix:` successor is replaced by it, so the old
+      // candidate leaves the queue whether it reads live or as closed history.
+      const successorParents = await successorParentsOf(ctx, deps.lineage,
+        [...candidateRead.proposals, ...closedRead.proposals]);
+      if (successorParents.status !== 'ready') return successorParents;
+      for (const proposal of [...candidateRead.proposals, ...closedRead.proposals]) {
         const card = candidateCard(proposal, goal);
-        if (card !== null) add(card);
+        if (card === null) continue;
+        if (successorParents.value.has(planProposalRefKey(proposal.ref))) {
+          collected.delete(card.source.key);
+          continue;
+        }
+        add(card);
       }
     }
   }
@@ -1282,7 +1302,7 @@ async function readDecisionQueueWindow(
     try {
       // book :428–:430: the queue merges the same live facts the single card carries.
       if (raw.source.kind === 'message_release' && raw.messageRelease === undefined) {
-        const live = await deriveOpenCard(deps, ctx, raw.source, goal);
+        const live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
         if (live !== null) raw = mergeCards(raw, live);
       }
       source = await refreshSourcePins(deps.records, raw.source);
@@ -1538,6 +1558,18 @@ async function readDecisionCard(
       return { status: 'rejected', code: 'forbidden', reason: 'the goal belongs to another workspace' };
     }
 
+    // §6.3.1: ONE candidate enumeration and ONE lineage pass feed both the
+    // saved-answer branch and `deriveOpenCard`. A candidate a `planfix:` round
+    // replaced is absent here even if it still has a saved answer.
+    let candidateRead: CandidateCardRead | null = null;
+    if (source.kind === 'candidate') {
+      const identity = parseIdentity(source.key);
+      if (identity !== null && identity.kind === 'candidate') {
+        candidateRead = await readCandidateCardSource(deps, ctx, goal, identity);
+        if (candidateRead.successor) return { status: 'not_found' };
+      }
+    }
+
     let card: DecisionCardV1 | null = null;
     if (source.kind === 'message') {
       const identity = parseIdentity(source.key);
@@ -1565,18 +1597,18 @@ async function readDecisionCard(
       const answered = answerMessage === null ? null : syntheticAnswerCard(answerMessage);
       if (source.kind !== 'message_release') {
         if (answered === null) {
-          card = await deriveOpenCard(deps, ctx, source, goal);
+          card = await deriveOpenCard(deps, ctx, source, goal, candidateRead);
         } else {
           card = answered;
           try {
-            const live = await deriveOpenCard(deps, ctx, source, goal);
+            const live = await deriveOpenCard(deps, ctx, source, goal, candidateRead);
             if (live !== null) card = { ...answered, openedAt: live.openedAt ?? answered.openedAt };
           } catch {
             // A failed source read keeps the saved answer's card.
           }
         }
       } else {
-        const live = await deriveOpenCard(deps, ctx, source, goal);
+        const live = await deriveOpenCard(deps, ctx, source, goal, candidateRead);
         card = answered === null ? live : live === null ? answered : mergeCards(answered, live);
       }
     }
@@ -1739,18 +1771,41 @@ async function readCardTerminalState(
   return { cancelled, completed };
 }
 
+/**
+ * §6.3.1: one candidate read for a single card — the chosen proposal plus
+ * whether a `planfix:` successor replaced it. `readDecisionCard` computes this
+ * once per call and passes it to `deriveOpenCard`, so the saved-answer branch
+ * and the live branch share the same successor set.
+ */
+type CandidateCardRead = { proposal: PlanProposal | null; successor: boolean };
+
+async function readCandidateCardSource(
+  deps: DecisionReadModelDependencies,
+  ctx: CoreCallContext,
+  goal: GoalSnapshot,
+  identity: Extract<DecisionSourceIdentityV1, { kind: 'candidate' }>,
+): Promise<CandidateCardRead> {
+  const enumerated = await enumerateCandidates(deps.records, goal.ref, {
+    status: 'any',
+    ...(deps.lookupPageLimit === undefined ? {} : { lookupPageLimit: deps.lookupPageLimit }),
+  });
+  if (enumerated.status !== 'ready') throw enumerated;
+  const successorParents = await successorParentsOf(ctx, deps.lineage, enumerated.proposals);
+  if (successorParents.status !== 'ready') throw successorParents;
+  const proposal = await findCandidateProposal(deps.records, identity, goal, deps.lookupPageLimit);
+  return { proposal, successor: proposal !== null && successorParents.value.has(planProposalRefKey(proposal.ref)) };
+}
+
 async function deriveOpenCard(
   deps: DecisionReadModelDependencies,
   ctx: CoreCallContext,
   source: DecisionSourceV1,
   goal: GoalSnapshot | null,
+  candidate: CandidateCardRead | null,
 ): Promise<DecisionCardV1 | null> {
   if (source.kind === 'candidate') {
-    const identity = parseIdentity(source.key);
-    if (identity === null || identity.kind !== 'candidate' || goal === null) return null;
-    const proposal = await findCandidateProposal(deps.records, identity, goal,
-      deps.lookupPageLimit);
-    return proposal === null ? null : candidateCard(proposal, goal);
+    if (candidate === null || goal === null) return null;
+    return candidate.proposal === null ? null : candidateCard(candidate.proposal, goal);
   }
   if (source.kind === 'goal_conflict') {
     const workspace = goal === null ? null : { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
@@ -1882,6 +1937,123 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
     candidateStatus: closed ? null : stale ? 'stale' : 'candidate', staleReason: stale ? 'basedOn is not the active Plan pointer' : null,
     closedReason: closed ? 'source_resolved' : null, openedAt: null, readOnly: closed, actions,
   };
+}
+
+/** §6.4.1/§6.7.1: the four facts the candidate-card read returns; each may fail on its own. */
+export type CandidateCardFactsV1 = {
+  card: DecisionCardV1;
+  diagnosis: readonly PlanDiagnosisFindingV1[] | null;
+  exactReview: ReadResult<PlanReviewReadV1>;
+  exportRead: TaskbookExportReadV1;
+};
+
+export type CandidateCardFactsDependencies = {
+  records: PlanReadersRecords;
+  /** The P5 plan reads: `planChecks` for the diagnosis and `readPlanReview` for the exact review. */
+  planReaders: Pick<PlanReaders, 'planChecks' | 'readPlanReview'>;
+  /** §6.4.1/§6.7.1: the canonical card read, never a second projection of the same card. */
+  decisions: Pick<DecisionReadPort, 'readDecisionCard'>;
+  /** P6's taskbook probe. Absent is `unavailable`, never an empty export list. */
+  exportBooks?: TaskbookExportReadPort['read'];
+};
+
+/**
+ * §6.4.1/§6.7.1: the internal composite behind `readCandidateCard`. Its card is
+ * the SAME `readDecisionCard` every other card surface reads — saved answers,
+ * refreshed pins and the Goal terminal state included — while the P5 plan reads
+ * add the diagnosis (the candidate's dependency-plan policy pin, never the
+ * current active pointer, plus the same `planChecks` coverage) and the exact
+ * review (the current `(proposalId, revision)`, or `revision - 1` when the
+ * candidate is already accepted). Member failures stay member failures, so a
+ * failed diagnosis/review/export still leaves the card readable; a failed card
+ * read is that failure.
+ */
+export async function candidateCardFacts(
+  deps: CandidateCardFactsDependencies,
+  ctx: CoreCallContext,
+  input: { goalRef: GoalRef; proposalRef: PlanProposalRef },
+): Promise<ReadResult<CandidateCardFactsV1>> {
+  const goalRead = await readGoalRecord(deps.records, input.goalRef);
+  if (goalRead.status !== 'ready') return goalRead;
+  const proposalRead = await readProposal(deps.records, input.proposalRef);
+  if (proposalRead.status !== 'ready') return proposalRead;
+  const goal = goalRead.goal;
+  const proposal = proposalRead.proposal;
+  if (proposal.goalRef.projectId !== goal.ref.projectId || proposal.goalRef.goalId !== goal.ref.goalId) {
+    return { status: 'rejected', code: 'not_found', reason: 'the candidate does not belong to this Goal' };
+  }
+  // The candidate's own source identity is the existing assembly's, so the
+  // canonical read answers exactly this proposal's card.
+  const projected = candidateCard(proposal, goal);
+  if (projected === null) {
+    return { status: 'rejected', code: 'not_found', reason: 'the proposal is not a candidate card' };
+  }
+  const card = await deps.decisions.readDecisionCard(ctx, { source: projected.source });
+  if (card.status !== 'ready') return card;
+  const scope: WorkspaceScope = {
+    projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId,
+  };
+  return { status: 'ready', value: {
+    card: card.value,
+    diagnosis: await candidateDiagnosis(deps, proposal, scope),
+    exactReview: await deps.planReaders.readPlanReview(ctx, {
+      goalRef: goal.ref,
+      proposalRef: proposal.ref,
+      // §6.4.1: an accepted candidate's review was read against the version
+      // BEFORE acceptance (acceptance bumps the proposal record revision).
+      revision: proposal.status === 'accepted' ? proposal.revision - 1 : proposal.revision,
+    }),
+    exportRead: await candidateExportRead(deps, proposal, scope, goal.ref.goalId),
+  } };
+}
+
+/** The diagnosis member: any unreadable input is `null`, never an empty finding list. */
+async function candidateDiagnosis(
+  deps: CandidateCardFactsDependencies,
+  proposal: PlanProposal,
+  scope: WorkspaceScope,
+): Promise<readonly PlanDiagnosisFindingV1[] | null> {
+  try {
+    // A first plan has no dependency plan to take a policy pin from; without the
+    // pin the coverage is unknown, so the diagnosis is `null`.
+    if (proposal.basedOn === null) return null;
+    const planRead = await readPlan(deps.records, proposal.basedOn);
+    if (planRead.status !== 'ready') return null;
+    const policyRead = await readPinnedCompletionPolicy(deps.records, planRead.plan.effectiveCompletionPolicy);
+    if (policyRead.status !== 'resolved') return null;
+    const checksRead = await deps.planReaders.planChecks(scope);
+    if (checksRead.status !== 'ready' || checksRead.value === null) return null;
+    return diagnosePlanCandidate({
+      candidate: proposal.draft,
+      catalogPin: proposal.catalogPin,
+      requirementKinds: policyRead.policyContent.requirementKinds,
+      checks: checksRead.value,
+    });
+  } catch {
+    // A Store read that throws is an unreadable input like any other.
+    return null;
+  }
+}
+
+/** The export member: P6 owns the probe; a missing probe is explicitly unavailable. */
+async function candidateExportRead(
+  deps: CandidateCardFactsDependencies,
+  proposal: PlanProposal,
+  scope: WorkspaceScope,
+  goalId: string,
+): Promise<TaskbookExportReadV1> {
+  if (deps.exportBooks === undefined) {
+    return { status: 'unavailable', reason: 'the taskbook export read is not wired' };
+  }
+  try {
+    return await deps.exportBooks({
+      plan: proposal.draft,
+      scope: { projectId: scope.projectId, workspaceId: scope.workspaceId, goalId },
+    });
+  } catch (error) {
+    return { status: 'unavailable',
+      reason: `the taskbook export read failed: ${messageOf(error)}` };
+  }
 }
 
 function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal: GoalTerminalState): DecisionCardV1 {

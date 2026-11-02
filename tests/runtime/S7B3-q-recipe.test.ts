@@ -53,7 +53,7 @@ async function submitPlanning(world: S6AHostWorld, planning: S7BPlanningWorld, q
       schemaVersion: 1, intentId: refs.queryJobRef.queryJobId, projectId: S6A_SCOPE.projectId,
       workspaceId: S6A_SCOPE.workspaceId, goalId: planning.goalRef.goalId, question, focusTaskRefs: [],
       budget: AG2B_QUERY_BUDGET, multiTurn: { maxRounds: 1 }, correlationId: `${suffix}-corr`,
-      execution: { kind: 'intervention_planning', roleBinding: S6A_WORK_ROLE_BINDING,
+      execution: { kind: 'intervention_planning', answerShape: 'plan_round', roleBinding: S6A_WORK_ROLE_BINDING,
         runtimeBudget: AG2B_RUNTIME_BUDGET,
         ...(sourceMessageRef === null ? {} : { sourceMessageRef }) },
     },
@@ -117,8 +117,8 @@ describe('the intervention-planning Query recipe', () => {
     expect(input.slice(0, questionAt)).not.toContain(text);
     expect(input.slice(questionAt)).toContain(`## Question\n${text}`);
     // The widened preparation condition appends the initial-planning answer guide.
-    expect(input).toContain(`${text}\n\nReturn exactly one JSON object as your entire final answer, `
-      + 'with schemaVersion 2 and kind "plan" or "needs_decision"');
+    expect(input).toContain(`${text}\n\nThis round's answer has one of two forms; use the form the round provides.\n`);
+    expect(input).toContain('with schemaVersion 2 and kind "plan" or "needs_decision"');
     expect(input).not.toContain('## Footprint');
 
     const answerRef = started.answer?.ref;

@@ -23,7 +23,7 @@ export type VerificationIssue = {
 import type { ActorRef } from "./command-event.js";
 import type { ArtifactRef } from "./artifact.js";
 import type { RunRef, TaskTriple } from "./dispatch.js";
-import type { PlanRevisionRef } from "./plan.js";
+import type { AcceptanceObligation, PlanRevisionRef } from "./plan.js";
 import type { WorkspaceRef } from "./ledger.js";
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from "./governance.js";
 import type { EvidenceCoverageV1, EvidenceOutcome, EvidenceRef } from "./evidence.js";
@@ -288,3 +288,68 @@ export type CheckCapabilityV1 = {
     coversKinds: string[];
     replayable: boolean;
 };
+
+/**
+ * Coverage of the required verification requirements by the registered check
+ * capabilities. This is the pure loop shared by the VerificationPlan compiler
+ * and the plan diagnosis; it never reads the store and never invents a check.
+ */
+export type VerificationCoverageV1 = {
+    /** One entry per covering capability, in first-covered order, with its coverage. */
+    checks: VerificationCheckPlan[];
+    /** Required requirements with no covering capability, in obligation/requirement order. */
+    uncovered: { obligationId: string; requirementId: string; kind: VerificationCheckKind }[];
+    /**
+     * A required obligation with no required verification requirement; the
+     * compiler rejects it as `invalid`. The first such obligation is reported.
+     */
+    emptyRequiredObligation: string | null;
+};
+
+/**
+ * Compile the required-obligation coverage. Inputs are already-resolved facts:
+ * the policy's requirement kinds and the read-only registered check
+ * capabilities. Check order is the first-coverage order; `uncovered` keeps the
+ * obligation order and then the requirement order.
+ */
+export function compileVerificationCoverage(input: {
+    obligations: readonly AcceptanceObligation[];
+    /** Resolved policy content, never a built-in default. */
+    requirementKinds: readonly string[];
+    /** Read-only registered check capabilities. */
+    checks: readonly CheckCapabilityV1[];
+}): VerificationCoverageV1 {
+    const checks = new Map<string, VerificationCheckPlan>();
+    const uncovered: { obligationId: string; requirementId: string; kind: VerificationCheckKind }[] = [];
+    let emptyRequiredObligation: string | null = null;
+    const knownKinds = new Set(input.requirementKinds);
+    for (const obligation of input.obligations) {
+        if (obligation.requirementLevel !== "required") continue;
+        const requiredRequirements = obligation.verificationRequirements
+            .filter(requirement => requirement.requirementLevel === "required");
+        if (requiredRequirements.length === 0) {
+            emptyRequiredObligation ??= obligation.obligationId;
+            continue;
+        }
+        for (const requirement of requiredRequirements) {
+            const covering = input.checks
+                .filter(capability => capability.coversKinds.includes(requirement.kind));
+            if (covering.length === 0 || !knownKinds.has(requirement.kind)) {
+                uncovered.push({ obligationId: obligation.obligationId, requirementId: requirement.requirementId,
+                    kind: requirement.kind as VerificationCheckKind });
+                continue;
+            }
+            const coverage: EvidenceCoverageV1 = { obligationId: obligation.obligationId, requirementId: requirement.requirementId };
+            for (const capability of covering) {
+                const existing = checks.get(capability.checkId);
+                if (existing === undefined) {
+                    checks.set(capability.checkId, { checkId: capability.checkId, kind: capability.kind,
+                        satisfiesKind: requirement.kind, coverage: [coverage], satisfactionPath: "predicate" });
+                } else {
+                    existing.coverage.push(coverage);
+                }
+            }
+        }
+    }
+    return { checks: [...checks.values()], uncovered, emptyRequiredObligation };
+}

@@ -341,6 +341,13 @@ function draftDefinitionIndex(plan: PlanRevisionDraft): ReadonlyMap<string, Froz
     inputRequirements: draftInputs(plan), obligations: plan.obligations });
 }
 
+/** The refusal of a candidate that drops a task of its source plan, or null. */
+export function removedTaskProblem(source: PlanRevisionSnapshot, targetTaskIds: ReadonlySet<string>): string | null {
+  const removed = source.tasks.find((task) => !targetTaskIds.has(task.taskId));
+  return removed === undefined ? null
+    : `W1 cannot physically remove task ${removed.taskId}; record a disposition instead`;
+}
+
 /** Derives the future-only change set from source+draft. The delta is computed
  * from the execution definition only; display hierarchy and advisory relations
  * are intentionally excluded. A physically removed task is unsupported: the
@@ -356,11 +363,8 @@ export function deriveFuturePlanDelta(
     }
     targetTaskIds.add(task.taskId);
   }
-  for (const task of source.tasks) {
-    if (!targetTaskIds.has(task.taskId)) {
-      return { status: 'unsupported', reason: `W1 cannot physically remove task ${task.taskId}; record a disposition instead` };
-    }
-  }
+  const removed = removedTaskProblem(source, targetTaskIds);
+  if (removed !== null) return { status: 'unsupported', reason: removed };
   const sourceDefinitions = definitionIndex(source);
   const targetDefinitions = draftDefinitionIndex(target);
   const sourceTaskById = new Map(source.tasks.map((task) => [task.taskId, task]));

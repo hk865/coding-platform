@@ -52,6 +52,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../../src/contracts/task-requeue.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
@@ -180,6 +181,9 @@ export function decisionReadsOver(base: TaskClaimFixture, records: WorkLineStore
     } },
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage: { messages: createRunSupport(base).mailbox(),
+      queries: createQueryJobService({ records, now: () => '2026-09-24T00:00:00.000Z', eventId: () => 's2c-l-plan-event' }),
+      plans },
   });
 }
 

@@ -26,11 +26,29 @@ import { createSessionOperations } from '../../src/core/agent-runtime/session-op
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
+import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { join } from 'node:path';
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import { workflowPlanReads } from '../helpers/S1-workflow-archive-fixture.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
+
+const R5C_SCHEMAS = {
+  records: [...COMPLETION_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
+    ...INITIALIZATION_BINDING_SCHEMAS.records],
+  events: [...COMPLETION_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
+    ...INITIALIZATION_BINDING_SCHEMAS.events],
+  lookups: [...(COMPLETION_RECORD_SCHEMAS.lookups ?? []), ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
+    ...(INITIALIZATION_BINDING_SCHEMAS.lookups ?? [])],
+};
 
 const fixtures: TaskClaimFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
@@ -68,6 +86,21 @@ async function assemble(fixture: TaskClaimFixture) {
     runRegisteredCheck: async () => unsupported('R5c business test does not run checks'),
   };
   const { authority } = createMaterialRecordReaders(fixture.records);
+  const bodies = new RawArtifactBodyStore();
+  const materials = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00.000Z' });
+  let sequence = 0;
+  const mailboxDeps: SessionMailboxDependencies = {
+    records: fixture.records, sessions: fixture.sessionsPort,
+    executions: createRunStateReader({ records: fixture.records }), roles: createRoleConfigurationService({
+      records: fixture.records, now: () => '2026-09-24T00:00:00.000Z', eventId: () => `r5c-role-${++sequence}` }),
+    materials,
+    defaultInquiryDeadlineMs: 86_400_000,
+    systemActor: { kind: 'system', id: 'r5c-business-system' },
+    now: () => '2026-09-24T00:00:00.000Z', newId: () => `r5c-business-${++sequence}`,
+  };
+  const messages = createSessionMailbox(mailboxDeps);
+  const planReads = workflowPlanReads({ records: fixture.records, messages, plans: fixture.plans,
+    now: mailboxDeps.now, newId: mailboxDeps.newId, mailboxDeps, materials });
   const configuration: WorkflowHostConfiguration = {
     consumerId: 'r5c-business-consumer',
     bindings: [{
@@ -80,6 +113,7 @@ async function assemble(fixture: TaskClaimFixture) {
   const dependencies: WorkflowDependencies = {
     tasks: fixture.goals, plans: fixture.plans, sessions: fixture.sessionsPort, claims: fixture.service,
     executions: createRunStateReader({ records: fixture.records }), runtime,
+    ...planReads,
     evidence, checks, sourceAuthority: createSourceAuthorityReader({ authority }), configuration,
   };
   return createWorkflow(dependencies);
@@ -90,7 +124,7 @@ function selectWork(fixture: TaskClaimFixture, flowId: string, goalRef = fixture
 }
 
 it('selects the first required work, performs the exact owner request, and replays the original receipt', async () => {
-  const fixture = await createTaskClaimFixture('memory');
+  const fixture = await createTaskClaimFixture('memory', R5C_SCHEMAS);
   fixtures.push(fixture);
   const workflow = await assemble(fixture);
 
@@ -132,7 +166,7 @@ it('selects the first required work, performs the exact owner request, and repla
 });
 
 it('reports a required plan_only future node as waiting instead of inventing work', async () => {
-  const fixture = await createTaskClaimFixture('memory');
+  const fixture = await createTaskClaimFixture('memory', R5C_SCHEMAS);
   fixtures.push(fixture);
   const workflow = await assemble(fixture);
 

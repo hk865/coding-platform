@@ -6,14 +6,20 @@ import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/
 import type { CoreRejection } from '../../contracts/core/results.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { GoalRef } from '../../contracts/ledger.js';
+import type { PlanRevisionRef } from '../../contracts/plan.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../contracts/query-job.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
+import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../contracts/plan-review.js';
+import type {
+  PlanFixReadV1, PlanningQuestionGroupV1, TaskbookExportReadPort, TaskbookExportReadV1,
+} from '../../contracts/plan-round.js';
+import type { CheckCapabilityV1 } from '../../contracts/verification.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
-import type { PlanProposalRef, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
+import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
@@ -34,9 +40,9 @@ import type { EvidencePort } from '../../core/work-graph/model/evidence-contract
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 import type { SourceSnapshotReads } from '../../core/work-graph/source-authority-ports.js';
-import type { SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
+import type { SendMessageResultV1, SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
 import type {
-  DecisionMessagePort, DecisionReadPort, GoalExecutedFilesPort,
+  DecisionCardV1, DecisionMessagePort, DecisionReadPort, GoalExecutedFilesPort,
   GoalSettingsPort, MessageDutiesFactsPort, MessageReleaseCandidatesPort, MessageReleasePort,
 } from '../../core/work-graph/model/decision-contracts.js';
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
@@ -54,6 +60,7 @@ import type { ConsultationFactsPort } from '../../core/work-graph/queries/platfo
 import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-service.js';
 import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
 import type { PickReadsV1 } from './session-chooser.js';
+import type { systemRoundSendInput } from './plan-round.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -107,6 +114,9 @@ export type PendingCardV1 = { task: TaskTriple; source: DecisionSourceV1 };
 /** L1's two pending block sources: one Goal's cards whose owning operation/request is still waiting. */
 export type PendingCardsPort = (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
   Promise<ReadResult<readonly PendingCardV1[]>>;
+
+/** PL §3.4/§5.1.4: one pass of the Host's existing Goal-wait queue; not a Workflow dependency field. */
+export type GoalWaitDrainPort = (scope: WorkspaceScope) => Promise<void>;
 
 /**
  * The exact owners the Workflow composes. It reads and calls only these ports;
@@ -261,6 +271,44 @@ export type WorkflowDependencies = {
   /** H's pending `handoff_approval` cards for the Task block source: one per handed-over Task of this Goal. */
   pendingHandoffApprovals?: (ctx: CoreCallContext, input: { workspace: WorkspaceScope; goalRef: GoalRef }) =>
     Promise<ReadResult<readonly PendingCardV1[]>>;
+  /**
+   * PL §3.4/§5.2.5: the one two-argument system-round send. `input` is exactly
+   * `systemRoundSendInput`'s parameter shape; `skipped` is the wrapper's own
+   * already-committed receipt, not a new message state or a second path. L
+   * binds it as `send(ctx, input) => sendSystemRound(ctx, { messages }, input)`.
+   */
+  send?: (ctx: CoreCallContext, input: Parameters<typeof systemRoundSendInput>[0]) =>
+    Promise<SendMessageResultV1 | CoreRejection | { status: 'skipped'; reason: 'already_committed' }>;
+  /**
+   * PL §6.7.1's seven goal-loop narrow reads and the candidate-card read. Only
+   * the types land in P1; the composition injects the real owners. Optional
+   * only so every old narrow double stays type-compatible — at run time a
+   * missing implementation is `unsupported`, never an empty result.
+   * `checks` stays the existing `runRegisteredCheck` runner and is not one of
+   * these fields.
+   */
+  latestAgentCandidate?: (goalRef: GoalRef) => Promise<ReadResult<PlanProposal | null>>;
+  completedFixes?: (goalRef: GoalRef, basedOn: PlanRevisionRef | null) => Promise<ReadResult<number>>;
+  planFixRead?: (goalRef: GoalRef, proposalRef: PlanProposalRef, revision: number) =>
+    Promise<ReadResult<PlanFixReadV1>>;
+  planChecks?: (scope: WorkspaceScope) => Promise<ReadResult<readonly CheckCapabilityV1[] | null>>;
+  planCandidates?: (scope: WorkspaceScope, ctx: CoreCallContext, goalRef?: GoalRef) => Promise<ReadResult<{
+    goals: readonly {
+      goalRef: GoalRef;
+      pending: { proposalRef: PlanProposalRef; basedOn: PlanRevisionRef | null } | null;
+      questionGroups: readonly PlanningQuestionGroupV1[];
+      readThrough: CommitCursor | null;
+    }[];
+  }>>;
+  acceptedCandidatesOf?: (goalRef: GoalRef) => Promise<ReadResult<readonly PlanProposal[]>>;
+  /** The taskbook probe: exactly `TaskbookExportReadPort['read']`, implemented by P6. */
+  exportBooks?: TaskbookExportReadPort['read'];
+  readCandidateCard?: (goalRef: GoalRef, proposalRef: PlanProposalRef) => Promise<ReadResult<{
+    card: DecisionCardV1;
+    diagnosis: readonly PlanDiagnosisFindingV1[] | null;
+    exactReview: ReadResult<PlanReviewReadV1>;
+    exportRead: TaskbookExportReadV1;
+  }>>;
 };
 
 /**
@@ -344,9 +392,15 @@ export type InterventionInput = {
   runtimeBudget: RuntimeBudget;
   budget: QueryJobIntentV1['budget'];
   consumerId: string;
+  /** Every ordinary pass is the planning arm; only the closing's second step carries `completion`. */
+  completion?: undefined;
+} | {
+  messageRef: SessionMessageRef;
   /** The Host's second step of a closing: the notice is committed and the formal Answer is associated as the
-   *  message's one reply. Absent on every ordinary pass, so the handler's planning stages are unchanged. */
-  completion?: 'associate_answer';
+   *  message's one reply. The association reads no execution profile, so the closing carries none. */
+  completion: 'associate_answer';
+  /** The closing associates the formal Answer as the original message's reply (§5.6). */
+  replyToOriginal?: boolean;
 };
 /** The stage one handler call reached; the next call continues from the first missing fact. */
 export type InterventionPlanningStage = 'query' | 'proposal' | 'adoption';
@@ -357,7 +411,7 @@ export type HandleInterventionResultV1 =
   /** The closing's reply step: `reason` names the one fixed Host notice (`questions` sends none) and the original
    *  formal Answer becomes the message's reply. */
   | { status: 'answer_ready'; branch: 'no_task'; answerRef: QueryJobAnswerRef;
-    reason: 'invalid_plan' | 'declined' | 'questions' }
+    reason: 'answered' | 'invalid_plan' | 'questions' | 'candidate' | 'declined' | 'adopted' }
   /** The closing's withdraw step: the Query is formally ended without an Answer. */
   | { status: 'no_answer'; branch: 'no_task' }
   /** The association step of an `answer_ready` closing: the formal Answer is this message's reply. */

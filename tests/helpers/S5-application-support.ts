@@ -21,6 +21,7 @@ import { decodeGoalSnapshot } from '../../src/core/work-graph/persistence/record
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
@@ -104,12 +105,14 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
       },
     } satisfies MessageDutiesFactsPort),
   };
+  const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.newId, operatorActor: { ...OPERATOR },
-    messages: createSessionMailbox(mailboxDeps), materials, messageWrites: createMessageWriteOwner(mailboxDeps),
+    messages: mailbox, materials, messageWrites: createMessageWriteOwner(mailboxDeps),
     sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }) });
   const planDeps = { records, bindings: createInitializationBindingReader({ records }), materials, initialPlanning: { bodies },
     now: f.now, eventId: f.newId };
   const plans = createPlanService(planDeps);
+  const queryJobs = createQueryJobService({ records, now: f.now, eventId: f.newId });
   const causes = createGoalDecisionCauseReader({ records, plans });
   // The real ordered port forwarded through the same records the test wraps
   // (faults and counters still apply); the executed-files reader and the
@@ -142,6 +145,7 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
       ...(widths.decision?.lookupPageLimit === undefined
         ? {} : { lookupPageLimit: widths.decision.lookupPageLimit }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage: { messages: mailbox, queries: queryJobs, plans },
   });
   return { decisions, plans, causes, reads,
     settings: createGoalSettingsService({ records, now: f.now, newId: f.newId, operatorActor: { ...OPERATOR } }),

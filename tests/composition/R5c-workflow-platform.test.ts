@@ -144,7 +144,10 @@ function planDraft(gatePlan: GatePlan): PlanRevisionDraft {
     stages: gatePlan === 'stage-then-goal' ? [{ stageId: 'stage-1', title: 'Stage one' }] : [],
     tasks: [
       { taskId: 'work-1', title: 'First ordinary work', requirementLevel: 'required', taskKind: 'work',
-        disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
+        disposition: 'active', phase: 'pending', executionIntent: 'request_execution',
+        ...(gatePlan === 'stage-then-goal'
+          ? { stageId: 'stage-1', scope: { kind: 'stage' as const, stageId: 'stage-1' } }
+          : { scope: { kind: 'goal' as const } }) },
       { taskId: 'work-2', title: 'Second ordinary work', requirementLevel: 'required', taskKind: 'work',
         disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
       ...stageGates,

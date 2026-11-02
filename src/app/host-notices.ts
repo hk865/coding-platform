@@ -29,6 +29,11 @@ export const INTERVENTION_CLOSING_NOTICE_TEXTS = {
   invalid_plan: '这次规划没有形成可采用的计划，模型的原回答在回复里。可以补充要求后重新发送。',
   declined: '这次规划的方案没有采用，原回答在回复里。可以补充要求后重新发送。',
   no_answer: '这次规划已结束，没有留下可用的回答，这条消息已撤回。请补充要求后重新发送。',
+  // PL-1's planning-round endings: a review answer, a written candidate and an
+  // adoption each end the system round; the reply/card carries the content.
+  answered: '这次规划已有结论，模型的回答在回复里。',
+  candidate: '这次规划已写入候选，采用前可以继续补充要求。',
+  adopted: '这次规划已经采用，计划的内容在候选卡和回复里。',
 } as const;
 
 export type InterventionClosingReasonV1 = keyof typeof INTERVENTION_CLOSING_NOTICE_TEXTS;

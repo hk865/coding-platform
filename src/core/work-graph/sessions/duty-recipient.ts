@@ -24,7 +24,7 @@ export type DutyRecipientDependencies = {
 };
 export interface DutyRecipientPort {
   resolveDutyRecipient(ctx: CoreCallContext, input: {
-    workspace: WorkspaceScope; duty: 'adviser' | 'secretary' | 'scribe';
+    workspace: WorkspaceScope; duty: 'adviser' | 'secretary' | 'scribe' | 'reviewer';
   }): Promise<ReadResult<SessionRef | null>>;
 }
 

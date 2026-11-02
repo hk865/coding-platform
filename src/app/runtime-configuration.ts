@@ -30,7 +30,7 @@ import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
 import type { JsonValue } from '../contracts/fingerprint.js';
 import type { QueryJobIntentV1 } from '../contracts/query-job.js';
-import { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } from '../contracts/runtime-budget.js';
+import { DEFAULT_RUNTIME_BUDGET, planningOutputReserveTokens, validateRuntimeBudget, type RuntimeBudget } from '../contracts/runtime-budget.js';
 import type {
   QueryRuntimeConfigurationInput,
   ReadonlyCommandAccessInput,
@@ -120,6 +120,22 @@ export const LOCAL_WORKBENCH_HOST_TEMPLATE = {
 // The local workbench can produce a complete structured initial plan, including
 // provider reasoning. The generic 4K reply cap truncates that normal path.
 export const LOCAL_WORKBENCH_BUDGET: RuntimeBudget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 16384 };
+
+/**
+ * §5.3.5: the planning round's own output reserve. The one formula
+ * (`planningOutputReserveTokens`) is measured against this profile's model
+ * window; the window itself is unchanged, and an ordinary profile keeps its
+ * 16384. The Host applies this to the profile that consumes a Host system
+ * `action_request`, so the request side and the Host upper bound use one value.
+ */
+export function planningRoundRuntimeBudget(
+  profile: Pick<WorkbenchQueryProfile, 'runtimeBudget'>,
+): RuntimeBudget {
+  return {
+    ...profile.runtimeBudget,
+    perResponseTokens: planningOutputReserveTokens(profile.runtimeBudget.contextWindowTokens),
+  };
+}
 
 /** Deterministic SecretSource variable name for a user-saved settings model. The
  * value is kept only in the Host's in-memory overlay and is never written to the
@@ -536,7 +552,16 @@ export function createWorkbenchRuntimeHostBindings(
       return resolve(ctx, input.role);
     },
     async resolveQueryConfiguration(ctx, input: QueryRuntimeConfigurationInput) {
-      return resolve(ctx, input.role);
+      const resolved = resolve(ctx, input.role);
+      if (resolved.status !== 'ready') return resolved;
+      // §5.3.5: the Host side of the one planning output reserve. The window is
+      // this resolution's own budget window; every other field stays untouched,
+      // so an ordinary Query's requested 16384 still wins the preparation min.
+      const budget = resolved.value.budget;
+      return { ...resolved, value: { ...resolved.value, budget: {
+        ...budget,
+        perResponseTokens: Math.max(budget.perResponseTokens, planningOutputReserveTokens(budget.contextWindowTokens)),
+      } } };
     },
     // A-07: the same scope/Role binding lookup with no Run, for the read-only
     // pre-claim check that runs before a Run exists.

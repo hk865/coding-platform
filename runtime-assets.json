@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "4d4b8719a0718a389d6ff6716d0f1dd120a9c55fd1a2092a0bc02d71158306f8"
+    "sha256": "93176cb7a8b5bf361fef467f93fb7180c8267da7d09a37da0cb74b3fedd6589a"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -21,7 +21,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "68dea8aeb3b5fa89e00c991bacc17648875fbe91b27822fd5947687cd73a69e6"
+    "sha256": "48f4e0beec1750b2ee7dc29c85ed1aa594a7164bc88a11ec62a735d86abb2806"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -58,6 +58,10 @@
   {
     "path": "resources/prompts/platform/templates/intervention-planning.txt",
     "sha256": "bda67890b5173c7ea7d542e1396e371496205d2f2c190b0033d694298895ba40"
+  },
+  {
+    "path": "resources/prompts/platform/templates/plan-review-input.txt",
+    "sha256": "44a78e42d580621a367badc2f592113fff2e5b58edf779a51d086bb6eef93d9a"
   },
   {
     "path": "resources/prompts/platform/templates/scribe-reminder.txt",
@@ -137,7 +141,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "5f2163a75ed75a613e29a2f51139fe8f78b3ec73ab5a3084d7635c1d4407b296"
+    "sha256": "a396cc8ee564f5bbd7f96ea3b22b54cc3ecffb90c00850e5a1eae6cc1dd24b79"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -145,7 +149,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
-    "sha256": "275be65bdac92bc2e1cf1b11dede3e3f049f6e356eb897b4fa6b2a737b575983"
+    "sha256": "4fa780b2a47de2e01145fef5363a2cac93409fc49f220ed63b1c9e77b474fc9a"
   },
   {
     "path": "resources/prompts/platform/tools/query_task_graph.json",
@@ -298,6 +302,14 @@
   {
     "path": "resources/prompts/platform/tools/submit_initial_questions.json",
     "sha256": "5dd9daf3528030f5b6cf660c5e34c2d4f18a178c640d8398670a3855f49fc817"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_plan_review.json",
+    "sha256": "1d8f27298ae25fd6042b27e87499722e93b43fa8c8b156649ebdee0a6b4e2a2f"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_plan_round.json",
+    "sha256": "1aff4528a71f0eb8816bd774ea41df60e686c017207cb99e7a3e7ea827f922f3"
   },
   {
     "path": "resources/prompts/platform/tools/hand_off.json",

@@ -10,7 +10,7 @@ import type {
   DecisionNoticeSourcePort, DecisionSourcePageV1, NoticeItemV1, S5RecordPort,
 } from '../model/decision-contracts.js';
 import type { SessionMessageRecord } from '../state/message-machine.js';
-import { waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
+import { isWaitMessage, waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
 import { decodeSessionMessageRecord, decodeNoticeOrigin, sessionMessageRefKey,
   S5_MESSAGE_BY_WORKSPACE_STATUS } from '../sessions/message-record-codecs.js';
 import { decodeSessionRecord, plainSessionRefToAggregate,
@@ -101,7 +101,7 @@ export async function readDisconnectFacts(
       const archivePosition = origin.value.since;
       const recipient: SessionRef | null = 'kind' in message.recipient ? null : message.recipient as SessionRef;
       const parties: { side: DisconnectSideV1; ref: SessionRef }[] = [];
-      if (message.intent === 'inquiry' && message.release === 'released' && message.waitAfterSend === true) {
+      if (isWaitMessage(message) && message.release === 'released') {
         const state = waitStateOf(message, waitFactsOfRecord(message));
         if (state.state === 'open' || state.state === 'answered' || state.state === 'expired') {
           const waiting = messageSenderSessionOf(message);

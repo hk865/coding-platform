@@ -36,6 +36,7 @@ import { createDecisionMessageService } from '../../src/core/work-graph/communic
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -382,7 +383,9 @@ export async function openK3ReviewCardWorld(
   const readModel = createDecisionReadModel({ records, cardSources, noticeSources: [],
     conflicts: createGoalConflictAssembler({ records,
       catalog: createArchitectureCatalogService({ records }), executedFiles: createGoalExecutedFilesReader({ records }) }),
-    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
+    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage: { messages: mailbox, queries: createQueryJobService({ records, now: () => T, eventId: nextDecisionId }),
+      plans: fixture.b2.base.plans } });
   createRunReconcileService({ records, reads, bodies: fixture.bodies,
     hostInstance: { hostInstanceId: 'k3-review-card-host', lease: 'owned', takeover: { kind: 'hl01_no_lock' } },
     now: () => T, eventId: () => `k3-review-card-event-${String(nextSequence())}` });

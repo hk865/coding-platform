@@ -54,6 +54,10 @@ export type RuntimeTask = {
      * 历史“完整执行定义”语义，不表示“不知道验收”，也不得用 blocked 代替意图。
      */
     executionIntent?: 'plan_only' | 'request_execution';
+    /** 任务书里模型给的改动行数预估；缺省 = 未知（不是 0）。正整数安全整数。 */
+    estimatedLines?: number;
+    /** 任务书里模型给的档位；缺省 = 未分档，只累计、不提醒。 */
+    sizeClass?: 'small' | 'medium' | 'large' | 'explore';
     /**
      * 只在 disposition="superseded" 时有意义：该任务在后一个
      * PlanRevision 里由哪个任务接手（同一义务、同一验收语义，只换承担者）。

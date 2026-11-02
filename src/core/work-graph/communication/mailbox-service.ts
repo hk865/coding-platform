@@ -44,6 +44,7 @@ import type { ArtifactRecord, ArtifactRef } from '../../../contracts/artifact.js
 import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { hostMessageId, planningReplyTextOf } from '../../../contracts/plan-round.js';
 import { principalIdentity, type CoreCallContext, type CorePrincipal, type MaterialReader } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import { QueryJobRefShape, QueryRunRefShape, WorkspaceScopeShape } from '../../../contracts/data-format-refs.js';
@@ -96,7 +97,7 @@ import type { DecisionMessagePort, MessageCommandWritePort, SessionMessageCommit
 import {
   executeWriteCommand, type CommandResult, type CommittedReceipt, type Keys, type WriteCommand,
 } from '../persistence/command-executor.js';
-import type { GoalRecordTransactionPort, RecordBatchRead, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordBatchRead, DecodeResult, EncodedDomainEvent, EncodedRecord, CommitCursorBinding, PreparedCommit, RecordGuard, StoreResult, UniqueClaimChange } from '../../record-store/ports.js';
 import type { RecordLookupRequest } from '../../record-store/lookup-ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
@@ -110,7 +111,7 @@ import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
   SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP,
   SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
-  SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES,
+  SESSION_MESSAGE_CONTENT_TYPE, SESSION_MESSAGE_MAX_TEXT_BYTES, sessionMessageTextBound,
   archiveWaitDisposedEventFromEvent, checkSessionMessageRef, decodeSessionMessageRecord,
   encodeArchiveWaitDisposedEvent, encodeSessionMessageReadEvent, encodeSessionMessageRecord, encodeSessionMessageRespondedEvent,
   encodeSessionMessageSentEvent, sessionMessageFromEvent, sessionMessageRefKey,
@@ -778,11 +779,11 @@ function ownWrite<T>(request: GraphWrite<T>): OwnedWrite<T> {
 // Request normalization
 // --------------------------------------------------------------------------
 
-/** Send/respond text, kept on purpose: its capacity reason names the codec bound the machine cannot (`textBodyProblem`). */
-function normalizeText(raw: unknown): { ok: true; text: string } | { ok: false; rejection: CoreRejection } {
+/** Send/respond text, kept on purpose: its capacity reason names the selected codec bound the machine cannot (`textBodyProblem`). */
+function normalizeText(raw: unknown, maxBytes: number): { ok: true; text: string } | { ok: false; rejection: CoreRejection } {
   if (typeof raw !== 'string' || raw.length === 0) return { ok: false, rejection: reject('invalid', 'message text must be a non-empty string') };
-  if (Buffer.byteLength(raw, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
-    return { ok: false, rejection: reject('capacity', `message text exceeds ${SESSION_MESSAGE_MAX_TEXT_BYTES} UTF-8 bytes`) };
+  if (Buffer.byteLength(raw, 'utf8') > maxBytes) {
+    return { ok: false, rejection: reject('capacity', `message text exceeds ${maxBytes} UTF-8 bytes`) };
   }
   return { ok: true, text: raw };
 }
@@ -1119,11 +1120,14 @@ function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, mes
 } {
   const execution = job.job.intent.execution;
   // The intervention planning Query is the second Host-only answer association: it must name exactly this source
-  // message and exactly its own deterministic Job/Run pair. It is never dressed up as a consultation; the caller
-  // line, the settled Answer and the claimed Session generation stay with the shared guards below.
+  // message or the executor message frozen on `repliesToMessageRef` (a planresume/planfix continuation), and exactly
+  // its own deterministic Job/Run pair. It is never dressed up as a consultation; the caller line, the settled
+  // Answer and the claimed Session generation stay with the shared guards below.
   if (execution.kind === 'intervention_planning') {
     const source = execution.sourceMessageRef as SessionMessageRef;
-    if (canonicalOf(source) !== canonicalOf(messageRef)) {
+    const repliesTo = execution.repliesToMessageRef;
+    if (canonicalOf(source) !== canonicalOf(messageRef)
+      && (repliesTo === undefined || canonicalOf(repliesTo) !== canonicalOf(messageRef))) {
       return { binding: 'other_message', answererSession: null };
     }
     const refs = interventionPlanningQueryRefs(source);
@@ -1271,9 +1275,102 @@ function fingerprintOf(operation: string, scope: MailboxScope, senderIdentity: U
 }
 
 function messageIdOf(owned: Owned, senderIdentity: Unknown, requestId: string): string {
+  // A Host send's id is P1's one formula (`hostMessageId`); the identity the
+  // mailbox already built with `senderIdentityOf` has the same `{kind:'host',
+  // actor}` shape, so the hash is never written a second time here.
+  const hostActor = isObject(senderIdentity) && senderIdentity['kind'] === 'host' ? senderIdentity['actor'] : null;
+  if (isObject(hostActor) && (hostActor['kind'] === 'human' || hostActor['kind'] === 'system') && nonEmpty(hostActor['id'])) {
+    const actor = hostActor as { kind: 'human' | 'system'; id: string };
+    const id = hostMessageId(owned, actor, requestId);
+    if (id.status !== 'ready') throw new Error('the mailbox message id requires a non-empty request id');
+    return id.value;
+  }
   return 'session-message-' + sha256Hex(canonicalJson({
     projectId: owned.projectId, workspaceId: owned.workspaceId, sender: senderIdentity, requestId,
   } as unknown as JsonValue));
+}
+
+/**
+ * One exact Query-family record read for the exported read-only helper below:
+ * the same decoders and failure translation the mailbox's own loaders use, but
+ * over a plain `records` read port and without a mailbox instance.
+ */
+async function readStoredQueryRecord<T>(
+  records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  ref: unknown,
+  decode: (record: EncodedRecord) => DecodeResult<T>,
+  what: string,
+): Promise<ReadResult<T>> {
+  const key = canonicalOf(ref);
+  if (key === null) return reject('invalid', `the ${what} ref is not canonicalizable JSON`);
+  let read: StoreResult<RecordBatchRead>;
+  try {
+    read = await records.readMany([key]);
+  } catch {
+    return reject('unavailable', 'the Query record could not be read');
+  }
+  if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+  const record = read.value.records.find((candidate) => candidate.refKey === key);
+  if (record === undefined) {
+    return read.value.missing.includes(key)
+      ? { status: 'not_found' }
+      : reject('unavailable', 'the record store neither returned nor reported missing the Query record');
+  }
+  const decoded = decode(record);
+  if (decoded.status !== 'decoded') return reject('unavailable', `the ${what} snapshot is damaged: ${decoded.reason}`);
+  return { status: 'ready', value: decoded.value };
+}
+
+/**
+ * The read-only identity of a formal Query-answer reply commit (§6.4.2,
+ * DR-P2-03): from source R's deterministic intervention-planning Query and its
+ * settled formal Answer, restore the SAME `query_run` sender the
+ * `respond_from_query_answer` arm derives, then return the exact commit
+ * identity. It reuses `senderIdentityOf` and `identityKeyOf`; it writes no
+ * record, adds no mailbox method, and copies no hash. The caller reads the
+ * receipt cursor with `readCommitByIdentity`.
+ */
+export async function respondReceiptIdentityOf(
+  ctx: CoreCallContext,
+  records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  source: SessionMessageRef,
+  requestId: string,
+): Promise<ReadResult<string>> {
+  const owned = ownContext(ctx);
+  if (!owned.ok) return owned.rejection;
+  if (!nonEmpty(requestId)) return reject('invalid', 'the reply request id must be a non-empty string');
+  const refs = interventionPlanningQueryRefs(source);
+  const jobRead = await readStoredQueryRecord(records, refs.queryJobRef, decodeQueryJobSnapshot, 'QueryJob');
+  if (jobRead.status !== 'ready') return jobRead;
+  const job = jobRead.value;
+  const execution = job.job.intent.execution;
+  if (execution.kind !== 'intervention_planning'
+    || canonicalOf(execution.sourceMessageRef) !== canonicalOf(source)) {
+    return { status: 'not_found' };
+  }
+  const answerRef = job.job.answerRefs.at(-1);
+  if (answerRef === undefined) return { status: 'not_found' };
+  const answerRead = await readStoredQueryRecord(records, answerRef, decodeQueryJobAnswerSnapshot, 'QueryJobAnswer');
+  if (answerRead.status !== 'ready') return answerRead;
+  const answer = answerRead.value;
+  const runRead = await readStoredQueryRecord(records, answer.answer.runRef, decodeQueryRunSnapshotRecord, 'QueryRun');
+  if (runRead.status !== 'ready') return runRead;
+  const state = runRead.value.run.executionState;
+  const generation = state?.sessionGeneration;
+  if (state === undefined || !isPositiveInt(generation)) {
+    return reject('unavailable', 'the QueryRun Session generation is not readable');
+  }
+  const sender: MessageQueryAnswerSender = {
+    kind: 'query_run',
+    sessionRef: { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId },
+    queryRunRef: { ...answer.answer.runRef },
+    answerRef: { ...answerRef },
+    generation,
+  };
+  return {
+    status: 'ready',
+    value: identityKeyOf('respond_from_query_answer', owned, senderIdentityOf(sender), requestId),
+  };
 }
 
 /**
@@ -2204,52 +2301,19 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
 
   type QueryRecordRead<T> = ReadResult<T>;
 
-  async function readEncoded(key: string): Promise<{ ok: true; record: EncodedRecord } | { ok: false; failure: CoreRejection | { missing: true } }> {
-    let read: StoreResult<RecordBatchRead>;
-    try {
-      read = await records.readMany([key]);
-    } catch {
-      return { ok: false, failure: reject('unavailable', 'the Query record could not be read') };
-    }
-    if (read.status !== 'ready') return { ok: false, failure: sessionStoreFailureToRejection(read) };
-    const record = read.value.records.find((candidate) => candidate.refKey === key);
-    if (record === undefined) {
-      return { ok: false, failure: read.value.missing.includes(key) ? { missing: true } : reject('unavailable', 'the record store neither returned nor reported missing the Query record') };
-    }
-    return { ok: true, record };
-  }
-
   async function loadQueryJob(owned: Owned, ref: QueryJobRef): Promise<QueryRecordRead<QueryJobSnapshot>> {
     if (owned.signal.aborted) return reject('cancelled', 'the QueryJob read was cancelled');
-    const key = canonicalOf(ref);
-    if (key === null) return reject('invalid', 'the QueryJob ref is not canonicalizable JSON');
-    const read = await readEncoded(key);
-    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
-    const decoded = decodeQueryJobSnapshot(read.record);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJob snapshot is damaged: ${decoded.reason}`);
-    return { status: 'ready', value: decoded.value };
+    return readStoredQueryRecord(records, ref, decodeQueryJobSnapshot, 'QueryJob');
   }
 
   async function loadQueryRun(owned: Owned, ref: QueryRunRef): Promise<QueryRecordRead<QueryRunSnapshot>> {
     if (owned.signal.aborted) return reject('cancelled', 'the QueryRun read was cancelled');
-    const key = canonicalOf(ref);
-    if (key === null) return reject('invalid', 'the QueryRun ref is not canonicalizable JSON');
-    const read = await readEncoded(key);
-    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
-    const decoded = decodeQueryRunSnapshotRecord(read.record);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryRun snapshot is damaged: ${decoded.reason}`);
-    return { status: 'ready', value: decoded.value };
+    return readStoredQueryRecord(records, ref, decodeQueryRunSnapshotRecord, 'QueryRun');
   }
 
   async function loadQueryAnswer(owned: Owned, ref: QueryJobAnswerRef): Promise<QueryRecordRead<QueryJobAnswerSnapshot>> {
     if (owned.signal.aborted) return reject('cancelled', 'the QueryJobAnswer read was cancelled');
-    const key = canonicalOf(ref);
-    if (key === null) return reject('invalid', 'the QueryJobAnswer ref is not canonicalizable JSON');
-    const read = await readEncoded(key);
-    if (!read.ok) return 'missing' in read.failure ? { status: 'not_found' } : read.failure;
-    const decoded = decodeQueryJobAnswerSnapshot(read.record);
-    if (decoded.status !== 'decoded') return reject('unavailable', `the QueryJobAnswer snapshot is damaged: ${decoded.reason}`);
-    return { status: 'ready', value: decoded.value };
+    return readStoredQueryRecord(records, ref, decodeQueryJobAnswerSnapshot, 'QueryJobAnswer');
   }
 
   type QueryAnswerFacts = {
@@ -2292,7 +2356,19 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const settlement: QueryAnswerFacts['verdict']['run'] = state === undefined || state.phase !== 'settled' ? 'not_settled'
       : run.run.status !== 'answered' || run.run.outcome !== 'answered' ? 'not_answered' : 'settled_answered';
     const generation = state?.sessionGeneration;
-    const text = answer.answer.answer;
+    const answerText = answer.answer.answer;
+    // DR-P2-05: a planning line's reply is the DERIVED short text, then held to
+    // the ordinary 16 KiB reply bound; the source Answer may itself be the
+    // 256 KiB planning answer. An ordinary consultation keeps its original text.
+    // A plan_review answer that no longer parses has no reply (`null`): the
+    // machine's `bodyBounded` guard refuses the write before this arm runs.
+    const execution = job.job.intent.execution;
+    const replyText = execution.kind === 'intervention_planning'
+      ? planningReplyTextOf({
+        shape: execution.answerShape ?? 'text', answerText, queryJobId: job.job.queryJobId,
+      })
+      : answerText;
+    const text = replyText ?? answerText;
     return {
       ok: true,
       facts: {
@@ -2306,7 +2382,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
           answerOfRun: canonicalOf(answer.answer.runRef) === canonicalOf(run.ref),
           sessionGenerationReadable: isPositiveInt(generation),
         },
-        bodyBounded: typeof text === 'string' && text.length > 0 && Buffer.byteLength(text, 'utf8') <= SESSION_MESSAGE_MAX_TEXT_BYTES,
+        bodyBounded: replyText !== null && text.length > 0
+          && Buffer.byteLength(text, 'utf8') <= SESSION_MESSAGE_MAX_TEXT_BYTES,
         text,
         answerSource: answer.answer.bodyRef.source,
         sender: answererSession === null || !isPositiveInt(generation) ? null : {
@@ -2675,7 +2752,16 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (normalized.status === 'rejected') return normalized;
     if (normalized.status !== 'ready') return reject('invalid', 'the send input could not be normalized');
     const send = normalized.value;
-    const text = normalizeText(send.text);
+    // The text bound follows THIS send's principal/sender: only the fixed Host
+    // system-round identity may write a 64 KiB `message` part; every other send
+    // stays 16 KiB. The principal is the same trusted source the sender is
+    // derived from below, so this never reads the input or `followupOf`.
+    const maxTextBytes = owned.principal.kind === 'host'
+      ? sessionMessageTextBound({
+        sender: { kind: 'host', actor: { ...owned.principal.actor } }, part: 'message', original: null,
+      })
+      : SESSION_MESSAGE_MAX_TEXT_BYTES;
+    const text = normalizeText(send.text, maxTextBytes);
     if (!text.ok) return text.rejection;
     const projectRejection = guardRejection(messageRecipientProjectProblem(send.recipient.projectId === owned.projectId));
     if (projectRejection !== null) return projectRejection;
@@ -3695,8 +3781,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (scopeProblem !== null) return scopeProblem;
     const pins = pinsOf(write.expected, messageRef);
     if (!pins.ok) return pins.rejection;
-    // The reason is the refusal's reply body, held to the same bound as text.
-    const saved = normalizeText(arm.reject === true ? arm.reason : arm.text);
+    // The reason is the refusal's reply body; a `response` part is always held to the ordinary 16 KiB.
+    const saved = normalizeText(arm.reject === true ? arm.reason : arm.text, SESSION_MESSAGE_MAX_TEXT_BYTES);
     if (!saved.ok) return saved.rejection;
 
     const identity = await readWorkRunIdentity(owned, owned.principal, owned.principal.runRef);
@@ -4542,7 +4628,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     if (intent !== 'notify' && intent !== 'decision_request') {
       return reject('invalid', 'the user message intent must be notify or decision_request');
     }
-    const text = normalizeText(raw['text']);
+    const text = normalizeText(raw['text'], SESSION_MESSAGE_MAX_TEXT_BYTES);
     if (!text.ok) return text.rejection;
     const needsReply = raw['needsReply'];
     const waitAfterSend = raw['waitAfterSend'];
@@ -4886,7 +4972,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
    */
   /**
    * The ONE narrow system-Host withdraw exception: the message must be the exact source of a formally ended
-   * `intervention_planning` Query with no Answer, claimed on the very line the message is addressed to. Every
+   * `intervention_planning` Query with no usable Answer, claimed on the very line the message is addressed to. Every
    * read failure is returned; a not-found or mismatched fact is not an exception.
    */
   async function interventionSourceFormallyEnded(owned: Owned, message: SessionMessage):
@@ -4900,8 +4986,17 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     const execution = job.job.intent.execution;
     if (execution.kind !== 'intervention_planning'
       || canonicalOf(execution.sourceMessageRef) !== canonicalOf(message.ref)) return { ok: false };
-    // The formal Answer is the whole point: a settled ended run with no answer, never an answered one.
-    if (job.job.answerRefs.length > 0) return { ok: false };
+    // The formal Answer is the whole point: a settled ended run with no answer, never one with a reply to give.
+    // A stored review answer that no longer parses has no reply (`planningReplyTextOf`), so its source still retires.
+    const answerRef = job.job.answerRefs.at(-1);
+    if (answerRef !== undefined) {
+      if (execution.answerShape !== 'plan_review') return { ok: false };
+      const answerRead = await loadQueryAnswer(owned, answerRef);
+      if (answerRead.status !== 'ready') return { ok: false, rejection: mapReadResult(answerRead) as CoreRejection };
+      const replyText = planningReplyTextOf({ shape: 'plan_review', answerText: answerRead.value.answer.answer,
+        queryJobId: job.job.queryJobId });
+      if (replyText !== null) return { ok: false };
+    }
     const runRead = await loadQueryRun(owned, refs.queryRunRef);
     if (runRead.status === 'not_found') return { ok: false };
     if (runRead.status !== 'ready') return { ok: false, rejection: mapReadResult(runRead) as CoreRejection };
@@ -5247,11 +5342,15 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       if (part !== 'message' && part !== 'response') return reject('invalid', 'storeBody part must be message or response');
       const text = raw['text'];
       if (typeof text !== 'string' || text.length === 0) return reject('invalid', 'storeBody text must be a non-empty string');
-      if (Buffer.byteLength(text, 'utf8') > SESSION_MESSAGE_MAX_TEXT_BYTES) {
-        return reject('capacity', `message text exceeds ${SESSION_MESSAGE_MAX_TEXT_BYTES} UTF-8 bytes`);
-      }
       const sender = raw['sender'];
       if (!isObject(sender) || !nonEmpty(sender['kind'])) return reject('invalid', 'storeBody requires a sender');
+      // The one bound: the `message` part by this body's sender, the `response` part always 16 KiB.
+      const maxBytes = sessionMessageTextBound({
+        sender: sender as unknown as MessageBodySender, part, original: null,
+      });
+      if (Buffer.byteLength(text, 'utf8') > maxBytes) {
+        return reject('capacity', `message text exceeds ${maxBytes} UTF-8 bytes`);
+      }
       const source = await readCurrentWorkspaceSource(records, owned);
       if (!source.ok) return source.rejection;
       return storeScopedMessageBody(deps, {

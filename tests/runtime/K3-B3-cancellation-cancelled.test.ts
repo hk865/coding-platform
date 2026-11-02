@@ -26,6 +26,7 @@ import {
 } from '../../src/core/agent-runtime/context-assembler.js';
 import { createKernelStoreRegistry, type KernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -185,6 +186,9 @@ describe.each(['memory', 'sqlite'] as const)('F-076/F-101: cancellation stays ca
         executedFiles: createGoalExecutedFilesReader({ records: world.fixture.records }) }),
       positions: createNoticePositionComparator(),
       displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+      lineage: { messages: world.mailbox,
+        queries: createQueryJobService({ records: world.fixture.records, now: () => T, eventId: () => 'k3-b3-query' }),
+        plans: world.fixture.b2.base.plans },
     });
     const read = await readModel.queryDecisionQueue(world.fixture.ctx, {
       workspace: WORKSPACE_SCOPE, goalRef: GOAL_B, sections: ['waiting_answer'], page: { limit: 100 } });

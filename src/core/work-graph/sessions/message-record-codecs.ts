@@ -22,6 +22,7 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
+import { SYSTEM_ROUND_ACTOR } from '../../../contracts/plan-round.js';
 import { DecisionSubjectShape } from '../../../contracts/goal-decisions.js';
 import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
@@ -46,6 +47,7 @@ import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.j
 import { SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type {
+  MessageQueryAnswerSender, MessageSender,
   HostOutboxStoredItemV1, SessionMessageHostOutboxV1,
 } from '../model/communication-contracts.js';
 import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
@@ -130,6 +132,34 @@ export const SESSION_MESSAGE_CONTENT_TYPE = 'application/vnd.coding-platform.ses
 
 /** Non-empty UTF-8 text, at most 16 KiB. Over-bound input returns `capacity`. */
 export const SESSION_MESSAGE_MAX_TEXT_BYTES = 16 * 1024;
+
+/** A Host system-round message's `message` part: 64 KiB, never a reply (§5.3.5 #1). */
+export const SYSTEM_ROUND_MESSAGE_MAX_TEXT_BYTES = 64 * 1024;
+
+/**
+ * The ONE Host system-round sender predicate (§5.3.5 #1): exactly the fixed
+ * `host:plan-round` identity. Automation senders such as `workflow:auto-rework`
+ * are ordinary 16 KiB senders; no text prefix and no `followupOf` is read.
+ */
+export function isSystemRoundSender(sender: MessageSender | MessageQueryAnswerSender): boolean {
+  return sender.kind === 'host' && sender.actor.kind === 'system' && sender.actor.id === SYSTEM_ROUND_ACTOR.id;
+}
+
+/**
+ * The ONE stored-text bound (§5.3.5 #1). The `message` part is bounded by this
+ * message's own sender: the Host system round has 64 KiB, every other sender
+ * 16 KiB. The `response` part is always the ordinary 16 KiB, even when it
+ * replies to a system round. `original` names the message the consumption
+ * branch is checking; it never changes the bound.
+ */
+export function sessionMessageTextBound(input: {
+  sender: MessageSender | MessageQueryAnswerSender;
+  part: 'message' | 'response';
+  original: SessionMessageRef | null;
+}): number {
+  if (input.part === 'response') return SESSION_MESSAGE_MAX_TEXT_BYTES;
+  return isSystemRoundSender(input.sender) ? SYSTEM_ROUND_MESSAGE_MAX_TEXT_BYTES : SESSION_MESSAGE_MAX_TEXT_BYTES;
+}
 
 /** One recipient and one recipient+status candidate index (frozen paths). */
 export const SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [

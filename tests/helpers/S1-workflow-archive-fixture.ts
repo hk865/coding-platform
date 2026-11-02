@@ -79,7 +79,15 @@ import { createRunControlService } from '../../src/core/work-graph/tasks/control
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 
-import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createSessionResponsibilityBasisReader, createPlanReaders } from '../../src/core/work-graph/tasks/plan-readers.js';
+import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
+import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
+import { createMessageWriteOwner } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { listWorkspaceGoals, readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
+import type { SessionMailboxDependencies, SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
@@ -572,6 +580,62 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
   }
 
 let workflowFixtureId = 0;
+
+export type WorkflowPlanReads = Pick<WorkflowDependencies, 'latestAgentCandidate' | 'completedFixes'
+  | 'planFixRead' | 'planChecks' | 'planCandidates' | 'acceptedCandidatesOf'>;
+
+type PlanReaderDeps = Parameters<typeof createPlanReaders>[0];
+
+/**
+ * The one real goal-loop read bag an old Workflow assembly needs: the
+ * production `createPlanReaders` over the same records/mailbox/Query/Plan
+ * owners, with the planning-question and saved-answer readers and the two Goal
+ * reads it also asks. Callers that already own a real decision-message service
+ * pass it; the rest get the production owner over their own mailbox bag.
+ */
+export function workflowPlanReads(input: {
+  records: PlanReaderDeps['records'];
+  messages: PlanReaderDeps['messages'];
+  plans: PlanTaskPort;
+  now(): string;
+  newId(): string;
+  decisions?: PlanReaderDeps['decisions'];
+  mailboxDeps?: SessionMailboxDependencies;
+  materials?: Parameters<typeof createDecisionMessageService>[0]['materials'];
+}): WorkflowPlanReads {
+  const bindings = createInitializationBindingReader({ records: input.records });
+  const questions = createPlanningQuestionReader({ records: input.records, plans: input.plans, bindings });
+  let decisions = input.decisions;
+  if (decisions === undefined) {
+    if (input.mailboxDeps === undefined || input.materials === undefined) {
+      throw new Error('workflowPlanReads needs a decision-message owner or its mailbox dependencies');
+    }
+    decisions = createDecisionMessageService({
+      records: input.records, now: input.now, newId: input.newId,
+      messages: input.messages as SessionMailboxPort,
+      materials: input.materials, messageWrites: createMessageWriteOwner(input.mailboxDeps),
+      sources: createDecisionSourceFacts({ records: input.records, bindings, plans: input.plans }),
+    });
+  }
+  const readers = createPlanReaders({
+    records: input.records, messages: input.messages,
+    queries: createQueryJobService({ records: input.records, now: input.now, eventId: input.newId }),
+    plans: input.plans, questions, decisions,
+    goals: {
+      listWorkspaceGoals: workspace => listWorkspaceGoals(input.records, workspace),
+      readGoalTerminalState: goal => readGoalTerminalState(input.records, goal),
+    },
+  });
+  return {
+    latestAgentCandidate: goalRef => readers.latestAgentCandidate(goalRef),
+    completedFixes: (goalRef, basedOn) => readers.completedFixes(goalRef, basedOn),
+    planFixRead: (goalRef, proposalRef, revision) => readers.planFixRead(goalRef, proposalRef, revision),
+    planChecks: scope => readers.planChecks(scope),
+    planCandidates: (scope, ctx, goalRef) => readers.planCandidates(scope, ctx, goalRef),
+    acceptedCandidatesOf: goalRef => readers.acceptedCandidatesOf(goalRef),
+  };
+}
+
 /** Full production wiring: archive/maintenance need Runtime, requeue, directory and Plan ports too. */
 export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   now: () => string; records?: B2Records; allowedRuns?: Set<string>;
@@ -590,9 +654,13 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   const roles = createRoleConfigurationService({ records, now, eventId });
   const authority = createMaterialRecordReaders(records).authority;
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
-  const messages = createSessionMailbox({ records, sessions: base.sessionsPort, executions: reads, roles, materials,
+  const mailboxDeps: SessionMailboxDependencies = { records, sessions: base.sessionsPort, executions: reads, roles, materials,
     defaultInquiryDeadlineMs: 86_400_000,
-    systemActor: { kind: 'system', id: prefix }, now, newId: eventId });
+    systemActor: { kind: 'system', id: prefix }, now, newId: eventId };
+  const messages = createSessionMailbox(mailboxDeps);
+  const workflowPlans = options.plans ?? base.plans;
+  const planReads = workflowPlanReads({ records, messages, plans: workflowPlans, now, newId: eventId,
+    mailboxDeps, materials });
   const controls = createRunControlService({ records, authority, reads, now, eventId });
   const workspaceHost = {
     async resolveRoot(scope: WorkspaceScope) {
@@ -646,6 +714,7 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   const forbiddenCheck = async () => { throw new Error('archive/maintenance must not start a check'); };
   const deps: WorkflowDependencies = {
     tasks: base.goals, plans: options.plans ?? base.plans, sessions: base.sessionsPort, claims, executions: reads,
+    ...planReads,
     runtime: { ...runtime.port, createSession: sessionOperations.createSession },
     evidence: { openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
       recordCheckResult: forbiddenCheck, finalizeChecks: forbiddenCheck },

@@ -46,7 +46,7 @@ import type { SecretaryQueryRunPort } from './secretary-query-run-contracts.js';
 import type { RecipientExecutionsPort, DeliveryEligibilityFactsV1 } from './session-facts-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
 import type { ExecutionReadPort } from './execution-read-contracts.js';
-import { effectiveReplyHandler, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+import { effectiveReplyHandler, isWaitMessage, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
   type DeliveryFactsV1 } from '../state/message-machine.js';
 import { sameRef } from '../state/ref-equality.js';
 import type {
@@ -97,7 +97,7 @@ export function consultationFacts(message: SessionMessage, part: 'message' | 're
   const state = waitStateOf(message, waitFactsOfRecord(message));
   const handler = effectiveReplyHandler(message);
   return { ...base, part, accepted: accepted(deriveSessionInputId(message.ref, 'response')),
-    wait: message.intent !== 'inquiry' || message.waitAfterSend !== true ? { kind: 'none' }
+    wait: !isWaitMessage(message) ? { kind: 'none' }
       : state.state === 'consumed' ? { kind: 'consumed' }
       : handler !== null && sameRef(handler, target) ? { kind: 'unconsumed', boundHere: true }
       : { kind: 'unconsumed', boundHere: false } };

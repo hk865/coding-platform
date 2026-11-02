@@ -21,6 +21,8 @@ import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/exe
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import { createMaterialRecordReaders, QUERY_RUN_RECORD_SCHEMA } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { workflowPlanReads } from '../helpers/S1-workflow-archive-fixture.js';
 import { createRecipientExecutions } from '../../src/core/work-graph/sessions/recipient-executions.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -41,6 +43,9 @@ import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/ses
 import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
+import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
 import { DISPATCH_COUNTER_SCHEMAS } from '../../src/core/work-graph/persistence/dispatch-counter-codecs.js';
 import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { sessionActivityRefOf } from '../../src/core/work-graph/sessions/session-activity.js';
@@ -74,12 +79,15 @@ async function ledger(kind: 'memory' | 'sqlite') {
   const fixture = await createTaskClaimFixture(kind, {
     records: [...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...EXECUTION_ENTRY_RECORD_SCHEMAS.records,
       ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, QUERY_RUN_RECORD_SCHEMA,
-      ...NOTE_RECORD_SCHEMAS.records, ...DISPATCH_COUNTER_SCHEMAS.records],
+      ...NOTE_RECORD_SCHEMAS.records, ...DISPATCH_COUNTER_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
+      ...QUERY_JOB_RECORD_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records],
     events: [...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
-      ...SESSION_ACTIVITY_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events],
+      ...SESSION_ACTIVITY_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events,
+      ...QUERY_JOB_RECORD_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events],
     lookups: [...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
       ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []), ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []),
+      ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(INITIALIZATION_BINDING_SCHEMAS.lookups ?? []),
       ...SLICE1_LOOKUP_INDEXES.filter((index) =>
         index.name === WORK_EXECUTION_BY_SESSION_LOOKUP || index.name === QUERY_RUN_BY_SESSION_LOOKUP)],
   });
@@ -164,6 +172,9 @@ async function ledger(kind: 'memory' | 'sqlite') {
   };
   const goalSettings = createGoalSettingsService({ records, now, newId, operatorActor: { kind: 'human', id: 's7a2-pass-host' } });
   const plans = fixture.plans;
+  const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
+  const planReads = workflowPlanReads({ records, messages: mailbox, plans, now, newId,
+    mailboxDeps: depsOver(), materials });
 
   /** `every_step`: a new agent `action_request` awaits the person instead of releasing itself at send. */
   async function awaitEveryStep(): Promise<void> {
@@ -209,6 +220,7 @@ async function ledger(kind: 'memory' | 'sqlite') {
     const dependencies: WorkflowDependencies = {
       tasks: createGoalService({ records, now, eventId }).tasks,
       plans,
+      ...planReads,
       sessions: fixture.sessionsPort,
       claims: createTaskClaimService({ records, now, newId, roles }),
       executions,

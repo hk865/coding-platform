@@ -81,6 +81,16 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'handoff-brief-adviser': {
         task_round: { required: true },
     },
+    // The review input: the frozen request body, its candidate and the
+    // Goal/plan background. The role is the existing main-recipe role slot and
+    // the diagnosis is carried verbatim through `message` (§6.3.2, DR-P3-07/09).
+    'plan-review-input': {
+        prelude: { required: false },
+        goal: { required: true },
+        plan: { required: false },
+        candidate: { required: true },
+        message: { required: true },
+    },
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },

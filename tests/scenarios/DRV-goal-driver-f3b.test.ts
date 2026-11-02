@@ -139,6 +139,10 @@ describe('DRV goal driver queue: D-F3b', () => {
       observedCursor: () => head,
     });
     drivers.push(driver);
+    // A3: the rebuild's two candidate reads are the platform's own published
+    // reads; the counters prove the start-up recovery really ran them.
+    let candidateReads = 0;
+    let acceptedReads = 0;
     const queue = createGoalWaitQueue({ registries,
       wake: async (_scope, goalRef) => driver.wake(world.fixture.ctx, goalRef),
       // The Host's restart composition over the same real reads (`host.ts:842`).
@@ -149,6 +153,19 @@ describe('DRV goal driver queue: D-F3b', () => {
         sessions: platform.sessions,
         facts: platform.sessionFacts,
         released: platform.messageRelease,
+        // PL L-05: the same platform's published candidate reads and its real
+        // message/Query/Plan owners, not empty or `not_found` stand-ins.
+        planCandidates: (...args) => {
+          candidateReads += 1;
+          return platform.planReaders.planCandidates(...args);
+        },
+        acceptedCandidatesOf: (...args) => {
+          acceptedReads += 1;
+          return platform.planReaders.acceptedCandidatesOf(...args);
+        },
+        messages: platform.messages,
+        queries: platform.queries,
+        plans: platform.plans,
         held: async (ctx, goalRef) => {
           const read = await platform.plans.queryGoalDisplay!(ctx, { goalRef });
           if (read.status !== 'ready') {
@@ -161,6 +178,9 @@ describe('DRV goal driver queue: D-F3b', () => {
       aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
     });
     await wakeLoop.start([WORKSPACE_SCOPE], { resumeOnStartup: true });
+    // The real start-up recovery read both candidate facts; no placeholder answered.
+    expect(candidateReads).toBeGreaterThan(0);
+    expect(acceptedReads).toBeGreaterThan(0);
 
     const started = ready<CollaborationSnapshot>(await driver.start(world.fixture.ctx, { advance: {
       schemaVersion: 1, goalRef: GOAL_B, flowId: 'drv-f3b', sessionHint: null, kind: 'select_work',

@@ -46,6 +46,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { readCanonicalTaskFacts, readGoalPlanWindow } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { leaseReleasedForContinuation } from '../../src/core/work-graph/state/review-lease.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
@@ -345,7 +346,10 @@ function cardReads(f: ReviewWorldFixture) {
     conflicts: createGoalConflictAssembler({ records,
       catalog: createArchitectureCatalogService({ records }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
-    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)) });
+    positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
+    lineage: { messages: f.world.mailbox,
+      queries: createQueryJobService({ records, now: () => AT, eventId: () => 'k3-26-query' }),
+      plans: f.world.fixture.b2.base.plans } });
 }
 
 /** The queue's review cards, filtered from the real read model. */

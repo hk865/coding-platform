@@ -17,10 +17,17 @@ import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../contracts/core/identity.js';
 import { canonicalKey } from '../contracts/fingerprint.js';
 import { compareCursors, type AggregateRef, type GoalRef } from '../contracts/ledger.js';
+import { interventionPlanningQueryRefs } from '../contracts/query-job.js';
+import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageReleasedActionsPort } from '../core/work-graph/model/decision-contracts.js';
+import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
+import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
+import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
+import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
+import type { PlanReaders } from '../core/work-graph/tasks/plan-readers.js';
 import { notReady, type QueueHandler } from './wake-loop.js';
 
 export const GOAL_WAITS_QUEUE = 'goal_waits';
@@ -144,18 +151,31 @@ export type GoalWaitRebuildDependencies = {
   released: Pick<MessageReleasedActionsPort, 'readReleasedActions'>;
   /** The Goal's own pending restart interruption, read through its display; `ask`/`off` hold such a Goal. */
   held(ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean>;
+  /** The goal loop's candidate read (`createPlanReaders(...).planCandidates`); the same facts step 3b uses. */
+  planCandidates: PlanReaders['planCandidates'];
+  /** Every accepted candidate of one Goal (`createPlanReaders(...).acceptedCandidatesOf`). */
+  acceptedCandidatesOf: PlanReaders['acceptedCandidatesOf'];
+  /** The source-lineage reads (slice-PL-SPEC §6.3.1) the accepted-candidate arm walks the chain with. */
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+  queries: Pick<QueryJobPort, 'readQueryJob'>;
+  plans: Pick<PlanTaskPort, 'readPlanProposal'>;
 };
 
 /**
- * The restart composition: the two published reads that rebuild a fresh registry after a Host start.
+ * The restart composition: the three published reads that rebuild a fresh registry after a Host start.
  *
  * The wait half walks every Session of the scope (archived included) page by page and registers each
  * wait's own `originalRun.goalId` at the facts read's cursor; a wait with no Work Run is a secretary
  * round's, which R's reply round answers, so it wakes no Goal. The released half walks 7A's released,
  * unprocessed action requests page by page and registers each page's Goals at that page's read-through
- * cursor. Both halves may name the same Goal; `register` merges them, so it is woken once. A Goal with a
- * pending restart interruption is held, because in `ask`/`off` only a person continues it (decision 97-9).
- * A read that is not `ready` is the failure, never an empty result.
+ * cursor. The candidate half reads the goal loop's own candidate facts and registers only the Goals
+ * that still have something to continue: a pending candidate, an unanswered question group, a fully
+ * answered group whose `planresume:` was never created, or an accepted candidate whose source message
+ * is still an open wait. It never registers a Goal merely because it is active, writes no recovery
+ * record, and does not read completed/cancelled Goals (the read returns active ones only). All halves
+ * may name the same Goal; `register` merges them, so it is woken once. A Goal with a pending restart
+ * interruption is held, because in `ask`/`off` only a person continues it (decision 97-9). A read that
+ * is not `ready` is the failure, never an empty result.
  */
 export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
   (scope: WorkspaceScope, registry: GoalWaitWakes) => Promise<void> {
@@ -198,7 +218,66 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
       }
       after = page.value.nextCursor;
     } while (after !== null);
+    await rebuildCandidateWaits(ctx, scope, registry);
   };
+
+  /**
+   * The candidate half (§6.1.6). A Goal is registered only when one of its own facts still waits:
+   * a pending candidate, a question group with an unanswered card, a fully answered group whose
+   * continuation was never created, or an accepted candidate whose expected executor message is an
+   * open wait. `planCandidates`' own read failure propagates like every other half's.
+   */
+  async function rebuildCandidateWaits(
+    ctx: CoreCallContext, scope: WorkspaceScope, registry: GoalWaitWakes,
+  ): Promise<void> {
+    const read = await deps.planCandidates(scope, ctx);
+    if (read.status !== 'ready') throw notReady('the planning-candidate read', read);
+    for (const goal of read.value.goals) {
+      const goalRef = goal.goalRef;
+      if (await deps.held(ctx, goalRef)) continue;
+      let basis: GoalWaitBasisV1 | null = null;
+      if (goal.pending !== null) {
+        basis = { projectId: scope.projectId, goalId: goalRef.goalId,
+          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'] };
+      } else if (goal.questionGroups.some(group => !group.allAnswered)) {
+        basis = { projectId: scope.projectId, goalId: goalRef.goalId,
+          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'] };
+      } else if (goal.questionGroups.some(group => group.allAnswered && !group.resumeMessageExists)) {
+        basis = { projectId: scope.projectId, goalId: goalRef.goalId,
+          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'] };
+      } else if (await hasUnansweredAcceptedCandidate(ctx, goalRef)) {
+        basis = { projectId: scope.projectId, goalId: goalRef.goalId,
+          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'] };
+      }
+      if (basis === null) continue;
+      registry.register(basis, goal.readThrough!);
+    }
+  }
+
+  /**
+   * (d): every accepted candidate of this Goal, not only the active Plan's version. The candidate's
+   * source is the start of the §6.3.1 chain; its planned executor message is the original
+   * deterministic Query's `repliesToMessageRef`, else the chain root (a `planresume:` Query froze
+   * that same `repliesToMessageRef ?? rootMessage` when it was created).
+   */
+  async function hasUnansweredAcceptedCandidate(ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean> {
+    const accepted = await deps.acceptedCandidatesOf(goalRef);
+    if (accepted.status !== 'ready') throw notReady('the accepted-candidate read', accepted);
+    for (const proposal of accepted.value) {
+      if (proposal.sourceMessageRef === null) continue;
+      const lineage = await planSourceLineageOf(ctx, deps, proposal.sourceMessageRef);
+      if (lineage.status !== 'ready') throw notReady('the accepted candidate source lineage', lineage);
+      const query = await deps.queries.readQueryJob(ctx,
+        interventionPlanningQueryRefs(proposal.sourceMessageRef).queryJobRef);
+      if (query.status !== 'ready') throw notReady('the accepted candidate planning Query', query);
+      const message = await deps.messages.readMessage(ctx,
+        query.value.job.job.intent.execution.repliesToMessageRef ?? lineage.value.rootMessage);
+      if (message.status !== 'ready') throw notReady('the accepted candidate wait message', message);
+      if (message.value.response === null
+        && waitStateOf(message.value, waitFactsOfRecord(message.value)).state === 'open') return true;
+    }
+    return false;
+  }
 }
 
 export type GoalWaitQueueDependencies = {

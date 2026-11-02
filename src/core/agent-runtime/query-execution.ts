@@ -45,12 +45,12 @@ import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
 import {
-  answerSubmitNamesIn, answerToolsOf, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
+  answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
 } from './answer-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsHandle } from './note-tool.js';
 import type { NoteCheckPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
-import { secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
+import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
 import { sessionHistoryDecision } from './context-history-facts.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import type {
@@ -322,12 +322,36 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         }
         if (currentAuthorization.status !== 'ready') return rejected('unavailable', currentAuthorization.reason);
       }
-      // The frozen manifest's request facts decide the Query's note class: a
-      // non-null request is exactly a secretary request round. The pure rule
-      // decides the class from the request root, so preparation and this start
-      // read the same frozen fact and cannot disagree.
+      // The frozen answer shape decides the submit tools; note admission is the
+      // separate question (spec §5.2.8): a request round keeps the secretary
+      // rule, every other Query goes through the planning rule, whose only
+      // extra source read is a shape-null `intervention_planning` Query.
+      const shape = manifest.answerShape;
+      let hostSystemPlanningSource = false;
+      if (shape === null && intentExecution.kind === 'intervention_planning') {
+        if (deps.messages === undefined) {
+          return rejected('unavailable', 'the planning source read is not bound');
+        }
+        let source;
+        try {
+          source = await deps.messages.readMessage(owned, intentExecution.sourceMessageRef!);
+        } catch (error) {
+          return rejected('unavailable', `the planning source message read failed: ${messageOf(error)}`);
+        }
+        if (source.status !== 'ready') {
+          return rejected('unavailable', 'the planning source message could not be read');
+        }
+        const message = source.value;
+        hostSystemPlanningSource = message.sender.kind === 'host'
+          && message.sender.actor.kind === 'system' && message.intent === 'action_request';
+      }
       const noteAdmission: QueryNoteAdmissionV1 = manifest.request === null
-        ? { class: 'none' }
+        ? planningNoteAdmission({
+            answerShape: shape,
+            effectiveGoalId: manifest.goal === null ? null : manifest.goal.ref.goalId,
+            planRef: manifest.focusPlan === null ? null : manifest.focusPlan.ref,
+            hostSystemPlanningSource,
+          })
         : secretaryNoteAdmission({
             requestRoot: manifest.request.requestRoot,
             effectiveGoalId: manifest.request.effectiveGoalId,
@@ -337,8 +361,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // A missing dependency is `unavailable`, never a tool built around a
       // non-null assertion.
       const noteOwners = noteOwnersOf(deps.notes);
-      if (noteAdmission.class === 'secretary' && noteOwners === null) {
-        return rejected('unavailable', 'the secretary Query round admits notes but no note write/check dependency is bound');
+      if (noteAdmission.class !== 'none' && noteOwners === null) {
+        return rejected('unavailable', 'the Query round admits notes but no note write/check dependency is bound');
       }
       // Ruling 16: the one final tool list, compared with the frozen one before
       // any entry write. A difference is `forbidden`.
@@ -352,12 +376,12 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         reviewSource: false,
         frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
         materialTools: false,
-        answerTools: manifest.request === null ? null : answerToolsOf(manifest.request.executionKind),
+        answerTools: shape,
         owners: {
           mailbox: false, decisionMessages: false, applicationReceipt: false,
           sessions: false, plans: false,
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
-          notes: noteAdmission.class === 'secretary', unknownCallReviews: false, commandRerunRequests: false,
+          notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
         },
         // The read-only command is a Host-gated capability: the start reads the
         // real whole-workspace read policy again (the same fact preparation
@@ -405,7 +429,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
       }
       let coordinationTools: ToolGroup | null = null;
-      if (grantedGraphNames.length > 0 || noteAdmission.class === 'secretary' || submitNames.length > 0
+      if (grantedGraphNames.length > 0 || noteAdmission.class !== 'none' || submitNames.length > 0
         || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
@@ -465,9 +489,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           });
         }
         let noteTools: NoteToolsHandle | null = null;
-        if (noteAdmission.class === 'secretary') {
+        if (noteAdmission.class !== 'none') {
           if (noteOwners === null) {
-            return rejected('unavailable', 'the secretary Query round admits notes but no note write/check dependency is bound');
+            return rejected('unavailable', 'the Query round admits notes but no note write/check dependency is bound');
           }
           noteTools = createNoteTools({
             context: toolContext,
@@ -522,7 +546,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         }
         let answerTools: AnswerToolsHandle | null = null;
         if (submitNames.length > 0) {
-          if (deps.secretaryFacts === undefined) {
+          const requestShape = shape === 'secretary' || shape === 'initial';
+          if (requestShape && deps.secretaryFacts === undefined) {
             return rejected('unsupported', 'the secretary answer tools require the secretary facts read');
           }
           answerTools = createAnswerTools({
@@ -530,10 +555,13 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             // The submit-time facts read uses the Host context this start holds.
             hostContext: owned,
             queryRunRef,
-            kind: manifest.request!.executionKind,
-            hasGoal: manifest.goal !== null,
-            goalLess: manifest.request!.effectiveGoalId === null,
-            secretaryFacts: deps.secretaryFacts,
+            shape: shape!,
+            ...(requestShape ? {
+              kind: manifest.request!.executionKind,
+              hasGoal: manifest.goal !== null,
+              goalLess: manifest.request!.effectiveGoalId === null,
+              secretaryFacts: deps.secretaryFacts,
+            } : {}),
             acceptedCallIds: acceptedAnswerCallIds,
             names: submitNames,
             texts: toolTexts,

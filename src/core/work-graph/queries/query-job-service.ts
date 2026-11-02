@@ -82,16 +82,21 @@ import {
 export const QUERY_JOB_SUBMIT_IDENTITY_PREFIX = 'query-job-submit:';
 
 const MAX_QUESTION_BYTES = 16 * 1024;
+/** A planning Query's question: 64 KiB, chosen only by `execution.kind` (§5.3.5 #2). */
+const PLANNING_MAX_QUESTION_BYTES = 64 * 1024;
 const MAX_FOCUS_REFS = 64;
 
 /**
- * The ONE question-text rule of every Query entry: a non-empty string of at
- * most 16 KiB of UTF-8, never trimmed. Returns the reason suffix, or null when
- * the text is acceptable. Later Query commands (`submit`, `ask`) import this.
+ * The ONE question-text rule of every Query entry: a non-empty string within
+ * the bound selected by the execution kind, never trimmed. An
+ * `intervention_planning` Query gets 64 KiB; every other Query (and an omitted
+ * kind, as the human request entries call it) stays 16 KiB. Returns the reason
+ * suffix, or null when the text is acceptable.
  */
-export function queryTextProblem(text: unknown): string | null {
+export function queryTextProblem(text: unknown, executionKind?: unknown): string | null {
   if (typeof text !== 'string' || text.length === 0) return 'must be non-empty';
-  if (Buffer.byteLength(text, 'utf8') > MAX_QUESTION_BYTES) return 'must be at most 16 KiB of UTF-8';
+  const maxBytes = executionKind === 'intervention_planning' ? PLANNING_MAX_QUESTION_BYTES : MAX_QUESTION_BYTES;
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) return `must be at most ${maxBytes / 1024} KiB of UTF-8`;
   return null;
 }
 
@@ -260,7 +265,10 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.intentId must equal the actual queryJobId') };
   }
   const question = intent['question'];
-  const textProblem = queryTextProblem(question);
+  // The read-only kind narrow-read selects the question bound BEFORE the full
+  // execution validation below; it never replaces that validation.
+  const rawExecution = intent['execution'];
+  const textProblem = queryTextProblem(question, isRecord(rawExecution) ? rawExecution['kind'] : undefined);
   if (textProblem !== null) {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', `intent.question ${textProblem}`) };
   }

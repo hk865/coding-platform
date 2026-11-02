@@ -53,7 +53,7 @@ import type { EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionDependencies } from './execution-contracts.js';
 import type { ObservedModelRunOptions } from './observed-model-run.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
-import { ANSWER_TOOL_NAMES, type AnswerToolKind } from './answer-tools.js';
+import { answerToolNamesOf, type AnswerToolKind } from './answer-tools.js';
 
 export type ToolGroup = { names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] };
 export type ToolGroupResult<T = ToolGroup> = { ok: true; value: T } | { ok: false; rejection: CoreRejection };
@@ -647,7 +647,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
-  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class === 'secretary'));
+  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none'));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) && (!query || secretary) ? [CREATE_MEMBER_TOOL_NAME] : [];
   // Only the Work Runtime builds the rework tools; a Query's projection never reaches its factory.
   const reworkNames = query ? [] : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
@@ -698,11 +698,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const readonlyName = input.readOnly && input.readonlyCommand.requested
     && input.readonlyCommand.access === 'all_except_denied' && input.readonlyCommand.allowsReadWholeWorkspace
     ? READONLY_COMMAND_TOOL_NAME : null;
-  const answerNames = input.answerTools === 'secretary'
-    ? ANSWER_TOOL_NAMES.slice(0, 1)
-    : input.answerTools === 'initial'
-      ? ANSWER_TOOL_NAMES.slice(1)
-      : [];
+  const answerNames = answerToolNamesOf(input.answerTools ?? null);
   const extensionNames = [...coordinationNames,
     ...(readonlyName === null ? [] : [readonlyName]),
     ...(reviewToolName === null ? [] : [reviewToolName]),

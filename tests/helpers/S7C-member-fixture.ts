@@ -26,6 +26,7 @@ import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuratio
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { RawArtifactRecord } from '../../src/core/record-store/body-ports.js';
 import * as runtimeConfigurationModule from '../../src/app/runtime-configuration.js';
+import type { WorkbenchQueryProfile, WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createMemberService, type MemberServiceV1 } from '../../src/core/work-graph/tasks/member-service.js';
 import { createSecretaryQueryRun } from '../../src/core/work-graph/tasks/secretary-query-run.js';
@@ -40,7 +41,7 @@ import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions, type S6AToolCall } from './S6A-host-fixture.js';
 import {
   S6A_AT, S6A_SCRIBE_ROLE, S6A_SCOPE,
-  type S6ABackend, type S6ASession,
+  type S6ABackend, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
 import { createS6BLine, governS6B, holdS6BRequestRound, type S6BHeldRound } from './S6B1-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
@@ -90,7 +91,8 @@ function narrowedBindingsFactory(original: typeof BINDINGS_FACTORY,
 }
 
 function configuredHostFactory(original: typeof HOST_FACTORY,
-  hostGrant: S7C1HostGrant | undefined): typeof HOST_FACTORY {
+  hostGrant: S7C1HostGrant | undefined,
+  configure: ((configuration: WorkbenchRuntimeConfiguration) => void) | undefined): typeof HOST_FACTORY {
   return async hostOptions => {
     const configuration = hostOptions.runtimeConfiguration;
     const work = configuration?.bindings.find(binding => binding.id === 's6a-work-binding');
@@ -133,6 +135,7 @@ function configuredHostFactory(original: typeof HOST_FACTORY,
     const noCreate = configuration.bindings.find(binding => binding.id === 's7c-executor-binding')!;
     const { createMember: _absent, ...grant } = noCreate.grant;
     noCreate.grant = grant;
+    configure?.(configuration);
     if (hostGrant === undefined) return await original(hostOptions);
     const bindings = BINDINGS_FACTORY;
     Object.defineProperty(runtimeConfigurationModule, 'createWorkbenchRuntimeHostBindings', {
@@ -154,9 +157,10 @@ export async function withConfiguredHost<T>(run: () => Promise<T>,
     { value: original, configurable: true, writable: true }); }
 }
 
-async function openConfiguredHost(options: S6AHostWorldOptions, hostGrant?: S7C1HostGrant): Promise<S6AHostWorld> {
+async function openConfiguredHost(options: S6AHostWorldOptions, hostGrant?: S7C1HostGrant,
+  configure?: (configuration: WorkbenchRuntimeConfiguration) => void): Promise<S6AHostWorld> {
   return await withConfiguredHost(() => openS6AHostWorld(options),
-    original => configuredHostFactory(original, hostGrant));
+    original => configuredHostFactory(original, hostGrant, configure));
 }
 
 /** The platform publishes `records` only; the same backend's identity port is captured from its factory. */
@@ -261,11 +265,20 @@ export type S7C1FirstRun = 'ended' | 'held' | 'deferred';
 
 /** One instance per row; `adviser: false` opens without the adviser line (the L1 host-pick row). */
 export async function openS7C1World(options: { backend?: S6ABackend; adviser?: boolean; firstRun?: S7C1FirstRun;
-  /** L1-14's mutable Host grant; absent keeps the fixture's fixed grants. */ hostGrant?: S7C1HostGrant } = {}): Promise<S7C1World> {
+  /** L1-14's mutable Host grant; absent keeps the fixture's fixed grants. */ hostGrant?: S7C1HostGrant;
+  /** Extra bindings/profiles, forwarded to `openS6AHostWorld` exactly as it applies them. */
+  extraBindings?: readonly S6AExtraBinding[];
+  /** Host start options that are not bindings (for example an input consumer). */
+  extraHostOptions?: Record<string, unknown>;
+  /** Mutate the finished S7C configuration; needed because the adviser binding is created inside this factory,
+   *  after `extraBindings`, and a duplicate-Role binding in one scope is refused by validation. */
+  configure?: (configuration: WorkbenchRuntimeConfiguration) => void } = {}): Promise<S7C1World> {
   const backend = options.backend ?? 'memory';
   const adviser = options.adviser ?? true;
   const firstRun = options.firstRun ?? 'ended';
-  const world = await withS7CCapturedBackend(() => openConfiguredHost({ backend, scribe: true }, options.hostGrant));
+  const world = await withS7CCapturedBackend(() => openConfiguredHost({ backend, scribe: true,
+    ...(options.extraBindings === undefined ? {} : { extraBindings: options.extraBindings }),
+    ...(options.extraHostOptions === undefined ? {} : { extraHostOptions: options.extraHostOptions }) }, options.hostGrant, options.configure));
   try {
     world.clock.set(S6A_AT);
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -355,7 +368,7 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
     return { backend, world, main, goal, plan, tasks, secretary, run, query: queryRound, queryRead, member, holdFirst,
       lines: { module: moduleLine, work: workLine, noCreate: noCreateLine, adviser: adviserLine, scribe: scribeLine,
         fixed: fixedLine }, reopen: () => withConfiguredHost(() => world.reopen(),
-          original => configuredHostFactory(original, options.hostGrant)),
+          original => configuredHostFactory(original, options.hostGrant, options.configure)),
       close: async () => {
         try {
           if (releaseFirst !== null) await releaseFirst();

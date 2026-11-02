@@ -1,0 +1,7 @@
+{
+  "description": "The only way to give this round's review answer. Fill the fields and call it; the platform builds and stores the answer from them. Do not write the answer as text.",
+  "parameters": {
+    "verdict": "\"pass\" or \"fix\".",
+    "findings": "Optional array of {taskId, text}. taskId is a candidate task id, or null for a plan-level finding. fix needs at least one finding; pass may omit the array or carry optional notes."
+  }
+}

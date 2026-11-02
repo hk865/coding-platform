@@ -14,6 +14,8 @@
  * implementations.
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
+import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { QueryRunRef, QueryRunSnapshot } from '../../contracts/query-job.js';
@@ -211,9 +213,9 @@ function platformReadFailure(read: { code: string; reason: string }): TurnClosur
  * at call time, M2). A closed/already-closed Turn is re-probed and handed to the
  * health owner under the incoming Host call identity (M3).
  */
-function createCloseOpenTurn(
+function createTurnClosures(
   deps: RuntimeExecutionDependencies, owner: SessionHistoryCursorOwner,
-): NonNullable<RuntimeExecutionPort['closeOpenTurn']> {
+): Required<Pick<RuntimeExecutionPort, 'closeOpenTurn' | 'closeQueryTurn'>> {
   type RefusalReason = Extract<TurnClosureOutcome, { status: 'refused' }>['reason'];
   const refusal = (reason: RefusalReason): TurnClosureOutcome => ({ status: 'refused', reason });
 
@@ -334,7 +336,101 @@ function createCloseOpenTurn(
     }
   }
 
-  return async (ctx, input) => {
+  /** Steps 3-5 for an execution its caller proved ended: the Session facts, the health conclusion and the Kernel closure. */
+  async function closeProvedTurn(ctx: CoreCallContext, closure: TurnClosureDependencies, input: {
+    sessionRef: SessionRef; runKernel: RunExecutionHistoryV1['kernel'] | null; runId: string;
+    turnClosureCaller: 'turn_closure' | null;
+  }): Promise<TurnClosureOutcome> {
+    const { sessionRef, runKernel, runId, turnClosureCaller } = input;
+    // 3. Session facts
+    let card;
+    try { card = await deps.sessions.readSession(ctx, sessionRef); }
+    catch (error) { return closureFailure(error, ctx.signal); }
+    if (card.status === 'not_found') return { status: 'unreadable', reason: 'the Session does not exist' };
+    if (card.status === 'rejected') return platformReadFailure(card);
+    if (card.status !== 'ready') return { status: 'unreadable', reason: 'the Session is not ready' };
+    const session = card.value.record;
+    if (session.lifecycle !== 'active') return refusal('archived');
+    if (session.archiveRequest !== null && session.archiveRequest !== undefined) return refusal('archive_requested');
+    if (session.occupancy !== null) return refusal('occupied');
+    const successor = await recordedSuccessor(ctx, session);
+    if (successor === 'unusable') {
+      return { status: 'transient', reason: 'the successor Session enumeration is not usable' };
+    }
+    if (successor === 'found') return refusal('handed_over');
+    if (runKernel !== null && (runKernel.adapterId !== session.kernel.adapterId
+      || runKernel.kernelSessionId !== session.kernel.kernelSessionId)) {
+      return { status: 'mismatch', reason: 'the afterRun Kernel binding disagrees with the Session mapping' };
+    }
+    // 4. health
+    if (session.health === 'available') {
+      const probe = await owner.probe({ session, signal: ctx.signal });
+      if (probe.verdict === 'ready' && probe.activeRunId === null) return { status: 'already_closed', health: 'available' };
+      // L4 step 4: only "ready with no active Run" is already_closed. An available
+      // Health whose Kernel head still names an active Run (or any other
+      // observation) is `refused('health')`: the platform facts changed, so the
+      // caller re-walks them; it is never the definite `mismatch` fallback.
+      if (probe.verdict === 'ready') return refusal('health');
+      if (probe.verdict === 'missing' || probe.verdict === 'damaged') return { status: 'unreadable', reason: probe.reason };
+      // L4: a host_config, transient or cancelled probe is retryable, never a
+      // definite failure (D6).
+      return { status: 'transient', reason: probe.reason };
+    }
+    if (!(session.health === 'unavailable' && (session.healthConclusion ?? null) === 'kernel_turn_open')) return refusal('health');
+    // 5. storage and the Kernel closure (M2, D5: read BOTH injected seams at call
+    // time; either one absent is `unsupported` and no write happens)
+    const closeFn = deps.kernel.closeOpenTurn;
+    const readBoundsFn = deps.kernel.readTurnBounds;
+    const location = deps.kernelStores.byAdapterId(session.kernel.adapterId);
+    if (location === null || closeFn === undefined || readBoundsFn === undefined) {
+      return { status: 'unsupported', reason: 'the Session Kernel store is legacy, another adapter, or cannot close a Turn' };
+    }
+    try {
+      if (await kernelDatabaseState(location.databasePath) === 'missing') {
+        await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
+        return { status: 'unreadable', reason: 'the mapped Kernel database file is missing' };
+      }
+    } catch (error) { return closureFailure(error, ctx.signal); }
+    const kernelRunId = runKernel?.runId ?? runId;
+    let kernelResult;
+    try {
+      kernelResult = await deps.kernelStores.withStore(session.kernel.adapterId, async (store) => {
+        const header = await store.get(session.kernel.kernelSessionId, { signal: ctx.signal });
+        return closeFn(store, { sessionId: session.kernel.kernelSessionId, kernelRunId,
+          expectedRevision: header.revision, at: deps.now() });
+      });
+    } catch (error) {
+      const failure = closureFailure(error, ctx.signal);
+      // 2C-22(2): a Kernel store whose records cannot be read (a fresh empty
+      // file after the old one was removed, or damaged rows) throws out of the
+      // read instead of answering a Kernel result. That is still an `unreadable`
+      // closure answer, so re-probe and hand the verdict to the health owner
+      // (SES-19a) exactly as the `kernelResult.status === 'unreadable'` case does.
+      if (failure.status === 'unreadable') await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
+      return failure;
+    }
+    switch (kernelResult.status) {
+      case 'closed':
+      case 'already_closed':
+        return settleHealth(ctx, session, closure, kernelResult.status);
+      case 'not_found':
+      case 'already_terminal':
+      case 'mismatch':
+        return { status: 'mismatch', reason: `the Kernel answers ${kernelResult.status}` };
+      case 'conflict':
+        return { status: 'conflict', reason: `the Kernel Session revision changed (current ${String(kernelResult.currentRevision)})` };
+      case 'unreadable':
+        await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
+        return { status: 'unreadable', reason: kernelResult.reason };
+      default: {
+        const exhaustive: never = kernelResult;
+        void exhaustive;
+        return { status: 'transient', reason: 'the Kernel returned an unknown closure result' };
+      }
+    }
+  }
+
+  const closeOpenTurn: NonNullable<RuntimeExecutionPort['closeOpenTurn']> = async (ctx, input) => {
     const closure = deps.turnClosure;
     if (closure === undefined) return { status: 'unsupported', reason: 'the Runtime does not publish closeOpenTurn' };
     if (closure.lease !== 'owned') return refusal('lease');
@@ -380,96 +476,38 @@ function createCloseOpenTurn(
     } else if (!(run19 || run23 || run22 || run25)) {
       return refusal('not_closable_run');
     }
-    // 3. Session facts
-    let card;
-    try { card = await deps.sessions.readSession(ctx, sessionRef); }
-    catch (error) { return closureFailure(error, ctx.signal); }
-    if (card.status === 'not_found') return { status: 'unreadable', reason: 'the Session does not exist' };
-    if (card.status === 'rejected') return platformReadFailure(card);
-    if (card.status !== 'ready') return { status: 'unreadable', reason: 'the Session is not ready' };
-    const session = card.value.record;
-    if (session.lifecycle !== 'active') return refusal('archived');
-    if (session.archiveRequest !== null && session.archiveRequest !== undefined) return refusal('archive_requested');
-    if (session.occupancy !== null) return refusal('occupied');
-    const successor = await recordedSuccessor(ctx, session);
-    if (successor === 'unusable') {
-      return { status: 'transient', reason: 'the successor Session enumeration is not usable' };
-    }
-    if (successor === 'found') return refusal('handed_over');
     const authorization = run.executionAuthorization;
     const runKernel = run.executionHistory?.kernel
       ?? (authorization !== undefined ? authorization.kernel : null);
-    if (runKernel !== null && (runKernel.adapterId !== session.kernel.adapterId
-      || runKernel.kernelSessionId !== session.kernel.kernelSessionId)) {
-      return { status: 'mismatch', reason: 'the afterRun Kernel binding disagrees with the Session mapping' };
-    }
-    // 4. health
-    if (session.health === 'available') {
-      const probe = await owner.probe({ session, signal: ctx.signal });
-      if (probe.verdict === 'ready' && probe.activeRunId === null) return { status: 'already_closed', health: 'available' };
-      // L4 step 4: only "ready with no active Run" is already_closed. An available
-      // Health whose Kernel head still names an active Run (or any other
-      // observation) is `refused('health')`: the platform facts changed, so the
-      // caller re-walks them; it is never the definite `mismatch` fallback.
-      if (probe.verdict === 'ready') return refusal('health');
-      if (probe.verdict === 'missing' || probe.verdict === 'damaged') return { status: 'unreadable', reason: probe.reason };
-      // L4: a host_config, transient or cancelled probe is retryable, never a
-      // definite failure (D6).
-      return { status: 'transient', reason: probe.reason };
-    }
-    if (!(session.health === 'unavailable' && (session.healthConclusion ?? null) === 'kernel_turn_open')) return refusal('health');
-    // 5. storage and the Kernel closure (M2, D5: read BOTH injected seams at call
-    // time; either one absent is `unsupported` and no write happens)
-    const closeFn = deps.kernel.closeOpenTurn;
-    const readBoundsFn = deps.kernel.readTurnBounds;
-    const location = deps.kernelStores.byAdapterId(session.kernel.adapterId);
-    if (location === null || closeFn === undefined || readBoundsFn === undefined) {
-      return { status: 'unsupported', reason: 'the Session Kernel store is legacy, another adapter, or cannot close a Turn' };
-    }
-    try {
-      if (await kernelDatabaseState(location.databasePath) === 'missing') {
-        await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
-        return { status: 'unreadable', reason: 'the mapped Kernel database file is missing' };
-      }
-    } catch (error) { return closureFailure(error, ctx.signal); }
-    const kernelRunId = runKernel?.runId ?? afterRunRef.runId;
-    let kernelResult;
-    try {
-      kernelResult = await deps.kernelStores.withStore(session.kernel.adapterId, async (store) => {
-        const header = await store.get(session.kernel.kernelSessionId, { signal: ctx.signal });
-        return closeFn(store, { sessionId: session.kernel.kernelSessionId, kernelRunId,
-          expectedRevision: header.revision, at: deps.now() });
-      });
-    } catch (error) {
-      const failure = closureFailure(error, ctx.signal);
-      // 2C-22(2): a Kernel store whose records cannot be read (a fresh empty
-      // file after the old one was removed, or damaged rows) throws out of the
-      // read instead of answering a Kernel result. That is still an `unreadable`
-      // closure answer, so re-probe and hand the verdict to the health owner
-      // (SES-19a) exactly as the `kernelResult.status === 'unreadable'` case does.
-      if (failure.status === 'unreadable') await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
-      return failure;
-    }
-    switch (kernelResult.status) {
-      case 'closed':
-      case 'already_closed':
-        return settleHealth(ctx, session, closure, kernelResult.status);
-      case 'not_found':
-      case 'already_terminal':
-      case 'mismatch':
-        return { status: 'mismatch', reason: `the Kernel answers ${kernelResult.status}` };
-      case 'conflict':
-        return { status: 'conflict', reason: `the Kernel Session revision changed (current ${String(kernelResult.currentRevision)})` };
-      case 'unreadable':
-        await recordUnreadableProbe(ctx, session, closure, turnClosureCaller);
-        return { status: 'unreadable', reason: kernelResult.reason };
-      default: {
-        const exhaustive: never = kernelResult;
-        void exhaustive;
-        return { status: 'transient', reason: 'the Kernel returned an unknown closure result' };
-      }
-    }
+    return closeProvedTurn(ctx, closure, { sessionRef, runKernel, runId: afterRunRef.runId, turnClosureCaller });
   };
+
+  /**
+   * K L10, slice 6's open item: a Query the restart left with an open Turn hands its line back. The proof is the
+   * round settled and the Session still naming it, so nothing ran since; the Session and Kernel steps are shared.
+   */
+  const closeQueryTurn: NonNullable<RuntimeExecutionPort['closeQueryTurn']> = async (ctx, input) => {
+    const closure = deps.turnClosure;
+    if (closure === undefined || deps.queryExecution === undefined) {
+      return { status: 'unsupported', reason: 'the Runtime does not publish closeQueryTurn' };
+    }
+    if (closure.lease !== 'owned') return refusal('lease');
+    const { sessionRef, queryRunRef } = input;
+    let read;
+    try { read = await deps.queryExecution.readQueryExecution(ctx, queryRunRef); }
+    catch (error) { return closureFailure(error, ctx.signal); }
+    if (read.status === 'not_found') return { status: 'unreadable', reason: 'the QueryRun does not exist' };
+    if (read.status === 'rejected') return platformReadFailure(read);
+    if (read.status !== 'ready') return { status: 'unreadable', reason: 'the QueryRun is not ready' };
+    const state = read.value.run.run.executionState;
+    const last = read.value.session.lastExecutionRef;
+    if (state?.phase !== 'settled' || !state.entry || last?.aggregateType !== 'QueryRun'
+      || last.runId !== queryRunRef.runId) return refusal('not_closable_run');
+    return closeProvedTurn(ctx, closure,
+      { sessionRef, runKernel: state.entry.kernel, runId: queryRunRef.runId, turnClosureCaller: null });
+  };
+
+  return { closeOpenTurn, closeQueryTurn };
 }
 
 /**
@@ -1020,7 +1058,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
   // M1: without the injected closure dependency the port does not publish the
   // operation, and the Workflow's `close_open_turn` answers `unsupported`.
   if (deps.turnClosure !== undefined) {
-    port.closeOpenTurn = createCloseOpenTurn(deps, historyCursorOwner);
+    Object.assign(port, createTurnClosures(deps, historyCursorOwner));
   }
   // K3 (G6): the read-only check is published whenever the closure dependency is.
   if (deps.turnClosure !== undefined) {

@@ -9,6 +9,7 @@
 import type {
   LineReadingV1, RunActivityFactsV1, RunGrowthReadingV1, RunModelUsageV1, RunUsageReadingV1,
 } from '../../../contracts/run-activity.js';
+import type { PlanLoopLimitsV1 } from '../../../contracts/plan-loop-limits.js';
 
 /** §10.4 (2): the growth reading; the first input is not counted. */
 export function runGrowthOf(usage: RunModelUsageV1): RunGrowthReadingV1 {
@@ -59,4 +60,77 @@ export function lineReadingOf(facts: RunActivityFactsV1): LineReadingV1 {
     complete: facts.changedLines.complete,
     reason: null,
   };
+}
+
+/** §10.5: the stage reading, summed over the stage's tasks and their runs. */
+export type StageReadingV1 = {
+  usage: RunUsageReadingV1;
+  lines: LineReadingV1;
+  estimatedLines: number | null;
+};
+
+/** §10.5: aggregate the stage's tasks; unknown stays unknown, zero is never substituted. */
+export function stageReadingOf(tasks: readonly {
+  estimatedLines?: number;
+  readings: readonly { usage: RunUsageReadingV1; lines: LineReadingV1 }[];
+}[]): StageReadingV1 {
+  const runs = tasks.flatMap((task) => task.readings);
+  const usages = runs.map((run) => run.usage);
+  const lines = runs.map((run) => run.lines);
+  // 一条任务没写预估就是「未预估」，不拿 0 当它的预估。
+  const estimatedLines = tasks.some((task) => task.estimatedLines === undefined)
+    ? null
+    : tasks.reduce((sum, task) => sum + (task.estimatedLines ?? 0), 0);
+  return {
+    usage: {
+      tokens: sumOrNull(usages.map((usage) => usage.tokens)),
+      // 任一 Run 未知（tokens 为 null）或不完整，阶段读数就不完整。
+      complete: usages.every((usage) => usage.complete && usage.tokens !== null),
+      growth: {
+        tokens: sumOrNull(usages.map((usage) => usage.growth.tokens)),
+        complete: usages.every((usage) => usage.growth.complete && usage.growth.tokens !== null),
+      },
+      reason: firstReason(usages),
+    },
+    lines: {
+      added: sumOrNull(lines.map((line) => line.added)),
+      deleted: sumOrNull(lines.map((line) => line.deleted)),
+      complete: lines.every((line) => line.complete && line.added !== null && line.deleted !== null),
+      reason: firstReason(lines),
+    },
+    estimatedLines,
+  };
+}
+
+/** §10.5/§13.2.4: a strict over-line test that is false whenever the reading is unknown or incomplete. */
+export function stageOverLine(reading: StageReadingV1, limits: PlanLoopLimitsV1): boolean {
+  if (reading.estimatedLines === null) return false;
+  if (reading.usage.tokens === null || !reading.usage.complete) return false;
+  // 严格大于：正好在预算上不算超线。
+  return reading.estimatedLines > limits.stageLineBudget || reading.usage.tokens > limits.stageTokenBudget;
+}
+
+/**
+ * §10.5: an empty set sums to 0; when every entry is unknown the field is
+ * unknown (null); a mix sums the known part and the aggregate stays incomplete
+ * (`complete: false` at the caller), never discarding the known lower bound.
+ */
+function sumOrNull(values: readonly (number | null)[]): number | null {
+  if (values.length === 0) return 0;
+  let sum = 0;
+  let known = 0;
+  for (const value of values) {
+    if (value === null) continue;
+    sum += value;
+    known += 1;
+  }
+  return known === 0 ? null : sum;
+}
+
+/** 第一条非空原因，读失败的原因沿聚合往上带。 */
+function firstReason(readings: readonly { reason: string | null }[]): string | null {
+  for (const reading of readings) {
+    if (reading.reason !== null) return reading.reason;
+  }
+  return null;
 }

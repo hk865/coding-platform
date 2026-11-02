@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 2,
+      "version": 4,
       "mentionsTools": []
     },
     "consultation-received-input": {
@@ -50,6 +50,11 @@
     },
     "intervention-planning": {
       "file": "templates/intervention-planning.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
+    "plan-review-input": {
+      "file": "templates/plan-review-input.txt",
       "version": 1,
       "mentionsTools": []
     },
@@ -156,7 +161,7 @@
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 3,
+      "version": 4,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
@@ -210,6 +215,8 @@
     "submit_secretary_answer": "tools/submit_secretary_answer.json",
     "submit_initial_plan": "tools/submit_initial_plan.json",
     "submit_initial_questions": "tools/submit_initial_questions.json",
+    "submit_plan_round": "tools/submit_plan_round.json",
+    "submit_plan_review": "tools/submit_plan_review.json",
     "hand_off": "tools/hand_off.json"
   }
 }

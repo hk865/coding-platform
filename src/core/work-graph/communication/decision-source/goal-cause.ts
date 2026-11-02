@@ -21,6 +21,9 @@ const KNOWN_CAUSE_CODES: ReadonlySet<string> = new Set([
   'budget_exhausted', 'not_reworkable', 'unknown_outcome', 'interrupted_pending_resume',
   'automation_confirmation_required',
   'missing_initial_architecture', 'missing_initial_completion_policy',
+  // §5.5.3: derived (not persisted) when a refinement need exists and the
+  // authoritative adviser recipient read returns null.
+  'no_adviser',
 ]);
 
 /**

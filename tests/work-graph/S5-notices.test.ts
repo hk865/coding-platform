@@ -21,6 +21,7 @@ import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
 import { decodeNoticeOrigin } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { GOAL_B, OPERATOR, WORKSPACE, WORKSPACE_SCOPE, openS5DecisionFixture,
   type S5DecisionFixture, type S5FixtureKind } from '../helpers/S5-decision-fixture.js';
@@ -59,7 +60,10 @@ function harness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePor
   const reads = createDecisionReadModel({ records: f.records, cardSources: [], noticeSources: sources,
     conflicts: createGoalConflictAssembler({ records: f.records,
       catalog: createArchitectureCatalogService({ records: f.records }),
-      executedFiles: createGoalExecutedFilesReader({ records: f.records }) }), positions, displayTokens });
+      executedFiles: createGoalExecutedFilesReader({ records: f.records }) }), positions, displayTokens,
+    lineage: { messages: createSessionMailbox(mailboxDependencies(f)),
+      queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),
+      plans: f.b2.base.plans } });
   const page = async (options: { categories?: NoticeCategoryV1[]; limit?: number } = {}) => ready(await reads.queryDecisionQueue(f.ctx,
     { workspace: WORKSPACE_SCOPE, sections: ['notices'], ...(options.categories === undefined ? {} : { categories: options.categories }),
       page: { limit: options.limit ?? 50 } }));

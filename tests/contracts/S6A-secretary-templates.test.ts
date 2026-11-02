@@ -27,13 +27,13 @@ const EXISTING_DIGESTS = {
     'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
-    'initial-planning-answer': '68dea8aeb3b5fa89e00c991bacc17648875fbe91b27822fd5947687cd73a69e6',
+    'initial-planning-answer': '48f4e0beec1750b2ee7dc29c85ed1aa594a7164bc88a11ec62a735d86abb2806',
     base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
     'skill-platform-work': 'eb4bb377bcc4f98259878c47260d5c68ad01c2ce18fbe3b67e97c495a29719f1',
     'skill-platform-secretary': 'cb02659d41f8d91e430352da33b0a17154161a2edb30cb9d66e1823afa1da8d5',
-    'skill-platform-adviser': '5f2163a75ed75a613e29a2f51139fe8f78b3ec73ab5a3084d7635c1d4407b296',
+    'skill-platform-adviser': 'a396cc8ee564f5bbd7f96ea3b22b54cc3ecffb90c00850e5a1eae6cc1dd24b79',
     'skill-platform-scribe': 'fd7b2ac9359d991e3181d8c2dd73d23334683601b5b6e459f161519ba76b103d',
-    'skill-platform-reviewer': '275be65bdac92bc2e1cf1b11dede3e3f049f6e356eb897b4fa6b2a737b575983',
+    'skill-platform-reviewer': '4fa780b2a47de2e01145fef5363a2cac93409fc49f220ed63b1c9e77b474fc9a',
 } as const;
 
 const secretaryAnswerText = [

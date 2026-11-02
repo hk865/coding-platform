@@ -102,11 +102,15 @@ export async function proveInterventionSource(input: {
   }
   // A withdrawn or unreleased message is never an admitted source.
   if (messageConsumptionProblem(message) !== null) return { status: 'ready', value: null };
-  // Book §3.10 item 6: a person, or an authorized agent's released `action_request`.
+  // A person, an authorized agent's released `action_request`, or the fixed Host
+  // system round's `action_request` (§5.2.4 (2), DR-P2-02/D2). The text prefix is
+  // never parsed here.
   const person = message.sender.kind === 'host' && message.sender.actor.kind === 'human';
   const releasedRequest = (message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round')
     && message.intent === 'action_request' && message.release === 'released';
-  if (!person && !releasedRequest) return { status: 'ready', value: null };
+  const systemRequest = message.sender.kind === 'host' && message.sender.actor.kind === 'system'
+    && message.intent === 'action_request';
+  if (!person && !releasedRequest && !systemRequest) return { status: 'ready', value: null };
   return { status: 'ready', value: {
     sourceMessageRef: { ...source },
     guards: [

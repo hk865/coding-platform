@@ -46,8 +46,13 @@ import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
 import type {
   HostOutboxItemV1, HostOutboxKeysetV1, HostOutboxSourceV1, HostOutboxStoredItemV1,
-  SessionMailboxPort, SessionMessageSendInputV1,
+  SessionMailboxPort, SessionMessage, SessionMessageSendInputV1,
 } from '../core/work-graph/model/communication-contracts.js';
+import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
+import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../contracts/plan.js';
+import { interventionPlanningQueryRefs } from '../contracts/query-job.js';
+import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
+import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
@@ -57,10 +62,13 @@ import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../contracts/verification.js';
-import { decisionSourceKey, type DecisionSourceV1, type NoticePositionV1 } from '../contracts/goal-decisions.js';
+import {
+  decisionSourceKey, decisionSubjectGoalRef, type DecisionSourceV1, type NoticePositionV1,
+} from '../contracts/goal-decisions.js';
 import type { NoticeItemV1 } from '../core/work-graph/model/decision-contracts.js';
 import { compareNoticePositions } from '../core/work-graph/views/notice-position.js';
 import { createChangeFeed } from './change-feed.js';
+import type { WorkflowAdvanceResult } from '../business/workflow/contracts.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
 import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver } from './auto-capture-driver.js';
@@ -113,6 +121,7 @@ import {
   LOCAL_WORKBENCH_ROLE,
   LOCAL_WORKBENCH_ROLE_BINDING,
   narrowResolvedReadonlyCommands,
+  planningRoundRuntimeBudget,
   PLATFORM_SKILL_RESOURCE_ROOT,
   runtimeModelId,
   settingsModelSecretVariable,
@@ -126,6 +135,8 @@ import {
 import { createWorkbenchServer, type WorkbenchAddress, type WorkbenchServer } from './server.js';
 import { createDiskPromptPackSource, isPathWithin } from './prompt-packs.js';
 import { createSecretaryProfiles } from './secretary-profiles.js';
+import { sendSystemRound } from './system-round.js';
+import { exportBooks as readTaskbookExport, exportTaskbooksForPlan } from './taskbook-export.js';
 import { createSessionDutyResolver } from '../composition/session-duty.js';
 import type { SessionDutyResolver } from '../business/workflow/ports.js';
 
@@ -699,6 +710,37 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // (W-11): one process-local closing signal, trusted option only; not a setting, route or
   // persisted field. `close()` aborts it first so live Work pauses at its next safe point.
   const hostClosing = new AbortController();
+  // PL §6.4.3: the Host's one detached taskbook export set. Adoption never waits
+  // for it, and `close` awaits every job before the stores go away. A failure is
+  // never rethrown into the adoption; the notice's own probe re-reads the files.
+  const pendingTaskbookExports = new Set<Promise<void>>();
+  // PL §6.4.3: the candidate versions already exported by this Host, keyed by the source's pin so a later
+  // round skips even the read. A restart empties it and exports once more: the file is rebuildable.
+  const exportedCandidates = new Set<string>();
+  type AdoptedPlanExport = { plan: PlanRevisionDraft | PlanRevisionSnapshot;
+    scope: { projectId: string; workspaceId: string; goalId: string } };
+  function scheduleTaskbookExport(work: AdoptedPlanExport): void {
+    const job = exportTaskbooksForPlan({ root: settingsDirectory ?? null,
+      workspaceRoots: workspaces.map(workspace => workspace.root), plan: work.plan, scope: work.scope })
+      .then(() => undefined)
+      .catch(() => { /* a failed export is a later probe's fact, never the adoption's result */ })
+      .finally(() => { pendingTaskbookExports.delete(job); });
+    pendingTaskbookExports.add(job);
+  }
+  /** The one adoption wrapper (§6.4.3): a committed result starts one export; the result is returned unchanged. */
+  function adoptAndExport<A extends unknown[], R extends { status: string }>(
+    adopt: (...args: A) => Promise<R>,
+    adoptedPlan: (result: R, args: A) => AdoptedPlanExport | null | Promise<AdoptedPlanExport | null>,
+  ): (...args: A) => Promise<R> {
+    return async (...args: A) => {
+      const result = await adopt(...args);
+      if (result.status === 'committed') {
+        const exported = await adoptedPlan(result, args);
+        if (exported !== null) scheduleTaskbookExport(exported);
+      }
+      return result;
+    };
+  }
   let platform: Awaited<ReturnType<typeof createTargetPlatform>>;
   try {
     platform = await createTargetPlatform({
@@ -719,6 +761,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       resourceCaps,
       operatorActor: actor,
       ...(promptsRoot === undefined ? {} : { promptPacks: createDiskPromptPackSource(promptsRoot) }),
+      // PL §5.2.5/§6.7.1: the Host's own system-round wrapper over the ONE mailbox
+      // this root owns. Composition may not import `src/app`, so the factory is
+      // supplied here; the mailbox it hands back is the same one the platform publishes.
+      systemRoundSend: messages => (ctx, input) => sendSystemRound(ctx, { messages }, input),
+      // PL §6.4.3: the read-only taskbook probe rooted in this Host's settings directory.
+      // Without a settings directory it is the real `not_configured`, never `unavailable`.
+      exportBooks: input => readTaskbookExport({
+        root: settingsDirectory ?? null, plan: input.plan, scope: input.scope,
+      }),
+      // L-02 §6.4.3: an automatic adoption runs through the SAME wrapper at the
+      // commit itself; the published `platform.plans` stays raw (the route binding
+      // already wraps it, so wrapping both would export one adoption twice).
+      wrapPlanChange: raw => adoptAndExport(raw, (result, [ctx]) => result.status === 'committed'
+        ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
+          workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }
+        : null),
       // L8: the sink exists before the driver; its calls are ignored until then.
       onArchitectureCaptureTrigger: event => { architectureCaptureTrigger?.(event); },
       // A request command's commit reaches the wake loop of the workspace it
@@ -741,6 +799,38 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     readRoleSpec: platform.roles.readRoleSpec.bind(platform.roles),
     configuration: workflow,
   });
+
+  /**
+   * PL §6.4.3: a candidate result (`value.source`) exports its draft once through
+   * the same scheduler. The adoption itself registers its export at the commit
+   * (the Host option above); this path never reads an `adopt_plan` receipt. The
+   * result itself is never changed, and a failed read only skips this export:
+   * nothing is recorded, so the next round tries again. A started export is
+   * recorded even if it later fails (no retry; the card shows the failure line).
+   */
+  async function exportAdvanceResult(ctx: CoreCallContext, result: WorkflowAdvanceResult): Promise<void> {
+    if (result.status !== 'ready') return;
+    const value = result.value;
+    const source = value.source;
+    if (source === undefined || source === null) return;
+    const proposalPin = source.pins.find(pin => pin.ref.aggregateType === 'PlanProposal');
+    const goalRef = decisionSubjectGoalRef(source);
+    if (proposalPin === undefined || goalRef === null) return;
+    const candidateKey = canonicalKey(proposalPin);
+    if (exportedCandidates.has(candidateKey)) return;
+    exportedCandidates.add(candidateKey);
+    const proposal = await platform.plans.readPlanProposal(ctx, { ...proposalPin.ref as PlanProposalRef });
+    if (proposal.status !== 'ready') { exportedCandidates.delete(candidateKey); return; }
+    scheduleTaskbookExport({ plan: proposal.value.draft, scope: { projectId: goalRef.projectId,
+      workspaceId: ctx.workspaceId ?? '', goalId: goalRef.goalId } });
+  }
+  const workflowForDriver = { ...platform.workflow,
+    advanceWork: async (ctx: CoreCallContext, input: Parameters<typeof platform.workflow.advanceWork>[1],
+      internal?: Parameters<typeof platform.workflow.advanceWork>[2]) => {
+      const result = await platform.workflow.advanceWork(ctx, input, internal);
+      await exportAdvanceResult(ctx, result);
+      return result;
+    } };
 
   // L8 (book ruling 2): ONE automatic-capture driver for this Host, over the
   // platform's observed/catalog ports. Its detached work is the platform's own
@@ -797,8 +887,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     onCommandChange: changes.commandChanged,
     resourceCaps,
   });
+  // PL §5.5.1 steps 5–6: the driver registers a wait, drains the Host's one
+  // goal-waits handler, then parks/sends. The handler is created below, inside
+  // the lease block; the closure runs only after this Host has returned.
+  let goalWaitQueueOwner: QueueHandler | undefined;
   const collaborationDriver = createCollaborationDriver({
-    workflow: platform.workflow,
+    workflow: workflowForDriver,
     runtime: platform.runtime,
     sessions: platform.sessions,
     executions: platform.executions,
@@ -808,6 +902,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // The same per-scope registries the goal-waits queue drains: one instance per scope,
     // shared with the adapter, and the Host's observed head stamped before the fact read.
     goalWaits: goalWaitWakesOf,
+    drainGoalWaits: async scope => {
+      await goalWaitQueueOwner?.drain(scope, {
+        maxItems: WAKE_LIMIT, continuation: null, signal: hostClosing.signal,
+      });
+    },
     observedCursor,
     onChange: changes.driverChanged,
     // The Goal interruption is resolved only once a driver actually starts: a same-seed replay never reaches here.
@@ -849,6 +948,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // BW's one Workflow advance for the goal; the same host context every consume pass uses.
       wake: (scope, goalRef) => collaborationDriver.wake(hostContext(scope), goalRef),
       rebuild: createGoalWaitRebuild({ ctx: scope => hostScopeContext(scope, actor), sessions: platform.sessions, facts: platform.sessionFacts, released: platform.messageRelease,
+        // The goal loop's own candidate reads (§6.1.6); the accepted arm walks the source lineage with the
+        // same mailbox/Query/Plan reads the readers use.
+        planCandidates: platform.planReaders.planCandidates.bind(platform.planReaders),
+        acceptedCandidatesOf: platform.planReaders.acceptedCandidatesOf.bind(platform.planReaders),
+        messages: platform.messages, queries: platform.queries, plans: platform.plans,
         held: async (ctx, goalRef) => {
           if (platform.automationPolicy().resumeOnStartup === 'auto') return false;
           const read = await goalFanOut.readGoalDisplay(ctx, { goalRef });
@@ -856,6 +960,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           return read.value.display.causes.some(cause => 'interruption' in cause);
         } }),
     });
+    goalWaitQueueOwner = goalWaitQueue;
     loop.register(GOAL_WAITS_QUEUE, goalWaitQueue, {
       aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
     });
@@ -1814,6 +1919,44 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return (await inputCompletion(ctx, message)) === 'completed';
   }
   /**
+   * C-25/DR-P2-01: is the message this closing would reply to an executor's
+   * still-open wait? The target is the source Query's `repliesToMessageRef`, else
+   * the one lineage root for a Host system round, else the source itself. A read
+   * failure counts as "still waiting", so a candidate/questions close-out never
+   * replies the executor M by accident; the reason alone never decides.
+   */
+  async function executorWaitOf(ctx: CoreCallContext, message: SessionMessage): Promise<boolean> {
+    const executorSender = (sender: SessionMessage['sender']): boolean =>
+      sender.kind === 'work_run' || sender.kind === 'secretary_round';
+    let targetRef = message.ref;
+    if (message.sender.kind === 'host' && message.sender.actor.kind === 'system') {
+      const query = await platform.queries.readQueryJob(ctx,
+        interventionPlanningQueryRefs(message.ref).queryJobRef);
+      if (query.status !== 'ready') return true;
+      const execution = query.value.job.job.intent.execution;
+      const repliesTo = execution.kind === 'intervention_planning' ? execution.repliesToMessageRef : undefined;
+      if (repliesTo !== undefined) {
+        targetRef = repliesTo;
+      } else {
+        const lineage = await planSourceLineageOf(ctx,
+          { messages: platform.messages, queries: platform.queries, plans: platform.plans }, message.ref);
+        if (lineage.status !== 'ready') return true;
+        targetRef = lineage.value.rootMessage;
+      }
+    } else if (!executorSender(message.sender)) {
+      return false;
+    }
+    const same = targetRef.projectId === message.ref.projectId
+      && targetRef.workspaceId === message.ref.workspaceId
+      && targetRef.messageId === message.ref.messageId;
+    const target = same ? null : await platform.messages.readMessage(ctx, targetRef);
+    if (target !== null && target.status !== 'ready') return true;
+    const targetMessage = target === null ? message : (target as { status: 'ready'; value: SessionMessage }).value;
+    if (!executorSender(targetMessage.sender)) return false;
+    if (targetMessage.response !== null) return false;
+    return waitStateOf(targetMessage, waitFactsOfRecord(targetMessage)).state === 'open';
+  }
+  /**
    * One workspace's consume batch over C's published view: up to `CONSUME_BATCH` candidate Sessions in
    * Session-key order, each at most one turn, and the next continuation key. A Session with no matching
    * profile or no Goal is skipped with its reason and stays queued; `notify` never reaches this loop because
@@ -1844,11 +1987,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         ?? (read.value.taskRef === null ? null : { aggregateType: 'Goal' as const,
           projectId: read.value.taskRef.projectId, goalId: read.value.taskRef.goalId });
       if (offer.kind === 'person_message' || offer.kind === 'action_request') {
+        // §5.3.5: only a Host system round is the planning-round profile; its reserve is
+        // the one formula against this profile's own window, frozen as the request-side budget.
+        const planningRound = offer.kind === 'action_request'
+          && read.value.sender.kind === 'host' && read.value.sender.actor.kind === 'system';
         // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
         // other message of the Session stays queued for a later safe point.
         const interventionInput = {
           messageRef: offer.messageRef, roleBinding: profile.roleBinding,
-          runtimeBudget: profile.runtimeBudget, budget: profile.budget, consumerId: profile.consumerId,
+          runtimeBudget: planningRound ? planningRoundRuntimeBudget(profile) : profile.runtimeBudget,
+          budget: profile.budget, consumerId: profile.consumerId,
         };
         const claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
         if (claimed?.status === 'claimed') {
@@ -1875,7 +2023,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
             }));
             if (notice.status !== 'committed') continue;
           }
-          await platform.workflow.handleIntervention?.(ctx, { ...interventionInput, completion: 'associate_answer' });
+          // §5.2.4/C-25: only an executor's open wait defers M on a candidate/question close-out;
+          // every terminal answer still replies it. R itself is associated in both cases.
+          const candidateOrQuestions = claimed.reason === 'candidate' || claimed.reason === 'questions';
+          const executorWait = candidateOrQuestions && await executorWaitOf(ctx, read.value);
+          await platform.workflow.handleIntervention?.(ctx, { ...interventionInput,
+            completion: 'associate_answer', replyToOriginal: !executorWait });
         } else if (claimed?.status === 'no_answer') {
           // The third ending is a real termination: the fixed notice, then the source withdrawal. Both carry the
           // fixed identities, so a crash between them replays the one already committed and finishes the other.
@@ -2442,19 +2595,48 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     return written;
   };
+  // PL §6.4.3 adoption point 1: the committed first plan exports before the driver starts;
+  // the result is unchanged and the export is detached.
+  const adoptInitializationWithExport = adoptAndExport(
+    (ctx: CoreCallContext, input: Parameters<CoreRouteBindings['adoptInitialization']>[1]) =>
+      routeBindings.adoptInitialization(ctx, input),
+    async (result, [ctx, input]) => {
+      if (result.status !== 'committed') return null;
+      const graph = await platform.plans.queryTaskGraph(ctx,
+        { goalRef: input.expectedGoal.ref, planRef: result.receipt.plan });
+      return graph.status === 'ready' ? { plan: graph.value.plan, scope: {
+        projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '',
+        goalId: input.expectedGoal.ref.goalId } } : null;
+    });
   // An adopted first plan starts its Goal's collaboration driver, replayed commits included (the driver's seed
   // dedupes them); only a context with a workspace starts. The adoption answer is unchanged.
   const adoptInitialization: CoreRouteBindings['adoptInitialization'] = async (ctx, input) => {
-    const result = await routeBindings.adoptInitialization(ctx, input);
+    const result = await adoptInitializationWithExport(ctx, input);
     if (result.status === 'committed' && ctx.workspaceId !== undefined) {
       await startGoalDriver({ projectId: ctx.projectId, workspaceId: ctx.workspaceId },
         input.expectedGoal.ref, `plan-adopted:${input.expectedGoal.ref.goalId}:${result.receipt.plan.planId}`);
     }
     return result;
   };
+  // PL §6.4.3 adoption point 2: the `plans/apply` binding is the same wrapper; the
+  // accepted snapshot is the export input, and the route result is unchanged.
+  const applyPlanChangeWithExport = adoptAndExport(
+    (...args: Parameters<CoreRouteBindings['applyPlanChange']>) => routeBindings.applyPlanChange(...args),
+    (result, [ctx]) => result.status === 'committed'
+      ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
+        workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }
+      : null);
+  // PL §6.4.3: the public advance takes the same candidate/adoption export path as the
+  // driver; the route's own release arming stays inside `routeBindings.advanceWork`.
+  const advanceWorkWithExport: CoreRouteBindings['advanceWork'] = async (ctx, input, internal) => {
+    const advanced = await routeBindings.advanceWork(ctx, input, internal);
+    await exportAdvanceResult(ctx, advanced);
+    return advanced;
+  };
   const server: WorkbenchServer = createWorkbenchServer({
     token,
-    bindings: leaseGated({ ...routeBindings, registerWorkspace, adoptInitialization }),
+    bindings: leaseGated({ ...routeBindings, registerWorkspace, adoptInitialization,
+      applyPlanChange: applyPlanChangeWithExport, advanceWork: advanceWorkWithExport }),
     actor,
     bootstrap: buildBootstrap,
     changes,
@@ -2508,6 +2690,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await goalFanOut.close();
         await workbenchToolsClosed;
         await autoCaptureClosed;
+        // PL §6.4.3: every detached taskbook write finishes before the stores go away.
+        await Promise.all([...pendingTaskbookExports]);
         await platform.close();
         // HL-06: the lock file goes only while it still names this instance; a Host that never held it never touches it.
         await instanceLease.release().catch(() => undefined);

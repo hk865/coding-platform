@@ -92,6 +92,8 @@ export type StartupReconcilePlatform = {
     reconcileQuery(ctx: CoreCallContext, input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }):
       Promise<QueryReconcileReport>;
     readQueryExecution(ctx: CoreCallContext, ref: QueryRunRef): Promise<ReadResult<QueryExecutionRecord>>;
+    /** Step 3: hand back a line whose Query left an open Turn; the problem text, or null. Optional like `maintainSessions`. */
+    closeQueryLineTurn?: (ctx: CoreCallContext, queryRunRef: QueryRunRef) => Promise<string | null>;
     /** Step 5 (CTL-08(a)/(d)/(e)): the classifier reads the accepted steers of an ended Run's Turn. */
     reconcileControls(ctx: CoreCallContext, input: { record: TaskExecutionRecord; hostInstanceId: string; queuedSteers: boolean }):
       Promise<RunReconcileReport>;
@@ -433,9 +435,18 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     }
 
     // Step 3: QueryRuns, found through the Sessions they occupy.
+    const closeQueryLine = async (queryRunRef: QueryRunRef): Promise<void> => {
+      const problem = await platform.reconcile.closeQueryLineTurn?.(ctx, queryRunRef) ?? null;
+      if (problem !== null) out.problems.push(`${refText(queryRunRef)}: the open Turn stayed (${problem})`);
+    };
     for (const session of sessions) {
       const occupancy = session.occupancy;
-      if (occupancy === null || occupancy.kind !== 'execution' || occupancy.executionRef.aggregateType !== 'QueryRun') continue;
+      if (occupancy === null || occupancy.kind !== 'execution' || occupancy.executionRef.aggregateType !== 'QueryRun') {
+        // A crash between the reconcile and the closure leaves the line free and the Turn open.
+        const last = session.lastExecutionRef;
+        if (session.healthConclusion === 'kernel_turn_open' && last?.aggregateType === 'QueryRun') await closeQueryLine(last);
+        continue;
+      }
       const queryRunRef = occupancy.executionRef;
       const read = await platform.reconcile.readQueryExecution(ctx, queryRunRef);
       if (read.status !== 'ready') {
@@ -444,6 +455,7 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
       }
       const result = await platform.reconcile.reconcileQuery(ctx, { record: read.value, hostInstanceId, probe: await probeOf(session) });
       out.queries.push({ ref: refText(result.queryRunRef), row: result.row, status: result.status, reason: result.reason });
+      if (result.row === 'Q-04' && result.status === 'reconciled') await closeQueryLine(queryRunRef);
     }
 
     // Step 4: executing checks (VR-04).

@@ -230,7 +230,7 @@ export const S6A_MEMORY_TEXTS = {
   },
 } as const;
 
-const asRecord = (value: unknown): Record<string, unknown> =>
+export const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
 /** One core route over HTTP as the world's human operator; a non-200 answer throws. */
@@ -240,12 +240,12 @@ async function route(world: S6AMemoryWorld, suffix: string, body: unknown, what:
   return answer.body;
 }
 
-function committedValue<T>(body: unknown, what: string): T {
+export function committedValue<T>(body: unknown, what: string): T {
   if (asRecord(body)['status'] !== 'committed') throw new Error(`S6A memory: ${what} did not commit: ${JSON.stringify(body)}`);
   return asRecord(body)['value'] as T;
 }
 
-function readyValue<T>(body: unknown, what: string): T {
+export function readyValue<T>(body: unknown, what: string): T {
   const read = body as ReadResult<T>;
   if (read.status !== 'ready') throw new Error(`S6A memory: ${what} is not ready: ${JSON.stringify(body)}`);
   return read.value;

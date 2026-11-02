@@ -141,7 +141,7 @@ describe('queryManifestProblem', () => {
     const plain = {
       schemaVersion: 1,
       kind: 'query_execution',
-      contextAssembly: { callKind: 'query-copy' },
+      contextAssembly: { callKind: 'query-copy' }, answerShape: null,
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
       focusPlan: null,
       request: null,
@@ -153,7 +153,7 @@ describe('queryManifestProblem', () => {
     const secretary = {
       schemaVersion: 1,
       kind: 'query_execution',
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: null,
       focusPlan: null,
       request: REQUEST_FACTS,
@@ -163,7 +163,7 @@ describe('queryManifestProblem', () => {
 
   it('accepts a request round with a goal when the facts name the same goal', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
       focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
@@ -172,7 +172,7 @@ describe('queryManifestProblem', () => {
 
   it('accepts a brief operation and a GoalRef grant list', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: null,
       focusPlan: null,
       request: {
@@ -185,7 +185,7 @@ describe('queryManifestProblem', () => {
 });
 
 const secretaryManifest = (request: unknown) => ({
-  contextAssembly: { callKind: 'secretary' }, goal: null, focusPlan: null, request,
+  contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary', goal: null, focusPlan: null, request,
 });
 
 describe('rejects: malformed request-fact understanding projections', () => {
@@ -208,10 +208,27 @@ describe('rejects: malformed request-fact understanding projections', () => {
   });
 });
 
+describe('rejects: a manifest without a valid frozen answer shape', () => {
+  const plain = {
+    contextAssembly: { callKind: 'query-copy' }, answerShape: null,
+    goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
+    focusPlan: null, request: null,
+  };
+  it('rejects a missing answerShape with exactly the one issue', () => {
+    const { answerShape: _omitted, ...missing } = plain;
+    expect(queryManifestProblem(missing)).toBe('the Query manifest answerShape is not a valid answer shape');
+  });
+
+  it('rejects an unknown answerShape with exactly the one issue', () => {
+    expect(queryManifestProblem({ ...plain, answerShape: 'plan' }))
+      .toBe('the Query manifest answerShape is not a valid answer shape');
+  });
+});
+
 describe('rejects: a manifest whose goal and request facts disagree', () => {
   it('a null goal outside a secretary round', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'query-copy' },
+      contextAssembly: { callKind: 'query-copy' }, answerShape: null,
       goal: null,
       focusPlan: null,
       request: null,
@@ -220,7 +237,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
 
   it('a secretary round without request facts', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: null,
       focusPlan: null,
       request: null,
@@ -229,7 +246,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
 
   it('request facts on a non-secretary Query', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'query-copy' },
+      contextAssembly: { callKind: 'query-copy' }, answerShape: null,
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
       focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
@@ -238,7 +255,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
 
   it('a round material whose since is not a commit cursor', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: null,
       focusPlan: null,
       request: { ...REQUEST_FACTS, round: { ...MATERIAL, since: 'not-a-cursor' } },
@@ -247,7 +264,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
 
   it('a batch round without its run reference', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: null,
       focusPlan: null,
       request: { ...REQUEST_FACTS, batch: [{ ...MATERIAL, runRef: undefined }] },
@@ -256,7 +273,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
 
   it('a no-goal request that freezes an effective goal', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'secretary' },
+      contextAssembly: { callKind: 'secretary' }, answerShape: 'secretary',
       goal: null,
       focusPlan: null,
       request: { ...REQUEST_FACTS, effectiveGoalId: 'g1' },
@@ -267,7 +284,7 @@ describe('rejects: a manifest whose goal and request facts disagree', () => {
 describe('rejects: a manifest that omits its frozen Plan', () => {
   it('a goal-bound manifest without the focusPlan key (decision 79-1: no default for a missing field)', () => {
     expect(queryManifestProblem({
-      contextAssembly: { callKind: 'query-copy' },
+      contextAssembly: { callKind: 'query-copy' }, answerShape: null,
       goal: { ref: { aggregateType: 'Goal', projectId: 'p1', goalId: 'g1' }, revision: 2 },
       request: null,
     })).toBe('the Query manifest focusPlan is not a Plan pin');

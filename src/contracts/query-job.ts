@@ -55,6 +55,30 @@ export type SecretaryRequestManifestV1 = {
     understandingGrants: GoalRef[];
 };
 /**
+ * The answer shape a Query was prepared with (spec §5.2.7). `secretary` and
+ * `initial` are the two request-round shapes; the other two belong to a
+ * planning line and are frozen on its `intervention_planning` execution.
+ */
+export type QueryAnswerShapeV1 = 'secretary' | 'initial' | 'plan_round' | 'plan_review';
+/** The planning-line subset written to `execution.answerShape`; `text` is the default. */
+export type PlanningAnswerShapeV1 = 'plan_round' | 'plan_review' | 'text';
+
+/** The one shape mapping used by preparation and start-up (§5.2.7). */
+export function queryAnswerShapeOf(
+    execution: QueryJobIntentV1['execution'],
+    requestExecutionKind: SecretaryRequestManifestV1['executionKind'] | null,
+): QueryAnswerShapeV1 | null {
+    if (requestExecutionKind !== null) {
+        return requestExecutionKind === 'semantic_query' ? 'secretary' : 'initial';
+    }
+    if (execution.kind === 'intervention_planning') {
+        if (execution.answerShape === 'plan_round') return 'plan_round';
+        if (execution.answerShape === 'plan_review') return 'plan_review';
+        return null;
+    }
+    return null;
+}
+/**
  * The one canonical `request_understanding` command: one unfinished root of
  * the old secretary that a handoff operation's understanding generation covers,
  * and the goals to cover with the pointer each was checked at. The operation's
@@ -289,6 +313,16 @@ export type QueryJobIntentV1 = {
         };
         /** L11: the planning Query starts from a real message; required on `intervention_planning`, absent on every other kind. */
         sourceMessageRef?: SessionMessageRef;
+        /**
+         * The submit-tool shape frozen when the platform creates the Query; only
+         * `intervention_planning` carries it, and only platform code writes it.
+         */
+        answerShape?: PlanningAnswerShapeV1;
+        /**
+         * The executor message a `planresume:` round ultimately replies to; only
+         * `intervention_planning` carries it (spec #8, ruling DR-P1-04).
+         */
+        repliesToMessageRef?: SessionMessageRef;
         implementationAuthorization?: {
             requestId: string;
             writeScope: [
@@ -300,7 +334,7 @@ export type QueryJobIntentV1 = {
     };
 };
 type QueryJobStatus = "pending" | "running" | "answered" | "closed";
-function validSessionMessageRef(value: unknown): boolean {
+export function validSessionMessageRef(value: unknown): value is SessionMessageRef {
     if (!isRecord(value))
         return false;
     const keys = Object.keys(value);
@@ -361,6 +395,14 @@ export function validQueryExecution(value: QueryJobIntentV1['execution']): boole
         if (value.sourceMessageRef === undefined || !validSessionMessageRef(value.sourceMessageRef))
             return false;
     } else if (value.sourceMessageRef !== undefined)
+        return false;
+    // Ruling DR-P1-04: the reply ref belongs to intervention_planning only.
+    if (value.repliesToMessageRef !== undefined
+        && (value.kind !== 'intervention_planning' || !validSessionMessageRef(value.repliesToMessageRef)))
+        return false;
+    // §5.2.7: answerShape belongs to intervention_planning only, from the three planning values.
+    if (value.answerShape !== undefined
+        && (value.kind !== 'intervention_planning' || !['plan_round', 'plan_review', 'text'].includes(value.answerShape)))
         return false;
     if (value.consultation !== undefined && (value.kind !== 'semantic_query' || !validConsultationBinding(value.consultation)))
         return false;
