@@ -389,14 +389,14 @@ describe('R5 one view state', () => {
     expect(withClass([buttonWith(view.tree, 'DAG')!], 'is-on')).toBe(buttonWith(view.tree, 'DAG'));
   }, 15_000);
 
-  it('R5b selects the DAG tab on the loading first render', () => {
+  it('R5b keeps the DAG view on the loading first render; the shell draws no tab pressed', () => {
     const board = loadBoard('TaskMap', WORKING_BOARDS);
     const view = new BoardView(board, { ...board.defaults, readState: { status: 'loading' } });
     view.render();
     expect(view.instance.state.view).toBe('dag');
     const dag = buttonWith(view.tree, 'DAG');
     expect(dag).toBeDefined();
-    expect(withClass([dag!], 'is-on')).toBe(dag);
+    expect(withClass([dag!], 'is-on')).toBeUndefined();
     const outline = buttonWith(view.tree, '大纲');
     expect(outline).toBeDefined();
     expect(withClass([outline!], 'is-on')).toBeUndefined();
@@ -436,25 +436,25 @@ describe('R9 real fields show or hide their row', () => {
     expect(textOf(card!)).toContain('Independent work e32-work · 待命');
     expect(textOf(card!)).not.toContain('undefined');
 
-    /* Present: the adopted assignment's instruction is the real detail row. */
+    /* Present: the adopted assignment's instruction is the detail's 语义 row. */
     eventOf(buttonWith(view.tree, 'Independent work e32-work')!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
     const taskDetail = withClass(view.tree, 'detail');
     expect(taskDetail).toBeDefined();
-    expect(textOf(taskDetail!)).toContain('指派说明');
+    expect(textOf(taskDetail!)).toContain('语义');
     expect(textOf(taskDetail!)).toContain('Perform independent work e32-work');
 
-    /* Absent: the gate Task has no owner and no semantic body, so both rows vanish. */
+    /* The gate Task is 待执行 and nobody is responsible: 负责 says 未分配 (decision 49·01, prototype:2272); it has no semantic body, so 语义 vanishes. */
     eventOf(buttonWith(view.tree, 'DAG')!, 'onClick')!.handler({});
     eventOf(buttonWith(view.tree, 'Goal gate')!, 'onMouseEnter')!.handler({});
     const gateCard = withClass(view.tree, 'hcard');
     expect(gateCard).toBeDefined();
-    expect(textOf(gateCard!)).not.toContain('负责');
+    expect(textOf(gateCard!)).toContain('负责未分配；开工时开一条工作线');
     expect(textOf(gateCard!)).not.toContain('语义');
 
     eventOf(buttonWith(view.tree, 'Goal gate')!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
     const detail = withClass(view.tree, 'detail');
     expect(detail).toBeDefined();
-    expect(textOf(detail!)).not.toContain('负责的 Agent');
+    expect(textOf(detail!)).toMatch(/负责的 Agent\s*未分配；开工时开一条工作线/);
     expect(textOf(detail!)).not.toContain('语义');
     expect(textOf(detail!)).toContain('（验收）');
   }, 15_000);

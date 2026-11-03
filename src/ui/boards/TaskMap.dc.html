@@ -88,7 +88,7 @@ body { margin: 0; background: #1F1F1F; }
     <span class="head-title">任务图</span>
     <span class="tm-gname">{{goalName}}</span>
     <span class="sp"></span>
-    <span class="tm-goal"><span class="sq z10 {{goalSq}}" aria-hidden="true"></span>{{goalWord}}<span class="why">{{barWhy}}</span></span>
+    <span class="tm-goal"><sc-if value="{{hasGoal}}" hint-placeholder-val="{{ true }}"><span class="sq z10 {{goalSq}}" aria-hidden="true"></span></sc-if>{{goalWord}}<span class="why">{{barWhy}}</span></span>
     <div class="seg" role="group" aria-label="视图">
       <button class="{{viewDagCls}}" type="button" aria-pressed="{{isDag}}" onClick="{{showDag}}">DAG</button>
       <button class="{{viewOutlineCls}}" type="button" aria-pressed="{{isOutline}}" onClick="{{showOutline}}">大纲</button>
@@ -173,7 +173,9 @@ body { margin: 0; background: #1F1F1F; }
             <span class="wide">没有连线不等于可以放心并行：两个任务可能改同一个文件，详情的“重叠”一行列出它们</span>
             <span class="wide">竖条所在的时刻：方格外有圈的是那时在执行、在检查（或已交给检查、等检查开始）、已暂停或等你决定的任务，右栏列出的就是它们；淡的是那时还不在计划里的任务</span>
             <span class="wide">关键路径：到目标验收最长的一串没完成的依赖。未排定：没有依赖也没有验收条件的未来意图，不算起点。已取消、已替代的任务不画，只计数</span>
-            <span class="wide"><span class="sq z10 s-satisfied"></span><span class="sq z10 s-done-2"></span><span class="sq z10 s-done-1"></span><span class="sq z10 s-pending"></span>600 个任务时，每个阶段是一个框，框里的格子是一组：按已满足的比例由深到浅，一项都没满足是半填的灰格；有要处理或在动的任务时显示其中最紧急的状态。框之间的线合并了跨阶段的依赖，数字是合并了几条；点框的名字展开它的任务</span>
+            <sc-if value="{{legendFold}}" hint-placeholder-val="{{ false }}">
+              <span class="wide"><span class="sq z10 s-satisfied"></span><span class="sq z10 s-done-2"></span><span class="sq z10 s-done-1"></span><span class="sq z10 s-pending"></span>600 个任务时，每个阶段是一个框，框里的格子是一组：按已满足的比例由深到浅，一项都没满足是半填的灰格；有要处理或在动的任务时显示其中最紧急的状态。框之间的线合并了跨阶段的依赖，数字是合并了几条；点框的名字展开它的任务</span>
+            </sc-if>
             <span class="wide">查找和“需要关注”标出的任务保持原色，其余变淡。双击一个节点固定它，最多 3 个</span>
           </div>
         </sc-if>
@@ -465,9 +467,6 @@ body { margin: 0; background: #1F1F1F; }
             </div>
           </sc-if>
 
-          <sc-if value="{{wl.isEmpty}}" hint-placeholder-val="{{ false }}">
-            <div class="tm-empty"><p>这个目标还没有活动。</p></div>
-          </sc-if>
           <div class="{{wl.cls}}">
             <div class="wl-scroll">
               <div class="wl-axrow">
@@ -625,8 +624,6 @@ body { margin: 0; background: #1F1F1F; }
             </dd>
             <sc-if value="{{det.hasAgent}}" hint-placeholder-val="{{ true }}"><dt>负责的 Agent</dt>
             <dd>{{det.agent}}</dd></sc-if>
-            <sc-if value="{{det.hasInstruction}}" hint-placeholder-val="{{ false }}"><dt>指派说明</dt>
-            <dd>{{det.instruction}}</dd></sc-if>
             <sc-if value="{{det.hasSem}}" hint-placeholder-val="{{ true }}"><dt>语义</dt>
             <dd>{{det.sem}}</dd></sc-if>
             <dt>关系</dt>
@@ -804,9 +801,9 @@ class Component extends DCLogic {
       nodes[n.id] = n; root.kids.push(n);
     });
     (data.tasks || []).forEach((t) => {
-      const node = { id: 'task:' + t.id, name: t.name, kind: 'task', st: t.st, why: t.why || '', sem: '',
-        gate: t.gate, att: null, stageId: t.stageId || null, owner: t.owner || '', instruction: t.instruction || '',
-        files: [], rework: t.rework || [], deps: (t.deps || []).map((d) => 'task:' + d), next: [], kids: [] };
+      const node = { id: 'task:' + t.id, name: t.name, kind: 'task', st: t.st, why: t.why || '', sem: t.instruction || '',
+        gate: t.gate, att: null, stageId: t.stageId || null, owner: t.owner || '',
+        files: [], rework: t.rework || [], reworkCap: typeof t.reworkCap === 'number' ? t.reworkCap : null, deps: (t.deps || []).map((d) => 'task:' + d), next: [], kids: [] };
       const home = t.stageId && nodes['stage:' + t.stageId] ? nodes['stage:' + t.stageId] : root;
       home.kids.push(node);
     });
@@ -1138,9 +1135,8 @@ class Component extends DCLogic {
   taskCard(n) {
     const W = this.words(); const tree = this.taskModel();
     const path = this.shortPath(tree.byId, n);
-    /* A Task's own semantic text has no route; the adopted assignment's
-       instruction is the fact this card can show (f10). */
-    const sem = n.kind === 'task' ? (n.instruction || '') : (n.sem || '');
+    /* A Task's 语义 is the adopted assignment's instruction (taskModel, f10). */
+    const sem = n.sem || '';
     const c = { show: true, name: n.name, path: path, hasPath: !!path, sem: sem, hasSem: !!sem };
     if (n.kind === 'task') { const agent = this.taskAgent(n);
       return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: n.why ? '：' + n.why : '', agent: agent, hasAgent: this.fieldHasValue(agent) }); }
@@ -1230,15 +1226,15 @@ class Component extends DCLogic {
       const rw = n.rework || [];
       if (rw.length) rel.push({ k: '返工', items: [], files: [], lines: rw.map((r) => String(r)), hasText: false, text: '' });
       const agent = real && real.hasOwner ? real.owner : this.taskAgent(n);
-      const instruction = real ? real.instruction : (n.instruction || '');
       return { id: id, sq: 'sq ' + this.sqAt(n.st), name: n.name, tx: 'tx-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), why: n.why ? '：' + n.why : '',
-        crumbs: crumbs, agent: agent, hasAgent: !!agent, instruction: instruction, hasInstruction: !!instruction,
+        crumbs: crumbs, agent: agent, hasAgent: !!agent,
         sem: n.sem, hasSem: !!n.sem, rel: rel, group: false, canHandle: ['decide', 'failed', 'blocked'].indexOf(n.st) >= 0 };
     }
     const isRoot = n.kind === 'goal';
     const count = this.countLine(n);
     let rel;
-    if (isRoot) rel = [grp('阶段', n.kids.map((k) => item(k.id, false)), '')];
+    /* a Task without a stage (the Goal's acceptance) hangs under the root; 阶段 lists stages only */
+    if (isRoot) rel = [grp('阶段', n.kids.filter((k) => k.kind === 'stage').map((k) => item(k.id, false)), '')];
     else if (n.kids.some((k) => k.kids.length)) rel = [grp('批次', n.kids.map((k) => item(k.id, false)), '')];
     else {
       const act = n.kids.filter((k) => this.isActive(k.st));
@@ -1286,7 +1282,7 @@ class Component extends DCLogic {
           why: '', prev: null, gap: '', n: { st: b.activity ? b.activity.steps : 0, ed: b.activity ? b.activity.edits : 0, ck: 0, rq: 0 },
           cf: b.activity && b.activity.changedFiles ? b.activity.changedFiles : null,
           p: null, v: null, g: null, round: b.ordinal === null ? null : b.ordinal, checksBegun: b.checksBegun,
-          pauses: b.pauses || [], bmarks: b.marks || [], previousKey: b.previousId || '' };
+          pauses: b.pauses || [], bmarks: b.marks || [], previousKey: b.previousId || '', attempt: b.attempt || null, sref: b.sessionRef || '' };
         lineBars.push(bar); runs.push(bar);
         byKey[String(b.id).replace(/^[a-z]+:/, '')] = bar;
       });
@@ -1444,7 +1440,10 @@ class Component extends DCLogic {
     const today = this.tlDayOf(now);
     const cellOf = (k) => (k ? A.cells[k] || null : null);
     const cellHour = cellOf(o.cell);
-    const cellName = cellHour ? cellHour.localDate + ' ' + String(cellHour.localHour).padStart(2, '0') : '';
+    /* MM-DD and the hour (DESIGN `:819`): 只看 and the hour's sum carry no year */
+    const cellName = cellHour ? this.tlDateLabel(this.tlDayOf(cellHour.startMinute)) + ' ' + String(cellHour.localHour).padStart(2, '0') : '';
+    /* an hour's card title: 10-04 周日 08:00–09:00, its end from the real cell (DESIGN `:841`) */
+    const hourTitle = (c) => this.tlDateLabel(this.tlDayOf(c.startMinute)) + ' ' + this.tlWeekday(this.tlDayOf(c.startMinute)) + ' ' + this.tlHM(c.startMinute) + '–' + this.tlHM(c.endMinute);
     const dayHours = (sl) => Object.keys(A.cells).map((k) => A.cells[k])
       .filter((c) => c.startMinute >= sl.start && c.startMinute < sl.end).sort((a, b) => a.startMinute - b.startMinute);
     /* ---- ticks: one per real day slot, else the prototype's minute steps */
@@ -1552,16 +1551,17 @@ class Component extends DCLogic {
           const tl = c.tasks.filter((id) => tasks[id]);
           const memNames = c.lines.map((id) => (MEM.filter((x) => x.id === id)[0] || {}).name).filter(Boolean);
           ccard = { show: true, x: 88 + 2 + (c.startMinute - (sl.start || c.startMinute)) / 60 * 14 - 8, top: (18 + (ri + 1) * 14 + 4) + 'px', sq: 'sq z10 cal-l' + lvl(tot),
-            name: c.localDate + ' ' + String(c.localHour).padStart(2, '0') + ':00',
-            word: future ? '还没到这个时间' : !c.complete ? '活动未记全' : tot ? '步骤 ' + c.st + ' · 编辑 ' + c.ed + ' · 检查 ' + c.ck + ' 次' : '这一小时没有活动',
+            name: hourTitle(c),
+            word: future ? '还没到这个时间' : !c.complete ? this.tlUnknown([c]) : tot ? '步骤 ' + c.st + ' · 编辑 ' + c.ed + ' · 检查 ' + c.ck + ' 次' : '这一小时没有活动',
             tx: 'tx-plain', tasks: tl.slice(0, 3).map((id) => ({ name: tasks[id].name, sq: 'sq z8 ' + this.sqAt(tasks[id].st) })), hasTasks: tl.length > 0,
             more: c.moreTasks > 0 ? '另有 ' + c.moreTasks + ' 个任务' : '', hasMore: c.moreTasks > 0,
             mem: memNames.slice(0, 3).join('、') + (c.moreSessions ? '，另 ' + c.moreSessions + ' 条' : ''), hasMem: memNames.length > 0,
-            hint: future ? '' : !c.complete ? '这一小时的活动没有记全，不能当作完整的 0' : isOn ? '再点一次取消，回到整段时间' : '点一下只看这一小时' };
+            hint: future || !c.complete || !tot ? '' : isOn ? '再点一次取消，回到整段时间' : '点一下只看这一小时' };
         }
         return { key: c.key, cls: 'cal-c cal-l' + lvl(tot) + (future ? ' is-future' : '') + (isOn ? ' is-on' : ''),
-          tip: c.localDate + ' ' + String(c.localHour).padStart(2, '0') + ':00，' + (future ? '还没到' : !c.complete ? '活动未记全' : tot ? '步骤 ' + c.st + '，编辑 ' + c.ed + '，检查 ' + c.ck + ' 次' : '没有活动'),
-          pick: !future && c.complete && on.cell ? () => on.cell(isOn ? null : c.key) : noop, hover: on.hover ? () => on.hover('cell:' + c.key) : noop };
+          tip: hourTitle(c) + '，' + (future ? '还没到' : !c.complete ? this.tlUnknown([c]) : tot ? '步骤 ' + c.st + '，编辑 ' + c.ed + '，检查 ' + c.ck + ' 次' : '没有活动'),
+          /* only an hour with activity, completely recorded, is a click (prototype:1788, :1792) */
+          pick: !future && c.complete && tot && on.cell ? () => on.cell(isOn ? null : c.key) : noop, hover: on.hover ? () => on.hover('cell:' + c.key) : noop };
       }) };
     });
     const headHours = days.length ? dayHours(days[0]) : [];
@@ -1575,7 +1575,7 @@ class Component extends DCLogic {
       : Object.keys(A.cells).map((k) => A.cells[k]).filter((c) => (o.cell ? c.key === o.cell : days.some((sl) => c.startMinute >= sl.start && c.startMinute < sl.end)));
     const total = used.reduce((a, c) => ({ st: a.st + c.st, ed: a.ed + c.ed, ck: a.ck + c.ck }), { st: 0, ed: 0, ck: 0 });
     const complete = used.length > 0 && used.every((c) => c.complete);
-    const u0 = this.unschedCount(o.win);
+    const u0 = this.unschedCount();
     const winWord = o.cell ? cellName + ':00 这一小时' : { today: '今天', week: '本周', all: '全部' }[o.win || 'today'];
     return {
       cls: 'tl' + (o.full ? ' full' : '') + (nowRow ? ' now-row' : '') + (hov ? ' focus' : ''),
@@ -1590,7 +1590,7 @@ class Component extends DCLogic {
       card: card || empty, ccard: ccard || empty, unhover: on.unhover || noop,
       cal: { rows: calRows, head: head }, calCls: 'cal' + (o.full ? ' full' : ''), winWord: winWord,
       note: u0 ? '未排期 ' + u0 : '', hasNote: u0 > 0,
-      sum: winWord + '：' + (complete ? '步骤 ' + total.st + ' · 编辑 ' + total.ed + ' · 检查 ' + total.ck + ' 次' : '活动未记全'),
+      sum: winWord + '：' + (complete ? '步骤 ' + total.st + ' · 编辑 ' + total.ed + ' · 检查 ' + total.ck + ' 次' : this.tlUnknown(used)),
       height: y
     };
   }
@@ -1662,7 +1662,8 @@ class Component extends DCLogic {
       const L = { id: row.id, projectId: row.projectId, sessionId: row.sessionId,
         role: row.role || 'unknown', name: row.name, task: taskRef || null,
         bars: bars, sessions: sessions, first: null, last: null, st: null, waitTo: null, end: null, attn: 9,
-        archived: row.archived === true, area: areaRef || null, pinned: row.pinned === true, countPartial: row.countPartial === true };
+        archived: row.archived === true, area: areaRef || null, pinned: row.pinned === true, countPartial: row.countPartial === true,
+        chainSessions: row.chainSessions || [] };
       bars.forEach((b) => { lineOfRun[b.id] = L.id; });
       list.push(L); byId[L.id] = L;
     });
@@ -1698,31 +1699,37 @@ class Component extends DCLogic {
     if (this._wu[key]) return this._wu[key];
     const units = []; let groups = []; const unitOfRun = {};
     if (by === 'task') {
+      /* a unit per Task from the window's bars and from every line's formal task (a quiet one folds into its stage's
+         header); a line with no task is its own unit under 对话. `lines`: the lines a unit's work is on (已归档). */
       const map = {};
-      R.M.runs.slice().sort((a, b) => a.s0 - b.s0).forEach((r) => {
-        const task = r.task;
-        const id = task ? 'K:' + task : 'K:' + r.m;
+      const unitOf = (task, m) => {
+        const id = task ? 'K:' + task : 'K:' + m;
         if (!map[id]) {
-          const line = task ? null : WL.byId[r.m];
+          const line = task ? null : WL.byId[m];
           const n = task ? WL.std[task] : null;
           map[id] = { id: id, kind: task ? 'task' : 'line', task: task, role: task ? 'task' : 'talk',
-            name: n ? n.name : (line ? line.name : r.m), group: task && n && n.stageId ? 'stage:' + n.stageId : 'talk', bars: [] };
+            name: n ? n.name : (line ? line.name : m), group: task && n && n.stageId ? 'stage:' + n.stageId : 'talk', bars: [], lines: [] };
           units.push(map[id]);
         }
-        map[id].bars.push(r); unitOfRun[r.id] = id;
-      });
+        if (map[id].lines.indexOf(m) < 0) map[id].lines.push(m);
+        return map[id];
+      };
+      R.M.runs.slice().sort((a, b) => a.s0 - b.s0).forEach((r) => { unitOf(r.task, r.m).bars.push(r); unitOfRun[r.id] = 'K:' + (r.task || r.m); });
+      WL.list.forEach((L) => { unitOf(L.task, L.id); });
       groups = WL.stages.map((x, i) => ({ key: x.id, name: x.name, base: i, packed: false, unit: ['个任务', '个'] }))
         .concat([{ key: 'talk', name: '对话（不属于任务）', base: 99, packed: false, unit: ['条工作线', '条'] }]);
     } else {
+      /* 模块 (prototype:2337): an executor under its module (keyed by id, titled by name), or 其它; every other duty under 对话 */
+      const moduleNames = (this.props.data && this.props.data.moduleNames) || {};
       WL.list.forEach((L) => {
         units.push({ id: L.id, kind: 'line', task: L.task, role: L.role, name: L.name,
           short: L.task && WL.std[L.task] ? WL.std[L.task].name : L.name,
-          group: by === 'module' ? ((L.task || L.area) ? (L.area || '其它') : 'conv') : L.role, bars: L.bars.slice(), line: L });
+          group: by === 'module' ? (L.role === 'executor' ? (moduleNames[L.area] ? L.area : '其它') : 'conv') : L.role, bars: L.bars.slice(), line: L });
         L.bars.forEach((b) => { unitOfRun[b.id] = L.id; });
       });
       if (by === 'module') {
         const areas = []; units.forEach((u) => { if (u.group !== 'conv' && areas.indexOf(u.group) < 0) areas.push(u.group); });
-        areas.forEach((a, i) => groups.push({ key: a, name: a, base: i, packed: true, unit: ['条工作线', '条'] }));
+        areas.forEach((a, i) => groups.push({ key: a, name: moduleNames[a] || a, base: i, packed: true, unit: ['条工作线', '条'] }));
         groups.push({ key: 'conv', name: '对话、咨询与验收', base: 98, packed: false, unit: ['条工作线', '条'] });
       } else {
         groups = [['secretary', '秘书'], ['adviser', '参谋'], ['scribe', '书记'], ['reviewer', '审阅者'], ['executor', '执行者'], ['unknown', '未分组']]
@@ -1732,7 +1739,8 @@ class Component extends DCLogic {
     units.forEach((u) => {
       u.bars.sort((a, b) => a.s0 - b.s0);
       Object.assign(u, this.unitStats(u.bars, u.task, WL.std, R.M, now));
-      u.archived = u.line ? u.line.archived === true : false;
+      /* a Task is archived when all its work is on archived lines */
+      u.archived = u.line ? u.line.archived === true : !!u.lines && u.lines.length > 0 && u.lines.every((m) => !!WL.byId[m] && WL.byId[m].archived === true);
       if (!u.short) u.short = u.name;
     });
     this._wu[key] = { units: units, groups: groups, unitOfRun: unitOfRun };
@@ -1802,6 +1810,17 @@ class Component extends DCLogic {
     const doing = R.rows.filter((r) => r.role !== 'secretary' && r.state === 'doing').length; const paused = R.rows.filter((r) => r.word === '已暂停').length;
     return '秘书 · ' + (sec ? sec.word : '待命') + (doing ? '，另有 ' + doing + ' 条工作线工作中' : paused ? '，另有 ' + paused + ' 条工作线已暂停' : '');
   }
+  /* 未知 and why, where an incomplete cell, day or sum is written (decision 49·03): Runs/Queries still going, then
+     not counted; a zero half and a reason with two zeros are left out; no reason at all is 未知 alone. A Run is
+     counted in every cell it touches, so counts are not added: one cell with counts gives its reasons, two or more
+     give 未知 alone (the adapter's unknownCountsOf has the same rule) */
+  tlUnknown(cells) {
+    const has = cells.filter((c) => c && c.unk && ['inProgressRuns', 'inProgressQueries', 'uncountedRuns', 'uncountedQueries'].some((k) => c.unk[k]));
+    const u = has.length === 1 ? has[0].unk : {};
+    const two = (r, q, tail) => (r || q ? [r ? r + ' 次执行' : '', q ? q + ' 个查询' : ''].filter(Boolean).join('、') + tail : '');
+    const why = [two(u.inProgressRuns, u.inProgressQueries, '还在进行'), two(u.uncountedRuns, u.uncountedQueries, '没有统计')].filter(Boolean).join('；');
+    return '未知' + (why ? '：' + why : '');
+  }
   /* The real activity calendar: day and hour buckets exactly as the route
      returned them (identity includes startAt/endAt, so a repeated local hour
      is two cells). No run is spread over invented hours, and day + hour are
@@ -1815,12 +1834,12 @@ class Component extends DCLogic {
     const cells = {}; const days = {};
     (C ? C.hours : []).forEach((h) => {
       cells[h.key] = { st: h.steps, ed: h.edits, ck: h.checks, tasks: h.tasks.map((t) => 'task:' + t.taskId), lines: h.sessions.slice(),
-        complete: h.complete, future: h.future, moreTasks: h.moreTasks, moreSessions: h.moreSessions, localDate: h.localDate, localHour: h.localHour,
+        complete: h.complete, future: h.future, unk: h.unknown, moreTasks: h.moreTasks, moreSessions: h.moreSessions, localDate: h.localDate, localHour: h.localHour,
         startAt: h.startAt, endAt: h.endAt, startMinute: Date.parse(h.startAt) / 60000, endMinute: Date.parse(h.endAt) / 60000 };
     });
     (C ? C.days : []).forEach((d) => {
       days[d.dayIndex] = { st: d.steps, ed: d.edits, ck: d.checks, tasks: d.tasks.map((t) => 'task:' + t.taskId), lines: d.sessions.slice(),
-        complete: d.complete, future: d.future, moreTasks: d.moreTasks, moreSessions: d.moreSessions, localDate: d.localDate, dayIndex: d.dayIndex,
+        complete: d.complete, future: d.future, unk: d.unknown, moreTasks: d.moreTasks, moreSessions: d.moreSessions, localDate: d.localDate, dayIndex: d.dayIndex,
         startAt: d.startAt, endAt: d.endAt, startMinute: Date.parse(d.startAt) / 60000, endMinute: Date.parse(d.endAt) / 60000, key: d.key };
       /* A complete day read means the hours the route did not list had no
          activity; draw each real local hour so a zero is only claimed for a
@@ -1895,11 +1914,11 @@ class Component extends DCLogic {
         const complete = c ? c.complete === true : false;
         if (hovDay === key) {
           ycard = Object.assign({}, empty, { show: true, x: Math.max(0, 30 + w * 14 - 8), top: (18 + (i + 1) * 14 + 4) + 'px', sq: 'sq z10 cal-l' + dlvl(n), name: dayLabel(d) + (d === today ? '（今天）' : ''),
-            word: !complete ? '活动未记全' : n ? words(c) : '这一天没有活动', tx: 'tx-plain', hint: !complete ? '' : isOn ? '再点一次回到全部' : '点一下看这一天：它的真实小时和那天的轨道' }, taskRows(c ? c.tasks : []), lineRows(c ? c.lines : []));
+            word: !complete ? this.tlUnknown([c]) : n ? words(c) : '这一天没有活动', tx: 'tx-plain', hint: !complete || !n ? '' : isOn ? '再点一次回到全部' : '点一下看这一天：它的 ' + Math.round((this.tlDayEnd(d) - this.tlDayStart(d)) / 60) + ' 小时和那天的轨道' }, taskRows(c ? c.tasks : []), lineRows(c ? c.lines : []));
         }
-        days.push({ on: true, off: false, key: key, cls: 'cal-c cal-l' + dlvl(n) + (isOn ? ' is-on' : '') + (!complete ? ' is-future' : ''),
-          tip: dayLabel(d) + '，' + (!complete ? '活动未记全' : n ? '步骤 ' + c.st + '，编辑 ' + c.ed + '，检查 ' + c.ck + ' 次' : '没有活动'),
-          pick: !complete ? noop : isOn
+        days.push({ on: true, off: false, key: key, cls: 'cal-c cal-l' + dlvl(n) + (isOn ? ' is-on' : '') + (c && c.future ? ' is-future' : ''),
+          tip: dayLabel(d) + '，' + (!complete ? this.tlUnknown([c]) : n ? '步骤 ' + c.st + '，编辑 ' + c.ed + '，检查 ' + c.ck + ' 次' : '没有活动'),
+          pick: !complete || !n ? noop : isOn
             ? () => { readDay(null); set({ wlDay: null, wlCell: null, [hk]: null }); }
             : () => { readDay(key); go({ wlDay: key, wlCell: null }, 'all', null, key); },
           hover: hov('day:' + key) });
@@ -1916,10 +1935,11 @@ class Component extends DCLogic {
         const n = tot(c); const key = c.key; const future = c.future || c.startMinute >= now; const isOn = o.cell === key;
         if (hovCell === key) {
           ccard = Object.assign({}, empty, { show: true, x: calX + (c.localHour || 0) * 14 - 8, top: (18 + 14 + 4) + 'px', sq: 'sq z10 cal-l' + lvl(n), name: dayLabel(pickedDay) + ' ' + p2(c.localHour) + ':00–' + p2((c.localHour || 0) + 1) + ':00',
-            word: future ? '还没到这个时间' : !c.complete ? '活动未记全' : n ? words(c) : '这一小时没有活动', tx: 'tx-plain', hint: future || !c.complete ? '' : isOn ? '再点一次取消，回到这一天' : '点一下只看这一小时' }, taskRows(c.tasks), lineRows(c.lines));
+            word: future ? '还没到这个时间' : !c.complete ? this.tlUnknown([c]) : n ? words(c) : '这一小时没有活动', tx: 'tx-plain', hint: future || !c.complete || !n ? '' : isOn ? '再点一次取消，回到这一天' : '点一下只看这一小时' }, taskRows(c.tasks), lineRows(c.lines));
         }
-        return { key: key, cls: 'cal-c cal-l' + lvl(n) + (future ? ' is-future' : '') + (isOn ? ' is-on' : ''), tip: key + '，' + (future ? '还没到' : !c.complete ? '活动未记全' : n ? '步骤 ' + c.st + '，编辑 ' + c.ed + '，检查 ' + c.ck + ' 次' : '没有活动'),
-          pick: future || !c.complete ? noop : () => go({ wlCell: isOn ? null : key }, 'all', isOn ? null : key, o.day), hover: hov('cell:' + key) };
+        return { key: key, cls: 'cal-c cal-l' + lvl(n) + (future ? ' is-future' : '') + (isOn ? ' is-on' : ''), tip: key + '，' + (future ? '还没到' : !c.complete ? this.tlUnknown([c]) : n ? '步骤 ' + c.st + '，编辑 ' + c.ed + '，检查 ' + c.ck + ' 次' : '没有活动'),
+          /* only an hour with activity, completely recorded, is a click (prototype:2796, :2799) */
+          pick: future || !c.complete || !n ? noop : () => go({ wlCell: isOn ? null : key }, 'all', isOn ? null : key, o.day), hover: hov('cell:' + key) };
       });
       cal = { cls: 'cal full', head: hs.map((c) => ({ label: (c.localHour || 0) % 6 === 0 ? String(c.localHour) : '' })), rows: [{ label: dayLabel(pickedDay), cells: cells }] };
     }
@@ -1948,10 +1968,11 @@ class Component extends DCLogic {
       : Object.keys(A.cells).map((k) => A.cells[k]).filter(inSum);
     const S1 = used.reduce((a, c) => ({ st: a.st + c.st, ed: a.ed + c.ed, ck: a.ck + c.ck }), { st: 0, ed: 0, ck: 0 });
     const complete = used.length > 0 && used.every((c) => c.complete);
-    const winWord = o.cell && A.cells[o.cell] ? A.cells[o.cell].localDate + ' ' + p2(A.cells[o.cell].localHour) + ':00 这一小时' : pickedDay !== null ? dayLabel(pickedDay) : '全部（' + this.tlDateLabel(first) + ' 起，' + nw + ' 周）';
-    const u0 = this.unschedCount(o.win);
+    /* MM-DD HH, as the dock's (prototype:2825) */
+    const winWord = o.cell && A.cells[o.cell] ? this.tlDateLabel(this.tlDayOf(A.cells[o.cell].startMinute)) + ' ' + p2(A.cells[o.cell].localHour) + ':00 这一小时' : pickedDay !== null ? dayLabel(pickedDay) : '全部（' + this.tlDateLabel(first) + ' 起，' + nw + ' 周）';
+    const u0 = this.unschedCount();
     return { yr: yr, cal: cal, ccard: ccard, ticks: ticks, evs: evs, wins: wins, crumbs: crumbs,
-      sum: winWord + '：' + (complete ? '步骤 ' + S1.st + ' · 编辑 ' + S1.ed + ' · 检查 ' + S1.ck + ' 次' : '活动未记全') + (u0 ? ' · 未排期 ' + u0 : '') };
+      sum: winWord + '：' + (complete ? '步骤 ' + S1.st + ' · 编辑 ' + S1.ed + ' · 检查 ' + S1.ck + ' 次' : this.tlUnknown(used)) + (u0 ? ' · 未排期 ' + u0 : '') };
   }
   /* =====================================================================
      TaskMap — the full-page task graph: DAG (default) + 大纲 + 轨道. The
@@ -1977,12 +1998,12 @@ class Component extends DCLogic {
     const R = this.runIndex();
     return this.tlDayOf(R.now) - this.tlDayOf(R.M.first) + 1 > 14;
   }
-  /* 未排期 n: only after the complete 全部 execution index. A plan Task that no
-     `executions[].taskId` names and that is neither satisfied nor cancelled has
-     not been scheduled; the first screen and a partial index show no number. */
-  unschedCount(win) {
+  /* 未排期 n: on every window once the complete execution index is read (the open track asks for it). A plan Task
+     that no `executions[].taskId` names and that is neither satisfied nor cancelled has not been scheduled; the
+     first screen and a partial index show no number. */
+  unschedCount() {
     const time = this.props.data && this.props.data.time;
-    if (win !== 'all' || !time || time.executionsComplete !== true) return 0;
+    if (!time || time.executionsComplete !== true) return 0;
     const ran = new Set((Array.isArray(time.executions) ? time.executions : [])
       .map((entry) => 'task:' + String((entry && entry.taskId) || '')));
     return this.taskModel().tasks.filter((t) => !ran.has(t.id)
@@ -2041,12 +2062,24 @@ class Component extends DCLogic {
     const hist = !live && time && typeof time.historyAt === 'function'
       ? time.historyAt(new Date(tt * 60000).toISOString()) : null;
     const ACT = ['running', 'verifying', 'waiting', 'decide'];
+    /* each Task's first real execution: the read bars and, once read, the execution index */
+    const first = {}; const seen = (id, at) => { if (Number.isFinite(at) && !(first[id] <= at)) first[id] = at; };
+    if (!live) {
+      this.tlData().runs.forEach((r) => { if (r.kind === 'run' && r.task) seen(r.task, r.s0); });
+      ((time && time.executions) || []).forEach((e) => seen('task:' + e.taskId, Date.parse(e.startAt) / 60000));
+    }
     const map = {};
     tm.tasks.forEach((n) => {
       const h = hist ? hist.get(String(n.id).replace(/^task:/, '')) : null;
+      /* before it joined the plan: its plan word, and when it joined (prototype:2945) */
+      const plan = h && h.raw === 'not_in_plan' ? (n.st === 'future' || n.st === 'deferred' ? n.st : 'pending') : null;
       const o = live ? { st: n.st, why: n.why || '', word: W[n.st] + (n.gate ? '（验收）' : '') }
-        : h ? { st: h.st, why: '', word: h.word + (n.gate ? '（验收）' : ''), off: h.off, faint: h.faint }
+        : plan ? { st: plan, why: '这时还不在计划里' + (h.addedAt ? '（' + this.stamp(Date.parse(h.addedAt) / 60000) + ' 加入）' : ''), word: W[plan] + (n.gate ? '（验收）' : ''), off: true, faint: true, raw: h.raw }
+        /* the state word at t; the timeline's own word, when it differs, is the reason; the timeline's 未知 stays 未知 */
+        : h ? { st: h.st, why: h.word !== '未知' && h.word !== W[h.st] ? h.word : '', word: (h.word === '未知' ? h.word : W[h.st]) + (n.gate ? '（验收）' : ''), off: h.off, faint: h.faint, raw: h.raw }
           : { st: n.st, why: n.why || '', word: W[n.st] + (n.gate ? '（验收）' : '') };
+      /* 待执行 at t with a later real execution (prototype:2951); none known, no reason */
+      if (o.raw === 'pending' && first[n.id] > tt) o.why = '这时还没开始，' + this.stamp(first[n.id]) + ' 第一次执行';
       o.act = !o.off && ACT.indexOf(o.st) >= 0;
       map[n.id] = o;
     });
@@ -2234,18 +2267,20 @@ class Component extends DCLogic {
     if (!n) return { sq: 'sq', name: '', word: '', tx: '', why: '', rows: [], hint: '' };
     const x = S.map[id] || { st: n.st, word: this.words()[n.st], why: n.why };
     const at = S.live ? '' : '（' + this.timeText(S.t) + '）';
+    /* 负责 is read only for now: in replay it says so (as the detail's 架构) */
+    const now = S.live ? '' : '（现在）';
     const hint = (id === sel ? '再点一次取消选中' : '点一下看详情') + ' · 双击固定';
     if (n.kind === 'task') {
       const c = this.taskCard(n); const rows = [];
       if (!S.live) rows.push({ k: '现在', v: c.word + c.why, cls: '' });
       if (c.hasPath) rows.push({ k: '归属', v: c.path, cls: '' });
-      if (c.hasAgent) rows.push({ k: '负责', v: c.agent, cls: '' });
+      if (c.hasAgent) rows.push({ k: '负责', v: c.agent + now, cls: '' });
       if (c.hasSem) rows.push({ k: '语义', v: c.sem, cls: 'hc-sem' });
       return { sq: 'sq z10 ' + this.sqAt(x.st), name: n.name, word: x.word, tx: 'tx-' + x.st, why: (x.why ? '：' + x.why : '') + at, rows: rows, hint: hint };
     }
     const g = this.groupAt(n, S); const c = this.taskCard(n);
     const rows = []; if (c.hasPath) rows.push({ k: '归属', v: c.path, cls: '' });
-    if (c.hasAgent) rows.push({ k: '负责', v: c.agent, cls: '' });
+    if (c.hasAgent) rows.push({ k: '负责', v: c.agent + now, cls: '' });
     if (c.hasSem) rows.push({ k: '语义', v: c.sem, cls: 'hc-sem' });
     return { sq: 'sq z10 ' + g.sq, name: n.name, word: g.line, tx: 'tx-plain', why: at, rows: rows, hint: hint };
   }  /* what 查找 / 需要关注 marks, for the DAG: the tasks that stay bright (a found stage or batch keeps all its tasks; 目标验收
@@ -2278,7 +2313,7 @@ class Component extends DCLogic {
     if (H.on) H.tasks.forEach((id) => bright.add(id));
     const refOf = (id) => (id === sel ? selRef : null);
     const relKey = s.relHover && selTask ? ((G.deps[sel] || []).indexOf(s.relHover) >= 0 ? s.relHover + '>' + sel : sel + '>' + s.relHover) : null;
-    const pickT = (id) => () => { const st = this.state || {}; if (st.sel === id) set({ sel: null, dHover: null, eHover: null, relHover: null }); else go.sel(id); };
+    const pickT = (id) => () => { const st = this.state || {}; if (st.sel === id) go.unsel({ sel: null, dHover: null, eHover: null, relHover: null }); else go.sel(id); };
     const hov = (key) => (e) => { this._dm = this.dagMeasure(e); if ((this.state || {}).dHover !== key) set({ dHover: key, eHover: null }); };
     const out = { cls: 'dg', w: lay.width + 4, h: lay.height + 8, nodes: [], clusters: [], edges: [], counts: [], band: [], hasBand: false, bandN: 0, bandH: 0,
       card: { show: false, x: 0, top: 'auto', bottom: 'auto', sq: '', name: '', word: '', tx: '', why: '', rows: [], hint: '' },
@@ -2302,7 +2337,7 @@ class Component extends DCLogic {
       const p = lay.pos[id]; const x = S.map[id] || { st: 'pending' }; const n = tm.byId[id]; const name = nameOf(id);
       out.nodes.push({ id: id, x: p.x, y: p.y, name: name, sq: 'sq ' + this.sqAt(x.st),
         cls: 'dg-node' + (n.gate ? ' is-gate' : '') + (x.faint ? ' is-faint' : '') + (x.act ? ' is-act' : '') + (id === sel ? ' is-sel' : '') + (crit && cp.nodes.has(id) ? ' is-crit' : '') + (focus && !bright.has(id) ? ' dim' : ''),
-        tip: name + '，' + x.word + (x.why ? '：' + x.why : '') + (n.gate ? '（验收）' : ''), pick: pickT(id), pin: pinIt(id), ref: refOf(id), hover: hov('n:' + id) });
+        tip: name + '，' + x.word + (x.why ? '：' + x.why : ''), pick: pickT(id), pin: pinIt(id), ref: refOf(id), hover: hov('n:' + id) });
       if (hovKey === 'n:' + id) out.card = Object.assign({ show: true }, this.dagCard(id, S, sel), cardBeside({ x: p.x, y: p.y, w: p.w, h: 20 }));
     });
     /* the 未排定 band: a grid of nodes under the DAG (6 per row); it fades with the DAG (focus) */
@@ -2326,7 +2361,7 @@ class Component extends DCLogic {
       x0 -= 6; y0 -= 2; x1 += 6; y1 += 2;
       const isOn = onEdge.has(k);
       const isCrit = crit && cp.edges.has(k);
-      const isHov = s.eHover === k || relKey === k || hovNode === e.a || hovNode === e.b;
+      const isHov = s.eHover === k || relKey === k;
       const faint = (S.map[e.a] || {}).off || (S.map[e.b] || {}).off;
       out.edges.push({ key: k, x: Math.round(x0), y: Math.round(y0), w: Math.ceil(x1 - x0), h: Math.ceil(y1 - y0), d: this.pathOf(e.pts, Math.round(x0), Math.round(y0)),
         cls: 'dg-edge' + (isOn ? ' is-on' : '') + (isCrit ? ' is-crit' : '') + (isHov ? ' is-hov' : '') + (faint ? ' is-faint' : '') + (focus && !isOn && !isCrit && !isHov ? ' dim' : ''),
@@ -2363,8 +2398,10 @@ class Component extends DCLogic {
          day summary derived from hour cells does not, so the local day's real
          bounds are the window (never the first-to-last activity span). */
       const full = d && Date.parse(d.endAt) - Date.parse(d.startAt) >= 20 * 3600000;
+      /* `a`/`b`: the day's local 08:00 and 20:00 (DST-safe), the default bounds of a picked day */
+      const at = (h) => { const x = new Date(i * 86400000); return new Date(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate(), h).getTime() / 60000; };
       return { i: i, start: full ? Date.parse(d.startAt) / 60000 : this.tlDayStart(i),
-        end: full ? Date.parse(d.endAt) / 60000 : this.tlDayEnd(i),
+        end: full ? Date.parse(d.endAt) / 60000 : this.tlDayEnd(i), a: at(8), b: at(20),
         localDate: d ? d.localDate : this.tlDateOf(i), complete: d ? d.complete : false };
     };
     let mode = 'span'; let w0; let w1; let d0 = today; let nd = 1; const slots = [];
@@ -2375,7 +2412,14 @@ class Component extends DCLogic {
     } else if (day) {
       const d = (C ? C.days : []).filter((x) => x.localDate === day)[0];
       const i = d ? d.dayIndex : this.tlDayOf(Date.parse(day + 'T00:00:00') / 60000);
-      d0 = i; nd = 1; const st = wlSlot(i); w0 = st.start; w1 = st.end;
+      d0 = i; nd = 1; const st = wlSlot(i);
+      /* the prototype's day (prototype:3415-3420): min(08:00, its first activity) to max(20:00, its last), inside the
+         day; today ends as 今天 does */
+      const mine = M.runs.filter((r) => r.e0 > st.start && r.s0 < st.end);
+      const a = mine.reduce((x, r) => Math.min(x, Math.max(r.s0, st.start)), st.a);
+      const b = mine.reduce((x, r) => Math.max(x, Math.min(r.e0, st.end)), st.b);
+      w0 = Math.max(st.start, Math.floor(a / 60) * 60);
+      w1 = Math.min(st.end, i === today ? Math.max(w0 + 360, Math.ceil((now + 45) / 60) * 60) : Math.ceil(b / 60) * 60);
       slots.push(st);
     } else if (win === 'week') {
       mode = 'days';
@@ -2399,9 +2443,10 @@ class Component extends DCLogic {
     }
     if (!slots.length) for (let i = 0; i < nd; i += 1) slots.push(wlSlot(d0 + i));
     if (!(w1 > w0)) w1 = w0 + 60;
-    let lo = w0; let hi = w1;
-    M.runs.forEach((r) => { if (Number.isFinite(r.s0)) lo = Math.min(lo, r.s0); if (Number.isFinite(r.e0)) hi = Math.max(hi, r.e0); });
-    lo = Math.min(lo, now); hi = Math.max(hi, now);
+    /* the cursor runs from max(window start, the Goal's first execution when the complete index knows it) to
+       min(window end, now) (prototype:3439); never from the window's own first bar */
+    const ex = T && T.executionsComplete === true && Array.isArray(T.executions) ? T.executions.map((e) => Date.parse(e.startAt) / 60000).filter(Number.isFinite) : [];
+    const hi = Math.min(w1, now); const lo = Math.min(hi, Math.max(w0, ex.length ? Math.min.apply(null, ex) : w0));
     const X = (min) => {
       if (mode !== 'days') return Math.max(0, Math.min(100, (min - w0) / (w1 - w0) * 100));
       if (min <= slots[0].start) return 0;
@@ -2410,8 +2455,9 @@ class Component extends DCLogic {
       for (let i = 0; i < slots.length; i += 1) {
         const sl = slots[i];
         if (min < sl.end || i === slots.length - 1) {
-          const f = (min - sl.start) / Math.max(1, sl.end - sl.start);
-          return Math.max(0, Math.min(100, (i + Math.max(0, Math.min(1, f))) / slots.length * 100));
+          /* a day column is its 08:00–20:00 (prototype:3407-3408, :3424); earlier and later minutes sit on its edges */
+          const f = (Math.max(sl.a, Math.min(sl.b, min)) - sl.a) / Math.max(1, sl.b - sl.a);
+          return Math.max(0, Math.min(100, (i + f) / slots.length * 100));
         }
       }
       return 100;
@@ -2420,7 +2466,7 @@ class Component extends DCLogic {
       const p = Math.max(0, Math.min(100, pct));
       if (mode !== 'days') return w0 + (w1 - w0) * p / 100;
       const at = p / 100 * slots.length; const i = Math.min(slots.length - 1, Math.floor(at)); const f = at - i;
-      const sl = slots[i]; return sl.start + (sl.end - sl.start) * f;
+      const sl = slots[i]; return sl.a + (sl.b - sl.a) * f;
     };
     return { mode: mode, w0: w0, w1: w1, d0: d0, nd: nd, X: X, inv: inv,
       inWin: (from, to) => to > w0 && from < w1, lo: lo, hi: hi, slots: slots };
@@ -2562,12 +2608,12 @@ class Component extends DCLogic {
       return tracks[u.id];
     };
     /* A bar click reads the task's detail and the bar's own line chain through
-       the one demand; deselecting the same bar withdraws both. */
+       the one demand; deselecting the same bar withdraws only the line (prototype:3570). */
     const pickBar = (u, b) => () => {
       const st = this.state || {};
       if (st.wlSel === u.id) {
         set({ wlSel: null, wHover: null });
-        if (actions.readMore) actions.readMore({ detailTaskId: null, lineKey: null });
+        if (actions.readMore) actions.readMore({ lineKey: null });
         return;
       }
       const task = b.task && b.task !== 'GOAL' ? b.task : u.task;
@@ -2621,7 +2667,7 @@ class Component extends DCLogic {
         name: inPacked ? (packed ? rowName(units) : u0.short) : u0.name, title: units.map((u) => u.name + (u.line && u.line.sessions > 1 ? '（工作记录 ' + u.line.sessions + ' 段）' : '')).join('；'),
         canPin: !packed && by !== 'task' && !!u0.line, pinned: !!(u0.line && u0.line.pinned === true),
         pinCls: 'btn btn-icon btn-xs wl-pin' + (u0.line && u0.line.pinned === true ? ' is-on' : ''),
-        pinLabel: u0.line && u0.line.pinned === true ? '取消固定这条工作线' : '固定这条工作线', pin: () => pinLine(u0),
+        pinLabel: u0.line && u0.line.pinned === true ? '取消固定这条工作线' : '固定这条工作线（排在最前）', pin: () => pinLine(u0),
         hasSub: !!quietSub, sub: quietSub || '', bars: [], links: [], marks: [] });
       units.forEach((u, i) => {
         const t = T[i];
@@ -2678,28 +2724,40 @@ class Component extends DCLogic {
     if (attn && !visible.length) push(Object.assign({}, blank, { isFold: true, h: 26, cls: 'lane wl-fold', name: by === 'task' ? '没有需要关注的任务' : '没有需要关注的工作线', title: '需要你决定、失败、受阻或待核对的都没有' }));
     const archCount = (this.props.data.time && this.props.data.time.archivedCount) || null;
     const archKnown = archCount && archCount.known === true && archCount.text !== '0';
-    const nArch = archKnown ? Number(archCount.text) : U.units.filter((u) => u.archived).length;
-    const archText = archKnown && !archCount.complete ? archCount.text : String(nArch);
+    /* 任务 counts Tasks once the archived lines are read (prototype:2351); before that, the Host's line count in 条 */
+    const archTasks = by === 'task' && WL.list.some((L) => L.archived);
+    const nArch = archKnown && !archTasks ? Number(archCount.text) : U.units.filter((u) => u.archived).length;
+    const archText = archKnown && !archTasks && !archCount.complete ? archCount.text : String(nArch);
+    const archUnit = archTasks ? ' 个任务' : ' 条';
     /* hidden archived lines active at t light this row (they are never inserted while you drag); archived lines never need
        you, so 只看需要关注的 leaves the row out */
     const archAct = s.wlArch ? [] : U.units.filter((u) => u.archived && actAt(u) && !(day && inWinU(u)));
     const archIn = s.wlArch || !day ? 0 : U.units.filter((u) => u.archived && inWinU(u)).length;
     if ((nArch || archKnown) && !attn) push(Object.assign({}, blank, { isArch: true, h: 28, cls: 'lane wl-archrow' + (archAct.length ? ' is-lit' : ''), ex: !!s.wlArch,
-      name: s.wlArch ? '收起已归档的 ' + archText + (by === 'task' ? ' 个任务' : ' 条') : '已归档 ' + archText + (by === 'task' ? ' 个任务' : ' 条')
-        + (archCount && !archCount.complete ? '（未读全）' : '') + (archAct.length ? ' · 竖条处有 ' + archAct.length + ' ' + (by === 'task' ? '个在做：' : '条在做：') + archAct.map((u) => u.short).join('、') : '')
+      name: s.wlArch ? '收起已归档的 ' + archText + archUnit : '已归档 ' + archText + archUnit
+        + (archCount && !archCount.complete && !archTasks ? '（未读全）' : '') + (archAct.length ? ' · 竖条处有 ' + archAct.length + ' ' + (by === 'task' ? '个在做：' : '条在做：') + archAct.map((u) => u.short).join('、') : '')
         + (archIn ? '；' + (cell ? '这一小时' : '这一天') + '做过事的 ' + archIn + (by === 'task' ? ' 个' : ' 条') + '照常画在上面' : ''),
-      title: '展开已归档的工作线',
-      toggle: () => { const open = !(this.state || {}).wlArch; set({ wlArch: open, wHover: null }); if (actions.readMore) actions.readMore({ track: true, archive: open }); } }));
+      title: archAct.length ? '点一下显示已归档的' + (by === 'task' ? '任务' : '工作线') : '',
+      toggle: () => { const open = !(this.state || {}).wlArch; set({ wlArch: open, wHover: null }); if (actions.readMore) actions.readMore({ track: true, archive: open || !!this._replayAsked }); } }));
     /* the hover card of a bar: its Session and task */
     let card = { below: false, above: false, x: 0, top: 'auto', bottom: 'auto', sq: '', name: '', word: '', tx: '', why: '', rows: [], hint: '' };
     if (hovRun && barAt[hovRun] && M.byId[hovRun]) {
       const b = M.byId[hovRun]; const at = barAt[hovRun]; const R0 = resOf(b); const L = WL.byId[WL.lineOfRun[b.id]];
       const name = b.task && b.task !== 'GOAL' && WL.std[b.task] ? WL.std[b.task].name : b.kind === 'talk' ? '对话回合' : b.kind === 'query' ? '咨询（只读副本）' : '目标验收';
       const rowsC = [{ k: '工作线', v: L ? L.name : '' }];
-      /* No route carries this bar's segment ordinal: the 记录 row stays absent
-         rather than claiming "第 1 段". */
+      /* 记录: the bar's Session in the line's chain (head first, index i) is segment n − i; a line of one Session, a
+         partial count or a Session not in the chain has no row */
+      const segI = L && L.sessions > 1 ? L.chainSessions.indexOf(b.sref) : -1;
+      if (segI >= 0) rowsC.push({ k: '记录', v: '工作记录第 ' + (L.sessions - segI) + ' 段，共 ' + L.sessions + ' 段' });
       if (b.kind === 'check') { if (b.round !== null) rowsC.push({ k: '尝试', v: '第 ' + b.round + ' 轮正式检查' }); }
-      else if (b.kind === 'run') rowsC.push({ k: '类型', v: '一次真实执行' });
+      else if (b.kind === 'run') {
+        /* how this attempt came (no ordinal); a first run or the same attempt has no row */
+        const a = b.attempt; const q = a && a.requeue; const cap = (this.taskModel().byId[b.task] || {}).reworkCap;
+        const how = !a || (a.via !== 'requeue' && a.via !== 'wait_continuation') ? ''
+          : q && q.actorClass === 'system' ? '系统自动重新入队' + (typeof q.automaticCount === 'number' && typeof cap === 'number' ? '（' + q.automaticCount + '/' + cap + '）' : '')
+          : q && q.actorClass === 'human' ? '你重新入队' : '接续';
+        if (how) rowsC.push({ k: '尝试', v: how });
+      }
       else rowsC.push({ k: '类型', v: b.kind === 'query' ? '只读副本回答，不写回工作记录' : '工作记录里的一轮' });      rowsC.push({ k: '时间', v: this.stamp(b.s0) + (b.live ? ' 起，已 ' + this.tlDur(b.s0, now) : '–' + this.tlHM(b.e0) + ' · ' + this.tlDur(b.s0, b.e0)) });
       if (b.checksBegun !== null && b.checksBegun !== undefined) rowsC.push({ k: '检查', v: '已启动 ' + b.checksBegun + ' 项' });
       if (b.pauses && b.pauses.length) rowsC.push({ k: '暂停', v: b.pauses.some((p) => !p.to) ? '进行中' : String(b.pauses.length) + ' 次' });
@@ -2714,14 +2772,14 @@ class Component extends DCLogic {
     /* the cursor: drag on the axis or on the stem through the lanes (a grab strip; both measure against the track's width),
        or focus it and use the keys. At 600 it stays at now: that example has no runs to replay. */
     const show = tCur >= Wn.w0 - 0.01 && tCur <= Wn.w1 + 0.01 && (Wn.mode !== 'days' || Wn.inWin(tCur, tCur + 0.1));
-    /* The first step into replay asks for the timeline once; a drag or an
-       arrow does not ask again. Leaving replay clears the demand. */
+    /* The first step into replay asks for the timeline (and the archived lines, so an archived line at work at t lights
+       its row) once; a drag or an arrow does not ask again. Leaving replay clears the demand; 已归档 keeps its own read. */
     const setT = (v) => {
       const c = Math.max(Wn.lo, Math.min(Wn.hi, v)); const r = Math.round(c);
       const next = r >= now ? null : r;
       if (actions.readMore) {
-        if (next !== null && !this._replayAsked) { this._replayAsked = true; actions.readMore({ replay: true }); }
-        if (next === null && this._replayAsked) { this._replayAsked = false; actions.readMore({ replay: false }); }
+        if (next !== null && !this._replayAsked) { this._replayAsked = true; actions.readMore({ replay: true, archive: true }); }
+        if (next === null && this._replayAsked) { this._replayAsked = false; actions.readMore({ replay: false, archive: !!(this.state || {}).wlArch }); }
       }
       set({ t: next, dHover: null, eHover: null, wHover: null });
     };
@@ -2751,15 +2809,15 @@ class Component extends DCLogic {
       on: { win: (x) => {
           this._replayAsked = false;
           set({ wlWin: x, wlCell: null, wlDay: null, wHover: null, t: clampFor(x, null, null) });
-          /* 今天 / 本周 / 全部 all use the one refresh loop; 全部 is what asks
-             for the complete execution index. */
-          if (actions.readMore) actions.readMore({ track: true, win: x, executions: x === 'all', replay: false, hourDay: null, lineKey: null });
+          /* 今天 / 本周 / 全部 all use the one refresh loop; the full track asks for the complete execution index
+             (未排期), and 全部 reads it anyway for its origin. */
+          if (actions.readMore) actions.readMore({ track: true, win: x, executions: !!full, replay: false, hourDay: null, lineKey: null });
         }, cell: (k) => set({ wlCell: k, wHover: null, t: clampFor(win, k, null) }),
         hover: (id) => { if ((this.state || {}).wHover !== id) set({ wHover: id }); }, unhover: noop } });
     const winChange = (x) => {
       this._replayAsked = false;
       set({ wlWin: x, wlCell: null, wlDay: null, wHover: null, t: null });
-      if (actions.readMore) actions.readMore({ track: true, win: x, executions: x === 'all', replay: false, hourDay: null, lineKey: null });
+      if (actions.readMore) actions.readMore({ track: true, win: x, executions: !!full, replay: false, hourDay: null, lineKey: null });
     };
     const LG = long ? this.wlLongView(W, s, Wn, { win: win, day: day, cell: cell, full: !!full, set: set, clampFor: clampFor, tasks: tvTasks, winChange: winChange }) : null;
     /* the calendar card: its tasks' squares follow sqAt (timeView's 's-' + state: a task that has not started is hollow)
@@ -2785,7 +2843,7 @@ class Component extends DCLogic {
       attnTip: (attn ? '再点一次显示全部' : '只留下需要你决定、失败、受阻或待核对的') + '（现在 ' + U.units.filter((u) => !u.archived && u.attn < 9).length + (by === 'task' ? ' 个' : ' 条') + '）',
       hasCrumb: !!LG && LG.crumbs.length > 0, crumbs: LG ? LG.crumbs : [],
       stale: stale, resort: () => { const st = this.state || {}; this._wlFz = null; set({ wlSort: (st.wlSort || 0) + 1, wHover: null }); }, replay: replay,
-      backNow: () => { this._replayAsked = false; if (actions.readMore) actions.readMore({ replay: false }); set({ t: null, wHover: null }); },
+      backNow: () => this.backToNow(),
       atText: replay ? '竖条在 ' + this.stamp(tCur) + '，任务图显示那时的状态' : '竖条在现在 ' + this.tlHM(now) + '；拖动它回放',
       axName: by === 'task' ? '每行一个任务' : '工作线 · 按' + BYL[by], ticks: (LG ? LG.ticks : tv.ticks).map((k) => (underCur(k) ? Object.assign({}, k, { cls: k.cls + ' is-under' }) : k)), evs: (LG ? LG.evs : tv.evs).map((e) => ({ x: e.x, label: e.label })), nowX: r1(nowX), nowTag: replay && Math.abs(nowX - cx) > 9 && nowX > 0 && nowX <= 100,
       cur: cur,
@@ -2799,6 +2857,8 @@ class Component extends DCLogic {
       legendOn: !!s.legend && !!full,
       hasSel: !!selU, selName: selU ? selU.name : '', selSub: (() => {
         if (!selU) return '';
+        /* a refused pin is said here until the next write succeeds */
+        if (s.pinError) return s.pinError;
         const parts = [];
         if (selU.line && selU.line.sessions !== null) parts.push('工作记录 ' + selU.line.sessions + ' 段');
         /* No loaded bar means no start fact; "现在起" is never invented. */
@@ -2807,8 +2867,15 @@ class Component extends DCLogic {
       })(),
       selCanPin: !!selU && by !== 'task' && !!selU.line, selPinned: !!(selU && selU.line && selU.line.pinned === true), selPinLabel: selU && selU.line && selU.line.pinned === true ? '取消固定' : '固定',
       selPin: selU ? () => pinLine(selU) : noop,
-      selClear: () => { set({ wlSel: null, wHover: null }); if (actions.readMore) actions.readMore({ detailTaskId: null, lineKey: null }); }
+      selClear: () => { set({ wlSel: null, wHover: null }); if (actions.readMore) actions.readMore({ lineKey: null }); }
     };
+  }
+  /* 回到现在, on the track and in the right column: the replay reads are withdrawn and the cursor goes back to now */
+  backToNow() {
+    this._replayAsked = false;
+    const actions = this.props.actions || {};
+    if (actions.readMore) actions.readMore({ replay: false, archive: !!(this.state || {}).wlArch });
+    this.setState({ t: null, wHover: null });
   }
   /* how far the lanes are scrolled when the pointer reaches a bar (null when it cannot be read) */
   wlMeasure(e) {
@@ -2827,10 +2894,10 @@ class Component extends DCLogic {
     const ORD = ['decide', 'waiting', 'running', 'verifying', 'failed', 'blocked'];
     const ids = Object.keys(S.map).filter((id) => !!tm.byId[id] && !S.map[id].off);
     /* The task's last bar at or before the cursor. Its own facts fill the
-       prototype's line: a Run's real changed files (`changedFiles.definite`,
-       prefixed 至少 when possiblyIncomplete) or a check's real ordinal and
-       begun-item count (已开始, never 已完成). No attempt ordinal and no
-       cursor-time x/y: neither route has them. */
+       prototype's line: a Run's 接续 (a requeue or a wait continuation; the
+       system's requeue with its count and class) and real changed files (`changedFiles.definite`, 已改至少 when
+       possiblyIncomplete), or a check's real ordinal and begun-item count
+       (已开始, never 已完成). No attempt ordinal and no cursor-time x/y. */
     const lastAt = (id) => {
       let last = null;
       D.runs.forEach((r) => { if (r.task === id && r.s0 <= S.t && (last === null || r.s0 >= last.s0)) last = r; });
@@ -2838,22 +2905,38 @@ class Component extends DCLogic {
     };
     const factText = (r) => {
       if (!r) return '';
+      /* in replay a bar across the cursor says its round or 接续 and how long so far; its counts are today's, not then's */
+      const across = !S.live && S.t < r.e0; const sofar = '已 ' + this.tlDur(r.s0, S.t);
       if (r.kind === 'check') {
+        if (across) return '正式检查' + (typeof r.round === 'number' ? '第 ' + r.round + ' 轮' : '') + '，' + sofar;
+        const begun = typeof r.checksBegun === 'number' ? '已开始 ' + r.checksBegun + ' 项' : '';
+        if (r.live && typeof r.round === 'number') return ['正式检查第 ' + r.round + ' 轮进行中', begun].filter(Boolean).join('，');
         const parts = [];
         if (typeof r.round === 'number') parts.push('第 ' + r.round + ' 轮正式检查');
-        if (typeof r.checksBegun === 'number') parts.push('已开始 ' + r.checksBegun + ' 项');
+        if (begun) parts.push(begun);
         return parts.join(' · ');
       }
-      if (r.cf && typeof r.cf.definite === 'number') {
-        return (r.cf.possiblyIncomplete === true ? '至少' : '') + '改过 ' + r.cf.definite + ' 个文件';
-      }
-      return '';
+      const a = r.attempt; const q = a && a.requeue;
+      const cap = q ? (tm.byId[r.task] || {}).reworkCap : null;
+      const cont = !a || (a.via !== 'requeue' && a.via !== 'wait_continuation') ? ''
+        : '接续' + (!q ? '' : q.actorClass !== 'system' ? (q.reason ? '，' + q.reason : '')
+          : '，系统自动重新入队' + (typeof q.automaticCount === 'number' && typeof cap === 'number' ? '（' + q.automaticCount + '/' + cap + '）' : '') + (q.classWord ? '：' + q.classWord : ''));
+      if (across) return [cont, sofar].filter(Boolean).join('，');
+      const files = r.cf && typeof r.cf.definite === 'number' ? '已改' + (r.cf.possiblyIncomplete === true ? '至少 ' : ' ') + r.cf.definite + ' 个文件' : '';
+      return [cont, files].filter(Boolean).join(' · ');
+    };
+    /* the timeline says it waits for its check: since its last run ended (prototype:2962) */
+    const handed = (id) => {
+      const ran = D.runs.filter((r) => r.task === id && r.kind === 'run' && r.e0 <= S.t).reduce((a, r) => (!a || r.e0 >= a.e0 ? r : a), null);
+      return '已交给正式检查，等检查开始' + (ran ? '，已 ' + this.tlDur(ran.e0, S.t) : '');
     };
     const item = (id) => {
       const x = S.map[id];
-      const sum = [x.why || '', factText(lastAt(id))].filter(Boolean).join(' · ');
+      const r = lastAt(id);
+      /* a running check's own line already says 正式检查…进行中; the phase word would say it twice */
+      const sum = [r && r.kind === 'check' && r.live ? '' : !S.live && x.raw === 'awaiting_check' ? handed(id) : x.why || '', factText(r)].filter(Boolean).join(' · ');
       return { name: name(id), sq: 'sq z10 ' + this.sqAt(x.st), word: x.word, tx: 'dg-now-w tx-' + x.st, sum: sum, cls: 'dg-now-row' + (s.sel === id ? ' is-on' : ''),
-        go: () => { if ((this.state || {}).sel === id) this.setState({ sel: null }); else go.sel(id); } };
+        go: () => { if ((this.state || {}).sel === id) go.unsel({ sel: null }); else go.sel(id); } };
     };
     const sort = (a, b) => ORD.indexOf(S.map[a].st) - ORD.indexOf(S.map[b].st) || (name(a) < name(b) ? -1 : 1);
     /* the same rule as the DAG's rings (statesAt: act), at t and at now */
@@ -2864,7 +2947,7 @@ class Component extends DCLogic {
        in view without scrolling */
     const fold = !!detId && !s.nowOpen;
     return {
-      label: '竖条所在时刻在进行的任务', cls: 'dg-now' + (fold ? ' is-folded' : ''), replay: !S.live, back: () => this.setState({ t: null }),
+      label: '竖条所在时刻在进行的任务', cls: 'dg-now' + (fold ? ' is-folded' : ''), replay: !S.live, back: () => this.backToNow(),
       title: (S.live ? '现在 · ' : '回放 · ') + this.timeText(S.t), count: '进行中 ' + act.length + ' 个' + (fold && held.length ? ' · 停着 ' + held.length + ' 个' : ''),
       open: !fold, canFold: !!detId, foldLabel: fold ? '展开' : '收起', toggleFold: () => this.setState({ nowOpen: !(this.state || {}).nowOpen }),
       items: act.slice(0, cap).map(item), none: !act.length, hasMore: act.length > cap, more: '另 ' + (act.length - cap) + ' 个在图里有圈',
@@ -2879,7 +2962,7 @@ class Component extends DCLogic {
   /* The detail for a real Task or group. The head is today's adapted state;
      while replaying, a second line and the relation squares are at the cursor's
      time. The adapted detail (when `detailFor` matches) supplies the current
-     reason, owner, instruction, actual files and participation. A real gate is
+     reason, owner, actual files and participation. A real gate is
      an ordinary Task. */
   dagDetail(id, S, go, hov) {
     const tm = this.taskModel(); const data = this.props.data || {}; const G = this.dagGraph();
@@ -2887,7 +2970,7 @@ class Component extends DCLogic {
     const atRow = (x) => (S.live ? { hasAt: false, atTime: '', atWord: '', atTx: '', atWhy: '' }
       : { hasAt: true, atTime: '在 ' + this.timeText(S.t), atWord: x.word, atTx: 'tx-' + x.st, atWhy: x.why ? '：' + x.why : '' });
     const base = { hasArch: false, archSum: '', arch: [], hasLines: false, lines: [], noLines: false, hasLinesNote: false, linesNote: '', acts: [], canHandle: false,
-      close: () => { this.setState({ sel: null, relHover: null, dHover: null }); const a = this.props.actions; if (a && a.readMore) a.readMore({ detailTaskId: null, lineKey: null }); } };
+      close: () => { this.setState({ sel: null, relHover: null, dHover: null }); const a = this.props.actions; if (a && a.readMore) a.readMore({ detailTaskId: go.shownTask((this.state || {}).pins), lineKey: null }); } };
     const sqT = (tid) => 'sq z8 ' + this.sqAt((S.map[tid] || tm.byId[tid] || {}).st);
     const det = this.detailOf(id, go, hov);
     if (!det) return null;
@@ -2901,8 +2984,7 @@ class Component extends DCLogic {
       out.sq = 'sq ' + this.sqAt(n.st);
       out.agent = real && real.hasOwner ? real.owner : this.taskAgent(n);
       out.hasAgent = !!out.agent;
-      out.instruction = real ? real.instruction : (n.instruction || '');
-      out.hasInstruction = !!out.instruction;
+      if (out.hasAgent && !S.live) out.agent += '（现在）';
       out.word = real ? real.word : det.word;
       out.why = real && real.why ? '：' + real.why : det.why;
       /* 依赖 / 后续: the real edges (transitive ones included); a line means
@@ -2912,37 +2994,44 @@ class Component extends DCLogic {
       const next = (G.next[id] || []).filter((d) => tm.byId[d]);
       out.rel = [grp('依赖', deps.map(item), deps.length ? '' : '无'), grp('后续', next.map(item), next.length ? '' : '无')]
         .concat(det.rel.filter((g) => g.k === '返工'));
+      /* 重叠 (decision 26; prototype:3836-3837): the read risks, at most 6 */
+      const ov = real && real.overlaps ? real.overlaps : [];
+      if (ov.length) out.rel.push(grp('重叠', ov.slice(0, 6).map((o) => ({ name: o.text, sq: sqT(o.id), go: () => go.sel(o.id), over: noop, out: noop })),
+        ov.length > 6 ? '另有' + (real.overlapsComplete ? ' ' : '至少 ') + (ov.length - 6) + ' 个任务也改这些文件' : ''));
+      if (deps.length) out.rel.push(grp('', [], '依赖是需要它的产出，不必等它整个结束' + (ov.length ? '；没有连线的也会改同一个文件' : '')));
       if (real && real.disposition) {
-        out.rel = out.rel.concat([{ k: '处置', items: [], files: [], lines: [real.disposition.word
-          + (real.disposition.atText ? ' · ' + real.disposition.atText : '')
-          + (real.disposition.why ? ' · ' + real.disposition.why : '')], hasText: false, text: '' }]);
+        out.rel = out.rel.concat([{ k: '处置', items: [], files: [], lines: [real.disposition.text], hasText: false, text: '' }]);
       }
-      /* 架构: only the adapted actual files, grouped by the formal catalog; no
-         planned file, per-file count or uncommitted number. */
+      /* 架构: the planned modules (计划要改, no square: no real file state) and the
+         adapted actual files, grouped by the formal catalog; no planned file,
+         per-file count or uncommitted number. */
       const arch = real && real.hasFiles ? real.files.map((g) => ({ crumb: g.crumb,
-        files: g.files.map((f) => ({ path: f.path, name: f.name, sq: 'sq z8 ' + (f.certainty === 'definite' ? 's-satisfied' : 's-pending'),
-          tagCls: 'd-arch-tag ' + (f.certainty === 'definite' ? 'is-real' : 'is-possible'), tag: f.tag })) })) : [];
+        files: g.files.map((f) => ({ path: f.path, name: f.name, sq: f.certainty === 'planned' ? '' : 'sq z8 ' + (f.certainty === 'definite' ? 's-satisfied' : 's-pending'),
+          tagCls: 'd-arch-tag' + (f.certainty === 'planned' ? '' : f.certainty === 'definite' ? ' is-real' : ' is-possible'), tag: f.tag })) })) : [];
       out.hasArch = arch.length > 0;
-      out.archSum = out.hasArch ? '实际改过／可能改过（现在）' : '';
+      out.archSum = arch.some((g) => g.files.some((f) => f.path !== '')) ? '实际改过／可能改过（现在）' : '';
       out.arch = out.hasArch ? arch : [];
       /* 参与: the already-adapted participants, never rediscovered from the
          window's bars; an unread or incomplete list says so instead of "none". */
       const p = this.participation(id);
       out.hasLines = p.loaded;
-      out.lines = p.lines.map((l) => ({ name: l.name, text: l.text, go: () => go.line(l.id) }));
+      out.lines = p.lines.map((l) => ({ name: l.name, text: l.text, go: () => go.line(l.id, l.archived, l.role) }));
       out.noLines = p.loaded && p.complete && p.lines.length === 0;
-      out.hasLinesNote = p.loaded && !p.complete;
-      out.linesNote = p.note;
-      if (p.loaded && p.lines.length) out.acts.push({ label: '在轨道里看它的工作线', go: () => go.line(p.lines[0].id) });
+      /* in replay a complete list says it runs to now, not only to the cursor (prototype:3857) */
+      const toNow = !S.live && p.loaded && p.complete && p.lines.length > 0;
+      out.hasLinesNote = (p.loaded && !p.complete) || toNow;
+      out.linesNote = toNow ? '到现在为止的参与，不只到 ' + this.stamp(S.t) : p.note;
+      if (p.loaded && p.lines.length) out.acts.push({ label: '在轨道里看它的工作线', go: () => go.line(p.lines[0].id, p.lines[0].archived, p.lines[0].role) });
     } else {
       out.agent = n.kind === 'goal' ? this.goalAgent() : '';
       out.hasAgent = !!out.agent;
+      if (out.hasAgent && !S.live) out.agent += '（现在）';
       if (!S.live) {
         /* a group's lists at t: its stages / batches with their squares at t, or its tasks that are active at t */
         const itemG = (k, tail) => ({ name: k.name + (tail || ''), sq: 'sq z8 ' + (k.kids.length ? this.groupAt(k, S).sq : this.sqAt((S.map[k.id] || k).st)), go: () => go.sel(k.id), over: noop, out: noop });
         const rw = []; const wr = (k) => { if (k.kind === 'task' && k.rework && k.rework.length) rw.push(k); k.kids.forEach(wr); }; wr(n);
         const keep = rw.length ? [grp('返工', rw.slice(0, 8).map((k) => itemG(k, '，返工 ' + k.rework.length + ' 次（到现在）')), rw.length > 8 ? '另有 ' + (rw.length - 8) + ' 个任务返工过' : '')] : [];
-        if (n.kind === 'goal') out.rel = [grp('阶段', n.kids.map((k) => itemG(k)), '')];
+        if (n.kind === 'goal') out.rel = [grp('阶段', n.kids.filter((k) => k.kind === 'stage').map((k) => itemG(k)), '')];
         else if (n.kids.some((k) => k.kids.length)) out.rel = [grp('批次', n.kids.map((k) => itemG(k)), '')];
         else {
           const act = n.kids.filter((k) => S.map[k.id] && this.isActive(S.map[k.id].st));
@@ -2963,7 +3052,7 @@ class Component extends DCLogic {
     const detail = data.detailFor === taskId && data.detail ? data.detail : null;
     if (!detail) return { loaded: false, complete: false, lines: [], note: '' };
     const lines = (detail.participants || []).map((p) => ({
-      id: p.key ? p.key.projectId + '/' + p.key.sessionId : '', name: p.name, text: p.text,
+      id: p.key ? p.key.projectId + '/' + p.key.sessionId : '', name: p.name, text: p.text, archived: p.archived === true, role: p.role || '',
     }));
     return { loaded: !!detail.participantsLoaded, complete: !!detail.participantsComplete, lines: lines,
       note: detail.participantsComplete ? '到现在为止的参与' : '参与线还没读完，只显示已读到的' };
@@ -2982,7 +3071,8 @@ class Component extends DCLogic {
         const next = st.sel === r.id ? null : r.id;
         set({ sel: next, hover: null, relHover: null });
         const a = this.props.actions;
-        if (a && a.readMore) a.readMore({ detailTaskId: next && String(next).indexOf('task:') === 0 ? String(next).slice(5) : null });
+        /* a deselect reads the detail shown next, the last pin left (4.1) */
+        if (a && a.readMore) a.readMore({ detailTaskId: next === null ? go.shownTask(st.pins) : String(next).indexOf('task:') === 0 ? String(next).slice(5) : null });
         return;
       }
       const op = (val) => Object.assign({}, st.open || {}, { [r.id]: val });
@@ -3032,13 +3122,11 @@ class Component extends DCLogic {
     const data = this.props.data || null;
     const view = s.view === 'outline' || s.view === 'lanes' ? s.view : 'dag';
     /* The prototype's goal bar reason: the working line count from `lines/list`
-       (exact, 至少 n, or hidden). A failed reread outranks it: the page keeps the
-       last data, but the bar must carry the E3-2 read-error text, not a count.
-       A dropped event stream only says 重连, so it never hides a real count. */
+       (exact, 至少 n, or hidden). A failed reread or a dropped event stream
+       outranks it (E3-3): the page keeps the last data, but the bar says the
+       read-error or 重连 text, not a count. */
     const working = data && data.time ? data.time.workingCount : null;
-    const barWhy = read && read.stale && read.staleError && read.staleText ? String(read.staleText)
-      : working && working.known ? working.text
-        : read && read.stale && read.staleText ? String(read.staleText) : '';
+    const barWhy = read && read.stale && read.staleText ? String(read.staleText) : working && working.known ? working.text : '';
     const emptyNow = { cls: 'dg-now is-folded', label: '竖条所在时刻在进行的任务', title: '现在', count: '', replay: false,
       back: noop, canFold: false, foldLabel: '展开', toggleFold: noop, open: false, items: [], none: false,
       hasMore: false, more: '', hasHeld: false, held: [] };
@@ -3061,9 +3149,11 @@ class Component extends DCLogic {
         themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
         toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
         legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
-        goalName: goal ? goal.name : '', goalSq: goal ? this.sqAt(goal.st) : '', goalWord: goal ? goal.word : '',
+        /* the 600-task legend line stays off until big plans fold by stage again (decision 26) */
+        legendFold: false,
+        goalName: goal ? goal.name : '', hasGoal: !!goal, goalSq: goal ? this.sqAt(goal.st) : '', goalWord: goal ? goal.word : '',
         barWhy: barWhy,
-        viewDagCls: 'seg-btn' + (view === 'dag' ? ' is-on' : ''), viewOutlineCls: 'seg-btn' + (view === 'outline' ? ' is-on' : ''), viewLanesCls: 'seg-btn' + (view === 'lanes' ? ' is-on' : ''),
+        viewDagCls: 'seg-btn', viewOutlineCls: 'seg-btn', viewLanesCls: 'seg-btn',
         isDag: false, isOutline: false, isLanes: false, hasWl: false,
         showDag: () => set({ view: 'dag', hover: null, wHover: null }), showOutline: () => set({ view: 'outline', dHover: null, eHover: null, wHover: null }),
         showLanes: () => set({ view: 'lanes', dHover: null, eHover: null, hover: null }),
@@ -3102,11 +3192,26 @@ class Component extends DCLogic {
         if (byId[id]) p.open = openAbove(Object.assign({}, st.open || {}), id);
         set(p); demand(id);
       },
-      line: (lid) => {
+      /* a deselect or a closed pin: the detail shown next is the last pin left (DESIGN :337), else none; its read follows */
+      shownTask: (left) => { const id = (left || []).filter(knownWord).slice(-1)[0]; return id && byId[id].kind === 'task' ? String(id).replace(/^task:/, '') : null; },
+      unsel: (p) => { set(p); if (actions.readMore) actions.readMore({ detailTaskId: go.shownTask((this.state || {}).pins) }); },
+      /* a line opens in 轨道 by 角色 (prototype:3951-3955): its group opens, an archived one shows the archived lines, one
+         whose last activity is before today widens to 全部 and picks its last day (used when 全部 is longer than 14 days) */
+      line: (lid, archived, role) => {
+        const st = this.state || {};
         const rows = (data.time && data.time.rows) || []; const row = rows.filter((r) => r.id === lid)[0];
-        const win = (this.state || {}).wlWin || 'today';
-        set({ view: 'lanes', wlSel: lid, wHover: null });
-        if (actions.readMore) actions.readMore({ track: true, win: win, lineKey: row ? { projectId: row.projectId, sessionId: row.sessionId } : null });
+        const arch = archived === true || !!(row && row.archived);
+        const last = row && row.lastActivityAt ? this.tlMin(row.lastActivityAt) : NaN;
+        const old = Number.isFinite(last) ? last < this.tlDayStart(this.tlDayOf(this.tlModel({}).now)) : !row && arch;
+        const win = old ? 'all' : st.wlWin || 'today';
+        /* not gated on wlLong: the calendar read so far is today's; a 全部 of 14 days or less never reads wlDay */
+        const day = old && Number.isFinite(last) ? this.tlDateOf(this.tlDayOf(last - 0.01)) : null;
+        set({ view: 'lanes', wlBy: 'role', wlSel: lid, wHover: null, /* a line not read yet (archived) opens its duty's group */
+          wlClosed: Object.assign({}, st.wlClosed || {}, { [(row ? row.role : role) || 'unknown']: false }),
+          wlArch: !!st.wlArch || arch, wlWin: win, wlCell: null, wlDay: day });
+        /* it opens the full track, so it reads the execution index too (5.10) */
+        if (actions.readMore) actions.readMore(Object.assign({ track: true, win: win, executions: true, lineKey: row ? { projectId: row.projectId, sessionId: row.sessionId } : null },
+          arch ? { archive: true } : {}, day ? { hourDay: day } : {}));
       },
       outline: (id) => { const st = this.state || {}; set({ view: 'outline', sel: id, hover: null, open: openAbove(Object.assign({}, st.open || {}), id) }); demand(id); },
       dag: (id) => { go.sel(id); set({ view: 'dag', hover: null, wHover: null }); }
@@ -3132,10 +3237,11 @@ class Component extends DCLogic {
       const real = hs.filter((h) => byId[h]); if (!real.length) return '';
       const parents = new Set(real.map((h) => byId[h].parent));
       if (parents.size === 1 && real.length === hs.length) { const p = byId[[...parents][0]]; return p && p.parent ? '，在 ' + this.crumbsOf(byId, p.id).filter((c) => c.parent).map((c) => c.name).join(' / ') : ''; }
-      const tops = new Set(real.map((h) => { const c = this.crumbsOf(byId, h); return c[1] ? c[1].id : h; }));
+      /* only stages count: the Goal's acceptance hangs under the root without one (prototype:3977-3984) */
+      const tops = new Set(real.map((h) => this.crumbsOf(byId, h)[1]).filter((c) => c && c.kind === 'stage').map((c) => c.id));
       return '，在 ' + tops.size + ' 个阶段';
     };
-    const qNote = q ? (hits.length ? hits.length + ' 个' + whereNote(hits) : '没有匹配') : att ? '标出：' + W[att] + ' ' + hits.length : '';
+    const qNote = q ? (hits.length ? hits.length + ' 个' + whereNote(hits) : '没有匹配') : att ? '标出：' + W[att] + ' ' + hits.length + (S.live ? '' : '（现在）') : '';
     const qrow = (id) => {
       const n = byId[id]; if (!n) return null;
       const path = this.crumbsOf(byId, n.parent).filter((c) => c.parent).map((c) => c.name).join(' / ');
@@ -3153,7 +3259,7 @@ class Component extends DCLogic {
       if (ts.length === 1) {
         const t = ts[0]; const on = s.sel === t.id;
         attn.items.push({ name: t.name, word: W[k], sq: 'sq z8 ' + this.sqAt(k), on: on, cls: 'tm-ai' + (on ? ' is-on' : ''), title: W[k] + (S.live ? '' : '（现在）') + '：' + t.why,
-          go: () => { if ((this.state || {}).sel === t.id) set({ sel: null, relHover: null }); else go.sel(t.id); } });
+          go: () => { if ((this.state || {}).sel === t.id) go.unsel({ sel: null, relHover: null }); else go.sel(t.id); } });
         return;
       }
       const on = att === k;
@@ -3161,6 +3267,11 @@ class Component extends DCLogic {
         title: on ? '不再标出' : '在图里标出' + nowWord + '这 ' + ts.length + ' 个任务，并在下面列出',
         go: () => set({ att: (this.state || {}).att === k && !String((this.state || {}).q || '').trim() ? null : k, q: '', hover: null, dHover: null }) });
     });
+    /* HO:2051: this Goal's waiting cards are one more item after the tasks; the cards stay in the one 需要你决定 queue
+       (Decide.dc.html), so the item only links there. Unread or none: no item. */
+    const cards = data.decisionCards || null;
+    if (cards && cards.n > 0) attn.items.push({ name: '需要你决定', word: (cards.atLeast ? '至少 ' : '') + cards.n + ' 张卡', sq: 'sq z8 ' + this.sqAt('decide'),
+      on: false, cls: 'tm-ai', title: '“需要你决定”页：全部目标的待处理和已处理', go: () => location.assign('Decide.dc.html') });
     attn.none = attn.items.length === 0;
 
     if (view === 'outline') this._wlFz = null;
@@ -3183,26 +3294,36 @@ class Component extends DCLogic {
       const others = pins.filter((p) => p !== det0.id).map((p) => ({ name: nameOf(p), sq: sqOfPin(p), go: () => go.sel(p) }));
       const unpin = () => set({ pins: ((this.state || {}).pins || []).filter((p) => p !== det0.id) });
       return Object.assign({}, det0, { pinned: pinned, hasPins: others.length > 0, pins: others, closeLabel: pinned ? '关闭并取消固定' : '关闭详情',
-        close: () => { set({ sel: null, relHover: null, dHover: null, pins: ((this.state || {}).pins || []).filter((p) => p !== det0.id) });
-          if (actions.readMore) actions.readMore({ detailTaskId: null, lineKey: null }); },
+        close: () => { const left = ((this.state || {}).pins || []).filter((p) => p !== det0.id); set({ sel: null, relHover: null, dHover: null, pins: left });
+          if (actions.readMore) actions.readMore({ detailTaskId: go.shownTask(left), lineKey: null }); },
         acts: det0.acts.concat([{ label: pinned ? '取消固定' : '固定', go: pinned ? unpin : pinIt(det0.id, []) }]) });
     })() : null;
     return {
       rootMod: theme === 'light' ? 't-light' : '',
-      goalName: data.goal.name, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word,
-      barWhy: barWhy,
+      goalName: data.goal.name, hasGoal: true, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word,
+      /* in replay (no reread text standing): the lines working and waiting at the cursor, and when (prototype:4048);
+         with the track or the timeline unread, no number */
+      barWhy: S.live || (read && read.stale && read.staleText) ? barWhy : !data.time || typeof data.time.historyAt !== 'function' ? ''
+        /* 工作中: the lines with a bar across t, archived ones too (prototype busyAt, :4045) */
+        : ((doing, c) => (doing ? doing + ' 条工作线工作中' : '没有工作线在工作') + (c.waiting ? ' · ' + c.waiting + ' 条在等' : '') + '（' + this.stamp(S.t) + '）')(
+          this.workLines().list.filter((L) => L.bars.some((b) => this.barAt(b, S.t))).length, this.wlRailAt(S).counts),
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       isDag: view === 'dag', isOutline: view === 'outline', isLanes: view === 'lanes', hasWl: !!wl,
       viewDagCls: 'seg-btn' + (view === 'dag' ? ' is-on' : ''), viewOutlineCls: 'seg-btn' + (view === 'outline' ? ' is-on' : ''), viewLanesCls: 'seg-btn' + (view === 'lanes' ? ' is-on' : ''),
       /* Leaving the lanes withdraws their stale line chain and archive reads;
          the selected task's detail stays because the selection survives. */
-      showDag: () => { set({ view: 'dag', hover: null, wHover: null, wlArch: false }); if (actions.readMore) actions.readMore({ lineKey: null, archive: false }); },
-      showOutline: () => { set({ view: 'outline', dHover: null, eHover: null, wHover: null, wlArch: false }); if (actions.readMore) actions.readMore({ lineKey: null, archive: false }); },
-      showLanes: () => { set({ view: 'lanes', dHover: null, eHover: null, hover: null }); if (actions.readMore) actions.readMore({ track: true, win: (s.wlWin || 'today') }); },
+      /* 已归档 stays as it was (prototype:4053-4054): the DAG's dock still draws the track and keeps the read; the outline
+         withdraws the read only */
+      /* in replay the archived lines stay read (5.12); the outline withdraws them (5.13) */
+      showDag: () => { set({ view: 'dag', hover: null, wHover: null }); if (actions.readMore) actions.readMore({ lineKey: null, archive: !!(this.state || {}).wlArch || !!this._replayAsked }); },
+      showOutline: () => { set({ view: 'outline', dHover: null, eHover: null, wHover: null }); if (actions.readMore) actions.readMore({ lineKey: null, archive: false }); },
+      showLanes: () => { set({ view: 'lanes', dHover: null, eHover: null, hover: null }); if (actions.readMore) actions.readMore({ track: true, win: (s.wlWin || 'today'), executions: true, archive: !!(this.state || {}).wlArch || !!this._replayAsked }); },
       canvasCls: 'tm-canvas' + (view === 'dag' ? ' is-dag' : ''), canvasLabel: view === 'dag' ? '任务 DAG 和工作线' : view === 'outline' ? '任务大纲' : '工作线轨道和活动日历',
       canvasRef: (el) => { this._cv = el; }, dgScrollRef: (el) => { this._dgs = el; },
       legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
+        /* the 600-task legend line stays off until big plans fold by stage again (decision 26) */
+        legendFold: false,
 
       showFind: view !== 'lanes', attn: attn,
       mapQ: s.q || '', hasQNote: !!qNote && view !== 'lanes', qNote: qNote,

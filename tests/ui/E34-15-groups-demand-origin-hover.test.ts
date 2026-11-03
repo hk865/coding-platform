@@ -83,7 +83,7 @@ function boardOf(time: TaskMapTimeData, actions?: { readMore(demand: unknown): v
      (transitive) edge the hover must reveal. */
   const data = adaptTaskMap(goalRead, graphOf([
     { taskId: 'A', dependsOnId: 'B' }, { taskId: 'A', dependsOnId: 'C' }, { taskId: 'B', dependsOnId: 'C' },
-  ]), displayRead);
+  ]), displayRead, { hover: { modules: [{ module: { projectId: SCOPE.projectId, moduleId: 'e34-15-module' }, name: 'E34-15 模块' }] } });
   data.time = time;
   return new BoardView(board, { ...board.defaults, data, readState: { status: 'ready' }, dataVersion: 1,
     actions: { readMore: actions?.readMore ?? (() => {}), pinLine: async () => {} } });
@@ -91,8 +91,9 @@ function boardOf(time: TaskMapTimeData, actions?: { readMore(demand: unknown): v
 
 describe('E34-15 rows 25–28', () => {
   it('E34-15 row 25 groups the line by its real task and module', () => {
-    /* Named mutation: the adapter drops `groups`, so the board's `row.groups`
-       read has no task and the module line falls into 对话. */
+    /* Named mutations: the adapter drops `groups`, so the line is not under its
+       module; or the board names the group by its moduleId, not the
+       `graph/hover` name (5.3). */
     const time = timeData();
     expect(time.rows[0]!.groups).toEqual({
       task: { taskId: 'A' },
@@ -101,7 +102,7 @@ describe('E34-15 rows 25–28', () => {
     const view = boardOf(time);
     view.instance.setState({ view: 'lanes', wlBy: 'module', wlAttn: true });
     const wl = (view.instance.renderVals() as { wl: { rows: Array<{ isGrp: boolean; isLine: boolean; name: string; title: string }> } }).wl;
-    expect(wl.rows.some((row) => row.isGrp && row.name === 'e34-15-module')).toBe(true);
+    expect(wl.rows.some((row) => row.isGrp && row.name === 'E34-15 模块')).toBe(true);
     /* The failed Task's state reaches the attention filter through `groups.task`. */
     expect(wl.rows.some((row) => row.isLine && row.title.includes('执行者 · E34-15 线'))).toBe(true);
   });
@@ -116,7 +117,7 @@ describe('E34-15 rows 25–28', () => {
     const view = boardOf(time);
     view.instance.setState({ view: 'lanes', wlBy: 'module' });
     const wl = (view.instance.renderVals() as { wl: { rows: Array<{ isGrp: boolean; name: string }> } }).wl;
-    expect(wl.rows.some((row) => row.isGrp && row.name === 'e34-15-module')).toBe(true);
+    expect(wl.rows.some((row) => row.isGrp && row.name === 'E34-15 模块')).toBe(true);
     expect(wl.rows.some((row) => row.isGrp && row.name === '对话、咨询与验收')).toBe(false);
   });
 
@@ -134,9 +135,9 @@ describe('E34-15 rows 25–28', () => {
       detailTaskId: 'A',
       lineKey: { projectId: SCOPE.projectId, sessionId: SESSION.sessionId },
     });
-    /* Deselecting the same bar withdraws both demands. */
+    /* Deselecting the same bar withdraws only the line demand; the Task's detail stays. */
     wl().rows.find((row) => row.isLine && row.bars.length > 0)!.bars[0]!.pick();
-    expect(calls.at(-1)).toEqual({ detailTaskId: null, lineKey: null });
+    expect(calls.at(-1)).toEqual({ lineKey: null });
     /* 收起归档 withdraws the archive read. */
     const arch = wl().rows.find((row) => row.isArch)!;
     arch.toggle();
@@ -230,7 +231,7 @@ describe('E34-15 rows 25–28', () => {
 
   it('E34-15 row 28 keeps the colon-bearing node key on hover', () => {
     /* Named mutation: `hovKey.split(':')[1]` yields the literal `task`, so the
-       transitive edge's endpoints never match and it is not drawn or hovered. */
+       transitive edge's endpoints never match and it is not drawn. */
     const time = timeData();
     const view = boardOf(time);
     const dag = (view.instance.renderVals() as { dag: { nodes: Array<{ id: string; hover(): void }>; edges: Array<{ key: string; cls: string }> } }).dag;
@@ -238,7 +239,7 @@ describe('E34-15 rows 25–28', () => {
     expect(a).toBeDefined();
     a.hover();
     const hovered = (view.instance.renderVals() as { dag: { edges: Array<{ key: string; cls: string }> } }).dag;
-    expect(hovered.edges.some((edge) => edge.key === 'task:C>task:A' && edge.cls.includes('is-hov'))).toBe(true);
+    expect(hovered.edges.find((edge) => edge.key === 'task:C>task:A')?.cls.includes('is-hov')).toBe(false);
     /* An unrelated node lights no edge. */
     const unrelated = (view.instance.renderVals() as { dag: { nodes: Array<{ id: string; hover(): void }> } }).dag
       .nodes.find((node) => node.id === 'task:D')!;

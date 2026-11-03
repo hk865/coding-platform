@@ -228,7 +228,7 @@ describe('E34-4 real Work and check bars', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(scene.now));
     let page: BootedPage | undefined;
-    const cellLabel = '2026-10-03 15:00';
+    const cellLabel = '10-03 周六 15:00–16:00';
     const cellWith = (label: string) => findElement(page!.root, (element) => {
       const cls = (element.getAttribute('class') ?? '').split(/\s+/);
       return cls.includes('cal-c') && (element.getAttribute('aria-label') ?? '').startsWith(label);
@@ -261,7 +261,7 @@ describe('E34-4 real Work and check bars', () => {
       findButton(page.root, '本周')!.dispatch('click');
       await poll(() => cellWith(cellLabel) !== undefined);
       cellWith(cellLabel)!.dispatch('click');
-      await poll(() => (findClass(page!.root, 'tl-sum')?.textContent ?? '').includes('2026-10-03 15:00 这一小时'));
+      await poll(() => (findClass(page!.root, 'tl-sum')?.textContent ?? '').includes('10-03 15:00 这一小时'));
       /* Under the old code the in-window T21 bar is the "last" one, so the
          decide mark and a wait to now land on yesterday. */
       expect(findElement(page.root, (element) => {
@@ -301,7 +301,7 @@ describe('E34-4 real Work and check bars', () => {
     const decisionAt = ['left: 88.33%;'];
     const incompleteAt = ['left: 86.19%;'];
     const waits = ['left: 86.19%; width: 3.1%;', 'left: 88.33%; width: 0.95%;'];
-    const cellLabel = '2026-10-03 15:00';
+    const cellLabel = '10-03 周六 15:00–16:00';
     let page: BootedPage | undefined;
     try {
       page = await bootPage({
@@ -325,7 +325,7 @@ describe('E34-4 real Work and check bars', () => {
       findButton(root, '本周')!.dispatch('click');
       await poll(() => hourCell(root, cellLabel) !== undefined);
       hourCell(root, cellLabel)!.dispatch('click');
-      await poll(() => (findClass(root, 'tl-sum')?.textContent ?? '').includes('2026-10-03 15:00 这一小时'));
+      await poll(() => (findClass(root, 'tl-sum')?.textContent ?? '').includes('10-03 15:00 这一小时'));
       expect(decideMarks(root)).toEqual([]);
       expect(incompleteMarks(root)).toEqual([]);
       expect(waitLines(root)).toEqual([]);
@@ -343,14 +343,14 @@ describe('E34-4 real Work and check bars', () => {
 
   it('E34-4 a Task whose real last bar is in a past hour marks it only in a window that holds now', async () => {
     /* Row C, the second half of the gate: T21's only bar is yesterday's, so it is
-       the real last bar in both windows. The week holds now: 10-03 15:40 is
-       (5 + 940/1440) of 7 days, 80.75%, and now is (6 + 855/1440) of 7, 94.20%, so
-       its wait is 13.44 wide; T20's incomplete check at 14:02, 94.07%, waits 0.13.
+       the real last bar in both windows. The week holds now; a day is drawn 08:00–20:00: 10-03 15:40 is
+       (5 + 460/720) of 7 days, 80.56%, and now is (6 + 375/720) of 7, 93.15%, so
+       its wait is 12.6 wide; T20's incomplete check at 14:02, (6 + 362/720) of 7, 92.90%, waits 0.26.
        The picked hour does not hold now. Named mutation: drop the window-contains-now
        gate; the picked hour draws the mark and a wait. */
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(scene.now));
-    const cellLabel = '2026-10-03 15:00';
+    const cellLabel = '10-03 周六 15:00–16:00';
     let page: BootedPage | undefined;
     try {
       page = await bootPage({
@@ -366,11 +366,11 @@ describe('E34-4 real Work and check bars', () => {
       await poll(() => findClass(root, 'is-full') !== undefined);
       findButton(root, '本周')!.dispatch('click');
       await poll(() => hourCell(root, cellLabel) !== undefined && decideMarks(root).length > 0);
-      expect(decideMarks(root)).toEqual(['left: 80.75%;']);
-      expect(waitLines(root)).toEqual(['left: 80.75%; width: 13.44%;', 'left: 94.07%; width: 0.13%;']);
+      expect(decideMarks(root)).toEqual(['left: 80.56%;']);
+      expect(waitLines(root)).toEqual(['left: 80.56%; width: 12.6%;', 'left: 92.9%; width: 0.26%;']);
 
       hourCell(root, cellLabel)!.dispatch('click');
-      await poll(() => (findClass(root, 'tl-sum')?.textContent ?? '').includes('2026-10-03 15:00 这一小时'));
+      await poll(() => (findClass(root, 'tl-sum')?.textContent ?? '').includes('10-03 15:00 这一小时'));
       expect(decideMarks(root)).toEqual([]);
       expect(waitLines(root)).toEqual([]);
     } finally {

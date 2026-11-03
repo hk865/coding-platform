@@ -276,7 +276,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
          10-03 (234/35/8) and 10-04 (213/34/8). Reading the raw fixture days by
          `st/ed/ck` instead of `wlActs`' `steps/edits/checks` makes this NaN. */
       expect(summary).toContain('步骤 955 · 编辑 131 · 检查 32 次');
-      expect(summary).not.toContain('活动未记全');
+      expect(summary).not.toContain('未知');
 
       const day = findElement(page.root, (element) => {
         const cls = element.getAttribute('class') ?? '';
@@ -336,8 +336,8 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       findButton(page.root, '轨道')!.dispatch('click');
       findButton(page.root, '全部')!.dispatch('click');
       await poll(() => calendarInputs.some((input) => input.granularity === 'day'));
-      await poll(() => page!.root.textContent.includes('活动未记全'));
-      expect(page.root.textContent).toContain('活动未记全');
+      await poll(() => page!.root.textContent.includes('：未知'));
+      expect(page.root.textContent).toContain('：未知');
       expect(page.root.textContent).not.toContain('步骤 0');
     } finally {
       await page?.restore();
@@ -348,7 +348,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
   it('E34-7 a 14.5-day full history reads the board\'s long granularity and its summary is a number', async () => {
     /* Named mutation: restore boot's 15-day hour threshold. The board's long
        view starts above 14 days, so the 14.5-day range is read as hours and the
-       no-day summary loses every bucket (the numeric assertion sees 活动未记全). */
+       no-day summary loses every bucket (the numeric assertion sees 未知). */
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(scene.now));
     const calendarInputs: Array<Record<string, unknown>> = [];
@@ -390,7 +390,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
         && typeof input.to === 'string' && Date.parse(input.to) - Date.parse(input.from) > 14 * 86400000));
       await poll(() => {
         const text = findClass(page!.root, 'tl-sum')?.textContent ?? '';
-        return /步骤 \d/.test(text) || text.includes('活动未记全');
+        return /步骤 \d/.test(text) || text.includes('未知');
       });
       /* The board's long view starts above 14 days; boot must judge the same
          range the same way, so every read over 14 days is one day read. */
@@ -400,7 +400,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       expect(longReads.map((input) => input.granularity)).toEqual(longReads.map(() => 'day'));
       const summary = findClass(page.root, 'tl-sum')!.textContent;
       expect(summary).toMatch(/步骤 \d+ · 编辑 \d+ · 检查 \d+ 次/);
-      expect(summary).not.toContain('活动未记全');
+      expect(summary).not.toContain('未知');
       expect(page.root.textContent).not.toContain('NaN');
     } finally {
       await page?.restore();
@@ -454,7 +454,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       await poll(() => calendarInputs.some(isFullRead));
       await poll(() => {
         const text = findClass(page!.root, 'tl-sum')?.textContent ?? '';
-        return /步骤 \d/.test(text) || text.includes('活动未记全');
+        return /步骤 \d/.test(text) || text.includes('未知');
       });
       /* 15:15 and 15:30 at +08:00 are 07:15Z and 07:30Z. */
       for (const input of calendarInputs.filter(isFullRead)) {
@@ -464,7 +464,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       /* 09-20 to 10-04 is 15 local days of 2 steps, 1 edit and 1 check. */
       const summary = findClass(page.root, 'tl-sum')!.textContent;
       expect(summary).toContain('步骤 30 · 编辑 15 · 检查 15 次');
-      expect(summary).not.toContain('活动未记全');
+      expect(summary).not.toContain('未知');
     } finally {
       await page?.restore();
       vi.useRealTimers();
@@ -474,7 +474,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
   it('E34-7 a long hour read with no picked day sums its hours instead of filtering them all out', () => {
     /* Named mutation: filter the no-day hours by `localDate === o.day` again;
        `o.day` is null, so every real hour is dropped and the complete range
-       reads 活动未记全. */
+       reads 未知. */
     const from = new Date(2026, 8, 20);
     const days = localDays(from.toISOString(), new Date(2026, 9, 4, 12).toISOString());
     const cells = days.map((day, index) => calendarBucket(day, index === 0 ? 0 : 12, 1, 2, 3));
@@ -492,7 +492,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
     view.instance.setState({ view: 'lanes', wlWin: 'all' });
     const vals = view.instance.renderVals() as { wl: { sum: string } };
     expect(vals.wl.sum).toContain('步骤 15 · 编辑 30 · 检查 45 次');
-    expect(vals.wl.sum).not.toContain('活动未记全');
+    expect(vals.wl.sum).not.toContain('未知');
   });
 
   it('E34-7 picking an hour in a past week day keeps the seven calendar rows and the picked cell', async () => {
@@ -502,7 +502,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
     vi.setSystemTime(new Date(scene.now));
     let page: Awaited<ReturnType<typeof bootPage>> | undefined;
     const cellAt = (root: Parameters<typeof findClass>[0]) => findAllClass(root, 'cal-c')
-      .find((element) => (element.getAttribute('aria-label') ?? '').startsWith('2026-10-02 09:00'));
+      .find((element) => (element.getAttribute('aria-label') ?? '').startsWith('10-02 周五 09:00–10:00'));
     try {
       page = await bootPage({
         name: 'TaskMap', search: '?goal=g1', token: 'e34-7-week-hour',
@@ -519,7 +519,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       findButton(page.root, '本周')!.dispatch('click');
       await poll(() => cellAt(page!.root) !== undefined);
       cellAt(page.root)!.dispatch('click');
-      await poll(() => (findClass(page!.root, 'tl-sum')?.textContent ?? '').includes('2026-10-02 09:00 这一小时'));
+      await poll(() => (findClass(page!.root, 'tl-sum')?.textContent ?? '').includes('10-02 09:00 这一小时'));
       const cal = findClass(page.root, 'cal')!;
       /* The corner plus one label for each of the week's seven real days. */
       expect(findAllClass(cal, 'cal-d')).toHaveLength(8);
@@ -575,8 +575,8 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       await poll(() => cellWith('10-02 ') !== undefined);
       cellWith('10-02 ')!.dispatch('click');
       await poll(() => cellWith('2026-10-02|') !== undefined);
-      cellWith('2026-10-02|')!.dispatch('click');
-      await poll(() => (cellWith('2026-10-02|')?.getAttribute('class') ?? '').includes('is-on'));
+      cellWith('2026-10-02|09|')!.dispatch('click');
+      await poll(() => (cellWith('2026-10-02|09|')?.getAttribute('class') ?? '').includes('is-on'));
       const earlier = cellWith('09-04 ');
       expect(earlier).toBeDefined();
       earlier!.dispatch('click');

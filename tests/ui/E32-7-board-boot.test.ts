@@ -58,10 +58,10 @@ describe('E32-7 boot reads the real task map', () => {
     });
     try {
       const text = page.root.textContent;
-      /* Ruling 3: the default DAG reads six base routes plus the day's track
-         and hour calendar (8 route reads), opens the change stream (404 here)
-         and fetches the page once: 8 + 1 + 1 = 10 requests. */
-      expect(calls + page.pageFetches()).toBe(10);
+      /* Ruling 3: the default DAG reads six base routes, the Goal's decision cards, the day's track
+         and hour calendar (9 route reads), opens the change stream (404 here)
+         and fetches the page once: 9 + 1 + 1 = 11 requests. */
+      expect(calls + page.pageFetches()).toBe(11);
       expect(page.pageFetches()).toBe(1);
       expect(text).toContain('E32 真实目标');
       expect(text).toContain('E32 真实任务');

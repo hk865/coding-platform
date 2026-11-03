@@ -539,6 +539,8 @@ function nodeDetail(input: Record<string, unknown>): NodeDetailV1 {
     return { section: 'participants', items: [], nextCursor: null, sourceCursor: CURSOR };
   }
   const task = taskOf(taskId);
+  /* the summary's responsible line is the hover's (hoverTask), as one source in production */
+  const owner = ownerLineOfTask(taskId);
   const graphNode: GraphNodeRefV1 = { kind: 'task', ref: { projectId: PROJECT, goalId: GOAL, taskId }, planRef };
   return {
     section: 'summary', node: graphNode, pin: { ref: planRef, revision: 1 },
@@ -548,10 +550,10 @@ function nodeDetail(input: Record<string, unknown>): NodeDetailV1 {
       phaseCause: task.phaseCause === null ? null : { code: phaseCauseCode(task.phaseCause.code) },
       disposition: lit<Disposition>(task.disposition),
       display: { neverRanTerminal: null, anomaly: null, attention: null },
-      module: null, owners: [], participatedLines: { status: 'exact', value: 0 },
+      module: null, owners: owner === undefined ? [] : [lineBrief(owner)], participatedLines: { status: 'exact', value: 0 },
       plannedModules: [],
       actualFiles: { availability: 'unavailable', cause: 'not_recorded', reason: 'scene' },
-      responsibleNow: [], responsibility: 'none',
+      responsibleNow: owner === undefined ? [] : [lineBrief(owner)], responsibility: owner === undefined ? 'none' : 'has_responsibility',
     },
     group: null, goal: null, module: null, line: null,
     notes: { status: 'not_available', reason: 'no_note_anchor' },

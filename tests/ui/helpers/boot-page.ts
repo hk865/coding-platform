@@ -8,7 +8,7 @@ import { FakeElement, installFakeDom, restoreFakeDom } from './dom.js';
  * at the Host origin or with the controlled replies of a failure row. */
 export type PageFetch = (url: string, init: RequestInit | undefined, realFetch: typeof fetch) => Promise<Response>;
 
-export type BootedPage = { root: FakeElement; restore(): Promise<void>; pageFetches(): number };
+export type BootedPage = { root: FakeElement; restore(): Promise<void>; pageFetches(): number; assigned(): string[] };
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const WORKING_BOARDS = `${ROOT}src/ui/boards`;
@@ -69,6 +69,7 @@ export async function bootPage(options: {
   const abort = new AbortController();
   let destroyed = false;
   let pageFetches = 0;
+  const assigned: string[] = [];
   /* only the page's reconnect timer: the Host shares this process and its heartbeat keeps running */
   globalThis.setTimeout = ((handler: () => void, delay?: number) => {
     if (delay !== PAGE_RECONNECT_MS) return savedSetTimeout(handler, delay);
@@ -89,6 +90,8 @@ export async function bootPage(options: {
     value: {
       href: url, search: options.search ?? '',
       reload: (): void => { throw new Error('E33: the page must not reload'); },
+      /* a link the page follows itself is recorded, never navigated */
+      assign: (to: string): void => { assigned.push(String(to)); },
     },
     configurable: true,
   });
@@ -114,7 +117,7 @@ export async function bootPage(options: {
     globalThis.setTimeout = savedSetTimeout;
   };
   try { await bootBoardPage(); } catch (error) { await restore(); throw error; }
-  return { root, restore, pageFetches: () => pageFetches };
+  return { root, restore, pageFetches: () => pageFetches, assigned: () => assigned.slice() };
 }
 
 /** Depth-first element lookup over the fake DOM `BoardView.mount` built. */

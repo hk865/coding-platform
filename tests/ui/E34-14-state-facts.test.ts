@@ -39,17 +39,18 @@ function nodesWithClass(root: FakeElement, cls: string): FakeElement[] {
   return found;
 }
 
-/** Boot the scene page, with an optional route-reply rewrite for a test row. */
+/** Boot the scene page, with an optional route-reply rewrite for a test row; `live` keeps the change stream open (by default it is answered 404, so the page is stale). */
 function scenePage(
   rewrite?: (route: string, reply: unknown, input: Record<string, unknown>) => unknown,
   onRoute?: (route: string) => void,
+  live = false,
 ): Promise<BootedPage> {
   return bootPage({
     name: 'TaskMap', search: '?goal=g1', token: 'e34-14-token',
     request: async (url, init) => {
       if (init?.signal?.aborted) return new Promise<Response>(() => {});
       const route = url.slice(url.indexOf('/api/real/core/') + '/api/real/core/'.length);
-      if (route === 'changes') return new Response('{}', { status: 404 });
+      if (route === 'changes') return live ? new Response(new ReadableStream<Uint8Array>(), { status: 200 }) : new Response('{}', { status: 404 });
       onRoute?.(route);
       const envelope = init?.body === undefined ? {} : JSON.parse(String(init.body)) as { input?: unknown };
       const input = envelope.input ?? envelope;
@@ -77,7 +78,7 @@ describe('E34-14 the route facts keep their state, result and reason words', () 
     });
     const data = adaptTaskMap(goalRead(), graph as unknown as TaskMapGraphRead, displayRead());
     expect(data.tasks.find((task) => task.id === 'T21')).toMatchObject({
-      st: 'decide', why: '自动返工已达上限',
+      st: 'decide', why: '自动返工已达上限（3/3）',
     });
   });
 
@@ -279,9 +280,9 @@ describe('E34-14 the route facts keep their state, result and reason words', () 
     expect(vals.wl.selSub).not.toContain('起');
   });
 
-  it('E34-14 the now column carries the bar’s changed files and check round, never an attempt ordinal or x/y', async () => {
+  it('E34-14 the now column carries the bar’s changed files and check round, never an attempt ordinal or a cursor-time x/y', async () => {
     /* Named mutation: build the now sum from `x.why` only (drop the bar facts);
-       the real 至少改过 3 个文件 / 第 2 轮正式检查 / 已开始 5 项 disappear. */
+       the real 已改至少 3 个文件 / 正式检查第 2 轮进行中 / 已开始 5 项 disappear. */
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(scene.now));
     let page: BootedPage | undefined;
@@ -301,27 +302,30 @@ describe('E34-14 the route facts keep their state, result and reason words', () 
         }
         return reply;
       });
-      await poll(() => (findClass(page!.root, 'dg-now')?.textContent ?? '').includes('改过'));
+      await poll(() => (findClass(page!.root, 'dg-now')?.textContent ?? '').includes('已改'));
       const now = findClass(page.root, 'dg-now')!;
       /* `definite` only, prefixed 至少 by `possiblyIncomplete`; `possible` is
          not named by the row and stays out. */
-      expect(now.textContent).toContain('至少改过 3 个文件');
-      expect(now.textContent).not.toContain('改过 5 个文件');
-      expect(now.textContent).toContain('第 2 轮正式检查');
+      expect(now.textContent).toContain('已改至少 3 个文件');
+      expect(now.textContent).not.toContain('5 个文件');
+      expect(now.textContent).toContain('正式检查第 2 轮进行中');
       expect(now.textContent).toContain('已开始 5 项');
       /* `checksBegun` is begun, not completed; there is no attempt ordinal and
-         no cursor-time x/y in these reads. */
+         no cursor-time x/y in these reads (the prototype's 9/14 项已完成,
+         prototype:783). A.2's （n/cap） is a real count (DESIGN `:606`) and is
+         cut out first. Named mutation: print `checksBegun + '/14 项'`. */
       expect(now.textContent).not.toContain('已完成');
       expect(now.textContent).not.toContain('次尝试');
-      expect(now.textContent).not.toMatch(/\d+\s*\/\s*\d+/);
+      expect(now.textContent.replace(/（\d+\/\d+）/g, '')).not.toMatch(/\d+\s*\/\s*\d+/);
     } finally {
       await page?.restore();
     }
   }, 60_000);
 
   it('E34-14 shows the goal bar’s working count and the assignment instruction in the hover card', async () => {
-    /* Named mutation: leave barWhy on the stale text and taskCard.sem on the
-       empty task semantic; the working count and the instruction disappear. */
+    /* On a live stream (6.1: a dropped one says 重连 instead). Named mutation:
+       drop the lines/list count from barWhy and leave taskCard.sem on the empty
+       task semantic; the working count and the instruction disappear. */
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(scene.now));
     let page: BootedPage | undefined;
@@ -331,7 +335,7 @@ describe('E34-14 the route facts keep their state, result and reason words', () 
         const graph = (reply as Ready<TaskGraph>).value;
         graph.plan.assignments = [{ taskId: 'T01', role: 'executor', instruction: '先读状态机规格再动手' }];
         return reply;
-      });
+      }, undefined, true);
       await poll(() => page!.root.textContent.includes('状态机可靠性改造'));
       const why = findClass(page.root, 'why')!;
       expect(why.textContent).toBe('3 条工作线工作中');

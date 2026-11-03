@@ -104,7 +104,7 @@ describe('E34-5 Query placement on the real track', () => {
       const rows = nodesWithClass(page!.root, 'wl-row').filter((row) =>
         nodesWithClass(row, 'k-talk').length + nodesWithClass(row, 'k-query').length > 0);
       expect(rows).toHaveLength(1);
-      expect(rows[0]!.textContent).toContain('executor');
+      expect(rows[0]!.textContent).toContain('执行者');
       expect(page!.root.textContent).not.toContain('状态机可靠性改造');
       /* The read-only copy is a separate Session and never a row of its own. */
       expect(nodesWithClass(page!.root, 'wl-row').some((row) => row.textContent.includes(copyRef.sessionId))).toBe(false);

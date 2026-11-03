@@ -36,16 +36,18 @@ export type TaskMapGraphRead = {
 };
 
 /** The two route replies read on every notification with the base four. */
-export type TaskMapHoverRead = { groups?: unknown[]; tasks?: unknown[] };
+export type TaskMapHoverRead = { groups?: unknown[]; tasks?: unknown[]; modules?: unknown[] };
 export type TaskMapLineRead = { counts?: { working?: unknown }; rows?: unknown[] };
 export type TaskMapExtraReads = { hover?: TaskMapHoverRead | null; lines?: TaskMapLineRead | null };
 
 export type TaskMapTask = {
   id: string; stageId: string | null; name: string; st: string; why: string;
   deps: string[]; gate: boolean; scopeKind: string; owner: string;
-  /** The adopted assignment's instruction; empty hides the row (never the title). */
+  /** The adopted assignment's instruction: the Task's 语义 (DESIGN `:492-507`); empty hides the row. */
   instruction: string;
   rework: string[];
+  /** `rework.cap`: the automatic requeue count on a bar reads (n/cap). */
+  reworkCap: number | null;
 };
 
 export type TaskMapDagEdge = {
@@ -84,7 +86,41 @@ export type TaskMapData = {
   detailFor?: string;
   /** Ruling 4: present only after the track is opened. */
   time?: TaskMapTimeData;
+  /** This Goal's waiting decision cards (HO:2051); null when unread or none. */
+  decisionCards?: { n: number; atLeast: boolean } | null;
+  /** `graph/hover` `modules[]`: moduleId → name, the 模块 group names (no id reaches the page). */
+  moduleNames?: Record<string, string>;
 };
+
+/** The `decisions/queue` value the attention item reads: the waiting total
+ * before paging and which sources could be read. */
+export type TaskMapQueueRead = {
+  counts?: { waitingAnswer?: unknown };
+  capabilities?: Array<{ source?: unknown; availability?: unknown }>;
+};
+
+/* The twelve notice categories (`NoticeCategoryV1`). A notice kind the Host
+   has no source for never hides a card, so only an unavailable card source
+   (or a source this page does not know) makes the count partial; the queue's
+   own `countsComplete` also waits on every notice kind and is never true on a
+   real Host. The page keeps its own copy of the names (it imports no contract
+   values). */
+const NOTICE_CATEGORIES = new Set(['member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply',
+  'automatic_rework', 'continuation', 'disconnect', 'member_created', 'project_notice', 'plan_adoption', 'plan_notice']);
+
+/** HO:2051: the number of this Goal's cards waiting for an answer; a zero or
+ * an unreadable count is no item (a complete 0 needs nothing, a partial 0 is
+ * no fact). */
+export function adaptTaskMapDecisionCards(read: TaskMapQueueRead | null): { n: number; atLeast: boolean } | null {
+  const n = asRecord(asRecord(read).counts).waitingAnswer;
+  if (typeof n !== 'number' || n <= 0) return null;
+  const capabilities = asRecord(read).capabilities;
+  const atLeast = (Array.isArray(capabilities) ? capabilities : []).some((entry) => {
+    const row = asRecord(entry);
+    return row.availability === 'not_available' && !NOTICE_CATEGORIES.has(asText(row.source));
+  });
+  return { n, atLeast };
+}
 
 /** Ruling item 2: the ten formal display phases, worded as the board's own goal
  * words (`Main.dc.html:1765`, `Plan.dc.html:1773`) and task words
@@ -139,27 +175,84 @@ function taskState(
   return phase;
 }
 
-/** The short current reason a TaskRow carries; the route has no long prose. */
+/** The short current reason a TaskRow carries, in the A.2 words (DESIGN `:606`,
+ * E3I:47) and the cause-code table (E3I:139); stop reasons and phase causes
+ * share it. The route has no long prose. */
 const PHASE_CAUSE_WORD: Record<string, string> = {
-  requeued: '已重新入队', run_outcome_unknown: '执行结果未知', run_failed: '执行失败',
+  requeued: '已重新入队', run_outcome_unknown: '执行结果待核对', run_failed: '执行失败',
   check_failed: '检查未通过', round_inconclusive: '检查不完整', check_interrupted: '检查被中断',
-  round_ambiguous: '检查轮次无法判定', awaiting_verification: '等待正式检查',
+  round_ambiguous: '轮次链无效，需要计划处理', awaiting_verification: '等待正式检查',
   verification_running: '正式检查进行中', awaiting_completion: '等待完成确认',
-  origin_unresolvable: '来源无法核对', continuation_cancelled: '接续已取消',
-  continuation_paused: '接续已暂停', paused_interrupted: '暂停时被中断',
-  gate_needs_fix: '验收未通过，需要修', auto_rework_cap_reached: '自动返工已达上限',
-  no_new_basis: '没有新的依据', verification_uncovered: '没有覆盖验收的检查',
-  unknown_outcome: '结果未知，需要核对', budget_exhausted: '预算用尽',
-  task_cancelled: '任务已取消', task_paused: '任务已暂停',
+  origin_unresolvable: '来源无法核对', continuation_cancelled: '已取消，可重新入队',
+  continuation_paused: '接续已暂停', paused_interrupted: '主机重启时已暂停',
+  gate_needs_fix: '验收未通过，需要添加修复任务', auto_rework_cap_reached: '自动返工已达上限',
+  no_new_basis: '没有新依据，自动返工已停止', verification_uncovered: '没有覆盖验收的检查',
+  unknown_outcome: '执行结果待核对', budget_exhausted: '预算耗尽',
+  task_cancelled: '任务已取消', task_paused: '已暂停，可继续',
+  unknown_call_review: '结果未知的调用待核对', interrupted_pending_resume: '被中断，等你继续',
 };
 
-function taskWhyOf(row: Record<string, unknown>): string {
+/* The automatic rework count and its cap in brackets; a missing value drops
+   only the brackets. */
+const countOf = (n: unknown, cap: unknown): string =>
+  typeof n === 'number' && typeof cap === 'number' ? '（' + String(n) + '/' + String(cap) + '）' : '';
+
+/** A stop reason's word. `not_reworkable` is worded by its cause; the cap
+ * counts the requeues, or the round chain for a reverify (E3I:228). */
+function stopWordOf(row: Record<string, unknown>, stop: string): string {
+  const failure = asRecord(row.failure);
+  const automation = asRecord(failure.automation);
+  const detail = asRecord(asRecord(automation.verdict).detail);
+  if (stop === 'not_reworkable') return asText(detail.cause) === 'round_ambiguous' ? PHASE_CAUSE_WORD.round_ambiguous! : '';
+  if (stop === 'auto_rework_cap_reached') {
+    return PHASE_CAUSE_WORD.auto_rework_cap_reached + countOf(detail.operation === 'reverify'
+      ? asRecord(failure.round).autoCount : automation.requeueAutoCount, automation.cap);
+  }
+  return PHASE_CAUSE_WORD[stop] ?? '';
+}
+
+/** `st` is the state the board shows. A reason never repeats the state word
+ * (DESIGN `:622`): a waiting Task already reads 已暂停，可继续, so its paused stop
+ * gives way to the phase cause. */
+function taskWhyOf(row: Record<string, unknown>, st: string): string {
   /* The automation stop explains a person's decision; it lives in the failure
      verdict, while `phaseCause.code` is only the phase projection. */
   const stop = automationStopOf(row);
-  if (stop !== '') return PHASE_CAUSE_WORD[stop] ?? '';
+  if (st === 'deferred') {
+    /* An inactive Task keeps its projected phase and reason when it ran
+       (`traced`, E3I:244); otherwise the reason it was deferred is its cause
+       (the detail's 处置 row has the same text). */
+    const change = asRecord(row.dispositionChange);
+    if (change.traced !== true) return asText(asRecord(change.reason).text);
+    const phaseSt = taskState(asText(row.effectivePhase), asRecord(row.definition).executionIntent, '',
+      asText(asRecord(row.phaseCause).code), stop) ?? '';
+    const reason = taskWhyOf(row, phaseSt);
+    return (PHASE_WORD[phaseSt] ?? '') + (reason !== '' ? '，' + reason : '');
+  }
+  const stopWord = stop === '' || (st === 'waiting' && stop === 'task_paused') ? '' : stopWordOf(row, stop);
+  if (stopWord !== '') return stopWord;
   const code = asText(asRecord(row.phaseCause).code);
-  return code === '' ? '' : PHASE_CAUSE_WORD[code] ?? '';
+  if (code === 'requeued') {
+    /* Who requeued is the last rework entry; the `claim_requeued` verdict
+       covers every requeue, manual or automatic, so it has no word. */
+    const rework = asRecord(row.rework);
+    const entries = Array.isArray(rework.entries) ? rework.entries : [];
+    const last = asRecord(entries[entries.length - 1]);
+    return last.automatic === true ? '系统自动重新入队' + countOf(last.autoCount, rework.cap) : PHASE_CAUSE_WORD.requeued!;
+  }
+  const word = code === '' ? '' : PHASE_CAUSE_WORD[code] ?? '';
+  /* 2C's sentence: the failure word, then what the automation does next
+     (slice-2C-SPEC.md:1192; E3I:202, :228). An interruption is not counted. */
+  const automation = asRecord(asRecord(row.failure).automation);
+  const verdict = asRecord(automation.verdict);
+  const lead = word === '' ? '' : word + '，';
+  if (verdict.kind === 'requeue') {
+    const next = typeof automation.requeueAutoCount === 'number' ? automation.requeueAutoCount + 1 : undefined;
+    return lead + '系统自动重新入队' + (verdict.failureClass === 'interrupted' ? '' : countOf(next, automation.cap)) + '，等待推进';
+  }
+  if (verdict.kind === 'reverify') return lead + '推进时自动重新检查';
+  if (word !== '') return word;
+  return st === 'claimable' ? '等成员领取' : '';
 }
 
 /** The Task's display stage: `definition.stageId`, else the scope's stage — a
@@ -171,22 +264,63 @@ function stageOf(definition: Record<string, unknown>): string {
   return scope.kind === 'stage' || scope.kind === 'module' ? asText(scope.stageId) : '';
 }
 
-function ownersOf(extra: TaskMapExtraReads | undefined): { byTask: Record<string, string>; goal: string } {
+/* What an interruption anchor waits for (slice-2C-SPEC.md:1195, `anomaly_pending`);
+   a blocked rework names no code (DESIGN `:604`), an unknown value names nothing. */
+const ANCHOR_NEXT_WORD: Record<string, string> = {
+  '': '等待推进', dispatch: '等待派工', human_continue: '等你点“继续”', rework_blocked: '不能自动返工',
+};
+const ANCHOR_GOAL_WORD: Record<string, string> = { paused: '目标已暂停', cancelled: '目标已取消' };
+
+/** Decision 42 (UIW:129): a Task with an unclaimed interruption anchor reads
+ * 中断，待核对 and what it waits for; its state and square stay. */
+function anchorWhyOf(extra: TaskMapExtraReads | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of Array.isArray(extra?.hover?.tasks) ? extra.hover.tasks : []) {
+    const row = asRecord(entry);
+    const anomaly = asRecord(asRecord(row.display).anomaly);
+    const id = asText(asRecord(row.task).taskId);
+    if (id === '' || asText(anomaly.label) === '') continue;
+    const next = asRecord(anomaly.next);
+    const params = asRecord(next.params);
+    const word = asText(next.code) !== 'anomaly_pending' ? ''
+      : params.next === 'goal_stopped' ? ANCHOR_GOAL_WORD[asText(params.goal)] ?? '' : ANCHOR_NEXT_WORD[asText(params.next)] ?? '';
+    out[id] = '中断，待核对' + (word === '' ? '' : ' · ' + word);
+  }
+  return out;
+}
+
+/** Decision 49·01 (prototype:2272): an unfinished Task that was read and that
+ * nobody is responsible for says so; a satisfied, cancelled or superseded one
+ * does not. */
+function unassignedOf(st: string): string {
+  if (st === 'satisfied' || st === 'cancelled' || st === 'superseded') return '';
+  return '未分配' + (st === 'claimable' ? '，等成员领取' : '') + (st === 'claimable' || st === 'pending' ? '；开工时开一条工作线' : '');
+}
+
+/** `none`: the Tasks the hover read with an empty `owners`. */
+function ownersOf(extra: TaskMapExtraReads | undefined): { byTask: Record<string, string>; goal: string; none: Set<string> } {
   const byTask: Record<string, string> = {};
+  const none = new Set<string>();
   let goal = '';
   const hover = extra?.hover;
-  if (hover === null || hover === undefined) return { byTask, goal };
+  if (hover === null || hover === undefined) return { byTask, goal, none };
   for (const entry of Array.isArray(hover.tasks) ? hover.tasks : []) {
     const row = asRecord(entry);
     const id = asText(asRecord(row.task).taskId);
     const text = ownerWords(row.owners);
     if (id !== '' && text !== '') byTask[id] = text;
+    if (id !== '' && Array.isArray(row.owners) && row.owners.length === 0) none.add(id);
   }
   for (const entry of Array.isArray(hover.groups) ? hover.groups : []) {
     const row = asRecord(entry);
-    if (asRecord(row.node).kind === 'goal') goal = ownerWords(row.owners);
+    if (asRecord(row.node).kind !== 'goal') continue;
+    /* DESIGN `:362`, `:1220` (prototype goalAgentAt): the other lines working, else paused */
+    const more = (count: unknown): string => { const c = archivedCountOf(count); return c.known && !/^(至少 )?0$/.test(c.text) ? c.text : ''; };
+    const working = more(row.workingLines); const paused = more(row.pausedLines);
+    goal = ownerWords(row.owners);
+    if (goal !== '') goal += working !== '' ? '，另有 ' + working + ' 条工作线工作中' : paused !== '' ? '，另有 ' + paused + ' 条工作线已暂停' : '';
   }
-  return { byTask, goal };
+  return { byTask, goal, none };
 }
 
 /** The longest unfinished dependency chain over the graph's real edges. A Task
@@ -247,25 +381,31 @@ export function localShortAt(iso: string): string {
     + pad(date.getHours()) + ':' + pad(date.getMinutes());
 }
 
+/** Who requested or adopted a change (DESIGN `:607`). */
+const ACTOR_WORD: Record<string, string> = { human: '人工', system: '系统自动', agent: 'Agent' };
+
+/** The five failure classes (DESIGN `:607`). */
 const FAILURE_CLASS_WORD: Record<string, string> = {
   run_failed: '执行失败', check_failed: '检查未通过', check_incomplete: '检查不完整',
+  interrupted: '平台中断', cancelled: '已取消',
 };
 
-/** Ruling 5: rework history from `tasks[].rework.entries`; no attempt ordinal
- * and no demo batch. `autoCount` is the automatic rework count, never an attempt
- * ordinal. */
+/** An automatic rework's reason is the code `auto-rework:<class>#<n>`
+ * (`workflow.ts`); its class and count are shown from their own fields. */
+const isAutoReworkCode = (reason: string): boolean => reason.startsWith('auto-rework:');
+
+/** Ruling 5: rework history from `tasks[].rework.entries`, no demo batch:
+ * 第 n 次 · who · class · reason · date (DESIGN `:507`). 第 n 次 is the
+ * rework's order, never an attempt ordinal. */
 function reworkLines(rework: unknown): string[] {
   const entries = asRecord(rework).entries;
-  return (Array.isArray(entries) ? entries : []).flatMap((entry) => {
+  return (Array.isArray(entries) ? entries : []).map((entry, index) => {
     const row = asRecord(entry);
-    const reason = asText(row.reason);
     const at = asText(row.requestedAt);
-    const kind = row.automatic === true ? '系统自动' : '人工';
-    const count = typeof row.autoCount === 'number' ? '（' + String(row.autoCount) + ' 次）' : '';
-    const failure = FAILURE_CLASS_WORD[asText(row.failureClass)] ?? '';
-    const parts = [kind + count, failure, reason].filter((part) => part !== '');
-    if (parts.length === 0 && at === '') return [];
-    return [(at !== '' ? localShortAt(at) + ' · ' : '') + parts.join(' · ')];
+    const who = row.automatic === true ? '系统自动' : ACTOR_WORD[asText(asRecord(row.requestedBy).kind)] ?? '人工';
+    return ['第 ' + String(index + 1) + ' 次', who, FAILURE_CLASS_WORD[asText(row.failureClass)] ?? '',
+      isAutoReworkCode(asText(row.reason)) ? '' : asText(row.reason), at !== '' ? localShortAt(at) : '']
+      .filter((part) => part !== '').join(' · ');
   });
 }
 
@@ -280,6 +420,7 @@ export function adaptTaskMap(
   const state = goalDisplayState(display.display.phase);
   const goalData = { id: asText(goalRef.goalId), name: asText(goalBody.objective), st: state.st, word: state.word };
   const owners = ownersOf(extra);
+  const anchors = anchorWhyOf(extra);
   const emptyDag: TaskMapDag = { edges: [], nodes: [], band: [], dropped: [], gateIds: [], crit: [], owners: {}, goalOwner: '' };
   if (graph === null) return { goal: goalData, stages: [], tasks: [], dag: emptyDag, planMissing: true };
 
@@ -309,18 +450,22 @@ export function adaptTaskMap(
       continue;
     }
     const stage = stageOf(definition);
+    /* the cards read `dag.owners`, so 未分配 goes there too */
+    const unassigned = owners.byTask[id] === undefined && owners.none.has(id) ? unassignedOf(st) : '';
+    if (unassigned !== '') owners.byTask[id] = unassigned;
     kept.push({
       id,
       stageId: stage === '' ? null : stage,
       name: asText(definition.title),
       st,
-      why: taskWhyOf(row),
+      why: anchors[id] ?? taskWhyOf(row, st),
       deps: [],
       gate: definition.taskKind === 'gate',
       scopeKind: asText(asRecord(definition.scope).kind),
       owner: owners.byTask[id] ?? '',
       instruction: instructions.get(id) ?? '',
       rework: reworkLines(row.rework),
+      reworkCap: typeof asRecord(row.rework).cap === 'number' ? asRecord(row.rework).cap as number : null,
     });
   }
   const keptById = new Map(kept.map((task) => [task.id, task]));
@@ -370,7 +515,12 @@ export function adaptTaskMap(
     owners: owners.byTask,
     goalOwner: owners.goal,
   };
-  return { goal: goalData, stages, tasks: kept, dag };
+  const moduleNames: Record<string, string> = {};
+  for (const entry of Array.isArray(extra?.hover?.modules) ? extra.hover.modules : []) {
+    const row = asRecord(entry); const moduleId = asText(asRecord(row.module).moduleId);
+    if (moduleId !== '' && asText(row.name) !== '') moduleNames[moduleId] = asText(row.name);
+  }
+  return { goal: goalData, stages, tasks: kept, dag, moduleNames };
 }
 
 /** The historical state of every Task at one instant (design §6). The timeline
@@ -383,6 +533,8 @@ export type TaskMapTimelineRead = {
  * and the two flags only the timeline can justify. */
 export type TaskMapHistoricalState = {
   st: string; word: string; raw: string; off?: boolean; faint?: boolean;
+  /** `not_in_plan`: when the Task joined, the next segment's `from`. */
+  addedAt?: string;
 };
 
 /** Raw timeline state -> the board's square state and word. `not_in_plan` is the
@@ -404,7 +556,7 @@ const HISTORICAL_STATE: Record<string, { st: string; word: string; off?: boolean
   interrupted_pending_check: { st: 'blocked', word: '中断，待检查' },
   paused: { st: 'waiting', word: '已暂停' },
   waiting_reply: { st: 'waiting', word: '等回答' },
-  outcome_unknown: { st: 'decide', word: '结果未知' },
+  outcome_unknown: { st: 'decide', word: '执行结果待核对' },
   deferred: { st: 'deferred', word: '已延后' },
   cancelled: { st: 'cancelled', word: '已取消' },
   superseded: { st: 'cancelled', word: '已替代' },
@@ -418,14 +570,15 @@ export function taskMapStatesAt(
   if (Number.isNaN(instant)) return out;
   for (const task of timeline.tasks) {
     let found = 'unknown';
-    for (const segment of task.segments) {
+    let next: string | null = null;
+    for (const [index, segment] of task.segments.entries()) {
       /* Half-open [from, to): the ending instant belongs to the next segment. */
       const from = segment.from === null ? -Infinity : Date.parse(segment.from);
       const to = segment.to === null ? Infinity : Date.parse(segment.to);
-      if (from <= instant && instant < to) { found = segment.state; break; }
+      if (from <= instant && instant < to) { found = segment.state; next = task.segments[index + 1]?.from ?? null; break; }
     }
     const known = HISTORICAL_STATE[found] ?? { st: 'pending', word: '未知' };
-    out.set(task.taskId, { ...known, raw: found });
+    out.set(task.taskId, { ...known, raw: found, ...(found === 'not_in_plan' && next !== null ? { addedAt: next } : {}) });
   }
   return out;
 }
@@ -439,8 +592,11 @@ export type TaskMapDetailTaskRead = {
   actualFiles?: unknown; responsibleNow?: unknown; plannedModules?: unknown;
 };
 export type TaskMapSummaryRead = { section: 'summary'; task: TaskMapDetailTaskRead | null };
+/** One `graph/detail` `section:'risks'` page: Tasks with no edge to this one that share its module or a file. */
+export type TaskMapRiskRead = { items?: unknown[]; nextCursor?: string | null };
+
 export type TaskMapParticipantRead = {
-  items: Array<{ key?: unknown; name?: unknown; status?: unknown; via?: unknown }>;
+  items: Array<{ key?: unknown; name?: unknown; status?: unknown; via?: unknown; duty?: unknown }>;
   nextCursor?: string | null;
 };
 export type TaskMapParticipationCounts = {
@@ -455,13 +611,14 @@ export type TaskMapDetailFile = { path: string; name: string; certainty: string;
 export type TaskMapDetailArchGroup = { crumb: string; files: TaskMapDetailFile[] };
 export type TaskMapNodeDetailData = {
   id: string; word: string; why: string;
-  instruction: string; stageName: string;
+  stageName: string;
   owner: string; hasOwner: boolean;
   /** Current owner is "现在"; a replay hides the historical relation (ruling 5). */
   ownerNow: boolean;
   files: TaskMapDetailArchGroup[];
   hasFiles: boolean;
-  participants: Array<{ name: string; text: string; key: { projectId: string; sessionId: string } | null }>;
+  /** `archived`: the line's `status.bucket`; the track opens it among the archived lines. */
+  participants: Array<{ name: string; text: string; key: { projectId: string; sessionId: string } | null; archived: boolean; role: string }>;
   hasParticipants: boolean;
   noParticipants: boolean;
   /** Whether the participants pages were read and whether the last page ended. */
@@ -470,7 +627,10 @@ export type TaskMapNodeDetailData = {
   countsComplete: boolean;
   /** No route returns an attempt ordinal; the row stays hidden. */
   attemptOrdinal: null;
-  disposition: { word: string; why: string; atText: string } | null;
+  /** Decision 26: 重叠, one row per risk (`<task> · <module | file>（没有连线）`). */
+  overlaps: Array<{ id: string; text: string }>; overlapsComplete: boolean;
+  /** E3I:244 without 从 <from> (`active` has no word): 由 <actor> 于计划 <time> 改为 <to>：<reason>. */
+  disposition: { word: string; text: string } | null;
 };
 
 const PHASE_WORD: Record<string, string> = {
@@ -482,52 +642,61 @@ const PHASE_WORD: Record<string, string> = {
   satisfied: '已满足', cancelled: '已取消', superseded: '已替代', deferred: '已延后',
 };
 
-const CAUSE_WORD: Record<string, string> = {
-  auto_rework_cap_reached: '自动返工已达上限', gate_needs_fix: '验收未通过，需要修',
-  verification_uncovered: '没有覆盖验收的检查', budget_exhausted: '预算用尽',
-  no_new_basis: '没有新的依据', unknown_outcome: '结果未知，需要核对',
-  task_cancelled: '任务已取消', task_paused: '任务已暂停',
+/* The line's own state code -> the line state words (slice-2C-SPEC.md:1049-1059;
+ * DESIGN `:608`; decision 38 retired 已结束). The track rows and the owners
+ * read this one table; an unrecognized code is shown as 未知 rather than
+ * leaking an English code into the page. */
+const OWN_WORD: Record<string, string> = {
+  working: '工作中', checking: '正式检查中', starting: '启动中', waiting_reply: '等回复',
+  paused: '已暂停', unknown: '待核对', done: '已做完', retired: '已退役', standby: '待命',
+};
+/* The line's most urgent attention, in the track's own words (board `wlStatus`). */
+const ATTENTION_WORD: Record<string, string> = {
+  decide: '等你决定', failed: '停下（失败）', blocked: '停下（受阻）', unknown: '待核对',
 };
 
-/* The line's own state code -> the board's Chinese word; an unknown code is
- * shown as 未知 rather than leaking an English code into the page. */
-const OWN_WORD: Record<string, string> = {
-  working: '执行中', checking: '检查中', starting: '启动中', waiting_reply: '等回答',
-  paused: '已暂停', unknown: '未知', done: '已完成', retired: '已结束', standby: '待命',
+/* A line with no task is named by its duty code (`source: 'duty_only'`); the
+   page shows the board's own group word for it, never the code (DESIGN `:604`). */
+const DUTY_WORD: Record<string, string> = {
+  secretary: '秘书', adviser: '参谋', scribe: '书记', reviewer: '审阅者', executor: '执行者',
 };
+function lineNameOf(name: unknown): string {
+  const row = asRecord(name);
+  return row.source === 'duty_only' ? DUTY_WORD[asText(row.primary)] ?? '未分组' : asText(row.primary);
+}
 
 function ownerWords(owners: unknown): string {
   return (Array.isArray(owners) ? owners : []).flatMap((entry) => {
     const row = asRecord(entry);
-    const name = asText(asRecord(row.name).primary);
+    const name = lineNameOf(row.name);
     if (name === '') return [];
-    const own = asText(asRecord(row.status).own);
-    const word = own === '' ? '' : OWN_WORD[own] ?? '未知';
+    /* The hover card and the track show one main state plus the most urgent attention (E3I:310). */
+    const status = asRecord(row.status);
+    const own = asText(status.own);
+    const word = ATTENTION_WORD[asText(asRecord(status.attention).code)] ?? (own === '' ? '' : OWN_WORD[own] ?? '未知');
     return [word === '' ? name : name + ' · ' + word];
   }).join('、');
 }
 
 function detailWhy(task: TaskMapDetailTaskRead): string {
-  /* `phaseCause.code` is a phase-cause code, not an automation stop reason; an
-   * unknown cause falls through to the failure verdict instead of hiding it. */
+  /* `phaseCause.code` is a phase-cause code. The summary carries no failure
+   * verdict (WL:296-299): a stop reason reaches the detail as the map row's why. */
   const code = asText(asRecord(task.phaseCause).code);
-  if (code !== '') {
-    const word = PHASE_CAUSE_WORD[code] ?? CAUSE_WORD[code];
-    if (word !== undefined) return word;
-  }
-  const verdict = asRecord(asRecord(asRecord(task.failure).automation).verdict);
-  if (asText(verdict.kind) === 'stopped') {
-    const reason = asText(verdict.reason);
-    return CAUSE_WORD[reason] ?? PHASE_CAUSE_WORD[reason] ?? '';
-  }
-  return '';
+  return code === '' ? '' : PHASE_CAUSE_WORD[code] ?? '';
 }
+
+/** Decision 49·01 (E3I:309): a participation is 现在负责 or 曾参与. The
+ * relation includes closed ones, so `responsible` alone is not "now": only a
+ * line also in `responsibleNow` is. */
+const PARTICIPATION_CODES = new Set(['responsible', 'participates', 'investigated', 'claimed']);
 
 /** The participant text counts only a complete history range; an incomplete
  * window shows the line and hides every total (design §1, row 975). */
-function participantText(item: Record<string, unknown>, counts: TaskMapParticipationCounts): string {
-  const via = asText(item.via);
-  if (counts === null || !counts.complete) return via === '' ? '' : via;
+function participantText(item: Record<string, unknown>, counts: TaskMapParticipationCounts, now: ReadonlySet<string>): string {
+  if (counts === null || !counts.complete) {
+    if (now.has(trackSessionKeyOf(item.key))) return '现在负责';
+    return PARTICIPATION_CODES.has(asText(item.via)) ? '曾参与' : '';
+  }
   const parts: string[] = [];
   if (counts.executions > 0) parts.push('执行 ' + counts.executions + ' 次');
   if (counts.checks > 0) parts.push('检查 ' + counts.checks + ' 轮');
@@ -537,13 +706,11 @@ function participantText(item: Record<string, unknown>, counts: TaskMapParticipa
 
 /** Pure detail projection (design §6): no request, no DOM. `summary` is the
  * unwrapped `graph/detail` summary; participants are its `section:'participants'`
- * pages; `catalog` is only needed when actual files must be grouped. Planned
+ * pages; `catalog` names planned modules and groups actual files. Planned
  * files, per-file line counts, "未提交" and attempt ordinals are never shown. */
 export function adaptTaskMapDetail(
   summary: TaskMapSummaryRead, participants: readonly TaskMapParticipantRead[],
   counts: TaskMapParticipationCounts, catalog: TaskMapCatalogRead,
-  /** The adopted assignment's instruction from the task row; the summary has none. */
-  instruction: string,
   /** The state the map already shows for this node. The detail must not
    * recompute it from `phase/disposition`: a future intention stays 未来意图. */
   state: string,
@@ -551,6 +718,11 @@ export function adaptTaskMapDetail(
    * failure verdict, so its `phaseCause` would otherwise hide a stop reason
    * (e.g. 自动返工已达上限) that the map already read. */
   mapWhy = '',
+  /** The `tasks/query` row's `dispositionChange` (the summary has none) and
+   * the local text of its plan's acceptedAt; '' drops 于计划 …. */
+  dispositionChange: unknown = null, changeAt = '',
+  /** The `risks` pages read with the detail. */
+  risks: readonly TaskMapRiskRead[] = [],
 ): TaskMapNodeDetailData | null {
   const task = summary.task;
   if (task === null) return null;
@@ -558,10 +730,12 @@ export function adaptTaskMapDetail(
   const id = asText(body.taskId);
   const disposition = asText(task.disposition) || asText(body.disposition);
   const word = PHASE_WORD[state] ?? '未知';
-  const who = ownerWords(task.responsibleNow) || ownerWords(task.owners);
+  const who = ownerWords(task.responsibleNow) || ownerWords(task.owners)
+    || (asRecord(task).responsibility === 'none' ? unassignedOf(state) : '');
   const modules = (catalog?.modules ?? []).flatMap((entry) => {
     const paths = (Array.isArray(entry.paths) ? entry.paths : []).filter((path): path is string => typeof path === 'string');
-    return paths.length === 0 ? [] : [{ value: { id: asText(entry.ref?.moduleId), name: asText(entry.name) }, paths }];
+    /* a module with paths: [] stays: it can be planned, and pathOwnershipOf skips it for real files */
+    return [{ value: { id: asText(entry.ref?.moduleId), name: asText(entry.name) }, paths }];
   });
   const parents = new Map<string, string>();
   for (const edge of catalog?.containment?.parentOf ?? []) {
@@ -585,6 +759,15 @@ export function adaptTaskMapDetail(
    * field of it, so reading `status` hid every real file (design §3/§5). */
   const executed = actual.availability === 'available' && Array.isArray(actual.value) ? actual.value : [];
   const groups = new Map<string, TaskMapDetailFile[]>();
+  /* Decision 26's 计划要改: the plan records modules only (DESIGN `:151`), so each
+   * planned module is one row named by the module, under its catalog path. */
+  for (const ref of Array.isArray(task.plannedModules) ? task.plannedModules : []) {
+    const moduleId = asText(asRecord(ref).moduleId);
+    const crumb = moduleId === '' ? '' : crumbOf(moduleId);
+    if (crumb === '') continue;
+    groups.set(crumb, [...(groups.get(crumb) ?? []),
+      { path: '', name: crumb.split(' / ').pop() ?? crumb, certainty: 'planned', tag: '计划要改' }]);
+  }
   for (const entry of executed) {
     const file = asRecord(entry);
     const path = asText(file.path);
@@ -598,15 +781,18 @@ export function adaptTaskMapDetail(
       tag: certainty === 'definite' ? '实际改过' : '可能改过' });
     groups.set(crumb, list);
   }
-  const lines: Array<{ name: string; text: string; key: { projectId: string; sessionId: string } | null }> = [];
+  const lines: TaskMapNodeDetailData['participants'] = [];
+  const responsibleNow = new Set((Array.isArray(task.responsibleNow) ? task.responsibleNow : [])
+    .map((entry) => trackSessionKeyOf(asRecord(entry).key)));
   for (const page of participants) {
     for (const item of page.items) {
       const row = asRecord(item);
-      const name = asText(asRecord(row.name).primary) || asText(row.name);
+      const name = lineNameOf(row.name) || asText(row.name);
       const key = asRecord(row.key);
       const sessionKey = asText(key.projectId) !== '' && asText(key.sessionId) !== ''
         ? { projectId: asText(key.projectId), sessionId: asText(key.sessionId) } : null;
-      if (name !== '') lines.push({ name, text: participantText(row, counts), key: sessionKey });
+      if (name !== '') lines.push({ name, text: participantText(row, counts, responsibleNow), key: sessionKey,
+        archived: asRecord(row.status).bucket === 'archived', role: asText(row.duty) });
     }
   }
   const participantsLoaded = participants.length > 0;
@@ -614,19 +800,30 @@ export function adaptTaskMapDetail(
     && (participants[participants.length - 1]?.nextCursor ?? null) === null;
   return {
     id, word, why: mapWhy !== '' ? mapWhy : detailWhy(task),
-    instruction, stageName: '',
+    stageName: '',
     owner: who, hasOwner: who !== '', ownerNow: true,
     files: [...groups.entries()].map(([crumb, files]) => ({ crumb, files })),
     hasFiles: groups.size > 0,
     participants: lines, hasParticipants: lines.length > 0, noParticipants: lines.length === 0,
     participantsLoaded, participantsComplete,
+    overlaps: risks.flatMap((page) => (Array.isArray(page.items) ? page.items : []).map((entry) => {
+      const risk = asRecord(entry); const shared = asRecord(risk.shared);
+      const moduleId = asText(asRecord(shared.module).moduleId);
+      const what = shared.kind === 'module' ? (modules.find((m) => m.value.id === moduleId)?.value.name ?? '') : asText(shared.path);
+      return { id: 'task:' + asText(asRecord(risk.task).taskId), text: asText(risk.title) + (what !== '' ? ' · ' + what : '') + '（没有连线）' };
+    })),
+    overlapsComplete: (risks[risks.length - 1]?.nextCursor ?? null) === null,
     countsComplete: counts !== null && counts.complete,
     attemptOrdinal: null,
-    disposition: (disposition === 'cancelled' || disposition === 'superseded' || disposition === 'deferred') ? {
-      word: PHASE_WORD[disposition] ?? disposition,
-      why: asText(asRecord(asRecord(asRecord(task).dispositionChange).reason).text),
-      atText: '',
-    } : null,
+    disposition: (disposition === 'cancelled' || disposition === 'superseded' || disposition === 'deferred') ? (() => {
+      const change = asRecord(dispositionChange);
+      const word = PHASE_WORD[disposition] ?? disposition;
+      if (dispositionChange === null) return { word, text: word };
+      const actor = ACTOR_WORD[asText(asRecord(change.actor).kind)] ?? '';
+      const reason = asText(asRecord(change.reason).text);
+      return { word, text: (actor !== '' ? '由 ' + actor + ' ' : '') + (changeAt !== '' ? '于计划 ' + changeAt + ' ' : '')
+        + '改为 ' + (PHASE_WORD[asText(change.to)] ?? word) + (reason !== '' ? '：' + reason : '') };
+    })() : null,
   };
 }
 
@@ -648,6 +845,7 @@ export type TaskMapTrackLineRead = {
   key: unknown; name?: { primary?: unknown }; status?: { own?: unknown; bucket?: unknown };
   sessionCount?: unknown; pinned?: unknown; pinnedBy?: unknown; chainSessions?: unknown;
   archived?: unknown;
+  lastActivityAt?: unknown;
   /** The role duty fixed at Session creation; the board groups lines by it. */
   duty?: unknown;
   /** The line's formal module and task groups; module grouping reads the module id. */
@@ -680,7 +878,10 @@ export type TaskMapCalendarHour = {
   steps: number; edits: number; checks: number; complete: boolean; future: boolean;
   tasks: TaskMapCalendarTask[]; moreTasks: number;
   sessions: string[]; moreSessions: number;
+  unknown: TaskMapUnknownCounts;
 };
+/** Why a cell is not complete (`ActivityCellV1`; decision 49·03): Runs and Queries still going or not counted. */
+export type TaskMapUnknownCounts = { inProgressRuns: number; inProgressQueries: number; uncountedRuns: number; uncountedQueries: number };
 export type TaskMapCalendarDay = {
   /** Identity: local date + the real bucket start/end. */
   key: string; localDate: string; dayIndex: number;
@@ -688,6 +889,7 @@ export type TaskMapCalendarDay = {
   steps: number; edits: number; checks: number; complete: boolean; future: boolean;
   tasks: TaskMapCalendarTask[]; moreTasks: number;
   sessions: string[]; moreSessions: number;
+  unknown: TaskMapUnknownCounts;
   /** Only the hours the calendar returned: DST days really have 23 or 25. */
   hours: TaskMapCalendarHour[];
 };
@@ -716,12 +918,16 @@ export type TaskMapTimeBar = {
   /** The same instants at the adapter fact boundary (design §4). */
   startMinute: number; endMinute: number | null;
   result: string; word: string; taskId: string; ordinal: number | null; via: string;
+  /** The bar's own Session as a `project/session` key; '' when the bar carries none. */
+  sessionRef: string;
   /** The formal predecessor on the same line, for the link under the bars. */
   previousId: string;
   /** The real pauses with their intervals and intents; never a fabricated count. */
   pauses: Array<{ from: string; to: string | null; intentRef: unknown }>;
   /** A Run's attempt facts; a check/query bar has none. */
-  attempt: { via: string; requeue: { actorClass: string; automaticCount: number | null; reason: string } | null } | null;
+  attempt: { via: string; requeue: { actorClass: string; automaticCount: number | null; reason: string;
+    /** The class word parsed from an automatic `auto-rework:<class>#<n>` reason; '' otherwise. */
+    classWord: string } | null } | null;
   /** A check's real ordinal and the number of checks begun; no cursor-completed count. */
   checksBegun: number | null;
   /** Run/Query activity totals; a check bar has only its begun count. */
@@ -739,6 +945,8 @@ export type TaskMapTimeLine = {
    * reads the prototype's `groups.task.taskId` and `groups.module.moduleId`. */
   groups: { task: { taskId: string } | null; module: { moduleId: string } | null };
   sessionCount: string; countPartial: boolean; pinned: boolean; pinnedBy: string[];
+  /** `chainSessions` as `project/session` keys, the line head first (at most 33). */
+  chainSessions: string[];
   /** The earliest activity of this line inside this window; not its creation. */
   startAt: string; bars: TaskMapTimeBar[];
   /** `lines/read` chain entries (with provenance) and its omitted count; absent
@@ -746,6 +954,8 @@ export type TaskMapTimeLine = {
   chain: unknown[]; omitted: unknown; lineRead: boolean;
   /** An archived line, merged before the bar index when the list expands. */
   archived: boolean;
+  /** `lines/list` `lastActivityAt`: a line older than today opens in 全部. */
+  lastActivityAt: string | null;
 };
 export type TaskMapTimeData = {
   window: { from: string; to: string; fromMinute: number; toMinute: number } | null;
@@ -816,6 +1026,16 @@ function calendarSessionsOf(cell: Record<string, unknown>): string[] {
   return (Array.isArray(cell.sessions) ? cell.sessions : []).map(trackSessionKeyOf).filter((key) => key !== '//');
 }
 
+/* A Run is counted in every cell it touches (activity-read-model.ts:369-383), so counts are not added across
+ * cells: one cell with counts gives its own, two or more give none, and the page writes 未知 alone. */
+function unknownCountsOf(cells: Array<Record<string, unknown>>): TaskMapUnknownCounts {
+  const num = (cell: Record<string, unknown>, key: string): number => (typeof cell[key] === 'number' ? cell[key] as number : 0);
+  const keys = ['inProgressRuns', 'inProgressQueries', 'uncountedRuns', 'uncountedQueries'];
+  const has = cells.filter((cell) => keys.some((key) => num(cell, key) > 0));
+  const one = has.length === 1 ? has[0]! : {};
+  return { inProgressRuns: num(one, 'inProgressRuns'), inProgressQueries: num(one, 'inProgressQueries'), uncountedRuns: num(one, 'uncountedRuns'), uncountedQueries: num(one, 'uncountedQueries') };
+}
+
 function calendarHourOf(entry: unknown): TaskMapCalendarHour | null {
   const cell = asRecord(entry);
   const localDate = asText(cell.localDate);
@@ -834,6 +1054,7 @@ function calendarHourOf(entry: unknown): TaskMapCalendarHour | null {
     complete: cell.complete === true, future: cell.future === true,
     tasks: calendarTasksOf(cell), moreTasks: typeof cell.moreTasks === 'number' ? cell.moreTasks : 0,
     sessions: calendarSessionsOf(cell), moreSessions: typeof cell.moreSessions === 'number' ? cell.moreSessions : 0,
+    unknown: unknownCountsOf([cell]),
   };
 }
 
@@ -919,7 +1140,7 @@ export function adaptTaskMapCalendar(
       complete: cell.complete === true, future: cell.future === true,
       tasks: calendarTasksOf(cell), moreTasks: typeof cell.moreTasks === 'number' ? cell.moreTasks : 0,
       sessions: calendarSessionsOf(cell), moreSessions: typeof cell.moreSessions === 'number' ? cell.moreSessions : 0,
-      hours: hours.filter((hour) => hour.localDate === localDate),
+      unknown: unknownCountsOf([cell]), hours: hours.filter((hour) => hour.localDate === localDate),
     });
   }
   days.sort((a, b) => a.localDate < b.localDate ? -1 : a.localDate > b.localDate ? 1 : 0);
@@ -943,7 +1164,7 @@ export function adaptTaskMapCalendar(
       complete: own.every((hour) => hour.complete), future: own.every((hour) => hour.future),
       tasks: [...tasks.values()], moreTasks: own.reduce((sum, hour) => sum + hour.moreTasks, 0),
       sessions: [...sessions], moreSessions: own.reduce((sum, hour) => sum + hour.moreSessions, 0),
-      hours: own,
+      unknown: unknownCountsOf(own.map((hour) => hour.unknown)), hours: own,
     });
   }
   days.sort((a, b) => a.localDate < b.localDate ? -1 : a.localDate > b.localDate ? 1 : 0);
@@ -997,12 +1218,8 @@ export function adaptTaskMapCalendar(
   };
 }
 
-const LINE_WORD: Record<string, string> = {
-  working: '执行中', checking: '检查中', starting: '启动中', waiting_reply: '等回答',
-  paused: '已暂停', unknown: '未知', done: '已完成', retired: '已结束', standby: '待命',
-};
 const RUN_RESULT_WORD: Record<string, string> = {
-  running: '执行中', completed: '已结束', failed: '失败', budget_exhausted: '预算用尽',
+  running: '执行中', completed: '已结束', failed: '失败', budget_exhausted: '预算耗尽',
   cancelled: '已取消', paused: '已暂停', interrupted: '中断', outcome_unknown: '结果未知', yielded: '已让出',
 };
 const CHECK_RESULT_WORD: Record<string, string> = {
@@ -1089,7 +1306,7 @@ export function adaptTaskMapTime(
     const key = asRecord(line.key);
     const id = trackSessionKeyOf(key);
     if (id === '/' || id === '' || bySession.has(id)) continue;
-    const name = asText(asRecord(line.name).primary);
+    const name = lineNameOf(line.name);
     const status = asText(asRecord(line.status).own);
     const count = asRecord(line.sessionCount);
     const countValue = typeof count.value === 'number' ? String(count.value)
@@ -1103,17 +1320,18 @@ export function adaptTaskMapTime(
     const row: TaskMapTimeLine = {
       id, projectId: asText(key.projectId), workspaceId: asText(key.workspaceId),
       sessionId: asText(key.sessionId), name: name === '' ? asText(key.sessionId) : name,
-      status, word: LINE_WORD[status] ?? '未知',
+      status, word: OWN_WORD[status] ?? '未知',
       role: asText(line.duty),
       groups: {
         task: taskGroup === '' ? null : { taskId: taskGroup },
         module: moduleGroup === '' ? null : { moduleId: moduleGroup },
       },
-      sessionCount: countValue,
+      sessionCount: countValue, chainSessions: chain,
       countPartial: count.status !== 'exact', pinned: line.pinned === true,
       pinnedBy: (Array.isArray(line.pinnedBy) ? line.pinnedBy : []).map((x) => asText(asRecord(x).sessionId)).filter((x) => x !== ''),
       startAt: '', bars: [], chain: [], omitted: null, lineRead: false,
       archived: line.archived === true || asRecord(line.status).bucket === 'archived',
+      lastActivityAt: asText(line.lastActivityAt) || null,
     };
     rows.push(row);
     bySession.set(id, row);
@@ -1175,6 +1393,7 @@ export function adaptTaskMapTime(
         actorClass: asText(requeueRaw.actorClass),
         automaticCount: typeof requeueRaw.automaticCount === 'number' ? requeueRaw.automaticCount : null,
         reason: asText(requeueRaw.reason),
+        classWord: FAILURE_CLASS_WORD[/^auto-rework:([a-z_]+)#\d+$/.exec(asText(requeueRaw.reason))?.[1] ?? ''] ?? '',
       },
     } : null;
     const marks: string[] = [];
@@ -1199,6 +1418,7 @@ export function adaptTaskMapTime(
         ordinal: kind === 'check' && typeof bar.ordinal === 'number' ? bar.ordinal : null,
         checksBegun: kind === 'check' && typeof bar.checksBegun === 'number' ? bar.checksBegun : null,
         via: asText(bar.via), previousId: previousKey,
+        sessionRef: trackSessionKeyOf(bar.sessionRef) === '/' ? '' : trackSessionKeyOf(bar.sessionRef),
         pauses, attempt, marks,
         activity: kind === 'check' ? null : (() => {
           const activity = asRecord(bar.activity);

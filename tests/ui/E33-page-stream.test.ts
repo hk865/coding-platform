@@ -33,7 +33,7 @@ const REPLIES: Record<string, unknown> = {
   } },
   /* E34 added the two per-notification reads to the TaskMap page; a Host that
      serves a real Task also answers them, so the stream fixture does too. */
-  'lines/list': { status: 'ready', value: { rows: [], counts: { working: 0 } } },
+  'lines/list': { status: 'ready', value: { rows: [], counts: { working: { status: 'exact', value: 0 } } } },
   'graph/hover': { status: 'ready', value: {} },
   /* Ruling 3: the default DAG also reads the day's track and hour calendar. */
   'activity/track': { status: 'ready', value: {
@@ -209,9 +209,9 @@ describe('E33-9 a Host restart is recovered from the token in the served page', 
 
       await flush();
       const oldReads = host.state.readTokens.length;
-      /* bootstrap, goals/read, goals/display, tasks/query, lines/list, graph/hover,
+      /* bootstrap, goals/read, goals/display, tasks/query, lines/list, graph/hover, decisions/queue,
          plus the default day's activity/track and activity/calendar. */
-      expect(oldReads).toBe(8);
+      expect(oldReads).toBe(9);
       expect(page.root.textContent).toContain('连接断开，正在重连。');
       vi.advanceTimersByTime(2_000);
       await flush();

@@ -5,18 +5,20 @@ import {
   RouteReadError, subscribeChanges, type BootstrapReply, type CoreScope,
 } from './host-client.js';
 import { asRecord, asText } from './values.js';
-import { revisionAssignments } from '../contracts/plan.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import {
-  NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDetail, adaptTaskMapTime, isFinishedGoalDisplayPhase, localShortAt,
+  NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
+  isFinishedGoalDisplayPhase, localShortAt, type TaskMapQueueRead,
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
-  type TaskMapParticipantRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
+  type TaskMapParticipantRead, type TaskMapRiskRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
   type TaskMapTrackLineRead, type TaskMapTrackPageRead,
 } from './adapters/task-map.js';
 
 /** Ruling item 5: the top-bar line while the change stream is down. */
 const RECONNECT_TEXT = '连接断开，正在重连。';
+/** The Host refused the stream with 429: too many pages open on it (lead ruling 7 of E3-5). */
+const TOO_MANY_PAGES_TEXT = '这台主机同时打开的页面太多，这一页暂时不自动更新；关掉别的页签后会自己接上。';
 
 /** Ruling 4: the board tells boot which not-yet-read material it needs; the read
  * joins the same refresh loop. */
@@ -160,12 +162,12 @@ function pageProps(
   if (snapshot.dataVersion === 0 && snapshot.error !== null) {
     return {
       ...defaults, actions,
-      readState: { status: 'error', message: pageTextOf(snapshot.error), retry, stale: false, staleError: true },
+      readState: { status: 'error', message: pageTextOf(snapshot.error), retry, stale: false },
     };
   }
   const staleText = !snapshot.stale ? ''
-    : snapshot.error !== null ? pageTextOf(snapshot.error) : RECONNECT_TEXT;
-  const stale = { stale: snapshot.stale, staleText, staleError: snapshot.error !== null };
+    : snapshot.error !== null ? pageTextOf(snapshot.error) : snapshot.tooMany === true ? TOO_MANY_PAGES_TEXT : RECONNECT_TEXT;
+  const stale = { stale: snapshot.stale, staleText };
   const data = snapshot.data;
   if (data === null) return { ...defaults, actions, readState: { status: 'empty', ...stale } };
   if (data.planMissing === true) {
@@ -303,8 +305,10 @@ async function loadTaskMapForGoal(
   const hover = readyRouteValue<TaskMapHoverRead>(
     await client.post('graph/hover', scope, { goalRef: ref }), 'graph/hover',
   );
+  const decisionCards = await readDecisionCards(client, scope, ref);
   const graph = readyRouteValue<TaskMapGraphRead>(reply, 'tasks/query');
   const data = adaptTaskMap(reads.goal, graph, reads.display, { lines, hover });
+  data.decisionCards = decisionCards;
   /* Ruling 4: disposition dates are read only while the dropped list is open. */
   if (demand.dropped === true) await resolveDroppedDates(client, scope, ref, data);
   if (demand.track === true) {
@@ -325,6 +329,20 @@ async function loadTaskMapForGoal(
   return data;
 }
 
+/** HO:2051: this Goal's waiting cards for the 需要关注 item, one card page is
+ * enough because the count is taken before paging. A failed read hides the
+ * item; it is not an error of the page and never a 0. */
+async function readDecisionCards(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, goalRef: TaskMapGoalRef,
+): Promise<{ n: number; atLeast: boolean } | null> {
+  try {
+    return adaptTaskMapDecisionCards(readyRouteValue<TaskMapQueueRead>(await client.post('decisions/queue', scope,
+      { workspace: scope, goalRef, sections: ['waiting_answer'], page: { limit: 1 } }), 'decisions/queue'));
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------- detail and writes */
 
 /** Immutable material keyed by its full reference, never by "current": an
@@ -341,29 +359,38 @@ function bootRefKey(ref: unknown): string {
   return planId === '' || projectId === '' ? '' : projectId + '/' + planId + '@' + revision;
 }
 
-/** Ruling 2: a dropped Task's disposition date is the acceptedAt of the Plan
- * named by `dispositionChange.setIn`; unreadable hides only the date. */
+/** Ruling 2: a disposition change's date is the acceptedAt of the Plan named
+ * by `dispositionChange.setIn`, as local short text; unreadable is ''. */
+async function acceptedAtText(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string }, setIn: unknown,
+): Promise<string> {
+  const key = bootRefKey(setIn);
+  if (key === '') return '';
+  let acceptedAt = ACCEPTED_AT.get(key) ?? '';
+  if (acceptedAt === '') {
+    try {
+      const plan = readyRouteValue<{ plan?: { acceptedAt?: unknown } }>(
+        await client.post('tasks/query', scope, { goalRef, planRef: setIn }), 'tasks/query',
+      );
+      acceptedAt = asText(plan.plan?.acceptedAt);
+    } catch {
+      acceptedAt = '';
+    }
+    if (acceptedAt === '') return '';
+    ACCEPTED_AT.set(key, acceptedAt);
+  }
+  return localShortAt(acceptedAt);
+}
+
+/** A dropped Task's date; unreadable hides only the date. */
 async function resolveDroppedDates(
   client: ReturnType<typeof createHostClient>, scope: CoreScope,
   goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string }, data: TaskMapData,
 ): Promise<void> {
   for (const dropped of data.dag.dropped) {
-    const key = bootRefKey(dropped.setIn);
-    if (key === '') continue;
-    let acceptedAt = ACCEPTED_AT.get(key) ?? '';
-    if (acceptedAt === '') {
-      try {
-        const plan = readyRouteValue<{ plan?: { acceptedAt?: unknown } }>(
-          await client.post('tasks/query', scope, { goalRef, planRef: dropped.setIn }), 'tasks/query',
-        );
-        acceptedAt = asText(plan.plan?.acceptedAt);
-      } catch {
-        acceptedAt = '';
-      }
-      if (acceptedAt === '') continue;
-      ACCEPTED_AT.set(key, acceptedAt);
-    }
-    dropped.at = localShortAt(acceptedAt);
+    const at = await acceptedAtText(client, scope, goalRef, dropped.setIn);
+    if (at !== '') dropped.at = at;
   }
 }
 
@@ -388,10 +415,21 @@ async function readNodeDetail(
     cursor = pageRead.nextCursor ?? null;
     if (cursor === null) break;
   }
+  /* 4.10: the risks pages, read the same way as the participants */
+  const risks: TaskMapRiskRead[] = [];
+  cursor = null;
+  for (let page = 0; page < 10; page += 1) {
+    const pageRead: TaskMapRiskRead = readyRouteValue<TaskMapRiskRead>(await readDetailPage('risks', cursor), 'graph/detail');
+    risks.push(pageRead);
+    cursor = pageRead.nextCursor ?? null;
+    if (cursor === null) break;
+  }
   const task = asRecord(summary.task);
   const actual = asRecord(task.actualFiles);
   /* `FromExecutedFilesV1` says `availability`; `status` was never its field. */
-  const needsCatalog = actual.availability === 'available' && Array.isArray(actual.value) && actual.value.length > 0;
+  const needsCatalog = (actual.availability === 'available' && Array.isArray(actual.value) && actual.value.length > 0)
+    || (Array.isArray(task.plannedModules) && task.plannedModules.length > 0)
+    || risks.some((page) => (page.items ?? []).some((item) => asRecord(asRecord(item).shared).kind === 'module'));
   let catalog: { modules?: unknown[]; containment?: unknown } | null = null;
   if (needsCatalog) {
     try {
@@ -403,10 +441,11 @@ async function readNodeDetail(
       catalog = null;
     }
   }
-  const instruction = revisionAssignments(graph.plan as unknown as Parameters<typeof revisionAssignments>[0])
-    .find((entry) => entry.taskId === taskId)?.instruction ?? '';
+  /* 4.6: the row's own disposition change and its plan's adoption time */
+  const change = row?.dispositionChange ?? null;
+  const changeAt = change === null ? '' : await acceptedAtText(client, scope, goalRef, asRecord(change).setIn);
   return adaptTaskMapDetail(summary, participants, null,
-    catalog as Parameters<typeof adaptTaskMapDetail>[3], instruction, state, mapWhy);
+    catalog as Parameters<typeof adaptTaskMapDetail>[3], state, mapWhy, change, changeAt, risks);
 }
 
 /** Ruling 7: the one write path. Read the real Workspace pin, commit, then let
@@ -592,7 +631,7 @@ async function readTrackPages(
   return pages;
 }
 
-/** Every `executions/list` page (only for 全部 or an explicit full-history need). */
+/** Every `executions/list` page (for 全部, or the open track's 未排期 on any window). */
 async function readExecutionPages(
   client: ReturnType<typeof createHostClient>, scope: CoreScope,
   goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
@@ -629,7 +668,7 @@ async function readTaskMapTime(
   const rows: unknown[] = Array.isArray(lines.rows) ? lines.rows : [];
   const nowMs = Date.now();
   const win = demand.win ?? 'today';
-  const fullHistory = win === 'all' || demand.executions === true;
+  const fullHistory = win === 'all';
   let executions: Array<{ runId: string; taskId: string; startAt: string }> = [];
   let executionsComplete = false;
   let fromMs: number;
@@ -655,10 +694,13 @@ async function readTaskMapTime(
   const readLineDetail = async (key: { projectId: string; sessionId: string }) =>
     readyRouteValue<{ kind?: unknown; row?: unknown; chain?: unknown[]; omitted?: unknown }>(
       await client.post('lines/read', scope, { workspace: scope, key }), 'lines/read');
-  if (fullHistory) {
+  /* `executions: true` reads the index alone; only 全部 takes the track's origin and line chains from it. */
+  if (fullHistory || demand.executions === true) {
     const read = await readExecutionPages(client, scope, goalRef);
     executions = read.executions;
     executionsComplete = read.complete;
+  }
+  if (fullHistory) {
     const originTimes = executions.map((entry) => Date.parse(entry.startAt)).filter((at) => !Number.isNaN(at));
     const seenLine = new Set<string>();
     for (const entry of lineRows) {

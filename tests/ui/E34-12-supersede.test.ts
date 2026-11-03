@@ -127,7 +127,7 @@ describe('E34-12 a real future revision and the detail subrows', () => {
       node: { kind: 'task', ref: row.ref, planRef: graph.plan.ref },
       section: 'summary', page: { afterCursor: null, limit: 100 },
     }), 'graph/detail');
-    detail = adaptTaskMapDetail(summary, [], null, null, '', 'pending');
+    detail = adaptTaskMapDetail(summary, [], null, null, 'pending');
     expect(detail?.word).toBe('待执行');
     expect(detail?.hasFiles).toBe(false);
     expect(detail?.files).toEqual([]);
@@ -186,7 +186,7 @@ describe('E34-12 a real future revision and the detail subrows', () => {
         actualFiles: { availability: 'available', value: [{ runRef: { runId: 'r1' }, path: 'src/ui/x.ts', certainty: 'definite' }] },
       },
     } as unknown as TaskMapSummaryRead;
-    const detail = adaptTaskMapDetail(summary, [], null, null, '', 'pending')!;
+    const detail = adaptTaskMapDetail(summary, [], null, null, 'pending')!;
     expect(detail.hasFiles).toBe(true);
     expect(detail.files[0]!.files[0]!.name).toBe('x.ts');
     expect(detail.files[0]!.files[0]!.tag).toBe('实际改过');

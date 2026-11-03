@@ -16,6 +16,8 @@ export type RefreshSnapshot<T> = {
   dataVersion: number;
   stale: boolean;
   error: unknown;
+  /** The stream was last refused for too many open pages (429); present only when true. */
+  tooMany?: boolean;
 };
 
 /** One read result: the board data plus the `changesHead` cursor that read's
@@ -30,7 +32,7 @@ export type RefreshSources<T> = {
   subscribe(handlers: ChangeStreamHandlers, cursor: string | null): ChangeStream;
 };
 
-/** Ruling item 5: every 2 s, with no cap and no backoff. */
+/** Ruling item 5: every 2 s, with no cap and no backoff (a failed reread too). */
 const RECONNECT_DELAY_MS = 2_000;
 
 export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Promise<void>; reread(): Promise<void> } {
@@ -41,9 +43,11 @@ export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Pro
   /** Ruling item 5: only a successful reconnect clears a stream-loss `stale`;
    * a read that finishes after the disconnect must not hide that banner. */
   let disconnected = false;
+  let tooMany = false;
   let error: unknown = null;
   let stream: ChangeStream | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let reading = false;
   let pending = false;
   let current: Promise<void> = Promise.resolve();
@@ -52,7 +56,7 @@ export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Pro
   const hasData = (): boolean => dataVersion > 0;
 
   function publish(): void {
-    sources.publish({ data, dataVersion, stale, error });
+    sources.publish({ data, dataVersion, stale, error, ...(tooMany ? { tooMany } : {}) });
   }
 
   /** Ruling item 5: every successful connection rereads once. A `ready` frame
@@ -63,12 +67,14 @@ export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Pro
     stream ??= sources.subscribe({
       onOpen(): void {
         disconnected = false;
+        tooMany = false;
         void requestRead();
       },
       onNotice(): void { void requestRead(); },
-      onEnd(): void {
+      onEnd(reason): void {
         disconnected = true;
         stale = true;
+        tooMany = reason === 'too_many_pages';
         publish();
         reconnectTimer ??= setTimeout(() => {
           reconnectTimer = null;
@@ -89,9 +95,14 @@ export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Pro
       dataVersion += 1;
       if (!disconnected) stale = false;
       error = null;
+      if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
     } catch (caught) {
       error = caught;
-      if (hasData()) stale = true;
+      /* a failed reread over shown data reads again in 2 s until one succeeds; one timer at a time */
+      if (hasData()) {
+        stale = true;
+        retryTimer ??= setTimeout(() => { retryTimer = null; void requestRead(); }, RECONNECT_DELAY_MS);
+      }
     }
     publish();
   }

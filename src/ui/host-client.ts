@@ -149,8 +149,9 @@ export function createHostClient(token: string, base = ''): {
 export type ChangeStreamHandlers = {
   onOpen(): void;
   onNotice(): void;
-  /** This connection ended: Host close, a rejected request or a stream error. */
-  onEnd(): void;
+  /** This connection ended: Host close, a rejected request or a stream error;
+   * `too_many_pages` when the Host refused it with 429 (too many open pages). */
+  onEnd(reason?: 'too_many_pages'): void;
 };
 
 /** One page's change-stream client. The cursor survives a reconnect, so a
@@ -218,6 +219,7 @@ export function subscribeChanges(
   return {
     connect(): void {
       void (async () => {
+        let reason: 'too_many_pages' | undefined;
         try {
           const token = await tokenOf();
           const headers: Record<string, string> = { [PLATFORM_TOKEN_HEADER]: token };
@@ -228,11 +230,11 @@ export function subscribeChanges(
           if (response.ok && response.body !== null) {
             handlers.onOpen();
             await pumpChanges(response.body);
-          }
+          } else if (response.status === 429) reason = 'too_many_pages';
         } catch {
           // A read error is the same page condition as the Host closing.
         } finally {
-          handlers.onEnd();
+          handlers.onEnd(reason);
         }
       })();
     },

@@ -135,7 +135,7 @@ describe('E34-9 the default read budget and the execution pager', () => {
          The whole first round, not a prefix: one extra lines/list fails here. */
       expect(host.log).toEqual([
         'bootstrap', 'goals/read', 'goals/display', 'tasks/query', 'lines/list',
-        'graph/hover', 'activity/track', 'activity/calendar',
+        'graph/hover', 'decisions/queue', 'activity/track', 'activity/calendar',
       ]);
       expect(host.log).not.toContain('executions/list');
 

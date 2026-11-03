@@ -88,7 +88,7 @@ describe('E34-8 empty states', () => {
          not an incomplete-read placeholder. The track is present and empty. */
       expect(page.root.textContent).toContain('步骤 0');
       expect(page.root.textContent).not.toContain('覆盖不完整');
-      expect(page.root.textContent).not.toContain('未记全');
+      expect(page.root.textContent).not.toContain('：未知');
       expect(findClass(page.root, 'is-full')).toBeDefined();
       expect(findClass(page.root, 'tl-b')).toBeUndefined();
       for (const sample of SAMPLE) expect(page.root.textContent).not.toContain(sample);
@@ -125,7 +125,7 @@ describe('E34-8 empty states', () => {
     const view = new BoardView(board, { ...board.defaults, data, readState: { status: 'ready' }, dataVersion: 1 });
     view.instance.setState({ view: 'lanes' });
     const sum = (view.instance.renderVals() as { wl: { sum: string } }).wl.sum;
-    expect(sum).toContain('活动未记全');
+    expect(sum).toContain('：未知');
     expect(sum).not.toContain('步骤 0');
   });
 
