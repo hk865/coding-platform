@@ -1364,18 +1364,6 @@
       "note": "waits for 7D2 C1 batch freeze (the public batch-freeze entry), slice 7 of the orchestration design"
     },
     {
-      "file": "src/core/work-graph/model/note-contracts.ts",
-      "name": "NOTE_FLOW_CANDIDATE_MAX",
-      "reason": "kept-for",
-      "note": "8E-2 F2 的 readSemanticFlows 默认值（8E 开工裁定 v5 :1962，书 :887），slice 8 of the orchestration design；F2 落地时删这一条"
-    },
-    {
-      "file": "src/contracts/semantic-layer.ts",
-      "name": "SemanticFlowV1",
-      "reason": "kept-for",
-      "note": "8E-2 F2 的 readSemanticFlows 返回类型（8E 开工裁定 v5 :1962，书 :908–910），slice 8 of the orchestration design；F2 落地时删这一条"
-    },
-    {
       "file": "src/contracts/role-lines.ts",
       "name": "GoalAdviserQueueEntryV1",
       "reason": "kept-for",

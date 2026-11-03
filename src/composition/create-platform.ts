@@ -139,7 +139,7 @@ import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMe
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
-import { createSemanticLayerRead, type SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
+import { createSemanticLayerRead, expandFlowForHead, type SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
 import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-material.js';
 import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
 import { createNoteDecisionSource } from '../core/work-graph/notes/note-decision-source.js';
@@ -2819,12 +2819,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 4C C2.2: the concrete narrow Run resolver (one readMany) resolves a
       // work Run's own task and bound plan from the trusted principal.
       runTask: createNoteRunTaskResolver(backend.records),
+      expandFlowForHead,
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
     boundNoteReads = noteReads;
     // The semantic links read reuses the SAME records, catalog and check the
     // note reads use; it reads the one note layer, not a second owner.
     const semanticLinks: SemanticLinksReader = createSemanticLayerRead({
-      records: backend.records, architecture: catalog, check: noteCheck });
+      records: backend.records, architecture: catalog, check: noteCheck,
+      ...(options.noteLimits?.flowCandidateMax === undefined
+        ? {} : { flowCandidateMax: options.noteLimits.flowCandidateMax }) });
     // H: the assembly reads the SAME history, records, note, decision and Query
     // execution owners the rest of this root publishes. A platform without a
     // Runtime has no Query execution reader; the successor step then answers
@@ -2911,6 +2914,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale, listNotes,
         listPlanVersions, listCatalogVersions,
         readSemanticLinks: semanticLinks.readSemanticLinks,
+        readSemanticFlows: semanticLinks.readSemanticFlows,
         readScribeTodos: noteScribeTodos.readScribeTodos,
         readLedgerCursor: noteScribeTodos.readLedgerCursor,
         goalIdsForWorkspace,

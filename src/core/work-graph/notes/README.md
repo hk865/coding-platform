@@ -10,8 +10,8 @@
 ## 文件
 
 `note-service.ts` — 唯一的注记写入器：写入、复核/撤回、决定应用、用户理由事实、工具提交回读；命令身份 `noteCommandIdentity`（write/review/withdraw/activate）。
-`note-read-model.ts` — 注记读端口：按 id/锚点读取、六种记忆读、`find`、记忆材料（无 Goal 时只读项目理解与 norms）；并转出基础读法与唯一的记忆游标 helper（`encodeMemoryCursor`/`parseMemoryCursor`/`callerIdentityOf`）。
-`semantic-layer-read.ts` — 语义联系层的读侧：`readSemanticLinks` 按 project/module/file 范围读 `link` 的三状态页，一次 `checkHeads` 得到每槽状态和证据核对，映射成 `SemanticLinkV1`；本层没有 flow 读。
+`note-read-model.ts` — 注记读端口：按 id/锚点读取、六种记忆读、`find`、记忆材料（无 Goal 时只读项目理解与 norms）；并转出基础读法与唯一的记忆游标 helper（`encodeMemoryCursor`/`parseMemoryCursor`/`callerIdentityOf`）；`NoteReadDependencies.expandFlowForHead` 是 flow 项的展开依赖，`flowCheckOf` 合成流程的 freshness/currentEligible，`readSemanticCatalog` 是语义页的唯一目录读。
+`semantic-layer-read.ts` — 语义层的读侧：`readSemanticLinks` 按 project/module/file 范围读 `link` 的三状态页，`readSemanticFlows` 读 `flow` 的三状态页并按存储的步骤 id 展开（module/file 范围先取范围里任意状态的 `link`）；两页都一次 `checkHeads`，分别映射成 `SemanticLinkV1`/`SemanticFlowV1`。
 `activate-repair.ts` — 8C 的唯一 repair 激活 owner 与纯 footprint 判定：把 staged `repair` 注记绑到 Run 轮链的有效 head，检查轮 PASS、批准与 footprint，再一次 `PreparedCommit` 提交 `staged → accepted` 与 catalog revision contribution；`readBoundRepairRound`、`footprintProblem`、`activateRepair`、`readObservation`、`attemptRepairsForGoal` 与 `createRepairActivationService`。
 `note-anchors.ts` — 锚点 key、主题归一化、写时锚点解析（含 symbol 定位）。
 `note-anchor-facts.ts` — 锚点校验所需的 Goal/Plan 窗口事实读取，不经通用 Plan 服务。
@@ -35,10 +35,12 @@
 | --- | --- | --- | --- |
 | `createNoteService` | `src/core/work-graph/notes/note-service.ts:756` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点；文件锚点的存在、候选、符号读和基准文件的读经 `noteCheckWorkspace`，写入、准入、额度和存下的作者仍是调用者 | 注入给 composition；所有注记写入与处置走它 |
 | `createRepairActivationService` | `src/core/work-graph/notes/activate-repair.ts:713` | 绑定 records/catalog/evidence 等依赖，返回 `readBoundRepairRound`/`activateRepair`/`attemptRepairsForGoal`；激活检查轮 PASS、批准、footprint 并一次提交注记与 catalog 修订 | 组合根装配 repair 激活；不要另开激活入口 |
-| `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:411` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空） | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
-| `createSemanticLayerRead` | `src/core/work-graph/notes/semantic-layer-read.ts:40` | 语义联系层的唯一读端口：`readSemanticLinks`（project/module/file，limit 1–100，一页一次核对） | Host 的 `architecture/semantic-links` 路由；不要另写范围、分页或 item 映射 |
-| `encodeMemoryCursor`、`parseMemoryCursor`、`callerIdentityOf` | `src/core/work-graph/notes/note-read-model.ts:376`、`src/core/work-graph/notes/note-read-model.ts:383`、`src/core/work-graph/notes/note-read-model.ts:372` | 注记读与语义读共用的唯一不透明游标：绑定 op、调用者、规则、请求和位置 | 需要绑定请求的翻页时；不要把游标解析放到 HTTP 层或另写一份 |
-| `collectModuleFileKeys`、`interfaceKeysOf` | `src/core/work-graph/notes/note-related-scope.ts:321`、`src/core/work-graph/notes/note-related-scope.ts:316` | 模块路径下的文件 key 集合（按唯一主人判定）与模块接口 key | 语义模块范围要模块/接口/文件键集时；不要另写归属或接口 key |
+| `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:480` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空）；`expandFlowForHead` 依赖把 flow 项展开成 `flow` | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
+| `createSemanticLayerRead` | `src/core/work-graph/notes/semantic-layer-read.ts:49` | 语义层的唯一读端口：`readSemanticLinks`（project/module/file，limit 1–100）、`readSemanticFlows`（project/module/file，limit 1–50，一页最多 500 个流程头）；一页一次核对 | Host 的 `architecture/semantic-links`、`architecture/semantic-flows` 路由；不要另写范围、分页或 item 映射 |
+| `expandFlowForHead` | `src/core/work-graph/notes/semantic-layer-read.ts:392` | 纯映射：按存储的步骤顺序展开一条流程，五值取第一个 problem（`not_current` 时 `item: null`），`gapsAfter` 按端点身份比相邻步 | 流程页与 `withCheck` 的 flow 项；不要另写问题的先后或 `gapsAfter` |
+| `flowCheckOf`、`readSemanticCatalog` | `src/core/work-graph/notes/note-read-model.ts:468`、`src/core/work-graph/notes/note-read-model.ts:445` | 流程 freshness/currentEligible 的唯一合成；语义页的唯一目录读（缺目录是 `null`，其它失败 `unavailable`） | `semanticFlowOf`、`withCheck` 的 flow 项与两个语义读口；不要另写合成或目录读 |
+| `encodeMemoryCursor`、`parseMemoryCursor`、`callerIdentityOf` | `src/core/work-graph/notes/note-read-model.ts:405`、`src/core/work-graph/notes/note-read-model.ts:412`、`src/core/work-graph/notes/note-read-model.ts:401` | 注记读与语义读共用的唯一不透明游标：绑定 op、调用者、规则、请求和位置 | 需要绑定请求的翻页时；不要把游标解析放到 HTTP 层或另写一份 |
+| `collectModuleFileKeys`、`interfaceKeysOf` | `src/core/work-graph/notes/note-related-scope.ts:319`、`src/core/work-graph/notes/note-related-scope.ts:314` | 模块路径下的文件 key 集合（按唯一主人判定）与模块接口 key | 语义模块范围要模块/接口/文件键集时；不要另写归属或接口 key |
 | `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:236` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
 | `createNoteDecisionSource` | `src/core/work-graph/notes/note-decision-source.ts:118` | 注记复核决定卡来源：`readNoteDecisions` 按 `subject` 读 Goal 或项目的卡（项目桶无 Goal 窗口、无 cancelled 门，批读与理由读同一套）、按 pin 读一张（`goalId: null` 走项目卡；开着、关了都带回注记自己的 subject，读的一方先比 subject 再看开关）、应用决定 | 装配决定队列/决定应用 |
 | `createNoteScribeTodos` | `src/core/work-graph/notes/note-scribe-todos.ts:76` | 书记待办：`pending`、`updateDueTodos`、`immediate`，复用同一锚点读 | Host 提醒/书记心跳 |
@@ -57,15 +59,15 @@
 | `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:278` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
 | `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:291` | 一基 UTF-16 行/列切片（结束列不含） | 从捕获内容取 symbol 文本 |
 | `noteCheckWorkspace` | `src/core/work-graph/notes/note-anchors.ts:858` | 注记的工作区读口包一层：`readWorkspace`/`capture`/`querySource`/`releaseCapture` 都用 `platformCheckContext` 换成固定的内部 Host 身份（`system`/`note-workspace-check`；Host 只给自己的 principal 授权工作区读），Host 调用者不变 | 注记写入的锚点和基准文件读、注记检查的文件读、读模型的锚点存在读；写入、准入、额度、作者和非工作区读仍用调用者的上下文 |
-| `createNoteHeadDerivations` | `src/core/work-graph/notes/note-read-model.ts:283` | 从已存 head 派生 `conflicting`/`overQuota` 等注记字段 | 注记读/检查；不要另算 |
-| `newHeadCache` | `src/core/work-graph/notes/note-read-model.ts:247` | 一次读内的 anchors/goals 缓存 | 与 `createNoteHeadDerivations` 配套 |
-| `selectRelatedFiles` | `src/core/work-graph/notes/note-related-scope.ts:104` | 纯：从 Run 事实选 related 文件，definite 先于 possible、去重、截断 | `find` 的 related 文件段 |
-| `taskRelatedKeys` | `src/core/work-graph/notes/note-related-scope.ts:131` | 纯：task T 在 goal/plan 下的 anchor key 集合 | `find` 的 related task 段 |
-| `moduleRelatedKeys` | `src/core/work-graph/notes/note-related-scope.ts:151` | 纯：module 及其 interface/file key 集合 | `find` 的 related module 段 |
-| `isRelatedHead` | `src/core/work-graph/notes/note-related-scope.ts:166` | 纯：head 的五个槽是否落在 key 集合；`project` 只算通用种类 | 两段 `find` 共用的相关谓词 |
-| `anchorSlots` | `src/core/work-graph/notes/note-related-scope.ts:88` | 把 head 的五个可空锚点槽收成非空数组 | 遍历 head 锚点时 |
-| `readAllRecords` | `src/core/work-graph/notes/note-base-reader.ts:22` | 把一个 lookup index 分页读到尾，任一分页失败即整体失败 | 需要完整等值集合时；`src/core/work-graph/notes/note-read-model.ts:67` 转出 |
-| `mapStoreFailure` | `src/core/work-graph/notes/store-failures.ts:9` | 注记读/写共用的 store 失败映射 | 把 StoreFailure 转 NoteErrorCode 时；`src/core/work-graph/notes/note-read-model.ts:68` 转出 |
+| `createNoteHeadDerivations` | `src/core/work-graph/notes/note-read-model.ts:300` | 从已存 head 派生 `conflicting`/`overQuota` 等注记字段 | 注记读/检查；不要另算 |
+| `newHeadCache` | `src/core/work-graph/notes/note-read-model.ts:264` | 一次读内的 anchors/goals 缓存 | 与 `createNoteHeadDerivations` 配套 |
+| `selectRelatedFiles` | `src/core/work-graph/notes/note-related-scope.ts:102` | 纯：从 Run 事实选 related 文件，definite 先于 possible、去重、截断 | `find` 的 related 文件段 |
+| `taskRelatedKeys` | `src/core/work-graph/notes/note-related-scope.ts:129` | 纯：task T 在 goal/plan 下的 anchor key 集合 | `find` 的 related task 段 |
+| `moduleRelatedKeys` | `src/core/work-graph/notes/note-related-scope.ts:149` | 纯：module 及其 interface/file key 集合 | `find` 的 related module 段 |
+| `isRelatedHead` | `src/core/work-graph/notes/note-related-scope.ts:164` | 纯：head 的五个槽是否落在 key 集合；`project` 只算通用种类 | 两段 `find` 共用的相关谓词 |
+| `anchorSlots` | `src/core/work-graph/notes/note-related-scope.ts:86` | 把 head 的五个可空锚点槽收成非空数组 | 遍历 head 锚点时 |
+| `readAllRecords` | `src/core/work-graph/notes/note-base-reader.ts:22` | 把一个 lookup index 分页读到尾，任一分页失败即整体失败 | 需要完整等值集合时；`src/core/work-graph/notes/note-read-model.ts:71` 转出 |
+| `mapStoreFailure` | `src/core/work-graph/notes/store-failures.ts:9` | 注记读/写共用的 store 失败映射 | 把 StoreFailure 转 NoteErrorCode 时；`src/core/work-graph/notes/note-read-model.ts:72` 转出 |
 | `pathOwnershipOf` | `src/contracts/path-ownership.ts:36` | 路径所有权：最长合法段匹配，返回 owner/tie/none；`note-path-ownership.ts` 只是转出 | file 锚点归属；不要另写路径匹配 |
 
 ## 内部用

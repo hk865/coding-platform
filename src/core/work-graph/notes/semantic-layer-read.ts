@@ -1,6 +1,9 @@
 /**
- * Slice 8E L3: the semantic layer's read side. This run implements only the
- * link read; the flow read belongs to the next run and is not stubbed here.
+ * Slice 8E L9: the semantic layer's read side. It answers two pages over the
+ * same heads: `readSemanticLinks` and `readSemanticFlows`. A flow's steps are
+ * the stored `link` note ids, so a page of flows is read through one head batch
+ * and one merged check; the step expansion never opens a capture or builds a
+ * TypeScript program.
  *
  * A page is read once from the scope's candidate heads, checked once through
  * the note check (so freshness, per-slot anchor statuses and the link
@@ -11,17 +14,22 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { LinkEndRequestV1, NoteHeadSnapshot } from '../../../contracts/note.js';
-import type { SemanticEndV1, SemanticLinkV1, SemanticPageV1, SemanticScopeV1 } from '../../../contracts/semantic-layer.js';
+import type { NoteFlowReadV1, SemanticEndV1, SemanticFlowStepV1, SemanticFlowV1, SemanticLinkV1,
+  SemanticPageV1, SemanticScopeV1 } from '../../../contracts/semantic-layer.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { NoteCheckV1, NoteHeadCheckPort } from '../model/note-contracts.js';
+import { NOTE_FLOW_CANDIDATE_MAX } from '../model/note-contracts.js';
+import { REQUEST_PAGE_SIZE } from '../model/request-contracts.js';
 import type { NoteReadDependencies } from './note-read-model.js';
 import type { ReadOutcome } from './note-base-reader.js';
 import { S8E_NOTE_BY_KIND_STATE_LOOKUP, decodeNoteHeadSnapshot } from '../persistence/note-record-codecs.js';
-import { encodeMemoryCursor, parseMemoryCursor } from './note-read-model.js';
+import { encodeMemoryCursor, flowCheckOf, parseMemoryCursor, readSemanticCatalog } from './note-read-model.js';
 import { anchorSlots, collectModuleFileKeys, headsOnKeyPrefix, interfaceKeysOf, isRelatedHead,
   matchesPathPrefix, moduleRelatedKeys } from './note-related-scope.js';
-import { moduleOfFile } from './link-evidence.js';
+import { readHeadBatch } from './note-batch-reader.js';
+import { endpointIdentityOf, moduleOfFile } from './link-evidence.js';
 import { normalizePath } from './note-anchors.js';
-import { asOutcome } from './store-failures.js';
+import { asOutcome, mapStoreFailure } from './store-failures.js';
 
 export type SemanticReadInput = {
   scope: SemanticScopeV1;
@@ -30,11 +38,13 @@ export type SemanticReadInput = {
 };
 
 export type SemanticReadDeps = Pick<NoteReadDependencies, 'records' | 'architecture'>
-  & { check: NoteHeadCheckPort };
+  & { check: NoteHeadCheckPort; flowCandidateMax?: number };
 
 export type SemanticLinksReader = {
   readSemanticLinks(ctx: CoreCallContext, input: SemanticReadInput):
     Promise<ReadResult<SemanticPageV1<SemanticLinkV1>>>;
+  readSemanticFlows(ctx: CoreCallContext, input: SemanticReadInput):
+    Promise<ReadResult<SemanticPageV1<SemanticFlowV1>>>;
 };
 
 export function createSemanticLayerRead(deps: SemanticReadDeps): SemanticLinksReader {
@@ -42,13 +52,32 @@ export function createSemanticLayerRead(deps: SemanticReadDeps): SemanticLinksRe
     readSemanticLinks(ctx, input) {
       return readLinks(deps, ctx, input);
     },
+    readSemanticFlows(ctx, input) {
+      return readFlows(deps, ctx, input);
+    },
   };
 }
 
 /** The three states the Host route reads, across goals. */
 const VISIBLE_STATES: readonly NoteHeadSnapshot['state'][] = ['accepted', 'reviewed', 'pending_review'];
 const LINK_KIND = 'link';
+const FLOW_KIND = 'flow';
 const LIMIT_MAX = 100;
+const FLOW_LIMIT_MAX = 50;
+const SCOPE_REASON = 'scope must be a project, a module or a file';
+
+/**
+ * The wire scope is a union the type checker cannot enforce on an HTTP body: a
+ * project takes no other key, a module needs a non-empty module id and a file a
+ * non-empty path. Extra keys are not rejected.
+ */
+function badScope(scope: unknown): boolean {
+  if (!isRecord(scope)) return true;
+  if (scope['kind'] === 'project') return false;
+  if (scope['kind'] === 'module') return !nonEmpty(scope['moduleId']);
+  if (scope['kind'] === 'file') return !nonEmpty(scope['path']);
+  return true;
+}
 
 async function readLinks(
   deps: SemanticReadDeps,
@@ -58,6 +87,7 @@ async function readLinks(
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > LIMIT_MAX) {
     return { status: 'rejected', code: 'invalid', reason: 'cursor_mismatch' };
   }
+  if (badScope(input.scope)) return { status: 'rejected', code: 'invalid', reason: SCOPE_REASON };
   const request = { scope: input.scope, kind: 'links', limit: input.limit };
   const cursor = parseMemoryCursor(ctx, input.cursor, 'semantic_links', request);
   if (!cursor.ok) return { status: 'rejected', code: 'invalid', reason: 'cursor_mismatch' };
@@ -65,21 +95,9 @@ async function readLinks(
 
   // L7: one catalog read for the page; an absent catalog is `null`, any other
   // failed read is `unavailable`, never an empty catalog.
-  let catalog: AdoptedArchitecture | null = null;
-  let catalogRevision: number | null = null;
-  if (deps.architecture !== undefined) {
-    const read = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-    if (read.status === 'ready') {
-      catalog = read.value.catalog.catalog;
-      catalogRevision = read.value.baseline.ref.revision;
-    } else if (read.status === 'not_found'
-      || (read.status === 'rejected' && read.code === 'not_found')) {
-      catalog = null;
-    } else {
-      return { status: 'rejected', code: 'unavailable',
-        reason: read.status === 'rejected' ? read.reason : 'the architecture catalog is not ready' };
-    }
-  }
+  const catalogRead = await readSemanticCatalog(deps.architecture, ctx);
+  if (!catalogRead.ok) return { status: 'rejected', code: catalogRead.code, reason: catalogRead.reason };
+  const { catalog, revision: catalogRevision } = catalogRead.value;
 
   const candidates = await scopeHeads(deps, ctx, input.scope, after, input.limit + 1, catalog);
   if (!candidates.ok) return { status: 'rejected', code: candidates.code, reason: candidates.reason };
@@ -102,50 +120,157 @@ async function readLinks(
 }
 
 /**
+ * The flow page. Project scope pages the three visible flow states; module/file
+ * scope first takes every link head of the scope in ANY state (a superseded or
+ * withdrawn step still brings its flow into the range) and keeps the flows
+ * whose stored steps cite one of those heads. The flow heads are scanned in
+ * `noteId` order, bounded per page; the cursor carries the scan position as
+ * well as the last result id.
+ */
+async function readFlows(
+  deps: SemanticReadDeps,
+  ctx: CoreCallContext,
+  input: SemanticReadInput,
+): Promise<ReadResult<SemanticPageV1<SemanticFlowV1>>> {
+  if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > FLOW_LIMIT_MAX) {
+    return { status: 'rejected', code: 'invalid', reason: 'cursor_mismatch' };
+  }
+  if (badScope(input.scope)) return { status: 'rejected', code: 'invalid', reason: SCOPE_REASON };
+  const request = { scope: input.scope, kind: 'flows', limit: input.limit };
+  const cursor = parseMemoryCursor(ctx, input.cursor, 'semantic_flows', request);
+  if (!cursor.ok) return { status: 'rejected', code: 'invalid', reason: 'cursor_mismatch' };
+  const scanAfter = cursor.value.recordCursor ?? cursor.value.after;
+
+  const catalogRead = await readSemanticCatalog(deps.architecture, ctx);
+  if (!catalogRead.ok) return { status: 'rejected', code: catalogRead.code, reason: catalogRead.reason };
+  const { catalog, revision: catalogRevision } = catalogRead.value;
+
+  const flowCandidateMax = deps.flowCandidateMax ?? NOTE_FLOW_CANDIDATE_MAX;
+  const cap = input.scope.kind === 'project'
+    ? Math.min(input.limit + 1, flowCandidateMax) : flowCandidateMax;
+  let results: NoteHeadSnapshot[];
+  const scanned = await projectHeads(deps, ctx, scanAfter, cap, FLOW_KIND);
+  if (!scanned.ok) return { status: 'rejected', code: scanned.code, reason: scanned.reason };
+  const examined = scanned.value;
+  if (input.scope.kind === 'project') {
+    results = examined;
+  } else {
+    const links = await scopeHeads(deps, ctx, input.scope, null, Number.POSITIVE_INFINITY, catalog, false);
+    if (!links.ok) return { status: 'rejected', code: links.code, reason: links.reason };
+    const linkIds = new Set(links.value.map(head => head.noteId));
+    results = examined.filter(head => head.flow!.steps.some(step => linkIds.has(step.link)));
+  }
+
+  const pageHeads = results.slice(0, input.limit);
+  const hasMore = results.length > input.limit;
+  const capped = !hasMore && examined.length === cap;
+
+  // One batched read of the page's distinct step heads, then one merged check
+  // for the flow heads and those step heads. A missing step head stays absent
+  // and expands to `not_current`.
+  const stepIds = pageHeads.flatMap(head => head.flow!.steps.map(step => step.link));
+  const batch = await readHeadBatch(deps.records, ctx.projectId, stepIds, { requireAll: false });
+  if (!batch.ok) {
+    const failure = mapStoreFailure(batch);
+    return { status: 'rejected', code: failure.code, reason: failure.reason };
+  }
+  const stepHeads = [...batch.value.values()];
+  const checked = await deps.check.checkHeads(ctx, {
+    items: [...pageHeads, ...stepHeads].map(head => ({ head, version: head.version })),
+  });
+  if (checked.status !== 'ready') {
+    if (checked.status === 'rejected') return checked;
+    return { status: 'rejected', code: 'unavailable', reason: 'the note check is not ready' };
+  }
+
+  const checkByStep = new Map<string, { head: NoteHeadSnapshot; check: NoteCheckV1 }>();
+  stepHeads.forEach((head, index) => {
+    checkByStep.set(head.noteId, { head, check: checked.value.items[pageHeads.length + index]! });
+  });
+  const items = pageHeads.map((head, index) => {
+    const check = checked.value.items[index]!;
+    const steps = head.flow!.steps.flatMap(step => {
+      const found = checkByStep.get(step.link);
+      return found === undefined ? [] : [found];
+    });
+    return semanticFlowOf(head, check, expandFlowForHead(ctx, { flow: head, steps, catalog }));
+  });
+
+  let next: string | null = null;
+  if (hasMore) {
+    const last = pageHeads[pageHeads.length - 1]!.noteId;
+    next = encodeMemoryCursor(ctx, 'semantic_flows', request, { after: last, recordCursor: last });
+  } else if (capped && examined.length > 0) {
+    next = encodeMemoryCursor(ctx, 'semantic_flows', request, {
+      after: pageHeads.length === 0 ? null : pageHeads[pageHeads.length - 1]!.noteId,
+      recordCursor: examined[examined.length - 1]!.noteId,
+    });
+  }
+  return { status: 'ready', value: { items, next, catalogRevision } };
+}
+
+/**
  * The scope's candidate heads: `link` only, the three visible states, sorted by
  * `noteId`, deduplicated, after the cursor. A failed read is returned as is.
  */
 async function scopeHeads(deps: SemanticReadDeps, ctx: CoreCallContext, scope: SemanticScopeV1,
-  after: string | null, cap: number, catalog: AdoptedArchitecture | null): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+  after: string | null, cap: number, catalog: AdoptedArchitecture | null,
+  visibleOnly = true): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
   if (scope.kind === 'project') return projectHeads(deps, ctx, after, cap);
   if (scope.kind === 'file') {
     const path = normalizePath(scope.path);
     const key = `file:${path}`;
-    return keyHeads(deps, ctx, [key], [path], after, cap);
+    return keyHeads(deps, ctx, [key], [path], after, cap, visibleOnly);
   }
   const keySet = await moduleKeys(deps, ctx, scope.moduleId, catalog);
   if (!keySet.ok) return keySet;
-  return keyHeads(deps, ctx, [...keySet.value.keys], keySet.value.paths, after, cap);
+  return keyHeads(deps, ctx, [...keySet.value.keys], keySet.value.paths, after, cap, visibleOnly);
 }
 
 async function projectHeads(deps: SemanticReadDeps, ctx: CoreCallContext, after: string | null,
-  cap: number): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+  cap: number, kind: NoteHeadSnapshot['kind'] = LINK_KIND): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
   const seen = new Map<string, NoteHeadSnapshot>();
   for (const state of VISIBLE_STATES) {
-    const read = await deps.records.lookupOrdered({
-      index: S8E_NOTE_BY_KIND_STATE_LOOKUP,
-      values: [ctx.projectId, LINK_KIND, state],
-      direction: 'asc',
-      ...(after === null ? {} : { bound: { value: after, inclusive: false } }),
-      limit: cap,
-    });
-    if (read.status !== 'ready') return asOutcome(read);
-    for (const record of read.value.records) {
-      const decoded = decodeNoteHeadSnapshot(record);
-      if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
-      keepVisible(seen, decoded.value, after);
+    // The ordered lookup pages at most 200 records, so the per-state read pages
+    // to `cap`; the flow candidate bound (500) is larger than one page.
+    let bound: { value: string; inclusive: boolean } | undefined =
+      after === null ? undefined : { value: after, inclusive: false };
+    let taken = 0;
+    while (taken < cap) {
+      const limit = Math.min(cap - taken, REQUEST_PAGE_SIZE);
+      const read = await deps.records.lookupOrdered({
+        index: S8E_NOTE_BY_KIND_STATE_LOOKUP,
+        values: [ctx.projectId, kind, state],
+        direction: 'asc',
+        ...(bound === undefined ? {} : { bound }),
+        limit,
+      });
+      if (read.status !== 'ready') return asOutcome(read);
+      let lastId: string | undefined;
+      for (const record of read.value.records) {
+        const decoded = decodeNoteHeadSnapshot(record);
+        if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
+        keepVisible(seen, decoded.value, after, kind);
+        lastId = decoded.value.noteId;
+      }
+      taken += read.value.records.length;
+      if (read.value.next === null) break;
+      bound = { value: lastId!, inclusive: false };
     }
   }
-  return { ok: true, value: sortHeadsByNoteId(seen) };
+  return { ok: true, value: sortHeadsByNoteId(seen).slice(0, cap) };
 }
 
 /**
  * §3.8.3: the ordered anchor-path indexes page on a string prefix, so the page
  * keeps only heads whose exact key is in the scope and whose file slots pass
- * the scope's path boundary.
+ * the scope's path boundary. A flow range also keeps superseded or withdrawn
+ * link heads (`visibleOnly: false`): a step that is no longer current still
+ * belongs to the range.
  */
 async function keyHeads(deps: SemanticReadDeps, ctx: CoreCallContext, keys: readonly string[],
-  pathPrefixes: readonly string[], after: string | null, cap: number): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+  pathPrefixes: readonly string[], after: string | null, cap: number,
+  visibleOnly = true): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
   const keySet = new Set(keys);
   const seen = new Map<string, NoteHeadSnapshot>();
   for (const key of keys) {
@@ -154,7 +279,7 @@ async function keyHeads(deps: SemanticReadDeps, ctx: CoreCallContext, keys: read
     for (const head of read.value) {
       if (!isRelatedHead(head, keySet)) continue;
       if (!pathBoundaryAccepts(head, keySet, pathPrefixes)) continue;
-      keepVisible(seen, head, after);
+      keepVisible(seen, head, after, LINK_KIND, visibleOnly);
     }
   }
   return { ok: true, value: sortHeadsByNoteId(seen).slice(0, cap) };
@@ -189,9 +314,10 @@ function pathBoundaryAccepts(head: NoteHeadSnapshot, keySet: ReadonlySet<string>
   return true;
 }
 
-function keepVisible(seen: Map<string, NoteHeadSnapshot>, head: NoteHeadSnapshot, after: string | null): void {
-  if (head.kind !== LINK_KIND) return;
-  if (!VISIBLE_STATES.includes(head.state)) return;
+function keepVisible(seen: Map<string, NoteHeadSnapshot>, head: NoteHeadSnapshot, after: string | null,
+  kind: NoteHeadSnapshot['kind'] = LINK_KIND, visibleOnly = true): void {
+  if (head.kind !== kind) return;
+  if (visibleOnly && !VISIBLE_STATES.includes(head.state)) return;
   if (after !== null && head.noteId <= after) return;
   if (!seen.has(head.noteId)) seen.set(head.noteId, head);
 }
@@ -241,5 +367,77 @@ function semanticLinkOf(head: NoteHeadSnapshot, check: NoteCheckV1,
     goalId: head.goalId,
     confirmedByUser: head.confirmedByUser,
     freshness: check.freshness,
+  };
+}
+
+/** Each step's problem is the first of the five values. */
+function problemOf(head: NoteHeadSnapshot, check: NoteCheckV1): SemanticFlowStepV1['problem'] {
+  if (head.state !== 'accepted' && head.state !== 'reviewed') return 'not_current';
+  if (check.linkVerification?.status === 'broken') return 'broken';
+  if (check.freshness === 'stale'
+    || check.anchorSlots.some(slot => slot.status === 'retired')
+    || check.conflicting
+    || check.sourceUnavailable) return 'stale';
+  if (check.freshness === 'unchecked' || check.linkVerification?.status === 'unchecked') return 'unchecked';
+  return null;
+}
+
+/**
+ * Expand one flow over the step heads and checks read with its page. A missing
+ * step head is `not_current` and keeps no item; the other problems keep the
+ * item. `gapsAfter` compares step i's "to" with step i+1's "from" by endpoint
+ * identity, 1-based, as a hint only.
+ */
+export function expandFlowForHead(
+  ctx: CoreCallContext,
+  input: {
+    flow: NoteHeadSnapshot;
+    steps: readonly { head: NoteHeadSnapshot; check: NoteCheckV1 }[];
+    catalog: AdoptedArchitecture | null;
+  },
+): NoteFlowReadV1 {
+  const byId = new Map(input.steps.map(step => [step.head.noteId, step]));
+  const stored = input.flow.flow!.steps;
+  const steps: SemanticFlowStepV1[] = stored.map(step => {
+    const found = byId.get(step.link);
+    if (found === undefined) return { link: step.link, item: null, problem: 'not_current' };
+    const item = semanticLinkOf(found.head, found.check, input.catalog);
+    const problem = problemOf(found.head, found.check);
+    return { link: step.link, item: problem === 'not_current' ? null : item, problem };
+  });
+  const gapsAfter: number[] = [];
+  for (let index = 0; index + 1 < stored.length; index += 1) {
+    const left = byId.get(stored[index]!.link);
+    const right = byId.get(stored[index + 1]!.link);
+    if (left === undefined || right === undefined) continue;
+    const to = left.head.link!.ends.to;
+    const from = right.head.link!.ends.from;
+    if (endpointIdentityOf(to) !== endpointIdentityOf(from)) gapsAfter.push(index + 1);
+  }
+  return { steps, gapsAfter };
+}
+
+/**
+ * The flow row's freshness combines its own check with its steps' problems and
+ * its `currentEligible` is the flow's own condition AND every step's item.
+ */
+function semanticFlowOf(
+  head: NoteHeadSnapshot,
+  check: NoteCheckV1,
+  expanded: NoteFlowReadV1,
+): SemanticFlowV1 {
+  const combined = flowCheckOf(check, expanded.steps);
+  return {
+    noteId: head.noteId,
+    version: head.version,
+    state: head.state as SemanticFlowV1['state'],
+    topic: head.topic,
+    conclusion: head.conclusion,
+    source: head.source,
+    goalId: head.goalId,
+    steps: expanded.steps,
+    gapsAfter: expanded.gapsAfter,
+    currentEligible: combined.currentEligible,
+    freshness: combined.freshness,
   };
 }

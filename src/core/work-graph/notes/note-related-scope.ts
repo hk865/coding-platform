@@ -23,7 +23,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { okFalse } from '../../../contracts/core/rejections.js';
 import type { NoteAnchorV1, NoteHeadSnapshot, NoteKind } from '../../../contracts/note.js';
-import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
+import { isGeneral } from '../../../contracts/note.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
@@ -77,8 +77,6 @@ export type RelatedScopeDeps = {
 };
 
 function byteOrder(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
-
-function isGeneralKind(kind: string): boolean { return (NOTE_GENERAL_KINDS as readonly string[]).includes(kind); }
 
 export function matchesPathPrefix(key: string, prefix: string): boolean {
   const base = `file:${prefix}`;
@@ -167,7 +165,7 @@ export function isRelatedHead(head: { kind: NoteKind; anchorKey0: string; anchor
   anchorKey2: string | null; anchorKey3: string | null; anchorKey4: string | null }, keys: ReadonlySet<string>): boolean {
   for (const slot of [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]) {
     if (slot === null || !keys.has(slot)) continue;
-    if (slot === 'project' && !isGeneralKind(head.kind)) continue;
+    if (slot === 'project' && !isGeneral(head.kind)) continue;
     return true;
   }
   return false;

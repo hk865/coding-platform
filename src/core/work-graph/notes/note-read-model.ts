@@ -22,6 +22,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
 import { headerExtrasOf, isGeneral, renderNoteHeader } from '../../../contracts/note.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { NoteFlowReadV1, SemanticFlowStepV1, SemanticFlowV1 } from '../../../contracts/semantic-layer.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort, RecordTextSearchPort } from '../../record-store/lookup-ports.js';
@@ -48,9 +49,11 @@ import { FIND_RELATED_FILES_MAX, MEMORY_PAGE_MAX, MEMORY_PAGE_DEFAULT, MEMORY_RE
   PROJECT_NORMS_CHECK_MAX, PROJECT_NORMS_MAX, TEXT_SEARCH_CANDIDATE_MAX,
   TEXT_SEARCH_MAX_TERMS } from '../model/note-contracts.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
+import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { NoteAnchorWorkspace } from './note-anchors.js';
 import {
   S4_NOTE_BY_REVIEW_STATUS_LOOKUP, S4_NOTE_TEXT_LOOKUP,
+  S8E_NOTE_BY_KIND_STATE_LOOKUP,
   NOTE_TEXT_PATHS,
   currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot,
   noteHeadRefKey, noteVersionRefKey,
@@ -62,7 +65,7 @@ import { headsByAnchorKey, readAllHeads, readAllRecords, type ReadFailureCode, t
 import { renderUnderstandingBody } from './note-rendering.js';
 import { anchorSlots, headsOnKeyPrefix, isRelatedHead, matchesPathPrefix, resolveRelatedScope, resolveTaskScopeWithPlan,
   stageIdOf, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
-import { readPointerAndHeadBatch } from './note-batch-reader.js';
+import { readHeadBatch, readPointerAndHeadBatch } from './note-batch-reader.js';
 import { asOutcome, mapStoreFailure } from './store-failures.js';
 
 export { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
@@ -75,6 +78,19 @@ export type NoteReadDependencies = {
   workspace?: NoteAnchorWorkspace;
   /** Slice 4B L22 / S2.5: the injected derived-field implementation. */
   check?: NoteHeadCheckPort;
+  /**
+   * The flow expander. A flow item is expanded from its stored step ids and the
+   * page's step heads; without it a read that contains a flow item is
+   * `unavailable`, never a flow item without its `flow`.
+   */
+  expandFlowForHead?: (
+    ctx: CoreCallContext,
+    input: {
+      flow: NoteHeadSnapshot;
+      steps: readonly { head: NoteHeadSnapshot; check: NoteCheckV1 }[];
+      catalog: AdoptedArchitecture | null;
+    },
+  ) => NoteFlowReadV1;
   anchorQuota?: number;
   goalQuota?: number;
   /** The link populations' soft quotas (spec §2). */
@@ -339,12 +355,25 @@ export function createNoteHeadDerivations(records: GoalRecordTransactionPort & R
     if (head.goalId !== null && goalCounted) {
       const heads = await cachedCurrentHeadsForGoal(cache, records, projectId, head.goalId);
       if (!heads.ok) return heads;
-      // The general goal population excludes links; a link counts links only
-      // (book :444, :451).
-      const count = head.kind === 'link'
-        ? heads.value.filter(candidate => candidate.kind === 'link').length
-        : heads.value.filter(candidate => candidate.kind !== 'link').length;
-      if (count > (head.kind === 'link' ? quotas.goalLink : quotas.goal)) return { ok: true, value: true };
+      // Links and flows are one family for the goal population; every other
+      // kind counts against the general goal quota (book :444, :451).
+      const linkOrFlow = head.kind === 'link' || head.kind === 'flow';
+      const count = linkOrFlow
+        ? heads.value.filter(candidate => candidate.kind === 'link' || candidate.kind === 'flow').length
+        : heads.value.filter(candidate => candidate.kind !== 'link' && candidate.kind !== 'flow').length;
+      if (count > (linkOrFlow ? quotas.goalLink : quotas.goal)) return { ok: true, value: true };
+    }
+    // A flow also has a project population: every current flow counts against
+    // the soft project quota; it is a derived fact only, never a write refusal
+    // or a scan bound (book :445–446).
+    if (head.kind === 'flow' && current) {
+      let projectFlows = 0;
+      for (const state of ['accepted', 'reviewed'] as const) {
+        const page = await readAllHeads(records, S8E_NOTE_BY_KIND_STATE_LOOKUP, [projectId, 'flow', state]);
+        if (!page.ok) return page;
+        projectFlows += page.heads.length;
+      }
+      if (projectFlows > quotas.projectFlow) return { ok: true, value: true };
     }
     return { ok: true, value: false };
   }
@@ -406,6 +435,46 @@ export function parseMemoryCursor(ctx: CoreCallContext, cursor: string | null, o
   } catch {
     return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
   }
+}
+
+/**
+ * The one catalog read the semantic pages use: an absent catalog is `null` and
+ * the page reports no revision; any other failed read is `unavailable`, never
+ * an empty catalog.
+ */
+export async function readSemanticCatalog(
+  architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> | undefined,
+  ctx: CoreCallContext,
+): Promise<ReadOutcome<{ catalog: AdoptedArchitecture | null; revision: number | null }>> {
+  if (architecture === undefined) return { ok: true, value: { catalog: null, revision: null } };
+  const read = await architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+  if (read.status === 'ready') {
+    return { ok: true, value: { catalog: read.value.catalog.catalog, revision: read.value.baseline.ref.revision } };
+  }
+  if (read.status === 'not_found' || (read.status === 'rejected' && read.code === 'not_found')) {
+    return { ok: true, value: { catalog: null, revision: null } };
+  }
+  return { ok: false, code: 'unavailable',
+    reason: read.status === 'rejected' ? read.reason : 'the architecture catalog is not ready' };
+}
+
+/**
+ * The flow's read result combines its own check with its steps' (§3.9.5): any
+ * `not_current`/`broken`/`stale` step or a stale flow is stale; otherwise any
+ * `unchecked` step or an unchecked flow is unchecked; otherwise fresh.
+ * `currentEligible` is the flow's own condition AND every step's item; it is
+ * not derived from freshness alone.
+ */
+export function flowCheckOf(check: NoteCheckV1, steps: readonly SemanticFlowStepV1[]):
+{ freshness: SemanticFlowV1['freshness']; currentEligible: boolean } {
+  const stale = steps.some(step =>
+    step.problem === 'not_current' || step.problem === 'broken' || step.problem === 'stale')
+    || check.freshness === 'stale';
+  const unchecked = steps.some(step => step.problem === 'unchecked') || check.freshness === 'unchecked';
+  return {
+    freshness: stale ? 'stale' : unchecked ? 'unchecked' : 'fresh',
+    currentEligible: check.currentEligible && steps.every(step => step.item?.currentEligible === true),
+  };
 }
 
 export function createNoteReadModel(deps: NoteReadDependencies):
@@ -517,6 +586,32 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (deps.check === undefined) return { ok: true, value: { items, understanding: [] } };
     const wantsUnderstanding = understandingAnchors !== undefined && understandingAnchors.length > 0;
     if (items.length === 0 && !wantsUnderstanding) return { ok: true, value: { items, understanding: [] } };
+    // A flow item is expanded from the page's distinct step heads, which ride
+    // the SAME check as the items. Without the expander the whole read fails:
+    // a flow item never leaves here without its `flow`.
+    const flowItems = items.filter(item => item.kind === 'flow');
+    let flowCatalog: AdoptedArchitecture | null = null;
+    let stepItems: NoteHeadCheckItemV1[] = [];
+    let expandFlow: NoteReadDependencies['expandFlowForHead'];
+    if (flowItems.length > 0) {
+      expandFlow = deps.expandFlowForHead;
+      if (expandFlow === undefined) {
+        return { ok: false, code: 'unavailable', reason: 'the flow expander is not bound' };
+      }
+      const catalogRead = await readSemanticCatalog(deps.architecture, ctx);
+      if (!catalogRead.ok) return catalogRead;
+      flowCatalog = catalogRead.value.catalog;
+      // A step already in this batch reuses the batch's head and check; only the others are read.
+      const already = new Set(items.map(item => item.noteId));
+      const stepIds = flowItems.flatMap(item => headSnapshots!.get(item.noteId)!.flow!.steps.map(step => step.link))
+        .filter(id => !already.has(id));
+      const batch = await readHeadBatch(deps.records, ctx.projectId, stepIds, { requireAll: false });
+      if (!batch.ok) {
+        const mapped = mapStoreFailure(batch);
+        return { ok: false, code: mapped.code, reason: mapped.reason };
+      }
+      stepItems = [...batch.value.values()].map(head => ({ head, version: head.version }));
+    }
     let checked: NoteCheckV1[];
     let understanding: UnderstandingStatusV1[] = [];
     const result = await deps.check.checkHeads(ctx, {
@@ -524,8 +619,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // read in this call go straight to the check; it never reads them again.
       // §11.3 (b11): a derivation the read model already made (conflicts) is
       // handed over so the check does not recompute it. U-3: understanding
-      // anchors ride the same call/caches.
-      items: items.map(item => {
+      // anchors ride the same call/caches. A flow's step heads are appended
+      // after the items so one call visits them in flow order, then step order.
+      items: [...items.map(item => {
         const snapshot = versionSnapshots?.get(item.version);
         const conflicting = conflictingByNote?.get(item.noteId);
         const checkItem: NoteHeadCheckItemV1 & { conflicting?: boolean } = {
@@ -533,7 +629,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
           ...(snapshot === undefined ? {} : { snapshot }),
           ...(conflicting === undefined ? {} : { conflicting }) };
         return checkItem;
-      }),
+      }), ...stepItems],
       ...(anchorSets === undefined ? {} : { anchorSets }),
       ...(planWindows === undefined ? {} : { planWindows }),
       ...(understandingAnchors === undefined ? {} : { understandingAnchors }),
@@ -542,12 +638,31 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (result.status !== 'ready') return checkFailure(result);
     checked = result.value.items;
     understanding = result.value.understanding;
+    const checkedById = new Map<string, { head: NoteHeadSnapshot; check: NoteCheckV1 }>();
+    items.forEach((item, index) => {
+      checkedById.set(item.noteId, { head: headSnapshots!.get(item.noteId)!, check: checked[index]! });
+    });
+    stepItems.forEach((step, index) => {
+      checkedById.set(step.head.noteId, { head: step.head, check: checked[items.length + index]! });
+    });
+    const expandedFlows = new Map<string, NoteFlowReadV1>();
+    for (const item of flowItems) {
+      const flow = headSnapshots!.get(item.noteId)!;
+      const steps = flow.flow!.steps.flatMap(step => {
+        const found = checkedById.get(step.link);
+        return found === undefined ? [] : [found];
+      });
+      expandedFlows.set(item.noteId, expandFlow!(ctx, { flow, steps, catalog: flowCatalog }));
+    }
     const out = items.map((item, index) => {
       const check = checked[index]!;
       const headVersion = headVersions?.get(item.noteId);
+      const expanded = expandedFlows.get(item.noteId);
+      const combined = expanded === undefined ? undefined : flowCheckOf(check, expanded.steps);
       const currentEligible = headVersion === undefined || headVersion === item.version
-        ? check.currentEligible : false;
-      return { ...item, freshness: check.freshness, changedFiles: check.changedFiles, staleReasons: check.staleReasons,
+        ? (combined === undefined ? check.currentEligible : combined.currentEligible) : false;
+      return { ...item, freshness: combined === undefined ? check.freshness : combined.freshness,
+        changedFiles: check.changedFiles, staleReasons: check.staleReasons,
         observedFiles: check.observedFiles,
         sourceUnavailable: check.sourceUnavailable, invalid: check.invalid, conflicting: check.conflicting,
         overQuota: check.overQuota, updateDue: check.updateDue, currentEligible,
@@ -557,6 +672,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         // an overlay on a fresh item object.
         ...(item.link === undefined ? {} : { link: { ...item.link,
           verification: check.linkVerification ?? item.link.verification } }),
+        ...(expanded === undefined ? {} : { flow: expanded }),
         retiredExtraAnchors: check.retiredExtraAnchors, unresolvedFacts: check.unresolvedFacts,
         uncheckedFacts: check.uncheckedFacts, hints: check.hints };
     });

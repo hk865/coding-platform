@@ -418,3 +418,21 @@ describe('S8E L3 R-route: E-19a paging and the request-bound cursor', () => {
       }
     }, 240_000);
 });
+
+// E2-27 (8E-2 :856; FR6 :319): a bad `scope` is `invalid` on both semantic
+// reads. `limit: 10` is inside links' 1–100 and flows' 1–50, so `scope` is the
+// one bad field (A6). Both are reads: nothing is written, nothing else is read.
+// The reason text is not asserted (f2-start-rulings 2).
+describe('rejects: F2 E2-27 a bad scope is invalid on both semantic reads', () => {
+  it.each(['architecture/semantic-links', 'architecture/semantic-flows'] as const)(
+    'E2-27 %s: scope { kind: bogus } is invalid', async suffix => {
+      const world = await openS8ESemanticWorld({ scribeTasks: 1 });
+      try {
+        const result = await world.route(suffix, { scope: { kind: 'bogus' }, cursor: null, limit: 10 });
+        expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
+        expect(result).not.toHaveProperty('value');
+      } finally {
+        await world.close();
+      }
+    }, 180_000);
+});
