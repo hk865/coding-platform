@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 11-03 的决定（20–112）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-03 的决定（20–113）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -2001,6 +2001,35 @@
             - **进 E3 待办。** 任务图取 `bootstrap.workspaces[0]`（`src/ui/boot.ts:196`），配置里的占位工作区排第一时看不到真实目标；1440 宽时顶栏文字压住 DAG 按钮；`/workbench/` 索引页没有令牌 meta，文字过时；“需要关注”没列成员卡（Host 的队列里有，`waitingAnswer`），待查；目标出现之前的秘书轮 `goalId` 为空，不上轨道，是产品问题。
             - **不改。** 采用通知里的任务书路径是完整绝对路径，goal id 被百分号编码（文件名不能有冒号），内容是对的。
             - 来源：lead 笔记 `smoke/s1103/`（脚本、`out/`、`shots/`）；`slice-PL-SPEC.md:136`、`:1423`。
+
+        - **113 SF1、E3-4c、SF3、SF2 合入，8E-1 合并和返工，第 9 片和 B06 的开工裁定，下一步（11-03 下午）。**
+          - **113-1 四批合入。**
+            - **SF1（`f733b3c6`）。** 真实模型小检查查出的三处后端错。`deepseek-v4.1-flash` 拿 100 万窗口，和 `deepseek-flash`、`deepseek-v4-pro` 一样，原来落到默认 128000。`decisions/queue` 缺 `sections` 或 `page`、`goals/overlap-gates` 缺 `page` 时，由各自的 owner 回 200 和 `invalid`，和坏游标一样，不再是 HTTP 500。Query 的 Kernel 运行在 Turn 进入之前就抛错时，开始回 `unavailable` 和原因，不再给一个永远不结束的 ready Run；驱动先观察，和 Work 驱动一样，进入之后以观察结果为准。10 个文件 +97/−9。全量（`10bfd97`，含 E3-4c）1,300 个文件、14,204 项过、1 项跳过，负载下 1 个红（`S7B-V-wait-kept` 的 hook 超时，单独跑 3/3 绿）。
+            - **E3-4c（`01f96172`）。** 任务图按小检查改三处：`?goal=` 链接在持有这个目标的项目里读目标和写置顶，只有 `not_found` 才试下一个项目；长目标名旁边的状态不再压住 DAG 按钮（只改已有的 `.tm-goal` 规则）；画板索引页写明任务图读真实数据。控制台的 `{{e.d}}` 模板错误不改，冻结原型也报同样六条。6 个文件 +109/−20。
+            - **SF3（`19a568e3`）。** 检查留下的三处小修。`lines/pin` 的 add、remove 里 `sessionRef` 格式不对时，在入口用现成的 `sessionRefProblem` 回 `invalid`（400）；原来 add 多一个键会到记录编解码回 503，remove 坏了还会提交。E31-7、E32-6 各自把界面构建到自己的临时目录，`scripts/build-ui.mjs` 加一个可选的输出目录，不给时构建不变；一起跑 24 次，原来 4 次红，现在 0 次。`S7D1-G3-facts` 等 Host 自己的生命周期轮在驱动返回后可能做的接续登记；负载下原来 10 次红 8 次，现在 20 次 0 次。7 个文件 +106/−20。
+            - **SF2（`679f06dd`）。** Agent 的注记读工作区时用平台身份。真实 Host 上，Run 或 Query 在文件锚点上写注记会被拒（`anchor_forbidden`、`basis_file_forbidden`、注记检查没核对），因为 Host 的工作区端口只认 host principal。现在注记自己的读取用固定的内部身份：`work-graph/model` 的 `platformCheckContext(ctx, actor)` 换掉 8C 私有的 `trialContext` 和 `plan-write-admission`、`module-maintainer-service` 里两份一样的副本，Host 的 ctx 原样通过；`noteCheckWorkspace` 包住工作区的读、捕获、查询和释放，用在注记服务的锚点和依据文件、注记检查和读模型的锚点存在读。写者、作者、准入、额度、`currentEligible` 和别的非工作区读取还是调用者自己的；`host.ts` 不改。缺失文件锚点的候选扫描会释放它的捕获，否则 agent 能占满 Host 共用的捕获池。16 个文件 +185/−87。
+            - **SF2、SF3 的检查（同树 `91dec53`）。** 全量（bubblewrap）1,302 个文件、14,214 项过、1 项跳过、0 个红、1,365.30 秒；规模批 15 个文件 44 项、1,032.17 秒。
+            - **E3-UI-ITEMS 第 4 项（`e021eb6a`）。** 轮链读路由的前向核对 10-25 已放进 E3 的“后端配套”，不再是待定。
+            - 来源：五个提交的说明；行数来自 `git show --stat`。
+          - **113-2 这批的小裁定和已知角落。**
+            - **SF2。** 第三轮审查时 Codex 对 `module-maintainer-service` 的意见驳回：只有 agent 工具走到它，用平台身份是对的。已知角落：记录编解码对 `sessionRef` 的检查和 `sessionRefProblem` 不完全一样，不改；`endOf` 的原样 `./` 路径，反驳者驳回，不改；link 的 `currentEligible` 要三端都活，归 8E-2 F2。进清理清单：`STATE-MACHINES-SPEC.md` 的 `:555`、`:675`、`:676`、`:731`、`:2635`、`:2828`，`plan-machine.ts:465` 的注释，`tests/state/plan-machine.test.ts:499`、`:501`，`C8-human-stop-respected.test.ts:394`，这几处指向 `plan-write-admission.ts` 的行号过时了。
+            - **`sessions/find`。** 只带 `projectId` 时读整个项目的活跃 Session，照决定 104-1，不按工作区挡。
+            - 来源：`impl/sf2/round3.md`、`impl/sf2/reply.md`；`impl/s7d2/close-todo.md`。
+          - **113-3 8E-1 的进度。**
+            - **L2** 返工两轮后关闭（`8el2-u3`）。第一轮返工带进一处回退（禁读的符号选择器证据被接受），第二轮修好，并改成非 TS 语言在读文件之前就判定。
+            - **合并。** Opus 子 agent 在 `s98el3` 上先并 L2 的两轮返工，再并新主线（SF1、E3-4c、SF3、SF2），结果 `afd2dfe`（标签 `8e1-int1`）。L2 的 `checkLinkDraft` 改用 SF2 包过的工作区（`note-service.ts:1573`）；SF2 的捕获释放保留。SF2 在注记服务构造时就取走工作区方法，测试夹具的故障探针注不进去，合并者让探针也包一层 `createNoteService`，产品代码不动。
+            - **R-context 的更正。** lead 之前答 L3，说模块任务能带进文件键，这是错的（Codex 和 Opus 一致）：模块任务的相关键只有 `module:<id>` 和接口，文件键只从同一任务已结束 Run 的改动文件来。范围规则不改，测试补一个真实执行过一次的夹具。
+            - **L3 第 1 轮返工**（DSH，13:55 开工，12 行）：读侧的 link 额度、两个路由类型别名进路由表、相似注记的 link 标题、四个 skill 模板的 link 短段、读回断言、R-route 和 R-auth 加强、SF2 之后补 E1 那半、R-context 的夹具、`NOTE_FLOW_CANDIDATE_MAX` 进允许清单（`kept-for` F2）、删没用的 `workspace?` 字段、夹具过时的说明。L3 改了 7 个提示词资源，`runtime-assets.json` 由 lead 落地时重算。
+            - 来源：`impl/s8e/integrate-reply.md`、`impl/s8e/8e-l3-rework-table.md`、`impl/s8e/8e-l2-reply-rw2.md`。
+          - **113-4 7D2-1 的进度。** A1a 施工和审查完（`7da1a-u2` = `98c2645`）：Codex 可合入、0 条；Opus 查出 `tests/state/query-run-recovery.test.ts:512` 的整对象期望缺 `admissionWait: null`，lead 挪到 A1a 改了。A1b 和 8E 共用 `core-routes.ts`、`core-http-types.ts`、`create-platform.ts`，等 8E-1 落地后开，A1a 到时 rebase 到新主线。O5a 开工时调用 `runAdmissionWaitOf`，不重推，它的 `kept-for` 才删得掉。
+            - 来源：`impl/s7d2/close-todo.md`。
+          - **113-5 第 9 片和 B06 的书冻结，开工裁定第一稿。**
+            - 两本书 11-03 中午冻结（`impl/sgl/book/book-9-frozen.md`、`book-b06-frozen.md`）。DSH 在落地树上写了开工裁定第一稿：第 9 片 1,079 行，B06 2,450 行。
+            - **B06。** 三个开放问题照建议：R1 走公开的 `checks/approve` 两格，书 `:774` 的 `owner` 作废；W10 停点不钉原因字面量；见证臂只收 `check_result_recorded`，见证的 `check_begun` 在 `beginCheck` 处拒。Codex 第一轮三份共 23 条，Opus 逐条核对后 lead 裁定，DSH 出第二稿。
+            - **第 9 片。** 14 个开放问题照建议，两处不同。OQ-5“还没有审阅线”不用“先归档原线再开线”，G1 的共享夹具加一个只收公开输入的选项 `reviewLine?: 'open' | 'none'`，因为归档会带出交接和归档的副作用。OQ-8 驱动从画板页面的 `<meta name="platform-token">` 取令牌，令牌只留在驱动进程的内存里，不写进 `result.json`、README、notes、日志、命令行参数、URL 或任何文件（E3-2 的裁定）。Codex 第一轮在审。
+            - **等用户：** 第 9 片 G6（真实验收）开工前，U1 的窗口上限、时间窗和授权文字要用户定。G6 之前的组不受影响。
+            - 来源：`impl/sgl/book/9-rulings-lead-1.md`；`codex2/egrp/SB06R1a.out.md`、`b`、`c`。
+          - **113-6 下一步。** 8E-1：L3 返工、审查、全量和规模批、重算 `runtime-assets.json`、落地；之后 8E-2（F1 开工时定 `NOTE_LINK_RECHECK_MAX`，再 F2）。7D2-1：8E-1 落地后开 A1b，之后 O1a 和其余各包串行。B06、第 9 片：开工裁定第二稿、第二轮审查、快速核对、冻结。6C 在 8C 和 7D2-1 的落地树上演练。E3 后面的页面等用户看任务图的成对截图。第二批大文件等用户定。小项：计划入口限 `taskId` 长度（以后）、`contracts/core/README.md` 补 `CoreRejection.detail`。推送：远端 `feat/orchestration-slices` 是 `8fcbebf7`；之后 PL-2、邮箱拆分、E3-4b、8C、决定 112 的文档、SF1、E3-4c、E3-UI-ITEMS、SF3、SF2 共 10 个提交，加这批文档，等用户推送；远端 `next-main` 不动。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
