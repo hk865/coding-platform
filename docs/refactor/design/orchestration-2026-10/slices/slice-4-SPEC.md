@@ -221,7 +221,7 @@
   - `notes/review`：审（`accepted → reviewed`；对 `pending_review` 的收下或拒绝，见 L17），带只对当前理解的 `expectedPointerRevision`。
   - 每次写都带 `commandId` 幂等键，经存储的幂等提交（同 WorkGraph 别的写）；重放回原回执（N-12）。每个操作的错误码见 §2。（第一轮审查第 13 条）
   - 还有两个版本列表的读（L19）。都加进界面路由标签表。
-- **L16 书记提醒。**【lead 定，待审】注意力心跳（F14）加两个计数：**待审条数**（按审查状态索引数 `pending_review`，加 `overQuota` 的锚点数）和**该更新的当前理解条数**（目标、阶段锚点的 `UnderstandingStatusV1.updateDue`，没有当前理解也算）。（第二轮审查第 7 条）
+- **L16 书记提醒。**【lead 定，待审】注意力心跳（F14）加两个计数：**待审条数**（按审查状态索引数 `pending_review`，加 `overQuota` 的锚点数）和**该更新的当前理解条数**（目标、阶段锚点的 `UnderstandingStatusV1.updateDue`，没有当前理解也算）。（第二轮审查第 7 条）（8E-2 冻结注，2026-11-04：加第三个计数，**断了的联系条数**：满 5 条，或最早一条断了满 10 分钟（从改它的 Run 结束后算）就发；只数断了的，不数存疑；模板加必填槽 `brokenCount`。见 8E-2 S，决定 116-2 第 6 件。）
   - 发给书记的条件：任一计数达到阈值（`SCRIBE_PENDING_THRESHOLD = 10`、`SCRIBE_UPDATE_DUE_THRESHOLD = 5`，没实测，可配置），或你手动归档、在场没有 agent 的那个目标出现了 `updateDue`（DESIGN §3.5“书记补写”）。心跳按 `(anchorKey, latestTriggerCursor, ownerSessionKey)` 的集合去重，不按计数去重（相同的计数可能是不同的工作）；**管理归属、按范围计数和待审提醒一律按“整条注记及它 `replaces`/`contradicts` 的注记的全部锚点”求最窄共同负责范围，只有“没有当前理解的 `updateDue`”按单个锚点找**（审查二第 6 条）；**这不是新字段：这个去重键本来就是一个字符串身份，`ownerSessionKey` 在发提醒时按 L35/L23 算出的负责书记线的键；负责线换了，键就不同，新书记收到还没处理的那条**。（第一轮审查第 12 条；第二轮审查第 7 条）
   - **发给哪个书记（决定 60-5；7D L35/L23）**：按 7D 的 `resolveResponsibleLine(范围, 'scribe')` 发给 L5 求出的负责范围的书记：待审提醒和按范围计数按整条注记（含它 `replaces`/`contradicts` 的注记）的全部锚点求负责范围，只有“没有当前理解的 `updateDue`”按那一个目标锚点找。负责范围上没有书记就逐级往上，最后是项目范围的书记（只有开局书记时它就是项目范围）。每个项目至少有一条书记、由它负责项目范围（7D L38），所以总找得到；确切收件人见 D-03。计数和待办也按这个范围算（L7 的按范围现行注记数）。（审查二第 6 条；审查二 lead 补）
   - Workflow 不写文字，也不存“该更新了”的标记（DESIGN §3.5 末尾）。
@@ -263,7 +263,7 @@
   - **`existingTopics`（在写入结果 `WriteNoteResult` 里，由写入方给，4A）**：新注记的 `topicKey` 在某个锚点键上是新的、而该锚点键已有别的话题的现行项时，给出这些现行项的不同 `topicKey`（显示最近写入的写法）和条数，按锚点键、`topicKey` 排，总共最多 `NOTE_EXISTING_TOPICS_MAX = 20`。是提示，不退回；给写的人下次复用一个话题。
   - **相近注记（写侧，`checkNotes` 带 `withSimilar: true` 时给，4B）**：相似度 = 对 `normalized(topic) + "\n" + normalized(conclusion)` 的 `bigramWindows` 算 Jaccard。候选：和新注记共享至少一个锚点键的现行项（`accepted`、`reviewed`、`pending_review`），排除自己和已在 `replaces`/`contradicts`/`coexistWith` 点名的；只读锚点查找的第一页（有界）。返回最多 `NOTE_SIMILAR_MAX = 3`、相似度 ≥ `NOTE_SIMILAR_MIN = 0.3`（没实测、可注入），每条 `noteId`、`version`、`header`（`renderNoteHeader`）、`similarity`；并列按 `noteId`。它从不拦写入，写的人自己决定取代/并存/矛盾。
 - **L23 读时的锚点状态（第 7 类）。**【用户 2026-10-15 第 10 条】`NoteItemV1`/`NoteCheckV1` 加 `anchorStatus: 'live' | 'retired'`、`anchorRetiredReasons: ('module_removed' | 'interface_removed' | 'file_deleted' | 'task_ended' | 'stage_not_in_current_plan' | 'symbol_missing')[]`、`retiredExtraAnchors: string[]`（锚点键）。**主锚点** retired 时这条才 `retired`；retired 的附加锚点只列出来。带 `deleted: true` 的文件锚点不适用 `file_deleted`。`task_ended` 指取消或被替代（已满足的任务不算）。`retired` → `currentEligible: false`；历史照读。
-  - **符号**：文件当前摘要等于存下的 `fileDigest` 时，符号不重新解析就算 live；否则按 `qualifiedName` 重新解析（捕获 + `querySource` 在这个文件上的 symbols）：找不到 → `symbol_missing`；找到但 `signatureDigest` 不同 → `stale`、原因 `symbol_signature_changed`。每页最多重解 `NOTE_SYMBOL_RECHECK_MAX = 20` 次，且计入 `NOTE_READ_FILES_MAX`；超出的那项 `unchecked`。
+  - **符号**：文件当前摘要等于存下的 `fileDigest` 时，符号不重新解析就算 live；否则按 `qualifiedName` 重新解析（单文件解析，不开捕获：TS/JS 用单文件导航树，Python、C++ 用常驻进程单文件查；原写“捕获 + `querySource` 在这个文件上的 symbols”）：找不到 → `symbol_missing`；找到但 `signatureDigest` 不同 → `stale`、原因 `symbol_signature_changed`。一次调用最多单文件解析 `NOTE_SYMBOL_RECHECK_MAX = 20` 个文件，解析的文字总字节不超过上限（`NOTE_READ_PARSE_BYTES_MAX`），且计入 `NOTE_READ_FILES_MAX`；超出的那项 `unchecked`。（8E-2 冻结注，2026-11-04：原写“每页最多重解 `NOTE_SYMBOL_RECHECK_MAX = 20` 次”；这两个预算第 4 片的锚点和联系的门共用。C++ 有 `compile_commands.json` 时用 libclang 单文件加 preamble，退回的解析找不到读 `unchecked`，不读 `symbol_missing`。见 8E-2 R3、R4。）
   - 平台从不自动改挂、不猜改名；第 8 片 A 的“可能移动”仍只是装配器里的提示。
 
 ### 0.4 和别的片的接缝
@@ -524,7 +524,7 @@ export const NOTE_RANK_WEIGHT_TOPIC = 3, NOTE_RANK_WEIGHT_CONCLUSION = 2, NOTE_R
 export const NOTE_SIMILAR_MAX = 3, NOTE_SIMILAR_MIN = 0.3;  // 初值没实测、可注入（用户 2026-10-15 第 3 条）
 export const NOTE_ANCHOR_CANDIDATES_MAX = 5;                // 初值没实测、可注入（用户 2026-10-15 第 6 条）
 export const NOTE_ANCHOR_CANDIDATE_SCAN = 2000;             // 初值没实测、可注入（用户 2026-10-15 第 6 条）
-export const NOTE_SYMBOL_RECHECK_MAX = 20;                  // 初值没实测、可注入（用户 2026-10-15 第 10 条）
+export const NOTE_SYMBOL_RECHECK_MAX = 20;                  // 初值没实测、可注入（用户 2026-10-15 第 10 条）（8E-2 冻结注，2026-11-04：不改名，改义：一次调用最多单文件解析 20 个不同文件，第 4 片的锚点和联系的门共用；另加 NOTE_READ_PARSE_BYTES_MAX = 1024 * 1024，一次调用单文件解析的文字总字节；见 8E-2 §2.0）
 export const NOTE_READ_FACTS_MAX = 256;                    // 初值没实测、可注入（用户 2026-10-15 第 9 条）
 export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 // 写信封：每次写都带 `commandId`，提交走存储的幂等提交（同 WorkGraph 别的写）；重放原样回原回执。
@@ -654,7 +654,7 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - M-12 该更新：当前理解的最后一版**文字**以后，任务结束、返工、采用新计划、Session 归档、重新分组各造一次 → `UnderstandingStatusV1.updateDue`；只审一次、文字没变 → 不触发；有任务结束但没有当前理解的目标或阶段也算 `updateDue`（`pointer.noteId = null`）；阶段只数本阶段的任务，目标数全部；`lookup` 返回这个状态。（第一轮审查第 12 条；第二轮审查第 7 条）
 - M-13 相近注记：新注记的两段拼成 `"auth flow\nuse jwt"`，一条候选 `"auth flow\nuse jwt now"` 的 Jaccard = 10/11 ≈ 0.909 ≥ 0.3 进列表；一条 `"认证流程\n用令牌"` = 0 不进；最多 3 条，并列按 `noteId`；候选只取和新注记共享锚点键的现行项（`accepted`/`reviewed`/`pending_review`），排除自己和已在 `replaces`/`contradicts`/`coexistWith` 点名的；它从不拦写入。（用户 2026-10-15 第 3 条）
 - M-14 写后核对：一条合法 `commit`（40 位十六进制）不出现在 `unresolvedFacts`，进 `uncheckedFacts`，这一项仍可当现行结论；一页 257 个事实指针 → 第 257 个进 `uncheckedFacts`、所在那一项 `freshness: 'unchecked'`；3 个字符的 `commit` → `unresolvedFacts` 有它、原因 `invalid_commit_format`；`note` 指针版本大于头 → `version_ahead`；指向不存在的记录 → `not_found`；指针种类和记录种类不同 → `kind_mismatch`；禁止读或工具不可用 → `forbidden`、`unavailable`；`file` 指针当前摘要不同 → `changed`（进 `changedFiles`，不算 unresolved）；消息事实读不到 → `sourceUnavailable`；第 5 类（`basis_outside_anchor`、`file_module_mismatch`、`deleted_path_unverified`）进 `hints`；核对失败不撤销写入、这条不当现行结论、进 `stale` 读。（用户 2026-10-15 第 9 条）
-- M-15 锚点状态：模块被删 → `anchorStatus: 'retired'`、`anchorRetiredReasons: ['module_removed']`、`currentEligible: false`、历史照读；任务取消或被替代 → `task_ended`（已满足的任务不算）；文件当前摘要等于存下的 `fileDigest` → 符号 live、不重解，摘要变了但符号找不到 → `symbol_missing`，找到但 `signatureDigest` 不同 → `stale`、原因 `symbol_signature_changed`（不是 retired）；retired 的附加锚点只进 `retiredExtraAnchors`，主锚点 live 时这条仍 live；一页最多重解 20 次并计入 `NOTE_READ_FILES_MAX`，超出 `unchecked`。（用户 2026-10-15 第 10 条）
+- M-15 锚点状态：模块被删 → `anchorStatus: 'retired'`、`anchorRetiredReasons: ['module_removed']`、`currentEligible: false`、历史照读；任务取消或被替代 → `task_ended`（已满足的任务不算）；文件当前摘要等于存下的 `fileDigest` → 符号 live、不重解，摘要变了但符号找不到 → `symbol_missing`，找到但 `signatureDigest` 不同 → `stale`、原因 `symbol_signature_changed`（不是 retired）；retired 的附加锚点只进 `retiredExtraAnchors`，主锚点 live 时这条仍 live；一次调用最多单文件解析 20 个文件、解析总字节不超过上限，并计入 `NOTE_READ_FILES_MAX`，超出 `unchecked`。（用户 2026-10-15 第 10 条）（8E-2 冻结注，2026-11-04：原写“一页最多重解 20 次”，见 L23。）
 - M-16 `not_found` 对空：`lookup` 一个不存在的模块 id、没有头 → `not_found`、原因 `anchor_not_found`、带 `anchorCandidates`；一个存在但没有注记的锚点 → `items: []`、`complete: true`；一个已删但还有头的模块 → 返回这些头、标 `retired`。（用户 2026-10-15 第 8 条）
 
 **4C（NE4–NE7）**
@@ -669,7 +669,7 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - C-04 Query：规划的 Query 只有当前理解，没有一般注记。
 - D-01 注记卡：矛盾的新项进“要决定”；选项 id 是 `supersede`/`coexist`/`reject`，理解卡带当前指针（编号、版本）；你选 `supersede` → 应用写一条新版本（`replaces` 加上旧项、`contradicts` 去掉旧项）并收下，旧项在同一次提交 `superseded`、新项 `accepted`，证明事件是提交最后一条 `NoteDispositionChanged`（带 `acknowledgementRef` = 你答复的消息），应用返回这次提交的正式回执；选 `coexist` → 写新版本、`contradicts` 去掉那条、`coexistWith` 加上它、适用条件进 `change.reason`、旧版本保留 `contradicts`，两条都现行；选 `reject` → 新项 `rejected`。（第一轮审查第 1、9 条；第二轮审查第 1、2 条）
 - D-02 卡出来以后注记又被撤下 → 落实 `source_stale`。
-- D-03 书记提醒：待审达到 10 条 → 心跳带计数、发一次；同一 `(anchorKey, latestTriggerCursor, ownerSessionKey)` 集合不变时不重发，**负责线换了新书记收到还没处理的**；你手动归档、没人在场的目标出现 `updateDue`（`UnderstandingStatusV1`，没有当前理解也算）→ 发。**按 L5 的负责范围找书记（`resolveResponsibleLine(范围, 'scribe')`）：待审提醒和按范围计数按整条注记（含它 `replaces`/`contradicts` 的注记）的负责范围，只有“没有当前理解的 `updateDue`”按那一个目标锚点找。用 N-10 的书记范围夹具：n1 待审 → 发给 `SA1`；n2 → `SA`；n3、n4 → `S0`；`g1` 没有当前理解的 `updateDue` → `SG`；`SA1` 归档后 n1 的提醒发给 `SA`（`ownerSessionKey` 变了，`SA` 收到还没处理的那条）**（审查二 lead 补）（7D L35；每个项目至少有一条书记，7D L38）；计数按范围算（L7）。（第一轮审查第 12 条；第二轮审查第 7 条；审查二第 6 条；审查二第 19 条）
+- D-03 书记提醒：待审达到 10 条 → 心跳带计数、发一次；同一 `(anchorKey, latestTriggerCursor, ownerSessionKey)` 集合不变时不重发，**负责线换了新书记收到还没处理的**；你手动归档、没人在场的目标出现 `updateDue`（`UnderstandingStatusV1`，没有当前理解也算）→ 发。**按 L5 的负责范围找书记（`resolveResponsibleLine(范围, 'scribe')`）：待审提醒和按范围计数按整条注记（含它 `replaces`/`contradicts` 的注记）的负责范围，只有“没有当前理解的 `updateDue`”按那一个目标锚点找。用 N-10 的书记范围夹具：n1 待审 → 发给 `SA1`；n2 → `SA`；n3、n4 → `S0`；`g1` 没有当前理解的 `updateDue` → `SG`；`SA1` 归档后 n1 的提醒发给 `SA`（`ownerSessionKey` 变了，`SA` 收到还没处理的那条）**（审查二 lead 补）（7D L35；每个项目至少有一条书记，7D L38）；计数按范围算（L7）。（第一轮审查第 12 条；第二轮审查第 7 条；审查二第 6 条；审查二第 19 条）（8E-2 冻结注，2026-11-04：断了的联系满 5 条，或最早一条断了满 10 分钟 → 也发；没有断了的联系时身份集合和请求号不变。行在 8E-2 §4.3 的 E2-19a–c。）
 - R-01 路由：`notes/write` 由成员身份调 `forbidden`；你写的读出来是用户来源；同一 `commandId` 重放回原回执；`plans/versions`、`architecture/versions` 原样传出。
 - R-02 节点详情（2C 合入后）：任务节点上一条注记、一条异常锚点并列；悬停卡只有条数；“看”下钻读到同样的内容。
 - R-03 `notes/write` 返回 `{ write, check }`：成功时 `check` 是 `NoteCheckV1`；核对器不可用时是 `{ status: 'unavailable'; reason }`；`write` 被拒时不写记录，`check` 不假装成功。（用户 2026-10-15 第 9 条）
@@ -731,7 +731,7 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - **重放：** 命令身份是（操作、项目、工作区、可信的调用者、commandId）；先查重放、再读会变的状态，原样返回第一次的结果。写入提交里 `NoteWritten` 是最后一个事件并带上成功回执（`overQuota`、`warnings`、`existingTopics`）；读不回这个事件时回 `unavailable`。同一个 commandId 不同请求：`{ code: 'invalid', reason: 'idempotency_conflict' }`。每个事件各有自己的 `eventId`；不是 `staged` 的注记没有 `stagedRunKey`。
 - **依据的版本（L14）：** agent 的依据用执行绑定的计划（`RunSnapshot.planRef`）和那份计划的架构基线版本；人用目标现在采用的计划和现在的目录版本；阶段锚点要在绑定的计划和现在的计划里都有，否则 `anchor_not_found`。项目书记写别的目标的锚点，经注记自己的窄读口（`notes/note-anchor-facts.ts`）读那个目标的事实，不放宽计划服务的限制。
 - **事实指针：** 写入只查形状（种类、字段类型）；SHA 长度、摘要格式、路径在不在工作区、注记存不存在是 4B 的检查。
-- **符号（L14 写入这一半，4A 做）：** 语言只认 `typescript`、`python`、`cpp`，别的当不支持，警告 `symbol_unresolved`；扫到 `NOTE_SYMBOL_HITS_MAX` 还有下一页时不存定位（0 或 1 个命中 → `symbol_unresolved`，2 个以上 → `symbol_ambiguous`）；捕获或查询失败（`unavailable`、`capacity`、`cancelled`、`capture_expired`、`source_stale`）整个写入回 `unavailable`；`unsupported` 只是警告。定位的范围是源码查询给的名字所在的行（冻结的 `typescript-source-query.ts` 给的是 `nameSpan`）；4B 读侧按这个比。测试在 NE1 的 `S4A-note-symbol.test.ts`（`G-01(4A)`），4C 的 G-01 经 `record_note` 再跑一遍。
+- **符号（L14 写入这一半，4A 做）：** 语言只认 `typescript`、`python`、`cpp`，别的当不支持，警告 `symbol_unresolved`；扫到 `NOTE_SYMBOL_HITS_MAX` 还有下一页时不存定位（0 或 1 个命中 → `symbol_unresolved`，2 个以上 → `symbol_ambiguous`）；捕获或查询失败（`unavailable`、`capacity`、`cancelled`、`capture_expired`、`source_stale`）整个写入回 `unavailable`；`unsupported` 只是警告。定位的范围是源码查询给的名字所在的行（冻结的 `typescript-source-query.ts` 给的是 `nameSpan`）；4B 读侧按这个比。测试在 NE1 的 `S4A-note-symbol.test.ts`（`G-01(4A)`），4C 的 G-01 经 `record_note` 再跑一遍。（8E-2 冻结注，2026-11-04：写时不开捕获：TS/JS 用单文件导航树按名字找，Python、C++ 用常驻进程单文件查（Python 用 `ast`，C++ 有 `compile_commands.json` 时用 libclang），所以 Python/C++ 的函数定位第一次存得下；扫描的分页上限 `NOTE_SYMBOL_HITS_MAX` 删掉；“捕获或查询失败整个写入回 `unavailable`”改成读文件失败（`not_found` 以外）整个写入回 `unavailable`。见 8E-2 G7–G9。）
 - **审阅的项目级槽位**存成 `goalId: null`，读时用 null 查（4C 的待审计数也是）；不加字段。
 - **允许表**只有一组 `kept-for` 第 4 片的条目：`renderNoteHeader`（N-16 测它，读者是 4B 的 `NoteSimilarV1.header` 和 4C）。`MEMORY_PAGE_DEFAULT` 等 4B 有读者时再加。
 - **测试的例外**（§7 以外，验收时接受）：存储边界的提交闸门（N-07、N-14，另用于 N-08 的提交时指针冲突和重放的并发情形），只排先后、不造执行、职责、计划或 Session 的事实；一个只让读失败的替身（存储的 `lookup`、`readMany`，范围事实的 `findSessions`、`readArchitectureRevision`）。书记和执行者都按生产的职责解析器认得出的方式建，不注入职责。
@@ -747,7 +747,7 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - **`lookup` 列哪些（R9）：** 这个锚点上 `accepted`、`reviewed`、`pending_review`、`staged` 的头，跨目标的只列 `reviewed` 或你确认过的；不按 `currentEligible` 筛（需复查的照列，`currentEligible: false`），已退役的照列、标 `retired`。`lookup`、`conflicts`、`find` 带锚点时先查锚点在不在。锚点不存在：`NoteMemoryReadResult<T>` 的拒绝带 `anchorCandidates`（最多 `NOTE_ANCHOR_CANDIDATES_MAX` 个），类型在 `model/note-contracts.ts`，`results.ts` 不改。
 - **事实（R1）：** 记录指针在记录存在、当前版本 ≥ 指针版本时算解析得了（旧版本读不到，F6），指针版本更大 → `version_ahead`，`SessionMessage` 也一样；不比摘要。`file` 事实的摘要不是 64 位小写十六进制 → 新原因 `invalid_file_digest`；路径在工作区外 → `forbidden`。`artifact` 事实查原始产物存储里有没有（不读正文、不按授权）：没有 → `not_found`。`kernel_history` 事实查 Run 和它的执行历史定位：没有 Run 或没有定位 → `not_found`，位置超出已观察的范围 → `version_ahead`。读失败一律 `unavailable`。只有格式对的 `commit` 留在 `uncheckedFacts` 而不影响现行结论（P6）。
 - **一次观察、一份预算（R3）：** `NoteCheckV1` 加 `observedFiles`：这一项读过的每个文件（依据文件、文件锚点含符号重解、`file` 事实）和结果。所有这些共用每页 `NOTE_READ_FILES_MAX` 个不同路径的预算，读口传给核对；读口自己不读文件。`coverage` 数这一页看过的全部候选（含被筛掉的），`filesRead` 数尝试过的不同路径（含 `forbidden`、`capacity`、`unavailable`）。
-- **符号（R4）：** 按 `qualifiedName` 重解；存下的范围只用来在同名的几个命中里挑一个，挑不出 → `unchecked`。扫到上限、语言不支持、分析失败或捕获里读不到这个文件 → `unchecked`，不是 `symbol_missing`。`symbol_signature_changed` 照 §9 的名字范围比，公开输入走不到（4A 的已知限制）。
+- **符号（R4）：** 按 `qualifiedName` 重解；存下的范围只用来在同名的几个命中里挑一个，挑不出 → `unchecked`。语言不支持、分析失败、超字节预算或 C++ 退回的解析找不到 → `unchecked`，不是 `symbol_missing`。`symbol_signature_changed` 照 §9 的名字范围比；有名字的项摘要就是名字，按名字找到的总相同；只有构造函数这类没有名字段的项会推（8E-2 F41、E2-12）。（8E-2 冻结注，2026-11-04：删了“扫到上限”“捕获里读不到这个文件”两种 `unchecked`（单文件没有分页，也不开捕获），加了“超字节预算”和“C++ 退回的解析找不到”；原写“公开输入走不到（4A 的已知限制）”。）
 - **任务和阶段锚点（R5）：** 每个锚点按它自己目标的计划判断。阶段锚点从它的 `planRevision` 到当前的每一个已采用的计划版本里都有这个 `stageId` 才算 live；中间删过、后来同名再加的不算。
 - **游标（R10）：** 普通游标绑完整的调用身份、整份请求（不含游标）、规则版本常量和记录游标；正文游标绑调用身份、`{ noteId, version }`、规则版本和这条注记的头版本，头变了 → `revision_conflict`（钉了版本的也一样），别的对不上 → `cursor_mismatch`，偏移不在 UTF-8 边界 → `cursor_mismatch`。外层游标只绑正文目标 `{ noteId, version }`，不绑正文游标。
 - **历史版本（R11）：** 只有头版本能 `currentEligible: true`（`checkNotes` 本身就这样判）；历史项的存下状态、关系、`confirmedByUser` 取那一版，`conflicting`、`overQuota`、新鲜度和锚点状态按现在算。`history` 先分页再核对。正文挂在 `noteId` 和版本都对的那一项上；正文目标不在这一页（包括被字节上限裁掉）→ 警告 `body_target_not_on_page`。
@@ -877,7 +877,7 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
   - 待办两种，各有自己的身份：待审 = `noteId@version`；该更新 = `anchorKey@latestTriggerCursor`。待审只数书记能处理的（§11.6 的 `userReasonsOf` 为空的），含因 `quota_full` 待审的和被更新的一版盖过的待审当前理解；已取消目标的不数。来源：待审状态桶（每个目标槽一个，加不挂目标的一个）。
   - 冻结规格 L16 的“待审数 + 超配额锚点数”改成只数待审：agent 在满了的锚点上写入本来就进待审（原因 `quota_full`），已经算在待审里；已收下而超配额的只有用户自己的写入（用户可以超），不算书记的活。这样不必为数超配额去读所有现行注记。
   - 待审数到 10、该更新数到 5 时发；有一条 `archive:` 触发、而它的返工还没有 Run 认领时（`Run.requeueRef`）立即发——这就是 L16 的“没有 agent 在场”。
-  - 每个收件人一条消息，请求号 `scribe-reminder:<ws>:<owner>:<sha256(两种待办身份排好序的列表)>`，靠消息的幂等不重复；列计数和最多 20 个锚点名。每个收件人最多一条没处理完的提醒（同 `host.ts:1173-1195` 的规则）。
+  - 每个收件人一条消息，请求号 `scribe-reminder:<ws>:<owner>:<sha256(两种待办身份排好序的列表)>`，靠消息的幂等不重复；列计数和最多 20 个锚点名。每个收件人最多一条没处理完的提醒（同 `host.ts:1173-1195` 的规则）。（8E-2 冻结注，2026-11-04：请求号的身份集合加上断了的联系的 `noteId@version`；没有断了的联系时和今天一样。断了的联系是改文件改出来的、计时靠时钟，都不动账本游标，所以“账本游标没动就不重算”这道门同时比断了的联系：游标没动、断了的联系的集合和满 10 分钟的条数也没变，才不重算。见 8E-2 S2、S4。）
   - 算和发分开记：账本游标没动时不重算待办集合；但上一次没发成功的（发送失败、`host.ts:1238` 保留重试的那种），下一次心跳照样再发，不等账本动。
   - 时间：心跳的 `Date.now()`（`host.ts:1164`、`:1201`）改走注入的时钟，NE6 才能用注入时钟测。`Session.archivedAt` 用的是墙上时钟（`session-lifecycle.ts:321`），本规则不用它。
 - **今天的心跳从不触发**（`attention-observer.ts:716-718` 恒回 `pendingInputs: 0`）：书记提醒是新加的一条检查，不改已有的 attention 逻辑。
@@ -906,7 +906,7 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 ### 11.7 成本、行数、复用（决定 69）
 
 - **验收行：每次调用最多读几次存储。** 只给本节新加或改了的读写；没改的读法照第一轮合入后的实测。
-  - 记号：一次“索引扫描”读一个桶，花 ⌈n/200⌉ 次调用（n 是桶里的条数，空桶也算 1 次）；“锚点集合”= 5 个锚点槽各扫一次；`C(k)` = 一次核对 k 项的读：1 次批量读这些项的头和版本、1 次批量读它们引用的事实、文件读至多 `min(Σ 依据文件 + Σ 文件事实 + 文件锚点, NOTE_READ_FILES_MAX = 256)` 次（§10 的每页文件预算，`note-views.ts:727`、`:733`），符号复查至多 `NOTE_SYMBOL_RECHECK_MAX = 20` 次，每个涉及的不同目标的计划窗口 2–3 次（冷缓存，`plan-readers.ts:971-981`；单次调用里每个目标只读一次），目录 1 次。
+  - 记号：一次“索引扫描”读一个桶，花 ⌈n/200⌉ 次调用（n 是桶里的条数，空桶也算 1 次）；“锚点集合”= 5 个锚点槽各扫一次；`C(k)` = 一次核对 k 项的读：1 次批量读这些项的头和版本、1 次批量读它们引用的事实、文件读至多 `min(Σ 依据文件 + Σ 文件事实 + 文件锚点, NOTE_READ_FILES_MAX = 256)` 次（§10 的每页文件预算，`note-views.ts:727`、`:733`），单文件解析至多 `NOTE_SYMBOL_RECHECK_MAX = 20` 个文件、总字节不超过 `NOTE_READ_PARSE_BYTES_MAX`（8E-2 冻结注，2026-11-04：原写“符号复查至多 20 次”；不开捕获），每个涉及的不同目标的计划窗口 2–3 次（冷缓存，`plan-readers.ts:971-981`；单次调用里每个目标只读一次），目录 1 次。
   - 验收时按测试数据的实际桶大小算出数字，经公开端口外面套一层只数调用、不看内容的计数包装来量（§7 的夹具例外，lead 同意）。“每条记录只解码一次”数调用量不出来，不当验收行，放进 Codex 实现审查的成本项。
   - **建有联系的集合（工作 Run）**：Run 解析 1 + 计划 1–3 + 目录 1 + 任务的 Run 索引扫描 + 1 次批量读 RunActivity + 每个锚点键一组锚点集合 + 阶段前缀扫描 5 次 + 每条模块路径的前缀扫描 5 次。
   - **“找”一页**：上面一项（分段时）+ 1 次账本 + 第一段的注记头已在锚点集合里 + 到第二段时原来不分段读法的读 + 第一页的项目部分（项目锚点集合一次：5 个槽，和核对、有联系的集合共用）+ `C(本页项数 + 项目部分项数)`。页停在第一段时，文本端口一次都不调。按状态读：工作 Run 读 2(G+1)+1 个状态桶，主机或查询 Run 读 3(G+1) 个，指明 `state` 时 G+1 个（今天 7(G+1) 个）。
@@ -976,7 +976,7 @@ O34、O35、L2a 第 3 类、L4 第 2 步、L8（项目的当前理解）；L5、
      - 两个模块在最长前缀上并列时，两个都返回，读的人看得出有两个模块声明了同一路径（`pathOwnershipOf` 的并列结果带上 `owners`；其他调用方照旧“并列不归任何模块”）；
      - “路径就是查询词”的分支服从同一个结果。
    - **键前缀扫描：** `headsOnPathPrefix` 推广为任意键前缀的 `headsOnKeyPrefix`（`note-related-scope.ts`）。
-   - **缓存只活在一次调用里：** 每次公开调用（写、审、撤，以及用到它们的读）在入口建自己的缓存对象，向下传递，包括书记范围的事实和计划的阶段。不按调用者的 `ctx` 存，也不放在模块级。
+   - **缓存只活在一次调用里：** 每次公开调用（写、审、撤，以及用到它们的读）在入口建自己的缓存对象，向下传递，包括书记范围的事实和计划的阶段。不按调用者的 `ctx` 存，也不放在模块级。（8E-2 冻结注，2026-11-04：两个例外，都放在 `createNoteCheck` 的闭包里，每个 Host 一份，重启就空：联系的第二档结论，按注记版本和门里文件的摘要记；按文字摘要记的单文件解析结果，按源码字节做 LRU、上限 8 MiB。两样都只存确切的答案，命中和不命中读出的一样。见 8E-2 R7。）
    - **读取次数：**
      - 一次调用里，一个目标的计划窗口只读一次；
      - 写入的关系目标一次批量读；
@@ -1024,7 +1024,7 @@ O34、O35、L2a 第 3 类、L4 第 2 步、L8（项目的当前理解）；L5、
    - **一次检查的顺序：**
      1. 提醒自己的周期到了没有：`SCRIBE_REMINDER_PERIOD_MS = 60_000`，可以注入，走注入的时钟。
      2. 读账本游标。
-     3. 游标没动：有没发成功的，就用同一个请求号重试；否则什么也不做。
+     3. 游标没动：有没发成功的，就用同一个请求号重试；否则什么也不做。（8E-2 冻结注，2026-11-04：“游标没动”改成游标没动、并且断了的联系的门（已开始计时的集合和满 10 分钟的条数）也没变，见 §11.5 的注和 8E-2 S2。）
      4. 游标动了：先恢复“没处理完”的状态，再定收件人、重算待办，最后才定要发的请求；旧的没发成功的请求丢掉。
 
      所以收件人换了以后（例如最小的书记被归档，这本身是账本事件），发给新收件人，用新收件人的请求号，不会重发给旧的人。

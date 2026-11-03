@@ -550,7 +550,7 @@ export type CompactionSettingsV1 = {
   - 摘要提示放在最后（裁定五第 3 条，裁定六第 7 条）：
     - 它是提示词包里的模板 `context-summary-request`，文件 `resources/prompts/platform/templates/context-summary-request.txt`，`version: 1`，`mentionsTools: []`，没有槽位。和别的较长的固定提示一样放在 `templates/` 下，不放 `strings.json`。
     - id 在 `src`、`resources`、`tests`、`vendor/coding-agent/patches` 里 grep 过，没有重名。不用 `context-summary`：L5 已经把 `context-summary:` 用作摘要消息的 ID 前缀，分开好认。
-    - 从本轮冻结的提示词渲染，不读当前包（决定 83；同 `execution-inputs.ts:64-71` 的做法）。冻结的文字在压缩点之前就读好了（Work `execution-driver.ts:506`，Query `query-execution.ts:270`）。为此它进投递集合：`prompt-set-texts.ts:386` 的 `DELIVERY_SET_TEMPLATE_IDS` 加这个 id，准备时就冻结（`templatesToFreeze`，`:389-391`）。
+    - 从本轮冻结的提示词渲染，不读当前包（决定 83；同 `execution-inputs.ts:64-71` 的做法）。冻结的文字在压缩点之前就读好了（Work `execution-driver.ts:506`，Query `query-execution.ts:270`）。为此它进投递集合：`prompt-set-texts.ts:386` 的 `DELIVERY_SET_TEMPLATE_IDS` 加这个 id，准备时就冻结（`templatesToFreeze`，`:389-391`）。（8E-2 冻结注，2026-11-04：8E-2 R 照这个做法在末尾加 `link-breaks-input`；R 先落时这个 id 排在它后面，是第九个，见 §3 :778 的注。）
     - 第一稿正文（第一稿；提示词包定稿时可改，测试跟着改）。正文是下面框里的文字，每行去掉框的 6 格缩进，结尾不带换行：
       ```
       请把上面这段对话写成一份压缩摘要。之后这条线只看这份摘要和最近几轮的原文，更早的原文不再交给你；原记录不会删除。
@@ -758,7 +758,7 @@ export type CompactionSettingsV1 = {
 
 **K2-P2（摘要，L18–L21；组三）。** K2-P1 之后做，要提示词包和摘要模板（6C 之后）。
 - 要做的：摘要调用（先建临时 Kernel Session、拦工具、两个绑定摘要、用量记账）；段落检查（照 `src/contracts/continuation-brief.ts` 的做法）；L19a 的来源核对；提示词包条目（摘要提示是模板 `context-summary-request`，裁定五第 3 条、裁定六第 7 条；来源格式写在它里面）；重算 `runtime-assets.json`。
-- 要改的文件另加 `src/core/agent-runtime/prompt-set-texts.ts`（裁定六第 7 条）：`DELIVERY_SET_TEMPLATE_IDS`（`:386`）加 `context-summary-request`。它不在 7D2、6C、第 9 片、B06 冻结起始裁定的文件表里（6C 只引用 `:184`）。
+- 要改的文件另加 `src/core/agent-runtime/prompt-set-texts.ts`（裁定六第 7 条）：`DELIVERY_SET_TEMPLATE_IDS`（`:386`）加 `context-summary-request`。它不在 7D2、6C、第 9 片、B06 冻结起始裁定的文件表里（6C 只引用 `:184`）。（8E-2 冻结注，2026-11-04：8E-2 R 也在这里末尾加 `link-breaks-input`；R 先落时 `context-summary-request` 是第九个，加在它后面。）
 - Work 的两处改动见 L18：计量和许可的绑定挪到压缩点之前；`admitEnteredRun` 多收一种（`src/core/work-graph/tasks/execution-entry-service.ts:703-704`，裁定五第 1 条）。`execution-entry-service.ts` 不在 7D2、6C、第 9 片、B06 冻结起始裁定的文件表里（`.lead-ref/*-start-rulings.frozen.md` 逐份 grep 过，只有行号引用）。
 - Query 在 `entering` 时准入和记用量都收（F16），不用改。
 - 落地以后，L11 第一步不够时改走 L18，不再写 `summary_unsupported`。
@@ -774,8 +774,8 @@ export type CompactionSettingsV1 = {
 
 - **要改的旧测试**（lead 写出改前、改后的断言后冻结，施工方不自行改）：
   - `tests/contracts/PC-platform-pack-v2.test.ts:101-136`：`PACK.origins` 无条件加摘要模板一行（裁定五第 3 条；同 K2-K 旧测试的做法；S9 G1 也改它，`9-start-rulings.frozen.md:173`）。改后多的那一行（裁定六第 7 条）：`'context-summary-request': { packId: 'platform', version: 1, mentionsTools: [] },`。
-  - `tests/runtime/S7B-preparation-freeze.test.ts:24-27`（裁定六第 7 条）：手抄的 `DELIVERY_IDS` 末尾加 `'context-summary-request'`（`DELIVERY_SET_TEMPLATE_IDS` 的顺序，`prompt-set-texts.ts:386`）；`:71`、`:113` 展开它，跟着变。
-  - 同一份清单在 helper 里还有一份手抄：`tests/helpers/S7B-delivery-samples.ts:12-20` 的 `DELIVERY_SET_IDS`，以及它的 `DELIVERY_SET_TEXTS`（`:23` 起，逐字抄模板文件）。用它的 `tests/runtime/PC-prepare-prompt-freeze.test.ts:151`、`PC-joint-record-and-failure.test.ts:27-28`、`PC-joint-prepare-freeze.test.ts:33`、`PC2-joint-packs.test.ts:79`、`tests/scenarios/S6A-secretary-context-input.test.ts:123` 都比冻结的模板清单，加了 id 会一起红。lead 冻结时定（裁定七第 2 条）：改，和 `S7B-preparation-freeze.test.ts` 同一个理由。改前、改后：`DELIVERY_SET_IDS` 在 `'user-decision-response',` 之后加一行 `'context-summary-request',`（`DELIVERY_SET_TEMPLATE_IDS` 的顺序，加在末尾）；`:11` 的注释改成 “The six delivery templates in the platform pack's order, then the decision response, then the context-summary request (K2).”；`DELIVERY_SET_TEXTS` 末尾加 `'context-summary-request': <模板文件逐字，不带结尾换行>`，字面照 L18 的第一稿正文，提示词包定稿改正文时跟着改；文件头注释里的三处 “seven” 改成 “eight”；摘要提示没有槽位，不加格式函数，“one formatter per delivery template” 不改。用它的 5 个文件展开 helper，不另改，施工后照常绿。
+  - `tests/runtime/S7B-preparation-freeze.test.ts:24-27`（裁定六第 7 条）：手抄的 `DELIVERY_IDS` 末尾加 `'context-summary-request'`（`DELIVERY_SET_TEMPLATE_IDS` 的顺序，`prompt-set-texts.ts:386`）；`:71`、`:113` 展开它，跟着变。（8E-2 冻结注，2026-11-04：8E-2 R 先落时末尾已有 `'link-breaks-input'`，`'context-summary-request'` 加在它后面，是第九个。）
+  - 同一份清单在 helper 里还有一份手抄：`tests/helpers/S7B-delivery-samples.ts:12-20` 的 `DELIVERY_SET_IDS`，以及它的 `DELIVERY_SET_TEXTS`（`:23` 起，逐字抄模板文件）。用它的 `tests/runtime/PC-prepare-prompt-freeze.test.ts:151`、`PC-joint-record-and-failure.test.ts:27-28`、`PC-joint-prepare-freeze.test.ts:33`、`PC2-joint-packs.test.ts:79`、`tests/scenarios/S6A-secretary-context-input.test.ts:123` 都比冻结的模板清单，加了 id 会一起红。lead 冻结时定（裁定七第 2 条）：改，和 `S7B-preparation-freeze.test.ts` 同一个理由。改前、改后：`DELIVERY_SET_IDS` 在 `'user-decision-response',` 之后加一行 `'context-summary-request',`（`DELIVERY_SET_TEMPLATE_IDS` 的顺序，加在末尾）；`:11` 的注释改成 “The six delivery templates in the platform pack's order, then the decision response, then the context-summary request (K2).”；`DELIVERY_SET_TEXTS` 末尾加 `'context-summary-request': <模板文件逐字，不带结尾换行>`，字面照 L18 的第一稿正文，提示词包定稿改正文时跟着改；文件头注释里的三处 “seven” 改成 “eight”；摘要提示没有槽位，不加格式函数，“one formatter per delivery template” 不改。用它的 5 个文件展开 helper，不另改，施工后照常绿。（8E-2 冻结注，2026-11-04：8E-2 R 先落时，`DELIVERY_SET_TEMPLATE_IDS` 和 `S7B-delivery-samples.ts` 里已经有 `link-breaks-input`（第八个），K2-P2 的 `context-summary-request` 是第九个：加在 `'link-breaks-input',` 之后，`:11` 的注释跟着带上它，文件头注释的 “seven → eight” 改成 “eight → nine”。见 slice-8E2-SPEC R12。）
   - K2-P1 的三行（裁定四第 9 条）：
 
     | 行 | 改前（K2-P1 落地时） | 改后（K2-P2 落地时） |

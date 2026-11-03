@@ -1,6 +1,6 @@
 # 第 8E 片规格：语义联系（决定 87）
 
-**状态：已冻结（2026-10-22）。** lead 起草，经 Codex 两轮完整审查和一次快速核对，lead 逐行审后冻结（决定 56）。施工排在 8C 之后（§7）。
+**状态：已冻结（2026-10-22）。** lead 起草，经 Codex 两轮完整审查和一次快速核对，lead 逐行审后冻结（决定 56）。施工排在 8C 之后（§7）。（8E-2 冻结注，2026-11-04：读和核改成两档，L3d 等由决定 117-3 改，读法和施工以 [8E-2 规格](slice-8E2-SPEC.md) 为准；读从不开捕获、不建程序，核的结论只放 Host 内存。下面各处的“8E-2 冻结注”逐条写明改了什么，原文保留。）
 
 代码事实在 `994b69e2` 上核对。
 
@@ -38,12 +38,12 @@
 | F14 ✓ | 人写注记走 Host 路由 `notes/write`（只认人） | `app/core-routes.ts:506` |
 | F15 ✓ | 源码查询 `querySource` 有这几类：`paths`；`text`（字面子串，`caseSensitive`，可选 `prefix`）；`symbols`；`definitions`、`references`（给路径、行、列）；`imports`、`calls`。命中分文件、文字、符号、位置、关系五种 | `core/workspace/ports.ts:65–76`、`:179` |
 | F16 ✓ | `text` 查询一行一行按字面找，不跨行；文字 1–512 个码点、≤2,048 个 UTF-8 字节、不含回车换行；`prefix` 等于一个文件路径时只查这个文件 | `workspace/source-query.ts:43–45`、`:53–75`；`ports.ts:236–244` |
-| F17 ✓ | 捕获只有 `typescript` 和 `text` 两种，`python`、`cpp` 退回 `unsupported`；`symbols`、`references` 这些语义查询只在 TypeScript 的捕获上有。Python、C++ 的分析器只给 agent 的探索工具用，不经 `querySource`。所以今天注记里只有 TS/JS 的符号解析得出来，Python、C++ 的 `symbolRequest` 都落成 `symbol_unresolved` | `workspace/capture.ts:611`；`source-query.ts:105–111`；`workspace/python-source-index.ts:17`、`workspace/cpp-source-index.ts:16`；`agent-runtime/exploration-tools.ts:112`、`:119`；`note-anchors.ts:317–319` |
+| F17 ✓ | 捕获只有 `typescript` 和 `text` 两种，`python`、`cpp` 退回 `unsupported`；`symbols`、`references` 这些语义查询只在 TypeScript 的捕获上有。Python、C++ 的分析器只给 agent 的探索工具用，不经 `querySource`。所以今天注记里只有 TS/JS 的符号解析得出来，Python、C++ 的 `symbolRequest` 都落成 `symbol_unresolved`（8E-2 冻结注，2026-11-04：两档以后 Python/C++ 的一般注记能存函数定位，Python 用常驻 `ast` 进程，C++ 有 `compile_commands.json` 时用 libclang 单文件加 preamble；联系的端和证据仍只收 TS/JS，8E-2 W11、G8） | `workspace/capture.ts:611`；`source-query.ts:105–111`；`workspace/python-source-index.ts:17`、`workspace/cpp-source-index.ts:16`；`agent-runtime/exploration-tools.ts:112`、`:119`；`note-anchors.ts:317–319` |
 | F18 ✓ | 符号命中的位置是名字那几行（`nameSpan`），不是整个函数；存下的 `SymbolLocatorV1.range` 就是这几行。一个导航项可以带多个声明段（重载、合并声明）；今天只取 `item.nameSpan ?? item.spans[0]`，没有把各段都带出来 | `workspace/typescript-source-query.ts:204`；`note-anchors.ts:374–376`；`contracts/note.ts:19–20` |
 | F19 ✓ | 捕获的上限（Host 默认，可配）：一次查询最多 10,000 个结果；同时留 8 个捕获；一个捕获最多 16 种查询。查询按完整参数缓存，同参数的第二次查询不再计数。超了是 `capacity` | `workspace/workspace-tools.ts:11–21`；`source-query.ts:83`、`:86`、`:100`、`:149` |
 | F20 ✓ | 文件锚点的键只到路径，不含符号；同一条注记里两个锚点的键重复是第 1 类格式错。所以同一个文件里的两个函数，今天不能同时当一条注记的两个锚点 | `note-anchors.ts:409–414`、`:497–502`、`:570–574` |
 | F21 ✓ | 写入时：形状在第一步（`writeInputProblem`）；重放在调用方之前答复；锚点、第 3 类检查和警告在一起；之后按工作树读依据文件的摘要（`raw_bytes`） | `note-service.ts:1157`、`:1164–1166`、`:1184–1252`、`:1254–1272` |
-| F22 ✓ | 读时的核对在 `createNoteCheck`，读法经 `withCheck` 调它。文件锚点的文件摘要变了才重新解析符号：按名字找，同名多个时用存下的行挑；一次调用最多重解析 `NOTE_SYMBOL_RECHECK_MAX = 20` 个，每个开一个捕获，超了记 `unchecked`；另加最多 `NOTE_LINK_RECHECK_MAX` 条联系的重核，每条最多开一个捕获。一次调用最多读 `NOTE_READ_FILES_MAX = 256` 个文件 | `work-graph/views/note-views.ts:214`、`:321–392`、`:709–727`；`note-read-model.ts:389`；`note-contracts.ts:37`、`:39` |
+| F22 ✓ | 读时的核对在 `createNoteCheck`，读法经 `withCheck` 调它。文件锚点的文件摘要变了才重新解析符号：按名字找，同名多个时用存下的行挑；一次调用最多重解析 `NOTE_SYMBOL_RECHECK_MAX = 20` 个，每个开一个捕获，超了记 `unchecked`；另加最多 `NOTE_LINK_RECHECK_MAX` 条联系的重核，每条最多开一个捕获。一次调用最多读 `NOTE_READ_FILES_MAX = 256` 个文件（8E-2 冻结注，2026-11-04：这是 `994b69e2` 上的代码事实，留作历史；两档以后读侧不再开捕获，文件变了在单个文件里按名字重找，8E-2 R1、R3） | `work-graph/views/note-views.ts:214`、`:321–392`、`:709–727`；`note-read-model.ts:389`；`note-contracts.ts:37`、`:39` |
 | F23 ✓ | L8 的自动抓在 Host 里：工作区登记、目录采用或修订、检查 PASS 之后各触发一次；全 Host 一个串行队列，同一工作区的等待合并；没有租约的 Host 不写任何东西 | `app/auto-capture-driver.ts:54–64`、`:81`、`:141`；`app/host.ts:546`；[第 8 片规格](slice-8-SPEC.md) §13 |
 | F24 ✓ | 文件按扩展名分语言：`typescript`（含 `.js` 等）、`cpp`、`python`、`rust`、`go`、`other` | `workspace/architecture-language-provider.ts:84–101` |
 | F25 ✓ | 运行时拼名字的地方静态找不到：8D 实测 Django 的 `django/` 里 importlib 43 处、`import_string` 41 处，名字都不是字面量；ros2/demos 上 117 对按名字通信的文件里，114 对在依赖图上毫无关系 | 8D 实测报告（已归档：`docs/refactor/reviews/evidence/orchestration-slice-8D-2026-10-18/checks/measure-runtime/report.md`）第 26、88、101 行 |
@@ -81,16 +81,16 @@
 1. 证据的范围从函数名来（L3a，F18）：一个导航项带全部声明段（`declarationRanges`）；证据范围就是这些段，命中落在任何一段都算，不静默取第一段。行号范围在上面插一行就失效。端口上这个字段可选，TypeScript 提供者总是给；消费端保留 L3a 的回退（N11）。
 2. 证据要落在端点里（L3a）：不然不相干的代码也能让联系读作 `verified`。
 3. 同一个文件里的两个锚点（L1，F20）：`link` 按端点身份判重（N1、C13），即规范化路径 + 请求的符号名，请求给了行号范围时也带上（原样比较）；没给符号时只看路径。行号、摘要不参与。回调和注入的槽常和“从”在同一个文件。lead 核过索引，同一个键落在两个槽不冲突。
-4. 代码改了以后重核（L3d）：(a) 读时按文件摘要重核；已有同样的做法，不加记录。门里的文件改了，下一次读就看得到（C3）；门外的文件不在承诺里（L3e）。每次调用最多 `NOTE_LINK_RECHECK_MAX = 10` 条。
-5. 读时加 `unchecked`。`accepted`/`reviewed` 是状态现行；`broken`、`unchecked` 不构成现行结论（`currentEligible` 为假，L3c）：没核过的不能当作还对。
+4. 代码改了以后重核（L3d）：(a) 读时按文件摘要重核；已有同样的做法，不加记录。门里的文件改了，下一次读就看得到（C3）；门外的文件不在承诺里（L3e）。每次调用最多 `NOTE_LINK_RECHECK_MAX = 10` 条。（8E-2 冻结注，2026-11-04：改成两档。读只做第一档，比摘要、变了只在单个文件里查，不重核、不建程序，没有联系重核的上限，`NOTE_LINK_RECHECK_MAX` 删掉；核是第二档，结论只放 Host 内存，不落记录。见 8E-2 §2.3 R1、R5–R7。）
+5. 读时加 `unchecked`。`accepted`/`reviewed` 是状态现行；`broken`、`unchecked` 不构成现行结论（`currentEligible` 为假，L3c）：没核过的不能当作还对。（8E-2 冻结注，2026-11-04：`unchecked` 加原因 `refs_pending`，读作“存疑：跨文件引用待核”，存疑不构成现行结论。见 8E-2 §2.0、R5。）
 6. Python、C++ 的引用（L3b）：读作 `unverifiable`（`language_unsupported`），不退成按名字找文字；同名的注释和变量会算进去。
 
 ### 0.4 和别的片的接缝
 
-- **第 4 片：** 在注记上加种类；写入闸门、读法、书记的 `stale` 读照用。找证据接在写入闸门的锚点之后（F21）；读时重核和符号重解析共用一次调用的观测预算（F22）：最多 20 次符号重解析，加上最多 `NOTE_LINK_RECHECK_MAX` 条联系重核，每条最多一个捕获。`link` 的端点和符号 key 解析成第 4 片 L14 存的那种 `SymbolLocatorV1`（限定名、范围、文件摘要、签名摘要），所以第 4 片的读时重解析和退役（F22、L23）原样适用于联系的端点（M2）。核对按锚点槽位留状态和原因（N2），`retiredExtraAnchors` 只是兼容投影。
+- **第 4 片：** 在注记上加种类；写入闸门、读法、书记的 `stale` 读照用。找证据接在写入闸门的锚点之后（F21）；读时重核和符号重解析共用一次调用的观测预算（F22）：最多 20 次符号重解析，加上最多 `NOTE_LINK_RECHECK_MAX` 条联系重核，每条最多一个捕获。`link` 的端点和符号 key 解析成第 4 片 L14 存的那种 `SymbolLocatorV1`（限定名、范围、文件摘要、签名摘要），所以第 4 片的读时重解析和退役（F22、L23）原样适用于联系的端点（M2）。核对按锚点槽位留状态和原因（N2），`retiredExtraAnchors` 只是兼容投影。（8E-2 冻结注，2026-11-04：第 4 片的读时重解析改走第一档，单文件按名字重找，不开捕获；`NOTE_SYMBOL_RECHECK_MAX = 20` 改义为一次调用最多单文件解析 20 个不同文件，第 4 片的锚点和联系的门共用，另有解析字节上限 `NOTE_READ_PARSE_BYTES_MAX`；联系没有重核预算了。见 8E-2 R3、R4。）
 - **工作区：** 只读，经现有端口（T10）。按 lead 2026-10-22 的决定，要给 `SourceHit` 的符号命中加一个可选字段 `declarationRanges: { startLine: number; endLine: number }[]`（C8）：端口上可选，TypeScript 提供者总是给（N11）。`project_source` 工具把查询结果原样交给模型（`agent-runtime/project-source-tool.ts:205–206`），模型会多看到这个字段，相关字节测试要改。
 - **8C：** 两片都改注记的写入合同（8C 加 `repair` 字段，8E 加 `link`、`flow` 字段），所以 8E 排在 8C 之后，免得冲突。这是集成顺序：8E 的代码只依赖第 4 片和 8A（文件归模块的根路径）。
-- **第 8 片 L8：** L3d 选了 (a)，不接自动抓（F23）。
+- **第 8 片 L8：** L3d 选了 (a)，不接自动抓（F23）。（8E-2 冻结注，2026-11-04：仍不接自动抓；另有 Host 空闲时的后台批量核存疑的联系，在 Host 的心跳循环里，不落记录、不唤醒书记，8E-2 H2。）
 - **PC-2：**
   - `record_note` 的工具说明、参数说明和平台包字符串都在提示词包里。8E 改的是包里的文字，平台包版本加一，规则照 PC-2。
   - `record_note` 的参数表加字段，照 W 组让工具工厂收 `texts` 的做法。
@@ -161,7 +161,7 @@ export type LinkVerificationV1 =
   | { status: 'verified' }
   | { status: 'broken'; missing: number[] }     // 找不到的证据的下标，从 0 数；只在读时出现
   | { status: 'unverifiable'; reason: 'key_not_literal' | 'language_unsupported' | 'analyzer_unavailable' }
-  | { status: 'unchecked'; reason: 'budget' | 'unavailable' };   // 只在读时出现
+  | { status: 'unchecked'; reason: 'budget' | 'unavailable' };   // 只在读时出现（8E-2 冻结注，2026-11-04：unchecked 加原因 'refs_pending'，存疑，跨文件引用待核；另加核对入口 checkNotes(ctx, { items, verifyLinks?: { priority }, heldByRun? }) 和路由 architecture/semantic-links/check { items } → { items: { noteId, version, verification | null }[] }，agent 的只读工具 check_links 同形；签名以 8E-2 §2.0 为准）
 
 /** 存下的（NoteBodyV1.link）：原始选择器、解析出的位置、文件摘要和写时的结果。
  *  摘要口径：捕获内容是 decoded_utf8，工作树读是 raw_bytes（ports.ts:39–41）；只同口径比。 */
@@ -297,7 +297,7 @@ readSemanticLinks(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
 readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; limit: number /* 1–50 */ }):
   Promise<ReadResult<{ items: SemanticFlowV1[]; next: string | null; catalogRevision: number | null }>>;
 // 项目流程一页最多核对 NOTE_FLOW_CANDIDATE_MAX 个候选，没走完给 cursor（C16，L9）。
-// links、flows 都按 noteId 排序；重核预算按流程结果顺序、步骤顺序，第一次遇到一条联系时消耗（N9）。
+// links、flows 都按 noteId 排序；重核预算按流程结果顺序、步骤顺序，第一次遇到一条联系时消耗（N9）。（8E-2 冻结注，2026-11-04：读不再重核，没有重核预算，这一句的预算部分删掉；排序不变。）
 
 // Host 路由（和别的架构读一样的门）
 //   architecture/semantic-links  { scope, cursor?, limit? } → 上面的 links 结果
@@ -350,7 +350,7 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     - `steps` 2–20 步（`flow_step_count`），同一条联系不重复（`flow_step_duplicate`）；
     - `structural` 必须是 `false`。
   - **别的种类**带了 `link` 或 `flow` 字段 → `payload_kind_mismatch`；`link`、`flow` 缺自己的字段，同此。
-  - **同一个文件里的两个锚点（lead 2026-10-22 定）。** 文件锚点的键只到路径，两个锚点在同一个文件里，今天是第 1 类的重复（F20）。可是回调的槽常是“从”那个类的字段；本仓库的注入槽也常是“从”那个文件里选项类型的字段（L3a 例子的第 1 步）。
+  - **同一个文件里的两个锚点（lead 2026-10-22 定）。** 文件锚点的键只到路径，两个锚点在同一个文件里，今天是第 1 类的重复（F20）。可是回调的槽常是“从”那个类的字段；本仓库的注入槽也常是“从”那个文件里选项类型的字段（L3a 例子的第 1 步；类型别名里的字段当不了端，见那里的实测结果）。
     - `link` 的锚点按端点身份判重（N1、C13）：规范化路径 + 请求的符号名，请求给了行号范围时也带上（原样比较）；没给符号时只看路径。解析出的行号、摘要不参与。锚点键照旧只到路径；按锚点读本来就按注记编号去重（第 4 片 L3），额度也按注记数算。改动只在判重一处：`resolveNoteAnchors` 收一个开关，`note-service` 只在 `draft.kind === 'link'` 时打开；别的种类照旧按路径判重（旧八种行为不变）。lead 核过索引：每个锚点槽各有等值索引和有序路径索引（`note-record-codecs.ts:39–47`、`:659–678`），同一个键落在两个槽不冲突。
     - 不采用“从”只能退到模块锚点：`use` 照样落在模块里，但联系挂不到函数上。
 - **L2 流程的步骤**（在 F2 的“关系”那一步，和关系一起批量读一次）：
@@ -360,7 +360,7 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
   - 步骤不要求首尾相接：读的时候在 `gapsAfter` 里按端点身份提示（N1、C13）。
 - **L3 三个端的核对。** 照第 4 片 L14（F4）：
   - 文件锚点带 `symbolRequest` 时由分析器解析；多个命中退回；没有命中只存文件锚点，并给警告 `symbol_unresolved`。
-  - **定位同第 4 片（M2）。** `link` 的端点和符号 key 解析成第 4 片 L14 存的那种 `SymbolLocatorV1`（限定名、范围、文件摘要、签名摘要），存进端的 `symbol` 和 `key.symbol`；所以第 4 片的读时重解析和退役（F22、L23）原样适用于联系的端点。原样请求另存，身份不从解析结果算（N1）。
+  - **定位同第 4 片（M2）。** `link` 的端点和符号 key 解析成第 4 片 L14 存的那种 `SymbolLocatorV1`（限定名、范围、文件摘要、签名摘要），存进端的 `symbol` 和 `key.symbol`；所以第 4 片的读时重解析和退役（F22、L23）原样适用于联系的端点。原样请求另存，身份不从解析结果算（N1）。（8E-2 冻结注，2026-11-04：仍适用，读时走第一档，单文件按名字重找，不开捕获，8E-2 R3、R5。）
   - **`link` 的解析位置（C4）。** 三个端的 `symbolRequest` 和符号 key 都在 L3b 的那一个捕获里解析，规则同第 4 片 L14，不走锚点一步的逐个 `resolveSymbol`；锚点一步照旧查形状、路径和第 1–3 类。别的种类不变。
   - L1 要求给到符号的那几头（`injects`、`callback`、`calls` 的“到”，`injects`、`callback` 的“经过”）和符号 key，平台要从它们的定义查引用：
     - 在 TS/JS 文件里（按扩展名，F24）却没有命中 → 退回 `link_end_unresolved`，`reason` 写成 `link_end_unresolved: <字段路径>`，例如 `link_end_unresolved: extraAnchors[0]`、`link_end_unresolved: link.key`（C12）。只有这些规则需要的端和符号 key 是退回；别的端没有命中只给警告 `symbol_unresolved`（N3）；
@@ -401,7 +401,7 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
 | `spawns` | `launch`、`entry` | 都有 key（程序名）。`entry` 是“到”的入口声明（package.xml、setup.py、CMakeLists.txt），常给整个文件 |
 
   **例子：平台自己的模型调用授权。** Runtime 每次调模型前，要 WorkGraph 签一张一次性的许可。中间隔着一个适配层，一条联系写不下：第 1 跳的槽是 Runtime 选项里的 `modelCalls`，第 2 跳的槽是 Runtime 依赖里的 `modelRequests`，用的地方和接线的地方各不相同。所以写成两条 `injects` 和一条两步的流程。
-  - **前提（C9）：** 捕获要用项目里的 TypeScript 配置（`tsconfig.json` 或 `jsconfig.json`）。没有配置时分析器用 `noLib`（`typescript-source-query.ts:290–292`），经 `Pick` 这类映射类型的引用可能解析不出来；这时第 2 步的引用证据找不到，写时是 `evidence_missing`。施工在本仓库实测这个例子；查不到就报 lead，改例子或查法。`broken` 只用于已经保存的联系，不用于首次写入。
+  - **前提（C9）：** 捕获要用项目里的 TypeScript 配置（`tsconfig.json` 或 `jsconfig.json`）。没有配置时分析器用 `noLib`（`typescript-source-query.ts:114`），经 `Pick` 这类映射类型的引用可能解析不出来。8E-2 以后有三种情形：范围里 X 的名字作属性出现、编译器又取不到那个属性时，第二档不下结论（8E-2 W6 的 `undecided`），写时记 `analyzer_unavailable`、照收，读作存疑；证据或定义不在配置的项目文件里时，也记 `analyzer_unavailable`（8E-2 §6 第 2 条）；其余找不到的，写时仍是 `evidence_missing`。本例两步的“经过”是类型别名里的字段，不是导航项，写时先回 `link_end_unresolved`（见下面的实测结果）。施工在本仓库实测这个例子；查不到就报 lead，改例子或查法。`broken` 只用于已经保存的联系，不用于首次写入。
 
 | | 第 1 步 | 第 2 步 |
 | --- | --- | --- |
@@ -417,7 +417,7 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     - 类型别名里的字段（`modelCalls`、`modelRequests`）能不能被 `symbols` 查到；
     - 从 `modelRequests` 查引用，能不能查到经 `Pick<…>` 读它的 :76（`model-call-access.ts:18–19`）；
     - 能不能查到 :1183、:966 的简写属性。
-  - 查不到就报 lead，改例子或改查法；首次写入按 L3b 退回或记 `evidence_missing`，`broken` 只用于已经保存的联系（C9）。
+  - 查不到就报 lead，改例子或改查法；首次写入按 L3b 退回或记 `evidence_missing`，`broken` 只用于已经保存的联系（C9）。 **实测结果（8E-2 开工先量，2026-11-03）：** 类型别名（`type X = { … }`）里的字段不是 TS 导航项：导航树把类型别名当叶子，不进它的类型字面量，接口、类的成员才是导航项。所以 `symbols` 查不到 `modelCalls`、`modelRequests`，两步的“经过”写时都回 `link_end_unresolved: extraAnchors[1]`。这个例子今天写不进去，两档以后也一样（8E-2 F50）。按位置查引用时，经 `Pick<…>` 读 `modelRequests` 的 :76（`model-call-access.ts:18–19`），和 :1183、:966 的简写属性都查得到。这个例子只用来说明一条联系怎么拆成两跳；能当“经过”的是接口或类的成员、顶层声明，例如 §5.2 的 `Access.beforeCall`。
 - **L3b 写入时找证据。**
   - **位置**（F21）：
     - L1 的形状在写入的第一步。
@@ -438,8 +438,8 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     4. 读每个证据文件：TS/JS 的从同一个捕获读（同 `note-anchors.ts:364–366`），别的按工作树读。捕获里没有这个文件而工作树有 → 按结果表的 `source_stale`（N5）；两处都没有、`range` 超出文件 → 这条找不到。
        - **摘要和内容同源（C2）。** 核对的材料和存下的摘要要来自同一份内容。捕获里的内容口径是 `decoded_utf8`，工作树读的摘要是 `raw_bytes`（`ports.ts:39–41`）；两者不直接比摘要，先比解码后的文字。另读工作树取摘要时，如果内容和捕获里的这份不同，就是 `source_stale`：这次不核，`fileDigest` 记 `null`，写时记 `analyzer_unavailable`，读时记 `unchecked`（`unavailable`）。
        - 内容一致时，存工作树读的 `raw_bytes` 摘要；工作树读不了时 `fileDigest` 记 `null`，读证据文件报 `forbidden` 的按结果表退回（M1）。
-    5. 落在端点里的证据，在范围里按 L3a 的表找；不落的不找，按结果表退回。
-  - **存下没解析成功的请求（C1）。** 分析器这次不可用时，证据的 `at`、三个端的 `ends`、符号 key 的 `symbolRequest` 都保留原始选择器（`symbolRequest` 或 `range`；都不给就是整个文件），解析结果留空；不把请求扩大成整个文件。`fileDigest` 没读到就是 `null`。读时 `fileDigest` 为 `null` 或端/key 没有定位的一律重试；重试成功按结果给 `verified`/`broken`，仍因分析器不可用而失败读作 `unverifiable`（`analyzer_unavailable`）；预算用尽、C2 的内容不一致和文件读取失败另按结果表（N4）。
+    5. 落在端点里的证据，在范围里按 L3a 的表找；不落的不找，按结果表退回。（8E-2 冻结注，2026-11-04：第 2–4 步改了，写时不开捕获。三个端、符号 key 和证据的 `symbolRequest` 走第一档：从工作树读这个文件一次，单文件导航树按名字找；要引用的 X 走第二档：一条联系一次 `verify`（`priority: 'write'`）；`analysisConfig` 存第二档实际用的配置。没有捕获，C2 的“捕获和工作树对不上”不再出现，它防的事由第二档分析过的文件摘要和工作树摘要的比对接手；存的摘要口径照 8E-2 R2。见 8E-2 §2.4 G1–G6。）
+  - **存下没解析成功的请求（C1）。** 分析器这次不可用时，证据的 `at`、三个端的 `ends`、符号 key 的 `symbolRequest` 都保留原始选择器（`symbolRequest` 或 `range`；都不给就是整个文件），解析结果留空；不把请求扩大成整个文件。`fileDigest` 没读到就是 `null`。读时 `fileDigest` 为 `null` 或端/key 没有定位的一律重试；重试成功按结果给 `verified`/`broken`，仍因分析器不可用而失败读作 `unverifiable`（`analyzer_unavailable`）；预算用尽、C2 的内容不一致和文件读取失败另按结果表（N4）。（8E-2 冻结注，2026-11-04：读时不再重试分析器。第一档每次读重做单文件那部分，引用那部分读存疑（`unchecked`/`refs_pending`），进后台由第二档核；存下的 `analyzer_unavailable` 也读作存疑，直到核过。见 8E-2 R5、R8。）
   - **结果**（先一条一条判，再按下面这张表取第一个）：
     - 一条证据的“有 key”和“引用 X”分开判：字面 key 找不到 → 这条证据找不到（进 `evidence_missing`）；引用部分在非 TS/JS 的文件里查不了 → 记 `language_unsupported`，不算找不到。
     - 查不了的项不挡能查的项。例如 `calls` 给 `key: null`：`register` 还要引用“到”，找不到照样退回。
@@ -478,8 +478,8 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     | 引用查询 | 取完、范围里没有命中 | 这条证据找不到 | 确定找不到（`broken`） |
     | 读时（C1 的例外） | 从没解析成功的请求，重试仍因分析器不可用而失败 | — | `unverifiable`（`analyzer_unavailable`），不变成 `unchecked`（N4） |
 
-    - 读证据文件或查询证据时 `forbidden`，写入一律退回 `evidence_invalid: link.evidence[i].at.path`（M1）。
-    - **C1 的例外（N4）。** 存下的请求从没解析成功（`fileDigest` 是 `null`，或端/key 没有定位）的，读时重试；重试仍因分析器不可用而失败，读作 `unverifiable`（`analyzer_unavailable`），不按读时列变成 `unchecked`。预算用尽是 `unchecked`（`budget`）；C2 的内容不一致和文件读取失败是 `unchecked`（`unavailable`）。确定缺失始终先判。
+    - 读证据文件或查询证据时 `forbidden`，写入一律退回 `evidence_invalid: link.evidence[i].at.path`（M1）。（8E-2 冻结注，2026-11-04：上表的捕获行和分页上限两档以后不再出现。写时换成工作树读口的读取（读不了、`forbidden` 照上表的工作树行）和第二档的结果（`found` 找到；`not_found` 这条证据找不到；查不了、不在 TS 项目里、第二档失败 → `analyzer_unavailable`）；读时换成第一档的确定规则和存疑（8E-2 R5）。`NOTE_SYMBOL_HITS_MAX` 删掉。见 8E-2 G4、G6、G9。）
+    - **C1 的例外（N4）。** 存下的请求从没解析成功（`fileDigest` 是 `null`，或端/key 没有定位）的，读时重试；重试仍因分析器不可用而失败，读作 `unverifiable`（`analyzer_unavailable`），不按读时列变成 `unchecked`。预算用尽是 `unchecked`（`budget`）；C2 的内容不一致和文件读取失败是 `unchecked`（`unavailable`）。确定缺失始终先判。（8E-2 冻结注，2026-11-04：读时不重试分析器，第一档重做单文件部分，引用部分读存疑（`refs_pending`）、进后台；只有核的时候第二档失败，核的回复才是这次没核（`unavailable`），不记。见 8E-2 R5–R7。）
 
   - **Python、C++ 的引用（lead 2026-10-22 定）。**
     - 读作 `unverifiable`（`language_unsupported`）；字面的核对照做；等分析器接进 `querySource` 再查引用。
@@ -489,16 +489,16 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     - `verified`：证据都还找得到；
     - `broken`：`missing` 列出确定找不到的下标；
     - `unverifiable`：查不了，带原因（L3b）；
-    - `unchecked`（lead 2026-10-22 定）：这次没核，带原因（预算用完，或文件、分析器这次读不了）。
+    - `unchecked`（lead 2026-10-22 定）：这次没核，带原因（预算用完，或文件、分析器这次读不了）。（8E-2 冻结注，2026-11-04：加一种原因 `refs_pending`，存疑：跨文件引用待核，第一档说不准，交第二档；不当现行结论。见 8E-2 R5。）
   - 比摘要的“需复查”细：摘要只说文件变了，核对说指定的引用和文字还在不在、哪一条断了。依据文件的新鲜度照第 4 片 L11 算，不变。
-  - **读时的优先级（C6、N4）：** 先看有没有确定找不到。至少一条确定找不到 → `broken`，`missing` 列出全部确定的下标；没有确定找不到、但有读不了或超预算的 → `unchecked`；都没有、但有 `language_unsupported` 等 → `unverifiable`；都找到 → `verified`。确定缺失压过查不了。从没解析成功的请求重试仍因分析器不可用而失败的那一条是 `unverifiable`，不并进 `unchecked`；读时同名多个候选、存下的行挑不出一个的那一条是 `unchecked`（`unavailable`），不是 `broken`（N3、N4）。
+  - **读时的优先级（C6、N4）：** 先看有没有确定找不到。至少一条确定找不到 → `broken`，`missing` 列出全部确定的下标；没有确定找不到、但有读不了或超预算的 → `unchecked`；都没有、但有 `language_unsupported` 等 → `unverifiable`；都找到 → `verified`。确定缺失压过查不了。从没解析成功的请求重试仍因分析器不可用而失败的那一条是 `unverifiable`，不并进 `unchecked`；读时同名多个候选、存下的行挑不出一个的那一条是 `unchecked`（`unavailable`），不是 `broken`（N3、N4）。（8E-2 冻结注，2026-11-04：先后改成：确定断 → `broken`；否则读不了或超预算 → `unchecked`（`unavailable`/`budget`）；否则存疑 → `unchecked`（`refs_pending`）；否则 `key_not_literal`、`language_unsupported` → `unverifiable`；否则 `verified`。读时不重试分析器：从没解析成功的请求，单文件部分每次读重做，引用部分读存疑（`refs_pending`）；只有核的时候第二档失败，核的回复才是这次没核，不记。见 8E-2 R5、R6。）
   - **状态现行和现行结论分开（C14）。**
     - “状态现行”只看存下的状态：`accepted`、`reviewed`（L2 的写入规则）。
-    - “现行结论”由 `currentEligible` 表示：状态现行、`freshness` 是 `fresh`、不冲突、来源可用、三端都不 `retired`、各端自己的读时核对没有 stale（签名摘要变了算 stale，M2；各端自己的状态，N2、C12），并且证据不是 `broken`、`unchecked`。
-    - `broken`、`unchecked` 不构成现行结论（`currentEligible` 为假），同第 4 片 L9 对 `stale`、`unchecked` 的做法；`unverifiable` 照常算，它是查不了，不是不对。
+    - “现行结论”由 `currentEligible` 表示：状态现行、`freshness` 是 `fresh`、不冲突、来源可用、三端都不 `retired`、各端自己的读时核对没有 stale（签名摘要变了算 stale，M2；各端自己的状态，N2、C12），并且证据不是 `broken`、`unchecked`。（8E-2 冻结注，2026-11-04：实现时补齐“三端都 live”：所有锚点槽都要 `live`，今天的代码只看主锚点；签名摘要变了仍算 stale。见 8E-2 R10。）
+    - `broken`、`unchecked` 不构成现行结论（`currentEligible` 为假），同第 4 片 L9 对 `stale`、`unchecked` 的做法；`unverifiable` 照常算，它是查不了，不是不对。（8E-2 冻结注，2026-11-04：存下的 `analyzer_unavailable` 读作存疑、不算现行，直到核过；`key_not_literal`、`language_unsupported` 照常算（决定 116-2 第 8 件）。）
     - `broken` 进书记的 `stale` 读，原因 `link_evidence_broken`，带下标（L12）；执行输入里的行照 L10、L13。
-    - 流程的每一步也用这一份派生；一次调用里步骤的联系去重，共用重核预算和可见性规则（L9，C14）。
-- **L3d 代码改了以后重核（lead 2026-10-22 定）。** 选 (a)：读时按摘要重核；已有同样的做法和预算，不加记录和触发。
+    - 流程的每一步也用这一份派生；一次调用里步骤的联系去重，共用重核预算和可见性规则（L9，C14）。（8E-2 冻结注，2026-11-04：读不再重核，没有重核预算，“共用重核预算”删掉；去重和可见性不变。）
+- **L3d 代码改了以后重核（lead 2026-10-22 定）。** 选 (a)：读时按摘要重核；已有同样的做法和预算，不加记录和触发。**（8E-2 冻结注，2026-11-04：本段整段由两档取代，以 [8E-2 规格](slice-8E2-SPEC.md) §2 为准；下面的原文只留作历史。）** 两档的要点：**第一档（读）**，看、找、执行输入、架构图、书记的待查都只做第一档：比门里文件的摘要（口径照 8E-2 R2），变了只在单个文件里查，从不建 TS 程序；确定断了的读 `broken`（哪一条），名字还在、要跨文件才判得了的读存疑（`unchecked`/`refs_pending`），不当现行结论；预算是一次调用最多读 256 个文件、单文件解析 20 个、解析 1 MiB 文字（8E-2 R4）；门（证据文件、“到”“经过”和符号 key 的定义文件、存下的配置）和下面原文的一样，配置门不开捕获（8E-2 R5）。**第二档（核）**，只加载证据文件和它 import 到的文件，用 TS 的引用引擎找，只留证据文件里对那个定义的引用（8E-2 W6），在每个 Host 一个的分析线程里做（W1）；在写联系、Run 里改了文件之后、架构图上的“重新核对”（路由 `architecture/semantic-links/check`）、agent 的只读工具 `check_links`、Host 空闲时的后台批量里做（8E-2 G4、R12、R13、H2、H3）。**结论放哪**：第二档的结论只放 Host 内存，按“注记版本 + 门里文件的摘要”记；不落记录，重启就丢，下次空闲再核（8E-2 R7）。**没有重核预算**：`NOTE_LINK_RECHECK_MAX` 删掉；读不开捕获，“一次读的总捕获数”那笔代价不再有。**Run 里改断了的**：每次模型请求之前，平台用第一档查这次 Run 改过的文件上的联系，确定断了的当场交给执行者；存疑的后台核，核出断了的在之后的安全点交；最后一次请求之后才核出的由书记兜底（8E-2 R12、S）。
   - **门（C3、D1、M2）：** 证据文件存下的 `fileDigest`；“到”“经过”和符号 key 的 `SymbolLocatorV1.fileDigest`；写时存下的 `analysisConfig` 的路径和摘要。
     - **配置门不为判门开捕获。** 读时在工作树上按捕获的默认选择规则找配置：先 `tsconfig.json`，再 `jsconfig.json`（`typescript-source-query.ts:99–100`；写时的捕获不传显式配置路径，`note-anchors.ts:317`）。读它的文字，按 `decoded_utf8` 的口径算摘要（`ports.ts:96–97`）。路径或摘要和存下的不同，都算门变了；门变了才开重核捕获。
     - 写时的摘要取捕获里这份配置的文字，读时取工作树读出的文字，两边都按解码后的文字算。两边解码有出入时，只会多判一次“变了”、多开一个捕获，不会漏判。
@@ -517,7 +517,7 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
 - **L3e 静态核对做不到的**（写进工具说明和平台 Skill）：
   - **哪条分支真的跑、配置装的是哪个实现。** `if` 两边各接一个实现，两条联系都会 `verified`。静态核对只证明指定的引用和文字在指定的范围里共现，不证明接线。
   - **共现的假阳性。** 把 K1 的 `wire` 写成 `{ beforeCall: other, unused: authorize }`，同一个范围仍同时包含槽和实现的引用，按表照样 `verified`，实际没有把该实现装进槽（C10）。
-  - **重核的门的边界（C3）。** 门只看证据文件、三个端的定义文件和符号 key 的定义文件，加项目 TypeScript 配置文件。转导出文件、配置外的路径别名等改了，引用可能已经变了，但门里的文件都没变，重核还是 `verified`，直到门里的某个文件变了。这是“共现”而不是“接线”的边界。
+  - **重核的门的边界（C3）。** 门只看证据文件、三个端的定义文件和符号 key 的定义文件，加项目 TypeScript 配置文件。转导出文件、配置外的路径别名等改了，引用可能已经变了，但门里的文件都没变，重核还是 `verified`，直到门里的某个文件变了。这是“共现”而不是“接线”的边界。（8E-2 冻结注，2026-11-04：另有两件。第一档判不了跨文件：名字还在时，它还指不指向同一个定义，第一档不读“对得上”，只读存疑，交第二档。门外还有：再导出的中转文件、tsconfig 的 `extends` 指向的基础配置、`package.json`（模块格式、`exports`）、import 链上的其他文件；它们改了不会让联系变存疑，真去核时第二档看到的是它们的当前内容。见 8E-2 R5。）
   - **运行时拼出来的名字。** 只能给 `key: null`，读作 `unverifiable`。8D 实测 Django 的 `django/` 里，importlib 43 处、`import_string` 41 处，名字都不是字面量（F25）。
   - **多发多收的话题**（ROS 等）。两边写了同一个话题名，只证明它们用这个名字；哪几对真的一起跑，要看 launch 的命名空间和重映射。8D 在 ros2/demos 上量到 117 对按名字通信的文件，其中 114 对在依赖图上毫无关系（F25）。
   - **范围是整个文件时**，import 那一行也算引用，只能证明“这个文件用到了”。
@@ -554,14 +554,14 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     4. 新鲜度或证据 `unchecked` → `unchecked`；
     5. 都没有 → `null`。
   - **流程自己的核对**（依据文件、来源、冲突）和步骤的问题一起给流程的结果（N6）：有一步是 `not_current`、`broken` 或 `stale`，或流程自己是 `stale` → `stale`；上面都不适用，但有一步是 `unchecked` 或流程自己没核 → `unchecked`；否则 `fresh`。只有流程自己的检查通过（状态现行、`fresh`、不冲突、来源可用、锚点不 `retired`）、并且每一步的 `currentEligible` 都为真，流程的 `currentEligible` 才是真；不另按 freshness 推。
-  - 这一份派生同时供 Host 路由、`lookup`/`find` 和书记的 `stale` 读用；一次调用里步骤的联系去重，共用重核预算和可见性规则；重核预算按流程结果顺序、步骤顺序，第一次遇到一条联系时消耗（C14、N9）。
+  - 这一份派生同时供 Host 路由、`lookup`/`find` 和书记的 `stale` 读用；一次调用里步骤的联系去重，共用重核预算和可见性规则；重核预算按流程结果顺序、步骤顺序，第一次遇到一条联系时消耗（C14、N9）。（8E-2 冻结注，2026-11-04：读不再重核，重核预算的两处删掉；去重和可见性不变，步骤的问题里 `unchecked` 含存疑（`refs_pending`）。见 8E-2 FR2。）
   - `gapsAfter` 按端点身份比第 i 步的“到”和第 i+1 步的“从”（N1、C13），只是提示。
 - **L10 执行输入**（T8）：
   - 收哪些：“注记”一段收 `link` 行，选法照第 4 片 §11.4 和 L20（有联系的范围、默认可见、按类别、层级、话题排序），和一般注记共用这一段的预算。
   - 怎么显示：行文字用 L13 的格式。只有 `currentEligible` 出结论行。不构成现行结论时按原因出行（第 4 片 L20 的警示行）：
     - 证据 `broken` → 一行 `note.warning.link_broken`（L13）；
     - 否则 `freshness: 'stale'`、`conflicting`、`sourceUnavailable` 各出一行；
-    - 只有“证据 `unchecked` 是唯一原因”时才完全不出行；它同时有 `stale`、`conflicting` 或 `sourceUnavailable` 时仍出那一行；同时有 `broken` 时只出 `broken` 那一行（C18）。
+    - 只有“证据 `unchecked` 是唯一原因”时才完全不出行；它同时有 `stale`、`conflicting` 或 `sourceUnavailable` 时仍出那一行；同时有 `broken` 时只出 `broken` 那一行（C18）。（8E-2 冻结注，2026-11-04：`freshness: 'stale'`、`staleReasons` 不为空、或证据存疑（`refs_pending`），都出一行“需复查”（只出一次）；只有 `unchecked`（`unavailable`/`budget`）是唯一原因时不出行，C18 不变。只因存疑出行的联系一段里超过 3 条时合成一行“这些节点上另有 k 条联系待核，不能当现行结论”。见 8E-2 R11，决定 116-2 第 2、6 件。）
     - 代码见 `note-read-model.ts:2044–2057`；结论行和警示行不拆开。
   - `flow` 不进。查询的输入今天不收一般注记行（`agent-runtime/context-query-recipe.ts:91` 只记来源），联系也不收。
 - **L11 agent 的工具：**
@@ -575,8 +575,8 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
     - 回执是 `evidence_missing` 时，按 `evidenceIndexes` 改那几条再写；
     - 读懂一条业务流程时，先记各步的联系，再记流程；
     - 两头尽量给到函数；
-    - L3e 的几条限制，特别是：核对只证明指定的引用和文字在指定范围里共现，不证明接线。
-- **L12 书记。** 联系和流程照第 4 片进 `stale` 读；证据 `broken` 的也进，原因 `link_evidence_broken`（L3c）。Host、`lookup`/`find` 和这里的 `stale` 读共用 L3c/L9 的同一份派生（C14）。书记合并重复、标过时、重写流程，不加新的触发。
+    - L3e 的几条限制，特别是：核对只证明指定的引用和文字在指定范围里共现，不证明接线。（8E-2 冻结注，2026-11-04：L11 加一个只读工具 `check_links`（`{ items: { noteId, version }[] }`，1–20 条），和“看”“找”同一处装配，有看、找的线都有（审阅线、不写注记的 Query 在内），服务端不拒任何职责；时限 8 秒，到了这次回 `unchecked`（`budget`）。说明写明平时不用调，平台空闲时会核，只有马上要依据一条存疑的联系做事时才调。`record_note` 的 `op` 不改。见 8E-2 H3、H4，决定 116-2 第 4 件。）
+- **L12 书记。** 联系和流程照第 4 片进 `stale` 读；证据 `broken` 的也进，原因 `link_evidence_broken`（L3c）。Host、`lookup`/`find` 和这里的 `stale` 读共用 L3c/L9 的同一份派生（C14）。书记合并重复、标过时、重写流程，不加新的触发。（8E-2 冻结注，2026-11-04：后台批量不唤醒书记；存疑的不进书记的待查，后台核出断了才以“证据对不上”进。另加一个触发：书记提醒数断了的联系，满 5 条，或最早一条断了满 10 分钟（从改它的 Run 结束后算）就提醒，只数断了的、不数存疑。见 8E-2 H2、S，决定 116-2 第 3、6 件。）
 - **L13 显示：**
   - `renderNoteHeader` 加两种格式：
     - 联系：`<类名>·<关系名>(<从的显示>→<到的显示>)：<结论>`；
@@ -595,13 +595,13 @@ readSemanticFlows(ctx, input: { scope: SemanticScopeV1; cursor: string | null; l
 - **E4** 工作执行的输入（“注记”一段），经第 3 片的准备入口。
 - **E5** 记忆的 `lookup`、`find`（agent 的工具）。
 - 少量纯函数：L1 的形状检查、L3a 的角色表和“合起来”的规则、L7 的归到模块。
-- 数捕获次数（E-31、E-32、E-46）用包在真实工作区端口外面的计数，同第 8 片 §13 的做法；只数联系重核开的捕获，不读库核对。
+- 数捕获次数（E-31、E-32、E-46）用包在真实工作区端口外面的计数，同第 8 片 §13 的做法；只数联系重核开的捕获，不读库核对。（8E-2 冻结注，2026-11-04：改成数第二档建程序的次数：世界原地包住 `noteWorkspace` 的 `verify`，一次 `verify` 算一次。见 8E-2 §4.1。）
 - E-15、E-25 的端状态和 `currentEligible` 分别经 E3 的路由、E5 的 `stale`、E4 的执行输入断言（C12）。
-- 以上 E1–E5、少量纯函数和数捕获次数，用户 2026-10-22 确认。
+- 以上 E1–E5、少量纯函数和数捕获次数，用户 2026-10-22 确认。（8E-2 冻结注，2026-11-04：用户 11-03 晚确认改一处（数建程序的次数）、加三处：E6 路由 `architecture/semantic-links/check`；E7 agent 的只读工具 `check_links`；E8 Host 的后台批量（空闲时间注入成很短）。另加 E9 真实 Work Run 里改文件后的平台消息、E10 书记提醒心跳，用户也已确认。见 8E-2 §4.1，决定 116-2 第 1 件和“续二”。）
 
 ### 5.2 验收行为
 
-手算的世界（行号从 1 数）：
+（8E-2 冻结注，2026-11-04：两档以后改了期望的行，在下表行末逐条注明，以 [8E-2 规格](slice-8E2-SPEC.md) §4.3 为准：E-15、E-25（拆成 E-25a、E-25b）、E-26、E-31、E-32（删）、E-33、E-34、E-37、E-38、E-40、E-45、E-46、E-47。E-11、E-13、E-19b、E-42、E-43 归 F2，期望不变；E-27、E-35 期望不变，只换故障点。新加的行 E2-01 起见 8E-2 §4.3。）手算的世界（行号从 1 数）：
 - 目录里的模块：`runtime`（路径 `src/runtime`）、`wg`（`src/wg`）、`contracts`（`src/contracts`）、`robot`（`src/robot`）、`launch`（`launch`）。
 - `src/compose.ts`、`src/wire2.ts`、`config/handlers.json` 不归任何模块。
 - 文件（`bus.ts` 只给 E-33 用，`wire2.ts` 只给 E-31、E-33 用；`handlers.json` 只给 E-35 用）：
@@ -726,7 +726,7 @@ launch/bringup.launch.py
 | E-12 | 步骤引用一般注记 / 同一联系两次 / 1 步或 21 步 / `anchor` 不是第一步的“从” | 依次是 `flow_step_not_link`、`flow_step_duplicate`、`flow_step_count`、`flow_anchor_mismatch` |
 | E-13 | 两步：A→B、C→D | `gapsAfter: [1]` |
 | E-14 | 只写了 K1 时按模块 `runtime` 读；再写一条从 `src/compose.ts` 出发的 `calls`（到 `audit.ts` 函数 `audit`，key `'wg.audit'`，两条证据都是 `compose.ts` 第 9 行）；目录里两个模块并列认领同一文件时再读 | `runtime` 读到 K1；`src/compose.ts` 那一端 `not_owned`；并列的那一端 `ambiguous` |
-| E-15 | K1 写时给 `basisFiles: ['src/compose.ts']`。之后改 `compose.ts` 第 10 行；再删掉 `permit.ts` 里的 `authorize` | 前者 `freshness: 'stale'`，证据重核仍 `verified`（第 7 行没动），三端仍 `live`；后者“到”按第 4 片 L23 重解，`anchorStatus: 'retired'`、`anchorRetiredReasons: ['symbol_missing']`（M2），“从”“经过”`live`，证据 `broken`、`missing: [1]`，`currentEligible: false`，出现在书记的 `stale` 读里。断言入口：E1 写，E3 读路由的端状态，E5 读书记的 `stale` 读（C12、N2） |
+| E-15 | K1 写时给 `basisFiles: ['src/compose.ts']`。之后改 `compose.ts` 第 10 行；再删掉 `permit.ts` 里的 `authorize` | 前者 `freshness: 'stale'`，证据重核仍 `verified`（第 7 行没动），三端仍 `live`；后者“到”按第 4 片 L23 重解，`anchorStatus: 'retired'`、`anchorRetiredReasons: ['symbol_missing']`（M2），“从”“经过”`live`，证据 `broken`、`missing: [1]`，`currentEligible: false`，出现在书记的 `stale` 读里。断言入口：E1 写，E3 读路由的端状态，E5 读书记的 `stale` 读（C12、N2） （8E-2 冻结注，2026-11-04：照 8E-2 §4.3 的 E-15：改后读 `stale`、`unchecked`/`refs_pending`、建 0；核后 `verified`、仍 `stale`、建 1；删 `authorize` 那半不变） |
 | E-16 | 目标 g1 的 agent 写联系，目标 g2 的 agent 去读；书记审过以后再读；Host 路由读 | g2 默认看不到；审过以后看得到；Host 一直看得到，三个可见状态都返回，并带状态（C16） |
 | E-17 | g1 的执行在 `src/runtime/run.ts` 上干活 | 输入的“注记”一段有 K1 的行，文字按 L13 的格式（期望值写任务书时按平台包字符串手写）；流程不出现 |
 | E-18 | `find` 的 `kind: 'link'`；`kind: 'general'` | 前者只回联系；后者不含联系 |
@@ -737,29 +737,29 @@ launch/bringup.launch.py
 | E-22 | K1 的 [1] 改成 `compose.ts` 第 10 行；再把 [0] 也改成 `run.ts` 第 1 行 | 前者 `invalid`、`evidence_missing`、`evidenceIndexes: [1]`；后者 `[0, 1]` |
 | E-23 | K1 的证据换成 `use`、`register`；K3 只给 `register` | 都是 `invalid`、`evidence_roles` |
 | E-24 | K3 的 key 给 `null`；再把它的 [0] 改成 `compose.ts` 第 10 行 | 前者 `accepted`，`warnings: ['evidence_unverifiable']`，`unverifiable`、`key_not_literal`；后者 `invalid`、`evidence_missing`、`[0]`（`register` 还要引用“到”） |
-| E-25 | 写 K1；把 `compose.ts` 第 7 行改成 `const access: Access = { beforeCall: async () => {} };`；按模块 `runtime` 读，书记读 `stale`，g1 在 `run.ts` 上准备执行 | 路由读出 `broken`、`missing: [1]`、`currentEligible: false`，三端 `from`、`to`、`via` 都仍 `live`；书记的 `stale` 读里有它，原因 `link_evidence_broken`；“注记”一段出一行警告（文字写任务书时按平台包字符串手写）。断言入口：E3 读路由，E5 读书记的 `stale`，E4 读执行输入（C12） |
-| E-26 | 写 K1、K2；在 `compose.ts` 第 1 行前插一行注释 | K1 `broken`、`[1]`（第 7 行变成 `import type { Hooks }…`）；K2 `broken`、`[0]`（第 8 行变成 `const access…`）；两条的 `use` 给的是函数名，仍找得到 |
+| E-25 | 写 K1；把 `compose.ts` 第 7 行改成 `const access: Access = { beforeCall: async () => {} };`；按模块 `runtime` 读，书记读 `stale`，g1 在 `run.ts` 上准备执行 | 路由读出 `broken`、`missing: [1]`、`currentEligible: false`，三端 `from`、`to`、`via` 都仍 `live`；书记的 `stale` 读里有它，原因 `link_evidence_broken`；“注记”一段出一行警告（文字写任务书时按平台包字符串手写）。断言入口：E3 读路由，E5 读书记的 `stale`，E4 读执行输入（C12） （8E-2 冻结注，2026-11-04：拆成 8E-2 §4.3 的 E-25a、E-25b：第一次读存疑（`refs_pending`），执行输入一行“需复查”，书记读没有它；核过以后 `broken [1]`，书记读有它，执行输入一行“证据对不上”） |
+| E-26 | 写 K1、K2；在 `compose.ts` 第 1 行前插一行注释 | K1 `broken`、`[1]`（第 7 行变成 `import type { Hooks }…`）；K2 `broken`、`[0]`（第 8 行变成 `const access…`）；两条的 `use` 给的是函数名，仍找得到 （8E-2 冻结注，2026-11-04：期望不变，加“建 0”，8E-2 §4.3） |
 | E-27 | Python 的 `injects`：从 `drive.py`（`symbolRequest` 名字 `main`）到 `teleop.py`（`start`），经过 `ports.py`（`Publisher`）；[0] `use`：`drive.py` 第 1–2 行；[1] `wire`：`teleop.py` 第 1–2 行 | `accepted`；`warnings` 有 `symbol_unresolved` 和 `evidence_unverifiable`；`unverifiable`、`language_unsupported` |
 | E-28 | K1 的“到”写成 `authorise`（`permit.ts` 里没有） | `invalid`、`link_end_unresolved`，`reason` 是 `link_end_unresolved: extraAnchors[0]` |
 | E-29 | K1 的 [0] 改成 `permit.ts` 第 1–3 行 | `invalid`、`evidence_outside_end`、`evidenceIndexes: [0]` |
 | E-30 | K1 带 key；K3 不带 `key` 字段；K3 的字面 key 含换行，或 513 个码点；K1 的 [0] 同时给 `symbolRequest` 和 `range`；K1 的 [1] 给 `range: { startLine: 8, endLine: 7 }` | 依次是 `link_key_mismatch`、`link_key_mismatch`、`link_key_invalid`、`evidence_invalid: link.evidence[0].at`、`evidence_invalid: link.evidence[1].at.range`（都写在 `reason` 里） |
-| E-31 | 读 K1 两次，文件都没改；改 `compose.ts` 第 10 行（`start` 改名 `begin`）后再读；再改 `wire2.ts` 第 2 行后读 | 前两次 `verified`，没有开联系重核捕获；第三次开 1 个联系重核捕获，仍 `verified`；第四次仍开 1 个联系重核捕获，仍 `verified`（`compose.ts` 仍是第三次改动后的样子，和写入时不同；结果不存，C3、N7）。另一个子例：只改 `wire2.ts`，门里的文件都保持写入时的版本 → 0 个捕获、`verified`。这里的计数只数联系重核开的捕获（C4） |
-| E-32 | 注入 `NOTE_LINK_RECHECK_MAX = 1`；写 K1、K3（K1 的 `noteId` 在前）；改 `compose.ts` 第 10 行，按项目读 | K1 重核、`verified`；K3 `unchecked`、`budget`。计数只数联系重核开的捕获，K1 一个（C4） |
-| E-33 | `callback`：从 `bus.ts`（文件锚点，不带符号）到 `bus.ts` 函数 `select`，经过同一个文件的 `onSelected`；[0] `wire`：`wire2.ts` 第 3 行（`bus.onSelected = bus.select`）；[1] `use`：`bus.ts` 函数 `select`。写成功后删掉 `bus.ts` 的 `onSelected`（第 2 行），再读 | 先 `accepted`、`verified`；删掉后只有“经过”`retired`、`anchorRetiredReasons: ['symbol_missing']`，“从”和“到”仍 `live`：“到”和“经过”两个附加槽共用一个文件键，按槽位分开（N2）；证据 `broken`、`missing: [0, 1]`，`currentEligible: false` |
-| E-34 | 写 K1、K2 和流程 [K1, K2]；再照 E-25 改第 7 行；再写一条证据没坏、取代 K1 的 K1' | 读出 `gapsAfter: [1]`；改后第 1 步 `problem: 'broken'`（`item` 保留），整条 `stale`；K1 被取代后第 1 步 `problem: 'not_current'`（状态压过 broken），`item: null`，整条 `stale`（C14、N6） |
+| E-31 | 读 K1 两次，文件都没改；改 `compose.ts` 第 10 行（`start` 改名 `begin`）后再读；再改 `wire2.ts` 第 2 行后读 | 前两次 `verified`，没有开联系重核捕获；第三次开 1 个联系重核捕获，仍 `verified`；第四次仍开 1 个联系重核捕获，仍 `verified`（`compose.ts` 仍是第三次改动后的样子，和写入时不同；结果不存，C3、N7）。另一个子例：只改 `wire2.ts`，门里的文件都保持写入时的版本 → 0 个捕获、`verified`。这里的计数只数联系重核开的捕获（C4） （8E-2 冻结注，2026-11-04：照 8E-2 §4.3 的 E-31：四次读都不建程序；第三次读存疑；核一次（建 1）后第四次读 `verified`，来自内存结论；取代 N7） |
+| E-32 | 注入 `NOTE_LINK_RECHECK_MAX = 1`；写 K1、K3（K1 的 `noteId` 在前）；改 `compose.ts` 第 10 行，按项目读 | K1 重核、`verified`；K3 `unchecked`、`budget`。计数只数联系重核开的捕获，K1 一个（C4） （8E-2 冻结注，2026-11-04：删，读不再重核，没有这个上限，8E-2 §4.3） |
+| E-33 | `callback`：从 `bus.ts`（文件锚点，不带符号）到 `bus.ts` 函数 `select`，经过同一个文件的 `onSelected`；[0] `wire`：`wire2.ts` 第 3 行（`bus.onSelected = bus.select`）；[1] `use`：`bus.ts` 函数 `select`。写成功后删掉 `bus.ts` 的 `onSelected`（第 2 行），再读 | 先 `accepted`、`verified`；删掉后只有“经过”`retired`、`anchorRetiredReasons: ['symbol_missing']`，“从”和“到”仍 `live`：“到”和“经过”两个附加槽共用一个文件键，按槽位分开（N2）；证据 `broken`、`missing: [0, 1]`，`currentEligible: false` （8E-2 冻结注，2026-11-04：期望不变，加“建 0”，8E-2 §4.3） |
+| E-34 | 写 K1、K2 和流程 [K1, K2]；再照 E-25 改第 7 行；再写一条证据没坏、取代 K1 的 K1' | 读出 `gapsAfter: [1]`；改后第 1 步 `problem: 'broken'`（`item` 保留），整条 `stale`；K1 被取代后第 1 步 `problem: 'not_current'`（状态压过 broken），`item: null`，整条 `stale`（C14、N6） （8E-2 冻结注，2026-11-04：照 8E-2 §4.3 的 E-34：第 7 行改成第一档能确定的 `{ before: authorize }`，第 1 步 `broken`） |
 | E-35 | K3 的 [0] 改成 `config/handlers.json` 第 1 行（`register`）；再把第 1 行改成 `{"wg.other": "…"}` | 前者 `accepted`、`warnings: ['evidence_unverifiable']`、`unverifiable`、`language_unsupported`（字面 key 照查，引用部分查不了不算找不到）；后者 `invalid`、`evidence_missing`、`evidenceIndexes: [0]` |
 | E-36 | 写 K7（`overload.ts` 的重载 `pick`） | `accepted`、`verified`；[0] 的范围是导航项的三个声明段 :1、:2、:3–5，字面 `'overload-key'` 在 :4，落在第三段；若只取第一段会 `evidence_missing`（C8） |
-| E-37 | 写一条 `data`：`run.ts` 文件锚点 → `permit.ts` 文件锚点，key `'reports/latest.json'`，[0] `emit` 给 `saveReport` 的 `symbolRequest`，[1] `receive` 给 `permit.ts` 5–7 行；写时让 [0] 的捕获查询报 `source_stale`（工作树和捕获内容不同），之后让分析器仍不可用读一次，再恢复 | 写 `accepted`，`warnings: ['evidence_unverifiable']`，`unverifiable`、`analyzer_unavailable`；存下的 [0].at 保留 `symbolRequest`（名字 `saveReport`），没有 `symbol`，没有隐式改成整个文件，`fileDigest: null`。分析器仍不可用时读：`unverifiable`（`analyzer_unavailable`），不是 `unchecked`（N4）。恢复后读：因 `fileDigest` 是 null 重试，`verified`（C1、C2） |
-| E-38 | 写一条纯字面的 `data`：`run.ts` 文件锚点 → `permit.ts` 文件锚点，key `'reports/latest.json'`，[0] `emit` 给 `run.ts` 9–11 行，[1] `receive` 给 `permit.ts` 5–7 行 | 写和读都 `verified`，开 0 个捕获，也不发 `text` 查询；改 `run.ts` 第 10 行的路径后再读 → `broken`、`missing: [0]`，仍 0 个捕获（C5） |
+| E-37 | 写一条 `data`：`run.ts` 文件锚点 → `permit.ts` 文件锚点，key `'reports/latest.json'`，[0] `emit` 给 `saveReport` 的 `symbolRequest`，[1] `receive` 给 `permit.ts` 5–7 行；写时让 [0] 的捕获查询报 `source_stale`（工作树和捕获内容不同），之后让分析器仍不可用读一次，再恢复 | 写 `accepted`，`warnings: ['evidence_unverifiable']`，`unverifiable`、`analyzer_unavailable`；存下的 [0].at 保留 `symbolRequest`（名字 `saveReport`），没有 `symbol`，没有隐式改成整个文件，`fileDigest: null`。分析器仍不可用时读：`unverifiable`（`analyzer_unavailable`），不是 `unchecked`（N4）。恢复后读：因 `fileDigest` 是 null 重试，`verified`（C1、C2） （8E-2 冻结注，2026-11-04：整行照 8E-2 §4.3 的 E-37 重写：写时第二档失败，存 `unverifiable`/`analyzer_unavailable`；写后核对和读都是存疑；失败时核回 `unchecked`/`unavailable`、不记；恢复后核 `verified`） |
+| E-38 | 写一条纯字面的 `data`：`run.ts` 文件锚点 → `permit.ts` 文件锚点，key `'reports/latest.json'`，[0] `emit` 给 `run.ts` 9–11 行，[1] `receive` 给 `permit.ts` 5–7 行 | 写和读都 `verified`，开 0 个捕获，也不发 `text` 查询；改 `run.ts` 第 10 行的路径后再读 → `broken`、`missing: [0]`，仍 0 个捕获（C5） （8E-2 冻结注，2026-11-04：期望不变，“0 个捕获”换成“建 0”，8E-2 §4.3） |
 | E-39 | 写 K1，[0] 改成 `permit.ts` 1–3 行（不在“从”里），[1] 改成 `compose.ts` 第 10 行（找不到）；再把“到”写成 `authorise`，同时 [1] 找不到 | 前者 `invalid`、`evidence_outside_end`、`evidenceIndexes: [0]`（不是 `evidence_missing`）；后者 `invalid`、`link_end_unresolved`（先于 `evidence_missing`）（C6） |
-| E-40 | 写 K1；读时让 `compose.ts` 第 7 行确定找不到，让 `run.ts` 读不了（端口报 `forbidden`）；再把第 7 行改回原样，只让 `run.ts` 读不了；再恢复 `run.ts` 可读，只改 `compose.ts` 第 10 行触发重核（第 7 行保持有效），让新捕获里没有 `compose.ts`、工作树有它；另写一次 K1，写时让证据 [1] 的 `compose.ts` 读取报 `forbidden`（`compose.ts` 不是锚点，不会先撞锚点一步） | 第一 `broken`、`missing: [1]`，不是 `unchecked`（确定缺失压过查不了）；第二 `unchecked`、`unavailable`，`currentEligible: false`（C6）；第三，捕获缺文件而工作树有 → `unchecked`（`unavailable`），不是 `broken`（N5）；最后 `invalid`、`evidence_invalid: link.evidence[1].at.path`（M1） |
+| E-40 | 写 K1；读时让 `compose.ts` 第 7 行确定找不到，让 `run.ts` 读不了（端口报 `forbidden`）；再把第 7 行改回原样，只让 `run.ts` 读不了；再恢复 `run.ts` 可读，只改 `compose.ts` 第 10 行触发重核（第 7 行保持有效），让新捕获里没有 `compose.ts`、工作树有它；另写一次 K1，写时让证据 [1] 的 `compose.ts` 读取报 `forbidden`（`compose.ts` 不是锚点，不会先撞锚点一步） | 第一 `broken`、`missing: [1]`，不是 `unchecked`（确定缺失压过查不了）；第二 `unchecked`、`unavailable`，`currentEligible: false`（C6）；第三，捕获缺文件而工作树有 → `unchecked`（`unavailable`），不是 `broken`（N5）；最后 `invalid`、`evidence_invalid: link.evidence[1].at.path`（M1） （8E-2 冻结注，2026-11-04：①②④ 不变；③ 换成核时第二档失败 → 核回 `unchecked`/`unavailable`、不记，再读存疑，8E-2 §4.3 的 E-40） |
 | E-41 | K1 的 [0].at.symbolRequest.language 改成 `python`（文件是 `.ts`）；K1 的“到”language 改成 `python`；K3 的 key 改成符号 key、language 写 `python`；K5 的证据给 `symbolRequest`（`.py` 文件） | 依次是 `evidence_invalid: link.evidence[0].at.symbolRequest`、`anchor_invalid: extraAnchors[0]`、`link_key_invalid`、`evidence_invalid: link.evidence[0].at.symbolRequest`（K2、C7；扩展名是唯一权威） |
 | E-42 | 写 K1、K2 和流程 [K1, K2]；在 `run.ts` 第 1 行前插一行注释；再写一条 `anchor` 与 K1 的“从”相同的流程；再写一条 `anchor` 是 `run.ts` 的 `dispatch` 的流程 | 第三句 `accepted`（端点身份不看行号）；第四句 `invalid`、`flow_anchor_mismatch`（`dispatch` 和 `runModel` 身份不同）；`gapsAfter` 仍是 `[1]`（C13） |
 | E-43 | 写 K1、K6 和流程 [K1, K6]；写一条证据同样有效的 K1' 取代 K1；按模块 `runtime` 读流程 | 流程仍出现在 `runtime` 的范围里：归属看它引用的 K1（已被取代），K6 不涉及 `runtime`；第 1 步 `item: null`、`not_current`，整条 `stale`（C15、N8） |
 | E-44 | 同一锚点已有 30 条现行联系，且新联系与一条你确认过的注记矛盾；你经 `notes/write` 写一条合法联系 | `accepted`，不是 `pending_review`、不是 `quota_full`；矛盾、取代你确认过的和额度只把 agent、书记的写入送待审（C17） |
-| E-45 | K1 带 `basisFiles: ['src/compose.ts']`；注入 `NOTE_LINK_RECHECK_MAX = 0`；改 `compose.ts` 第 10 行；g1 在 `run.ts` 上准备执行。再把上限调回 10，改 `compose.ts` 第 7 行 | 前者证据 `unchecked`（`budget`）、`freshness: 'stale'`；执行输入仍出一行 stale 警告（不是没有行）。后者证据 `broken`，同时仍有 stale；只出 `broken` 那一行警告（C18） |
-| E-46 | 注入 `NOTE_LINK_RECHECK_MAX = 2`；写 K1、K2、K3 和两条流程 [K1, K2]、[K1, K3]，夹具让 [K1, K2] 的 `noteId` 在前；改 `compose.ts` 第 10 行，经 `architecture/semantic-flows` 按项目一次读 | K1 只重核一次（两条流程共用），K2 重核，K3 `unchecked`、`budget`；第一条流程 `fresh`、`currentEligible: true`；第二条流程 `unchecked`、`currentEligible: false`；联系重核捕获共 2 个（C14、N6、N9） |
-| E-47 | 分析器写时不可用：写 K1 和 K3（两条的“从”都在 `run.ts`：K1 请求 `runModel`，K3 请求 `dispatch`），所有 `symbolRequest` 都解析不出（端都存成普通文件锚点，原样请求另存）。然后恢复分析器（流程的锚点仍按第 4 片在锚点一步解析，分析器不可用时流程写不进），写流程 [K1, K3]（`anchor` 是 `run.ts` 的 `runModel`），再写一条步骤相同、`anchor` 是 `run.ts` 的 `dispatch` 的流程 | 两条联系都 `accepted`、`unverifiable`（`analyzer_unavailable`）；端点身份按存下的请求算，不因都没解析成就并成同一个文件身份；第一条流程 `accepted`；第二条 `invalid`、`flow_anchor_mismatch`（N1） |
+| E-45 | K1 带 `basisFiles: ['src/compose.ts']`；注入 `NOTE_LINK_RECHECK_MAX = 0`；改 `compose.ts` 第 10 行；g1 在 `run.ts` 上准备执行。再把上限调回 10，改 `compose.ts` 第 7 行 | 前者证据 `unchecked`（`budget`）、`freshness: 'stale'`；执行输入仍出一行 stale 警告（不是没有行）。后者证据 `broken`，同时仍有 stale；只出 `broken` 那一行警告（C18） （8E-2 冻结注，2026-11-04：照 8E-2 §4.3 的 E-45：没有重核上限；改第 10 行读存疑加 `stale`，只出一行“需复查”；用第一档确定的改法只出“证据对不上”） |
+| E-46 | 注入 `NOTE_LINK_RECHECK_MAX = 2`；写 K1、K2、K3 和两条流程 [K1, K2]、[K1, K3]，夹具让 [K1, K2] 的 `noteId` 在前；改 `compose.ts` 第 10 行，经 `architecture/semantic-flows` 按项目一次读 | K1 只重核一次（两条流程共用），K2 重核，K3 `unchecked`、`budget`；第一条流程 `fresh`、`currentEligible: true`；第二条流程 `unchecked`、`currentEligible: false`；联系重核捕获共 2 个（C14、N6、N9） （8E-2 冻结注，2026-11-04：照 8E-2 §4.3 的 E-46：改后两条流程都 `unchecked`（三条都存疑）；一次核三条（建 1）后两条流程都 `fresh`；预算部分删） |
+| E-47 | 分析器写时不可用：写 K1 和 K3（两条的“从”都在 `run.ts`：K1 请求 `runModel`，K3 请求 `dispatch`），所有 `symbolRequest` 都解析不出（端都存成普通文件锚点，原样请求另存）。然后恢复分析器（流程的锚点仍按第 4 片在锚点一步解析，分析器不可用时流程写不进），写流程 [K1, K3]（`anchor` 是 `run.ts` 的 `runModel`），再写一条步骤相同、`anchor` 是 `run.ts` 的 `dispatch` 的流程 | 两条联系都 `accepted`、`unverifiable`（`analyzer_unavailable`）；端点身份按存下的请求算，不因都没解析成就并成同一个文件身份；第一条流程 `accepted`；第二条 `invalid`、`flow_anchor_mismatch`（N1） （8E-2 冻结注，2026-11-04：照 8E-2 §4.3 的 E-47：故障改成读口失败加第二档失败；写后核对 `unchecked`/`unavailable`；两条流程不变） |
 
 ### 5.3 要改断言的旧测试
 
@@ -777,14 +777,14 @@ launch/bringup.launch.py
   - `work-graph/notes/note-service.ts`（形状、接入找证据、步骤、取代家族、额度）；
   - 新文件 `work-graph/notes/link-evidence.ts`（L3a 的表、范围、落在哪里、字面查找、引用筛选、合起来的规则；写时和读时共用）；
   - `work-graph/notes/note-anchors.ts`（同一文件两个锚点的判重；`link` 三个端不在锚点一步解析，交给 L3b，C4）；
-  - `work-graph/views/note-views.ts`（读时重核和预算，按 L3d；按锚点槽位的状态和原因，N2）；
+  - `work-graph/views/note-views.ts`（读时重核和预算，按 L3d；按锚点槽位的状态和原因，N2）；（8E-2 冻结注，2026-11-04：两档以后这里是第一档的读、内存结论和存疑队列；另加工作区的分析文件：`workspace/single-file-syntax.ts`、第二档的分析线程和 `workspace/native-single-file.ts`，加 Kernel 补丁的 `readMany`。文件和白名单以 8E-2 §3.3 为准。）
   - `work-graph/state/note-machine.ts`（状态，AGENTS 第 9 条）；
   - `work-graph/persistence/note-record-codecs.ts`（种类、字段、新索引）；
   - `work-graph/notes/note-read-model.ts`（种类过滤、结果项、执行输入的行、`stale` 读收 `broken`）；
   - 新文件 `work-graph/notes/semantic-layer-read.ts`。
 - **工作区：** 不加端口，找证据经 `NoteAnchorWorkspace`（`note-anchors.ts:40–45`）。按 lead 2026-10-22 的决定改：`workspace/ports.ts`（`SourceHit` 的符号命中加可选的 `declarationRanges`）、`workspace/typescript-source-query.ts`（:204 收全部声明段）、`workspace/source-query.ts`（:39 照转）。
 - **Runtime：** `agent-runtime/note-tool.ts`、`agent-runtime/graph-tools.ts`。
-- **Host：** `app/core-routes.ts`、`app/core-http-types.ts`。不加自动抓，也不加重核路由（L3d 选了 (a)）。
+- **Host：** `app/core-routes.ts`、`app/core-http-types.ts`。不加自动抓，也不加重核路由（L3d 选了 (a)）。（8E-2 冻结注，2026-11-04：仍不加自动抓；加核对路由 `architecture/semantic-links/check`，`app/host.ts` 加后台批量（心跳里一个调用）和书记提醒数断了的联系。见 8E-2 R13、H2、S。）
 - **组合根：** `composition/create-platform.ts`。
 - **平台包：** `resources/prompts/platform/**`（字符串、工具说明、Skill），加上生成的模块；根目录的 `runtime-assets.json` 一起更新（包信息、字符串文件和资源摘要都要同步，C20）。
 - **文档：** `docs/refactor/STATE-MACHINES-SPEC.md` 的 S4-NOTE 加 §3 的行（C20）；`docs/refactor/design/orchestration-2026-10/E3-UI-ITEMS.md` 的 D87-1 补核对结果展示：`verified`、`broken` 和哪一条、`unverifiable` 和原因、`unchecked` 和原因（N12；lead 在规格提交时写）。
@@ -792,7 +792,7 @@ launch/bringup.launch.py
 
 ## 7. 施工
 
-- 排在 8C 之后（§0.4），分两段，各一次 DSH 运行，照 [DSH-WORKFLOW §6.10](../../../DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)。
+- 排在 8C 之后（§0.4），分两段，各一次 DSH 运行，照 [DSH-WORKFLOW §6.10](../../../DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)。（8E-2 冻结注，2026-11-04：第一段已做完（8E-1，`3fc8d247`），第二段里流程的写侧已做完（8E-2 F1，`720eb978`）。剩下的第二段换成 [8E-2 规格](slice-8E2-SPEC.md) §3：分 W、F2、R、G、H、S 六组，先后、文件和行数照那里；下面原写的第二段的读时重核、它的行数和开头的实测不再适用，只留作历史。）
   - **第一段：`link` 这一种做到最终合同（C19、N11）。**
     - 合同：`NoteKind` 只加 `'link'`；`record_note` 的工具枚举、`find_graph` 的种类过滤加 `'link'`；显示映射（`contracts/note.ts:112` 的 `Record<NoteKind, string>`）加 `link` 一项。类型：`LinkInputV1`、`LinkEvidenceV1`、`LinkEvidenceStoredV1`（原始选择器 + 解析位置）、`LinkEndRequestV1`、`LinkKeyStoredV1`、`LinkPayloadV1`（`ends`、`key.symbolRequest`、`analysisConfig`）、`LinkVerificationV1`（这一段只有 `verified`、`unverifiable`）、`NoteDraftV1` 的 `link` 支；`WriteNoteResult` 的新原因和 `evidenceIndexes`；第 4 片 `NoteCheckV1`/`NoteItemV1` 的 `anchorSlots`；`SemanticEndV1`（`request`、按槽位的状态）、`SemanticLinkV1`（含每端状态和 `currentEligible`）、`LinkReadPayloadV1`、`SemanticScopeV1`、`readSemanticLinks`；`SourceHit.declarationRanges?`（C8）。
     - 规则：L1、L3、L3a、L3b（写时证据核对）、L4–L8、L10（只有联系行，先不查读时重核）、L11、L13。
@@ -820,6 +820,6 @@ launch/bringup.launch.py
 - 不从代码自动推联系，不用运行记录确认。
 - 不证明运行时走哪条分支、配置装的是哪个实现（L3e）。
 - 不给 Python、C++ 做引用核对，也不退成按名字找文字（L3b）。
-- 核对结果不存，每次读时算。
+- 核对结果不存，每次读时算。（8E-2 冻结注，2026-11-04：仍不落记录；第二档的结论放 Host 内存，按注记版本和门里文件的摘要记，重启就丢，8E-2 R7。）
 - 流程不跟着取代自动更新，不猜改名。
 - 不做界面（E3 的 D87-1）。
