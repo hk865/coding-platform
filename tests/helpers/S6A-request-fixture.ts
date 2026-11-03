@@ -620,10 +620,11 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     return read.value;
   }
 
-  async function createSession(label: string, role: RoleConfigurationRef, at?: string): Promise<S6ASession> {
+  async function createSession(label: string, role: RoleConfigurationRef, at?: string,
+    initialLinks: Parameters<typeof createAG2bSession>[3] = []): Promise<S6ASession> {
     if (at !== undefined) clock.set(at);
     // `createAG2bSession`'s parameter is typed by its default legacy role; the route takes any complete role.
-    const created = await createAG2bSession(ag2b(), `s6a-session-${label}`, role as never);
+    const created = await createAG2bSession(ag2b(), `s6a-session-${label}`, role as never, initialLinks);
     const card = await readSession(created.sessionRef);
     return { label, ref: created.sessionRef, aggregateRef: card.record.ref, role: structuredClone(role),
       createdAt: card.record.createdAt };
@@ -744,7 +745,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     readSession,
     async listSessions() { return await listSessions(ag2b()); },
 
-    createSecretary: (label, opts = {}) => createSession(label, S6A_SECRETARY_ROLE, opts.at),
+    createSecretary: (label, opts = {}) => createSession(label, S6A_SECRETARY_ROLE, opts.at,
+      [{ target: { kind: 'project', ref: { projectId: S6A_SCOPE.projectId } }, relation: 'responsible' }]),
     async createUnprofiledSecretary(label, opts = {}) { return createSession(label, await unprofiledSecretaryRole(), opts.at); },
     createWorkSession: (label, opts = {}) => createSession(label, S6A_WORK_ROLE, opts.at),
 
@@ -1002,7 +1004,9 @@ Promise<{ world: S6ARequestWorld; second: S6ASecondWorkspace }> {
     readSession: readSecond,
     async createSecretary(label) {
       const created = asRecord(await world.dispatch('sessions/create', contextOf(), plain(S6A_SECOND_SCOPE, {
-        workspace: { ...S6A_SECOND_SCOPE }, role: S6A_SECRETARY_ROLE, recommendedRefs: [], initialLinks: [],
+        workspace: { ...S6A_SECOND_SCOPE }, role: S6A_SECRETARY_ROLE, recommendedRefs: [],
+        initialLinks: [{ target: { kind: 'project', ref: { projectId: S6A_SECOND_SCOPE.projectId } },
+          relation: 'responsible' }],
         meta: { requestId: `s6a-second-session-${label}`, expected: [] },
       })));
       if (created['status'] !== 'completed') {

@@ -25,6 +25,7 @@ import type { SessionOperationsPort } from '../../src/core/agent-runtime/session
 import type { SecretaryProfilePort } from '../../src/core/work-graph/model/request-contracts.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
+import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService, REQUEST_TAIL_PREFIX } from '../../src/core/work-graph/tasks/request-service.js';
 import {
@@ -137,10 +138,12 @@ function faultyIntake(world: S6ARequestWorld, fault: {
     records, facts, sessionFacts: world.platform.sessionFacts, duty, profiles: profilePort(fault.serviceProfile),
     now: () => world.clock.now(), operationId: () => `s6a-retries-${world.backend}-${++sequence}`,
   });
+  const effectiveScope = createEffectiveScopeReader({
+    records, architecture: world.platform.architecture, duties: duty });
   return createRequestIntake({
     rounds, facts,
     selection: createSecretarySelection({ records, sessionFacts: world.platform.sessionFacts, profiles: real,
-      scope: createProjectSecretaryScope(), duty }),
+      scope: createProjectSecretaryScope(effectiveScope), duty }),
     lineCreation, profiles: profilePort(fault.intakeProfile), sessionFacts: world.platform.sessionFacts,
   });
 }

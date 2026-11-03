@@ -12,6 +12,9 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createGoalSecretary } from '../../src/core/work-graph/tasks/goal-secretary.js';
+import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
+import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
+import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { GoalConfirmDraftReceiptV1 } from '../../src/contracts/goal-card.js';
 import type { SessionRef, RoleConfigurationRef } from '../../src/contracts/core/identity.js';
@@ -129,7 +132,14 @@ describe('F-resolver', () => {
       const duty = dutyOf(host);
       const records = host.platform.disconnect.records;
       const facts = host.platform.requestFacts;
-      const goalSecretary = createGoalSecretary({ ordered: records, requestFacts: facts, duty });
+      const duties = createSessionDutyResolver({
+        readRoleSpec: (...args) => host.platform.roles.readRoleSpec(...args), configuration: undefined });
+      const effectiveScope = createEffectiveScopeReader({
+        records, architecture: host.platform.architecture, duties });
+      const selection = createSecretarySelection({
+        records, sessionFacts: host.platform.sessionFacts, profiles: host.platform.secretaryProfiles,
+        scope: createProjectSecretaryScope(effectiveScope), duty: duties });
+      const goalSecretary = createGoalSecretary({ ordered: records, requestFacts: facts, duty, selection });
       const owners: SessionRef[] = [];
       const runRound = (label: string, goalId: string | null, answer?: string) =>
         holdS6BRequestRound(host, { label, goalId,
@@ -171,12 +181,12 @@ describe('F-resolver', () => {
       expect(await goalSecretary.resolveGoalSecretary(ctx, { goalRef: attributed }))
         .toEqual({ status: 'ready', value: owners[2] });
       // Every failed owner/effective-goal read, `not_found` included, is `unavailable`.
-      const ownerFault = createGoalSecretary({ ordered: records, duty,
+      const ownerFault = createGoalSecretary({ ordered: records, duty, selection,
         requestFacts: { effectiveGoalOf: facts.effectiveGoalOf,
           ownerOf: async () => ({ status: 'not_found' as const }) } });
       expect(await ownerFault.resolveGoalSecretary(ctx, { goalRef: goal }))
         .toMatchObject({ status: 'rejected', code: 'unavailable' });
-      const goalFault = createGoalSecretary({ ordered: records, duty,
+      const goalFault = createGoalSecretary({ ordered: records, duty, selection,
         requestFacts: { ownerOf: facts.ownerOf,
           effectiveGoalOf: async () => ({ status: 'rejected' as const, code: 'unavailable' as const,
             reason: 'the effective goal is not readable' }) } });

@@ -10,6 +10,7 @@ import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { coverageHolds } from '../../src/core/work-graph/state/session-handoff.js';
 import { createSecretaryHandoffFacts } from '../../src/core/work-graph/views/secretary-handoff-facts.js';
+import { transferPinsOf } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { governS6B } from '../helpers/S6B1-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
@@ -18,6 +19,7 @@ import { seedS6BStaleCandidate, seedS6BTwoProcessingRoots } from '../helpers/S6B
 import { waitForRound } from '../helpers/S6A-history-fixture.js';
 import {
   s6b2Accept, s6b2Advance, s6b2Backend, s6b2Duty, s6b2Facts, s6b2Scene, s6b2Workspace, type S6B2Captured,
+  type S6B2WorldValue,
 } from '../helpers/S6B2-handoff-scene.js';
 
 const captured = vi.hoisted((): S6B2Captured => ({ backend: null }));
@@ -51,6 +53,41 @@ function services(world: Parameters<typeof s6b2Facts>[0]) {
   return { facts, advance: s6b2Advance(world, captured, { coverage: facts }) };
 }
 
+type Advance = ReturnType<typeof services>['advance'];
+type CommittedAdvance = Extract<Awaited<ReturnType<Advance['advanceHandoff']>>, { status: 'committed' }>;
+
+/**
+ * TS-17 (o4b1-R1-02): every `createSecretary` line holds one open project link, so after the successor the source's
+ * link moves to the successor in the transfer stage's scope sub-steps before routing (session-handoff-service.ts:
+ * the scope plan, the entry's before write, its after write and the stage exit). The child is the owner the
+ * `sessions/transfer-responsibility` route binds, called with the saved arm between two advances (the
+ * S6B2-handoff-advance.test.ts:104 shape) under the operation's saved system actor, like the routing children below.
+ * Returns the stage exit, whose next stage is routing.
+ */
+async function moveProjectLink(world: S6B2WorldValue, advance: Advance, operation: OperationRef,
+  revision: number): Promise<CommittedAdvance> {
+  const step = async (expectedRevision: number) => {
+    const result = await advance.advanceHandoff(world.humanContext(), { kind: 'continue', operation, expectedRevision });
+    if (result.status !== 'committed') throw new Error(`the scope step at ${expectedRevision} failed: ${JSON.stringify(result)}`);
+    return result;
+  };
+  const plan = await step(revision);
+  expect(plan.value.write).toMatchObject({ stage: 'transfer', item: 'scope:plan', phase: 'after' });
+  const before = await step(plan.value.revision);
+  expect(before.value.write).toMatchObject({ stage: 'transfer', item: 'scope:0', phase: 'before' });
+  const saved = before.value.write.savedInput;
+  if (saved?.kind !== 'transfer') throw new Error('the scope before write saved no transfer input');
+  const child = await world.platform.responsibilities.transferSessionResponsibility(world.systemContext(), {
+    input: { from: saved.from, to: saved.to, target: saved.target },
+    meta: { requestId: saved.requestId, expected: transferPinsOf(saved) } });
+  expect(child.status).toBe('committed');
+  const after = await step(before.value.revision);
+  expect(after.value.write).toMatchObject({ stage: 'transfer', item: 'scope:0', phase: 'after' });
+  const exit = await step(after.value.revision);
+  expect(exit.value.write).toMatchObject({ stage: 'transfer', item: '-', phase: 'after' });
+  return exit;
+}
+
 describe.each(['memory', 'sqlite'] as const)('row 20 on %s: the routing set closes only on a complete read and checks expectedSource', backend => {
   it('routes one root, skips the moved owner and closes with the final read horizon', async () => {
     const { world } = await scene.open(backend);
@@ -74,7 +111,7 @@ describe.each(['memory', 'sqlite'] as const)('row 20 on %s: the routing set clos
       steps.push({ revision: result.value.revision, stage: result.value.write.stage });
       return result.value;
     };
-    // accepted -> fence take -> wait/stopped -> recheck -> existing successor -> routing.
+    // accepted -> fence take -> wait/stopped -> recheck -> existing successor -> project-link transfer -> routing.
     let value = await run(1);
     expect(value.write.stage).toBe('fence');
     value = await run(value.revision);
@@ -83,6 +120,8 @@ describe.each(['memory', 'sqlite'] as const)('row 20 on %s: the routing set clos
     expect(value.write.stage).toBe('recheck');
     value = await run(value.revision);
     expect(value.write.stage).toBe('successor');
+    expect(value.next).toBe('transfer');
+    value = (await moveProjectLink(world, advance, operation, value.revision)).value;
     expect(value.next).toBe('routing');
     value = await run(value.revision);
     expect(value.write.stage).toBe('routing');
@@ -158,6 +197,7 @@ describe('row 20 receipts: found, missing, conflict and unavailable are four out
     expect(value.status).toBe('committed');
     if (value.status !== 'committed') return;
     expect(value.value.write.stage).toBe('successor');
+    value = await moveProjectLink(world, base.advance, operation, value.value.revision);
     value = await base.advance.advanceHandoff(world.humanContext(),
       { kind: 'continue', operation, expectedRevision: value.value.revision });
     expect(value.status).toBe('committed');

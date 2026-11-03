@@ -122,6 +122,7 @@ import {
   createRequestRoundService, workspaceOf, type RequestFactsReader, type RequestRoundPort,
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
+import { createEffectiveScopeReader } from '../core/work-graph/views/role-scope-reader.js';
 import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-query-run.js';
 import { createPlanningQueryRun } from '../core/work-graph/tasks/planning-query-run.js';
 import { createRecipientExecutions } from '../core/work-graph/sessions/recipient-executions.js';
@@ -1247,9 +1248,6 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // request facts fill a request card's `confirmedGoalRef` from it.
     const bindingReads = createInitializationBindingReader({ records: backend.records });
     const rawRequestFacts = createRequestFacts({ records: backend.records, bindings: bindingReads });
-    // The one Goal-secretary resolver the Host's rework notifier asks: the newest kept request owner, else the duty
-    // read. It shares the same request-facts instance and the same duty instance as the rest of the root.
-    const goalSecretary = createGoalSecretary({ ordered: backend.records, requestFacts: rawRequestFacts, duty: dutyRecipient });
     const resolveGoalSecretary = (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
       goalSecretary.resolveGoalSecretary(ctx, input);
     const recipientExecutions = createRecipientExecutions({
@@ -3690,13 +3688,22 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // the request facts reader, the capacity adapter, the line-creation entry and
     // the round owner are the ones the secretary lifecycle shares (above), never a
     // second copy: a handoff's successor is a real admitted line.
+    // BK-15: the ONE effective-scope read. The secretary pick reads it here; O5b passes the same instance to the
+    // line read, never a second array.
+    const effectiveScope = createEffectiveScopeReader({
+      records: backend.records, architecture, duties: sessionDutyResolver });
     const requestSelection = createSecretarySelection({
       records: backend.records,
       sessionFacts,
       profiles: rawSecretaryProfiles,
-      scope: createProjectSecretaryScope(),
+      scope: createProjectSecretaryScope(effectiveScope),
       duty: sessionDutyResolver,
     });
+    // The one Goal-secretary resolver the Host's rework notifier asks: the newest kept request owner, else the same
+    // selection the request intake uses. It shares the same request-facts instance and the same duty instance as
+    // the rest of the root.
+    const goalSecretary = createGoalSecretary({ ordered: backend.records, requestFacts: rawRequestFacts, duty: dutyRecipient,
+      selection: requestSelection });
     const rawRequestIntake = createRequestIntake({
       rounds: rawRequestRounds, facts: rawRequestFacts, selection: requestSelection,
       lineCreation: requestLineCreation, profiles: rawSecretaryProfiles, sessionFacts,

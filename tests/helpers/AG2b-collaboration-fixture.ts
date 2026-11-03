@@ -24,6 +24,7 @@ import { loadWorkbenchCliConfig } from '../../src/app/main.js';
 import { ProviderRegistry, type ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
@@ -83,6 +84,14 @@ export const AG2B_CONSUMER_ID = 'ag2b-consumer';
 export const AG2B_QUERY_PROFILE_ID = 'ag2b-consult';
 export const AG2B_WORK_INSTRUCTION = 'AG2b trusted work instruction: consult then write through the real tools';
 export const AG2B_QUERY_INSTRUCTION = 'AG2b trusted read-only consultation guidance';
+/** The platform secretary template (the opening secretary line's role, O1b) and its Query profile's binding;
+ *  configured only with `secretaryQueryProfile`. */
+const AG2B_SECRETARY_ROLE = platformRoleProfile('secretary').template;
+const AG2B_SECRETARY_ROLE_BINDING: RoleBindingRefV1 = {
+  schemaVersion: 1, bindingId: 'ag2b-secretary-binding', templateId: AG2B_SECRETARY_ROLE.templateId,
+  templateRevision: AG2B_SECRETARY_ROLE.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template',
+};
+const AG2B_SECRETARY_INSTRUCTION = 'AG2b trusted secretary guidance';
 
 export const AG2B_RUNTIME_BUDGET: RuntimeBudget = {
   contextWindowTokens: 200000, inputTokens: null, outputTokens: null, maxRequests: 16,
@@ -131,6 +140,13 @@ export type AG2bHost = {
 
 export type AG2bOverrides = {
   builderQueryProfile?: boolean;
+  /**
+   * O4b-1 (BK-15): also configure the platform secretary's binding and Query profile, as the local workbench
+   * publishes one per workspace (`src/app/host.ts` `localSecretaryProfile`). Only then is the opening secretary
+   * line (O1b) an admitted secretary of the request intake's selection, which the Goal secretary's last fallback
+   * reads (`src/core/work-graph/tasks/goal-secretary.ts`): the rework notice's recipient.
+   */
+  secretaryQueryProfile?: boolean;
   hostOptions?: Pick<import('../../src/app/host.js').LocalWorkbenchHostOptions, 'attention' | 'inputConsumers'>;
   root?: string;
   database?: string;
@@ -307,6 +323,25 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
     runtimeBindingId: 'ag2b-work-binding', sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,
     runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
   });
+  if (overrides.secretaryQueryProfile) {
+    bindings.push({
+      id: 'ag2b-secretary-binding', label: 'AG2b secretary runtime', scope: AG2B_SCOPE, role: AG2B_SECRETARY_ROLE,
+      configurationRevision: 'ag2b-secretary-host@1',
+      model: { revision: 'ag2b-secretary-model@1', provider: 'deepseek', model: 'ag2b-scripted-query', secretEnvironmentVariable: AG2B_SECRET_VAR },
+      grant: {
+        budget: AG2B_RUNTIME_BUDGET,
+        hostTemplate: { templateId: AG2B_SECRETARY_ROLE.templateId, revision: AG2B_SECRETARY_ROLE.templateRevision,
+          digest: sha256Hex(AG2B_SECRETARY_INSTRUCTION) },
+        tools: ['read'], writeScope: [], skills: { resourceRoot: skillsRoot, enabledIds: [] },
+        systemInstruction: AG2B_SECRETARY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+      },
+    });
+    queryProfiles.push({
+      id: 'ag2b-secretary-profile', label: 'AG2b secretary', scope: AG2B_SCOPE,
+      runtimeBindingId: 'ag2b-secretary-binding', sessionRole: AG2B_SECRETARY_ROLE, roleBinding: AG2B_SECRETARY_ROLE_BINDING,
+      runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
+    });
+  }
   const workflow: WorkflowHostConfiguration = {
     consumerId: AG2B_CONSUMER_ID,
     bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,

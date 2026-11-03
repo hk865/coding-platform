@@ -92,7 +92,8 @@ async function expectClaimed(h: HostScenario, run2Ref: Awaited<ReturnType<typeof
 }
 
 it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every crash point before the Kernel and keeps one brief', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE,
+  // O4b-1 (BK-15): the opening secretary is the Goal's secretary (the rework notice's recipient) only with its profile.
+  const h = await openHostScenario({ automation: NO_REDRIVE, secretaryQueryProfile: true,
     script: { replies: [...notesThenText('c3-idem'), ...editThenText('c3-idem-run2')] } });
 
   // 1. Run 1 FAILs; Run 2 is claimed and prepared: the manifest with the brief is stored, the Run does not reference it.
@@ -280,7 +281,7 @@ it('C3-R1 (W-24) with the source changed before the Workflow prepares again: the
 }, 120_000);
 
 it('C3-R2 (W-25): after a restart the facts Run\'s Kernel store is not registered (host_config): prepare answers unavailable, pins no degraded brief and changes nothing; the Workflow waits and retries, and binds the full brief once the store is readable', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE,
+  const h = await openHostScenario({ automation: NO_REDRIVE, secretaryQueryProfile: true,
     script: { replies: [...notesThenText('c3-r2'), ...editThenText('c3-r2-run2')] } });
   // Run 1 FAILs; the automatic requeue is claimed; stop before Run 2's prepare.
   const toPrepare = await h.advance(h.select('c3-r2-1', AG2B_WORK_TASK_ID), { stopBefore: performsAfterRequeues(h, 'prepare', 1) });
@@ -338,7 +339,7 @@ it('C3-R2 (W-25): after a restart the facts Run\'s Kernel store is not registere
 }, 120_000);
 
 it('C3-R2 (W-25) with a transient Kernel read: the Kernel store is held by another process at the restart and at the prepare; the probe proves nothing (H-03), prepare answers unavailable, pins no degraded brief and changes nothing; once the store is free the next advance binds the full brief', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE,
+  const h = await openHostScenario({ automation: NO_REDRIVE, secretaryQueryProfile: true,
     script: { replies: [...notesThenText('c3-r2t'), ...editThenText('c3-r2t-run2')] } });
   const toPrepare = await h.advance(h.select('c3-r2t-1', AG2B_WORK_TASK_ID), { stopBefore: performsAfterRequeues(h, 'prepare', 1) });
   expect(toPrepare.state).toBe('stopped');

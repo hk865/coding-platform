@@ -965,6 +965,12 @@ export type HostScenarioOptions = {
    * root is the scenario's temporary directory; the repository is never touched.
    */
   gitWorkspace?: GitWorkspaceOption;
+  /**
+   * O4b-1 (BK-15): the Host also configures the platform secretary's binding and Query profile
+   * (`startAG2bHost`'s `secretaryQueryProfile`), so the opening secretary line is the Goal's secretary
+   * the rework notice goes to. Kept on every restart and peer; absent configures none, as before.
+   */
+  secretaryQueryProfile?: boolean;
 };
 
 export type HostRestartOptions = {
@@ -984,7 +990,8 @@ export type HostRestartOptions = {
   invariants?: boolean;
 };
 
-type HostSettings = { check: CheckBehaviour; checkRevision: number; actor: WorkbenchActor; noKernelStores: boolean };
+type HostSettings = { check: CheckBehaviour; checkRevision: number; actor: WorkbenchActor; noKernelStores: boolean;
+  secretaryQueryProfile: boolean };
 
 export class HostScenario extends ScenarioBase {
   readonly mode = 'host' as const;
@@ -1024,7 +1031,7 @@ export class HostScenario extends ScenarioBase {
     if (options.automation !== undefined) await writeAutomationSettings(database, options.automation);
     const models = new ScriptState(options.script ?? {});
     const settings: HostSettings = { check: options.check ?? 'result_file', checkRevision: 1, actor: options.actor ?? SCENARIO_OPERATOR,
-      noKernelStores: false };
+      noKernelStores: false, secretaryQueryProfile: options.secretaryQueryProfile ?? false };
     if (options.commitObserver !== undefined) addScenarioCommitObserver(options.commitObserver);
     if (options.commitGate !== undefined) addScenarioCommitGate(options.commitGate);
     // The wrap must be installed BEFORE the first Host opens its backend, so a later
@@ -1070,7 +1077,7 @@ export class HostScenario extends ScenarioBase {
       host = await startAG2bHost(publicDir, { root, database, replies: hooks.replies, beforeReply: hooks.beforeReply,
         queryReplies: hooks.queryReplies, queryBeforeReply: hooks.queryBeforeReply, checkCommand: command, checkTimeoutMs: timeoutMs,
         checkConfigurationRevision: checkRevisionOf(settings.checkRevision), actor: settings.actor,
-        noKernelStores: settings.noKernelStores });
+        noKernelStores: settings.noKernelStores, secretaryQueryProfile: settings.secretaryQueryProfile });
     } catch (error) {
       models.release();
       throw error;
@@ -1163,7 +1170,8 @@ export class HostScenario extends ScenarioBase {
     }
     const check = options.check ?? this.settings.check;
     this.settings = { check, checkRevision: this.settings.checkRevision + (sameCheck(check, this.settings.check) ? 0 : 1),
-      actor: options.actor ?? this.settings.actor, noKernelStores: options.noKernelStores ?? this.settings.noKernelStores };
+      actor: options.actor ?? this.settings.actor, noKernelStores: options.noKernelStores ?? this.settings.noKernelStores,
+      secretaryQueryProfile: this.settings.secretaryQueryProfile };
     this.current = await HostScenario.start(this.root, this.database, this.publicDir, this.models, this.settings, 'live');
     this.restarts += 1;
     if (options.invariants !== false) await assertInvariants(this, `restart ${this.restarts}${options.crash === true ? ' (crash)' : ''}`);

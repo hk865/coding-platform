@@ -22,6 +22,7 @@ import type { SessionOperationsPort } from '../../src/core/agent-runtime/session
 import type { SessionFactsPort } from '../../src/core/work-graph/model/session-facts-contracts.js';
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
+import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService, SECRETARY_INTAKE_PREFIX } from '../../src/core/work-graph/tasks/request-service.js';
 import { createLineCreation } from '../../src/business/workflow/line-creation.js';
@@ -128,10 +129,12 @@ function gatedIntake(world: S6ARequestWorld): Gated {
     records, facts, sessionFacts: gate.port, duty, profiles,
     now: () => world.clock.now(), operationId: () => `s6a-conflicts-${world.backend}-${++sequence}`,
   });
+  const effectiveScope = createEffectiveScopeReader({
+    records, architecture: world.platform.architecture, duties: duty });
   const intake = createRequestIntake({
     rounds, facts,
     selection: createSecretarySelection({ records, sessionFacts: world.platform.sessionFacts, profiles,
-      scope: createProjectSecretaryScope(), duty }),
+      scope: createProjectSecretaryScope(effectiveScope), duty }),
     lineCreation: createLineCreation({
       // The public runtime port is the same real owner; its wrapper only widens
       // the return with the platform's closing rejection.

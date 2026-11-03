@@ -3,7 +3,9 @@
  * R-01a): `latestActivityAt` and `orderCandidates`, called with hand-built
  * facts. The expected literals are spec R-01a's own example (A/C/D/B and the
  * opening secretary S0). The two frozen types come from the module the frozen
- * interface names (`tasks/secretary-selection.ts`), never a copy.
+ * interface names (`tasks/secretary-selection.ts`), never a copy. BK-15 (v4
+ * §5.2 (e)): a candidate's scope is 7D1's `EffectiveScopeV1[]`; the old
+ * single-value cases are written as one-entry arrays with unchanged answers.
  */
 import { describe, expect, it } from 'vitest';
 import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
@@ -12,6 +14,7 @@ import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type {
   SecretaryCandidateFactsV1, SecretarySelectionFactsV1,
 } from '../../src/core/work-graph/tasks/secretary-selection.js';
+import type { EffectiveScopeV1 } from '../../src/core/work-graph/state/role-scope.js';
 import { orderCandidates } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { latestActivityAt } from '../../src/core/work-graph/tasks/line-clock.js';
 
@@ -38,7 +41,7 @@ function candidate(sessionId: string, over: Partial<SecretaryCandidateFactsV1> =
   return {
     session: { projectId: PROJECT, sessionId },
     revision: 1,
-    scope: { kind: 'project' },
+    scope: [{ kind: 'project' }],
     profile: profileOf(sessionId),
     busy: false,
     ranGoal: false,
@@ -54,6 +57,10 @@ function factsOf(candidates: SecretaryCandidateFactsV1[]): SecretarySelectionFac
 }
 
 const ids = (facts: SecretaryCandidateFactsV1[]): string[] => facts.map((entry) => entry.session.sessionId);
+
+/** The goal arm of `EffectiveScopeV1` (v4 :5535; GoalRef `src/contracts/ledger.ts:48-52`). */
+const goalScope = (goalId: string): EffectiveScopeV1 =>
+  ({ kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: PROJECT, goalId } });
 
 // ------------------------------------------------------------------------ //
 // latestActivityAt (pure)                                                   //
@@ -118,9 +125,9 @@ describe('orderCandidates (R-01a)', () => {
   });
 
   it('a goal-scope secretary that did not run the goal still follows one that did', () => {
-    const A = candidate('a', { scope: { kind: 'goal', goalId: 'g1' }, ranGoal: true,
+    const A = candidate('a', { scope: [goalScope('g1')], ranGoal: true,
       lastActivityAt: '2026-10-23T10:00:00.000Z' });
-    const S0 = candidate('s0', { scope: { kind: 'project' }, ranGoal: false,
+    const S0 = candidate('s0', { scope: [{ kind: 'project' }], ranGoal: false,
       lastActivityAt: '2026-10-23T11:00:00.000Z' });
     expect(ids(orderCandidates(factsOf([S0, A]), { goalId: 'g1' }))).toEqual(['a', 's0']);
   });
@@ -141,17 +148,40 @@ describe('orderCandidates (R-01a)', () => {
   });
 
   it('filters goal scope: g1 candidates plus project scope, never g2', () => {
-    const G1 = candidate('g1-one', { scope: { kind: 'goal', goalId: 'g1' }, lastActivityAt: '2026-10-23T12:00:00.000Z' });
-    const G2 = candidate('g2-one', { scope: { kind: 'goal', goalId: 'g2' }, lastActivityAt: '2026-10-23T13:00:00.000Z' });
+    const G1 = candidate('g1-one', { scope: [goalScope('g1')], lastActivityAt: '2026-10-23T12:00:00.000Z' });
+    const G2 = candidate('g2-one', { scope: [goalScope('g2')], lastActivityAt: '2026-10-23T13:00:00.000Z' });
     const P = candidate('p-one', { lastActivityAt: '2026-10-23T11:00:00.000Z' });
     expect(ids(orderCandidates(factsOf([G2, P, G1]), { goalId: 'g1' }))).toEqual(['g1-one', 'p-one']);
   });
 
   it('a no-goal request takes only project scope', () => {
-    const G1 = candidate('g1-one', { scope: { kind: 'goal', goalId: 'g1' } });
+    const G1 = candidate('g1-one', { scope: [goalScope('g1')] });
     const P = candidate('p-one', {});
     expect(ids(orderCandidates(factsOf([G1, P]), { goalId: null }))).toEqual(['p-one']);
   });
+
+  // BK-15 T1 (v4 :5552-:5557; book :611-:614): an empty array and a region-only array select nobody, and a goal
+  // arm counts only for its own goal. The five are idle, not too long, ran no goal and have no usage, so after the
+  // filter the third key (later activity first) orders them. Named mutation: the filter takes an empty array as
+  // project (`candidate.scope.length === 0 || candidate.scope.some(...'project')`, the old always-project adapter's
+  // effect): `e` joins and, with the latest activity, comes first in all three cases.
+  it.each([
+    { goalId: 'g1', expected: ['g1', 'p'] },
+    { goalId: 'g2', expected: ['g2', 'p'] },
+    { goalId: null, expected: ['p'] },
+  ])('BK-15 T1: empty and region-only scopes select nobody, a goal arm only its goal (goal $goalId)',
+    ({ goalId, expected }) => {
+      const m = { projectId: PROJECT, moduleId: 'm' };
+      const candidates = [
+        candidate('p', { scope: [{ kind: 'project' }], lastActivityAt: '2026-10-23T11:00:00.000Z' }),
+        candidate('g1', { scope: [goalScope('g1')], lastActivityAt: '2026-10-23T12:00:00.000Z' }),
+        candidate('g2', { scope: [goalScope('g2')], lastActivityAt: '2026-10-23T13:00:00.000Z' }),
+        candidate('r', { scope: [{ kind: 'region', moduleRef: m, modules: [m] }],
+          lastActivityAt: '2026-10-23T14:00:00.000Z' }),
+        candidate('e', { scope: [], lastActivityAt: '2026-10-23T15:00:00.000Z' }),
+      ];
+      expect(ids(orderCandidates(factsOf(candidates), { goalId }))).toEqual(expected);
+    });
 
   it('does not mutate the facts it was given', () => {
     const input = factsOf([candidate('b'), candidate('a')]);

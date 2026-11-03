@@ -254,6 +254,7 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
       reason: 'secretary_needed',
       provenance: { schemaVersion: 1, kind: 'new' },
       roleConfiguration: profile.value.sessionRole,
+      roleScopes: [{ kind: 'project' }],
     });
   }
 

@@ -100,7 +100,9 @@ it('A8-3l, A8-3p (W-20, RUN-24, LA-1, C3, C4, §13.4 #23/#24; K KA-07, KA-04): a
     // Run3 (the automatic rework, in S1 again) writes it.
     { kind: 'calls', calls: [{ callId: 'a8-3p-run3-edit', name: 'edit', args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
     { kind: 'text', text: 'restart scenario A8-3p: Run3 wrote the result file' }];
-  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0_TASK], check: 'pass', script: { replies,
+  // O4b-1 (BK-15): the opening secretary is the Goal's secretary (the rework notice's recipient) only with its profile.
+  const h = await openHostScenario({ workIds: [RUN0_TASK, AG2B_WORK_TASK_ID], lineTaskIds: [RUN0_TASK], check: 'pass',
+    secretaryQueryProfile: true, script: { replies,
     duringReply: async (index) => {
       if (index !== 3 || scenario === undefined) return;
       pauseRef = (await submitControl(scenario.host, await selectedRun(scenario), 'pause', 'restart scenario: pause', 'a8-3l-pause')).intent.ref;

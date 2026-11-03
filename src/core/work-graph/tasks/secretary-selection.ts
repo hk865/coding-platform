@@ -34,6 +34,7 @@ import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-sto
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import type { EffectiveScopeReadPort } from '../state/role-scope.js';
 import {
   LIVE_ATTEMPT_PHASES, QUERY_OPEN_BY_WORKSPACE_INDEX, QUERY_RAN_BY_SESSION_GOAL_INDEX, REQUEST_PAGE_SIZE,
   type SecretaryProfilePort, type SecretaryProfileV1, type SecretaryScopePort,
@@ -71,7 +72,7 @@ export type SecretarySelectionDependencies = {
   sessionFacts: SessionFactsPort;
   /** `A/secretary-profiles.ts` in production; a test builds one over the Host's published profiles. */
   profiles: SecretaryProfilePort;
-  /** Each secretary's scope; the project-scope adapter answers `project` for every one. */
+  /** Each secretary's real effective scope (project, a Goal, or region only). */
   scope: SecretaryScopePort;
   /** The real `SessionDutyResolver` (composition/session-duty.ts). */
   duty: SessionDutyReadPort;
@@ -86,15 +87,13 @@ export interface SecretarySelectionPort {
 }
 
 // ------------------------------------------------------------------------ //
-// The project-scope adapter                                                 //
+// The secretary scope adapter                                               //
 // ------------------------------------------------------------------------ //
 
-/** The project-scope adapter (spec §7): every secretary is project-scoped. */
-export function createProjectSecretaryScope(): SecretaryScopePort {
+/** The secretary's one effective scope (spec §7, BK-15): the real read, never a fixed `project`. */
+export function createProjectSecretaryScope(effective: EffectiveScopeReadPort): SecretaryScopePort {
   return {
-    async scopeOf() {
-      return { status: 'ready', value: { kind: 'project' } };
-    },
+    scopeOf: (ctx, input) => effective.readEffectiveScope(ctx, { session: input.session }),
   };
 }
 
@@ -112,17 +111,19 @@ function appendGuardCopyFirstWins(guards: RecordGuard[], guard: RecordGuard): vo
 }
 
 /**
- * Filter, then order: project scope always, a goal scope only when
- * it covers the request's goal (a no-goal request takes project scope only);
- * then idle and not too long; then spec L4's four keys.
+ * Filter, then order: a project entry always, a goal entry only when it covers
+ * the request's goal (a no-goal request takes project scope only); an empty or
+ * region-only array selects nobody. Then idle and not too long, then spec L4's
+ * four keys.
  */
 export function orderCandidates(
   facts: SecretarySelectionFactsV1,
   input: { goalId: string | null },
 ): SecretaryCandidateFactsV1[] {
   const eligible = facts.candidates.filter((candidate) => {
-    if (candidate.scope.kind === 'project') return true;
-    return input.goalId !== null && candidate.scope.goalId === input.goalId;
+    if (candidate.scope.some((scope) => scope.kind === 'project')) return true;
+    return input.goalId !== null && candidate.scope.some((scope) =>
+      scope.kind === 'goal' && scope.goalRef.goalId === input.goalId);
   }).filter((candidate) => !candidate.busy && !candidate.tooLong);
   return eligible.sort(compareCandidates);
 }

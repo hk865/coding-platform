@@ -1317,51 +1317,15 @@
     },
     {
       "file": "src/core/work-graph/state/role-scope.ts",
-      "name": "RegionClaimV1",
+      "name": "EffectiveScopeReadPort.effectiveRegionOf",
       "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/state/role-scope.ts",
-      "name": "EffectiveScopeV1",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/state/role-scope.ts",
-      "name": "EffectiveScopeReadPort",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/state/role-scope.ts",
-      "name": "effectiveRegions",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+      "note": "waits for O4b-2's adviser resolver (readEffectiveRegionAdviser) over the reached effective-scope read; slice 7 of the orchestration design"
     },
     {
       "file": "src/core/work-graph/views/role-line-allocation-reader.ts",
       "name": "RoleLineContactFactsV1",
       "reason": "kept-for",
       "note": "no consumer in rulings or the book; the allocation reader exports the shape and nothing in src/ names it; kept in the allowlist so reach stays green (lead answer q-w-allowlist, condition 3), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/views/role-scope-reader.ts",
-      "name": "EffectiveScopeReaderDependencies",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/views/role-scope-reader.ts",
-      "name": "createEffectiveScopeReader",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/views/role-scope-reader.ts",
-      "name": "SESSION_READ_TEMPLATES",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
     },
     {
       "file": "src/ui/runtime.ts",

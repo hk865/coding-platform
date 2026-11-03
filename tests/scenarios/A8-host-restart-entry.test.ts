@@ -329,7 +329,9 @@ it('A8-2b, SES-07, SES-19, H-01 (W-06, RUN-22, LA-1): attested while the Kernel 
 }, 180_000);
 
 it('A8-2c (W-07, H-03, CI-10, then W-05 with RUN-09): under a host_config probe an Entering Run and its queued cancel are left as they are; the next start with the Kernel registered revokes the entry and ends the Run cancelled in the same commit', async () => {
-  const h = await openHostScenario({ automation: redrivePolicy(false), script: { replies: [RUN1_WITHOUT_FILE] } });
+  // O4b-1 (BK-15): the opening secretary is the Goal's secretary (the rework notice's recipient) only with its profile.
+  const h = await openHostScenario({ automation: redrivePolicy(false), secretaryQueryProfile: true,
+    script: { replies: [RUN1_WITHOUT_FILE] } });
   const { run2Ref, start, sessionRef } = await requeuedRunBeforeStart(h, 'a8-2c');
   const aside = await startWithKernelAside(h, start);
   const entering = await execution(h, run2Ref);

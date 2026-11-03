@@ -19,6 +19,7 @@ import type {
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import type { PlanProposalRef } from '../state/plan-machine.js';
+import type { EffectiveScopeV1 } from '../state/role-scope.js';
 
 // ------------------------------------------------------------------------ //
 // Spec §2 constants and ruling 7.8 bounds                                   //
@@ -156,7 +157,7 @@ export type SecretaryProfileV1 = {
 export type SecretaryCandidateFactsV1 = {
   session: SessionRef;
   revision: number;
-  scope: { kind: 'project' } | { kind: 'goal'; goalId: string };
+  scope: EffectiveScopeV1[];
   profile: SecretaryProfileV1;
   busy: boolean;
   ranGoal: boolean;
@@ -177,8 +178,7 @@ export interface SecretaryProfilePort {
 }
 
 export interface SecretaryScopePort {
-  scopeOf(ctx: CoreCallContext, input: { session: SessionRef }):
-    Promise<ReadResult<{ kind: 'project' } | { kind: 'goal'; goalId: string }>>;
+  scopeOf(ctx: CoreCallContext, input: { session: SessionRef }): Promise<ReadResult<EffectiveScopeV1[]>>;
 }
 
 /**

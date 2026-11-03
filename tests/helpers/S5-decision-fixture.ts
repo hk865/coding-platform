@@ -84,6 +84,9 @@ import { createQueryJobService } from '../../src/core/work-graph/queries/query-j
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService } from '../../src/core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
+import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
+import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
+import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRequestIntake } from '../../src/business/workflow/request-intake.js';
 import { createLineCreation } from '../../src/business/workflow/line-creation.js';
@@ -1055,6 +1058,25 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   // request identities stay what the S5 rows name.
   const requestSecretaryRole = platformRoleProfile('secretary').template;
   const requestSecretary = await createRealS5Session('session-secretary', requestSecretaryRole);
+  const requestSessionFacts = createSessionFactsService({ records });
+  const duties = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: undefined });
+  // The one project link that makes this secretary selectable under the real scope filter (BK-15). It is the
+  // public `sessions/link` owner, the same step the route binds, not a seeded link.
+  const requestLifecycle = createSessionLifecycleService({
+    records, lookups: records, sessionFacts: requestSessionFacts, duty: duties });
+  const requestCard = await sessionsPort.readSession(ctx, requestSecretary);
+  if (requestCard.status !== 'ready') throw new Error(`S5 secretary card read failed: ${JSON.stringify(requestCard)}`);
+  const requestProjectTarget = { kind: 'project' as const, ref: { projectId: PROJECT_ID } };
+  const requestLinked = await requestLifecycle.linkSessionWork(ctx, {
+    input: { sessionRef: requestSecretary, target: requestProjectTarget, relation: 'responsible', active: true },
+    meta: { requestId: 's5-request-secretary-project', expected: [
+      { ref: requestCard.value.record.ref, revision: requestCard.value.record.revision },
+      { ref: responsibleLinkRef(requestSecretary, requestProjectTarget), revision: 0 },
+    ] },
+  });
+  if (requestLinked.status !== 'committed') {
+    throw new Error(`S5 secretary project link failed: ${JSON.stringify(requestLinked)}`);
+  }
   const requestProfile: SecretaryProfileV1 = {
     profileId: 's5-request-secretary',
     sessionRole: requestSecretaryRole,
@@ -1071,13 +1093,14 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     forNewLine: async () => ({ status: 'ready', value: requestProfile }),
   };
   const requestFacts = createRequestFacts({ records });
-  const requestSessionFacts = createSessionFactsService({ records });
+  const requestEffectiveScope = createEffectiveScopeReader({
+    records, architecture: createArchitectureCatalogService({ records }), duties });
   const requestSelection = createSecretarySelection({
     records,
     sessionFacts: requestSessionFacts,
     profiles: requestProfiles,
-    scope: createProjectSecretaryScope(),
-    duty: createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: undefined }),
+    scope: createProjectSecretaryScope(requestEffectiveScope),
+    duty: duties,
   });
   const requestLineCreation = createLineCreation({
     sessions: createSessionOperations({ sessions: sessionsPort, kernelStores }),
@@ -1088,7 +1111,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const requestRounds = createRequestRoundService({
     records, facts: requestFacts, profiles: requestProfiles,
     sessionFacts: requestSessionFacts,
-    duty: createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: undefined }), now,
+    duty: duties, now,
     operationId: () => {
       if (requestSeedJobId !== null) { const id = requestSeedJobId; requestSeedJobId = null; return id; }
       return `s5-request-${++requestIdSeq}`;

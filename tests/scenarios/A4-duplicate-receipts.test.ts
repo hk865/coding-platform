@@ -163,7 +163,8 @@ it('A4 (领取、发信、记录结果): every step of a Run, its rounds and the
 }, 120_000);
 
 it('A4, W-23: a requeue and its committed refusal that fail inside the commit leave nothing; after the restart the same request commits once, and every later copy — same Host, after a crash, from the operator — replays the original receipt', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'fail',
+  // O4b-1 (BK-15): the opening secretary is the Goal's secretary (the rework notice's recipient) only with its profile.
+  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'fail', secretaryQueryProfile: true,
     script: { replies: [textReply('A4 requeue: Run 1 changes nothing'), textReply('A4 requeue: Run 2 changes nothing')] } });
   // Run 1's round FAILs; the Workflow's next request is the automatic requeue (#1 of 3).
   const toRequeue = await h.advance(h.select('a4-requeue', W), { stopBefore: performs('requeue_task') });
@@ -273,7 +274,7 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
 }, 120_000);
 
 it('A4, C-05: an automatic reverify and its committed refusal that fail inside the commit leave nothing; after the restart the same request commits once and every later copy replays the original receipt', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE, check: { timeoutAfterMs: 1_000 },
+  const h = await openHostScenario({ automation: NO_REDRIVE, check: { timeoutAfterMs: 1_000 }, secretaryQueryProfile: true,
     script: { replies: [textReply('A4 reverify: Run 1 changes nothing')] } });
   // Round 1's check times out (INCONCLUSIVE); the next request is the automatic successor round.
   const toReverify = await h.advance(h.select('a4-reverify', W), { stopBefore: performs('reverify_round') });

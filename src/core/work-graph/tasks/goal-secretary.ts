@@ -1,11 +1,12 @@
 /**
- * The goal's current secretary: the owner of the newest kept request root, else the workspace's secretary duty.
+ * The goal's current secretary: the owner of the newest kept request root, else the same selection service the
+ * request intake uses.
  * `tasks/` owns it because `sessions/` may not import `tasks` or `queries`.
  *
  * Candidates are the workspace's request roots in `g:<goalId>` and `no-goal`, newest first (`since`). A root is kept
  * when its derived EFFECTIVE goal is this Goal, so a request attributed after creation is not missed (A-21). The
  * owner is `ownerOf` of the newest kept root with a non-null owner; only a successful `null` continues to an older
- * kept root or falls back to duty. A rejected, `not_found` or `not_ready` read, a damaged root and a bound hit (the
+ * kept root or falls back to the same selection service. A rejected, `not_found` or `not_ready` read, a damaged root and a bound hit (the
  * 8 x 50 traversal reaches a next page) are all `unavailable` — never "no owner".
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -22,11 +23,14 @@ import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
 import type { DutyRecipientPort } from '../sessions/duty-recipient.js';
 import type { RequestFactsPort } from './request-facts.js';
 import { workspaceOf } from './request-service.js';
+import { orderCandidates, type SecretarySelectionPort } from './secretary-selection.js';
 
 export type GoalSecretaryDependencies = {
   ordered: RecordOrderedLookupPort;
   requestFacts: Pick<RequestFactsPort, 'ownerOf' | 'effectiveGoalOf'>;
   duty: DutyRecipientPort;
+  /** The one 6A selection owner the request intake also reads. */
+  selection: Pick<SecretarySelectionPort, 'readSecretarySelectionFacts'>;
 };
 export interface GoalSecretaryPort {
   resolveGoalSecretary(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<SessionRef | null>>;
@@ -97,9 +101,10 @@ export function createGoalSecretary(deps: GoalSecretaryDependencies): GoalSecret
         }
         if (owner.value !== null) return { status: 'ready', value: { ...owner.value } };
       }
-      return deps.duty.resolveDutyRecipient(ctx, {
-        workspace: workspaceOf(ctx), duty: 'secretary',
-      });
+      const facts = await deps.selection.readSecretarySelectionFacts(ctx,
+        { scope: workspaceOf(ctx), goalId, exclude: [] });
+      if (facts.status !== 'ready') return facts;
+      return { status: 'ready', value: orderCandidates(facts.value, { goalId })[0]?.session ?? null };
     },
   };
 }

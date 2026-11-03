@@ -29,7 +29,9 @@ afterEach(cleanupScenarios);
 it('A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim; the start-up re-drive claims with the requeueRef (exactly one new Run), off waits for a workflow/advance; an occupied claim Session skips the Task until it is free', async () => {
   for (const resumeOnStartup of [false, true]) {
     const label = `a8-r1-${String(resumeOnStartup)}`;
-    const h = await openHostScenario({ automation: redrivePolicy(resumeOnStartup), script: { replies: [RUN1_WITHOUT_FILE, ...editThenText(label)] } });
+    // O4b-1 (BK-15): the opening secretary is the Goal's secretary (the rework notice's recipient) only with its profile.
+    const h = await openHostScenario({ automation: redrivePolicy(resumeOnStartup), secretaryQueryProfile: true,
+      script: { replies: [RUN1_WITHOUT_FILE, ...editThenText(label)] } });
     // Run 1 FAILs; the Workflow commits the automatic requeue (check_failed #1) and stops before the claim.
     const toClaim = await h.advance(h.select(label, AG2B_WORK_TASK_ID), { stopBefore: (input) => input.kind === 'perform'
       && input.operation.kind === 'claim_task' && (h.lastWorld?.requeues.length ?? 0) === 1 });
@@ -104,7 +106,7 @@ it('A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim;
 }, 240_000);
 
 it('A8-R2 (W-22, C8, ND-8): a committed no_new_basis refusal survives the restart: the verdict stays stopped, the start-up re-drive does not select the Goal, and a 推进 writes nothing', async () => {
-  const h = await openHostScenario({ script: { replies: [RUN1_WITHOUT_FILE,
+  const h = await openHostScenario({ secretaryQueryProfile: true, script: { replies: [RUN1_WITHOUT_FILE,
     { kind: 'text', text: 'restart scenario A8-R2: Run 2 changes nothing either' }] } });
   // Run 1 and Run 2 fail the same way with nothing changed: the second automatic requeue is refused (§13.4 #2).
   const refused = await h.advance(h.select('a8-r2', AG2B_WORK_TASK_ID));
