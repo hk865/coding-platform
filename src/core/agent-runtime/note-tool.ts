@@ -189,6 +189,22 @@ const flowSchema = z.object({
   steps: z.array(z.object({ link: z.string().min(1) }).strict()),
 }).strict();
 
+// A fact points at a fixed version (`NoteFactV1`, src/contracts/note.ts:234-238;
+// slice-4-SPEC.md:199, :215). `note`, `file` and `commit` are fixed here with
+// the codec's own fields, so a missing or extra field is refused by the
+// Kernel's schema check with its path (decision 98-1). `record`, `artifact`
+// and `kernel_history` copy a context source: only their `kind` is fixed and
+// `factProblem` stays the one owner of their fields, the same split as
+// `repairMoveSchema` below.
+const noteFactSchema: z.ZodType = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('record') }).loose(),
+  z.object({ kind: z.literal('artifact') }).loose(),
+  z.object({ kind: z.literal('kernel_history') }).loose(),
+  z.object({ kind: z.literal('note'), noteId: z.string().min(1), version: z.number().int().min(1) }).strict(),
+  z.object({ kind: z.literal('file'), path: z.string().min(1), digest: z.string() }).strict(),
+  z.object({ kind: z.literal('commit'), sha: z.string() }).strict(),
+]);
+
 /**
  * The repair payload's outer shape. The ops and destinations stay loose here:
  * the ONE op parser owns the ops' exact keys and the note service owns the move
@@ -233,7 +249,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     conclusion: z.string().min(1),
     anchor: draftAnchorSchema,
     extraAnchors: z.array(draftAnchorSchema).max(4).optional(),
-    facts: z.array(z.record(z.string(), z.unknown())).optional(),
+    facts: z.array(noteFactSchema).optional(),
     basisFiles: z.array(z.string().min(1)).optional(),
     replaces: z.array(z.string().min(1)).optional(),
     contradicts: z.array(z.string().min(1)).optional(),

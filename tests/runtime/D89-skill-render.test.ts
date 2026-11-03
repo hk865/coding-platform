@@ -27,7 +27,7 @@ const SKILLS: Readonly<Record<string, Skill>> = {
       'work.search': "   - 用 `search` 搜这条规则里不会变的字面量：上限数字、错误消息、字段名、配置键。", 'work.code_index': "   - 用 `code_index` 查你想到的几个名字有没有定义。",
       'work.lookup': "   - 用 `look_graph` 的 `lookup` 读你要动的模块锚点，看话题（`topics`）里有没有“接口约定”和说明某件东西放在哪的约定。", 'work.children': "   - 用 `look_graph` 读目标节点的子项（阶段和不在阶段里的任务），相关阶段再读一层它的子项，结果分页时按返回的游标翻完；再看任务卡上的状态和模块，知道哪些任务正在做、动哪些模块。",
       'work.discovery': "     不知道该找谁时，可以用 `find_related_sessions` 按这个模块或任务找相关的线，从它们的卡片里认出参谋或秘书；找不到就走下面的退路。", 'work.send': "     知道该找谁时（例如派你这项工作的就是他），用 `send_session_message` 发行动请求（`action_request`），`needsReply` 为真、`waitAfterSend` 为假，接着做不依赖它的部分。只读问询（`inquiry`）只能问已经定了的归属：回答你的是对方的只读副本，它不能替对方定分工。",
-      'work.question': "     发不出消息时，用 `record_note` 在那个模块上记一条 `open_question`（例如“X 归谁写？我先在某文件里写了一份不导出的”）。记下不等于对方已经收到。", 'work.convention': "   - 用 `record_note` 在那个模块锚点上记一条 `convention`：话题写它的名字，结论一句话（“X 只在某文件里，要用就引用它，不另写”），`facts` 指向那个文件。",
+      'work.question': "     发不出消息时，用 `record_note` 在那个模块上记一条 `open_question`（例如“X 归谁写？我先在某文件里写了一份不导出的”）。记下不等于对方已经收到。", 'work.convention': "   - 用 `record_note` 在那个模块锚点上记一条 `convention`：话题写它的名字，结论一句话（“X 只在某文件里，要用就引用它，不另写”），`basisFiles` 写那个文件（只写路径）。",
     },
     blankLines: 17,
   },

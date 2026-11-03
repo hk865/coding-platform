@@ -22,7 +22,7 @@ const specification = (tool: ToolDefinition) => ({ name: tool.name, description:
  */
 const DEFAULT_SPECIFICATION: ToolSpecification = {
   "name": "record_note",
-  "description": "Record a note: `{ op: \"write\" | \"review\" | \"withdraw\", ... }`. Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the ten kinds: `convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`, `link`, `flow`. A `link` records a relation the scan cannot see: `anchor` is the `from` end, `extraAnchors` is `[to, via?]` (`via` is required for `injects` and `callback`, optional otherwise), and the direction is from → to. `injects`: `from` uses the slot `via`, which is filled at runtime with `to`'s implementation; `callback`: `to` hands its function to `from`, and `from` calls back through `via`. `data`/`message`: `from` emits/sends and `to` receives; `spawns`: `from` launches the `to` entry. Give function-level ends where possible. The relation is one of `calls`, `injects`, `callback`, `data`, `message` or `spawns`. Give at least one evidence item for each role the relation requires, and no role outside the table: `injects`/`callback` use `use` and `wire`; `calls` uses `register` and `use`; `data`/`message` use `emit` and `receive`; `spawns` uses `launch` and `entry`. Each item gives `at.path` and at most one of `at.range` or `at.symbolRequest` (its declaration ranges; lines count from 1), never both; the platform looks only there, and with neither it uses the whole file. Each role must find: `injects.use` references `via`, `injects.wire` references `to` and `via`; `callback.wire` references `to` and `via`, `callback.use` references `via`; `calls.register` has the `key` and references `to`, `calls.use` has the `key`; `data`/`message` both roles have the `key` (`emit` writes/sends, `receive` reads/receives); `spawns` both roles have the `key` (`entry` is `to`'s entry declaration). `use`, `emit` and `launch` must fall in the `from` end, `receive` in the `to` end, `entry` in the `to` end's module; `wire` and `register` may be anywhere. Give the shared name as `key` (a literal or symbol request; omit it for `injects` and `callback`; `spawns` takes a literal or `null`; use `null` when the name is built at runtime). Evidence is co-occurrence inside the given range, not proof of wiring; a runtime branch or a configuration choice is not proved. A missing or outside evidence item is refused with `evidenceIndexes`; correct exactly those items and retry. A `flow` records ordered steps by `noteId`: write the steps first, then the flow; give 2–20 distinct steps that are current (`accepted` or `reviewed`) links of this project and a first step whose `from` is the flow's anchor; a superseded step reads `not_current` and the flow is not rewritten. Keep the conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that points at it via `replaces`. `write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; read the `check` result and fix what it reports. `review` (the scribe) reviews/accepts/rejects, with an optional `resolution: \"supersede\" | \"coexist\"` when resolving live contradictions; `withdraw` withdraws a note you may withdraw. Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service. For `kind: \"repair\"`, `repair` takes `{ pin, ops, responsibilityMoves }`; the platform computes `structural` and resolves the anchor facts, so send only the pin, the ordered ops and the moves — never a derived `structural`.",
+  "description": "Record a note: `{ op: \"write\" | \"review\" | \"withdraw\", ... }`. Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the ten kinds: `convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`, `link`, `flow`. An `understanding` gives `sections` (`status`, `decided`, `open`, `next`, `risks`, each non-empty) and no `body`, and hangs only on a goal or a stage (only the project scribe writes the project's understanding); every other kind gives `body`. A `link` records a relation the scan cannot see: `anchor` is the `from` end, `extraAnchors` is `[to, via?]` (`via` is required for `injects` and `callback`, optional otherwise), and the direction is from → to. `injects`: `from` uses the slot `via`, which is filled at runtime with `to`'s implementation; `callback`: `to` hands its function to `from`, and `from` calls back through `via`. `data`/`message`: `from` emits/sends and `to` receives; `spawns`: `from` launches the `to` entry. Give function-level ends where possible. The relation is one of `calls`, `injects`, `callback`, `data`, `message` or `spawns`. Give at least one evidence item for each role the relation requires, and no role outside the table: `injects`/`callback` use `use` and `wire`; `calls` uses `register` and `use`; `data`/`message` use `emit` and `receive`; `spawns` uses `launch` and `entry`. Each item gives `at.path` and at most one of `at.range` or `at.symbolRequest` (its declaration ranges; lines count from 1), never both; the platform looks only there, and with neither it uses the whole file. Each role must find: `injects.use` references `via`, `injects.wire` references `to` and `via`; `callback.wire` references `to` and `via`, `callback.use` references `via`; `calls.register` has the `key` and references `to`, `calls.use` has the `key`; `data`/`message` both roles have the `key` (`emit` writes/sends, `receive` reads/receives); `spawns` both roles have the `key` (`entry` is `to`'s entry declaration). `use`, `emit` and `launch` must fall in the `from` end, `receive` in the `to` end, `entry` in the `to` end's module; `wire` and `register` may be anywhere. Give the shared name as `key` (a literal or symbol request; omit it for `injects` and `callback`; `spawns` takes a literal or `null`; use `null` when the name is built at runtime). Evidence is co-occurrence inside the given range, not proof of wiring; a runtime branch or a configuration choice is not proved. A missing or outside evidence item is refused with `evidenceIndexes`; correct exactly those items and retry. A `flow` records ordered steps by `noteId`: write the steps first, then the flow; give 2–20 distinct steps that are current (`accepted` or `reviewed`) links of this project and a first step whose `from` is the flow's anchor; a superseded step reads `not_current` and the flow is not rewritten. Keep the conclusion to one line; facts are pointers only, never copied text. A fact is `{ kind: \"file\", path, digest }` (`digest` is the `revision` your `read` result gave for that file; after you edit the file, use the `newRevision` from the `edit` result), `{ kind: \"note\", noteId, version }`, `{ kind: \"commit\", sha }`, or a `record`, `artifact` or `kernel_history` source copied unchanged from your context. When the note only rests on some files, list their paths in `basisFiles` instead. Close an `open_question` with the `decision` that points at it via `replaces`. `write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; read the `check` result and fix what it reports. `review` (the scribe) reviews/accepts/rejects, with an optional `resolution: \"supersede\" | \"coexist\"` when resolving live contradictions; `withdraw` withdraws a note you may withdraw. Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service. For `kind: \"repair\"`, `repair` takes `{ pin, ops, responsibilityMoves }`; the platform computes `structural` and resolves the anchor facts, so send only the pin, the ordered ops and the moves — never a derived `structural`.",
   "inputSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "oneOf": [
@@ -427,11 +427,110 @@ const DEFAULT_SPECIFICATION: ToolSpecification = {
           "facts": {
             "type": "array",
             "items": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {}
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "record"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "artifact"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "kernel_history"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "note"
+                    },
+                    "noteId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "noteId",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "file"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "digest": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path",
+                    "digest"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "commit"
+                    },
+                    "sha": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "sha"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
             }
           },
           "basisFiles": {

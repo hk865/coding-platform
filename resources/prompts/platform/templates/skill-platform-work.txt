@@ -42,7 +42,7 @@
 {{/tool:find_graph}}
 {{/tool:look_graph}}
 - 十种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）、`link`（联系）、`flow`（流程）。
-- 结论一句话；事实只给指针（`facts`），从不抄原文。
+- 结论一句话；事实只给指针（`facts`），从不抄原文。{{#tool:record_note}}每种事实怎么写，见 `record_note` 的说明。{{/tool:record_note}}
 - `open_question` 由点它的 `decision` 用 `replaces` 收掉。
 - 写后读回执里的 `check`（L22），按它报的问题撤下或重写。
 - 只有 `currentEligible: true` 的条目才是现行结论（§11.3）。
@@ -92,7 +92,7 @@
    为什么：不导出能少很多直接引用，以后换成共享的那份时要改的地方少；临时件留着不收，就成了第二份。
 5. 你确实新建了共享的东西：放进管这个概念的模块，而不是你正在写的功能文件。
 {{#tool:record_note}}
-   - 用 `record_note` 在那个模块锚点上记一条 `convention`：话题写它的名字，结论一句话（“X 只在某文件里，要用就引用它，不另写”），`facts` 指向那个文件。
+   - 用 `record_note` 在那个模块锚点上记一条 `convention`：话题写它的名字，结论一句话（“X 只在某文件里，要用就引用它，不另写”），`basisFiles` 写那个文件（只写路径）。
 {{/tool:record_note}}
    为什么：同伴动模块前先看锚点上的注记；只靠搜代码，要猜中词才找得到。
 6. 做完时的说明（最后的回答，和发出的“请知悉”）里，列出你新建的共享件（名字 → 文件），以及还没换掉的临时件和原因（列为未解决）。

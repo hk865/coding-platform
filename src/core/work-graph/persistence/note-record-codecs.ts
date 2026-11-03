@@ -238,14 +238,16 @@ export function factProblem(value: unknown): string | null {
         && nonEmpty(value['turnId']) && typeof value['fromPosition'] === 'number' && typeof value['throughPosition'] === 'number'
         && isRecord(value['runRef']) && isRecord(value['sessionRef']) ? null : 'kernel_history fact is invalid';
     case 'note':
+      if (!hasOnlyKeys(value, ['kind', 'noteId', 'version'])) return 'note fact carries unknown fields';
       return nonEmpty(value['noteId']) && isPos(value['version']) ? null : 'note fact is invalid';
     case 'file':
+      if (!hasOnlyKeys(value, ['kind', 'path', 'digest'])) return 'file fact carries unknown fields';
       return nonEmpty(value['path']) && typeof value['digest'] === 'string' ? null : 'file fact is invalid';
     case 'commit':
       // L22: the codec and the write gate check only the pointer's SHAPE; the
       // 40/64-hex format is 4B's check (`invalid_commit_format`), never 4A's.
-      return typeof value['sha'] === 'string' && hasOnlyKeys(value, ['kind', 'sha'])
-        ? null : 'commit fact sha is invalid';
+      if (!hasOnlyKeys(value, ['kind', 'sha'])) return 'commit fact carries unknown fields';
+      return typeof value['sha'] === 'string' ? null : 'commit fact sha is invalid';
     default:
       return 'fact kind is not recognized';
   }

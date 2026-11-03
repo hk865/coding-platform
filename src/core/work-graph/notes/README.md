@@ -74,7 +74,7 @@
 
 ## 不要做
 
-- 不另写记录 codec 或游标绑定；用 `src/core/work-graph/persistence/note-record-codecs.ts:449` 的 `decodeNoteHeadSnapshot` 等既有入口（CS-01、CS-08、CS-10）。
+- 不另写记录 codec 或游标绑定；用 `src/core/work-graph/persistence/note-record-codecs.ts:454` 的 `decodeNoteHeadSnapshot` 等既有入口（CS-01、CS-08、CS-10）。
 - 不另写命令身份里的主体折叠；用 `src/contracts/core/call-context.ts:64` 的 `principalIdentity`（原来的私有 `principalOf` 已删除）。
 - 不绕过 `src/core/work-graph/state/note-machine.ts` 自行改状态；状态写入只经 `state/`（`src/core/work-graph/state/note-machine.ts:429` 的 `transitionNote`）。
 - 不把失败的读或损坏的记录当成空列表、空范围、0 或“没有书记”（FP-05、M1-12、MH-06）。

@@ -630,9 +630,9 @@ function writeInputProblem(input: unknown): string | null {
   const facts = draft['facts'];
   if (!Array.isArray(facts)) return 'facts must be an array';
   if (facts.length > NOTE_FACTS_MAX) return 'too many facts';
-  for (const fact of facts) {
+  for (const [index, fact] of facts.entries()) {
     const problem = factProblem(fact);
-    if (problem !== null) return problem;
+    if (problem !== null) return `facts[${String(index)}]: ${problem}`;
   }
   const basisFiles = draft['basisFiles'];
   if (!Array.isArray(basisFiles)) return 'basisFiles must be an array';

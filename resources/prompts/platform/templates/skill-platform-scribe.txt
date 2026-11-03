@@ -27,7 +27,7 @@
 {{/tool:find_graph}}
 {{/tool:look_graph}}
 - 十种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）、`link`（联系）、`flow`（流程）。
-- 结论一句话；事实只给指针（`facts`），从不抄原文。
+- 结论一句话；事实只给指针（`facts`），从不抄原文。{{#tool:record_note}}每种事实怎么写，见 `record_note` 的说明。{{/tool:record_note}}
 - `open_question` 由点它的 `decision` 用 `replaces` 收掉。
 - 写后读回执里的 `check`（L22），按它报的问题撤下或重写。
 - 只有 `currentEligible: true` 的条目才是现行结论（§11.3）。
