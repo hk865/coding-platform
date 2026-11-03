@@ -29,6 +29,7 @@ import { sameActorIdentity as sameActor } from '../../../contracts/actor-equalit
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { LineSettingsSessionRead, WorkLineSettingsPort } from '../model/work-line-contracts.js';
 import { canonicalRefKey, encodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
+import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { WORKSPACE_LINE_PINS_CHANGED_EVENT,
   decodeWorkspaceLinePinsChangedEvent, encodeWorkspaceLinePinsChangedEvent } from '../persistence/line-settings-codecs.js';
 import type { LinePinGuardV1 } from '../state/line-pin-machine.js';
@@ -117,6 +118,13 @@ export function createLineSettingsService(deps: LineSettingsDependencies): WorkL
       const pinVerdict = boundWorkspacePin(expected, owned);
       if ('status' in pinVerdict) return pinVerdict;
       const { pin } = pinVerdict;
+      // Every `add`/`remove` entry is a complete SessionRef, the pin table's shape
+      // (exactly projectId and sessionId): a malformed one is `invalid` here, never
+      // the record codec's refusal at commit.
+      for (const ref of [...add, ...remove]) {
+        const problem = sessionRefProblem(ref, 'a pinned line sessionRef');
+        if (problem !== null) return rejected('invalid', problem);
+      }
 
       const identityKey = 'workspace-line-pins:' + sha256Hex(canonicalJson({
         projectId: owned.projectId, workspaceId: owned.workspaceId, operator: { ...operator }, requestId,

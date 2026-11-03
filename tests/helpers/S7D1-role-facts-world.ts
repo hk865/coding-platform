@@ -33,20 +33,19 @@ const chainLineOf = (label: string, ref: SessionRef, operation: OperationRef) =>
 
 /**
  * Run `run` while the next Session registration is held after its real commit: the platform's own commit comes
- * back as the observable, and the caller then continues unchanged.
+ * back as the observable, and the caller then continues unchanged. The registration need not be made by `run`
+ * itself: with the request driver on, the Host's own lifecycle pass also continues a handoff and may create the
+ * successor, so a handoff drive can return ("the create child is still accepted") before that registration commits.
+ * A `run` that returns first therefore still waits for the commit; a `run` that throws fails at once.
  */
 export async function heldRegistration<T>(label: string, run: () => Promise<T>):
 Promise<{ value: T; commit: PreparedCommit }> {
   const hold = commitBarrier.holdAfter(byIdentityPrefix('session-register:'), label);
   try {
     const pending = run();
-    const raced = await Promise.race([
-      hold.reached.then(commit => ({ kind: 'commit' as const, commit })),
-      pending.then(value => ({ kind: 'value' as const, value })),
-    ]);
-    if (raced.kind !== 'commit') throw new Error(`S7D1: ${label} finished without a registration commit`);
+    const commit = await Promise.race([hold.reached, pending.then(() => hold.reached)]);
     hold.release();
-    return { value: await pending, commit: raced.commit };
+    return { value: await pending, commit };
   } finally {
     hold.release();
   }

@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
  * E32-6 (ruling items 1 and 9, row E32-6): the nine boards without a working
@@ -11,14 +13,17 @@ import { beforeAll, describe, expect, it } from 'vitest';
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const frozen = `${root}docs/ui-reference/workbench-2026-10`;
 const working = `${root}src/ui/boards`;
-const built = `${root}dist/app/public/workbench`;
+// Its own output directory: another build test never writes into it.
+const built = mkdtempSync(join(tmpdir(), 'e32-6-workbench-'));
 const FROZEN_ONLY = [
   'ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Main', 'Member', 'Phone', 'Plan',
 ] as const;
 
 beforeAll(() => {
-  execFileSync(process.execPath, ['scripts/build-ui.mjs'], { cwd: root, stdio: 'pipe' });
+  execFileSync(process.execPath, ['scripts/build-ui.mjs', built], { cwd: root, stdio: 'pipe' });
 }, 30_000);
+
+afterAll(() => { rmSync(built, { recursive: true, force: true }); });
 
 describe('E32-6 build sources', () => {
   it.each(FROZEN_ONLY)('%s is the frozen reference', (name) => {

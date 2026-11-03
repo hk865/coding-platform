@@ -7,17 +7,21 @@
  * directory, and `kit.css` from the reference directory; `index.html` lists
  * the boards so `/workbench/` shows them. esbuild is already a dev dependency;
  * nothing is added.
+ *
+ * An optional first argument names another output directory (a test builds
+ * into its own temporary directory, so two builds never share one); without
+ * it the output is the Host's `dist/app/public/workbench`.
  */
 import { build } from 'esbuild';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const boardsDir = join(root, 'docs/ui-reference/workbench-2026-10');
 const workBoardsDir = join(root, 'src/ui/boards');
-const outDir = join(root, 'dist/app/public/workbench');
+const outDir = process.argv[2] === undefined ? join(root, 'dist/app/public/workbench') : resolve(process.argv[2]);
 
 const boards = (await readdir(boardsDir)).filter((name) => name.endsWith('.dc.html')).sort();
 if (boards.length !== 10) throw new Error(`expected 10 .dc.html boards, found ${boards.length}`);
