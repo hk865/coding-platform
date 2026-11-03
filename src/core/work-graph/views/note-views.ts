@@ -34,7 +34,7 @@ import type { NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadC
   NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
 import { NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_QUOTA, NOTE_READ_FACTS_MAX, NOTE_READ_FILES_MAX,
   NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX, NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';
-import { anchorKeyOf, isSafeRelativePath, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
+import { anchorKeyOf, isSafeRelativePath, noteCheckWorkspace, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
 import { anchorSlots } from '../notes/note-related-scope.js';
 import { foldInputOf, foldUpdateDue } from '../notes/note-update-due.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
@@ -219,6 +219,8 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
 
   const workspaceRef = (ctx: CoreCallContext) => ({ aggregateType: 'Workspace' as const,
     projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
+  // The file reads are the platform's checks (`noteCheckWorkspace`); the caller's own goal still decides eligibility.
+  const workspace = deps.workspace === undefined ? undefined : noteCheckWorkspace(deps.workspace);
 
   async function readHead(projectId: string, noteId: string): Promise<Outcome<NoteHeadSnapshot | null>> {
     const refKey = noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId });
@@ -258,9 +260,9 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
   }
 
   async function readCurrentFile(ctx: CoreCallContext, path: string): Promise<FileRead> {
-    if (deps.workspace === undefined) return { status: 'unavailable' };
+    if (workspace === undefined) return { status: 'unavailable' };
     try {
-      const read = await deps.workspace.readWorkspace(ctx,
+      const read = await workspace.readWorkspace(ctx,
         { workspace: workspaceRef(ctx), path, maxBytes: basisFileMaxBytes, version: { kind: 'working_tree' } });
       if (read.status === 'ready') return { status: 'ready', digest: read.value.digest };
       if (read.code === 'not_found') return { status: 'missing' };
@@ -320,7 +322,6 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
    */
   async function recheckSymbol(ctx: CoreCallContext, anchor: Extract<NoteAnchorV1, { kind: 'file' }>,
     hitsMax: number): Promise<SymbolRecheck> {
-    const workspace = deps.workspace;
     const symbol = anchor.symbol;
     if (symbol === undefined || workspace === undefined || workspace.capture === undefined
       || workspace.querySource === undefined) return { status: 'unchecked' };

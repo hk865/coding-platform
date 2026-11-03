@@ -41,6 +41,7 @@ import {
 import { dispatchOutboxRefKey, taskAttemptRefKey } from './claim-record-codecs.js';
 import type { ExecutionEntryDependencies } from '../model/execution-entry-contracts.js';
 import { agentActorOf } from '../model/tool-commit-arguments.js';
+import { platformCheckContext } from '../model/platform-check-context.js';
 import {
   mergeGuards,
   readStoredManifest,
@@ -85,7 +86,11 @@ export type PlanWriteAdmission = {
   duty: 'executor' | 'adviser';
 };
 
-/** The fixed platform attribution of the internal Host-only WG11 read. */
+/**
+ * The fixed platform attribution of the internal Host-only WG11 read. The admission reads WG11 through
+ * `platformCheckContext` on the caller's own project, workspace and signal; that context is never handed to the
+ * public Plan write methods.
+ */
 const INTERNAL_READ_ACTOR = { kind: 'system' as const, id: 'w2-plan-write-admission' };
 
 type Rejection = { status: 'rejected'; code: CoreError; reason: string };
@@ -116,23 +121,6 @@ function roleBindingFromValue(value: unknown): RoleBindingRefV1 | null {
   if (typeof bindingVersion !== 'number' || !Number.isSafeInteger(bindingVersion) || bindingVersion < 0) return null;
   return { schemaVersion: 1, bindingId: value['bindingId'], templateId: value['templateId'],
     templateRevision: value['templateRevision'], bindingVersion, policyRevision: value['policyRevision'] };
-}
-
-/**
- * WG11 is a Host-only reader. The admission builds a fixed trusted platform
- * read context for the exact scope (same project/workspace/original signal and
- * a consistent Host material reader); this internal context is never handed to
- * the public Plan write methods.
- */
-function internalReadContext(ctx: CoreCallContext, projectId: string, workspaceId: string): CoreCallContext {
-  const actor = { kind: 'system' as const, id: INTERNAL_READ_ACTOR.id };
-  return {
-    projectId,
-    workspaceId,
-    principal: { kind: 'host', actor },
-    materialReader: { kind: 'host', projectId, workspaceId, actor },
-    signal: ctx.signal,
-  } as CoreCallContext;
 }
 
 /**
@@ -182,7 +170,7 @@ export async function identifyDelegatedWriter(
   }
   if (signal['aborted'] === true) return { status: 'rejected', code: 'cancelled', reason: 'the Agent identity read was cancelled' };
 
-  const read = await deps.reads.readExecution(internalReadContext(ctx, projectId, workspaceId), runRef);
+  const read = await deps.reads.readExecution(platformCheckContext(ctx, INTERNAL_READ_ACTOR), runRef);
   if (read.status !== 'ready') return mapReadFailure(read);
   const facts = read.value;
   if (facts.run.task.projectId !== projectId || facts.outbox.claim.workspaceId !== workspaceId) {
@@ -248,7 +236,7 @@ export async function authorizeDelegatedWrite(
   if (projectId !== ctx.projectId || workspaceId !== ctx.workspaceId) {
     return forbidden('the Agent writer scope disagrees with the call context');
   }
-  const readCtx = internalReadContext(ctx, projectId, workspaceId);
+  const readCtx = platformCheckContext(ctx, INTERNAL_READ_ACTOR);
   const read = await deps.reads.readExecution(readCtx, writer.runRef);
   if (read.status !== 'ready') return mapReadFailure(read);
   const facts = read.value;

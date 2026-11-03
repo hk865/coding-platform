@@ -32,7 +32,7 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createNoteService` | `src/core/work-graph/notes/note-service.ts:586` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点 | 注入给 composition；所有注记写入与处置走它 |
+| `createNoteService` | `src/core/work-graph/notes/note-service.ts:586` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点；文件锚点的存在、候选、符号读和基准文件的读经 `noteCheckWorkspace`，写入、准入、额度和存下的作者仍是调用者 | 注入给 composition；所有注记写入与处置走它 |
 | `createRepairActivationService` | `src/core/work-graph/notes/activate-repair.ts:713` | 绑定 records/catalog/evidence 等依赖，返回 `readBoundRepairRound`/`activateRepair`/`attemptRepairsForGoal`；激活检查轮 PASS、批准、footprint 并一次提交注记与 catalog 修订 | 组合根装配 repair 激活；不要另开激活入口 |
 | `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:341` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空） | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
 | `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:228` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
@@ -44,13 +44,14 @@
 | `foldInputOf` | `src/core/work-graph/notes/note-update-due.ts:48` | `updateDue` 的 baseline 规则：当前版才计，stage 无当前版时用 plan 接受时间 | 构造 `foldUpdateDue` 输入时 |
 | `foldUpdateDue` | `src/core/work-graph/notes/note-update-due.ts:57` | 纯 fold：trigger 相对 baseline，返回 `updateDue` 与 `latestTriggerCursor` | 需要更新到期判断时；不要另写规则 |
 | `stageContinuityOf` | `src/core/work-graph/notes/note-continuity.ts:18` | 纯 stage 连续性：revision 窗口内缺席即 `retired`，读不到为 `unchecked` | 注记派生字段的 stage 退役判断 |
-| `anchorKeyOf` | `src/core/work-graph/notes/note-anchors.ts:410` | 唯一 anchor key 规则；file key 只含路径、不含 symbol | 任何锚点比较/存储前 |
-| `moduleRefOf` | `src/core/work-graph/notes/note-anchors.ts:422` | 由 `projectId` 和 `moduleId` 组成 `ModuleRef` | 要 `ModuleRef` 时；不要另写构造器 |
-| `topicKeyOf` | `src/core/work-graph/notes/note-anchors.ts:105` | 主题归一化：NFC、空白折叠、ASCII 小写 | 主题比较/查重 |
-| `isSafeRelativePath` | `src/core/work-graph/notes/note-anchors.ts:402` | 安全的 workspace 相对路径（无 `\`、盘符、`.`/`..`） | file 锚点/路径输入 |
-| `normalizePath` | `src/core/work-graph/notes/note-anchors.ts:583` | 去掉前导 `./`；其余由 class-1 提前拒绝 | 锚点 key 归一化 |
-| `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:268` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
-| `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:281` | 一基 UTF-16 行/列切片（结束列不含） | 从捕获内容取 symbol 文本 |
+| `anchorKeyOf` | `src/core/work-graph/notes/note-anchors.ts:417` | 唯一 anchor key 规则；file key 只含路径、不含 symbol | 任何锚点比较/存储前 |
+| `moduleRefOf` | `src/core/work-graph/notes/note-anchors.ts:429` | 由 `projectId` 和 `moduleId` 组成 `ModuleRef` | 要 `ModuleRef` 时；不要另写构造器 |
+| `topicKeyOf` | `src/core/work-graph/notes/note-anchors.ts:106` | 主题归一化：NFC、空白折叠、ASCII 小写 | 主题比较/查重 |
+| `isSafeRelativePath` | `src/core/work-graph/notes/note-anchors.ts:409` | 安全的 workspace 相对路径（无 `\`、盘符、`.`/`..`） | file 锚点/路径输入 |
+| `normalizePath` | `src/core/work-graph/notes/note-anchors.ts:590` | 去掉前导 `./`；其余由 class-1 提前拒绝 | 锚点 key 归一化 |
+| `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:275` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
+| `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:288` | 一基 UTF-16 行/列切片（结束列不含） | 从捕获内容取 symbol 文本 |
+| `noteCheckWorkspace` | `src/core/work-graph/notes/note-anchors.ts:817` | 注记的工作区读口包一层：`readWorkspace`/`capture`/`querySource`/`releaseCapture` 都用 `platformCheckContext` 换成固定的内部 Host 身份（`system`/`note-workspace-check`；Host 只给自己的 principal 授权工作区读），Host 调用者不变 | 注记写入的锚点和基准文件读、注记检查的文件读、读模型的锚点存在读；写入、准入、额度、作者和非工作区读仍用调用者的上下文 |
 | `createNoteHeadDerivations` | `src/core/work-graph/notes/note-read-model.ts:279` | 从已存 head 派生 `conflicting`/`overQuota` 等注记字段 | 注记读/检查；不要另算 |
 | `newHeadCache` | `src/core/work-graph/notes/note-read-model.ts:243` | 一次读内的 anchors/goals 缓存 | 与 `createNoteHeadDerivations` 配套 |
 | `selectRelatedFiles` | `src/core/work-graph/notes/note-related-scope.ts:104` | 纯：从 Run 事实选 related 文件，definite 先于 possible、去重、截断 | `find` 的 related 文件段 |

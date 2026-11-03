@@ -44,7 +44,7 @@
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:174` | 由 actor/project/request 推出稳定的 operationRef 与 plannedSessionRef | 创建前查重、重试或容量预检 |
 | `sessionRegisterIdentityKey` | `src/core/work-graph/sessions/session-directory.ts:160` | Host actor/project/request 的 Session 登记提交身份键（正式 receipt 的 identity） | 按子线登记提交读回执时 |
 | `kernelSessionClaimKey` | `src/core/work-graph/sessions/session-directory.ts:187` | Kernel Session 独占映射槽 key | 绑定/检查 Kernel 映射 claim 时 |
-| `createModuleMaintainer` | `src/core/work-graph/sessions/module-maintainer-service.ts:182` | 模块维护者唯一 owner：维护者读、指定命令（打开/移动/`already_owner`）、决定应用与每步确认/自动模式的工具入口；证明绑定只从存储操作输入重建 | 两条入口（人的路由、adviser 工具）与卡的应用；不要另写指定命令或第二份读取 |
+| `createModuleMaintainer` | `src/core/work-graph/sessions/module-maintainer-service.ts:171` | 模块维护者唯一 owner：维护者读、指定命令（打开/移动/`already_owner`）、决定应用与每步确认/自动模式的工具入口；证明绑定只从存储操作输入重建 | 两条入口（人的路由、adviser 工具）与卡的应用；不要另写指定命令或第二份读取 |
 | `readMaintainerAssignmentOperation` | `src/core/work-graph/sessions/session-record-codecs.ts:1451` | 存储 `maintainer_assignment` 操作的唯一点读：真实缺失 `null`、损坏 `unavailable`、别的 action 种类 `null` | 卡来源与 owner 共用；不要另建索引或第二次读 |
 | `maintainerAssignmentRecordedCodec` | `src/core/work-graph/sessions/session-record-codecs.ts:1215` | `MaintainerAssignmentRecorded` 事件的编码、解码与注册：每次写 `maintainer_assignment` 操作都追加这条事件（带操作 ref、revision、phase 和整个 action，可带 actor 和证明）；没有新记录格式 | 写维护者操作时编码，命令结果校验时解码；不要另写事件信封 |
 | `checkSessionProvenance` | `src/core/work-graph/sessions/session-record-codecs.ts:363` | 校验 new/task 续接/secretary handoff/readonly-copy provenance | 跟随 successor 或排除副本时 |

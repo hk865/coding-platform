@@ -56,7 +56,7 @@ import {
 } from '../persistence/note-record-codecs.js';
 import { GOAL_BY_WORKSPACE_INDEX, readGoalPlanWindow } from '../tasks/plan-readers.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
-import { anchorKeyOf, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
+import { anchorKeyOf, noteCheckWorkspace, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
 import { headsByAnchorKey, readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome } from './note-base-reader.js';
 import { renderUnderstandingBody } from './note-rendering.js';
 import { anchorSlots, headsOnKeyPrefix, isRelatedHead, matchesPathPrefix, resolveRelatedScope, resolveTaskScopeWithPlan,
@@ -344,7 +344,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
   const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
-    ...(deps.workspace === undefined ? {} : { workspace: deps.workspace }) };
+    ...(deps.workspace === undefined ? {} : { workspace: noteCheckWorkspace(deps.workspace) }) };
   const derivations = createNoteHeadDerivations(deps.records, anchorQuota, goalQuota);
   const conflictingOf = derivations.conflictingOf;
   const overQuotaOf = derivations.overQuotaOf;

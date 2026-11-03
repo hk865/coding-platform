@@ -36,6 +36,7 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
+import { platformCheckContext } from '../model/platform-check-context.js';
 import { commandKeys, type CommitFragment } from '../persistence/command-executor.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
@@ -129,19 +130,6 @@ function readFailure(read: { status: string; code?: string; reason?: string }): 
  * the trusted Run facts, never from the model.
  */
 const TRIAL_ACTOR: { kind: 'system'; id: string } = Object.freeze({ kind: 'system', id: 'architecture-proposal-trial' });
-
-function trialContext(ctx: CoreCallContext): CoreCallContext {
-  if (ctx.principal.kind === 'host') return ctx;
-  return {
-    projectId: ctx.projectId,
-    ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }),
-    principal: { kind: 'host', actor: TRIAL_ACTOR },
-    materialReader: ctx.workspaceId === undefined
-      ? { kind: 'host', projectId: ctx.projectId, actor: TRIAL_ACTOR }
-      : { kind: 'host', projectId: ctx.projectId, workspaceId: ctx.workspaceId, actor: TRIAL_ACTOR },
-    signal: ctx.signal,
-  };
-}
 
 function hostActorOf(ctx: CoreCallContext): ActorRef | null {
   return ctx.principal.kind === 'host' ? ctx.principal.actor : null;
@@ -353,7 +341,7 @@ async function trialCatalogRevision(deps: ProposalServiceDeps, ctx: CoreCallCont
   };
   let planned;
   try {
-    planned = await planCatalogRevision(deps, trialContext(ctx), input);
+    planned = await planCatalogRevision(deps, platformCheckContext(ctx, TRIAL_ACTOR), input);
   } catch (error) {
     return rejected('unavailable', `the catalog revision trial failed: ${messageOf(error)}`);
   }
@@ -666,7 +654,7 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   const facts = await deps.runFacts(ctx, ctx.principal.runRef);
   if (facts.status !== 'ready') return readFailure(facts);
   if (deps.duty === undefined) return rejected('unavailable', 'the proposal owner has no Session duty reader');
-  const duty = await deps.duty(facts.value.role, trialContext(ctx));
+  const duty = await deps.duty(facts.value.role, platformCheckContext(ctx, TRIAL_ACTOR));
   if (duty.status !== 'ready') return readFailure(duty);
   if (duty.value !== 'adviser') {
     return rejected('forbidden', 'a structural proposal is written by an adviser');

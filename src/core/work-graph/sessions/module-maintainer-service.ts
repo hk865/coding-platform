@@ -50,6 +50,7 @@ import {
   type MaintainerAssignmentRequestV1, type MaintainerAssignmentToolResultV1, type MaintainerCallerV1,
   type ModuleMaintainerPort, maintainerBindingOfOperation,
 } from '../model/module-maintainer-contracts.js';
+import { platformCheckContext } from '../model/platform-check-context.js';
 import {
   type AssignMaintainerDecisionV1, type AssignMaintainerFactsV1, type AssignMaintainerRefusalV1,
   assignMaintainerDecision,
@@ -96,18 +97,6 @@ function maintainerScopeProblem(ctx: CoreCallContext): CoreRejection | null {
     return rejected('forbidden', 'a module maintainer call requires a bound project/workspace context');
   }
   return null;
-}
-
-/** The existing `systemContext` shape (`member-service.ts`): a Host read identity, never a second write identity. */
-function hostReadContext(ctx: CoreCallContext): CoreCallContext {
-  return {
-    ...ctx,
-    principal: { kind: 'host', actor: { ...MAINTAINER_SYSTEM_ACTOR } },
-    materialReader: {
-      kind: 'host', projectId: ctx.projectId, actor: { ...MAINTAINER_SYSTEM_ACTOR },
-      ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }),
-    },
-  };
 }
 
 function acceptedRecord(input: {
@@ -696,7 +685,8 @@ export function createModuleMaintainer(deps: ModuleMaintainerDependenciesV1): Mo
   async function modeOf(ctx: CoreCallContext, operation: MaintainerAssignmentOperationV1):
     Promise<'needs_decision' | 'automatic' | CoreRejection> {
     const caller = operation.action.input.caller;
-    const runRead = await deps.executions.readExecution(hostReadContext(ctx), structuredClone(caller.run));
+    const runRead = await deps.executions.readExecution(platformCheckContext(ctx, MAINTAINER_SYSTEM_ACTOR),
+      structuredClone(caller.run));
     if (runRead.status === 'rejected') return runRead;
     if (runRead.status !== 'ready') return rejected('unavailable', 'the maintainer caller Run is not readable');
     const goalRef: GoalRef = {

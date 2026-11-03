@@ -30,6 +30,7 @@ import {
   NOTE_ANCHOR_CANDIDATES_MAX, NOTE_ANCHOR_CANDIDATE_SCAN, NOTE_BASIS_FILE_MAX_BYTES,
   NOTE_CONCLUSION_MAX_CODEPOINTS, NOTE_SYMBOL_HITS_MAX,
 } from '../model/note-contracts.js';
+import { platformCheckContext } from '../model/platform-check-context.js';
 
 /**
  * The narrow workspace surface the anchor gate needs: the existence read and
@@ -227,23 +228,29 @@ Promise<{ candidates: NoteAnchorCandidateV1[]; unavailable: boolean }> {
   } catch {
     return { candidates: [], unavailable: true };
   }
-  const paths: string[] = [];
-  let cursor: string | null = null;
-  while (paths.length < NOTE_ANCHOR_CANDIDATE_SCAN) {
-    let page: Awaited<ReturnType<WorkspaceToolsPort['querySource']>>;
-    try {
-      page = await querySource(ctx, { capture: capture.ref, query: { kind: 'paths' }, cursor, limit: 500 });
-    } catch {
-      return { candidates: [], unavailable: true };
+  try {
+    const paths: string[] = [];
+    let cursor: string | null = null;
+    while (paths.length < NOTE_ANCHOR_CANDIDATE_SCAN) {
+      let page: Awaited<ReturnType<WorkspaceToolsPort['querySource']>>;
+      try {
+        page = await querySource(ctx, { capture: capture.ref, query: { kind: 'paths' }, cursor, limit: 500 });
+      } catch {
+        return { candidates: [], unavailable: true };
+      }
+      if (page.status !== 'ready') return { candidates: [], unavailable: true };
+      for (const hit of page.value.items as readonly SourceHit[]) {
+        if (hit.kind === 'file') paths.push(hit.file.path);
+      }
+      if (page.value.nextCursor === null) break;
+      cursor = page.value.nextCursor;
     }
-    if (page.status !== 'ready') return { candidates: [], unavailable: true };
-    for (const hit of page.value.items as readonly SourceHit[]) {
-      if (hit.kind === 'file') paths.push(hit.file.path);
-    }
-    if (page.value.nextCursor === null) break;
-    cursor = page.value.nextCursor;
+    return { candidates: fileCandidates(paths.slice(0, NOTE_ANCHOR_CANDIDATE_SCAN), path), unavailable: false };
+  } finally {
+    // Best-effort release, as in `resolveSymbol`: the capture is the Host's shared pool's, and a failed release never
+    // changes the candidates.
+    try { await workspace.releaseCapture?.(ctx, capture.ref); } catch { /* best-effort */ }
   }
-  return { candidates: fileCandidates(paths.slice(0, NOTE_ANCHOR_CANDIDATE_SCAN), path), unavailable: false };
 }
 
 // --------------------------------------------------------------------------
@@ -797,6 +804,24 @@ async function checkFileAnchor(ctx: CoreCallContext, anchor: Extract<NoteAnchorV
       anchorCandidates: candidates.candidates, ...(candidates.unavailable ? { candidatesUnavailable: true } : {}) };
   }
   return { status: 'rejected', code: 'unavailable', reason: 'the file anchor cannot be read', field };
+}
+
+/**
+ * The notes' workspace reads (a file anchor's existence, candidates and symbol, a basis file's digest, a note's
+ * freshness) are read-only checks the platform makes for the caller. The Host authorizes a workspace read only for
+ * its own principal, so a Run's check reads under this fixed internal identity (`platformCheckContext`); the write,
+ * its admission, quotas and stored author, and every non-workspace read, stay the caller's.
+ */
+const NOTE_CHECK_ACTOR: { kind: 'system'; id: string } = Object.freeze({ kind: 'system', id: 'note-workspace-check' });
+
+export function noteCheckWorkspace(workspace: NoteAnchorWorkspace): NoteAnchorWorkspace {
+  const checking = (ctx: CoreCallContext): CoreCallContext => platformCheckContext(ctx, NOTE_CHECK_ACTOR);
+  const { capture, querySource, releaseCapture } = workspace;
+  const checked: NoteAnchorWorkspace = { readWorkspace: (ctx, input) => workspace.readWorkspace(checking(ctx), input) };
+  if (capture !== undefined) checked.capture = (ctx, input) => capture(checking(ctx), input);
+  if (querySource !== undefined) checked.querySource = (ctx, input) => querySource(checking(ctx), input);
+  if (releaseCapture !== undefined) checked.releaseCapture = (ctx, ref) => releaseCapture(checking(ctx), ref);
+  return checked;
 }
 
 // `ModuleDefinition` is re-exported for the scope math to share the same catalog shape.

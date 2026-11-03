@@ -27,7 +27,7 @@ import type { RunRef } from '../../../contracts/dispatch.js';
 import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
 } from './note-anchors.js';
-import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
+import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, noteCheckWorkspace, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
 import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
 import { newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
 import { stageContinuityOf } from './note-continuity.js';
@@ -588,9 +588,11 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
   const symbolHitsMax = deps.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
   const basisFileMaxBytes = Math.min(deps.basisFileMaxBytes ?? NOTE_BASIS_FILE_MAX_BYTES, deps.workspaceMaxFileBytes);
+  // The anchor and basis-file reads are the platform's checks (`noteCheckWorkspace`).
+  const checkedWorkspace = noteCheckWorkspace(deps.workspace);
   const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
-    ...(deps.workspace === undefined ? {} : { workspace: deps.workspace }) };
+    workspace: checkedWorkspace };
 
   /**
    * P9: the per-commit envelope fields shared by every event of one
@@ -1415,7 +1417,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       // R15/L11: a path that escapes the workspace (`../…`) is a class-1 shape
       // problem, not a transient read failure.
       if (!isSafeRelativePath(path)) return rejectedInput(input, 'invalid', 'basis_file_forbidden');
-      const read = await deps.workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
+      const read = await checkedWorkspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
         projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path, maxBytes: basisFileMaxBytes,
         version: { kind: 'working_tree' } });
       if (read.status !== 'ready') {

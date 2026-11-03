@@ -19,6 +19,7 @@
 - `execution-history-contracts.ts` — `RunExecutionHistory` 写入端口与输入/结果。
 - `execution-read-contracts.ts` — `TaskExecutionRecord` 精确读取与按 Goal/Task 的执行分页。
 - `plan-loop-readings.ts` — 三个 Run 读数（纯函数，只读已记录的 `RunActivityFactsV1`，不补算）：`runUsageOf`（累计 input+output，不扣缓存；unknown 保留原因）、`runGrowthOf`（第一次输入不计，看不到末段时不补）、`lineReadingOf`（counted 的 `changedLines`，缺失不是完整零）。阶段/超线读数（`stageReadingOf`/`stageOverLine`/`lineOverrun`）不在 R3。
+- `platform-check-context.ts` — 平台替 Agent 做只读核对时的调用上下文（`platformCheckContext`）。
 - `query-activity-plan.ts` — Query 活动写入的纯计划：`queryActivityRefOf`、`QueryActivityRecordContent`、`planQueryActivityWrite`（替换规则调用 `state/activity-replacement.ts`）与 `queryActivitySourceOf`（记录里的目标和两个 Session）。
 - `task-contracts.ts` — `GoalTaskPort`（创建/完成/控制 Goal）与 `GraphWrite` 正本。
 - `task-index.ts` — plan-local 的正反邻接构造和两种环检测，纯算法、无 Store 语义。
@@ -145,6 +146,7 @@
 | `queryActivitySourceOf` | `src/core/work-graph/model/query-activity-plan.ts:79` | 从 QueryJob 与 QueryRun 读出记录要写的目标（请求轮取 prepared manifest 冻结的目标，其他取 intent 目标）、执行 Session 和被问 Session；两个 Session 都投影成 `{projectId, sessionId}`（claim 可能留下完整 Session aggregate ref）；进入了却没有 prepared manifest 的请求轮答原因 | Query 收尾提交与 Query backfill 写记录内容；不要另读目标或 Session |
 | `toolCommitRequestId` | `src/core/work-graph/model/tool-commit-arguments.ts:68` | 由 origin/toolName/kernelCallId 派生稳定的工具 commit request id | 工具 handler 与 lookup 需要同一 id |
 | `agentActorOf` | `src/core/work-graph/model/tool-commit-arguments.ts:85` | 由 SessionRef/RunRef 构造唯一的 agent actor | 委派写入身份 |
+| `platformCheckContext` | `src/core/work-graph/model/platform-check-context.ts:10` | 平台替 Agent 做只读核对的调用上下文：Host 调用者原样返回；Run/QueryRun 换成给定的固定内部 system 身份，保留 projectId、workspaceId、signal | 只用于只认 Host 身份的核对读（结构提案的 catalog 试算和职责读、注记的工作区读 `noteCheckWorkspace`、委派写准入的 WG11 读、模块维护者请求读调用者的 Run）；写入、准入和存下的作者仍用调用者的上下文 |
 | `sendSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:94` | `send_session_message` 参数 → mailbox 请求 | 工具 handler 构造请求 |
 | `ackSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:112` | `ack_session_message` 参数 → 带 revision pin 的请求 | ack 工具 |
 | `respondSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:121` | `respond_session_message` 参数 → 带 revision pin 的请求 | respond 工具 |
