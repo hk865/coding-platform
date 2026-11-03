@@ -192,6 +192,7 @@ export async function runCodingAgent(input) {
                 mode: "session_history",
                 throughPosition: sessionContext.throughPosition,
                 ...(sessionContext.sourceSessionId === undefined ? {} : { sourceSessionId: sessionContext.sourceSessionId }),
+                ...(sessionContext.viewPosition === undefined ? {} : { viewPosition: sessionContext.viewPosition }),
             }
             : undefined;
         // 已完成轮次重建出的前缀：只与当前 Turn 合并做一次预算选择，且绝不含当前 Turn。
@@ -200,6 +201,7 @@ export async function runCodingAgent(input) {
             const restored = restoreSessionHistory(sourceRecords ?? [], {
                 sessionId: sourceSessionId,
                 throughPosition: contextBasis.throughPosition,
+                ...(contextBasis.viewPosition === undefined ? {} : { viewPosition: contextBasis.viewPosition }),
                 currentTurn: {
                     runId,
                     turnId: run.turn.turnId,
@@ -404,11 +406,13 @@ function resolveSessionContextMode(input) {
         if (sourceSessionId !== undefined && (typeof sourceSessionId !== "string" || sourceSessionId.length === 0)) {
             throw new StoreError("invalid_record", "session_history sourceSessionId 必须是非空字符串");
         }
+        const viewPosition = input.viewPosition;
         return {
             version: 1,
             mode: "session_history",
             throughPosition: throughPosition,
             ...(sourceSessionId === undefined ? {} : { sourceSessionId }),
+            ...(viewPosition === undefined ? {} : { viewPosition }),
         };
     }
     throw new StoreError("version_unsupported", `sessionContext mode=${JSON.stringify(candidate.mode)} 不受支持`);
@@ -437,7 +441,8 @@ function assertSameExecutionContent(record, run, contextBasis) {
     const recordedBasis = recorded ? parseContextBasis(recorded) : null;
     if ((recordedBasis?.throughPosition ?? null) !== (contextBasis?.throughPosition ?? null) ||
         (recordedBasis?.mode ?? null) !== (contextBasis?.mode ?? null) ||
-        (recordedBasis?.sourceSessionId ?? null) !== (contextBasis?.sourceSessionId ?? null)) {
+        (recordedBasis?.sourceSessionId ?? null) !== (contextBasis?.sourceSessionId ?? null) ||
+        (recordedBasis?.viewPosition ?? null) !== (contextBasis?.viewPosition ?? null)) {
         throw new StoreError("idempotency_conflict", "相同执行身份的会话历史绑定不同");
     }
 }

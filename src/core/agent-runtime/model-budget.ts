@@ -2,14 +2,46 @@ import type { ContextPreviewResult, ModelClientPort, ModelRequest, ModelEvent } 
 import { createHash } from 'node:crypto';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 export { DEFAULT_RUNTIME_BUDGET, validateRuntimeBudget, type RuntimeBudget } from '../../contracts/runtime-budget.js';
-export type InputTokenMeasurement = { tokens: number; method: 'model_tokenizer' | 'conservative_utf8_estimate'; tokenizer: string };
-export type ModelInputCounter = { count(request: ModelRequest): InputTokenMeasurement | Promise<InputTokenMeasurement> };
+export type InputTokenMeasurement = { tokens: number; method: 'model_tokenizer' | 'conservative_utf8_estimate' | 'provider_ratio_estimate'; tokenizer: string };
+export type ModelInputCounter = {
+  count(request: ModelRequest): InputTokenMeasurement | Promise<InputTokenMeasurement>;
+  /** Called when a request's stream ends (slice-K2-SPEC M2): the provider-reported input tokens of that
+   * request, or null after a non-retryable `provider_request_failed` with no usage. */
+  observe?(inputBytes: number, inputTokens: number | null): void;
+};
 export type MeterEntry = { requestId: string; reservedInput: number; reservedOutput: number; inputTokens: number | null; outputTokens: number | null; cachedInputTokens: number | null; status: 'reserved' | 'reported' | 'unknown';
   inputMeasurement?: InputTokenMeasurement; inputBytes?: number; inputDigest?: string; contextWindowTokens?: number };
 export type MeasuredModelRequest = {
   outgoing: ModelRequest; output: number; inputBytes: number;
   measurement: InputTokenMeasurement; fits: boolean;
 };
+
+/** Without a better count the input is its UTF-8 bytes plus a 4,096-token reservation. */
+function utf8Reservation(inputBytes: number): InputTokenMeasurement {
+  return { tokens: inputBytes + 4096, method: 'conservative_utf8_estimate', tokenizer: 'unavailable; UTF-8 reservation only' };
+}
+
+/**
+ * slice-K2-SPEC M1: one binding's counter. It keeps only the last usable ratio r of provider-reported input
+ * tokens to that request's bytes, in memory (a restart or a settings save starts without one), and counts
+ * min(B + 4,096, ceil(B × r × 1.1)): never more than the UTF-8 reservation, so it never trims more than bytes do.
+ */
+export function createObservedInputCounter(): ModelInputCounter {
+  let ratio: number | null = null;
+  return {
+    count(request) {
+      const bytes = Buffer.byteLength(JSON.stringify(request), 'utf8');
+      const reserved = utf8Reservation(bytes);
+      const estimate = ratio === null ? reserved.tokens : Math.ceil(bytes * ratio * 1.1);
+      return estimate < reserved.tokens
+        ? { tokens: estimate, method: 'provider_ratio_estimate', tokenizer: 'provider-reported tokens per byte × 1.1' }
+        : reserved;
+    },
+    observe(inputBytes, inputTokens) {
+      ratio = inputTokens === null ? null : inputTokens / inputBytes;
+    },
+  };
+}
 
 export class BudgetExceeded extends Error {}
 export class ContextCapacityExceeded extends Error {
@@ -110,8 +142,8 @@ export class ModelBudget {
     // Count the complete final request, including system/tool schemas and
     // tool history. Estimates and provider-reported usage remain separate.
     const inputBytes = Buffer.byteLength(JSON.stringify(outgoing), 'utf8');
-    const measurement = this.counter ? await this.counter.count(outgoing) : { tokens: inputBytes + 4096, method: 'conservative_utf8_estimate' as const, tokenizer: 'unavailable; UTF-8 reservation only' };
-    if (!Number.isSafeInteger(measurement.tokens) || measurement.tokens < 0 || !['model_tokenizer', 'conservative_utf8_estimate'].includes(measurement.method)) throw Error('输入 Token 计量无效；模型尚未调用');
+    const measurement = this.counter ? await this.counter.count(outgoing) : utf8Reservation(inputBytes);
+    if (!Number.isSafeInteger(measurement.tokens) || measurement.tokens < 0 || !['model_tokenizer', 'conservative_utf8_estimate', 'provider_ratio_estimate'].includes(measurement.method)) throw Error('输入 Token 计量无效；模型尚未调用');
     return { outgoing, output, inputBytes, measurement,
       fits: measurement.tokens + output <= this.limits.contextWindowTokens };
   }
@@ -158,9 +190,11 @@ export class ModelBudget {
       self.entries.push(entry); await self.persist(self.entries);
       let usage: Extract<ModelEvent, { type: 'usage_snapshot' }>['usage'] | undefined;
       let providerFailed = false;
+      let providerRefused = false;
       try {
         for await (const event of client.stream(outgoing, options)) {
           if (event.type === 'usage_snapshot') usage = event.usage;
+          if (event.type === 'error' && !event.error.retryable && event.error.code === 'provider_request_failed') providerRefused = true;
           if (event.type === 'error' && event.error.retryable) self.lastRetryableProviderError = event;
           else if (event.type === 'completed') self.lastRetryableProviderError = null;
           if (['error', 'cancelled', 'truncated'].includes(event.type)) providerFailed = true;
@@ -169,6 +203,10 @@ export class ModelBudget {
       } finally {
         if (usage) { entry.inputTokens = usage.inputTokens; entry.outputTokens = usage.outputTokens; entry.cachedInputTokens = usage.cachedInputTokens; entry.status = 'reported'; }
         else entry.status = 'unknown';
+        // slice-K2-SPEC M2: a positive report is the next ratio; a report of 0 is a missing field, not a ratio; a
+        // non-retryable provider_request_failed with no usage may be the request being too long, so drop the ratio.
+        if (usage !== undefined && usage.inputTokens > 0) self.counter?.observe?.(inputBytes, usage.inputTokens);
+        else if (usage === undefined && providerRefused) self.counter?.observe?.(inputBytes, null);
         await self.persist(self.entries);
       }
       if (providerFailed) return;

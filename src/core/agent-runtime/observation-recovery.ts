@@ -233,6 +233,7 @@ function inspectEntry(entry: SessionHistoryEntry, identity: KernelExecutionIdent
     return { ok: true,
       matches: record.payload.run.runId === identity.runId && record.payload.run.turn.turnId === identity.turnId };
   }
+  if (record.recordType !== 'agent.event') return { ok: true, matches: false };
   return { ok: true,
     matches: record.payload.event.meta.runId === identity.runId && record.payload.event.meta.turnId === identity.turnId };
 }

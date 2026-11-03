@@ -633,7 +633,7 @@ function userMessages(request: ModelRequest): readonly string[] {
 
 describe("kernel session public extension (R4a)", () => {
   it("默认 current_turn：不写 contextBasis，请求只含当前 Turn", async () => {
-    expect(kernelSessionApiVersion).toBe(3);
+    expect(kernelSessionApiVersion).toBe(4);
     const harness = await createHarness("kernel-default-", [{ text: "answer-default" }]);
     const result = await runCodingAgent({ ...harness.common, input: "default input" });
     expect(result.state.status).toBe("completed");

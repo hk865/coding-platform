@@ -124,8 +124,8 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     recoverRun: { supported: true },
     nativeCompact: { supported: false }, scopedWorkspaceWrites: { supported: false },
   });
-  // Slice K L1 (lead decision D10): the Kernel with the interrupted terminal and the Turn closure.
-  expect(report.kernelSessionApiVersion).toBe(3);
+  // Slice K2 L7: 4 adds the context.compacted record and appendCompactionRecord (slice K made it 3).
+  expect(report.kernelSessionApiVersion).toBe(4);
 
   // LA-1: a continuation is a new Run, never the original Turn; with a Kernel
   // terminal it continues in the same Session (including the yielded successor),

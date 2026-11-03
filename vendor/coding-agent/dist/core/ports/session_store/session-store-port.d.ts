@@ -71,6 +71,7 @@ export declare const contextBasisSchema: z.ZodObject<{
     mode: z.ZodString;
     throughPosition: z.ZodNumber;
     sourceSessionId: z.ZodOptional<z.ZodString>;
+    viewPosition: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strict>;
 export declare const sessionRecordSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     recordType: z.ZodLiteral<"session.created">;
@@ -127,6 +128,7 @@ export declare const sessionRecordSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
             mode: z.ZodString;
             throughPosition: z.ZodNumber;
             sourceSessionId: z.ZodOptional<z.ZodString>;
+            viewPosition: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strict>>;
         recoveryConstraints: z.ZodOptional<z.ZodObject<{
             version: z.ZodNumber;
@@ -759,6 +761,32 @@ export declare const sessionRecordSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
                 requestedBy: z.ZodLiteral<"app">;
             }, z.core.$strict>;
         }, z.core.$strict>], "type">;
+    }, z.core.$strict>;
+    recordId: z.ZodString;
+    sessionId: z.ZodString;
+    position: z.ZodNumber;
+    schemaVersion: z.ZodLiteral<1>;
+    recordedAt: z.ZodString;
+    checksum: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    recordType: z.ZodLiteral<"context.compacted">;
+    payload: z.ZodObject<{
+        basedOnPosition: z.ZodNumber;
+        outcome: z.ZodEnum<{
+            failed: "failed";
+            compacted: "compacted";
+        }>;
+        stubs: z.ZodNullable<z.ZodObject<{
+            throughPosition: z.ZodNumber;
+            readBack: z.ZodRecord<z.ZodString, z.ZodString>;
+        }, z.core.$strict>>;
+        summary: z.ZodNullable<z.ZodObject<{
+            throughPosition: z.ZodNumber;
+            text: z.ZodString;
+        }, z.core.$strict>>;
+        failure: z.ZodNullable<z.ZodObject<{
+            reason: z.ZodString;
+        }, z.core.$strict>>;
     }, z.core.$strict>;
     recordId: z.ZodString;
     sessionId: z.ZodString;
@@ -810,6 +838,7 @@ export declare const sessionRecordDraftSchema: z.ZodDiscriminatedUnion<[z.ZodObj
             mode: z.ZodString;
             throughPosition: z.ZodNumber;
             sourceSessionId: z.ZodOptional<z.ZodString>;
+            viewPosition: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strict>>;
         recoveryConstraints: z.ZodOptional<z.ZodObject<{
             version: z.ZodNumber;
@@ -1443,6 +1472,29 @@ export declare const sessionRecordDraftSchema: z.ZodDiscriminatedUnion<[z.ZodObj
     recordId: z.ZodString;
     schemaVersion: z.ZodLiteral<1>;
     recordedAt: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    recordType: z.ZodLiteral<"context.compacted">;
+    payload: z.ZodObject<{
+        basedOnPosition: z.ZodNumber;
+        outcome: z.ZodEnum<{
+            failed: "failed";
+            compacted: "compacted";
+        }>;
+        stubs: z.ZodNullable<z.ZodObject<{
+            throughPosition: z.ZodNumber;
+            readBack: z.ZodRecord<z.ZodString, z.ZodString>;
+        }, z.core.$strict>>;
+        summary: z.ZodNullable<z.ZodObject<{
+            throughPosition: z.ZodNumber;
+            text: z.ZodString;
+        }, z.core.$strict>>;
+        failure: z.ZodNullable<z.ZodObject<{
+            reason: z.ZodString;
+        }, z.core.$strict>>;
+    }, z.core.$strict>;
+    recordId: z.ZodString;
+    schemaVersion: z.ZodLiteral<1>;
+    recordedAt: z.ZodString;
 }, z.core.$strict>], "recordType">;
 export declare const sessionHeaderSchema: z.ZodObject<{
     schemaVersion: z.ZodLiteral<1>;
@@ -1482,6 +1534,7 @@ export type ContextBasis = {
     readonly mode: "session_history";
     readonly throughPosition: number;
     readonly sourceSessionId?: string;
+    readonly viewPosition?: number;
 };
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;
 export type SessionRecordDraft = z.infer<typeof sessionRecordDraftSchema>;

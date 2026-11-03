@@ -25,6 +25,10 @@ const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api
   // session-store-port inlines the AgentEvent union into its emitted declarations; it
   // must be regenerated with the same event set or its ZodObject snapshot goes stale.
   'core/ports/session_store/session-store-port.ts',
+  // The Session projection decides which drafts an append accepts; the compaction
+  // record joins that set, so the restored source is managed here and its dist is
+  // only produced by this script.
+  'core/ports/session_store/session-projection.ts',
   // The context selection policy is restored from the frozen map so its dist is
   // only produced by this script.
   'core/context/selection_policy/context-selection-policy.ts',

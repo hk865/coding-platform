@@ -26,6 +26,11 @@ export interface SessionHistoryRestoreInput {
     readonly throughPosition: number;
     /** 派生隔离基线的真实源 Session；缺省表示前缀就是当前 Session 自身。 */
     readonly sourceSessionId?: string;
+    /**
+     * 选压缩记录的位置（K2 L5）：用它及以前最新的一条 `compacted`；缺省等于 throughPosition。
+     * 可以大于 throughPosition；截前缀仍按 throughPosition。
+     */
+    readonly viewPosition?: number;
     /** 当前 Turn 身份：前缀绝不允许包含它，避免把当前输入重复喂给模型。 */
     readonly currentTurn?: SessionHistoryTurnIdentity;
 }

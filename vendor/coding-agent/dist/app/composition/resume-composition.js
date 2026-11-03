@@ -130,6 +130,7 @@ export async function resumeCodingAgentInternal(input, target) {
             ? restoreSessionHistory(sourceRecords, {
                 sessionId: sourceSessionId,
                 throughPosition: contextBasis.throughPosition,
+                ...(contextBasis.viewPosition === undefined ? {} : { viewPosition: contextBasis.viewPosition }),
                 currentTurn: {
                     runId: turnRecord.payload.run.runId,
                     turnId: turnRecord.payload.run.turn.turnId,

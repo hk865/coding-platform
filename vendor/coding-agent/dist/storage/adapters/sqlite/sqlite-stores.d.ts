@@ -67,4 +67,44 @@ export declare function readTurnBounds(store: SqliteStores, input: {
     readonly kernelRunId: string;
 }): Promise<TurnBounds>;
 export declare function closeOpenTurn(store: SqliteStores, input: CloseOpenTurnInput): Promise<CloseOpenTurnResult>;
+type CompactionDraft = Extract<SessionRecordDraft, {
+    recordType: "context.compacted";
+}>;
+type CompactionPayload = CompactionDraft["payload"];
+export interface AppendCompactionRecordInput {
+    readonly sessionId: string;
+    readonly expectedRevision: number;
+    readonly at: string;
+    readonly basedOnPosition: number;
+    readonly outcome: CompactionPayload["outcome"];
+    readonly stubs: CompactionPayload["stubs"];
+    readonly summary: CompactionPayload["summary"];
+    readonly failure: CompactionPayload["failure"];
+}
+export type AppendCompactionRecordResult = {
+    readonly status: "appended";
+    readonly position: number;
+    readonly revision: number;
+} | {
+    readonly status: "not_idle";
+    readonly reason: string;
+} | {
+    readonly status: "invalid";
+    readonly reason: string;
+} | {
+    readonly status: "conflict";
+    readonly currentRevision: number;
+} | {
+    readonly status: "unreadable";
+    readonly reason: string;
+};
+/**
+ * Append one `context.compacted` record (K2 L3). The first matching row of the table
+ * wins and only row 5 writes: 1 unreadable, 2 revision conflict, 3 the base is not the
+ * Session's tail terminal event, 4 the payload or its ranges are invalid, 5 append.
+ * A compacted record without a summary carries the previous compacted record's
+ * summary, so every compacted record holds the whole view.
+ */
+export declare function appendCompactionRecord(store: SqliteStores, input: AppendCompactionRecordInput): Promise<AppendCompactionRecordResult>;
+export {};
 //# sourceMappingURL=sqlite-stores.d.ts.map

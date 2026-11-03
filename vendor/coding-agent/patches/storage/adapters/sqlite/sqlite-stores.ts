@@ -44,7 +44,10 @@ import {
   isActiveSessionState,
   replaySessionRecords,
 } from "../../../core/ports/session_store/session-projection.js";
-import { readAllSessionRecords } from "../../../core/ports/session_store/session-history.js";
+import {
+  findLastCompletedTurnBoundary,
+  readAllSessionRecords,
+} from "../../../core/ports/session_store/session-history.js";
 import { isTerminalRunStatus } from "../../../core/runtime/state/run-state.js";
 
 type SessionProjection = ReturnType<typeof replaySessionRecords>;
@@ -747,7 +750,18 @@ function describeStoreFailure(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The isolated record range of one Turn identity: its turn.started through the record before the next turn.started. */
+/**
+ * The record range of the Turn whose turn.started is at index `start`: through the record
+ * before the next turn.started. A compaction record sits between Turns and belongs to
+ * neither, so the range of a terminal Turn ends at its terminal event (K2 L4).
+ */
+function turnRangeAt(records: readonly SessionRecord[], start: number): SessionRecord[] {
+  let end = start + 1;
+  while (end < records.length && records[end]!.recordType !== "turn.started") end += 1;
+  return records.slice(start, end).filter((record) => record.recordType !== "context.compacted");
+}
+
+/** The isolated record range of one Turn identity (see turnRangeAt). */
 function turnRecordRange(
   records: readonly SessionRecord[],
   kernelRunId: string,
@@ -755,11 +769,7 @@ function turnRecordRange(
   const start = records.findIndex(
     (record) => record.recordType === "turn.started" && record.payload.run.runId === kernelRunId,
   );
-  if (start < 0) return null;
-  const next = records.findIndex(
-    (record, index) => index > start && record.recordType === "turn.started",
-  );
-  return next < 0 ? records.slice(start) : records.slice(start, next);
+  return start < 0 ? null : turnRangeAt(records, start);
 }
 
 function closureIdentity(sessionId: string, kernelRunId: string): string {
@@ -895,6 +905,160 @@ export async function closeOpenTurn(
       (error.code === "conflict" || error.code === "idempotency_conflict")
     ) {
       return reconcileClosureCollision(store, input, signal, header.revision);
+    }
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+}
+
+type CompactionDraft = Extract<SessionRecordDraft, { recordType: "context.compacted" }>;
+type CompactionPayload = CompactionDraft["payload"];
+
+export interface AppendCompactionRecordInput {
+  readonly sessionId: string;
+  readonly expectedRevision: number;
+  readonly at: string;
+  readonly basedOnPosition: number;
+  readonly outcome: CompactionPayload["outcome"];
+  readonly stubs: CompactionPayload["stubs"];
+  readonly summary: CompactionPayload["summary"];
+  readonly failure: CompactionPayload["failure"];
+}
+
+export type AppendCompactionRecordResult =
+  | { readonly status: "appended"; readonly position: number; readonly revision: number }
+  | { readonly status: "not_idle"; readonly reason: string }
+  | { readonly status: "invalid"; readonly reason: string }
+  | { readonly status: "conflict"; readonly currentRevision: number }
+  | { readonly status: "unreadable"; readonly reason: string };
+
+/**
+ * Append one `context.compacted` record (K2 L3). The first matching row of the table
+ * wins and only row 5 writes: 1 unreadable, 2 revision conflict, 3 the base is not the
+ * Session's tail terminal event, 4 the payload or its ranges are invalid, 5 append.
+ * A compacted record without a summary carries the previous compacted record's
+ * summary, so every compacted record holds the whole view.
+ */
+export async function appendCompactionRecord(
+  store: SqliteStores,
+  input: AppendCompactionRecordInput,
+): Promise<AppendCompactionRecordResult> {
+  const signal = new AbortController().signal;
+  let header: SessionHeader;
+  try {
+    header = await store.get(input.sessionId, { signal });
+  } catch (error) {
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+  if (header.revision !== input.expectedRevision) {
+    return { status: "conflict", currentRevision: header.revision };
+  }
+  let records: readonly SessionRecord[];
+  let open: boolean;
+  try {
+    records = await readAllSessionRecords(store, input.sessionId, signal);
+    open = isActiveSessionState(replaySessionRecords(records));
+  } catch (error) {
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+
+  // Row 3: the base must be the tail, and the tail must close a completed Turn. A tail
+  // that is a compaction record, an open Turn or any other record fails the second test.
+  const tail = records.at(-1)?.position;
+  if (input.basedOnPosition !== tail || findLastCompletedTurnBoundary(records) !== tail) {
+    return {
+      status: "not_idle",
+      reason: open ? "本轮未结束，未执行" : "压缩只接在已完成轮次的终止事件后面",
+    };
+  }
+
+  const previous = records.findLast(
+    (record) => record.recordType === "context.compacted" && record.payload.outcome === "compacted",
+  );
+  const summary =
+    input.summary ??
+    (input.outcome === "compacted" && previous?.recordType === "context.compacted"
+      ? previous.payload.summary
+      : null);
+  const parsed = sessionRecordDraftSchema.safeParse({
+    recordId: `context-compacted:${input.sessionId}:${String(input.basedOnPosition)}`,
+    recordType: "context.compacted",
+    schemaVersion: 1,
+    recordedAt: input.at,
+    payload: {
+      basedOnPosition: input.basedOnPosition,
+      outcome: input.outcome,
+      stubs: input.stubs,
+      summary,
+      failure: input.failure,
+    },
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return {
+      status: "invalid",
+      reason: `压缩记录不合法：${issue ? `${issue.path.join(".")} ${issue.message}` : "shape"}`,
+    };
+  }
+  // The draft was built with recordType context.compacted above.
+  const draft = parsed.data as CompactionDraft;
+
+  // Row 4: both ranges end at the terminal event of a Turn that enters the model
+  // history (terminal, not interrupted), and every such Turn the stubs newly cover
+  // has its read-back text. Row 3 made the base the tail, so every Turn is at or
+  // before it.
+  const historyTurns: { readonly runId: string; readonly endPosition: number }[] = [];
+  try {
+    for (const [index, record] of records.entries()) {
+      if (record.recordType !== "turn.started") continue;
+      const range = turnRangeAt(records, index);
+      const state = replaySessionRecords(range);
+      if (state !== null && isTerminalRunStatus(state.status) && state.status !== "interrupted") {
+        historyTurns.push({ runId: state.runId, endPosition: range.at(-1)!.position });
+      }
+    }
+  } catch (error) {
+    return { status: "unreadable", reason: describeStoreFailure(error) };
+  }
+  const { stubs } = draft.payload;
+  for (const part of [stubs, summary]) {
+    if (part !== null && !historyTurns.some((turn) => turn.endPosition === part.throughPosition)) {
+      return {
+        status: "invalid",
+        reason: `位置 ${String(part.throughPosition)} 不是进模型历史的 Turn 的终止位置`,
+      };
+    }
+  }
+  if (stubs !== null) {
+    const after = summary?.throughPosition ?? 0;
+    const missing = historyTurns.find(
+      (turn) =>
+        turn.endPosition > after &&
+        turn.endPosition <= stubs.throughPosition &&
+        !Object.hasOwn(stubs.readBack, turn.runId),
+    );
+    if (missing) {
+      return { status: "invalid", reason: `readBack 缺少 Turn ${missing.runId}` };
+    }
+  }
+
+  try {
+    const appended = await store.append(input.sessionId, input.expectedRevision, [draft], {
+      signal,
+    });
+    return { status: "appended", position: appended.positions[0]!, revision: appended.revision };
+  } catch (error) {
+    // Same id with other content, or a revision moved after row 2: a retryable
+    // conflict on the freshly read head, never `unreadable`.
+    if (
+      error instanceof StoreError &&
+      (error.code === "conflict" || error.code === "idempotency_conflict")
+    ) {
+      try {
+        const current = await store.get(input.sessionId, { signal });
+        return { status: "conflict", currentRevision: current.revision };
+      } catch {
+        return { status: "conflict", currentRevision: header.revision };
+      }
     }
     return { status: "unreadable", reason: describeStoreFailure(error) };
   }

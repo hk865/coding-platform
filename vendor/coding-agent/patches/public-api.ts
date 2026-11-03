@@ -181,6 +181,7 @@ export {
 } from "./tools/registry/tool-registry.js";
 export { InMemoryStores } from "./storage/adapters/in_memory/in-memory-stores.js";
 export {
+  appendCompactionRecord,
   closeOpenTurn,
   readTurnBounds,
   SqliteStores,
@@ -202,6 +203,8 @@ export type {
   SessionStorePort,
 } from "./core/ports/session_store/session-store-port.js";
 export type {
+  AppendCompactionRecordInput,
+  AppendCompactionRecordResult,
   CloseOpenTurnInput,
   CloseOpenTurnResult,
   TurnBounds,

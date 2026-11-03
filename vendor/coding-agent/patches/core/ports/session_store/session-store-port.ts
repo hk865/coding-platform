@@ -85,6 +85,8 @@ export const contextBasisSchema = z
     throughPosition: z.number().int().positive(),
     /** 派生隔离基线：前缀来自该源 Session；缺省表示当前 Session 自身。 */
     sourceSessionId: z.string().min(1).optional(),
+    /** 选压缩记录的位置（K2 L5）；缺省等于 throughPosition。 */
+    viewPosition: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -111,6 +113,39 @@ const turnStartedPayloadShape = {
   recoveryConstraints: effectiveRecoveryConstraintsSchema.optional(),
 } as const;
 
+/**
+ * `context.compacted` 的正文（K2 L1）：每条 `compacted` 自带完整视图（桩的范围和读回文字、
+ * 摘要），恢复时只看最新的一条；`failed` 只是“压缩失败”那一行，不改视图。版本跟记录本身的
+ * `schemaVersion`，正文不另带版本。记录和草稿共用这一份。
+ */
+const contextCompactedPayloadSchema = z
+  .object({
+    /** 紧挨在前面的那条记录，必须是终止的 agent.event。 */
+    basedOnPosition: z.number().int().positive(),
+    outcome: z.enum(["compacted", "failed"]),
+    /** readBack 的键是 Kernel runId。 */
+    stubs: z
+      .object({
+        throughPosition: z.number().int().positive(),
+        readBack: z.record(z.string(), z.string()),
+      })
+      .strict()
+      .nullable(),
+    summary: z
+      .object({ throughPosition: z.number().int().positive(), text: z.string() })
+      .strict()
+      .nullable(),
+    failure: z.object({ reason: z.string() }).strict().nullable(),
+  })
+  .strict()
+  .refine(
+    (payload) =>
+      payload.outcome === "compacted"
+        ? (payload.stubs !== null || payload.summary !== null) && payload.failure === null
+        : payload.stubs === null && payload.summary === null && payload.failure !== null,
+    { message: "compacted 至少带桩或摘要且没有 failure；failed 只带 failure" },
+  );
+
 export const sessionRecordSchema = z.discriminatedUnion("recordType", [
   z
     .object({
@@ -131,6 +166,13 @@ export const sessionRecordSchema = z.discriminatedUnion("recordType", [
       ...recordBase,
       recordType: z.literal("agent.event"),
       payload: z.object({ event: agentEventSchema }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...recordBase,
+      recordType: z.literal("context.compacted"),
+      payload: contextCompactedPayloadSchema,
     })
     .strict(),
 ]);
@@ -154,6 +196,13 @@ export const sessionRecordDraftSchema = z.discriminatedUnion("recordType", [
       ...draftBase,
       recordType: z.literal("agent.event"),
       payload: z.object({ event: agentEventSchema }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...draftBase,
+      recordType: z.literal("context.compacted"),
+      payload: contextCompactedPayloadSchema,
     })
     .strict(),
 ]);
@@ -199,6 +248,7 @@ export type ContextBasis = {
   readonly mode: "session_history";
   readonly throughPosition: number;
   readonly sourceSessionId?: string;
+  readonly viewPosition?: number;
 };
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;
 export type SessionRecordDraft = z.infer<typeof sessionRecordDraftSchema>;

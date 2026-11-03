@@ -47,6 +47,11 @@ export interface SessionHistoryRestoreInput {
   readonly throughPosition: number;
   /** 派生隔离基线的真实源 Session；缺省表示前缀就是当前 Session 自身。 */
   readonly sourceSessionId?: string;
+  /**
+   * 选压缩记录的位置（K2 L5）：用它及以前最新的一条 `compacted`；缺省等于 throughPosition。
+   * 可以大于 throughPosition；截前缀仍按 throughPosition。
+   */
+  readonly viewPosition?: number;
   /** 当前 Turn 身份：前缀绝不允许包含它，避免把当前输入重复喂给模型。 */
   readonly currentTurn?: SessionHistoryTurnIdentity;
 }
@@ -87,6 +92,7 @@ export function parseContextBasis(value: unknown): ContextBasis {
     // parse/compare/checkpoint/resume replay; dropping it silently restores the
     // wrong history.
     ...(basis.sourceSessionId === undefined ? {} : { sourceSessionId: basis.sourceSessionId }),
+    ...(basis.viewPosition === undefined ? {} : { viewPosition: basis.viewPosition }),
   };
 }
 
@@ -262,6 +268,48 @@ export function findLastCompletedTurnBoundary(records: readonly SessionRecord[])
   return boundary;
 }
 
+/**
+ * K2 L6: replace each successful tool result of one Turn by its stub when the stub's
+ * output JSON is strictly shorter in UTF-8. Calls, call ids, status and effects stay, so
+ * every call keeps its result; the name and arguments come from the Turn's own
+ * assistant tool calls, the position from the record of its tool.completed event.
+ */
+function stubTurnResults(
+  transcript: readonly TranscriptEntry[],
+  slice: readonly SessionRecord[],
+  readBack: string,
+): TranscriptEntry[] {
+  const calls = new Map(
+    transcript.flatMap((entry) =>
+      entry.kind === "assistant_message" ? entry.toolCalls.map((call) => [call.callId, call] as const) : [],
+    ),
+  );
+  const completedAt = new Map(
+    slice.flatMap((record) =>
+      record.recordType === "agent.event" && record.payload.event.type === "tool.completed"
+        ? [[record.payload.event.payload.callId, record.position] as const]
+        : [],
+    ),
+  );
+  return transcript.map((entry) => {
+    if (entry.kind !== "tool_result" || entry.result.status !== "success") return entry;
+    const call = calls.get(entry.callId)!;
+    const bytes = Buffer.byteLength(JSON.stringify(entry.result.output), "utf8");
+    const argumentPoints = [...JSON.stringify(call.arguments)];
+    const argumentDigest =
+      argumentPoints.length > 80 ? `${argumentPoints.slice(0, 80).join("")}…` : argumentPoints.join("");
+    const output = [
+      {
+        kind: "text" as const,
+        text: `旧工具结果已清（工具 ${call.name}，调用 ${entry.callId}，参数 ${argumentDigest}，位置 ${String(completedAt.get(entry.callId))}，原 ${String(bytes)} 字节）。要原文：${readBack}`,
+      },
+    ];
+    return Buffer.byteLength(JSON.stringify(output), "utf8") < bytes
+      ? { ...entry, result: { ...entry.result, output } }
+      : entry;
+  });
+}
+
 function nextTurnStart(records: readonly SessionRecord[], from: number): number | null {
   for (let index = from + 1; index < records.length; index += 1) {
     if (records[index]!.recordType === "turn.started") return index;
@@ -282,7 +330,7 @@ export function restoreSessionHistory(
   records: readonly SessionRecord[],
   input: Readonly<SessionHistoryRestoreInput>,
 ): SessionHistoryRestore {
-  const { sessionId, throughPosition, sourceSessionId } = input;
+  const { sessionId, throughPosition, sourceSessionId, viewPosition } = input;
   const lastPosition = records.at(-1)?.position ?? 0;
   if (!Number.isSafeInteger(throughPosition) || throughPosition < 1) {
     throw new StoreError("invalid_record", `throughPosition 必须是正的安全整数`);
@@ -306,15 +354,29 @@ export function restoreSessionHistory(
     }
   }
   const boundary = prefix.at(-1)!;
+  // K2 L5: a compaction record is a boundary too; it always follows a terminal event.
   if (
-    boundary.recordType !== "agent.event" ||
-    !TERMINAL_EVENT_TYPES.has(boundary.payload.event.type)
+    boundary.recordType !== "context.compacted" &&
+    (boundary.recordType !== "agent.event" || !TERMINAL_EVENT_TYPES.has(boundary.payload.event.type))
   ) {
     throw new StoreError(
       "conflict",
       `throughPosition ${String(throughPosition)} 不是已完成轮次的稳定边界（记录类型 ${boundary.recordType}）`,
     );
   }
+
+  // K2 L5: the view is the latest `compacted` record at or before viewPosition (failed
+  // ones never change the view); it may lie after the prefix, so search every record.
+  const viewThrough = viewPosition ?? throughPosition;
+  const view = records.findLast(
+    (record) =>
+      record.recordType === "context.compacted" &&
+      record.position <= viewThrough &&
+      record.payload.outcome === "compacted",
+  );
+  const compacted = view?.recordType === "context.compacted" ? view : null;
+  const summary = compacted?.payload.summary ?? null;
+  const stubs = compacted?.payload.stubs ?? null;
 
   const turns: SessionHistoryTurnBoundary[] = [];
   const transcript: TranscriptEntry[] = [];
@@ -377,7 +439,28 @@ export function restoreSessionHistory(
       startPosition: record.position,
       endPosition: slice.at(-1)!.position,
     });
-    transcript.push(...turnTranscript);
+    // Turns up to the summary keep their identity in `turns` but leave the transcript;
+    // the next ones up to the stubs range get their results stubbed. A slice may end with
+    // a compaction record, so a Turn is placed by its terminal event.
+    const terminalPosition = slice.findLast((entry) => entry.recordType === "agent.event")!.position;
+    if (summary !== null && terminalPosition <= summary.throughPosition) continue;
+    transcript.push(
+      ...(stubs !== null && terminalPosition <= stubs.throughPosition
+        ? // appendCompactionRecord admits a stubs range only with the read-back of each such Turn.
+          stubTurnResults(turnTranscript, slice, stubs.readBack[state.runId]!)
+        : turnTranscript),
+    );
+  }
+  if (compacted !== null && summary !== null) {
+    transcript.unshift({
+      kind: "user_message",
+      message: {
+        schemaVersion: 1,
+        messageId: `context-summary:${compacted.sessionId}:${String(compacted.position)}`,
+        role: "user",
+        content: `以下是本线更早对话的压缩摘要（压缩记录 ${String(compacted.position)}，覆盖到位置 ${String(summary.throughPosition)}）。原记录没有删除。\n\n${summary.text}`,
+      },
+    });
   }
 
   if (turns.length === 0) {
@@ -413,6 +496,7 @@ export function restoreSessionHistory(
       mode: SESSION_HISTORY_MODE,
       throughPosition,
       ...(sourceSessionId === undefined ? {} : { sourceSessionId }),
+      ...(viewPosition === undefined ? {} : { viewPosition }),
     },
     sessionId,
     throughPosition,

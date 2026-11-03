@@ -26,7 +26,7 @@
 - `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线；`createMember` 取 Host 授权，Session 有 `delegationCeiling` 时工具取交集、写范围越界答 `forbidden`、委托取合取，`secretaryCreated` 一律钉 false。
 - `execution-inputs.ts` — 统一输入通道：邮件、答复、到期（expiry）、steer 和 attention 的候选与 accepted 排除。`only: 'notify'` 是秘书请求轮的供给：跳过 person 列表、续接与答复邮件，只把 `intent` 缺省或 `notify` 的收件箱邮件经 `readMessagePart` 供出（`notify-delivery`）。
 - `check-execution.ts` — 可信 Host 注册检查执行器。
-- `model-budget.ts` — 模型预算、token 计量与超限错误。
+- `model-budget.ts` — 模型预算、token 计量与超限错误。Host 的每个绑定带一个观察计数器（`createObservedInputCounter`）：用模型服务上次报的输入 token ÷ 那次请求的字节数换算、留 10% 余量，不超过按字节的预留；只在内存里，重启或保存设置后先按字节计。
 - `model-call-access.ts` — 一次性模型调用许可：绑定校验、durable permit。
 - `run-limits.ts` — 平台预算映射为 Kernel `RunLimits`。
 - `role-profiles.ts` — 平台 Role duty profile 表。
@@ -161,7 +161,8 @@
 | `readPromptTexts` | `src/core/agent-runtime/prompt-set-texts.ts:243` | 按 ref 读文本并校验内容 | 读冻结提示词 |
 | `resolvePromptPack` | `src/core/agent-runtime/prompt-set-texts.ts:140` | 经 `PromptPackSourcePort` 解析指定 pack | prepare 选包 |
 | `selectPromptSkills` | `src/core/agent-runtime/prompt-set-texts.ts:333` | 按选择取 Skill 内容 | prepare 冻结 Skill |
-| `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
+| `ModelBudget` | `src/core/agent-runtime/model-budget.ts:76` | 一次执行的预算与用量账 | 模型请求记账 |
+| `createObservedInputCounter` | `src/core/agent-runtime/model-budget.ts:29` | 一个绑定的输入计数器：min(字节 + 4,096, ceil(字节 × 上次报的 token/字节 × 1.1))；报 0 不算，不可重试的 `provider_request_failed` 清掉比例 | Host 建 BoundModel 时（`runtime-configuration.ts`）；不要另存比例 |
 | `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
 | `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:247` | 按 grant/配置选 Work 工具组 | 驱动装配 |
 | `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:660` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |

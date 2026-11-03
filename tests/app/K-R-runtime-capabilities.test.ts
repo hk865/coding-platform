@@ -63,6 +63,6 @@ it('KA-17 reports that a Work line continues in the same Session after the platf
   expect(report.safePointPause.reason).toContain('(a new continuation Run, in the same Session once the platform has closed the dangling Kernel Turn, otherwise in a new Session)');
   expect(report.safePointPause.reason).not.toContain('(a new continuation Run in a new Session)');
 
-  // Slice K L1/M4: the Kernel session API version is 3.
-  expect(report.kernelSessionApiVersion).toBe(3);
+  // Slice K2 L7: the Kernel session API version is 4 (slice K made it 3).
+  expect(report.kernelSessionApiVersion).toBe(4);
 });

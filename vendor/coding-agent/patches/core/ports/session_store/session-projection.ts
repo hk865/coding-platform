@@ -38,6 +38,13 @@ export function applySessionDraft(state: RunState | null, draft: SessionRecordDr
     }
     return createInitialRunState(draft.payload.run);
   }
+  // K2 L2: a compaction record is only taken between Turns and never changes the state.
+  if (draft.recordType === "context.compacted") {
+    if (!state || !isTerminalRunStatus(state.status)) {
+      throw new StoreError("invalid_record", "本轮未结束，未执行");
+    }
+    return state;
+  }
   if (!state) throw new StoreError("invalid_record", "agent.event 缺少当前 Turn");
   try {
     return reduceRunState(state, draft.payload.event);

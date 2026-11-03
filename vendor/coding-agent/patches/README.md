@@ -46,3 +46,23 @@ node scripts/build-kernel-patch.mjs --write
 `!parsedArguments.success` 分支把 Zod 的各 issue 按 `字段: 原因` 列出、以 `; ` 连接后附在原文案后；错误码仍为 `invalid_arguments`，其余分支、Zod 的消息文案、平台侧消息均未改，无新增类型、错误码或上限。改后源 SHA-256 为 `c030c3e0d4d36bcfa6e35f47606c20ded79fe0d684dd463a56bab8115ee8bb4f`；四份产物为 `eeb1d3b9d0fd1122de4a42912ef231854503f6b005aac3f25b3e7f7287b56226`（js）、`c5344f3b4afd9596618369e18999097adcb4a05571008cc76cd8a2caa5d2c3ea`（js.map）、`96d4252def7a23e6a4baee5f24589354ea10b7254d5b95a8ffa70e46215ee69b`（d.ts，未变）、`e42edbee9f8a33f1d2717b7fa475f9adeaceab67c49e1f29e54f662304556023`（d.ts.map）。
 
 命令不变：`node scripts/build-kernel-patch.mjs --check`（0）与 `--write`；`--write` 只改 `dist/tools/dispatcher/tool-dispatcher.*`，无其他产物变化。
+
+## 2026-11-03 K2-K 压缩记录（slice-K2-SPEC L1–L7）
+
+新增受管 `core/ports/session_store/session-projection.ts`：内容就是冻结 `dist/core/ports/session_store/session-projection.js.map` 的 `sourcesContent[0]`，SHA-256 `879966958692f4cc93b937e83a3a077a00f22bab5b331464e1600136a0a02c3e`；纳入后 `--check` 为 0，十九个源、76 份产物逐字再生，纳入本身不改变行为。
+
+之后改了九个受管源：Session 记录和草稿多一种 `context.compacted`（`session-store-port.ts`，`contextBasis` 多可选的 `viewPosition`）；投影只在最后一个 Turn 已终止时收压缩草稿（`session-projection.ts`）；公开的 `appendCompactionRecord` 按追加表返回第一条命中的结果，Turn 的记录范围去掉压缩记录（`sqlite-stores.ts`）；恢复历史时按 `viewPosition` 及以前最新一条 `compacted` 拼视图：摘要消息 `context-summary:<sessionId>:<position>`、旧工具结果的桩（`session-history.ts`）；`selectContext` 保护摘要消息（`context-selection-policy.ts`）；`public-api.ts` 导出 `appendCompactionRecord` 和 `AppendCompactionRecordInput`、`AppendCompactionRecordResult`；`kernelSessionApiVersion` 是 4，`SessionContextMode` 的 `session_history` 多可选的 `viewPosition`（`composition-contracts.ts`）；`composition-root.ts`、`resume-composition.ts` 透传 `viewPosition`，同一执行身份的比对多比它。原记录不改不删，没有新的 mode 值，`contextBasis.version` 不变。改后 SHA-256：
+
+- `core/ports/session_store/session-store-port.ts` `4133a04e8a97e0b6ebbcaa6f9f3259d802debffe9a39bc7f98ba696bbaa6cbe9`
+- `core/ports/session_store/session-projection.ts` `96c4d4d171bfd6b6f7e94ea62bcf251946e42e7e98e7b97b2fc992d599ac9dd5`
+- `core/ports/session_store/session-history.ts` `1d08df0716b9e341bde4eb30d8dd59249b4b88858491702a9cbca1545988f3fb`
+- `storage/adapters/sqlite/sqlite-stores.ts` `6e990cd5f1ce63d806f9b9970f526aa6b215ff77b454b99c9ae14266fa681afc`
+- `core/context/selection_policy/context-selection-policy.ts` `203d319e92cb197a795cfd81206f7dc65c41712d880bd89b5bcdc8a11201088d`
+- `public-api.ts` `c3d3d5fde940c7ad22aa7af02233519d3934dacae5a692660f215a382da0c14b`
+- `app/composition/composition-contracts.ts` `811c47066ba896aa95d442db7e3cfb151703a9578dcb95425a3acbf89503e6b5`
+- `app/composition/composition-root.ts` `ee79bd0a80ee6820296652fe2c39b57424c1e05313a42f9417053e19ad7ac341`
+- `app/composition/resume-composition.ts` `fb86ff15438275c534387560d952a7e657adc8d862f9904f78a8b730bd6c0538`
+
+`--write` 改了这九个源的 32 份产物：每个源的 `.js`、`.js.map`、`.d.ts.map`，以及 `session-store-port.d.ts`、`session-history.d.ts`、`sqlite-stores.d.ts`、`public-api.d.ts`、`composition-contracts.d.ts`；`session-projection.d.ts`、`context-selection-policy.d.ts`、`composition-root.d.ts`、`resume-composition.d.ts` 不变，其余源的产物不变。
+
+命令不变：`node scripts/build-kernel-patch.mjs --check`（0）与 `--write`。

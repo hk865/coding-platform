@@ -262,6 +262,13 @@ function buildRemovalUnits(
     if (latest.kind === "user_message") protectedIds.add(latest.message.messageId);
   }
   if (taskInputMessageId !== null) protectedIds.add(taskInputMessageId);
+  // K2 L7: a compaction summary message stands for every Turn it replaced; dropping it
+  // would silently lose that history again.
+  for (const { entry, history } of entries) {
+    if (history && entry.kind === "user_message" && entry.message.messageId.startsWith("context-summary:")) {
+      protectedIds.add(entry.message.messageId);
+    }
+  }
   const scanByAssistant = new Map<number, ExchangeScan>();
   for (const scan of scans) scanByAssistant.set(scan.assistantIndex, scan);
 

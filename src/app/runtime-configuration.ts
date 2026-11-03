@@ -25,6 +25,7 @@ import {
 } from '../../vendor/coding-agent/dist/public-api.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../contracts/core/identity.js';
 import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
+import { createObservedInputCounter } from '../core/agent-runtime/model-budget.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
@@ -503,6 +504,8 @@ export function createWorkbenchRuntimeHostBindings(
     const model: ResolvedRuntimeConfiguration['model'] = {
       configuration: { revision: binding.model.revision, provider: binding.model.provider, model: binding.model.model, baseUrl },
       client,
+      // slice-K2-SPEC M3: one observed counter per binding, living as long as this BoundModel.
+      inputCounter: createObservedInputCounter(),
       selection: {
         modelId,
         promptPack: binding.model.promptPack ?? 'platform',
