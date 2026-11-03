@@ -135,3 +135,14 @@ export function findButton(root: FakeElement, text: string): FakeElement | undef
 export function findClass(root: FakeElement, name: string): FakeElement | undefined {
   return findElement(root, (element) => (element.getAttribute('class') ?? '').split(/\s+/).includes(name));
 }
+
+/** Every element under `root` that carries the class token `name`, in document order. */
+export function findAllClass(root: FakeElement, name: string): FakeElement[] {
+  const found: FakeElement[] = [];
+  const walk = (element: FakeElement): void => {
+    if ((element.getAttribute('class') ?? '').split(/\s+/).includes(name)) found.push(element);
+    for (const child of element.childNodes) if (child instanceof FakeElement) walk(child);
+  };
+  walk(root);
+  return found;
+}

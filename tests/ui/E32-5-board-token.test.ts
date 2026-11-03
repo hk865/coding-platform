@@ -3,8 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { CoreRouteBindings } from '../../src/app/core-routes.js';
-import { bootBoardPage } from '../../src/ui/boot.js';
-import { FakeElement, installFakeDom, restoreFakeDom } from './helpers/dom.js';
+import { bootPage, findClass } from './helpers/boot-page.js';
 import { createWorkbenchServer, type WorkbenchServer } from '../../src/app/server.js';
 
 /**
@@ -22,7 +21,6 @@ beforeAll(() => {
 }, 30_000);
 
 afterEach(async () => {
-  restoreFakeDom();
   await server?.close();
   server = undefined;
 });
@@ -52,45 +50,32 @@ describe('E32-5 board token', () => {
     expect(readFileSync(`${root}src/ui/boards/TaskMap.dc.html`, 'utf8')).not.toContain(TOKEN);
   });
 
-  it('a page without the token meta mounts the sample board and makes no core call', async () => {
-    const source = readFileSync(`${root}src/ui/boards/TaskMap.dc.html`, 'utf8');
-    const dom = installFakeDom();
-    const page = dom as unknown as {
-      title: string; readyState: string; head: FakeElement; addEventListener(): void;
-      querySelector(selector: string): FakeElement | null;
-    };
-    const rootElement = new FakeElement('x-dc');
-    page.title = '任务图';
-    page.readyState = 'loading';
-    page.head = new FakeElement('head');
-    page.addEventListener = () => {};
-    page.querySelector = (selector) => (selector === 'x-dc' ? rootElement : null);
-    const createElement = dom.createElement;
-    dom.createElement = (tag) => {
-      const element = createElement(tag);
-      if (tag === 'template') Object.defineProperty(element, 'content', { get: () => createElement('#fragment') });
-      return element;
-    };
-
-    const savedFetch = globalThis.fetch;
-    const savedLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
-    const calls: string[] = [];
-    globalThis.fetch = (async (input: unknown) => {
-      calls.push(String(input));
-      return { text: async () => source } as unknown as Response;
-    }) as typeof fetch;
-    Object.defineProperty(globalThis, 'location', {
-      value: { href: 'http://host/workbench/TaskMap.dc.html', search: '' }, configurable: true,
+  it('a TaskMap page without the token meta mounts the empty board and makes no core call', async () => {
+    let routeCalls = 0;
+    const page = await bootPage({
+      name: 'TaskMap', token: null,
+      request: async (url) => {
+        if (url.includes('/api/real/core/')) routeCalls += 1;
+        return new Response('{}', { status: 404 });
+      },
     });
     try {
-      await bootBoardPage();
+      /* Ruling 1: no token is the empty page, not the sample board. */
+      expect(page.pageFetches()).toBe(1);
+      expect(routeCalls).toBe(0);
+      const text = page.root.textContent;
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toContain('状态机可靠性改造');
+      expect(text).not.toContain('状态机规格对齐');
+      expect(text).not.toContain('目标验收');
+      expect(text).not.toContain('{{');
+      expect(text).not.toContain('NaN');
+      expect(text).not.toContain('undefined');
+      /* The empty copy is UNSPECIFIED by the frozen rulings; only the default
+         DAG frame and its now column are asserted. */
+      expect(findClass(page.root, 'dg-now')).toBeDefined();
     } finally {
-      globalThis.fetch = savedFetch;
-      if (savedLocation) Object.defineProperty(globalThis, 'location', savedLocation);
-      else delete (globalThis as { location?: unknown }).location;
+      await page.restore();
     }
-
-    expect(calls).toEqual(['http://host/workbench/TaskMap.dc.html']);
-    expect(rootElement.textContent).toContain('状态机可靠性改造');
   });
 });

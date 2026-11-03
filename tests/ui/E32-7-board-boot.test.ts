@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BoardView } from '../../src/ui/runtime.js';
 import { BOARD_NAMES, loadBoard } from './helpers/board-files.js';
-import { bootPage } from './helpers/boot-page.js';
+import { bootPage, findButton } from './helpers/boot-page.js';
 import { FakeElement } from './helpers/dom.js';
 
 /**
@@ -33,6 +33,17 @@ describe('E32-7 boot reads the real task map', () => {
         }],
         sourceCursor: null,
       } },
+      'lines/list': { status: 'ready', value: { rows: [], counts: { working: { status: 'exact', value: 0 } } } },
+      'graph/hover': { status: 'ready', value: { groups: [], tasks: [] } },
+      'activity/track': { status: 'ready', value: {
+        from: '2026-11-01T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z', bars: [], next: null,
+        hostRestarts: [], queriesIncluded: false, unplaced: { runs: 0, rounds: 0, gateRounds: 0 },
+      } },
+      'activity/calendar': { status: 'ready', value: {
+        from: '2026-11-01T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z',
+        granularity: 'hour', timeZone: 'UTC', scope: 'goal', cells: [],
+        totals: { steps: 0, edits: 0, checks: 0, complete: true },
+      } },
     };
     let calls = 0;
     const page = await bootPage({
@@ -47,13 +58,14 @@ describe('E32-7 boot reads the real task map', () => {
     });
     try {
       const text = page.root.textContent;
-      /* E3-3: the boot now opens the change stream after the five reads; this
-         row's fake fetch answers it with 404, so it counts as the sixth request. */
-      expect(calls + page.pageFetches()).toBe(6);
+      /* Ruling 3: the default DAG reads six base routes plus the day's track
+         and hour calendar (8 route reads), opens the change stream (404 here)
+         and fetches the page once: 8 + 1 + 1 = 10 requests. */
+      expect(calls + page.pageFetches()).toBe(10);
       expect(page.pageFetches()).toBe(1);
       expect(text).toContain('E32 真实目标');
       expect(text).toContain('E32 真实任务');
-      expect(text).toContain('待执行');
+      expect(findButton(page.root, 'E32 真实任务')!.getAttribute('aria-label')).toContain('待执行');
       expect(text).not.toContain('状态机可靠性改造');
       expect(text).not.toContain('状态机规格对齐');
     } finally {

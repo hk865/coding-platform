@@ -33,7 +33,7 @@ export type RefreshSources<T> = {
 /** Ruling item 5: every 2 s, with no cap and no backoff. */
 const RECONNECT_DELAY_MS = 2_000;
 
-export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Promise<void> } {
+export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Promise<void>; reread(): Promise<void> } {
   let data: T | null = null;
   let cursor: string | null = null;
   let dataVersion = 0;
@@ -124,6 +124,11 @@ export function createAutoRefresh<T>(sources: RefreshSources<T>): { start(): Pro
     async start(): Promise<void> {
       await requestRead();
       if (stream === null) connect();
+    },
+    /** Ruling 4: the one read request `props.actions.readMore` uses; it joins
+     * the same loop and never opens a second polling path. */
+    reread(): Promise<void> {
+      return requestRead();
     },
   };
 }

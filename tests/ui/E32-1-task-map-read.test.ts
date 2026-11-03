@@ -9,10 +9,10 @@ import { loadBoard } from './helpers/board-files.js';
 import { serializeTree } from './helpers/render.js';
 import { ag2bPlanDraft, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import {
-  openS6ARequestWorld, S6A_GOAL_1, S6A_GOAL_2, S6A_SCOPE, type S6ARequestWorld,
+  openS6ARequestWorld, S6A_GOAL_1, S6A_GOAL_2, S6A_SCOPE, S6A_WORK_ROLE, type S6ARequestWorld,
 } from '../helpers/S6A-request-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
-import { governS6B } from '../helpers/S6B1-fixture.js';
+import { createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import { bootPage, type BootedPage } from './helpers/boot-page.js';
 
 /**
@@ -89,6 +89,12 @@ beforeAll(async () => {
     scope: task.taskKind === 'work' ? { kind: 'stage' as const, stageId: 'e32-stage' } : task.scope,
   }));
   await adoptE32Plan(S6A_GOAL_1, draft, 'e32');
+  /* One real line responsible for the Task: the hover owner is a real route
+     fact, not a sample string. */
+  await createS6BLine(s6aCardsWorkspace(opened, S6A_SCOPE), {
+    label: 'e32-owner', role: S6A_WORK_ROLE,
+    tasks: [{ projectId: S6A_SCOPE.projectId, goalId: S6A_GOAL_1.goalId, taskId: 'e32-work' }],
+  });
 }, 30_000);
 
 afterAll(async () => {
@@ -104,24 +110,36 @@ async function realView(goalId: string = S6A_GOAL_1.goalId): Promise<BoardView> 
   return new BoardView(board, { ...board.defaults, data, readState: { status: 'ready' }, dataVersion: 1 });
 }
 
-describe('E32-1 the real goal and tasks reach the outline', () => {
-  it('shows the real Goal, Task and status words and no sample facts', async () => {
+describe('E32-1 the real goal and tasks reach the DAG and the outline', () => {
+  it('starts on the real DAG and keeps the same names and states in the outline', async () => {
     const view = await realView();
-    const html = serializeTree(view.render());
-    expect(html).toContain('S6A goal one');
-    expect(html).toContain('Independent work e32-work');
-    expect(html).toContain('待执行');
-    expect(html).not.toContain('状态机可靠性改造');
-    expect(html).not.toContain('状态机规格对齐');
-
-    /* ruling item 6: the other views show their empty state, not the sample DAG */
-    const dag = buttonWith(view.tree, 'DAG');
-    expect(dag).toBeDefined();
-    eventOf(dag!, 'onClick')!.handler({});
+    view.render();
+    /* Ruling 3: the default page is the DAG, never the outline. */
+    expect(view.instance.state.view).toBe('dag');
     const dagHtml = serializeTree(view.tree);
-    expect(dagHtml).toContain('这个视图还没有接上真实数据');
     expect(dagHtml).toContain('S6A goal one');
+    expect(dagHtml).toContain('Independent work e32-work');
+    expect(dagHtml).toContain('Goal gate');
     expect(dagHtml).not.toContain('状态机可靠性改造');
+    expect(dagHtml).not.toContain('状态机规格对齐');
+    const node = buttonWith(view.tree, 'Independent work e32-work');
+    expect(node).toBeDefined();
+    expect(withClass([node!], 'dg-node')).toBe(node);
+    const aria = node!.attrs.find((attr) => attr.name === 'aria-label');
+    expect(typeof aria?.value === 'string' ? aria.value : '').toContain('待执行');
+
+    /* The outline is a click, not the starting view; it shows the same real
+       rows and no sample fact. */
+    eventOf(buttonWith(view.tree, '大纲')!, 'onClick')!.handler({});
+    /* The prototype opens only a stage with attention or activity; a pending
+       stage is opened by the person. */
+    eventOf(buttonWith(view.tree, 'E32 阶段')!, 'onClick')!.handler({});
+    const outlineHtml = serializeTree(view.tree);
+    expect(outlineHtml).toContain('S6A goal one');
+    expect(outlineHtml).toContain('Independent work e32-work');
+    expect(outlineHtml).toContain('待执行');
+    expect(outlineHtml).not.toContain('状态机可靠性改造');
+    expect(outlineHtml).not.toContain('状态机规格对齐');
   });
 });
 
@@ -270,7 +288,11 @@ describe('R3 kind-scoped identities keep collisions apart', () => {
 
   it('R3 shows every row and both selection and hover terminate', async () => {
     const view = await realView(S6A_GOAL_2.goalId);
-    const html = serializeTree(view.render());
+    view.render();
+    /* Empty Stage rows are outline rows: switch explicitly first. */
+    eventOf(buttonWith(view.tree, '大纲')!, 'onClick')!.handler({});
+    eventOf(buttonWith(view.tree, 'E32 撞名阶段')!, 'onClick')!.handler({});
+    const html = serializeTree(view.tree);
     for (const text of ['E32 撞名阶段', 'E32 空阶段', 'Independent work dup', 'Independent work G1', 'Goal gate']) {
       expect(html).toContain(text);
     }
@@ -296,7 +318,9 @@ describe('R3 kind-scoped identities keep collisions apart', () => {
 
   it('R4 keeps both empty Stage rows and does not count them', async () => {
     const view = await realView(S6A_GOAL_2.goalId);
-    const html = serializeTree(view.render());
+    view.render();
+    eventOf(buttonWith(view.tree, '大纲')!, 'onClick')!.handler({});
+    const html = serializeTree(view.tree);
     expect(html).not.toContain('未改动');
     expect(html).not.toContain('全部已满足');
     const goalRow = withClass(view.tree, 'root');
@@ -308,7 +332,8 @@ describe('R3 kind-scoped identities keep collisions apart', () => {
       const row = withClassAll(view.tree, 'tr').find((candidate) => textOf(candidate).includes(name));
       expect(row).toBeDefined();
       expect(textOf(row!)).toContain(name);
-      expect(textOf(row!)).toContain('还没有任务');
+      /* An empty Stage counts nothing; its open row carries no satisfied count. */
+      expect(textOf(row!)).not.toContain('全部已满足');
 
       const empty = buttonWith(view.tree, name);
       expect(empty).toBeDefined();
@@ -335,6 +360,7 @@ describe('R3 kind-scoped identities keep collisions apart', () => {
       stages: [{ id: 'later', name: 'Later' }], tasks: [] };
     const view = new BoardView(board, { ...board.defaults, data, readState: { status: 'ready' }, dataVersion: 1 });
     view.render();
+    eventOf(buttonWith(view.tree, '大纲')!, 'onClick')!.handler({});
     const goal = buttonWith(view.tree, 'Only a skeleton');
     expect(goal).toBeDefined();
     eventOf(goal!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
@@ -346,40 +372,35 @@ describe('R3 kind-scoped identities keep collisions apart', () => {
 });
 
 describe('R5 one view state', () => {
-  it('R5 starts real mode in the outline and the sample mode in the DAG', async () => {
+  it('R5 starts real and loading views on the DAG and switches to the outline on the tab', async () => {
     const view = await realView();
     view.render();
-    expect(view.instance.state.view).toBe('outline');
-    expect(withClass([buttonWith(view.tree, '大纲')!], 'is-on')).toBe(buttonWith(view.tree, '大纲'));
-
-    eventOf(buttonWith(view.tree, 'DAG')!, 'onClick')!.handler({});
     expect(view.instance.state.view).toBe('dag');
+    expect(withClass([buttonWith(view.tree, 'DAG')!], 'is-on')).toBe(buttonWith(view.tree, 'DAG'));
     expect(withClass([buttonWith(view.tree, '大纲')!], 'is-on')).toBeUndefined();
 
     eventOf(buttonWith(view.tree, '大纲')!, 'onClick')!.handler({});
     expect(view.instance.state.view).toBe('outline');
-    expect(withClass([buttonWith(view.tree, 'DAG')!], 'is-on')).toBeUndefined();
     expect(withClass([buttonWith(view.tree, '大纲')!], 'is-on')).toBe(buttonWith(view.tree, '大纲'));
+    expect(withClass([buttonWith(view.tree, 'DAG')!], 'is-on')).toBeUndefined();
 
-    const sample = new BoardView(loadBoard('TaskMap', WORKING_BOARDS));
-    sample.render();
-    expect(sample.instance.state.view).toBe('dag');
-    const dag = buttonWith(sample.tree, 'DAG');
-    expect(dag).toBeDefined();
-    expect(withClass([dag!], 'is-on')).toBe(dag);
+    eventOf(buttonWith(view.tree, 'DAG')!, 'onClick')!.handler({});
+    expect(view.instance.state.view).toBe('dag');
+    expect(withClass([buttonWith(view.tree, 'DAG')!], 'is-on')).toBe(buttonWith(view.tree, 'DAG'));
   }, 15_000);
 
-  it('R5b selects the outline tab on the loading first render', () => {
+  it('R5b selects the DAG tab on the loading first render', () => {
     const board = loadBoard('TaskMap', WORKING_BOARDS);
     const view = new BoardView(board, { ...board.defaults, readState: { status: 'loading' } });
     view.render();
-    expect(view.instance.state.view).toBe('outline');
-    const outline = buttonWith(view.tree, '大纲');
-    expect(outline).toBeDefined();
-    expect(withClass([outline!], 'is-on')).toBe(outline);
+    expect(view.instance.state.view).toBe('dag');
     const dag = buttonWith(view.tree, 'DAG');
     expect(dag).toBeDefined();
-    expect(withClass([dag!], 'is-on')).toBeUndefined();
+    expect(withClass([dag!], 'is-on')).toBe(dag);
+    const outline = buttonWith(view.tree, '大纲');
+    expect(outline).toBeDefined();
+    expect(withClass([outline!], 'is-on')).toBeUndefined();
+    expect(serializeTree(view.tree)).not.toContain('状态机可靠性改造');
   });
 });
 
@@ -401,47 +422,40 @@ describe('R6 the gate Task carries the acceptance mark', () => {
   }, 15_000);
 });
 
-describe('R9 empty fields hide their row in real mode', () => {
-  it('R9 hides the empty 负责 and 语义 rows, while the sample rows stay', async () => {
+describe('R9 real fields show or hide their row', () => {
+  it('R9 shows the real owner and stage meaning, and hides rows with no real value', async () => {
     const view = await realView();
     view.render();
-    const hover = eventOf(buttonWith(view.tree, 'Independent work e32-work')!, 'onMouseEnter');
-    expect(hover).toBeDefined();
-    hover!.handler({});
+    /* Present: the Task has a real responsible line from graph/hover. */
+    eventOf(buttonWith(view.tree, 'Independent work e32-work')!, 'onMouseEnter')!.handler({});
     const card = withClass(view.tree, 'hcard');
     expect(card).toBeDefined();
-    expect(textOf(card!)).not.toContain('负责');
+    expect(textOf(card!)).toContain('负责');
+    expect(textOf(card!)).toContain('Independent work e32-work');
+    /* The exact owner value, not merely the 负责 label and the task title. */
+    expect(textOf(card!)).toContain('Independent work e32-work · 待命');
+    expect(textOf(card!)).not.toContain('undefined');
 
+    /* Present: the adopted assignment's instruction is the real detail row. */
     eventOf(buttonWith(view.tree, 'Independent work e32-work')!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
+    const taskDetail = withClass(view.tree, 'detail');
+    expect(taskDetail).toBeDefined();
+    expect(textOf(taskDetail!)).toContain('指派说明');
+    expect(textOf(taskDetail!)).toContain('Perform independent work e32-work');
+
+    /* Absent: the gate Task has no owner and no semantic body, so both rows vanish. */
+    eventOf(buttonWith(view.tree, 'DAG')!, 'onClick')!.handler({});
+    eventOf(buttonWith(view.tree, 'Goal gate')!, 'onMouseEnter')!.handler({});
+    const gateCard = withClass(view.tree, 'hcard');
+    expect(gateCard).toBeDefined();
+    expect(textOf(gateCard!)).not.toContain('负责');
+    expect(textOf(gateCard!)).not.toContain('语义');
+
+    eventOf(buttonWith(view.tree, 'Goal gate')!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
     const detail = withClass(view.tree, 'detail');
     expect(detail).toBeDefined();
     expect(textOf(detail!)).not.toContain('负责的 Agent');
     expect(textOf(detail!)).not.toContain('语义');
-
-    const sample = new BoardView(loadBoard('TaskMap', WORKING_BOARDS));
-    sample.render();
-    eventOf(buttonWith(sample.tree, '大纲')!, 'onClick')!.handler({});
-    const sampleHover = eventOf(buttonWith(sample.tree, '规格与验收')!, 'onMouseEnter');
-    expect(sampleHover).toBeDefined();
-    sampleHover!.handler({});
-    expect(textOf(withClass(sample.tree, 'hcard')!)).toContain('负责');
-
-    eventOf(buttonWith(sample.tree, '规格与验收')!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
-    const sampleDetail = withClass(sample.tree, 'detail');
-    expect(sampleDetail).toBeDefined();
-    expect(textOf(sampleDetail!)).toContain('负责的 Agent');
-    expect(textOf(sampleDetail!)).toContain('语义');
-
-    const gateSample = new BoardView(loadBoard('TaskMap', WORKING_BOARDS));
-    gateSample.render();
-    const gate = buttonWith(gateSample.tree, '目标验收');
-    expect(gate).toBeDefined();
-    eventOf(gate!, 'onClick')!.handler({ preventDefault() {}, stopPropagation() {} });
-    const gateDetail = withClass(gateSample.tree, 'detail');
-    expect(gateDetail).toBeDefined();
-    expect(textOf(gateDetail!)).toContain('负责的 Agent');
-    expect(textOf(gateDetail!)).toContain('审阅者 · 规格');
-    expect(textOf(gateDetail!)).toContain('语义');
-    expect(textOf(gateDetail!)).toContain('目标 1 的整体验收');
+    expect(textOf(detail!)).toContain('（验收）');
   }, 15_000);
 });

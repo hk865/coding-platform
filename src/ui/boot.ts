@@ -1,17 +1,52 @@
 import { BoardView } from './runtime.js';
 import { parseBoard } from './board.js';
 import {
-  createHostClient, fetchPageText, readPlatformToken, readPlatformTokenText, readyRouteValue, RouteReadError,
-  subscribeChanges, type CoreScope,
+  committedRouteValue, createHostClient, fetchPageText, readPlatformToken, readPlatformTokenText, readyRouteValue,
+  RouteReadError, subscribeChanges, type CoreScope,
 } from './host-client.js';
+import { asRecord, asText } from './values.js';
+import { revisionAssignments } from '../contracts/plan.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import {
-  NO_PLAN_TEXT, adaptTaskMap, isFinishedGoalDisplayPhase,
-  type TaskMapData, type TaskMapDisplayRead, type TaskMapGoalRead, type TaskMapGraphRead,
+  NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDetail, adaptTaskMapTime, isFinishedGoalDisplayPhase, localShortAt,
+  type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
+  type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
+  type TaskMapParticipantRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
+  type TaskMapTrackLineRead, type TaskMapTrackPageRead,
 } from './adapters/task-map.js';
 
 /** Ruling item 5: the top-bar line while the change stream is down. */
 const RECONNECT_TEXT = '连接断开，正在重连。';
+
+/** Ruling 4: the board tells boot which not-yet-read material it needs; the read
+ * joins the same refresh loop. */
+export type TaskMapReadDemand = {
+  detailTaskId?: string | null;
+  /** Ruling 3: the DAG's dock reads today's track and hour calendar by default. */
+  track?: boolean;
+  /** The window the dock/轨道 shows: today, this week, or all loaded history. */
+  win?: 'today' | 'week' | 'all';
+  /** While a replay cursor is live, every reread keeps the `tasks/timeline`
+   * demand; only the board's explicit `replay:false` withdraws it. */
+  replay?: boolean;
+  /** A picked year day (`YYYY-MM-DD`) appends that local day's hour calendar
+   * and track; `null` withdraws it. */
+  hourDay?: string | null;
+  /** The archive expansion reads `lines/archived` on demand. */
+  archive?: boolean;
+  /** The dropped list expansion reads the disposition dates on demand. */
+  dropped?: boolean;
+  /** A full-history number is only read when the caller asks for it. */
+  executions?: boolean;
+  /** A selected multi-Session line reads its chain (`lines/read`). */
+  lineKey?: TaskMapSessionRef | null;
+};
+/** A complete `SessionRef`: exactly projectId + sessionId (no workspaceId). */
+export type TaskMapSessionRef = { projectId: string; sessionId: string };
+export type TaskMapActions = {
+  readMore(demand: TaskMapReadDemand): void;
+  pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void>;
+};
 
 /**
  * Browser entry for one frozen board page. The Host serves the original
@@ -60,11 +95,33 @@ export async function bootBoardPage(): Promise<void> {
     return token;
   }
   const goalId = new URLSearchParams(location.search).get('goal');
+  /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
+   * hour calendar, not only the six base reads. */
+  const demand: TaskMapReadDemand = { track: true, win: 'today' };
+  const actions: TaskMapActions = {
+    readMore(next: TaskMapReadDemand): void {
+      /* Explicit fields replace the old demand, including `false`/`null`, so a
+       * closed view can withdraw its read instead of sticking forever. */
+      Object.assign(demand, next);
+      void refresh.reread();
+    },
+    async pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void> {
+      try {
+        const boot = await client.bootstrap();
+        const scope = boot.workspaces[0]?.scope;
+        if (scope === undefined) throw new Error('找不到工作区。');
+        await pinTaskMapLine(client, scope, key, pinned);
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+  };
   const sources: RefreshSources<TaskMapData> = {
-    read: async () => await reader(client, goalId),
+    read: async () => await reader(client, goalId, demand),
     publish: (snapshot) => {
       if (snapshot.error !== null) logReadError(snapshot.error);
-      view.updateProps(pageProps(board.defaults, snapshot, restart));
+      view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
     },
     subscribe: (handlers, cursor) => subscribeChanges(tokenOf, handlers, cursor),
   };
@@ -76,7 +133,7 @@ export async function bootBoardPage(): Promise<void> {
 }
 
 type BoardReader = (
-  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  client: ReturnType<typeof createHostClient>, goalId: string | null, demand?: TaskMapReadDemand,
 ) => Promise<RefreshRead<TaskMapData>>;
 
 /** Ruling item 8: the one board this slice wires; every other board keeps the
@@ -99,25 +156,26 @@ function boardNameOf(href: string): string {
  */
 function pageProps(
   defaults: Record<string, string>, snapshot: RefreshSnapshot<TaskMapData>, retry: () => void,
+  actions: TaskMapActions,
 ): Record<string, unknown> {
   if (snapshot.dataVersion === 0 && snapshot.error !== null) {
     return {
-      ...defaults,
-      readState: { status: 'error', message: pageTextOf(snapshot.error), retry, stale: false },
+      ...defaults, actions,
+      readState: { status: 'error', message: pageTextOf(snapshot.error), retry, stale: false, staleError: true },
     };
   }
   const staleText = !snapshot.stale ? ''
     : snapshot.error !== null ? pageTextOf(snapshot.error) : RECONNECT_TEXT;
-  const stale = { stale: snapshot.stale, staleText };
+  const stale = { stale: snapshot.stale, staleText, staleError: snapshot.error !== null };
   const data = snapshot.data;
-  if (data === null) return { ...defaults, readState: { status: 'empty', ...stale } };
+  if (data === null) return { ...defaults, actions, readState: { status: 'empty', ...stale } };
   if (data.planMissing === true) {
     return {
-      ...defaults, data, dataVersion: snapshot.dataVersion,
+      ...defaults, actions, data, dataVersion: snapshot.dataVersion,
       readState: { status: 'empty', message: NO_PLAN_TEXT, ...stale },
     };
   }
-  return { ...defaults, data, dataVersion: snapshot.dataVersion, readState: { status: 'ready', ...stale } };
+  return { ...defaults, actions, data, dataVersion: snapshot.dataVersion, readState: { status: 'ready', ...stale } };
 }
 
 /** `goals/conflicts` carries one footprint entry per Goal; only the ref is read. */
@@ -131,6 +189,7 @@ type GoalConflictRead = { footprintCompleteness: Array<{ goalRef: { goalId: stri
  */
 export async function readTaskMap(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: TaskMapReadDemand = {},
 ): Promise<RefreshRead<TaskMapData>> {
   const boot = await client.bootstrap();
   const cursor = boot.changesHead ?? null;
@@ -140,7 +199,7 @@ export async function readTaskMap(
 
   if (goalId !== null) {
     const ref = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
-    const data = await loadTaskMapForGoal(client, scope, ref, await readGoalReads(client, scope, ref));
+    const data = await loadTaskMapForGoal(client, scope, ref, await readGoalReads(client, scope, ref), demand);
     return { data, cursor };
   }
 
@@ -153,7 +212,7 @@ export async function readTaskMap(
     const ref = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: id };
     const reads = await readGoalReads(client, scope, ref);
     if (isFinishedGoalDisplayPhase(reads.display.display.phase)) continue;
-    const data = await loadTaskMapForGoal(client, scope, ref, reads);
+    const data = await loadTaskMapForGoal(client, scope, ref, reads, demand);
     return { data, cursor };
   }
   return { data: null, cursor };
@@ -179,11 +238,167 @@ async function loadTaskMapForGoal(
   scope: CoreScope,
   ref: { aggregateType: 'Goal'; projectId: string; goalId: string },
   reads: { goal: TaskMapGoalRead; display: TaskMapDisplayRead },
+  demand: TaskMapReadDemand,
 ): Promise<TaskMapData> {
   const reply = await client.post('tasks/query', scope, { goalRef: ref });
-  if (reply.status === 'not_found') return adaptTaskMap(reads.goal, null, reads.display);
+  /* Ruling item 4: `lines/list` and `graph/hover` join the base four on every
+   * notification — one read each for the Goal, never one per Task. A Goal with
+   * no adopted Plan has no task graph, so its hover read is expectedly
+   * `unavailable`; the empty Plan state is still the ruled answer. */
+  const lines = readyRouteValue<TaskMapLineRead>(
+    await client.post('lines/list', scope, { workspace: scope }), 'lines/list',
+  );
+  if (reply.status === 'not_found') {
+    let hover: TaskMapHoverRead | null = null;
+    try {
+      hover = readyRouteValue<TaskMapHoverRead>(
+        await client.post('graph/hover', scope, { goalRef: ref }), 'graph/hover',
+      );
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'unavailable') throw error;
+    }
+    return adaptTaskMap(reads.goal, null, reads.display, { lines, hover });
+  }
+  const hover = readyRouteValue<TaskMapHoverRead>(
+    await client.post('graph/hover', scope, { goalRef: ref }), 'graph/hover',
+  );
   const graph = readyRouteValue<TaskMapGraphRead>(reply, 'tasks/query');
-  return adaptTaskMap(reads.goal, graph, reads.display);
+  const data = adaptTaskMap(reads.goal, graph, reads.display, { lines, hover });
+  /* Ruling 4: disposition dates are read only while the dropped list is open. */
+  if (demand.dropped === true) await resolveDroppedDates(client, scope, ref, data);
+  if (demand.track === true) {
+    /* The replay demand stays until the board itself leaves replay
+       (`replay:false`); a later notification must not fall back to today. */
+    data.time = await readTaskMapTime(client, scope, ref, lines, demand);
+  }
+  const node = demand.detailTaskId ?? null;
+  if (node !== null) {
+    data.detailFor = node;
+    /* The detail head uses the state the map already shows, never a recount
+       from `phase/disposition` (a future intention must stay 未来意图); its
+       reason comes from the same row, not from the verdict-less summary. */
+    const mapRow = data.tasks.find((task) => task.id === node);
+    data.detail = await readNodeDetail(client, scope, ref, graph, node,
+      mapRow?.st ?? '', mapRow?.why ?? '');
+  }
+  return data;
+}
+
+/* ------------------------------------------------------- detail and writes */
+
+/** Immutable material keyed by its full reference, never by "current": an
+ * adopted revision's acceptedAt cannot change. */
+const ACCEPTED_AT = new Map<string, string>();
+
+function bootRefKey(ref: unknown): string {
+  const row = asRecord(ref);
+  const projectId = asText(row.projectId);
+  const planId = asText(row.planId);
+  const revision = typeof row.revision === 'number' ? String(row.revision) : '';
+  /* The cache key is the whole PlanRef: the same plan id in another project is
+   * another adopted revision with another acceptedAt. */
+  return planId === '' || projectId === '' ? '' : projectId + '/' + planId + '@' + revision;
+}
+
+/** Ruling 2: a dropped Task's disposition date is the acceptedAt of the Plan
+ * named by `dispositionChange.setIn`; unreadable hides only the date. */
+async function resolveDroppedDates(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string }, data: TaskMapData,
+): Promise<void> {
+  for (const dropped of data.dag.dropped) {
+    const key = bootRefKey(dropped.setIn);
+    if (key === '') continue;
+    let acceptedAt = ACCEPTED_AT.get(key) ?? '';
+    if (acceptedAt === '') {
+      try {
+        const plan = readyRouteValue<{ plan?: { acceptedAt?: unknown } }>(
+          await client.post('tasks/query', scope, { goalRef, planRef: dropped.setIn }), 'tasks/query',
+        );
+        acceptedAt = asText(plan.plan?.acceptedAt);
+      } catch {
+        acceptedAt = '';
+      }
+      if (acceptedAt === '') continue;
+      ACCEPTED_AT.set(key, acceptedAt);
+    }
+    dropped.at = localShortAt(acceptedAt);
+  }
+}
+
+async function readNodeDetail(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
+  graph: TaskMapGraphRead, taskId: string, state: string, mapWhy: string,
+): Promise<TaskMapNodeDetailData | null> {
+  const planRef = graph.plan.ref;
+  const row = graph.tasks.map(asRecord).find((entry) => asText(asRecord(entry.ref).taskId) === taskId);
+  if (row === undefined || planRef === undefined) return null;
+  const node = { kind: 'task' as const, ref: row.ref, planRef };
+  const readDetailPage = (section: string, afterCursor: string | null) => client.post('graph/detail', scope,
+    { goalRef, node, section, page: { afterCursor, limit: 100 } });
+  const summary = readyRouteValue<TaskMapSummaryRead>(await readDetailPage('summary', null), 'graph/detail');
+  const participants: TaskMapParticipantRead[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 10; page += 1) {
+    const pageRead: TaskMapParticipantRead = readyRouteValue<TaskMapParticipantRead>(
+      await readDetailPage('participants', cursor), 'graph/detail');
+    participants.push(pageRead);
+    cursor = pageRead.nextCursor ?? null;
+    if (cursor === null) break;
+  }
+  const task = asRecord(summary.task);
+  const actual = asRecord(task.actualFiles);
+  /* `FromExecutedFilesV1` says `availability`; `status` was never its field. */
+  const needsCatalog = actual.availability === 'available' && Array.isArray(actual.value) && actual.value.length > 0;
+  let catalog: { modules?: unknown[]; containment?: unknown } | null = null;
+  if (needsCatalog) {
+    try {
+      const architecture = readyRouteValue<{ catalog?: { catalog?: unknown } }>(
+        await client.post('architecture/read', scope, { selection: { kind: 'current' } }), 'architecture/read',
+      );
+      catalog = asRecord(asRecord(architecture.catalog).catalog) as { modules?: unknown[]; containment?: unknown };
+    } catch {
+      catalog = null;
+    }
+  }
+  const instruction = revisionAssignments(graph.plan as unknown as Parameters<typeof revisionAssignments>[0])
+    .find((entry) => entry.taskId === taskId)?.instruction ?? '';
+  return adaptTaskMapDetail(summary, participants, null,
+    catalog as Parameters<typeof adaptTaskMapDetail>[3], instruction, state, mapWhy);
+}
+
+/** Ruling 7: the one write path. Read the real Workspace pin, commit, then let
+ * the caller reread. A rejected write is an error, never a fake success. */
+export async function pinTaskMapLine(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  key: TaskMapSessionRef, pinned: boolean,
+): Promise<void> {
+  const registration = readyRouteValue<{ workspace: { ref: unknown; revision: number } }>(
+    await client.post('workspaces/registration', scope, scope), 'workspaces/registration',
+  );
+  const revision = registration.workspace.revision;
+  /* `WorkspaceSnapshot@1` requires exactly { projectId, sessionId } in the
+   * pin table (record-codecs.ts:299); aggregateType/workspaceId are rejected. */
+  const sessionRef = { projectId: key.projectId, sessionId: key.sessionId };
+  const requestId = `line-pin-${scope.workspaceId}-${sessionRef.sessionId}-${pinned ? 'add' : 'remove'}-${revision}`;
+  const reply = await client.write('lines/pin', scope, {
+    input: { workspace: scope, add: pinned ? [sessionRef] : [], remove: pinned ? [] : [sessionRef] },
+    meta: { requestId, expected: [{ ref: registration.workspace.ref, revision }] },
+  });
+  committedRouteValue(reply, 'lines/pin');
+}
+
+const WRITE_ERROR_TEXT: Record<string, string> = {
+  revision_conflict: '这条工作线的版本已变化，请重读后再试。',
+  unavailable: '暂时写不了，可以重试。',
+  forbidden: '这次写入没有被允许。',
+  invalid: '这次写入的输入无效。',
+};
+
+function writeTextOf(error: unknown): string {
+  const code = error instanceof RouteReadError ? error.code : '';
+  return WRITE_ERROR_TEXT[code] ?? '写入失败。';
 }
 
 /** Ruling item 6: the page text is chosen by the reply code, never the raw
@@ -212,4 +427,323 @@ function hoistHelmet(html: string): void {
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootBoardPage, { once: true });
   else void bootBoardPage();
+}
+
+/* --------------------------------------------------------------- track reads */
+
+type TrackPage = TaskMapTrackPageRead & { from?: string; to?: string };
+
+/* Ruling 4/§3: calendar windows have no cursor; a day window is at most 400
+ * days, so a longer range is read as several windows and is complete only
+ * after every one. The hour read stops at the board's own 14-day long-view
+ * threshold (`wlLong`), so the two never disagree about a 14–15 day range;
+ * beyond it one day read covers the whole range. */
+const HOUR_WINDOW_MAX_MS = 14 * 24 * 60 * 60 * 1000;
+const DAY_WINDOW_MAX_MS = 400 * 24 * 60 * 60 * 1000;
+const QUARTER_MS = 15 * 60 * 1000;
+
+function browserTimeZone(): string {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof zone === 'string' && zone !== '') return zone;
+  } catch { /* no Intl: the calendar's default zone is UTC */ }
+  return 'UTC';
+}
+
+function quarterFloor(ms: number): string {
+  return new Date(Math.floor(ms / QUARTER_MS) * QUARTER_MS).toISOString();
+}
+function quarterCeil(ms: number): string {
+  return new Date(Math.ceil(ms / QUARTER_MS) * QUARTER_MS).toISOString();
+}
+
+/* The browser's local day/week boundaries. A DST day is 23 or 25 hours, so the
+ * end is the next local date's start, never `start + 24h`. */
+function localDayStart(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+function localDayEnd(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+}
+function localWeekStart(ms: number): number {
+  const d = new Date(ms);
+  const back = (d.getDay() + 6) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - back).getTime();
+}
+function localWeekEnd(ms: number): number {
+  const d = new Date(localWeekStart(ms));
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7).getTime();
+}
+
+/** Split one range into quarter-aligned windows no longer than the route's own
+ * limit. Both ends are aligned before splitting, so rounding can never push a
+ * window over 15/400 days (the previous ceil-after-clamp bug). */
+function calendarWindows(fromMs: number, toMs: number, maxMs: number):
+Array<{ from: string; to: string }> {
+  const step = Math.max(QUARTER_MS, Math.floor(maxMs / QUARTER_MS) * QUARTER_MS);
+  const start = Math.floor(fromMs / QUARTER_MS) * QUARTER_MS;
+  const end = Math.ceil(toMs / QUARTER_MS) * QUARTER_MS;
+  const out: Array<{ from: string; to: string }> = [];
+  for (let at = start; at < end; at += step) {
+    out.push({ from: new Date(at).toISOString(), to: new Date(Math.min(end, at + step)).toISOString() });
+  }
+  return out;
+}
+
+async function readCalendarWindowForBoard(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
+  from: string, to: string, granularity: 'hour' | 'day', timeZone: string,
+): Promise<TaskMapCalendarRead> {
+  const value = readyRouteValue<TaskMapCalendarRead>(await client.post('activity/calendar', scope, {
+    scope: { kind: 'goal', goalRef }, from, to, granularity, timeZone,
+  }), 'activity/calendar');
+  return { ...value, windows: [{ granularity, from, to }], scope: 'goal' };
+}
+
+/* Design §3/§4: one range has one granularity (hour up to 15 days, day up to
+ * 400), read as the route's non-overlapping windows. Day and hour windows are
+ * never both read for the same range, so their totals cannot be added twice. */
+async function readTaskMapCalendar(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
+  fromMs: number, toMs: number,
+): Promise<TaskMapCalendarRead[]> {
+  const timeZone = browserTimeZone();
+  /* The board judges the returned window, so judge its quarter-rounded span. */
+  const span = Date.parse(quarterCeil(toMs)) - Date.parse(quarterFloor(fromMs));
+  const granularity: 'hour' | 'day' = span <= HOUR_WINDOW_MAX_MS ? 'hour' : 'day';
+  const maxMs = granularity === 'hour' ? HOUR_WINDOW_MAX_MS : DAY_WINDOW_MAX_MS;
+  const reads: TaskMapCalendarRead[] = [];
+  for (const window of calendarWindows(fromMs, toMs, maxMs)) {
+    reads.push(await readCalendarWindowForBoard(client, scope, goalRef, window.from, window.to, granularity, timeZone));
+  }
+  return reads;
+}
+
+/** The 500-bar page cap and the 33-Session filter cap (design §3). */
+const TRACK_PAGE_LIMIT = 500;
+const SESSION_BATCH = 33;
+const EXECUTION_PAGE_LIMIT = 100;
+const TIMELINE_PAGE_LIMIT = 200;
+
+function sessionKeyOfSession(key: TaskMapSessionRef): string {
+  return key.projectId + '/' + key.sessionId;
+}
+
+/** Every page of `activity/track` for one filter (none, then ≤33 Sessions). */
+async function readTrackPages(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  input: Record<string, unknown>, limit: number,
+): Promise<TrackPage[]> {
+  const pages: TrackPage[] = [];
+  let cursor: string | null = null;
+  for (let guard = 0; guard < 1000; guard += 1) {
+    const page: TrackPage = readyRouteValue<TrackPage>(await client.post('activity/track', scope,
+      { ...input, cursor, limit }), 'activity/track');
+    pages.push(page);
+    cursor = page.next ?? null;
+    if (cursor === null) break;
+    if (guard === 999) throw new RouteReadError('activity/track', 'unavailable', 'the track did not finish paging');
+  }
+  return pages;
+}
+
+/** Every `executions/list` page (only for 全部 or an explicit full-history need). */
+async function readExecutionPages(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
+): Promise<{ executions: Array<{ runId: string; taskId: string; startAt: string }>; complete: boolean }> {
+  const executions: Array<{ runId: string; taskId: string; startAt: string }> = [];
+  let after: string | null = null;
+  let complete = false;
+  for (let guard = 0; guard < 10_000; guard += 1) {
+    const page: { items?: unknown[]; nextCursor?: string | null } = readyRouteValue<{ items?: unknown[]; nextCursor?: string | null }>(
+      await client.post('executions/list', scope, { goalRef, page: { afterCursor: after, limit: EXECUTION_PAGE_LIMIT } }),
+      'executions/list');
+    for (const entry of Array.isArray(page.items) ? page.items : []) {
+      const run = asRecord(entry).run as Record<string, unknown> | undefined;
+      const ref = asRecord(run?.ref);
+      executions.push({ runId: asText(ref.runId), taskId: asText(asRecord(run?.task).taskId),
+        startAt: asText(run?.startedAt) });
+    }
+    after = page.nextCursor ?? null;
+    if (after === null) { complete = true; break; }
+  }
+  return { executions, complete };
+}
+
+/** Ruling 3/4/§3: the unfiltered Work/check page, then the Query passes over the
+ * unique `chainSessions` in batches of at most 33. A Query is deduped by its
+ * complete `queryRunRef`; the unfiltered Work/check bars are not counted again.
+ * The window is the selected local day/week or the real execution index start —
+ * never a fixed 2000 origin. */
+async function readTaskMapTime(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
+  lines: TaskMapLineRead, demand: TaskMapReadDemand,
+): Promise<TaskMapTimeData> {
+  const rows: unknown[] = Array.isArray(lines.rows) ? lines.rows : [];
+  const nowMs = Date.now();
+  const win = demand.win ?? 'today';
+  const fullHistory = win === 'all' || demand.executions === true;
+  let executions: Array<{ runId: string; taskId: string; startAt: string }> = [];
+  let executionsComplete = false;
+  let fromMs: number;
+  let toMs: number;
+  /* Ruling 4: archived lines join the line set before the Query Sessions and
+   * the 全部 origin are taken. The rows are read once and merged. */
+  const archived: unknown[] = [];
+  if (demand.archive === true) {
+    let cursor: string | null = null;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const page: { rows?: unknown[]; nextCursor?: string | null } = readyRouteValue<{ rows?: unknown[]; nextCursor?: string | null }>(
+        await client.post('lines/archived', scope, { workspace: scope, page: { limit: 100, cursor } }), 'lines/archived');
+      archived.push(...(Array.isArray(page.rows) ? page.rows : []));
+      cursor = page.nextCursor ?? null;
+      if (cursor === null) break;
+    }
+  }
+  const lineRows = archived.length > 0 ? [...rows, ...archived] : rows;
+  /* The 全部 `L` reads: one `lines/read` per included line head. Its chain is
+   * the only field with a Session's real `createdAt`; the same read serves the
+   * selected line below instead of a second request. */
+  const lineDetails = new Map<string, { kind?: unknown; row?: unknown; chain?: unknown[]; omitted?: unknown }>();
+  const readLineDetail = async (key: { projectId: string; sessionId: string }) =>
+    readyRouteValue<{ kind?: unknown; row?: unknown; chain?: unknown[]; omitted?: unknown }>(
+      await client.post('lines/read', scope, { workspace: scope, key }), 'lines/read');
+  if (fullHistory) {
+    const read = await readExecutionPages(client, scope, goalRef);
+    executions = read.executions;
+    executionsComplete = read.complete;
+    const originTimes = executions.map((entry) => Date.parse(entry.startAt)).filter((at) => !Number.isNaN(at));
+    const seenLine = new Set<string>();
+    for (const entry of lineRows) {
+      const key = asRecord(asRecord(entry).key);
+      const projectId = asText(key.projectId); const sessionId = asText(key.sessionId);
+      const id = projectId + '/' + sessionId;
+      if (projectId === '' || sessionId === '' || seenLine.has(id)) continue;
+      seenLine.add(id);
+      let detail: { kind?: unknown; row?: unknown; chain?: unknown[]; omitted?: unknown };
+      try {
+        detail = await readLineDetail({ projectId, sessionId });
+      } catch {
+        /* A line whose chain cannot be read does not move the origin. */
+        continue;
+      }
+      lineDetails.set(id, detail);
+      for (const chainEntry of Array.isArray(detail.chain) ? detail.chain : []) {
+        const at = Date.parse(asText(asRecord(chainEntry).createdAt));
+        if (!Number.isNaN(at)) originTimes.push(at);
+      }
+    }
+    fromMs = originTimes.length > 0 ? Math.min(...originTimes) : localDayStart(nowMs);
+    toMs = Math.max(nowMs + 60 * 60 * 1000, fromMs + 60 * 60 * 1000);
+  } else if (win === 'week') {
+    fromMs = localWeekStart(nowMs);
+    toMs = Math.max(localWeekEnd(nowMs), nowMs + 45 * 60 * 1000);
+  } else {
+    fromMs = localDayStart(nowMs);
+    toMs = Math.max(localDayEnd(nowMs), nowMs + 45 * 60 * 1000);
+  }
+  const from = quarterFloor(fromMs);
+  const to = quarterCeil(toMs);
+  const input = { goalRef, from, to };
+  const pages = await readTrackPages(client, scope, input, TRACK_PAGE_LIMIT);
+  const seen = new Set<string>();
+  const sessions: TaskMapSessionRef[] = [];
+  for (const row of lineRows) {
+    for (const entry of (Array.isArray(asRecord(row).chainSessions) ? asRecord(row).chainSessions as unknown[] : [])) {
+      const session = asRecord(entry);
+      const key = asText(session.projectId) + '/' + asText(session.sessionId);
+      if (key === '/' || seen.has(key)) continue;
+      seen.add(key);
+      sessions.push({ projectId: asText(session.projectId), sessionId: asText(session.sessionId) });
+    }
+  }
+  for (let at = 0; at < sessions.length; at += SESSION_BATCH) {
+    pages.push(...await readTrackPages(client, scope, {
+      ...input, sessionRefs: sessions.slice(at, at + SESSION_BATCH),
+    }, TRACK_PAGE_LIMIT));
+  }
+  /* A picked year day: one hour calendar read for that local day plus that
+     day's track, merged for the day→hour row. No per-Session Query page. */
+  const hourDay = typeof demand.hourDay === 'string' ? demand.hourDay : '';
+  let hourCalendars: TaskMapCalendarRead[] = [];
+  let dayTrackPages: TrackPage[] = [];
+  if (hourDay !== '') {
+    const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(hourDay);
+    if (parts !== null) {
+      const dayStart = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])).getTime();
+      const dayEnd = new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]) + 1).getTime();
+      hourCalendars = await readTaskMapCalendar(client, scope, goalRef, dayStart, dayEnd);
+      dayTrackPages = await readTrackPages(client, scope,
+        { goalRef, from: quarterFloor(dayStart), to: quarterCeil(dayEnd) }, TRACK_PAGE_LIMIT);
+    }
+  }
+  const baseComplete = pages.length > 0 && (pages[pages.length - 1]?.next ?? null) === null;
+  if (dayTrackPages.length > 0) pages.push(...dayTrackPages);
+  let timeline: TaskMapTimelineRead | null = null;
+  if (demand.replay === true) {
+    const tasks: TaskMapTimelineRead['tasks'] = [];
+    let cursor: string | null = null;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const page: TaskMapTimelineRead & { next?: string | null } = readyRouteValue<TaskMapTimelineRead & { next?: string | null }>(
+        await client.post('tasks/timeline', scope, { goalRef, cursor, limit: TIMELINE_PAGE_LIMIT }), 'tasks/timeline');
+      tasks.push(...page.tasks);
+      cursor = page.next ?? null;
+      if (cursor === null) break;
+    }
+    timeline = { tasks };
+  }
+  const calendars = await readTaskMapCalendar(client, scope, goalRef, fromMs, toMs);
+  const time = adaptTaskMapTime(pages, calendars, timeline, lineRows as TaskMapTrackLineRead[],
+    new Date(nowMs).toISOString(), asRecord(lines).counts);
+  if (dayTrackPages.length > 0) {
+    const dayComplete = (dayTrackPages[dayTrackPages.length - 1]?.next ?? null) === null;
+    time.complete = baseComplete && dayComplete;
+  }
+  if (hourCalendars.length > 0 && time.calendar !== null) {
+    const calendar = time.calendar;
+    const extra = adaptTaskMapCalendar(hourCalendars);
+    const seenHours = new Set(calendar.hours.map((hour) => hour.key));
+    for (const hour of extra.hours) {
+      if (seenHours.has(hour.key)) continue;
+      seenHours.add(hour.key);
+      calendar.hours.push(hour);
+    }
+    calendar.hours.sort((a, b) => a.startAt < b.startAt ? -1 : a.startAt > b.startAt ? 1 : 0);
+    for (const day of calendar.days) day.hours = calendar.hours.filter((hour) => hour.localDate === day.localDate);
+    calendar.windows.push(...extra.windows);
+    /* The summary for the drilled day is an hour summary; the year grid keeps
+       its own day cells. */
+    calendar.granularity = 'hour';
+  }
+  Object.assign(time, { executionsComplete, executions, archived });
+  time.executionsRead = executions.length;
+  if (demand.lineKey !== null && demand.lineKey !== undefined) {
+    try {
+      const key = sessionKeyOfSession(demand.lineKey);
+      const detail = lineDetails.get(key) ?? await readLineDetail(demand.lineKey);
+      const row = time.rows.find((entry) => entry.id === key);
+      if (row !== undefined) {
+        const count = asRecord(asRecord(detail.row).sessionCount);
+        if (typeof count.value === 'number') row.sessionCount = String(count.value);
+        else if (typeof count.atLeast === 'number') row.sessionCount = '至少 ' + String(count.atLeast);
+        if (typeof count.status === 'string') row.countPartial = count.status !== 'exact';
+        const omitted = asRecord(detail.omitted);
+        /* `omitted: {status:'exact', value:0}` is not a partial chain. */
+        if (omitted.status === 'partial' || omitted.status === 'unavailable') row.countPartial = true;
+        row.chain = Array.isArray(detail.chain) ? detail.chain : [];
+        row.omitted = detail.omitted ?? null;
+        row.lineRead = true;
+      }
+      Object.assign(time, { lineDetail: detail, lineKey: demand.lineKey });
+    } catch {
+      /* A selected line that no longer reads shows the list row; no chain is invented. */
+    }
+  }
+  return time;
 }

@@ -31,6 +31,20 @@ const REPLIES: Record<string, unknown> = {
     plan: { stages: [{ stageId: 'e33-stage', title: 'E33 阶段' }], executionDag: { dependsOn: [] } },
     tasks: [TASK],
   } },
+  /* E34 added the two per-notification reads to the TaskMap page; a Host that
+     serves a real Task also answers them, so the stream fixture does too. */
+  'lines/list': { status: 'ready', value: { rows: [], counts: { working: 0 } } },
+  'graph/hover': { status: 'ready', value: {} },
+  /* Ruling 3: the default DAG also reads the day's track and hour calendar. */
+  'activity/track': { status: 'ready', value: {
+    from: '2026-11-01T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z', bars: [], next: null,
+    hostRestarts: [], queriesIncluded: false, unplaced: { runs: 0, rounds: 0, gateRounds: 0 },
+  } },
+  'activity/calendar': { status: 'ready', value: {
+    from: '2026-11-01T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z',
+    granularity: 'hour', timeZone: 'UTC', scope: 'goal', cells: [],
+    totals: { steps: 0, edits: 0, checks: 0, complete: true },
+  } },
 };
 
 const rejectedReply = (): Response => new Response(
@@ -100,7 +114,7 @@ function push(state: { openings: ReadableStreamDefaultController<Uint8Array>[] }
   opening.enqueue(new TextEncoder().encode(frame));
 }
 
-const flush = async (): Promise<void> => { for (let i = 0; i < 60; i += 1) await Promise.resolve(); };
+const flush = async (): Promise<void> => { for (let i = 0; i < 400; i += 1) await Promise.resolve(); };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -195,7 +209,9 @@ describe('E33-9 a Host restart is recovered from the token in the served page', 
 
       await flush();
       const oldReads = host.state.readTokens.length;
-      expect(oldReads).toBe(4);
+      /* bootstrap, goals/read, goals/display, tasks/query, lines/list, graph/hover,
+         plus the default day's activity/track and activity/calendar. */
+      expect(oldReads).toBe(8);
       expect(page.root.textContent).toContain('连接断开，正在重连。');
       vi.advanceTimersByTime(2_000);
       await flush();
@@ -246,12 +262,12 @@ describe('E33-11 the first stream open rereads once', () => {
     let page: BootedPage | undefined;
     try {
       page = await bootPage({ name: 'TaskMap', search: '?goal=e33-g', token: 'e33-token', request: host.request });
-      expect(page.root.textContent).toContain('待执行');
+      expect(findButton(page.root, 'E33 刷新任务')!.getAttribute('aria-label')).toContain('待执行');
       host.state.taskDisposition = 'deferred';
       release();
       await flush();
       expect(host.state.tasksReads).toBe(2);
-      expect(page.root.textContent).toContain('已延后');
+      expect(findButton(page.root, 'E33 刷新任务')!.getAttribute('aria-label')).toContain('已延后');
       expect(page.root.textContent).not.toContain('连接断开，正在重连。');
     } finally {
       await page?.restore();

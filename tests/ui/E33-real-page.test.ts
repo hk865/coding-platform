@@ -88,6 +88,11 @@ describe('E33-1 an external write reaches the open page', () => {
       name: 'TaskMap', search: `?goal=${S6A_GOAL_1.goalId}`, token: world!.token, request: forward,
     });
     try {
+      /* Ruling 3: the default page is the DAG with its dock and now column. */
+      expect(findClass(page.root, 'dg-now')).toBeDefined();
+      expect(findClass(page.root, 'is-dock')).toBeDefined();
+      findButton(page.root, '大纲')!.dispatch('click');
+      findButton(page.root, 'E33 阶段 A')!.dispatch('click');
       expect(page.root.textContent).toContain('Independent work e33-a');
       expect(page.root.textContent).toContain('待执行');
       await defer('e33-a', 'e33-plan-defer-a');
@@ -105,16 +110,23 @@ describe('E33-2 the person’s selection and expansion survive a reread', () => 
       name: 'TaskMap', search: `?goal=${S6A_GOAL_1.goalId}`, token: world!.token, request: forward,
     });
     try {
-      findButton(page.root, 'Independent work e33-b')!.dispatch('click');
-      expect(findClass(page.root, 'detail')!.textContent).toContain('Independent work e33-b');
-      expect(findClass(page.root, 'detail')!.textContent).toContain('待执行');
-      /* the person collapses stage A (select, then close); stage B and its task stay visible */
-      findButton(page.root, 'E33 阶段 A')!.dispatch('click');
-      findButton(page.root, 'E33 阶段 A')!.dispatch('click');
+      /* The outline is not the default view; collapse is an outline action. */
+      findButton(page.root, '大纲')!.dispatch('click');
+      const stageA = (): ReturnType<typeof findButton> => findButton(page.root, 'E33 阶段 A');
+      for (let click = 0; click < 4 && stageA()!.getAttribute('aria-expanded') !== 'false'; click += 1) {
+        const before = stageA()!.getAttribute('aria-expanded');
+        stageA()!.dispatch('click');
+        await until(() => stageA()!.getAttribute('aria-expanded') !== before, 2_000);
+      }
+      expect(stageA()!.getAttribute('aria-expanded')).toBe('false');
       expect(findButton(page.root, 'Independent work e33-a')).toBeUndefined();
-      findButton(page.root, 'Independent work e33-b')!.dispatch('click');
-      expect(findClass(page.root, 'detail')!.textContent).toContain('Independent work e33-b');
 
+      /* B is still there: open it, select its Task, then let the real reread
+         update the same detail to 已延后. */
+      findButton(page.root, 'E33 阶段 B')!.dispatch('click');
+      findButton(page.root, 'Independent work e33-b')!.dispatch('click');
+      await until(() => (findClass(page.root, 'detail')?.textContent ?? '').includes('Independent work e33-b'), 10_000);
+      expect(findClass(page.root, 'detail')!.textContent).toContain('待执行');
       await defer('e33-b', 'e33-plan-defer-b');
       await until(() => (findClass(page.root, 'detail')?.textContent ?? '').includes('已延后'), 10_000);
       expect(findClass(page.root, 'detail')!.textContent).toContain('Independent work e33-b');

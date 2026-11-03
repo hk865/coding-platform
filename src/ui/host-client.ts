@@ -93,12 +93,31 @@ export function readyRouteValue<T>(reply: RouteReply, route: string): T {
   return reply.value as T;
 }
 
+/** Ruling item 7: a graph write carries `{scope, request:{input, meta}}`; the
+ * plain `{scope, input}` envelope is rejected by the route parser. The pin is
+ * the real registration read, never a guessed revision 1. */
+export type GraphWriteRequest = {
+  input: unknown;
+  meta: { requestId: string; expected: readonly { ref: unknown; revision: number }[] };
+};
+
+/** Ruling item 7: a write is successful only at `status: 'committed'`; the
+ * read-side `readyRouteValue` would call a rejection a success. */
+export function committedRouteValue<T>(reply: RouteReply, route: string): T {
+  if (reply.status !== 'committed') {
+    const code = reply.code || reply.status || 'no status';
+    throw new RouteReadError(route, code, reply.reason ?? '');
+  }
+  return reply.value as T;
+}
+
 /** Ruling items 5 and 6: `bootstrap` is where the UI learns the workspace scope;
  * `post` is the plain route shape, with `scope` supplied by the caller. `base` is
  * empty in the browser (same-origin relative); Node tests pass a Host origin
  * without a trailing slash because a Node `fetch` refuses a relative URL. */
 export function createHostClient(token: string, base = ''): {
   post(route: string, scope: CoreScope, input: unknown): Promise<RouteReply>;
+  write(route: string, scope: CoreScope, request: GraphWriteRequest): Promise<RouteReply>;
   bootstrap(): Promise<BootstrapReply>;
 } {
   return {
@@ -107,6 +126,13 @@ export function createHostClient(token: string, base = ''): {
         method: 'POST',
         headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: token },
         body: JSON.stringify({ scope, input }),
+      }, route);
+    },
+    write(route: string, scope: CoreScope, writeRequest: GraphWriteRequest): Promise<RouteReply> {
+      return request<RouteReply>(`${base}${CORE_API_PREFIX}${route}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: token },
+        body: JSON.stringify({ scope, request: writeRequest }),
       }, route);
     },
     bootstrap(): Promise<BootstrapReply> {

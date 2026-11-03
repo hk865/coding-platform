@@ -1,0 +1,5186 @@
+{
+  "scope": {
+    "projectId": "ple34b",
+    "workspaceId": "scene"
+  },
+  "goal": {
+    "goalId": "g1",
+    "objective": "状态机可靠性改造",
+    "sem": "让任务、执行和检查的每一次状态变化都经状态机判定；失败能分类、能接续。",
+    "desiredState": "active",
+    "phase": "RUNNING",
+    "since": "c0000000001"
+  },
+  "plan": {
+    "planId": "ple34b-scene-plan",
+    "acceptedAt": "2026-10-02T09:30:00+08:00",
+    "revision": 1,
+    "policyId": "scene-policy",
+    "baselineId": "scene-baseline"
+  },
+  "failures": [
+    {
+      "taskId": "T21",
+      "reason": "auto_rework_cap_reached"
+    }
+  ],
+  "gate": {
+    "taskId": "GATE",
+    "name": "目标验收",
+    "sem": "目标 1 的整体验收：汇总各阶段的验收报告，确认失败能分类、能接续，检查能按项重跑。"
+  },
+  "stages": [
+    {
+      "stageId": "S1",
+      "title": "规格与验收",
+      "description": "把状态机规格逐条对到代码和检查，作为后面各阶段的起点。",
+      "owner": "审阅者 · 规格"
+    },
+    {
+      "stageId": "S2",
+      "title": "写入收口",
+      "description": "让所有正式写入只经状态机，不留旁路。",
+      "owner": "执行者"
+    },
+    {
+      "stageId": "S3",
+      "title": "失败与重新入队",
+      "description": "失败分五类；能自动重新入队的自动排回，接续时带上原因。",
+      "owner": "执行者"
+    },
+    {
+      "stageId": "S4",
+      "title": "检查与返工",
+      "description": "让检查能按项重跑、记轮次，返工有上限也有记录。",
+      "owner": "执行者"
+    },
+    {
+      "stageId": "S5",
+      "title": "服务拆分",
+      "description": "拆开路由和前端，用推送取代每秒轮询。",
+      "owner": "执行者"
+    },
+    {
+      "stageId": "S6",
+      "title": "以后再做",
+      "description": "暂不排期的想法，先记成未来意图。",
+      "owner": "未分配"
+    }
+  ],
+  "tasks": [
+    {
+      "taskId": "T01",
+      "stageId": "S1",
+      "title": "状态机规格对齐",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S1"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": "审阅者 · 规格",
+      "why": "",
+      "sem": "把目标、任务、一次执行和工作记录的规格条目，与代码里的判定逐条对齐。",
+      "files": [
+        "docs/refactor/STATE-MACHINES-SPEC.md"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T02",
+      "stageId": "S1",
+      "title": "原因码表",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S1"
+      },
+      "deps": [
+        "T01"
+      ],
+      "gate": false,
+      "agent": "审阅者 · 规格",
+      "why": "",
+      "sem": "为每个“需要你决定”的原因写好界面文字和对应按钮。",
+      "files": [
+        "src/core/work-graph/state/goal-machine.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T03",
+      "stageId": "S1",
+      "title": "目标展示名",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S1"
+      },
+      "deps": [
+        "T01"
+      ],
+      "gate": false,
+      "agent": "审阅者 · 规格",
+      "why": "",
+      "sem": "定下目标的十个展示名；运行中也照样列出全部原因。",
+      "files": [
+        "src/core/work-graph/state/goal-machine.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T04",
+      "stageId": "S1",
+      "title": "规格验收",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "gate",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S1"
+      },
+      "deps": [
+        "T02",
+        "T03"
+      ],
+      "gate": true,
+      "agent": "审阅者 · 规格",
+      "why": "",
+      "sem": "确认每条规格都有对应检查，作为后面各阶段的起点。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T05",
+      "stageId": "S2",
+      "title": "消息写入收口",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T04"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "成员之间的消息只经状态机写入，不再直接改记录。",
+      "files": [
+        "src/core/work-graph/communication/mailbox-service.ts",
+        "src/core/work-graph/state/message-machine.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T06",
+      "stageId": "S2",
+      "title": "检查轮次写入收口",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T04"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "检查轮次和证据的写入都经状态机判定。",
+      "files": [
+        "src/core/work-graph/evidence/evidence-service.ts",
+        "src/core/work-graph/state/verification-machine.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T07",
+      "stageId": "S2",
+      "title": "查询任务写入收口",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T04"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "查询任务和它的每次执行只经状态机写入。",
+      "files": [
+        "src/core/work-graph/queries/query-job-service.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T08",
+      "stageId": "S2",
+      "title": "执行事实读取迁移",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T04"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "把 Kernel 执行事实的读取搬到 Runtime，写入经状态机。",
+      "files": [
+        "src/core/agent-runtime/kernel-turn-facts.ts"
+      ],
+      "rework": {
+        "entries": [
+          {
+            "index": 1,
+            "ordinal": "第 1 次",
+            "requestedBy": "Agent",
+            "failureClass": "执行失败",
+            "reason": "读取路径写错，回放测试 2 项未通过",
+            "automatic": false,
+            "requestedAt": "2026-10-03T10:00:00+08:00"
+          }
+        ],
+        "requeueAutoCount": 0,
+        "cap": 3
+      },
+      "phaseCause": null
+    },
+    {
+      "taskId": "T09",
+      "stageId": "S2",
+      "title": "工作记录目录精简",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T04"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "工作记录目录只保留工作记录状态机做出的决定。",
+      "files": [
+        "src/core/work-graph/sessions/session-directory.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T10",
+      "stageId": "S2",
+      "title": "生命周期决定收口",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T09"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "成员的开始、让出和结束只由工作记录状态机决定。",
+      "files": [
+        "src/core/work-graph/sessions/session-lifecycle.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T11",
+      "stageId": "S2",
+      "title": "写入收口验收",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "gate",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S2"
+      },
+      "deps": [
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T10"
+      ],
+      "gate": true,
+      "agent": "审阅者 · 规格",
+      "why": "",
+      "sem": "确认所有写入都经过状态机，没有旁路。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T12",
+      "stageId": "S3",
+      "title": "平台中断识别",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T11"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "Host 重启或连接中断时记为“平台中断”，不算成员失败。",
+      "files": [
+        "src/core/work-graph/state/task-failure.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T13",
+      "stageId": "S3",
+      "title": "重新入队与失败类别",
+      "st": "running",
+      "phase": "running",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T12",
+        "T05"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "第 2 次尝试 · 接续，上次检查未通过",
+      "sem": "失败后按五种类别决定能否自动重新入队，并记下“系统自动重新入队（n/3）”。",
+      "files": [
+        "src/core/work-graph/state/task-machine.ts",
+        "src/core/work-graph/state/attempt-machine.ts"
+      ],
+      "rework": {
+        "entries": [
+          {
+            "index": 1,
+            "ordinal": "第 1 次",
+            "requestedBy": "系统自动",
+            "failureClass": "检查未通过",
+            "reason": "lint 2 项，回放测试 1 项",
+            "automatic": true,
+            "requestedAt": "2026-10-03T10:00:00+08:00"
+          }
+        ],
+        "requeueAutoCount": 1,
+        "cap": 3
+      },
+      "phaseCause": {
+        "code": "requeued"
+      }
+    },
+    {
+      "taskId": "T14",
+      "stageId": "S3",
+      "title": "接续说明",
+      "st": "verifying",
+      "phase": "verifying",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T08",
+        "T12"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "正式检查第 1 轮进行中，9/14 项已完成",
+      "sem": "新的一次执行开头带上上次停在哪里、为什么停，只用已保存的事实组装。",
+      "files": [
+        "src/core/agent-runtime/execution-preparation.ts"
+      ],
+      "rework": null,
+      "phaseCause": {
+        "code": "verification_running"
+      }
+    },
+    {
+      "taskId": "T15",
+      "stageId": "S3",
+      "title": "启动核对",
+      "st": "failed",
+      "phase": "failed",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T12",
+        "T13"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "执行失败，系统自动重新入队（1/3），等待推进",
+      "sem": "Host 启动时核对上次没结束的执行；结果未知的交给你决定。",
+      "files": [
+        "src/app/host.ts",
+        "src/core/agent-runtime/observation-recovery.ts"
+      ],
+      "rework": null,
+      "phaseCause": {
+        "code": "run_failed"
+      }
+    },
+    {
+      "taskId": "T16",
+      "stageId": "S3",
+      "title": "取消传播",
+      "st": "claimable",
+      "phase": "ready",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T10"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "等成员领取",
+      "sem": "取消目标时，把取消传到进行中的执行和排队中的检查。",
+      "files": [
+        "src/core/agent-runtime/execution-control.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T17",
+      "stageId": "S3",
+      "title": "失败类别展示",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T13"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "在格子、任务详情和目标条上显示五种失败类别。",
+      "files": [
+        "src/ui/views.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T18",
+      "stageId": "S3",
+      "title": "重新入队验收",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "gate",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S3"
+      },
+      "deps": [
+        "T13",
+        "T14",
+        "T15"
+      ],
+      "gate": true,
+      "agent": null,
+      "why": "",
+      "sem": "确认重新入队、接续和启动核对在 Host 重启后都成立。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T19",
+      "stageId": "S4",
+      "title": "证据链接",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T06"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "每轮检查的报告、退出码和日志都挂到对应任务。",
+      "files": [
+        "src/core/work-graph/evidence/coverage.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T20",
+      "stageId": "S4",
+      "title": "检查链与重新检查",
+      "st": "blocked",
+      "phase": "blocked",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T19",
+        "T06"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "检查不完整，第 2 轮的类型检查被 Host 重启打断",
+      "sem": "让检查链支持重新检查：重跑哪些项、记第几轮、什么时候停。",
+      "files": [
+        "src/core/agent-runtime/check-execution.ts",
+        "src/core/work-graph/evidence/verification-plan.ts"
+      ],
+      "rework": null,
+      "phaseCause": {
+        "code": "check_interrupted"
+      }
+    },
+    {
+      "taskId": "T21",
+      "stageId": "S4",
+      "title": "检查不完整判定",
+      "st": "failed",
+      "phase": "failed",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T19"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "自动返工已达上限（3/3）",
+      "sem": "检查进程被打断或报告缺项时判为“检查不完整”，不判为“检查未通过”。",
+      "files": [
+        "src/core/work-graph/state/verification-machine.ts"
+      ],
+      "rework": {
+        "entries": [
+          {
+            "index": 1,
+            "ordinal": "第 1 次",
+            "requestedBy": "系统自动",
+            "failureClass": "检查未通过",
+            "reason": "lint 3 项",
+            "automatic": true,
+            "requestedAt": "2026-10-03T10:00:00+08:00"
+          },
+          {
+            "index": 2,
+            "ordinal": "第 2 次",
+            "requestedBy": "系统自动",
+            "failureClass": "检查未通过",
+            "reason": "lint 2 项，类型检查 1 项",
+            "automatic": true,
+            "requestedAt": "2026-10-04T10:01:00+08:00"
+          },
+          {
+            "index": 3,
+            "ordinal": "第 3 次",
+            "requestedBy": "系统自动",
+            "failureClass": "检查未通过",
+            "reason": "lint 2 项",
+            "automatic": true,
+            "requestedAt": "2026-10-05T10:02:00+08:00"
+          }
+        ],
+        "requeueAutoCount": 3,
+        "cap": 3
+      },
+      "phaseCause": {
+        "code": "check_failed"
+      }
+    },
+    {
+      "taskId": "T22",
+      "stageId": "S4",
+      "title": "自动返工上限",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T20",
+        "T21"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "自动返工默认最多 3 次，到上限后转为“需要你决定”。",
+      "files": [
+        "src/core/work-graph/state/no-progress.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T23",
+      "stageId": "S4",
+      "title": "返工历史",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T20"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "记下每次返工是谁、哪一类、什么原因、第几次。",
+      "files": [
+        "src/core/work-graph/persistence/rework-codecs.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T24",
+      "stageId": "S4",
+      "title": "重新验收",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T20"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "验收没通过时，补上修复任务后再验收一次。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T25",
+      "stageId": "S4",
+      "title": "检查链验收",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "gate",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S4"
+      },
+      "deps": [
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24"
+      ],
+      "gate": true,
+      "agent": null,
+      "why": "",
+      "sem": "确认重新检查、返工上限和返工历史一起成立。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T26",
+      "stageId": "S5",
+      "title": "core-routes 拆分",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T04"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "把 core-routes 按目标、任务、成员、文件拆成四组路由。",
+      "files": [
+        "src/app/core-routes.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T27",
+      "stageId": "S5",
+      "title": "前端拆分",
+      "st": "satisfied",
+      "phase": "satisfied",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T26"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "",
+      "sem": "前端拆成 api、state、components、views 四层。",
+      "files": [
+        "src/ui/main.ts",
+        "src/ui/views.ts"
+      ],
+      "rework": {
+        "entries": [
+          {
+            "index": 1,
+            "ordinal": "第 1 次",
+            "requestedBy": "人工",
+            "failureClass": "检查未通过",
+            "reason": "样式检查 4 项",
+            "automatic": false,
+            "requestedAt": "2026-10-03T10:00:00+08:00"
+          }
+        ],
+        "requeueAutoCount": 0,
+        "cap": 3
+      },
+      "phaseCause": null
+    },
+    {
+      "taskId": "T28",
+      "stageId": "S5",
+      "title": "SSE 推送",
+      "st": "running",
+      "phase": "running",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T26",
+        "T27"
+      ],
+      "gate": false,
+      "agent": "执行者",
+      "why": "第 1 次尝试，已改 3 个文件",
+      "sem": "用 SSE 把状态变化推给工作台，取代每秒轮询。",
+      "files": [
+        "src/app/server.ts",
+        "src/app/attention-observer.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T29",
+      "stageId": "S5",
+      "title": "目标展示读取路由",
+      "st": "claimable",
+      "phase": "ready",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T26",
+        "T03"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "等成员领取",
+      "sem": "给工作台一个只读接口：目标状态、原因和待决数。",
+      "files": [
+        "src/app/core-routes.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T30",
+      "stageId": "S5",
+      "title": "目标列表接口",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T26"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "列出项目里的目标、顺序和状态，供左栏使用。",
+      "files": [
+        "src/app/core-routes.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T31",
+      "stageId": "S5",
+      "title": "任务格子摘要",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T28"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "一次返回全部任务的状态摘要，不带完整记录。",
+      "files": [
+        "src/core/work-graph/tasks/task-index.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T32",
+      "stageId": "S5",
+      "title": "增量刷新",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T28",
+        "T31"
+      ],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "图按格子增量更新，不整张重画。",
+      "files": [
+        "src/ui/views.ts"
+      ],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T33",
+      "stageId": "S5",
+      "title": "服务拆分验收",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "gate",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S5"
+      },
+      "deps": [
+        "T28",
+        "T29",
+        "T30",
+        "T31",
+        "T32"
+      ],
+      "gate": true,
+      "agent": null,
+      "why": "",
+      "sem": "确认推送、接口和增量刷新一起成立。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T34",
+      "stageId": "S6",
+      "title": "依赖矩阵视图",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "模块超过约 30 个时，用依赖矩阵代替连线。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T35",
+      "stageId": "S6",
+      "title": "自治档位设置",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "在设置里改每个目标的默认自治档位。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T36",
+      "stageId": "S6",
+      "title": "通知策略",
+      "st": "deferred",
+      "phase": "pending",
+      "disposition": "deferred",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "浏览器通知默认关闭",
+      "sem": "以后再定界面之外的提醒方式。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T37",
+      "stageId": "S6",
+      "title": "多项目待决统计",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "顶栏的待决数跨项目统计。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T38",
+      "stageId": "S6",
+      "title": "原生压缩",
+      "st": "deferred",
+      "phase": "pending",
+      "disposition": "deferred",
+      "intent": "request_execution",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "长对话改用原生压缩，不手写摘要。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T39",
+      "stageId": "S6",
+      "title": "规模自适应",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "按项目规模调整默认显示密度和分组。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "T40",
+      "stageId": "S6",
+      "title": "运行轨道视图",
+      "st": "future",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "plan_only",
+      "taskKind": "work",
+      "scope": {
+        "kind": "stage",
+        "stageId": "S6"
+      },
+      "deps": [],
+      "gate": false,
+      "agent": null,
+      "why": "",
+      "sem": "按时间看每次执行和返工的轨道视图。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    },
+    {
+      "taskId": "GATE",
+      "stageId": null,
+      "title": "目标验收",
+      "st": "pending",
+      "phase": "pending",
+      "disposition": "active",
+      "intent": "request_execution",
+      "taskKind": "gate",
+      "scope": {
+        "kind": "goal"
+      },
+      "deps": [
+        "T16",
+        "T17",
+        "T18",
+        "T25",
+        "T33"
+      ],
+      "gate": true,
+      "agent": null,
+      "why": "",
+      "sem": "目标 1 的整体验收：汇总各阶段的验收报告，确认失败能分类、能接续，检查能按项重跑。",
+      "files": [],
+      "rework": null,
+      "phaseCause": null
+    }
+  ],
+  "edges": [
+    {
+      "taskId": "T02",
+      "dependsOnId": "T01",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T01 的输出"
+      }
+    },
+    {
+      "taskId": "T03",
+      "dependsOnId": "T01",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T01 的输出"
+      }
+    },
+    {
+      "taskId": "T04",
+      "dependsOnId": "T02",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T02 的输出"
+      }
+    },
+    {
+      "taskId": "T04",
+      "dependsOnId": "T03",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T03 的输出"
+      }
+    },
+    {
+      "taskId": "T05",
+      "dependsOnId": "T04",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T04 的输出"
+      }
+    },
+    {
+      "taskId": "T06",
+      "dependsOnId": "T04",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T04 的输出"
+      }
+    },
+    {
+      "taskId": "T07",
+      "dependsOnId": "T04",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T04 的输出"
+      }
+    },
+    {
+      "taskId": "T08",
+      "dependsOnId": "T04",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T04 的输出"
+      }
+    },
+    {
+      "taskId": "T09",
+      "dependsOnId": "T04",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T04 的输出"
+      }
+    },
+    {
+      "taskId": "T10",
+      "dependsOnId": "T09",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T09 的输出"
+      }
+    },
+    {
+      "taskId": "T11",
+      "dependsOnId": "T05",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T05 的输出"
+      }
+    },
+    {
+      "taskId": "T11",
+      "dependsOnId": "T06",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T06 的输出"
+      }
+    },
+    {
+      "taskId": "T11",
+      "dependsOnId": "T07",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T07 的输出"
+      }
+    },
+    {
+      "taskId": "T11",
+      "dependsOnId": "T08",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T08 的输出"
+      }
+    },
+    {
+      "taskId": "T11",
+      "dependsOnId": "T10",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T10 的输出"
+      }
+    },
+    {
+      "taskId": "T12",
+      "dependsOnId": "T11",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T11 的输出"
+      }
+    },
+    {
+      "taskId": "T13",
+      "dependsOnId": "T12",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T12 的输出"
+      }
+    },
+    {
+      "taskId": "T13",
+      "dependsOnId": "T05",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T05 的输出"
+      }
+    },
+    {
+      "taskId": "T14",
+      "dependsOnId": "T08",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T08 的输出"
+      }
+    },
+    {
+      "taskId": "T14",
+      "dependsOnId": "T12",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T12 的输出"
+      }
+    },
+    {
+      "taskId": "T15",
+      "dependsOnId": "T12",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T12 的输出"
+      }
+    },
+    {
+      "taskId": "T15",
+      "dependsOnId": "T13",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T13 的输出"
+      }
+    },
+    {
+      "taskId": "T16",
+      "dependsOnId": "T10",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T10 的输出"
+      }
+    },
+    {
+      "taskId": "T17",
+      "dependsOnId": "T13",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T13 的输出"
+      }
+    },
+    {
+      "taskId": "T18",
+      "dependsOnId": "T13",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T13 的输出"
+      }
+    },
+    {
+      "taskId": "T18",
+      "dependsOnId": "T14",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T14 的输出"
+      }
+    },
+    {
+      "taskId": "T18",
+      "dependsOnId": "T15",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T15 的输出"
+      }
+    },
+    {
+      "taskId": "T19",
+      "dependsOnId": "T06",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T06 的输出"
+      }
+    },
+    {
+      "taskId": "T20",
+      "dependsOnId": "T19",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T19 的输出"
+      }
+    },
+    {
+      "taskId": "T20",
+      "dependsOnId": "T06",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T06 的输出"
+      }
+    },
+    {
+      "taskId": "T21",
+      "dependsOnId": "T19",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T19 的输出"
+      }
+    },
+    {
+      "taskId": "T22",
+      "dependsOnId": "T20",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T20 的输出"
+      }
+    },
+    {
+      "taskId": "T22",
+      "dependsOnId": "T21",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T21 的输出"
+      }
+    },
+    {
+      "taskId": "T23",
+      "dependsOnId": "T20",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T20 的输出"
+      }
+    },
+    {
+      "taskId": "T24",
+      "dependsOnId": "T20",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T20 的输出"
+      }
+    },
+    {
+      "taskId": "T25",
+      "dependsOnId": "T20",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T20 的输出"
+      }
+    },
+    {
+      "taskId": "T25",
+      "dependsOnId": "T21",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T21 的输出"
+      }
+    },
+    {
+      "taskId": "T25",
+      "dependsOnId": "T22",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T22 的输出"
+      }
+    },
+    {
+      "taskId": "T25",
+      "dependsOnId": "T23",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T23 的输出"
+      }
+    },
+    {
+      "taskId": "T25",
+      "dependsOnId": "T24",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T24 的输出"
+      }
+    },
+    {
+      "taskId": "T26",
+      "dependsOnId": "T04",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T04 的输出"
+      }
+    },
+    {
+      "taskId": "T27",
+      "dependsOnId": "T26",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T26 的输出"
+      }
+    },
+    {
+      "taskId": "T28",
+      "dependsOnId": "T26",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T26 的输出"
+      }
+    },
+    {
+      "taskId": "T28",
+      "dependsOnId": "T27",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T27 的输出"
+      }
+    },
+    {
+      "taskId": "T29",
+      "dependsOnId": "T26",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T26 的输出"
+      }
+    },
+    {
+      "taskId": "T29",
+      "dependsOnId": "T03",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T03 的输出"
+      }
+    },
+    {
+      "taskId": "T30",
+      "dependsOnId": "T26",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T26 的输出"
+      }
+    },
+    {
+      "taskId": "T31",
+      "dependsOnId": "T28",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T28 的输出"
+      }
+    },
+    {
+      "taskId": "T32",
+      "dependsOnId": "T28",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T28 的输出"
+      }
+    },
+    {
+      "taskId": "T32",
+      "dependsOnId": "T31",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T31 的输出"
+      }
+    },
+    {
+      "taskId": "T33",
+      "dependsOnId": "T28",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T28 的输出"
+      }
+    },
+    {
+      "taskId": "T33",
+      "dependsOnId": "T29",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T29 的输出"
+      }
+    },
+    {
+      "taskId": "T33",
+      "dependsOnId": "T30",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T30 的输出"
+      }
+    },
+    {
+      "taskId": "T33",
+      "dependsOnId": "T31",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T31 的输出"
+      }
+    },
+    {
+      "taskId": "T33",
+      "dependsOnId": "T32",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T32 的输出"
+      }
+    },
+    {
+      "taskId": "GATE",
+      "dependsOnId": "T16",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T16 的输出"
+      }
+    },
+    {
+      "taskId": "GATE",
+      "dependsOnId": "T17",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T17 的输出"
+      }
+    },
+    {
+      "taskId": "GATE",
+      "dependsOnId": "T18",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T18 的输出"
+      }
+    },
+    {
+      "taskId": "GATE",
+      "dependsOnId": "T25",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T25 的输出"
+      }
+    },
+    {
+      "taskId": "GATE",
+      "dependsOnId": "T33",
+      "requires": {
+        "kind": "output-contract",
+        "label": "需要 T33 的输出"
+      }
+    }
+  ],
+  "runs": [
+    {
+      "id": "c01",
+      "member": "SC",
+      "task": null,
+      "attempt": 1,
+      "kind": "talk",
+      "startAt": "2026-10-02T09:05:00+08:00",
+      "endAt": "2026-10-02T09:30:00+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "写目标卡和第一个方案；你在 09:30 采用",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 18,
+        "ed": 0,
+        "ck": 0,
+        "rq": 7
+      },
+      "lineId": "L:SC",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "SC"
+      }
+    },
+    {
+      "id": "v01",
+      "member": "SV",
+      "task": "T26",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T09:30:00+08:00",
+      "endAt": "2026-10-02T10:18:00+08:00",
+      "live": false,
+      "result": "ended",
+      "reason": "读取 3 个文件、编辑 2 个文件",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 34,
+        "ed": 2,
+        "ck": 0,
+        "rq": 10
+      },
+      "lineId": "L:T26",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T26"
+      }
+    },
+    {
+      "id": "v02",
+      "member": "SV",
+      "task": "T26",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T10:18:00+08:00",
+      "endAt": "2026-10-02T10:27:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "运行检查",
+      "previous": "v01",
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 6,
+        "ed": 0,
+        "ck": 0,
+        "rq": 2
+      },
+      "lineId": "L:T26",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T26"
+      }
+    },
+    {
+      "id": "v03",
+      "member": "SV",
+      "task": "T26",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T10:58:00+08:00",
+      "endAt": "2026-10-02T11:05:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "v02",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 12,
+        "rq": 0
+      },
+      "lineId": "L:T26",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T26"
+      }
+    },
+    {
+      "id": "r01",
+      "member": "RV",
+      "task": "T01",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T10:25:00+08:00",
+      "endAt": "2026-10-02T10:55:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 21,
+        "ed": 3,
+        "ck": 0,
+        "rq": 8
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r02",
+      "member": "RV",
+      "task": "T01",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T10:55:00+08:00",
+      "endAt": "2026-10-02T11:01:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "r01",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 8,
+        "rq": 0
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r03",
+      "member": "RV",
+      "task": "T02",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T13:05:00+08:00",
+      "endAt": "2026-10-02T13:35:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 21,
+        "ed": 3,
+        "ck": 0,
+        "rq": 8
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r04",
+      "member": "RV",
+      "task": "T02",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T13:35:00+08:00",
+      "endAt": "2026-10-02T13:40:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "r03",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 8,
+        "rq": 0
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r05",
+      "member": "RV",
+      "task": "T03",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T14:00:00+08:00",
+      "endAt": "2026-10-02T14:30:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 21,
+        "ed": 3,
+        "ck": 0,
+        "rq": 8
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r06",
+      "member": "RV",
+      "task": "T03",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T14:30:00+08:00",
+      "endAt": "2026-10-02T14:35:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "r05",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 8,
+        "rq": 0
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "s01",
+      "member": "SM",
+      "task": "T05",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T14:20:00+08:00",
+      "endAt": "2026-10-02T15:15:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 39,
+        "ed": 6,
+        "ck": 0,
+        "rq": 10
+      },
+      "lineId": "L:T05",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T05"
+      }
+    },
+    {
+      "id": "s02",
+      "member": "SM",
+      "task": "T05",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T15:15:00+08:00",
+      "endAt": "2026-10-02T15:21:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s01",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T05",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T05"
+      }
+    },
+    {
+      "id": "s03",
+      "member": "SM",
+      "task": "T06",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T15:30:00+08:00",
+      "endAt": "2026-10-02T16:25:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 39,
+        "ed": 6,
+        "ck": 0,
+        "rq": 10
+      },
+      "lineId": "L:T06",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T06"
+      }
+    },
+    {
+      "id": "s04",
+      "member": "SM",
+      "task": "T06",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T16:25:00+08:00",
+      "endAt": "2026-10-02T16:31:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s03",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T06",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T06"
+      }
+    },
+    {
+      "id": "s05",
+      "member": "SM",
+      "task": "T09",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T16:40:00+08:00",
+      "endAt": "2026-10-02T17:20:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 28,
+        "ed": 4,
+        "ck": 0,
+        "rq": 8
+      },
+      "lineId": "L:T09",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T09"
+      }
+    },
+    {
+      "id": "s06",
+      "member": "SM",
+      "task": "T09",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T17:20:00+08:00",
+      "endAt": "2026-10-02T17:26:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s05",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T09",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T09"
+      }
+    },
+    {
+      "id": "r07",
+      "member": "RV",
+      "task": "T04",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-02T16:50:00+08:00",
+      "endAt": "2026-10-02T17:28:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 27,
+        "ed": 4,
+        "ck": 0,
+        "rq": 10
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r08",
+      "member": "RV",
+      "task": "T04",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-02T17:34:00+08:00",
+      "endAt": "2026-10-02T17:40:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "规格对照检查：23 条规格都有检查",
+      "previous": "r07",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 23,
+        "rq": 0
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "s07",
+      "member": "SM",
+      "task": "T07",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T08:40:00+08:00",
+      "endAt": "2026-10-03T09:05:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 18,
+        "ed": 3,
+        "ck": 0,
+        "rq": 5
+      },
+      "lineId": "L:T07",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T07"
+      }
+    },
+    {
+      "id": "s08",
+      "member": "SM",
+      "task": "T07",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-03T09:05:00+08:00",
+      "endAt": "2026-10-03T09:10:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s07",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T07",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T07"
+      }
+    },
+    {
+      "id": "s09",
+      "member": "SM",
+      "task": "T08",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T09:12:00+08:00",
+      "endAt": "2026-10-03T09:34:00+08:00",
+      "live": false,
+      "result": "execfail",
+      "reason": "读取路径写错，回放测试 2 项未通过",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 15,
+        "ed": 2,
+        "ck": 0,
+        "rq": 4
+      },
+      "lineId": "L:T08",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T08"
+      }
+    },
+    {
+      "id": "s10",
+      "member": "SM",
+      "task": "T08",
+      "attempt": 2,
+      "kind": "run",
+      "startAt": "2026-10-03T09:38:00+08:00",
+      "endAt": "2026-10-03T09:58:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": "s09",
+      "gap": "返工 · Agent · 执行失败",
+      "round": null,
+      "counts": {
+        "st": 14,
+        "ed": 2,
+        "ck": 0,
+        "rq": 4
+      },
+      "lineId": "L:T08",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T08"
+      }
+    },
+    {
+      "id": "s11",
+      "member": "SM",
+      "task": "T08",
+      "attempt": 2,
+      "kind": "check",
+      "startAt": "2026-10-03T09:58:00+08:00",
+      "endAt": "2026-10-03T10:03:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s10",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T08",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T08"
+      }
+    },
+    {
+      "id": "s12",
+      "member": "SM",
+      "task": "T10",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T10:05:00+08:00",
+      "endAt": "2026-10-03T10:30:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 18,
+        "ed": 3,
+        "ck": 0,
+        "rq": 5
+      },
+      "lineId": "L:T10",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T10"
+      }
+    },
+    {
+      "id": "s13",
+      "member": "SM",
+      "task": "T10",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-03T10:30:00+08:00",
+      "endAt": "2026-10-03T10:36:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s12",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T10",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T10"
+      }
+    },
+    {
+      "id": "r09",
+      "member": "RV",
+      "task": "T11",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T10:40:00+08:00",
+      "endAt": "2026-10-03T10:57:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 12,
+        "ed": 2,
+        "ck": 0,
+        "rq": 4
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "r10",
+      "member": "RV",
+      "task": "T11",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-03T10:58:00+08:00",
+      "endAt": "2026-10-03T11:05:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "写入旁路扫描：旁路 0 处",
+      "previous": "r09",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 9,
+        "rq": 0
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "s14",
+      "member": "SM",
+      "task": "T12",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T11:15:00+08:00",
+      "endAt": "2026-10-03T12:05:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 35,
+        "ed": 6,
+        "ck": 0,
+        "rq": 10
+      },
+      "lineId": "L:T12",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T12"
+      }
+    },
+    {
+      "id": "s15",
+      "member": "SM",
+      "task": "T12",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-03T12:05:00+08:00",
+      "endAt": "2026-10-03T12:11:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s14",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T12",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T12"
+      }
+    },
+    {
+      "id": "s16",
+      "member": "SM",
+      "task": "T19",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T13:30:00+08:00",
+      "endAt": "2026-10-03T13:40:00+08:00",
+      "live": false,
+      "result": "paused",
+      "reason": "你在 13:40 暂停了目标，已完成的步骤保留",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 7,
+        "ed": 1,
+        "ck": 0,
+        "rq": 2
+      },
+      "lineId": "L:T19",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T19"
+      }
+    },
+    {
+      "id": "s16c",
+      "member": "SM",
+      "task": "T19",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T13:52:00+08:00",
+      "endAt": "2026-10-03T14:25:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": "s16",
+      "gap": "接续：你在 13:52 继续，从暂停处接着做",
+      "round": null,
+      "counts": {
+        "st": 23,
+        "ed": 4,
+        "ck": 0,
+        "rq": 6
+      },
+      "lineId": "L:T19",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T19"
+      }
+    },
+    {
+      "id": "s17",
+      "member": "SM",
+      "task": "T19",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-03T14:25:00+08:00",
+      "endAt": "2026-10-03T14:31:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "s16c",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T19",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T19"
+      }
+    },
+    {
+      "id": "v04",
+      "member": "SV",
+      "task": "T27",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T14:41:00+08:00",
+      "endAt": "2026-10-03T15:03:00+08:00",
+      "live": false,
+      "result": "ended",
+      "reason": "读取 2 个文件、编辑 3 个文件",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 15,
+        "ed": 3,
+        "ck": 0,
+        "rq": 5
+      },
+      "lineId": "L:T27",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T27"
+      }
+    },
+    {
+      "id": "v05",
+      "member": "SV",
+      "task": "T27",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T15:03:00+08:00",
+      "endAt": "2026-10-03T15:12:00+08:00",
+      "live": false,
+      "result": "interrupted",
+      "reason": "Host 在 15:12 重启，这一轮执行没有结束",
+      "previous": "v04",
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 6,
+        "ed": 0,
+        "ck": 0,
+        "rq": 2
+      },
+      "lineId": "L:T27",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T27"
+      }
+    },
+    {
+      "id": "v06",
+      "member": "SV",
+      "task": "T27",
+      "attempt": 2,
+      "kind": "run",
+      "startAt": "2026-10-03T15:20:00+08:00",
+      "endAt": "2026-10-03T15:34:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "读取 3 个文件、编辑 2 个文件",
+      "previous": "v05",
+      "gap": "接续：带上接续说明，从停下的地方接着做",
+      "round": null,
+      "counts": {
+        "st": 10,
+        "ed": 2,
+        "ck": 0,
+        "rq": 3
+      },
+      "lineId": "L:T27",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T27~2"
+      }
+    },
+    {
+      "id": "v07",
+      "member": "SV",
+      "task": "T27",
+      "attempt": 2,
+      "kind": "check",
+      "startAt": "2026-10-03T15:34:00+08:00",
+      "endAt": "2026-10-03T15:40:00+08:00",
+      "live": false,
+      "result": "failed",
+      "reason": "样式检查 4 项",
+      "previous": "v06",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 12,
+        "rq": 0
+      },
+      "lineId": "L:T27",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T27~2"
+      }
+    },
+    {
+      "id": "v08",
+      "member": "SV",
+      "task": "T27",
+      "attempt": 2,
+      "kind": "run",
+      "startAt": "2026-10-03T15:41:00+08:00",
+      "endAt": "2026-10-03T15:58:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "编辑 1 个文件、运行检查",
+      "previous": "v07",
+      "gap": "返工 · 人工 · 检查未通过",
+      "round": null,
+      "counts": {
+        "st": 12,
+        "ed": 1,
+        "ck": 0,
+        "rq": 3
+      },
+      "lineId": "L:T27",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T27~2"
+      }
+    },
+    {
+      "id": "v09",
+      "member": "SV",
+      "task": "T27",
+      "attempt": 2,
+      "kind": "check",
+      "startAt": "2026-10-03T15:52:00+08:00",
+      "endAt": "2026-10-03T15:58:00+08:00",
+      "live": false,
+      "result": "passed",
+      "reason": "",
+      "previous": "v08",
+      "gap": null,
+      "round": 2,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 12,
+        "rq": 0
+      },
+      "lineId": "L:T27",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T27~2"
+      }
+    },
+    {
+      "id": "s18",
+      "member": "SM",
+      "task": "T20",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-03T15:30:00+08:00",
+      "endAt": "2026-10-03T16:20:00+08:00",
+      "live": false,
+      "result": "execfail",
+      "reason": "检查链测试超时，命令没有返回（系统自动重新入队（1/3））",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 35,
+        "ed": 6,
+        "ck": 0,
+        "rq": 10
+      },
+      "lineId": "L:T20",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T20"
+      }
+    },
+    {
+      "id": "c02",
+      "member": "SC",
+      "task": null,
+      "attempt": 1,
+      "kind": "talk",
+      "startAt": "2026-10-03T18:10:00+08:00",
+      "endAt": "2026-10-03T18:30:00+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "回答你：今天的进展和明天的安排",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 14,
+        "ed": 0,
+        "ck": 0,
+        "rq": 5
+      },
+      "lineId": "L:SC",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "SC"
+      }
+    },
+    {
+      "id": "s19",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-04T08:30:00+08:00",
+      "endAt": "2026-10-04T09:02:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 22,
+        "ed": 4,
+        "ck": 0,
+        "rq": 6
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s20",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-04T09:02:00+08:00",
+      "endAt": "2026-10-04T09:08:00+08:00",
+      "live": false,
+      "result": "failed",
+      "reason": "lint 3 项",
+      "previous": "s19",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s21",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 2,
+      "kind": "run",
+      "startAt": "2026-10-04T09:12:00+08:00",
+      "endAt": "2026-10-04T09:40:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": "s20",
+      "gap": "系统自动返工（1/3）：检查未通过",
+      "round": null,
+      "counts": {
+        "st": 20,
+        "ed": 3,
+        "ck": 0,
+        "rq": 5
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s22",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 2,
+      "kind": "check",
+      "startAt": "2026-10-04T09:40:00+08:00",
+      "endAt": "2026-10-04T09:46:00+08:00",
+      "live": false,
+      "result": "failed",
+      "reason": "lint 2 项，类型检查 1 项",
+      "previous": "s21",
+      "gap": null,
+      "round": 2,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s23",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 3,
+      "kind": "run",
+      "startAt": "2026-10-04T09:50:00+08:00",
+      "endAt": "2026-10-04T10:12:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": "s22",
+      "gap": "系统自动返工（2/3）：检查未通过",
+      "round": null,
+      "counts": {
+        "st": 15,
+        "ed": 2,
+        "ck": 0,
+        "rq": 4
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s24",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 3,
+      "kind": "check",
+      "startAt": "2026-10-04T10:12:00+08:00",
+      "endAt": "2026-10-04T10:18:00+08:00",
+      "live": false,
+      "result": "failed",
+      "reason": "lint 2 项",
+      "previous": "s23",
+      "gap": null,
+      "round": 3,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s25",
+      "member": "SM",
+      "task": "T14",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-04T10:25:00+08:00",
+      "endAt": "2026-10-04T11:35:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 49,
+        "ed": 8,
+        "ck": 0,
+        "rq": 13
+      },
+      "lineId": "L:T14",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T14"
+      }
+    },
+    {
+      "id": "s26",
+      "member": "SM",
+      "task": "T14",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-04T14:05:00+08:00",
+      "endAt": null,
+      "live": true,
+      "result": "checking",
+      "reason": "",
+      "previous": "s25",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 9,
+        "rq": 0
+      },
+      "lineId": "L:T14",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T14"
+      }
+    },
+    {
+      "id": "s27",
+      "member": "SM",
+      "task": "T20",
+      "attempt": 2,
+      "kind": "run",
+      "startAt": "2026-10-04T12:00:00+08:00",
+      "endAt": "2026-10-04T12:58:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": "s18",
+      "gap": "系统自动重新入队（1/3）：执行失败",
+      "round": null,
+      "counts": {
+        "st": 41,
+        "ed": 7,
+        "ck": 0,
+        "rq": 11
+      },
+      "lineId": "L:T20",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T20"
+      }
+    },
+    {
+      "id": "s28",
+      "member": "SM",
+      "task": "T20",
+      "attempt": 2,
+      "kind": "check",
+      "startAt": "2026-10-04T13:40:00+08:00",
+      "endAt": "2026-10-04T13:47:00+08:00",
+      "live": false,
+      "result": "incomplete",
+      "reason": "回放测试没有输出报告",
+      "previous": "s27",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T20",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T20"
+      }
+    },
+    {
+      "id": "s29",
+      "member": "SM",
+      "task": "T20",
+      "attempt": 2,
+      "kind": "check",
+      "startAt": "2026-10-04T13:55:00+08:00",
+      "endAt": "2026-10-04T14:02:00+08:00",
+      "live": false,
+      "result": "incomplete",
+      "reason": "第 2 轮的类型检查被 Host 重启打断",
+      "previous": "s28",
+      "gap": "系统自动重新检查",
+      "round": 2,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 13,
+        "rq": 0
+      },
+      "lineId": "L:T20",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T20"
+      }
+    },
+    {
+      "id": "s30",
+      "member": "SM",
+      "task": "T13",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-04T13:31:00+08:00",
+      "endAt": "2026-10-04T13:55:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "编辑 2 个文件、运行 3 条命令，问过 审阅者 · 规格",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 18,
+        "ed": 2,
+        "ck": 0,
+        "rq": 2
+      },
+      "lineId": "L:T13",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T13"
+      }
+    },
+    {
+      "id": "s31",
+      "member": "SM",
+      "task": "T13",
+      "attempt": 1,
+      "kind": "check",
+      "startAt": "2026-10-04T13:55:00+08:00",
+      "endAt": "2026-10-04T14:00:00+08:00",
+      "live": false,
+      "result": "failed",
+      "reason": "lint 2 项，回放测试 1 项",
+      "previous": "s30",
+      "gap": null,
+      "round": 1,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T13",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T13"
+      }
+    },
+    {
+      "id": "s32",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 4,
+      "kind": "run",
+      "startAt": "2026-10-04T13:56:00+08:00",
+      "endAt": "2026-10-04T14:01:00+08:00",
+      "live": false,
+      "result": "handoff",
+      "reason": "",
+      "previous": "s24",
+      "gap": "系统自动返工（3/3）：检查未通过",
+      "round": null,
+      "counts": {
+        "st": 4,
+        "ed": 1,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s33",
+      "member": "SM",
+      "task": "T21",
+      "attempt": 4,
+      "kind": "check",
+      "startAt": "2026-10-04T14:05:00+08:00",
+      "endAt": "2026-10-04T14:11:00+08:00",
+      "live": false,
+      "result": "failed",
+      "reason": "lint 2 项，其余 12 项通过",
+      "previous": "s32",
+      "gap": null,
+      "round": 4,
+      "counts": {
+        "st": 0,
+        "ed": 0,
+        "ck": 14,
+        "rq": 0
+      },
+      "lineId": "L:T21",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T21"
+      }
+    },
+    {
+      "id": "s34",
+      "member": "SM",
+      "task": "T15",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-04T14:01:20+08:00",
+      "endAt": "2026-10-04T14:02:11+08:00",
+      "live": false,
+      "result": "execfail",
+      "reason": "读到 Host 重启时写了一半的记录；系统自动重新入队（1/3）",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 2,
+        "ed": 0,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:T15",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T15"
+      }
+    },
+    {
+      "id": "s35",
+      "member": "SM",
+      "task": "T13",
+      "attempt": 2,
+      "kind": "run",
+      "startAt": "2026-10-04T14:04:00+08:00",
+      "endAt": null,
+      "live": true,
+      "result": "running",
+      "reason": "",
+      "previous": "s31",
+      "gap": "接续 · 系统自动重新入队（1/3）：检查未通过",
+      "round": null,
+      "counts": {
+        "st": 7,
+        "ed": 2,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:T13",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T13"
+      }
+    },
+    {
+      "id": "r11",
+      "member": "RV",
+      "task": null,
+      "attempt": 1,
+      "kind": "query",
+      "via": "consultation",
+      "startAt": "2026-10-04T13:43:00+08:00",
+      "endAt": "2026-10-04T13:47:00+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "回答 执行者 · 重新入队与失败类别：检查不完整的计数",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 3,
+        "ed": 0,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:RV",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "RV"
+      }
+    },
+    {
+      "id": "v10",
+      "member": "SV",
+      "task": "T28",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-04T13:52:00+08:00",
+      "endAt": "2026-10-04T14:03:00+08:00",
+      "live": false,
+      "result": "ended",
+      "reason": "编辑 2 个文件；你的直接干预被拒绝（不在负责范围）",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 8,
+        "ed": 2,
+        "ck": 0,
+        "rq": 2
+      },
+      "lineId": "L:T28",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T28"
+      }
+    },
+    {
+      "id": "v11",
+      "member": "SV",
+      "task": "T28",
+      "attempt": 1,
+      "kind": "run",
+      "startAt": "2026-10-04T14:04:00+08:00",
+      "endAt": null,
+      "live": true,
+      "result": "running",
+      "reason": "",
+      "previous": "v10",
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 4,
+        "ed": 1,
+        "ck": 0,
+        "rq": 2
+      },
+      "lineId": "L:T28",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T28"
+      }
+    },
+    {
+      "id": "v12",
+      "member": "SV",
+      "task": null,
+      "attempt": 1,
+      "kind": "query",
+      "via": "consultation",
+      "startAt": "2026-10-04T14:05:00+08:00",
+      "endAt": "2026-10-04T14:05:41+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "临时分支 · 你问：SSE 断线重连以后，会不会漏掉中间的状态变化？",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 2,
+        "ed": 0,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:T28",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T28"
+      }
+    },
+    {
+      "id": "v13",
+      "member": "SV",
+      "task": null,
+      "attempt": 1,
+      "kind": "query",
+      "via": "consultation",
+      "startAt": "2026-10-04T14:07:00+08:00",
+      "endAt": null,
+      "live": true,
+      "result": "running",
+      "reason": "咨询 · 架构参谋问：推送接口放在 server.ts 还是 core-routes.ts",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 2,
+        "ed": 0,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:T28",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "T28"
+      }
+    },
+    {
+      "id": "a01",
+      "member": "AA",
+      "task": null,
+      "attempt": 1,
+      "kind": "talk",
+      "startAt": "2026-10-04T14:05:00+08:00",
+      "endAt": "2026-10-04T14:09:00+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "发出咨询：core-routes 拆分后的边界",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 3,
+        "ed": 0,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:AA",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "AA"
+      }
+    },
+    {
+      "id": "c03",
+      "member": "SC",
+      "task": null,
+      "attempt": 1,
+      "kind": "talk",
+      "startAt": "2026-10-04T14:06:00+08:00",
+      "endAt": "2026-10-04T14:10:00+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "方案 · 第 1 版：检查链重新检查的两个做法",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 11,
+        "ed": 2,
+        "ck": 0,
+        "rq": 3
+      },
+      "lineId": "L:SC",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "SC"
+      }
+    },
+    {
+      "id": "c04",
+      "member": "SC",
+      "task": null,
+      "attempt": 1,
+      "kind": "talk",
+      "startAt": "2026-10-04T14:12:00+08:00",
+      "endAt": "2026-10-04T14:13:00+08:00",
+      "live": false,
+      "result": "answered",
+      "reason": "修改方案",
+      "previous": null,
+      "gap": null,
+      "round": null,
+      "counts": {
+        "st": 2,
+        "ed": 0,
+        "ck": 0,
+        "rq": 1
+      },
+      "lineId": "L:SC",
+      "session": {
+        "projectId": "ple34b",
+        "workspaceId": "scene",
+        "sessionId": "SC"
+      }
+    }
+  ],
+  "marks": [
+    {
+      "at": "2026-10-04T14:11:00+08:00",
+      "member": "SM",
+      "task": "T21",
+      "kind": "decide",
+      "label": "自动返工已达上限（3/3），需要你决定"
+    }
+  ],
+  "events": [
+    {
+      "at": "2026-10-03T15:12:00+08:00",
+      "kind": "restart",
+      "label": "Host 重启"
+    },
+    {
+      "at": "2026-10-04T14:02:00+08:00",
+      "kind": "restart",
+      "label": "Host 重启"
+    }
+  ],
+  "lines": [
+    {
+      "id": "L:SC",
+      "role": "secretary",
+      "name": "秘书（主对话）",
+      "task": null,
+      "sessions": 1,
+      "sessionIds": [
+        "SC"
+      ],
+      "archived": false,
+      "area": null,
+      "st": null,
+      "first": "2026-10-02T09:05:00+08:00",
+      "last": "2026-10-04T14:13:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "c01",
+        "c02",
+        "c03",
+        "c04"
+      ]
+    },
+    {
+      "id": "L:T26",
+      "role": "executor",
+      "name": "执行者 · core-routes 拆分",
+      "task": "T26",
+      "sessions": 1,
+      "sessionIds": [
+        "T26"
+      ],
+      "archived": true,
+      "area": "Host",
+      "st": "satisfied",
+      "first": "2026-10-02T09:30:00+08:00",
+      "last": "2026-10-02T11:05:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "v01",
+        "v02",
+        "v03"
+      ]
+    },
+    {
+      "id": "L:RV",
+      "role": "reviewer",
+      "name": "审阅者 · 规格",
+      "task": null,
+      "sessions": 1,
+      "sessionIds": [
+        "RV"
+      ],
+      "archived": false,
+      "area": null,
+      "st": null,
+      "first": "2026-10-02T10:25:00+08:00",
+      "last": "2026-10-04T13:47:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "r01",
+        "r02",
+        "r03",
+        "r04",
+        "r05",
+        "r06",
+        "r07",
+        "r08",
+        "r09",
+        "r10",
+        "r11"
+      ]
+    },
+    {
+      "id": "L:T05",
+      "role": "executor",
+      "name": "执行者 · 消息写入收口",
+      "task": "T05",
+      "sessions": 1,
+      "sessionIds": [
+        "T05"
+      ],
+      "archived": true,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-02T14:20:00+08:00",
+      "last": "2026-10-02T15:21:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s01",
+        "s02"
+      ]
+    },
+    {
+      "id": "L:T06",
+      "role": "executor",
+      "name": "执行者 · 检查轮次写入收口",
+      "task": "T06",
+      "sessions": 1,
+      "sessionIds": [
+        "T06"
+      ],
+      "archived": true,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-02T15:30:00+08:00",
+      "last": "2026-10-02T16:31:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s03",
+        "s04"
+      ]
+    },
+    {
+      "id": "L:T09",
+      "role": "executor",
+      "name": "执行者 · 工作记录目录精简",
+      "task": "T09",
+      "sessions": 1,
+      "sessionIds": [
+        "T09"
+      ],
+      "archived": true,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-02T16:40:00+08:00",
+      "last": "2026-10-02T17:26:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s05",
+        "s06"
+      ]
+    },
+    {
+      "id": "L:T07",
+      "role": "executor",
+      "name": "执行者 · 查询任务写入收口",
+      "task": "T07",
+      "sessions": 1,
+      "sessionIds": [
+        "T07"
+      ],
+      "archived": true,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-03T08:40:00+08:00",
+      "last": "2026-10-03T09:10:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s07",
+        "s08"
+      ]
+    },
+    {
+      "id": "L:T08",
+      "role": "executor",
+      "name": "执行者 · 执行事实读取迁移",
+      "task": "T08",
+      "sessions": 1,
+      "sessionIds": [
+        "T08"
+      ],
+      "archived": true,
+      "area": "AgentRuntime",
+      "st": "satisfied",
+      "first": "2026-10-03T09:12:00+08:00",
+      "last": "2026-10-03T10:03:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s09",
+        "s10",
+        "s11"
+      ]
+    },
+    {
+      "id": "L:T10",
+      "role": "executor",
+      "name": "执行者 · 生命周期决定收口",
+      "task": "T10",
+      "sessions": 1,
+      "sessionIds": [
+        "T10"
+      ],
+      "archived": true,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-03T10:05:00+08:00",
+      "last": "2026-10-03T10:36:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s12",
+        "s13"
+      ]
+    },
+    {
+      "id": "L:T12",
+      "role": "executor",
+      "name": "执行者 · 平台中断识别",
+      "task": "T12",
+      "sessions": 1,
+      "sessionIds": [
+        "T12"
+      ],
+      "archived": true,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-03T11:15:00+08:00",
+      "last": "2026-10-03T12:11:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s14",
+        "s15"
+      ]
+    },
+    {
+      "id": "L:T19",
+      "role": "executor",
+      "name": "执行者 · 证据链接",
+      "task": "T19",
+      "sessions": 1,
+      "sessionIds": [
+        "T19"
+      ],
+      "archived": false,
+      "area": "WorkGraph",
+      "st": "satisfied",
+      "first": "2026-10-03T13:30:00+08:00",
+      "last": "2026-10-03T14:31:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s16",
+        "s16c",
+        "s17"
+      ]
+    },
+    {
+      "id": "L:T27",
+      "role": "executor",
+      "name": "执行者 · 前端拆分",
+      "task": "T27",
+      "sessions": 2,
+      "sessionIds": [
+        "T27",
+        "T27~2"
+      ],
+      "archived": false,
+      "area": "UI",
+      "st": "satisfied",
+      "first": "2026-10-03T14:41:00+08:00",
+      "last": "2026-10-03T15:58:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": "",
+        "2": "Host 10-03 15:12 重启后接续"
+      },
+      "bars": [
+        "v04",
+        "v05",
+        "v06",
+        "v07",
+        "v08",
+        "v09"
+      ]
+    },
+    {
+      "id": "L:T20",
+      "role": "executor",
+      "name": "执行者 · 检查链与重新检查",
+      "task": "T20",
+      "sessions": 1,
+      "sessionIds": [
+        "T20"
+      ],
+      "archived": false,
+      "area": "AgentRuntime",
+      "st": "blocked",
+      "first": "2026-10-03T15:30:00+08:00",
+      "last": "2026-10-04T14:02:00+08:00",
+      "waitTo": "2026-10-04T14:15:00+08:00",
+      "attn": 2,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s18",
+        "s27",
+        "s28",
+        "s29"
+      ]
+    },
+    {
+      "id": "L:T21",
+      "role": "executor",
+      "name": "执行者 · 检查不完整判定",
+      "task": "T21",
+      "sessions": 1,
+      "sessionIds": [
+        "T21"
+      ],
+      "archived": false,
+      "area": "WorkGraph",
+      "st": "decide",
+      "first": "2026-10-04T08:30:00+08:00",
+      "last": "2026-10-04T14:11:00+08:00",
+      "waitTo": "2026-10-04T14:15:00+08:00",
+      "attn": 0,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s19",
+        "s20",
+        "s21",
+        "s22",
+        "s23",
+        "s24",
+        "s32",
+        "s33"
+      ]
+    },
+    {
+      "id": "L:T14",
+      "role": "executor",
+      "name": "执行者 · 接续说明",
+      "task": "T14",
+      "sessions": 1,
+      "sessionIds": [
+        "T14"
+      ],
+      "archived": false,
+      "area": "AgentRuntime",
+      "st": "verifying",
+      "first": "2026-10-04T10:25:00+08:00",
+      "last": "2026-10-04T14:15:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s25",
+        "s26"
+      ]
+    },
+    {
+      "id": "L:T13",
+      "role": "executor",
+      "name": "执行者 · 重新入队与失败类别",
+      "task": "T13",
+      "sessions": 1,
+      "sessionIds": [
+        "T13"
+      ],
+      "archived": false,
+      "area": "WorkGraph",
+      "st": "running",
+      "first": "2026-10-04T13:31:00+08:00",
+      "last": "2026-10-04T14:15:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s30",
+        "s31",
+        "s35"
+      ]
+    },
+    {
+      "id": "L:T28",
+      "role": "executor",
+      "name": "执行者 · SSE 推送",
+      "task": "T28",
+      "sessions": 1,
+      "sessionIds": [
+        "T28"
+      ],
+      "archived": false,
+      "area": "Host",
+      "st": "running",
+      "first": "2026-10-04T13:52:00+08:00",
+      "last": "2026-10-04T14:15:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "v10",
+        "v11",
+        "v12",
+        "v13"
+      ]
+    },
+    {
+      "id": "L:T15",
+      "role": "executor",
+      "name": "执行者 · 启动核对",
+      "task": "T15",
+      "sessions": 1,
+      "sessionIds": [
+        "T15"
+      ],
+      "archived": false,
+      "area": "Host",
+      "st": "failed",
+      "first": "2026-10-04T14:01:20+08:00",
+      "last": "2026-10-04T14:02:11+08:00",
+      "waitTo": null,
+      "attn": 1,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "s34"
+      ]
+    },
+    {
+      "id": "L:AA",
+      "role": "advisor",
+      "name": "架构参谋",
+      "task": null,
+      "sessions": 1,
+      "sessionIds": [
+        "AA"
+      ],
+      "archived": false,
+      "area": null,
+      "st": null,
+      "first": "2026-10-04T14:05:00+08:00",
+      "last": "2026-10-04T14:09:00+08:00",
+      "waitTo": null,
+      "attn": 9,
+      "segWhy": {
+        "1": ""
+      },
+      "bars": [
+        "a01"
+      ]
+    }
+  ],
+  "moments": {
+    "main": "2026-10-04T14:15:00+08:00"
+  },
+  "calendar": {
+    "hours": [
+      {
+        "localDate": "2026-10-02",
+        "localHour": 9,
+        "startAt": "2026-10-02T09:00:00+08:00",
+        "endAt": "2026-10-02T10:00:00+08:00",
+        "steps": 39,
+        "edits": 1,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T26",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "秘书（主对话）",
+          "执行者 · core-routes 拆分"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 10,
+        "startAt": "2026-10-02T10:00:00+08:00",
+        "endAt": "2026-10-02T11:00:00+08:00",
+        "steps": 40,
+        "edits": 4,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T26",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T01",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · core-routes 拆分",
+          "审阅者 · 规格"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 11,
+        "startAt": "2026-10-02T11:00:00+08:00",
+        "endAt": "2026-10-02T12:00:00+08:00",
+        "steps": 0,
+        "edits": 0,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T26",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T01",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · core-routes 拆分",
+          "审阅者 · 规格"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 13,
+        "startAt": "2026-10-02T13:00:00+08:00",
+        "endAt": "2026-10-02T14:00:00+08:00",
+        "steps": 21,
+        "edits": 3,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T02",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "审阅者 · 规格"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 14,
+        "startAt": "2026-10-02T14:00:00+08:00",
+        "endAt": "2026-10-02T15:00:00+08:00",
+        "steps": 49,
+        "edits": 7,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T03",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T05",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "审阅者 · 规格",
+          "执行者 · 消息写入收口"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 15,
+        "startAt": "2026-10-02T15:00:00+08:00",
+        "endAt": "2026-10-02T16:00:00+08:00",
+        "steps": 32,
+        "edits": 5,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T05",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T06",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 消息写入收口",
+          "执行者 · 检查轮次写入收口"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 16,
+        "startAt": "2026-10-02T16:00:00+08:00",
+        "endAt": "2026-10-02T17:00:00+08:00",
+        "steps": 39,
+        "edits": 6,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T06",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T09",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T04",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查轮次写入收口",
+          "执行者 · 工作记录目录精简",
+          "审阅者 · 规格"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-02",
+        "localHour": 17,
+        "startAt": "2026-10-02T17:00:00+08:00",
+        "endAt": "2026-10-02T18:00:00+08:00",
+        "steps": 34,
+        "edits": 5,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T09",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T04",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 工作记录目录精简",
+          "审阅者 · 规格"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 8,
+        "startAt": "2026-10-03T08:00:00+08:00",
+        "endAt": "2026-10-03T09:00:00+08:00",
+        "steps": 14,
+        "edits": 2,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T07",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 查询任务写入收口"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 9,
+        "startAt": "2026-10-03T09:00:00+08:00",
+        "endAt": "2026-10-03T10:00:00+08:00",
+        "steps": 33,
+        "edits": 5,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T07",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T08",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 查询任务写入收口",
+          "执行者 · 执行事实读取迁移"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 10,
+        "startAt": "2026-10-03T10:00:00+08:00",
+        "endAt": "2026-10-03T11:00:00+08:00",
+        "steps": 30,
+        "edits": 5,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T08",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T10",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T11",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 执行事实读取迁移",
+          "执行者 · 生命周期决定收口",
+          "审阅者 · 规格"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 11,
+        "startAt": "2026-10-03T11:00:00+08:00",
+        "endAt": "2026-10-03T12:00:00+08:00",
+        "steps": 32,
+        "edits": 5,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T11",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T12",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "审阅者 · 规格",
+          "执行者 · 平台中断识别"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 12,
+        "startAt": "2026-10-03T12:00:00+08:00",
+        "endAt": "2026-10-03T13:00:00+08:00",
+        "steps": 3,
+        "edits": 1,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T12",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 平台中断识别"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 13,
+        "startAt": "2026-10-03T13:00:00+08:00",
+        "endAt": "2026-10-03T14:00:00+08:00",
+        "steps": 13,
+        "edits": 2,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T19",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 证据链接"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 14,
+        "startAt": "2026-10-03T14:00:00+08:00",
+        "endAt": "2026-10-03T15:00:00+08:00",
+        "steps": 30,
+        "edits": 6,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T19",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T27",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 证据链接",
+          "执行者 · 前端拆分"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 15,
+        "startAt": "2026-10-03T15:00:00+08:00",
+        "endAt": "2026-10-03T16:00:00+08:00",
+        "steps": 51,
+        "edits": 7,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T27",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 前端拆分",
+          "执行者 · 检查链与重新检查"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 16,
+        "startAt": "2026-10-03T16:00:00+08:00",
+        "endAt": "2026-10-03T17:00:00+08:00",
+        "steps": 14,
+        "edits": 2,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查链与重新检查"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "localHour": 18,
+        "startAt": "2026-10-03T18:00:00+08:00",
+        "endAt": "2026-10-03T19:00:00+08:00",
+        "steps": 14,
+        "edits": 0,
+        "checks": 0,
+        "tasks": [],
+        "lines": [
+          "秘书（主对话）"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 8,
+        "startAt": "2026-10-04T08:00:00+08:00",
+        "endAt": "2026-10-04T09:00:00+08:00",
+        "steps": 21,
+        "edits": 4,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T21",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查不完整判定"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 9,
+        "startAt": "2026-10-04T09:00:00+08:00",
+        "endAt": "2026-10-04T10:00:00+08:00",
+        "steps": 28,
+        "edits": 4,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T21",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查不完整判定"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 10,
+        "startAt": "2026-10-04T10:00:00+08:00",
+        "endAt": "2026-10-04T11:00:00+08:00",
+        "steps": 33,
+        "edits": 5,
+        "checks": 1,
+        "tasks": [
+          {
+            "taskId": "T21",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T14",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查不完整判定",
+          "执行者 · 接续说明"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 11,
+        "startAt": "2026-10-04T11:00:00+08:00",
+        "endAt": "2026-10-04T12:00:00+08:00",
+        "steps": 24,
+        "edits": 4,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T14",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 接续说明"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 12,
+        "startAt": "2026-10-04T12:00:00+08:00",
+        "endAt": "2026-10-04T13:00:00+08:00",
+        "steps": 41,
+        "edits": 7,
+        "checks": 0,
+        "tasks": [
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查链与重新检查"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 13,
+        "startAt": "2026-10-04T13:00:00+08:00",
+        "endAt": "2026-10-04T14:00:00+08:00",
+        "steps": 30,
+        "edits": 4,
+        "checks": 3,
+        "tasks": [
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T13",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T21",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T28",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查链与重新检查",
+          "执行者 · 重新入队与失败类别",
+          "执行者 · 检查不完整判定",
+          "审阅者 · 规格",
+          "执行者 · SSE 推送"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "localHour": 14,
+        "startAt": "2026-10-04T14:00:00+08:00",
+        "endAt": "2026-10-04T15:00:00+08:00",
+        "steps": 36,
+        "edits": 6,
+        "checks": 2,
+        "tasks": [
+          {
+            "taskId": "T14",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T21",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T15",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T13",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T28",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 接续说明",
+          "执行者 · 检查链与重新检查",
+          "执行者 · 检查不完整判定",
+          "执行者 · 启动核对",
+          "执行者 · 重新入队与失败类别",
+          "执行者 · SSE 推送",
+          "架构参谋",
+          "秘书（主对话）"
+        ],
+        "future": false,
+        "complete": true
+      }
+    ],
+    "days": [
+      {
+        "localDate": "2026-10-02",
+        "startAt": "2026-10-02T00:00:00+08:00",
+        "endAt": "2026-10-03T00:00:00+08:00",
+        "steps": 254,
+        "edits": 31,
+        "checks": 8,
+        "tasks": [
+          {
+            "taskId": "T26",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T01",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T02",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T03",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T05",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T06",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T09",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T04",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "秘书（主对话）",
+          "执行者 · core-routes 拆分",
+          "审阅者 · 规格",
+          "执行者 · 消息写入收口",
+          "执行者 · 检查轮次写入收口",
+          "执行者 · 工作记录目录精简"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-03",
+        "startAt": "2026-10-03T00:00:00+08:00",
+        "endAt": "2026-10-04T00:00:00+08:00",
+        "steps": 234,
+        "edits": 35,
+        "checks": 8,
+        "tasks": [
+          {
+            "taskId": "T07",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T08",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T10",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T11",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T12",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T19",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T27",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 查询任务写入收口",
+          "执行者 · 执行事实读取迁移",
+          "执行者 · 生命周期决定收口",
+          "审阅者 · 规格",
+          "执行者 · 平台中断识别",
+          "执行者 · 证据链接",
+          "执行者 · 前端拆分",
+          "执行者 · 检查链与重新检查",
+          "秘书（主对话）"
+        ],
+        "future": false,
+        "complete": true
+      },
+      {
+        "localDate": "2026-10-04",
+        "startAt": "2026-10-04T00:00:00+08:00",
+        "endAt": "2026-10-05T00:00:00+08:00",
+        "steps": 213,
+        "edits": 34,
+        "checks": 8,
+        "tasks": [
+          {
+            "taskId": "T21",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T14",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T20",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T13",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T28",
+            "goalId": "g1"
+          },
+          {
+            "taskId": "T15",
+            "goalId": "g1"
+          }
+        ],
+        "lines": [
+          "执行者 · 检查不完整判定",
+          "执行者 · 接续说明",
+          "执行者 · 检查链与重新检查",
+          "执行者 · 重新入队与失败类别",
+          "审阅者 · 规格",
+          "执行者 · SSE 推送",
+          "执行者 · 启动核对",
+          "架构参谋",
+          "秘书（主对话）"
+        ],
+        "future": false,
+        "complete": true
+      }
+    ]
+  },
+  "timeline": [
+    {
+      "taskId": "T01",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T02",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T03",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T04",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T05",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T06",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T07",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T08",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T09",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T10",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T11",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T12",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T13",
+      "state": "running",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "taskId": "T14",
+      "state": "verifying",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "verifying"
+        }
+      ]
+    },
+    {
+      "taskId": "T15",
+      "state": "run_failed",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "run_failed"
+        }
+      ]
+    },
+    {
+      "taskId": "T16",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T17",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T18",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T19",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T20",
+      "state": "check_incomplete",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "check_incomplete"
+        }
+      ]
+    },
+    {
+      "taskId": "T21",
+      "state": "outcome_unknown",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "outcome_unknown"
+        }
+      ]
+    },
+    {
+      "taskId": "T22",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T23",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T24",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T25",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T26",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T27",
+      "state": "satisfied",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "satisfied"
+        }
+      ]
+    },
+    {
+      "taskId": "T28",
+      "state": "running",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "taskId": "T29",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T30",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T31",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    },
+    {
+      "taskId": "T32",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T33",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T34",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T35",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T36",
+      "state": "deferred",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "deferred"
+        }
+      ]
+    },
+    {
+      "taskId": "T37",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T38",
+      "state": "deferred",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "deferred"
+        }
+      ]
+    },
+    {
+      "taskId": "T39",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "T40",
+      "state": "not_in_plan",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "not_in_plan"
+        }
+      ]
+    },
+    {
+      "taskId": "GATE",
+      "state": "pending",
+      "segments": [
+        {
+          "from": "2026-10-02T09:30:00+08:00",
+          "to": null,
+          "state": "pending"
+        }
+      ]
+    }
+  ]
+}
