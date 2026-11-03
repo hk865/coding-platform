@@ -349,7 +349,7 @@ function permissionRevision(actor: WorkbenchActor, workspace: WorkbenchWorkspace
  * limits, checked 2026-09-29: https://api-docs.deepseek.com/quick_start/pricing/ */
 function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORKBENCH_BUDGET {
   const contextWindowTokens = model.provider === 'deepseek'
-    && ['deepseek-flash', 'deepseek-v4-pro'].includes(model.model)
+    && ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4.1-flash'].includes(model.model)
     ? 1_000_000 : LOCAL_WORKBENCH_BUDGET.contextWindowTokens;
   return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens };
 }

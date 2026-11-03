@@ -86,3 +86,14 @@ describe('L1-routes: goals/overlap-gates and goals/overlap-release', () => {
     ] } });
   });
 });
+
+// The gates page is a required input: a read without it is the owner's `invalid`, answered like a bad cursor (a
+// plain read keeps its rejected body with HTTP 200), never the route's 500.
+describe('rejects: goals/overlap-gates without a page', () => {
+  it('a gates read without page is invalid with HTTP 200', async () => {
+    world = await openS7C1World();
+    const read = await world.world.post('goals/overlap-gates', plain(S6A_SCOPE, { goalRef: world.goal }));
+    expect(read).toEqual({ httpStatus: 200,
+      body: { status: 'rejected', code: 'invalid', reason: 'the gates read requires a page' } });
+  });
+});

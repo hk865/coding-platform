@@ -145,6 +145,20 @@ describe('L2-attention', () => {
   });
 });
 
+// The queue's two required inputs (slice-5-SPEC.md:759-764): a read that leaves one out is the owner's `invalid`,
+// answered like a bad cursor (a plain read keeps its rejected body with HTTP 200), never the route's 500.
+describe('rejects: decisions/queue without a required input', () => {
+  it.each([
+    ['sections', { page: { limit: 100 } }, 'the queue read requires sections'],
+    ['page', { sections: ['waiting_answer'] }, 'the queue read requires a page'],
+  ] as const)('a queue read without %s is invalid with HTTP 200', async (_missing, rest, reason) => {
+    const opened = await openS7CSystemWorld();
+    worlds.push(opened.world);
+    const queue = await opened.world.post('decisions/queue', plain(S6A_SCOPE, { workspace: S6A_SCOPE, ...rest }));
+    expect(queue).toEqual({ httpStatus: 200, body: { status: 'rejected', code: 'invalid', reason } });
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // L2-outbox (book 1393; drill L2-07/08; P-20): the saved delivery is retried and replayed, and the restart keeps

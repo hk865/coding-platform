@@ -214,6 +214,30 @@ describe('PL L: the goal-loop send', () => {
     }
   }, 120_000);
 
+  // DeepSeek publishes a 1,000,000-token window for deepseek-v4.1-flash; the
+  // person saves and selects it through the Host settings routes.
+  it('L-01 local workbench: a deepseek-v4.1-flash model publishes the 1,000,000-token window', async () => {
+    const opened = await openPlanOnlyWorld('pl-wiring-v41');
+    const root = await mkdtemp(join(tmpdir(), 'pl-wiring-v41-'));
+    try {
+      const { scope } = readyValue<{ scope: typeof S6A_SCOPE }>(await opened.world.settings('workspaces/open',
+        { path: root, writeAllowed: false, commandsAllowed: false }), 'PL L-01: the v4.1 workspace');
+      const saved = readyValue<{ models: Array<{ id: string; model: string }> }>(await opened.world.settings('models/save',
+        { label: 'PL L-01 v4.1 flash', provider: 'deepseek', model: 'deepseek-v4.1-flash', apiKey: 'pl-wiring-v41-key' }),
+      'PL L-01: the saved v4.1 model');
+      const model = saved.models.find(entry => entry.model === 'deepseek-v4.1-flash');
+      if (model === undefined) throw new Error('PL L-01: the saved v4.1 model is not in the catalog');
+      readyValue(await opened.world.settings('models/select', { scope, modelId: model.id }), 'PL L-01: the v4.1 model');
+      const profile = (await opened.world.readProfiles()).find(entry =>
+        entry.scope.projectId === scope.projectId && entry.scope.workspaceId === scope.workspaceId
+        && entry.sessionRole.kind === 'legacy_template' && entry.sessionRole.templateId === 'local-workbench');
+      expect(profile?.runtimeBudget.contextWindowTokens).toBe(1_000_000);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await opened.close();
+    }
+  }, 120_000);
+
   /**
    * L-02 (human route): one `plans/propose` + `plans/apply` adoption exports its
    * accepted snapshot exactly once. The expected path and text are the spec

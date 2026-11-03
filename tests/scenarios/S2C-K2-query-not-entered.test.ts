@@ -9,7 +9,13 @@
  * Entry LE4: `openHostScenario`, `restart({ crash: true })`, the real
  * `queries/submit`, `queries/claim`, `queries/prepare`, `queries/start` routes and
  * `lines/page` (`executions`). Expected values are §0.2 and L12.
+ *
+ * A Query whose Kernel run throws (its workspace root moved away after the
+ * prepare, so the Kernel cannot open the workspace) answers `queries/start`
+ * with that reason as `unavailable`, never a `ready` start of a run that will
+ * not settle.
  */
+import { rename } from 'node:fs/promises';
 import { afterEach, expect, it } from 'vitest';
 import { cleanupScenarios, openHostScenario, performs } from './harness.js';
 import {
@@ -75,4 +81,26 @@ it('2C-41 a Query reconciled entering -> not_entered keeps the entering startedA
   // The read is stable: the same section read again keeps the entering moment.
   const again = ready(await lineSection(h, s1Key, 'executions', { limit: 10 }), 'lines/page S1 again');
   expect(queryItem(again, entering.queryRunRef.runId).startedAt).toBe(itemB.startedAt);
+}, 240_000);
+
+it('a Query whose Kernel run throws answers its start with the reason, not a ready unsettled run', async () => {
+  const h = await openHostScenario();
+  const session = await createAG2bSession(h.host, 'kernel-throw-session');
+  const query = await claimBusyQuery(h.host, session, 'kernel-throw');
+  const prepared = await h.post<ReadResult<unknown>>('queries/prepare', plain(AG2B_SCOPE, { queryRunRef: query.queryRunRef,
+    requestId: 'kernel-throw-prepare' }));
+  expect(prepared.status).toBe('ready');
+  // The root is moved away and back: the Kernel cannot open the workspace, so its run throws.
+  const aside = `${h.root}-aside`;
+  await rename(h.root, aside);
+  let started: Record<string, unknown>;
+  try {
+    started = await h.answer('queries/start', plain(AG2B_SCOPE, { prepared: (prepared as { value: unknown }).value,
+      consumerId: AG2B_CONSUMER_ID, requestId: 'kernel-throw-start' }));
+  } finally {
+    await rename(aside, h.root);
+  }
+  expect(started).toMatchObject({ status: 'rejected', code: 'unavailable' });
+  expect(started['reason']).toEqual(expect.stringMatching(/^running the Query failed: /));
+  expect(started['reason']).toContain(h.root);
 }, 240_000);

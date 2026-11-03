@@ -833,6 +833,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
         : { version: 1 as const, mode: 'current_turn' as const };
 
+      let thrown: unknown;
       try {
         await runObservedModel({
           kernel: deps.kernel,
@@ -888,10 +889,14 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         });
       } catch (error) {
         if (error instanceof RuntimeModelCallRejected) enteredFailure ??= rejected(error.code, error.message);
+        else thrown = error;
       }
       if (enteredFailure !== undefined) return enteredFailure;
       const reconcileSignal = new AbortController().signal;
-      return observation.observe({ ...owned, signal: reconcileSignal }, { queryRunRef });
+      const reconciled = await observation.observe({ ...owned, signal: reconcileSignal }, { queryRunRef });
+      // A throw before the Turn entered leaves nothing to observe; after entry the observed result wins.
+      if (thrown !== undefined && !enteredDone) return rejected('unavailable', `running the Query failed: ${messageOf(thrown)}`);
+      return reconciled;
     },
   };
 }

@@ -1042,6 +1042,9 @@ async function queryDecisionQueue(
   ctx: CoreCallContext,
   input: QueueInput,
 ): Promise<ReadResult<DecisionQueueReadV1>> {
+  // The sections and the page are required inputs: a read without one is `invalid`, like a bad cursor.
+  if (!Array.isArray(input.sections)) return { status: 'rejected', code: 'invalid', reason: 'the queue read requires sections' };
+  if (!isRecord(input.page)) return { status: 'rejected', code: 'invalid', reason: 'the queue read requires a page' };
   return readStableWindow(deps, ctx, input, { kind: 'queue' });
 }
 

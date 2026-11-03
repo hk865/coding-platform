@@ -12,6 +12,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { ModuleOverlapGateRef } from '../../../contracts/module-overlap-gate.js';
 import type { NoteVersionSnapshot } from '../../../contracts/note.js';
 import type { Phase } from '../../../contracts/plan.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionMessageSendInputV1, SendMessageResultV1 } from '../model/communication-contracts.js';
@@ -451,6 +452,8 @@ export function createOverlapGateService(deps: OverlapGateServiceDependencies): 
     },
 
     async readOverlapGates(ctx, input) {
+      // The page is a required input: a read without it is `invalid`, like a bad cursor.
+      if (!isRecord(input.page)) return rejected('invalid', 'the gates read requires a page');
       const goalId = input.goalRef.goalId;
       let after: { order: string | number; refKey: string } | undefined;
       if (input.page.cursor !== undefined) {
