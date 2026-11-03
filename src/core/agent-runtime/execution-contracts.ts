@@ -22,6 +22,7 @@
  * intersection before it authorizes anything.
  */
 import type { BoundModel } from './source-tool-ports.js';
+import type { RoleSplitToolOwnerV1 } from './role-split-tool.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../contracts/core/session-message.js';
@@ -360,6 +361,8 @@ export type RuntimeExecutionDependencies = {
    */
   maintainerAssignments?: Pick<import('../work-graph/model/module-maintainer-contracts.js').ModuleMaintainerPort,
     'requestAssignment'>;
+  /** The one `propose_role_split` owner; absent keeps the name `unsupported`, never silently dropped. */
+  roleSplit?: RoleSplitToolOwnerV1;
   /**
    * The structural-proposal owner behind `propose_architecture_revision`; absent
    * fails a Run selecting that tool closed as `unsupported` before the model. The

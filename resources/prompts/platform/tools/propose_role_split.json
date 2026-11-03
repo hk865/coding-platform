@@ -1,0 +1,7 @@
+{
+  "description": "Propose moving part of this line's responsibility to a new line of the same duty: { move, reason }. move lists scopes this line holds now and must be a strict subrange; at least one scope stays. The platform checks at once and answers; a refusal says why.",
+  "parameters": {
+    "move": "The scopes to move: a non-empty array of {kind:'goal', goalRef} or {kind:'region', moduleRef} that this line holds; never {kind:'project'}.",
+    "reason": "Why the split helps; one short sentence."
+  }
+}

@@ -353,3 +353,6 @@ export function headerExtrasOf(note: {
   if (note.kind === 'flow') return { firstFrom: displayOfAnchor(note.anchor) };
   return {};
 }
+
+/** P1: the scribe scope a note count is taken over (L7): the project, one region or one goal. */
+export type NoteScopeV1 = { kind: 'project' } | { kind: 'region'; moduleId: string } | { kind: 'goal'; goalId: string };

@@ -17,7 +17,7 @@
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
-import type { ExecutionRef, RoleConfigurationRef, SessionAggregateRef } from '../../../contracts/core/identity.js';
+import type { ExecutionRef, RoleConfigurationRef, SessionAggregateRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { SessionHealthConclusion, SessionProvenanceV1, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
@@ -26,6 +26,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { CoreError } from '../../../contracts/core/results.js';
 import type { QueryExecutionStateV1, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
+import type { RoleLineDutyV1 } from '../../../contracts/role-lines.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 import { sameRef } from './ref-equality.js';
 
@@ -592,6 +593,41 @@ export function executorArchiveDue(input: {
   const now = Date.parse(input.now);
   if (!Number.isFinite(finishedAt) || !Number.isFinite(now)) return false;
   return now - finishedAt >= input.thresholdMs;
+}
+
+/** Why an adviser/scribe line is not idle for the retained-cap reclaim; `unreadable` is a failed fact read. */
+export type RoleLineIdleReasonV1 =
+  | 'occupied' | 'unaccepted_input' | 'handoff_fence' | 'in_progress_task'
+  | 'pending_note' | 'open_question' | 'unreadable';
+
+export type RoleLineIdleFactsV1 = {
+  session: SessionRef; duty: RoleLineDutyV1; lastActivityAt: string;
+  occupancy: 'none' | 'held' | 'unknown';
+  unacceptedInput: boolean;       // consumable by messageConsumptionProblem, not accepted, not notify
+  handoffFenceOpen: boolean;      // the source's open handoff fence
+  inProgressTaskInScope: boolean;
+  pendingNoteInScope: boolean;
+  openQuestionSent: boolean;      // an action_request/inquiry it sent with no response
+  pendingDecisionCard: boolean;   // exclusion (c), not one of the six
+  lastUnarchivedOfDuty: boolean;  // exclusion (a)
+  readable: boolean;
+};
+export type RoleLineIdleV1 = { idle: true } | { idle: false; reason: RoleLineIdleReasonV1 };
+
+/**
+ * Idle only when every fact is readable, occupancy is `none` and the five booleans are false. A failed read is
+ * `unreadable`; `occupancy: 'unknown'` is `occupied`, never idle. `pendingDecisionCard`/`lastUnarchivedOfDuty` are
+ * the reclaim's exclusions, not reasons. The executor line keeps its own rule (`executorArchiveDue`).
+ */
+export function roleLineIdleOf(facts: RoleLineIdleFactsV1): RoleLineIdleV1 {
+  if (!facts.readable) return { idle: false, reason: 'unreadable' };
+  if (facts.occupancy !== 'none') return { idle: false, reason: 'occupied' };
+  if (facts.unacceptedInput) return { idle: false, reason: 'unaccepted_input' };
+  if (facts.handoffFenceOpen) return { idle: false, reason: 'handoff_fence' };
+  if (facts.inProgressTaskInScope) return { idle: false, reason: 'in_progress_task' };
+  if (facts.pendingNoteInScope) return { idle: false, reason: 'pending_note' };
+  if (facts.openQuestionSent) return { idle: false, reason: 'open_question' };
+  return { idle: true };
 }
 
 // --------------------------------------------------------------------------

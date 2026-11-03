@@ -22,7 +22,7 @@
 `note-batch-reader.ts` — 批量读当前指针与被指 head，缺指针/缺 head 的语义由调用方选。
 `note-decision-source.ts` — 注记复核决定卡来源（communication/business 消费的对象）：Goal 的 bucket，或项目 subject 的无 Goal bucket `[projectId, null, 'pending_review']`。
 `note-scribe-todos.ts` — 书记待办：`updateDue`、`pending`、`immediate` 三类。
-`scribe-scope.ts` — 书记范围事实、写准入、管理范围与按范围计数；包含判定、模块深度与最深包含 region 的纯规则在 `state/role-scope.ts`（本文件只导入 `regionContains`/`deepestContainingRegion`，不另留副本）。只有目标链接的书记是逐 Session 的 `unavailable`/`goal_scope_pending`：写准入答 `unavailable`，`manages` 答拒绝，按范围计数不把它当成持有所求范围；其他书记与调用方照旧。
+`scribe-scope.ts` — 书记范围事实、写准入、管理范围与按范围计数；包含判定、模块深度与最深包含 region 的纯规则在 `state/role-scope.ts`（本文件只导入 `regionContains`/`deepestContainingRegion`，不另留副本）。只有目标链接的书记现在是 goal 范围：每条开着的 goal 负责链接给一个 `{kind:'goal'}` 范围，与 region 范围合并（同时持有 region 和目标的线两边都留）；目标类锚点在它持有的目标内准入，其余锚点 `anchor_out_of_scope`；单目标、没有模块锚点且有书记持有该目标时，管理范围是这个目标，所以计数与 `manages` 按同一个范围。`ScribeScope.managingScopeOfAnchors` 按同一规则给没有 head 的锚点（`updateDue` 待办）求管理范围。
 `note-version-lists.ts` — 计划版本与目录版本的分页列表。
 `note-memory-material.ts` — 记忆材料端口的薄适配；无 Goal 的项目材料由读模型组装。
 `note-rendering.ts` — 理解正文的五段渲染。
@@ -39,7 +39,7 @@
 | `createSemanticLayerRead` | `src/core/work-graph/notes/semantic-layer-read.ts:40` | 语义联系层的唯一读端口：`readSemanticLinks`（project/module/file，limit 1–100，一页一次核对） | Host 的 `architecture/semantic-links` 路由；不要另写范围、分页或 item 映射 |
 | `encodeMemoryCursor`、`parseMemoryCursor`、`callerIdentityOf` | `src/core/work-graph/notes/note-read-model.ts:376`、`src/core/work-graph/notes/note-read-model.ts:383`、`src/core/work-graph/notes/note-read-model.ts:372` | 注记读与语义读共用的唯一不透明游标：绑定 op、调用者、规则、请求和位置 | 需要绑定请求的翻页时；不要把游标解析放到 HTTP 层或另写一份 |
 | `collectModuleFileKeys`、`interfaceKeysOf` | `src/core/work-graph/notes/note-related-scope.ts:321`、`src/core/work-graph/notes/note-related-scope.ts:316` | 模块路径下的文件 key 集合（按唯一主人判定）与模块接口 key | 语义模块范围要模块/接口/文件键集时；不要另写归属或接口 key |
-| `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:228` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
+| `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:236` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
 | `createNoteDecisionSource` | `src/core/work-graph/notes/note-decision-source.ts:118` | 注记复核决定卡来源：`readNoteDecisions` 按 `subject` 读 Goal 或项目的卡（项目桶无 Goal 窗口、无 cancelled 门，批读与理由读同一套）、按 pin 读一张（`goalId: null` 走项目卡；开着、关了都带回注记自己的 subject，读的一方先比 subject 再看开关）、应用决定 | 装配决定队列/决定应用 |
 | `createNoteScribeTodos` | `src/core/work-graph/notes/note-scribe-todos.ts:76` | 书记待办：`pending`、`updateDueTodos`、`immediate`，复用同一锚点读 | Host 提醒/书记心跳 |
 | `createVersionLists` | `src/core/work-graph/notes/note-version-lists.ts:69` | 计划版本/目录版本列表：新到旧、每页 ≤50、游标绑定请求 | 版本页；不要另写分页 |

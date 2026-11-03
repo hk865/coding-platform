@@ -36,6 +36,7 @@ import {
 import { createCommandRerunTools, REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { createReworkTools, REWORK_TOOL_NAMES } from './rework-tools.js';
 import { createAssignMaintainerTools, ASSIGN_MODULE_MAINTAINER_TOOL_NAME } from './maintainer-tools.js';
+import { createRoleSplitTools, PROPOSE_ROLE_SPLIT_TOOL_NAME, type RoleSplitToolOwnerV1 } from './role-split-tool.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
 import { agentActorOf } from '../work-graph/model/tool-commit-arguments.js';
@@ -75,6 +76,7 @@ export const EXPLORATION_TOOL_NAMES = [
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
   ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES, ...ARCHITECTURE_TOOL_NAMES,
+  PROPOSE_ROLE_SPLIT_TOOL_NAME,
 ]);
 /** K3 group 3: the L13 exploration names a review-round manifest may select.
  * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
@@ -227,6 +229,8 @@ export type WorkToolGroupInput = {
   handoffs?: RuntimeExecutionDependencies['handoffs'];
   /** The adviser's one maintainer assignment entry; absent makes the name unregisterable. */
   maintainerAssignments?: RuntimeExecutionDependencies['maintainerAssignments'];
+  /** The one `propose_role_split` owner; absent makes the name unregisterable. */
+  roleSplit?: RoleSplitToolOwnerV1;
   /** The structural-proposal owner behind `propose_architecture_revision`; absent makes the name unregisterable. */
   architectureProposals?: RuntimeExecutionDependencies['architectureProposals'];
   /** The formal Session duty the start resolved; `hand_off` is executor/adviser only. */
@@ -267,6 +271,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
   const maintainerNames = wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
     ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
+  const roleSplitNames = wanted.has(PROPOSE_ROLE_SPLIT_TOOL_NAME) ? [PROPOSE_ROLE_SPLIT_TOOL_NAME] : [];
   const reworkNames = REWORK_TOOL_NAMES.filter(name => wanted.has(name));
   const members = input.memberCreation;
   const maintainers = input.maintainerAssignments;
@@ -275,7 +280,8 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
     && graphNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
     && architectureNames.length === 0
-    && memberNames.length === 0 && maintainerNames.length === 0 && reworkNames.length === 0) {
+    && memberNames.length === 0 && maintainerNames.length === 0 && reworkNames.length === 0
+    && roleSplitNames.length === 0) {
     return { ok: true, value: null };
   }
   if (decisionNames.length > 0 && input.decisionMessages === undefined) {
@@ -303,6 +309,9 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (architectureNames.length > 0 && input.architectureProposals === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects propose_architecture_revision but no proposal owner is bound: ${architectureNames.join(', ')}`) };
+  }
+  if (roleSplitNames.length > 0 && input.roleSplit === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects propose_role_split but no roleSplit owner is bound: ${roleSplitNames.join(', ')}`) };
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
   if (mailboxNames.length > 0 || decisionNames.length > 0) {
@@ -421,8 +430,23 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
+  if (roleSplitNames.length > 0 && input.roleSplit !== undefined) {
+    // The Run's own trusted Work identity, never a model argument.
+    handles.push(createRoleSplitTools({
+      roleSplit: input.roleSplit,
+      context: input.context,
+      caller: {
+        kind: 'work',
+        actor: agentActorOf(input.sessionRef, input.runRef),
+        session: input.sessionRef,
+        run: input.runRef,
+      },
+      requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
+  }
   const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames,
-    ...handoffNames, ...architectureNames, ...memberNames, ...maintainerNames, ...reworkNames];
+    ...handoffNames, ...architectureNames, ...memberNames, ...maintainerNames, ...roleSplitNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -642,6 +666,8 @@ export type FinalToolListInputV1 = {
     recheckRequests?: boolean;
     /** The adviser's maintainer assignment entry; optional for the same reason. */
     maintainerAssignments?: boolean;
+    /** The `propose_role_split` owner; optional for the same reason. */
+    roleSplit?: boolean;
     /** The structural-proposal owner behind `propose_architecture_revision`. */
     architectureProposals?: boolean;
   };
@@ -694,6 +720,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   // Only the Work Runtime builds the maintainer tool; Query has no adviser duty.
   const maintainerNames = !query && wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
     ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
+  // Only the Work Runtime builds the split tool; a Query's projection never reaches its factory.
+  const roleSplitNames = !query && wanted.has(PROPOSE_ROLE_SPLIT_TOOL_NAME)
+    ? [PROPOSE_ROLE_SPLIT_TOOL_NAME] : [];
   // Only the Work Runtime builds the rework tools; a Query's projection never reaches its factory.
   const reworkNames = query ? [] : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
   const requestNames = query && wanted.has(READ_REQUESTS_TOOL_NAME) ? [READ_REQUESTS_TOOL_NAME] : [];
@@ -728,6 +757,10 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (maintainerNames.length > 0 && owners.maintainerAssignments === false) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects assign_module_maintainer but no maintainer-assignment dependency is bound: ${maintainerNames.join(', ')}`) };
   }
+  if (roleSplitNames.length > 0 && owners.roleSplit === false) {
+    return { ok: false, rejection: rejected('unsupported',
+      'the Run selects propose_role_split but no roleSplit owner is bound') };
+  }
   // The one rework factory requires both owners, so either absence keeps every
   // selected rework name `unsupported`; nothing is silently dropped.
   if (reworkNames.length > 0 && (owners.reworkRequests === false || owners.recheckRequests === false)) {
@@ -740,7 +773,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   }
   const coordinationNames = [...mailboxNames, ...handoffNames, ...decisionNames, ...whiteboardNames,
     ...discoveryNames, ...graphNames, ...noteNames, ...architectureNames, ...memberNames, ...maintainerNames,
-    ...reworkNames, ...requestNames];
+    ...roleSplitNames, ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }

@@ -44,7 +44,7 @@ import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js'
 import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import { readSecretaryHandoffBasis } from '../../src/core/work-graph/tasks/secretary-handoff-basis.js';
@@ -111,7 +111,7 @@ function nextId(prefix: string): string {
 // ------------------------------------------------------------------------ //
 
 /** The store surface the basis reader declares; a backend's real `records` is one. */
-type BasisStore = Pick<GoalRecordTransactionPort, 'readMany'> & RecordOrderedLookupPort;
+type BasisStore = Pick<GoalRecordTransactionPort, 'readMany'> & RecordOrderedLookupPort & RecordLookupPort;
 
 /** The real backend the current world built (A3/A4: captured, never replaced). */
 function latestBackend(): BasisStore {
@@ -135,7 +135,7 @@ async function openEmptyLedger(backend: 'memory' | 'sqlite'): Promise<{ records:
 }
 
 async function basisOf(
-  records: Pick<RecordOrderedLookupPort, 'lookupOrdered'>, session: SessionRef,
+  records: BasisStore, session: SessionRef,
   contextWindowTokens = WINDOW_TOKENS,
 ) {
   const read = await readSecretaryHandoffBasis(records, S6A_SCOPE, session, contextWindowTokens);
@@ -152,8 +152,10 @@ type WatermarkWatch = { read: CommitCursor | null | undefined };
  */
 function wrappedBasis(
   records: BasisStore, watch: WatermarkWatch, mode: 'real' | 'throw' | 'failed_page' | 'damaged' = 'real',
-): Pick<RecordOrderedLookupPort, 'lookupOrdered'> {
+): BasisStore {
   return {
+    readMany: (refKeys) => records.readMany(refKeys),
+    lookup: (request) => records.lookup(request),
     async lookupOrdered(request) {
       if (mode === 'throw') throw new Error('S6B2 basis: the ordered read threw');
       if (mode === 'failed_page') {

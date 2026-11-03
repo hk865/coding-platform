@@ -34,7 +34,7 @@
 - `request-ideas.ts` — 回答思路的唯一规则：`validIdeaCount` 与 `ideasIssues`（纯函数）。
 - `secretary-contracts.ts` — 秘书准备读取的契约：`SecretaryHistoryEntryV1`、`SecretaryPreparationFactsV1`（请求事实带 `briefRef` 与唯一一份 `understandingGrants`）、`SecretaryPreparationFactsPort`（实现在 views，组合根注入）。
 - `secretary-query-run-contracts.ts` — 运行中的秘书 QueryRun 的受信事实 `SecretaryQueryRunV1` 与解析端口 `SecretaryQueryRunPort`；`goals` 只是冻结材料列表上仍有效的 `request_understanding` 授权集（解析时按当前 operation 记录重算），绝不是本轮的有效 Goal；`planRef` 是准备时冻结的 Plan，秘书的阶段锚点取它的版本。
-- `secretary-lifecycle-contracts.ts` — 秘书生命周期的跨组契约：`SecretaryHandoffBasisV1`、覆盖/路由/简报事实与四态、归档条件的可合并片段、`SecretaryHandoffFactsPort`/`SecretaryArchiveConditionPort`；只有声明，规则和读取器在各自 owner。
+- `secretary-lifecycle-contracts.ts` — 秘书生命周期的跨组契约：`SecretaryHandoffBasisV1`（`run` 是用量来自的 QueryRun 或 Work Run）、覆盖/路由/简报事实与四态、归档条件的可合并片段、`SecretaryHandoffFactsPort`/`SecretaryArchiveConditionPort`；只有声明，规则和读取器在各自 owner。
 - `secretary-note-contracts.ts` — 再导出 `QueryNoteAdmissionV1`（Query 本轮可写的注记值：none 或 secretary 的 kinds/withdraw/grantedGoalIds）；唯一的声明和纯规则 `secretaryNoteAdmission` 都在 `state/secretary-note.ts`。
 - `session-handoff-contracts.ts` — 交接推进与秘书归档的输入/结果/进度类型，`handoff.decide` 的输入/结果（`HandoffDecideInputV1`/`HandoffDecideResultV1`），简报消费端口 `HandoffBriefPort`、简报引用的窄读口 `HandoffBriefRefsReadPort` 与 Workflow 入口 `SessionHandoffWorkflowPort`；`HandoffProgressV1.trigger` 用 F2 的 `HandoffTriggerV1`；命令和组合在各自 owner。
 - **记录 5 不在本层。** 6B 的 `HandoffBriefV1` 是秘书 QueryRun 简报；H 的 `WorkHandoffBriefV1` 是 `state/work-handoff-brief.ts` 的纯记录类型，ref/材料/绑定来自 `contracts/handoff-brief.ts`（F2），消费贡献是 `workHandoffBriefConsumption`。不要把两者混用或在本层复制记录 5 的类型。
@@ -64,7 +64,7 @@
 - `graph-context-contracts.ts` — 图上下文、任务卡、节点卡的读端口与 DTO；`look`/`find` 的 `goalRef` 可为 `null`（项目分支，不借任何 Goal 的 universe）；extensions 另有空目标的请求类型（只读项目理解和 norms，整份上下文读取仍要求 Goal）。
 - `kernel-command-read-contracts.ts` — Kernel 原始命令与 workspace 文件读取的窄端口类型。
 - `material-contracts.ts` — `MaterialPort`：artifact 存储与按引用打开。
-- `note-contracts.ts` — 注记/记忆的写入、读取、检查、决定应用端口，上限常量与 `recordNoteRequestOf`。
+- `note-contracts.ts` — 注记/记忆的写入、读取、检查、决定应用端口，上限常量与 `recordNoteRequestOf`；`NoteScopeV1` 的正本在 `contracts/note.ts`，这里只再导出。
 - `work-line-contracts.ts` — 工作线、节点详情、悬停读取与线 pin 写入端口。
 
 ## 可以复用的能力
@@ -175,7 +175,7 @@
 | `GoalCardDraftViewV1`、`GoalCardDraftRowsV1` | `src/core/work-graph/model/request-contracts.ts:95`、`src/core/work-graph/model/request-contracts.ts:96` | 每张目标卡草稿的视图：`index`、`draft` 与它已确认的 Goal `confirmedGoalRef`（未确认为 `null`）；同一回答的两张草稿可以各带一个 Goal | 请求读模型与主对话读投影草稿时；只读，不从视图反推 binding |
 | `latestAnsweredRound` | `src/core/work-graph/model/request-contracts.ts:130` | 请求的最近作答轮：从最后一轮往前找调用方判定为已答的一轮，返回它的 `ref`，没有则 `null` | 请求读取与 confirm owner 共用这一顺序；不要各写倒序扫描 |
 | Session facts 索引名 | `src/core/work-graph/model/session-facts-contracts.ts:27` | `SESSION_BY_PROVENANCE_LOOKUP`、`WORK_EXECUTION_BY_SESSION_LOOKUP`、`QUERY_RUN_BY_SESSION_LOOKUP`、`SESSION_ANOMALY_BY_TASK_LOOKUP`、`SESSION_ANOMALY_BY_GOAL_LOOKUP`、`SESSION_REPLY_BY_HANDLER_LOOKUP`、`SLICE1_LOOKUP_INDEXES` | 注册/读取 Session facts 索引时 |
-| `SecretaryHandoffBasisV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:23` | too-long 事实：阈值、最后输入 token、来源 QueryRun/请求序号与读取水位；D 的纯规则和读取器产出 |
+| `SecretaryHandoffBasisV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:24` | too-long 事实：阈值、最后输入 token、来源 QueryRun 或 Work Run/请求序号与读取水位；D 的纯规则和读取器产出 |
 | `CoverageGoalV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:40` | 每个 Goal 的当前理解指针、文本版本、最后文本写的 Session 与轮 |
 | `CoverageFactsV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:49` | 覆盖读取的完整事实：源 Session、活动 revision、最后进入并结束的轮、Goal 集与首个读取水位 |
 | `RoutingRootV1` | `src/core/work-graph/model/secretary-lifecycle-contracts.ts:57` | 一个未完成请求根、它的 owner 与 effective goal id |

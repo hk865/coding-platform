@@ -24,6 +24,7 @@ import { CREATE_MEMBER_TOOL_NAME } from '../../src/core/agent-runtime/member-too
 import { READONLY_COMMAND_TOOL_NAME } from '../../src/core/agent-runtime/readonly-command-tool.js';
 import { READ_REQUESTS_TOOL_NAMES } from '../../src/core/agent-runtime/request-read-tools.js';
 import { REWORK_TOOL_NAMES } from '../../src/core/agent-runtime/rework-tools.js';
+import { PROPOSE_ROLE_SPLIT_TOOL_NAME } from '../../src/core/agent-runtime/role-split-tool.js';
 import { SESSION_DISCOVERY_TOOL_NAMES } from '../../src/core/agent-runtime/session-discovery-tools.js';
 import { RESERVED_TOOL_NAMES } from '../../src/core/agent-runtime/tool-group-assembly.js';
 import {
@@ -54,6 +55,7 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     READONLY_COMMAND_TOOL_NAME,
     // The pack carries the propose_architecture_revision text before its tool declaration lands.
     'propose_architecture_revision',
+    PROPOSE_ROLE_SPLIT_TOOL_NAME,
 ]);
 
 type ExemptionV1 = { templateId: string; word: string; line: number; reason: string };
@@ -113,7 +115,7 @@ describe('PC-19 platform tool-name scan (ruling 18)', () => {
             + GRAPH_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
             + ANSWER_TOOL_NAMES.length + READ_REQUESTS_TOOL_NAMES.length + 1
-            + REWORK_TOOL_NAMES.length + 4);
+            + REWORK_TOOL_NAMES.length + 5);
         for (const name of Object.keys(PACK.manifest.tools)) expect(EVERY_TOOL_NAME.has(name)).toBe(true);
     });
 

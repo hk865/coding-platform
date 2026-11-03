@@ -598,7 +598,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         owners: {
           mailbox: true, decisionMessages: true, applicationReceipt: true,
           sessions: true, plans: true, graph: true, notes: true,
-          unknownCallReviews: true, commandRerunRequests: true,
+          unknownCallReviews: true, commandRerunRequests: true, roleSplit: true,
         },
         readonlyCommand: {
           requested: readonlyRequested,

@@ -186,6 +186,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "request_recheck": "tools/request_recheck.json",
       "record_note": "tools/record_note.json",
       "propose_architecture_revision": "tools/propose_architecture_revision.json",
+      "propose_role_split": "tools/propose_role_split.json",
       "project_source": "tools/project_source.json",
       "read_source": "tools/read_source.json",
       "cpp_index": "tools/cpp_index.json",
@@ -823,6 +824,13 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "description": "Propose an architecture revision: `{ baseCatalogPin, ops, responsibilityMoves, reason, operationRef? }`. Trial the ordered repair ops and responsibility moves against the pinned catalog; on success save a pending proposal and return a single-member `needs_decision` card (or `pending_batch` in the cold-start window). A person's approval applies the frozen batch as one catalog revision. The platform computes `structural`, checks live module use, every edge and every destination, and derives the receipt identity.",
       "parameters": {},
     },
+    "propose_role_split": {
+      "description": "Propose moving part of this line's responsibility to a new line of the same duty: { move, reason }. move lists scopes this line holds now and must be a strict subrange; at least one scope stays. The platform checks at once and answers; a refusal says why.",
+      "parameters": {
+        "move": "The scopes to move: a non-empty array of {kind:'goal', goalRef} or {kind:'region', moduleRef} that this line holds; never {kind:'project'}.",
+        "reason": "Why the split helps; one short sentence.",
+      },
+    },
     "project_source": {
       "description": "Read exact source materials through the frozen capture protocol. Actions: capture (one bounded capture; provider defaults to typescript, or text for a strict readable regular UTF-8/no-NUL text scope selected by prefix; optional configPath/prefix and optional previous capture for explicit changes; the trusted workspace root/revision/identity always come from the host, never from arguments), query (page a frozen capture with an opaque cursor: null on the first page, then the returned nextCursor; limit 1-200, default 100; paths lists only the files this capture retained, text is a literal line search with original line/UTF-16 columns and complete excerpts; semantic kinds are available only for a typescript capture), read (one exact file, at most 8192 bytes, either version working_tree for the current file, version capture for the exact frozen content of a retained capture, or version git with a full 40/64 lowercase commit id for one exact historical blob; a file outside the declared scope is refused rather than reported absent), compare (same-scope content diff of two captures: added/deleted/modified plus renamed only when one digest occurs exactly once in each complete manifest, marked identical_content and never a business identity claim; or two full Git commit ids with an optional prefix, compared by authorized regular-file blob id and mode; or one full Git commit id against one bounded current-working-tree observation of authorized regular UTF-8/no-NUL text, compared by raw-byte digest and owner-executable mode in either direction with an optional prefix and currentness not_rechecked; add duplicates: true to list candidates from that same call's after-side material — a new top-level definition, or a new string literal of at least 40 code points, that occurs elsewhere in the after pool — with two locations each and exact scanned/skipped counts reported apart from truncation (candidates only; the tool never judges whether two pieces are one rule); never by a ref or shell expression), verify (re-read the real scope now and confirm whether the capture still matches; a point-in-time answer, not a future guarantee), release (drop the capture when done). Coverage and change lists are returned as exact counts with at most five preview items of at most 160 code points each and an explicit truncated flag; the complete internal material is retained untrimmed. Pages are marked captured_source/not_rechecked unless verify says otherwise; captures cover only their declared scope (not the whole worktree) and a successful capture is not acceptance of the code.",
       "parameters": {},
@@ -1213,6 +1221,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "request_recheck": "platform",
     "record_note": "platform",
     "propose_architecture_revision": "platform",
+    "propose_role_split": "platform",
     "project_source": "platform",
     "read_source": "platform",
     "cpp_index": "platform",

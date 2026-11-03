@@ -188,6 +188,7 @@
     "request_recheck": "tools/request_recheck.json",
     "record_note": "tools/record_note.json",
     "propose_architecture_revision": "tools/propose_architecture_revision.json",
+    "propose_role_split": "tools/propose_role_split.json",
     "project_source": "tools/project_source.json",
     "read_source": "tools/read_source.json",
     "cpp_index": "tools/cpp_index.json",

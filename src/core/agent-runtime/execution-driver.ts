@@ -70,7 +70,7 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
-  | 'memberCreation' | 'handoffs' | 'maintainerAssignments' | 'architectureProposals'
+  | 'memberCreation' | 'handoffs' | 'maintainerAssignments' | 'roleSplit' | 'architectureProposals'
   | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
@@ -554,6 +554,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           commandRerunRequests: deps.commandRerunRequests !== undefined,
           memberCreation: deps.memberCreation !== undefined,
           maintainerAssignments: deps.maintainerAssignments !== undefined,
+          roleSplit: deps.roleSplit !== undefined,
           architectureProposals: deps.architectureProposals !== undefined,
           reworkRequests: deps.claims.requeueTask !== undefined,
           recheckRequests: deps.evidence?.reverifyRound !== undefined,
@@ -640,6 +641,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         ...(deps.maintainerAssignments === undefined ? {} : {
           maintainerAssignments: deps.maintainerAssignments,
         }),
+        ...(deps.roleSplit === undefined ? {} : { roleSplit: deps.roleSplit }),
         ...(deps.architectureProposals === undefined ? {} : {
           architectureProposals: deps.architectureProposals,
         }),

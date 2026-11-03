@@ -10,7 +10,7 @@ import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } f
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
   FlowPayloadV1, LinkInputV1, LinkVerificationV1, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1,
-  NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot,
+  NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteScopeV1, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot,
   RepairInputV1, RepairPayloadV1,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
@@ -475,7 +475,7 @@ export type VersionListPageV1 = {
 // --------------------------------------------------------------------------
 
 /** P1: the per-scope current-note count (L7). Does not change NoteReadPort. */
-export type NoteScopeV1 = { kind: 'project' } | { kind: 'region'; moduleId: string } | { kind: 'goal'; goalId: string };
+export type { NoteScopeV1 } from '../../../contracts/note.js';
 export interface NoteScopeReadPort {
   countCurrentNotes(ctx: CoreCallContext, input: { scope: NoteScopeV1 }):
     Promise<ReadResult<{ scope: NoteScopeV1; current: number }>>;

@@ -65,6 +65,9 @@ export interface ScribeScope extends NoteScopeReadPort {
   /** L5 managing scope of a stored note, including its replaces/contradicts anchors. */
   managingScopeOf(ctx: CoreCallContext, head: NoteHeadSnapshot, call: ScribeScopeCall):
     Promise<ReadResult<NoteScopeV1>>;
+  /** b08/c24: the managing scope of anchors with no stored head (an `updateDue` todo); same rule as `managingScopeOf`. */
+  managingScopeOfAnchors(ctx: CoreCallContext, anchors: readonly NoteAnchorV1[], call: ScribeScopeCall):
+    Promise<ReadResult<NoteScopeV1>>;
   /** Whether the caller Session is a scribe whose scope is exactly `scope`. */
   manages(ctx: CoreCallContext, sessionRef: SessionRef, scope: NoteScopeV1, call: ScribeScopeCall):
     Promise<ReadResult<boolean>>;
@@ -174,18 +177,21 @@ async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies):
       }
       if (duty !== 'scribe') continue;
       const links = card.links;
-      const scopes: NoteScopeV1[] = [];
+      const regionScopes: NoteScopeV1[] = [];
       for (const link of links) {
         if (link.until !== null || link.ref.relation !== 'responsible' || link.ref.target.kind !== 'module') continue;
         const moduleId = link.ref.target.ref.moduleId;
-        scopes.push({ kind: 'region', moduleId });
+        regionScopes.push({ kind: 'region', moduleId });
         regions.add(moduleId);
       }
       const projectLink = links.some(l => l.until === null && l.ref.relation === 'responsible' && l.ref.target.kind === 'project');
-      const goalLink = links.some(l => l.until === null && l.ref.relation === 'responsible' && l.ref.target.kind === 'goal');
+      // Goal links resolve to their own scope; a line holding a region and a goal keeps every scope of both.
+      const goalIds = links.flatMap(link => link.until === null && link.ref.relation === 'responsible'
+        && link.ref.target.kind === 'goal' ? [link.ref.target.ref.goalId] : []);
+      const goalScopes: NoteScopeV1[] = [...new Set(goalIds)].map(goalId => ({ kind: 'goal' as const, goalId }));
       const entry: SessionScopeFactsV1 = projectLink ? { state: 'known', scopes: [{ kind: 'project' }] }
-        : scopes.length > 0 ? { state: 'known', scopes }
-        : goalLink ? { state: 'unavailable', reason: 'goal_scope_pending' }        // only this session's row
+        : regionScopes.length > 0 || goalScopes.length > 0
+          ? { state: 'known', scopes: [...regionScopes, ...goalScopes] }
         : { state: 'known', scopes: [{ kind: 'project' }] };
       if (entry.state === 'known' && entry.scopes.some((scope) => scope.kind === 'project')) project = true;
       scopesBySession.set(card.record.ref.sessionId, entry);
@@ -208,8 +214,10 @@ function managingScopeOfAnchors(facts: ScribeFacts, anchors: readonly NoteAnchor
   }
   if (goals.size > 0) {
     if (moduleAnchors.length > 0 || goals.size > 1) return { kind: 'project' };
-    // A goal scribe needs slice 7D1's `goal` work-link target; 4A has none.
-    return { kind: 'project' };
+    const goalId = [...goals][0]!;
+    const held = [...facts.scopesBySession.values()].some(candidate => candidate.state === 'known'
+      && candidate.scopes.some(scope => scope.kind === 'goal' && scope.goalId === goalId));
+    return held ? { kind: 'goal', goalId } : { kind: 'project' };
   }
   if (facts.regions.size === 0) return { kind: 'project' };
   const modules: string[] = [];
@@ -343,7 +351,14 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       if (scopes.length === 0) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
       if (scopes.some(scope => scope.kind === 'project')) return null;
       for (const anchor of anchors) {
-        if (anchorClassOf(anchor) !== 'module') return { code: 'forbidden', reason: 'anchor_out_of_scope' };
+        const cls = anchorClassOf(anchor);
+        if (cls === 'goal') {
+          // A goal-class anchor inside one of the scribe's goals is admitted.
+          const goalId = goalIdOf(anchor);
+          if (goalId !== null && scopes.some(scope => scope.kind === 'goal' && scope.goalId === goalId)) continue;
+          return { code: 'forbidden', reason: 'anchor_out_of_scope' };
+        }
+        if (cls !== 'module') return { code: 'forbidden', reason: 'anchor_out_of_scope' };
         const moduleId = moduleOfAnchor(facts.catalog, anchor);
         if (moduleId === null) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
         const admitted = scopes.some(scope => scope.kind === 'region' && regionContains(facts.catalog, scope.moduleId, moduleId));
@@ -363,6 +378,12 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
 
     async managingScopeOf(ctx, head, call) {
       return managingScopeOf(call, ctx, head);
+    },
+
+    async managingScopeOfAnchors(ctx, anchors, call) {
+      const factsRead = await factsFor(call, ctx);
+      if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
+      return result(managingScopeOfAnchors(factsRead.facts, anchors));
     },
   };
 }

@@ -532,7 +532,7 @@ describe('S7D1 G1-scribe-scope: a goal-only scribe is one unavailable entry', ()
         flowId: 'g1-scribe-goal-only', sessionHint: opened.scribe.line.ref, kind: 'select_work',
         taskId: opened.scribe.nextTask().taskId });
       expect(opened.world.model.calls()).toBe(before + 2);
-      expect(JSON.stringify(opened.world.model.lastRequest())).toContain('goal_scope_pending');
+      expect(JSON.stringify(opened.world.model.lastRequest())).toContain('project_understanding_scribe_only');
 
       // Another scribe (no goal link, so project scope) resolves: the person's project note is managed by it.
       await createS6BLine(opened.main, { label: 'g1-scribe-second', role: S6A_SCRIBE_ROLE });

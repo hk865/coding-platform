@@ -11,6 +11,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionArchiveConditionV1 } from '../../../contracts/core/session-archive.js';
+import type { RunRef } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { CurrentPointerRef } from '../../../contracts/note.js';
 import type { QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
@@ -25,8 +26,8 @@ export type SecretaryHandoffBasisV1 = {
   /** min(SECRETARY_HANDOFF_INPUT_TOKENS, floor(0.8 × contextWindowTokens)); the profile's real number. */
   threshold: number;
   lastInputTokens: number | null;
-  /** The QueryRun the usage came from; null only when there is no usage at all. */
-  run: QueryRunRef | null;
+  /** The QueryRun or the Work Run the usage came from; null only when there is no usage at all. */
+  run: QueryRunRef | RunRef | null;
   /** The model request index inside that run's execution state; null with `run`. */
   requestIndex: number | null;
   /** The ordered read's watermark; selection merges it; null only for an empty ledger. */
