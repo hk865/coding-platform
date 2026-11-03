@@ -20,7 +20,7 @@
 - **E2E 首通**：用户在真实入口给出 Goal，无预置 Plan，经调查/规划、正式采用、执行、真实检查、Task/Goal 完成，最终在工作台查看产物与依据。先选一条窄而真实的 coding 路径，允许该样例顺序执行；它不证明全部 MVP 已完成。
 - **产品 MVP**：首通之外，还通过本文的并行、失败返工、控制恢复、换手、变更、双图追溯和项目隔离路径；记忆核心与 B11–B20 的新增行为也属于 MVP（[HANDOFF 决定 13、15、23、49](refactor/HANDOFF.md)）。界面可以朴素，但不能用手工 seed、脚本代改数据库或假成功填补用户路径。
 
-首版仍是单用户、单机、coding-first，多 Project/Workspace，一个 Goal 绑定一个 Workspace。不建设跨机器共识、多租户、完整 IDE、通用工作流 DSL 或长期专家知识库；原生 compact 按真实能力显示 unsupported。压缩不算 MVP 门槛，在支持以前用换手接续（[HANDOFF 决定 39](refactor/HANDOFF.md)；[STATUS](refactor/STATUS.md)“缺口”）。已有生命周期、并行与恢复承诺不能以“最小化”为理由永久后置。
+首版仍是单用户、单机、coding-first，多 Project/Workspace，一个 Goal 绑定一个 Workspace。不建设跨机器共识、多租户、完整 IDE、通用工作流 DSL 或长期专家知识库；压缩（K2）进 MVP：两轮之间先清旧工具结果，不够再摘要；做好以前按真实能力显示 unsupported，用换手接续（[HANDOFF 决定 39、113-7](refactor/HANDOFF.md)；[STATUS](refactor/STATUS.md)“缺口”）。已有生命周期、并行与恢复承诺不能以“最小化”为理由永久后置。
 
 ## 2. 用户入口与结果
 
