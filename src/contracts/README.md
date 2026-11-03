@@ -77,6 +77,7 @@
 - `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`moduleMappingsOf` 与 `isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
 - `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`FormalObservedFindingV1`、`FileGraphPageV1`、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
 - `architecture-observation.ts` — 自动捕获：`AUTO_CAPTURE_TRIGGERS`、`isAutoCaptureTrigger`、`ArchitectureAutoCaptureRecordV1`、`ArchitectureObservationStateV1`。
+- `architecture-proposal.ts` — 结构提案契约：提案/批的 ref 与记录 `ArchitectureProposalV1`/`ArchitectureProposalBatchV1`、输入 `ProposeArchitectureRevisionInputV1`、结果 `ProposalResult`/`ApplyBatchResult` 与读 `ProposalRead`；纯数据，不建 store、时钟、id 或路由。
 - `architecture-source.ts` — 架构源快照：`ArchitectureSourceSnapshotV1`、`compactUnresolvedLines`、`architectureSourceIssues`，并转出 `pathOwnershipOf`。
 - `artifact.ts` — 内容寻址正文：`ArtifactRef`、`ArtifactRecord`、`ARTIFACT_MAX_SIZE_BYTES`、`artifactBodyDigest`、`artifactBodySize`。
 - `material-access.ts` — 材料来源集/pin、grant 引用与 `sameArtifactRef`/`sameArtifactOwnerRunRef`。
@@ -101,7 +102,7 @@
 - `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:131`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:137`）/ `compareCursors`（`src/contracts/ledger.ts:149`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:151`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）。
 - `line-delta.ts` — 真实文本行 diff 的唯一正本：`lineDelta`（LCS，超过 250k 格改用 Myers；返回 `added`/`deleted`/`totalLines`）与 `contentLines`，`MAX_LCS_CELLS` 私有；两者从 `src/app/attention-observer.ts` 搬来，注意力和 Run activity tally 共用（`core` 不 import `app`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
-- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、`NOTE_GENERAL_KINDS` 与 `renderNoteHeader`；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
+- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS` 与 `payloadKindProblem`、`renderNoteHeader`；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
 - `platform-duty.ts` — `PlatformDutyV1`：五种平台职责；`PLATFORM_DUTIES` 是它唯一的运行时列表。
 - `resource-caps.ts` — 资源上限：`MIB`、`RESOURCE_CAP_*`、`defaultResourceCapSettings`、报告与不可用原因。
@@ -158,7 +159,7 @@
 | `queryAnswerShapeOf`、`validSessionMessageRef` | `src/contracts/query-job.ts:67`、`src/contracts/query-job.ts:337` | 回答形状的唯一映射（请求轮，或 `intervention_planning` 冻结的 `plan_round`/`plan_review`），以及完整 `SessionMessageRef` 的形状校验。 | 准备/启动读回答形状、读计划来源消息；不要另写映射或 ref 检查。 |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18` | 初始规划 v2 回答的外层协议：一个 JSON 对象、`schemaVersion` 2、`plan` 或 `needs_decision` 的外形；不修补模型的计划，计划内容由 Plan 校验器判断。 | 读初始规划回答或秘书 `initial_coordination` 回答；不要另写 v2 JSON 解析。 |
 | `queryExecutionBindingOf` | `src/contracts/query-job.ts:545` | 普通 Query 读 intent；request round 读该 attempt 的 `executionState.roleBinding/requestProfile`，缺 profile 抛错。 | 所有读 Query 绑定或预算的地方。 |
-| `decisionSourceKey` | `src/contracts/goal-decisions.ts:257` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
+| `decisionSourceKey` | `src/contracts/goal-decisions.ts:262` | 决策来源身份键；`planning_question` 带 `binding` 选择器时键里多出 `binding` 一项，不带时键逐字节不变。 | 决策来源去重/幂等。 |
 | `DecisionSubjectShape`、`DecisionSubjectV1` | `src/contracts/goal-decisions.ts:94`、`src/contracts/goal-decisions.ts:100` | 决定来源/卡片/请知悉的 subject 字段表与推导类型：`{ kind: 'goal', goalRef }` 或 `{ kind: 'project', projectRef }`，旁边不再有第二个 `goalRef` 字段。 | 构造或读 `subject`；不要另写一份只认 Goal 的 subject 形状。 |
 | `decisionSubjectKey` | `src/contracts/goal-decisions.ts:102` | subject 的带标签规范键。 | 读侧按 subject 分组/排序；不要手拼字符串。 |
 | `decisionSubjectGoalRef` | `src/contracts/goal-decisions.ts:116` | 对已校验的 subject 收窄（来源、卡片、请知悉）：goal 返回 `goalRef`，project 或缺失返回 `null`；不代替输入形状校验。 | 每个来源/卡片分支只经这一处收窄；不要自己再写一份 `goalRefOf`。 |
@@ -201,7 +202,7 @@
 | `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:839` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
 | `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
 | `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
-| `renderNoteHeader` | `src/contracts/note.ts:115` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
+| `renderNoteHeader` | `src/contracts/note.ts:189` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
 | `planValidationError` | `src/contracts/plan.ts:307` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:313` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:18`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
@@ -235,7 +236,7 @@
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:29` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:186`、`src/contracts/unknown-call-review.ts:195` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
 | `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:14` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
-| `compileVerificationCoverage` | `src/contracts/verification.ts:315` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
+| `compileVerificationCoverage` | `src/contracts/verification.ts:319` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
 | `CopyInterventionStateV1`、`CopyInterventionCandidateV1` | `src/contracts/goal-copy-retraction.ts:4`、`src/contracts/goal-copy-retraction.ts:11` | 复制取消的候选状态闭集（`withdrawn`/`applied`/`rejected`/`copied`/`delivered`/`not_delivered`）与候选 DTO（消息 ref、版本、状态、可选/可撤回及各自原因）。 | 候选规则与 copy 端口引用候选类型时；不要另写候选形状。 |
 
 ## 内部用

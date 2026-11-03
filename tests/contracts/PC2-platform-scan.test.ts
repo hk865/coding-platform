@@ -52,6 +52,8 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     CREATE_MEMBER_TOOL_NAME,
     ASSIGN_MODULE_MAINTAINER_TOOL_NAME,
     READONLY_COMMAND_TOOL_NAME,
+    // The pack carries the propose_architecture_revision text before its tool declaration lands.
+    'propose_architecture_revision',
 ]);
 
 type ExemptionV1 = { templateId: string; word: string; line: number; reason: string };
@@ -111,7 +113,7 @@ describe('PC-19 platform tool-name scan (ruling 18)', () => {
             + GRAPH_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
             + ANSWER_TOOL_NAMES.length + READ_REQUESTS_TOOL_NAMES.length + 1
-            + REWORK_TOOL_NAMES.length + 3);
+            + REWORK_TOOL_NAMES.length + 4);
         for (const name of Object.keys(PACK.manifest.tools)) expect(EVERY_TOOL_NAME.has(name)).toBe(true);
     });
 

@@ -27,6 +27,7 @@ import { createNoticePositionComparator } from '../../src/core/work-graph/views/
 import { createSessionMailbox, createMessageWriteOwner } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -103,7 +104,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
   const userMailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.id, operatorActor: actor,
     messages: userMailbox, materials, messageWrites: createMessageWriteOwner(mailboxDeps),
-    sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }) });
+    sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }) }) });
   const reconcile = createRunReconcileService({ records, reads, bodies: b2.bodies, hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' }, now: f.now, eventId: f.id });
   let tokens = createNoticeDisplayToken(new Uint8Array(32).fill(1));
   let tokenGeneration = 1;

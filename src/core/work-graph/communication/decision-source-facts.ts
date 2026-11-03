@@ -49,6 +49,7 @@ import type { WorkspaceToolsPort } from '../../workspace/ports.js';
 import { readApplicationReceiptFacts } from './decision-application.js';
 import { clonePins, createSourceReadSupport, isAbsencePin, readStoredDecoded,
   SAVED_ANSWER_READ_TEMPLATES, type Scope } from './decision-source/read-support.js';
+import type { SourceReadSupport } from './decision-source/types.js';
 import { readMessageSource } from './decision-source/message.js';
 import { readGoalCauseSource } from './decision-source/goal-cause.js';
 import { readCandidateSource } from './decision-source/candidate.js';
@@ -127,7 +128,111 @@ export type DecisionSourceFactsDependencies = {
    * present it is used instead of building a private reader here.
    */
   goalCauses?: GoalDecisionCauseReader;
+  /**
+   * The ONE `structuralProposalObjects` read the structural card source uses.
+   * The answer facts must store the card's frozen digest/ops/moves and member
+   * reasons, or an annotated answer names no card object. Required: the
+   * composition binds the view's records-only export; there is no label-only
+   * fallback.
+   */
+  structuralProposalObjects: (records: S5RecordPort, source: DecisionSourceV1) =>
+    Promise<ReadResult<DecisionObjectV1[]>>;
+  /**
+   * The ONE `repairApprovalObjects` read the repair card source uses. Optional
+   * so the frozen direct factories keep compiling; absent, a `repair_approval`
+   * source is explicitly `unavailable`, never an empty card. The composition
+   * binds the view's records-only export.
+   */
+  repairApprovalObjects?: (records: S5RecordPort, source: DecisionSourceV1) =>
+    Promise<ReadResult<DecisionObjectV1[]>>;
 };
+
+
+/**
+ * The `structural_proposal` card's two options, shared by its card source and its
+ * answer facts: both apply the frozen batch (approve applies the revision, reject
+ * closes the members); the ids and labels never drift between the two reads.
+ */
+export const STRUCTURAL_PROPOSAL_OPTIONS: readonly DecisionOptionV1[] = Object.freeze([
+  Object.freeze({ id: 'approve', label: '批准', effect: 'apply' as const }),
+  Object.freeze({ id: 'reject', label: '不采用', effect: 'apply' as const }),
+]);
+
+/** The `repair_approval` card's options, shared by its card source and its answer facts. */
+export const REPAIR_APPROVAL_OPTIONS: readonly DecisionOptionV1[] = Object.freeze([
+  Object.freeze({ id: 'approve', label: '收下', effect: 'apply' as const }),
+  Object.freeze({ id: 'reject', label: '不采用', effect: 'apply' as const }),
+]);
+
+/**
+ * The `structural_proposal` answer fact is its pinned batch identity, not a
+ * re-trial: the card read supplied the batch, baseline and active-pointer pins,
+ * and the application row re-reads the batch and its members. Requiring the
+ * batch's own pin keeps a forged key/pin pair from authorizing an answer; the
+ * common pin verifier proves the rest against the records.
+ */
+async function readStructuralProposalSource(deps: DecisionSourceFactsDependencies, source: DecisionSourceV1,
+  identity: Extract<DecisionSourceIdentityV1, { kind: 'structural_proposal' }>): Promise<ReadResult<DecisionSourceBranchFacts>> {
+  const batchPin = source.pins.find(pin => canonicalOf(pin.ref) === canonicalOf(identity.batch));
+  if (batchPin === undefined || batchPin.revision !== 1) {
+    return rejectedWithCurrent('invalid', 'a structural_proposal source must carry its batch record pin');
+  }
+  const objects = await deps.structuralProposalObjects(deps.records, source);
+  if (objects.status !== 'ready') return objects;
+  return {
+    status: 'ready',
+    value: {
+      goal: null,
+      objects: objects.value,
+      options: STRUCTURAL_PROPOSAL_OPTIONS.map(option => ({ ...option })),
+      pins: clonePins(source.pins),
+      goalBases: [],
+      closed: false,
+      allowedReaderSessionRefs: [],
+    },
+  };
+}
+
+/**
+ * The `repair_approval` answer fact is its pinned note identity. The note's own
+ * goal is loaded and checked here; the card's note pin must be in `source.pins`
+ * at the same revision. The objects come from the same records-only read the
+ * card source uses.
+ */
+async function readRepairApprovalSource(deps: DecisionSourceFactsDependencies, support: SourceReadSupport,
+  source: DecisionSourceV1, identity: Extract<DecisionSourceIdentityV1, { kind: 'repair_approval' }>,
+  goalRef: GoalRef): Promise<ReadResult<DecisionSourceBranchFacts>> {
+  const notePin = source.pins.find(pin => canonicalOf(pin.ref) === canonicalOf(identity.note.ref));
+  if (notePin === undefined || notePin.revision !== identity.note.revision) {
+    return rejectedWithCurrent('invalid', 'a repair_approval source must carry its note head pin');
+  }
+  if (deps.repairApprovalObjects === undefined) {
+    return rejectedWithCurrent('unavailable',
+      'no repair-approval source reader is bound for a repair_approval source');
+  }
+  const goalProblem = support.scopeProblem(goalRef);
+  if (goalProblem !== null) return goalProblem;
+  const goalRead = await support.readGoal(goalRef);
+  if (goalRead.status !== 'ready') return goalRead;
+  if (goalRead.value.workspaceRef.projectId !== support.scope.projectId
+    || goalRead.value.workspaceRef.workspaceId !== support.scope.workspaceId) {
+    return rejectedWithCurrent('forbidden', 'the repair_approval source Goal is outside the bound scope');
+  }
+  const objects = await deps.repairApprovalObjects(deps.records, source);
+  if (objects.status !== 'ready') return objects;
+  return {
+    status: 'ready',
+    value: {
+      goal: goalRead.value,
+      objects: objects.value,
+      options: REPAIR_APPROVAL_OPTIONS.map(option => ({ ...option })),
+      pins: clonePins(source.pins),
+      goalBases: [],
+      closed: false,
+      allowedReaderSessionRefs: [],
+    },
+  };
+}
 
 /** Builds the canonical source/application facts reader. */
 export function createDecisionSourceFacts(
@@ -209,8 +314,11 @@ export function createDecisionSourceFacts(
           if (identity.kind === 'module_maintainer_assignment') {
             return readMaintainerAssignmentSource(support, source, identity);
           }
+          if (identity.kind === 'structural_proposal') {
+            return readStructuralProposalSource(deps, source, identity);
+          }
           return rejectedWithCurrent('invalid',
-            'a project subject serves only a note_review, handoff_approval or module_maintainer_assignment source');
+            'a project subject serves only a note_review, handoff_approval, module_maintainer_assignment or structural_proposal source');
         }
         switch (identity.kind) {
           case 'message':
@@ -237,6 +345,8 @@ export function createDecisionSourceFacts(
             return readReworkRequestSource(support, ctx, identity, deps, goalRef);
           case 'handoff_approval':
             return readHandoffApprovalSource(support, ctx, source, identity, deps, goalRef);
+          case 'repair_approval':
+            return readRepairApprovalSource(deps, support, source, identity, goalRef);
           case 'adviser_creation': {
             if (deps.adviserCreation === undefined) {
               return rejectedWithCurrent('unavailable',

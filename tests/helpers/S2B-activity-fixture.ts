@@ -43,6 +43,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { createRunActivityService, type RunActivityPort } from '../../src/core/work-graph/tasks/run-activity-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
@@ -82,12 +83,13 @@ const ACTIVITY_SCHEMAS: RecordBackendSchemas = {
   // records) are added here. The bootstrap group carries no records in this
   // baseline.
   records: [...EVIDENCE_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
-    ...QUERY_JOB_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records],
+    ...QUERY_JOB_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...NOTE_RECORD_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
     ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
-    ...QUERY_JOB_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events],
+    ...QUERY_JOB_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...(NOTE_RECORD_SCHEMAS.events ?? [])],
   lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
-    ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [])],
+    ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
+    ...(NOTE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 /** Builds a literal `counted` facts value from an explicit quarter list (test-side expectation source). */

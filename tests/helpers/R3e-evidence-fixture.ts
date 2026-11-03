@@ -42,6 +42,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { createRegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -139,11 +140,15 @@ export async function createR3eEvidenceFixture(
     kind: ClaimFixtureKind = 'memory',
     additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
 ): Promise<R3eEvidenceFixture> {
+    // The evidence owner's opening binds staged repairs through the note index,
+    // so this shared store registers the note schemas as the platform does.
     const schemas: RecordBackendSchemas = {
-        records: [...EVIDENCE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records, ...additionalSchemas.records],
-        events: [...EVIDENCE_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...additionalSchemas.events],
+        records: [...EVIDENCE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records, ...NOTE_RECORD_SCHEMAS.records,
+            ...additionalSchemas.records],
+        events: [...EVIDENCE_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...NOTE_RECORD_SCHEMAS.events,
+            ...additionalSchemas.events],
         lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? []),
-            ...(additionalSchemas.lookups ?? [])],
+            ...(NOTE_RECORD_SCHEMAS.lookups ?? []), ...(additionalSchemas.lookups ?? [])],
     };
     const b2 = await createB2ExecutionFixture(kind, schemas);
     let closeB2 = true;

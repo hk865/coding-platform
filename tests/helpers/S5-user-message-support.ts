@@ -11,6 +11,7 @@ import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
@@ -71,7 +72,7 @@ export function realOwners(f: S5DecisionFixture, duties: readonly PlatformDutyV1
   const mailbox = createSessionMailbox(deps);
   const decisions = createDecisionMessageService({
     records, now, newId, operatorActor: f.operatorActor, messages: mailbox, materials,
-    messageWrites: createMessageWriteOwner(deps), sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }),
+    messageWrites: createMessageWriteOwner(deps), sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }) }),
   });
   return { mailbox, decisions, decisionMessages: {
     sendUserMessage: mailbox.sendUserMessage,

@@ -15,15 +15,14 @@ const definition = (texts?: Texts): ToolDefinition =>
 const specification = (tool: ToolDefinition) => ({ name: tool.name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) });
 
 /**
- * The `pc1-final` specification, one hand-written JSON literal. Copied by hand
- * from `git show pc1-final:src/core/agent-runtime/note-tool.ts` (schema shape,
- * key order, constraints) and
- * `git show pc1-final:src/contracts/prompts/platform-pack.generated.ts`
- * (every description and parameter text).
+ * The current `record_note` specification, one hand-written JSON literal. Copied
+ * by hand from `resources/prompts/platform/tools/record_note.json` (the
+ * description) and `src/core/agent-runtime/note-tool.ts` (schema shape, key
+ * order, constraints); `parameters` stays empty.
  */
 const DEFAULT_SPECIFICATION: ToolSpecification = {
   "name": "record_note",
-  "description": "Record a note: `{ op: \"write\" | \"review\" | \"withdraw\", ... }`. Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the eight kinds: `convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`. Keep the conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that points at it via `replaces`. `write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; read the `check` result and fix what it reports. `review` (the scribe) reviews/accepts/rejects, with an optional `resolution: \"supersede\" | \"coexist\"` when resolving live contradictions; `withdraw` withdraws a note you may withdraw. Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service.",
+  "description": "Record a note: `{ op: \"write\" | \"review\" | \"withdraw\", ... }`. Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the eight kinds: `convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`. Keep the conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that points at it via `replaces`. `write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; read the `check` result and fix what it reports. `review` (the scribe) reviews/accepts/rejects, with an optional `resolution: \"supersede\" | \"coexist\"` when resolving live contradictions; `withdraw` withdraws a note you may withdraw. Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service. For `kind: \"repair\"`, `repair` takes `{ pin, ops, responsibilityMoves }`; the platform computes `structural` and resolves the anchor facts, so send only the pin, the ordered ops and the moves — never a derived `structural`.",
   "inputSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "oneOf": [
@@ -497,6 +496,172 @@ const DEFAULT_SPECIFICATION: ToolSpecification = {
               "open",
               "next",
               "risks"
+            ],
+            "additionalProperties": false
+          },
+          "repair": {
+            "type": "object",
+            "properties": {
+              "pin": {
+                "type": "object",
+                "properties": {
+                  "catalogRef": {
+                    "type": "object",
+                    "properties": {
+                      "aggregateType": {
+                        "type": "string",
+                        "const": "ArchitectureCatalog"
+                      },
+                      "projectId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "baselineId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "aggregateType",
+                      "projectId",
+                      "baselineId",
+                      "revision"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "baseline": {
+                    "type": "object",
+                    "properties": {
+                      "ref": {
+                        "type": "object",
+                        "properties": {
+                          "aggregateType": {
+                            "type": "string",
+                            "const": "ArchitectureBaselineRevision"
+                          },
+                          "projectId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "baselineId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "aggregateType",
+                          "projectId",
+                          "baselineId",
+                          "revision"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "digest": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "ref",
+                      "digest"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "catalogRef",
+                  "baseline"
+                ],
+                "additionalProperties": false
+              },
+              "ops": {
+                "minItems": 1,
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              },
+              "responsibilityMoves": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "link": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "to": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "standby"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "modules"
+                            },
+                            "destinations": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "destinations"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "link",
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "pin",
+              "ops",
+              "responsibilityMoves"
             ],
             "additionalProperties": false
           },

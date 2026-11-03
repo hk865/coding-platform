@@ -10,7 +10,7 @@ import type {
   CurrentPointerRef, CurrentPointerSnapshot, NoteHeadRef, NoteHeadSnapshot, NoteKind, NoteReviewReason,
   NoteState, NoteVersionRef, NoteVersionSnapshot, PendingNoteHeadSnapshot, PendingNoteVersionSnapshot,
 } from '../../../contracts/note.js';
-import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
+import { NOTE_KINDS, payloadKindProblem } from '../../../contracts/note.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import { defineShape, f } from '../../../contracts/data-format.js';
@@ -103,14 +103,13 @@ export type CurrentPointerMovedEventV1 = NoteEventHeaderV1 & {
 
 type UnknownRecord = Record<string, unknown>;
 
-const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
 const NOTE_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pending_review', 'rejected', 'superseded',
   'withdrawn'];
 const REVIEW_REASONS: readonly NoteReviewReason[] = ['structural', 'contradiction', 'quota_full', 'user_note_replaced'];
-const CHANGE_KINDS: readonly NoteVersionSnapshot['change']['kind'][] = ['write', 'review', 'accept', 'reject',
-  'withdraw', 'supersede', 'coexist', 'merge'];
+const CHANGE_KINDS: readonly NoteVersionSnapshot['change']['kind'][] = ['write', 'review', 'accept', 'activate',
+  'reject', 'withdraw', 'supersede', 'coexist', 'merge'];
 const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion', 'body', 'sections', 'anchor',
-  'extraAnchors', 'facts', 'basis', 'structural', 'replaces', 'contradicts', 'coexistWith'];
+  'extraAnchors', 'facts', 'basis', 'structural', 'replaces', 'contradicts', 'coexistWith', 'repair'];
 const HEAD_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
   'stagedRunKey', 'reviewReasons', 'confirmedByUser', 'anchorKey0', 'anchorKey1', 'anchorKey2', 'anchorKey3',
   'anchorKey4', 'createdAt', 'since', 'revision'];
@@ -271,6 +270,8 @@ function basisProblem(value: unknown): string | null {
 function bodyProblem(body: UnknownRecord, label: string): string | null {
   const kind = body['kind'];
   if (!NOTE_KINDS.includes(kind as NoteKind)) return `${label}.kind is not recognized`;
+  const payload = payloadKindProblem(body, kind as string, label);
+  if (payload !== null) return payload;
   if (!nonEmpty(body['topic']) || !nonEmpty(body['topicKey']) || !nonEmpty(body['conclusion'])) {
     return `${label} needs non-empty topic, topicKey and conclusion`;
   }

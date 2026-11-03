@@ -331,11 +331,13 @@ async function openWorld(backend: Backend): Promise<World> {
     const registration = await platform.projects.readWorkspaceRegistration(ctx(scope), scope);
     if (registration.status !== 'ready') throw new Error('the workspace registration read failed');
     const revised = await platform.architecture.reviseArchitectureCatalog(ctx(scope), { input: {
-      basedOn: { ref: read.value.baseline.ref, digest: read.value.baseline.contentDigest },
-      catalog: { ...read.value.catalog.catalog, modules: read.value.catalog.catalog.modules.map(module => ({
-        ...module, responsibility: `${module.responsibility} (${requestId})`,
-      })) },
-      reason: requestId,
+      expected: { catalogRef: read.value.catalog.ref,
+        baseline: { ref: read.value.baseline.ref, digest: read.value.baseline.contentDigest } },
+      ops: read.value.catalog.catalog.modules.map(module => ({
+        op: 'set_responsibility' as const, moduleId: module.ref.moduleId,
+        text: `${module.responsibility} (${requestId})`,
+      })),
+      responsibilityMoves: [], reason: requestId,
     }, meta: { requestId, expected: [
       { ref: projectRef(scope.projectId), revision: registration.value.project.revision },
       { ref: workspaceRef(scope), revision: registration.value.workspace.revision }] } });

@@ -1,0 +1,4 @@
+{
+  "description": "Propose an architecture revision: `{ baseCatalogPin, ops, responsibilityMoves, reason, operationRef? }`. Trial the ordered repair ops and responsibility moves against the pinned catalog; on success save a pending proposal and return a single-member `needs_decision` card (or `pending_batch` in the cold-start window). A person's approval applies the frozen batch as one catalog revision. The platform computes `structural`, checks live module use, every edge and every destination, and derives the receipt identity.",
+  "parameters": {}
+}

@@ -10,6 +10,7 @@ import type { DecodeResult, PreparedCommit, StoreCommitReceipt } from '../../src
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import type { MessageDutiesFactsPort } from '../../src/core/work-graph/model/decision-contracts.js';
@@ -108,7 +109,7 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.newId, operatorActor: { ...OPERATOR },
     messages: mailbox, materials, messageWrites: createMessageWriteOwner(mailboxDeps),
-    sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }) });
+    sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }) }) });
   const planDeps = { records, bindings: createInitializationBindingReader({ records }), materials, initialPlanning: { bodies },
     now: f.now, eventId: f.newId };
   const plans = createPlanService(planDeps);

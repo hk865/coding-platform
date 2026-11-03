@@ -58,6 +58,7 @@ import { createEvidenceService } from '../../src/core/work-graph/evidence/eviden
 import { createRegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -94,11 +95,12 @@ type SnapshotV2 = Extract<PlanRevisionSnapshot, { schemaVersion: 2 }>;
 
 /** Extra record groups the real evidence/completion/control owners write; the claim fixture owns the rest. */
 const A2_SCHEMAS: RecordBackendSchemas = {
-  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records],
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
+    ...NOTE_RECORD_SCHEMAS.records],
   events: [...(EVIDENCE_RECORD_SCHEMAS.events ?? []), ...(COMPLETION_RECORD_SCHEMAS.events ?? []),
-    ...(CONTROL_RECORD_SCHEMAS.events ?? [])],
+    ...(CONTROL_RECORD_SCHEMAS.events ?? []), ...(NOTE_RECORD_SCHEMAS.events ?? [])],
   lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
-    ...(CONTROL_RECORD_SCHEMAS.lookups ?? [])],
+    ...(CONTROL_RECORD_SCHEMAS.lookups ?? []), ...(NOTE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 const work = (taskId: string, title = `Task ${taskId}`): RuntimeTask => ({ taskId, title, requirementLevel: 'required',

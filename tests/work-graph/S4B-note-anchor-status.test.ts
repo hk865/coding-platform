@@ -7,11 +7,22 @@
  */
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import type { AdoptedArchitecture } from '../../src/contracts/architecture-catalog.js';
-import type { NoteDraftV1 } from '../../src/contracts/note.js';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import type { CatalogRepairOpV1, NoteDraftV1 } from '../../src/contracts/note.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createS4BNoteCheckFixture, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
+import { bindCatalogRevision, catalogRevisionModule } from '../helpers/S8C-catalog-world.js';
+const catalogMock = vi.hoisted(() => ({ actual: null as null | Record<string, unknown>,
+  revision: null as null | Record<string, unknown> }));
+vi.mock('../../src/core/work-graph/architecture/catalog-service.js', async importOriginal => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  catalogMock.actual = actual;
+  return { ...actual, createArchitectureCatalogService: (stores: unknown) => {
+    if (catalogMock.revision === null) throw new Error('the catalog revision factory is not bound');
+    return (catalogMock.revision['createArchitectureCatalogService'] as (stores: unknown) => unknown)(stores);
+  } };
+});
+beforeAll(async () => { catalogMock.revision = await catalogRevisionModule(async () => catalogMock.actual!); });
 
 function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return { kind: 'pitfall', topic: 'anchors', conclusion: 'a conclusion', body: 'body',
@@ -25,14 +36,16 @@ async function writeNote(f: S4BNoteCheckFixture, note: NoteDraftV1, goalId: stri
   return result.noteId;
 }
 
-async function reviseCatalog(f: S4BNoteCheckFixture, mutate: (catalog: AdoptedArchitecture) => AdoptedArchitecture): Promise<void> {
+async function reviseCatalog(f: S4BNoteCheckFixture, ops: CatalogRepairOpV1[]): Promise<void> {
   const ctx = f.ctx();
   const current = await f.inner.platform.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
   if (current.status !== 'ready' || current.value.catalog === null) throw new Error('catalog read failed');
   const revised = await f.inner.platform.architecture.reviseArchitectureCatalog(ctx, {
     meta: { requestId: 's4b-m15-catalog-revise', expected: [{ ref: f.inner.projectRef, revision: 1 }, { ref: f.inner.workspaceRef, revision: 1 }] },
-    input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-      catalog: mutate(current.value.catalog.catalog), reason: 's4b M-15 catalog revision' } });
+    input: {
+      expected: { catalogRef: current.value.catalog.ref,
+        baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+      ops, responsibilityMoves: [], reason: 's4b M-15 catalog revision' } });
   if (revised.status !== 'committed') throw new Error(`revise failed: ${JSON.stringify(revised)}`);
 }
 
@@ -61,21 +74,26 @@ async function revisePlan(f: S4BNoteCheckFixture, mutate: (tasks: PlanRevisionDr
 }
 
 describe('S4B M-15 anchor status', () => {
-  // BLOCKED (spec M-15/L23 `module_removed`): `reviseArchitectureCatalog`
-  // refuses to remove any existing module — `catalog-service.ts:671-673`
-  // ("a catalog revision must not remove the existing module ..."), and
-  // `adoptInitialArchitecture` refuses a project that already has an active
-  // baseline. No real public path can leave the current catalog without a
-  // previously existing module, so the case cannot be built without a double.
-  it.skip('M-15 a module removed from the current catalog retires the note', () => { /* see comment */ });
+  it.each(['memory', 'sqlite'] as const)('M-15 %s: a module removed from the current catalog retires the note', async kind => {
+    const f = await createS4BNoteCheckFixture(kind);
+    bindCatalogRevision(f.inner.platform, f.inner.scope);
+    try {
+      const noteId = await writeNote(f, draft({ anchor: { kind: 'module', moduleId: 'B' } }));
+      await reviseCatalog(f, [{ op: 'remove_module', moduleId: 'B' }]);
+      const read = await f.notes.readNote(f.ctx(), { noteId });
+      expect(read.status).toBe('ready');
+      if (read.status !== 'ready') return;
+      expect(read.value.anchorStatus).toBe('retired');
+      expect(read.value.anchorRetiredReasons).toEqual(['module_removed']);
+    } finally { await f.close(); }
+  });
 
   it.each(['memory', 'sqlite'] as const)('M-15 %s: an interface removed from the current catalog retires the note', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
+    bindCatalogRevision(f.inner.platform, f.inner.scope);
     try {
       const noteId = await writeNote(f, draft({ anchor: { kind: 'interface', moduleId: 'A', interfaceId: 'I1' } }));
-      await reviseCatalog(f, catalog => ({ ...catalog,
-        modules: catalog.modules.map(module => module.ref.moduleId === 'A'
-          ? { ...module, interfaces: module.interfaces.filter(item => item.id !== 'I1') } : module) }));
+      await reviseCatalog(f, [{ op: 'remove_interface', moduleId: 'A', interfaceId: 'I1' }]);
       const read = await f.notes.readNote(f.ctx(), { noteId });
       expect(read.status).toBe('ready');
       if (read.status !== 'ready') return;
@@ -92,12 +110,11 @@ describe('S4B M-15 anchor status', () => {
 
   it.each(['memory', 'sqlite'] as const)('M-15 %s: a retired extra anchor is listed while the live main anchor keeps the note live', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
+    bindCatalogRevision(f.inner.platform, f.inner.scope);
     try {
       const noteId = await writeNote(f, draft({ anchor: { kind: 'module', moduleId: 'A' },
         extraAnchors: [{ kind: 'interface', moduleId: 'A', interfaceId: 'I1' }] }));
-      await reviseCatalog(f, catalog => ({ ...catalog,
-        modules: catalog.modules.map(module => module.ref.moduleId === 'A'
-          ? { ...module, interfaces: module.interfaces.filter(item => item.id !== 'I1') } : module) }));
+      await reviseCatalog(f, [{ op: 'remove_interface', moduleId: 'A', interfaceId: 'I1' }]);
       const read = await f.notes.readNote(f.ctx(), { noteId });
       expect(read.status).toBe('ready');
       if (read.status !== 'ready') return;
@@ -108,6 +125,7 @@ describe('S4B M-15 anchor status', () => {
 
   it.each(['memory', 'sqlite'] as const)('M-15 %s: a task cancelled by an adopted plan revision retires the note for task_ended', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
+    bindCatalogRevision(f.inner.platform, f.inner.scope);
     try {
       const noteId = await writeNote(f, draft({ anchor: { kind: 'task', goalId: 's4a-goal', taskId: 't1' } }), 's4a-goal');
       await revisePlan(f, tasks => tasks.map(task => task.taskId === 't1'
@@ -121,6 +139,7 @@ describe('S4B M-15 anchor status', () => {
 
   it.each(['memory', 'sqlite'] as const)('M-15 %s: a symbol that no longer resolves retires the note for symbol_missing', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
+    bindCatalogRevision(f.inner.platform, f.inner.scope);
     try {
       const noteId = await writeNote(f, draft({ anchor: { kind: 'file', path: 'src/a/x.ts',
         symbolRequest: { language: 'typescript', name: 'a' } } }));
@@ -151,6 +170,7 @@ describe('S4B M-15 anchor status', () => {
 
   it.each(['memory', 'sqlite'] as const)('M-15 %s: a target symbol after 20 other symbols still resolves (no false symbol_missing)', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
+    bindCatalogRevision(f.inner.platform, f.inner.scope);
     try {
       const declarations = Array.from({ length: 30 }, (_, index) => `export const s${index} = ${index};`);
       const path = join(f.root, 'src/a/many.ts');

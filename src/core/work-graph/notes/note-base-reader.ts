@@ -6,7 +6,7 @@
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import { decodeNoteHeadSnapshot } from '../persistence/note-record-codecs.js';
+import { decodeNoteHeadSnapshot, S4_NOTE_BY_ANCHOR_LOOKUPS } from '../persistence/note-record-codecs.js';
 import { asOutcome } from './store-failures.js';
 
 /** The note-port failure codes a store/record read can produce (all in NoteErrorCode). */
@@ -44,4 +44,23 @@ export async function readAllHeads(records: RecordLookupPort, index: string,
     heads.push(decoded.value);
   }
   return { ok: true, heads };
+}
+
+/**
+ * Every head that carries `anchorKey` in one of the five anchor slots, deduped
+ * by noteId. The whole index is read through `readAllHeads`, so a failed or
+ * damaged page is returned, never skipped into a partial set.
+ */
+export async function headsByAnchorKey(records: RecordLookupPort, projectId: string,
+  anchorKey: string): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+  const seen = new Map<string, NoteHeadSnapshot>();
+  for (const index of S4_NOTE_BY_ANCHOR_LOOKUPS) {
+    const page = await readAllHeads(records, index, [projectId, anchorKey]);
+    if (!page.ok) return page;
+    for (const head of page.heads) {
+      if (head.anchorKey0 === anchorKey || head.anchorKey1 === anchorKey || head.anchorKey2 === anchorKey
+        || head.anchorKey3 === anchorKey || head.anchorKey4 === anchorKey) seen.set(head.noteId, head);
+    }
+  }
+  return { ok: true, value: [...seen.values()] };
 }

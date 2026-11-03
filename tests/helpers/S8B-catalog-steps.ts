@@ -70,13 +70,12 @@ function catalogSteps(port: ArchitectureCatalogPort, ctx: CoreCallContext, scope
       const read = await architecture();
       return { catalogRef: read.catalog.ref, baseline: { ref: read.baseline.ref, digest: read.baseline.contentDigest } };
     },
-    /** `reviseArchitectureCatalog` (no HTTP route publishes it): the catalog as read plus one module; no removal. */
+    /** `reviseArchitectureCatalog` (no HTTP route publishes it): one `add_module` op; no removal. */
     async addModule(module: ModuleDefinition) {
-      const current = await architecture();
+      const expected = await this.pin();
       return committed(await port.reviseArchitectureCatalog(ctx, {
         meta: { requestId: `${prefix}-revise-${++revisions}`, expected: await scopePins() },
-        input: { basedOn: { ref: current.baseline.ref, digest: current.baseline.contentDigest },
-          catalog: { ...current.catalog.catalog, modules: [...current.catalog.catalog.modules, module] },
+        input: { expected, ops: [{ op: 'add_module', module }], responsibilityMoves: [],
           reason: `add the module ${module.ref.moduleId}` } }));
     },
   };
@@ -139,8 +138,10 @@ const secretaryProfiles: SecretaryProfilePort = { forNewLine: async () => ({ sta
 let opening: Promise<void> = Promise.resolve();
 
 /** The platform world (memory or SQLite) over the S8D fixture's project and workspace `main`. No request driver runs, so
- * a submitted request round waits on record. `close()` closes the platform, then removes the Kernel store. */
-export async function openCatalogWorld(backend: Backend, projectId = 's8b-catalog') {
+ * a submitted request round waits on record. `close()` closes the platform, then removes the Kernel store.
+ * `operatorActor` enables the Host's own operator writes (the public `lines/pin` owner) for a world that needs one. */
+export async function openCatalogWorld(backend: Backend, projectId = 's8b-catalog',
+  options: { operatorActor?: { kind: 'human' | 'system'; id: string } } = {}) {
   const kernelDirectory = await mkdtemp(join(tmpdir(), 's8b-kernel-'));
   let scripted: ScriptedModel | null = null;
   const runtime: RuntimeHostBindings = {
@@ -165,8 +166,9 @@ export async function openCatalogWorld(backend: Backend, projectId = 's8b-catalo
   let fx: PlatformFixture;
   try {
     const real = platformModule.createTargetPlatform;
-    spy = vi.spyOn(platformModule, 'createTargetPlatform').mockImplementation(async options => real({
-      ...options, runtime, secretaryProfiles,
+    spy = vi.spyOn(platformModule, 'createTargetPlatform').mockImplementation(async incoming => real({
+      ...incoming, runtime, secretaryProfiles,
+      ...(options.operatorActor === undefined ? {} : { operatorActor: options.operatorActor }),
       kernelStores: { entries: [{ adapterId: 's8b-kernel', storeKey: 's8b-kernel-store',
         workspace: { projectId, workspaceId: 'main' }, databasePath: join(kernelDirectory, 'kernel.sqlite') }] },
     }));

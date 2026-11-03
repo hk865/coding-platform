@@ -10,7 +10,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, SessionWorkLinkRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type {
-  AdoptedArchitecture, AdoptInitialArchitectureInput, ReviseArchitectureCatalogInput,
+  AdoptedArchitecture, AdoptInitialArchitectureInput, ReviseArchitectureCatalogOpsInput,
 } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/session-contracts.js';
 import type { ArchiveSessionInput, LinkSessionWorkInput } from '../../src/core/work-graph/sessions/lifecycle-contracts.js';
@@ -291,10 +291,18 @@ it('revises the adopted catalog with explicit containment, links the new module,
       modules: [parentModule, childModule],
       containment: { parentOf: [{ parent: parentModule.ref, child: childModule.ref }] },
     };
-    const reviseRequest: GraphWrite<ReviseArchitectureCatalogInput> = { meta: {
+    const reviseRequest: GraphWrite<ReviseArchitectureCatalogOpsInput> = { meta: {
       requestId: 'a1-revise-catalog', expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }],
-    }, input: { basedOn: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest },
-      catalog: revisedCatalog, reason: 'Declare the source index under the source tools parent' } };
+    }, input: {
+      expected: { catalogRef: adopted.value.catalog.ref,
+        baseline: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest } },
+      ops: [
+        { op: 'add_module', module: childModule },
+        { op: 'set_parent', moduleId: childModule.ref.moduleId, parentId: parentModule.ref.moduleId },
+        { op: 'add_dependency', from: childModule.ref, to: parentModule.ref,
+          reason: revisedCatalog.dependencies[0]!.reason },
+      ],
+      responsibilityMoves: [], reason: 'Declare the source index under the source tools parent' } };
     const revised = await platform.architecture.reviseArchitectureCatalog(ctx, reviseRequest);
     expect(revised).toMatchObject({ status: 'committed', replayed: false });
     if (revised.status !== 'committed') throw Error('formal catalog revision failed');

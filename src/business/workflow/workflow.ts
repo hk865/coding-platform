@@ -3191,6 +3191,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const result = await deps.tasks.completeTask(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'complete_task', result };
         if (result.status !== 'committed') return waiting(receipt, result.reason);
+        await deps.repairs?.attemptRepairsForGoal(owned.ctx, { goalRef: base.goalRef });
+        await handOverRepairAnswers(owned, base);
         return advancing(receipt, selectWorkStep(base));
       }
       case 'complete_goal': {
@@ -3571,19 +3573,19 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (!isRecord(source) || !isRecord(selection) || selection['kind'] !== 'option') continue;
       const kind = source['kind'];
       if (kind !== 'unknown_call_review' && kind !== 'command_rerun_request'
-        && kind !== 'message_release') continue;
+        && kind !== 'message_release' && kind !== 'repair_approval') continue;
       const handedRaw = handed as unknown as Record<string, unknown>;
-      // A `message_release` card carries neither a `reviewRef` nor a `requestRef`: `failedCardRefOf` (:406) and
-      // `addFailedCardRef` (:415) stay the two review kinds' and are not reached for it (no failed card exists).
-      const cardRef = kind === 'message_release' ? null
+      // A `message_release` or `repair_approval` card carries neither a `reviewRef` nor a `requestRef`: `failedCardRefOf`
+      // (:406) and `addFailedCardRef` (:415) stay the two review kinds' and are not reached for it (no failed card exists).
+      const cardRef = kind === 'message_release' || kind === 'repair_approval' ? null
         : kind === 'unknown_call_review' ? handedRaw['reviewRef'] : handedRaw['requestRef'];
       if (cardRef === undefined) {
         hardFailure = true;
         if (failure === null) failure = 'invalid: a handed-over answer has no card ref of its source kind';
         continue;
       }
-      const card = kind === 'message_release' ? null : failedCardRefOf(kind, cardRef);
-      if (kind !== 'message_release' && card === null) {
+      const card = kind === 'message_release' || kind === 'repair_approval' ? null : failedCardRefOf(kind, cardRef);
+      if (kind !== 'message_release' && kind !== 'repair_approval' && card === null) {
         hardFailure = true;
         if (failure === null) failure = `invalid: a handed-over ${kind} answer has an incomplete card ref`;
         continue;
@@ -3643,6 +3645,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
       return await continueAfterFailedReview(owned, base, receipt, firstFailure, failedCards);
     }
     return advancing(receipt, selectWorkStep(base), failure);
+  }
+
+  async function handOverRepairAnswers(owned: Owned, base: Base): Promise<void> {
+    const answers = await deps.repairAnswers?.(owned.ctx, { goalRef: base.goalRef });
+    if (answers === undefined || answers.length === 0) return;
+    await applyHandedOverAnswers(owned, base, answers);
   }
 
   const advanceWork = async (ctx: CoreCallContext, input: WorkflowAdvanceInput,

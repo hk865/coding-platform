@@ -276,9 +276,11 @@ async function reviseCatalog(platform: Platform, scope: WorkspaceScope): Promise
   const revised = await platform.architecture.reviseArchitectureCatalog(contextOf(scope), {
     meta: { requestId: scope.projectId + '-revise', expected: scopePins(scope) },
     input: {
-      basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-      catalog: catalogWith(scope.projectId, 'The src subtree after the revision'),
-      reason: 'Sharpen the module responsibility',
+      expected: { catalogRef: current.value.catalog.ref,
+        baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+      ops: [{ op: 'set_responsibility', moduleId: catalogWith(scope.projectId, '').modules[0]!.ref.moduleId,
+        text: 'The src subtree after the revision' }],
+      responsibilityMoves: [], reason: 'Sharpen the module responsibility',
     },
   });
   expect(revised).toMatchObject({ status: 'committed', replayed: false });

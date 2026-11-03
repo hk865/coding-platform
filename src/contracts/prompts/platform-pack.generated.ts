@@ -185,6 +185,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "request_rework": "tools/request_rework.json",
       "request_recheck": "tools/request_recheck.json",
       "record_note": "tools/record_note.json",
+      "propose_architecture_revision": "tools/propose_architecture_revision.json",
       "project_source": "tools/project_source.json",
       "read_source": "tools/read_source.json",
       "cpp_index": "tools/cpp_index.json",
@@ -806,7 +807,11 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       },
     },
     "record_note": {
-      "description": "Record a note: `{ op: \"write\" | \"review\" | \"withdraw\", ... }`. Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the eight kinds: `convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`. Keep the conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that points at it via `replaces`. `write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; read the `check` result and fix what it reports. `review` (the scribe) reviews/accepts/rejects, with an optional `resolution: \"supersede\" | \"coexist\"` when resolving live contradictions; `withdraw` withdraws a note you may withdraw. Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service.",
+      "description": "Record a note: `{ op: \"write\" | \"review\" | \"withdraw\", ... }`. Write at task end, rework, plan adoption or archive (MVP B09). Before writing, look first: use the memory `lookup` branch for the existing `topics` of the anchor and the `find` branch, and reuse an existing topic. Anchor so the note still holds if this task is cancelled tomorrow (otherwise anchor on architecture). Pick one of the eight kinds: `convention`, `pitfall`, `tradeoff`, `open_question`, `preference`, `decision`, `understanding`, `repair`. Keep the conclusion to one line; facts are pointers only, never copied text. Close an `open_question` with the `decision` that points at it via `replaces`. `write` stores your draft (the platform resolves plan/catalog revisions, the stage anchor plan revision, file symbol locators and basis-file digests from this execution; never send them) and returns `{ write, check }`; read the `check` result and fix what it reports. `review` (the scribe) reviews/accepts/rejects, with an optional `resolution: \"supersede\" | \"coexist\"` when resolving live contradictions; `withdraw` withdraws a note you may withdraw. Only items with `currentEligible: true` are current conclusions. Authority is enforced by the note service. For `kind: \"repair\"`, `repair` takes `{ pin, ops, responsibilityMoves }`; the platform computes `structural` and resolves the anchor facts, so send only the pin, the ordered ops and the moves — never a derived `structural`.",
+      "parameters": {},
+    },
+    "propose_architecture_revision": {
+      "description": "Propose an architecture revision: `{ baseCatalogPin, ops, responsibilityMoves, reason, operationRef? }`. Trial the ordered repair ops and responsibility moves against the pinned catalog; on success save a pending proposal and return a single-member `needs_decision` card (or `pending_batch` in the cold-start window). A person's approval applies the frozen batch as one catalog revision. The platform computes `structural`, checks live module use, every edge and every destination, and derives the receipt identity.",
       "parameters": {},
     },
     "project_source": {
@@ -1198,6 +1203,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "request_rework": "platform",
     "request_recheck": "platform",
     "record_note": "platform",
+    "propose_architecture_revision": "platform",
     "project_source": "platform",
     "read_source": "platform",
     "cpp_index": "platform",

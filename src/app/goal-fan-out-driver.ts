@@ -60,6 +60,7 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
 import type { GoalTaskPort, GraphWrite, SetGoalControlInput } from '../core/work-graph/model/task-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { GoalDisplayRead, GoalLiveRunsRead, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
+import type { RepairActivationService } from '../core/work-graph/notes/activate-repair.js';
 import {
   GOAL_FAN_OUT_ACTOR, goalFanOutReason, goalFanOutRequestId, type GoalControl, type GoalRunControlCapabilityV1,
 } from '../core/work-graph/state/goal-machine.js';
@@ -164,6 +165,8 @@ export type GoalFanOutDriverDependencies = {
    * new claims at once and the holding Host re-drives at its start (GOAL-16).
    */
   driving?: () => boolean;
+  repairs?: Pick<RepairActivationService, 'attemptRepairsForGoal'>;
+  redriveRepairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<void>;
 };
 
 type Scope = { projectId: string; workspaceId: string };
@@ -426,6 +429,11 @@ export function createGoalFanOutDriver(deps: GoalFanOutDriverDependencies): Goal
     }
     if (control !== 'resume') return { goalRef, epoch, control, runs, problem: null };
     const continued = await continueResumed(ctx, scope, goalRef);
+    if (!startup) {
+      await deps.repairs?.attemptRepairsForGoal(ctx, { goalRef });
+      await deps.redriveRepairAnswers?.(ctx, { goalRef })
+        .catch(() => { /* the report, the resume and the handle never change */ });
+    }
     return { goalRef, epoch, control, runs, problem: continued.problem, continuations: continued.results };
   }
 

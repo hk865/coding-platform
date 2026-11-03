@@ -517,18 +517,18 @@ export async function createReminderWorld(kind: ReminderBackend,
       }
       const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
       if (registration.status !== 'ready') throw new Error('the workspace registration read failed');
-      const revisedCatalog = {
-        ...current.value.catalog.catalog,
-        modules: current.value.catalog.catalog.modules.map((module, index) => index === 0
-          ? { ...module, responsibility: `${module.responsibility} (revised by ${requestId})` }
-          : module),
-      };
+      const first = current.value.catalog.catalog.modules[0];
+      if (first === undefined) throw new Error('the current catalog has no module to revise');
       const revised = await platform.architecture.reviseArchitectureCatalog(ctx, {
         meta: { requestId, expected: [
           { ref: projectRef, revision: registration.value.project.revision },
           { ref: workspaceRef, revision: registration.value.workspace.revision }] },
-        input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-          catalog: revisedCatalog, reason: requestId },
+        input: {
+          expected: { catalogRef: current.value.catalog.ref,
+            baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+          ops: [{ op: 'set_responsibility', moduleId: first.ref.moduleId,
+            text: `${first.responsibility} (revised by ${requestId})` }],
+          responsibilityMoves: [], reason: requestId },
       });
       if (revised.status !== 'committed') throw new Error(`the real catalog revision failed: ${JSON.stringify(revised)}`);
     },

@@ -7,6 +7,7 @@ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createWhiteboardTools } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createToolCommitLookup } from '../../src/composition/tool-commit-lookup.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -217,7 +218,7 @@ async function adoptAsOperator(h: Harness, given: Answered) {
 async function recordApplication(h: Harness, given: Answered, receipt: DecisionApplicationReceiptV1) {
   const before = await h.queue();
   expect(before.counts.answeredPendingApplication).toBe(2);
-  const expected = ready(await createDecisionSourceFacts({ records: h.records, bindings: createInitializationBindingReader({ records: h.records }) }).readApplication(h.f.ctx, {
+  const expected = ready(await createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: h.records, bindings: createInitializationBindingReader({ records: h.records }) }).readApplication(h.f.ctx, {
     answer: given.saved, receipt,
   }));
   expect(expected.actor).toEqual(h.f.operatorActor);

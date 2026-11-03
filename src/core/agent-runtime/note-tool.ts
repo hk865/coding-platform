@@ -152,6 +152,31 @@ const sectionsSchema = z.object({
   next: z.string().min(1), risks: z.string().min(1),
 }).strict();
 
+/**
+ * The repair payload's outer shape. The ops and destinations stay loose here:
+ * the ONE op parser owns the ops' exact keys and the note service owns the move
+ * shape and trial, so the tool never holds a second copy of either rule.
+ */
+const repairMoveSchema = z.object({
+  link: z.record(z.string(), z.unknown()),
+  to: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('standby') }).strict(),
+    z.object({ kind: z.literal('modules'),
+      destinations: z.array(z.record(z.string(), z.unknown())) }).strict(),
+  ]),
+}).strict();
+const repairInputSchema = z.object({
+  pin: z.object({
+    catalogRef: z.object({ aggregateType: z.literal('ArchitectureCatalog'), projectId: z.string().min(1),
+      baselineId: z.string().min(1), revision: z.number().int().min(1) }).strict(),
+    baseline: z.object({ ref: z.object({ aggregateType: z.literal('ArchitectureBaselineRevision'),
+      projectId: z.string().min(1), baselineId: z.string().min(1), revision: z.number().int().min(1) }).strict(),
+      digest: z.string().min(1) }).strict(),
+  }).strict(),
+  ops: z.array(z.record(z.string(), z.unknown())).min(1).max(20),
+  responsibilityMoves: z.array(repairMoveSchema),
+}).strict();
+
 export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
   const description = (config.texts?.['record_note']
     ?? PLATFORM_TOOL_TEXTS['record_note']!).description;
@@ -179,6 +204,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     structural: z.boolean().optional(),
     body: z.string().optional(),
     sections: sectionsSchema.optional(),
+    repair: repairInputSchema.optional(),
     expectedPointerRevision: z.number().int().min(0).nullable().optional(),
   }).strict();
   const reviewSchema = z.object({
@@ -269,6 +295,12 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
       }
       if (args.kind === 'understanding' && args.body !== undefined) {
         return rejectedWrite(callId, 'an understanding note gives sections, not a body');
+      }
+      if (args.kind !== 'repair' && args.repair !== undefined) {
+        return rejectedWrite(callId, 'only a repair note carries a repair payload');
+      }
+      if (args.kind === 'repair' && args.repair === undefined) {
+        return rejectedWrite(callId, 'a repair note requires a repair payload');
       }
     }
     let commandId: string;

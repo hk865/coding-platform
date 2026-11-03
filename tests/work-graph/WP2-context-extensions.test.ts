@@ -35,6 +35,7 @@ import type { SessionPage } from '../../src/core/work-graph/model/session-contra
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
@@ -244,7 +245,7 @@ async function openDecisionHarness(widths: DecisionReadWidths = {}): Promise<Dec
   const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: OPERATOR, messages: mailbox, materials: mailboxDeps.materials,
-    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
+    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
   return { f, mailbox, decisions, queue: realDecisionQueue(f, [], widths) };
 }
 
@@ -515,10 +516,13 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     // 'PlanProposal' < 'Task' ('P' < 'T'), so change_pending precedes
     // required_task_deferred; the candidate keys differ only in the proposal id,
     // so they follow the sorted proposal ids.
+    // 3 original unwired sources + the two new card kinds: 6 cards + 5 hints = 11, 5 cards + 5 hints = 10.
     const hintRowKeys = [
       'decision:not_available:message_release',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
+      'decision:not_available:repair_approval',
+      'decision:not_available:structural_proposal',
     ];
     const goalJson = '{"aggregateType":"Goal","goalId":"wp2-f07-deferred-goal","projectId":"P"}';
     const proposalJson = (proposalId: string): string =>
@@ -571,9 +575,9 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
   //   [fixture answered 364ef243..., Real decision 0 6341ee3b...]
   //   [Real decision 2 798d7148..., fixture decision 7f544757...]
   //   [Real decision 3 cd8c37dd...]
-  // -> 2/2/2/1, still with Real decision 3 on the last page. The four card
-  // sources this harness does not wire still produce 4 literal not_available
-  // hint rows: 8 + 4 = 12 rows, then 9 + 4 = 13 rows.
+  // -> 2/2/2/1, still with Real decision 3 on the last page. The six card
+  // sources this harness does not wire still produce 6 literal not_available
+  // hint rows: 8 + 6 = 14 rows, then 9 + 6 = 15 rows.
   it('F07 5,000 real waiting cards are all read and one more is read too (no capacity bound) (small: 4 requests, page 2)', async () => {
     const h = await openDecisionHarness({ lookupPageLimit: 2 });
     const read = createContextExtensionsReader({ anomalies: anomalyDouble(), hostActor: HOST_ACTOR,
@@ -617,20 +621,22 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
         + '"goalRef":{"aggregateType":"Goal","goalId":"B","projectId":"P"}}]}',
     ];
     for (const key of seedKeys) expect(keys.has(key)).toBe(true);
-    // The four literal L5 not_available hint rows for the seven card sources.
+    // The six literal L5 not_available hint rows for the nine card sources.
     const hintKeys = [
       'decision:not_available:goal_cause',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
       'decision:not_available:message_release',
+      'decision:not_available:repair_approval',
+      'decision:not_available:structural_proposal',
     ];
     for (const key of hintKeys) expect(keys.has(key)).toBe(true);
-    // 8 card rows (4 seed + 4 created) plus the 4 literal hint rows; nothing
-    // was truncated, skipped or fabricated.
-    expect(exact.decisions.rows).toHaveLength(12);
+    // 8 card rows (4 seed + 4 created) plus 6 literal hint rows; nothing was
+    // truncated, skipped or fabricated.
+    expect(exact.decisions.rows).toHaveLength(14);
 
     // One more real waiting card: the read still succeeds and carries it, with
-    // every earlier row kept: 9 card rows plus the 4 hint rows.
+    // every earlier row kept: 9 card rows plus 6 hint rows.
     const overflow = await sendDecisionRequest(h, 'Real decision overflow');
     const overflowSource = overflow.decision?.source;
     if (overflowSource === undefined) throw new Error('the sent decision request carries no decision source');
@@ -638,7 +644,7 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     const overKeys = new Set(over.decisions.rows.map(row => row.key));
     expect(overKeys.has(`decision:${overflowSource.key}`)).toBe(true);
     for (const key of [...created, ...seedKeys, ...hintKeys]) expect(overKeys.has(key)).toBe(true);
-    expect(over.decisions.rows).toHaveLength(13);
+    expect(over.decisions.rows).toHaveLength(15);
   });
 
   it('SUP (fault injection) an installed Goal-settings read failure fails the whole context read', async () => {

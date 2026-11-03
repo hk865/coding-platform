@@ -10,7 +10,7 @@ import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } f
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
   NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1,
-  NoteSourceV1, NoteState, NoteVersionSnapshot,
+  NoteSourceV1, NoteState, NoteVersionSnapshot, RepairInputV1, RepairPayloadV1,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
@@ -125,6 +125,7 @@ export type RecordNoteWriteArgs = {
   structural?: boolean;
   body?: string;
   sections?: NoteSectionsV1;
+  repair?: RepairInputV1;
   expectedPointerRevision?: number | null;
 };
 export type RecordNoteReviewArgs = {
@@ -172,7 +173,9 @@ export function recordNoteRequestOf(args: RecordNoteArgs, commandId: string): Re
     };
     const note: NoteDraftV1 = args.kind === 'understanding'
       ? { ...common, kind: 'understanding', sections: args.sections as NoteSectionsV1 }
-      : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding'>, body: args.body as string };
+      : args.kind === 'repair'
+        ? { ...common, kind: 'repair', body: args.body as string, repair: args.repair as RepairInputV1 }
+        : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding' | 'repair'>, body: args.body as string };
     return { op: 'write', request: { commandId, note,
       expectedPointerRevision: args.expectedPointerRevision ?? null, goalId: null } };
   }
@@ -308,6 +311,7 @@ export type NoteItemV1 = { noteId: string; version: number; storedState: NoteSta
   matchedTerms: string[]; score: number;
   segment?: 'related' | 'project';
   sections?: NoteSectionsV1;
+  repair?: RepairPayloadV1;
   body?: { text: string; next: string | null } };
 
 /** P9: goal/stage anchors only; `{ null, null }` when no pointer exists yet. */

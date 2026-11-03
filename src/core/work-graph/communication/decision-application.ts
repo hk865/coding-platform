@@ -27,6 +27,7 @@ import type { AggregateRef } from '../../../contracts/ledger.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
+import { parseTaggedObject } from '../../../contracts/validation/common.js';
 import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { EncodedDomainEvent, StoreFailure } from '../../record-store/ports.js';
 import type { DecisionSourceFactsPort, S5RecordPort } from '../model/decision-contracts.js';
@@ -34,6 +35,7 @@ import { decodeMessageReleaseProofEvent } from './decision-change-proof.js';
 import { decodeGoalSettingsChangedEvent, decisionChangeProofProblem } from '../persistence/decision-record-codecs.js';
 import { noteDispositionChangedEventFromEvent } from '../persistence/note-record-codecs.js';
 import { decodePlanRevisionAcceptedEvent, decodePlanProposalRecordedEvent } from '../persistence/plan-record-codecs.js';
+import { actorProblem, eventBodyEnvelopeProblem, eventEnvelopeProblem } from '../persistence/event-validation.js';
 import { taskClaimedEventFromEvent, taskRequeuedEventFromEvent } from '../tasks/claim-record-codecs.js';
 import { unknownCallReviewChangedEventFromEvent } from '../tasks/unknown-call-review-codecs.js';
 import { commandRerunRequestChangedEventFromEvent } from '../tasks/command-rerun-request-codecs.js';
@@ -229,6 +231,66 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: reverified.proof ?? null,
       effect: { kind: 'recheck', ref: round.ref, party: round.subjectRunRef, after,
         ...(reverified.acknowledgement === undefined ? {} : { acknowledgement: reverified.acknowledgement }) } };
+  },
+  // The one proof carrier for a repair activation and a proposal approval: the catalog event is
+  // the commit's last event and carries the formal proof; an ordinary host revision carries none and stays
+  // `incomplete` below.
+  ArchitectureCatalogRevised: (event) => {
+    // The catalog codec owns the full event; this row reads the two proof fields and the deciding actor from the
+    // already-committed body. A partial catalog body is `unavailable`, never a proof.
+    const envelope = eventEnvelopeProblem(event, 'ArchitectureCatalogRevised', 1);
+    if (envelope !== null) {
+      return rejectedWithCurrent('unavailable', `the ArchitectureCatalogRevised event is damaged: ${envelope}`);
+    }
+    const parsed = parseTaggedObject(event.json, 'ArchitectureCatalogRevised event');
+    if (typeof parsed === 'string') {
+      return rejectedWithCurrent('unavailable', `the ArchitectureCatalogRevised event is damaged: ${parsed}`);
+    }
+    const body = eventBodyEnvelopeProblem(parsed, event, 'ArchitectureCatalogRevised');
+    if (body !== null) {
+      return rejectedWithCurrent('unavailable', `the ArchitectureCatalogRevised event is damaged: ${body}`);
+    }
+    const actor = actorProblem(parsed['actor']);
+    if (actor !== null) {
+      return rejectedWithCurrent('unavailable', `the ArchitectureCatalogRevised event is damaged: ${actor}`);
+    }
+    const proof = parsed['proof'];
+    if (proof !== undefined) {
+      const problem = decisionChangeProofProblem(proof);
+      if (problem !== null) {
+        return rejectedWithCurrent('unavailable', `the ArchitectureCatalogRevised proof is damaged: ${problem}`);
+      }
+    }
+    return { actor: parsed['actor'] as DecisionApplicationV1['actor'], appliedAt: event.occurredAt,
+      proof: (proof ?? null) as DecisionChangeProofV1 | null };
+  },
+  // A proposal rejection/stale writes no catalog event; its proof is on the commit's last proposal state event.
+  ArchitectureProposalChanged: (event) => {
+    const envelope = eventEnvelopeProblem(event, 'ArchitectureProposalChanged', 1);
+    if (envelope !== null) {
+      return rejectedWithCurrent('unavailable', `the ArchitectureProposalChanged event is damaged: ${envelope}`);
+    }
+    const parsed = parseTaggedObject(event.json, 'ArchitectureProposalChanged event');
+    if (typeof parsed === 'string') {
+      return rejectedWithCurrent('unavailable', `the ArchitectureProposalChanged event is damaged: ${parsed}`);
+    }
+    const body = eventBodyEnvelopeProblem(parsed, event, 'ArchitectureProposalChanged');
+    if (body !== null) {
+      return rejectedWithCurrent('unavailable', `the ArchitectureProposalChanged event is damaged: ${body}`);
+    }
+    const actor = actorProblem(parsed['actor']);
+    if (actor !== null) {
+      return rejectedWithCurrent('unavailable', `the ArchitectureProposalChanged event is damaged: ${actor}`);
+    }
+    const proof = parsed['proof'];
+    if (proof !== undefined) {
+      const problem = decisionChangeProofProblem(proof);
+      if (problem !== null) {
+        return rejectedWithCurrent('unavailable', `the ArchitectureProposalChanged proof is damaged: ${problem}`);
+      }
+    }
+    return { actor: parsed['actor'] as DecisionApplicationV1['actor'], appliedAt: event.occurredAt,
+      proof: (proof ?? null) as DecisionChangeProofV1 | null };
   },
   // The initial architecture/completion-policy proof is slice 6.
   ArchitectureCatalogAdopted: () => rejectedWithCurrent('unsupported',

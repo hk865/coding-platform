@@ -32,40 +32,50 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreError, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
+import type { ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { ProjectRef, WorkspaceRef } from '../../../contracts/ledger.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   AdoptInitialArchitectureInput, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
   ArchitectureCatalogPort, ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision,
-  CatalogModuleFacts, ReadArchitectureRevisionInput, ReviseArchitectureCatalogInput,
+  CatalogModuleFacts, ReadArchitectureRevisionInput, ReviseArchitectureCatalogOpsInput,
 } from './catalog-contracts.js';
 import {
   ARCHITECTURE_CATALOG_ADOPTED_EVENT, ARCHITECTURE_CATALOG_REVISED_EVENT, architectureBaselineDigest,
   decodeArchitectureCatalogAdoptedEvent, decodeArchitectureCatalogRecord, decodeArchitectureCatalogRevisedEvent,
   encodeArchitectureCatalog, encodeArchitectureCatalogAdoptedEvent, encodeArchitectureCatalogRevisedEvent,
-  readArchitectureBaselinePin, readArchitectureBaselineRef, readArchitectureBaselineSnapshot, readConstraints,
+  readArchitectureBaselineRef, readArchitectureBaselineSnapshot, readConstraints,
   readModuleRef, validateAdoptedArchitecture,
   type ArchitectureCatalogAdoptedEventV1, type ArchitectureCatalogRevisedEventV1,
 } from './catalog-record-codecs.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { decodeProjectSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
+import { mergeGuards } from '../persistence/record-guards.js';
+import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import type { CatalogRevisionDependencies, CatalogRevisionInputV1 } from './revision-planner.js';
+import {
+  catalogRevisionKeys, catalogRevisionMovesProblem, catalogRevisionPinProblem, planCatalogRevision,
+} from './revision-planner.js';
+import { parseRepairOps } from './repair-ops.js';
 
 export { ARCHITECTURE_CATALOG_SCHEMAS } from './catalog-record-codecs.js';
 
 /** Records only: the catalog shares the baseline/active transaction and needs no
  * second store, body or index. */
-export type ArchitectureCatalogStores = { records: GoalRecordTransactionPort };
+export type ArchitectureCatalogStores = {
+  records: GoalRecordTransactionPort;
+  /** The task/role-scope capabilities a revising caller binds (G5). */
+  revision?: CatalogRevisionDependencies;
+};
 
 const ADOPT_IDENTITY_PREFIX = 'architecture-catalog-adopt:';
 const ADOPT_COMMAND_TYPE = 'AdoptInitialArchitecture';
-const REVISE_IDENTITY_PREFIX = 'architecture-catalog-revise:';
-const REVISE_COMMAND_TYPE = 'ReviseArchitectureCatalog';
 const MAX_REVISE_REASON_BYTES = 2048;
-const BASELINE_SCHEMA_ID = 'ArchitectureBaselineRevisionSnapshot@1';
-const BASELINE_ACTIVE_SCHEMA_ID = 'ProjectArchitectureBaselineActiveSnapshot@1';
+export const BASELINE_SCHEMA_ID = 'ArchitectureBaselineRevisionSnapshot@1';
+export const BASELINE_ACTIVE_SCHEMA_ID = 'ProjectArchitectureBaselineActiveSnapshot@1';
 
 type Rejection = { status: 'rejected'; code: CoreError; reason: string; current?: VersionPin[] };
 type Owned<T> = { status: 'owned'; value: T } | { status: 'invalid'; reason: string };
@@ -87,7 +97,7 @@ function mapStoreFailure(failure: StoreFailure): Rejection {
     case 'invalid': return invalid(failure.reason);
     case 'unsupported': return unavailable(failure.reason);
     case 'corrupt': return unavailable('corrupt: ' + failure.reason);
-    case 'unique_conflict':
+    case 'unique_conflict': return sessionStoreFailureToRejection(failure);
     case 'unavailable': return unavailable(failure.reason);
     // The Store's own idempotency verdict is preserved: a same-identity commit
     // with a different fingerprint must never be flattened into `unavailable`.
@@ -118,13 +128,13 @@ function ownJsonInput<T>(value: T, what: string): Owned<T> {
 function parseRecordBody(record: EncodedRecord): unknown {
   try { return JSON.parse(record.json); } catch { return null; }
 }
-function activeRefKey(projectId: string): string {
+export function activeRefKey(projectId: string): string {
   return canonicalJson({ aggregateType: 'ProjectArchitectureBaselineActive', projectId } as unknown as JsonValue);
 }
-function baselineRefFor(projectId: string, baselineId: string, revision: number): ArchitectureBaselineRevisionRef {
+export function baselineRefFor(projectId: string, baselineId: string, revision: number): ArchitectureBaselineRevisionRef {
   return { aggregateType: 'ArchitectureBaselineRevision', projectId, baselineId, revision };
 }
-function catalogRefFor(projectId: string, baselineId: string, revision: number): ArchitectureCatalogRef {
+export function catalogRefFor(projectId: string, baselineId: string, revision: number): ArchitectureCatalogRef {
   return { aggregateType: 'ArchitectureCatalog', projectId, baselineId, revision };
 }
 function decodeActivePointer(record: EncodedRecord): { status: 'ok'; value: ArchitectureBaselineRevisionRef } | Rejection {
@@ -300,23 +310,25 @@ async function restoreAdopted(records: GoalRecordTransactionPort,
 /** Restores the exact `ArchitectureRevision` embedded in the ORIGINAL revision
  * event, never recomputed against the later active pointer. */
 async function restoreRevised(records: GoalRecordTransactionPort, receipt: CommitReceipt,
-  expected: { identityKey: string; projectId: string; basedOn: ArchitectureBaselinePin }):
+  expected: { identityKey: string; projectId: string; expected: ArchitectureCatalogPinV1 }):
   Promise<{ status: 'restored'; value: ArchitectureRevision } | Rejection> {
   if (receipt.identityKey !== expected.identityKey) return unavailable('the idempotency receipt belongs to another identity');
-  if (receipt.eventIds.length !== 1) return unavailable('the revision receipt must reference exactly one event');
+  // The catalog event is the tail of every successful revision commit; the
+  // receipt may also carry the responsibility events written in the same commit.
   const located = await records.eventAt(receipt.cursor);
   if (located.status !== 'ready') return mapStoreFailure(located);
   if (String(located.value.cursor) !== String(receipt.cursor)) return unavailable('eventAt returned a different cursor');
   const decoded = decodeArchitectureCatalogRevisedEvent(located.value.event);
   if (decoded.status !== 'decoded') return unavailable('the original revision event is corrupt: ' + decoded.reason);
   const event = decoded.value;
-  if (event.eventId !== receipt.eventIds[0]) return unavailable('the receipt points at another event');
+  if (!receipt.eventIds.includes(event.eventId)) return unavailable('the tail event is not part of the revision receipt');
   if (event.identityKey !== expected.identityKey) return unavailable('the original revision event belongs to another identity');
   if (event.projectId !== expected.projectId || event.fromPin.ref.projectId !== expected.projectId) {
     return unavailable('the original revision event is outside the recovered scope');
   }
-  if (canonicalJson(event.fromPin as unknown as JsonValue) !== canonicalJson(expected.basedOn as unknown as JsonValue)) {
-    return unavailable('the original revision event does not match the requested baseline pin');
+  if (canonicalJson(event.fromPin as unknown as JsonValue)
+    !== canonicalJson(expected.expected.baseline as unknown as JsonValue)) {
+    return unavailable('the original revision event does not match the requested catalog pin');
   }
   // The event embeds the pre-bind revision (the `since` placeholder is null);
   // the store bound this commit's cursor into the written catalog row. Returning
@@ -364,7 +376,8 @@ export type CurrentCatalogWindow =
  * versions) and returns both the decoded revision and the exact guards a CAS
  * caller must join. `readCurrentRevision` and `readCatalogModuleFacts` share it.
  */
-export async function readCurrentCatalogWindow(records: GoalRecordTransactionPort, projectId: string): Promise<CurrentCatalogWindow> {
+export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  projectId: string): Promise<CurrentCatalogWindow> {
   const activeKey = activeRefKey(projectId);
   const pointerRead = await records.readMany([activeKey]);
   if (pointerRead.status !== 'ready') return mapStoreFailure(pointerRead);
@@ -578,30 +591,27 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
   }
 
   /**
-   * One authorized Host revision of the already-adopted catalog. Reuses the
-   * adoption owner (`readCurrentCatalogWindow`, the original validator/encoder
-   * and the original receipt reader); containment lives only in the new catalog
-   * body, never in a second tree fact.
-   *
-   * `basedOn` must be the exact current immutable baseline pin (otherwise
-   * `source_stale`); a project with no active baseline is `incomplete`. The
-   * request is structurally isolated before the first Store call, an original
-   * receipt replays from the original event, and a same-identity race reuses
-   * the existing bounded identity recovery.
+   * One authorized Host revision of the already-adopted catalog. The planner
+   * owns the pin/op/delete/move rules and returns the whole contribution; this
+   * wrapper validates the request before the first Store call, keeps the
+   * original receipt/recovery mechanics and commits the contribution once.
    */
   async function reviseArchitectureCatalog(ctx: CoreCallContext,
-    request: GraphWrite<ReviseArchitectureCatalogInput>): Promise<WriteResult<ArchitectureRevision>> {
+    request: GraphWrite<ReviseArchitectureCatalogOpsInput>): Promise<WriteResult<ArchitectureRevision>> {
     const owned = ownJsonInput(request, 'reviseArchitectureCatalog request');
     if (owned.status === 'invalid') return invalid(owned.reason);
     const body = owned.value as unknown as { input?: unknown; meta?: unknown };
     const rawInput = body.input;
     const rawMeta = body.meta;
     if (!isRecord(rawInput) || !isRecord(rawMeta)) return invalid('reviseArchitectureCatalog requires an input and meta object');
-    if (!exactKeys(rawInput, ['basedOn', 'catalog', 'reason'])) {
-      return invalid('reviseArchitectureCatalog.input must carry exactly basedOn, catalog and reason');
+    if (!exactKeys(rawInput, ['expected', 'ops', 'responsibilityMoves', 'reason'])) {
+      return invalid('reviseArchitectureCatalog.input must carry exactly expected, ops, responsibilityMoves and reason');
     }
-    const basedOn = readArchitectureBaselinePin(rawInput['basedOn']);
-    if (basedOn === null) return invalid('reviseArchitectureCatalog requires a complete baseline pin');
+    const expected = rawInput['expected'] as ArchitectureCatalogPinV1;
+    const pinProblem = catalogRevisionPinProblem(expected);
+    if (pinProblem !== null) return invalid(pinProblem);
+    const parsed = parseRepairOps(rawInput['ops']);
+    if (!parsed.ok) return invalid(parsed.problem.reason);
     const reason = rawInput['reason'];
     if (!nonEmpty(reason)) return invalid('reviseArchitectureCatalog requires a non-empty reason');
     if (Buffer.byteLength(reason, 'utf8') > MAX_REVISE_REASON_BYTES) {
@@ -613,25 +623,23 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (pins.status !== 'ok') return pins;
     const projectId = pins.project.ref.projectId;
     const workspaceId = pins.workspace.ref.workspaceId;
-    if (basedOn.ref.projectId !== projectId) return invalid('the basedOn baseline pin is outside the requested project');
+    if (expected.catalogRef.projectId !== projectId) return invalid('the expected catalog pin is outside the requested project');
     const bound = bindHostWriteContext(ctx, projectId, workspaceId);
     if (bound.status !== 'ok') return bound;
     if (ctx.signal.aborted) return rejected('cancelled', 'the catalog revision was cancelled before admission');
-    const candidate = validateAdoptedArchitecture(rawInput['catalog'], projectId);
-    if (candidate.status !== 'ok') return rejected(candidate.code, candidate.reason);
-    const catalog = candidate.value;
+    const revisionInput: CatalogRevisionInputV1 = {
+      expected, ops: parsed.ops, responsibilityMoves: rawInput['responsibilityMoves'] as CatalogRevisionInputV1['responsibilityMoves'],
+      reason, commandId: requestId,
+    };
+    const movesProblem = catalogRevisionMovesProblem(revisionInput.responsibilityMoves, projectId, null);
+    if (movesProblem !== null) return invalid(movesProblem);
+    const keys = catalogRevisionKeys(revisionInput, bound.actor, projectId);
+    const expectedIdentity = { identityKey: keys.identityKey, projectId, expected };
 
-    const fingerprint = sha256Hex(canonicalJson({
-      schemaVersion: 1, commandType: REVISE_COMMAND_TYPE, projectId, workspaceId, basedOn, catalog, reason,
-      expected: {
-        project: { ref: pins.project.ref, revision: pins.project.revision },
-        workspace: { ref: pins.workspace.ref, revision: pins.workspace.revision },
-      },
-    } as unknown as JsonValue));
-    const identityKey = REVISE_IDENTITY_PREFIX + commandIdentityKey({ projectId, actor: bound.actor, idempotencyKey: requestId });
-    const expectedIdentity = { identityKey, projectId, basedOn };
-
-    const early = await records.lookupCommit({ identityKey, fingerprint });
+    // The receipt lookup precedes the caller-scope comparison: a resend must
+    // return its original revision even after a later commit raised the Project
+    // or Workspace revision the command's pins necessarily predate.
+    const early = await records.lookupCommit({ identityKey: keys.identityKey, fingerprint: keys.fingerprint });
     if (early.status === 'ready') {
       const restored = await restoreRevised(records, early.value, expectedIdentity);
       if (restored.status !== 'restored') return restored;
@@ -640,104 +648,62 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
     if (early.code !== 'not_found') return unavailable(early.code + ': ' + early.reason);
 
-    const current = await readCurrentCatalogWindow(records, projectId);
-    if (current.status === 'not_found') return rejected('incomplete', 'the project has no active architecture baseline to revise');
-    if (current.status !== 'ready') {
-      // A peer using this same identity may have committed after our early
-      // lookup; a stale window is exactly that race, so re-query that exact
-      // identity before accepting the stale verdict. Other real read errors
-      // keep their existing return.
-      if (current.code === 'source_stale') {
-        return recoverConflictByIdentity(records, identityKey, fingerprint, current,
-          receipt => restoreRevised(records, receipt, expectedIdentity));
-      }
-      return current;
-    }
-    if (canonicalJson(current.baseline.ref as unknown as JsonValue) !== canonicalJson(basedOn.ref as unknown as JsonValue)
-      || current.baseline.contentDigest !== basedOn.digest) {
-      // The same-identity peer may already have advanced the pointer, making the
-      // requested baseline look stale. Re-query that exact identity first; only a
-      // genuine absence keeps the original source_stale fallback.
-      const stale = rejected('source_stale', 'the basedOn baseline pin is not the current active architecture revision');
-      return recoverConflictByIdentity(records, identityKey, fingerprint, stale,
-        receipt => restoreRevised(records, receipt, expectedIdentity));
+    const callerScope = await readCallerScope(records, pins, projectId, workspaceId);
+    if (callerScope.status !== 'ready') {
+      // A peer using the same identity may have committed between the early
+      // receipt miss above and this scope read; the scope read then sees the
+      // later Project/Workspace revision even though our receipt now exists.
+      // That is the same conflict shape as the planner and commit exits, so it
+      // takes the ONE identity re-query exit; without a matching receipt the
+      // scope conflict still stands.
+      return callerScope.code === 'revision_conflict'
+        ? recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, callerScope,
+          receipt => restoreRevised(records, receipt, expectedIdentity))
+        : callerScope;
     }
 
-    // A revision must not drop the parent's already-declared containment section
-    // (only an explicit empty parentOf can flatten it) and must not remove a
-    // module ref. Dependency and containment edges stay independent.
-    const parentCatalog = current.catalog.catalog;
-    const revisedModuleIds = new Set(catalog.modules.map(module => module.ref.moduleId));
-    for (const parentModule of parentCatalog.modules) {
-      if (!revisedModuleIds.has(parentModule.ref.moduleId)) {
-        return invalid('a catalog revision must not remove the existing module ' + parentModule.ref.moduleId);
+    const revisionDeps = stores.revision ?? {
+      records: records as GoalRecordTransactionPort & RecordLookupPort,
+      now: () => new Date().toISOString(),
+      eventId: () => randomUUID(),
+    };
+    const planned = await planCatalogRevision(revisionDeps, ctx, revisionInput);
+    if (planned.status !== 'ready') {
+      if (planned.status === 'rejected') {
+        if (planned.code === 'revision_conflict' || planned.code === 'source_stale') {
+          return recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, planned,
+            receipt => restoreRevised(records, receipt, expectedIdentity));
+        }
+        return planned;
       }
+      return unavailable('the catalog revision plan is not ready');
     }
-    const parentDeclaresContainment = Object.prototype.hasOwnProperty.call(parentCatalog, 'containment');
-    const revisedDeclaresContainment = Object.prototype.hasOwnProperty.call(catalog, 'containment');
-    if (parentDeclaresContainment && !revisedDeclaresContainment) {
-      return invalid('the parent catalog declared containment, so the revised catalog must declare it explicitly');
-    }
-    const dependencyRules = current.baseline.content.dependencyRules;
-    if (dependencyRules !== undefined && (!Array.isArray(dependencyRules) || dependencyRules.length > 0)) {
-      return rejected('unsupported', 'a baseline with typed dependencyRules cannot be revised without their rule consumer');
-    }
-
-    const scope = await readCallerScope(records, pins, projectId, workspaceId);
-    if (scope.status !== 'ready') {
-      if (scope.code === 'revision_conflict') {
-        return recoverConflictByIdentity(records, identityKey, fingerprint, scope,
-          receipt => restoreRevised(records, receipt, expectedIdentity));
-      }
-      return scope;
-    }
-
-    const baselineId = basedOn.ref.baselineId;
-    const nextRevision = basedOn.ref.revision + 1;
-    const content = structuredClone(current.baseline.content);
-    const contentDigest = architectureBaselineDigest({ schemaVersion: 1, baselineId, contentRevision: nextRevision, content });
-    if (contentDigest === null) return invalid('the carried baseline content is not canonical JSON');
-    const baselineRef = baselineRefFor(projectId, baselineId, nextRevision);
-    const baseline: ArchitectureBaselineRevisionSnapshot = {
-      ref: baselineRef, revision: 1, schemaVersion: 1, baselineId, contentRevision: nextRevision, contentDigest, content,
-    };
-    const catalogRef = catalogRefFor(projectId, baselineId, nextRevision);
-    const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog, since: null };
-    const activeRecord = {
-      ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
-      projectId, revision: current.activeRevision + 1, activeRevision: baselineRef,
-    };
-    const event: ArchitectureCatalogRevisedEventV1 = {
-      eventId: randomUUID(), eventType: ARCHITECTURE_CATALOG_REVISED_EVENT, schemaVersion: 1,
-      occurredAt: new Date().toISOString(), identityKey, fingerprint, projectId,
-      fromPin: basedOn, actor: bound.actor, reason, revision: { baseline, catalog: catalogRecord },
-    };
-    const baselineKey = canonicalJson(baselineRef as unknown as JsonValue);
-    const catalogKey = canonicalJson(catalogRef as unknown as JsonValue);
-    const activeKey = activeRefKey(projectId);
-    const guards: RecordGuard[] = [
-      { refKey: canonicalJson(projectRefFor(projectId) as unknown as JsonValue), expectedRevision: scope.projectRevision },
-      { refKey: canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue), expectedRevision: scope.workspaceRevision },
-      ...current.guards,
-      { refKey: baselineKey, expectedRevision: null },
-      { refKey: catalogKey, expectedRevision: null },
-    ];
     if (ctx.signal.aborted) return rejected('cancelled', 'the catalog revision was cancelled before commit');
+    const { revision, pin: _pin, ...fragment } = planned.value;
+    // The planner re-reads Project/Workspace, but the caller's own earlier read
+    // is the pin it declared. Merging both guards turns a commit that raised
+    // either revision in between into mergeGuards' revision_conflict instead of
+    // silently admitting the stale caller pin under the newer version.
+    const scoped = mergeGuards([...fragment.guards,
+      { refKey: canonicalJson(projectRefFor(projectId) as unknown as JsonValue),
+        expectedRevision: callerScope.projectRevision },
+      { refKey: canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue),
+        expectedRevision: callerScope.workspaceRevision },
+    ]);
+    // A conflict on the caller's own pins is the same conflict shape as a
+    // planner or commit one: the identity may have committed the same command
+    // while the scope moved, so it takes that ONE recovery exit too.
+    if (!scoped.ok) {
+      return scoped.rejection.code === 'revision_conflict'
+        ? recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, scoped.rejection,
+          receipt => restoreRevised(records, receipt, expectedIdentity))
+        : scoped.rejection;
+    }
     let committed;
     try {
       committed = await records.commit({
-        identityKey, fingerprint, guards,
-        records: [
-          { refKey: baselineKey, schemaId: BASELINE_SCHEMA_ID, revision: 1, json: JSON.stringify(baseline) },
-          encodeArchitectureCatalog(catalogRecord),
-          { refKey: activeKey, schemaId: BASELINE_ACTIVE_SCHEMA_ID, revision: activeRecord.revision, json: JSON.stringify(activeRecord) },
-        ],
-        claims: [], indexGuards: [], indexChanges: [],
-        // 8A (decision 72): the revision row records the cursor of
-        // this commit's last event (`ArchitectureCatalogRevised`), so
-        // `listCatalogVersions` can read that event's real occurredAt and reason.
-        commitCursorBindings: [{ refKey: catalogKey, field: 'since' }],
-        events: [encodeArchitectureCatalogRevisedEvent(event)],
+        ...fragment, guards: scoped.guards,
+        identityKey: keys.identityKey, fingerprint: keys.fingerprint, indexGuards: [], indexChanges: [],
       });
     } catch (error) {
       return unavailable('the catalog revision transaction failed: ' + messageOf(error));
@@ -745,17 +711,15 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (committed.status !== 'committed') {
       const failure = mapStoreFailure(committed);
       if (committed.code === 'revision_conflict') {
-        return recoverConflictByIdentity(records, identityKey, fingerprint, failure,
+        return recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, failure,
           receipt => restoreRevised(records, receipt, expectedIdentity));
       }
       return failure;
     }
     if (!committed.replayed) {
-      // The commit bound the `since` placeholder to this commit's cursor; the
-      // in-memory `catalogRecord` still carries the pre-bind null, so return the
-      // committed row (the same value the store read returns).
       return { status: 'committed',
-        value: { baseline, catalog: { ...catalogRecord, since: committed.cursor } }, replayed: false, cursor: committed.cursor };
+        value: { ...revision, catalog: { ...revision.catalog, since: committed.cursor } },
+        replayed: false, cursor: committed.cursor };
     }
     const restored = await restoreRevised(records, committed, expectedIdentity);
     if (restored.status !== 'restored') return restored;

@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "35fc9e33463fc1df7a32f225538845fa88e8fa066f25ddb27c9f5685af4d04af"
+    "sha256": "26df9418a8527cff64775d3e9ddc9ef260abd53d1fcae5e57930fab28d1e8001"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -189,7 +189,11 @@
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",
-    "sha256": "543e52d8f2ba86228ab92b168404f82f39794e7caed176ef841e5c02b4266d88"
+    "sha256": "2681389ef27908ffac411bdd9202367ab76dfe9a194bc0ecd9641c977d226cf6"
+  },
+  {
+    "path": "resources/prompts/platform/tools/propose_architecture_revision.json",
+    "sha256": "1ead056def4a3294cedfd6d4a85aea5bfa829e343489681f5f820910fd293a86"
   },
   {
     "path": "resources/prompts/platform/tools/project_source.json",

@@ -46,6 +46,11 @@ export const EXPECTED_ROUTE_ROWS = {
   'architecture/compare': { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' },
   'architecture/compare-formal': { kind: 'plain', binding: 'compareFormalObserved', owner: 'architecture.compareFormalObserved' },
   'architecture/impact': { kind: 'plain', binding: 'queryImpact', owner: 'architecture.queryImpact' },
+  // The person's catalog revision and the proposal read beside the two adopt/read rows.
+  'architecture/revise': { kind: 'graph_write', binding: 'reviseArchitectureCatalog',
+    owner: 'architecture.reviseArchitectureCatalog' },
+  'architecture/proposals/read': { kind: 'plain', binding: 'readArchitectureProposal',
+    owner: 'architecture.readArchitectureProposal' },
   // Slice 3: the graph find route and the three legacy reads beside it.
   'graph/find': { kind: 'plain', binding: 'findGraph', owner: 'graphContext.findGraph' },
   'tasks/query': { kind: 'plain', binding: 'queryTaskGraph', owner: 'plans.queryTaskGraph' },

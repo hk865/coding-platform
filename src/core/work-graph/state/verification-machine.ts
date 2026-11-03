@@ -191,6 +191,8 @@ export type RoundOpeningV1 = {
   identity: VerificationRoundMaterialIdentity;
   sourceProof: VerificationRoundSourceProof;
   verificationPlan: VerificationPlanV1;
+  /** The staged repair bindings read at opening (empty when none). */
+  stagedRepairs: { noteId: string; version: number; digest: string }[];
 };
 
 /** How the subject relates to the subject Run (`evidence-service.ts:537-547`). */
@@ -662,7 +664,8 @@ export function buildSuccessorRound(input: SuccessorRoundInputV1): RoundSnapshot
   // Only the built fields are taken: a caller passing VR-01's full opening
   // (its own ref, the caller as executor) must not override the subject or
   // the configured executor (VD-12).
-  const { adoptedPlanRef, taskBasisRef, configuration, configurationDigest, identity, sourceProof, verificationPlan } = build;
+  const { adoptedPlanRef, taskBasisRef, configuration, configurationDigest, identity, sourceProof, verificationPlan,
+    stagedRepairs } = build;
   const opened = buildOpenedRound({
     ref: { ...predecessor.ref, roundId: input.roundId },
     subject: predecessor.subject,
@@ -675,6 +678,7 @@ export function buildSuccessorRound(input: SuccessorRoundInputV1): RoundSnapshot
     identity,
     sourceProof,
     verificationPlan,
+    stagedRepairs,
   });
   return { ...opened, chain };
 }
@@ -910,7 +914,7 @@ export function buildOpenedRound(opening: RoundOpeningV1): RoundSnapshot {
     executor: opening.executor, configuration: opening.configuration, configurationDigest: opening.configurationDigest,
     identity: opening.identity, sourceProof: opening.sourceProof, verificationPlan: opening.verificationPlan,
     checks: checks.checks, status: 'open', outcome: null, gaps: uncoveredRequirementGaps(opening.verificationPlan),
-    evidenceRefs: [], chain: rootRoundChain() };
+    evidenceRefs: [], stagedRepairs: opening.stagedRepairs, until: null, chain: rootRoundChain() };
 }
 
 /** One `uncovered_requirement` gap per required requirement no registered check covers (VR-01 and the D-2 fold). */

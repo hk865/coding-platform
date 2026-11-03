@@ -57,12 +57,13 @@ import type { DeviationInputV1 } from '../../contracts/plan-deviation.js';
 import type { RequestSubmitPort } from './request-intake.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
-  ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
+  RedriveAnswerV1, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
 import type { ConsultationFactsPort } from '../../core/work-graph/queries/platform-facts.js';
 import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-service.js';
 import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
 import type { PickReadsV1 } from './session-chooser.js';
 import type { systemRoundSendInput } from './plan-round.js';
+import type { RepairActivationService } from '../../core/work-graph/notes/activate-repair.js';
 
 /**
  * Trusted Host advancement policy. It is pure data snapshotted by the
@@ -139,6 +140,8 @@ export type WorkflowDependencies = {
     | 'reviewCapability' | 'deliverControl' | 'readArchiveChangedFiles'>;
   evidence: EvidencePort;
   checks: RegisteredCheckRunner;
+  repairs?: Pick<RepairActivationService, 'attemptRepairsForGoal'>;
+  repairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<RedriveAnswerV1[]>;
   sourceAuthority: SourceSnapshotReads;
   configuration?: WorkflowHostConfiguration;
   /**

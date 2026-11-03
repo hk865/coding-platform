@@ -64,6 +64,7 @@ import type { HandoffQueuePort } from './wake-loop.js';
 import type { RedriveAnswerV1 } from '../business/workflow/contracts.js';
 import type { UnappliedAnswersReadV1 } from '../core/work-graph/tasks/unknown-call-review-answers.js';
 import type { MemberRequestPortV1 } from '../core/work-graph/tasks/member-service.js';
+import type { RepairActivationService } from '../core/work-graph/notes/activate-repair.js';
 
 type Scope = { projectId: string; workspaceId: string };
 
@@ -148,8 +149,11 @@ export type StartupReconcilePlatform = {
        * record.
        */
       readDecisionAnswer?: DecisionMessagePort['readDecisionAnswer'];
+      readRepairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<ReadResult<UnappliedAnswersReadV1>>;
     };
   };
+  repairs?: Pick<RepairActivationService, 'attemptRepairsForGoal'>;
+  redriveRepairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<void>;
 };
 
 export type StartupReconcileDependencies = {
@@ -521,6 +525,21 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     else {
       for (const key of goals.value.damaged) out.problems.push(`a damaged Goal record ${key} is left as recorded`);
       goalRecords = goals.value.records;
+    }
+    // Step 6a: retry every Goal's staged repairs once per start-up, then hand the already-approved
+    // answer to the same common advance so its ③ is recorded. Activation keeps this reconcile ctx; the
+    // callback's advance writes ③ as the configured operator, not as this system actor. Same permission
+    // as the re-drive: only `auto` runs it; ask/off leave the notes staged and the answers unapplied
+    // for the next trigger.
+    if (deps.resumeOnStartup === 'auto') {
+      for (const goal of goalRecords) {
+        try {
+          await platform.repairs?.attemptRepairsForGoal(ctx, { goalRef: goal.ref });
+          await platform.redriveRepairAnswers?.(ctx, { goalRef: goal.ref });
+        } catch (error) {
+          out.problems.push(`${scope.workspaceId}: the staged repairs of ${goal.ref.goalId} were not retried (${messageOf(error)})`);
+        }
+      }
     }
     for (const goal of goalRecords) {
       if (goal.desiredStateRevision <= 1 && goal.desiredState === 'active') continue;

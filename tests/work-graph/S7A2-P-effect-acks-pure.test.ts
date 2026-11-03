@@ -82,7 +82,7 @@ function successorRound(): RoundSnapshot {
     identity: { schemaVersion: 1, sourceDigest: '5'.repeat(64) } as unknown as RoundSnapshot['identity'],
     sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },
     verificationPlan: { schemaVersion: 1, planId: '8'.repeat(64) } as unknown as RoundSnapshot['verificationPlan'],
-    checks: [], status: 'open', outcome: null, gaps: [], evidenceRefs: [], chain };
+    checks: [], status: 'open', outcome: null, gaps: [], evidenceRefs: [], stagedRepairs: [], until: null, chain };
 }
 
 describe('the effect decoders keep an acknowledgement (7A §3.5)', () => {

@@ -415,6 +415,27 @@ export function deriveFuturePlanDelta(
 }
 
 /**
+ * L10 (`book-8c.md:809`): the source Tasks a target carries forward as UNCHANGED
+ * terminal history — the only Tasks the module fact leaves out. `terminalTaskIds`
+ * is the canonical closure of the SOURCE Plan's Tasks (the same non-open set the
+ * delete rule's `module_in_use` reads), so a satisfied Task with an `active`
+ * disposition is terminal history too. A terminal source Task that is neither
+ * changed nor disposition-only in this delta keeps both its execution definition
+ * and its terminal closure; every other Task (new, changed, re-enabled, or turned
+ * terminal now) is not exempt. A delta the existing rules cannot derive
+ * (a repeated or removed Task) exempts nothing: the full draft stays checked.
+ */
+export function unchangedTerminalTaskIds(source: PlanRevisionSnapshot, target: PlanRevisionDraft,
+  terminalTaskIds: ReadonlySet<string>): ReadonlySet<string> {
+  const delta = deriveFuturePlanDelta(source, target);
+  if (delta.status !== 'supported') return new Set();
+  const moved = new Set([...delta.delta.changedTaskIds, ...delta.delta.dispositionOnlyTaskIds]);
+  return new Set(source.tasks
+    .filter((task) => terminalTaskIds.has(task.taskId) && !moved.has(task.taskId))
+    .map((task) => task.taskId));
+}
+
+/**
  * C7 (§3.3 无痕规则): the source obligations a changed Task left (no longer
  * listed in their `taskIds`). Leaving an obligation changes the execution
  * definition, so the untraced rule's refusal of a traced Task that did so says

@@ -176,6 +176,9 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   NoteHead: { strings: ['projectId', 'noteId'] },
   CurrentPointer: { strings: ['projectId', 'anchorKey'] },
   InitializationAdoption: { strings: ['projectId', 'operationId'] },
+  // The proposal card's captured batch pin and the proposal application's member pins.
+  ArchitectureProposal: { strings: ['projectId', 'proposalId'] },
+  ArchitectureProposalBatch: { strings: ['projectId', 'batchId'] },
 };
 
 /**

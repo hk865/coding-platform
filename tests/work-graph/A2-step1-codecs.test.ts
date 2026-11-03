@@ -372,7 +372,7 @@ function openRound(ref: VerificationRoundRef, checks: RoundCheckSnapshot[], chai
     identity: { schemaVersion: 1, sourceDigest: sha('5') } as unknown as RoundSnapshot['identity'],
     sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },
     verificationPlan: { schemaVersion: 1, planId: sha('8') } as unknown as RoundSnapshot['verificationPlan'],
-    checks, status: 'open', outcome: null, gaps: [], evidenceRefs: [], chain };
+    checks, status: 'open', outcome: null, gaps: [], evidenceRefs: [], stagedRepairs: [], until: null, chain };
 }
 const reverifyBasis: ReverifyBasisV1 = { subject: task, subjectRunId: 'run-1', actionKind: 'reverify',
   failure: { checks: [{ checkId: 'unit', phase: 'interrupted', outcome: null, cause: null }], gapCodes: ['interrupted_check'] },

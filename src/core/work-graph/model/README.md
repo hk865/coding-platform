@@ -11,6 +11,8 @@
 
 ### Task/Run/执行
 做认领、执行进入与读取、Task/Goal 写入、plan 邻接和命令重跑请求的去这组。
+- `architecture-footprint.ts` — 执行文件到模块的唯一映射（`mapExecutedFilesToModules`）：按当前 catalog 的最长合法路径归属，找不到唯一 owner 的文件是 `moduleRef: null`，不猜；`views/goal-conflicts.ts` 转出它。
+- `catalog-revision-ports.ts` — catalog 修订规划读的窄端口：`CatalogTaskClosureV1`、`CatalogPlanTaskFactV1`、`CatalogPlanFactsV1`、`CatalogPlanFactsReadV1`、`CatalogPlanFactsPort`、`CatalogResponsibilityFactsV1`、`CatalogResponsibilityPlanInputV1`、`CatalogResponsibilityPort`；实现在 tasks/sessions，组合根注入，architecture 不 import 它们。
 - `claim-contracts.ts` — `TaskClaim` 认领、重新入队与审查认领的输入、`TaskClaimPort` 和依赖。
 - `command-rerun-request-contracts.ts` — `CommandRerunRequest` 读写端口、回复分支与 Task closure 读取 DTO。
 - `execution-entry-contracts.ts` — 执行授权/开始/进入/结果的端口与 DTO（不含 Query/Review 的伪 Run）。
@@ -114,8 +116,9 @@
 | `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:480` | notice 项的读取与排序 | notice 来源适配 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:17`、`src/core/work-graph/model/goal-copy-contracts.ts:22`、`src/core/work-graph/model/goal-copy-contracts.ts:15` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（C 的正本再导出；失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:89` | 注记写入、审核、撤回 | 注记写 owner |
-| `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:317` | 注记按引用/列表/版本读取 | 注记读模型 |
-| `NoteMemoryReadPort` | `src/core/work-graph/model/note-contracts.ts:414` | 记忆 lookup/neighbors/history/conflicts/find/stale | 注记检索 |
+| `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:321` | 注记按引用/列表/版本读取 | 注记读模型 |
+| `NoteMemoryReadPort` | `src/core/work-graph/model/note-contracts.ts:421` | 记忆 lookup/neighbors/history/conflicts/find/stale | 注记检索 |
+| `mapExecutedFilesToModules` | `src/core/work-graph/model/architecture-footprint.ts:17` | 把执行文件按当前 catalog 的最长合法路径映射到模块，无唯一 owner 时 `moduleRef: null`，不猜 | repair footprint 与 goal-conflict 读共用；不要另写路径归属 |
 | `UnknownCallReviewPort` | `src/core/work-graph/model/unknown-call-review-contracts.ts:59` | 未知调用审查的读与写 | 审查/重跑链路 |
 | `WorkLineReadPort` | `src/core/work-graph/model/work-line-contracts.ts:21` | 工作线列表、详情、分页与对话来源 | 工作线读模型 |
 | `NodeDetailReadPort` | `src/core/work-graph/model/work-line-contracts.ts:33` | 图悬停与节点详情读取 | 图/节点详情 |
@@ -132,7 +135,7 @@
 | `dispatchBasisProblem` | `src/core/work-graph/model/message-payload.ts:70` | 非空 `DispatchBasisV1` 的唯一检查：恰好 `planRevision`、`pointerRevision`、`dispatchSequence` 三个字段，`planRevision` 为 null 或非负整数，`pointerRevision` 为 `'none'` 或非负整数，`dispatchSequence` 为非负整数；返回问题文字，没问题返回 null | send 的 `expected` 规范化和消息 codec 的 pins 检查（`message pins ` 加这里的文字）；不要另写 |
 | `normalizeSendMessageInput` | `src/core/work-graph/model/message-payload.ts:87` | send 工具参数 → `SendMessageV1`：没给的可选字段取 mailbox owner 的默认值（`waitAfterSend` 为 false；`needsReply` 只在显式 true，或没给且 `waitAfterSend` 为 true 时为 true）；`deadlineMs` 须是大于 0 的有限数；多余或坏的字段是 `invalid`。纯函数，不读时钟 | send 工具、请求构造和提交查找解码参数时；不要另写解码 |
 | `normalizeRespondMessageInput` | `src/core/work-graph/model/message-payload.ts:152` | respond 工具参数 → `RespondMessageV1`：正文是 `{ text }` 或 `{ reject: true, reason }` 二选一，`expectedRevision` 是正整数；两臂都给、都不给、缺 `messageRef` 或多余字段是 `invalid` | respond 工具、请求构造和提交查找解码参数时 |
-| `recordNoteRequestOf` | `src/core/work-graph/model/note-contracts.ts:159` | 工具参数 → 注记 owner 请求，注入可信 commandId 并补默认值 | note 工具与查找共用同一份参数 |
+| `recordNoteRequestOf` | `src/core/work-graph/model/note-contracts.ts:163` | 工具参数 → 注记 owner 请求，注入可信 commandId 并补默认值 | note 工具与查找共用同一份参数 |
 | `buildTaskAdjacency` | `src/core/work-graph/model/task-index.ts:23` | 构造一个 plan 的正向/反向依赖表，保留声明顺序 | 需要 plan-local 邻接时 |
 | `hasDirectedCycle` | `src/core/work-graph/model/task-index.ts:46` | 对已有邻接表做 DFS 环检测 | 已构造邻接后校验 |
 | `hasCycleInEdges` | `src/core/work-graph/model/task-index.ts:69` | 对任意 `{from,to}` 边集做环检测 | 非执行 DAG 的关系校验 |

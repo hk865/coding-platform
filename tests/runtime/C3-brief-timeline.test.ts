@@ -69,6 +69,7 @@ function roundOf(runId: string, seed: string): RoundSnapshot {
     identity: { sourceDigest: sha(seed), workspaceRevision: 3 } as unknown as VerificationRoundMaterialIdentity,
     sourceProof: {} as RoundSnapshot['sourceProof'], verificationPlan: {} as RoundSnapshot['verificationPlan'],
     status: 'finalized', outcome: 'FAIL', checks: [structuredClone(failedCheck)], gaps: [], evidenceRefs: [],
+    stagedRepairs: [], until: null,
     chain: { schemaVersion: 1, ordinal: 1, predecessorRoundRef: null, predecessorRevision: null, supersededEvidenceIds: [],
       basisDigests: [], autoCount: 0, reverify: null },
   };

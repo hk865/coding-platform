@@ -51,6 +51,7 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -120,7 +121,7 @@ export async function openDutyMaintenanceFixture(
   vi.setSystemTime(new Date(T0));
   const schemas = [SESSION_LIFECYCLE_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
     SESSION_ANOMALY_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS,
-    EVIDENCE_RECORD_SCHEMAS, COMPLETION_RECORD_SCHEMAS];
+    EVIDENCE_RECORD_SCHEMAS, COMPLETION_RECORD_SCHEMAS, NOTE_RECORD_SCHEMAS];
   let b2: B2ExecutionFixture | undefined;
   try {
     b2 = await createB2ExecutionFixture('memory', {

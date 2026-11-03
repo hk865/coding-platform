@@ -201,15 +201,13 @@ async function fixture(kind: 'memory' | 'sqlite', options: FixtureOptions = {}) 
       }
       const revised = await catalog.reviseArchitectureCatalog(context, {
         input: {
-          basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-          catalog: {
-            ...current.value.catalog.catalog,
-            modules: current.value.catalog.catalog.modules.map(module => ({
-              ...module,
-              responsibility: module.responsibility + ' [' + requestId + ']',
-            })),
-          },
-          reason: 'S8A L8 observation test revision',
+          expected: { catalogRef: current.value.catalog.ref,
+            baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+          ops: current.value.catalog.catalog.modules.map(module => ({
+            op: 'set_responsibility' as const, moduleId: module.ref.moduleId,
+            text: module.responsibility + ' [' + requestId + ']',
+          })),
+          responsibilityMoves: [], reason: 'S8A L8 observation test revision',
         },
         meta: { requestId, expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
       });

@@ -56,6 +56,13 @@ export type CommandRerunAnswerHitV1 = {
   requestRef: CommandRerunRequestRef;
 };
 
+/** The repair approval's reader arm: `application_not_recorded` is exactly the unapplied answer the advance replays. */
+export type RepairApprovalAnswerHitV1 = {
+  kind: 'repair_approval';
+  answerMessageRef: SessionMessageRef;
+  source: DecisionSourceV1;
+};
+
 /** G.4's first hook shape: one answered, unapplied `message_release` card. */
 export type MessageReleaseAnswerHitV1 = {
   kind: 'message_release';
@@ -63,7 +70,8 @@ export type MessageReleaseAnswerHitV1 = {
   source: DecisionSourceV1;
   messageRef: SessionMessageRef;
 };
-export type RedriveAnswerHitV1 = UnknownCallAnswerHitV1 | CommandRerunAnswerHitV1 | MessageReleaseAnswerHitV1;
+export type RedriveAnswerHitV1 = UnknownCallAnswerHitV1 | CommandRerunAnswerHitV1 | MessageReleaseAnswerHitV1
+  | RepairApprovalAnswerHitV1;
 
 export type UnappliedAnswersReadV1 = {
   answers: RedriveAnswerHitV1[];
@@ -226,6 +234,12 @@ export async function readUnappliedAnswers(
       // already-applied candidates). A receipt read failure is still a failure.
       if (applied !== null && applied.status === 'rejected') return applied;
       answers.push({ kind: 'command_rerun_request', answerMessageRef: message.ref, source, requestRef });
+      continue;
+    }
+    if (input.kind === 'repair_approval') {
+      if (source.kind !== 'repair_approval') continue;
+      // No receipt check: an unanswered ② (or an unrecorded ③) is exactly what advance must replay.
+      answers.push({ kind: 'repair_approval', answerMessageRef: message.ref, source });
       continue;
     }
     const reviewRef = reviewRefOfSource(source);

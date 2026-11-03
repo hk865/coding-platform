@@ -71,9 +71,10 @@ describe('S8A architecture read routes', () => {
         };
       const architecture = {
         ...real,
-        // The other two architecture routes are not under test here; their
+        // The other architecture routes are not under test here; their
         // catalog owners stay explicit `unsupported` gaps.
         adoptInitialArchitecture: async () => ({ status: 'rejected', code: 'unsupported', reason: 'route test double' }),
+        reviseArchitectureCatalog: async () => ({ status: 'rejected', code: 'unsupported', reason: 'route test double: reviseArchitectureCatalog' }),
         readArchitectureRevision: async () => ({ status: 'rejected', code: 'unsupported', reason: 'route test double' }),
         compareArchitecture: spy('compareArchitecture'),
         compareFormalObserved: spy('compareFormalObserved'),

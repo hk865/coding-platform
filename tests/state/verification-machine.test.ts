@@ -111,7 +111,7 @@ const PLAN4 = verificationPlan(['c-pending', 'c-exec', 'c-fin', 'c-int'].map((ch
 
 const OPENING: RoundOpeningV1 = { ref: roundRef('round-1'), subject: task, subjectRunRef: runRef('run-1'),
   adoptedPlanRef: planRef, taskBasisRef: planRef, executor: operator, configuration: CONFIG, configurationDigest: sha('a'),
-  identity: IDENTITY, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2 };
+  identity: IDENTITY, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2, stagedRepairs: [] };
 
 // Checks and rounds in today's literal key order.
 const pendingCheck = (checkId: string, coverage: EvidenceCoverageV1): RoundCheckSnapshot => ({ checkId,
@@ -132,7 +132,8 @@ const pendingGap = (checkId: string, requirementId: string): RoundGapV1 =>
 const OPEN_PENDING: RoundSnapshot = { ref: roundRef('round-1'), revision: 1, schemaVersion: 1, subject: { ...task },
   subjectRunRef: runRef('run-1'), adoptedPlanRef: planRef, taskBasisRef: planRef, executor: operator, configuration: CONFIG,
   configurationDigest: sha('a'), identity: IDENTITY, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2,
-  checks: [LINT, UNIT], status: 'open', outcome: null, gaps: [], evidenceRefs: [], chain: rootRoundChain() };
+  checks: [LINT, UNIT], status: 'open', outcome: null, gaps: [], evidenceRefs: [], stagedRepairs: [], until: null,
+  chain: rootRoundChain() };
 /** VR-01's open@1 (`buildOpenedRound`): the same bytes with the ordinal-1 chain root last (C5). */
 const OPENED: RoundSnapshot = { ...OPEN_PENDING };
 const OPEN_EXECUTING: RoundSnapshot = { ...OPEN_PENDING, revision: 2, checks: [executingCheck(LINT, 'inv-lint'), UNIT] };
@@ -1013,7 +1014,7 @@ const basis = (digest: string): ReverifyBasisV1 => ({ subject: task, subjectRunI
   newInputDigest: null, digest });
 const IDENTITY2 = identity(sha('c'));
 const BUILD: SuccessorRoundBuildV1 = { adoptedPlanRef: planRef2, taskBasisRef: planRef, configuration: CONFIG2,
-  configurationDigest: sha('b'), identity: IDENTITY2, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2 };
+  configurationDigest: sha('b'), identity: IDENTITY2, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2, stagedRepairs: [] };
 const WORKFLOW = { kind: 'system', id: 'workflow:auto-rework' } as const;
 const successorInput = (predecessor: RoundSnapshot, roundId: string, over: Partial<SuccessorRoundInputV1['reverify']> = {}):
 SuccessorRoundInputV1 => ({ predecessor, roundId, build: BUILD, reverify: { requestedBy: WORKFLOW, actorClass: 'system',
@@ -1029,7 +1030,7 @@ describe('buildSuccessorRound (VR-14 record, VD-12/VD-13)', () => {
     const expected: RoundSnapshot = { ref: roundRef('round-2'), revision: 1, schemaVersion: 1, subject: { ...task },
       subjectRunRef: runRef('run-1'), adoptedPlanRef: planRef2, taskBasisRef: planRef, executor: hostExecutor, configuration: CONFIG2,
       configurationDigest: sha('b'), identity: IDENTITY2, sourceProof: SOURCE_PROOF, verificationPlan: PLAN2, checks: [LINT, UNIT],
-      status: 'open', outcome: null, gaps: [], evidenceRefs: [],
+      status: 'open', outcome: null, gaps: [], evidenceRefs: [], stagedRepairs: [], until: null,
       chain: { schemaVersion: 1, ordinal: 2, predecessorRoundRef: FINAL_FAIL.ref, predecessorRevision: 6,
         supersededEvidenceIds: ['e-1', 'e-3'], basisDigests: [sha('1')], autoCount: 1,
         reverify: { requestedBy: WORKFLOW, actorClass: 'system', failureClass: 'check_failed', requestedAt: AT, basis: basis(sha('1')),

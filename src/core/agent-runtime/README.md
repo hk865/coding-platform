@@ -60,6 +60,7 @@
 ### 工具注册与工具实现
 做工具组装配和每个 Kernel 工具实现的去这组。
 - `tool-group-assembly.ts` — 工具组装配、工具名清单与顺序。`FinalToolListInputV1.answerTools` 可为 `null`/`secretary`/`initial`：只有两个 Query 调用按冻结的 `executionKind` 给出，`finalToolNamesOf` 把提交工具名追加在既有扩展名之后，Work 不传、行为不变。`FinalToolListInputV1.noteAdmission`（必填）决定 Query 是否选 `record_note`：只有 `secretary` 类才选，Work 分支不读它；`selectWorkToolGroup` 里的 Work 注记工具声明传入全部写入种类与 `withdraw: true`。`WorkToolGroupInput.mailbox` 是完整 `SessionMessageCommandPort`；未绑定的检查在 mailbox/decision 分支内，只选用户决策工具同样要求它。`createQueryGraphToolGroup` 接受可空 `goalRef` 与可选 notes 读端口（只有秘书轮绑定）；`createGraphHistoryProxy` 在无可信目标时以 `invalid` 拒绝。 7C-1 的 Work 工具组还注册 `create_member`、`request_rework`、`request_recheck` 与秘书的 `read_requests`：成员名字要求 `memberCreation`，返工两名要求 `claims.requeueTask` 与 `evidence.reverifyRound`，缺依赖的名字保留为 `unsupported` 而不是被丢掉。`hand_off` 只由 `...HANDOFF_TOOL_NAMES` 进入已知名集合；`WorkToolGroupInput.handoffs`/`duty` 缺一个或正式 duty 不是 executor/adviser 时，选中的名字在模型前 `unsupported`，`finalToolNamesOf` 里 `handoffNames` 按 Work-only 规则跟随 `mailboxNames`。
+- `architecture-tools.ts` — `propose_architecture_revision` 的 Work 工具适配器：`PROPOSE_ARCHITECTURE_TOOL_NAME`/`ARCHITECTURE_TOOL_NAMES` 是名字清单，`createArchitectureTools` 把模型给的 base pin、ops、responsibility moves 与 reason 原样交给 proposal owner，命令 id、项目/workspace 和 proposer 由可信上下文绑定；不自己发明 id 或重试。
 - `exploration-tools.ts` — 源码探索工具组。
 - `graph-tools.ts` — `look_graph`/`find_graph` 只读图工具，`success`/`rejectedResult` 是各工具共用的结果构造（提交工具也直接用它们）；`goalRef` 可为 `null`（请求无目标时的项目读分支）。`history` 模式没有可信目标时以 `invalid`“this request has no goal”拒绝，不拿别的目标的历史。
 - `answer-tools.ts` — 秘书填表式回答（97-3）的三个提交工具。`ANSWER_TOOL_NAMES` 是名字清单；`createAnswerTools` 按冻结的 manifest 事实每轮建 zod schema（只在无 `effectiveGoalId` 的轮次出现 `goalCardDrafts`/`planDraftIndex`），处理器不写任何东西：`buildAnswerText` 把表单拼成今天的 v1/v2 协议文本并填入版本、`phase: "pending"`、`requireDag` 与每个 ref 的项目号；`answerProblems` 是检查入口；`answerSubmitNamesIn`/`answerToolsOf` 从冻结的工具名和执行种类取名字；`createAnswerToolBarrier` 在收下的提交组后 `yield`；`submittedAnswerArgumentsOf` 按 transcript 找第一条成功的提交调用参数，观察侧用同一 `buildAnswerText` 重建。
@@ -162,12 +163,13 @@
 | `ModelBudget` | `src/core/agent-runtime/model-budget.ts:44` | 一次执行的预算与用量账 | 模型请求记账 |
 | `kernelRunLimits` | `src/core/agent-runtime/run-limits.ts:40` | 平台预算映射为 Kernel limits | 启动 Kernel run |
 | `selectWorkToolGroup` | `src/core/agent-runtime/tool-group-assembly.ts:247` | 按 grant/配置选 Work 工具组 | 驱动装配 |
-| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:649` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
+| `finalToolNamesOf` | `src/core/agent-runtime/tool-group-assembly.ts:660` | 最终工具名与固定顺序；Query 只在该轮的注记准入是 `secretary` 时选注记工具；`answerTools` 为 `secretary`/`initial` 时追加对应提交工具 | 提交工具声明 |
 | `createGraphHistoryProxy` | `src/core/agent-runtime/tool-group-assembly.ts:133` | 图历史读端口的工具代理 | 工具需要图历史 |
 | `createProjectSourceTool` | `src/core/agent-runtime/project-source-tool.ts:238` | `project_source` 冻结模式工具 | 源码工具组 |
 | `duplicates`（`project_source` 的 compare 选项） | `src/core/agent-runtime/project-source-tool.ts:120` | `duplicates: true` 让同一次 compare 在 after 材料上列出重复候选；缺省时结果与字节不变 | 模型要在一次比较里同时拿重复候选时 |
 | `createExplorationTools` | `src/core/agent-runtime/exploration-tools.ts:105` | 源码探索工具组与生命周期 | 模型循环探索 |
-| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:570` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
+| `kernelEnabledToolNames` | `src/core/agent-runtime/tool-group-assembly.ts:585` | Kernel 回调的启用工具名与顺序 | 构造 Kernel 回调 |
+| `createArchitectureTools` | `src/core/agent-runtime/architecture-tools.ts:91` | `propose_architecture_revision` 的 Work 工具组：严格 schema 收 base pin/ops/moves/reason，身份与命令 id 由可信上下文绑定，结果原样交回 owner | Work 工具组注册结构提案工具 |
 | `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
 | `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
 | `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |

@@ -6,8 +6,7 @@
  * revised through the real `platform.architecture` service.
  */
 import { describe, expect, it } from 'vitest';
-import type { AdoptedArchitecture } from '../../src/contracts/architecture-catalog.js';
-import type { NoteDraftV1 } from '../../src/contracts/note.js';
+import type { CatalogRepairOpV1, NoteDraftV1 } from '../../src/contracts/note.js';
 import { createS4BNoteCheckFixture, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
 import { createS4BMultiScope } from '../helpers/S4B-note-multi-scope-fixture.js';
 
@@ -17,15 +16,16 @@ function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
     replaces: [], contradicts: [], coexistWith: [], ...overrides } as NoteDraftV1;
 }
 
-async function reviseCatalogP1(f: S4BNoteCheckFixture,
-  mutate: (catalog: AdoptedArchitecture) => AdoptedArchitecture): Promise<void> {
+async function reviseCatalogP1(f: S4BNoteCheckFixture, ops: CatalogRepairOpV1[]): Promise<void> {
   const ctx = f.ctx();
   const current = await f.inner.platform.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
   if (current.status !== 'ready' || current.value.catalog === null) throw new Error('catalog read failed');
   const revised = await f.inner.platform.architecture.reviseArchitectureCatalog(ctx, {
     meta: { requestId: 's4b-mf2-catalog-revise', expected: [{ ref: f.inner.projectRef, revision: 1 }, { ref: f.inner.workspaceRef, revision: 1 }] },
-    input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-      catalog: mutate(current.value.catalog.catalog), reason: 's4b MF2 catalog revision' } });
+    input: {
+      expected: { catalogRef: current.value.catalog.ref,
+        baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+      ops, responsibilityMoves: [], reason: 's4b MF2 catalog revision' } });
   if (revised.status !== 'committed') throw new Error(`revise failed: ${JSON.stringify(revised)}`);
 }
 
@@ -37,9 +37,7 @@ describe('S4B MF2 per-call caches', () => {
       const n1 = await f.inner.write(f.ctx(), draft({ topic: 'p1', anchor: { kind: 'interface', moduleId: 'A', interfaceId: 'I1' } }), null);
       const n2 = await f.inner.write(multi.ctxP2(), draft({ topic: 'p2', anchor: { kind: 'interface', moduleId: 'A', interfaceId: 'I1' } }), null);
       if (n1.status === 'rejected' || n2.status === 'rejected') throw new Error('write rejected');
-      await reviseCatalogP1(f, catalog => ({ ...catalog,
-        modules: catalog.modules.map(module => module.ref.moduleId === 'A'
-          ? { ...module, interfaces: module.interfaces.filter(item => item.id !== 'I1') } : module) }));
+      await reviseCatalogP1(f, [{ op: 'remove_interface', moduleId: 'A', interfaceId: 'I1' }]);
 
       const readP1 = () => f.notes.readNote(f.ctx(), { noteId: n1.noteId });
       const readP2 = () => f.notes.readNote(multi.ctxP2(), { noteId: n2.noteId });

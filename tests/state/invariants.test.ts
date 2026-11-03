@@ -540,7 +540,7 @@ function successor(predecessor: RoundSnapshot, roundId: string, requestedBy: Act
   const { adoptedPlanRef, taskBasisRef, configuration, configurationDigest, identity, sourceProof, verificationPlan } = predecessor;
   const basis = { digest, source: { workspaceRevision: identity.workspaceRevision, sourceDigest: identity.sourceDigest } } as unknown as ReverifyBasisV1;
   return buildSuccessorRound({ predecessor, roundId,
-    build: { adoptedPlanRef, taskBasisRef, configuration, configurationDigest, identity, sourceProof, verificationPlan },
+    build: { adoptedPlanRef, taskBasisRef, configuration, configurationDigest, identity, sourceProof, verificationPlan, stagedRepairs: [] },
     reverify: { requestedBy, actorClass, requestedAt: AT, basis, newInputRefs: [], reason: null } });
 }
 

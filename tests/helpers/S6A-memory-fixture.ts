@@ -338,10 +338,16 @@ export async function seedS6AMemory(world: S6AMemoryWorld, options: S6AMemoryOpt
     const current = await readArchitecture();
     if (current === null) throw new Error('S6A memory: no active architecture to revise');
     const catalog = reviseOptions.catalog ?? s6aRevisedCatalog(current.catalog, current.revision + 1);
+    const known = new Set(current.catalog.modules.map(module => module.ref.moduleId));
+    const added = catalog.modules.filter(module => !known.has(module.ref.moduleId));
     // No HTTP route publishes the revision; the public owner runs with the human operator's trusted context.
     const revised = await world.platform.architecture.reviseArchitectureCatalog(world.humanContext(), {
       meta: { requestId: requestId('architecture-revise'), expected: await scopePins() },
-      input: { basedOn: { ref: current.ref, digest: current.contentDigest }, catalog,
+      input: {
+        expected: { catalogRef: { aggregateType: 'ArchitectureCatalog' as const, projectId: current.ref.projectId,
+          baselineId: current.ref.baselineId, revision: current.ref.revision },
+        baseline: { ref: current.ref, digest: current.contentDigest } },
+        ops: added.map(module => ({ op: 'add_module' as const, module })), responsibilityMoves: [],
         reason: `S6A revision ${String(current.revision + 1)}` },
     });
     architecture = pointerOf(committedValue(revised, 'the architecture revision'));
@@ -425,7 +431,7 @@ export async function seedS6AMemory(world: S6AMemoryWorld, options: S6AMemoryOpt
   NoteDraftV1 => ({ ...common, kind: 'understanding', topic: text.topic, conclusion: text.conclusion, anchor,
     sections: { ...text.sections } });
   const general = (anchor: NoteDraftAnchorV1, text: { kind: string; topic: string; conclusion: string; body: string }):
-  NoteDraftV1 => ({ ...common, kind: text.kind as Exclude<NoteKind, 'understanding'>, topic: text.topic,
+  NoteDraftV1 => ({ ...common, kind: text.kind as Exclude<NoteKind, 'understanding' | 'repair'>, topic: text.topic,
     conclusion: text.conclusion, anchor, body: text.body });
 
   const firstId = world.goals.first.goalId;

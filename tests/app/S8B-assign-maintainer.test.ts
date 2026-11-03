@@ -409,10 +409,11 @@ async function addAssignModules(target: S7C1World, extra: readonly ModuleDefinit
       { ref: registration.workspace.ref, revision: registration.workspace.revision },
     ] },
     input: {
-      basedOn: { ref: current.baseline.ref, digest: current.baseline.contentDigest },
-      catalog: { ...current.catalog.catalog, modules: [...current.catalog.catalog.modules,
-        moduleDefinition('M', 'm'), moduleDefinition('M2', 'm2'), moduleDefinition('N', 'n'), ...extra] },
-      reason: 'S8B assign modules',
+      expected: { catalogRef: current.catalog.ref,
+        baseline: { ref: current.baseline.ref, digest: current.baseline.contentDigest } },
+      ops: [moduleDefinition('M', 'm'), moduleDefinition('M2', 'm2'), moduleDefinition('N', 'n'), ...extra]
+        .map(module => ({ op: 'add_module' as const, module })),
+      responsibilityMoves: [], reason: 'S8B assign modules',
     },
   });
   if (revised.status !== 'committed') throw new Error(`the module catalog revision was refused: ${JSON.stringify(revised)}`);

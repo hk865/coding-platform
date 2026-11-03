@@ -14,7 +14,7 @@
 - `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（26 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（52 个），例如 `R2e-git-operations.test.ts`。
-- `tests/helpers/` — 共享测试夹具，共 170 个文件；本清单主体在下一节。
+- `tests/helpers/` — 共享测试夹具，共 196 个文件；本清单主体在下一节。
 - `tests/kernel/` — 冻结 Kernel 公共入口的集成（23 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（15 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（148 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
@@ -133,6 +133,15 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `WP2-notices-fixture.ts` — 真实 S1 owner/backend，构造钩子只加 schema 和 beforeWrite 故障点，不种历史或 cursor；`tests/work-graph/WP2-undelivered-notices.test.ts` 在用。
 - `query-context-capture.ts` — 不冻结；A3 透传：`captureQueryContexts()` 包住真实的 `createQueryGraphToolGroup`，原样返回真实工具组，只留 Runtime 交给它的每个 Query 上下文的副本；`latest()` 取最近一个（请求轮里就是 Runtime 自己的 `query_run` principal），`restore()` 撤掉包装；不构造上下文；`tests/work-graph/S6B-secretary-note-source.test.ts`、`S6B-secretary-note-scope.test.ts` 在用。
 - `request-claim-steps.ts` — 不冻结；请求轮测试的 claim 步骤：Host 发布的 query profile 换成 claim 收的形状（`claimProfile`），按刚读到的 Job、Run、Session 版本走 `queries/claim`（`claimQuery`，带或不带 profile；`claimWithSecretaryProfile` 带秘书 profile）；`tests/work-graph/S6A-request-start.test.ts`、`S6A-request-claim.test.ts`、`S6A-request-attempt-restart.test.ts` 在用。
+
+### 8C 架构修订
+
+结构提案、repair 激活和 catalog 修订的公开世界；状态只走公开步骤，pin 只取公开读。
+
+- `S8C-catalog-world.ts` — 固定 W4 catalog 世界（`root`/`src`/`src/a`/`src/a/x`/`docs`）、L1/L2/L4 三条线和三条 `src` 责任链接；状态只走公开步骤，pin 只取公开当前 revision 读；每个测试文件装 `catalogRevisionModule` mock，委托真实工厂和真实 records/Plan/目录/duty 读。
+- `S8C-role-read-gate.ts` — 不冻结；Row 4 的本地 store 读闸门和 prepared commit 捕获（A3 委托包装的窄版）：测试装 `vi.mock` 工厂，平台自己的 `readMany`/`commit` 照常运行，没有生产钩子；`holdRead` 等第一条匹配的 `readMany` 停在 `reached`，`release` 后才放行真实读；`commits()` 是平台交给真实 store 的 prepared commit 副本，`reset()` 放开所有闸门并清空捕获；`tests/work-graph/S8C-catalog-revision-isolation.test.ts` 在用。
+- `S8C-proposal-world.ts` — 8C 结构提案世界：在 `openS7C1World` 的真实 staff Work 世界上，用真实 `propose_architecture_revision` 工具、组合根建出的 freeze/apply/read owner、真实决定协调器与 `structural_proposal` 卡来源；三个委托包装只记 proposal owner、`ArchitectureProposal` 提交计数和一次性 catalog window 读，不手造记录、pin 或上下文。
+- `S8C-repair-world.ts` — 8C staged `repair` 注记的真实 Host 世界：`openS6AHostWorld` 加 `governS6B`/`createGoal`/`adoptS6BPlan`/`createS6BLine`，脚本 Work Run 调真实 `edit`/`record_note`，真实 Workflow 跑 `open_checks`/`run_check`/`finalize_checks`；用平台自己的 records 与 observation 读调 G3 owner，读只走公开路由/owner，不读 store。
 
 ### 工作线
 

@@ -32,6 +32,7 @@ import { createSessionLifecycleService } from '../../src/core/work-graph/session
 import { createSessionMailbox, createMessageWriteOwner } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { decodeSessionMessageRecord } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { CANDIDATE_U1, CANDIDATE_U2, GOAL_A, GOAL_B, OPERATOR, PLAN_A1, PLAN_B1, T, WORKSPACE,
   WORKSPACE_SCOPE, openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
@@ -72,7 +73,7 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
   const reads = readers(f.records, plans, { messages: mailbox, queries: queryJobs, plans });
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: OPERATOR,
     messages: mailbox, materials: mailboxDeps.materials,
-    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
+    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
   const q = async (extra: Partial<QueueInput> = {}) => ready(await reads.queryDecisionQueue(f.ctx,
     { workspace: WORKSPACE_SCOPE, sections: SECTIONS, page: { limit: 50 }, ...extra }));
   const card = async (source: DecisionSourceV1) => ready(await reads.readDecisionCard(f.ctx, { source }));

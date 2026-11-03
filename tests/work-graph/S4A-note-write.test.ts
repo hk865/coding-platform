@@ -6,12 +6,20 @@
 import { describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { NoteDraftAnchorV1, NoteDraftV1, NoteSectionsV1 } from '../../src/contracts/note.js';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
+import type { NoteDraftAnchorV1, NoteDraftV1, NoteSectionsV1, RepairInputV1 } from '../../src/contracts/note.js';
 import { createS4ANoteFixture, type S4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
 
 const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
 const FILE_A = { kind: 'file', path: 'src/a/x.ts' } as const;
 const FILE_B = { kind: 'file', path: 'src/b/y.ts' } as const;
+const REPAIR_PIN: ArchitectureCatalogPinV1 = {
+  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: 's4a-project', baselineId: 's4a-baseline', revision: 1 },
+  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: 's4a-project', baselineId: 's4a-baseline',
+    revision: 1 }, digest: '7d318586bae25df0e13e789bebda01760f1e1b4ed1021fcb99b5947e1c21e82a' },
+};
+const REPAIR: RepairInputV1 = { pin: REPAIR_PIN,
+  ops: [{ op: 'set_responsibility', moduleId: 'A', text: 'area A repaired' }], responsibilityMoves: [] };
 
 function general(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return {
@@ -299,7 +307,7 @@ describe('S4A N-07 quota and overQuota', () => {
         expect(result.status).toBe('accepted');
       }
       const run = await f.claimRun('n07-repair-default');
-      const repair = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'q-repair-a', anchor: FILE_A }), 's4a-goal');
+      const repair = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'q-repair-a', anchor: FILE_A, repair: REPAIR }), 's4a-goal');
       expect(repair).toMatchObject({ status: 'staged', overQuota: false });
       const repairItem = await f.platform.notes.readNote(ctx, { noteId: idOf(repair) });
       if (repairItem.status !== 'ready') throw Error('unreachable');
@@ -312,7 +320,7 @@ describe('S4A N-07 quota and overQuota', () => {
         expect(result.status).toBe('accepted');
       }
       const run = await f.claimRun('n07-repair-goal');
-      const repair = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'q-repair-b', anchor: FILE_A }), 's4a-goal');
+      const repair = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'q-repair-b', anchor: FILE_A, repair: REPAIR }), 's4a-goal');
       expect(repair).toMatchObject({ status: 'staged', overQuota: true });
       const repairItem = await f.platform.notes.readNote(ctx, { noteId: idOf(repair) });
       if (repairItem.status !== 'ready') throw Error('unreachable');
@@ -385,7 +393,7 @@ describe('S4A N-07 quota and overQuota', () => {
       const understandingNote = await f.write(run, understanding(goalAnchor, { topic: 'full-b-2' }),
         's4a-goal', { expectedPointerRevision: null });
       expect(understandingNote.status).toBe('accepted');
-      const repair = await f.write(run, general({ kind: 'repair', topic: 'full-b-3', anchor: goalAnchor,
+      const repair = await f.write(run, general({ kind: 'repair', topic: 'full-b-3', anchor: goalAnchor, repair: REPAIR,
         replaces: [idOf(understandingNote)] }), 's4a-goal');
       expect(repair).toMatchObject({ status: 'staged', overQuota: true });
       const item = await f.platform.notes.readNote(ctx, { noteId: idOf(repair) });
@@ -836,7 +844,7 @@ describe('S4A N-13 human repair refusal', () => {
     await withFixture(kind, {}, async f => {
       const ctx = f.ctx();
       const input = { commandId: 's4a-n13-human-repair',
-        note: general({ kind: 'repair', topic: 'human repair', anchor: { kind: 'module', moduleId: 'A' } }),
+        note: general({ kind: 'repair', topic: 'human repair', anchor: { kind: 'module', moduleId: 'A' }, repair: REPAIR }),
         expectedPointerRevision: null, goalId: null };
       const result = await f.platform.notes.writeNote(ctx, input);
       expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });

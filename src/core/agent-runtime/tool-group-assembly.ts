@@ -8,8 +8,7 @@
  * the assembly code below is shared.
  */
 import { messageOf } from '../../contracts/error-message.js';
-import type { NoteKind } from '../../contracts/note.js';
-import { NOTE_GENERAL_KINDS } from '../../contracts/note.js';
+import { NOTE_KINDS } from '../../contracts/note.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -30,6 +29,7 @@ import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
+import { createArchitectureTools, ARCHITECTURE_TOOL_NAMES } from './architecture-tools.js';
 import {
   createUnknownCallReviewTools, PROPOSE_SAFER_METHOD_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
 } from './unknown-call-review-tools.js';
@@ -74,7 +74,7 @@ export const EXPLORATION_TOOL_NAMES = [
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
-  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES,
+  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES, ...ARCHITECTURE_TOOL_NAMES,
 ]);
 /** K3 group 3: the L13 exploration names a review-round manifest may select.
  * The set is deliberately NOT all of `RESERVED_TOOL_NAMES`: a mutation name
@@ -227,6 +227,8 @@ export type WorkToolGroupInput = {
   handoffs?: RuntimeExecutionDependencies['handoffs'];
   /** The adviser's one maintainer assignment entry; absent makes the name unregisterable. */
   maintainerAssignments?: RuntimeExecutionDependencies['maintainerAssignments'];
+  /** The structural-proposal owner behind `propose_architecture_revision`; absent makes the name unregisterable. */
+  architectureProposals?: RuntimeExecutionDependencies['architectureProposals'];
   /** The formal Session duty the start resolved; `hand_off` is executor/adviser only. */
   duty?: 'executor' | 'adviser';
   /** Names this Runtime handles outside the coordination factories (the
@@ -261,6 +263,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
   const handoffNames = HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
+  const architectureNames = ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
   const maintainerNames = wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
     ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
@@ -271,6 +274,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const reworkEvidence = input.evidence?.reverifyRound;
   if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
     && graphNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
+    && architectureNames.length === 0
     && memberNames.length === 0 && maintainerNames.length === 0 && reworkNames.length === 0) {
     return { ok: true, value: null };
   }
@@ -296,6 +300,9 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (handoffNames.length > 0 && (input.handoffs === undefined || input.duty === undefined)) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects hand_off but no handoff entry or formal Session duty is bound: ${handoffNames.join(', ')}`) };
+  }
+  if (architectureNames.length > 0 && input.architectureProposals === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects propose_architecture_revision but no proposal owner is bound: ${architectureNames.join(', ')}`) };
   }
   const handles: Array<{ names: readonly string[]; create: (workspace: WorkspaceSandbox) => ToolDefinition[] }> = [];
   if (mailboxNames.length > 0 || decisionNames.length > 0) {
@@ -353,7 +360,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       notes: noteDeps.write,
       check: noteDeps.check,
       requestIdForCall: input.requestIdForCall,
-      kinds: WORK_NOTE_KINDS,
+      kinds: NOTE_KINDS,
       withdraw: true,
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
@@ -406,8 +413,16 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       sessionRef: input.sessionRef, duty: input.duty, requestIdForCall: input.requestIdForCall,
       ...(input.texts === undefined ? {} : { texts: input.texts }) }));
   }
+  if (architectureNames.length > 0 && input.architectureProposals !== undefined) {
+    handles.push(createArchitectureTools({
+      propose: input.architectureProposals,
+      context: input.context,
+      requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
+  }
   const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames,
-    ...handoffNames, ...memberNames, ...maintainerNames, ...reworkNames];
+    ...handoffNames, ...architectureNames, ...memberNames, ...maintainerNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }
@@ -587,12 +602,6 @@ export function kernelEnabledToolNames(input: {
 }
 
 /**
- * The Work declaration shows every write kind, so a Work Run keeps the review
- * and repair operations; only a Query's declaration is narrowed.
- */
-const WORK_NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
-
-/**
  * Every fact the final tool list needs, all of them facts the
  * preparation and the start already hold. The list is computed once at
  * preparation and compared exactly at start, never sorted.
@@ -633,6 +642,8 @@ export type FinalToolListInputV1 = {
     recheckRequests?: boolean;
     /** The adviser's maintainer assignment entry; optional for the same reason. */
     maintainerAssignments?: boolean;
+    /** The structural-proposal owner behind `propose_architecture_revision`. */
+    architectureProposals?: boolean;
   };
   readonlyCommand: {
     requested: boolean;
@@ -677,6 +688,8 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none'));
+  // Only the Work Runtime builds the proposal tool; a Query's projection never reaches its factory.
+  const architectureNames = query ? [] : ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) && (!query || secretary) ? [CREATE_MEMBER_TOOL_NAME] : [];
   // Only the Work Runtime builds the maintainer tool; Query has no adviser duty.
   const maintainerNames = !query && wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
@@ -704,6 +717,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (noteNames.length > 0 && !owners.notes) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
   }
+  if (architectureNames.length > 0 && owners.architectureProposals === false) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects propose_architecture_revision but no proposal owner is bound: ${architectureNames.join(', ')}`) };
+  }
   // The member owner is re-checked at start; a preparation that freezes only
   // capabilities leaves the marker absent.
   if (memberNames.length > 0 && owners.memberCreation === false) {
@@ -723,7 +739,8 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
     return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
   }
   const coordinationNames = [...mailboxNames, ...handoffNames, ...decisionNames, ...whiteboardNames,
-    ...discoveryNames, ...graphNames, ...noteNames, ...memberNames, ...maintainerNames, ...reworkNames, ...requestNames];
+    ...discoveryNames, ...graphNames, ...noteNames, ...architectureNames, ...memberNames, ...maintainerNames,
+    ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
   }

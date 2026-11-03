@@ -900,6 +900,25 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // goal-waits handler, then parks/sends. The handler is created below, inside
   // the lease block; the closure runs only after this Host has returned.
   let goalWaitQueueOwner: QueueHandler | undefined;
+  // The approved repair answer is handed back through the same advance entrance
+  // the other answer kinds use. The activation guard admits the configured
+  // operator, so a system trigger's scope is rebuilt as that operator before the
+  // answer read and the advance; only the trigger's project, workspace and
+  // signal are taken from it.
+  const redriveRepairAnswers = async (trigger: CoreCallContext, input: { goalRef: GoalRef }): Promise<void> => {
+    const ctx: CoreCallContext = {
+      ...hostScopeContext({ projectId: trigger.projectId, workspaceId: trigger.workspaceId! }, actor),
+      signal: trigger.signal,
+    };
+    const read = await platform.reconcile.reviews?.readRepairAnswers?.(ctx, input);
+    if (read?.status !== 'ready' || read.value.answers.length === 0) return;
+    await platform.workflow.advanceWork(ctx, {
+      schemaVersion: 1, goalRef: input.goalRef, flowId: `repair-answer-redrive:${input.goalRef.goalId}`,
+      sessionHint: null, kind: 'select_work',
+      answers: read.value.answers.map(answer => ({ kind: 'repair_approval' as const,
+        answerMessageRef: answer.answerMessageRef })),
+    });
+  };
   const collaborationDriver = createCollaborationDriver({
     workflow: workflowForDriver,
     runtime: platform.runtime,
@@ -917,6 +936,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       });
     },
     observedCursor,
+    // The one activation owner and the common answer hand-over this Goal-level
+    // start runs after the seed is accepted and before the driver starts.
+    repairs: platform.repairs,
+    redriveRepairAnswers,
     onChange: changes.driverChanged,
     // The Goal interruption is resolved only once a driver actually starts: a same-seed replay never reaches here.
     onStarted: async (ctx, goalRef) => {
@@ -932,7 +955,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // GOAL-29 (A.2 step 5.6): the continuation of a fan-out-paused Task goes through the requeue owner.
     claims: { requeueTask: (...args) => platform.claims.requeueTask!(...args) },
     // L-10: only the Host holding the instance lease reaches the Runs.
-    driving: () => leaseOwned });
+    driving: () => leaseOwned,
+    // The resumed Goal's staged repairs and its approved answer get one retry
+    // before the pass reports; neither changes the report.
+    repairs: platform.repairs,
+    redriveRepairAnswers });
   goalFanOutCommitted = notice => goalFanOut.committed(notice);
 
   // The Host's one system-notice bag: the published send/fact/line-detail ports and the same `{records, sessions}` bag
@@ -1760,7 +1787,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   const reconcileScopes = (scopes: readonly CoreScope[]) => runStartupReconcile({
     platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
-      plans: platform.plans, reconcile: platform.reconcile },
+      plans: platform.plans, reconcile: platform.reconcile,
+      repairs: platform.repairs, redriveRepairAnswers },
     hostInstanceId: instanceLease.hostInstanceId,
     resumeOnStartup: platform.automationPolicy().resumeOnStartup,
     takeover: instanceLease.takeover,
@@ -2595,7 +2623,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // The real route bindings share the ONE platform instance assembled above.
   const routeBindings = createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
     { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) }, adoptionHost,
-    scope => { armMessageRelease?.(scope); });
+    scope => { armMessageRelease?.(scope); }, platform.readArchitectureProposal);
   // L8 (book ruling 1): the route-registration path uses the SAME shared step as
   // the settings flow, only after a NON-REPLAYED committed registration. The
   // step itself triggers only when `byScope` already holds the scope.

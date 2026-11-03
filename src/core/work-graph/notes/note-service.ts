@@ -11,8 +11,9 @@ import type { ActorRef } from '../../../contracts/command-event.js';
 import type {
   CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteHeadSnapshot,
   NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot, PendingNoteHeadSnapshot,
+  RepairPayloadV1, ResponsibilityMoveV1,
 } from '../../../contracts/note.js';
-import { NOTE_GENERAL_KINDS } from '../../../contracts/note.js';
+import { isGeneral, NOTE_KINDS, payloadKindProblem } from '../../../contracts/note.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
@@ -33,12 +34,19 @@ import { stageContinuityOf } from './note-continuity.js';
 import { anchorSlots } from './note-related-scope.js';
 import { readGoalPlanWindow, type GoalPlanWindow } from '../tasks/plan-readers.js';
 import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js';
-import { readAllHeads, type ReadFailureCode } from './note-base-reader.js';
+import { headsByAnchorKey, readAllHeads, type ReadFailureCode } from './note-base-reader.js';
 import { renderUnderstandingBody } from './note-rendering.js';
 import { mapStoreFailure } from './store-failures.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
-import { catalogModuleFactsOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
+import { catalogModuleFactsOf, readCurrentCatalogWindow, readRevisionByRef } from '../architecture/catalog-service.js';
+import {
+  readArchitectureBaselinePin, readArchitectureCatalogRef,
+} from '../architecture/catalog-record-codecs.js';
+import { exactKeys } from '../architecture/architecture-service.js';
+import {
+  applyRepairOps, catalogRevisionMovesProblem, parseRepairOps, structuralOfRepair, type RepairProblemV1,
+} from '../architecture/repair-ops.js';
 import type {
   NoteDecisionApplicationInputV1, NoteDecisionApplyPort, NoteDispositionResult, NoteDutyResolver, NoteErrorCode,
   NoteExistingTopicV1, NoteWritePort, WriteNoteInput, WriteNoteResult,
@@ -55,7 +63,7 @@ import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, Prep
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
   CURRENT_POINTER_MOVED_EVENT_TYPE, NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
-  NOTE_EVENT_SCHEMA_VERSION, NOTE_WRITTEN_EVENT_TYPE, S4_NOTE_BY_ANCHOR_LOOKUPS,
+  NOTE_EVENT_SCHEMA_VERSION, NOTE_WRITTEN_EVENT_TYPE,
   S4_NOTE_BY_REVIEW_STATUS_LOOKUP, currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot,
   encodeCurrentPointerMovedEvent, encodeCurrentPointerSnapshot,
   encodeNoteDispositionChangedEvent, encodeNoteHeadSnapshot, encodeNoteVersionSnapshot, encodeNoteWrittenEvent,
@@ -264,14 +272,19 @@ function pointerPayload(pointer: PointerRead | null): { noteId: string | null; r
 
 /**
  * L4 / decision 72 (U1): the ONE identity/fingerprint pair the note writer
- * (`writeNote`, `dispose`) and the read-only `lookupToolCommit` all use. The
- * builder and these helpers were factored out so the write and the lookup call
- * one function and never drift into two copies.
+ * (`writeNote`, `dispose`), the activation and the read-only `lookupToolCommit`
+ * all use. The builder and these helpers were factored out so the write and the
+ * lookup call one function and never drift into two copies. `activate` is the
+ * platform's act, so its identity carries the fixed project/workspace scope and
+ * the `activate:<noteId>:<version>` command id but never the calling principal
+ * or trigger actor: every trigger of one activation replays the same receipt.
  */
-function noteCommandIdentity(op: 'write' | 'review' | 'withdraw', ctx: CoreCallContext, commandId: string): string {
-  return `s4-note-${op}:` + sha256Hex(canonicalJson({ schemaVersion: 1, op, projectId: ctx.projectId,
-    workspaceId: ctx.workspaceId ?? null, principal: principalIdentity(ctx.principal),
-    commandId } as unknown as JsonValue));
+export function noteCommandIdentity(op: 'write' | 'review' | 'withdraw' | 'activate', ctx: CoreCallContext,
+  commandId: string): string {
+  const common = { schemaVersion: 1, op, projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null, commandId };
+  if (op === 'activate') return `s4-note-activate:` + sha256Hex(canonicalJson(common as unknown as JsonValue));
+  return `s4-note-${op}:` + sha256Hex(canonicalJson({ ...common,
+    principal: principalIdentity(ctx.principal) } as unknown as JsonValue));
 }
 function fingerprintOf(value: unknown): string { return sha256Hex(canonicalJson(value as JsonValue)); }
 
@@ -308,25 +321,6 @@ function noteCommandReceiptOf(ctx: CoreCallContext, built: RecordNoteRequestV1):
   };
 }
 
-/**
- * Every head that carries `anchorKey` in one of the five anchor slots, deduped
- * by noteId. The whole index is read through `readAllHeads`, so a
- * failed or damaged page is returned, never skipped into a partial set.
- */
-async function headsByAnchorKey(deps: NoteServiceDependencies, projectId: string, anchorKey: string):
-Promise<{ ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: ReadFailureCode; reason: string }> {
-  const seen = new Map<string, NoteHeadSnapshot>();
-  for (const index of S4_NOTE_BY_ANCHOR_LOOKUPS) {
-    const page = await readAllHeads(deps.records, index, [projectId, anchorKey]);
-    if (!page.ok) return page;
-    for (const head of page.heads) {
-      if (head.anchorKey0 === anchorKey || head.anchorKey1 === anchorKey || head.anchorKey2 === anchorKey
-        || head.anchorKey3 === anchorKey || head.anchorKey4 === anchorKey) seen.set(head.noteId, head);
-    }
-  }
-  return { ok: true, heads: [...seen.values()] };
-}
-
 async function headsByGoalState(deps: NoteServiceDependencies, projectId: string, goalId: string,
   state: NoteState): Promise<{ ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: ReadFailureCode; reason: string }> {
   const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, [projectId, goalId, state]);
@@ -337,10 +331,6 @@ async function headsByGoalState(deps: NoteServiceDependencies, projectId: string
 // --------------------------------------------------------------------------
 // Draft validation (L4.1–L4.3)
 // --------------------------------------------------------------------------
-
-function isGeneral(kind: string): boolean { return (NOTE_GENERAL_KINDS as readonly string[]).includes(kind); }
-
-const NOTE_KINDS: readonly string[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
 
 function sameKindFamily(left: string, right: string): boolean { return isGeneral(left) === isGeneral(right); }
 
@@ -370,6 +360,28 @@ function supersessionTargetsOf(subject: { noteId: string; kind: NoteHeadSnapshot
 /** The stored body of an understanding is the rendered five sections (L4.1). */
 export { renderUnderstandingBody } from './note-rendering.js';
 
+/** The repair pin's exact shape; the readers validate each ref arm. */
+function repairPinProblem(value: unknown): string | null {
+  if (!isRecord(value) || !exactKeys(value, ['catalogRef', 'baseline'])) {
+    return 'the repair pin carries exactly catalogRef and baseline';
+  }
+  if (readArchitectureCatalogRef(value['catalogRef']) === null) return 'the repair catalogRef is invalid';
+  if (readArchitectureBaselinePin(value['baseline']) === null) return 'the repair baseline pin is invalid';
+  return null;
+}
+
+/** The repair payload's exact outer shape; ops are parsed by the one op parser. */
+function repairInputProblem(value: unknown): string | null {
+  if (!isRecord(value) || !exactKeys(value, ['pin', 'ops', 'responsibilityMoves'])) {
+    return 'a repair note requires pin, ops and responsibilityMoves';
+  }
+  const pin = repairPinProblem(value['pin']);
+  if (pin !== null) return pin;
+  if (!Array.isArray(value['ops'])) return 'the repair ops must be an array';
+  if (!Array.isArray(value['responsibilityMoves'])) return 'the repair responsibilityMoves must be an array';
+  return null;
+}
+
 /**
  * L4.1/L2a class 1: the complete shape gate over the WHOLE `WriteNoteInput`.
  * `writeNote` runs it first, before the trusted caller read and before any
@@ -392,7 +404,7 @@ function writeInputProblem(input: unknown): string | null {
   const draft = input['note'];
   if (!isRecord(draft)) return 'the note draft must be an object';
   const kind = draft['kind'];
-  if (typeof kind !== 'string' || !NOTE_KINDS.includes(kind)) return 'the note kind is not recognized';
+  if (typeof kind !== 'string' || !(NOTE_KINDS as readonly string[]).includes(kind)) return 'the note kind is not recognized';
   const topic = topicProblem(draft['topic']);
   if (topic !== null) return topic;
   const conclusion = conclusionProblem(draft['conclusion']);
@@ -418,7 +430,17 @@ function writeInputProblem(input: unknown): string | null {
     if (typeof body !== 'string') return 'a note requires a body';
     if (Buffer.byteLength(body, 'utf8') > NOTE_BODY_MAX_BYTES) return 'the note body exceeds its byte limit';
   }
-  if (typeof draft['structural'] !== 'boolean') return 'structural must be a boolean';
+  const payload = payloadKindProblem(draft, kind);
+  if (payload !== null) return payload;
+  if (kind === 'repair') {
+    const repair = repairInputProblem(draft['repair']);
+    if (repair !== null) return repair;
+  }
+  // For a repair the caller's `structural` is optional and ignored: the
+  // platform writes its own `structuralOfRepair(ops)` value.
+  if (typeof draft['structural'] !== 'boolean' && !(kind === 'repair' && draft['structural'] === undefined)) {
+    return 'structural must be a boolean';
+  }
   const anchor = anchorFormatProblem(draft['anchor'], 'anchor');
   if (anchor !== null) return anchor.reason;
   const extraAnchors = draft['extraAnchors'];
@@ -456,6 +478,74 @@ function writeInputProblem(input: unknown): string | null {
   return null;
 }
 
+function repairProblem(reason: string, detail: string): RepairProblemV1 {
+  return { status: 'invalid', reason, detail };
+}
+
+/**
+ * The write-time responsibility-move refusal: the shared pure shape check over
+ * the TRIAL catalog (so a module added by the same ops can be a destination).
+ * Source openness and completeness are activation's checks, not this staged
+ * write's.
+ */
+function repairMovesProblem(raw: unknown,
+  modules: readonly { ref: { projectId: string; moduleId: string } }[], projectId: string): RepairProblemV1 | null {
+  const trialModules = new Set(modules
+    .filter(module => module.ref.projectId === projectId)
+    .map(module => module.ref.moduleId));
+  const reason = catalogRevisionMovesProblem(raw as ResponsibilityMoveV1[], projectId, trialModules);
+  if (reason === null) return null;
+  if (reason === 'duplicate_responsibility_move' || reason === 'responsibility_destination_missing'
+    || reason === 'noop_op') {
+    return repairProblem(reason, reason);
+  }
+  return repairProblem('invalid_op', reason);
+}
+
+type RepairTrialResult = { ok: true; payload: RepairPayloadV1 } | { ok: false; rejection: Rejected };
+
+/**
+ * The ONE write-time repair trial: resolves the pin's
+ * recorded baseline and its `dependencyRules`, applies the ops with G1's pure
+ * engine (which also validates the final catalog), checks the move destinations
+ * against the TRIAL catalog, and returns the platform-computed payload. It
+ * never reads the current catalog, never commits and never checks the footprint.
+ */
+async function repairTrial(deps: NoteServiceDependencies, ctx: CoreCallContext,
+  repair: { pin: RepairPayloadV1['pin']; ops: unknown; responsibilityMoves: unknown }): Promise<RepairTrialResult> {
+  const parsed = parseRepairOps(repair.ops);
+  if (!parsed.ok) return { ok: false, rejection: rejected('invalid', parsed.problem.reason) };
+  const { catalogRef, baseline } = repair.pin;
+  if (catalogRef.projectId !== ctx.projectId) {
+    return { ok: false, rejection: rejected('invalid', 'the repair pin is outside the call context project') };
+  }
+  if (catalogRef.projectId !== baseline.ref.projectId || catalogRef.baselineId !== baseline.ref.baselineId
+    || catalogRef.revision !== baseline.ref.revision) {
+    return { ok: false, rejection: rejected('invalid', 'the repair pin does not link its catalog ref to its baseline ref') };
+  }
+  const revision = await readRevisionByRef(deps.records, baseline.ref);
+  if (revision.status === 'not_found') {
+    return { ok: false, rejection: rejected('invalid', 'the repair pin names no recorded architecture baseline') };
+  }
+  if (revision.status === 'not_ready') {
+    return { ok: false, rejection: rejected('unavailable', 'the repair pin baseline is not ready') };
+  }
+  if (revision.status === 'rejected') {
+    return { ok: false, rejection: rejected(noteCodeOf(revision.code), revision.reason) };
+  }
+  if (revision.value.baseline.contentDigest !== baseline.digest) {
+    return { ok: false, rejection: rejected('invalid', 'the repair pin baseline digest does not match the recorded revision') };
+  }
+  const trial = applyRepairOps(revision.value.catalog.catalog,
+    revision.value.baseline.content.dependencyRules ?? [], parsed.ops, ctx.projectId);
+  if (!trial.ok) return { ok: false, rejection: rejected('invalid', trial.problem.reason) };
+  const moves = repairMovesProblem(repair.responsibilityMoves, trial.catalog.modules, ctx.projectId);
+  if (moves !== null) return { ok: false, rejection: rejected('invalid', moves.reason) };
+  return { ok: true, payload: { pin: repair.pin, ops: parsed.ops,
+    responsibilityMoves: repair.responsibilityMoves as ResponsibilityMoveV1[],
+    structural: structuralOfRepair(parsed.ops) } };
+}
+
 // --------------------------------------------------------------------------
 // The service
 // --------------------------------------------------------------------------
@@ -474,7 +564,24 @@ export type NoteUserReasonFactsPort = {
     attempt?: DecisionSourceAttempt): Promise<ReadResult<Map<string, NoteUserReasonTargetV1>>>;
 };
 
-export type NoteService = NoteWritePort & NoteDecisionApplyPort & NoteUserReasonFactsPort;
+/**
+ * The composition root's reject arm for a `repair_approval` answer. It is not a
+ * public note write (`NoteWritePort`), not a route and not an HTTP type: only
+ * `createTargetPlatform`'s `repair_approval` row calls it, so an ordinary
+ * `notes/withdraw` can never mint the card proof that proves the answer's
+ * application. The transition is the ordinary one (`staged → withdrawn`,
+ * reason `rejected_by_user`); the proof rides this commit's own
+ * `NoteDispositionChanged` event.
+ */
+export type NoteRepairRejectionPort = {
+  applyRepairRejection(ctx: CoreCallContext, input: {
+    commandId: string; noteId: string; expectedVersion: number;
+    answerMessageRef: SessionMessageRef; actor: ActorRef | null;
+  }): Promise<NoteDispositionResult>;
+};
+
+export type NoteService = NoteWritePort & NoteDecisionApplyPort & NoteUserReasonFactsPort
+  & NoteRepairRejectionPort;
 
 export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const anchorQuota = deps.anchorQuota ?? NOTE_ANCHOR_QUOTA;
@@ -1217,6 +1324,17 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const authority = noteWriteAuthority({ kind: draft.kind, isUser: caller.isUser, duty: caller.duty });
     if (authority !== null) return rejectedInput(input, noteCodeOf(authority.code), authority.detail);
 
+    // Book §3.1 items 2 and 4: a repair's trial runs once against the catalog
+    // and dependency rules its pin names; the platform's `structural` is the
+    // only value written, and the caller's boolean is ignored.
+    let repairPayload: RepairPayloadV1 | undefined;
+    if (draft.kind === 'repair') {
+      const trial = await repairTrial(deps, ctx, draft.repair);
+      if (!trial.ok) return rejectedInput(input, trial.rejection.code, trial.rejection.reason);
+      repairPayload = trial.payload;
+    }
+    const platformStructural = repairPayload === undefined ? draft.structural : repairPayload.structural;
+
     // L2a classes 1–2 and 4, through the narrow reader (the Run-bound plan is
     // passed so an agent's stage key keeps its bound revision).
     const anchorRead = await resolveNoteAnchors(ctx, { main: draft.anchor, extraAnchors: draft.extraAnchors,
@@ -1378,9 +1496,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const currentByAnchor = new Map<string, NoteHeadSnapshot[]>();
     for (const key of resolved.keys) {
       if (key === null) continue;
-      const page = await headsByAnchorKey(deps, ctx.projectId, key);
+      const page = await headsByAnchorKey(deps.records, ctx.projectId, key);
       if (!page.ok) return rejectedInput(input, page.code, page.reason);
-      const heads = page.heads.filter(head => head.state === 'accepted' || head.state === 'reviewed');
+      const heads = page.value.filter(head => head.state === 'accepted' || head.state === 'reviewed');
       currentByAnchor.set(key, heads);
     }
     const topicKey = topicKeyOf(draft.topic);
@@ -1486,7 +1604,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     });
     const userNoteReplaced = draft.kind !== 'understanding'
       && [...replacedCurrent.values()].some(target => target.confirmedByUser);
-    const admission = admitNoteWrite({ kind: draft.kind, structural: draft.structural,
+    const admission = admitNoteWrite({ kind: draft.kind, structural: platformStructural,
       contradicts: liveContradicts, userNoteReplaced, anchorFull, goalFull, isUser: caller.isUser });
 
     // L7/R6: the returned and replay-stored `overQuota` is the COMMITTED
@@ -1522,8 +1640,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         anchor: resolved.anchors[0]!, extraAnchors: resolved.anchors.slice(1), facts: draft.facts,
         basis: { planRevision: resolved.basisPlanRevision,
           catalogRevision: resolved.basisCatalogRevision, files: basisFiles },
-        structural: draft.structural, replaces: [...draft.replaces], contradicts: [...draft.contradicts],
+        structural: platformStructural, replaces: [...draft.replaces], contradicts: [...draft.contradicts],
         coexistWith: [...draft.coexistWith],
+        ...(repairPayload === undefined ? {} : { repair: repairPayload }),
       },
       state: admission.state, goalId: storedGoalId, source: caller.source,
       stagedRunKey: caller.source.kind === 'agent' && draft.kind === 'repair' && caller.source.runRef !== null
@@ -1633,7 +1752,8 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   async function dispose(ctx: CoreCallContext, commandId: string, noteId: string, expectedVersion: number,
     eventKind: 'review' | 'accept' | 'reject' | 'withdraw', reason: string | null,
     expectedPointerRevision?: number | null,
-    resolution?: 'supersede' | 'coexist'): Promise<NoteDispositionResult> {
+    resolution?: 'supersede' | 'coexist',
+    cardProof?: CardProofInput | null): Promise<NoteDispositionResult> {
     // This call owns its caches; nothing survives the return.
     const call = newNoteCall();
     // R4/d7: the disposition replay is resolved BEFORE `resolveCaller`, the head
@@ -1745,7 +1865,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       identityKey, fingerprint, noteId, head, caller, transition, decisionHeads,
       readPointer: 'accept', expectedPointerRevision: expectedPointerRevision ?? null,
       change: { kind: eventKind, by: caller.source, reason, decisionMessageRef: null },
-      cardProof: null,
+      cardProof: cardProof ?? null,
     });
   }
 
@@ -1834,6 +1954,21 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   }
 
   /**
+   * The composition root's `repair_approval` reject: it shares `dispose` and the
+   * one `finishDisposition` tail with every other disposition, so the replay,
+   * caller, guard and commit rules are the same. The card proof is supplied by
+   * this caller, never by an ordinary `notes/withdraw` request.
+   */
+  async function applyRepairRejection(ctx: CoreCallContext, input: {
+    commandId: string; noteId: string; expectedVersion: number;
+    answerMessageRef: SessionMessageRef; actor: ActorRef | null;
+  }): Promise<NoteDispositionResult> {
+    return dispose(ctx, input.commandId, input.noteId, input.expectedVersion, 'withdraw',
+      'rejected_by_user', undefined, undefined,
+      { acknowledgementRef: input.answerMessageRef, actor: input.actor });
+  }
+
+  /**
    * L4 / decision 72 (U1): the read-only committed-receipt lookup for
    * `record_note`. It rebuilds the request `recordNoteRequestOf` builds for the
    * tool handler and the identity/fingerprint pair `writeNote`/`dispose` commit,
@@ -1879,6 +2014,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       return dispose(ctx, input.commandId, input.noteId, input.expectedVersion, 'withdraw', input.reason);
     },
     applyNoteDecision,
+    applyRepairRejection,
     userReasonFacts,
     lookupToolCommit,
   };

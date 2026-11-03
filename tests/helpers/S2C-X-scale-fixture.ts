@@ -285,9 +285,10 @@ async function addResponsibleModules(f: LineFixture, count: number,
   if (registration.status !== 'ready') throw new Error(`S2C-X registration read failed: ${JSON.stringify(registration)}`);
   const revised = await catalogService.reviseArchitectureCatalog(f.ctx, {
     input: {
-      basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-      catalog: { ...catalog, modules: [...catalog.modules, ...added] },
-      reason: 'S2C-X small world: responsible link page width',
+      expected: { catalogRef: current.value.catalog.ref,
+        baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+      ops: added.map(module => ({ op: 'add_module' as const, module })),
+      responsibilityMoves: [], reason: 'S2C-X small world: responsible link page width',
     },
     meta: { requestId: requestId('catalog'), expected: [
       { ref: f.base.projectRef, revision: registration.value.project.revision },

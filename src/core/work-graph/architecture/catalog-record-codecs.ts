@@ -18,6 +18,7 @@
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { invalid, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type {
@@ -26,6 +27,7 @@ import type {
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { hasCycleInEdges } from '../model/task-index.js';
+import { decisionChangeProofProblem } from '../persistence/decision-record-codecs.js';
 import type {
   AdoptedArchitecture, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
   ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision, ModuleContainment,
@@ -71,6 +73,12 @@ export type ArchitectureCatalogRevisedEventV1 = {
   actor: ActorRef;
   reason: string;
   revision: ArchitectureRevision;
+  /**
+   * A decision application's formal proof, written by the repair activation or the
+   * proposal approval on the commit's last event. An ordinary
+   * host revision carries none.
+   */
+  proof?: DecisionChangeProofV1;
 };
 
 /** Domain verdict of one catalog candidate. The service maps these to the public
@@ -497,6 +505,10 @@ function validateArchitectureCatalogRevisedEvent(event: EncodedDomainEvent): Dec
   const actor = readHostActor(parsed['actor']);
   if (actor === null) return invalid('ArchitectureCatalogRevised actor must be a trusted human or system actor');
   if (!nonEmpty(parsed['reason'])) return invalid('ArchitectureCatalogRevised reason must be a non-empty string');
+  if (parsed['proof'] !== undefined) {
+    const proofProblem = decisionChangeProofProblem(parsed['proof']);
+    if (proofProblem !== null) return invalid('ArchitectureCatalogRevised proof is invalid: ' + proofProblem);
+  }
   const revision = parsed['revision'];
   if (!isRecord(revision) || !exactKeys(revision, ['baseline', 'catalog'])) {
     return invalid('ArchitectureCatalogRevised revision must carry exactly baseline and catalog');

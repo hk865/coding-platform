@@ -38,6 +38,7 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/quer
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createRunSupport, L_HOST, runKey, type RunSupport } from './S2C-L-runs-support.js';
 import { createLineCheckSupport, type LineCheckSupport } from './S2C-L-check-support.js';
@@ -194,6 +195,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records,
+      ...NOTE_RECORD_SCHEMAS.records,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records],
     events: [...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events,
@@ -201,11 +203,13 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
       ...QUERY_JOB_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
       ...CONTROL_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
       ...SESSION_ANOMALY_RECORD_SCHEMAS.events, ...EVIDENCE_RECORD_SCHEMAS.events,
+      ...NOTE_RECORD_SCHEMAS.events,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ROLE_LINE_RECORD_SCHEMAS.events],
     lookups: [...(SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
       ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []), ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []),
       ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []),
       ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []), ...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []),
+      ...(NOTE_RECORD_SCHEMAS.lookups ?? []),
       ...(PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? [])],
   });
   const records = base.records as unknown as WorkLineStore;

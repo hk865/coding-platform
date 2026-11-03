@@ -17,6 +17,7 @@ import type { OperationRef } from './core/operations.js';
 import type { ReworkRequestRef } from './rework-request.js';
 import type { TaskRequeueRef } from './task-requeue.js';
 import type { VerificationRoundRef } from './verification.js';
+import type { ArchitectureProposalBatchRef } from './architecture-proposal.js';
 import { defineShape, f, type InferShape } from './data-format.js';
 import { GoalRefShape, ProjectScopeShape } from './data-format-refs.js';
 import { canonicalJson, canonicalKey } from './fingerprint.js';
@@ -106,7 +107,7 @@ export type DecisionSourceV1 = {
     | 'planning_question' | 'goal_conflict' | 'message_release'
     | 'unknown_call_review' | 'command_rerun_request'
     | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation'
-    | 'module_maintainer_assignment';
+    | 'module_maintainer_assignment' | 'repair_approval' | 'structural_proposal';
   key: string; subject: DecisionSubjectV1; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
@@ -236,7 +237,9 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'handoff_approval'; operationRef: OperationRef }
   | { kind: 'module_maintainer_assignment'; operationRef: OperationRef }
   | { kind: 'adviser_creation'; trigger:
-      { kind: 'requeue'; ref: TaskRequeueRef } | { kind: 'round'; ref: VerificationRoundRef } };
+      { kind: 'requeue'; ref: TaskRequeueRef } | { kind: 'round'; ref: VerificationRoundRef } }
+  | { kind: 'repair_approval'; note: VersionPin }
+  | { kind: 'structural_proposal'; batch: ArchitectureProposalBatchRef };
 
 const goalKey = (goalRef: GoalRef): string => canonicalJson(goalRef as never);
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -301,6 +304,10 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
     case 'adviser_creation':
       // No adviser-operation ref exists: its key is the triggering requeue/round arm's canonical JSON (§3.9 item 3).
       return canonicalJson(identity.trigger as never);
+    case 'repair_approval':
+      return canonicalJson({ kind: 'repair_approval', note: identity.note } as never);
+    case 'structural_proposal':
+      return canonicalJson({ kind: 'structural_proposal', batch: identity.batch } as never);
     default: {
       const unknownKind: never = identity;
       throw new Error(`unknown decision source identity ${JSON.stringify(unknownKind)}`);

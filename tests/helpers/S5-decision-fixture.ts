@@ -113,6 +113,7 @@ import { REWORK_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/r
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
 import { RUN_ACTIVITY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/run-activity-codecs.js';
 import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
@@ -126,6 +127,7 @@ import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -501,7 +503,8 @@ function candidateRefFor(requestId: string): PlanProposal['ref'] {
 // ---------------------------------------------------------------------------
 
 const additionalSchemas: RecordBackendSchemas[] = [QUERY_JOB_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
-  DECISION_RECORD_SCHEMAS, COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS,
+  DECISION_RECORD_SCHEMAS, COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, NOTE_RECORD_SCHEMAS,
+  ARCHITECTURE_CATALOG_SCHEMAS,
   LINE_SETTINGS_RECORD_SCHEMAS,
   UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
   COMMAND_RERUN_REQUEST_RECORD_SCHEMAS,
@@ -1161,7 +1164,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const messageDecisions = createDecisionMessageService({
     records, now, newId, operatorActor: { ...operatorActor }, messages: messageMailbox,
     materials: messageMaterials, messageWrites: createMessageWriteOwner(messageDeps),
-    sources: createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }) }),
+    sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }) }),
   });
 
   const options: DecisionOptionV1[] = [

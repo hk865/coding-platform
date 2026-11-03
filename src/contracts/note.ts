@@ -3,13 +3,14 @@
 // write or disposition; a `CurrentPointer` records the accepted understanding
 // per goal/stage anchor. Names and shapes are frozen by the slice-4 spec §2.
 import type { CommitCursor } from './command-event.js';
-import type { SessionRef } from './core/identity.js';
+import type { ModuleRef, SessionRef, SessionWorkLinkRef } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef } from './dispatch.js';
 import type { ContextSourceV1 } from './graph-context.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import type { QueryRunRef } from './query-job.js';
 import { PLATFORM_PROMPT_PACK_V1 } from './prompts/platform-pack.generated.js';
+import type { ArchitectureCatalogPinV1, CatalogInterfaceV1, ModuleDefinition } from './architecture-catalog.js';
 
 /** P9: the three aggregate refs the ledger adds (`ledger.ts` `AggregateRef`). */
 export type NoteHeadRef = { aggregateType: 'NoteHead'; projectId: string; noteId: string };
@@ -50,14 +51,87 @@ export type NoteKind = 'convention' | 'pitfall' | 'tradeoff' | 'open_question' |
 export const NOTE_GENERAL_KINDS: readonly NoteKind[] =
   ['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision'];
 
+/** The six general kinds are the one family; every other kind is separate. */
+export function isGeneral(kind: string): boolean {
+  return (NOTE_GENERAL_KINDS as readonly string[]).includes(kind);
+}
+
+/** The one complete kind list; the codec, service and tool group point at it. */
+export const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
+
+/**
+ * The one per-kind payload table: the kind's dedicated field and whether it is
+ * required. Only `repair` exists in 8C; 8E adds its own entries.
+ */
+export const NOTE_PAYLOAD_KINDS: Readonly<Partial<Record<NoteKind, { field: string; required: boolean }>>> = {
+  repair: { field: 'repair', required: true },
+};
+
+/**
+ * The one per-kind payload gate: a dedicated field is present exactly on its
+ * kind and required there. A decoder passes its record path as `label`; the
+ * service passes none. 8E adds entries to `NOTE_PAYLOAD_KINDS`, never a second
+ * rule or message.
+ */
+export function payloadKindProblem(body: Record<string, unknown>, kind: string,
+  label?: string): string | null {
+  for (const [payloadKind, entry] of Object.entries(NOTE_PAYLOAD_KINDS)) {
+    if (entry === undefined) continue;
+    const present = body[entry.field] !== undefined;
+    if (kind === payloadKind) {
+      if (entry.required && !present) {
+        return label === undefined
+          ? `a ${payloadKind} note requires the ${entry.field} payload`
+          : `${label}.${entry.field} is required for ${payloadKind}`;
+      }
+    } else if (present) {
+      return label === undefined
+        ? `the ${entry.field} payload is only for a ${payloadKind} note`
+        : `${label}.${entry.field} is only for ${payloadKind}`;
+    }
+  }
+  return null;
+}
+
+export type CatalogRepairOpV1 =
+  | { op: 'set_responsibility'; moduleId: string; text: string }
+  | { op: 'set_module_name'; moduleId: string; name: string }
+  | { op: 'add_path'; moduleId: string; path: string }
+  | { op: 'remove_path'; moduleId: string; path: string }
+  | { op: 'add_interface'; moduleId: string; interface: CatalogInterfaceV1 }
+  | { op: 'set_interface'; moduleId: string; interfaceId: string; description?: string; paths?: string[] }
+  | { op: 'remove_interface'; moduleId: string; interfaceId: string }
+  | { op: 'set_dependency_reason'; from: ModuleRef; to: ModuleRef; reason: string }
+  | { op: 'add_module'; module: ModuleDefinition }
+  | { op: 'remove_module'; moduleId: string }
+  | { op: 'add_dependency'; from: ModuleRef; to: ModuleRef; reason: string }
+  | { op: 'remove_dependency'; from: ModuleRef; to: ModuleRef }
+  | { op: 'add_forbid_rule'; from: ModuleRef; to: ModuleRef; reason: string }
+  | { op: 'remove_forbid_rule'; from: ModuleRef; to: ModuleRef }
+  | { op: 'set_parent'; moduleId: string; parentId: string | null };
+
+export type ResponsibilityMoveV1 = {
+  link: SessionWorkLinkRef;
+  to: { kind: 'standby' } | { kind: 'modules'; destinations: ModuleRef[] };
+};
+
+export type RepairInputV1 = {
+  pin: ArchitectureCatalogPinV1;
+  ops: CatalogRepairOpV1[];
+  responsibilityMoves: ResponsibilityMoveV1[];
+};
+
+export type RepairPayloadV1 = RepairInputV1 & { structural: boolean };
+
 type NoteDraftCommonV1 = { topic: string; conclusion: string; anchor: NoteDraftAnchorV1; extraAnchors: NoteDraftAnchorV1[];
   facts: NoteFactV1[]; basisFiles: string[]; structural: boolean; replaces: string[]; contradicts: string[];
   coexistWith: string[] };
 
-/** Strict per-kind union: `understanding` gives sections and no body, every other kind the reverse. */
+/** Strict per-kind union: `understanding` gives sections, `repair` gives the payload, every other kind a body. */
 export type NoteDraftV1 =
-  | NoteDraftCommonV1 & { kind: Exclude<NoteKind, 'understanding'>; body: string }
-  | NoteDraftCommonV1 & { kind: 'understanding'; sections: NoteSectionsV1 };
+  | NoteDraftCommonV1 & { kind: Exclude<NoteKind, 'understanding' | 'repair'>; body: string }
+  | NoteDraftCommonV1 & { kind: 'understanding'; sections: NoteSectionsV1 }
+  | NoteDraftCommonV1 & { kind: 'repair'; body: string; repair: RepairInputV1 };
 
 export type NoteState = 'staged' | 'accepted' | 'reviewed' | 'pending_review' | 'rejected' | 'superseded' | 'withdrawn';
 
@@ -83,7 +157,7 @@ export type NoteBodyV1 = { kind: NoteKind; topic: string; topicKey: string; conc
   sections?: NoteSectionsV1; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; facts: NoteFactV1[];
   basis: { planRevision: number | null; catalogRevision: number | null; files: { path: string; digest: string }[] };
   structural: boolean; replaces: string[]; contradicts: string[];
-  coexistWith: string[] };
+  coexistWith: string[]; repair?: RepairPayloadV1 };
 
 export type NoteHeadSnapshot = NoteBodyV1 & { ref: NoteHeadRef; noteId: string; version: number; state: NoteState;
   goalId: string | null; source: NoteSourceV1; stagedRunKey: string | null;
@@ -94,7 +168,7 @@ export type NoteHeadSnapshot = NoteBodyV1 & { ref: NoteHeadRef; noteId: string; 
 export type NoteVersionSnapshot = NoteBodyV1 & { ref: NoteVersionRef; noteId: string; version: number; state: NoteState;
   goalId: string | null; source: NoteSourceV1; reviewReasons: NoteReviewReason[];
   noticeClass: 'user_affected' | 'structural' | 'scribe_result' | null;
-  change: { kind: 'write' | 'review' | 'accept' | 'reject' | 'withdraw' | 'supersede' | 'coexist' | 'merge';
+  change: { kind: 'write' | 'review' | 'accept' | 'activate' | 'reject' | 'withdraw' | 'supersede' | 'coexist' | 'merge';
             by: NoteSourceV1; reason: string | null; decisionMessageRef: SessionMessageRef | null };
   at: string; since: CommitCursor };
 

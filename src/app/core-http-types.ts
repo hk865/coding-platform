@@ -43,6 +43,7 @@ import type {
 import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
 import type { AdoptInitialArchitectureInput } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
+import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
 import type {
   CompletionPolicyConfigurationPort,
@@ -173,7 +174,9 @@ export type CoreRouteSuffix =
   | 'goals/create'
   | 'goals/read'
   | 'architecture/adopt-initial'
+  | 'architecture/revise'
   | 'architecture/read'
+  | 'architecture/proposals/read'
   | 'architecture/capture'
   | 'architecture/query'
   | 'architecture/compare'
@@ -369,8 +372,17 @@ export type GoalsReadBody = PlainBody<PlanTaskPort['queryGoal']>;
 export type GoalsReadResponse = RouteResponse<PlanTaskPort['queryGoal']>;
 export type ArchitectureAdoptInitialBody = GraphWriteBody<ArchitectureCatalogPort['adoptInitialArchitecture']>;
 export type ArchitectureAdoptInitialResponse = RouteResponse<ArchitectureCatalogPort['adoptInitialArchitecture']>;
+export type ArchitectureReviseBody = GraphWriteBody<ArchitectureCatalogPort['reviseArchitectureCatalog']>;
+export type ArchitectureReviseResponse = RouteResponse<ArchitectureCatalogPort['reviseArchitectureCatalog']>;
 export type ArchitectureReadBody = PlainBody<ArchitectureCatalogPort['readArchitectureRevision']>;
 export type ArchitectureReadResponse = RouteResponse<ArchitectureCatalogPort['readArchitectureRevision']>;
+export type ArchitectureProposalsReadBody = PlainBody<ArchitectureProposalService['readArchitectureProposal']>;
+export type ArchitectureProposalsReadResponse = RouteResponse<ArchitectureProposalService['readArchitectureProposal']>;
+/** The two architecture command/read suffixes' body/result pairs; the route table names it so the aliases stay in the production graph. */
+export type ArchitectureCoreRouteDto = {
+  'architecture/revise': { body: ArchitectureReviseBody; response: ArchitectureReviseResponse };
+  'architecture/proposals/read': { body: ArchitectureProposalsReadBody; response: ArchitectureProposalsReadResponse };
+};
 /** L8 (P16): the public manual capture body. The driver's trusted start
  * watermark (`requestSeq`) is not a public input, so the DTO omits it; the port
  * keeps accepting it for the driver's direct, non-public owner call. */

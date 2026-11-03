@@ -74,7 +74,7 @@
 | `runRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:114` | 校验完整 Work RunRef | Work Run 字段，注意不是 QueryRunRef |
 | `sessionRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整的普通 `{projectId,sessionId}` SessionRef；**正本** | 普通 SessionRef 输入及嵌套字段；旧副本见“不要做”（CS-11、M1-31） |
 | `taskTripleProblem` | `src/core/work-graph/persistence/rework-codecs.ts:107` | 校验 Task 三元组（project/goal/task） | 需要 Task 身份时 |
-| `aggregateRefProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:183` | 校验已知聚合判别式与全部身份字段 | VersionedRef/card 引用 |
+| `aggregateRefProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:189` | 校验已知聚合判别式与全部身份字段 | VersionedRef/card 引用 |
 | `isWorkLinkRelation`、`checkTarget`、`checkWorkLinkRef` | `src/core/work-graph/persistence/decision-record-codecs.ts:210`、`src/core/work-graph/persistence/decision-record-codecs.ts:214`、`src/core/work-graph/persistence/decision-record-codecs.ts:252` | 五个 `WorkLinkTarget` 臂的关系/目标/完整 ref 校验 | 会话链接与角色线目标校验；不要另写本地判别 |
 | `versionPinProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:275` | VersionPin 的唯一校验：`{ref,revision}` 的 ref 已知、revision 为正整数；`allowAbsence` 允许 0（变更证明的 before） | 需要校验 `{ref,revision}` pin 时；不要另写本地 pin 检查 |
 | `decisionChangeProofProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:344` | 校验决定变更证明 | 编码/解码决定写事件时 |

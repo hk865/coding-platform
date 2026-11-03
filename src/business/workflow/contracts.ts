@@ -67,7 +67,8 @@ export type {
 export type RedriveAnswerV1 =
   | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef; answerMessageRef: SessionMessageRef }
   | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; answerMessageRef: SessionMessageRef }
-  | { kind: 'message_release'; answerMessageRef: SessionMessageRef };
+  | { kind: 'message_release'; answerMessageRef: SessionMessageRef }
+  | { kind: 'repair_approval'; answerMessageRef: SessionMessageRef };
 
 /**
  * K3 UR7 rework 1 (answer 7): ONE internal discriminated failed-card ref. The

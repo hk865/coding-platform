@@ -190,6 +190,7 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
   'unknown_call_review', 'command_rerun_request',
   'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation', 'module_maintainer_assignment',
+  'repair_approval', 'structural_proposal',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
@@ -1716,7 +1717,10 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
     case 'goal_cause':
       return identity.goalRef.projectId !== ctx.projectId ? forbidden : null;
     case 'note_review':
+    case 'repair_approval':
       return null;
+    case 'structural_proposal':
+      return identity.batch.projectId !== ctx.projectId ? forbidden : null;
     // These sources' refs carry their own project/workspace ids.
     case 'unknown_call_review':
       return identity.reviewRef.projectId !== ctx.projectId ? forbidden : null;
@@ -2080,6 +2084,19 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
     return { ...card, state: 'closed', closedReason: card.closedReason, readOnly: true, actions: [] };
   }
   if (card.answer !== null) {
+    // 8C §3.7 item 5: a structural batch whose application proved no catalog revision
+    // (the answer's base pin changed: members `stale`, or a reject) is the closed
+    // "已过时，要重提" projection, never an applied revision. An applied batch's
+    // proof names the baseline/active pins, so the two outcomes stay distinct.
+    if (card.source.kind === 'structural_proposal' && card.application !== null
+      && !card.application.changes.some(change => change.after.ref.aggregateType === 'ArchitectureBaselineRevision'
+        || change.after.ref.aggregateType === 'ProjectArchitectureBaselineActive')) {
+      // An approve answer that proved no revision is the stale "已过时，要重提" card; a reject is not stale.
+      const selection = card.answer.decision.selection;
+      const stale = selection.kind === 'option' && selection.optionId === 'approve';
+      return { ...card, state: 'closed', closedReason: 'source_resolved', readOnly: true, actions: [],
+        ...(stale ? { staleReason: 'stale_pins' } : {}) };
+    }
     if (card.application !== null) return { ...card, state: 'applied', readOnly: false, actions: [] };
     if (card.answer.decision.requiresApplication) {
       // A resolved member operation's or rework request's answer stays history instead of a pending application.

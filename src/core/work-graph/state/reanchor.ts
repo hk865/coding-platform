@@ -8,7 +8,7 @@ import type { AdoptedArchitecture } from '../../../contracts/architecture-catalo
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { RoleLineBindingIntentV1, RoleLineDutyV1, RoleScopeClaimChangeV1, RoleScopeV1 } from '../../../contracts/role-lines.js';
-import { roleScopeOfTarget } from '../../../contracts/role-lines.js';
+import { roleScopeClaimKey, roleScopeOfTarget } from '../../../contracts/role-lines.js';
 import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from './role-scope.js';
 import { destinationEligible, openDestination } from './session-responsibility.js';
 export type ReanchorMoveV1 = { duty: RoleLineDutyV1; source: SessionWorkLinkRef;
@@ -172,7 +172,20 @@ export function planReanchor(input: { projectRef: ProjectScope; duty: RoleLineDu
     }
   }
 
-  // (5) One folded claim change per slot; the source closes once even in a split.
+  // (5) One owner per claim slot: two open claims on one key with different owners are a duplicate move.
+  const claimOwner = new Map<string, SessionWorkLinkRef>();
+  for (const claim of openClaims) {
+    const target = roleScopeOfTarget(claim.link.target);
+    if (target === null) continue;
+    const key = roleScopeClaimKey({ projectRef, duty: claim.duty, target });
+    const owner = claimOwner.get(key);
+    if (owner !== undefined && canonicalKey(owner) !== canonicalKey(claim.link)) {
+      return { ok: false, refusals: [rejected('invalid', 'duplicate_responsibility_move')] };
+    }
+    claimOwner.set(key, claim.link);
+  }
+
+  // (6) One folded claim change per slot; the source closes once even in a split.
   const claimChanges = foldRoleScopeClaimChanges(projectRef,
     responsibilityClaimChanges({ projectRef, close: closeClaims, open: openClaims }));
   return { ok: true, plan: {

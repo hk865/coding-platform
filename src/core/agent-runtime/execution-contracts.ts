@@ -49,6 +49,7 @@ import type {
 import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort,
 } from '../work-graph/model/command-rerun-request-contracts.js';
+import type { ArchitectureProposalService } from '../work-graph/architecture/proposal-service.js';
 import type { CommandRecognizer } from '../work-graph/model/command-recognition-contracts.js';
 import type { ToolCommitLookup } from '../../contracts/unknown-call-review.js';
 import type { ExecutionHistoryWritePort } from '../work-graph/model/execution-history-contracts.js';
@@ -352,6 +353,12 @@ export type RuntimeExecutionDependencies = {
    */
   maintainerAssignments?: Pick<import('../work-graph/model/module-maintainer-contracts.js').ModuleMaintainerPort,
     'requestAssignment'>;
+  /**
+   * The structural-proposal owner behind `propose_architecture_revision`; absent
+   * fails a Run selecting that tool closed as `unsupported` before the model. The
+   * owner is the same instance the routes publish.
+   */
+  architectureProposals?: Pick<ArchitectureProposalService, 'proposeArchitectureRevision'>;
   /**
    * K3 L14: the SAME UnknownCallReview owner the routes publish. The review
    * round's `record_unknown_call_review` tool binds the record and the

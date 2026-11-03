@@ -7,7 +7,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { NoteDraftAnchorV1, NoteDraftV1, NoteSectionsV1, SymbolLocatorV1 } from '../../src/contracts/note.js';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
+import type { NoteDraftAnchorV1, NoteDraftV1, NoteSectionsV1, RepairInputV1, SymbolLocatorV1 } from '../../src/contracts/note.js';
 import { renderNoteHeader } from '../../src/contracts/note.js';
 import { createS4ANoteFixture, type S4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
 import { createS4ANoteScopeFixture, type S4ANoteScopeFixture } from '../helpers/S4A-note-scope-fixture.js';
@@ -15,6 +16,13 @@ import { createS4ANoteScopeFixture, type S4ANoteScopeFixture } from '../helpers/
 const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
 const FILE_A = { kind: 'file', path: 'src/a/x.ts' } as const;
 const FILE_B = { kind: 'file', path: 'src/b/y.ts' } as const;
+const REPAIR_PIN: ArchitectureCatalogPinV1 = {
+  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: 's4a-project', baselineId: 's4a-baseline', revision: 1 },
+  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: 's4a-project', baselineId: 's4a-baseline',
+    revision: 1 }, digest: '7d318586bae25df0e13e789bebda01760f1e1b4ed1021fcb99b5947e1c21e82a' },
+};
+const REPAIR: RepairInputV1 = { pin: REPAIR_PIN,
+  ops: [{ op: 'set_responsibility', moduleId: 'A', text: 'area A repaired' }], responsibilityMoves: [] };
 
 function general(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return {
@@ -246,7 +254,7 @@ describe('S4A N-13 repair', () => {
     await withFixture(kind, {}, async f => {
       const ctx = f.ctx();
       const run = await f.claimRun('n13');
-      const repair = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'fix the seam' }), 's4a-goal');
+      const repair = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'fix the seam', repair: REPAIR }), 's4a-goal');
       if (repair.status === 'rejected') throw Error('unreachable');
       expect(repair).toMatchObject({ status: 'staged' });
       const noteId = repair.noteId;
@@ -283,7 +291,7 @@ describe('S4A N-15 kinds and replaces_kind_mismatch', () => {
       expect(understandingResult.status).toBe('accepted');
       if (understandingResult.status === 'rejected') throw Error('unreachable');
       const run = await f.claimRun('n15-repair');
-      const repairResult = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'kind-repair' }), 's4a-goal');
+      const repairResult = await f.write(f.workCtx(run), general({ kind: 'repair', topic: 'kind-repair', repair: REPAIR }), 's4a-goal');
       expect(repairResult).toMatchObject({ status: 'staged' });
 
       // open_question replaced by decision: accepted, old superseded

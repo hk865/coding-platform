@@ -4,8 +4,9 @@
  * never reads storage, mints ids or reads a clock. The owner service
  * (`notes/note-service.ts`) reads the current head and version, calls this
  * machine and writes the returned `next` plus the events in ONE RecordStore
- * commit (AGENTS.md rule 9). S4-NOTE-09 (`staged → accepted`) is slice 8 and is
- * deliberately absent.
+ * commit (AGENTS.md rule 9). S4-NOTE-09 (`staged → accepted`) is the `activate`
+ * event; the store CAS and the public acceptance read belong to the activation
+ * owner, not this pure machine.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type {
@@ -399,6 +400,7 @@ export function noteBodyOf(head: PendingNoteHeadSnapshot): NoteBodyV1 {
     coexistWith: head.coexistWith,
   };
   if (head.sections !== undefined) body.sections = head.sections;
+  if (head.repair !== undefined) body.repair = head.repair;
   return body;
 }
 
@@ -413,7 +415,8 @@ export type NoteDispositionEventV1 =
   | { kind: 'reject'; by: 'scribe' | 'user'; reasons: readonly NoteReviewReason[]; reason: string | null }   // S4-NOTE-06
   | { kind: 'withdraw' }                                                        // S4-NOTE-07
   | { kind: 'supersede' }                                                       // S4-NOTE-08
-  | { kind: 'coexist'; by: 'scribe' | 'user' };                                 // S4-NOTE-10
+  | { kind: 'coexist'; by: 'scribe' | 'user' }                                  // S4-NOTE-10
+  | { kind: 'activate' };                                                       // S4-NOTE-09
 
 const OPEN_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pending_review'];
 
@@ -440,6 +443,10 @@ Transition<PendingNoteHeadSnapshot, NoteDispositionEventV1, never> {
       return accept(bumped(head, 'superseded', [], head.confirmedByUser));
     case 'coexist':
       return accept(bumped(head, 'accepted', [], event.by === 'user' ? true : head.confirmedByUser));
+    case 'activate':
+      // S4-NOTE-09: activation is the platform's act, never the user's; the
+      // accepted version keeps the staged body and its digest.
+      return accept(bumped(head, 'accepted', [], false));
   }
 }
 
@@ -503,6 +510,9 @@ function sharedProblem(head: NoteHeadSnapshot, event: NoteDispositionEventV1): R
       return null;
     case 'coexist':
       if (head.state !== 'pending_review') return illegal(head, 'coexist', 'pending_review');
+      return null;
+    case 'activate':
+      if (head.state !== 'staged') return illegal(head, 'activate', 'staged');
       return null;
   }
 }

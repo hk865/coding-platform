@@ -28,6 +28,9 @@ import { createSessionMailbox, createMessageWriteOwner } from '../core/work-grap
 import { createMessageExpiryOwner, type MessageExpiryPort } from '../core/work-graph/communication/message-expiry.js';
 import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts, type DecisionSourceFactsDependencies } from '../core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../core/work-graph/views/structural-proposal-source.js';
+import { createStructuralProposalSource } from '../core/work-graph/views/structural-proposal-source.js';
+import { createRepairApprovalSource, readRepairApprovalObjects } from '../core/work-graph/views/repair-approval-source.js';
 import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
 import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
 import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
@@ -129,7 +132,7 @@ import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evid
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
 import { NOTE_RECORD_SCHEMAS, currentPointerRefKey, noteHeadRefKey } from '../core/work-graph/persistence/note-record-codecs.js';
 import { anchorKeyOf } from '../core/work-graph/notes/note-anchors.js';
-import { createNoteService } from '../core/work-graph/notes/note-service.js';
+import { createNoteService, noteCommandIdentity } from '../core/work-graph/notes/note-service.js';
 import type { NoteRunFactResolver, NoteService } from '../core/work-graph/notes/note-service.js';
 import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMemoryMaterialReadPort } from '../core/work-graph/notes/note-read-model.js';
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
@@ -178,7 +181,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalRunsForCount, readTaskClosure, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -211,14 +214,23 @@ import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
 import { createProjectNoticeSource } from '../core/work-graph/views/project-notice-notices.js';
 import { notifyProject } from '../core/work-graph/communication/project-notice-service.js';
-import { SESSION_RECORD_SCHEMAS, decodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
-  sessionAggregateRefKey, HANDOFF_BRIEF_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
+import { SESSION_RECORD_SCHEMAS, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, decodeSessionRecord,
+  decodeSessionWorkLink, encodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
+  sessionAggregateRefKey, sessionWorkLinkRefKey, HANDOFF_BRIEF_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
 import {
   createWorkHandoffBriefRead, type WorkHandoffBriefReadPort,
 } from '../core/agent-runtime/execution-preparation.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
-import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
+import { SESSION_LIFECYCLE_RECORD_SCHEMAS, encodeSessionResponsibilityChangedEvent } from '../core/work-graph/sessions/lifecycle-record-codecs.js';
+import { roleLineCommitContribution } from '../core/work-graph/sessions/role-scope-commit.js';
+import { eventIdOf } from '../core/work-graph/sessions/trusted-context.js';
+import { createRepairActivationService } from '../core/work-graph/notes/activate-repair.js';
+import { createArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
+import { ARCHITECTURE_PROPOSAL_SCHEMAS } from '../core/work-graph/architecture/proposal-record-codecs.js';
+import type { CatalogRevisionDependencies } from '../core/work-graph/architecture/revision-planner.js';
+import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
+import type { SessionRecord, SessionWorkLink } from '../contracts/core/session.js';
 import { SESSION_ACTIVITY_SCHEMAS, createSessionActivityReader } from '../core/work-graph/sessions/session-activity.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../core/work-graph/persistence/initialization-binding-codecs.js';
 // The initialization adoption operation owner and its bundle; the Host's adoption composite drives it.
@@ -277,7 +289,7 @@ import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
-import type { NoteVersionSnapshot } from '../contracts/note.js';
+import type { NoteVersionSnapshot, ResponsibilityMoveV1 } from '../contracts/note.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { OperationRef } from '../contracts/core/operations.js';
 import type { SessionOperationRecord } from '../core/work-graph/model/session-contracts.js';
@@ -295,7 +307,7 @@ import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
 import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
-import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
   ContinuationWorkspaceSource, ReadonlyCommandAccessInput, RuntimeExecutionDependencies, RuntimeHostBindings,
@@ -324,7 +336,7 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../core/work-graph/queries/query-recor
 import { createConsultationFactsReader } from '../core/work-graph/queries/platform-facts.js';
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
-import { createArchitectureCatalogService } from '../core/work-graph/architecture/catalog-service.js';
+import { createArchitectureCatalogService, readCurrentCatalogWindow } from '../core/work-graph/architecture/catalog-service.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../core/work-graph/architecture/catalog-record-codecs.js';
 import { observeRecordCommits, type RecordCommitObserver } from './commit-observer.js';
@@ -972,7 +984,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     records: [...materialsSchema.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records,
-      ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records,
+      ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...ARCHITECTURE_PROPOSAL_SCHEMAS.records,
+      ...TASK_CLAIM_RECORD_SCHEMAS.records,
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.records, ...MODEL_REQUEST_RECORD_SCHEMAS.records,
       ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records, ...EVIDENCE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
@@ -990,6 +1003,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
+      ...ARCHITECTURE_PROPOSAL_SCHEMAS.events,
       ...TASK_CLAIM_RECORD_SCHEMAS.events, ...EXECUTION_HISTORY_RECORD_SCHEMAS.events,
       ...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
       ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
@@ -1009,6 +1023,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
       ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? [], ...ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [],
+      ...ARCHITECTURE_PROPOSAL_SCHEMAS.lookups ?? [],
       ...TASK_CLAIM_RECORD_SCHEMAS.lookups ?? [], ...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [],
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.lookups ?? [], ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
@@ -1306,7 +1321,174 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
       eligibility: { readDeliveryEligibilityFacts: (...args) => rawWorkflow.readDeliveryEligibilityFacts!(...args) },
     });
-    const catalog = createArchitectureCatalogService({ records: backend.records });
+    /**
+     * The one catalog-revision capability set: the human revise route, the repair
+     * activation and the proposal owner all plan through these same ports. The
+     * task-facts arm enumerates the project's Goals through the Goal-by-project
+     * index and reads each current plan window and its canonical Task closure;
+     * the responsibility arm reads the directory cards and builds the same
+     * role-line contribution the reanchor writer uses.
+     */
+    const catalogRevision: CatalogRevisionDependencies = {
+      records: backend.records,
+      now,
+      eventId: randomUUID,
+      taskFacts: {
+        async read(records, projectId) {
+          const goals = await readGoalsByProject(records, projectId);
+          if (goals.status !== 'ready') return goals;
+          const plans: CatalogPlanFactsV1[] = [];
+          for (const goal of goals.goals) {
+            const window = await readGoalPlanWindow(records, goal.ref);
+            if (window.status !== 'ready') return window;
+            const plan = window.plan;
+            if (plan === null) {
+              plans.push({ goalRef: goal.ref, revision: window.goal.revision, planRef: null, tasks: [] });
+              continue;
+            }
+            const facts = await readCanonicalTaskFacts(records, goal.ref, plan);
+            if (facts.status !== 'ready') return facts;
+            plans.push({ goalRef: goal.ref, revision: window.goal.revision, planRef: plan.ref,
+              tasks: plan.tasks.map(task => ({
+                taskId: task.taskId,
+                moduleIds: task.scope.kind === 'module' ? [task.scope.moduleRef] : [],
+                closure: taskClosureOf(plan, facts.value, task.taskId).cause ?? 'open',
+              })) });
+          }
+          return { status: 'ready', value: { plans, watermark: goals.readThrough } };
+        },
+      },
+      responsibility: {
+        async readFacts(records, ctx, scope, moves: readonly ResponsibilityMoveV1[]) {
+          const window = await readCurrentCatalogWindow(records, scope.projectId);
+          if (window.status !== 'ready') return window;
+          // The delete rule is project-wide: every open responsible link to a
+          // module of this project must move, whichever workspace owns the
+          // line. This is the same project/target index `regionClaims` reads;
+          // each owner Session is read by ref, because the directory refuses
+          // another workspace's Session.
+          let batch;
+          try {
+            batch = await lookupAll(records, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP,
+              [scope.projectId, 'module', 'responsible', null]);
+          } catch (error) {
+            return { status: 'rejected', code: 'unavailable',
+              reason: `the project responsible-link read failed: ${messageOf(error)}` };
+          }
+          const sessions = new Map<string, SessionRecord>();
+          const links = new Map<string, SessionWorkLink>();
+          const guards: { refKey: string; expectedRevision: number | null }[] = [];
+          const archived = new Set<string>();
+          for (const record of batch.items) {
+            const decoded = decodeSessionWorkLink(record);
+            if (decoded.status !== 'decoded') {
+              return { status: 'rejected', code: 'unavailable',
+                reason: `the open responsible link ${record.refKey} is not decodable: ${decoded.reason}` };
+            }
+            const link = decoded.value;
+            if (link.ref.target.kind !== 'module') continue;
+            // An archived line's links are history, not unfinished work: the
+            // directory's old open read excluded archived Sessions, so no move
+            // and no guard applies to them.
+            if (archived.has(link.ref.sessionId)) continue;
+            if (!sessions.has(link.ref.sessionId)) {
+              const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate({
+                projectId: link.ref.projectId, sessionId: link.ref.sessionId }));
+              const read = await records.readMany([sessionKey]);
+              if (read.status !== 'ready') {
+                return { status: 'rejected', code: read.code === 'not_found' ? 'not_found' : 'unavailable',
+                  reason: `the responsible link's Session record could not be read: ${read.reason}` };
+              }
+              const sessionRecord = read.value.records.find(candidate => candidate.refKey === sessionKey);
+              if (sessionRecord === undefined) {
+                return read.value.missing.includes(sessionKey)
+                  ? { status: 'rejected', code: 'not_found', reason: 'the responsible link Session does not exist' }
+                  : { status: 'rejected', code: 'unavailable',
+                    reason: 'the responsible link Session read neither returned nor reported missing the record' };
+              }
+              const session = decodeSessionRecord(sessionRecord);
+              if (session.status !== 'decoded') {
+                return { status: 'rejected', code: 'unavailable',
+                  reason: `the responsible link Session is damaged: ${session.reason}` };
+              }
+              if (session.value.lifecycle !== 'active') {
+                archived.add(session.value.ref.sessionId);
+                continue;
+              }
+              sessions.set(session.value.ref.sessionId, session.value);
+              guards.push({ refKey: sessionKey, expectedRevision: session.value.revision });
+            }
+            links.set(canonicalKey(link.ref), link);
+            guards.push({ refKey: sessionWorkLinkRefKey(link.ref), expectedRevision: link.revision });
+          }
+          // A move may reopen a destination link that is closed now, so the
+          // open-link index does not carry it. Read exactly that destination
+          // record by its computed ref: a hit enters facts with its real
+          // revision as the guard; a miss is a new link and the planner pins
+          // null. No Session-wide link scan and no new index.
+          for (const move of moves) {
+            if (move.to.kind !== 'modules') continue;
+            for (const destination of move.to.destinations) {
+              const destinationRef: SessionWorkLink['ref'] = {
+                aggregateType: 'SessionWorkLink', projectId: move.link.projectId,
+                sessionId: move.link.sessionId,
+                target: { kind: 'module', ref: destination }, relation: 'responsible',
+              };
+              const key = canonicalKey(destinationRef);
+              if (links.has(key) || !sessions.has(destinationRef.sessionId)) continue;
+              const linkKey = sessionWorkLinkRefKey(destinationRef);
+              const read = await records.readMany([linkKey]);
+              if (read.status !== 'ready') {
+                return { status: 'rejected', code: read.code === 'not_found' ? 'not_found' : 'unavailable',
+                  reason: `the responsibility destination link could not be read: ${read.reason}` };
+              }
+              const linkRecord = read.value.records.find(candidate => candidate.refKey === linkKey);
+              if (linkRecord === undefined) continue;
+              const destinationLink = decodeSessionWorkLink(linkRecord);
+              if (destinationLink.status !== 'decoded') {
+                return { status: 'rejected', code: 'unavailable',
+                  reason: `the responsibility destination link is damaged: ${destinationLink.reason}` };
+              }
+              links.set(key, destinationLink.value);
+              guards.push({ refKey: linkKey, expectedRevision: destinationLink.value.revision });
+            }
+          }
+          return { status: 'ready', value: { sessions, links, guards, activeRevision: window.activeRevision } };
+        },
+        contribution(input) {
+          const projectId = input.projectId;
+          const events: ReturnType<typeof encodeSessionResponsibilityChangedEvent>[] = [];
+          for (const [index, material] of input.events.entries()) {
+            const source = input.sessions.find(session => session.ref.sessionId === material.closed.sessionId);
+            const closed = input.links.find(entry => canonicalKey(entry.link) === canonicalKey(material.closed))?.next;
+            const openedRef = material.opened;
+            const opened = openedRef === null ? null
+              : input.links.find(entry => canonicalKey(entry.link) === canonicalKey(openedRef))?.next ?? null;
+            if (source === undefined || closed === null || closed === undefined
+              || material.closed.target.kind !== 'module') {
+              return { ok: false, rejection: rejected('invalid', 'the responsibility event has no source, link or basis') };
+            }
+            const basis = { kind: 'module' as const, moduleRef: material.closed.target.ref,
+              catalogRevision: input.catalogRevision };
+            events.push(encodeSessionResponsibilityChangedEvent({
+              eventId: eventIdOf(input.identityKey, `responsibility:${index}`),
+              eventType: 'SessionResponsibilityChanged', schemaVersion: 1, occurredAt: input.occurredAt,
+              projectId: source.ref.projectId, workspaceId: source.workspaceId,
+              mode: openedRef === null ? 'drop' : 'transfer', source,
+              destination: openedRef === null ? null : source, closed, opened,
+              openedBound: material.openedBound, archiveStep: null, basis,
+            }));
+          }
+          return roleLineCommitContribution({
+            projectRef: { projectId }, records: input.sessions.map(encodeSessionRecord),
+            guards: input.guards, links: input.links, claimChanges: input.claimChanges,
+            bindings: input.bindings, events, allocation: null,
+          }, null);
+        },
+      },
+      duty: sessionDutyResolver,
+    };
+    const catalog = createArchitectureCatalogService({ records: backend.records, revision: catalogRevision });
     // The ONE reader of the roles this workspace's trusted bindings serve. It reads the live configuration at call
     // time: registering a binding may replace the whole object, so a build-time snapshot would miss it.
     const readServedRoles: ServedRolesPort['readServedRoles'] = (scope) =>
@@ -1416,6 +1598,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The same projection instance and duty resolver the rest of the root uses; without them the source is
       // explicitly `unavailable`.
       adviserCreation: { notices: automaticReworkNotices, resolveDutyRecipient },
+      // The same records-only object read the structural card source uses; the answer facts store the card's
+      // frozen digest/ops/moves and member reasons, not a label-only batch.
+      structuralProposalObjects: readStructuralProposalObjects,
+      repairApprovalObjects: readRepairApprovalObjects,
     };
     const decisionSources = createDecisionSourceFacts(decisionSourceDependencies);
     // §4.5: the formal identity/fingerprint of a settings commit are persisted
@@ -1436,13 +1622,32 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const rawGoalSettings = createGoalSettingsService({ records: backend.records, now, newId: randomUUID,
       ...(operatorActor === undefined ? {} : { operatorActor }) });
+    const decisionMessageOwner = createDecisionMessageService({ records: backend.records, now, newId: randomUUID,
+      ...(operatorActor === undefined ? {} : { operatorActor }),
+      messages: mailbox, materials: rawMaterials, messageWrites, sources: decisionSources });
     const rawDecisionMessages: DecisionMessagePort = {
-      ...createDecisionMessageService({ records: backend.records, now, newId: randomUUID,
-        ...(operatorActor === undefined ? {} : { operatorActor }),
-        messages: mailbox, materials: rawMaterials, messageWrites, sources: decisionSources }),
+      ...decisionMessageOwner,
       sendUserMessage: mailbox.sendUserMessage.bind(mailbox),
     };
     boundDecisionMessagesForReview = rawDecisionMessages;
+    // The catalog-revision ports are shared by the human revise route, the repair
+    // activation and the proposal owner; the Run facts come from the one notes
+    // resolver, whose declaration is later in this root but runs only after
+    // composition.
+    const architectureProposals = createArchitectureProposalService({
+      ...catalogRevision,
+      decisionMessages: decisionMessageOwner,
+      runFacts: (ctx, runRef) => noteRunFacts(ctx, runRef),
+    });
+    const repairActivation = createRepairActivationService({
+      records: backend.records,
+      observation: observed,
+      decisionMessages: { readDecisionMessagePin: decisionMessageOwner.readDecisionMessagePin },
+      catalogRevision,
+      now,
+      eventId: randomUUID,
+      newId: randomUUID,
+    });
     // §2.8/§4.1: the single in-process display-token key and the one notice
     // position comparator. The key is never persisted and never enters `state`.
     const noticeDisplayKey = randomBytes(32);
@@ -1576,7 +1781,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const decisionCardSources = [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
       commandRerunRequestCards, messageReleaseCards, handoffApprovalCards, adviserCreationCards,
       createMemberCreationCardSource({ records: backend.records }),
-      createMaintainerAssignmentCardSource({ records: backend.records })];
+      createMaintainerAssignmentCardSource({ records: backend.records }),
+      createRepairApprovalSource({ records: backend.records, observation: observed }),
+      createStructuralProposalSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: decisionCardSources,
@@ -1957,6 +2164,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readTaskClosure: async (_ctx, task) => readTaskClosure(backend.records,
           { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
         notes: noteToolDeps,
+        // The one proposal owner behind `propose_architecture_revision`; the same
+        // instance the answer row applies and the Host publishes.
+        architectureProposals,
         // K3 L14/L13/U5: the SAME review owner the routes/Workflow publish, and
         // the Host's workspace-level read-only facts for `reviewCapability`.
         unknownCallReviews,
@@ -2757,6 +2967,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readTaskRequeue: requeueService.readTaskRequeue,
         readTaskRequeueByIdentity: requeueService.readTaskRequeueByIdentity },
       executions: executionReader, runtime: rawRuntime, evidence: rawEvidence, checks: rawCheckRunner,
+      // The same activation owner the answer row and the Host's triggers use; the
+      // read half hands already-approved answers back through `advanceWork`.
+      repairs: repairActivation,
+      repairAnswers: async (ctx, input) => {
+        const read = await readUnappliedAnswers({ records: backend.records }, ctx,
+          { kind: 'repair_approval', goalRef: input.goalRef });
+        return read.status === 'ready' ? read.value.answers : [];
+      },
       sourceAuthority,
       // Slice 1 (spec §3.3): the new optional narrow ports. The SAME
       // `sessionFacts` instance reaches the Workflow; `controls` and the two
@@ -2895,6 +3113,71 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // ONE `unknown_call_review` row: the owner's answer-derived disposition.
       decisionApplications: {
         note_review: noteApplication,
+        // The approved repair reuses the activation owner and its one
+        // `activate:<noteId>:<version>` identity; the answer row records the
+        // activation's receipt, never a second revision or application.
+        repair_approval: {
+          async apply(ctx, { answerRef, source, selection }) {
+            const pin = source.pins.find(entry => entry.ref.aggregateType === 'NoteHead');
+            if (pin === undefined || pin.ref.aggregateType !== 'NoteHead') {
+              return { status: 'ready', value: { action: null, receipt: null } };
+            }
+            const commandId = `activate:${pin.ref.noteId}:${pin.revision}`;
+            // A reject answer withdraws the staged repair through the same note
+            // owner; the activation command id keeps one stable identity. This
+            // composition-root-only entry supplies the answer's card proof, so
+            // step ③ can record the answer's application from this receipt; the
+            // ordinary `notes/withdraw` route cannot.
+            if (selection.kind === 'option' && selection.optionId === 'reject') {
+              const withdrawn = await noteWrite.applyRepairRejection(ctx, {
+                commandId, noteId: pin.ref.noteId, expectedVersion: pin.revision,
+                answerMessageRef: answerRef,
+                actor: ctx.principal.kind === 'host' ? ctx.principal.actor : null });
+              return { status: 'ready', value: { action: withdrawn,
+                receipt: withdrawn.status === 'done' ? withdrawn.receipt : null } };
+            }
+            const result = await repairActivation.activateRepair(ctx, {
+              commandId, noteId: pin.ref.noteId, expectedVersion: pin.revision,
+            });
+            if (result.status !== 'activated') {
+              return { status: 'ready', value: { action: null, receipt: null } };
+            }
+            // The activation commit's events are [the note activate event, ...
+            // catalog revise events]; its last event carries the catalog-revise
+            // identity, so the receipt must be looked up by the commit's own
+            // `s4-note-activate:` identity. Step ③ then reads the proof on the
+            // commit's last event instead of searching for the last event's
+            // identity as a commit of its own.
+            const identityKey = noteCommandIdentity('activate', ctx, commandId);
+            const committed = await rawBackend.commitIdentities.readCommitByIdentity(identityKey);
+            if (committed.status !== 'ready') {
+              return { status: 'ready', value: { action: null, receipt: null } };
+            }
+            return { status: 'ready', value: { action: null,
+              receipt: { identityKey, fingerprint: committed.value.fingerprint,
+                cursor: committed.value.receipt.cursor } } };
+          },
+        },
+        // The structural proposal answer applies the frozen batch through the
+        // one proposal owner; an applied, rejected or stale batch carries its
+        // own formal receipt for step ③.
+        structural_proposal: {
+          async apply(ctx, { answerRef, source }) {
+            const pin = source.pins.find(entry => entry.ref.aggregateType === 'ArchitectureProposalBatch');
+            if (pin === undefined || pin.ref.aggregateType !== 'ArchitectureProposalBatch') {
+              return { status: 'ready', value: { action: null, receipt: null } };
+            }
+            const result = await architectureProposals.applyArchitectureProposalBatch(ctx, {
+              batchRef: pin.ref, answerMessageRef: answerRef });
+            if (result.status === 'invalid') {
+              return { status: 'ready', value: { action: rejected('invalid', result.reason), receipt: null } };
+            }
+            if ('receipt' in result) {
+              return { status: 'ready', value: { action: null, receipt: result.receipt } };
+            }
+            return { status: 'ready', value: { action: result, receipt: null } };
+          },
+        },
         unknown_call_review: {
           async apply(ctx, { answerRef, source, selection, requestId, expected }) {
             const result = await unknownCallReviews.applyDisposition(ctx, {
@@ -3159,6 +3442,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // G-late's `message_release` answers through the SAME `k3-decision-answer-by-source-goal` reader.
         readMessageReleaseAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
           readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'message_release', goalRef }),
+        // The repair answers the start-up step hands back through the same reader.
+        readRepairAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
+          readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'repair_approval', goalRef }),
         readDecisionAnswer: rawDecisionMessages.readDecisionAnswer.bind(rawDecisionMessages),
       },
       probe: (session: Parameters<typeof historyOwner.probe>[0]['session'], signal: AbortSignal): Promise<SessionMappingProbe> =>
@@ -3528,6 +3814,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
       // non-enumerable like the other internal owner groups.
       notes,
+      // The one repair activation owner the Host's triggers and the answer row
+      // use. Internal and never drained through `trackedCall`; the Host reads it
+      // by property.
+      repairs: repairActivation,
+      // The proposal owner's one plain read; the route binding receives this
+      // function, not the service and not a second reader.
+      readArchitectureProposal: (ctx: CoreCallContext,
+        input: Parameters<typeof architectureProposals.readArchitectureProposal>[1]) =>
+        architectureProposals.readArchitectureProposal(ctx, input),
       // N's ONE gate owner, the same instance the Workflow and the two
       // overlap routes use. Internal like the other owner groups.
       overlapGates: overlapGatePort,
@@ -3675,7 +3970,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
-      'overlapGates',
+      'repairs', 'readArchitectureProposal', 'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter',
       'moduleMaintainers',

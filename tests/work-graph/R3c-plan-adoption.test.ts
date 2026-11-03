@@ -115,9 +115,11 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     // The initial adoption writes revision 1, so one public revision writes the
     // same revision-2 baseline content the original assertion expects.
     const catalog = createArchitectureCatalogService({ records: backend.records });
-    const emptyCatalog = { modules: [], dependencies: [], requireDag: true as const };
+    const catalogBody = { modules: [{ ref: { projectId, moduleId: 'r3c-module' }, name: 'R3c module',
+      responsibility: 'The R3c module', paths: ['src/r3c'], interfaces: [] }],
+    dependencies: [], requireDag: true as const };
     const adopted = await catalog.adoptInitialArchitecture(ctx, {
-      input: { baselineId: architectureFixture.identity.baselineId, catalog: emptyCatalog,
+      input: { baselineId: architectureFixture.identity.baselineId, catalog: catalogBody,
         description: architectureFixture.content.description,
         constraints: architectureFixture.content.constraints },
       meta: { requestId: 'r3c-adopt-baseline', expected: [
@@ -126,8 +128,12 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
       ] } });
     if (adopted.status !== 'committed') throw Error(`initial architecture adoption failed: ${JSON.stringify(adopted)}`);
     const revised = await catalog.reviseArchitectureCatalog(ctx, {
-      input: { basedOn: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest },
-        catalog: emptyCatalog, reason: 'Reach the revision-2 baseline the original prerequisite used' },
+      input: {
+        expected: { catalogRef: adopted.value.catalog.ref,
+          baseline: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest } },
+        ops: [{ op: 'set_responsibility', moduleId: 'r3c-module',
+          text: 'The R3c module after the public revision' }],
+        responsibilityMoves: [], reason: 'Reach the revision-2 baseline the original prerequisite used' },
       meta: { requestId: 'r3c-revise-baseline', expected: [
         { ref: createdProject.value.ref, revision: createdProject.value.revision },
         { ref: workspace.ref, revision: registered.value.revision },

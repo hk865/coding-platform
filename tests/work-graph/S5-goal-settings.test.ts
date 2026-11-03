@@ -21,6 +21,7 @@ import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -306,7 +307,7 @@ function decisions(x: Ctx) {
   const { deps, mailbox, materials } = mailboxFor(x);
   return createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: f.operatorActor,
     messages: mailbox, materials, messageWrites: createMessageWriteOwner(deps),
-    sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
+    sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
 }
 async function conflicts(x: Ctx): Promise<GoalConflictReadV1> {
   const reads = createDecisionReadModel({ records: x.f.records, cardSources: [], noticeSources: [],

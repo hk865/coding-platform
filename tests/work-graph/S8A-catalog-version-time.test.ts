@@ -7,12 +7,12 @@
  *
  * The fixture is the real 4A one (public `reviseArchitectureCatalog` and the
  * production `platform.notes` holder). Everything is checked through the public
- * reads only: the catalog writer takes the wall clock (`new Date()`), so the
- * bound `at` is bracketed by ISO timestamps taken just before and after the
- * revise call. No record port, no event decode and no database read.
+ * reads only: the platform injects the fixture clock into the revision, so the
+ * bound `at` is the fixture-derived event time. No record port, no event decode
+ * and no database read.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { createS4ANoteFixture, type S4ANoteFixture } from '../helpers/S4A-note-fixture.js';
+import { createS4ANoteFixture, S4A_AT, type S4ANoteFixture } from '../helpers/S4A-note-fixture.js';
 
 describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real %s RecordStore', kind => {
   let fixture: S4ANoteFixture | null = null;
@@ -28,13 +28,15 @@ describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real
     // The initial adoption has no binding: the legacy placeholder is null.
     expect(current.value.catalog.since).toBe(null);
 
-    const t0 = new Date().toISOString();
     const revised = await f.platform.architecture.reviseArchitectureCatalog(ctx, {
       meta: { requestId: 's8a-catalog-time', expected: [{ ref: f.projectRef, revision: 1 },
         { ref: f.workspaceRef, revision: 1 }] },
-      input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-        catalog: structuredClone(current.value.catalog.catalog), reason: 's8a bound reason' } });
-    const t1 = new Date().toISOString();
+      input: {
+        expected: { catalogRef: current.value.catalog.ref,
+          baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+        ops: [{ op: 'set_responsibility', moduleId: current.value.catalog.catalog.modules[0]!.ref.moduleId,
+          text: current.value.catalog.catalog.modules[0]!.responsibility + ' bound reason' }],
+        responsibilityMoves: [], reason: 's8a bound reason' } });
     expect(revised.status).toBe('committed');
     if (revised.status !== 'committed') return;
 
@@ -50,11 +52,11 @@ describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real
     expect(page.value.items.map(item => item.revision)).toEqual([2, 1]);
     const newest = page.value.items[0]!;
     expect(newest.revision).toBe(2);
-    // The writer took the wall clock, so the bound event time must fall between
-    // the timestamps taken around the revise call (both are ISO strings).
+    // The revision stamps the injected fixture clock: the bound event time is
+    // nine seconds after S4A_AT.
     const at = newest.at;
     if (typeof at !== 'string') throw new Error('the newest catalog version has no bound time');
-    expect(t0 <= at && at <= t1).toBe(true);
+    expect(at).toBe(new Date(Date.parse(S4A_AT) + 9000).toISOString());
     expect(newest.reason).toBe('s8a bound reason');
     expect(newest.reasonLabel).toBe('s8a bound reason');
     // The cursor stays opaque: the public item never carries it.
@@ -78,8 +80,12 @@ describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real
     const revised = await f.platform.architecture.reviseArchitectureCatalog(ctx, {
       meta: { requestId: 's8a-catalog-write-since', expected: [{ ref: f.projectRef, revision: 1 },
         { ref: f.workspaceRef, revision: 1 }] },
-      input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-        catalog: structuredClone(current.value.catalog.catalog), reason: 's8a write since' } });
+      input: {
+        expected: { catalogRef: current.value.catalog.ref,
+          baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+        ops: [{ op: 'set_responsibility', moduleId: current.value.catalog.catalog.modules[0]!.ref.moduleId,
+          text: current.value.catalog.catalog.modules[0]!.responsibility + ' write since' }],
+        responsibilityMoves: [], reason: 's8a write since' } });
     expect(revised.status).toBe('committed');
     if (revised.status !== 'committed') return;
     expect(revised.value.catalog?.since).not.toBeNull();

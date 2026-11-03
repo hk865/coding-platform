@@ -37,8 +37,12 @@ describe.each(['memory', 'sqlite'] as const)('A1 independent %s review', kind =>
       if (!moved && refs.includes(pointerKey) && !refs.some(ref => JSON.parse(ref).aggregateType === 'ArchitectureBaselineRevision')) {
         moved = true;
         const revised = await f.catalog.reviseArchitectureCatalog(f.ctx, {
-          input: { basedOn: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest },
-            catalog: currentCatalog.catalog, reason: 'advance the pointer between reads' },
+          input: {
+            expected: { catalogRef: currentCatalog.ref,
+              baseline: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest } },
+            ops: [{ op: 'set_responsibility', moduleId: currentCatalog.catalog.modules[0]!.ref.moduleId,
+              text: currentCatalog.catalog.modules[0]!.responsibility + ' advanced between reads' }],
+            responsibilityMoves: [], reason: 'advance the pointer between reads' },
           meta: { requestId: 'after-reader-race',
             expected: [{ ref: f.projectRef, revision: 1 }, { ref: f.workspaceRef, revision: 1 }] },
         });

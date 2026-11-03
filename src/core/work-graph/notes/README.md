@@ -9,14 +9,15 @@
 
 ## 文件
 
-`note-service.ts` — 唯一的注记写入器：写入、复核/撤回、决定应用、用户理由事实、工具提交回读。
+`note-service.ts` — 唯一的注记写入器：写入、复核/撤回、决定应用、用户理由事实、工具提交回读；命令身份 `noteCommandIdentity`（write/review/withdraw/activate）。
 `note-read-model.ts` — 注记读端口：按 id/锚点读取、六种记忆读、`find`、记忆材料（无 Goal 时只读项目理解与 norms）；并转出基础读法。
+`activate-repair.ts` — 8C 的唯一 repair 激活 owner 与纯 footprint 判定：把 staged `repair` 注记绑到 Run 轮链的有效 head，检查轮 PASS、批准与 footprint，再一次 `PreparedCommit` 提交 `staged → accepted` 与 catalog revision contribution；`readBoundRepairRound`、`footprintProblem`、`activateRepair`、`readObservation`、`attemptRepairsForGoal` 与 `createRepairActivationService`。
 `note-anchors.ts` — 锚点 key、主题归一化、写时锚点解析（含 symbol 定位）。
 `note-anchor-facts.ts` — 锚点校验所需的 Goal/Plan 窗口事实读取，不经通用 Plan 服务。
 `note-related-scope.ts` — `find` 的 related 范围解析，以及纯 key 集合/相关谓词。
 `note-update-due.ts` — `updateDue` 的纯 fold，以及 Goal 锚点集合的唯一共享读取。
 `note-continuity.ts` — stage 锚点在 plan revision 窗口内的连续性纯判定。
-`note-base-reader.ts` — 把一个 lookup index 分页读到尾，返回完整集合或失败。
+`note-base-reader.ts` — 把一个 lookup index 分页读到尾，返回完整集合或失败；`readAllHeads` 读一批 head，`headsByAnchorKey` 读一个锚点 key 的 head 集合。
 `note-batch-reader.ts` — 批量读当前指针与被指 head，缺指针/缺 head 的语义由调用方选。
 `note-decision-source.ts` — 注记复核决定卡来源（communication/business 消费的对象）：Goal 的 bucket，或项目 subject 的无 Goal bucket `[projectId, null, 'pending_review']`。
 `note-scribe-todos.ts` — 书记待办：`updateDue`、`pending`、`immediate` 三类。
@@ -31,8 +32,9 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createNoteService` | `src/core/work-graph/notes/note-service.ts:480` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点 | 注入给 composition；所有注记写入与处置走它 |
-| `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:357` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空） | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
+| `createNoteService` | `src/core/work-graph/notes/note-service.ts:586` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点 | 注入给 composition；所有注记写入与处置走它 |
+| `createRepairActivationService` | `src/core/work-graph/notes/activate-repair.ts:713` | 绑定 records/catalog/evidence 等依赖，返回 `readBoundRepairRound`/`activateRepair`/`attemptRepairsForGoal`；激活检查轮 PASS、批准、footprint 并一次提交注记与 catalog 修订 | 组合根装配 repair 激活；不要另开激活入口 |
+| `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:341` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空） | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
 | `createScribeScope` | `src/core/work-graph/notes/scribe-scope.ts:228` | 书记范围事实、写准入、管理范围、按范围计数；事实按调用缓存 | 注记写入准入、范围计数 |
 | `createNoteDecisionSource` | `src/core/work-graph/notes/note-decision-source.ts:114` | 注记复核决定卡来源：`readNoteDecisions` 按 `subject` 读 Goal 或项目的卡（项目桶无 Goal 窗口、无 cancelled 门，批读与理由读同一套）、按 pin 读一张（`goalId: null` 走项目卡；开着、关了都带回注记自己的 subject，读的一方先比 subject 再看开关）、应用决定 | 装配决定队列/决定应用 |
 | `createNoteScribeTodos` | `src/core/work-graph/notes/note-scribe-todos.ts:76` | 书记待办：`pending`、`updateDueTodos`、`immediate`，复用同一锚点读 | Host 提醒/书记心跳 |
@@ -49,8 +51,8 @@
 | `normalizePath` | `src/core/work-graph/notes/note-anchors.ts:583` | 去掉前导 `./`；其余由 class-1 提前拒绝 | 锚点 key 归一化 |
 | `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:268` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
 | `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:281` | 一基 UTF-16 行/列切片（结束列不含） | 从捕获内容取 symbol 文本 |
-| `createNoteHeadDerivations` | `src/core/work-graph/notes/note-read-model.ts:295` | 从已存 head 派生 `conflicting`/`overQuota` 等注记字段 | 注记读/检查；不要另算 |
-| `newHeadCache` | `src/core/work-graph/notes/note-read-model.ts:259` | 一次读内的 anchors/goals 缓存 | 与 `createNoteHeadDerivations` 配套 |
+| `createNoteHeadDerivations` | `src/core/work-graph/notes/note-read-model.ts:279` | 从已存 head 派生 `conflicting`/`overQuota` 等注记字段 | 注记读/检查；不要另算 |
+| `newHeadCache` | `src/core/work-graph/notes/note-read-model.ts:243` | 一次读内的 anchors/goals 缓存 | 与 `createNoteHeadDerivations` 配套 |
 | `selectRelatedFiles` | `src/core/work-graph/notes/note-related-scope.ts:104` | 纯：从 Run 事实选 related 文件，definite 先于 possible、去重、截断 | `find` 的 related 文件段 |
 | `taskRelatedKeys` | `src/core/work-graph/notes/note-related-scope.ts:131` | 纯：task T 在 goal/plan 下的 anchor key 集合 | `find` 的 related task 段 |
 | `moduleRelatedKeys` | `src/core/work-graph/notes/note-related-scope.ts:151` | 纯：module 及其 interface/file key 集合 | `find` 的 related module 段 |

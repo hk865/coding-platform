@@ -51,6 +51,7 @@ const LOOKUP_MAX_PAGES = 25;
 /** §4.3.5: the seven formal card source kinds; notice categories never hint here. */
 const CARD_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+  'repair_approval', 'structural_proposal',
 ];
 
 /** §4.3.1: 100 per page. 2A §0.4 row 1 removes the 50-page / 5,000-card cap;

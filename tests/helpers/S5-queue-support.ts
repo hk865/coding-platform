@@ -43,6 +43,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -282,7 +283,8 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
 /** DQ03 starts before adoption. The B2 world's independent scope is left alone. */
 export async function openUninitializedQueue(kind: S5FixtureKind) {
   const bundles = [QUERY_JOB_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS, DECISION_RECORD_SCHEMAS,
-    COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, INITIALIZATION_BINDING_SCHEMAS,
+    COMPLETION_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, NOTE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS,
+    INITIALIZATION_BINDING_SCHEMAS,
     { records: [], events: PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events }];
   const b2 = await createB2ExecutionFixture(kind, { records: bundles.flatMap(b => [...b.records]),
     events: bundles.flatMap(b => [...b.events]), lookups: bundles.flatMap(b => [...(b.lookups ?? [])]) });

@@ -193,7 +193,7 @@ function roundOf(roundId: string, shape: RoundShape, chain: RoundChainV1 = ROOT_
     adoptedPlanRef: PLAN, taskBasisRef: PLAN, executor: HUMAN,
     configuration: {} as RoundSnapshot['configuration'], configurationDigest: sha('c'), identity: identityOf(source),
     sourceProof: {} as RoundSnapshot['sourceProof'], verificationPlan: {} as RoundSnapshot['verificationPlan'],
-    ...structuredClone(shape), evidenceRefs: [], chain,
+    ...structuredClone(shape), evidenceRefs: [], stagedRepairs: [], until: null, chain,
   };
 }
 const headOf = (shape: RoundShape, runId = 'run-1'): RoundChainHeadV1 => roundChainHead([roundOf('round-1', shape, ROOT_CHAIN, runId)]);

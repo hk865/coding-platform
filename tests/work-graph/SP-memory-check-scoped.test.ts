@@ -10,7 +10,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { AdoptedArchitecture } from '../../src/contracts/architecture-catalog.js';
+import type { CatalogRepairOpV1 } from '../../src/contracts/note.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import { createS4BNoteCheckFixture, currentVersion, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
@@ -43,16 +43,17 @@ async function review(f: S4BNoteCheckFixture, noteId: string, expectedVersion: n
   if (result.status !== 'done') throw new Error(`review failed: ${JSON.stringify(result)}`);
 }
 
-async function reviseCatalog(f: S4BNoteCheckFixture,
-  mutate: (catalog: AdoptedArchitecture) => AdoptedArchitecture): Promise<void> {
+async function reviseCatalog(f: S4BNoteCheckFixture, ops: CatalogRepairOpV1[]): Promise<void> {
   const ctx = f.ctx();
   const current = await f.inner.platform.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
   if (current.status !== 'ready' || current.value.catalog === null) throw new Error('catalog read failed');
   const revised = await f.inner.platform.architecture.reviseArchitectureCatalog(ctx, {
     meta: { requestId: 'sp-catalog-revise', expected: [{ ref: f.inner.projectRef, revision: 1 },
       { ref: f.inner.workspaceRef, revision: 1 }] },
-    input: { basedOn: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest },
-      catalog: mutate(current.value.catalog.catalog), reason: 'sp catalog revision' } });
+    input: {
+      expected: { catalogRef: current.value.catalog.ref,
+        baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+      ops, responsibilityMoves: [], reason: 'sp catalog revision' } });
   if (revised.status !== 'committed') throw new Error(`revise failed: ${JSON.stringify(revised)}`);
 }
 
@@ -159,9 +160,7 @@ describe('SP-3 module definition changed between two notes', () => {
       const f = await createS4BNoteCheckFixture(kind);
       try {
         const older = await write(f, draft({ topic: 'module-old', anchor: { kind: 'module', moduleId: 'A1' } }));
-        await reviseCatalog(f, catalog => ({ ...catalog,
-          modules: catalog.modules.map(module => module.ref.moduleId === 'A1'
-            ? { ...module, responsibility: 'area A1 changed' } : module) }));
+        await reviseCatalog(f, [{ op: 'set_responsibility', moduleId: 'A1', text: 'area A1 changed' }]);
         const newer = await write(f, draft({ topic: 'module-new', anchor: { kind: 'module', moduleId: 'A1' } }));
         const checks = await f.check.checkNotes(f.ctx(), { items: [
           { noteId: older, version: 1 }, { noteId: newer, version: 1 }] });

@@ -17,6 +17,7 @@ import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
@@ -98,7 +99,7 @@ async function openDecisionHarness(): Promise<DecisionHarness> {
   const mailbox = createSessionMailbox(mailboxDeps);
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: OPERATOR, messages: mailbox, materials: mailboxDeps.materials,
-    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
+    messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
   return { f, mailbox, decisions, queue: realDecisionQueue(f) };
 }
 
@@ -246,15 +247,18 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     // make the smallest proposal id the Goal's pending proposal, so the real
     // display reader adds its Goal-level change_pending cause, pinned at that
     // proposal's first revision, 1.
-    // Order: 'n' (0x6E) < '{' (0x7B), so the three hint rows come first;
+    // Order: 'n' (0x6E) < '{' (0x7B), so the five hint rows come first;
     // '{"affected"' < '{"goalRef"', so both goal_cause rows precede the candidates;
     // 'PlanProposal' < 'Task' ('P' < 'T'), so change_pending precedes
     // required_task_deferred; the candidate keys differ only in the proposal id,
     // so they follow the sorted proposal ids.
+    // 3 original unwired sources + the two new card kinds: 5 hint rows in every focus view.
     const hintRowKeys = [
       'decision:not_available:message_release',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
+      'decision:not_available:repair_approval',
+      'decision:not_available:structural_proposal',
     ];
     const goalJson = '{"aggregateType":"Goal","goalId":"wp2-f07-deferred-goal","projectId":"P"}';
     const proposalJson = (proposalId: string): string =>
@@ -313,20 +317,22 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       ] })}`,
     ];
     for (const key of seedKeys) expect(keys.has(key)).toBe(true);
-    // The four literal L5 not_available hint rows for the seven card sources.
+    // The six literal L5 not_available hint rows for the nine card sources.
     const hintKeys = [
       'decision:not_available:goal_cause',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
       'decision:not_available:message_release',
+      'decision:not_available:repair_approval',
+      'decision:not_available:structural_proposal',
     ];
     for (const key of hintKeys) expect(keys.has(key)).toBe(true);
-    // 5,000 card rows plus the 4 literal not_available hint rows; nothing was
+    // 5,000 card rows plus 6 literal not_available hint rows; nothing was
     // truncated, skipped or fabricated.
-    expect(exact.decisions.rows).toHaveLength(5_004);
+    expect(exact.decisions.rows).toHaveLength(5_006);
 
     // One more real waiting card: the read still succeeds and carries it, with
-    // every earlier row kept (5,001 card rows plus the 4 hint rows).
+    // every earlier row kept (5,001 card rows plus the 6 hint rows).
     const overflow = await sendDecisionRequest(h, 'Real decision overflow');
     const overflowSource = overflow.decision?.source;
     if (overflowSource === undefined) throw new Error('the sent decision request carries no decision source');
@@ -334,6 +340,6 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     const overKeys = new Set(over.decisions.rows.map(row => row.key));
     expect(overKeys.has(`decision:${overflowSource.key}`)).toBe(true);
     for (const key of [...created, ...seedKeys, ...hintKeys]) expect(overKeys.has(key)).toBe(true);
-    expect(over.decisions.rows).toHaveLength(5_005);
+    expect(over.decisions.rows).toHaveLength(5_007);
   }, 240_000);
 });

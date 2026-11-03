@@ -159,12 +159,14 @@ import {
   policyRefFromBody,
   resolveGovernance,
   sameCursor,
+  taskClosureOf,
   taskRecordRefKey,
   tryPolicyContent,
   GOAL_BY_CONTINUED_FROM_INDEX,
   type CanonicalTaskFacts,
   type CanonicalTaskState,
   type DispositionChangeTaskFacts,
+  type TaskFactRecordPort,
 } from './plan-readers.js';
 import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } from './plan-result-helpers.js';
 import {
@@ -172,6 +174,7 @@ import {
   planPhaseGuardReasons,
   removedTaskProblem,
   type FuturePlanDelta,
+  unchangedTerminalTaskIds,
   unknownModuleRejection,
   unknownModuleTasksOf,
   validateFutureObligationCoverage,
@@ -336,7 +339,7 @@ function planProposalRefFromUnknown(value: unknown): PlanProposalRef | null {
     workspaceId: value['workspaceId'], proposalId: value['proposalId'] };
 }
 const DECISION_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = ['message', 'goal_cause', 'candidate', 'note_review',
-  'planning_question', 'goal_conflict', 'message_release'];
+  'planning_question', 'goal_conflict', 'message_release', 'repair_approval', 'structural_proposal'];
 function decisionSourceFromUnknown(value: unknown): DecisionSourceV1 | null {
   if (!isRecord(value)) return null;
   if (typeof value['kind'] !== 'string'
@@ -1173,6 +1176,11 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const policyRead = await tryPolicyContent(records, goalRef.projectId);
     const issues = validatePlanDraft(input.draft, policyRead.policy);
+    // L10 (`book-8c.md:809`): the based-on Plan is the source whose unchanged terminal history the module fact
+    // leaves out. It is read once here and the removal check below reuses it; an unreadable source is not a refusal
+    // of its own there.
+    const sourceRead = input.basedOn === null ? null : await readPlan(records, input.basedOn);
+    const source = sourceRead !== null && sourceRead.status === 'ready' ? sourceRead.plan : null;
     let candidate: PlanProposal;
     let replacedRecord: CandidatePlanProposal | null = null;
     let requestSlotEffect: Extract<PlanProposalEffect, { kind: 'request_slot' }> | null = null;
@@ -1182,7 +1190,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       // S5-PLAN-02: the replacement transition over the real old head. The old
       // head's complete next record and the slot move are separate effects.
       // L10: the machine judges the head before the module fact read here.
-      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft);
+      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft, source);
       const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
         issues, catalogPin: catalog.catalogPin, submittedBy: null, sourceMessageRef: input.sourceMessageRef,
@@ -1211,7 +1219,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         future: null, requestCandidate: requestFacts };
       const refused = planProposalProblem(null, recorded, readFacts);
       if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
-      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft);
+      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft, source);
       const guardCtx: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };
       const decided = transitionPlanProposal(null, { ...recorded, issues, catalogPin: catalog.catalogPin }, guardCtx);
       if (!decided.ok) return refusalOf(decided);
@@ -1221,12 +1229,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       requestSlotEffect = commit.requestSlot;
       commitGuards = commit.guards;
     }
-    if (input.basedOn !== null) {
-      const sourceRead = await readPlan(records, input.basedOn);
-      if (sourceRead.status === 'ready') {
-        const removed = removedTaskRefusal(sourceRead.plan, input.draft);
-        if (removed !== null) return removed;
-      }
+    if (source !== null) {
+      const removed = removedTaskRefusal(source, input.draft);
+      if (removed !== null) return removed;
     }
 
     const identity = { projectId: goalRef.projectId, actor: input.actor, idempotencyKey: input.requestId };
@@ -1630,7 +1635,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       let modules: 'ok' | CoreRejection = 'ok';
       if (draftHasModuleTask(candidate.draft)) {
         const selected = await readRevisionByRef(records, resolved!.governance.architectureBaseline.ref);
-        if (selected.status === 'ready') modules = moduleFactOf(candidate.draft, selected.value.catalog.catalog);
+        if (selected.status === 'ready') modules = await moduleFactOf(records, candidate.draft, selected.value.catalog.catalog, null);
         else if (selected.status === 'not_found') {
           modules = rejected('unavailable', 'the governance architecture baseline has no catalog row');
         } else modules = asWriteRejection(selected, 'the governance architecture catalog is unavailable');
@@ -2590,9 +2595,39 @@ function planSourceFactsOf(plan: PlanRevisionSnapshot): PlanSourceFacts {
   return { ref: plan.ref, goalRef: plan.goalRef, planId: plan.planId, planRevision: plan.planRevision };
 }
 
-/** L10: a draft's module fact against one catalog — `'ok'`, or the one `unknown_module` refusal. */
-function moduleFactOf(draft: PlanRevisionDraft, catalog: AdoptedArchitecture): 'ok' | CoreRejection {
-  const unknown = unknownModuleTasksOf(draft, catalog);
+/**
+ * The SOURCE Plan's canonical Task closure (`readCanonicalTaskFacts` +
+ * `taskClosureOf`) — the same non-open set the delete rule's `module_in_use`
+ * reads. A read failure is the fact itself, never "still open".
+ */
+async function terminalTaskIdsOf(records: TaskFactRecordPort, source: PlanRevisionSnapshot):
+Promise<{ status: 'ready'; value: ReadonlySet<string> } | CoreRejection> {
+  const facts = await readCanonicalTaskFacts(records, source.goalRef, source);
+  if (facts.status !== 'ready') return facts;
+  const terminal = new Set<string>();
+  for (const task of source.tasks) {
+    if (taskClosureOf(source, facts.value, task.taskId).closed) terminal.add(task.taskId);
+  }
+  return { status: 'ready', value: terminal };
+}
+
+/**
+ * L10 (`book-8c.md:809`): a draft's module fact against one catalog — `'ok'`, or the one `unknown_module` refusal.
+ * `source` is the Plan the draft revises; the check leaves out only the Tasks that Plan carries forward as unchanged
+ * terminal history (`unchangedTerminalTaskIds`), read from the canonical Task closure. A first/initial draft has no
+ * source and is checked whole.
+ */
+async function moduleFactOf(records: TaskFactRecordPort, draft: PlanRevisionDraft, catalog: AdoptedArchitecture,
+  source: PlanRevisionSnapshot | null): Promise<'ok' | CoreRejection> {
+  let exempt: ReadonlySet<string> = new Set<string>();
+  if (source !== null) {
+    const terminal = await terminalTaskIdsOf(records, source);
+    if (terminal.status !== 'ready') return terminal;
+    exempt = unchangedTerminalTaskIds(source, draft, terminal.value);
+  }
+  const checked = exempt.size === 0 ? draft : { tasks: Array.isArray(draft.tasks)
+    ? draft.tasks.filter((task) => !exempt.has(task.taskId)) : draft.tasks };
+  const unknown = unknownModuleTasksOf(checked, catalog);
   return unknown.length === 0 ? 'ok' : unknownModuleRejection(unknown);
 }
 
@@ -2601,12 +2636,13 @@ function moduleFactOf(draft: PlanRevisionDraft, catalog: AdoptedArchitecture): '
  * pin and the module fact; none defers the check to adoption (`null` pin); a refused read is the fact itself and pins
  * nothing, never read as "no catalog".
  */
-async function proposeCatalogFacts(records: GoalRecordTransactionPort, projectId: string, draft: PlanRevisionDraft):
+async function proposeCatalogFacts(records: TaskFactRecordPort, projectId: string, draft: PlanRevisionDraft,
+  source: PlanRevisionSnapshot | null):
   Promise<{ catalogPin: ArchitectureCatalogPinV1 | null; modules: 'ok' | CoreRejection }> {
   const window = await readCurrentCatalogWindow(records, projectId);
   if (window.status === 'not_found') return { catalogPin: null, modules: 'ok' };
   if (window.status !== 'ready') return { catalogPin: null, modules: rejected(window.code, window.reason) };
-  return { catalogPin: catalogPinOf(window), modules: moduleFactOf(draft, window.catalog.catalog) };
+  return { catalogPin: catalogPinOf(window), modules: await moduleFactOf(records, draft, window.catalog.catalog, source) };
 }
 
 /** What a plan commit's effects name beyond the machine's own records: the scope read, the adopter, the guards read. */
@@ -3050,7 +3086,7 @@ async function applyFutureRevision(input: {
   if (draftHasModuleTask(proposal.draft)) {
     const window = await readCurrentCatalogWindow(records, proposal.goalRef.projectId);
     if (window.status === 'ready') {
-      modules = moduleFactOf(proposal.draft, window.catalog.catalog);
+      modules = await moduleFactOf(records, proposal.draft, window.catalog.catalog, source);
       catalogGuards = window.guards;
     } else if (window.status === 'not_found') {
       modules = rejected('incomplete', 'the project has no active architecture catalog');
@@ -3435,7 +3471,7 @@ async function proposePlanAsAgent(
     const policyRead = await tryPolicyContent(records, input.goalRef.projectId);
     const issues = validatePlanDraft(input.draft, policyRead.policy);
     // L10: the catalog is read once every other refusal point has passed; a replacement's head is judged first.
-    const catalog = await proposeCatalogFacts(records, input.goalRef.projectId, input.draft);
+    const catalog = await proposeCatalogFacts(records, input.goalRef.projectId, input.draft, source);
     const ctxFacts: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };
     const decided = oldHead === null
       ? transitionPlanProposal(null, { ...recorded, issues, catalogPin: catalog.catalogPin,

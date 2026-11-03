@@ -446,60 +446,6 @@
       "note": "kept for slice 3 of the orchestration design (decision 34: one role configuration per duty); decision 6 keeps role specs unwired, for picking members by meaning; unreached at 790d970; only reached from RoleConfigurationPort.activateRoleSpec"
     },
     {
-      "file": "src/core/work-graph/architecture/catalog-contracts.ts",
-      "name": "ReviseArchitectureCatalogInput",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-contracts.ts",
-      "name": "ArchitectureCatalogPort.reviseArchitectureCatalog",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; a port operation create-platform.ts publishes, but no route (core-routes.ts), Workflow or script reads it; used only by tests: tests/composition/A1-graph-session-platform.test.ts"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-record-codecs.ts",
-      "name": "encodeArchitectureCatalogRevisedEvent",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-service.ts",
-      "name": "REVISE_IDENTITY_PREFIX",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-service.ts",
-      "name": "REVISE_COMMAND_TYPE",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-service.ts",
-      "name": "MAX_REVISE_REASON_BYTES",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-service.ts",
-      "name": "CallerScope",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-service.ts",
-      "name": "readCallerScope",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
-      "file": "src/core/work-graph/architecture/catalog-service.ts",
-      "name": "restoreRevised",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (decision 34: the architecture revision interface); decisions 6 and 21: catalog revision is wired after A.2, entered from a work result; unreached at 790d970; only reached from ArchitectureCatalogPort.reviseArchitectureCatalog"
-    },
-    {
       "file": "src/core/work-graph/model/configuration-contracts.ts",
       "name": "RoleConfigurationPort.installRoleSpec",
       "reason": "kept-for",
@@ -896,24 +842,6 @@
       "note": "the frozen slice-4C L19 architecture/versions route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the new workbench UI; nothing in src/ names the alias at runtime"
     },
     {
-      "file": "src/contracts/architecture-inspection.ts",
-      "name": "FileGraphPageV1",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/architecture-service.ts",
-      "name": "readFileGraphCursor",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/contracts.ts",
-      "name": "ObservedArchitecturePort.listFiles",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
       "file": "src/core/work-graph/architecture/contracts.ts",
       "name": "ObservedArchitecturePort.neighbors",
       "reason": "kept-for",
@@ -927,73 +855,7 @@
     },
     {
       "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "FileGraphPageData",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "FileGraphData",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "FILE_GRAPH_PAGE_SIZE",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
       "name": "FILE_GRAPH_MAX_IMPACT_DEPTH",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "FileGraphCursorError",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "captureKeyOf",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "queryKeyOf",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "readOffset",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "orderedNodes",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "orderedEdges",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "buildPage",
-      "reason": "kept-for",
-      "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
-    },
-    {
-      "file": "src/core/work-graph/architecture/file-graph-index.ts",
-      "name": "listFilesPage",
       "reason": "kept-for",
       "note": "kept for slice 8 of the orchestration design (L12 file-level observation reads); 8A wires the capture and stores the chunked file graph, but §1 8A routes only architecture/compare, architecture/compare-formal and architecture/impact, so the file-level public reads (listFiles/neighbors/impact) and their chunk decoder/index are reached only by the architecture page later; decision 6: wired with the new UI, backend first"
     },
@@ -1357,43 +1219,221 @@
       "reason": "kept-for",
       "note": "slice 6 of the orchestration design (decision 83, prompts and context): the RunRef guard of ModelRequestReadPort.listRunModelRequests, reached through readPromptRecord; E3 adds the route."
     },
-    {"file": "src/contracts/data-format-refs.ts", "name": "PlanProposalRefShape", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B)"},
-    {"file": "src/core/work-graph/model/plan-contracts.ts", "name": "ProposeInitialPlanFromAnswer", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 G): the propose-from-answer method type with the optional `source` field"},
-    {"file": "src/core/work-graph/model/plan-contracts.ts", "name": "HostProposePlan", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 G): the Host propose method type over the two request arms"},
-    {"file": "src/core/work-graph/state/goal-confirm.ts", "name": "ConfirmObjectiveText", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 C): the type of the confirmed objective text rule; create-platform constructs `createGoalConfirmService`, which calls `confirmObjectiveText` directly, so no production code names this type"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsDispatchBasisBody", "reason": "wire-format", "note": "the goals/dispatch-basis route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsDispatchBasisResponse", "reason": "wire-format", "note": "the goals/dispatch-basis route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsConfirmDraftBody", "reason": "wire-format", "note": "the goals/confirm-draft route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsConfirmDraftResponse", "reason": "wire-format", "note": "the goals/confirm-draft route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsCopyDraftBody", "reason": "wire-format", "note": "the goals/copy-draft route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsCopyDraftResponse", "reason": "wire-format", "note": "the goals/copy-draft route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsCopyConfirmBody", "reason": "wire-format", "note": "the goals/copy-confirm route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "GoalsCopyConfirmResponse", "reason": "wire-format", "note": "the goals/copy-confirm route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "InitializationAdoptBody", "reason": "wire-format", "note": "the initialization/adopt route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/core-http-types.ts", "name": "InitializationAdoptResponse", "reason": "wire-format", "note": "the initialization/adopt route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"},
-    {"file": "src/app/initialization-adoption.ts", "name": "InitializationAdoptionHostPort.read", "reason": "kept-for", "note": "slice 6 of the orchestration design (6B-3 L): the adoption operation's recovery read on the Host owner (L brief §4.1); the Host builds `createInitializationAdoptionHost` and the route table binds only `adopt`, so no production caller reads the Host owner's `read` yet (callers read `platform.initializationAdoption.read`)"},
-    {"file": "src/core/work-graph/persistence/read-result-failures.ts", "name": "VersionConflictFailure", "reason": "kept-for", "note": "no consumer in rulings or the book; kept in the allowlist so reach stays green (lead answer q-w-allowlist, condition 3), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/sessions/role-scope-commit.ts", "name": "planReanchorHook", "reason": "kept-for", "note": "waits for 7D2's reanchor-hook connection (planReanchorHook), slice 7 of the orchestration design"},
-    {"file": "src/core/work-graph/sessions/session-responsibility-service.ts", "name": "ReanchorInputV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/sessions/session-responsibility-service.ts", "name": "ReanchorResultV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/sessions/session-responsibility-service.ts", "name": "SessionResponsibilityPort.reanchorSessionResponsibility", "reason": "kept-for", "note": "W publishes it on platform.responsibilities, but no src/ caller reads it; waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design, slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "ReanchorMoveV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "ReanchorEventMaterialV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "ReanchorPlanV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "ReanchorFactsV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "ReanchorRefusalV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "ReanchorReasonV1", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "REANCHOR_REASONS", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "authorizationCovers", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/reanchor.ts", "name": "planReanchor", "reason": "kept-for", "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/role-scope.ts", "name": "RegionClaimV1", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/role-scope.ts", "name": "EffectiveScopeV1", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/role-scope.ts", "name": "EffectiveScopeReadPort", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/state/role-scope.ts", "name": "effectiveRegions", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/views/role-line-allocation-reader.ts", "name": "RoleLineContactFactsV1", "reason": "kept-for", "note": "no consumer in rulings or the book; the allocation reader exports the shape and nothing in src/ names it; kept in the allowlist so reach stays green (lead answer q-w-allowlist, condition 3), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/views/role-scope-reader.ts", "name": "EffectiveScopeReaderDependencies", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/views/role-scope-reader.ts", "name": "createEffectiveScopeReader", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/core/work-graph/views/role-scope-reader.ts", "name": "SESSION_READ_TEMPLATES", "reason": "kept-for", "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"},
-    {"file": "src/ui/runtime.ts", "name": "DCLogic.setState", "reason": "kept-for", "note": "called only by the frozen board logic after it is compiled at runtime (slice 9 of the orchestration design, E3-1 page shell); static reach analysis cannot see the generated class"}
+    {
+      "file": "src/contracts/data-format-refs.ts",
+      "name": "PlanProposalRefShape",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (6B)"
+    },
+    {
+      "file": "src/core/work-graph/model/plan-contracts.ts",
+      "name": "ProposeInitialPlanFromAnswer",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (6B-3 G): the propose-from-answer method type with the optional `source` field"
+    },
+    {
+      "file": "src/core/work-graph/model/plan-contracts.ts",
+      "name": "HostProposePlan",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (6B-3 G): the Host propose method type over the two request arms"
+    },
+    {
+      "file": "src/core/work-graph/state/goal-confirm.ts",
+      "name": "ConfirmObjectiveText",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (6B-3 C): the type of the confirmed objective text rule; create-platform constructs `createGoalConfirmService`, which calls `confirmObjectiveText` directly, so no production code names this type"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsDispatchBasisBody",
+      "reason": "wire-format",
+      "note": "the goals/dispatch-basis route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsDispatchBasisResponse",
+      "reason": "wire-format",
+      "note": "the goals/dispatch-basis route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsConfirmDraftBody",
+      "reason": "wire-format",
+      "note": "the goals/confirm-draft route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsConfirmDraftResponse",
+      "reason": "wire-format",
+      "note": "the goals/confirm-draft route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsCopyDraftBody",
+      "reason": "wire-format",
+      "note": "the goals/copy-draft route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsCopyDraftResponse",
+      "reason": "wire-format",
+      "note": "the goals/copy-draft route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsCopyConfirmBody",
+      "reason": "wire-format",
+      "note": "the goals/copy-confirm route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "GoalsCopyConfirmResponse",
+      "reason": "wire-format",
+      "note": "the goals/copy-confirm route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "InitializationAdoptBody",
+      "reason": "wire-format",
+      "note": "the initialization/adopt route request DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "InitializationAdoptResponse",
+      "reason": "wire-format",
+      "note": "the initialization/adopt route response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts); nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/initialization-adoption.ts",
+      "name": "InitializationAdoptionHostPort.read",
+      "reason": "kept-for",
+      "note": "slice 6 of the orchestration design (6B-3 L): the adoption operation's recovery read on the Host owner (L brief §4.1); the Host builds `createInitializationAdoptionHost` and the route table binds only `adopt`, so no production caller reads the Host owner's `read` yet (callers read `platform.initializationAdoption.read`)"
+    },
+    {
+      "file": "src/core/work-graph/persistence/read-result-failures.ts",
+      "name": "VersionConflictFailure",
+      "reason": "kept-for",
+      "note": "no consumer in rulings or the book; kept in the allowlist so reach stays green (lead answer q-w-allowlist, condition 3), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-scope-commit.ts",
+      "name": "planReanchorHook",
+      "reason": "kept-for",
+      "note": "waits for 7D2's reanchor-hook connection (planReanchorHook), slice 7 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/sessions/session-responsibility-service.ts",
+      "name": "ReanchorInputV1",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/sessions/session-responsibility-service.ts",
+      "name": "ReanchorResultV1",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/sessions/session-responsibility-service.ts",
+      "name": "SessionResponsibilityPort.reanchorSessionResponsibility",
+      "reason": "kept-for",
+      "note": "W publishes it on platform.responsibilities, but no src/ caller reads it; waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design, slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/state/reanchor.ts",
+      "name": "ReanchorReasonV1",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/state/reanchor.ts",
+      "name": "REANCHOR_REASONS",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/state/role-scope.ts",
+      "name": "RegionClaimV1",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/state/role-scope.ts",
+      "name": "EffectiveScopeV1",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/state/role-scope.ts",
+      "name": "EffectiveScopeReadPort",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/state/role-scope.ts",
+      "name": "effectiveRegions",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/views/role-line-allocation-reader.ts",
+      "name": "RoleLineContactFactsV1",
+      "reason": "kept-for",
+      "note": "no consumer in rulings or the book; the allocation reader exports the shape and nothing in src/ names it; kept in the allowlist so reach stays green (lead answer q-w-allowlist, condition 3), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/views/role-scope-reader.ts",
+      "name": "EffectiveScopeReaderDependencies",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/views/role-scope-reader.ts",
+      "name": "createEffectiveScopeReader",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/views/role-scope-reader.ts",
+      "name": "SESSION_READ_TEMPLATES",
+      "reason": "kept-for",
+      "note": "waits for 8B-2's B-04 regional read (createEffectiveScopeReader), slice 8 of the orchestration design"
+    },
+    {
+      "file": "src/ui/runtime.ts",
+      "name": "DCLogic.setState",
+      "reason": "kept-for",
+      "note": "called only by the frozen board logic after it is compiled at runtime (slice 9 of the orchestration design, E3-1 page shell); static reach analysis cannot see the generated class"
+    },
+    {
+      "file": "src/core/work-graph/architecture/proposal-service.ts",
+      "name": "ArchitectureProposalService.freezeArchitectureProposalBatch",
+      "reason": "kept-for",
+      "note": "waits for 7D2 C1 batch freeze (the 7D2-only batch-freeze method on the proposal service), slice 7 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/architecture/proposal-service.ts",
+      "name": "FreezePlan",
+      "reason": "kept-for",
+      "note": "waits for 7D2 C1 batch freeze (the batch-freeze plan type), slice 7 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/architecture/proposal-service.ts",
+      "name": "freezePlan",
+      "reason": "kept-for",
+      "note": "waits for 7D2 C1 batch freeze (the batch-freeze planner), slice 7 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/architecture/proposal-service.ts",
+      "name": "freezeProposals",
+      "reason": "kept-for",
+      "note": "waits for 7D2 C1 batch freeze (the batch-freeze reader/committer), slice 7 of the orchestration design"
+    },
+    {
+      "file": "src/core/work-graph/architecture/proposal-service.ts",
+      "name": "freezeArchitectureProposalBatch",
+      "reason": "kept-for",
+      "note": "waits for 7D2 C1 batch freeze (the public batch-freeze entry), slice 7 of the orchestration design"
+    }
   ]
 }

@@ -72,6 +72,7 @@ function noteChangeAction(kind: NoteVersionSnapshot['change']['kind']): string {
     case 'write': return '写入';
     case 'review': return '审阅';
     case 'accept': return '收下';
+    case 'activate': return '激活';
     case 'reject': return '拒绝';
     case 'withdraw': return '撤下';
     case 'supersede': return '取代';

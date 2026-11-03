@@ -46,6 +46,7 @@ import { createEvidenceService } from '../../src/core/work-graph/evidence/eviden
 import { createRegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
@@ -82,9 +83,10 @@ type SnapshotV2 = Extract<PlanRevisionSnapshot, { schemaVersion: 2 }>;
 
 /** The extra record groups the real evidence and completion owners write. */
 const W1_SCHEMAS: RecordBackendSchemas = {
-  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records],
-  events: [...EVIDENCE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events],
-  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? [])],
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records, ...NOTE_RECORD_SCHEMAS.records],
+  events: [...EVIDENCE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events, ...(NOTE_RECORD_SCHEMAS.events ?? [])],
+  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
+    ...(NOTE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 const work = (taskId: string, title: string): RuntimeTask => ({ taskId, title,

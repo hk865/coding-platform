@@ -75,6 +75,10 @@ import type { WorkspaceHostBindings } from '../../workspace/access.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
+import { repairBindingDigest } from '../architecture/repair-ops.js';
+import { readAllHeads } from '../notes/note-base-reader.js';
+import { S4_NOTE_BY_STAGED_RUN_LOOKUP } from '../persistence/note-record-codecs.js';
+import { noteBodyOf } from '../state/note-machine.js';
 import {
     readBatch, readGoal, readGoalRunsForCount, readPinnedCompletionPolicy, readPlan, readPointerIntents, readRevisionNumber,
     type Rejected as ReadRejected,
@@ -339,6 +343,15 @@ async function preservedRoundNoticeOrigin(records: Records, ref: VerificationRou
 }
 
 /**
+ * The finalize commit binds the round record's `until` to its last event cursor
+ * inside the Store. The returned snapshot carries the same commit cursor so the
+ * direct result and a receipt replay agree with the committed record.
+ */
+function finalizedWithBoundUntil(value: FinalizedChecks, cursor: CommitCursor): FinalizedChecks {
+    return { ...value, snapshot: { ...value.snapshot, until: cursor } };
+}
+
+/**
  * Translates the effects into ONE RecordStore commit and commits it. Guards:
  * round, read set, index, then each Evidence (CAS null); records: round,
  * Evidence, index; claims: the round slot. A replayed or lost commit restores
@@ -378,7 +391,13 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
                     origin = { ...origin, finalizedAt: write.finalizedAt };
                 }
                 const record = encodeVerificationRoundSnapshot(write.round, origin);
-                if (effect.expectedRevision === null) roundOriginBinding = [{ refKey: record.refKey, field: 'since' }];
+                if (effect.expectedRevision === null) {
+                    roundOriginBinding = [{ refKey: record.refKey, field: 'since' }];
+                } else if (write.finalizedAt !== undefined) {
+                    // VR-07: the committed round's public `until` is this commit's
+                    // last event cursor; the opening `since` stays as preserved.
+                    roundOriginBinding = [{ refKey: record.refKey, field: 'until' }];
+                }
                 round = [guarded(record, effect.expectedRevision)];
                 break;
             }
@@ -423,10 +442,25 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
             if (receipt.code === 'unique_conflict' && write.slotTaken !== undefined) return await write.slotTaken();
             return mapStoreFailure(receipt);
         }
-        if (receipt.replayed) return await replayEvent(records, receipt, write.identity, write.fingerprint, eventType) as WriteResult<T>;
-        return { status: 'committed', value: write.value, replayed: false, cursor: receipt.cursor };
+        if (receipt.replayed) {
+            const replayed = await replayEvent(records, receipt, write.identity, write.fingerprint, eventType) as WriteResult<T>;
+            if (replayed.status === 'committed' && eventType === VERIFICATION_ROUND_FINALIZED_EVENT_TYPE) {
+                return { ...replayed,
+                    value: finalizedWithBoundUntil(replayed.value as unknown as FinalizedChecks, receipt.cursor) as unknown as T };
+            }
+            return replayed;
+        }
+        const value = eventType === VERIFICATION_ROUND_FINALIZED_EVENT_TYPE
+            ? finalizedWithBoundUntil(write.value as unknown as FinalizedChecks, receipt.cursor) as unknown as T
+            : write.value;
+        return { status: 'committed', value, replayed: false, cursor: receipt.cursor };
     } catch (error) {
-        return await commitOrRecover(records, write.identity, write.fingerprint, eventType, error) as WriteResult<T>;
+        const recovered = await commitOrRecover(records, write.identity, write.fingerprint, eventType, error) as WriteResult<T>;
+        if (recovered.status === 'committed' && eventType === VERIFICATION_ROUND_FINALIZED_EVENT_TYPE) {
+            return { ...recovered,
+                value: finalizedWithBoundUntil(recovered.value as unknown as FinalizedChecks, recovered.cursor) as unknown as T };
+        }
+        return recovered;
     }
 }
 
@@ -966,6 +1000,14 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     }): Promise<RoundPreparation | { ok: false; rejection: CoreRejection }> {
         const { configuration, goal, plan, scope } = input;
         const failure = (rejection: CoreRejection) => ({ ok: false as const, rejection });
+        // The opening binds the staged repairs of this subject Run once, through
+        // the already-registered index; only staged repair heads are bound.
+        const stagedRunKey = `${input.subject.goalId}/${input.subjectRunRef.runId}`;
+        const stagedRead = await readAllHeads(records, S4_NOTE_BY_STAGED_RUN_LOOKUP, [scope.projectId, stagedRunKey]);
+        if (!stagedRead.ok) return failure({ status: 'rejected', code: stagedRead.code, reason: stagedRead.reason });
+        const stagedRepairs = stagedRead.heads
+            .filter(head => head.kind === 'repair' && head.state === 'staged')
+            .map(head => ({ noteId: head.noteId, version: head.version, digest: repairBindingDigest(noteBodyOf(head)) }));
         const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
         if (policyRead.status !== 'resolved') return failure(mapRejected(policyRead));
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
@@ -1028,7 +1070,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (workspaceKey === null) return failure(invalid('the open read refs are not canonical JSON'));
         return { ok: true,
             build: { adoptedPlanRef: input.planRef, taskBasisRef: input.taskBasisRef, configuration, configurationDigest,
-                identity: identityMaterial, sourceProof: captured.sourceProof, verificationPlan },
+                identity: identityMaterial, sourceProof: captured.sourceProof, verificationPlan, stagedRepairs },
             source: { workspaceRevision: resolvedRoot.value.workspaceRevision, sourceDigest: captured.sourceDigest },
             workspaceGuard: { refKey: workspaceKey, expectedRevision: workspaceRead.revision },
             policyGuards: policyRead.guards, baselineGuard: baseline.guard };
@@ -1534,7 +1576,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const lookup = await lookupReceipt(records, identity, fingerprint);
         if (lookup.status === 'failed') return lookup.rejection;
         if (lookup.status === 'found') {
-            return await replayEvent(records, lookup.receipt, identity, fingerprint, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE) as WriteResult<FinalizedChecks>;
+            const replayed = await replayEvent(records, lookup.receipt, identity, fingerprint,
+                VERIFICATION_ROUND_FINALIZED_EVENT_TYPE) as WriteResult<FinalizedChecks>;
+            if (replayed.status !== 'committed') return replayed;
+            return { ...replayed, value: finalizedWithBoundUntil(replayed.value, lookup.receipt.cursor) };
         }
         const checked = checkRoundPin(owned.expected, input.roundRef);
         if ('status' in checked) return checked;

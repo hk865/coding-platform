@@ -53,6 +53,7 @@ import { createEvidenceService } from '../../src/core/work-graph/evidence/eviden
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
@@ -94,9 +95,10 @@ const actor = { kind: 'human' as const, id: 's4c2-trigger-operator' };
 
 /** The extra record groups the real evidence and completion owners write. */
 const TRIGGER_SCHEMAS = {
-  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records],
-  events: [...EVIDENCE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events],
-  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? [])],
+  records: [...EVIDENCE_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records, ...NOTE_RECORD_SCHEMAS.records],
+  events: [...EVIDENCE_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events, ...(NOTE_RECORD_SCHEMAS.events ?? [])],
+  lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
+    ...(NOTE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 const byKey = (left: { key: string }, right: { key: string }): number =>

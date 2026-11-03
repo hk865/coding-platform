@@ -24,6 +24,7 @@ import type { CommitCursor } from '../contracts/command-event.js';
 import { seqOfCommitCursor } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
+import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
 import type {
   MessageForwardingPort, SessionMailboxPort, SessionMessageCommandPort,
@@ -98,6 +99,7 @@ import {
   type CoreScope,
   type DecisionsCandidateCardRead,
   type AssignMaintainerRouteEntry,
+  type ArchitectureCoreRouteDto,
   type K3CoreRouteDto,
   type MaintainerCoreRouteDto,
   type MessagesCoreRouteDto,
@@ -130,7 +132,9 @@ export type CoreRouteBindings = {
   createGoal: GoalTaskPort['createGoal'];
   queryGoal: PlanTaskPort['queryGoal'];
   adoptInitialArchitecture: ArchitectureCatalogPort['adoptInitialArchitecture'];
+  reviseArchitectureCatalog: ArchitectureCatalogPort['reviseArchitectureCatalog'];
   readArchitectureRevision: ArchitectureCatalogPort['readArchitectureRevision'];
+  readArchitectureProposal: ArchitectureProposalService['readArchitectureProposal'];
   captureArchitectureSource: ObservedArchitecturePort['captureSourceChanges'];
   queryArchitecture: ObservedArchitecturePort['queryArchitecture'];
   // Slice 8A §2: the two observed-domain comparisons and the impact read.
@@ -478,6 +482,7 @@ export type CoreRouteSpec = {
 export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
   | keyof MessagesCoreRouteDto
+  | keyof ArchitectureCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto,
@@ -495,7 +500,9 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/create': { kind: 'graph_write', binding: 'createGoal', owner: 'goals.createGoal' },
   'goals/read': { kind: 'plain', binding: 'queryGoal', owner: 'plans.queryGoal' },
   'architecture/adopt-initial': { kind: 'graph_write', binding: 'adoptInitialArchitecture', owner: 'architecture.adoptInitialArchitecture' },
+  'architecture/revise': { kind: 'graph_write', binding: 'reviseArchitectureCatalog', owner: 'architecture.reviseArchitectureCatalog' },
   'architecture/read': { kind: 'plain', binding: 'readArchitectureRevision', owner: 'architecture.readArchitectureRevision' },
+  'architecture/proposals/read': { kind: 'plain', binding: 'readArchitectureProposal', owner: 'architecture.readArchitectureProposal' },
   'architecture/capture': { kind: 'graph_write', binding: 'captureArchitectureSource', owner: 'architecture.captureSourceChanges' },
   'architecture/query': { kind: 'plain', binding: 'queryArchitecture', owner: 'architecture.queryArchitecture' },
   'architecture/compare': { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' },
@@ -785,6 +792,7 @@ export function createPlatformCoreRouteBindings(
   hostReport?: HostReconcileReportPort,
   initialization?: InitializationAdoptionHostPort,
   armMessageRelease?: (scope: WorkspaceScope) => void,
+  readArchitectureProposal?: ArchitectureProposalService['readArchitectureProposal'],
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -876,7 +884,16 @@ export function createPlatformCoreRouteBindings(
     createGoal: platform.goals.createGoal.bind(platform.goals),
     queryGoal: platform.plans.queryGoal.bind(platform.plans),
     adoptInitialArchitecture: platform.architecture.adoptInitialArchitecture.bind(platform.architecture),
+    // The person's op-form catalog revision; the same service the composition
+    // wraps, with `meta.requestId` as the command id.
+    reviseArchitectureCatalog: personEntry(
+      platform.architecture.reviseArchitectureCatalog.bind(platform.architecture)),
     readArchitectureRevision: platform.architecture.readArchitectureRevision.bind(platform.architecture),
+    // A plain project-scoped read of one proposal; the proposal owner checks the
+    // project, so a person and an agent share it.
+    readArchitectureProposal: readArchitectureProposal === undefined
+      ? unsupported('the Host does not publish the architecture proposal read')
+      : readArchitectureProposal,
     captureArchitectureSource: platform.architecture.captureSourceChanges.bind(platform.architecture),
     queryArchitecture: platform.architecture.queryArchitecture.bind(platform.architecture),
     compareArchitecture: platform.architecture.compareArchitecture.bind(platform.architecture),
@@ -1376,7 +1393,9 @@ export async function dispatchCoreRoute(
       case 'goals/create': return bindings.createGoal(ctx, graphWrite.request as never);
       case 'goals/read': return bindings.queryGoal(ctx, plain.input as never);
       case 'architecture/adopt-initial': return bindings.adoptInitialArchitecture(ctx, graphWrite.request as never);
+      case 'architecture/revise': return bindings.reviseArchitectureCatalog(ctx, graphWrite.request as never);
       case 'architecture/read': return bindings.readArchitectureRevision(ctx, plain.input as never);
+      case 'architecture/proposals/read': return bindings.readArchitectureProposal(ctx, plain.input as never);
       case 'architecture/capture': return bindings.captureArchitectureSource(ctx, graphWrite.request as never);
       case 'architecture/query': return bindings.queryArchitecture(ctx, plain.input as never);
       case 'architecture/compare': return bindings.compareArchitecture(ctx, plain.input as never);

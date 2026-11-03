@@ -12,7 +12,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { NoteDraftAnchorV1, NoteDraftV1 } from '../../src/contracts/note.js';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
+import type { NoteDraftAnchorV1, NoteDraftV1, RepairInputV1 } from '../../src/contracts/note.js';
 import type { NoteItemV1 } from '../../src/core/work-graph/model/note-contracts.js';
 import { secretaryNoteScope, type SecretaryNoteScopeFactsV1 } from '../../src/core/work-graph/state/note-machine.js';
 import { draftFrom } from '../scenarios/support/common.js';
@@ -117,6 +118,15 @@ async function openWorld() {
 const common = (topic: string, anchor: NoteDraftAnchorV1) => ({ topic, conclusion: `S6B ${topic}`, anchor,
   extraAnchors: [], facts: [], basisFiles: [], structural: false, replaces: [], contradicts: [], coexistWith: [] });
 
+const REPAIR_PIN: ArchitectureCatalogPinV1 = {
+  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: S6A_SCOPE.projectId, baselineId: 's6a-baseline',
+    revision: 1 },
+  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: S6A_SCOPE.projectId,
+    baselineId: 's6a-baseline', revision: 1 }, digest: 'ba5eb0045599359bf4873c0b514f30dbf3a9ab6950133addc084f7b25bdd79b6' },
+};
+const REPAIR: RepairInputV1 = { pin: REPAIR_PIN,
+  ops: [{ op: 'set_responsibility', moduleId: 's6a-core', text: 'S6A core repaired' }], responsibilityMoves: [] };
+
 function general(topic: string, anchor: NoteDraftAnchorV1): NoteDraftV1 {
   return { ...common(topic, anchor), kind: 'convention', body: `S6B ${topic} body` };
 }
@@ -127,7 +137,7 @@ function understanding(topic: string, anchor: NoteDraftAnchorV1): NoteDraftV1 {
 }
 
 function repair(topic: string, anchor: NoteDraftAnchorV1): NoteDraftV1 {
-  return { ...common(topic, anchor), kind: 'repair', body: `S6B ${topic} body` };
+  return { ...common(topic, anchor), kind: 'repair', body: `S6B ${topic} body`, repair: REPAIR };
 }
 
 async function readNote(world: S6AHostWorld, noteId: string): Promise<NoteItemV1> {

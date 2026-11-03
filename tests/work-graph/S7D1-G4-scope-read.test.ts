@@ -103,8 +103,12 @@ describe('the effective scope read port', () => {
               { ref: { aggregateType: 'Project', projectId: opened.projectId }, revision: registration.project.revision },
               { ref: { aggregateType: 'Workspace', ...opened.a.scope }, revision: registration.workspace.revision },
             ] },
-            input: { basedOn: { ref: current.baseline.ref, digest: current.baseline.contentDigest },
-              catalog: current.catalog.catalog, reason: 'S7D1 G4 moves the catalog inside the scope read window' },
+            input: {
+              expected: { catalogRef: current.catalog.ref,
+                baseline: { ref: current.baseline.ref, digest: current.baseline.contentDigest } },
+              ops: [{ op: 'set_responsibility', moduleId: opened.catalog.moduleM.moduleId,
+                text: 'S7D1 module M responsibility moved inside the scope read window' }],
+              responsibilityMoves: [], reason: 'S7D1 G4 moves the catalog inside the scope read window' },
           }), 'the catalog revision');
         }
         return records.readMany(keys);

@@ -13,6 +13,7 @@ import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-e
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import type { MessageDutiesFactsPort } from '../../src/core/work-graph/model/decision-contracts.js';
@@ -59,7 +60,7 @@ export async function assembleB(f: S5DecisionFixture) {
   const settings = createGoalSettingsService({ records, now: f.now, newId: f.newId, operatorActor: f.operatorActor });
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
     materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
-  const sources = createDecisionSourceFacts({ records, bindings: createInitializationBindingReader({ records }), plans });
+  const sources = createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }), plans });
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records, sessions, executions, roles, materials, systemActor: f.operatorActor,

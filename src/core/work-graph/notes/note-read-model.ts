@@ -13,14 +13,14 @@
  * undecodable record is `unavailable`. Every head/version/pointer read tells a
  * miss apart from a failure, and `readNote`/`listByAnchor` return the failure.
  */
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1 } from '../../../contracts/graph-context.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
-import { NOTE_GENERAL_KINDS, renderNoteHeader } from '../../../contracts/note.js';
+import { isGeneral, renderNoteHeader } from '../../../contracts/note.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
@@ -49,7 +49,7 @@ import { FIND_RELATED_FILES_MAX, MEMORY_PAGE_MAX, MEMORY_PAGE_DEFAULT, MEMORY_RE
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { NoteAnchorWorkspace } from './note-anchors.js';
 import {
-  S4_NOTE_BY_ANCHOR_LOOKUPS, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, S4_NOTE_TEXT_LOOKUP,
+  S4_NOTE_BY_REVIEW_STATUS_LOOKUP, S4_NOTE_TEXT_LOOKUP,
   NOTE_TEXT_PATHS,
   currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot,
   noteHeadRefKey, noteVersionRefKey,
@@ -57,7 +57,7 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX, readGoalPlanWindow } from '../tasks/plan-readers.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { anchorKeyOf, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
-import { readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome } from './note-base-reader.js';
+import { headsByAnchorKey, readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome } from './note-base-reader.js';
 import { renderUnderstandingBody } from './note-rendering.js';
 import { anchorSlots, headsOnKeyPrefix, isRelatedHead, matchesPathPrefix, resolveRelatedScope, resolveTaskScopeWithPlan,
   stageIdOf, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
@@ -109,8 +109,6 @@ export function anchorNotFound(candidates?: NoteAnchorCandidateV1[], unavailable
 type AnchorExistence = { ok: true; exists: true }
   | { ok: true; exists: false; anchorCandidates?: NoteAnchorCandidateV1[]; candidatesUnavailable?: boolean }
   | { ok: false; code: ReadFailureCode | 'forbidden'; reason: string };
-
-function isGeneral(kind: string): boolean { return (NOTE_GENERAL_KINDS as readonly string[]).includes(kind); }
 
 /** RW-7: a request object carries exactly the named keys, no extras. */
 function hasOnlyKeys(value: object, allowed: readonly string[]): boolean {
@@ -169,20 +167,6 @@ async function confirmedByUserOfVersion(records: GoalRecordTransactionPort, proj
     }
   }
   return { ok: true, value: false };
-}
-
-async function headsByAnchorKey(records: RecordLookupPort, projectId: string, anchorKey: string):
-Promise<ReadOutcome<NoteHeadSnapshot[]>> {
-  const seen = new Map<string, NoteHeadSnapshot>();
-  for (const index of S4_NOTE_BY_ANCHOR_LOOKUPS) {
-    const page = await readAllHeads(records, index, [projectId, anchorKey]);
-    if (!page.ok) return page;
-    for (const head of page.heads) {
-      if (head.anchorKey0 === anchorKey || head.anchorKey1 === anchorKey || head.anchorKey2 === anchorKey
-        || head.anchorKey3 === anchorKey || head.anchorKey4 === anchorKey) seen.set(head.noteId, head);
-    }
-  }
-  return { ok: true, value: [...seen.values()] };
 }
 
 type AnchorHeadsPage = {
@@ -399,6 +383,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         anchorStatus: 'live', anchorRetiredReasons: [], retiredExtraAnchors: [],
         unresolvedFacts: [], uncheckedFacts: head.facts.map((_, index) => index), hints: [], matchedTerms: [], score: 0,
         ...(head.sections === undefined ? {} : { sections: head.sections }),
+        ...(head.repair === undefined ? {} : { repair: head.repair }),
       } } satisfies ReadOutcome<NoteItemV1>;
     })();
   }
@@ -416,6 +401,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       retiredExtraAnchors: [], unresolvedFacts: [], uncheckedFacts: version.facts.map((_, index) => index),
       hints: [], matchedTerms: [], score: 0,
       ...(version.sections === undefined ? {} : { sections: version.sections }),
+      ...(version.repair === undefined ? {} : { repair: version.repair }),
     };
   }
 
@@ -582,25 +568,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   /**
-   * R10/MF10: exactly 4A's `principalOf` projection (copied; `note-service`
-   * imports this module, so it cannot be shared by import). A cursor from a
-   * different caller, goal or actor kind cannot replay.
+   * L12: the cursor binds the call's identity (project, workspace, principal).
+   * `principalIdentity` is the canonical projection, the same JSON for every
+   * principal kind.
    */
-  function principalProjection(ctx: CoreCallContext): unknown {
-    const principal = ctx.principal;
-    if (principal.kind === 'host') {
-      return { kind: 'host', actor: { kind: principal.actor.kind, id: principal.actor.id } };
-    }
-    if (principal.kind === 'work_run') {
-      return { kind: 'work_run', runRef: { projectId: principal.runRef.projectId,
-        goalId: principal.runRef.goalId, runId: principal.runRef.runId } };
-    }
-    return { kind: 'query_run', queryRunRef: { ...principal.queryRunRef } };
-  }
-
-  /** L12: the cursor binds the call's identity (project, workspace, principal). */
   function callerIdentityOf(ctx: CoreCallContext): string {
-    return `${ctx.projectId}\u0000${ctx.workspaceId ?? ''}\u0000${JSON.stringify(principalProjection(ctx))}`;
+    return `${ctx.projectId}\u0000${ctx.workspaceId ?? ''}\u0000${JSON.stringify(principalIdentity(ctx.principal))}`;
   }
 
   function isCrossGoal(head: NoteHeadSnapshot, currentGoalId: string | null): boolean {

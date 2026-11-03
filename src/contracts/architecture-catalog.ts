@@ -25,6 +25,9 @@ export type ModuleDefinition = {
   interfaces: { id: string; description: string; paths: string[] }[];
 };
 
+/** The existing module interface shape, named for the repair op contract. */
+export type CatalogInterfaceV1 = ModuleDefinition['interfaces'][number];
+
 /**
  * Explicit formal containment declared by the adopter. Absence of the field on
  * an `AdoptedArchitecture` means that revision declared no containment at all;

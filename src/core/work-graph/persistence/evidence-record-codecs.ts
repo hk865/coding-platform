@@ -29,6 +29,7 @@ import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
+import { isPlatformCursor } from '../../../contracts/validation/cursors.js';
 import {
     hasOnlyKeys, invalid, isRecord, nonEmpty, parseObject,
 } from '../../../contracts/validation/common.js';
@@ -284,12 +285,31 @@ function roundChainProblem(value: unknown, ref: UnknownRecord): string | null {
     return reverifyFactProblem(value['reverify']);
 }
 
+/**
+ * The round's opening binding: every entry names the staged repair's note, its
+ * version and the digest of the whole stored body (`repairBindingDigest`). The
+ * field is required on every current round (decision 79-1); no old-round
+ * default is read.
+ */
+function stagedRepairsProblem(value: unknown): string | null {
+    if (!Array.isArray(value)) return 'VerificationRoundSnapshot stagedRepairs must be an array';
+    for (const entry of value) {
+        if (!isRecord(entry) || !hasOnlyKeys(entry, ['noteId', 'version', 'digest'])) {
+            return 'a staged repair binding must carry exactly noteId, version and digest';
+        }
+        if (!nonEmpty(entry['noteId'])) return 'a staged repair binding requires a noteId';
+        if (!isSafeInteger(entry['version'], 1)) return 'a staged repair binding version must be a positive safe integer';
+        if (!isSha256Hex(entry['digest'])) return 'a staged repair binding digest must be sha256 hex';
+    }
+    return null;
+}
+
 function roundSnapshotProblem(value: unknown): string | null {
     if (!isRecord(value)) return 'VerificationRoundSnapshot must be an object';
     if (!hasOnlyKeys(value, ['ref', 'revision', 'schemaVersion', 'subject', 'subjectRunRef', 'adoptedPlanRef',
         'taskBasisRef', 'executor', 'configuration', 'configurationDigest', 'identity', 'sourceProof',
         'verificationPlan', 'checks', 'status', 'outcome', 'gaps', 'evidenceRefs', 'chain',
-        'since', 'noticeAutomationCap', 'finalizedAt'])) {
+        'stagedRepairs', 'until', 'since', 'noticeAutomationCap', 'finalizedAt'])) {
         return 'VerificationRoundSnapshot carries unknown fields';
     }
     const ref = roundRefProblem(value['ref']);
@@ -319,6 +339,13 @@ function roundSnapshotProblem(value: unknown): string | null {
     if (value['outcome'] !== null && !OUTCOMES.includes(value['outcome'] as typeof OUTCOMES[number])) return 'VerificationRoundSnapshot outcome is not recognized';
     if (!Array.isArray(value['gaps'])) return 'VerificationRoundSnapshot gaps must be an array';
     if (!Array.isArray(value['evidenceRefs'])) return 'VerificationRoundSnapshot evidenceRefs must be an array';
+    const stagedRepairs = stagedRepairsProblem(value['stagedRepairs']);
+    if (stagedRepairs !== null) return stagedRepairs;
+    // `until` is the finalize commit's last-event cursor (a public field), null
+    // on an open round; a missing field is a damaged old format, not a default.
+    if (value['until'] !== null && !isPlatformCursor(value['until'])) {
+        return 'VerificationRoundSnapshot.until must be a CommitCursor or null';
+    }
     // Wire-only notice origin (absent on old rounds): the creating commit
     // cursor and the write-time cap for an automatic reverify.
     const originProblem = noticeOriginFieldsProblem(value, 'VerificationRoundSnapshot', { allowFinalizedAt: true });
@@ -771,7 +798,7 @@ export const S2B_ROUND_BY_GOAL_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
 export const EVIDENCE_RECORD_SCHEMAS: RecordBackendSchemas = {
     records: [
         { schemaId: VERIFICATION_ROUND_SNAPSHOT_SCHEMA_ID, aggregateType: 'VerificationRound', validate: validateRoundRecord,
-            commitCursorFields: NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS },
+            commitCursorFields: ['since', 'until'] },
         { schemaId: EVIDENCE_SNAPSHOT_SCHEMA_ID, aggregateType: 'Evidence', validate: validateEvidenceRecord },
         { schemaId: TASK_EVIDENCE_INDEX_SNAPSHOT_SCHEMA_ID, aggregateType: 'TaskEvidenceIndex', validate: validateIndexRecord },
     ],

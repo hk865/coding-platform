@@ -1,0 +1,972 @@
+/**
+ * The structural-proposal owner: the exploration line writes a pinned proposal,
+ * the batch freeze groups compatible proposals behind one card, and the person's
+ * answer applies or closes the batch. It is the only writer of
+ * `ArchitectureProposal`/`ArchitectureProposalBatch` records and the only caller of
+ * the catalog planner on behalf of a proposal.
+ *
+ * The write trial reuses G2's `planCatalogRevision` (the same op, delete and move
+ * rules as the human revision path) and discards its contribution; the approval
+ * commits that contribution whole, with the proposal state records and the
+ * proposal proof joined to it. The planner's catalog event stays the commit's last
+ * event, because the revision restore path depends on that order.
+ */
+import type {
+  ArchitectureProposalBatchRef, ArchitectureProposalBatchV1, ArchitectureProposalRef,
+  ArchitectureProposalV1, ApplyBatchResult, ProposalRead, ProposalResult,
+  ProposeArchitectureRevisionInputV1,
+} from '../../../contracts/architecture-proposal.js';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { ActorRef } from '../../../contracts/command-event.js';
+import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { principalIdentity } from '../../../contracts/core/call-context.js';
+import type { ProjectScope, RoleConfigurationRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { RunRef } from '../../../contracts/dispatch.js';
+import type { DecisionChangeProofV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../../contracts/goal-decisions.js';
+import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
+import { OperationRefShape } from '../../../contracts/data-format-refs.js';
+import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { SessionMessage } from '../model/communication-contracts.js';
+import { commandKeys, type CommitFragment } from '../persistence/command-executor.js';
+import { mergeGuards } from '../persistence/record-guards.js';
+import { storeFailureToRejection } from '../persistence/read-result-failures.js';
+import { lookupCommittedReceipt, type CommittedReceipt } from '../persistence/receipt-lookup.js';
+import {
+  newArchitectureProposalRecord, transitionArchitectureProposal,
+  type ArchitectureProposalRecordV1,
+} from '../state/architecture-proposal-machine.js';
+import {
+  ARCHITECTURE_PROPOSAL_CHANGED_EVENT, decodeArchitectureProposalBatchRecord,
+  decodeArchitectureProposalChangedEvent, decodeArchitectureProposalRecord,
+  encodeArchitectureProposalBatchRecord, encodeArchitectureProposalChangedEvent,
+  encodeArchitectureProposalRecord,
+} from './proposal-record-codecs.js';
+import type { ArchitectureRevision } from './catalog-contracts.js';
+import {
+  decodeArchitectureCatalogRevisedEvent, encodeArchitectureCatalogRevisedEvent,
+} from './catalog-record-codecs.js';
+import {
+  catalogPinOf, readCurrentCatalogWindow,
+} from './catalog-service.js';
+import { exactKeys } from './architecture-service.js';
+import {
+  catalogRevisionMovesProblem, catalogRevisionPinProblem, planCatalogRevision,
+  type CatalogRevisionDependencies,
+} from './revision-planner.js';
+import { parseRepairOps } from './repair-ops.js';
+
+/** The optional cold-start window fact; absent means the immediate single-member freeze. */
+export type ProposalBatchWindowPort = {
+  isOpen(ctx: CoreCallContext, input: { projectRef: ProjectScope }): Promise<ReadResult<boolean>>;
+};
+
+/** The trusted Run→Session facts the composition resolves for a `work_run` proposer. */
+export type ProposalRunFactResolver = (ctx: CoreCallContext, runRef: RunRef) =>
+  Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef }>>;
+
+/** The decision-message owner's answer read; the answer's selection and captured pins are the approval's facts. */
+export type ProposalDecisionMessageRead = {
+  readDecisionAnswer(ctx: CoreCallContext, input: { source: DecisionSourceV1 }):
+    Promise<ReadResult<{ message: SessionMessage | null; body: UserDecisionBodyV1 | null }>>;
+};
+
+/**
+ * The proposal owner's dependencies. The G2 `CatalogRevisionDependencies` are the
+ * same records/clock/ports the human revision path uses, so the write trial and the
+ * approval plan cannot drift from it. `proposalBatchWindow` is read once, after the
+ * trial and before the pending write; a read failure writes nothing.
+ */
+export type ProposalServiceDeps = CatalogRevisionDependencies & {
+  proposalBatchWindow?: ProposalBatchWindowPort;
+  decisionMessages: ProposalDecisionMessageRead;
+  runFacts: ProposalRunFactResolver;
+};
+
+export type ArchitectureProposalService = {
+  proposeArchitectureRevision(ctx: CoreCallContext,
+    input: ProposeArchitectureRevisionInputV1 & { commandId: string }): Promise<ProposalResult>;
+  freezeArchitectureProposalBatch(ctx: CoreCallContext,
+    input: { baseCatalogPin: ArchitectureCatalogPinV1; proposalRefs: ArchitectureProposalRef[] }):
+    Promise<ReadResult<ArchitectureProposalBatchV1[]>>;
+  applyArchitectureProposalBatch(ctx: CoreCallContext,
+    input: { batchRef: ArchitectureProposalBatchRef; answerMessageRef: SessionMessageRef }):
+    Promise<ApplyBatchResult<ArchitectureRevision>>;
+  readArchitectureProposal(ctx: CoreCallContext,
+    input: { proposalRef: ArchitectureProposalRef }): Promise<ReadResult<ProposalRead>>;
+};
+
+type Clock = { now: string; eventId: string };
+
+/** The read revision is store metadata, not proposal content. */
+function proposalOf(record: ArchitectureProposalRecordV1): ArchitectureProposalV1 {
+  const { revision: _revision, ...proposal } = record;
+  return proposal;
+}
+
+function rejectionOf(failure: StoreFailure): CoreRejection {
+  return storeFailureToRejection(failure, 'current' in failure ? failure.current : undefined);
+}
+
+function readFailure(read: { status: string; code?: string; reason?: string }): CoreRejection {
+  return read.status === 'rejected'
+    ? rejected(read.code as CoreRejection['code'], read.reason ?? 'the read failed')
+    : rejected('unavailable', 'the record read is not ready');
+}
+
+/**
+ * The planner admits a catalog revision only through the Host principal. A proposal
+ * write is a read-only trial whose contribution is discarded, so it runs under a
+ * fixed internal system identity; the real proposer is stored on the proposal from
+ * the trusted Run facts, never from the model.
+ */
+const TRIAL_ACTOR: { kind: 'system'; id: string } = Object.freeze({ kind: 'system', id: 'architecture-proposal-trial' });
+
+function trialContext(ctx: CoreCallContext): CoreCallContext {
+  if (ctx.principal.kind === 'host') return ctx;
+  return {
+    projectId: ctx.projectId,
+    ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }),
+    principal: { kind: 'host', actor: TRIAL_ACTOR },
+    materialReader: ctx.workspaceId === undefined
+      ? { kind: 'host', projectId: ctx.projectId, actor: TRIAL_ACTOR }
+      : { kind: 'host', projectId: ctx.projectId, workspaceId: ctx.workspaceId, actor: TRIAL_ACTOR },
+    signal: ctx.signal,
+  };
+}
+
+function hostActorOf(ctx: CoreCallContext): ActorRef | null {
+  return ctx.principal.kind === 'host' ? ctx.principal.actor : null;
+}
+
+function workActorOf(ctx: CoreCallContext, sessionRef: SessionRef): ActorRef | null {
+  if (ctx.principal.kind !== 'work_run') return null;
+  return { kind: 'agent', id: sessionRef.sessionId, runRef: ctx.principal.runRef };
+}
+
+function operationRefProblem(value: unknown): string | null {
+  if (value === undefined) return null;
+  return checkShape(OperationRefShape, value, 'pending');
+}
+
+function messageRefProblem(value: unknown): string | null {
+  if (!isRecord(value) || !exactKeys(value, ['aggregateType', 'projectId', 'workspaceId', 'messageId'])) {
+    return 'the answer message ref is incomplete';
+  }
+  if (value['aggregateType'] !== 'SessionMessage' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['workspaceId']) || !nonEmpty(value['messageId'])) {
+    return 'the answer message ref is incomplete';
+  }
+  return null;
+}
+
+function proposalRefProblem(value: unknown): string | null {
+  if (!isRecord(value) || !exactKeys(value, ['aggregateType', 'projectId', 'proposalId'])) {
+    return 'the proposal ref is incomplete';
+  }
+  if (value['aggregateType'] !== 'ArchitectureProposal' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['proposalId'])) {
+    return 'the proposal ref is incomplete';
+  }
+  return null;
+}
+
+function batchRefProblem(value: unknown): string | null {
+  if (!isRecord(value) || !exactKeys(value, ['aggregateType', 'projectId', 'batchId'])) {
+    return 'the batch ref is incomplete';
+  }
+  if (value['aggregateType'] !== 'ArchitectureProposalBatch' || !nonEmpty(value['projectId'])
+    || !nonEmpty(value['batchId'])) {
+    return 'the batch ref is incomplete';
+  }
+  return null;
+}
+
+// --------------------------------------------------------------------------
+// Record reads
+// --------------------------------------------------------------------------
+
+async function readProposal(deps: ProposalServiceDeps, ref: ArchitectureProposalRef):
+Promise<ReadResult<ArchitectureProposalRecordV1>> {
+  const key = canonicalKey(ref);
+  let read;
+  try {
+    read = await deps.records.readMany([key]);
+  } catch (error) {
+    return rejected('unavailable', `the proposal record could not be read: ${messageOf(error)}`);
+  }
+  if (read.status !== 'ready') {
+    return read.code === 'not_found' ? { status: 'not_found' } : rejectionOf(read);
+  }
+  const record = read.value.records.find(entry => entry.refKey === key);
+  if (record === undefined) {
+    return read.value.missing.includes(key) ? { status: 'not_found' }
+      : rejected('unavailable', 'the proposal record read neither returned nor reported the record missing');
+  }
+  const decoded = decodeArchitectureProposalRecord(record);
+  if (decoded.status !== 'decoded') {
+    return rejected('unavailable', `the proposal record is damaged: ${decoded.reason}`);
+  }
+  return { status: 'ready', value: decoded.value };
+}
+
+async function readProposals(deps: ProposalServiceDeps, refs: readonly ArchitectureProposalRef[]):
+Promise<ReadResult<ArchitectureProposalRecordV1[]>> {
+  const byKey = new Map<string, ArchitectureProposalRef>();
+  for (const ref of refs) byKey.set(canonicalKey(ref), ref);
+  const keys = [...byKey.keys()];
+  if (keys.length === 0) return { status: 'ready', value: [] };
+  let read;
+  try {
+    read = await deps.records.readMany(keys);
+  } catch (error) {
+    return rejected('unavailable', `the proposal records could not be read: ${messageOf(error)}`);
+  }
+  if (read.status !== 'ready') {
+    return read.code === 'not_found' ? { status: 'not_found' } : rejectionOf(read);
+  }
+  const byRefKey = new Map(read.value.records.map(record => [record.refKey, record]));
+  const proposals: ArchitectureProposalRecordV1[] = [];
+  for (const key of keys) {
+    const encoded = byRefKey.get(key);
+    if (encoded === undefined) {
+      return read.value.missing.includes(key) ? { status: 'not_found' }
+        : rejected('unavailable', `the proposal record ${key} read neither returned nor reported missing`);
+    }
+    const decoded = decodeArchitectureProposalRecord(encoded);
+    if (decoded.status !== 'decoded') {
+      return rejected('unavailable', `a proposal record is damaged: ${decoded.reason}`);
+    }
+    proposals.push(decoded.value);
+  }
+  return { status: 'ready', value: proposals };
+}
+
+async function readBatch(deps: ProposalServiceDeps, ref: ArchitectureProposalBatchRef):
+Promise<ReadResult<ArchitectureProposalBatchV1>> {
+  const key = canonicalKey(ref);
+  let read;
+  try {
+    read = await deps.records.readMany([key]);
+  } catch (error) {
+    return rejected('unavailable', `the proposal batch could not be read: ${messageOf(error)}`);
+  }
+  if (read.status !== 'ready') {
+    return read.code === 'not_found' ? { status: 'not_found' } : rejectionOf(read);
+  }
+  const record = read.value.records.find(entry => entry.refKey === key);
+  if (record === undefined) {
+    return read.value.missing.includes(key) ? { status: 'not_found' }
+      : rejected('unavailable', 'the proposal batch read neither returned nor reported the record missing');
+  }
+  const decoded = decodeArchitectureProposalBatchRecord(record);
+  if (decoded.status !== 'decoded') {
+    return rejected('unavailable', `the proposal batch is damaged: ${decoded.reason}`);
+  }
+  const { revision: _revision, ...batch } = decoded.value;
+  return { status: 'ready', value: batch };
+}
+
+async function readBatchMembers(deps: ProposalServiceDeps, batch: ArchitectureProposalBatchV1):
+Promise<ReadResult<ArchitectureProposalRecordV1[]>> {
+  return readProposals(deps, batch.members);
+}
+
+// --------------------------------------------------------------------------
+// Identity, proof and commit helpers
+// --------------------------------------------------------------------------
+
+function receiptOf(keys: { identityKey: string; fingerprint: string }, cursor: CommittedReceipt['cursor']):
+{ identityKey: string; fingerprint: string; cursor: CommittedReceipt['cursor'] } {
+  return { identityKey: keys.identityKey, fingerprint: keys.fingerprint, cursor };
+}
+
+function answerPins(message: SessionMessage): VersionPin[] {
+  if (message.response === null || !('decision' in message.response)) return [];
+  return message.response.decision.source.pins.map(pin => structuredClone(pin));
+}
+
+function changeProof(message: SessionMessage, changes: { before: VersionPin; after: VersionPin }[]):
+DecisionChangeProofV1 {
+  return {
+    acknowledgementRef: structuredClone(message.ref),
+    capturedPins: answerPins(message),
+    changes: changes.map(change => ({
+      before: structuredClone(change.before), after: structuredClone(change.after),
+    })),
+    basisRebases: [],
+  };
+}
+
+function proposalPins(records: readonly ArchitectureProposalRecordV1[]):
+{ before: VersionPin; after: VersionPin }[] {
+  return records.map(record => ({
+    before: { ref: structuredClone(record.ref), revision: record.revision },
+    after: { ref: structuredClone(record.ref), revision: record.revision + 1 },
+  }));
+}
+
+function baselinePinOf(pin: ArchitectureCatalogPinV1, revision: number): VersionPin {
+  return { ref: structuredClone(pin.baseline.ref), revision };
+}
+
+function activePinOf(projectId: string, revision: number): VersionPin {
+  return { ref: { aggregateType: 'ProjectArchitectureBaselineActive', projectId }, revision };
+}
+
+function proposalBatchReason(members: readonly ArchitectureProposalRecordV1[]): string {
+  return members.map(member => member.reason).join('\n');
+}
+
+function batchOf(projectId: string, members: readonly ArchitectureProposalRecordV1[],
+  baseCatalogPin: ArchitectureCatalogPinV1): ArchitectureProposalBatchV1 {
+  const memberRefs = members.map(member => structuredClone(member.ref));
+  const ops = members.flatMap(member => member.ops.map(op => structuredClone(op)));
+  const responsibilityMoves = members.flatMap(member => member.responsibilityMoves.map(move => structuredClone(move)));
+  const batchId = sha256Hex(canonicalJson({ baseCatalogPin, members: memberRefs } as unknown as JsonValue));
+  const digest = sha256Hex(canonicalJson({
+    members: memberRefs, baseCatalogPin, ops, responsibilityMoves,
+  } as unknown as JsonValue));
+  return {
+    ref: { aggregateType: 'ArchitectureProposalBatch', projectId, batchId },
+    members: memberRefs, baseCatalogPin: structuredClone(baseCatalogPin), ops, responsibilityMoves, digest,
+  };
+}
+
+async function trialCatalogRevision(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  pin: ArchitectureCatalogPinV1, ops: readonly unknown[], moves: readonly unknown[], reason: string,
+  commandId: string): Promise<CoreRejection | null> {
+  const input = {
+    expected: pin,
+    ops: ops as ProposeArchitectureRevisionInputV1['ops'],
+    responsibilityMoves: moves as ProposeArchitectureRevisionInputV1['responsibilityMoves'],
+    reason,
+    commandId,
+  };
+  let planned;
+  try {
+    planned = await planCatalogRevision(deps, trialContext(ctx), input);
+  } catch (error) {
+    return rejected('unavailable', `the catalog revision trial failed: ${messageOf(error)}`);
+  }
+  if (planned.status === 'ready') return null;
+  return planned.status === 'rejected' ? planned
+    : rejected('unavailable', 'the catalog revision trial is not ready');
+}
+
+// --------------------------------------------------------------------------
+// The proposal write
+// --------------------------------------------------------------------------
+
+async function proposalWriteKeys(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: ProposeArchitectureRevisionInputV1 & { commandId: string }): Promise<{
+  identityKey: string; fingerprint: string;
+}> {
+  return commandKeys({
+    operation: 'architecture-proposal-propose',
+    scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+    principal: principalIdentity(ctx.principal),
+    commandId: input.commandId,
+    fingerprintInput: {
+      baseCatalogPin: input.baseCatalogPin, ops: input.ops,
+      responsibilityMoves: input.responsibilityMoves, reason: input.reason,
+      operationRef: input.operationRef ?? null,
+    } as unknown as JsonValue,
+  });
+}
+
+/**
+ * The original result is the one the command's own receipt names: a `pending_batch`
+ * write carries `batchRef: null`, an immediate freeze carries the batch. The
+ * proposal's later `batchRef` is not the replay's source.
+ */
+async function replayPropose(deps: ProposalServiceDeps, receipt: CommittedReceipt): Promise<ProposalResult> {
+  let located;
+  try {
+    located = await deps.records.eventAt(receipt.cursor);
+  } catch (error) {
+    return rejected('unavailable', `the proposal receipt event could not be read: ${messageOf(error)}`);
+  }
+  if (located.status !== 'ready' || located.value.cursor !== receipt.cursor) {
+    return rejected('unavailable', 'the proposal receipt event is not readable at its cursor');
+  }
+  const event = located.value.event;
+  if (!receipt.eventIds.includes(event.eventId)) {
+    return rejected('unavailable', 'the proposal receipt does not name its last event');
+  }
+  if (event.eventType !== ARCHITECTURE_PROPOSAL_CHANGED_EVENT) {
+    return rejected('unavailable', 'the proposal receipt names no proposal event');
+  }
+  const decoded = decodeArchitectureProposalChangedEvent(event);
+  if (decoded.status !== 'decoded') {
+    return rejected('unavailable', `the proposal event is damaged: ${decoded.reason}`);
+  }
+  if (decoded.value.batchRef === null) return { status: 'pending_batch', proposalRef: decoded.value.proposalRef };
+  return { status: 'needs_decision', proposalRef: decoded.value.proposalRef,
+    cardKey: decisionSourceKey({ kind: 'structural_proposal', batch: decoded.value.batchRef }) };
+}
+
+/**
+ * One commit writes the proposal, and — unless the cold-start window is open — its
+ * single-member batch. The batch's trial already ran, so no second trial can see a
+ * moved catalog between the two records.
+ */
+async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: ProposeArchitectureRevisionInputV1 & { commandId: string },
+  proposer: SessionRef, keys: { identityKey: string; fingerprint: string },
+  write: Clock, immediate: boolean): Promise<ProposalResult> {
+  const proposalId = sha256Hex(canonicalJson({ projectId: ctx.projectId, commandId: input.commandId } as unknown as JsonValue));
+  const ref: ArchitectureProposalRef = {
+    aggregateType: 'ArchitectureProposal', projectId: ctx.projectId, proposalId,
+  };
+  const created = newArchitectureProposalRecord({
+    ref,
+    baseCatalogPin: structuredClone(input.baseCatalogPin),
+    ops: structuredClone(input.ops),
+    responsibilityMoves: structuredClone(input.responsibilityMoves),
+    reason: input.reason,
+    proposer: structuredClone(proposer),
+    operationRef: input.operationRef === undefined ? null : structuredClone(input.operationRef),
+  });
+  const actor = workActorOf(ctx, proposer) ?? hostActorOf(ctx) ?? TRIAL_ACTOR;
+  const records: EncodedRecord[] = [];
+  const guards: RecordGuard[] = [];
+  let record = created;
+  let batch: ArchitectureProposalBatchV1 | null = null;
+  if (immediate) {
+    batch = batchOf(ctx.projectId, [created], input.baseCatalogPin);
+    const entered = transitionArchitectureProposal(created, { kind: 'enter_batch', batchRef: batch.ref });
+    if (!entered.ok) return rejected(entered.code, entered.detail);
+    record = entered.next;
+    records.push(encodeArchitectureProposalBatchRecord({ ...batch, revision: 1 }));
+    guards.push({ refKey: canonicalKey(batch.ref), expectedRevision: null });
+  }
+  records.push(encodeArchitectureProposalRecord(record));
+  guards.push({ refKey: canonicalKey(ref), expectedRevision: null });
+  const event = encodeArchitectureProposalChangedEvent({
+    eventId: write.eventId, eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
+    occurredAt: write.now, projectId: ctx.projectId, proposalRef: ref, revision: record.revision,
+    state: record.state, batchRef: record.batchRef, actor,
+  });
+  let receipt;
+  try {
+    receipt = await deps.records.commit({
+      identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+      guards, records, claims: [], indexGuards: [], indexChanges: [], events: [event],
+    });
+  } catch (error) {
+    return rejected('unavailable', `the proposal write outcome is unknown: ${messageOf(error)}`);
+  }
+  if (receipt.status !== 'committed') {
+    const looked = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+    if (looked.status === 'found') return replayPropose(deps, looked.receipt);
+    if (looked.status === 'conflict') return rejected('idempotency_conflict', looked.reason);
+    return rejectionOf(receipt);
+  }
+  // A concurrent commit of the same command won the identity: its event is the original result.
+  if (receipt.replayed) return replayPropose(deps, receipt);
+  if (batch === null) return { status: 'pending_batch', proposalRef: ref };
+  return { status: 'needs_decision', proposalRef: ref,
+    cardKey: decisionSourceKey({ kind: 'structural_proposal', batch: batch.ref }) };
+}
+
+// --------------------------------------------------------------------------
+// Freeze
+// --------------------------------------------------------------------------
+
+type FreezePlan = {
+  batch: ArchitectureProposalBatchV1;
+  members: ArchitectureProposalRecordV1[];
+  existing: boolean;
+};
+
+async function freezePlan(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  pin: ArchitectureCatalogPinV1, proposals: readonly ArchitectureProposalRecordV1[]):
+Promise<ReadResult<FreezePlan[]>> {
+  const sorted = [...proposals].sort((left, right) => left.ref.proposalId < right.ref.proposalId ? -1
+    : left.ref.proposalId > right.ref.proposalId ? 1 : 0);
+  const compatible: ArchitectureProposalRecordV1[][] = [];
+  let current: ArchitectureProposalRecordV1[] = [];
+  let accumulatedOps: ProposeArchitectureRevisionInputV1['ops'] = [];
+  let accumulatedMoves: ProposeArchitectureRevisionInputV1['responsibilityMoves'] = [];
+  for (const proposal of sorted) {
+    const nextOps = [...accumulatedOps, ...proposal.ops];
+    const nextMoves = [...accumulatedMoves, ...proposal.responsibilityMoves];
+    const reason = proposalBatchReason([...current, proposal]);
+    const trial = await trialCatalogRevision(deps, ctx, pin, nextOps, nextMoves, reason,
+      `freeze-trial:${proposal.ref.proposalId}`);
+    if (trial === null) {
+      current.push(proposal);
+      accumulatedOps = nextOps;
+      accumulatedMoves = nextMoves;
+      continue;
+    }
+    // Only a content conflict closes the current batch; a read failure is returned as it is.
+    if (trial.code !== 'invalid') return trial;
+    if (current.length > 0) {
+      compatible.push(current);
+      current = [];
+      accumulatedOps = [];
+      accumulatedMoves = [];
+    }
+    const alone = await trialCatalogRevision(deps, ctx, pin, proposal.ops, proposal.responsibilityMoves,
+      proposal.reason, `freeze-trial:${proposal.ref.proposalId}`);
+    if (alone !== null) return alone.status === 'rejected' ? alone : rejected('unavailable', 'the proposal trial is not ready');
+    current.push(proposal);
+    accumulatedOps = [...proposal.ops];
+    accumulatedMoves = [...proposal.responsibilityMoves];
+  }
+  if (current.length > 0) compatible.push(current);
+
+  const plans: FreezePlan[] = [];
+  for (const members of compatible) {
+    const batch = batchOf(pin.catalogRef.projectId, members, pin);
+    const existing = await readBatch(deps, batch.ref);
+    if (existing.status === 'rejected') return existing;
+    if (existing.status === 'not_found') {
+      plans.push({ batch, members, existing: false });
+      continue;
+    }
+    if (existing.status !== 'ready') return rejected('unavailable', 'the stored proposal batch is not readable');
+    if (canonicalJson(existing.value.members as unknown as JsonValue)
+      !== canonicalJson(batch.members as unknown as JsonValue)
+      || existing.value.digest !== batch.digest) {
+      return rejected('unavailable', 'the stored proposal batch differs from the content its batch id names');
+    }
+    plans.push({ batch: existing.value, members, existing: true });
+  }
+  return { status: 'ready', value: plans };
+}
+
+async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  pin: ArchitectureCatalogPinV1, refs: readonly ArchitectureProposalRef[]): Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
+  const read = await readProposals(deps, refs);
+  if (read.status !== 'ready') return read;
+  const samePin = (record: ArchitectureProposalRecordV1): boolean =>
+    canonicalJson(record.baseCatalogPin.catalogRef as unknown as JsonValue)
+      === canonicalJson(pin.catalogRef as unknown as JsonValue)
+    && canonicalJson(record.baseCatalogPin.baseline as unknown as JsonValue)
+      === canonicalJson(pin.baseline as unknown as JsonValue);
+  const existingRefs: ArchitectureProposalBatchRef[] = [];
+  const seenBatches = new Set<string>();
+  for (const record of read.value) {
+    if (record.batchRef === null || !samePin(record)) continue;
+    const key = canonicalKey(record.batchRef);
+    if (seenBatches.has(key)) continue;
+    seenBatches.add(key);
+    existingRefs.push(record.batchRef);
+  }
+  const existingBatches: ArchitectureProposalBatchV1[] = [];
+  for (const ref of existingRefs) {
+    const batch = await readBatch(deps, ref);
+    if (batch.status === 'rejected') return batch;
+    if (batch.status !== 'ready') return rejected('unavailable', 'a frozen proposal batch is not readable');
+    existingBatches.push(batch.value);
+  }
+  const pending = read.value.filter(record => record.state === 'pending' && record.batchRef === null && samePin(record));
+  if (pending.length === 0) return { status: 'ready', value: existingBatches };
+  const planned = await freezePlan(deps, ctx, pin, pending);
+  if (planned.status !== 'ready') return planned;
+  const all = new Map<string, ArchitectureProposalBatchV1>();
+  for (const batch of existingBatches) all.set(batch.ref.batchId, batch);
+  for (const plan of planned.value) all.set(plan.batch.ref.batchId, plan.batch);
+  const fresh = planned.value.filter(plan => !plan.existing);
+  if (fresh.length === 0) return { status: 'ready', value: [...all.values()] };
+
+  const clock: Clock = { now: deps.now(), eventId: deps.eventId() };
+  const actor = hostActorOf(ctx) ?? TRIAL_ACTOR;
+  const guards: RecordGuard[] = [];
+  const records: EncodedRecord[] = [];
+  const events = [];
+  for (const plan of fresh) {
+    guards.push({ refKey: canonicalKey(plan.batch.ref), expectedRevision: null });
+    records.push(encodeArchitectureProposalBatchRecord({ ...plan.batch, revision: 1 }));
+    for (const member of plan.members) {
+      const entered = transitionArchitectureProposal(member, { kind: 'enter_batch', batchRef: plan.batch.ref });
+      if (!entered.ok) return rejected(entered.code, entered.detail);
+      guards.push({ refKey: canonicalKey(member.ref), expectedRevision: member.revision });
+      records.push(encodeArchitectureProposalRecord(entered.next));
+      events.push(encodeArchitectureProposalChangedEvent({
+        eventId: deps.eventId(), eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
+        occurredAt: clock.now, projectId: ctx.projectId, proposalRef: member.ref,
+        revision: entered.next.revision, state: entered.next.state,
+        batchRef: plan.batch.ref, actor,
+      }));
+    }
+  }
+  const merged = mergeGuards(guards);
+  if (!merged.ok) return merged.rejection;
+  const keys = commandKeys({
+    operation: 'architecture-proposal-freeze',
+    scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+    principal: principalIdentity(ctx.principal),
+    commandId: canonicalJson(fresh.map(plan => plan.batch.ref.batchId).sort() as unknown as JsonValue),
+    fingerprintInput: { pin, proposals: pending.map(record => record.ref).sort((left, right) =>
+      left.proposalId < right.proposalId ? -1 : left.proposalId > right.proposalId ? 1 : 0) } as unknown as JsonValue,
+  });
+  let committed;
+  try {
+    committed = await deps.records.commit({
+      identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+      guards: merged.guards, records, claims: [], indexGuards: [], indexChanges: [], events,
+    });
+  } catch (error) {
+    const again = await freezePlan(deps, ctx, pin, pending);
+    if (again.status === 'ready' && again.value.every(plan => plan.existing)) {
+      return { status: 'ready', value: again.value.map(plan => plan.batch) };
+    }
+    return rejected('unavailable', `the batch freeze outcome is unknown: ${messageOf(error)}`);
+  }
+  if (committed.status !== 'committed') {
+    const again = await freezePlan(deps, ctx, pin, pending);
+    if (again.status === 'ready' && again.value.every(plan => plan.existing)) {
+      return { status: 'ready', value: again.value.map(plan => plan.batch) };
+    }
+    return rejectionOf(committed);
+  }
+  return { status: 'ready', value: [...all.values()] };
+}
+
+// --------------------------------------------------------------------------
+// The four public entries (bare form; the factory binds deps)
+// --------------------------------------------------------------------------
+
+export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: ProposeArchitectureRevisionInputV1 & { commandId: string }): Promise<ProposalResult> {
+  if (!isRecord(input)) return rejected('invalid', 'a proposal requires an input object');
+  if (!nonEmpty(input.commandId)) return rejected('invalid', 'a proposal requires a command id');
+  const pinProblem = catalogRevisionPinProblem(input.baseCatalogPin);
+  if (pinProblem !== null) return { status: 'invalid', reason: pinProblem };
+  if (input.baseCatalogPin.catalogRef.projectId !== ctx.projectId) {
+    return rejected('forbidden', 'the proposal base pin is outside the call context project');
+  }
+  if (!nonEmpty(input.reason)) return { status: 'invalid', reason: 'a proposal requires a non-empty reason' };
+  const operationProblem = operationRefProblem(input.operationRef);
+  if (operationProblem !== null) return { status: 'invalid', reason: operationProblem };
+  const parsed = parseRepairOps(input.ops);
+  if (!parsed.ok) return { status: 'invalid', reason: parsed.problem.reason };
+  const movesProblem = catalogRevisionMovesProblem(input.responsibilityMoves, ctx.projectId, null);
+  if (movesProblem !== null) return { status: 'invalid', reason: movesProblem };
+  if (ctx.principal.kind !== 'work_run') {
+    return rejected('forbidden', 'a structural proposal is written by a Work Run');
+  }
+  const keys = await proposalWriteKeys(deps, ctx, input);
+  const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+  if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
+  if (prior.status !== 'missing' && prior.status !== 'found') return rejected('unavailable', prior.reason);
+  if (prior.status === 'found') return replayPropose(deps, prior.receipt);
+  const facts = await deps.runFacts(ctx, ctx.principal.runRef);
+  if (facts.status !== 'ready') return readFailure(facts);
+  if (deps.duty === undefined) return rejected('unavailable', 'the proposal owner has no Session duty reader');
+  const duty = await deps.duty(facts.value.role, trialContext(ctx));
+  if (duty.status !== 'ready') return readFailure(duty);
+  if (duty.value !== 'adviser') {
+    return rejected('forbidden', 'a structural proposal is written by an adviser');
+  }
+
+  const trial = await trialCatalogRevision(deps, ctx, input.baseCatalogPin, input.ops,
+    input.responsibilityMoves, input.reason, `${input.commandId}:trial`);
+  if (trial !== null) return trial.code === 'invalid' ? { status: 'invalid', reason: trial.reason } : trial;
+
+  const window = deps.proposalBatchWindow === undefined
+    ? { status: 'ready' as const, value: false }
+    : await deps.proposalBatchWindow.isOpen(ctx, { projectRef: { projectId: ctx.projectId } });
+  if (window.status === 'rejected') return window;
+  if (window.status !== 'ready') {
+    return rejected('unavailable', `proposal batch window is not readable (${window.status})`);
+  }
+  return writeProposal(deps, ctx, input, facts.value.sessionRef, keys,
+    { now: deps.now(), eventId: deps.eventId() }, !window.value);
+}
+
+export async function freezeArchitectureProposalBatch(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: { baseCatalogPin: ArchitectureCatalogPinV1; proposalRefs: ArchitectureProposalRef[] }):
+Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
+  if (!isRecord(input)) return rejected('invalid', 'a batch freeze requires an input object');
+  const pinProblem = catalogRevisionPinProblem(input.baseCatalogPin);
+  if (pinProblem !== null) return rejected('invalid', pinProblem);
+  if (input.baseCatalogPin.catalogRef.projectId !== ctx.projectId) {
+    return rejected('forbidden', 'the freeze base pin is outside the call context project');
+  }
+  if (!Array.isArray(input.proposalRefs)) return rejected('invalid', 'a batch freeze requires proposal refs');
+  for (const ref of input.proposalRefs) {
+    const problem = proposalRefProblem(ref);
+    if (problem !== null) return rejected('invalid', problem);
+    if (ref.projectId !== ctx.projectId) return rejected('forbidden', 'a proposal ref is outside the call context project');
+  }
+  return freezeProposals(deps, ctx, input.baseCatalogPin, input.proposalRefs);
+}
+
+async function replayApproval(deps: ProposalServiceDeps, keys: { identityKey: string; fingerprint: string },
+  receipt: CommittedReceipt): Promise<ApplyBatchResult<ArchitectureRevision>> {
+  let located;
+  try {
+    located = await deps.records.eventAt(receipt.cursor);
+  } catch (error) {
+    return rejected('unavailable', `the approval receipt event could not be read: ${messageOf(error)}`);
+  }
+  if (located.status !== 'ready' || located.value.cursor !== receipt.cursor) {
+    return rejected('unavailable', 'the approval receipt event is not readable at its cursor');
+  }
+  const event = located.value.event;
+  if (!receipt.eventIds.includes(event.eventId)) {
+    return rejected('unavailable', 'the approval receipt does not name its last event');
+  }
+  const answerReceipt = receiptOf(keys, receipt.cursor);
+  if (event.eventType === ARCHITECTURE_PROPOSAL_CHANGED_EVENT) {
+    const decoded = decodeArchitectureProposalChangedEvent(event);
+    if (decoded.status !== 'decoded') return rejected('unavailable', `the approval event is damaged: ${decoded.reason}`);
+    if (decoded.value.state === 'rejected') return { status: 'rejected', receipt: answerReceipt };
+    if (decoded.value.state === 'stale') return { status: 'source_stale', receipt: answerReceipt };
+    return rejected('unavailable', 'the approval receipt names an unapplied proposal state');
+  }
+  if (event.eventType !== 'ArchitectureCatalogRevised') {
+    return rejected('unavailable', 'the approval receipt names no proposal or catalog event');
+  }
+  const decoded = decodeArchitectureCatalogRevisedEvent(event);
+  if (decoded.status !== 'decoded') return rejected('unavailable', `the approval catalog event is damaged: ${decoded.reason}`);
+  return { status: 'applied', receipt: answerReceipt, revision: decoded.value.revision };
+}
+
+async function readApprovalAnswer(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  batchRef: ArchitectureProposalBatchRef, answerMessageRef: SessionMessageRef):
+Promise<ReadResult<{ message: SessionMessage; body: UserDecisionBodyV1 }>> {
+  const source: DecisionSourceV1 = {
+    kind: 'structural_proposal',
+    key: decisionSourceKey({ kind: 'structural_proposal', batch: batchRef }),
+    subject: { kind: 'project', projectRef: { projectId: batchRef.projectId } },
+    pins: [],
+  };
+  const read = await deps.decisionMessages.readDecisionAnswer(ctx, { source });
+  if (read.status !== 'ready') return read;
+  if (read.value.message === null || read.value.body === null) {
+    return rejected('invalid', 'the structural proposal batch has no saved answer');
+  }
+  if (canonicalKey(read.value.message.ref) !== canonicalKey(answerMessageRef)) {
+    return rejected('invalid', 'the saved answer is another message');
+  }
+  return { status: 'ready', value: { message: read.value.message, body: read.value.body } };
+}
+
+function selectionOption(body: UserDecisionBodyV1): 'approve' | 'reject' | null {
+  if (body.selection.kind !== 'option') return null;
+  return body.selection.optionId === 'approve' || body.selection.optionId === 'reject'
+    ? body.selection.optionId : null;
+}
+
+async function writeClosedMembers(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  keys: { identityKey: string; fingerprint: string }, batch: ArchitectureProposalBatchV1,
+  members: readonly ArchitectureProposalRecordV1[], message: SessionMessage,
+  state: 'rejected' | 'stale'): Promise<CoreRejection | { receipt: ReturnType<typeof receiptOf> }> {
+  const actor = hostActorOf(ctx);
+  if (actor === null) return rejected('forbidden', 'a proposal answer is applied by the Host');
+  const proof = changeProof(message, proposalPins(members));
+  const records: EncodedRecord[] = [];
+  const guards: RecordGuard[] = [];
+  const events = [];
+  for (const [index, member] of members.entries()) {
+    const next = transitionArchitectureProposal(member, { kind: state === 'rejected' ? 'reject' : 'stale' });
+    if (!next.ok) return rejected(next.code, next.detail);
+    guards.push({ refKey: canonicalKey(member.ref), expectedRevision: member.revision });
+    records.push(encodeArchitectureProposalRecord(next.next));
+    events.push(encodeArchitectureProposalChangedEvent({
+      eventId: deps.eventId(), eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
+      occurredAt: deps.now(), projectId: ctx.projectId, proposalRef: member.ref,
+      revision: next.next.revision, state: next.next.state, batchRef: batch.ref, actor,
+      ...(index === members.length - 1 ? { proof } : {}),
+    }));
+  }
+  if (events.length === 0) return rejected('invalid', 'the batch has no proposal member to close');
+  let committed;
+  try {
+    committed = await deps.records.commit({
+      identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+      guards, records, claims: [], indexGuards: [], indexChanges: [], events,
+    });
+  } catch (error) {
+    return rejected('unavailable', `the proposal close outcome is unknown: ${messageOf(error)}`);
+  }
+  if (committed.status !== 'committed') {
+    const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+    if (prior.status === 'found') {
+      const replay = await replayApproval(deps, keys, prior.receipt);
+      return replay.status === 'rejected' ? replay : { receipt: receiptOf(keys, prior.receipt.cursor) };
+    }
+    return rejectionOf(committed);
+  }
+  return { receipt: receiptOf(keys, committed.cursor) };
+}
+
+export async function applyArchitectureProposalBatch(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: { batchRef: ArchitectureProposalBatchRef; answerMessageRef: SessionMessageRef }):
+Promise<ApplyBatchResult<ArchitectureRevision>> {
+  if (!isRecord(input)) return rejected('invalid', 'a batch application requires an input object');
+  const batchProblem = batchRefProblem(input.batchRef);
+  if (batchProblem !== null) return rejected('invalid', batchProblem);
+  const messageProblem = messageRefProblem(input.answerMessageRef);
+  if (messageProblem !== null) return rejected('invalid', messageProblem);
+  if (input.batchRef.projectId !== ctx.projectId) {
+    return rejected('forbidden', 'the batch is outside the call context project');
+  }
+  const keys = commandKeys({
+    operation: 'architecture-proposal-apply',
+    scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+    principal: principalIdentity(ctx.principal),
+    commandId: `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`,
+    fingerprintInput: { batchRef: input.batchRef, answerMessageRef: input.answerMessageRef } as unknown as JsonValue,
+  });
+  const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+  if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
+  if (prior.status === 'found') return replayApproval(deps, keys, prior.receipt);
+  if (prior.status !== 'missing') return rejected('unavailable', prior.reason);
+
+  const batch = await readBatch(deps, input.batchRef);
+  if (batch.status === 'rejected') return batch;
+  if (batch.status !== 'ready') return rejected('not_found', 'the proposal batch does not exist');
+  const members = await readBatchMembers(deps, batch.value);
+  if (members.status === 'rejected') return members;
+  if (members.status !== 'ready') return rejected('unavailable', 'the proposal batch members are not readable');
+  if (members.value.some(member => member.state !== 'pending')) {
+    return rejected('invalid', 'the proposal batch is no longer pending');
+  }
+  const answer = await readApprovalAnswer(deps, ctx, batch.value.ref, input.answerMessageRef);
+  if (answer.status === 'rejected') return answer;
+  if (answer.status !== 'ready') return rejected('unavailable', 'the proposal answer is not readable');
+  const option = selectionOption(answer.value.body);
+  if (option === null) return rejected('invalid', 'a structural proposal answers approve or reject');
+
+  if (option === 'reject') {
+    const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
+      answer.value.message, 'rejected');
+    if ('status' in closed) return closed;
+    return { status: 'rejected', receipt: closed.receipt };
+  }
+
+  const window = await readCurrentCatalogWindow(deps.records, batch.value.ref.projectId);
+  if (window.status === 'rejected') return window;
+  if (window.status !== 'ready') return rejected('unavailable', 'the current architecture catalog is not readable');
+  const sameBaseline = canonicalKey(batch.value.baseCatalogPin.baseline.ref)
+      === canonicalKey(window.baseline.ref)
+    && batch.value.baseCatalogPin.baseline.digest === window.baseline.contentDigest;
+  if (!sameBaseline) {
+    const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
+      answer.value.message, 'stale');
+    if ('status' in closed) return closed;
+    return { status: 'source_stale', receipt: closed.receipt };
+  }
+
+  const reason = proposalBatchReason(members.value);
+  const planned = await planCatalogRevision(deps, ctx, {
+    expected: batch.value.baseCatalogPin,
+    ops: batch.value.ops,
+    responsibilityMoves: batch.value.responsibilityMoves,
+    reason,
+    commandId: `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`,
+  });
+  if (planned.status === 'rejected') {
+    if (planned.code === 'invalid') return { status: 'invalid', reason: planned.reason };
+    if (planned.code === 'source_stale') {
+      // The planner's re-read moved after the first window read: the same stale close as above.
+      const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
+        answer.value.message, 'stale');
+      if ('status' in closed) return closed;
+      return { status: 'source_stale', receipt: closed.receipt };
+    }
+    return planned;
+  }
+  if (planned.status !== 'ready') return rejected('unavailable', 'the catalog revision plan is not ready');
+
+  const actor = hostActorOf(ctx);
+  if (actor === null) return rejected('forbidden', 'a proposal answer is applied by the Host');
+  const changes: { before: VersionPin; after: VersionPin }[] = [
+    { before: baselinePinOf(batch.value.baseCatalogPin, 1), after: baselinePinOf(catalogPinOf(planned.value.revision), 1) },
+    { before: activePinOf(ctx.projectId, window.activeRevision),
+      after: activePinOf(ctx.projectId, window.activeRevision + 1) },
+    ...proposalPins(members.value),
+  ];
+  const proof = changeProof(answer.value.message, changes);
+
+  const appliedMembers: ArchitectureProposalRecordV1[] = [];
+  for (const member of members.value) {
+    const next = transitionArchitectureProposal(member, { kind: 'apply' });
+    if (!next.ok) return rejected(next.code, next.detail);
+    appliedMembers.push(next.next);
+  }
+  const records = [...planned.value.records, ...appliedMembers.map(encodeArchitectureProposalRecord)];
+  const proposalEvents = appliedMembers.map(member => encodeArchitectureProposalChangedEvent({
+    eventId: deps.eventId(), eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
+    occurredAt: deps.now(), projectId: ctx.projectId, proposalRef: member.ref,
+    revision: member.revision, state: member.state, batchRef: batch.value.ref, actor,
+  }));
+  const fragment: CommitFragment = planned.value;
+  const catalogEvents = fragment.events;
+  const lastCatalog = catalogEvents[catalogEvents.length - 1];
+  if (lastCatalog === undefined) return rejected('unavailable', 'the catalog revision contribution has no event');
+  const decodedCatalog = decodeArchitectureCatalogRevisedEvent(lastCatalog);
+  if (decodedCatalog.status !== 'decoded') {
+    return rejected('unavailable', `the catalog revision event is damaged: ${decodedCatalog.reason}`);
+  }
+  const catalogEvent = encodeArchitectureCatalogRevisedEvent({ ...decodedCatalog.value, proof });
+  const events = [...catalogEvents.slice(0, -1), ...proposalEvents, catalogEvent];
+  const memberGuards: RecordGuard[] = members.value.map(member => ({
+    refKey: canonicalKey(member.ref), expectedRevision: member.revision,
+  }));
+  const merged = mergeGuards([...fragment.guards, ...memberGuards]);
+  if (!merged.ok) return merged.rejection;
+  let committed;
+  try {
+    committed = await deps.records.commit({
+      identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+      guards: merged.guards, records, claims: fragment.claims,
+      indexGuards: [], indexChanges: [], events,
+      ...(fragment.ledgerHorizon === undefined ? {} : { ledgerHorizon: fragment.ledgerHorizon }),
+      ...(fragment.commitCursorBindings === undefined ? {} : { commitCursorBindings: fragment.commitCursorBindings }),
+    });
+  } catch (error) {
+    return rejected('unavailable', `the proposal application outcome is unknown: ${messageOf(error)}`);
+  }
+  if (committed.status !== 'committed') {
+    const again = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+    if (again.status === 'found') return replayApproval(deps, keys, again.receipt);
+    return rejectionOf(committed);
+  }
+  return { status: 'applied', receipt: receiptOf(keys, committed.cursor), revision: planned.value.revision };
+}
+
+export async function readArchitectureProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: { proposalRef: ArchitectureProposalRef }): Promise<ReadResult<ProposalRead>> {
+  if (!isRecord(input)) return rejected('invalid', 'a proposal read requires an input object');
+  const problem = proposalRefProblem(input.proposalRef);
+  if (problem !== null) return rejected('invalid', problem);
+  if (input.proposalRef.projectId !== ctx.projectId) {
+    return rejected('forbidden', 'the proposal is outside the call context project');
+  }
+  const record = await readProposal(deps, input.proposalRef);
+  if (record.status !== 'ready') return record;
+  const batchRef = record.value.batchRef;
+  return {
+    status: 'ready',
+    value: {
+      proposal: proposalOf(record.value),
+      batchRef: batchRef === null ? null : structuredClone(batchRef),
+      cardKey: batchRef === null ? null : decisionSourceKey({ kind: 'structural_proposal', batch: batchRef }),
+    },
+  };
+}
+
+export function createArchitectureProposalService(deps: ProposalServiceDeps): ArchitectureProposalService {
+  return {
+    proposeArchitectureRevision: (ctx, input) => proposeArchitectureRevision(deps, ctx, input),
+    freezeArchitectureProposalBatch: (ctx, input) => freezeArchitectureProposalBatch(deps, ctx, input),
+    applyArchitectureProposalBatch: (ctx, input) => applyArchitectureProposalBatch(deps, ctx, input),
+    readArchitectureProposal: (ctx, input) => readArchitectureProposal(deps, ctx, input),
+  };
+}

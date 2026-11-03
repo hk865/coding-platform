@@ -14,7 +14,9 @@
  */
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
+import type { CatalogRepairOpV1, ResponsibilityMoveV1 } from '../../../contracts/note.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RecordGuard } from '../../record-store/ports.js';
@@ -93,13 +95,14 @@ export type ArchitectureRevision = {
 };
 
 /**
- * One Host revision of an already-adopted catalog. `basedOn` is the complete
- * immutable baseline pin taken from an adoption/read result; the caller never
- * supplies a target revision, digest, baseline body or decision/gate claim.
+ * One Host revision of an already-adopted catalog. `expected` is the complete
+ * immutable pin taken from an adoption/read result; the caller never supplies a
+ * target revision, digest, baseline body or decision/gate claim.
  */
-export type ReviseArchitectureCatalogInput = {
-  basedOn: ArchitectureBaselinePin;
-  catalog: AdoptedArchitecture;
+export type ReviseArchitectureCatalogOpsInput = {
+  expected: ArchitectureCatalogPinV1;
+  ops: CatalogRepairOpV1[];
+  responsibilityMoves: ResponsibilityMoveV1[];
   reason: string;
 };
 
@@ -123,7 +126,7 @@ export interface ArchitectureCatalogPort {
   ): Promise<WriteResult<ArchitectureRevision>>;
   reviseArchitectureCatalog(
     ctx: CoreCallContext,
-    request: GraphWrite<ReviseArchitectureCatalogInput>,
+    request: GraphWrite<ReviseArchitectureCatalogOpsInput>,
   ): Promise<WriteResult<ArchitectureRevision>>;
   readArchitectureRevision(
     ctx: CoreCallContext,

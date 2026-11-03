@@ -20,7 +20,7 @@ export type VerificationIssue = {
 // ------------------------------------------------------------------------ //
 // R3e.1 bounded command / round / configuration DTOs                         //
 // ------------------------------------------------------------------------ //
-import type { ActorRef } from "./command-event.js";
+import type { ActorRef, CommitCursor } from "./command-event.js";
 import type { ArtifactRef } from "./artifact.js";
 import type { RunRef, TaskTriple } from "./dispatch.js";
 import type { AcceptanceObligation, PlanRevisionRef } from "./plan.js";
@@ -236,6 +236,10 @@ export type RoundSnapshot = {
     gaps: { code: string; message: string; coverage?: EvidenceCoverageV1 }[];
     evidenceRefs: EvidenceRef[];
     chain: RoundChainV1;
+    /** The staged repair bindings at opening: `{noteId, version, digest}`, `[]` when none. */
+    stagedRepairs: { noteId: string; version: number; digest: string }[];
+    /** The finalize commit's last-event cursor, bound on the committed record; null at opening. */
+    until: CommitCursor | null;
 };
 
 // ------------------------------------------------------------------------ //

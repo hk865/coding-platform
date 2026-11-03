@@ -21,7 +21,7 @@
  * captured backend in step 6. No store is read, no card/notice/reader is built, nothing is hand-made.
  */
 import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
-import type { AdoptedArchitecture, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
+import type { ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { ModuleRef, RoleConfigurationRef, SessionRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../src/contracts/core/session-message.js';
@@ -128,20 +128,20 @@ Promise<S7D1ProjectCardWorld> {
     const registration = ready<{ project: { revision: number }; workspace: { revision: number } }>(
       await a.route('workspaces/registration', { projectId, workspaceId: world.scope.workspaceId }),
       'the workspace registration');
-    const catalog: AdoptedArchitecture = {
-      ...current.catalog.catalog,
-      modules: [...current.catalog.catalog.modules,
-        moduleDefinition(moduleM, 'S7D1 module M', ['src/s7d1-m']),
-        moduleDefinition(moduleN, 'S7D1 module N', ['src/s7d1-m/n'])],
-      containment: { parentOf: [{ parent: moduleM, child: moduleN }] },
-    };
     committed<ArchitectureRevision>(await world.platform.architecture.reviseArchitectureCatalog(a.humanContext(), {
       meta: { requestId: 's7d1-g4-catalog', expected: [
         { ref: { aggregateType: 'Project', projectId }, revision: registration.project.revision },
         { ref: { aggregateType: 'Workspace', ...world.scope }, revision: registration.workspace.revision },
       ] },
-      input: { basedOn: { ref: current.baseline.ref, digest: current.baseline.contentDigest }, catalog,
-        reason: 'S7D1 G4 adds module M and its child N' },
+      input: {
+        expected: { catalogRef: current.catalog.ref,
+          baseline: { ref: current.baseline.ref, digest: current.baseline.contentDigest } },
+        ops: [
+          { op: 'add_module', module: moduleDefinition(moduleM, 'S7D1 module M', ['src/s7d1-m']) },
+          { op: 'add_module', module: moduleDefinition(moduleN, 'S7D1 module N', ['src/s7d1-m/n']) },
+          { op: 'set_parent', moduleId: moduleN.moduleId, parentId: moduleM.moduleId },
+        ],
+        responsibilityMoves: [], reason: 'S7D1 G4 adds module M and its child N' },
     }), 'the revised architecture');
     await world.settleDetached();
     const adviser = await createS6BLine(a, { label: 's7d1-adviser', role: ADVISER_ROLE });

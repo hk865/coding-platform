@@ -83,6 +83,7 @@ import { createSessionResponsibilityBasisReader, createPlanReaders } from '../..
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createMessageWriteOwner } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { listWorkspaceGoals, readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
@@ -614,7 +615,7 @@ export function workflowPlanReads(input: {
       records: input.records, now: input.now, newId: input.newId,
       messages: input.messages as SessionMailboxPort,
       materials: input.materials, messageWrites: createMessageWriteOwner(input.mailboxDeps),
-      sources: createDecisionSourceFacts({ records: input.records, bindings, plans: input.plans }),
+      sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: input.records, bindings, plans: input.plans }),
     });
   }
   const readers = createPlanReaders({

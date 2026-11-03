@@ -57,6 +57,7 @@
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
+- `architecture-proposal-machine.ts` — `ArchitectureProposal` 状态机：写入时 `pending`，之后只改 `state`（`pending → applied | rejected | stale`）与一次进入冻结批的 `batchRef`；内容（pin/ops/moves/reason/proposer/operation ref）不可变，`ARCHITECTURE_PROPOSAL_STATES` 是闭集，`newArchitectureProposalRecord`/`transitionArchitectureProposal` 只复制记录并改 revision/state/batchRef；无存储、时钟或 id。
 - `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`/`reviewer_not_supported`，`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
 - `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
 - `decision-policy.ts` — 自主级别动作表（含 `create_member` 的两档值与两档都为 `needs_decision` 的 `role_line_add`）、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
@@ -254,18 +255,19 @@
 | `transitionUnknownCallReview` | `src/core/work-graph/state/unknown-call-review.ts:245` | 审查主迁移（UCR-01..15） | 审查写入 |
 | `admitUnknownCallReview` | `src/core/work-graph/state/unknown-call-review.ts:217` | 审查准入 | 开审前 |
 | `UNKNOWN_CALL_REVIEW_MAX_ROUNDS` | `src/core/work-graph/state/unknown-call-review.ts:39` | 审查最多轮数 | 校验轮数 |
-| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1348` | 验证轮主迁移（VR-01..15） | 轮生命周期写入 |
-| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1599` | 单项检查迁移 | 检查开始/结果/中断 |
-| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:905` | 建已开启的轮 | 开轮提交 |
+| `ARCHITECTURE_PROPOSAL_STATES`、`newArchitectureProposalRecord`、`transitionArchitectureProposal` | `src/core/work-graph/state/architecture-proposal-machine.ts:20`、`:34`、`:45` | 提案状态闭集与记录的唯一构造/迁移：进入批或到终态，只改 state/batchRef 与 revision，内容不可变 | 提案 owner 的写入、冻结与答复提交 |
+| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1352` | 验证轮主迁移（VR-01..15） | 轮生命周期写入 |
+| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1603` | 单项检查迁移 | 检查开始/结果/中断 |
+| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:909` | 建已开启的轮 | 开轮提交 |
 | `buildSuccessorRound` | `src/core/work-graph/state/verification-machine.ts:629` | 建后继轮 | 重验证 |
-| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:802` | 折叠检查并定轮结果 | 轮收尾 |
-| `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:782` | 按验证计划折叠检查判定 | 轮收尾/展示 |
+| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:806` | 折叠检查并定轮结果 | 轮收尾 |
+| `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:786` | 按验证计划折叠检查判定 | 轮收尾/展示 |
 | `roundChainHead` | `src/core/work-graph/state/verification-machine.ts:477` | 一轮链的头（最新/最高轮次） | 链相关守卫 |
-| `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:700` | 轮链给 Task 相位的信号 | Task 相位投影 |
-| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1409` | 能否开重验证轮 | 重验证前 |
+| `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:704` | 轮链给 Task 相位的信号 | Task 相位投影 |
+| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1413` | 能否开重验证轮 | 重验证前 |
 | `reverifyExemption` | `src/core/work-graph/state/verification-machine.ts:550` | 重验证的豁免判定 | 自动重做计数 |
-| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1074` | 轮写入的通用准入 | 任何轮写入 |
-| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1024` | 轮对应的证据索引 ref | 追加证据 |
+| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1078` | 轮写入的通用准入 | 任何轮写入 |
+| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1028` | 轮对应的证据索引 ref | 追加证据 |
 | `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:430` | 展示用轮状态 | 读模型 |
 | `isFinalizedNonPass` | `src/core/work-graph/state/verification-machine.ts:102` | 已定稿且非 PASS | 失败事实/重验证 |
 | `copyInterventionCandidateOf`、`CopyInterventionFactsV1` | `src/core/work-graph/state/copy-intervention.ts:16`、`src/core/work-graph/state/copy-intervention.ts:6` | 复制取消的纯候选规则与事实形状：按书的表序（先排除，再投递/未投递）判一条消息是否候选、可选/可撤回及原因；`null` 不是候选 | 分页读可复制干预时；不要另写状态判定 |

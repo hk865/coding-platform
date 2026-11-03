@@ -4,9 +4,18 @@
  * staged repair's OWN Run's task, not on the note's task anchors.
  */
 import { describe, expect, it } from 'vitest';
-import type { NoteDraftV1 } from '../../src/contracts/note.js';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
+import type { NoteDraftV1, RepairInputV1 } from '../../src/contracts/note.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createS4BNoteCheckFixture, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
+
+const REPAIR_PIN: ArchitectureCatalogPinV1 = {
+  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: 's4a-project', baselineId: 's4a-baseline', revision: 1 },
+  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: 's4a-project', baselineId: 's4a-baseline',
+    revision: 1 }, digest: '7d318586bae25df0e13e789bebda01760f1e1b4ed1021fcb99b5947e1c21e82a' },
+};
+const REPAIR: RepairInputV1 = { pin: REPAIR_PIN,
+  ops: [{ op: 'set_responsibility', moduleId: 'A', text: 'area A repaired' }], responsibilityMoves: [] };
 
 async function revisePlan(f: S4BNoteCheckFixture, mutate: (tasks: PlanRevisionDraft['tasks']) => PlanRevisionDraft['tasks'],
   affectedTaskIds: string[]): Promise<void> {
@@ -40,7 +49,7 @@ Promise<{ noteId: string; run: Awaited<ReturnType<S4BNoteCheckFixture['inner']['
   const repair: NoteDraftV1 = { kind: 'repair', topic: `repair-${suffix}`, conclusion: 'repair the task',
     body: 'repair body', anchor: { kind: 'task', goalId: 's4a-goal', taskId: anchorTask },
     extraAnchors: [], facts: [], basisFiles: [], structural: false,
-    replaces: [], contradicts: [], coexistWith: [] };
+    replaces: [], contradicts: [], coexistWith: [], repair: REPAIR };
   const written = await f.inner.write(f.inner.workCtx(run), repair, 's4a-goal');
   if (written.status === 'rejected') throw new Error(`repair write rejected: ${JSON.stringify(written)}`);
   expect(written.status).toBe('staged');

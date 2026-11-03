@@ -120,6 +120,7 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
   const wanted = [...expected].sort();
   return keys.length === wanted.length && keys.every((key, index) => key === wanted[index]);
 }
+export { exactKeys };
 function safeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -129,7 +130,7 @@ function safeRelativePath(value: unknown): value is string {
 }
 /** A mapping/module path additionally accepts exactly `.` (the root); a file
  * anchor and the configuration path keep the strict `safeRelativePath` check. */
-function safeMappingPath(value: unknown): value is string {
+export function safeMappingPath(value: unknown): value is string {
   return value === '.' || safeRelativePath(value);
 }
 function ownJsonInput<T>(value: T, what: string): Owned<T> {

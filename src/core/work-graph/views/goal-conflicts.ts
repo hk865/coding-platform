@@ -36,13 +36,16 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
-import { pathOwnershipOf } from '../notes/note-path-ownership.js';
+import { mapExecutedFilesToModules } from '../model/architecture-footprint.js';
 import { goalDecisionBasis } from '../tasks/goal-basis.js';
 
 // The two shared RecordStore failure helpers live in `persistence` (the
 // `tasks -> views` edge is forbidden); re-exported here for the existing
 // `views/` readers and the slice-5 tests that import them from this module.
 export { atLeastCursorResult, storeFailureToRejection };
+// The executed-file mapper lives in `model` so `notes` can use it too; this
+// export keeps the existing `views` callers and tests on the same name.
+export { mapExecutedFilesToModules };
 
 /**
  * The read-only slice of the shared RecordStore seam every `views/` reader uses.
@@ -431,20 +434,4 @@ export async function readGoalFootprint(
     possiblyIncomplete: executed.value.possiblyIncomplete || executed.value.availability !== 'available'
       || mapped.some((file) => file.moduleRef === null),
   } };
-}
-
-/**
- * §4.3: project-relative, segmented, longest legal catalog path match (RW-13:
- * the ONE `pathOwnershipOf`); files with no single longest owner stay
- * `moduleRef: null` (unmapped), never guessed.
- */
-export function mapExecutedFilesToModules(
-  catalog: AdoptedArchitecture,
-  files: readonly { path: string; certainty: 'definite' | 'possible' }[],
-): GoalFootprintV1['executedFiles'] {
-  const candidates = catalog.modules.map((definition) => ({ value: definition.ref, paths: definition.paths }));
-  return files.map((file) => {
-    const ownership = pathOwnershipOf(file.path, candidates);
-    return { path: file.path, moduleRef: ownership.status === 'owner' ? ownership.owner : null, certainty: file.certainty };
-  });
 }

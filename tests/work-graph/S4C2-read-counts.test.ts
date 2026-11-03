@@ -584,23 +584,22 @@ it.each(KINDS)('rework 2/3 item 1 %s: one plan window and exactly one catalog pe
     // Retire the interface A/I1 through the PUBLIC catalog revision, so the
     // interface target's `primaryAnchorRetiredNonFile` would build a candidate
     // list (a second catalog read) on the old code.
-    // A module removed from the catalog is publicly refused
-    // (`catalog-service.ts` "must not remove the existing module", see the
-    // BLOCKED comment in `S4B-note-anchor-status.test.ts`), so an interface
-    // removal is the smallest public revision that reaches `candidatesFor`.
+    // The revision removes interface A/I1 (the module itself stays), the
+    // smallest real change that reaches `candidatesFor` for this anchored note.
     const currentCatalog = await f.platform.architecture.readArchitectureRevision(f.ctx(),
       { selection: { kind: 'current' } });
     if (currentCatalog.status !== 'ready' || currentCatalog.value.catalog === null) {
       throw new Error(`catalog read failed: ${JSON.stringify(currentCatalog)}`);
     }
-    const catalog = currentCatalog.value.catalog.catalog;
     const revised = await f.platform.architecture.reviseArchitectureCatalog(f.ctx(), {
       meta: { requestId: 'queue-count-catalog', expected: [
         { ref: f.projectRef, revision: 1 }, { ref: f.workspaceRef, revision: 1 }] },
-      input: { basedOn: { ref: currentCatalog.value.baseline.ref, digest: currentCatalog.value.baseline.contentDigest },
-        catalog: { ...catalog, modules: catalog.modules.map(module => module.ref.moduleId === 'A'
-          ? { ...module, interfaces: module.interfaces.filter(entry => entry.id !== 'I1') } : module) },
-        reason: 'queue-count: interface A/I1 removed for the retired-target read count' } });
+      input: {
+        expected: { catalogRef: currentCatalog.value.catalog.ref,
+          baseline: { ref: currentCatalog.value.baseline.ref,
+            digest: currentCatalog.value.baseline.contentDigest } },
+        ops: [{ op: 'remove_interface', moduleId: 'A', interfaceId: 'I1' }],
+        responsibilityMoves: [], reason: 'queue-count: interface A/I1 removed for the retired-target read count' } });
     if (revised.status !== 'committed') throw new Error(`catalog revision failed: ${JSON.stringify(revised)}`);
 
     // The REAL workspace-wide queue, no goalRef: it is the only entry.

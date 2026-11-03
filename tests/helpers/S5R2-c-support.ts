@@ -12,6 +12,7 @@ import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createDecisionMessageService } from '../../src/core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts } from '../../src/core/work-graph/communication/decision-source-facts.js';
+import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
@@ -79,7 +80,7 @@ export function assembleS5R2C(f: S5DecisionFixture) {
     systemActor: f.operatorActor, now: f.now, newId: f.newId, duties };
   // Match create-platform.ts:628: both the message owner and Workflow receive
   // the real source reader WITH the real Plan service, including its retry seam.
-  const sources = createDecisionSourceFacts({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+  const sources = createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
     plans });
   // Lead: as create-platform.ts composes the Workflow port: the decision-message owner plus the mailbox send.
   const messageMailbox = createSessionMailbox(mailbox);

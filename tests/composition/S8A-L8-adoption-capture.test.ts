@@ -208,10 +208,12 @@ describe.each(BACKENDS)('L8 A-04 adoption capture through the Host driver [%s]',
       const revised = await fx.platform.architecture.reviseArchitectureCatalog(fx.ctx, {
         meta: { requestId: projectId + '-revise', expected: expectedScope },
         input: {
-          basedOn: { ref: beforeRevision.value.baseline.ref, digest: beforeRevision.value.baseline.contentDigest },
-          catalog: { requireDag: true, dependencies: [],
-            modules: [MODULE_A(projectId, 'The src subtree after the revision')] },
-          reason: 'Sharpen the module responsibility',
+          expected: { catalogRef: beforeRevision.value.catalog.ref,
+            baseline: { ref: beforeRevision.value.baseline.ref,
+              digest: beforeRevision.value.baseline.contentDigest } },
+          ops: [{ op: 'set_responsibility', moduleId: MODULE_A(projectId, '').ref.moduleId,
+            text: 'The src subtree after the revision' }],
+          responsibilityMoves: [], reason: 'Sharpen the module responsibility',
         },
       });
       expect(revised).toMatchObject({ status: 'committed', replayed: false });

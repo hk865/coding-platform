@@ -54,6 +54,7 @@ import type {
   WorkflowAdvanceResult,
 } from '../business/workflow/contracts.js';
 import type { GoalWaitDrainPort, WorkflowPort } from '../business/workflow/ports.js';
+import type { RepairActivationService } from '../core/work-graph/notes/activate-repair.js';
 import type { WorkbenchQueryProfile } from './runtime-configuration.js';
 import type { GoalWaitWakes } from './goal-wait-wakes.js';
 
@@ -161,6 +162,8 @@ export type CollaborationDriverDependencies = {
   /** The Host's observed commit head, sampled immediately BEFORE the advance that can return `waiting`;
    * absent keeps today's poll. */
   observedCursor?: () => CommitCursor | null;
+  repairs?: Pick<RepairActivationService, 'attemptRepairsForGoal'>;
+  redriveRepairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<void>;
 };
 
 const TICK_MS = 500;
@@ -1466,11 +1469,19 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
         enterPublicOrder(existingDriver);
         existingDriver.registered = false;
         existingDriver.recheck = false;
+        await dependencies.repairs?.attemptRepairsForGoal(ctx, { goalRef })
+          .catch(() => { /* a failed activation never changes the handle, the seed or the advance */ });
+        await dependencies.redriveRepairAnswers?.(ctx, { goalRef })
+          .catch(() => { /* a failed ③ leaves the answer unapplied for the next trigger */ });
         kickDriver(existingDriver);
         await dependencies.onStarted?.(ctx, goalRef);
         return { status: 'ready', value: snapshot(existingDriver) };
       }
       const created = installDriver(ctx, goalRef, typedAdvance.flowId, seed, profiles, typedAdvance, true);
+      await dependencies.repairs?.attemptRepairsForGoal(ctx, { goalRef })
+        .catch(() => { /* a failed activation never changes the handle, the seed or the advance */ });
+      await dependencies.redriveRepairAnswers?.(ctx, { goalRef })
+        .catch(() => { /* a failed ③ leaves the answer unapplied for the next trigger */ });
       kickDriver(created);
       await dependencies.onStarted?.(ctx, goalRef);
       return { status: 'ready', value: snapshot(created) };

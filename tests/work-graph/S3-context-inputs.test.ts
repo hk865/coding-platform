@@ -57,6 +57,7 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
+import { NOTE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-settings-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
@@ -267,15 +268,17 @@ const INPUT_EXTRA_SCHEMAS: RecordBackendSchemas = {
     ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records,
     ...SESSION_MESSAGE_RECORD_SCHEMAS.records, ...QUERY_JOB_RECORD_SCHEMAS.records,
     ...LINE_SETTINGS_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
-    ...SESSION_ACTIVITY_SCHEMAS.records],
+    ...SESSION_ACTIVITY_SCHEMAS.records, ...NOTE_RECORD_SCHEMAS.records],
   events: [...EVIDENCE_RECORD_SCHEMAS.events, ...EXECUTION_ENTRY_RECORD_SCHEMAS.events,
     ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...CONTROL_RECORD_SCHEMAS.events,
     ...SESSION_MESSAGE_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events,
-    ...LINE_SETTINGS_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events],
+    ...LINE_SETTINGS_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
+    ...(NOTE_RECORD_SCHEMAS.events ?? [])],
   lookups: [...(EVIDENCE_RECORD_SCHEMAS.lookups ?? []), ...(EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? []),
     ...(MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? []), ...(CONTROL_RECORD_SCHEMAS.lookups ?? []),
     ...(SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? []), ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
-    ...(LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [])],
+    ...(LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? []),
+    ...(NOTE_RECORD_SCHEMAS.lookups ?? [])],
 };
 
 async function createInputFixture(
