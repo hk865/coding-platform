@@ -59,6 +59,10 @@ describe('WK-drain', () => {
       wake: async (_scope, goal) => { wakes.push(goal.goalId); },
       registries: fixture.registries,
       rebuild: async () => undefined,
+      ctx: () => fixture.world.systemContext(),
+      readMarkerQueries: async () => ({ status: 'ready', value: { items: [], nextCursor: null } }),
+      startMarkerQuery: async () => undefined,
+      l5PriorityOf: async () => 2,
     });
     const handler: QueueHandler = {
       rebuild: scope => queue.rebuild(scope),

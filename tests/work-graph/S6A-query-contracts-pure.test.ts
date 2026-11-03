@@ -72,6 +72,7 @@ function requestRun(profile: RequestProfile): QueryRunSnapshot {
         roleResolution: { status: 'absent', roleId: 'role-1', reason: 'no role spec' },
         priorHistoryCursor: null,
         prepared: null,
+        admissionWait: null,
         entry: null,
         history: null,
         requests: [],

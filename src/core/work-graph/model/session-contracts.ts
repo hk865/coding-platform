@@ -141,7 +141,7 @@ export interface SessionDirectoryPort {
   getSessionOperation(ctx: CoreCallContext, ref: OperationRef): Promise<ReadResult<SessionOperationRecord>>;
   readSession(ctx: CoreCallContext, ref: SessionRef): Promise<ReadResult<SessionCard>>;
   findSessions(ctx: CoreCallContext, input: {
-    workspace: WorkspaceScope; target?: WorkLinkTarget; role?: RoleConfigurationRef;
+    workspace: { projectId: string; workspaceId?: string }; target?: WorkLinkTarget; role?: RoleConfigurationRef;
     includeArchived: boolean; page: SessionPageRequest & { afterSessionKey?: string };
   }): Promise<ReadResult<SessionPage<SessionCard>>>;
 }

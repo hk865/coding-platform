@@ -606,6 +606,8 @@ export type QueryExecutionStateV1 = {
      * reads the goal the round ran under here, not from the current Job.
      */
     prepared: { bundleRef: ArtifactRef; inputDigest: string; requestEffectiveGoalId: string | null } | null;
+    /** The one running-cap marker (L31): `null` except while a prepared Query waits for a slot; the entering commit clears it; the group is derived from the trusted role and is not stored. */
+    admissionWait: 'running_cap' | null;
     entry: {
         generation: 1;
         consumerId: string;

@@ -101,6 +101,16 @@ export function maintainerClaimConflictOf(
 // ------------------------------------------------------------------------ //
 
 export type ScopeOwnedDetailV1 = { duty: RoleLineDutyV1; target: RoleScopeV1; holder: SessionRef | null };
+/** `episode` is the open L32 episode of this (project, duty), or null when no platform-add opened one. */
+export type CapacityAtCapDetailV1 = {
+  duty: RoleLineDutyV1; holders: number; reservations: number; open: number; episode: number | null;
+};
+/** The one builder of the detail; `seatAtCap` and O1b's line-operation both call it, so the shape has one copy. */
+export function capacityAtCapDetailOf(input: { duty: RoleLineDutyV1; holders: number; reservations: number;
+  open: number; episode?: number | null }): CapacityAtCapDetailV1 {
+  return { duty: input.duty, holders: input.holders, reservations: input.reservations,
+    open: input.open, episode: input.episode ?? null };
+}
 export function sessionRefOfClaimOwner(ownerKey: string | null): SessionRef | null {
   if (ownerKey === null) return null;
   let value: unknown;

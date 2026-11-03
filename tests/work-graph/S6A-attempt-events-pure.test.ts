@@ -41,7 +41,7 @@ function state(phase: QueryExecutionStateV1['phase']): QueryExecutionStateV1 {
     roleBinding: { schemaVersion: 1, bindingId: 'b1', templateId: 'platform-secretary', templateRevision: 's3.1', bindingVersion: 1,
       policyRevision: 'pol-1' },
     roleResolution: { status: 'absent', roleId: 'role-1', reason: 'no role spec' },
-    priorHistoryCursor: null, prepared: null, entry: null, history: null, requests: [],
+    priorHistoryCursor: null, prepared: null, admissionWait: null, entry: null, history: null, requests: [],
     requestProfile: { profileId: 'secretary', runtimeBudget: { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
       maxRequests: null, maxToolCalls: null, timeoutMs: null, perResponseTokens: 4096 }, budget: { maxTokens: null, deadline: null },
     consumerId: 'secretary-consumer' },

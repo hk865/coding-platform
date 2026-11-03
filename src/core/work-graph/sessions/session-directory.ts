@@ -67,7 +67,7 @@ import type { CommitFragment } from '../persistence/command-executor.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import {
   SESSION_BY_WORKSPACE_LOOKUP, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
-  SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP,
+  SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP, SESSION_BY_PROJECT_LOOKUP,
   SESSION_CREATED_EVENT_TYPE, SESSION_LINKS_BY_GOAL_LOOKUP, SESSION_LINKS_BY_MODULE_LOOKUP,
   SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, SESSION_LINKS_BY_TASK_LOOKUP,
   SESSION_LINKS_BY_WORK_LOOKUP, SESSION_WORK_LINK_RELATIONS,
@@ -441,7 +441,7 @@ function registrationVerdict(planned: SessionRecord | null, operationAcceptedAt1
 type DirectoryCursor = {
   v: 1;
   projectId: string;
-  workspaceId: string;
+  workspaceId: string | null;
   includeArchived: boolean;
   targetKey: string | null;
   roleKey: string | null;
@@ -462,7 +462,7 @@ function decodeDirectoryCursor(raw: string): DirectoryCursor | null {
   }
   if (!isObject(parsed) || parsed['v'] !== 1) return null;
   const { projectId, workspaceId, includeArchived, targetKey, roleKey, actorKey, after, sourceCursor } = parsed;
-  if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || typeof includeArchived !== 'boolean') return null;
+  if (!nonEmpty(projectId) || !(workspaceId === null || nonEmpty(workspaceId)) || typeof includeArchived !== 'boolean') return null;
   if (!(targetKey === null || nonEmpty(targetKey)) || !(roleKey === null || nonEmpty(roleKey))) return null;
   if (!nonEmpty(actorKey) || !nonEmpty(after) || !isPlatformCursor(sourceCursor)) return null;
   return { v: 1, projectId, workspaceId, includeArchived, targetKey, roleKey, actorKey, after, sourceCursor };
@@ -620,7 +620,11 @@ type LookupPlan = { index: string; values: readonly (string | number | null)[] }
 type Fetched = { ok: true; value: { records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null } } |
   { ok: false; rejection: CoreRejection };
 
-function directoryCandidatePlan(scope: WorkspaceScope, role: RoleConfigurationRef | undefined, includeArchived: boolean): LookupPlan {
+function directoryCandidatePlan(scope: { projectId: string; workspaceId?: string },
+  role: RoleConfigurationRef | undefined, includeArchived: boolean): LookupPlan {
+  if (scope.workspaceId === undefined) {
+    return { index: SESSION_BY_PROJECT_LOOKUP, values: [scope.projectId, 'active'] };
+  }
   if (role !== undefined) {
     if (role.kind === 'legacy_template') {
       return {
@@ -1826,11 +1830,11 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
   async function findSessions(
     ctx: CoreCallContext,
     input: {
-      workspace: WorkspaceScope;
+      workspace: { projectId: string; workspaceId?: string };
       target?: WorkLinkTarget;
       role?: RoleConfigurationRef;
       includeArchived: boolean;
-      page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
+      page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; afterSessionKey?: string };
     },
   ): Promise<ReadResult<SessionPage<SessionCard>>> {
     // The read binding may suspend, so freeze the caller's input BEFORE the
@@ -1843,9 +1847,16 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const raw = ownedInput.value as Record<string, unknown> | null | undefined;
     if (!isObject(raw)) return reject('invalid', 'findSessions requires an input object');
     const workspace = raw['workspace'];
-    if (!isObject(workspace) || workspace['projectId'] !== scope.projectId || workspace['workspaceId'] !== scope.workspaceId) {
+    if (!isObject(workspace) || workspace['projectId'] !== scope.projectId) {
       return reject('forbidden', 'findSessions is bound to another project or workspace');
     }
+    const requestedWorkspaceId = workspace['workspaceId'];
+    if (requestedWorkspaceId !== undefined && requestedWorkspaceId !== scope.workspaceId) {
+      return reject('forbidden', 'findSessions is bound to another project or workspace');
+    }
+    const requestScope: { projectId: string; workspaceId?: string } = requestedWorkspaceId === undefined
+      ? { projectId: scope.projectId }
+      : { projectId: scope.projectId, workspaceId: scope.workspaceId };
     const includeArchived = raw['includeArchived'];
     if (typeof includeArchived !== 'boolean') return reject('invalid', 'findSessions requires includeArchived');
     const pageInput = raw['page'];
@@ -1871,6 +1882,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       const scopeProblem = checkRoleScope(role, scope);
       if (scopeProblem !== null) return reject('forbidden', scopeProblem);
       roleValue = role as unknown as RoleConfigurationRef;
+    }
+    if (requestScope.workspaceId === undefined && (targetValue !== undefined || roleValue !== undefined || includeArchived)) {
+      return reject('unsupported', 'a project-wide Session read has no target or role filter and reads active Sessions only');
     }
     const targetKey = targetValue === undefined ? null : canonicalOf(targetValue);
     const roleKey = roleValue === undefined ? null : canonicalOf(roleValue);
@@ -1915,7 +1929,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       if (!nonEmpty(rawCursor)) return reject('invalid', 'findSessions cursor must be a non-empty string');
       const decodedCursor = decodeDirectoryCursor(rawCursor);
       if (decodedCursor === null) return reject('invalid', 'findSessions cursor is not a valid directory cursor');
-      if (decodedCursor.projectId !== scope.projectId || decodedCursor.workspaceId !== scope.workspaceId ||
+      if (decodedCursor.projectId !== requestScope.projectId ||
+        decodedCursor.workspaceId !== (requestScope.workspaceId ?? null) ||
         decodedCursor.includeArchived !== includeArchived || decodedCursor.targetKey !== targetKey ||
         decodedCursor.roleKey !== roleKey || decodedCursor.actorKey !== actorKey) {
         return reject('invalid', 'findSessions cursor is bound to another scope, filter or principal');
@@ -1924,7 +1939,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       cursorSource = decodedCursor.sourceCursor as CommitCursor;
     }
 
-    const candidatePlan = directoryCandidatePlan(scope, roleValue, includeArchived);
+    const candidatePlan = directoryCandidatePlan(requestScope, roleValue, includeArchived);
     let sourceCursor: CommitCursor | null = null;
     let firstPage = true;
     let scanned = 0;
@@ -1967,7 +1982,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           return reject('unavailable', `session ${record.refKey} is damaged: ${decoded.reason}`);
         }
         const session = decoded.value;
-        if (session.ref.projectId !== scope.projectId || session.workspaceId !== scope.workspaceId) continue;
+        if (session.ref.projectId !== requestScope.projectId) continue;
+        if (requestScope.workspaceId !== undefined && session.workspaceId !== requestScope.workspaceId) continue;
         if (!includeArchived && session.lifecycle === 'archived') continue;
         if (roleKey !== null && canonicalOf(session.role) !== roleKey) continue;
         if (items.length >= limit) {
@@ -1997,8 +2013,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const nextCursor = hasMore && nextAnchor !== null
       ? encodeDirectoryCursor({
         v: 1,
-        projectId: scope.projectId,
-        workspaceId: scope.workspaceId,
+        projectId: requestScope.projectId,
+        workspaceId: requestScope.workspaceId ?? null,
         includeArchived,
         targetKey,
         roleKey,

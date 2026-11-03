@@ -43,7 +43,8 @@ describe('G3-cap: the open cap counts holders and reservations, not requests', (
     expect(await world.world.listSessions()).toHaveLength(8);
     const ninth = await world.createLine({ label: 'cap-9' });
     expect(ninth.answer.body).toEqual({ status: 'rejected', code: 'capacity',
-      reason: 'at_cap: secretary has 8 holder(s) and 0 reservation(s) against open limit 8' });
+      reason: 'at_cap: secretary has 8 holder(s) and 0 reservation(s) against open limit 8',
+      detail: { duty: 'secretary', holders: 8, reservations: 0, open: 8, episode: null } });
     expect(await world.world.listSessions()).toHaveLength(8);
     const full = await world.allocation();
     expect(full.duties.secretary.holders).toHaveLength(8);

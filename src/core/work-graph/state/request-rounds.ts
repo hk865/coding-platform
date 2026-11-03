@@ -332,7 +332,7 @@ export function foldUnderstandingCommand(job: QueryJobSnapshot, transitioned: Qu
 /** The claimed/prepared/settled execution state moves to `settled`; a pending Run has none. */
 function settledExecution(run: QueryRunSnapshot): QueryExecutionStateV1 | null {
   const state = run.run.executionState;
-  return state === undefined ? null : { ...structuredClone(state), phase: 'settled' as const };
+  return state === undefined ? null : { ...structuredClone(state), phase: 'settled' as const, admissionWait: null };
 }
 
 function cloneSession(session: SessionRef | null): SessionRef | null {

@@ -93,7 +93,8 @@ export const QUERY_EXECUTION_EVENT = 'QueryExecutionRecorded';
 export const QUERY_EXECUTION_EVENT_SCHEMA_VERSION = 1;
 export const QUERY_JOB_ANSWERED_EVENT = 'QueryJobAnswered';
 /** Persisted operation discriminants of one QueryRun's execution event. */
-export const QUERY_EXECUTION_OPERATIONS = ['claimed', 'prepared', 'entering', 'entered', 'usage', 'admitted', 'observed'] as const;
+export const QUERY_EXECUTION_OPERATIONS =
+  ['claimed', 'prepared', 'waiting', 'entering', 'entered', 'usage', 'admitted', 'observed'] as const;
 export type QueryExecutionOperation = typeof QUERY_EXECUTION_OPERATIONS[number];
 
 /**
@@ -715,6 +716,10 @@ function executionStateIssues(value: unknown): string[] {
   if (value['schemaVersion'] !== 1) issues.push('executionState.schemaVersion must be 1');
   if (!['claimed', 'prepared', 'entering', 'entered', 'unknown', 'settled'].includes(value['phase'] as string)) {
     issues.push('executionState.phase is not a legal phase');
+  }
+  const admissionWait = value['admissionWait'];
+  if (admissionWait !== undefined && admissionWait !== null && admissionWait !== 'running_cap') {
+    issues.push('executionState.admissionWait must be null or running_cap');
   }
   if (!isRecord(value['sessionRef'])) issues.push('executionState.sessionRef must be an object');
   if (!Number.isSafeInteger(value['sessionGeneration']) || (value['sessionGeneration'] as number) < 1) {

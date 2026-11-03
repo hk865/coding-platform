@@ -1881,6 +1881,84 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
   }
 
   /**
+   * L31 (A1b): the one marker a prepared Query writes while it waits for a
+   * running-cap slot. It consumes the QueryRun and its Session only, never the
+   * QueryJob; the begin commit's `entering` state copy clears it. A second
+   * pass over an already marked Query returns the original busy before this
+   * write, so the fixed marker request id is never replayed against a grown
+   * Run revision.
+   */
+  async function markQueryAdmissionWait(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ queryRunRef: QueryRunRef }>,
+  ): Promise<WriteResult<QueryExecutionRecord>> {
+    const owned = ownContext(ctx);
+    if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
+    const actor = hostActor(owned);
+    if (actor === null) return rejectedWithNonEmptyCurrent('forbidden', 'markQueryAdmissionWait requires a trusted Host call context');
+    const signal = owned.signal;
+    if (signal.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'the Query wait marker was cancelled before the records read');
+    let ownedRequest: GraphWrite<{ queryRunRef: QueryRunRef }>;
+    try { ownedRequest = structuredClone(request); } catch { return rejectedWithNonEmptyCurrent('invalid', 'the wait request cannot be isolated from the caller'); }
+    const input = ownedRequest?.input;
+    const meta = ownedRequest?.meta;
+    if (!isRecord(input) || !isRecord(input.queryRunRef) || !isRecord(meta) || !nonEmpty(meta.requestId)) {
+      return rejectedWithNonEmptyCurrent('invalid', 'markQueryAdmissionWait requires a QueryRunRef and requestId');
+    }
+    let queryRunRef: QueryRunRef;
+    let requestId: string;
+    try {
+      queryRunRef = structuredClone(input.queryRunRef) as QueryRunRef;
+      requestId = meta.requestId;
+    } catch { return rejectedWithNonEmptyCurrent('invalid', 'the wait request cannot be isolated from the caller'); }
+    if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
+      return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
+    }
+    const expected = validateExpected(meta.expected,
+      { projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId, queryJobId: queryRunRef.queryJobId, runId: queryRunRef.runId },
+      { job: false, run: true, session: true });
+    if (expected.status === 'invalid') return rejectedWithNonEmptyCurrent('invalid', expected.reason);
+    const identityKey = operationIdentity('waiting', actor, queryRunRef, requestId);
+    const fingerprint = requestFingerprint('waiting', requestId, expected, input);
+    if (fingerprint === null) return rejectedWithNonEmptyCurrent('invalid', 'the wait request is not serializable');
+    const replay = await replayOriginal<QueryExecutionRecord>(deps, identityKey, fingerprint, 'waiting');
+    if (replay !== null) return replay;
+
+    const read = await readCore(deps, queryRunRef, null);
+    if (read.status !== 'ready') return toRejection(read);
+    const { job, run, session } = read.value;
+    const state = run.run.executionState;
+    if (state === undefined) return rejectedWithNonEmptyCurrent('incomplete', 'the QueryRun has no persisted execution state');
+    if (state.phase !== 'prepared') return rejectedWithNonEmptyCurrent('busy', `the QueryRun is not waiting for admission (phase ${state.phase})`);
+    if (expected.run !== run.revision || expected.session !== session.revision
+      || expected.sessionId !== state.sessionRef.sessionId) {
+      return revisionConflict([
+        { refKey: queryRunRefKey(queryRunRef), revision: run.revision },
+        { refKey: sessionAggregateRefKey(session.ref), revision: session.revision },
+      ]);
+    }
+    const occurredAt = deps.now();
+    const eventId = deps.eventId();
+    if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
+    const nextRun = advanceQueryExecutionRecord({ job, run }, { phase: 'waiting', admissionWait: 'running_cap' }).run;
+    const nextRecord: QueryExecutionRecord = { job, run: nextRun, session, answer: null };
+    const event = buildRecordedEvent({
+      eventId, identityKey, fingerprint, actor, occurredAt, queryRunRef, requestId,
+      correlationId: job.job.intent.correlationId, operation: 'waiting', result: nextRecord, run: nextRun,
+    });
+    return commitOperation({
+      deps, identityKey, fingerprint,
+      guards: [
+        { refKey: queryRunRefKey(queryRunRef), expectedRevision: expected.run! },
+        { refKey: sessionAggregateRefKey(session.ref), expectedRevision: expected.session! },
+      ],
+      records: [encodeQueryRunSnapshotRecord(nextRun)],
+      events: [encodeQueryExecutionRecordedEvent(event)],
+      value: nextRecord, operation: 'waiting',
+    });
+  }
+
+  /**
    * A request round's start commit holds the request tail still and guards
    * every record its facts read, so a request command that commits first (an
    * append, a route, a drop, an intake move) fails it with a conflict. That is
@@ -2800,6 +2878,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     async claimQuery(ctx, request) { return claim(ctx, request); },
     async bindPreparedQuery(ctx, request) { return bindPrepared(ctx, request); },
     async beginQueryEntry(ctx, request) { return beginEntry(ctx, request); },
+    async markQueryAdmissionWait(ctx, request) { return markQueryAdmissionWait(ctx, request); },
     async recordQueryUsage(ctx, request) { return recordUsage(ctx, request); },
     async admitQueryModelRequest(ctx, request) { return admitRequest(ctx, request); },
     async recordQueryObservation(ctx, request) { return recordObservation(ctx, request); },

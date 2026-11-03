@@ -163,6 +163,9 @@ export interface QueryExecutionPort {
     consumerId: string;
     kernel: RunExecutionHistoryV1['kernel'];
   }>): Promise<WriteResult<QueryEntryTicket>>;
+  /** L31: records the one marker while a prepared Query waits; the entering commit clears it. */
+  markQueryAdmissionWait?(ctx: CoreCallContext, request: GraphWrite<{ queryRunRef: QueryRunRef }>):
+    Promise<WriteResult<QueryExecutionRecord>>;
   recordQueryUsage(ctx: CoreCallContext, request: GraphWrite<{
     entry: QueryEntryIdentity;
     entries: QueryModelUsageV1[];

@@ -48,6 +48,7 @@ import {
   answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
 } from './answer-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsHandle } from './note-tool.js';
+import type { RunningAdmissionGrant } from './model-admission.js';
 import type { NoteCheckPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
 import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
@@ -596,6 +597,34 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         turnId: 'kturn-' + sha256Hex(canonicalJson({ queryRunRef, entryGeneration: 1, consumerId } as unknown as JsonValue)),
       };
       const sessionRef = { aggregateType: 'Session' as const, projectId: queryRunRef.projectId, sessionId: state.sessionRef.sessionId };
+      // L31 (A1b; D-2): the gate before the begin commit; an absent port is no gate.
+      let grant: RunningAdmissionGrant | undefined;
+      if (deps.admission !== undefined) {
+        // The gate's group and the count's are one map: the one Session-duty resolver on the trusted
+        // `executionState.role` (book :436).
+        const duty = await deps.admission.dutyOfRole(state.role, owned);
+        if (duty.status !== 'ready') return mapRead(duty);
+        const admitted = await deps.admission.admitModelCall(owned, {
+          projectId: queryRunRef.projectId, duty: duty.value, ref: queryRunRef, kind: 'query',
+        });
+        if (admitted.status !== 'admitted') {
+          if (admitted.code === 'busy' && admitted.reason === 'running_cap' && state.admissionWait !== 'running_cap') {
+            const mark = queryExecution.markQueryAdmissionWait;        // first entry into the wait only
+            if (mark === undefined) return rejected('unsupported', 'the Query owner cannot record a running-cap wait');
+            const marked = await mark.call(queryExecution, owned, {
+              input: { queryRunRef },
+              meta: { requestId: `r5b-query-wait:${requestId}`,       // the same fixed identity on every retry of this start
+                expected: [
+                  { ref: queryRunRef, revision: record.run.revision },
+                  { ref: sessionRef, revision: record.session.revision },
+                ] },
+            });
+            if (marked.status !== 'committed') return marked;         // the marker write failed: keep prepared, retry
+          }
+          return admitted;                                             // an existing marker returns the original busy
+        }
+        grant = admitted;
+      }
       let begun;
       try {
         begun = await deps.queryExecution.beginQueryEntry(owned, {
@@ -611,6 +640,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         });
       } catch (error) {
         return rejected('unavailable', `beginning the Query entry failed: ${messageOf(error)}`);
+      } finally {
+        grant?.release();                                              // begin committed; the Kernel follows in this driver
       }
       if (begun.status !== 'committed') return begun;
       if (begun.replayed) return observation.observe(owned, { queryRunRef });

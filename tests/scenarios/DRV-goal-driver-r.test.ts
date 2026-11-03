@@ -114,6 +114,10 @@ describe('DRV goal driver queue and failure rows (memory)', () => {
       },
       registries: { all: () => [{ scope: S6A_SCOPE, waits }] },
       rebuild: async () => { throw new Error('D-P4 marks its registrations with queueAll'); },
+      ctx: () => ctx,
+      readMarkerQueries: async () => ({ status: 'ready', value: { items: [], nextCursor: null } }),
+      startMarkerQuery: async () => undefined,
+      l5PriorityOf: async () => 2,
     });
     waits.queueAll();
     let drained = false;

@@ -100,7 +100,8 @@ describe.each(BACKENDS)('G3-reserve-convert on the real %s Host', (backend: S6AB
     await hold.reached;
     const competitor = await world.createLine({ label: 'reg-b' });
     expect(competitor.answer.body).toEqual({ status: 'rejected', code: 'capacity',
-      reason: 'at_cap: secretary has 7 holder(s) and 1 reservation(s) against open limit 8' });
+      reason: 'at_cap: secretary has 7 holder(s) and 1 reservation(s) against open limit 8',
+      detail: { duty: 'secretary', holders: 7, reservations: 1, open: 8, episode: null } });
     hold.release();
     const winner = await registrant;
     expect(winner.answer.body).toMatchObject({ status: 'completed' });

@@ -3118,6 +3118,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
           return advancing(receipt, makePerform(base,
             { kind: 'prepare', request: prepareStep(base, operation.request.prepared.claim.runRef) }));
         }
+        if (result.status === 'rejected' && result.code === 'busy' && result.reason === 'running_cap') {
+          return waiting(receipt, 'running_cap');               // the Run stays starting; no afterNotNormalEnd
+        }
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the Run did not return a formal record'));
         // K3 L10: a review-purpose Run NEVER opens a check round and never takes
         // `afterNotNormalEnd`; any known end settles the record instead.

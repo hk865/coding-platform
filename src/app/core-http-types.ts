@@ -25,6 +25,8 @@ import type {
 } from '../core/work-graph/model/session-handoff-contracts.js';
 import type { HandoffAcceptInputV1 } from '../core/work-graph/sessions/session-handoff-service.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
+import type { RunRef } from '../contracts/dispatch.js';
+import type { QueryRunRef } from '../contracts/query-job.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
@@ -740,7 +742,8 @@ export type QueriesClaimResponse = RouteResponse<QueryJobPort['claimQuery']>;
 export type QueriesPrepareBody = PlainBody<NonNullable<RuntimeExecutionPort['prepareQuery']>>;
 export type QueriesPrepareResponse = RouteResponse<NonNullable<RuntimeExecutionPort['prepareQuery']>>;
 export type QueriesStartBody = PlainBody<NonNullable<RuntimeExecutionPort['startQuery']>>;
-export type QueriesStartResponse = RouteResponse<NonNullable<RuntimeExecutionPort['startQuery']>>;
+export type CoreStartWaitingV1 = { status: 'waiting'; reason: 'running_cap'; ref: RunRef | QueryRunRef };
+export type QueriesStartResponse = RouteResponse<NonNullable<RuntimeExecutionPort['startQuery']>> | CoreStartWaitingV1;
 export type QueriesObserveBody = PlainBody<NonNullable<RuntimeExecutionPort['observeQuery']>>;
 export type QueriesObserveResponse = RouteResponse<NonNullable<RuntimeExecutionPort['observeQuery']>>;
 export type QueriesAnswerBody = PlainBody<QueryJobPort['readQueryAnswer']>;

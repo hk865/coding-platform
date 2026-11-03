@@ -12,9 +12,10 @@
  *   `busy`, the round waits on a new Run, A is free, the intake the round held
  *   on A is released, no model call; a second start of the same request that
  *   read the attempt before the first one committed answers the same `busy`.
- * - Two starts of one request whose commits decide differently (one enters,
- *   the other abandons the attempt): whichever commit reached the store first,
- *   both starts answer its outcome.
+ * - Two starts of one request that read different owners (the request routes
+ *   while the first start's begin commit is held; the running admission holds
+ *   the second start until that commit, book-7d2 §3.5 1): both starts answer
+ *   the outcome the first commit leaves.
  * - The start absorbs the frozen batch: the follow-up ends `absorbedInto` the
  *   executing round, which carries the answer; the intake the executing round
  *   held is released.
@@ -184,8 +185,8 @@ describe.each(['memory', 'sqlite'] as const)('a request round started through th
     });
   });
 
-  describe('two starts of one request whose commits decide differently: both answer the outcome committed first', () => {
-    it("the first start's entry waits; the request moves to B and the second abandons first: both answer busy", async () => {
+  describe('two starts of one request that read different owners: both answer the outcome committed first', () => {
+    it("the first start's entry waits; the request moves to B and a second start reads B as the owner: both answer busy", async () => {
       const world = await openHostWorld(backend);
       const b = await world.createSecretary('b');
       const a = await world.createSecretary('a');
@@ -195,16 +196,27 @@ describe.each(['memory', 'sqlite'] as const)('a request round started through th
       const claimed = await readQuery(world.ag2b, request.round);
 
       // The first start read A as the owner and its entry commit waits before the store; the request moves to B and a
-      // second start of the same request reads B as the owner and commits the abandoned attempt.
+      // second start of the same request reads B as the owner and waits before its entry. The running admission holds
+      // (project, secretary) until the first begin commit (book-7d2 §3.5 1), so that commit is released first; it no
+      // longer matches the request, and both starts answer the abandoned attempt.
       const entry = commitBarrier.hold(byIdentityPrefix('r5b-query-execution:entering:'), 'the first start entry');
       const first = start(world, prepared, 's6a-begin-abandon-start');
       await entry.reached;
       expect(await world.route({ commandId: 's6a-begin-abandon-route', round: request.round, to: b }))
         .toMatchObject({ status: 'routed' });
-      expect(await start(world, prepared, 's6a-begin-abandon-start')).toEqual(ABANDONED);
-      entry.release();
+      const secondRead = holdNextPromptTextRead();
+      try {
+        const second = start(world, prepared, 's6a-begin-abandon-start');
+        await secondRead.reached;
+        entry.release();
+        expect(await first).toEqual(ABANDONED);
+        secondRead.release();
+        expect(await second).toEqual(ABANDONED);
+      } finally {
+        secondRead.release();
+        secondRead.restore();
+      }
 
-      expect(await first).toEqual(ABANDONED);
       const after = await readQuery(world.ag2b, request.round);
       expect(after.job.job).toMatchObject({ status: 'pending', runRef: after.run.ref });
       expect(after.run.ref.runId).not.toBe(claimed.run.ref.runId);
@@ -213,7 +225,7 @@ describe.each(['memory', 'sqlite'] as const)('a request round started through th
       expect(await world.scripted.requests(a)).toEqual([]);
     });
 
-    it("the first start's abandon waits; the request moves back to A and the second enters first: both answer its record", async () => {
+    it("the first start's abandon waits; the request moves back to A and a second start reads A as the owner: both answer one entry", async () => {
       const world = await openHostWorld(backend);
       const b = await world.createSecretary('b');
       const a = await world.createSecretary('a');
@@ -225,17 +237,27 @@ describe.each(['memory', 'sqlite'] as const)('a request round started through th
       await world.scripted.script(a, [{ kind: 'text', text: COORDINATION_ANSWER }]);
 
       // The first start read B as the owner and its abandoning commit waits before the store; the request moves back
-      // to A and a second start of the same request reads A as the owner, enters and is answered.
+      // to A and a second start of the same request reads A as the owner and waits before its entry. The running
+      // admission holds (project, secretary) until the first begin commit (book-7d2 §3.5 1), so that commit is released
+      // first; it no longer matches the request, the attempt enters on A once and both starts answer its record.
       const abandon = commitBarrier.hold(byIdentityPrefix('r5b-query-execution:entering:'), 'the first start abandon');
       const first = start(world, prepared, 's6a-begin-entry-start');
       await abandon.reached;
       expect(await world.route({ commandId: 's6a-begin-entry-back', round: request.round, to: a }))
         .toMatchObject({ status: 'routed' });
-      const second = await start(world, prepared, 's6a-begin-entry-start');
-      expect(second).toMatchObject({ status: 'ready', value: { answer: { revision: 1, answer: { answer: COORDINATION_ANSWER } } } });
-      abandon.release();
-
-      expect(await first).toEqual(second);
+      const secondRead = holdNextPromptTextRead();
+      try {
+        const second = start(world, prepared, 's6a-begin-entry-start');
+        await secondRead.reached;
+        abandon.release();
+        const answered = await first;
+        expect(answered).toMatchObject({ status: 'ready', value: { answer: { revision: 1, answer: { answer: COORDINATION_ANSWER } } } });
+        secondRead.release();
+        expect(await second).toEqual(answered);
+      } finally {
+        secondRead.release();
+        secondRead.restore();
+      }
       expect((await world.readRequest(request.requestRoot)).rounds[0]).toMatchObject({ ref: request.round, status: 'ended',
         answer: COORDINATION_ANSWER });
       expect(await world.scripted.requests(a)).toHaveLength(1);

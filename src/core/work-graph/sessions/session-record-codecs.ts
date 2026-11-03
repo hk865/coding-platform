@@ -80,6 +80,8 @@ export const SESSION_EVENT_SCHEMA_VERSION = 1;
 export const SESSION_BY_WORKSPACE_LOOKUP = 'session-by-workspace';
 export const SESSION_WORK_LINKS_LOOKUP = 'session-work-links';
 export const SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP = 'session-by-workspace-lifecycle';
+/** The one project-wide Session index: its lifecycle segment serves the active-only project read. */
+export const SESSION_BY_PROJECT_LOOKUP = 'session-by-project';
 export const SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP = 'session-by-workspace-legacy-role';
 export const SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP = 'session-by-workspace-spec-role';
 export const SESSION_LINKS_BY_MODULE_LOOKUP = 'session-links-by-module';
@@ -1338,6 +1340,7 @@ export const SESSION_RECORD_SCHEMAS: RecordBackendSchemas = {
     { name: SESSION_BY_WORKSPACE_LOOKUP, aggregateType: 'Session', paths: ['ref.projectId', 'workspaceId'] },
     { name: SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP, aggregateType: 'Session',
       paths: ['ref.projectId', 'workspaceId', 'lifecycle'] },
+    { name: SESSION_BY_PROJECT_LOOKUP, aggregateType: 'Session', paths: ['ref.projectId', 'lifecycle'] },
     { name: SESSION_BY_WORKSPACE_LEGACY_ROLE_LOOKUP, aggregateType: 'Session',
       paths: ['ref.projectId', 'workspaceId', 'role.kind', 'role.templateId', 'role.templateRevision'] },
     { name: SESSION_BY_WORKSPACE_SPEC_ROLE_LOOKUP, aggregateType: 'Session',

@@ -82,7 +82,8 @@ describe.each(BACKENDS)('G3-races on the real %s Host', (backend: S6ABackend) =>
     await world.setOpen('secretary', 7);
     const refused = await world.createLine({ label: 'lower-refused' });
     expect(refused.answer.body).toEqual({ status: 'rejected', code: 'capacity',
-      reason: 'at_cap: secretary has 7 holder(s) and 0 reservation(s) against open limit 7' });
+      reason: 'at_cap: secretary has 7 holder(s) and 0 reservation(s) against open limit 7',
+      detail: { duty: 'secretary', holders: 7, reservations: 0, open: 7, episode: null } });
 
     const report = await world.allocation();
     expect(report.duties.secretary.limit).toBe(7);

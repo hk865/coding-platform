@@ -325,6 +325,13 @@ export type RuntimeExecutionDependencies = {
   controls?: RunControlPort & ControlObservationPort;
   /** R5b.2 internal Query writer. Optional only to keep Work callers working. */
   queryExecution?: QueryExecutionPort;
+  /** L31 (D-2): the one running-admission port. The composition root always provides it (RL-10); absent, both start
+   *  owners begin without the gate, as an old direct `createAgentRuntime(deps)` caller did (`resourceCaps?` :300–:306,
+   *  `controls?` :316–:325). */
+  admission?: import('./model-admission.js').ModelAdmissionPort & {
+    /** The gate's duty: the SAME one Session-duty resolver the count reads (`model-admission.ts:31`; book :436). */
+    dutyOfRole: import('./model-admission.js').ModelAdmissionDependencies['dutyOfRole'];
+  };
   /**
    * Slice 3 read model. Optional only so a narrow old caller/test double keeps
    * compiling; a real grant that selects look/find without them fails closed.

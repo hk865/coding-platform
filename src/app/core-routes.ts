@@ -98,6 +98,7 @@ import {
   type CoreRouteKind,
   type CoreRouteSuffix,
   type CoreScope,
+  type CoreStartWaitingV1,
   type DecisionsCandidateCardRead,
   type AssignMaintainerRouteEntry,
   type ArchitectureCoreRouteDto,
@@ -124,7 +125,8 @@ export type CoreRouteBindings = {
   submitControl: RunControlPort['submitControl'];
   readControl: RunControlPort['readControl'];
   deliverControl: NonNullable<RuntimeExecutionPort['deliverControl']>;
-  startRun: RuntimeExecutionPort['startRun'];
+  startRun: (...args: Parameters<RuntimeExecutionPort['startRun']>) =>
+    Promise<Awaited<ReturnType<RuntimeExecutionPort['startRun']>> | CoreStartWaitingV1>;
   createProject: ProjectRegistrationPort['createProject'];
   registerWorkspace: ProjectRegistrationPort['registerWorkspace'];
   installCompletionPolicy: CompletionPolicyConfigurationPort['installCompletionPolicy'];
@@ -183,7 +185,8 @@ export type CoreRouteBindings = {
   readQueryJob: QueryJobPort['readQueryJob'];
   claimQuery: QueryJobPort['claimQuery'];
   prepareQuery: NonNullable<RuntimeExecutionPort['prepareQuery']>;
-  startQuery: NonNullable<RuntimeExecutionPort['startQuery']>;
+  startQuery: (...args: Parameters<NonNullable<RuntimeExecutionPort['startQuery']>>) =>
+    Promise<Awaited<ReturnType<NonNullable<RuntimeExecutionPort['startQuery']>>> | CoreStartWaitingV1>;
   observeQuery: NonNullable<RuntimeExecutionPort['observeQuery']>;
   readQueryAnswer: QueryJobPort['readQueryAnswer'];
   openArtifact: MaterialPort['openArtifact'];
@@ -873,11 +876,29 @@ export function createPlatformCoreRouteBindings(
   const personEntry = <A, R>(method: (ctx: CoreCallContext, input: A) => Promise<R>) =>
     async (ctx: CoreCallContext, input: A): Promise<R | CoreRejection> =>
       personOnly(ctx) ? method(ctx, input) : forbiddenPerson();
+  // L31 (A1b): the two start routes answer the internal running-cap refusal as
+  // the public waiting arm; the ref thunk runs only on that refusal, after the
+  // Runtime read the prepared input.
+  const isRunningCap = (result: ReadResult<unknown>): boolean =>
+    result.status === 'rejected' && result.code === 'busy' && result.reason === 'running_cap';
+  function publicStartResult<T>(result: ReadResult<T>, ref: () => RunRef | QueryRunRef):
+    ReadResult<T> | CoreStartWaitingV1 {
+    return isRunningCap(result) ? { status: 'waiting', reason: 'running_cap', ref: ref() } : result;
+  }
   return {
     submitControl: platform.controls.submitControl.bind(platform.controls),
     readControl: platform.controls.readControl.bind(platform.controls),
     deliverControl: (ctx, request) => platform.runtime.deliverControl?.(ctx, request) ?? Promise.resolve({ status: 'rejected', code: 'unsupported', reason: 'Runtime control delivery unavailable' }),
-    startRun: platform.runtime.startRun.bind(platform.runtime),
+    startRun: async (ctx, input) => {
+      const result = await platform.runtime.startRun(ctx, input);
+      // A1b-R1-01 (book :431, :457): a refused public Work start hands its Goal to the driver, whose Workflow
+      // registers the wait the drain wakes when a seat frees; the route still answers `waiting`.
+      if (isRunningCap(result) && driver !== undefined) {
+        const { projectId, goalId } = input.prepared.claim.runRef;
+        await driver.wake(ctx, { aggregateType: 'Goal', projectId, goalId });
+      }
+      return publicStartResult(result, () => input.prepared.claim.runRef);
+    },
     createProject: platform.projects.createProject.bind(platform.projects),
     registerWorkspace: platform.projects.registerWorkspace.bind(platform.projects),
     installCompletionPolicy: platform.completionPolicies.installCompletionPolicy.bind(platform.completionPolicies),
@@ -964,7 +985,8 @@ export function createPlatformCoreRouteBindings(
     readQueryJob: platform.queries.readQueryJob.bind(platform.queries),
     claimQuery: platform.queries.claimQuery.bind(platform.queries),
     prepareQuery: platform.runtime.prepareQuery.bind(platform.runtime),
-    startQuery: platform.runtime.startQuery.bind(platform.runtime),
+    startQuery: async (ctx, input) => publicStartResult(await platform.runtime.startQuery(ctx, input),
+      () => input.prepared.queryRunRef),
     observeQuery: platform.runtime.observeQuery.bind(platform.runtime),
     readQueryAnswer: platform.queries.readQueryAnswer.bind(platform.queries),
     openArtifact: platform.materials.openArtifact.bind(platform.materials),

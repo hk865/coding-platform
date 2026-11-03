@@ -48,7 +48,8 @@ describe('G3-retired-held on the real sqlite Host', () => {
       meta: { requestId: 's7d1-retired-over', expected: [] },
     }) as Record<string, unknown>;
     expect(refused).toEqual({ status: 'rejected', code: 'capacity',
-      reason: 'at_cap: executor has 16 holder(s) and 0 reservation(s) against open limit 16' });
+      reason: 'at_cap: executor has 16 holder(s) and 0 reservation(s) against open limit 16',
+      detail: { duty: 'executor', holders: 16, reservations: 0, open: 16, episode: null } });
 
     const raised = await setS7D1Open(world, 'executor', 17, 0, 's7d1-retired-raise');
     expect(raised).toMatchObject({ revision: 1, open: { executor: 17 } });

@@ -136,6 +136,19 @@ export type ExecutionAuthorizationV2 = {
     kernel: import('./core/execution-history.js').RunExecutionHistoryV1['kernel'] | null;
 };
 /**
+ * BK-7d2-13: a Run waits only while it is `starting`, its authorization is
+ * `authorized`, and its group is at the cap. After restart these are the
+ * persisted status/authorization, so no `admissionWait` Run field is needed.
+ */
+export function runAdmissionWaitOf(
+    run: Pick<RunSnapshot, 'status' | 'executionAuthorization'>,
+    groupAtCap: boolean,
+): 'running_cap' | null {
+    return run.status === 'starting'
+        && run.executionAuthorization?.phase === 'authorized'
+        && groupAtCap ? 'running_cap' : null;
+}
+/**
  * C6 relaxed authorization plan guard (§6.1 contract (g)); computed by the pure
  * `entryPlanVerdict`. The claim, envelope and inputBinding always keep
  * `claim.planRef`; `activePlanRef` is only pinned by the authorization commit.

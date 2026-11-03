@@ -16,8 +16,9 @@ import type { CommitCursor } from '../contracts/command-event.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../contracts/core/identity.js';
 import { canonicalKey } from '../contracts/fingerprint.js';
+import type { ReadResult } from '../contracts/core/results.js';
 import { compareCursors, type AggregateRef, type GoalRef } from '../contracts/ledger.js';
-import { interventionPlanningQueryRefs } from '../contracts/query-job.js';
+import { interventionPlanningQueryRefs, type QueryRunRef } from '../contracts/query-job.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageReleasedActionsPort } from '../core/work-graph/model/decision-contracts.js';
 import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
@@ -43,6 +44,9 @@ export const GOAL_WAIT_WAKE_AGGREGATE_TYPES: readonly AggregateRef['aggregateTyp
   'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate',
 ]);
 
+/** One marked Goal wait with its read cursor (frozen drain shape; no slice, no removal). */
+export type GoalWaitCandidateV1 = { goalRef: GoalRef; cursorAtRead: CommitCursor };
+
 type GoalWaitRegistrationV1 = {
   goalRef: GoalRef;
   recordKinds: ReadonlySet<string>;
@@ -54,8 +58,10 @@ export type GoalWaitWakes = {
   register(basis: GoalWaitBasisV1, cursorAtRead: CommitCursor): void;
   leave(goalRef: GoalRef): void;
   onCommitted(notice: RecordCommitNotice): void;
-  /** The next bounded drain candidates, goal-key order; the caller re-reads each goal's facts. */
-  nextDrainBatch(limit: number): { goals: readonly GoalRef[]; more: boolean };
+  /** Every marked Goal wait with its read cursor, goal-key order; no slice, no removal. */
+  nextDrainBatch(): readonly GoalWaitCandidateV1[];
+  /** Remove exactly the Goals this page started; every unstarted Goal stays marked for the next page. */
+  takeDrainBatch(goalRefs: readonly GoalRef[]): void;
   /** A start-up registration is queued at once (nothing was "seen" in this fresh registry). */
   queueAll(): void;
 };
@@ -121,14 +127,14 @@ export function createGoalWaitWakes(): GoalWaitWakes {
       }
     },
 
-    nextDrainBatch(limit) {
-      const keys = [...marked].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-      const taken = keys.slice(0, limit);
-      for (const key of taken) marked.delete(key);
-      return {
-        goals: taken.map(key => registrations.get(key)!.goalRef),
-        more: marked.size > 0,
-      };
+    nextDrainBatch() {
+      return [...marked].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(key => ({ goalRef: registrations.get(key)!.goalRef,
+          cursorAtRead: registrations.get(key)!.cursorAtRead }));
+    },
+
+    takeDrainBatch(goalRefs) {
+      for (const goalRef of goalRefs) marked.delete(canonicalKey(goalRef));
     },
 
     queueAll() {
@@ -280,23 +286,67 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
   }
 }
 
+/** One marker Query kept at `prepared` + `running_cap`, with the cursor its record was read at. */
+export type MarkerQueryCandidateV1 = { queryRunRef: QueryRunRef; startCursor: CommitCursor };
+
 export type GoalWaitQueueDependencies = {
   /** The Workflow's one advance for a goal: no model call, no content. */
   wake(scope: WorkspaceScope, goalRef: GoalRef): Promise<void>;
   /** The Host's one registry per workspace scope: this adapter drains it and the driver registers into the same instances. */
   registries: GoalWaitRegistries;
+  /** The Host's own trusted context for the scope; every read below runs as the Host. */
+  ctx(scope: WorkspaceScope): CoreCallContext;
+  /** One Session page's marker Queries, read at the drain's own cursor; a non-ready read is the failure. */
+  readMarkerQueries(ctx: CoreCallContext, scope: WorkspaceScope, cursor: string | null):
+    Promise<ReadResult<{ items: readonly MarkerQueryCandidateV1[]; nextCursor: string | null }>>;
+  /** One marker Query's original driver, started under the pass's signal and never awaited here. */
+  startMarkerQuery(ctx: CoreCallContext, candidate: MarkerQueryCandidateV1): Promise<void>;
+  /** `0` person, `1` yielded reply/expiry, `2` agent send; read with the waiting call's own facts, no new field. */
+  l5PriorityOf(ctx: CoreCallContext, call: WaitingCallV1): Promise<0 | 1 | 2>;
   /** The restart composition: registers every open/answered/expired wait and every released action. */
   rebuild(scope: WorkspaceScope, registry: GoalWaitWakes): Promise<void>;
 };
 
-export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandler {
+export type WaitingCallV1 =
+  | { kind: 'goal'; goalRef: GoalRef; startCursor: CommitCursor }
+  | { kind: 'query'; queryRunRef: QueryRunRef; startCursor: CommitCursor };
+type AdmissionCandidateV1 = WaitingCallV1 & { priority: 0 | 1 | 2 };
+const admissionOrder = (left: AdmissionCandidateV1, right: AdmissionCandidateV1): number =>
+  left.priority - right.priority || compareCursors(left.startCursor, right.startCursor);
+
+export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandler & { settle(): Promise<void> } {
   /** Scope keys whose rebuild has not finished; a failed rebuild stays for the loop's retry pass. */
   const unbuilt = new Set<string>();
+  /** Each marker Query's launched start, keyed by its QueryRun; `settle()` waits for them. */
+  const inFlight = new Map<string, Promise<void>>();
+  /** A marker Query dispatched since its project's last commit (QueryRun key → projectId); it is not
+   *  dispatched again before the next commit, so a refused page never re-runs at once. */
+  const tried = new Map<string, string>();
+  /** After `settle()` the Host is closing: nothing new is launched. */
+  let closed = false;
   /** The scope's one registry; the Host creates it before registering this queue. */
   function registryFor(scope: WorkspaceScope): GoalWaitWakes {
     const entry = deps.registries.all().find(candidate =>
       candidate.scope.projectId === scope.projectId && candidate.scope.workspaceId === scope.workspaceId)!;
     return entry.waits;
+  }
+
+  /** One marker Query's original driver, launched and never awaited here; the entry leaves when it settles. */
+  function launch(ctx: CoreCallContext, candidate: MarkerQueryCandidateV1): void {
+    const key = canonicalKey(candidate.queryRunRef);
+    tried.set(key, candidate.queryRunRef.projectId);
+    if (closed || inFlight.has(key)) return;
+    let settled: () => void = () => undefined;
+    inFlight.set(key, new Promise<void>(resolve => { settled = resolve; }));
+    void (async () => {
+      try {
+        await deps.startMarkerQuery(ctx, candidate);
+      } catch {
+        // A throw keeps the persisted marker: the next commit dispatches it again.
+      }
+      inFlight.delete(key);
+      settled();
+    })();
   }
 
   async function build(scope: WorkspaceScope): Promise<void> {
@@ -312,19 +362,64 @@ export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandl
     rebuild: build,
 
     async drain(scope, input) {
+      // A closing Host starts nothing; the markers and the Goal marks stay.
+      if (closed || input.signal.aborted) {
+        return { progressed: 0, more: false, continuation: input.continuation, wrapped: false, blocked: 0 };
+      }
       if (unbuilt.has(canonicalKey(scope))) await build(scope);
       const waits = registryFor(scope);
-      const { goals, more } = waits.nextDrainBatch(input.maxItems);
-      for (const goal of goals) await deps.wake(scope, goal);
-      return { progressed: goals.length, more, continuation: null, wrapped: false, blocked: 0 };
+      // The launched start runs under the pass's signal, so the Host close aborts it.
+      const ctx: CoreCallContext = { ...deps.ctx(scope), signal: input.signal };
+      const markers = await deps.readMarkerQueries(ctx, scope, input.continuation);
+      if (markers.status !== 'ready') throw notReady('the marker Query page', markers);
+      const candidates: AdmissionCandidateV1[] = [];
+      for (const goal of waits.nextDrainBatch()) {
+        const call: WaitingCallV1 = { kind: 'goal', goalRef: goal.goalRef, startCursor: goal.cursorAtRead };
+        candidates.push({ ...call, priority: await deps.l5PriorityOf(ctx, call) });
+      }
+      for (const marker of markers.value.items) {
+        if (tried.has(canonicalKey(marker.queryRunRef))) continue;    // waits for the next commit
+        const call: WaitingCallV1 = { kind: 'query', queryRunRef: marker.queryRunRef, startCursor: marker.startCursor };
+        candidates.push({ ...call, priority: await deps.l5PriorityOf(ctx, call) });
+      }
+      candidates.sort(admissionOrder);
+      const page = candidates.slice(0, input.maxItems);
+      const startedGoals: GoalRef[] = [];
+      for (const candidate of page) {
+        if (candidate.kind === 'goal') {
+          await deps.wake(scope, candidate.goalRef);                  // queues the driver only
+          startedGoals.push(candidate.goalRef);
+        } else {
+          launch(ctx, candidate);                                      // dispatched in (L5, startCursor) order, not awaited
+        }
+      }
+      waits.takeDrainBatch(startedGoals);
+      const pendingOnPage = candidates.length > page.length;
+      return {
+        progressed: page.length,
+        more: pendingOnPage || markers.value.nextCursor !== null,
+        continuation: pendingOnPage ? input.continuation : markers.value.nextCursor,
+        wrapped: false, blocked: 0,
+      };
     },
 
     onCommitted(notice) {
+      // A commit of the project lets its tried marker Queries be dispatched again, as a commit re-marks a Goal.
+      for (const aggregate of notice.aggregates) {
+        if (aggregate.projectId === null) continue;
+        for (const [key, projectId] of tried) if (projectId === aggregate.projectId) tried.delete(key);
+      }
       for (const entry of deps.registries.all()) {
         if (notice.aggregates.some(aggregate => aggregate.projectId === entry.scope.projectId)) {
           entry.waits.onCommitted(notice);
         }
       }
+    },
+
+    async settle() {
+      closed = true;
+      // Never throws: allSettled absorbs every result; a launch that settles during the wait is waited for too.
+      while (inFlight.size > 0) await Promise.allSettled([...inFlight.values()]);
     },
   };
 }

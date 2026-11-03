@@ -596,6 +596,8 @@ export type QueryExecutionStep =
     }
   /** `:959`: requires `claimed`. */
   | { phase: 'prepared'; prepared: NonNullable<QueryExecutionStateV1['prepared']> }
+  /** L31: requires `prepared`; records the running-cap wait marker, keeps the phase. */
+  | { phase: 'waiting'; admissionWait: 'running_cap' }
   /** `:1074`: requires `prepared`; QueryRun and QueryJob become `running`. */
   | {
       phase: 'entering';
@@ -624,6 +626,7 @@ export function advanceQueryExecutionRecord(records: QueryLifecycleRecords, step
         roleResolution: structuredClone(step.claim.roleResolution),
         priorHistoryCursor: step.claim.priorHistoryCursor,
         prepared: null,
+        admissionWait: null,
         entry: null,
         history: null,
         requests: [],
@@ -636,12 +639,17 @@ export function advanceQueryExecutionRecord(records: QueryLifecycleRecords, step
       const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'prepared', prepared: structuredClone(step.prepared) };
       return { job, run: { ...run, revision: run.revision + 1, run: { ...run.run, executionState } } };
     }
+    case 'waiting': {
+      const state = requirePhase(current, 'prepared', step.phase);
+      const executionState: QueryExecutionStateV1 = { ...structuredClone(state), admissionWait: step.admissionWait };
+      return { job, run: { ...run, revision: run.revision + 1, run: { ...run.run, executionState } } };
+    }
     case 'entering': {
       const state = requirePhase(current, 'prepared', step.phase);
       if (job.job.status !== 'pending' && job.job.status !== 'running') {
         throw new Error('advanceQueryExecutionRecord: entering requires an unsettled QueryJob');
       }
-      const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'entering', entry: structuredClone(step.entry) };
+      const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'entering', admissionWait: null, entry: structuredClone(step.entry) };
       const nextRun: QueryRunSnapshot = {
         ...run,
         revision: run.revision + 1,
@@ -727,7 +735,7 @@ export function settleQueryRunRecord(
       updatedAt: input.occurredAt,
     },
   };
-  const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'settled', history: nextHistory(state, input.history) };
+  const executionState: QueryExecutionStateV1 = { ...structuredClone(state), phase: 'settled', admissionWait: null, history: nextHistory(state, input.history) };
   const nextRun: QueryRunSnapshot = {
     ...run,
     revision: run.revision + 1,

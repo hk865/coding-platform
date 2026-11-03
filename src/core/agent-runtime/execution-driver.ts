@@ -47,6 +47,7 @@ import {
 } from './unknown-call-review-tools.js';
 import { REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { commandSha256 } from '../work-graph/state/command-normalization.js';
+import type { RunningAdmissionGrant } from './model-admission.js';
 import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort,
 } from '../work-graph/model/command-rerun-request-contracts.js';
@@ -73,7 +74,7 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
-  | 'commandRerunRequests' | 'commandRecognizer'> & {
+  | 'commandRerunRequests' | 'commandRecognizer' | 'admission'> & {
   /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
   notes?: RuntimeExecutionDependencies['notes'];
   /** The same observer instance backs start and explicit observe calls. */
@@ -751,6 +752,18 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           if (afterAuthorize.status !== 'ready') return mapRead(afterAuthorize);
           currentRevision = afterAuthorize.value.run.revision;
         }
+        // L31 (A1b; D-2): the gate before the begin commit; an absent port is no gate.
+        let grant: RunningAdmissionGrant | undefined;
+        if (deps.admission !== undefined) {
+          // The gate's group and the count's are one map: the one Session-duty resolver (book :436).
+          const duty = await deps.admission.dutyOfRole(record.session.role, owned);
+          if (duty.status !== 'ready') return mapRead(duty);
+          const admitted = await deps.admission.admitModelCall(owned, {
+            projectId: runRef.projectId, duty: duty.value, ref: runRef, kind: 'run',
+          });
+          if (admitted.status !== 'admitted') return admitted;          // busy/running_cap: the Run stays starting/authorized
+          grant = admitted;
+        }
         let begun;
         try {
           begun = await deps.entry.beginRuntimeEntry(owned, {
@@ -759,6 +772,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           });
         } catch (error) {
           return rejected('unavailable', `beginning the runtime entry failed: ${messageOf(error)}`);
+        } finally {
+          grant?.release();                                             // after the begin commit, before the Kernel loop
         }
         if (begun.status !== 'committed') return mapWrite(begun);
         if (begun.replayed) return deps.observation.observe(owned, { runRef });

@@ -320,6 +320,7 @@ import { createRoleConfigurationService } from '../core/work-graph/configuration
 import { ROLE_RECORD_SCHEMAS } from '../core/work-graph/configuration/role-record-codecs.js';
 import { createProjectBootstrapServices } from '../core/work-graph/configuration/project-bootstrap-service.js';
 import { createQueryExecution } from '../core/work-graph/queries/query-execution.js';
+import { createModelAdmission } from '../core/agent-runtime/model-admission.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../core/work-graph/tasks/session-anomaly-codecs.js';
 import { projectQueryConfiguration, type QueryPreparationDependencies } from '../core/agent-runtime/query-preparation.js';
 import { createTaskContextInputService } from '../core/work-graph/tasks/context-input-service.js';
@@ -2101,6 +2102,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       const entry = createExecutionEntryService(entryDependencies);
       resultWriter = entry;
       const modelRequests = createModelCallService(entryDependencies);
+      // L31 (A1b, RL-10): the one running-admission port. Its `roleLimitsOwner`
+      // closure is called only after this root returns, so the later declaration
+      // is initialized by then.
+      // The gate asks the same resolver the count uses, so both read one duty map (book :436).
+      const runningAdmission = queryExecution === undefined ? undefined : {
+        ...createModelAdmission({
+          limits: { readRoleLimits: (ctx, input) => roleLimitsOwner.readRoleLimits(ctx, input) },
+          sessions: sessionDirectory, executions: executionReader, queries: queryExecution,
+          dutyOfRole: sessionDutyResolver,
+        }),
+        dutyOfRole: sessionDutyResolver,
+      };
       const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff' | 'planningQuestions'> & {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
         /** H: record 5's readiness read into Work preparation. */
@@ -2137,6 +2150,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(options.sourcePolicyFor === undefined ? {} : { sourcePolicyFor: options.sourcePolicyFor }),
         ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }),
         ...(queryExecution === undefined ? {} : { queryExecution }),
+        ...(runningAdmission === undefined ? {} : { admission: runningAdmission }),
         ...(secretaryFacts === undefined ? {} : { secretaryFacts }),
         // SR3 item 6/§8.3: the SAME hand-off facts owner the lifecycle publishes, read once per successor round.
         handoff: { readBriefState: (ctx, input) => handoffFacts.readBriefState(ctx, input) },

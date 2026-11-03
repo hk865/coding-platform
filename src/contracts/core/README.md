@@ -15,7 +15,7 @@
 - `operations.ts` — `OperationRef`：跨 Store 与 Kernel 效果的操作身份。
 - `prepared-execution.ts` — 准备执行清单：`PreparedTaskManifestV1`、`PreparedQueryManifestV1`、`UnknownCallReviewInputV1` 与 `renderUnknownCallReviewZh`。
 - `rejections.ts` — 拒绝结果构造器：`rejected`、`rejectedWithCurrent`、`rejectedWithNonEmptyCurrent`、`okFalse`。
-- `results.ts` — 结果词汇：`CoreError`（唯一的运行时列表 `CORE_ERRORS`）、`CoreRejection`、`ReadResult`、`WriteResult`、`ReadStamp`、`Page`、`OperationReceipt`。
+- `results.ts` — 结果词汇：`CoreError`（唯一的运行时列表 `CORE_ERRORS`）、`CoreRejection`、`ReadResult`、`WriteResult`、`ReadStamp`、`Page`、`OperationReceipt`。`CoreRejection` 可带可选的 `detail`（满额事实 `CapacityAtCapDetailV1`），只有满额拒绝携带。
 - `session-archive.ts` — 不可变归档请求 `SessionArchiveRequestV1`、秘书归档条件 `SessionArchiveConditionV1`（`src/contracts/core/session-archive.ts:27`）与 `deriveArchiveStepCommitIdentityV1`。
 - `session-message.ts` — `SessionMessageRef` 完整地址、通信意图、用户/决策消息与 `isUserMessageRecipient`；7A-1 加效果证明 `ApplicationProofV1`（`src/contracts/core/session-message.ts:105`）、发送拒绝 `SendRejectionV1`（`:113`）、发布状态 `MessageReleaseV1`（`:118`）、派送三元组 `MessageDeliveryStateV1`（`:120`）与读处置 `MessageReadDispositionV1`（`:126`）。
 - `session.ts` — Session 记录/占用/健康/来源：`SessionRecord`、`SessionProvenanceV1`、`SessionHealthConclusion`、`SESSION_HEALTH_CONCLUSIONS`。

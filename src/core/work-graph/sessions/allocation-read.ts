@@ -15,7 +15,8 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import {
-  ROLE_LINE_DEFAULT_LIMITS, type ProjectRoleLimitsV1, type RoleLineAllocationV1, type RoleLineDutyV1,
+  ROLE_LINE_DEFAULT_LIMITS, capacityAtCapDetailOf, type ProjectRoleLimitsV1, type RoleLineAllocationV1,
+  type RoleLineDutyV1,
 } from '../../../contracts/role-lines.js';
 import type {
   DecodeResult, EncodedRecord, GoalRecordTransactionPort, RecordGuard,
@@ -31,12 +32,13 @@ export function openLimitOf(limits: ProjectRoleLimitsV1 | null, duty: RoleLineDu
   return limits === null ? ROLE_LINE_DEFAULT_LIMITS.open[duty] : limits.open[duty];
 }
 
-/** holders + reservations < open; the refusal names all four facts as text (no DTO). */
-export function seatAtCap(input: { duty: RoleLineDutyV1; open: number; holders: number; reservations: number }):
-  CoreRejection | null {
-  return input.holders + input.reservations < input.open ? null
-    : rejected('capacity', `at_cap: ${input.duty} has ${input.holders} holder(s) and `
-      + `${input.reservations} reservation(s) against open limit ${input.open}`);
+/** holders + reservations < open; the refusal names all four facts as text and in `detail`. */
+export function seatAtCap(input: { duty: RoleLineDutyV1; open: number; holders: number; reservations: number;
+  episode?: number | null }): CoreRejection | null {
+  if (input.holders + input.reservations < input.open) return null;
+  const refusal = rejected('capacity', `at_cap: ${input.duty} has ${input.holders} holder(s) and `
+    + `${input.reservations} reservation(s) against open limit ${input.open}`);
+  return { ...refusal, detail: capacityAtCapDetailOf(input) };
 }
 
 /** The admission's read: a `W/sessions` read cannot reach a store, so the factory binds one. */

@@ -258,6 +258,9 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
     }
     const started = await deps.runtime.startQuery(ctx, { prepared, consumerId, requestId: startId });
     if (started.status === 'ready') return attemptOutcome(started.value);
+    if (started.status === 'rejected' && started.code === 'busy' && started.reason === 'running_cap') {
+      return blocked('on_change', 'running_cap');           // waits; never terminal, never replacedAttempt
+    }
     if (started.status === 'rejected' && started.code === 'busy') {
       const replaced = await replacedAttempt(ctx, record.job.ref, record.run.ref);
       if (replaced !== null) return replaced;

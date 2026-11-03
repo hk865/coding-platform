@@ -158,8 +158,8 @@ describe('PL-41 goal-wait rebuild, candidate half', () => {
 
     // The registry the rebuild actually fed answers the Goal through its own drain batch.
     waits.queueAll();
-    expect(waits.nextDrainBatch(100).goals.map(goal => goal.goalId)).toContain(fixture.goal.goalId);
-    expect(waits.nextDrainBatch(100).goals.map(goal => goal.goalId)).not.toContain(other.goalId);
+    expect(waits.nextDrainBatch().map(c => c.goalRef.goalId)).toContain(fixture.goal.goalId);
+    expect(waits.nextDrainBatch().map(c => c.goalRef.goalId)).not.toContain(other.goalId);
   }, 120_000);
 });
 

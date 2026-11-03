@@ -176,6 +176,12 @@ export type StartupReconcileDependencies = {
   /** Step 6: one idempotent fan-out pass for the Goal's current epoch (GOAL-16/14, then GOAL-29 on a resume). */
   fanOut(ctx: CoreCallContext, goalRef: GoalRef, options: GoalFanOutPassOptions): Promise<GoalFanOutReportV1>;
   /**
+   * Step 3b: after a Query kept at `prepared` + `running_cap` is classified, run the Host's one admission
+   * drain once for this scope; the kept Query is started there in `(L5, startCursor)` order. Not with
+   * `resumeOnStartup` off (decision 97-9): the kept Query keeps waiting.
+   */
+  wakeRounds?: (scope: Scope) => Promise<void>;
+  /**
    * Step 6c: after maintenance, run one lifecycle traversal (pending round ends, every unfinished
    * handoff/archive operation once), so a crash resumes instead of waiting for a new commit.
    */
@@ -337,6 +343,8 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
   return report;
 
   async function reconcileScope(scope: Scope, ctx: CoreCallContext, out: StartupReconcileReportV1): Promise<void> {
+    /** Set when a Query is left for the one admission drain after step 3. */
+    let keptAny = false;
     // Step 0 (LD-14): the Host start-up continues a pending member child under
     // its own system context, before any Run or Session is classified.
     if (deps.members !== undefined) {
@@ -457,10 +465,20 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
         out.queries.push({ ref: refText(queryRunRef), row: 'Q-*', status: 'failed', reason: `the QueryRun is not readable (${rejectionText(read)})` });
         continue;
       }
+      const state = read.value.run.run.executionState;
+      if (state?.phase === 'prepared' && state.admissionWait === 'running_cap') {
+        out.queries.push({ ref: refText(queryRunRef), row: 'Q-wait', status: 'left',
+          reason: 'running_cap: kept for the admission drain' });
+        keptAny = true;
+        continue;
+      }
       const result = await platform.reconcile.reconcileQuery(ctx, { record: read.value, hostInstanceId, probe: await probeOf(session) });
       out.queries.push({ ref: refText(result.queryRunRef), row: result.row, status: result.status, reason: result.reason });
       if (result.row === 'Q-04' && result.status === 'reconciled') await closeQueryLine(queryRunRef);
     }
+    // Decision 97-9: with `resumeOnStartup` off a restart starts nothing; the kept Query waits for the person or the
+    // next ordinary trigger.
+    if (keptAny && deps.resumeOnStartup !== 'off') await deps.wakeRounds?.(scope);
 
     // Step 4: executing checks (VR-04).
     const rounds = await platform.reconcile.candidates.listOpenRounds(scope, ctx.signal);

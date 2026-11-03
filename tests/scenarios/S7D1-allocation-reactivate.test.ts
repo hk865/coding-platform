@@ -84,7 +84,8 @@ describe.each(BACKENDS)('G3-reactivate on the real %s Host', (backend: S6ABacken
     expect(before.duties.secretary.holders).toHaveLength(8);
     const refused = await reactivate(world, 'reactivate-cap-1', first.session!);
     expect(refused).toEqual({ status: 'rejected', code: 'capacity',
-      reason: 'at_cap: secretary has 8 holder(s) and 0 reservation(s) against open limit 8' });
+      reason: 'at_cap: secretary has 8 holder(s) and 0 reservation(s) against open limit 8',
+      detail: { duty: 'secretary', holders: 8, reservations: 0, open: 8, episode: null } });
     const after = await world.allocation();
     expect(after.duties.secretary.revision).toBe(before.duties.secretary.revision);
     expect(after.duties.secretary.holders).toHaveLength(8);

@@ -34,7 +34,8 @@ import type { CommitCursor } from '../contracts/command-event.js';
 import { makeCommitCursor, seqOfCommitCursor, type GoalRef, type WorkspaceRef } from '../contracts/ledger.js';
 import {
   createGoalWaitQueue, createGoalWaitWakes, GOAL_WAITS_QUEUE, GOAL_WAIT_WAKE_AGGREGATE_TYPES, WAKE_LIMIT,
-  createGoalWaitRebuild, type GoalWaitRegistries, type GoalWaitWakes,
+  createGoalWaitRebuild, type GoalWaitRegistries, type GoalWaitWakes, type MarkerQueryCandidateV1,
+  type WaitingCallV1,
 } from './goal-wait-wakes.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
@@ -50,7 +51,8 @@ import type {
 } from '../core/work-graph/model/communication-contracts.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../contracts/plan.js';
-import { interventionPlanningQueryRefs } from '../contracts/query-job.js';
+import { interventionPlanningQueryRefs, queryJobRefFor } from '../contracts/query-job.js';
+import type { RunSnapshot } from '../contracts/dispatch.js';
 import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
 import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
@@ -81,7 +83,7 @@ import {
 import {
   createRequestRoundQueues, REQUEST_ROUNDS_QUEUE, REQUEST_UNASSIGNED_QUEUE,
 } from '../business/workflow/request-round-queue.js';
-import { createQueryStageDriver } from '../business/workflow/query-stage-driver.js';
+import { createQueryStageDriver, type QueryStageDriver } from '../business/workflow/query-stage-driver.js';
 import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
 } from './attention-observer.js';
@@ -899,7 +901,120 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // PL §5.5.1 steps 5–6: the driver registers a wait, drains the Host's one
   // goal-waits handler, then parks/sends. The handler is created below, inside
   // the lease block; the closure runs only after this Host has returned.
-  let goalWaitQueueOwner: QueueHandler | undefined;
+  let goalWaitQueueOwner: ReturnType<typeof createGoalWaitQueue> | undefined;
+  /** One Session-page cursor per scope, kept across drain pages; no new queue or timer. */
+  const admissionCursors = new Map<string, string>();
+  // The one admission drain entry: the driver's running-cap hold and the start-up wake both use it.
+  const drainGoalWaits = async (scope: WorkspaceScope): Promise<void> => {
+    const key = scopeKey(scope);
+    const page = await goalWaitQueueOwner?.drain(scope, {
+      maxItems: WAKE_LIMIT, continuation: admissionCursors.get(key) ?? null,
+      signal: hostClosing.signal,
+    });
+    if (page === undefined) return;
+    if (page.continuation === null) admissionCursors.delete(key);
+    else admissionCursors.set(key, page.continuation);
+    if (page.more) wakeLoop?.wake(scope, GOAL_WAITS_QUEUE, 'commit'); // the next page, same queue
+  };
+  // The marker page behind the drain: one Session page's Query marks kept at `prepared` + `running_cap`.
+  async function readMarkerQueries(ctx: CoreCallContext, scope: WorkspaceScope, cursor: string | null) {
+    const found = await platform.sessions.findSessions(ctx, {
+      workspace: { projectId: scope.projectId }, includeArchived: false,
+      // The page key is the last card's Session key: a directory cursor binds the ledger head, and this
+      // drain's own start commits move it.
+      page: { limit: 200, ...(cursor === null ? {} : { afterSessionKey: cursor }) },
+    });
+    if (found.status !== 'ready') return found;
+    const items: MarkerQueryCandidateV1[] = [];
+    let last: string | null = null;
+    for (const card of found.value.items) {
+      last = plainSessionRefKey(card.record.ref);
+      const occupancy = card.record.occupancy;
+      if (occupancy === null || occupancy.kind !== 'execution') continue;
+      const ref = occupancy.executionRef;
+      if (ref.aggregateType !== 'QueryRun') continue;
+      const read = await platform.reconcile.readQueryExecution({ ...ctx, workspaceId: card.record.workspaceId }, ref);
+      if (read.status !== 'ready') return read;
+      const state = read.value.run.run.executionState;
+      if (state?.phase !== 'prepared' || state.admissionWait !== 'running_cap') continue;
+      items.push({ queryRunRef: ref, startCursor: read.value.job.since });
+    }
+    return { status: 'ready' as const, value: { items, nextCursor: found.value.nextCursor === null ? null : last } };
+  }
+  // The request driver's round-end hook (`recordRoundEnd`), set in that driver's block below when it runs: a request
+  // round the drain starts records its end the same way, so the automatic-handoff trigger still reads it.
+  let markerRoundEnded: ((ctx: CoreCallContext, session: SessionRef) => Promise<void>) | undefined;
+  // The lazy creation avoids the TDZ on `workflowConsumerId`, declared later in this Host; the first drain runs after
+  // the request driver's block, so the hook above is set by then.
+  let markerStageDriver: QueryStageDriver | undefined;
+  const startMarkerQuery = async (ctx: CoreCallContext, candidate: MarkerQueryCandidateV1): Promise<void> => {
+    markerStageDriver ??= createQueryStageDriver({
+      queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
+      fence: platform.readHandoffFence, consumerId: workflowConsumerId,
+      ...(markerRoundEnded === undefined ? {} : { onRoundEnded: markerRoundEnded }),
+    });
+    // The marker page is project-wide: the start runs in the candidate's own workspace, as its read does.
+    await markerStageDriver.advance({ ...ctx, workspaceId: candidate.queryRunRef.workspaceId }, {
+      queryJobRef: { aggregateType: 'QueryJob', projectId: candidate.queryRunRef.projectId,
+        workspaceId: candidate.queryRunRef.workspaceId, queryJobId: candidate.queryRunRef.queryJobId },
+      expectedRunRef: candidate.queryRunRef, profile: null,
+    });
+  };
+  // The L5 priority read (lead ruling (b), `a-a1b-l5-lead.md`): the waiting call's own persisted facts, read on
+  // demand; no registry field. The class is the Runtime's L5 split: 0 = a message whose sender is the Host with a
+  // human actor; 1 = a wait's reply or expiry; 2 = everything else, Host system senders included.
+  /** The Runtime's L5 person test, inlined at `core/agent-runtime/execution-inputs.ts:239` and
+   *  `core/work-graph/views/consumable-sessions.ts:90`; no exported helper exists. */
+  const isPersonSender = (sender: { kind: string; actor?: { kind: string } } | undefined): boolean =>
+    sender?.kind === 'host' && sender.actor?.kind === 'human';
+  async function senderClass(ctx: CoreCallContext, ref: SessionMessageRef, part: 'message' | 'response'): Promise<0 | 2> {
+    const read = await platform.messages.readMessage(ctx, ref);
+    if (read.status !== 'ready') throw notReady('the L5 source message', read);
+    return isPersonSender(part === 'message' ? read.value.sender : read.value.response?.sender) ? 0 : 2;
+  }
+  /** One `starting` scan per drain pass: the drain builds one ctx per pass and reads every priority before any start. */
+  const startingRuns = new WeakMap<CoreCallContext, Promise<readonly RunSnapshot[]>>();
+  const l5PriorityOf = async (ctx: CoreCallContext, call: WaitingCallV1): Promise<0 | 1 | 2> => {
+    if (call.kind === 'query') {
+      const ref = call.queryRunRef;
+      const qctx: CoreCallContext = { ...ctx, workspaceId: ref.workspaceId };
+      const read = await platform.queries.readQueryJob(qctx, queryJobRefFor(ref.projectId, ref.workspaceId, ref.queryJobId));
+      if (read.status !== 'ready') throw notReady('the marker Query', read);
+      const job = read.value.job.job;
+      if (job.roundKind === 'reply' || job.roundKind === 'expiry') return 1;
+      // A request or follow-up round: every `submit` receipt is the person's (0); the hand-off's understanding
+      // round is the system's (2). Routing/explain rounds never reach the gate.
+      if (job.roundKind !== null) return job.understanding !== null ? 2 : 0;
+      const execution = job.intent.execution;
+      if (execution.kind === 'intervention_planning') return senderClass(qctx, execution.sourceMessageRef!, 'message');
+      if (execution.consultation !== undefined) {
+        return senderClass(qctx, execution.consultation.messageRef,
+          execution.consultation.part === 'response' ? 'response' : 'message');
+      }
+      return 0;                                   // initial_coordination / a plain semantic_query: only `queries/submit`
+    }
+    let runs = startingRuns.get(ctx);
+    if (runs === undefined) {
+      runs = platform.reconcile.candidates.listRuns({ projectId: ctx.projectId, workspaceId: ctx.workspaceId! },
+        'starting', ctx.signal).then(found => {
+        if (found.status !== 'ready') throw notReady('the starting Runs', found);
+        return found.value.records;
+      });
+      startingRuns.set(ctx, runs);
+    }
+    // The Goal's Runs held at the gate (`starting` + `authorized`); the smallest class wins. A person's rework
+    // (`requeueRef`) and an intervention claim with no prior Run are 2 (the lead's known corners).
+    let best: 0 | 1 | 2 = 2;
+    for (const run of await runs) {
+      if (run.ref.goalId !== call.goalRef.goalId || run.executionAuthorization?.phase !== 'authorized') continue;
+      const wait = run.consumedWait;
+      const own = wait?.kind === 'wait_reply' || wait?.kind === 'expiry' ? 1
+        : wait?.kind === 'intervention' ? await senderClass(ctx, wait.messageRef, 'message') : 2;
+      if (own < best) best = own;
+    }
+    return best;
+  };
+
   // The approved repair answer is handed back through the same advance entrance
   // the other answer kinds use. The activation guard admits the configured
   // operator, so a system trigger's scope is rebuilt as that operator before the
@@ -930,11 +1045,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // The same per-scope registries the goal-waits queue drains: one instance per scope,
     // shared with the adapter, and the Host's observed head stamped before the fact read.
     goalWaits: goalWaitWakesOf,
-    drainGoalWaits: async scope => {
-      await goalWaitQueueOwner?.drain(scope, {
-        maxItems: WAKE_LIMIT, continuation: null, signal: hostClosing.signal,
-      });
-    },
+    // The one admission drain entry: merge the marked Goals with the marker Queries, order and page.
+    drainGoalWaits,
     observedCursor,
     // The one activation owner and the common answer hand-over this Goal-level
     // start runs after the seed is accepted and before the driver starts.
@@ -983,6 +1095,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       registries: goalWaitRegistriesV1,
       // BW's one Workflow advance for the goal; the same host context every consume pass uses.
       wake: (scope, goalRef) => collaborationDriver.wake(hostContext(scope), goalRef),
+      ctx: scope => hostScopeContext(scope, actor),
+      readMarkerQueries,
+      startMarkerQuery,
+      l5PriorityOf,
       rebuild: createGoalWaitRebuild({ ctx: scope => hostScopeContext(scope, actor), sessions: platform.sessions, facts: platform.sessionFacts, released: platform.messageRelease,
         // The goal loop's own candidate reads (§6.1.6); the accepted arm walks the source lineage with the
         // same mailbox/Query/Plan reads the readers use.
@@ -1014,6 +1130,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       pendingRoundEnds.set(key, sources);
       loop.wake({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, LIFECYCLE_QUEUE, 'advance_settled');
     };
+    markerRoundEnded = recordRoundEnd;                  // A1b: the drain's marker driver ends a request round the same way
     const queues = createRequestRoundQueues({
       rounds: platform.requestRounds,
       facts: platform.requestFacts,
@@ -1796,6 +1913,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     context: reconcileContext,
     members: platform.memberCreations,
     fanOut: (ctx, goalRef, options) => goalFanOut.fanOut(ctx, goalRef, options),
+    wakeRounds: async scope => { await drainGoalWaits(scope); },
     ...(lifecycleQueue === undefined ? {} : { handoffQueue: lifecycleQueue }),
   });
   const reconcileReport = leaseOwned ? await reconcileScopes(workspaces.map(workspace => workspace.scope)) : null;
@@ -2726,6 +2844,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (wakeLoop !== undefined) await wakeLoop.close();
         if (lifecycleQueue !== undefined) await lifecycleQueue.close();
         if (requestQueues !== undefined) await requestQueues.settle();
+        if (goalWaitQueueOwner !== undefined) await goalWaitQueueOwner.settle();
         await collaborationClosed;
         await goalFanOut.close();
         await workbenchToolsClosed;

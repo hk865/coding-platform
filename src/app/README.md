@@ -13,7 +13,7 @@
 ### Host 启动与选项
 做 Host 装配、CLI、单实例锁和启动对账的去这组。
 - `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁时建 `createWakeLoop` 并注册 `goal_waits`；`requestDriver` 不是 `'off'` 时再注册两条请求队列、生命周期队列 `LIFECYCLE_QUEUE` 和释放队列 `MESSAGE_RELEASE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列；关闭顺序是关闭信号先于全部 drain（在途 HTTP、协作驱动、Goal 扇出、平台，实例锁最后释放），关闭中的 Host 让在跑的 Work 在下一个安全点暂停、由下一次启动按 W-11 结清）。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。
-  受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1399`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1750`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
+  受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1515`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1860`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
   Work Run token 预算在设置可用时从私有快照安装（默认 400000000，存储值为 1…600000000）；每次推送只把每个 scope 的生效预算写进已有的 Workflow binding，保留它自己的 sessionRole、roleBinding 和 deadline，所以自定义启动角色不被本地默认角色替换、下一次 Work Run 无需重启即用新值，已被 claim 的 Run 保持自己的预算。
 - `main.ts` — CLI：读一份 JSON 配置，启动 loopback Host，只打印不含 token 的地址。
 - `host-instance-lease.ts` — SQLite 旁的单实例锁：存活、陈旧、损坏的判定与 takeover。
@@ -57,11 +57,11 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createLocalWorkbenchHost` | `src/app/host.ts:467` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
-| `consumeStatus` | `src/app/host.ts:245` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
+| `createLocalWorkbenchHost` | `src/app/host.ts:471` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
+| `consumeStatus` | `src/app/host.ts:249` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
 | `createWorkbenchServer` | `src/app/server.ts:205` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，给画板 HTML 注入令牌 meta 并 `no-store`，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
 | `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:791` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
-| `dispatchCoreRoute` | `src/app/core-routes.ts:1365` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
+| `dispatchCoreRoute` | `src/app/core-routes.ts:1387` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
 | `parseCoreRouteRequest` | `src/app/core-routes.ts:716` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
 | `createWorkbenchTools` | `src/app/workbench-tools.ts:283` | 适配 Kernel 文件沙箱与进程沙箱：读写、列目录、后台命令 | 工作台的文件/命令路由；不要直接碰 Kernel sandbox |
 | `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:425` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
@@ -84,7 +84,7 @@
 | `INTERVENTION_CLOSING_NOTICE_TEXTS` / `interventionClosingNoticeRequest` | `src/app/host-notices.ts:28` / `:42` | 干预收尾的固定通知文本（每个 reason 一句，`questions` 不发）与确定性 `requestId` 的发送请求；系统 Host 先提交通知，再关联回复或撤回 | Host 的 `consumeIdle` 收尾分支；不要另写通知文本 |
 | `createAutoCaptureDriver` | `src/app/auto-capture-driver.ts:81` | 每 Host 一个自动捕获驱动：一次一个 workspace，请求记录先写 | Host 启动自动捕获时；失败写 failAutoCapture，取消不写 |
 | `createChangeFeed` | `src/app/change-feed.ts:87` | 汇总 commit 与 Host 句柄变更，保留窗口并回答 SSE 恢复 | `changes` 长连接；notice 只带粗粒度类型与 project |
-| `createCollaborationDriver` | `src/app/collaboration-driver.ts:368` | 持续协作的 Goal 驱动与 Run 看守：每个目标一条决定循环、每个任务一个 `Lane`；`wake` 只置 `recheck` 或重开交回过依据的看守并立即返回，推进由决定循环做；可选 `onStarted` 在每次接受 Goal 范围启动时触发 | Host 的持续通信；不拥有 store，只组合既有 owner |
+| `createCollaborationDriver` | `src/app/collaboration-driver.ts:372` | 持续协作的 Goal 驱动与 Run 看守：每个目标一条决定循环、每个任务一个 `Lane`；`wake` 只置 `recheck` 或重开交回过依据的看守并立即返回，推进由决定循环做；可选 `onStarted` 在每次接受 Goal 范围启动时触发 | Host 的持续通信；不拥有 store，只组合既有 owner |
 | `createGoalFanOutDriver` | `src/app/goal-fan-out-driver.ts:201` | Goal 控制提交后，对每个受影响 Run 提交幂等 fan-out 控制并观察未知结果 | Goal pause/resume/cancel 与启动重驱；不要重复提交 intent |
 | `createWakeLoop` | `src/app/wake-loop.ts:218` | 请求队列和生命周期队列的唤醒循环：合并脏标记、一次一个 pass、`more` 让出后重跑、失败退避、按队列订阅的聚合类型配对 commit notice、每条队列自己的 `maxItems` 页预算（缺省用循环的 `deps.maxItems ?? 1`）、提交后先同步调每个注册的 `onCommitted` 再唤醒、未武装与 `close` | Host 的请求/生命周期队列驱动；`driving` 传租约是否持有，`register` 的 `aggregateTypes` 只给生命周期队列（`LIFECYCLE_WAKE_AGGREGATE_TYPES`）、释放队列（`MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES`）和请求轮队列（`QueryJob`/`QueryRun`/`Session`/`SessionMessage`），别在别处另写合并或退避 |
 | `acquireHostInstanceLease` | `src/app/host-instance-lease.ts:113` | 取得/释放 SQLite 旁的单 Host 锁，处理陈旧锁与 takeover | 建平台之前；没持锁的 Host 只做读与 owner 写 |
@@ -98,7 +98,7 @@
 | `parseWorkbenchCliConfig` | `src/app/main.ts:72` | 把可序列化 CLI 文件纯转换成本地 Host 选项 | CLI 与测试复用同一份配置转换 |
 | `runWorkbenchCli` | `src/app/main.ts:196` | 读配置、启动 loopback Host、返回退出码 | `main` 入口；token 不落盘、不打印 |
 | `messageExpiry` | `src/composition/create-platform.ts:1288` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
-| `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2206` / `:2336` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问 adviser（`platform.recipients.resolveDutyRecipient`），没有再回配置目标；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
+| `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2323` / `:2481` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问 adviser（`platform.recipients.resolveDutyRecipient`），没有再回配置目标；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
 
 ## 内部用
 以下导出只供本层（含 Host 内部与测试）使用，不应成为其他层的依赖：`validateAttentionConfig`、`withinAttentionScope`、`graphChangedElements`、`graphChanges`、`attentionSignalToJson`、`AUTO_CAPTURE_ACTOR`、`changeKindOf`、`CoreRouteRejectionError`、`CORE_ROUTE_SPECS`、`parseChangeStreamResume`、`SETTINGS_API_PREFIX`、`DEFAULT_WORK_RUN_TOKEN_BUDGET`、`MAX_WORK_RUN_TOKEN_BUDGET`、`SETTINGS_ROUTE_SUFFIXES`、`isSettingsRoute`、`validateSettingsBaseUrl`、`HOST_INSTANCE_LOCK_FILE`、`localWorkbenchGrant`、`readonlyCommandsDisabledScopes`、`HOST_RECONCILE_ACTOR`、`emptyStartupReport`、`WORKBENCH_CLI_USAGE`、`loadWorkbenchCliConfig`、`isPromptPackId`、`isPathWithin`、`effectiveTemplateVersionOf`、`effectiveToolTextOf`、`settingsModelSecretVariable`、`runtimeModelId`、`sameRoleConfiguration`、`PLATFORM_TOKEN_HEADER`、`PLATFORM_TOKEN_PLACEHOLDER`、`WORKBENCH_PATH`、`CORE_API_PREFIX`、`BOOTSTRAP_SUFFIX`、`CHANGES_SUFFIX`、`LAST_EVENT_ID_HEADER`、`LOCAL_WORKBENCH_TEMPLATE_ID`、`LOCAL_WORKBENCH_TEMPLATE_REVISION`、`LOCAL_WORKBENCH_GUIDANCE`、`LOCAL_WORKBENCH_ROLE`、`LOCAL_WORKBENCH_ROLE_BINDING`、`LOCAL_WORKBENCH_HOST_TEMPLATE`、`LOCAL_WORKBENCH_BUDGET`、`LIFECYCLE_QUEUE`、`LIFECYCLE_WAKE_AGGREGATE_TYPES`、`createHandoffQueue`；`lineDelta` 的正本在 `src/contracts/line-delta.ts:19`。

@@ -145,6 +145,10 @@ describe('DRV goal driver queue: D-F3b', () => {
     let acceptedReads = 0;
     const queue = createGoalWaitQueue({ registries,
       wake: async (_scope, goalRef) => driver.wake(world.fixture.ctx, goalRef),
+      ctx: () => world.fixture.ctx,
+      readMarkerQueries: async () => ({ status: 'ready', value: { items: [], nextCursor: null } }),
+      startMarkerQuery: async () => undefined,
+      l5PriorityOf: async () => 2,
       // The Host's restart composition over the same real reads (`host.ts:842`).
       // The platform has no installed automation policy, so the Host default
       // (`resumeOnStartup: 'ask'`) holds a pending restart interruption.

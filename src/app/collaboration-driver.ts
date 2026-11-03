@@ -57,6 +57,7 @@ import type { GoalWaitDrainPort, WorkflowPort } from '../business/workflow/ports
 import type { RepairActivationService } from '../core/work-graph/notes/activate-repair.js';
 import type { WorkbenchQueryProfile } from './runtime-configuration.js';
 import type { GoalWaitWakes } from './goal-wait-wakes.js';
+import { GOAL_WAIT_WAKE_AGGREGATE_TYPES } from './goal-wait-wakes.js';
 
 /** The frozen closed set of states. `waiting_for_reply` stays active. */
 export type CollaborationState =
@@ -1005,6 +1006,20 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     void decision.then(settleDecision, settleDecision);
   }
 
+  /** The one admission hold's basis: the same wait for a Goal and for a Task watch. */
+  function runningCapBasisOf(handle: Handle): GoalWaitBasisV1 {
+    return { projectId: handle.projectId, goalId: handle.goalRef.goalId,
+      recordKinds: [...GOAL_WAIT_WAKE_AGGREGATE_TYPES, 'QueryRun'], reasons: ['running_cap'] };
+  }
+  /** Register the running-cap wait, then run the Host's one admission drain; the drain is awaited. */
+  async function holdRunningCapWait(handle: Handle, cursorAtRead: CommitCursor | null): Promise<void> {
+    if (cursorAtRead === null) return;
+    const scope = { projectId: handle.projectId, workspaceId: handle.workspaceId };
+    const waits = dependencies.goalWaits?.(scope);
+    waits?.register(runningCapBasisOf(handle), cursorAtRead);
+    await dependencies.drainGoalWaits?.(scope);            // merge, order, page
+  }
+
   /**
    * The yielded-reply wait reused by a watch and by the Goal entry (the entry
    * only sees it when its own accepted advance already started the Run). It
@@ -1128,6 +1143,12 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
             driver.state = 'completed'; driver.reason = value.reason; return;
           }
           if (value.state === 'waiting') {
+            // The admission hold: the freed slot's own commit re-opens this Goal through the queue.
+            if (value.reason === 'running_cap') {
+              driver.state = 'waiting'; driver.reason = value.reason;
+              await holdRunningCapWait(driver, cursorAtRead);
+              break;
+            }
             const woken = await awaitYielded(driver, value.reason);
             if (woken !== null) { input = woken; driver.current = woken; continue; }
             if (driver.stopRequested) return;
@@ -1238,6 +1259,16 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           const woken = await awaitYielded(lane, value.reason);
           if (woken !== null) { lane.current = woken; input = woken; continue; }
           if (lane.stopRequested) return;
+          if (value.reason === 'running_cap') {
+            lane.state = 'waiting'; lane.reason = value.reason;
+            if (cursorAtRead !== null) {
+              lane.handedBack = runningCapBasisOf(lane);      // hand the watch back BEFORE the register/drain below
+              lane.driver.registered = true;
+              lane.state = 'waiting_for_reply';                // the existing wake re-opens this watch
+            }
+            await holdRunningCapWait(lane, cursorAtRead);
+            return;                                            // no yielded pump, no terminal
+          }
           if (value.waitBasis !== undefined && cursorAtRead !== null) {
             lane.state = 'waiting_for_reply'; lane.reason = value.reason;
             lane.handedBack = structuredClone(value.waitBasis);

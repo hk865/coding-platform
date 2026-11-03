@@ -7,16 +7,21 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RecordCommitNotice } from '../../src/composition/commit-observer.js';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { makeCommitCursor as cursor, type GoalRef } from '../../src/contracts/ledger.js';
 import { createGoalWaitQueue, createGoalWaitWakes, type GoalWaitWakes } from '../../src/app/goal-wait-wakes.js';
 import { basisOf } from '../helpers/S7B2-WK-basis.js';
 
+const HOST = { kind: 'system', id: 's7b2-wk-registry' } as const;
 const goalOf = (goalId: string): GoalRef => ({ aggregateType: 'Goal', projectId: 'p1', goalId });
 const noticeOf = (
   sequence: number, ...aggregates: { aggregateType: string; projectId: string | null }[]
 ): RecordCommitNotice => ({ cursor: cursor(sequence), aggregates });
-const idsOf = (waits: GoalWaitWakes, limit: number) =>
-  waits.nextDrainBatch(limit).goals.map(goal => goal.goalId);
+const idsOf = (waits: GoalWaitWakes, limit: number) => {
+  const taken = waits.nextDrainBatch().slice(0, limit);
+  waits.takeDrainBatch(taken.map(candidate => candidate.goalRef));
+  return taken.map(candidate => candidate.goalRef.goalId);
+};
 
 describe('register', () => {
   it.each([
@@ -112,6 +117,11 @@ describe('drain after a failed rebuild', () => {
         if (attempts++ === 0) throw new Error('the first rebuild read failed');
         registry.register(basisOf('p1', 'G01', ['SessionMessage']), cursor(5));
       },
+      ctx: (): CoreCallContext => ({ ...scope, principal: { kind: 'host', actor: HOST },
+        materialReader: { kind: 'host', ...scope, actor: HOST }, signal: new AbortController().signal }),
+      readMarkerQueries: async () => ({ status: 'ready', value: { items: [], nextCursor: null } }),
+      startMarkerQuery: async () => undefined,
+      l5PriorityOf: async () => 2,
     });
     await expect(queue.rebuild(scope)).rejects.toThrow('the first rebuild read failed');
     const drained = await queue.drain(scope, { maxItems: 10, continuation: null, signal: new AbortController().signal });

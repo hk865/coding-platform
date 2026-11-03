@@ -28,6 +28,7 @@ export type CoreRejection = {
     reason: string;
     current?: VersionPin[];
     scopeOwned?: import('../role-lines.js').ScopeOwnedDetailV1;
+    detail?: import('../role-lines.js').CapacityAtCapDetailV1;
 };
 /** R3b exact material read subset. Projection `not_ready` is published with its
  * real ReadStamp only when an indexed read actually consumes that state. */

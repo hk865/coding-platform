@@ -42,6 +42,7 @@
 - `run-machine.ts` — Run 机器：status/outcome、V2 入口相位、控制指针；每次写入整条 Run。
 - `attempt-machine.ts` — TaskAttempt / TaskLease / DispatchOutboxEntry 三部机器与 Run 事件映射；与 Run 事件同一提交。
 - `query-run-recovery.ts` — QueryRun/QueryJob 生命周期构造与恢复：claimed/prepared/entering/entered/unknown/settled。
+- `running-admission.ts` — 运行中并发的纯规则：`runningGroupOf` 是五职责到四组的唯一映射（reviewer → executor，没有职责依据的 `unknown` 也按 executor 计）；`countsRunningAdmission`/`emptyRunningCounts`/`countRunningAdmission` 只算 entering/entered/unknown 且每个占用 Session 一次；`admitModelCall` 是唯一判定；不读存储、不保存计数。
 - `transition.ts` — 所有机器共用的 `Transition` 形状与 accept/reject 构造。
 - `no-progress.ts` — 无进展/重验证键与失败事实；requeue 与 successor 两套键，互不比较。
 - `activity-replacement.ts` — L4 唯一的活动替换判定（created/replaced/unchanged），回填与 Run 结束提交共用。
@@ -177,8 +178,8 @@
 | `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1482` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
 | `newPendingQueryRecords` | `src/core/work-graph/state/query-run-recovery.ts:533` | 建 pending 的 QueryJob/QueryRun 对 | 新 Query 请求 |
 | `advanceQueryExecutionRecord` | `src/core/work-graph/state/query-run-recovery.ts:608` | 推进 claimed/prepared/entering/entered | Query 进入执行 |
-| `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:681` | 记录 unknown（Job 保持 running） | 结果未知 |
-| `settleQueryRunRecord` | `src/core/work-graph/state/query-run-recovery.ts:701` | 一起结清 Job 与 Run；带答案检查的 failed 关闭原因为 `invalid_answer` | Query 终态 |
+| `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:688` | 记录 unknown（Job 保持 running） | 结果未知 |
+| `settleQueryRunRecord` | `src/core/work-graph/state/query-run-recovery.ts:708` | 一起结清 Job 与 Run；带答案检查的 failed 关闭原因为 `invalid_answer` | Query 终态 |
 | `transitionQueryRunRecovery` | `src/core/work-graph/state/query-run-recovery.ts:216` | QRR 恢复子机器；请求轮的 not-entered 按是否被 drop 覆盖分成结束或新 attempt | 启动对账与人工确认 |
 | `queryRecoveryStateOf` | `src/core/work-graph/state/query-run-recovery.ts:505` | Job+Run 的恢复机器状态 | 恢复迁移前 |
 | `MAX_ATTESTATION_REASON_CHARS` / `QueryAnswerCheck` | `src/core/work-graph/state/query-run-recovery.ts:135`、`src/core/work-graph/state/query-run-recovery.ts:129` | 人工确认理由和关闭消息的上限（2000 个 UTF-16 单位，截断不留半个代理对）；答案检查失败的 detail 与理由 | 校验确认理由、结清带答案检查的终态；`src/core/work-graph/tasks/run-reconcile-service.ts` 只复用这个常量，不另写答案检查类型 |
