@@ -282,7 +282,7 @@
     **旧线的持有【lead 定】：** 7D1 合入时已有的线没有 `RoleLineAllocationV1`。旧库按决定 79-1 重建，不迁移、不补持有；第一次准入不扫描旧 Session 建记录，读口读到缺失的分配记录按空集合（0 个 holder、0 个预留），不写。持有超过上限照“调低上限”办：不撤销，降到上限以下之前不再加。（审查二 lead 补）
   - **同时运行上限**：持租约的 Host 里设一个所有模型入口共用的准入器，按 (项目, 职责) 串行地查和预留，再异步开始。计数组只有四个（决定 62-2）：秘书、参谋、书记、执行者。审阅线（`reviewer`）只经 `role_line_add` 建，运行准入并入执行者组；保留名额沿用现有准入，不新增第五组初值/数字。
     映射：独立审阅者（`reviewer`）算执行者组；只读副本、咨询（问一问）算它复制的那条线的职责组；7D1 之前建的旧线（读作 `openedBy: 'legacy'`）按它的固定职责算；没有映射的调用一律拒绝启动
-    （`invalid/no_running_group`），不绕过上限。准入器接在真实的共同启动路径上：Run 和 Query 都已有持久身份（准备之后、交给 Kernel 之前），在这一步过准入。
+    （`invalid/no_running_group`），不绕过上限。（A1b 落地注，2026-11-03：没有职责依据的按执行者计，`invalid/no_running_group` 一臂已删，见决定 116-4。）准入器接在真实的共同启动路径上：Run 和 Query 都已有持久身份（准备之后、交给 Kernel 之前），在这一步过准入。
     包括 Workflow 派工、消息消费、秘书的一轮、咨询（`consultation.ts:226`）、公开的 `executions/start`、`queries/start`（`core-routes.ts:529`、`:569`）。
     计数 = 已准入、还没结束的模型轮（从准入到 Run/Query 结束或放弃）；结果未知的照算，结果核清前不当空位、不重跑。被挡：Run/Query 保持“已准备、未开始”，
     读出原因 `running_cap`；公开 start 路由回 `{ status: 'waiting', reason: 'running_cap', ref }`；可以取消；Host 启动时扫“已准备、未开始、因 `running_cap` 等”的，
@@ -530,7 +530,7 @@ export type RoleLineAllocationV1 = {           // 每个项目、每种职责一
 };
 // 运行准入的计数组仍是四种（秘书、参谋、书记、执行者）；映射：`reviewer` → 执行者组；
 // 只读副本、咨询（问一问）→ 它复制的那条线的职责组；7D1 之前建的旧线（`openedBy: 'legacy'`）→ 它的固定职责；
-// 没有映射的调用 → `invalid/no_running_group`，不绕过上限。
+// 没有映射的调用 → `invalid/no_running_group`，不绕过上限。（A1b 落地注，2026-11-03：没有职责依据的按执行者计，这一臂已删，见决定 116-4。）
 // 准入器接在真实共同 Runtime 启动路径（Run/Query 准备之后、交给 Kernel 之前）；被挡时 Run/Query 保持“已准备、未开始”，
 // 公开 start 路由回 `{ status: 'waiting', reason: 'running_cap', ref }`。（审查二第 2 条）
 
@@ -592,7 +592,7 @@ export type RoleCapacityEpisodeV1 = {
 `ROLE_LINE_IDLE_ARCHIVE_MS = 86_400_000`（**决定 91 取消**）、`ROLE_LINE_SLOW_MESSAGE_LIMIT = 10`（比较用 `>`）、`ROLE_LINE_SLOW_WINDOW_MS = 1_800_000`、
 `NOTICE_SUMMARY_WINDOW_MS = 900_000`、`QUEUE_DRAIN_BATCH = 16`；输入量阈值复用第 6 片 L10 的 `min(500000, 模型容量 × 0.8)`（软预算，一轮结束后才拆或换手；用户 2026-10-15 晚定）。
 新错误：`capacity/at_cap`、`revision_conflict/scope_owned`、`invalid/role_line_duty`、`invalid/rule_action_fixed`、`invalid/rule_limit_over_cap`、
-`invalid/no_responsible_adviser`、`invalid/no_running_group`（审查二第 2 条）、`invalid/responsibility_destination_missing`（8C）。都用现有的 code（`results.ts:17`），只加 reason。
+`invalid/no_responsible_adviser`、`invalid/no_running_group`（审查二第 2 条；A1b 落地注，2026-11-03：这一臂已删，没有职责依据的按执行者计，见决定 116-4）、`invalid/responsibility_destination_missing`（8C）。都用现有的 code（`results.ts:17`），只加 reason。
 
 ## 3. 状态行（冻结时 lead 补期望值；第一轮审查第 17 条填全）
 
@@ -627,8 +627,8 @@ export type RoleCapacityEpisodeV1 = {
 | S7-RL-09（7D2 联动补验；审查二第 18 条；决定 62-3、62-4） | 无 → 规则 `active` | 只认人；`actions` 只能是 `RuleActionV1`，否则 `invalid/rule_action_fixed`；`limits.open` 每种职责不超过项目的保留上限，否则 `invalid/rule_limit_over_cap`；`scope`、`actions` 非空；每次建、撤、改把 `AutonomyRuleSetV1.revision` 加一 | 人（`autonomy-rules/create`） | 写 `AutonomyRuleV1`、`state: 'active'`、`approvedBy`、`approvedFrom` | `invalid/rule_action_fixed`、`invalid/rule_limit_over_cap` | 单次提交，重放 |
 | S7-RL-10（7D2 联动补验；审查二第 18 条；决定 62-3、62-4） | `active → revoked` | 只认人；任何建、撤、改把 `AutonomyRuleSetV1.revision` 加一 | 人（`autonomy-rules/revoke`） | 写 `state: 'revoked'`；不追溯已经做了的事 | `forbidden`、`not_found` | 单次提交，重放 |
 | S7-RL-11（7D2 联动补验；审查二第 18 条；决定 60-8、62-2） | 无 → episode 开 → 关（`RoleCapacityEpisodeV1`） | 平台自动加线被保留上限拒且没有开着的 episode 就开一个；持有 + 预留降到上限以下或上限变了就关（预留转持有不关 episode） | 平台规则 | 开 episode（`capValue`、`openedAt`）、出 `role_capacity` 卡（主体 `project`）；关 episode（`closedAt`）；episode 开着时再被拒直接回 `capacity/at_cap`，不出新卡 | `capacity/at_cap` | episode 和卡按来源身份重放，不出第二张（审查二第 1 条） |
-| S7-RL-12（7D2 联动补验；审查二第 18 条；决定 62-2） | 无 → 运行准入（运行上限） | 计数 = 已准入、还没结束的模型轮（从准入到 Run/Query 结束或放弃）；结果未知的照算，结果核清前不当空位、不重跑；按 (项目, 职责) 的四个计数组（秘书、参谋、书记、执行者）串行查和预留；没有映射的调用 → `invalid/no_running_group` | 持租约的 Host | 准入在真实共同启动路径（Run/Query 准备之后、交给 Kernel 之前）；被挡的 Run/Query 保持“已准备、未开始”、读出原因 `running_cap`，公开 start 路由回 `{ status: 'waiting', reason: 'running_cap', ref }`、可取消；一轮结束按 L5 排空 | 无（读原因 `running_cap`） | Host 重启后从持久的 Run/Query 状态重建计数；已进入或结果未知的重放只观察、不再准入、不重启（审查二第 2 条） |
-| S7-RL-13（7D2 联动补验；审查二第 18 条；决定 61-1、61-2、61-4） | 无 → 角色线探索 Query（`role_exploration`） | 区域参谋、开局参谋的探索；`goalId` 可以为空（同秘书）；可信 principal 是 QueryRun；绑定 `role_line` 操作和那条系统“请动手”消息；注册工具看、找、只读命令、范围受限的 `record_note`（按 S4 L2a 的范围准入）、`propose_architecture_revision`；普通 copy 的权限不变 | 平台（L41 的 `coarse_split`/`regions`） | 开只读 Query；`query-execution.ts:381` 对这个调用类放开“没有目标” | `invalid/no_running_group`（没有映射）、`invalid` | 按 `role_line` 操作身份和系统消息去重（审查二第 11 条） |
+| S7-RL-12（7D2 联动补验；审查二第 18 条；决定 62-2） | 无 → 运行准入（运行上限） | 计数 = 已准入、还没结束的模型轮（从准入到 Run/Query 结束或放弃）；结果未知的照算，结果核清前不当空位、不重跑；按 (项目, 职责) 的四个计数组（秘书、参谋、书记、执行者）串行查和预留；没有映射的调用 → `invalid/no_running_group`（A1b 落地注，2026-11-03：没有职责依据的按执行者计，这一臂已删，见决定 116-4） | 持租约的 Host | 准入在真实共同启动路径（Run/Query 准备之后、交给 Kernel 之前）；被挡的 Run/Query 保持“已准备、未开始”、读出原因 `running_cap`，公开 start 路由回 `{ status: 'waiting', reason: 'running_cap', ref }`、可取消；一轮结束按 L5 排空 | 无（读原因 `running_cap`） | Host 重启后从持久的 Run/Query 状态重建计数；已进入或结果未知的重放只观察、不再准入、不重启（审查二第 2 条） |
+| S7-RL-13（7D2 联动补验；审查二第 18 条；决定 61-1、61-2、61-4） | 无 → 角色线探索 Query（`role_exploration`） | 区域参谋、开局参谋的探索；`goalId` 可以为空（同秘书）；可信 principal 是 QueryRun；绑定 `role_line` 操作和那条系统“请动手”消息；注册工具看、找、只读命令、范围受限的 `record_note`（按 S4 L2a 的范围准入）、`propose_architecture_revision`；普通 copy 的权限不变 | 平台（L41 的 `coarse_split`/`regions`） | 开只读 Query；`query-execution.ts:381` 对这个调用类放开“没有目标” | `invalid/no_running_group`（没有映射；A1b 落地注，2026-11-03：这一臂已删，没有职责依据的按执行者计，见决定 116-4）、`invalid` | 按 `role_line` 操作身份和系统消息去重（审查二第 11 条） |
 
 - 角色线状态是读出来的，不加 `standby` 生命周期值；`unassigned` 是 2C T9 的读时原因（L23）。（决定 60-5、60-7）
 
