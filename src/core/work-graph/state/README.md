@@ -159,7 +159,7 @@
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
 | `admitNoteWrite` | `src/core/work-graph/state/note-machine.ts:59` | 新注记的准入状态 | 写注记前 |
-| `transitionNote` | `src/core/work-graph/state/note-machine.ts:425` | 注记处置迁移 | 注记状态写入 |
+| `transitionNote` | `src/core/work-graph/state/note-machine.ts:429` | 注记处置迁移 | 注记状态写入 |
 | `newNoteHeadRecord` | `src/core/work-graph/state/note-machine.ts:291` | 建 pending 注记头 | 新建注记 |
 | `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:365` | 建注记版本 | 追加注记版本 |
 | `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:221` | 由处置关系算用户复查原因 | 注记复查 |

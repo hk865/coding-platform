@@ -52,7 +52,8 @@ function acceptedWrite(noteId = 'n1', version = 1): Extract<WriteNoteResult, { s
 function noteCheck(noteId = 'n1', version = 1): NoteCheckV1 {
   return { noteId, version, observedFiles: [], freshness: 'fresh', changedFiles: [], staleReasons: [],
     sourceUnavailable: false, invalid: false, conflicting: false, overQuota: false, updateDue: null,
-    currentEligible: true, anchorStatus: 'live', anchorRetiredReasons: [], retiredExtraAnchors: [],
+    currentEligible: true, anchorStatus: 'live', anchorRetiredReasons: [],
+    anchorSlots: [{ status: 'live', reasons: [] }], retiredExtraAnchors: [],
     unresolvedFacts: [], uncheckedFacts: [], hints: [] };
 }
 

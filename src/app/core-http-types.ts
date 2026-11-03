@@ -98,6 +98,8 @@ import type {
 import type { RequestSubmitPort } from '../business/workflow/request-intake.js';
 // The main conversation's read and one request's read with its cards.
 import type { MainSurfaceReadPort } from '../core/work-graph/views/main-surface-read-model.js';
+// The semantic links read owner's method, derived into the architecture read DTO.
+import type { SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
 
 /** The project/workspace navigation scope. It is a real domain scope, not a
  * second source of Project/Workspace registration truth. */
@@ -177,6 +179,7 @@ export type CoreRouteSuffix =
   | 'architecture/revise'
   | 'architecture/read'
   | 'architecture/proposals/read'
+  | 'architecture/semantic-links'
   | 'architecture/capture'
   | 'architecture/query'
   | 'architecture/compare'
@@ -378,10 +381,13 @@ export type ArchitectureReadBody = PlainBody<ArchitectureCatalogPort['readArchit
 export type ArchitectureReadResponse = RouteResponse<ArchitectureCatalogPort['readArchitectureRevision']>;
 export type ArchitectureProposalsReadBody = PlainBody<ArchitectureProposalService['readArchitectureProposal']>;
 export type ArchitectureProposalsReadResponse = RouteResponse<ArchitectureProposalService['readArchitectureProposal']>;
-/** The two architecture command/read suffixes' body/result pairs; the route table names it so the aliases stay in the production graph. */
+export type ArchitectureSemanticLinksBody = PlainBody<SemanticLinksReader['readSemanticLinks']>;
+export type ArchitectureSemanticLinksResponse = RouteResponse<SemanticLinksReader['readSemanticLinks']>;
+/** The architecture routes' body/result pairs; the route table names it so the aliases stay in the production graph. */
 export type ArchitectureCoreRouteDto = {
   'architecture/revise': { body: ArchitectureReviseBody; response: ArchitectureReviseResponse };
   'architecture/proposals/read': { body: ArchitectureProposalsReadBody; response: ArchitectureProposalsReadResponse };
+  'architecture/semantic-links': { body: ArchitectureSemanticLinksBody; response: ArchitectureSemanticLinksResponse };
 };
 /** L8 (P16): the public manual capture body. The driver's trusted start
  * watermark (`requestSeq`) is not a public input, so the DTO omits it; the port

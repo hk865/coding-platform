@@ -72,7 +72,9 @@ export type SourceQuery =
 export type SourceHit =
   | { kind: 'file'; file: SourceFileEntry }
   | { kind: 'text'; location: SourceLocation; excerpt: string }
-  | { kind: 'symbol'; location: SourceLocation; name: string; symbolKind: string }
+  | { kind: 'symbol'; location: SourceLocation; name: string; symbolKind: string;
+      /** Every declaration span of this navigation item; the port keeps it optional, the TS provider always answers. */
+      declarationRanges?: { startLine: number; endLine: number }[] }
   | { kind: 'location'; location: SourceLocation }
   | { kind: 'relation'; relation: SourceRelation };
 export type SourcePageRequest = {

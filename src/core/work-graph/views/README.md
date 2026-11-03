@@ -156,7 +156,7 @@
 | `readEqualityAll` | `src/core/work-graph/views/activity-read-helpers.ts:94` | 把等值索引候选集读完并计预算 | 需要完整等值事实集时 |
 | `readOneKeyed` | `src/core/work-graph/views/activity-read-helpers.ts:117` | 按 key 读一条记录并计预算（miss 也计） | 活动读里按键取记录时 |
 | `activityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:326` | 把 `RunActivity` 快照投影成 `RunActivityViewV1` | 活动/轨道读投影时 |
-| `createNoteCheck` | `src/core/work-graph/views/note-views.ts:214` | 注记派生字段的唯一检查端口（freshness、changedFiles、冲突、配额等）；文件读经 `noteCheckWorkspace`，调用者自己的目标仍决定 `currentEligible` | 注记读模型要派生字段时；不要另写检查 |
+| `createNoteCheck` | `src/core/work-graph/views/note-views.ts:226` | 注记派生字段的唯一检查端口（freshness、changedFiles、冲突、配额、link 每槽状态等）；文件读经 `noteCheckWorkspace`，调用者自己的目标仍决定 `currentEligible` | 注记读模型要派生字段时；不要另写检查 |
 | `latestActivityAt`（**正本**） | `src/core/work-graph/state/session-activity.ts:25` | 线卡时钟的纯规则：Session 创建时刻与调用方给的时刻取最大 ISO 串，空集回退 `createdAt` | 线卡/选择读时钟；不要另写一份 |
 | `readClaimedAtForRun`（**正本**） | `src/core/work-graph/tasks/line-clock.ts:190` | Run 无起止时间时，从按代排序的 Work claim 索引顶行读 claim 时间，只认本 Run | claimedAt 回退；本层与 `secretary-selection.ts` 都调这一份 |
 | `indexActiveCopies` | `src/core/work-graph/tasks/line-clock.ts:51` | 从 Session 列表按来源索引 active 的只读副本 | 线卡/选择要数副本时 |

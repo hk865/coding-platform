@@ -44,7 +44,7 @@ export function secretaryNoteAdmission(input: {
   if (input.requestRoot === null) return { class: 'none' };
   return {
     class: 'secretary',
-    kinds: [...NOTE_GENERAL_KINDS, 'understanding'],
+    kinds: [...NOTE_GENERAL_KINDS, 'understanding', 'link'],
     withdraw: true,
     grantedGoalIds: input.grantedGoalIds.map(goal => goal.goalId),
   };

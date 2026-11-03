@@ -1488,6 +1488,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
                         "decision",
                         "understanding",
                         "repair",
+                        "link",
                         "general"
                       ]
                     },

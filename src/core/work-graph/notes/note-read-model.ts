@@ -20,7 +20,7 @@ import { messageOf } from '../../../contracts/error-message.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1 } from '../../../contracts/graph-context.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
-import { isGeneral, renderNoteHeader } from '../../../contracts/note.js';
+import { headerExtrasOf, isGeneral, renderNoteHeader } from '../../../contracts/note.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
@@ -42,7 +42,8 @@ import type {
   UnderstandingStatusV1,
 } from '../model/note-contracts.js';
 import { FIND_RELATED_FILES_MAX, MEMORY_PAGE_MAX, MEMORY_PAGE_DEFAULT, MEMORY_RESULT_MAX_BYTES, MEMORY_TOPICS_MAX,
-  NOTE_ANCHOR_QUOTA, NOTE_BODY_PAGE_BYTES, NOTE_GOAL_QUOTA, NOTE_RANK_WEIGHT_BODY,
+  NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BODY_PAGE_BYTES, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
+  NOTE_PROJECT_FLOW_QUOTA, NOTE_RANK_WEIGHT_BODY,
   NOTE_RANK_WEIGHT_CONCLUSION, NOTE_RANK_WEIGHT_TOPIC,
   PROJECT_NORMS_CHECK_MAX, PROJECT_NORMS_MAX, TEXT_SEARCH_CANDIDATE_MAX,
   TEXT_SEARCH_MAX_TERMS } from '../model/note-contracts.js';
@@ -76,6 +77,10 @@ export type NoteReadDependencies = {
   check?: NoteHeadCheckPort;
   anchorQuota?: number;
   goalQuota?: number;
+  /** The link populations' soft quotas (spec §2). */
+  anchorLinkQuota?: number;
+  goalLinkQuota?: number;
+  projectFlowQuota?: number;
   /** Slice 4B P14/T-09: bounds the match set the read model ranks (injectable). */
   textSearchCandidateMax?: number;
   textSearchMaxTerms?: number;
@@ -277,7 +282,7 @@ export type NoteHeadDerivations = {
  * read model and the injected `NoteCheckPort` (one implementation, L22).
  */
 export function createNoteHeadDerivations(records: GoalRecordTransactionPort & RecordLookupPort,
-  anchorQuota: number, goalQuota: number): NoteHeadDerivations {
+  quotas: { anchor: number; goal: number; anchorLink: number; goalLink: number; projectFlow: number }): NoteHeadDerivations {
   async function conflictingOf(projectId: string, head: NoteHeadLike, cache: HeadCache): Promise<ReadOutcome<boolean>> {
     for (const other of head.contradicts) {
       const otherHead = await readHeadRecord(records, projectId, other);
@@ -308,17 +313,25 @@ export function createNoteHeadDerivations(records: GoalRecordTransactionPort & R
   }
 
   async function overQuotaOf(projectId: string, head: NoteHeadSnapshot, cache: HeadCache): Promise<ReadOutcome<boolean>> {
-    // L7/R6: each quota counts its own population. The anchor quota flags only a
-    // current general note (accepted/reviewed); the goal quota flags any counted
-    // state (accepted/reviewed/pending_review/staged) of a note that has a goal.
-    if (isGeneral(head.kind) && (head.state === 'accepted' || head.state === 'reviewed')) {
-      const keys = anchorSlots(head);
-      for (const key of keys) {
+    const current = head.state === 'accepted' || head.state === 'reviewed';
+    // Anchor quotas: general counts only current general notes, link counts
+    // only current links (book :443, :450–451).
+    if (isGeneral(head.kind) && current) {
+      for (const key of anchorSlots(head)) {
         const heads = await cachedHeadsByAnchorKey(cache, records, projectId, key);
         if (!heads.ok) return heads;
         const count = heads.value.filter(candidate => isGeneral(candidate.kind)
           && (candidate.state === 'accepted' || candidate.state === 'reviewed')).length;
-        if (count > anchorQuota) return { ok: true, value: true };
+        if (count > quotas.anchor) return { ok: true, value: true };
+      }
+    }
+    if (head.kind === 'link' && current) {
+      for (const key of anchorSlots(head)) {
+        const heads = await cachedHeadsByAnchorKey(cache, records, projectId, key);
+        if (!heads.ok) return heads;
+        const count = heads.value.filter(candidate => candidate.kind === 'link'
+          && (candidate.state === 'accepted' || candidate.state === 'reviewed')).length;
+        if (count > quotas.anchorLink) return { ok: true, value: true };
       }
     }
     const goalCounted = head.state === 'accepted' || head.state === 'reviewed'
@@ -326,7 +339,12 @@ export function createNoteHeadDerivations(records: GoalRecordTransactionPort & R
     if (head.goalId !== null && goalCounted) {
       const heads = await cachedCurrentHeadsForGoal(cache, records, projectId, head.goalId);
       if (!heads.ok) return heads;
-      if (heads.value.length > goalQuota) return { ok: true, value: true };
+      // The general goal population excludes links; a link counts links only
+      // (book :444, :451).
+      const count = head.kind === 'link'
+        ? heads.value.filter(candidate => candidate.kind === 'link').length
+        : heads.value.filter(candidate => candidate.kind !== 'link').length;
+      if (count > (head.kind === 'link' ? quotas.goalLink : quotas.goal)) return { ok: true, value: true };
     }
     return { ok: true, value: false };
   }
@@ -338,14 +356,72 @@ export type NoteMemoryMaterialReadPort = {
     Promise<ReadResult<NoteMemoryMaterialV1>>;
 };
 
+// §11.3: a default-state filter changes the page contents for the same cursor,
+// so all reads move to rule version 2 together; an old cursor is a mismatch.
+const RULE_VERSION = 2;
+
+/** The one opaque memory cursor shared by the note reads and the semantic reads. */
+export type MemoryCursor = { after: string | null; recordCursor: string | null; identity: string;
+  seg: 'related' | 'project' | null; resolved: unknown };
+
+/**
+ * L12: the cursor binds the call's identity (project, workspace, principal).
+ * `principalIdentity` is the canonical projection, the same JSON for every
+ * principal kind.
+ */
+export function callerIdentityOf(ctx: CoreCallContext): string {
+  return `${ctx.projectId}\u0000${ctx.workspaceId ?? ''}\u0000${JSON.stringify(principalIdentity(ctx.principal))}`;
+}
+
+export function encodeMemoryCursor(ctx: CoreCallContext, op: string, request: unknown,
+  state: { after: string | null; recordCursor: string | null; seg?: 'related' | 'project' | null; resolved?: unknown }): string {
+  return JSON.stringify({ v: 1, op, id: callerIdentityOf(ctx), rule: RULE_VERSION, request,
+    after: state.after, cursor: state.recordCursor, seg: state.seg ?? null,
+    resolved: state.resolved ?? null });
+}
+
+export function parseMemoryCursor(ctx: CoreCallContext, cursor: string | null, op: string, request: unknown):
+{ ok: true; value: MemoryCursor } | { ok: false; code: ReadFailureCode; reason: string } {
+  const identity = callerIdentityOf(ctx);
+  if (cursor === null) return { ok: true, value: { after: null, recordCursor: null, identity, seg: null, resolved: null } };
+  try {
+    const parsed = JSON.parse(cursor) as Record<string, unknown>;
+    if (parsed['v'] !== 1 || parsed['op'] !== op) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    // L12: the cursor binds the caller's identity; another identity is a mismatch.
+    if (parsed['id'] !== identity) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    // The cursor binds the actual rule-version constant, not a literal.
+    if (parsed['rule'] !== RULE_VERSION) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    if (JSON.stringify(parsed['request']) !== JSON.stringify(request)) {
+      return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    }
+    const after = parsed['after'];
+    const record = parsed['cursor'];
+    const seg = parsed['seg'] ?? null;
+    if (!(after === null || typeof after === 'string') || !(record === null || typeof record === 'string')
+      || !(seg === null || seg === 'related' || seg === 'project')) {
+      return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+    }
+    return { ok: true, value: { after: after as string | null, recordCursor: record as string | null, identity,
+      seg: seg as 'related' | 'project' | null, resolved: parsed['resolved'] ?? null } };
+  } catch {
+    return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
+  }
+}
+
 export function createNoteReadModel(deps: NoteReadDependencies):
 NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort {
   const anchorQuota = deps.anchorQuota ?? NOTE_ANCHOR_QUOTA;
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
+  const quotas = {
+    anchor: anchorQuota, goal: goalQuota,
+    anchorLink: deps.anchorLinkQuota ?? NOTE_ANCHOR_LINK_QUOTA,
+    goalLink: deps.goalLinkQuota ?? NOTE_GOAL_LINK_QUOTA,
+    projectFlow: deps.projectFlowQuota ?? NOTE_PROJECT_FLOW_QUOTA,
+  };
   const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
     ...(deps.workspace === undefined ? {} : { workspace: noteCheckWorkspace(deps.workspace) }) };
-  const derivations = createNoteHeadDerivations(deps.records, anchorQuota, goalQuota);
+  const derivations = createNoteHeadDerivations(deps.records, quotas);
   const conflictingOf = derivations.conflictingOf;
   const overQuotaOf = derivations.overQuotaOf;
   // Slice 4C §11.2: the related-scope read is one narrow port; the pure key-set
@@ -380,10 +456,15 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [],
         sourceUnavailable: false, invalid: false, conflicting,
         overQuota, updateDue: null, currentEligible: false, crossGoal: false,
-        anchorStatus: 'live', anchorRetiredReasons: [], retiredExtraAnchors: [],
+        anchorStatus: 'live', anchorRetiredReasons: [],
+        // The check overlays the real per-slot statuses; without one this read
+        // has observed no slot, so the neutral answer is an empty list.
+        anchorSlots: [],
+        retiredExtraAnchors: [],
         unresolvedFacts: [], uncheckedFacts: head.facts.map((_, index) => index), hints: [], matchedTerms: [], score: 0,
         ...(head.sections === undefined ? {} : { sections: head.sections }),
         ...(head.repair === undefined ? {} : { repair: head.repair }),
+        ...(head.link === undefined ? {} : { link: head.link }),
       } } satisfies ReadOutcome<NoteItemV1>;
     })();
   }
@@ -398,10 +479,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [],
       sourceUnavailable: false, invalid: false, conflicting: false, overQuota: false, updateDue: null,
       currentEligible: false, crossGoal: false, anchorStatus: 'live', anchorRetiredReasons: [],
+      anchorSlots: [],
       retiredExtraAnchors: [], unresolvedFacts: [], uncheckedFacts: version.facts.map((_, index) => index),
       hints: [], matchedTerms: [], score: 0,
       ...(version.sections === undefined ? {} : { sections: version.sections }),
       ...(version.repair === undefined ? {} : { repair: version.repair }),
+      ...(version.link === undefined ? {} : { link: version.link }),
     };
   }
 
@@ -469,6 +552,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         sourceUnavailable: check.sourceUnavailable, invalid: check.invalid, conflicting: check.conflicting,
         overQuota: check.overQuota, updateDue: check.updateDue, currentEligible,
         anchorStatus: check.anchorStatus, anchorRetiredReasons: check.anchorRetiredReasons,
+        anchorSlots: check.anchorSlots,
+        // The stored payload is never rewritten; the read-time verification is
+        // an overlay on a fresh item object.
+        ...(item.link === undefined ? {} : { link: { ...item.link,
+          verification: check.linkVerification ?? item.link.verification } }),
         retiredExtraAnchors: check.retiredExtraAnchors, unresolvedFacts: check.unresolvedFacts,
         uncheckedFacts: check.uncheckedFacts, hints: check.hints };
     });
@@ -548,9 +636,6 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
   const textSearchCandidateMax = deps.textSearchCandidateMax ?? TEXT_SEARCH_CANDIDATE_MAX;
   const textSearchMaxTerms = deps.textSearchMaxTerms ?? TEXT_SEARCH_MAX_TERMS;
-  // §11.3: a default-state filter changes the page contents for the same cursor,
-  // so all reads move to rule version 2 together; an old cursor is a mismatch.
-  const RULE_VERSION = 2;
   const resultMaxBytes = deps.resultMaxBytes ?? MEMORY_RESULT_MAX_BYTES;
 
   function compareText(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
@@ -565,15 +650,6 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const principal = ctx.principal;
     if (principal.kind === 'query_run') return principal.goalId ?? null;
     return principal.kind === 'work_run' ? principal.runRef.goalId : null;
-  }
-
-  /**
-   * L12: the cursor binds the call's identity (project, workspace, principal).
-   * `principalIdentity` is the canonical projection, the same JSON for every
-   * principal kind.
-   */
-  function callerIdentityOf(ctx: CoreCallContext): string {
-    return `${ctx.projectId}\u0000${ctx.workspaceId ?? ''}\u0000${JSON.stringify(principalIdentity(ctx.principal))}`;
   }
 
   function isCrossGoal(head: NoteHeadSnapshot, currentGoalId: string | null): boolean {
@@ -689,44 +765,6 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       ids.push(decoded.value.ref.goalId);
     }
     return { ok: true, value: ids };
-  }
-
-  type MemoryCursor = { after: string | null; recordCursor: string | null; identity: string;
-    seg: 'related' | 'project' | null; resolved: unknown };
-
-  function encodeMemoryCursor(ctx: CoreCallContext, op: string, request: unknown,
-    state: { after: string | null; recordCursor: string | null; seg?: 'related' | 'project' | null; resolved?: unknown }): string {
-    return JSON.stringify({ v: 1, op, id: callerIdentityOf(ctx), rule: RULE_VERSION, request,
-      after: state.after, cursor: state.recordCursor, seg: state.seg ?? null,
-      resolved: state.resolved ?? null });
-  }
-
-  function parseMemoryCursor(ctx: CoreCallContext, cursor: string | null, op: string, request: unknown):
-  { ok: true; value: MemoryCursor } | { ok: false; code: ReadFailureCode; reason: string } {
-    const identity = callerIdentityOf(ctx);
-    if (cursor === null) return { ok: true, value: { after: null, recordCursor: null, identity, seg: null, resolved: null } };
-    try {
-      const parsed = JSON.parse(cursor) as Record<string, unknown>;
-      if (parsed['v'] !== 1 || parsed['op'] !== op) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-      // L12: the cursor binds the caller's identity; another identity is a mismatch.
-      if (parsed['id'] !== identity) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-      // R10: the cursor binds the actual rule-version constant, not a literal.
-      if (parsed['rule'] !== RULE_VERSION) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-      if (JSON.stringify(parsed['request']) !== JSON.stringify(request)) {
-        return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-      }
-      const after = parsed['after'];
-      const record = parsed['cursor'];
-      const seg = parsed['seg'] ?? null;
-      if (!(after === null || typeof after === 'string') || !(record === null || typeof record === 'string')
-        || !(seg === null || seg === 'related' || seg === 'project')) {
-        return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-      }
-      return { ok: true, value: { after: after as string | null, recordCursor: record as string | null, identity,
-        seg: seg as 'related' | 'project' | null, resolved: parsed['resolved'] ?? null } };
-    } catch {
-      return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-    }
   }
 
   async function checkedPage(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
@@ -1340,7 +1378,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       const item = itemByKey.get(`${head.noteId}@${String(head.version)}`);
       if (item === undefined || !item.currentEligible) continue;
       rows.push({ anchorKey: head.anchorKey0, noteId: head.noteId, version: head.version, kind: head.kind,
-        conclusion: head.conclusion, freshness: item.freshness, label: renderNoteHeader(head) });
+        conclusion: head.conclusion, freshness: item.freshness,
+        label: renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
+          conclusion: head.conclusion, ...headerExtrasOf(head) }) });
       items.push(item);
     }
     return { rows, items, omitted: eligibleTotal - rows.length };
@@ -1869,7 +1909,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const next = slice.complete ? null : encodeMemoryCursor(ctx, 'notes_list', request,
       { after: slice.last, recordCursor: current.value });
     const result: NoteListResultV1 = {
-      items: pageBuilt.value.items.map((item, index) => ({ ...item, label: renderNoteHeader(slice.page[index]!) })),
+      items: pageBuilt.value.items.map((item, index) => {
+        const head = slice.page[index]!;
+        return { ...item, label: renderNoteHeader({ kind: head.kind, anchor: head.anchor,
+          structural: head.structural, conclusion: head.conclusion, ...headerExtrasOf(head) }) };
+      }),
       next, complete: next === null, readBasis: basisOf(current.value, pageBuilt.value.items), warnings: [],
       coverage: coverageOf(pageBuilt.value.items) };
     return { status: 'ready', value: result };
@@ -1892,13 +1936,29 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return 4;
   }
 
+  /** The one warning-line shape: word, then the note and its conclusion. */
+  function warningLabelOf(word: string, head: NoteHeadSnapshot): string {
+    const S = PLATFORM_PROMPT_PACK_V1.strings;
+    return `${word}${S['note.warning.separator']}${head.noteId} ${head.conclusion}${S['note.warning.suffix']}`;
+  }
+
   /** L20: one warning line or none; the conclusion and its warning never split. */
   function generalWarningLabel(item: NoteItemV1, head: NoteHeadSnapshot): string | null {
     const S = PLATFORM_PROMPT_PACK_V1.strings;
     const word = item.freshness === 'stale' ? S['note.warning.stale']
       : item.conflicting ? S['note.warning.conflict']
       : item.sourceUnavailable ? S['note.warning.sourceUnavailable'] : null;
-    return word === null ? null : `${word}${S['note.warning.separator']}${head.noteId} ${head.conclusion}${S['note.warning.suffix']}`;
+    return word === null ? null : warningLabelOf(word, head);
+  }
+
+  /** L10/C18: the work input admits general notes and links, never flows. */
+  function inContextNoteSection(kind: string): boolean {
+    return isGeneral(kind) || kind === 'link';
+  }
+
+  /** L12: a broken link is stale even when its own freshness is `fresh`. */
+  function linkBrokenStaleReason(missing: readonly number[]): string {
+    return missing.length === 0 ? 'link_evidence_broken' : `link_evidence_broken:${missing.join(',')}`;
   }
 
   /**
@@ -2080,8 +2140,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const tierOf = (head: NoteHeadSnapshot): number =>
       head.confirmedByUser ? 0 : head.goalId === goalId ? 1 : 2;
     const general: NoteIndexRowV1[] = [];
+    const S = PLATFORM_PROMPT_PACK_V1.strings;
     for (const head of generalHeads
-      .filter(candidate => isGeneral(candidate.kind) && visibleByDefault(candidate, goalId)
+      .filter(candidate => inContextNoteSection(candidate.kind) && visibleByDefault(candidate, goalId)
         && !excluded.has(candidate.noteId))
       .sort((left, right) => {
         const leftRank = classRankOf(left);
@@ -2095,12 +2156,33 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       })) {
       const item = itemOfHead(head);
       if (item === undefined) continue;
+      const row = (label: string): NoteIndexRowV1 => ({ anchorKey: displayAnchorOf(head), noteId: head.noteId,
+        version: head.version, kind: head.kind, conclusion: head.conclusion, freshness: item.freshness, label });
+      if (head.kind === 'link') {
+        // A current link renders its conclusion header; a broken one renders
+        // only the broken warning (even when it is also stale/conflicting/
+        // source-unavailable); otherwise one row per applicable reason, and an
+        // `unchecked`-only link renders no row.
+        if (item.currentEligible) {
+          general.push(row(renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
+            conclusion: head.conclusion, ...headerExtrasOf(item) })));
+          continue;
+        }
+        if (item.link?.verification.status === 'broken') {
+          general.push(row(warningLabelOf(S['note.warning.link_broken'], head)));
+          continue;
+        }
+        if (item.freshness === 'stale') general.push(row(warningLabelOf(S['note.warning.stale'], head)));
+        if (item.conflicting) general.push(row(warningLabelOf(S['note.warning.conflict'], head)));
+        if (item.sourceUnavailable) general.push(row(warningLabelOf(S['note.warning.sourceUnavailable'], head)));
+        continue;
+      }
       // Only a current conclusion, or one warning row for an
       // accepted/reviewed stale/conflicting/source-unavailable head; every
       // other ineligible head contributes no row at all.
       if (item.currentEligible) {
-        general.push({ anchorKey: displayAnchorOf(head), noteId: head.noteId, version: head.version, kind: head.kind,
-          conclusion: head.conclusion, freshness: item.freshness, label: renderNoteHeader(head) });
+        general.push(row(renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
+          conclusion: head.conclusion, ...headerExtrasOf(head) })));
         continue;
       }
       const warningState = head.state === 'accepted' || head.state === 'reviewed';
@@ -2108,8 +2190,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (!warningState || !warningWord) continue;
       const label = generalWarningLabel(item, head);
       if (label === null) continue;
-      general.push({ anchorKey: displayAnchorOf(head), noteId: head.noteId, version: head.version, kind: head.kind,
-        conclusion: head.conclusion, freshness: item.freshness, label });
+      general.push(row(label));
     }
 
     const reminders = pageBuilt.value.understanding.map(status => ({ anchorKey: status.anchorKey,
@@ -2232,7 +2313,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (built.status !== 'ready') return built;
       const { result, heads } = built.value;
       const value: NoteListResultV1 = {
-        items: result.items.map((item, index) => ({ ...item, label: renderNoteHeader(heads[index]!) })),
+        items: result.items.map((item, index) => {
+          const head = heads[index]!;
+          return { ...item, label: renderNoteHeader({ kind: head.kind, anchor: head.anchor,
+            structural: head.structural, conclusion: head.conclusion, ...headerExtrasOf(head) }) };
+        }),
         next: result.next, complete: result.complete, readBasis: result.readBasis, warnings: result.warnings,
         coverage: result.coverage, understanding: result.understanding };
       return { status: 'ready', value };
@@ -2532,8 +2617,17 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
       // §11.3: the unreachable `item.invalid` test is gone — only a staged
       // repair can be invalid, and `stale` never reads staged candidates.
-      const items = pageBuilt.value.items.filter(item => item.freshness !== 'fresh' || item.sourceUnavailable
-        || item.unresolvedFacts.length > 0 || item.anchorStatus === 'retired');
+      const items = pageBuilt.value.items
+        .map(item => {
+          const link = item.link;
+          if (link?.verification.status !== 'broken') return item;
+          const reason = linkBrokenStaleReason(link.verification.missing);
+          if (item.staleReasons.includes(reason)) return item;
+          return { ...item, staleReasons: [...item.staleReasons, reason] };
+        })
+        .filter(item => item.freshness !== 'fresh' || item.sourceUnavailable
+          || item.unresolvedFacts.length > 0 || item.anchorStatus === 'retired'
+          || item.link?.verification.status === 'broken');
       const next = slice.complete ? null : encodeMemoryCursor(ctx, 'stale', request,
         { after: slice.last, recordCursor: current.value });
       const result: MemoryResultV1 = { readBasis: basisOf(current.value, items), items, warnings: [],

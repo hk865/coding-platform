@@ -138,6 +138,7 @@ import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMe
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
 import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
+import { createSemanticLayerRead, type SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
 import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-material.js';
 import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
 import { createNoteDecisionSource } from '../core/work-graph/notes/note-decision-source.js';
@@ -535,6 +536,8 @@ export type TargetPlatformOptions = {
     anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; basisFileMaxBytes?: number;
     readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
     textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
+    anchorLinkQuota?: number; goalLinkQuota?: number; projectFlowQuota?: number;
+    linkRecheckMax?: number; flowCandidateMax?: number;
   };
   /**
    * Slice 4C-2 D-03: the injectable note id generator (`createNoteService`'s
@@ -2797,6 +2800,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       runTask: createNoteRunTaskResolver(backend.records),
       ...(options.noteLimits === undefined ? {} : options.noteLimits) });
     boundNoteReads = noteReads;
+    // The semantic links read reuses the SAME records, catalog and check the
+    // note reads use; it reads the one note layer, not a second owner.
+    const semanticLinks: SemanticLinksReader = createSemanticLayerRead({
+      records: backend.records, architecture: catalog, check: noteCheck });
     // H: the assembly reads the SAME history, records, note, decision and Query
     // execution owners the rest of this root publishes. A platform without a
     // Runtime has no Query execution reader; the successor step then answers
@@ -2869,7 +2876,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         duty: 'scribe',
       });
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
-      & NoteListReadPort & typeof noteVersions & {
+      & NoteListReadPort & SemanticLinksReader & typeof noteVersions & {
         readScribeTodos: NoteScribeTodoPort['readScribeTodos'];
         readLedgerCursor: NoteScribeTodoPort['readLedgerCursor'];
         goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
@@ -2882,6 +2889,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         ...(noteWrite.lookupToolCommit === undefined ? {} : { lookupToolCommit: noteWrite.lookupToolCommit }),
         memoryLookup, memoryNeighbors, memoryHistory, memoryConflicts, memoryFind, memoryStale, listNotes,
         listPlanVersions, listCatalogVersions,
+        readSemanticLinks: semanticLinks.readSemanticLinks,
         readScribeTodos: noteScribeTodos.readScribeTodos,
         readLedgerCursor: noteScribeTodos.readLedgerCursor,
         goalIdsForWorkspace,

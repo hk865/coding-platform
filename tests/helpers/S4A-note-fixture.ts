@@ -50,6 +50,8 @@ export type S4ANoteLimits = {
   anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; basisFileMaxBytes?: number;
   readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
   textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
+  anchorLinkQuota?: number; goalLinkQuota?: number; projectFlowQuota?: number;
+  linkRecheckMax?: number; flowCandidateMax?: number;
 };
 
 let suffixCounter = 0;

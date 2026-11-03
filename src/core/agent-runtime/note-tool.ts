@@ -18,7 +18,7 @@
  * the service's `forbidden`, not a second tool-level check.
  */
 import { messageOf } from '../../contracts/error-message.js';
-import type { NoteKind } from '../../contracts/note.js';
+import { payloadKindProblem, type NoteKind } from '../../contracts/note.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type {
   NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteWritePort, WriteNoteInput,
@@ -152,6 +152,36 @@ const sectionsSchema = z.object({
   next: z.string().min(1), risks: z.string().min(1),
 }).strict();
 
+// 8E L2 (sheet §4.2.3): the link payload's model-facing shape. The 1–8 evidence
+// count and every business refusal code stay in `writeInputProblem`; this only
+// fixes the shape the write owner receives.
+const linkKeySchema = z.union([
+  z.object({
+    kind: z.literal('symbol'),
+    anchor: z.object({
+      kind: z.literal('file'),
+      path: z.string().min(1),
+      symbolRequest: symbolRequestSchema,
+    }).strict(),
+  }).strict(),
+  z.object({ kind: z.literal('literal'), text: z.string().min(1) }).strict(),
+]);
+
+const linkEvidenceSchema = z.object({
+  role: z.enum(['use', 'wire', 'register', 'emit', 'receive', 'launch', 'entry']),
+  at: z.object({
+    path: z.string().min(1),
+    symbolRequest: symbolRequestSchema.optional(),
+    range: z.object({ startLine: z.number().int().min(0), endLine: z.number().int().min(0) }).strict().optional(),
+  }).strict(),
+}).strict();
+
+const linkSchema = z.object({
+  relation: z.enum(['calls', 'injects', 'callback', 'data', 'message', 'spawns']),
+  key: linkKeySchema.nullable().optional(),
+  evidence: z.array(linkEvidenceSchema),
+}).strict();
+
 /**
  * The repair payload's outer shape. The ops and destinations stay loose here:
  * the ONE op parser owns the ops' exact keys and the note service owns the move
@@ -205,6 +235,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     body: z.string().optional(),
     sections: sectionsSchema.optional(),
     repair: repairInputSchema.optional(),
+    link: linkSchema.optional(),
     expectedPointerRevision: z.number().int().min(0).nullable().optional(),
   }).strict();
   const reviewSchema = z.object({
@@ -302,6 +333,11 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
       if (args.kind === 'repair' && args.repair === undefined) {
         return rejectedWrite(callId, 'a repair note requires a repair payload');
       }
+      // The dedicated payload belongs to exactly its kind. The strict schema
+      // accepts `link` on every write arm, so the ONE per-kind payload table
+      // decides the mismatch here, before the builder can drop the raw field.
+      const payloadProblem = payloadKindProblem(args as unknown as Record<string, unknown>, args.kind);
+      if (payloadProblem !== null) return rejectedWrite(callId, payloadProblem);
     }
     let commandId: string;
     try {

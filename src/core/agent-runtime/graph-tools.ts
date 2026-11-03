@@ -282,7 +282,7 @@ const noteAnchorSchema: z.ZodType = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('project') }).strict(),
 ]);
 const noteKindSchema = z.enum(['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision',
-  'understanding', 'repair', 'general']);
+  'understanding', 'repair', 'link', 'general']);
 const noteStateSchema = z.enum(['staged', 'accepted', 'reviewed', 'pending_review', 'rejected', 'superseded', 'withdrawn']);
 const memoryBodySchema = z.object({
   noteId: z.string().min(1),

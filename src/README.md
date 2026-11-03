@@ -76,7 +76,7 @@
 | 工作线读取 | `src/core/work-graph/views/`（`work-line-reader.ts`） | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3052`）、`assembleLineBriefs`（`src/core/work-graph/views/work-line-reader.ts:239`） |
 | 附件和材料 | `src/core/work-graph/materials/` | `createMaterialService`（`src/core/work-graph/materials/material-service.ts:116`）、`createMaterialApplicability`（`src/core/work-graph/materials/applicability.ts:23`） |
 | 架构图/正式架构 | `src/core/work-graph/architecture/` | `createObservedArchitecture`（`src/core/work-graph/architecture/architecture-service.ts:904`）、`readCurrentCatalogWindow`（`src/core/work-graph/architecture/catalog-service.ts:368`）、`catalogPinOf`（`src/core/work-graph/architecture/catalog-service.ts:443`） |
-| 笔记（注记） | `src/core/work-graph/notes/` | `createNoteService`（`src/core/work-graph/notes/note-service.ts:586`）、`createNoteReadModel`（`src/core/work-graph/notes/note-read-model.ts:341`） |
+| 笔记（注记） | `src/core/work-graph/notes/` | `createNoteService`（`src/core/work-graph/notes/note-service.ts:730`）、`createNoteReadModel`（`src/core/work-graph/notes/note-read-model.ts:400`） |
 | 配置和设置 | `src/core/work-graph/configuration/` | `createProjectBootstrapServices`（`src/core/work-graph/configuration/project-bootstrap-service.ts:1125`）、`createRoleConfigurationService`（`src/core/work-graph/configuration/role-memory-service.ts:206`） |
 | 记录存储（提交/回执/翻页） | `src/core/record-store/`（`ports.ts`、`lookup-ports.ts`） | `GoalRecordTransactionPort`（`src/core/record-store/ports.ts:192`）、`lookupCommit`（`src/core/record-store/ports.ts:190`） |
 | 测试夹具 | `tests/helpers/`（先读 `tests/README.md`）；内存/SQLite 后端在 `src/core/record-store/` | `createInMemoryRecordBackend`（`src/core/record-store/in-memory-record-store.ts:71`） |

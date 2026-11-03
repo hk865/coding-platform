@@ -19,8 +19,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult, CoreRejection } from '../../../contracts/core/results.js';
 import { okFalse } from '../../../contracts/core/rejections.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import type { NoteAnchorV1, NoteFactV1, NoteHeadSnapshot, NoteSectionsV1, NoteVersionSnapshot } from '../../../contracts/note.js';
-import { renderNoteHeader } from '../../../contracts/note.js';
+import type { LinkPayloadV1, NoteAnchorV1, NoteFactV1, NoteHeadSnapshot, NoteSectionsV1, NoteVersionSnapshot } from '../../../contracts/note.js';
+import { headerExtrasOf, renderNoteHeader } from '../../../contracts/note.js';
 import { bigramWindows, normalizeSearchText } from '../../record-store/lookup-index.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
@@ -32,8 +32,10 @@ import type { AdoptedArchitecture, ArchitectureCatalogPort, ArchitectureRevision
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteSimilarV1,
   NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
-import { NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_QUOTA, NOTE_READ_FACTS_MAX, NOTE_READ_FILES_MAX,
-  NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX, NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';
+import { NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
+  NOTE_LINK_RECHECK_MAX, NOTE_PROJECT_FLOW_QUOTA, NOTE_READ_FACTS_MAX,
+  NOTE_READ_FILES_MAX, NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX,
+  NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';
 import { anchorKeyOf, isSafeRelativePath, noteCheckWorkspace, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
 import { anchorSlots } from '../notes/note-related-scope.js';
 import { foldInputOf, foldUpdateDue } from '../notes/note-update-due.js';
@@ -63,6 +65,12 @@ export type NoteCheckLimits = {
   basisFileMaxBytes?: number;
   anchorQuota?: number;
   goalQuota?: number;
+  /** The link populations' soft quotas (spec §2). */
+  anchorLinkQuota?: number;
+  goalLinkQuota?: number;
+  projectFlowQuota?: number;
+  /** The read-time link recheck budget; this run only initialises it. */
+  linkRecheckMax?: number;
 };
 
 export type NoteCheckDependencies = {
@@ -96,7 +104,8 @@ const RETIRED_TASK_DISPOSITIONS: readonly string[] = ['cancelled', 'superseded']
 type CheckBody = {
   noteId: string; version: number; state: NoteHeadSnapshot['state']; kind: NoteHeadSnapshot['kind'];
   topic: string; topicKey: string; conclusion: string; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[];
-  facts: NoteFactV1[]; basis: NoteHeadSnapshot['basis']; sections?: NoteSectionsV1; source: NoteHeadSnapshot['source'];
+  facts: NoteFactV1[]; basis: NoteHeadSnapshot['basis']; sections?: NoteSectionsV1; link?: LinkPayloadV1;
+  source: NoteHeadSnapshot['source'];
   replaces: readonly string[]; contradicts: readonly string[]; coexistWith: readonly string[];
 };
 
@@ -105,7 +114,8 @@ function bodyOfHead(head: NoteHeadSnapshot): CheckBody {
     topicKey: head.topicKey, conclusion: head.conclusion, anchor: head.anchor, extraAnchors: head.extraAnchors,
     facts: head.facts, basis: head.basis, source: head.source, replaces: head.replaces, contradicts: head.contradicts,
     coexistWith: head.coexistWith,
-    ...(head.sections === undefined ? {} : { sections: head.sections }) };
+    ...(head.sections === undefined ? {} : { sections: head.sections }),
+    ...(head.link === undefined ? {} : { link: head.link }) };
 }
 
 function bodyOfVersion(version: NoteVersionSnapshot): CheckBody {
@@ -113,7 +123,8 @@ function bodyOfVersion(version: NoteVersionSnapshot): CheckBody {
     topic: version.topic, topicKey: version.topicKey, conclusion: version.conclusion, anchor: version.anchor,
     extraAnchors: version.extraAnchors, facts: version.facts, basis: version.basis, replaces: version.replaces,
     contradicts: version.contradicts, coexistWith: version.coexistWith, source: version.source,
-    ...(version.sections === undefined ? {} : { sections: version.sections }) };
+    ...(version.sections === undefined ? {} : { sections: version.sections }),
+    ...(version.link === undefined ? {} : { link: version.link }) };
 }
 
 type FileRead = { status: 'ready'; digest: string } | { status: 'missing' | 'forbidden' | 'capacity' | 'unavailable' };
@@ -132,6 +143,7 @@ type CheckBudget = {
   readCount: number;
   factsRemaining: number;
   symbolRechecksRemaining: number;
+  linkRechecksRemaining: number;
 };
 
 /** The per-item observations, deduplicated by path, in first-encounter order. */
@@ -189,7 +201,8 @@ function newCheckCaches(): CheckCaches {
 function newCheckBudget(limits: NoteCheckLimits): CheckBudget {
   return { filesMax: limits.readFilesMax ?? NOTE_READ_FILES_MAX, reads: new Map(), readCount: 0,
     factsRemaining: limits.readFactsMax ?? NOTE_READ_FACTS_MAX,
-    symbolRechecksRemaining: limits.symbolRecheckMax ?? NOTE_SYMBOL_RECHECK_MAX };
+    symbolRechecksRemaining: limits.symbolRecheckMax ?? NOTE_SYMBOL_RECHECK_MAX,
+    linkRechecksRemaining: limits.linkRecheckMax ?? NOTE_LINK_RECHECK_MAX };
 }
 
 type FactOutcome =
@@ -214,8 +227,14 @@ export const NOTE_SIMILAR_SCAN = 100;
 export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort {
   const limits = deps.limits ?? {};
   const basisFileMaxBytes = limits.basisFileMaxBytes ?? NOTE_BASIS_FILE_MAX_BYTES;
-  const derivations: NoteHeadDerivations = createNoteHeadDerivations(deps.records,
-    limits.anchorQuota ?? NOTE_ANCHOR_QUOTA, limits.goalQuota ?? NOTE_GOAL_QUOTA);
+  const quotas = {
+    anchor: limits.anchorQuota ?? NOTE_ANCHOR_QUOTA,
+    goal: limits.goalQuota ?? NOTE_GOAL_QUOTA,
+    anchorLink: limits.anchorLinkQuota ?? NOTE_ANCHOR_LINK_QUOTA,
+    goalLink: limits.goalLinkQuota ?? NOTE_GOAL_LINK_QUOTA,
+    projectFlow: limits.projectFlowQuota ?? NOTE_PROJECT_FLOW_QUOTA,
+  };
+  const derivations: NoteHeadDerivations = createNoteHeadDerivations(deps.records, quotas);
 
   const workspaceRef = (ctx: CoreCallContext) => ({ aggregateType: 'Workspace' as const,
     projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
@@ -627,12 +646,14 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
   async function anchorStatusOf(ctx: CoreCallContext, body: CheckBody, budget: CheckBudget,
     itemObs: ItemObservations, caches: CheckCaches):
   Promise<Outcome<{ retired: boolean; reasons: StaleReason[]; retiredExtraAnchors: string[]; unchecked: boolean;
-    staleReasons: string[] }>> {
-    const reasons: StaleReason[] = [];
+    staleReasons: string[]; anchorSlots: NoteCheckV1['anchorSlots'] }>> {
     const retiredExtraAnchors: string[] = [];
     const staleReasons: string[] = [];
     let unchecked = false;
     const all = [body.anchor, ...body.extraAnchors];
+    // One reason list per slot: the primary anchor first, then `extraAnchors`
+    // order. A slot keeps its own status even when two slots name one key.
+    const slotReasons: StaleReason[][] = all.map(() => []);
     const needsCatalog = all.some(anchor => anchor.kind === 'module' || anchor.kind === 'interface');
     // MF5/R5: each task/stage anchor resolves against its OWN goal's plan.
     const plans = new Map<string, PlanRevisionSnapshot | null>();
@@ -699,15 +720,16 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       }
     };
 
-    for (const anchor of all) {
-      const outcome = await retirementOf(anchor);
+    for (let index = 0; index < all.length; index += 1) {
+      const outcome = await retirementOf(all[index]!);
       if (!outcome.ok) return outcome;
       const retired = outcome.value;
-      if (anchor === body.anchor) reasons.push(...retired);
-      else if (retired.length > 0) retiredExtraAnchors.push(anchorKeyOf(anchor));
+      slotReasons[index]!.push(...retired);
+      if (index > 0 && retired.length > 0) retiredExtraAnchors.push(anchorKeyOf(all[index]!));
     }
 
-    for (const anchor of all) {
+    for (let index = 0; index < all.length; index += 1) {
+      const anchor = all[index]!;
       if (anchor.kind !== 'file' || anchor.symbol === undefined) continue;
       const observed = await observeForItem(ctx, budget, itemObs, anchor.path, anchor.symbol.fileDigest);
       if (observed.outcome === 'same') continue; // stored fileDigest matches: no recheck
@@ -720,13 +742,19 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       const rechecked = await recheckSymbol(ctx, anchor, limits.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX);
       if (rechecked.status === 'changed') staleReasons.push('symbol_signature_changed');
       else if (rechecked.status === 'missing') {
-        if (anchor === body.anchor) reasons.push('symbol_missing');
-        else if (!retiredExtraAnchors.includes(anchorKeyOf(anchor))) retiredExtraAnchors.push(anchorKeyOf(anchor));
+        slotReasons[index]!.push('symbol_missing');
+        if (index > 0 && !retiredExtraAnchors.includes(anchorKeyOf(anchor))) retiredExtraAnchors.push(anchorKeyOf(anchor));
       } else if (rechecked.status === 'unchecked') {
         unchecked = true;
       }
     }
-    return { ok: true, value: { retired: reasons.length > 0, reasons, retiredExtraAnchors, unchecked, staleReasons } };
+    const reasons = slotReasons[0] ?? [];
+    const anchorSlots: NoteCheckV1['anchorSlots'] = slotReasons.map(reasonsOfSlot => ({
+      status: reasonsOfSlot.length > 0 ? 'retired' as const : 'live' as const,
+      reasons: reasonsOfSlot,
+    }));
+    return { ok: true, value: { retired: reasons.length > 0, reasons, retiredExtraAnchors, unchecked, staleReasons,
+      anchorSlots } };
   }
 
   /** L11 definitions: plan adoption, task definitions, module/interface definitions. */
@@ -1059,7 +1087,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       if (similarity < NOTE_SIMILAR_MIN) continue;
       scored.push({ noteId: head.noteId, version: head.version,
         header: renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
-          conclusion: head.conclusion }), similarity });
+          conclusion: head.conclusion, ...headerExtrasOf(head) }), similarity });
     }
     scored.sort((left, right) => right.similarity - left.similarity || (left.noteId < right.noteId ? -1 : 1));
     return { ok: true, value: scored.slice(0, NOTE_SIMILAR_MAX) };
@@ -1193,8 +1221,10 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     // condition, and the project understanding is current for every goal.
     const callerGoalId = ctx.principal.kind === 'work_run' ? ctx.principal.runRef.goalId : null;
     const isProjectUnderstanding = body.kind === 'understanding' && body.anchor.kind === 'project';
-    const ownGoalEligible = isProjectUnderstanding || body.state !== 'accepted' || callerGoalId === null
-      || head.goalId === callerGoalId || head.confirmedByUser;
+    // A link is read across goals by the Host route, so the general note's
+    // own-goal term does not apply to it.
+    const ownGoalEligible = body.kind === 'link' || isProjectUnderstanding || body.state !== 'accepted'
+      || callerGoalId === null || head.goalId === callerGoalId || head.confirmedByUser;
     const currentEligible = stateEligible && ownGoalEligible && isHeadVersion && freshness === 'fresh'
       && !derived.conflicting && !invalid && !sourceUnavailable && !anchor.value.retired && unresolvedFacts.length === 0;
 
@@ -1225,8 +1255,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       currentEligible,
       anchorStatus: anchor.value.retired ? 'retired' : 'live',
       anchorRetiredReasons: anchor.value.reasons,
+      anchorSlots: anchor.value.anchorSlots,
       retiredExtraAnchors: anchor.value.retiredExtraAnchors,
       unresolvedFacts, uncheckedFacts, hints,
+      // The read side carries the stored write-time result here; a later read
+      // may replace it with its own recheck result.
+      ...(body.kind === 'link' && body.link !== undefined ? { linkVerification: body.link.verification } : {}),
       ...(similar === undefined ? {} : { similar }),
     } };
   }

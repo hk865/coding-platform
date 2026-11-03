@@ -162,6 +162,7 @@ Goal/Plan/claim/prepare/execute 的共同前置；claim 只由 `TaskClaimPort` �
 - `W2-whiteboard-fixture.ts` — 真实 B2 执行世界 + W2 read/admission 端口，Agent Run/claim/Session/Lease 全由正式服务产生；`tests/work-graph/A2-disposition-change.test.ts` 在用。
 - `WP1-scenario-fixture.ts` — SQLite 真实组合的 SC01 暂停中断和 SC02 归档线场景，返回人继续/下一 Session 之前的状态；`tests/scenarios/WP1-wiring.test.ts` 在用。
 - `observation-source-fixture.ts` — 真实临时根 + `createWorkspaceAccessFactory`/`captureObservationSource`，保留真实 git 命令和 Host bindings；`tests/data/S8E-A26-git-classification.test.ts` 在用。
+- `S8E-semantic-world.ts` — 8E L2 的唯一语义世界：规格 §5.2 的 19 文件树、五模块目录（公开 `architecture/adopt-initial`）、Goal/Plan/scribe 线、真实 Host 与 person `notes/write`/真实 Work Run 的 `record_note`，以及小额度、捕获计数和读故障 wrapper；L3/F1/F2 只读复用。
 
 ### 活动
 

@@ -46,7 +46,7 @@ export type NoteDraftAnchorV1 =
 export type NoteSectionsV1 = { status: string; decided: string; open: string; next: string; risks: string };
 
 export type NoteKind = 'convention' | 'pitfall' | 'tradeoff' | 'open_question' | 'preference' | 'decision'
-  | 'understanding' | 'repair';
+  | 'understanding' | 'repair' | 'link';
 /** The six general kinds, in spec order. */
 export const NOTE_GENERAL_KINDS: readonly NoteKind[] =
   ['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision'];
@@ -57,14 +57,15 @@ export function isGeneral(kind: string): boolean {
 }
 
 /** The one complete kind list; the codec, service and tool group point at it. */
-export const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair'];
+export const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair', 'link'];
 
 /**
  * The one per-kind payload table: the kind's dedicated field and whether it is
- * required. Only `repair` exists in 8C; 8E adds its own entries.
+ * required. 8C owns `repair`; 8E adds `link` (and later `flow`) here.
  */
 export const NOTE_PAYLOAD_KINDS: Readonly<Partial<Record<NoteKind, { field: string; required: boolean }>>> = {
   repair: { field: 'repair', required: true },
+  link: { field: 'link', required: true },
 };
 
 /**
@@ -80,11 +81,13 @@ export function payloadKindProblem(body: Record<string, unknown>, kind: string,
     const present = body[entry.field] !== undefined;
     if (kind === payloadKind) {
       if (entry.required && !present) {
+        if (payloadKind === 'link' && label === undefined) return 'payload_kind_mismatch';
         return label === undefined
           ? `a ${payloadKind} note requires the ${entry.field} payload`
           : `${label}.${entry.field} is required for ${payloadKind}`;
       }
     } else if (present) {
+      if (payloadKind === 'link' && label === undefined) return 'payload_kind_mismatch';
       return label === undefined
         ? `the ${entry.field} payload is only for a ${payloadKind} note`
         : `${label}.${entry.field} is only for ${payloadKind}`;
@@ -92,6 +95,77 @@ export function payloadKindProblem(body: Record<string, unknown>, kind: string,
   }
   return null;
 }
+
+// --------------------------------------------------------------------------
+// The link write-and-store contract (8E L1, spec §2)
+// --------------------------------------------------------------------------
+
+/** Direction = the runtime control or data flow: from → to. */
+export type SemanticRelationV1 =
+  | 'calls'     // from finds and calls to at runtime by name or path: registry, dynamic import, plugin, dlopen
+  | 'injects'   // from knows one slot; elsewhere plugs to's implementation in at runtime; the slot is the "via"
+  | 'callback'  // to hands its own function to from, which calls it back at runtime; the slot is the "via"
+  | 'data'      // from writes and to reads the same data: file, table, body, configuration
+  | 'message'   // from sends and to receives: topic, event, mailbox, HTTP
+  | 'spawns';   // from starts to as a process: launch, child process
+
+/** The name both sides share. */
+export type LinkKeyV1 =
+  | { kind: 'symbol'; anchor: { kind: 'file'; path: string; symbolRequest: SymbolRequestV1 } }
+  | { kind: 'literal'; text: string };   // a name written literally in code: registry name, topic, path, program
+
+export type LinkEvidenceRoleV1 = 'use' | 'wire' | 'register' | 'emit' | 'receive' | 'launch' | 'entry';
+export type LinkEvidenceV1 = {
+  role: LinkEvidenceRoleV1;
+  // at most one of symbolRequest and range; neither means the whole file
+  at: { path: string; symbolRequest?: SymbolRequestV1; range?: { startLine: number; endLine: number } };
+};
+
+/** Given at write time by `record_note` / `notes/write`. */
+export type LinkInputV1 = {
+  relation: SemanticRelationV1;
+  key?: LinkKeyV1 | null;        // injects and callback give none; the others must, null when the name is built at runtime
+  evidence: LinkEvidenceV1[];    // 1–8 entries (NOTE_LINK_EVIDENCE_MAX), roles per the evidence gate
+};
+
+/** The verification result. broken/unchecked only appear at read time; L1 never produces them. */
+export type LinkVerificationV1 =
+  | { status: 'verified' }
+  | { status: 'broken'; missing: number[] }     // missing evidence indexes, 0-based; read time only
+  | { status: 'unverifiable'; reason: 'key_not_literal' | 'language_unsupported' | 'analyzer_unavailable' }
+  | { status: 'unchecked'; reason: 'budget' | 'unavailable' };   // read time only
+
+/** Stored in `NoteBodyV1.link`: the raw selectors, resolved locations, file digests and the write-time result. */
+export type LinkEvidenceStoredV1 = {
+  role: LinkEvidenceRoleV1;
+  at: {
+    path: string;
+    symbolRequest?: SymbolRequestV1;   // the raw selector given at write time; kept even when resolution failed
+    range?: { startLine: number; endLine: number };   // the line range given at write time
+    symbol?: SymbolLocatorV1;          // the resolved location; absent when resolution failed
+  };
+  fileDigest: string | null;           // raw_bytes of the worktree read at write time; null when unreadable
+  digestBasis: 'raw_bytes';            // not directly comparable with captured decoded_utf8
+};
+
+/** The raw endpoint request: a file end carries symbolRequest; a module or interface end is itself. */
+export type LinkEndRequestV1 = Extract<NoteDraftAnchorV1, { kind: 'module' | 'interface' | 'file' }>;
+
+/** The stored symbol key: the request is kept verbatim and the resolved location is stored separately. */
+export type LinkKeyStoredV1 =
+  | { kind: 'symbol'; path: string; symbolRequest: SymbolRequestV1; symbol?: SymbolLocatorV1 }
+  | { kind: 'literal'; text: string };
+
+export type LinkPayloadV1 = {
+  relation: SemanticRelationV1;
+  /** Each end's raw request (via is null when absent). Resolved anchors live in the body's anchor/extraAnchors. */
+  ends: { from: LinkEndRequestV1; to: LinkEndRequestV1; via: LinkEndRequestV1 | null };
+  key?: LinkKeyStoredV1 | null;   // null for injects and callback
+  evidence: LinkEvidenceStoredV1[];
+  /** The captured `coverage.projectConfiguration` and the configuration digest; both null without a capture. */
+  analysisConfig: { path: string | null; digest: string | null };
+  verification: Extract<LinkVerificationV1, { status: 'verified' | 'unverifiable' }>;   // the write-time result
+};
 
 export type CatalogRepairOpV1 =
   | { op: 'set_responsibility'; moduleId: string; text: string }
@@ -127,11 +201,18 @@ type NoteDraftCommonV1 = { topic: string; conclusion: string; anchor: NoteDraftA
   facts: NoteFactV1[]; basisFiles: string[]; structural: boolean; replaces: string[]; contradicts: string[];
   coexistWith: string[] };
 
-/** Strict per-kind union: `understanding` gives sections, `repair` gives the payload, every other kind a body. */
+/**
+ * Strict per-kind union: `understanding` gives sections, `repair` gives its payload,
+ * `link` gives its payload, every other kind a body. The general arm excludes
+ * `link` too, so a link cannot bypass the payload-kind gate.
+ */
 export type NoteDraftV1 =
-  | NoteDraftCommonV1 & { kind: Exclude<NoteKind, 'understanding' | 'repair'>; body: string }
+  | NoteDraftCommonV1 & { kind: Exclude<NoteKind, 'understanding' | 'repair' | 'link'>; body: string }
   | NoteDraftCommonV1 & { kind: 'understanding'; sections: NoteSectionsV1 }
-  | NoteDraftCommonV1 & { kind: 'repair'; body: string; repair: RepairInputV1 };
+  | NoteDraftCommonV1 & { kind: 'repair'; body: string; repair: RepairInputV1 }
+  | NoteDraftCommonV1 & { kind: 'link'; body: string; link: LinkInputV1 };
+
+export type LinkDraftV1 = Extract<NoteDraftV1, { kind: 'link' }>;
 
 export type NoteState = 'staged' | 'accepted' | 'reviewed' | 'pending_review' | 'rejected' | 'superseded' | 'withdrawn';
 
@@ -154,10 +235,11 @@ export type NoteFactV1 =
 export type NoteReviewReason = 'structural' | 'contradiction' | 'quota_full' | 'user_note_replaced';
 
 export type NoteBodyV1 = { kind: NoteKind; topic: string; topicKey: string; conclusion: string; body: string;
-  sections?: NoteSectionsV1; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; facts: NoteFactV1[];
+  sections?: NoteSectionsV1; repair?: RepairPayloadV1; link?: LinkPayloadV1;
+  anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; facts: NoteFactV1[];
   basis: { planRevision: number | null; catalogRevision: number | null; files: { path: string; digest: string }[] };
   structural: boolean; replaces: string[]; contradicts: string[];
-  coexistWith: string[]; repair?: RepairPayloadV1 };
+  coexistWith: string[] };
 
 export type NoteHeadSnapshot = NoteBodyV1 & { ref: NoteHeadRef; noteId: string; version: number; state: NoteState;
   goalId: string | null; source: NoteSourceV1; stagedRunKey: string | null;
@@ -185,9 +267,37 @@ export type PendingNoteVersionSnapshot = Omit<NoteVersionSnapshot, 'since'> & { 
 // renderNoteHeader (spec §2; user 2026-10-15 第 1 条)
 // --------------------------------------------------------------------------
 
-/** `<类名>(<锚点显示>)<!>：<结论>`; the `!` appears only for `structural`. */
-export function renderNoteHeader(note: { kind: NoteKind; anchor: NoteAnchorV1; structural: boolean; conclusion: string }): string {
-  // Display label per kind. The first six are frozen by §2; understanding/repair are the spec's own names.
+/** The anchor's display text; the one switch all header forms share. */
+function displayOfAnchor(anchor: NoteAnchorV1): string {
+  switch (anchor.kind) {
+    case 'module': return `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.modulePrefix']}${anchor.moduleId}`;
+    case 'interface': return `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.interfacePrefix']}${anchor.moduleId}/${anchor.interfaceId}`;
+    case 'file': {
+      const symbol = anchor.symbol === undefined ? '' : `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.symbolPrefix']}${anchor.symbol.qualifiedName}`;
+      const deleted = anchor.deleted === true ? PLATFORM_PROMPT_PACK_V1.strings['note.anchor.deletedSuffix'] : '';
+      return `${anchor.path}${symbol}${deleted}`;
+    }
+    case 'goal': return `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.goalPrefix']}${anchor.goalId}`;
+    case 'stage': return `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.stagePrefix']}${anchor.stageId}`;
+    case 'task': return `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.taskPrefix']}${anchor.taskId}`;
+    case 'project': return PLATFORM_PROMPT_PACK_V1.strings['note.anchor.project'];
+  }
+}
+
+/**
+ * `<类名>(<锚点显示>)<!>：<结论>` for the old kinds; a link renders
+ * `<类名>·<关系>(<from>→<to>)：<结论>`. The `!` appears only for `structural`,
+ * which link never is.
+ */
+export function renderNoteHeader(note: {
+  kind: NoteKind;
+  anchor: NoteAnchorV1;
+  structural: boolean;
+  conclusion: string;
+  relation?: SemanticRelationV1;  // link
+  to?: string;                    // the link's "to" display
+}): string {
+  // Display label per kind. The compiler is the checklist: every kind needs a label.
   const labels: Record<NoteKind, string> = {
     convention: PLATFORM_PROMPT_PACK_V1.strings['note.kind.convention'],
     pitfall: PLATFORM_PROMPT_PACK_V1.strings['note.kind.pitfall'],
@@ -197,23 +307,38 @@ export function renderNoteHeader(note: { kind: NoteKind; anchor: NoteAnchorV1; s
     decision: PLATFORM_PROMPT_PACK_V1.strings['note.kind.decision'],
     understanding: PLATFORM_PROMPT_PACK_V1.strings['note.kind.understanding'],
     repair: PLATFORM_PROMPT_PACK_V1.strings['note.kind.repair'],
+    link: PLATFORM_PROMPT_PACK_V1.strings['note.kind.link'],
   };
-  const anchor = note.anchor;
-  let display = '';
-  switch (anchor.kind) {
-    case 'module': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.modulePrefix']}${anchor.moduleId}`; break;
-    case 'interface': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.interfacePrefix']}${anchor.moduleId}/${anchor.interfaceId}`; break;
-    case 'file': {
-      const symbol = anchor.symbol === undefined ? '' : `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.symbolPrefix']}${anchor.symbol.qualifiedName}`;
-      const deleted = anchor.deleted === true ? PLATFORM_PROMPT_PACK_V1.strings['note.anchor.deletedSuffix'] : '';
-      display = `${anchor.path}${symbol}${deleted}`;
-      break;
-    }
-    case 'goal': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.goalPrefix']}${anchor.goalId}`; break;
-    case 'stage': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.stagePrefix']}${anchor.stageId}`; break;
-    case 'task': display = `${PLATFORM_PROMPT_PACK_V1.strings['note.anchor.taskPrefix']}${anchor.taskId}`; break;
-    case 'project': display = PLATFORM_PROMPT_PACK_V1.strings['note.anchor.project']; break;
+  const anchor = displayOfAnchor(note.anchor);
+  if (note.kind === 'link' && note.relation !== undefined && note.to !== undefined) {
+    const relationLabels: Record<SemanticRelationV1, string> = {
+      calls: PLATFORM_PROMPT_PACK_V1.strings['note.relation.calls'],
+      injects: PLATFORM_PROMPT_PACK_V1.strings['note.relation.injects'],
+      callback: PLATFORM_PROMPT_PACK_V1.strings['note.relation.callback'],
+      data: PLATFORM_PROMPT_PACK_V1.strings['note.relation.data'],
+      message: PLATFORM_PROMPT_PACK_V1.strings['note.relation.message'],
+      spawns: PLATFORM_PROMPT_PACK_V1.strings['note.relation.spawns'],
+    };
+    return `${labels.link}·${relationLabels[note.relation]}(${anchor}→${note.to})：${note.conclusion}`;
   }
   const marker = note.structural ? '!' : '';
-  return `${labels[note.kind]}(${display})${marker}：${note.conclusion}`;
+  return `${labels[note.kind]}(${anchor})${marker}：${note.conclusion}`;
+}
+
+/**
+ * The optional extras `renderNoteHeader` takes for a link, so the call sites do
+ * not each re-derive them. A caller with a `NoteItemV1` projects `kind`,
+ * `anchor`, `extraAnchors` and `link` only.
+ */
+export function headerExtrasOf(note: {
+  kind: NoteKind;
+  anchor: NoteAnchorV1;
+  extraAnchors?: readonly NoteAnchorV1[];
+  link?: { relation: SemanticRelationV1 };
+}): { relation?: SemanticRelationV1; to?: string } {
+  if (note.kind === 'link' && note.link !== undefined) {
+    const to = note.extraAnchors?.[0];
+    return { relation: note.link.relation, ...(to === undefined ? {} : { to: displayOfAnchor(to) }) };
+  }
+  return {};
 }

@@ -217,11 +217,13 @@ function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfi
       }
       const existing = built.bindings[index]!;
       const tools = [...existing.grant.tools, ...(entry.mergeTools ?? [])];
-      built.bindings[index] = { ...existing, grant: { ...existing.grant, tools: [...new Set(tools)] } };
+      const writeScope = [...existing.grant.writeScope, ...(entry.mergeWriteScope ?? [])];
+      built.bindings[index] = { ...existing, grant: { ...existing.grant, tools: [...new Set(tools)],
+        writeScope: [...new Set(writeScope)] } };
       continue;
     }
-    if (entry.mergeTools !== undefined) {
-      throw new Error(`S6A: mergeTools names the new binding ${entry.binding.id}; only an existing binding merges`);
+    if (entry.mergeTools !== undefined || entry.mergeWriteScope !== undefined) {
+      throw new Error(`S6A: mergeTools/mergeWriteScope names the new binding ${entry.binding.id}; only an existing binding merges`);
     }
     built.bindings.push(structuredClone(entry.binding));
     if (entry.queryProfile !== undefined) built.queryProfiles.push(structuredClone(entry.queryProfile));
@@ -318,6 +320,8 @@ export type S6AExtraBinding = {
   binding: WorkbenchRuntimeBinding;
   /** Added to the existing `binding.id`'s `grant.tools`; refused (`invalid`) when `binding.id` is new. */
   mergeTools?: readonly string[];
+  /** Added to the existing `binding.id`'s `grant.writeScope`; only with `mergeTools` on an existing binding. */
+  mergeWriteScope?: readonly string[];
   /** Only with a new binding id. */
   workflow?: WorkflowHostConfiguration['bindings'][number];
   /** Only with a new binding id. */

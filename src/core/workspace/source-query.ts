@@ -36,7 +36,8 @@ const rejected = <T>(code: WorkspaceError, reason: string): WorkspaceResult<T> =
 const toHit = (result: TypeScriptQueryResult): SourceHit => {
   if ('module' in result) return { kind: 'relation', relation: toSourceRelation(result) };
   if ('expression' in result) return { kind: 'relation', relation: toCallRelation(result) };
-  if ('name' in result) return { kind: 'symbol', location: toSourceLocation(result), name: result.name, symbolKind: result.kind };
+  if ('name' in result) return { kind: 'symbol', location: toSourceLocation(result), name: result.name, symbolKind: result.kind,
+    ...(result.declarationRanges === undefined ? {} : { declarationRanges: result.declarationRanges }) };
   return { kind: 'location', location: toSourceLocation(result) };
 };
 

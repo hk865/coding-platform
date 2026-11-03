@@ -9,10 +9,11 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
-  NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1,
-  NoteSourceV1, NoteState, NoteVersionSnapshot, RepairInputV1, RepairPayloadV1,
+  LinkInputV1, LinkVerificationV1, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteHeadSnapshot, NoteKind,
+  NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot, RepairInputV1, RepairPayloadV1,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { LinkReadPayloadV1 } from '../../../contracts/semantic-layer.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 
 // --------------------------------------------------------------------------
@@ -37,6 +38,14 @@ export const NOTE_ANCHOR_CANDIDATE_SCAN = 2000;
 export const NOTE_READ_FILES_MAX = 256;
 export const NOTE_READ_FACTS_MAX = 256;
 export const NOTE_SYMBOL_RECHECK_MAX = 20;
+// 8E L1 link constants (slice-8E spec §2). `NOTE_LINK_EVIDENCE_MAX` is also the
+// write shape's evidence cap and takes no injectable field.
+export const NOTE_LINK_EVIDENCE_MAX = 8;
+export const NOTE_LINK_RECHECK_MAX = 10;
+export const NOTE_FLOW_CANDIDATE_MAX = 500;
+export const NOTE_ANCHOR_LINK_QUOTA = 30;
+export const NOTE_GOAL_LINK_QUOTA = 300;
+export const NOTE_PROJECT_FLOW_QUOTA = 100;
 // Slice 4B §2 constants of the memory reads (L10/L12). All injectable.
 export const MEMORY_PAGE_DEFAULT = 20;
 export const MEMORY_RESULT_MAX_BYTES = 48 * 1024;
@@ -74,11 +83,13 @@ export type NoteSimilarV1 = { noteId: string; version: number; header: string; s
 export type WriteNoteResult =
   | { status: 'accepted' | 'pending_review' | 'staged'; noteId: string; version: number;
       reasons: NoteReviewReason[]; overQuota: boolean; confirmedByUser: boolean;
-      warnings: ('symbol_unresolved' | 'anchor_ended')[]; existingTopics: NoteExistingTopicV1[] }
+      warnings: ('symbol_unresolved' | 'anchor_ended' | 'evidence_unverifiable')[]; existingTopics: NoteExistingTopicV1[] }
   | { status: 'rejected'; code: NoteErrorCode; reason: string; draft: WriteNoteInput;
       conflicts?: { noteId: string; version: number; conclusion: string }[];
       symbolCandidates?: { name: string; range: { startLine: number; endLine: number } }[];
       anchorCandidates?: NoteAnchorCandidateV1[]; candidatesUnavailable?: boolean;
+      /** Only on `evidence_missing` / `evidence_outside_end`: every failing evidence index. */
+      evidenceIndexes?: number[];
       pointer?: { noteId: string | null; revision: number | null } };
 
 export type NoteDispositionResult =
@@ -126,6 +137,8 @@ export type RecordNoteWriteArgs = {
   body?: string;
   sections?: NoteSectionsV1;
   repair?: RepairInputV1;
+  /** The link's dedicated payload; the one payload-kind gate rejects it on another kind. */
+  link?: LinkInputV1;
   expectedPointerRevision?: number | null;
 };
 export type RecordNoteReviewArgs = {
@@ -170,12 +183,18 @@ export function recordNoteRequestOf(args: RecordNoteArgs, commandId: string): Re
       replaces: args.replaces ?? [],
       contradicts: args.contradicts ?? [],
       coexistWith: args.coexistWith ?? [],
+      // Keep a caller-supplied link on every kind branch: a mismatched payload
+      // must reach the one payload-kind gate instead of being silently dropped.
+      ...(args.link === undefined ? {} : { link: args.link }),
     };
     const note: NoteDraftV1 = args.kind === 'understanding'
       ? { ...common, kind: 'understanding', sections: args.sections as NoteSectionsV1 }
       : args.kind === 'repair'
         ? { ...common, kind: 'repair', body: args.body as string, repair: args.repair as RepairInputV1 }
-        : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding' | 'repair'>, body: args.body as string };
+        : args.kind === 'link'
+          ? { ...common, kind: 'link', body: args.body as string, link: args.link as LinkInputV1 }
+          : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding' | 'repair' | 'link'>,
+              body: args.body as string };
     return { op: 'write', request: { commandId, note,
       expectedPointerRevision: args.expectedPointerRevision ?? null, goalId: null } };
   }
@@ -283,6 +302,11 @@ export type NoteCheckV1 = { noteId: string; version: number;
   anchorStatus: 'live' | 'retired';
   anchorRetiredReasons: ('module_removed' | 'interface_removed' | 'file_deleted' | 'task_ended'
     | 'stage_not_in_current_plan' | 'symbol_missing')[];
+  /** One entry per slot: the primary anchor first, then `extraAnchors` order. */
+  anchorSlots: { status: 'live' | 'retired'; reasons: ('module_removed' | 'interface_removed' | 'file_deleted'
+    | 'task_ended' | 'stage_not_in_current_plan' | 'symbol_missing')[] }[];
+  /** The stored narrow result overlaid by the read side; 8E-1 only produces verified/unverifiable. */
+  linkVerification?: LinkVerificationV1;
   retiredExtraAnchors: string[];
   // R1: `invalid_file_digest` mirrors `invalid_commit_format` for a file fact
   // whose digest is not 64 lowercase hex (lead amends §2's reason list).
@@ -306,6 +330,10 @@ export type NoteItemV1 = { noteId: string; version: number; storedState: NoteSta
   anchorStatus: 'live' | 'retired';
   anchorRetiredReasons: ('module_removed' | 'interface_removed' | 'file_deleted' | 'task_ended'
     | 'stage_not_in_current_plan' | 'symbol_missing')[];
+  /** One entry per slot: the primary anchor first, then `extraAnchors` order; two slots on one key stay separate. */
+  anchorSlots: NoteCheckV1['anchorSlots'];
+  /** Present exactly on a `link` note. */
+  link?: LinkReadPayloadV1;
   retiredExtraAnchors: string[];
   unresolvedFacts: NoteCheckV1['unresolvedFacts']; uncheckedFacts: number[]; hints: NoteHintV1[];
   matchedTerms: string[]; score: number;

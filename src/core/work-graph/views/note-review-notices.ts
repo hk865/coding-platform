@@ -19,7 +19,7 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
-import { renderNoteHeader, type NoteVersionSnapshot } from '../../../contracts/note.js';
+import { headerExtrasOf, renderNoteHeader, type NoteVersionSnapshot } from '../../../contracts/note.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   DecisionNoticeSourcePort,
@@ -139,7 +139,9 @@ async function readNoteReviewPage(
         items.push({
           itemKey, category: 'note_review', subject,
           position: { kind: 'commit', cursor: version.since, itemKey },
-          summary: `注记 · ${noteChangeAction(version.change.kind)} · ${renderNoteHeader(version)}`,
+          summary: `注记 · ${noteChangeAction(version.change.kind)} · ${renderNoteHeader({ kind: version.kind,
+            anchor: version.anchor, structural: version.structural, conclusion: version.conclusion,
+            ...headerExtrasOf(version) })}`,
           objects: [], rework: null, noteClass: versionClass,
         });
       }

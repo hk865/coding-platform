@@ -29,7 +29,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
-import { renderNoteHeader } from '../../../contracts/note.js';
+import { headerExtrasOf, renderNoteHeader } from '../../../contracts/note.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey, decisionSubjectGoalRef } from '../../../contracts/goal-decisions.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -88,14 +88,16 @@ function cardFactsOf(projectId: string, head: NoteHeadSnapshot, pointer: Pointer
     reasons.includes('contradiction') || reasons.includes('user_note_replaced')
       ? ['supersede', 'coexist', 'reject'] : ['accept', 'reject'];
   const objects: DecisionObjectV1[] = [
-    { kind: 'aggregate', pin: headPin, label: renderNoteHeader(head) },
+    { kind: 'aggregate', pin: headPin, label: renderNoteHeader({ kind: head.kind, anchor: head.anchor,
+      structural: head.structural, conclusion: head.conclusion, ...headerExtrasOf(head) }) },
   ];
   for (const targetId of actualDispositionTargets(head)) {
     const targetHead = targetHeads.get(targetId);
     if (targetHead === undefined) continue;
     objects.push({ kind: 'aggregate',
       pin: { ref: { aggregateType: 'NoteHead', projectId, noteId: targetId }, revision: targetHead.version },
-      label: renderNoteHeader(targetHead) });
+      label: renderNoteHeader({ kind: targetHead.kind, anchor: targetHead.anchor,
+        structural: targetHead.structural, conclusion: targetHead.conclusion, ...headerExtrasOf(targetHead) }) });
   }
   // D-01/NE6: every note-card option is a real state transition of the note
   // (reject included), so all four go through `applyNoteDecision` and the
@@ -106,7 +108,8 @@ function cardFactsOf(projectId: string, head: NoteHeadSnapshot, pointer: Pointer
     cardId: decisionSourceKey({ kind: 'note_review', note: headPin }),
     source: 'note_review', noteId: head.noteId, version: head.version, kind: head.kind, goalId: head.goalId,
     openedAt: head.createdAt,
-    optionIds, summary: renderNoteHeader(head),
+    optionIds, summary: renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
+      conclusion: head.conclusion, ...headerExtrasOf(head) }),
     pointer: isUnderstanding ? { noteId: pointer.noteId, revision: pointer.revision } : null,
     pins, objects, options,
   };

@@ -431,7 +431,7 @@ export async function seedS6AMemory(world: S6AMemoryWorld, options: S6AMemoryOpt
   NoteDraftV1 => ({ ...common, kind: 'understanding', topic: text.topic, conclusion: text.conclusion, anchor,
     sections: { ...text.sections } });
   const general = (anchor: NoteDraftAnchorV1, text: { kind: string; topic: string; conclusion: string; body: string }):
-  NoteDraftV1 => ({ ...common, kind: text.kind as Exclude<NoteKind, 'understanding' | 'repair'>, topic: text.topic,
+  NoteDraftV1 => ({ ...common, kind: text.kind as Exclude<NoteKind, 'understanding' | 'repair' | 'link'>, topic: text.topic,
     conclusion: text.conclusion, anchor, body: text.body });
 
   const firstId = world.goals.first.goalId;

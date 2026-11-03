@@ -313,12 +313,12 @@ Promise<{ ok: true; catalog: AdoptedArchitecture; module: ModuleDefinition; cata
 }
 
 /** §11.2: the module's declared interfaces, as canonical anchor keys. */
-function interfaceKeysOf(moduleId: string, module: ModuleDefinition): string[] {
+export function interfaceKeysOf(moduleId: string, module: ModuleDefinition): string[] {
   return module.interfaces.map(candidate => `interface:${moduleId}/${candidate.id}`);
 }
 
 /** §11.2: file keys whose single longest catalog owner is M (via the exported `moduleOfAnchor`). */
-async function collectModuleFileKeys(deps: RelatedScopeDeps, ctx: CoreCallContext,
+export async function collectModuleFileKeys(deps: RelatedScopeDeps, ctx: CoreCallContext,
   catalog: AdoptedArchitecture, module: ModuleDefinition):
 Promise<{ ok: true; value: string[] } | { ok: false; code: RelatedReadCode; reason: string }> {
   const paths = new Set<string>();

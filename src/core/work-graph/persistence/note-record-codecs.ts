@@ -55,6 +55,8 @@ export const S4_NOTE_TEXT_LOOKUP = 's4-note-text';
  * per (project, noticeClass), read from the saved seen position (inclusive).
  */
 export const S4C2_NOTE_VERSION_NOTICE_LOOKUP = 's4c2-note-version-notice';
+/** 8E L1: the project-scope `(kind, state)` index the link/flow reads page through. */
+export const S8E_NOTE_BY_KIND_STATE_LOOKUP = 's8e-note-by-kind-state';
 
 /** Event header copied from the Slice 2B run-activity codec. */
 export type NoteEventHeaderV1 = {
@@ -108,8 +110,8 @@ const NOTE_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pe
 const REVIEW_REASONS: readonly NoteReviewReason[] = ['structural', 'contradiction', 'quota_full', 'user_note_replaced'];
 const CHANGE_KINDS: readonly NoteVersionSnapshot['change']['kind'][] = ['write', 'review', 'accept', 'activate',
   'reject', 'withdraw', 'supersede', 'coexist', 'merge'];
-const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion', 'body', 'sections', 'anchor',
-  'extraAnchors', 'facts', 'basis', 'structural', 'replaces', 'contradicts', 'coexistWith', 'repair'];
+const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion', 'body', 'sections', 'repair', 'link', 'anchor',
+  'extraAnchors', 'facts', 'basis', 'structural', 'replaces', 'contradicts', 'coexistWith'];
 const HEAD_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
   'stagedRunKey', 'reviewReasons', 'confirmedByUser', 'anchorKey0', 'anchorKey1', 'anchorKey2', 'anchorKey3',
   'anchorKey4', 'createdAt', 'since', 'revision'];
@@ -530,12 +532,12 @@ export function encodeNoteWrittenEvent(event: NoteWrittenEventV1): EncodedDomain
 }
 
 const NOTE_WRITE_STATUSES: readonly NoteState[] = ['accepted', 'pending_review', 'staged'];
-const NOTE_WRITE_WARNINGS: readonly string[] = ['symbol_unresolved', 'anchor_ended'];
+const NOTE_WRITE_WARNINGS: readonly string[] = ['symbol_unresolved', 'anchor_ended', 'evidence_unverifiable'];
 
 /**
  * R4: the strict `NoteWritten.result` check. It must agree with
  * the written head (status, noteId, version, reasons, confirmedByUser) and stay
- * inside the success shape (`overQuota` boolean, the two warning codes, at most
+ * inside the success shape (`overQuota` boolean, the warning codes, at most
  * `NOTE_EXISTING_TOPICS_MAX` `{anchorKey, topic, count >= 1}` topics).
  */
 function noteWriteResultProblem(value: unknown, head: UnknownRecord): string | null {
@@ -688,6 +690,9 @@ const NOTE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   // Slice 4C-2: one ordered notice stream per (project, noticeClass), by `since`.
   { name: S4C2_NOTE_VERSION_NOTICE_LOOKUP, aggregateType: 'NoteVersion',
     paths: ['ref.projectId', 'noticeClass'], orderBy: { path: 'since' } },
+  // 8E L1: the project-scope link/flow read by kind and state, ordered by `noteId`.
+  { name: S8E_NOTE_BY_KIND_STATE_LOOKUP, aggregateType: 'NoteHead',
+    paths: ['ref.projectId', 'kind', 'state'], orderBy: { path: 'noteId' } },
 ];
 
 export const NOTE_RECORD_SCHEMAS: RecordBackendSchemas = {

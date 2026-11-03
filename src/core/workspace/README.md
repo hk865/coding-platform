@@ -61,8 +61,8 @@
 | `CandidateWorkspaceReader` | `src/core/workspace/candidate-workspace-reader.ts:64` | candidate 范围的整树快照与 git entry | 需要 candidate 级摘要或验证基准时 |
 | `SourceIndex` | `src/core/workspace/source-index.ts:29` | 显式文件集的只读 TS 语义查询与有界 excerpt | 探索工具要符号/定义/引用时；不是全仓索引 |
 | `TypeScriptSourceAnalyzer` | `src/core/workspace/typescript-source-query.ts:135` | 对一份冻结快照做同步 TS 分析 | 捕获后重复分析且不能再有 I/O 时 |
-| `readTopLevelDeclarations` | `src/core/workspace/typescript-source-query.ts:317` | 只列顶层声明，不走进嵌套节点 | 需要在比较材料里按顶层名字找重复时 |
-| `readStringLiterals` | `src/core/workspace/typescript-source-query.ts:344` | 列出字符串字面量的位置、预览、长度与 digest | 需要在比较材料里找重复字面量时 |
+| `readTopLevelDeclarations` | `src/core/workspace/typescript-source-query.ts:330` | 只列顶层声明，不走进嵌套节点 | 需要在比较材料里按顶层名字找重复时 |
+| `readStringLiterals` | `src/core/workspace/typescript-source-query.ts:357` | 列出字符串字面量的位置、预览、长度与 digest | 需要在比较材料里找重复字面量时 |
 | `CppSourceIndex` | `src/core/workspace/cpp-source-index.ts:16` | 权限过滤后的 C/C++ 来源查询 | 探索工具要 C/C++ 符号/import 时 |
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |
 | `readSourceIdentity` | `src/core/workspace/source-identity.ts:4` | 读 workspace 的固定 HEAD 身份 | 需要来源 pin、又不想引入完整 Git 读取时 |

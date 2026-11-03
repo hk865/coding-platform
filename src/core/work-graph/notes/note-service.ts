@@ -9,7 +9,7 @@
 import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type {
-  CurrentPointerRef, CurrentPointerSnapshot, NoteAnchorV1, NoteHeadSnapshot,
+  CurrentPointerRef, CurrentPointerSnapshot, LinkPayloadV1, NoteAnchorV1, NoteHeadSnapshot,
   NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot, PendingNoteHeadSnapshot,
   RepairPayloadV1, ResponsibilityMoveV1,
 } from '../../../contracts/note.js';
@@ -28,6 +28,8 @@ import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
 } from './note-anchors.js';
 import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, noteCheckWorkspace, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
+import { checkLinkDraft, evidenceRoleProblem, literalKeyProblem } from './link-evidence.js';
+import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
 import { newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
 import { stageContinuityOf } from './note-continuity.js';
@@ -55,8 +57,9 @@ import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts
 import type { NoteQueryRunSourcePort, PlanningQueryRunV1 } from '../tasks/planning-query-run.js';
 import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import {
-  NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES, NOTE_EXISTING_TOPICS_MAX,
-  NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_QUOTA, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
+  NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES,
+  NOTE_EXISTING_TOPICS_MAX, NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
+  NOTE_LINK_EVIDENCE_MAX, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
   UNDERSTANDING_BODY_MAX_BYTES,
 } from '../model/note-contracts.js';
 import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
@@ -114,6 +117,11 @@ export type NoteServiceDependencies = {
   /** P4 injection points (tests shrink the soft quota); production uses the spec constants. */
   anchorQuota?: number;
   goalQuota?: number;
+  /** L7/8E: the link populations' soft quotas (spec §2); the general quotas above stay as they are. */
+  anchorLinkQuota?: number;
+  goalLinkQuota?: number;
+  /** F1's flow-only project quota; declared here for the shared limit surface, unused until flow exists. */
+  projectFlowQuota?: number;
   /** The injectable L14 symbol-scan cap; production uses `NOTE_SYMBOL_HITS_MAX`. */
   symbolHitsMax?: number;
   basisFileMaxBytes?: number;
@@ -332,7 +340,13 @@ async function headsByGoalState(deps: NoteServiceDependencies, projectId: string
 // Draft validation (L4.1–L4.3)
 // --------------------------------------------------------------------------
 
-function sameKindFamily(left: string, right: string): boolean { return isGeneral(left) === isGeneral(right); }
+function sameKindFamily(left: string, right: string): boolean {
+  // The four families (book :430–434): the six general kinds replace only each
+  // other; an understanding, a repair and a link each replace only their own
+  // kind. `flow` is F1's family and is not a kind yet.
+  if (left === 'link' || right === 'link') return left === right;
+  return isGeneral(left) === isGeneral(right);
+}
 
 /**
  * The ONE supersession target rule, shared by the accepted-write
@@ -379,6 +393,132 @@ function repairInputProblem(value: unknown): string | null {
   if (pin !== null) return pin;
   if (!Array.isArray(value['ops'])) return 'the repair ops must be an array';
   if (!Array.isArray(value['responsibilityMoves'])) return 'the repair responsibilityMoves must be an array';
+  return null;
+}
+
+// --------------------------------------------------------------------------
+// The link draft's L1 shape (spec §4 L1): bare tokens, except the field-path
+// forms for an end or an evidence `at`. The evidence role table and the literal
+// bound live in `link-evidence.ts`; this is the one shape pass.
+// --------------------------------------------------------------------------
+
+const LINK_EVIDENCE_ROLES: readonly string[] = ['use', 'wire', 'register', 'emit', 'receive', 'launch', 'entry'];
+
+function isEndDraftKind(value: unknown): value is 'module' | 'interface' | 'file' {
+  return value === 'module' || value === 'interface' || value === 'file';
+}
+
+/** `symbolRequest.language` must agree with the file's extension (C7/F24). */
+function endLanguageMismatch(anchor: Record<string, unknown>): boolean {
+  const request = anchor['symbolRequest'];
+  if (anchor['kind'] !== 'file' || !isRecord(request) || typeof anchor['path'] !== 'string') return false;
+  return languageOfPath(anchor['path']) !== request['language'];
+}
+
+function linkKeyProblem(link: Record<string, unknown>, relation: string): string | null {
+  const has = link['key'] !== undefined;
+  const key = link['key'];
+  if (relation === 'injects' || relation === 'callback') {
+    if (has && key !== null) return 'link_key_mismatch';
+    return null;
+  }
+  if (!has) return 'link_key_mismatch';
+  if (key === null) return null;
+  if (!isRecord(key)) return 'link_key_invalid';
+  if (key['kind'] === 'literal') {
+    return typeof key['text'] === 'string' && literalKeyProblem(key['text']) === null ? null : 'link_key_invalid';
+  }
+  if (key['kind'] !== 'symbol') return 'link_key_invalid';
+  if (relation === 'spawns') return 'link_key_invalid';
+  const anchor = key['anchor'];
+  // LinkKeyV1's symbol key is a file anchor that carries the symbol request.
+  if (!isRecord(anchor) || anchor['kind'] !== 'file' || anchor['symbolRequest'] === undefined) {
+    return 'link_key_invalid';
+  }
+  // Reuse the one file-anchor shape rule; its prefixed text is not the token.
+  if (anchorFormatProblem(anchor, 'link.key') !== null) return 'link_key_invalid';
+  return endLanguageMismatch(anchor) ? 'link_key_invalid' : null;
+}
+
+function linkEvidenceProblem(link: Record<string, unknown>, relation: string): string | null {
+  const evidence = link['evidence'];
+  if (!Array.isArray(evidence) || evidence.length < 1 || evidence.length > NOTE_LINK_EVIDENCE_MAX) {
+    return 'evidence_count';
+  }
+  const roles: string[] = [];
+  for (const entry of evidence) {
+    const role = isRecord(entry) ? entry['role'] : undefined;
+    if (typeof role !== 'string' || !LINK_EVIDENCE_ROLES.includes(role)) return 'evidence_roles';
+    roles.push(role);
+  }
+  if (evidenceRoleProblem(relation as never, roles as never) !== null) return 'evidence_roles';
+  for (const [index, entry] of evidence.entries()) {
+    const field = `link.evidence[${String(index)}].at`;
+    const at = isRecord(entry) ? entry['at'] : undefined;
+    if (!isRecord(at)) return `evidence_invalid: ${field}`;
+    if (!isSafeRelativePath(at['path'])) return `evidence_invalid: ${field}.path`;
+    const hasRequest = at['symbolRequest'] !== undefined;
+    const hasRange = at['range'] !== undefined;
+    if (hasRequest && hasRange) return `evidence_invalid: ${field}`;
+    const range = at['range'];
+    if (hasRange) {
+      if (!isRecord(range) || !isPos(range['startLine']) || !isPos(range['endLine'])
+        || range['startLine'] > range['endLine']) return `evidence_invalid: ${field}.range`;
+    }
+    if (hasRequest) {
+      const request = at['symbolRequest'];
+      const shaped = anchorFormatProblem({ kind: 'file', path: at['path'], symbolRequest: request }, field);
+      if (shaped !== null) return `evidence_invalid: ${field}.symbolRequest`;
+      // A symbolRequest is only for TS/JS files (F24): another extension or a
+      // language that disagrees with it is the same field-path refusal.
+      const pathLanguage = languageOfPath(at['path'] as string);
+      if (pathLanguage !== 'typescript' || pathLanguage !== (request as Record<string, unknown>)['language']) {
+        return `evidence_invalid: ${field}.symbolRequest`;
+      }
+    }
+  }
+  return null;
+}
+
+function linkShapeProblem(draft: Record<string, unknown>): string | null {
+  const link = draft['link'];
+  if (!isRecord(link)) return 'link_anchor_kind';
+  const relation = link['relation'];
+  if (typeof relation !== 'string'
+    || !['calls', 'injects', 'callback', 'data', 'message', 'spawns'].includes(relation)) {
+    return 'link_anchor_kind';
+  }
+  const anchor = draft['anchor'];
+  if (!isRecord(anchor) || !isEndDraftKind(anchor['kind'])) return 'link_anchor_kind';
+  const extraAnchors = draft['extraAnchors'] as unknown[];
+  const count = extraAnchors.length;
+  const needsTwo = relation === 'injects' || relation === 'callback';
+  if (needsTwo ? count !== 2 : count < 1 || count > 2) return 'link_anchor_count';
+  const to = extraAnchors[0];
+  if (!isRecord(to)) return 'link_anchor_kind';
+  if (needsTwo || relation === 'calls') {
+    if (to['kind'] !== 'file' || to['symbolRequest'] === undefined) return 'link_anchor_kind';
+  } else if (!isEndDraftKind(to['kind'])) {
+    return 'link_anchor_kind';
+  }
+  const via = count === 2 ? extraAnchors[1] : undefined;
+  if (via !== undefined) {
+    if (!isRecord(via)) return 'link_anchor_kind';
+    if (needsTwo) {
+      if (via['kind'] !== 'file' || via['symbolRequest'] === undefined) return 'link_anchor_kind';
+    } else if (via['kind'] !== 'interface' && via['kind'] !== 'file') {
+      return 'link_anchor_kind';
+    }
+  }
+  // End language/extension mismatch: the end's own field path (C7/F24).
+  if (endLanguageMismatch(anchor)) return 'anchor_invalid: anchor';
+  if (endLanguageMismatch(to)) return 'anchor_invalid: extraAnchors[0]';
+  if (isRecord(via) && endLanguageMismatch(via)) return 'anchor_invalid: extraAnchors[1]';
+  const keyProblem = linkKeyProblem(link, relation);
+  if (keyProblem !== null) return keyProblem;
+  const evidenceProblem = linkEvidenceProblem(link, relation);
+  if (evidenceProblem !== null) return evidenceProblem;
+  if (draft['structural'] === true) return 'structural_not_allowed';
   return null;
 }
 
@@ -454,6 +594,10 @@ function writeInputProblem(input: unknown): string | null {
   for (const [index, extra] of extraAnchors.entries()) {
     const problem = anchorFormatProblem(extra, `extraAnchors[${String(index)}]`);
     if (problem !== null) return problem.reason;
+  }
+  if (kind === 'link') {
+    const linkProblem = linkShapeProblem(draft);
+    if (linkProblem !== null) return linkProblem;
   }
   const facts = draft['facts'];
   if (!Array.isArray(facts)) return 'facts must be an array';
@@ -586,6 +730,10 @@ export type NoteService = NoteWritePort & NoteDecisionApplyPort & NoteUserReason
 export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const anchorQuota = deps.anchorQuota ?? NOTE_ANCHOR_QUOTA;
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
+  // 8E L2's own populations: links per anchor (30) and link+flow per goal (300).
+  // The general 5/200 above stay separate; `projectFlowQuota` is F1's and unused.
+  const anchorLinkQuota = deps.anchorLinkQuota ?? NOTE_ANCHOR_LINK_QUOTA;
+  const goalLinkQuota = deps.goalLinkQuota ?? NOTE_GOAL_LINK_QUOTA;
   const symbolHitsMax = deps.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
   const basisFileMaxBytes = Math.min(deps.basisFileMaxBytes ?? NOTE_BASIS_FILE_MAX_BYTES, deps.workspaceMaxFileBytes);
   // The anchor and basis-file reads are the platform's checks (`noteCheckWorkspace`).
@@ -1338,9 +1486,13 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const platformStructural = repairPayload === undefined ? draft.structural : repairPayload.structural;
 
     // L2a classes 1–2 and 4, through the narrow reader (the Run-bound plan is
-    // passed so an agent's stage key keeps its bound revision).
+    // passed so an agent's stage key keeps its bound revision). A link judges
+    // duplicates by endpoint identity and stores plain file anchors; its ends,
+    // key and evidence are resolved once by `checkLinkDraft` below.
     const anchorRead = await resolveNoteAnchors(ctx, { main: draft.anchor, extraAnchors: draft.extraAnchors,
-      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax }, anchorFactsOf(call));
+      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax,
+      ...(draft.kind === 'link' ? { duplicateIdentity: 'end' as const, resolveSymbols: false } : {}) },
+    anchorFactsOf(call));
     if (anchorRead.status === 'rejected') {
       return rejectedInput(input, anchorRead.code, anchorRead.reason, {
         ...(anchorRead.anchorCandidates === undefined ? {} : { anchorCandidates: anchorRead.anchorCandidates }),
@@ -1403,11 +1555,29 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       const refusal = await deps.scopes.writeAdmission(ctx, caller.sessionRef, resolved.anchors, call.scope);
       if (refusal !== null) return rejectedInput(input, refusal.code, refusal.reason);
     }
-    const warnings: ('symbol_unresolved' | 'anchor_ended')[] = [];
+    const warnings: ('symbol_unresolved' | 'anchor_ended' | 'evidence_unverifiable')[] = [];
     if (resolved.anchorEnded) warnings.push('anchor_ended');
     // L14: a symbolRequest that resolved to no unique locator keeps the
     // plain file anchor and reports the success warning exactly once.
     if (resolved.symbolUnresolved) warnings.push('symbol_unresolved');
+    // L3b: a link's ends, symbol key and evidence resolve in ONE capture and the
+    // write-time verification is fixed here. A refusal writes nothing; the
+    // resolved anchors replace the anchor step's plain file anchors.
+    let linkAnchors: NoteAnchorV1[] = resolved.anchors;
+    let linkPayload: LinkPayloadV1 | undefined;
+    if (draft.kind === 'link') {
+      const window = await catalogWindowOf(call, ctx);
+      if (window.status === 'rejected') return rejectedInput(input, 'unavailable', window.reason);
+      const checked = await checkLinkDraft(ctx, { draft,
+        anchors: resolved.anchors, catalog: window.status === 'ready' ? window : null },
+      { workspace: checkedWorkspace, symbolHitsMax });
+      if (checked.status !== 'ok') return { ...checked, draft: input };
+      linkAnchors = checked.anchors;
+      linkPayload = checked.link;
+      for (const token of checked.warnings) {
+        if (!warnings.includes(token)) warnings.push(token);
+      }
+    }
 
     // Basis files (L11 write half): the platform reads each digest; too large is a refusal.
     const basisFiles: { path: string; digest: string }[] = [];
@@ -1569,14 +1739,23 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       if (target !== undefined && target !== null && target.state === 'pending_review'
         && sourceIsAuthorOf(target.source, caller.source)) revisedPending.set(noteId, target);
     }
-    // L7/R6: the anchor quota gates only general-kind items, so it is projected
-    // only for a general kind; the goal quota counts every kind.
-    const anchorFull = isGeneral(draft.kind) && [...resolved.keys].some(key => {
-      if (key === null) return false;
-      const heads = currentByAnchor.get(key) ?? [];
-      const count = heads.filter(head => isGeneral(head.kind) && !replacedCurrent.has(head.noteId)).length;
-      return count >= anchorQuota;
-    });
+    // L7/R6: the general anchor quota gates only general-kind items; a link has
+    // its own anchor population (accepted+reviewed links per key, 30). The goal
+    // quota counts every kind for the general population and link+flow for the
+    // link population (300).
+    const anchorFull = isGeneral(draft.kind)
+      ? [...resolved.keys].some(key => {
+        if (key === null) return false;
+        const heads = currentByAnchor.get(key) ?? [];
+        const count = heads.filter(head => isGeneral(head.kind) && !replacedCurrent.has(head.noteId)).length;
+        return count >= anchorQuota;
+      })
+      : draft.kind === 'link' && [...resolved.keys].some(key => {
+        if (key === null) return false;
+        const heads = currentByAnchor.get(key) ?? [];
+        const count = heads.filter(head => head.kind === 'link' && !replacedCurrent.has(head.noteId)).length;
+        return count >= anchorLinkQuota;
+      });
     // The goal's counted heads (deduped across the four counted states) are read
     // once: `goalFull` is the admission projection; the committed count below
     // subtracts only what this commit actually supersedes.
@@ -1593,8 +1772,17 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         }
       }
     }
-    const goalFull = goalHeads.filter(head => !replacedCurrent.has(head.noteId)
+    // The goal 200 counts every kind except link/flow; those are the separate
+    // `goalLinkQuota` population, so a link/flow head never enters the general
+    // count and a new link/flow does not increment it.
+    const outsideGeneralGoal = (kind: string): boolean => kind === 'link' || kind === 'flow';
+    const goalFullGeneral = !outsideGeneralGoal(draft.kind) && goalHeads.filter(head =>
+      !outsideGeneralGoal(head.kind) && !replacedCurrent.has(head.noteId)
       && !revisedPending.has(head.noteId)).length >= goalQuota;
+    const goalFullLink = draft.kind === 'link' && goalHeads.filter(head => head.kind === 'link'
+      && !replacedCurrent.has(head.noteId)
+      && !revisedPending.has(head.noteId)).length >= goalLinkQuota;
+    const goalFull = goalFullGeneral || goalFullLink;
 
     // C3.3: `contradiction` is recorded only when a contradicted target is
     // accepted/reviewed at write (D-04); `user_note_replaced` only when the
@@ -1624,10 +1812,23 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         return count + 1 > anchorQuota;
       });
     }
+    if (draft.kind === 'link' && supersedesNow) {
+      committedOverQuota = committedOverQuota || [...resolved.keys].some(key => {
+        if (key === null) return false;
+        const heads = currentByAnchor.get(key) ?? [];
+        const count = heads.filter(head => head.kind === 'link' && !replacedCurrent.has(head.noteId)).length;
+        return count + 1 > anchorLinkQuota;
+      });
+    }
     if (storedGoalId !== null) {
-      const committedGoal = goalHeads.filter(head => !(supersedesNow && replacedCurrent.has(head.noteId))
-        && !revisedPending.has(head.noteId)).length + 1;
-      if (committedGoal > goalQuota) committedOverQuota = true;
+      const counted = goalHeads.filter(head => !(supersedesNow && replacedCurrent.has(head.noteId))
+        && !revisedPending.has(head.noteId));
+      if (!outsideGeneralGoal(draft.kind)
+        && counted.filter(head => !outsideGeneralGoal(head.kind)).length + 1 > goalQuota) {
+        committedOverQuota = true;
+      }
+      if (draft.kind === 'link'
+        && counted.filter(head => head.kind === 'link').length + 1 > goalLinkQuota) committedOverQuota = true;
     }
 
     const noteId = deps.newId();
@@ -1639,12 +1840,13 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         kind: draft.kind, topic: draft.topic, topicKey, conclusion: draft.conclusion,
         body: draft.kind === 'understanding' ? renderUnderstandingBody(draft.sections) : draft.body,
         ...(draft.kind === 'understanding' ? { sections: draft.sections } : {}),
-        anchor: resolved.anchors[0]!, extraAnchors: resolved.anchors.slice(1), facts: draft.facts,
+        anchor: linkAnchors[0]!, extraAnchors: linkAnchors.slice(1), facts: draft.facts,
         basis: { planRevision: resolved.basisPlanRevision,
           catalogRevision: resolved.basisCatalogRevision, files: basisFiles },
         structural: platformStructural, replaces: [...draft.replaces], contradicts: [...draft.contradicts],
         coexistWith: [...draft.coexistWith],
         ...(repairPayload === undefined ? {} : { repair: repairPayload }),
+        ...(linkPayload === undefined ? {} : { link: linkPayload }),
       },
       state: admission.state, goalId: storedGoalId, source: caller.source,
       stagedRunKey: caller.source.kind === 'agent' && draft.kind === 'repair' && caller.source.runRef !== null

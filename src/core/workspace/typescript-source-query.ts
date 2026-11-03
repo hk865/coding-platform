@@ -34,7 +34,8 @@ export type SourceLocation = {
   symbolId: string;
 };
 
-export type SymbolQueryResult = SourceLocation & { name: string; kind: string };
+export type SymbolQueryResult = SourceLocation & { name: string; kind: string;
+  declarationRanges?: { startLine: number; endLine: number }[] };
 export type ImportQueryResult = SourceLocation & {
   module: string;
   resolution: 'resolved' | 'unknown';
@@ -203,9 +204,21 @@ export class TypeScriptSourceAnalyzer {
         if (overflow) break;
         signal.throwIfAborted();
         if (query.operation === 'symbols') {
-          const visit = (item: ts.NavigationTree) => { if (overflow) return; const span = item.nameSpan ?? item.spans[0];
-            if (span) { const located = location(file.fileName, span.start, span.length); if (located) push({ name: item.text, kind: item.kind, ...located }); }
-            item.childItems?.forEach(visit); };
+          const visit = (item: ts.NavigationTree) => {
+            if (overflow) return;
+            const span = item.nameSpan ?? item.spans[0];
+            if (span) {
+              const located = location(file.fileName, span.start, span.length);
+              if (located) {
+                const declarationRanges = item.spans.flatMap((entry) => {
+                  const declared = location(file.fileName, entry.start, entry.length);
+                  return declared === null ? [] : [{ startLine: declared.line, endLine: declared.endLine }];
+                });
+                push({ name: item.text, kind: item.kind, ...located, declarationRanges });
+              }
+            }
+            item.childItems?.forEach(visit);
+          };
           service.getNavigationTree(file.fileName).childItems?.forEach(visit);
         } else {
           const visit = (node: ts.Node) => {

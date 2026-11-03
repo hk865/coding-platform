@@ -12,7 +12,9 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureBaselinePin } from '../../../contracts/governance.js';
-import type { NoteAnchorV1, NoteDraftAnchorV1, NoteFactV1, SymbolLocatorV1, SymbolRequestV1 } from '../../../contracts/note.js';
+import type {
+  LinkEndRequestV1, NoteAnchorV1, NoteDraftAnchorV1, NoteFactV1, SymbolLocatorV1, SymbolRequestV1,
+} from '../../../contracts/note.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import { sha256Hex } from '../../../contracts/fingerprint.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -23,6 +25,7 @@ import type {
 import type { ArchitectureCatalogPort, CatalogModuleFacts } from '../architecture/catalog-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import { endpointIdentityOf } from './link-evidence.js';
 import type { GoalPlanWindow } from '../tasks/plan-readers.js';
 import type { AnchorGoalPlanFacts } from './note-anchor-facts.js';
 import { readAnchorGoalFacts } from './note-anchor-facts.js';
@@ -279,7 +282,7 @@ export function signatureDigestOf(text: string): string {
 type SymbolHit = Extract<SourceHit, { kind: 'symbol' }>;
 
 type SymbolResolution =
-  | { status: 'resolved'; symbol: SymbolLocatorV1 }
+  | { status: 'resolved'; symbol: SymbolLocatorV1; hit: SymbolHit }
   | { status: 'unresolved' }
   | { status: 'ambiguous'; candidates: { name: string; range: { startLine: number; endLine: number } }[] }
   | { status: 'rejected'; code: 'unavailable'; reason: string };
@@ -311,24 +314,39 @@ function symbolCandidatesOf(hits: readonly SymbolHit[]): { name: string; range: 
  * cap and no match are `unresolved`; 2+ are `ambiguous` (ordered by start
  * line). A capture/query failure is a write rejection (`unavailable`), never
  * a silent `unresolved` (R10).
+ *
+ * A caller that already owns the link's one capture passes it as `capture`;
+ * this function then uses it and does NOT release it (the caller's
+ * `checkLinkDraft` releases in its own `finally`). Without it, the function
+ * opens and releases its own capture exactly as before. In the shared-capture
+ * branch a page that still has `nextCursor` at the hit cap means the scan did
+ * not finish, so it is `unavailable` for the gate's `analyzer_unavailable`
+ * rather than a definite no-hit/ambiguity; the old callers keep their exit.
  */
 export async function resolveSymbol(ctx: CoreCallContext, path: string, request: SymbolRequestV1,
-  workspace: NoteAnchorWorkspace | undefined, hitsMax: number): Promise<SymbolResolution> {
-  if (workspace === undefined || workspace.capture === undefined || workspace.querySource === undefined) {
+  workspace: NoteAnchorWorkspace | undefined, hitsMax: number, capture?: CaptureSummary): Promise<SymbolResolution> {
+  if (workspace === undefined || workspace.querySource === undefined) {
     return { status: 'unresolved' };
   }
+  if (capture === undefined && workspace.capture === undefined) return { status: 'unresolved' };
   if (!SYMBOL_LANGUAGES.includes(request.language as SourceProvider)) return { status: 'unresolved' };
   const provider = request.language as SourceProvider;
-  let capture: CaptureSummary;
-  try {
-    const captured = await workspace.capture(ctx, { provider });
-    if (captured.status !== 'ready') {
-      if (captured.code === 'unsupported') return { status: 'unresolved' };
-      return { status: 'rejected', code: 'unavailable', reason: captured.reason };
+  let usedCapture: CaptureSummary;
+  let ownedCapture = false;
+  if (capture !== undefined) {
+    usedCapture = capture;
+  } else {
+    try {
+      const captured = await workspace.capture!(ctx, { provider });
+      if (captured.status !== 'ready') {
+        if (captured.code === 'unsupported') return { status: 'unresolved' };
+        return { status: 'rejected', code: 'unavailable', reason: captured.reason };
+      }
+      usedCapture = captured.value;
+      ownedCapture = true;
+    } catch {
+      return { status: 'rejected', code: 'unavailable', reason: 'the symbol capture cannot be read' };
     }
-    capture = captured.value;
-  } catch {
-    return { status: 'rejected', code: 'unavailable', reason: 'the symbol capture cannot be read' };
   }
   try {
     const matches: SymbolHit[] = [];
@@ -339,7 +357,7 @@ export async function resolveSymbol(ctx: CoreCallContext, path: string, request:
       let page: Awaited<ReturnType<WorkspaceToolsPort['querySource']>>;
       try {
         page = await workspace.querySource(ctx,
-          { capture: capture.ref, query: { kind: 'symbols', path }, cursor, limit });
+          { capture: usedCapture.ref, query: { kind: 'symbols', path }, cursor, limit });
       } catch {
         return { status: 'rejected', code: 'unavailable', reason: 'the symbol scan cannot be read' };
       }
@@ -359,8 +377,14 @@ export async function resolveSymbol(ctx: CoreCallContext, path: string, request:
     }
     const sorted = [...matches].sort((left, right) => left.location.start.line - right.location.start.line
       || left.location.start.column - right.location.start.column);
-    // R10: stopping at the cap with more pages never stores a locator.
+    // Stopping at the cap with more pages never stores a locator. The one
+    // shared capture must tell the gate the scan was incomplete (L2 DR-05:
+    // analyzer_unavailable), while the old callers keep the old exit.
     if (cursor !== null) {
+      if (capture !== undefined) {
+        return { status: 'rejected', code: 'unavailable',
+          reason: 'the symbol scan stopped at the hit cap before the file was exhausted' };
+      }
       return sorted.length >= 2
         ? { status: 'ambiguous', candidates: symbolCandidatesOf(sorted) }
         : { status: 'unresolved' };
@@ -370,7 +394,7 @@ export async function resolveSymbol(ctx: CoreCallContext, path: string, request:
     const hit = sorted[0]!;
     const read = await workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
       projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path, maxBytes: NOTE_BASIS_FILE_MAX_BYTES,
-      version: { kind: 'capture', capture: capture.ref } });
+      version: { kind: 'capture', capture: usedCapture.ref } });
     if (read.status !== 'ready') {
       // R10(iii): only a file that is not in the capture is a success warning;
       // every other read failure (capacity, unavailable, ...) rejects the write.
@@ -378,13 +402,16 @@ export async function resolveSymbol(ctx: CoreCallContext, path: string, request:
         ? { status: 'unresolved' }
         : { status: 'rejected', code: 'unavailable', reason: read.reason };
     }
-    return { status: 'resolved', symbol: { language: request.language, qualifiedName: hit.name,
+    return { status: 'resolved', hit, symbol: { language: request.language, qualifiedName: hit.name,
       range: { startLine: hit.location.start.line, endLine: hit.location.end.line },
       fileDigest: hit.location.digest, signatureDigest: signatureDigestOf(rangeTextOf(read.value.content, hit)) } };
   } finally {
     // Best-effort release: the locator is already computed, so a failed release
-    // never changes the write's outcome.
-    try { await workspace.releaseCapture?.(ctx, capture.ref); } catch { /* best-effort */ }
+    // never changes the write's outcome. A passed-in capture belongs to the
+    // caller and is released there.
+    if (ownedCapture) {
+      try { await workspace.releaseCapture?.(ctx, usedCapture.ref); } catch { /* best-effort */ }
+    }
   }
 }
 
@@ -490,6 +517,13 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   includeBasis?: boolean;
   /** The injectable symbol-scan cap; defaults to the spec's `NOTE_SYMBOL_HITS_MAX`. */
   symbolHitsMax?: number;
+  /** L2: the duplicate rule. `'path'` (default) is the old eight kinds; `'end'` is only for `kind === 'link'` (book :895, :229–232). */
+  duplicateIdentity?: 'path' | 'end';
+  /** L2: `false` makes this step store the plain file anchor and the raw
+   * request only. A link's ends and key are then resolved by §3.7's
+   * `checkLinkDraft` in field order (including `from`); the default `true`
+   * keeps the old eight kinds' per-anchor resolution (book :253–254, :895). */
+  resolveSymbols?: boolean;
 }, deps: NoteAnchorFactsDeps): Promise<{ status: 'ok'; value: ResolvedNoteAnchors } | NoteAnchorFailure> {
   const symbolHitsMax = input.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
   const drafts: NoteDraftAnchorV1[] = [input.main, ...input.extraAnchors];
@@ -500,10 +534,15 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   }
 
   // Class 1 duplicate check, on the canonical key (the stage version does not exist yet,
-  // so a stage duplicate is compared by goal+stage id).
+  // so a stage duplicate is compared by goal+stage id). A link compares endpoint
+  // identities instead, so two anchors in one file with different symbols are distinct.
+  const duplicateIdentity = input.duplicateIdentity ?? 'path';
   const seen = new Set<string>();
   for (const draft of drafts) {
-    const key = draftKeyWithoutVersion(draft);
+    const key = duplicateIdentity === 'end'
+      // The anchor-kind shape already passed for a link, so the draft is module/interface/file.
+      ? endpointIdentityOf(draft as LinkEndRequestV1)
+      : draftKeyWithoutVersion(draft);
     if (seen.has(key)) return { status: 'rejected', code: 'invalid',
       reason: 'an extra anchor repeats the main anchor', field: 'extraAnchors' };
     seen.add(key);
@@ -540,7 +579,8 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   for (const [index, draft] of drafts.entries()) {
     const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
     const resolved = await resolveOne(ctx, draft, field, deps, goalPlanFacts,
-      { isAgent, runGoalId: input.goalId, facts: input.facts ?? [], symbolHitsMax });
+      { isAgent, runGoalId: input.goalId, facts: input.facts ?? [], symbolHitsMax,
+        ...(input.resolveSymbols === undefined ? {} : { resolveSymbols: input.resolveSymbols }) });
     if (resolved.status === 'rejected') return resolved;
     if (resolved.ended) anchorEnded = true;
     if (resolved.symbolUnresolved === true) symbolUnresolved = true;
@@ -668,7 +708,8 @@ export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFa
 
 async function resolveOne(ctx: CoreCallContext, draft: NoteDraftAnchorV1, field: string, deps: NoteAnchorFactsDeps,
   goalPlanFacts: (goalId: string, field: string) => Promise<GoalPlanEntry | NoteAnchorFailure>,
-  context: { isAgent: boolean; runGoalId: string | null; facts: readonly NoteFactV1[]; symbolHitsMax: number }):
+  context: { isAgent: boolean; runGoalId: string | null; facts: readonly NoteFactV1[]; symbolHitsMax: number;
+    resolveSymbols?: boolean }):
 Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: boolean } | NoteAnchorFailure> {
   const notFound = (candidates?: NoteAnchorCandidateV1[], unavailable?: boolean): NoteAnchorFailure => ({
     status: 'rejected', code: 'invalid', reason: 'anchor_not_found', field,
@@ -724,7 +765,7 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
       if (problem !== null) return problem;
       // L14: resolution runs after the class-2 existence check. The
       // symbolRequest is write-only; only the resolved locator is stored.
-      if (draft.symbolRequest !== undefined) {
+      if (draft.symbolRequest !== undefined && context.resolveSymbols !== false) {
         const resolution = await resolveSymbol(ctx, path, draft.symbolRequest, deps.workspace, context.symbolHitsMax);
         if (resolution.status === 'rejected') {
           return { status: 'rejected', code: resolution.code, reason: resolution.reason, field };

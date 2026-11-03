@@ -342,6 +342,8 @@ describe('S4A N-16 header rendering', () => {
       conclusion: '都用 POSIX 路径' }, '约定(项目)：都用 POSIX 路径'],
     ['structural', { kind: 'decision', anchor: { kind: 'task', goalId: 'g1', taskId: 't1' }, structural: true,
       conclusion: '先冻结接口' }, '决定(任务 t1)!：先冻结接口'],
+    ['link', { kind: 'link', anchor: { kind: 'file', path: 'src/a.ts' }, structural: false,
+      conclusion: '调用前鉴权', relation: 'calls', to: 'src/b.ts#b' }, '联系·调用(src/a.ts→src/b.ts#b)：调用前鉴权'],
   ];
   it.each(cases)('N-16 %s renders the exact header line', (_name, note, expected) => {
     expect(renderNoteHeader(note)).toBe(expected);
