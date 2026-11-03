@@ -13,12 +13,17 @@ import {
 import type { NoticeItemV1 } from '../model/decision-contracts.js';
 import { compareNoticePositions } from './notice-position.js';
 
+/** L43: the summary window; members of one category and subject within it become one displayed line. */
+export const NOTICE_SUMMARY_WINDOW_MS = 900_000;
+
 /**
  * `main_conversation` is the main read's grouping (slice-6-SPEC L6): everything
  * `user_affected_per_goal` does, and every Goal's automatic-rework notices fold
  * into one "n 条自动返工" line. The decision queue keeps them one by one.
+ * `summary` is `main_conversation` plus the read-time summary of `groupNotices`.
  */
-export type NoticeGroupingStrategyV1 = 'pass_through' | 'user_affected_per_goal' | 'main_conversation';
+export type NoticeGroupingStrategyV1 =
+  'pass_through' | 'user_affected_per_goal' | 'main_conversation' | 'summary';
 
 /**
  * One shown notice line. A folded automatic-rework line of the main read also
@@ -53,6 +58,59 @@ function foldItemKey(kind: FoldKind, subject: DecisionSubjectV1): string {
 }
 
 /**
+ * L43: the summary reads the notice's own event time from `occurredAtOf` (keyed by `itemKey`); an item without one
+ * is its own line. Every other strategy is `groupNoticesWithoutSummary`'s and ignores the times. No summary record
+ * is stored and no timer runs: the lines are recomputed on every read.
+ */
+export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGroupingStrategyV1,
+  occurredAtOf: ReadonlyMap<string, string> = new Map()): NoticeLineV1[] {
+  if (strategy !== 'summary') return groupNoticesWithoutSummary(items, strategy);
+  const base = groupNoticesWithoutSummary(items, 'main_conversation');
+  return summarizeBySubjectWindow(base, occurredAtOf);
+}
+
+/**
+ * Lines of one category and subject whose times fall within `NOTICE_SUMMARY_WINDOW_MS` of their window's first
+ * member become one line listing its members; a member exactly at the boundary stays in the earlier window, only a
+ * later one (`>`) starts a new window. A line without a time is its own line.
+ */
+function summarizeBySubjectWindow(lines: readonly NoticeLineV1[],
+  at: ReadonlyMap<string, string>): NoticeLineV1[] {
+  type Window = { subject: DecisionSubjectV1; category: NoticeCategoryV1; start: number;
+    views: NoticeLineV1[]; newest: NoticeLineV1 };
+  const windows: Window[] = [];
+  const open = new Map<string, Window>();
+  lines.forEach((line) => {
+    const occurredAt = at.get(line.itemKey);
+    const time = occurredAt === undefined ? Number.NaN : Date.parse(occurredAt);
+    if (Number.isNaN(time)) {
+      windows.push({ subject: line.subject, category: line.category, start: Number.NaN,
+        views: [line], newest: line });
+      return;
+    }
+    const key = `${line.category}|${decisionSubjectKey(line.subject)}`;
+    const current = open.get(key);
+    if (current === undefined || time - current.start > NOTICE_SUMMARY_WINDOW_MS) {
+      const next: Window = { subject: line.subject, category: line.category, start: time,
+        views: [line], newest: line };
+      windows.push(next); open.set(key, next); return;
+    }
+    current.views.push(line);
+    if (compareNoticePositions(line.position, current.newest.position) >= 0) current.newest = line;
+  });
+  const out = windows.map((window) => window.views.length === 1 && Number.isNaN(window.start)
+    ? window.views[0]!
+    : {
+      itemKey: `notice_summary:${decisionSubjectKey(window.subject)}:${window.views[0]!.itemKey}`,
+      category: window.category, subject: structuredClone(window.subject), position: window.newest.position,
+      summary: `${window.views.length} 条自动调整`, objects: window.views.flatMap((line) => [...line.objects]),
+      rework: null, members: window.views.map((line) => ({ itemKey: line.itemKey, position: line.position })),
+      memberViews: window.views,
+    } satisfies NoticeLineV1);
+  return out.sort((left, right) => compareNoticePositions(left.position, right.position));
+}
+
+/**
  * U9: raw items + strategy -> shown lines. `pass_through` returns the items
  * unchanged. `user_affected_per_goal` keeps every non-`note_review` item and
  * every own-line note (`user_affected`, `structural` or an absent class), and
@@ -60,7 +118,7 @@ function foldItemKey(kind: FoldKind, subject: DecisionSubjectV1): string {
  * also folds each Goal's `automatic_rework` notices into one line that lists
  * its members and carries their views.
  */
-export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGroupingStrategyV1): NoticeLineV1[] {
+function groupNoticesWithoutSummary(items: readonly NoticeItemV1[], strategy: NoticeGroupingStrategyV1): NoticeLineV1[] {
   if (strategy === 'pass_through') return items.slice();
 
   type Line = { item: NoticeLineV1; order: number };

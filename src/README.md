@@ -66,7 +66,7 @@
 | 加一种记录或索引 | `src/core/record-store/`（`lookup-ports.ts`、`ports.ts`） | `RecordLookupIndex`（`src/core/record-store/lookup-ports.ts:5`）、`RecordLookupPort`（`src/core/record-store/lookup-ports.ts:35`） |
 | 加一种事件/记录编解码 | `src/core/work-graph/persistence/` | `createEventCodec`（`src/core/work-graph/persistence/event-codec-factory.ts:42`）、`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:81`） |
 | 状态迁移 | `src/core/work-graph/state/`（按聚合分文件） | `transitionRun`（`src/core/work-graph/state/run-machine.ts:1395`）、`transitionTask`（`src/core/work-graph/state/task-machine.ts:797`） |
-| 加一个读模型 | `src/core/work-graph/views/` | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3052`）、`createCollectionCardSource`（`src/core/work-graph/views/decision-read-model.ts:344`） |
+| 加一个读模型 | `src/core/work-graph/views/` | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3052`）、`createCollectionCardSource`（`src/core/work-graph/views/decision-read-model.ts:353`） |
 | 改提示词模板或渲染 | `src/contracts/prompts/` | `renderTemplate`（`src/contracts/prompts/render-template.ts:387`）、`resolvePromptPackV1`（`src/contracts/prompts/resolve-pack.ts:79`） |
 | Kernel 补丁（vendor 冻结） | 脚本 `scripts/build-kernel-patch.mjs`；适配 `src/core/agent-runtime/`（`observed-model-run.ts`） | `runObservedModel`（`src/core/agent-runtime/observed-model-run.ts:207`） |
 | Workflow 的驱动和唤醒 | `src/business/workflow/` | `createWorkflow`（`src/business/workflow/workflow.ts:815`）、`createRequestIntake`（`src/business/workflow/request-intake.ts:193`） |
@@ -94,7 +94,7 @@
 | Git 与工作树比较 | `src/core/workspace/`（`git-read.ts`、`workspace-change-capture.ts`） | `compareGitWorkingTree`（`src/core/workspace/git-read.ts:617`）、`captureWorkspaceChange`（`src/core/workspace/workspace-change-capture.ts:276`） |
 | 重复候选 | `src/core/workspace/`（`duplicate-candidates.ts`） | `duplicateCandidates`（`src/core/workspace/duplicate-candidates.ts:66`）、`readTopLevelDeclarations`（`src/core/workspace/typescript-source-query.ts:317`）、`readStringLiterals`（`src/core/workspace/typescript-source-query.ts:344`） |
 | 全文检索/注记查找 | `src/core/record-store/`（`lookup-ports.ts`） | `RecordTextSearchPort.searchText`（`src/core/record-store/lookup-ports.ts:130`） |
-| 决定队列/请知悉 | `src/core/work-graph/views/`（`decision-read-model.ts`、`notice-grouping.ts`） | `createDecisionReadModel`（`src/core/work-graph/views/decision-read-model.ts:245`）、`groupNotices`（`src/core/work-graph/views/notice-grouping.ts:63`） |
+| 决定队列/请知悉 | `src/core/work-graph/views/`（`decision-read-model.ts`、`notice-grouping.ts`） | `createDecisionReadModel`（`src/core/work-graph/views/decision-read-model.ts:254`）、`groupNotices`（`src/core/work-graph/views/notice-grouping.ts:65`） |
 
 ## 依赖方向
 

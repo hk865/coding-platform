@@ -496,7 +496,7 @@ export function createDecisionMessageService(
   const OPTION_REQUIRED_SOURCE_KINDS: ReadonlySet<DecisionSourceV1['kind']> =
     new Set<DecisionSourceV1['kind']>(['unknown_call_review', 'member_creation', 'rework_request',
       'handoff_approval', 'adviser_creation', 'module_maintainer_assignment', 'repair_approval',
-      'structural_proposal']);
+      'structural_proposal', 'role_capacity', 'role_line_change']);
 
   function validSelection(kind: DecisionSourceV1['kind'], options: readonly DecisionOptionV1[],
     selection: DecisionSelectionV1): boolean {

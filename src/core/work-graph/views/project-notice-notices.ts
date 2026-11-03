@@ -4,8 +4,8 @@
  * The read follows the notice protocol: the watermark is read first and reported as `sourceCursor` (a later read
  * never advances it), the ordered `project-notices-by-project` index is read from the saved position inclusively to
  * the end, and a damaged record or one whose `since` is missing or below the saved position is `unavailable` — never
- * silently skipped. A Goal-filtered read answers an empty available page: a notice belongs to the project, never to
- * one Goal. There is no window, no merge and no summary record; grouping is `groupNotices`'s.
+ * silently skipped. A Goal-filtered read keeps the notices whose stored subject is that Goal; the paging is the
+ * same. There is no window, no merge and no summary record; grouping is `groupNotices`'s.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -54,10 +54,6 @@ async function readProjectNoticePage(
   if (watermarkRead.status !== 'ready') return watermarkRead;
   const watermark = watermarkRead.value;
   const projectId = input.workspace.projectId;
-  // A notice belongs to the project, never to one Goal: a Goal-filtered read has nothing to contribute.
-  if (input.goalRef !== undefined) {
-    return { status: 'ready', value: { availability: 'available', items: [], nextCursor: null, sourceCursor: watermark } };
-  }
   const seen: CommitCursor | null = input.after === undefined ? null : input.after.cursor;
   const recordsWindow: EncodedRecord[] = [];
   try {
@@ -80,6 +76,8 @@ async function readProjectNoticePage(
     if (seen !== null && since < seen) {
       return rejected('unavailable', `project notice ${record.refKey} is outside the requested window`);
     }
+    if (input.goalRef !== undefined && (notice.subject.kind !== 'goal'
+      || notice.subject.goalRef.goalId !== input.goalRef.goalId)) continue;
     const itemKey = `project_notice:${notice.ref.noticeId}`;
     items.push({ itemKey, category: 'project_notice', subject: notice.subject, summary: notice.summary,
       position: { kind: 'commit', cursor: since, itemKey }, objects: [], rework: null });

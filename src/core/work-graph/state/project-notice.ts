@@ -19,7 +19,7 @@ import {
   type NotifyProjectInputV1, type ProjectNoticeKindV1, type ProjectNoticeV1,
 } from '../../../contracts/role-lines.js';
 
-/** The project notice's identity: the project subject, the kind and the operation that caused it. */
+/** The project notice's identity: the subject (a Goal or the project), the kind and the operation that caused it. */
 export function projectNoticeIdentity(input: { subject: DecisionSubjectV1; kind: ProjectNoticeKindV1;
   operation: OperationRef }): { noticeId: string; commandId: string } {
   const digest = sha256Hex(canonicalJson({ subjectKey: canonicalJson(input.subject as unknown as JsonValue),
@@ -44,7 +44,8 @@ export function projectNoticeNext(facts: ProjectNoticeForCommitV1):
   if (!PROJECT_NOTICE_KINDS.includes(input.kind)) {
     return { refuse: rejected('invalid', 'the project notice kind is not recognized') };
   }
-  const subject: DecisionSubjectV1 = { kind: 'project', projectRef: { ...input.projectRef } };
+  const subject: DecisionSubjectV1 = structuredClone(input.subject
+    ?? { kind: 'project', projectRef: input.projectRef });
   if (input.operation.projectId !== input.projectRef.projectId) {
     return { refuse: rejected('invalid', 'a project notice operation must be this project') };
   }

@@ -775,6 +775,7 @@ const DECISION_SOURCE_KINDS: readonly string[] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
   'unknown_call_review', 'command_rerun_request', 'member_creation', 'rework_request', 'handoff_approval',
   'adviser_creation', 'module_maintainer_assignment', 'repair_approval', 'structural_proposal',
+  'role_capacity', 'role_line_change',
 ];
 
 function checkDecisionSourceShape(value: unknown): Problem {

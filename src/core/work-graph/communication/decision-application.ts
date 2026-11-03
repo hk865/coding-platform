@@ -46,6 +46,10 @@ import {
   verificationRoundEventFromEvent, VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
   type VerificationRoundEvent,
 } from '../persistence/evidence-record-codecs.js';
+import { projectRoleLimitsChangedCodec } from '../sessions/role-line-record-codecs.js';
+import {
+  sessionLifecycleChangedPayloadFromEvent, sessionResponsibilityChangedEventFromEvent,
+} from '../sessions/lifecycle-record-codecs.js';
 
 function mapStoreFailure(failure: StoreFailure): ReadResult<never> {
   switch (failure.code) {
@@ -291,6 +295,56 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     }
     return { actor: parsed['actor'] as DecisionApplicationV1['actor'], appliedAt: event.occurredAt,
       proof: (proof ?? null) as DecisionChangeProofV1 | null };
+  },
+  // The capacity card's three options: the cap raise, the merge reanchor and the archive release each carry the
+  // formal proof; a write without one stays `incomplete`, a damaged one is `unavailable`.
+  ProjectRoleLimitsChanged: (event) => {
+    const decoded = projectRoleLimitsChangedCodec.decode(event);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithCurrent('unavailable', `the ProjectRoleLimitsChanged event is damaged: ${decoded.reason}`);
+    }
+    const proof = decoded.value.proof;
+    if (proof === undefined) {
+      return rejectedWithCurrent('incomplete', 'the ProjectRoleLimitsChanged event carries no decision change proof');
+    }
+    const problem = decisionChangeProofProblem(proof);
+    if (problem !== null) {
+      return rejectedWithCurrent('unavailable', `the role-limits change proof is damaged: ${problem}`);
+    }
+    return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt,
+      proof: proof as unknown as DecisionChangeProofV1 };
+  },
+  SessionResponsibilityChanged: (event) => {
+    const decoded = sessionResponsibilityChangedEventFromEvent(event);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithCurrent('unavailable', `the SessionResponsibilityChanged event is damaged: ${decoded.reason}`);
+    }
+    const proof = decoded.value.proof;
+    if (proof === undefined) {
+      return rejectedWithCurrent('incomplete', 'the SessionResponsibilityChanged event carries no decision change proof');
+    }
+    const problem = decisionChangeProofProblem(proof);
+    if (problem !== null) {
+      return rejectedWithCurrent('unavailable', `the reanchor proof is damaged: ${problem}`);
+    }
+    return { actor: { kind: 'system', id: 'workflow:role-line' }, appliedAt: decoded.value.occurredAt,
+      proof: proof as unknown as DecisionChangeProofV1 };
+  },
+  SessionArchived: (event) => {
+    const decoded = sessionLifecycleChangedPayloadFromEvent(event);
+    if (decoded.status !== 'decoded') {
+      return rejectedWithCurrent('unavailable', `the SessionArchived event is damaged: ${decoded.reason}`);
+    }
+    const proof = decoded.value.proof;
+    if (proof === undefined) {
+      return rejectedWithCurrent('incomplete', 'the SessionArchived event carries no decision change proof');
+    }
+    const problem = decisionChangeProofProblem(proof);
+    if (problem !== null) {
+      return rejectedWithCurrent('unavailable', `the archive proof is damaged: ${problem}`);
+    }
+    return { actor: { kind: 'system', id: 'workflow:role-line' }, appliedAt: decoded.value.occurredAt,
+      proof: proof as unknown as DecisionChangeProofV1 };
   },
   // The initial architecture/completion-policy proof is slice 6.
   ArchitectureCatalogAdopted: () => rejectedWithCurrent('unsupported',

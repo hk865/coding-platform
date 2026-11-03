@@ -1578,6 +1578,174 @@
       "name": "roleLineIdleOf",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `reclaimIdleLineOf`; O2b deletes this entry when the reclaim lands"
+    },
+    {
+      "file": "src/core/work-graph/state/autonomy-rules.ts",
+      "name": "AutonomyRuleLimitsV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: the rule service's create request and `validateAutonomyRule` take it; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/state/autonomy-rules.ts",
+      "name": "validateAutonomyRule",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: the rule service's create and update check every rule with it; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/state/autonomy-rules.ts",
+      "name": "scopeCovers",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M7, M12: called only by `matchAutonomyRule`, which the policy entries call before `decisionActionPolicy`"
+    },
+    {
+      "file": "src/core/work-graph/state/autonomy-rules.ts",
+      "name": "matchAutonomyRule",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M7, M12: the policy entries match the project's rules with it before `decisionActionPolicy`"
+    },
+    {
+      "file": "src/core/work-graph/state/autonomy-rules.ts",
+      "name": "nextAutonomyRuleSetRevision",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: the rule service's three writes bump the set revision with it; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/state/role-capacity-episode.ts",
+      "name": "nextCapacityEpisode",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b `role-capacity-service.ts`: `observeAtCap` numbers a new episode with it"
+    },
+    {
+      "file": "src/core/work-graph/state/role-capacity-episode.ts",
+      "name": "capacityEpisodeCloses",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b `role-capacity-service.ts`: `closeIfStale` decides the close with it"
+    },
+    {
+      "file": "src/core/work-graph/state/role-capacity-episode.ts",
+      "name": "closeCapacityEpisode",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b `role-capacity-service.ts`: `closeIfStale` writes the closed episode with it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "AutonomyRuleCreateRequestV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "AutonomyRuleRevokeRequestV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "AutonomyRuleUpdateRequestV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "AutonomyRuleViewV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "AutonomyRulePort",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "AutonomyRuleServiceDependenciesV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "createAutonomyRuleService",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "RuleFacts",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: used only inside `createAutonomyRuleService`; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "RuleDecision",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: used only inside `createAutonomyRuleService`; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "TrustedScope",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: used only inside `createAutonomyRuleService`; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "ruleSetRef",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: used only inside `createAutonomyRuleService`; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "ruleRef",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: used only inside `createAutonomyRuleService`; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/autonomy-rule-service.ts",
+      "name": "readRuleFacts",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M6: used only inside `createAutonomyRuleService`; M6 builds the rule service (`autonomyRules`) in CP and O5b's `autonomy-rules` routes call it"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "createRoleCapacityCardSource",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "createRoleLineChangeCardSource",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "roleLineChangeSubjectOf",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: used only by the two card sources `createRoleCapacityCardSource`/`createRoleLineChangeCardSource`; M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "roleCapacityCardKey",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: used only by the two card sources `createRoleCapacityCardSource`/`createRoleLineChangeCardSource`; M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "roleCapacityCard",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: used only by the two card sources `createRoleCapacityCardSource`/`createRoleLineChangeCardSource`; M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "roleLineChangeCardKey",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: used only by the two card sources `createRoleCapacityCardSource`/`createRoleLineChangeCardSource`; M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
+    },
+    {
+      "file": "src/core/work-graph/views/decision-read-model.ts",
+      "name": "roleLineChangeCard",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b M11: used only by the two card sources `createRoleCapacityCardSource`/`createRoleLineChangeCardSource`; M11 registers the two card sources in CP's `decisionCardSources` (with `CARD_KINDS`)"
     }
   ]
 }

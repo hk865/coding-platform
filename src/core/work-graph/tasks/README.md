@@ -17,6 +17,7 @@
 
 做 request round 的提交/路由/分配、秘书准入、决定答案与决定卡投影的去这组。
 
+- `autonomy-rule-service.ts` — 自主规则的一个读和三个只许人的写（`createAutonomyRuleService`）：create 记 `approvedBy`/`approvedFrom`、`state: 'active'`，在回执检查之后按当前项目上限校验（已提交的 create 重放，不受之后调低的上限影响），revoke 写 `revoked`，update 只改 `expiresAt`（只查它，不按项目上限查）；每个写都经 `executeWriteCommand` 一次提交规则和规则集（revision 加一），`AutonomyRuleSetChanged` 放最后，结果是提交后重读的视图；读不查人，项目还没有规则集时答 revision 0 的空集。
 - `command-rerun-request-card.ts` — `CommandRerunRequest` 到决定卡的纯投影（source、pins、objects、options、summary）。
 - `command-rerun-request-service.ts` — `CommandRerunRequest` 读写 owner；`closed` 按 Task closure 在读取时派生。
 - `context-input-service.ts` — 精确 task input owner：声明 → 上游事实 → 纯声明守卫 → 历史材料桥。
@@ -297,4 +298,5 @@
 - 不要先读现状再查 receipt：重放与丢失 ack 的恢复都先 `lookupCommit`/`replayCommittedReceipt`，绝不按今天的快照重建原答案（M1-14、M1-15、M1-25、M1-26）。
 - 不要一个 commit 混用多次读的事实窗口，或让同 key 的 guard first-wins：冲突的 revision 必须拒绝并重读（M1-07、M1-09、M1-10）。
 - 不要发明默认值（秘书、容量、唤醒驱动、时钟）：时间用注入的 `now()`，配置从 Host 透传（FP-15、MH-02、MH-25）。
+| `createAutonomyRuleService`、`AutonomyRulePort`、`AutonomyRuleServiceDependenciesV1`、`AutonomyRuleCreateRequestV1`、`AutonomyRuleRevokeRequestV1`、`AutonomyRuleUpdateRequestV1`、`AutonomyRuleViewV1` | `autonomy-rule-service.ts:72`、`autonomy-rule-service.ts:50`、`autonomy-rule-service.ts:62`、`autonomy-rule-service.ts:36`、`autonomy-rule-service.ts:41`、`autonomy-rule-service.ts:44`、`autonomy-rule-service.ts:48` | 自主规则的唯一 owner：读（不查人）与 create/revoke/update（只许人，`trusted.actor.kind === 'human'`），每个写一次提交规则、规则集和最后的 `AutonomyRuleSetChanged`，revoke/update 守规则和规则集的期待 revision；依赖是 `records`、`now` 和角色额度的 `readRoleLimits` | 组合根建 `autonomyRules`、路由和策略入口读规则时；不要另写规则写入或规则集 revision |
 | `createMemberService`、`MemberServiceDependenciesV1`、`MemberRequestPortV1`、`MemberDecisionPortV1` | `member-service.ts:370`、`member-service.ts:152`、`member-service.ts:91`、`member-service.ts:110` | 成员创建的唯一 owner 与两个冻结端口：进度构造/阶段迁移调 `state/member-creation.ts`，本文件只管信封、revision/时刻、编码与提交；每个写各用自己的键经共享 R2 执行器按身份+指纹重放，一张卡或自动档（卡键随决定存下，重放答同一个键），批准后经注入的 `ensureLine` 以 `<operationId>:create` 建执行子线（`parentOperation`、Work 调用经 `executions/readExecution` 读 accepted envelope 做准入并用同一份 permissions 带 `delegationCeiling`、秘书 `secretaryCreated` 且不带 ceiling）；批准前重读采用计划，任务离开则 `stale` 不建线；启动恢复按 Goal 读 `core-op-member-by-goal` 续建原 child，`rejected`/`capacity_blocked` 只写 `lastRefusal` 保持 `creating`，pending 卡读只留 `awaiting_decision`，`readMemberRequestCommit` 只做一次身份读；子线登记提交的 `MemberCreated` 回执就是正式 proof receipt | Q 导入端口类型，L1 组合根注入 `records`/`commitIdentities`/`sessions`/`lines`/`requests`/`secretaryRuns`/`duties`/`executions`/`executorRole`/`reuse`/`now`/`eventId` 并接启动恢复；不要另写成员端口、卡源或第二条重放 |

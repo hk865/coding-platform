@@ -3,7 +3,10 @@
  * (docs/refactor/design/orchestration-2026-10/slices/slice-5-SPEC.md §3.2).
  *
  * `decisionActionPolicy` is the ONE table every entry (owner service, tool,
- * Workflow, route) consults; `automationDecisionCause` derives the named
+ * Workflow, route) consults: the L36 five layers (always you, a pending card,
+ * a matching autonomy rule, the factory default, out of bounds), with today's
+ * per-action table kept as the factory default of the older actions;
+ * `automationDecisionCause` derives the named
  * `automation_confirmation_required` cause from the same policy plus the saved
  * affected refs and the existing rework counters. `canSendUserMessage` is the
  * trusted-duties admission of S5-AU-04. All three are pure and read no clock,
@@ -16,6 +19,7 @@ import type { DecisionActionV1, GoalAutonomyV1 } from '../../../contracts/goal-d
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { Phase, RuntimeTask } from '../../../contracts/plan.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { AutonomyRuleV1, RoleScopeV1 } from '../../../contracts/role-lines.js';
 import type { TaskFailureFactsV1 } from '../../../contracts/task-failure.js';
 import type { ReworkActorClass, TaskReworkRefusalCode } from '../../../contracts/task-requeue.js';
 import { ROUND_CHAIN_MAX } from '../../../contracts/verification.js';
@@ -27,11 +31,73 @@ const DECISION_REQUEST_DUTIES: ReadonlySet<PlatformDutyV1> = new Set<PlatformDut
   ['secretary', 'adviser', 'scribe'],
 );
 
-/** §3.2 autonomy table: the four verdicts for one action under one autonomy level. */
-export function decisionActionPolicy(input: {
-  autonomy: GoalAutonomyV1; action: DecisionActionV1;
-  actorClass: ReworkActorClass; countedNext: number | null; cap: number;
-}): 'user_only' | 'needs_decision' | 'automatic' | 'automatic_notice' {
+export type DecisionPolicyVerdictV1 = 'user_only' | 'needs_decision' | 'automatic' | 'automatic_notice';
+export type DecisionPolicyInputV1 = {
+  action: DecisionActionV1; actorClass: ReworkActorClass;
+  /** The old callers' fields, still accepted. */
+  autonomy?: GoalAutonomyV1; countedNext?: number | null; cap?: number;
+  affectedGoals?: readonly { goalRef: GoalRef; autonomy: GoalAutonomyV1; settingsRevision: number }[];
+  affectedScopes?: readonly { scope: RoleScopeV1; catalogPin: VersionPin | null }[];
+  now?: string; ruleSetRevision?: number; matchedRule?: AutonomyRuleV1 | null;
+  counts?: { holders: number; reservations: number; open: number };
+  pendingCard?: { cardKey: string };
+  /** The real trusted shapes, never a `RoleScope` list: Work `TaskEnvelopeV1.permissions` (path
+   *  `writeScope`, string `policyRevision`), Query `PreparedQueryManifestV1.permissions.tools` +
+   *  `roleBinding.policyRevision`. `createMember` stays the Work flag; a secretary Query's permission is
+   *  proved by its call-kind registration, not by this flag and not by an empty `writeScope`. */
+  delegation?: { revision: number; tools: readonly string[]; writeScope: readonly string[];
+    createMember: boolean; policyRevision: string } | null;
+  /** The trusted caller's responsibility ceiling; null for a secretary Query (its empty `writeScope` is not one). */
+  roleCeiling?: readonly RoleScopeV1[] | null;
+  /** True only from the trusted source: Work `createMember`, or the secretary call-kind registration. */
+  createMemberAuthorized?: boolean;
+};
+
+/**
+ * L36: the five layers in order. The input is the caller's; the policy does no I/O. The platform is not an agent:
+ * its calls pass `actorClass: 'system'` and no delegation.
+ */
+export function decisionActionPolicy(input: DecisionPolicyInputV1): DecisionPolicyVerdictV1 {
+  const everyStep = input.affectedGoals !== undefined && input.affectedGoals.length > 0
+    ? input.affectedGoals.some((goal) => goal.autonomy === 'every_step')
+    : input.autonomy === 'every_step';
+  // layer 1 — always you: rules never release these (the old table's verdicts are unchanged)
+  switch (input.action) {
+    case 'confirm_goal': case 'adopt_first_plan': case 'remember_user_preference': return 'user_only';
+    case 'structural_patch': case 'change_goal': case 'exceed_budget': case 'escalate':
+    case 'long_handoff': case 'change_duty': return 'needs_decision';
+    default: break;
+  }
+  // layer 2 — the same action already has a pending card: follow it, a new rule does not release it
+  if (input.pendingCard !== undefined) return 'needs_decision';
+  // layer 3 — one active matching rule (match already checked expiry and the after-action quota)
+  if (input.matchedRule !== null && input.matchedRule !== undefined) return 'automatic_notice';
+  // layer 4 — the factory default
+  switch (input.action) {
+    case 'role_line_add': case 'role_line_split': case 'role_line_reuse': case 'goal_queue_assign':
+      return everyStep ? 'needs_decision'
+        : input.actorClass === 'human' ? 'automatic' : 'automatic_notice';
+    case 'create_member': case 'short_change_duty':
+      return everyStep ? 'needs_decision'
+        : input.actorClass === 'human' ? 'automatic' : 'automatic_notice';
+    case 'module_maintainer':
+      return everyStep ? 'needs_decision' : 'automatic';
+    default:
+      // the existing actions keep today's table; the old switch below is retained verbatim. The older callers
+      // always pass `countedNext`/`cap`; a caller that leaves them out has no count, so no cap fence applies.
+      return legacyDecisionActionPolicy({ ...input, action: input.action,
+        countedNext: input.countedNext ?? null, cap: input.cap ?? 0 });
+  }
+}
+
+/** The actions layer 4 does not take over keep today's table. */
+type LegacyDecisionActionV1 = Exclude<DecisionActionV1,
+  'create_member' | 'role_line_add' | 'role_line_split' | 'role_line_reuse' | 'goal_queue_assign' | 'short_change_duty'>;
+
+/** §3.2 autonomy table: the four verdicts for one older action under one autonomy level. */
+function legacyDecisionActionPolicy(input: {
+  autonomy?: GoalAutonomyV1; action: LegacyDecisionActionV1; countedNext: number | null; cap: number;
+}): DecisionPolicyVerdictV1 {
   const everyStep = input.autonomy === 'every_step';
   switch (input.action) {
     // The user's own choices: never automatic at either autonomy level.
@@ -62,17 +128,9 @@ export function decisionActionPolicy(input: {
     case 'long_handoff':
     case 'change_duty':
       return 'needs_decision';
-    case 'create_member':
-      return everyStep ? 'needs_decision' : 'automatic_notice';
-    case 'role_line_add':
-      // B2-01: the card always waits for the person; both autonomy levels are `needs_decision`.
-      return 'needs_decision';
     case 'module_maintainer':
       // The adviser's assignment asks under every-step; after plan confirmation the owner applies it directly.
       return everyStep ? 'needs_decision' : 'automatic';
-    case 'role_line_split': case 'role_line_reuse': case 'goal_queue_assign': case 'short_change_duty':
-      // O3 replaces (7D2 v4 §4, :3735); no package produces these four before O3, so deferring to a human is the safe default.
-      return 'needs_decision';
     default:
       return unreachable(input.action, 'decision action');
   }

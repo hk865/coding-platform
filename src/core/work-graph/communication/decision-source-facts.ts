@@ -67,6 +67,8 @@ import {
 } from './decision-source/adviser-creation.js';
 import { readReworkRequestSource } from './decision-source/rework-request.js';
 import type { DecisionSourceBranchFacts } from './decision-source/types.js';
+import { roleCapacityEpisodeCodec } from '../sessions/role-line-orchestration-codecs.js';
+import { decodeSessionOperationRecord } from '../sessions/session-record-codecs.js';
 
 /** The one Store seam this reader uses, the same instance every other WorkGraph reader shares. */
 export type DecisionSourceFactsDependencies = {
@@ -234,6 +236,73 @@ async function readRepairApprovalSource(deps: DecisionSourceFactsDependencies, s
   };
 }
 
+/**
+ * The `role_capacity` card's four options and the `role_line_change` card's two, shared by each card source and its
+ * answer facts; the answer's `optionId` picks one.
+ */
+export const ROLE_CAPACITY_OPTIONS: readonly DecisionOptionV1[] = Object.freeze([
+  Object.freeze({ id: 'raise_cap', label: '调高上限', effect: 'apply' as const }),
+  Object.freeze({ id: 'merge_scopes', label: '合并范围', effect: 'apply' as const }),
+  Object.freeze({ id: 'archive_line', label: '归档闲线', effect: 'apply' as const }),
+  Object.freeze({ id: 'wait', label: '先排队', effect: 'defer' as const }),
+]);
+export const ROLE_LINE_CHANGE_OPTIONS: readonly DecisionOptionV1[] = Object.freeze([
+  Object.freeze({ id: 'approve', label: '执行', effect: 'apply' as const }),
+  Object.freeze({ id: 'reject', label: '不执行', effect: 'apply' as const }),
+]);
+
+/** The `role_capacity` answer fact is the open episode of its identity; a closed episode or a moved cap is stale. */
+async function readRoleCapacitySource(support: SourceReadSupport, ctx: CoreCallContext,
+  source: DecisionSourceV1, identity: Extract<DecisionSourceIdentityV1, { kind: 'role_capacity' }>):
+  Promise<ReadResult<DecisionSourceBranchFacts>> {
+  const ref = { aggregateType: 'RoleCapacityEpisode' as const, projectId: ctx.projectId,
+    duty: identity.duty, episode: identity.episode };
+  const episode = await support.readDecoded(ref, roleCapacityEpisodeCodec.decode, 'the role-capacity episode');
+  if (episode.status !== 'ready') return episode;
+  const value = episode.value;
+  if (value.closedAt !== null || value.capValue !== identity.capValue) {
+    return rejectedWithCurrent('source_stale', 'the capacity episode is closed or its cap moved');
+  }
+  const pin = { ref: structuredClone(value.ref), revision: value.revision };
+  return { status: 'ready', value: {
+    goal: null,
+    objects: [{ kind: 'aggregate', pin: structuredClone(pin), label: '容量' }],
+    options: ROLE_CAPACITY_OPTIONS.map((option) => ({ ...option })),
+    pins: [pin], goalBases: [], closed: false, allowedReaderSessionRefs: [],
+  } };
+}
+
+/**
+ * The `role_line_change` answer fact is its saved role-line operation. The operation's own `action.goalRef` is the
+ * subject: a goal subject must name that Goal and a project subject an operation with none, so a request never
+ * loads another Goal than the one the operation saved.
+ */
+async function readRoleLineChangeSource(support: SourceReadSupport, ctx: CoreCallContext,
+  source: DecisionSourceV1, identity: Extract<DecisionSourceIdentityV1, { kind: 'role_line_change' }>,
+  goalRef: GoalRef | null): Promise<ReadResult<DecisionSourceBranchFacts>> {
+  const operation = await support.readDecoded(identity.operationRef, decodeSessionOperationRecord,
+    'the role-line operation');
+  if (operation.status !== 'ready') return operation;
+  const action = operation.value.action;
+  if (action.kind !== 'role_line') {
+    return rejectedWithCurrent('invalid', 'the decision source operation is not a role-line operation');
+  }
+  const ownGoal = action.goalRef;
+  if (ownGoal === null ? goalRef !== null
+    : goalRef === null || ownGoal.projectId !== goalRef.projectId || ownGoal.goalId !== goalRef.goalId) {
+    return rejectedWithCurrent('invalid', 'the role-line operation names another subject');
+  }
+  const goal = ownGoal === null ? null : await support.readGoal(ownGoal);
+  if (goal !== null && goal.status !== 'ready') return goal;
+  const pin = { ref: structuredClone(operation.value.ref), revision: operation.value.revision };
+  return { status: 'ready', value: {
+    goal: goal === null ? null : goal.value,
+    objects: [{ kind: 'aggregate', pin: structuredClone(pin), label: '角色线调整' }],
+    options: ROLE_LINE_CHANGE_OPTIONS.map((option) => ({ ...option })),
+    pins: [pin], goalBases: [], closed: false, allowedReaderSessionRefs: [],
+  } };
+}
+
 /** Builds the canonical source/application facts reader. */
 export function createDecisionSourceFacts(
   deps: DecisionSourceFactsDependencies,
@@ -317,8 +386,12 @@ export function createDecisionSourceFacts(
           if (identity.kind === 'structural_proposal') {
             return readStructuralProposalSource(deps, source, identity);
           }
+          if (identity.kind === 'role_capacity') return readRoleCapacitySource(support, ctx, source, identity);
+          if (identity.kind === 'role_line_change') {
+            return readRoleLineChangeSource(support, ctx, source, identity, null);
+          }
           return rejectedWithCurrent('invalid',
-            'a project subject serves only a note_review, handoff_approval, module_maintainer_assignment or structural_proposal source');
+            'a project subject serves only a note_review, handoff_approval, module_maintainer_assignment, structural_proposal, role_capacity or role_line_change source');
         }
         switch (identity.kind) {
           case 'message':
@@ -354,6 +427,8 @@ export function createDecisionSourceFacts(
             }
             return readAdviserCreationSource(support, ctx, source, identity, deps.adviserCreation, goalRef);
           }
+          case 'role_line_change':
+            return readRoleLineChangeSource(support, ctx, source, identity, goalRef);
           default:
             return rejectedWithCurrent('invalid', 'the decision source kind is not recognized');
         }

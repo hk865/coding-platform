@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DecisionActionV1, GoalAutonomyV1 } from '../../src/contracts/goal-decisions.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import type { ReworkActorClass } from '../../src/contracts/task-requeue.js';
 import { canSendUserMessage, decisionActionPolicy } from '../../src/core/work-graph/state/decision-policy.js';
@@ -121,5 +122,64 @@ describe('S5 decision policy (§5.2 PO01..PO16)', () => {
 
   it('PO16 a reviewer that is not a read-only copy can notify', () => {
     expect(send(['reviewer'], 'notify', { readOnlyCopy: false, independentReview: false })).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// 7D2 O3a R2, R3 — layer 4, the factory default (v4 §4.1 (e) :3698–:3747)   //
+// -------------------------------------------------------------------------- //
+
+type AffectedGoal = { goalRef: GoalRef; autonomy: GoalAutonomyV1; settingsRevision: number };
+type DefaultRow = [n: number, action: DecisionActionV1, actorClass: ReworkActorClass,
+  affectedGoals: AffectedGoal[], expected: PolicyVerdict];
+
+const goal = (goalId: string): GoalRef => ({ aggregateType: 'Goal', projectId: 'p1', goalId });
+const G1: AffectedGoal = { goalRef: goal('g1'), autonomy: 'every_step', settingsRevision: 1 };
+const G2: AffectedGoal = { goalRef: goal('g2'), autonomy: 'after_plan_confirmation', settingsRevision: 1 };
+
+describe('7D2 O3a 五层策略的出厂默认', () => {
+  // R2: a non-empty `affectedGoals` is every-step when any one is; an empty one falls back to `autonomy`, absent
+  // here (v4 :3719–:3721). Layer 4: every-step → card; else a person → `automatic`, anyone else →
+  // `automatic_notice` (v4 :3735–:3737; book :636–:638). The platform writes 'system' (drill O3-01).
+  /* Named mutation: “any” becomes “all” (`some` → `every`: a card only when every affected goal is every-step) →
+     items 2, 7, 12, 16 go red. */
+  it.each<DefaultRow>([
+    [1, 'role_line_add', 'system', [G1], 'needs_decision'],
+    [2, 'role_line_add', 'system', [G1, G2], 'needs_decision'],
+    [3, 'role_line_add', 'system', [G2], 'automatic_notice'],
+    [4, 'role_line_add', 'system', [], 'automatic_notice'],
+    [5, 'role_line_add', 'human', [G2], 'automatic'],
+    [6, 'role_line_split', 'system', [G1], 'needs_decision'],
+    [7, 'role_line_split', 'system', [G1, G2], 'needs_decision'],
+    [8, 'role_line_split', 'system', [G2], 'automatic_notice'],
+    [9, 'role_line_split', 'system', [], 'automatic_notice'],
+    [10, 'role_line_split', 'agent', [G2], 'automatic_notice'],
+    [11, 'role_line_reuse', 'system', [G1], 'needs_decision'],
+    [12, 'role_line_reuse', 'system', [G1, G2], 'needs_decision'],
+    [13, 'role_line_reuse', 'system', [G2], 'automatic_notice'],
+    [14, 'role_line_reuse', 'system', [], 'automatic_notice'],
+    [15, 'goal_queue_assign', 'system', [G1], 'needs_decision'],
+    [16, 'goal_queue_assign', 'system', [G1, G2], 'needs_decision'],
+    [17, 'goal_queue_assign', 'system', [G2], 'automatic_notice'],
+    [18, 'goal_queue_assign', 'system', [], 'automatic_notice'],
+  ])('O3a-R2 #%s 四个调整动作按目标的默认值: %s by %s', (_n, action, actorClass, affectedGoals, expected) => {
+    expect(decisionActionPolicy({ action, actorClass, affectedGoals })).toBe(expected);
+  });
+
+  // R3: `change_duty` is layer 1 at both tiers (v4 :3725–:3726; book :632–:633, :745–:746); `create_member` and
+  // `short_change_duty` are an every-step card, else a notice, a person `automatic` (v4 :3738–:3740; book
+  // :638–:639, :1340–:1341).
+  /* Named mutation: `short_change_duty` treated as `change_duty` (put in layer 1) → items 5, 6 go red. */
+  it.each<DefaultRow>([
+    [1, 'create_member', 'agent', [G1], 'needs_decision'],
+    [2, 'create_member', 'agent', [G2], 'automatic_notice'],
+    [3, 'create_member', 'human', [G2], 'automatic'],
+    [4, 'short_change_duty', 'agent', [G1], 'needs_decision'],
+    [5, 'short_change_duty', 'agent', [G2], 'automatic_notice'],
+    [6, 'short_change_duty', 'human', [G2], 'automatic'],
+    [7, 'change_duty', 'agent', [G1], 'needs_decision'],
+    [8, 'change_duty', 'agent', [G2], 'needs_decision'],
+  ])('O3a-R3 #%s 两个成员动作和长短换职责: %s by %s', (_n, action, actorClass, affectedGoals, expected) => {
+    expect(decisionActionPolicy({ action, actorClass, affectedGoals })).toBe(expected);
   });
 });

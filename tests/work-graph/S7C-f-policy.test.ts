@@ -17,10 +17,17 @@ describe('F-policy', () => {
     expect(policy('create_member', 'after_plan_confirmation')).toBe('automatic_notice');
   });
 
-  it('role_line_add waits for the person at both autonomy levels (B2-01)', () => {
-    expect(policy('role_line_add', 'every_step')).toBe('needs_decision');
-    expect(policy('role_line_add', 'after_plan_confirmation')).toBe('needs_decision');
-  });
+  // 7D2 O3a R1 (v4 :3367; book :1350–:1351): the B2-01 both-tier row is replaced by layer 4's default. Without
+  // `affectedGoals` the tier is `autonomy` (v4 :3719–:3721); layer 4: every-step → card, else not a person →
+  // `automatic_notice` (v4 :3735–:3737; book :636–:638, :644–:645).
+  /* Named mutation: keep the B2-01 row (role_line_add is needs_decision at both levels) → item 2 goes red. */
+  it.each([
+    [1, 'role_line_add', 'every_step', 'needs_decision'],
+    [2, 'role_line_add', 'after_plan_confirmation', 'automatic_notice'],
+  ] as const)('O3a-R1 #%s role_line_add 每步确认出卡，计划确认后自动并通知（7D2 第 4 层）: %s at %s → %s',
+    (_n, action, autonomy, expected) => {
+      expect(policy(action, autonomy)).toBe(expected);
+    });
 
   it('member_creation keys the operation ref, hand-computed canonical JSON', () => {
     expect(decisionSourceKey({ kind: 'member_creation', operationRef: {

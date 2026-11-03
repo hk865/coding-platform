@@ -126,6 +126,11 @@ import {
 } from './goal-conflicts.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
 import { groupNotices, noticePage, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
+import { ROLE_CAPACITY_EPISODES_BY_PROJECT_DUTY_LOOKUP, ROLE_LINE_DUTIES,
+  type RoleCapacityEpisodeV1 } from '../../../contracts/role-lines.js';
+import type { RoleLineOperationV1 } from '../model/session-contracts.js';
+import { roleCapacityEpisodeCodec } from '../sessions/role-line-orchestration-codecs.js';
+import { ROLE_CAPACITY_OPTIONS, ROLE_LINE_CHANGE_OPTIONS } from '../communication/decision-source-facts.js';
 
 /**
  * The views' read seam plus the two commit reads the member notice rebuilds its position from. The composition root
@@ -1368,8 +1373,12 @@ async function readDecisionQueueWindow(
   }
   // U9: the ONE grouping. Only `note_review` scribe results fold (per Goal);
   // every other category and own-line note passes through unchanged. The main
-  // read's whole page also folds each Goal's automatic reworks (slice-6-SPEC L6).
-  const groupedAll = groupNotices(allNotices, mode.kind === 'whole' ? 'main_conversation' : 'user_affected_per_goal');
+  // read's whole page also folds each Goal's automatic reworks (slice-6-SPEC L6)
+  // and summarizes the project notices of one subject within the 15-minute window
+  // by their event time; the queue keeps them one by one.
+  const noticeTimestamps = mode.kind === 'whole' ? await noticeTimes(deps, allNotices) : new Map<string, string>();
+  const groupedAll = groupNotices(allNotices, mode.kind === 'whole' ? 'summary' : 'user_affected_per_goal',
+    noticeTimestamps);
 
   // ---- one stable global page ----------------------------------------------
   // §4.1: the requested sections are selected BEFORE paging; a page of 50
@@ -1738,9 +1747,11 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
       return foreignRef(identity.requestRef) ? forbidden : null;
     case 'adviser_creation':
       return foreignRef(identity.trigger.ref) ? forbidden : null;
-    // O3 replaces; no card has these two sources before O3.
-    case 'role_capacity': case 'role_line_change':
-      return forbidden;
+    // The capacity card's project subject is checked before the branch; its episode ref is built from it.
+    case 'role_capacity':
+      return null;
+    case 'role_line_change':
+      return foreignRef(identity.operationRef) ? forbidden : null;
     default: {
       const unknown: never = identity;
       void unknown;
@@ -2296,6 +2307,196 @@ export function createMaintainerAssignmentCardSource(
   return createCollectionCardSource(maintainerAssignmentCardSourceSpec(deps.records));
 }
 
+/**
+ * The `role_capacity` card source: a project card per open capacity episode, one per (project, duty). The episode
+ * record is the source; no card row is stored. A closed episode, or one whose cap moved, reads as the closed card.
+ */
+export function createRoleCapacityCardSource(deps: {
+  records: DecisionReadRecordsPort;
+}): DecisionCardSourcePort {
+  return createCollectionCardSource<RoleCapacityEpisodeV1>({
+    kind: 'role_capacity', serves: ['project'],
+    async readCollection(_ctx, { workspace, subject }) {
+      if (subject.kind !== 'project') return { status: 'ready', value: [] };
+      const items: RoleCapacityEpisodeV1[] = [];
+      // one open episode per (project, duty); the lookup is ordered by episode, so the open one is the tail
+      for (const duty of ROLE_LINE_DUTIES) {
+        let batch;
+        try {
+          batch = await lookupAll(deps.records, ROLE_CAPACITY_EPISODES_BY_PROJECT_DUTY_LOOKUP,
+            [workspace.projectId, duty]);
+        } catch (error) {
+          return storeFailureToRejection(error as { code: string; reason: string });
+        }
+        for (const encoded of batch.items) {
+          const decoded = roleCapacityEpisodeCodec.decode(encoded);
+          if (decoded.status !== 'decoded') {
+            return { status: 'rejected', code: 'unavailable',
+              reason: `a role-capacity episode is damaged: ${decoded.reason}` };
+          }
+          if (decoded.value.closedAt === null) items.push(decoded.value);
+        }
+      }
+      return { status: 'ready', value: items };
+    },
+    keyOf: (episode) => roleCapacityCardKey(episode),
+    closedReasonOf: (episode) => episode.closedAt === null ? null : 'source_resolved',
+    project: (episode, subject) => roleCapacityCard(episode, subject),
+    async readByKey(_ctx, { source }) {
+      const identity = parseIdentity(source.key);
+      if (identity === null || identity.kind !== 'role_capacity') {
+        return { status: 'rejected', code: 'invalid',
+          reason: 'a role_capacity source key is not an episode identity' };
+      }
+      if (source.subject.kind !== 'project') return { status: 'ready', value: null };
+      const record = await readOne(deps.records, canonicalJson({
+        aggregateType: 'RoleCapacityEpisode', projectId: source.subject.projectRef.projectId,
+        duty: identity.duty, episode: identity.episode } as unknown as JsonValue));
+      if (record === null) return { status: 'ready', value: null };
+      const decoded = roleCapacityEpisodeCodec.decode(record);
+      if (decoded.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable',
+          reason: `the role-capacity episode is damaged: ${decoded.reason}` };
+      }
+      const episode = decoded.value;
+      // the same source identity: a closed episode or a moved cap is the closed card, never a live one
+      if (episode.closedAt !== null || episode.capValue !== identity.capValue) {
+        return { status: 'ready', value: { closed: 'source_resolved', openedAt: episode.openedAt } };
+      }
+      return { status: 'ready', value: { item: episode } };
+    },
+  });
+}
+
+/**
+ * The `role_line_change` card source: a role-line operation the caller stopped at `needs_decision`, which is the
+ * one whose saved `action.result` is `waiting`. Its subject is the operation's own saved `goalRef` (the project when
+ * none), so the reader never re-stamps an operation with the requested subject.
+ */
+export function createRoleLineChangeCardSource(deps: {
+  records: DecisionReadRecordsPort;
+}): DecisionCardSourcePort {
+  return createCollectionCardSource<RoleLineOperationV1>({
+    kind: 'role_line_change', serves: ['goal', 'project'],
+    async readCollection(_ctx, { workspace, subject }) {
+      const wanted = decisionSubjectKey(subject);
+      const items: RoleLineOperationV1[] = [];
+      // the five phases of the one CoreOperation index
+      for (const phase of ['accepted', 'running', 'completed', 'failed', 'unknown'] as const) {
+        let batch;
+        try {
+          batch = await lookupAll(deps.records, CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP,
+            [workspace.projectId, workspace.workspaceId, phase]);
+        } catch (error) {
+          return storeFailureToRejection(error as { code: string; reason: string });
+        }
+        for (const encoded of batch.items) {
+          const decoded = decodeSessionOperationRecord(encoded);
+          if (decoded.status !== 'decoded') {
+            return { status: 'rejected', code: 'unavailable',
+              reason: `a role-line operation is damaged: ${decoded.reason}` };
+          }
+          const operation = decoded.value;
+          if (operation.action.kind !== 'role_line') continue;
+          switch (operation.action.action) {
+            case 'role_line_add': case 'role_line_split': case 'role_line_reuse': case 'goal_queue_assign':
+              break;
+            default: continue;
+          }
+          // the open card is the operation the caller stopped at `needs_decision`: only a `waiting` result; a
+          // running one (`result: null`) and a terminal one are no card
+          if (operation.action.result?.status !== 'waiting') continue;
+          // the saved action's own subject decides the collection; the reader never re-stamps `subject`
+          if (decisionSubjectKey(roleLineChangeSubjectOf(operation as RoleLineOperationV1)) !== wanted) continue;
+          items.push(operation as RoleLineOperationV1);
+        }
+      }
+      return { status: 'ready', value: items };
+    },
+    keyOf: (operation) => roleLineChangeCardKey(operation),
+    project: (operation, subject) => roleLineChangeCard(operation, subject),
+    async readByKey(_ctx, { source }) {
+      const identity = parseIdentity(source.key);
+      if (identity === null || identity.kind !== 'role_line_change') {
+        return { status: 'rejected', code: 'invalid',
+          reason: 'a role_line_change source key is not an operation identity' };
+      }
+      const record = await readOne(deps.records, canonicalJson(identity.operationRef as unknown as JsonValue));
+      if (record === null) return { status: 'ready', value: null };
+      const decoded = decodeSessionOperationRecord(record);
+      if (decoded.status !== 'decoded') {
+        return { status: 'rejected', code: 'unavailable',
+          reason: `the role-line operation is damaged: ${decoded.reason}` };
+      }
+      const operation = decoded.value;
+      if (operation.action.kind !== 'role_line') return { status: 'ready', value: null };
+      switch (operation.action.action) {
+        case 'role_line_add': case 'role_line_split': case 'role_line_reuse': case 'goal_queue_assign':
+          break;
+        default: return { status: 'ready', value: null };
+      }
+      // the by-key read checks the SAME saved subject, so a G1 card can never resolve to a G2 operation
+      if (decisionSubjectKey(roleLineChangeSubjectOf(operation as RoleLineOperationV1))
+        !== decisionSubjectKey(source.subject)) return { status: 'ready', value: null };
+      // anything but `waiting` (a running one, an approved one being carried out, a terminal one) is the closed card
+      if (operation.action.result?.status !== 'waiting') {
+        return { status: 'ready', value: { closed: 'source_resolved', openedAt: operation.requestedAt } };
+      }
+      return { status: 'ready', value: { item: operation as RoleLineOperationV1 } };
+    },
+  });
+}
+
+/** The one saved-action subject: the action's `goalRef` is the single affected goal; null means none or several,
+ *  i.e. the project. The reader passes this object through; it never re-labels an operation. */
+function roleLineChangeSubjectOf(operation: RoleLineOperationV1): DecisionSubjectV1 {
+  const goalRef = operation.action.goalRef;
+  return goalRef === null
+    ? { kind: 'project', projectRef: { projectId: operation.ref.projectId } }
+    : { kind: 'goal', goalRef: structuredClone(goalRef) };
+}
+
+/** The episode identity (`role_capacity` arm), one spelling for `keyOf` and the card. */
+function roleCapacityCardKey(episode: RoleCapacityEpisodeV1): string {
+  return decisionSourceKey({ kind: 'role_capacity', duty: episode.duty,
+    capValue: episode.capValue, episode: episode.episode });
+}
+function roleCapacityCard(episode: RoleCapacityEpisodeV1, subject: DecisionSubjectV1): DecisionCardV1 {
+  const pin = { ref: structuredClone(episode.ref), revision: episode.revision };
+  return {
+    cardKey: roleCapacityCardKey(episode),
+    source: { kind: 'role_capacity', key: roleCapacityCardKey(episode), subject: structuredClone(subject),
+      pins: [pin], goalBases: [] },
+    state: episode.closedAt === null ? 'waiting_answer' : 'closed', subject: structuredClone(subject),
+    senderSessionRef: null, requestRef: null,
+    objects: [{ kind: 'aggregate', pin: structuredClone(pin), label: '容量' }],
+    options: ROLE_CAPACITY_OPTIONS.map((option) => ({ ...option })),
+    answerMessageRef: null, answer: null, application: null,
+    candidateStatus: null, staleReason: null,
+    closedReason: episode.closedAt === null ? null : 'source_resolved',
+    openedAt: episode.openedAt, readOnly: episode.closedAt !== null,
+    actions: episode.closedAt === null ? ['answer'] : [],
+  };
+}
+/** The operation identity (`role_line_change` arm); the item is the saved operation record, not a facts bag. */
+function roleLineChangeCardKey(operation: RoleLineOperationV1): string {
+  return decisionSourceKey({ kind: 'role_line_change', operationRef: operation.ref });
+}
+function roleLineChangeCard(operation: RoleLineOperationV1, subject: DecisionSubjectV1): DecisionCardV1 {
+  const pin = { ref: structuredClone(operation.ref), revision: operation.revision };
+  return {
+    cardKey: roleLineChangeCardKey(operation),
+    source: { kind: 'role_line_change', key: roleLineChangeCardKey(operation), subject: structuredClone(subject),
+      pins: [pin], goalBases: [] },
+    state: 'waiting_answer', subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
+    objects: [{ kind: 'aggregate', pin: structuredClone(pin), label: '角色线调整' }],
+    options: ROLE_LINE_CHANGE_OPTIONS.map((option) => ({ ...option })),
+    answerMessageRef: null, answer: null, application: null,
+    candidateStatus: null, staleReason: null, closedReason: null,
+    openedAt: operation.requestedAt, readOnly: false, actions: ['answer'],
+  };
+}
+
 // -------------------------------------------------------------------------- //
 // Built-in member notification source                                         //
 // -------------------------------------------------------------------------- //
@@ -2608,6 +2809,22 @@ async function refreshSourcePins(records: DecisionReadRecordsPort, source: Decis
 
 function isGoalPin(pin: VersionPin): boolean {
   return (pin.ref as { aggregateType?: string }).aggregateType === 'Goal';
+}
+
+/**
+ * The summary's per-notice time: the `ProjectNoticeCreated` event at the notice's own `since` cursor, read through
+ * the existing `eventAt` port. A read-time value kept only in this map for the one grouping call; a notice whose
+ * event does not read has no time and stays its own line.
+ */
+async function noticeTimes(deps: DecisionReadModelDependencies,
+  items: readonly NoticeItemV1[]): Promise<ReadonlyMap<string, string>> {
+  const out = new Map<string, string>();
+  for (const item of items) {
+    if (item.category !== 'project_notice') continue;
+    const event = await deps.records.eventAt(item.position.cursor);
+    if (event.status === 'ready') out.set(item.itemKey, event.value.event.occurredAt);
+  }
+  return out;
 }
 
 /** A read failure is thrown so the caller reports it; only a real absence is null. */
