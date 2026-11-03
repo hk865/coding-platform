@@ -1316,12 +1316,6 @@
       "note": "no consumer in rulings or the book; kept in the allowlist so reach stays green (lead answer q-w-allowlist, condition 3), slice 8 of the orchestration design"
     },
     {
-      "file": "src/core/work-graph/sessions/role-scope-commit.ts",
-      "name": "planReanchorHook",
-      "reason": "kept-for",
-      "note": "waits for 7D2's reanchor-hook connection (planReanchorHook), slice 7 of the orchestration design"
-    },
-    {
       "file": "src/core/work-graph/state/role-scope.ts",
       "name": "RegionClaimV1",
       "reason": "kept-for",

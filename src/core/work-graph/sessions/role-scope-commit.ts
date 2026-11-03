@@ -38,5 +38,3 @@ export function roleLineCommitContribution(input: RoleLineCommitInputV1, allocat
   return { ok: true, fragment: { guards: merged.guards, records, claims,
     events: input.events, commitCursorBindings: bindings } };
 }
-// W/state/goal-copy.ts:12 — B2 seam; implementation stays 7D2's
-export declare function planReanchorHook(): { status: 'not_implemented'; reason: 'planReanchor is 7D1' };
