@@ -2,7 +2,7 @@ import { BoardView } from './runtime.js';
 import { parseBoard } from './board.js';
 import {
   committedRouteValue, createHostClient, fetchPageText, readPlatformToken, readPlatformTokenText, readyRouteValue,
-  RouteReadError, subscribeChanges, type CoreScope,
+  RouteReadError, subscribeChanges, type BootstrapReply, type CoreScope,
 } from './host-client.js';
 import { asRecord, asText } from './values.js';
 import { revisionAssignments } from '../contracts/plan.js';
@@ -107,10 +107,9 @@ export async function bootBoardPage(): Promise<void> {
     },
     async pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void> {
       try {
-        const boot = await client.bootstrap();
-        const scope = boot.workspaces[0]?.scope;
-        if (scope === undefined) throw new Error('找不到工作区。');
-        await pinTaskMapLine(client, scope, key, pinned);
+        const found = await taskMapScope(client, (await client.bootstrap()).workspaces, goalId);
+        if (found === null) throw new Error('找不到工作区。');
+        await pinTaskMapLine(client, found.scope, key, pinned);
       } catch (error) {
         throw new Error(writeTextOf(error));
       }
@@ -181,8 +180,45 @@ function pageProps(
 /** `goals/conflicts` carries one footprint entry per Goal; only the ref is read. */
 type GoalConflictRead = { footprintCompleteness: Array<{ goalRef: { goalId: string } }> };
 
+type TaskMapGoalRef = { aggregateType: 'Goal'; projectId: string; goalId: string };
+
 /**
- * Ruling items 1, 2 and 5: the first workspace is the scope; a given goal id
+ * The one scope choice of the read and the pin write. Without a goal id it is
+ * the first workspace. With one, decision 104-1 (a read inside a project is not
+ * limited by the workspace): each project is tried once, with its first
+ * workspace in bootstrap order, and the first `ready` `goals/read` names the
+ * scope; that read is returned so the Goal is not read twice. A project that
+ * does not hold the Goal answers `not_found` and the next one is tried; when
+ * none holds it that `not_found` stands. Any other failure is the read's own
+ * error. No workspace at all is `null`.
+ */
+async function taskMapScope(
+  client: ReturnType<typeof createHostClient>, workspaces: BootstrapReply['workspaces'], goalId: string | null,
+): Promise<{ scope: CoreScope; goal: { ref: TaskMapGoalRef; read: TaskMapGoalRead } | null } | null> {
+  if (goalId === null) {
+    const first = workspaces[0];
+    return first === undefined ? null : { scope: first.scope, goal: null };
+  }
+  const tried = new Set<string>();
+  let missing: RouteReadError | null = null;
+  for (const { scope } of workspaces) {
+    if (tried.has(scope.projectId)) continue;
+    tried.add(scope.projectId);
+    const ref = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
+    try {
+      const read = readyRouteValue<TaskMapGoalRead>(await client.post('goals/read', scope, ref), 'goals/read');
+      return { scope, goal: { ref, read } };
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      missing = error;
+    }
+  }
+  if (missing !== null) throw missing;
+  return null;
+}
+
+/**
+ * Ruling items 1, 2 and 5: the scope is `taskMapScope`'s; a given goal id
  * wins, otherwise the first Goal whose display state is unfinished; none is the
  * empty state. Every read reply must be `ready`. The returned `cursor` is this
  * read's bootstrap `changesHead`, never a later head.
@@ -193,13 +229,14 @@ export async function readTaskMap(
 ): Promise<RefreshRead<TaskMapData>> {
   const boot = await client.bootstrap();
   const cursor = boot.changesHead ?? null;
-  const workspace = boot.workspaces[0];
-  if (workspace === undefined) return { data: null, cursor };
-  const scope: CoreScope = workspace.scope;
+  const found = await taskMapScope(client, boot.workspaces, goalId);
+  if (found === null) return { data: null, cursor };
+  const scope = found.scope;
 
-  if (goalId !== null) {
-    const ref = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
-    const data = await loadTaskMapForGoal(client, scope, ref, await readGoalReads(client, scope, ref), demand);
+  if (found.goal !== null) {
+    const { ref, read } = found.goal;
+    const reads = { goal: read, display: await readGoalDisplay(client, scope, ref) };
+    const data = await loadTaskMapForGoal(client, scope, ref, reads, demand);
     return { data, cursor };
   }
 
@@ -219,16 +256,20 @@ export async function readTaskMap(
 }
 
 async function readGoalReads(
-  client: ReturnType<typeof createHostClient>, scope: CoreScope,
-  ref: { aggregateType: 'Goal'; projectId: string; goalId: string },
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, ref: TaskMapGoalRef,
 ): Promise<{ goal: TaskMapGoalRead; display: TaskMapDisplayRead }> {
   const goal = readyRouteValue<TaskMapGoalRead>(
     await client.post('goals/read', scope, ref), 'goals/read',
   );
-  const display = readyRouteValue<TaskMapDisplayRead>(
+  return { goal, display: await readGoalDisplay(client, scope, ref) };
+}
+
+async function readGoalDisplay(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, ref: TaskMapGoalRef,
+): Promise<TaskMapDisplayRead> {
+  return readyRouteValue<TaskMapDisplayRead>(
     await client.post('goals/display', scope, { goalRef: ref }), 'goals/display',
   );
-  return { goal, display };
 }
 
 /** Ruling item 1: `tasks/query` `not_found` is a Goal without an adopted Plan,

@@ -18,7 +18,7 @@ body { margin: 0; background: #1F1F1F; }
 .tm-bar { flex: none; display: flex; align-items: center; gap: 14px; min-height: 48px; padding: 0 12px 0 8px; background: var(--side); border-bottom: 1px solid var(--line); min-width: 0; }
 .tm-back { gap: 4px; flex: none; }
 .tm-gname { flex: 0 1 auto; min-width: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tm-goal { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.tm-goal { display: inline-flex; flex: none; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); white-space: nowrap; } /* the long goal name gives way (ellipsis); the state never shrinks under the view buttons */
 .tm-goal .why { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
 .tm-body { flex: 1 1 auto; min-height: 0; display: flex; }
 .tm-canvas { flex: 999 1 560px; min-width: 0; overflow: auto; padding: 14px 32px 40px; display: flex; flex-direction: column; gap: 12px; }
