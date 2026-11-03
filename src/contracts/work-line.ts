@@ -46,7 +46,7 @@ export type LineReasonCodeV1 =                                            // 中
   | 'paused_by_you' | 'paused_by_goal' | 'paused_interrupted' | 'paused_yielded'
   | 'unknown_run' | 'unknown_query' | 'health_recoverable' | 'occupancy_unexplained'
   | 'done_tasks' | 'done_unproven' | 'retired_turn_open' | 'retired_missing' | 'retired_damaged' | 'retired_unrecorded'
-  | 'goal_cancelled' | 'awaiting_check' | 'task_deferred' | 'waiting_dispatch' | 'idle'
+  | 'goal_cancelled' | 'awaiting_check' | 'task_deferred' | 'waiting_dispatch' | 'idle' | 'unassigned'
   | 'card' | 'run_failed' | 'check_failed' | 'continuation_cancelled'
   | 'round_inconclusive' | 'check_interrupted' | 'round_ambiguous' | 'origin_unresolvable'
   | 'run_outcome_unknown' | 'anomaly_pending' | 'copy_unknown' | 'unknown_call_review'
@@ -76,7 +76,7 @@ export type LineStatusV1 = {                                                // �
 };
 
 export type LineNameV1 = {
-  source: 'running_task' | 'open_tasks' | 'recent_task' | 'secretary_ordinal' | 'duty_only';
+  source: 'running_task' | 'open_tasks' | 'recent_task' | 'secretary_ordinal' | 'duty_only' | 'stored_name';
   primary: string; extraCount: number;                                     // “首项等 n 项”；秘书是“秘书 N”
   ordinal: number | null;                                                  // secretary_ordinal 的 N：本工作区秘书 Session 按创建顺序（createdAt，同刻按 Session 键）
                                                                            // 从 1 数，归档的也算，只读副本不算；别的来源和读不到序号时为 null
@@ -106,6 +106,8 @@ export type LineRowV1 = {
   duty: PlatformDutyV1 | 'unknown';                                        // unknown 也包括读角色配置失败（L7）
   name: LineNameV1;
   status: LineStatusV1;
+  /** L44's one displayed wait; the Query marker and the Run's persisted shape, never a second state. */
+  runningCap: 'running_cap' | null;
   responsibleNow: LineTaskBriefV1[];                                       // 链上全部开着的负责关系，去重（悬停“列全”）
   doneTasks: { tasks: LineTaskBriefV1[]; omitted: LineCountV1 } | null;    // 已做完的悬停卡：最新 21 条里 terminal 的前 20 项（L1a、T8 补充）
   retired: { conclusion: SessionHealthConclusion | null; history: 'readable' | 'not_readable';
@@ -214,6 +216,9 @@ export type TaskDisplayFactsV1 = {
   neverRanTerminal: 'cancelled' | 'superseded' | null;
   anomaly: { label: '中断，待核对'; next: LineReasonV1; pending: LineCountV1 } | null;
   attention: LineAttentionV1 | null;
+  // TaskDisplayFactsV1 (:213): the task read's one adviser wait; the literal is the book's (:847).
+  // Additive optional: the existing `deriveTaskDisplayFacts` producers keep compiling; the two task reads assign it.
+  adviserWait?: 'waiting for an adviser' | null;
 };
 export type TaskHoverV1 = {
   task: TaskTriple; planRef: PlanRevisionRef; title: string;

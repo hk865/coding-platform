@@ -67,7 +67,7 @@
 - `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`/`reviewer_not_supported`，`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
 - `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
 - `decision-policy.ts` — 自主级别动作表（含 `create_member` 的两档值与两档都为 `needs_decision` 的 `role_line_add`）、用户消息准入、自动化确认原因、gate 覆盖与修复判定。
-- `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）。
+- `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）；待命原因多一个 `unassigned`（链上没有开着的负责链接），行带名额等待 `runningCap`。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
 - `initialization-adoption.ts` — 初始化采用操作的纯记录表：出生 `newInitializationAdoptionRecord`、既有操作的再次接受 `acceptExistingInitializationAdoption`、写入前标记 `nextAdoptionStage`，以及三个后写 `advanceInitializationAdoption`/`stopInitializationAdoption`/`completeInitializationAdoption`，再加供服务重建已提交记录的纯投影 `committedAdoptionRecord`（前缀、before/stopped 标记与 `record.result` 只在这里形成；不读时钟、不生成 id、不碰存储）。
 
@@ -146,9 +146,10 @@
 | `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:255` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
 | `isLegalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:141` | Goal 设置形状的唯一纯检查（schema 版本、autonomy、order、wait/risk 字段） | 构造或复制设置后写之前；`decideGoalCopy` 与设置迁移共用 |
 | `transitionLinePins` | `src/core/work-graph/state/line-pin-machine.ts:81` | 一次原子增删置顶项；无变化时 effects 为空 | 修改工作线置顶 |
-| `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:259` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
-| `deriveLineControls` | `src/core/work-graph/state/line-status.ts:485` | 由事实与状态派生可用控制项 | 画工作线操作 |
-| `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:741` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
+| `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:261` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
+| `lineRunningCapOf` | `src/core/work-graph/state/line-status.ts:413` | 由持有者的 Query 标记或 Run 的持久 `starting`+`authorized` 形状派生运行名额等待（`running_cap` 或 null） | 画线的名额等待；不要另写判定 |
+| `deriveLineControls` | `src/core/work-graph/state/line-status.ts:496` | 由事实与状态派生可用控制项 | 画工作线操作 |
+| `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:752` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
 | `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1607` | SessionMessage 主迁移 | 消息读/回/派生 |
 | `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1773` | 建新消息记录 | 收到用户或系统消息 |
 | `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1854` | 按变更生成下一条消息记录 | 读、回、绑定答复 |

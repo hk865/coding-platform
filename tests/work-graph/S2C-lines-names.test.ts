@@ -100,7 +100,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-16 line names and groups (%s)',
       (role) => role.templateId === 'secretary' ? 'secretary' : 'executor');
     const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
-    expect(row?.status.ownReason.code).toBe('idle');
+    expect(row?.status.ownReason.code).toBe('unassigned');
     expect(row?.name.source).toBe('secretary_ordinal');
     expect(row?.name.primary).toBe('秘书 1');
     expect(row?.name.complete).toBe(true);

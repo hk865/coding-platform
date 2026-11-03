@@ -273,6 +273,7 @@ function lineRow(line: typeof raw.lines[number]): LineRowV1 {
     duty: sceneDutyOf(line),
     name: lineName(line),
     status: lineStatus(line),
+    runningCap: null,
     responsibleNow: [],
     doneTasks: null,
     retired: null,

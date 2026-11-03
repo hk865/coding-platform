@@ -58,7 +58,7 @@
 - `handoff-brief.ts` — Work 交接简报（记录 5）的契约：ref `HandoffBriefRef`、归一化材料 `HandoffBriefMaterialV1`（executor/adviser 两臂，含 `HandoffBriefTaskV1`/`HandoffBriefNoteIndexV1`）、独立绑定 `HandoffBriefBindingV1` 与唯一摘要 `handoffBriefDigest`；渲染在 H 的 `continuation-brief-render.ts`。
 - `session-activity.ts` — Session 的活动记录（字段表格式 `SessionActivity@1`）：`SessionActivityRefShape`、`SessionActivityFormat` 和推导出的 `SessionActivityRef`/`SessionActivityV1`；只随引起它的事实一起提交，`source` 是那个事实的 ref（`input` 来自 QueryJob 或 SessionMessage，`round_ended` 来自 QueryRun）。
 - `session-anomaly.ts` — `SessionAnomalyAnchorRef`、归档变更与排队来源视图。
-- `work-line.ts` — 工作线读 DTO：列表、详情、悬停、分段与执行项；秘书线的名字是“秘书 N”（`LineNameV1.ordinal`）。消息项的 `LineMessageStateV1` 顶层带 `release`（记录原值）、推导出的 `delivery`/`deliveredTo`/`evidence`/`reason` 与 `disposition`（`reason` 是未送达的读原因，仅 `delivery === 'undelivered'` 时非 null；记录上存的 `delivery` 不读，7B 才读）；`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。
+- `work-line.ts` — 工作线读 DTO：列表、详情、悬停、分段与执行项；秘书线的名字是“秘书 N”（`LineNameV1.ordinal`）。行带 `runningCap`（运行名额的等待，只有 `running_cap` 或 null），待命原因多一个 `unassigned`（链上没有开着的负责链接），名字来源多一个 `stored_name`，任务显示多一个可选的 `adviserWait`。消息项的 `LineMessageStateV1` 顶层带 `release`（记录原值）、推导出的 `delivery`/`deliveredTo`/`evidence`/`reason` 与 `disposition`（`reason` 是未送达的读原因，仅 `delivery === 'undelivered'` 时非 null；记录上存的 `delivery` 不读，7B 才读）；`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。
 
 ### 证据与审查
 做证据、无进展、审查准入/材料与验证范围/导入的去这组。

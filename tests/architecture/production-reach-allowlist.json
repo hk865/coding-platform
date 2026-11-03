@@ -1406,12 +1406,6 @@
       "note": "8E-2 F2 的 readSemanticFlows 默认值（8E 开工裁定 v5 :1962，书 :887），slice 8 of the orchestration design；F2 落地时删这一条"
     },
     {
-      "file": "src/contracts/dispatch.ts",
-      "name": "runAdmissionWaitOf",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5a reads it"
-    },
-    {
       "file": "src/contracts/semantic-layer.ts",
       "name": "SemanticFlowV1",
       "reason": "kept-for",

@@ -15,7 +15,7 @@ import type { ModuleRef, SessionRef, VersionPin } from '../../../contracts/core/
 import type { CoreError } from '../../../contracts/core/results.js';
 import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-archive.js';
 import type { SessionHealthConclusion, SessionRecord } from '../../../contracts/core/session.js';
-import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+import { runAdmissionWaitOf, type RunRef, type RunSnapshot, type TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
@@ -403,8 +403,19 @@ function standbyReason(facts: LineFactsV1, done: DoneVerdict, waiting: boolean):
     return reason('paused_by_goal');
   }
   if (nonTerminal.length > 0) return reason('waiting_dispatch');
+  // T9: the two open-link classes are the only basis; no lifecycle value.
+  if (facts.responsibleOpen.length === 0 && facts.responsibleOpenOther.length === 0) return reason('unassigned');
   if (isExecutorEvidenceReady(facts, waiting) && done.evidence === 'incomplete') return reason('done_unproven');
   return reason('idle');
+}
+
+/** L44: `running_cap` from A1a's Query marker, else the Run's persisted `starting`+`authorized` shape (BK-7d2-13). */
+export function lineRunningCapOf(holder: LineFactsV1['holder']): 'running_cap' | null {
+  if (holder === null) return null;
+  if (holder.kind === 'query') return holder.query.run.executionState?.admissionWait ?? null;
+  if (holder.kind !== 'run') return null;
+  // 线读没有组的计数；门只在拒绝时把 Run 留在 `starting`+`authorized`（书 `:449–:450`），所以持有中的这种 Run 就是名额等待。
+  return runAdmissionWaitOf(holder.run.run, true);
 }
 
 // -------------------------------------------------------------------------- //

@@ -89,7 +89,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-04 done evidence (%s)', (kind) 
     await f.transfer(head, other, taskTarget(goal.tasks['x-moved']!));
     const row = rowOf(ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
-    expect(row?.status.ownReason.code).toBe('idle');
+    expect(row?.status.ownReason.code).toBe('unassigned');
     expect(row?.status.doneEvidence).toBe('complete');
   });
 
@@ -110,7 +110,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-04 done evidence (%s)', (kind) 
     }
     const row = rowOf(ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
-    expect(row?.status.ownReason.code).toBe('done_unproven');
+    expect(row?.status.ownReason.code).toBe('unassigned');
     expect(row?.status.doneEvidence).toBe('incomplete');
   });
 
@@ -126,7 +126,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-04 done evidence (%s)', (kind) 
     }
     const row = rowOf(ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
-    expect(row?.status.ownReason.code).toBe('idle');
+    expect(row?.status.ownReason.code).toBe('unassigned');
     expect(row?.status.doneEvidence).toBe('complete');
   });
 
@@ -158,7 +158,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-04 done evidence (%s)', (kind) 
     await f.link(head, taskTarget(goal.tasks['x-unknown']!), 'responsible', false);
     const row = rowOf(ready(await f.reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
-    expect(row?.status.ownReason.code).toBe('done_unproven');
+    expect(row?.status.ownReason.code).toBe('unassigned');
     expect(row?.status.doneEvidence).toBe('incomplete');
   });
 
@@ -204,7 +204,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-04 done evidence (%s)', (kind) 
     const reader = lineReaderOver(f.base, f.records, () => 'executor', 2);
     const row = rowOf(ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope })).rows, head);
     expect(row?.status.own).toBe('standby');
-    expect(row?.status.ownReason.code).toBe('done_unproven');
+    expect(row?.status.ownReason.code).toBe('unassigned');
     expect(row?.status.doneEvidence).toBe('incomplete');
     // L1b: the done-evidence part that stopped on the budget is reported.
     expect(row?.status.partialParts).toContainEqual({ part: 'done_evidence', reason: 'history_budget' });

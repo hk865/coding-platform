@@ -81,7 +81,7 @@ import {
   decodeSessionRecord, decodeSessionWorkLink, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
-  cardLineKeys, deriveAttentionAll, deriveLineControls, deriveLineStatus, lineSortKey, type LineCardFactV1, type LineCardInputV1,
+  cardLineKeys, deriveAttentionAll, deriveLineControls, deriveLineStatus, lineRunningCapOf, lineSortKey, type LineCardFactV1, type LineCardInputV1,
   type LineClosureModeV1, type LineDoneEvidenceV1, type LineFactsV1, type LineOwnerIndexV1,
   type LinePausedTaskFactsV1, type LineRunFactsV1, type LineTaskArchiveNextV1, type LineTaskFactV1,
 } from '../state/line-status.js';
@@ -665,6 +665,7 @@ async function assembleOneLine(
     duty,
     name,
     status,
+    runningCap: lineRunningCapOf(facts.holder),
     responsibleNow: responsibleOpen.map(toTaskBrief),
     doneTasks: deriveDoneTasks(facts, taskFacts),
     retired: headRecord.health === 'unavailable'
