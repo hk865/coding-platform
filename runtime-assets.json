@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "b78d989c7241ae77e5bc6107438523a7c79bb5ac50d083c0298dc6b499456f4e"
+    "sha256": "db2b02d6a659966364fcef3dfcbfb3f7459019083ccd7a37a3001c4db9e41445"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "9834d1e4bed2cbaadacd43f5349704ab0829b2175abb49d51e786aa12acbe905"
+    "sha256": "6da33894f7fbf42d2ea7b2de9525668ec5c4db3dd8d1c5ed75d5a295ea58b852"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -133,19 +133,19 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "fac6185e8cc70d38562662a101d6ff5d1c27b9329635e7ede0405b7e3f2ee716"
+    "sha256": "969337c084fcacc0329016857821d4230adf4239a5072b11e0004469fffd1b60"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "f96d6dbfa65cc9a9d5b8dc92a68b4ad57304624457597d098dde5cae9ff5d7b0"
+    "sha256": "b8b7203b8ca2426506aee0f9e161ff7838c8a897c8646301c3b3e82cf9ea2706"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "04d626e345fde72e1347f81f6373c93eb2d31e3ffec1bbf375820725122f27f5"
+    "sha256": "909e43e0b6d1ffe17ee05a5a9612efca002a12464d7ba00676ea7185e1358d93"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
-    "sha256": "ce369cc31801f802005aa78187e9466307cce2cb021e4dc9264c1aec26b14917"
+    "sha256": "9b705856ce463730c2100dc70ef965739bf1417dbabd91c41020aeb4e154ca29"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
@@ -189,7 +189,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",
-    "sha256": "41a1c0af6d1c644cf69b7df37fcde30187c22c6d66ec4b539e75dcf06c5bfe4a"
+    "sha256": "b5c36c3c0fa338335f245b07ad105889a72d5b050fb68e3af2bafbb66fce1948"
   },
   {
     "path": "resources/prompts/platform/tools/propose_architecture_revision.json",

@@ -36,6 +36,31 @@ export type SemanticLinkV1 = {
  */
 export type LinkReadPayloadV1 = Omit<LinkPayloadV1, 'verification'> & { verification: LinkVerificationV1 };
 
+/** One step of a flow read: the link's current item and the first of five problems. */
+export type SemanticFlowStepV1 = {
+  link: string;
+  item: SemanticLinkV1 | null;                 // only not_current is null; broken keeps the item
+  problem: 'not_current' | 'broken' | 'stale' | 'unchecked' | null; // the first of these five, in order
+};
+
+/** The flow row a semantic read returns. */
+export type SemanticFlowV1 = {
+  noteId: string;
+  version: number;
+  state: 'accepted' | 'reviewed' | 'pending_review';
+  topic: string;
+  conclusion: string;
+  source: NoteSourceV1;
+  goalId: string | null;
+  steps: SemanticFlowStepV1[];
+  gapsAfter: number[];                         // step i's "to" is not step i+1's "from", 1-based; a hint only
+  currentEligible: boolean;                    // the flow's own checks pass and every step's currentEligible is true
+  freshness: 'fresh' | 'stale' | 'unchecked';  // the flow's own check combined with its steps' problems
+};
+
+/** The read-time flow payload on `NoteItemV1.flow`; only `expandFlowForHead` produces it. */
+export type NoteFlowReadV1 = { steps: SemanticFlowStepV1[]; gapsAfter: number[] };
+
 export type SemanticScopeV1 = { kind: 'project' } | { kind: 'module'; moduleId: string } | { kind: 'file'; path: string };
 
 /** The paging envelope the links and flows reads share. */

@@ -3,8 +3,9 @@
  * when this round is a secretary request round or a non-request planning round.
  * A plain Query and a copy have no request root, so they get no note tool and no
  * note declaration. A secretary round admits the six general kinds plus
- * `understanding`: `review` is not a write kind at all, and `repair` is refused
- * for a secretary's write. A planning round admits only the six general kinds.
+ * `understanding`, `link` and `flow`: `review` is not a write kind at all, and
+ * `repair` is refused for a secretary's write. A planning round admits only the
+ * six general kinds.
  *
  * This file holds the value's one declaration; consumers import it through
  * `model/secretary-note-contracts.ts`, which re-exports it.
@@ -17,7 +18,7 @@ import type { QueryAnswerShapeV1, QueryJobRef } from '../../../contracts/query-j
 export type QueryNoteAdmissionV1 =
   | { class: 'none' }
   | { class: 'secretary';
-      /** The admitted write kinds, in the declaration's order: the six general kinds then `understanding`. */
+      /** The admitted write kinds, in the declaration's order: the six general kinds then understanding, link, flow. */
       kinds: readonly NoteKind[];
       withdraw: true;
       /** The still-valid request_understanding grant set (goal ids), read from the round's frozen batch. */
@@ -44,7 +45,7 @@ export function secretaryNoteAdmission(input: {
   if (input.requestRoot === null) return { class: 'none' };
   return {
     class: 'secretary',
-    kinds: [...NOTE_GENERAL_KINDS, 'understanding', 'link'],
+    kinds: [...NOTE_GENERAL_KINDS, 'understanding', 'link', 'flow'],
     withdraw: true,
     grantedGoalIds: input.grantedGoalIds.map(goal => goal.goalId),
   };

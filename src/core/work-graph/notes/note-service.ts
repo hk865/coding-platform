@@ -20,7 +20,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import { isPos, isRecord } from '../../../contracts/validation/common.js';
+import { hasOnlyKeys, isPos, isRecord } from '../../../contracts/validation/common.js';
 import type { RoleConfigurationRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
@@ -28,7 +28,7 @@ import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
 } from './note-anchors.js';
 import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, noteCheckWorkspace, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
-import { checkLinkDraft, evidenceRoleProblem, literalKeyProblem } from './link-evidence.js';
+import { checkLinkDraft, endpointIdentityOf, evidenceRoleProblem, literalKeyProblem } from './link-evidence.js';
 import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
 import { newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
@@ -59,7 +59,7 @@ import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import {
   NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES,
   NOTE_EXISTING_TOPICS_MAX, NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
-  NOTE_LINK_EVIDENCE_MAX, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
+  NOTE_LINK_EVIDENCE_MAX, NOTE_PROJECT_FLOW_QUOTA, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
   UNDERSTANDING_BODY_MAX_BYTES,
 } from '../model/note-contracts.js';
 import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
@@ -67,7 +67,8 @@ import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-sto
 import {
   CURRENT_POINTER_MOVED_EVENT_TYPE, NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
   NOTE_EVENT_SCHEMA_VERSION, NOTE_WRITTEN_EVENT_TYPE,
-  S4_NOTE_BY_REVIEW_STATUS_LOOKUP, currentPointerRefKey, decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot,
+  S4_NOTE_BY_REVIEW_STATUS_LOOKUP, S8E_NOTE_BY_KIND_STATE_LOOKUP, currentPointerRefKey,
+  decodeCurrentPointerSnapshot, decodeNoteHeadSnapshot,
   encodeCurrentPointerMovedEvent, encodeCurrentPointerSnapshot,
   encodeNoteDispositionChangedEvent, encodeNoteHeadSnapshot, encodeNoteVersionSnapshot, encodeNoteWrittenEvent,
   factProblem, noteDispositionChangedEventFromEvent, noteHeadRefKey, noteVersionRefKey, noteWrittenEventFromEvent,
@@ -120,7 +121,7 @@ export type NoteServiceDependencies = {
   /** L7/8E: the link populations' soft quotas (spec §2); the general quotas above stay as they are. */
   anchorLinkQuota?: number;
   goalLinkQuota?: number;
-  /** F1's flow-only project quota; declared here for the shared limit surface, unused until flow exists. */
+  /** F1's flow-only project quota (100): a soft quota that never refuses a write. */
   projectFlowQuota?: number;
   /** The injectable L14 symbol-scan cap; production uses `NOTE_SYMBOL_HITS_MAX`. */
   symbolHitsMax?: number;
@@ -342,9 +343,9 @@ async function headsByGoalState(deps: NoteServiceDependencies, projectId: string
 
 function sameKindFamily(left: string, right: string): boolean {
   // The four families (book :430–434): the six general kinds replace only each
-  // other; an understanding, a repair and a link each replace only their own
-  // kind. `flow` is F1's family and is not a kind yet.
-  if (left === 'link' || right === 'link') return left === right;
+  // other; an understanding, a repair, a link and a flow each replace only their
+  // own kind. A link and a flow never replace one another.
+  if (left === 'link' || right === 'link' || left === 'flow' || right === 'flow') return left === right;
   return isGeneral(left) === isGeneral(right);
 }
 
@@ -523,6 +524,29 @@ function linkShapeProblem(draft: Record<string, unknown>): string | null {
 }
 
 /**
+ * The flow draft's shape (book :253–260): 2–20 steps, each an object whose only
+ * key is the non-empty noteId of a link, no duplicate step, and
+ * `structural: false`. Step kinds and step states are the relation step's
+ * rules, not this one.
+ */
+function flowShapeProblem(draft: Record<string, unknown>): string | null {
+  const flow = draft['flow'];
+  if (!isRecord(flow)) return 'flow_step_count';
+  const steps = flow['steps'];
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 20) return 'flow_step_count';
+  const seen = new Set<string>();
+  for (const step of steps) {
+    if (!isRecord(step) || !hasOnlyKeys(step, ['link'])) return 'flow_step_count';
+    const link = step['link'];
+    if (typeof link !== 'string' || link.length === 0) return 'flow_step_count';
+    if (seen.has(link)) return 'flow_step_duplicate';
+    seen.add(link);
+  }
+  if (draft['structural'] === true) return 'structural_not_allowed';
+  return null;
+}
+
+/**
  * L4.1/L2a class 1: the complete shape gate over the WHOLE `WriteNoteInput`.
  * `writeNote` runs it first, before the trusted caller read and before any
  * dereference or read, so a malformed input is refused `invalid` with the draft
@@ -598,6 +622,10 @@ function writeInputProblem(input: unknown): string | null {
   if (kind === 'link') {
     const linkProblem = linkShapeProblem(draft);
     if (linkProblem !== null) return linkProblem;
+  }
+  if (kind === 'flow') {
+    const flowProblem = flowShapeProblem(draft);
+    if (flowProblem !== null) return flowProblem;
   }
   const facts = draft['facts'];
   if (!Array.isArray(facts)) return 'facts must be an array';
@@ -730,10 +758,11 @@ export type NoteService = NoteWritePort & NoteDecisionApplyPort & NoteUserReason
 export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const anchorQuota = deps.anchorQuota ?? NOTE_ANCHOR_QUOTA;
   const goalQuota = deps.goalQuota ?? NOTE_GOAL_QUOTA;
-  // 8E L2's own populations: links per anchor (30) and link+flow per goal (300).
-  // The general 5/200 above stay separate; `projectFlowQuota` is F1's and unused.
+  // 8E's own populations: links per anchor (30), link+flow per goal (300) and
+  // current flows per project (100). The general 5/200 above stay separate.
   const anchorLinkQuota = deps.anchorLinkQuota ?? NOTE_ANCHOR_LINK_QUOTA;
   const goalLinkQuota = deps.goalLinkQuota ?? NOTE_GOAL_LINK_QUOTA;
+  const projectFlowQuota = deps.projectFlowQuota ?? NOTE_PROJECT_FLOW_QUOTA;
   const symbolHitsMax = deps.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
   const basisFileMaxBytes = Math.min(deps.basisFileMaxBytes ?? NOTE_BASIS_FILE_MAX_BYTES, deps.workspaceMaxFileBytes);
   // The anchor and basis-file reads are the platform's checks (`noteCheckWorkspace`).
@@ -1604,7 +1633,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // a missing or damaged head keeps the old `not_found` / `unavailable` result.
     const relations = new Map<string, NoteHeadSnapshot | null>();
     const relationIds: string[] = [];
-    for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith]) {
+    // A flow's steps join the SAME batch as the replaces/contradicts/coexistWith
+    // ids: the relation step has one read, never a second source of truth.
+    const stepIds = draft.kind === 'flow' ? draft.flow.steps.map(step => step.link) : [];
+    for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith, ...stepIds]) {
       if (noteId === '') return rejectedInput(input, 'invalid', 'a relation names an empty noteId');
       if (!relations.has(noteId)) {
         relations.set(noteId, null);
@@ -1628,6 +1660,47 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
           return rejectedInput(input, 'unavailable', `the note head is damaged: ${decoded.reason}`);
         }
         relations.set(noteId, decoded.value);
+      }
+    }
+    // L2 (book :316–321): a flow's steps are current links of this project, the
+    // flow's own anchor is the FIRST step's "from" and every extra anchor is one
+    // of any step's ends — compared by endpoint identity over the stored raw
+    // requests, never the resolved line or digest. Shape already answered the
+    // step count and duplicates, so this step checks kinds, states and endpoints
+    // only. The step link's payload is guaranteed by the strict decode.
+    if (draft.kind === 'flow') {
+      for (const step of draft.flow.steps) {
+        const head = relations.get(step.link)!;
+        if (head.kind !== 'link') return rejectedInput(input, 'invalid', 'flow_step_not_link');
+      }
+      for (const step of draft.flow.steps) {
+        const head = relations.get(step.link)!;
+        if (head.state !== 'accepted' && head.state !== 'reviewed') {
+          return rejectedInput(input, 'invalid', 'flow_step_not_current');
+        }
+      }
+      const anchor = draft.anchor;
+      if (anchor.kind !== 'module' && anchor.kind !== 'interface' && anchor.kind !== 'file') {
+        return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
+      }
+      const firstLink = relations.get(draft.flow.steps[0]!.link)!.link as LinkPayloadV1;
+      if (endpointIdentityOf(anchor) !== endpointIdentityOf(firstLink.ends.from)) {
+        return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
+      }
+      const stepEnds = new Set<string>();
+      for (const step of draft.flow.steps) {
+        const link = relations.get(step.link)!.link as LinkPayloadV1;
+        stepEnds.add(endpointIdentityOf(link.ends.from));
+        stepEnds.add(endpointIdentityOf(link.ends.to));
+        if (link.ends.via !== null) stepEnds.add(endpointIdentityOf(link.ends.via));
+      }
+      for (const extra of draft.extraAnchors) {
+        if (extra.kind !== 'module' && extra.kind !== 'interface' && extra.kind !== 'file') {
+          return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
+        }
+        if (!stepEnds.has(endpointIdentityOf(extra))) {
+          return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
+        }
       }
     }
     for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith]) {
@@ -1772,17 +1845,39 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         }
       }
     }
-    // The goal 200 counts every kind except link/flow; those are the separate
-    // `goalLinkQuota` population, so a link/flow head never enters the general
-    // count and a new link/flow does not increment it.
+    // The goal 200 counts every kind except link/flow; link and flow are the
+    // separate `goalLinkQuota` (300) population, so a link/flow head never
+    // enters the general count and a new link/flow does not increment it.
     const outsideGeneralGoal = (kind: string): boolean => kind === 'link' || kind === 'flow';
     const goalFullGeneral = !outsideGeneralGoal(draft.kind) && goalHeads.filter(head =>
       !outsideGeneralGoal(head.kind) && !replacedCurrent.has(head.noteId)
       && !revisedPending.has(head.noteId)).length >= goalQuota;
-    const goalFullLink = draft.kind === 'link' && goalHeads.filter(head => head.kind === 'link'
-      && !replacedCurrent.has(head.noteId)
+    const goalFullLink = (draft.kind === 'link' || draft.kind === 'flow') && goalHeads.filter(head =>
+      (head.kind === 'link' || head.kind === 'flow') && !replacedCurrent.has(head.noteId)
       && !revisedPending.has(head.noteId)).length >= goalLinkQuota;
-    const goalFull = goalFullGeneral || goalFullLink;
+    // F1's soft project-flow quota: the current (accepted + reviewed) flows of
+    // the project, deduped by noteId. It never refuses a write; it joins the
+    // same `goalFull` admission fact (a non-human write then goes pending) and
+    // feeds the committed receipt below. Like the goal counts, admission
+    // subtracts the current flows this write replaces; a read failure is the
+    // existing mapped rejection.
+    let projectFlowCount = 0;
+    let projectFlowFull = false;
+    if (draft.kind === 'flow') {
+      const seenFlows = new Set<string>();
+      for (const state of ['accepted', 'reviewed'] as const) {
+        const page = await readAllHeads(deps.records, S8E_NOTE_BY_KIND_STATE_LOOKUP, [ctx.projectId, 'flow', state]);
+        if (!page.ok) return rejectedInput(input, page.code, page.reason);
+        for (const head of page.heads) {
+          if (seenFlows.has(head.noteId)) continue;
+          seenFlows.add(head.noteId);
+          projectFlowCount += 1;
+        }
+      }
+      projectFlowFull = projectFlowCount
+        - [...replacedCurrent.values()].filter(head => head.kind === 'flow').length >= projectFlowQuota;
+    }
+    const goalFull = goalFullGeneral || goalFullLink || projectFlowFull;
 
     // C3.3: `contradiction` is recorded only when a contradicted target is
     // accepted/reviewed at write (D-04); `user_note_replaced` only when the
@@ -1827,8 +1922,15 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         && counted.filter(head => !outsideGeneralGoal(head.kind)).length + 1 > goalQuota) {
         committedOverQuota = true;
       }
-      if (draft.kind === 'link'
-        && counted.filter(head => head.kind === 'link').length + 1 > goalLinkQuota) committedOverQuota = true;
+      if ((draft.kind === 'link' || draft.kind === 'flow')
+        && counted.filter(head => head.kind === 'link' || head.kind === 'flow').length + 1 > goalLinkQuota) {
+        committedOverQuota = true;
+      }
+    }
+    if (draft.kind === 'flow' && supersedesNow && projectFlowCount
+      - [...replacedCurrent.values()].filter(head => head.kind === 'flow').length
+      + 1 > projectFlowQuota) {
+      committedOverQuota = true;
     }
 
     const noteId = deps.newId();
@@ -1847,6 +1949,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         coexistWith: [...draft.coexistWith],
         ...(repairPayload === undefined ? {} : { repair: repairPayload }),
         ...(linkPayload === undefined ? {} : { link: linkPayload }),
+        ...(draft.kind === 'flow' ? { flow: draft.flow } : {}),
       },
       state: admission.state, goalId: storedGoalId, source: caller.source,
       stagedRunKey: caller.source.kind === 'agent' && draft.kind === 'repair' && caller.source.runRef !== null

@@ -36,7 +36,7 @@ const GOAL_A: GoalRef = { aggregateType: 'Goal', projectId: 'project-1', goalId:
 const GOAL_B: GoalRef = { aggregateType: 'Goal', projectId: 'project-1', goalId: 'goal-b' };
 
 const SECRETARY_KINDS = [
-  'convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'link',
+  'convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision', 'understanding', 'link', 'flow',
 ] as const;
 
 type Case = {

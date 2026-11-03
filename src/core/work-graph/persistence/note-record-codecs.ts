@@ -110,7 +110,7 @@ const NOTE_STATES: readonly NoteState[] = ['staged', 'accepted', 'reviewed', 'pe
 const REVIEW_REASONS: readonly NoteReviewReason[] = ['structural', 'contradiction', 'quota_full', 'user_note_replaced'];
 const CHANGE_KINDS: readonly NoteVersionSnapshot['change']['kind'][] = ['write', 'review', 'accept', 'activate',
   'reject', 'withdraw', 'supersede', 'coexist', 'merge'];
-const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion', 'body', 'sections', 'repair', 'link', 'anchor',
+const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion', 'body', 'sections', 'repair', 'link', 'flow', 'anchor',
   'extraAnchors', 'facts', 'basis', 'structural', 'replaces', 'contradicts', 'coexistWith'];
 const HEAD_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
   'stagedRunKey', 'reviewReasons', 'confirmedByUser', 'anchorKey0', 'anchorKey1', 'anchorKey2', 'anchorKey3',

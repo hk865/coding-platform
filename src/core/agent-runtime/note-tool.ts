@@ -182,6 +182,13 @@ const linkSchema = z.object({
   evidence: z.array(linkEvidenceSchema),
 }).strict();
 
+// 8E F1 (sheet §4.3.5): the flow payload's model-facing shape. The 2–20 step
+// count, the duplicate rule and every relation/state refusal stay in
+// `writeInputProblem`; this only fixes the shape the write owner receives.
+const flowSchema = z.object({
+  steps: z.array(z.object({ link: z.string().min(1) }).strict()),
+}).strict();
+
 /**
  * The repair payload's outer shape. The ops and destinations stay loose here:
  * the ONE op parser owns the ops' exact keys and the note service owns the move
@@ -236,6 +243,7 @@ export function createNoteTools(config: NoteToolsConfig): NoteToolsHandle {
     sections: sectionsSchema.optional(),
     repair: repairInputSchema.optional(),
     link: linkSchema.optional(),
+    flow: flowSchema.optional(),
     expectedPointerRevision: z.number().int().min(0).nullable().optional(),
   }).strict();
   const reviewSchema = z.object({

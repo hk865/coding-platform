@@ -9,11 +9,12 @@ import type { ReadResult } from '../../../contracts/core/results.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
-  LinkInputV1, LinkVerificationV1, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1, NoteHeadSnapshot, NoteKind,
-  NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot, RepairInputV1, RepairPayloadV1,
+  FlowPayloadV1, LinkInputV1, LinkVerificationV1, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1,
+  NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot,
+  RepairInputV1, RepairPayloadV1,
 } from '../../../contracts/note.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
-import type { LinkReadPayloadV1 } from '../../../contracts/semantic-layer.js';
+import type { LinkReadPayloadV1, NoteFlowReadV1 } from '../../../contracts/semantic-layer.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
 
 // --------------------------------------------------------------------------
@@ -139,6 +140,8 @@ export type RecordNoteWriteArgs = {
   repair?: RepairInputV1;
   /** The link's dedicated payload; the one payload-kind gate rejects it on another kind. */
   link?: LinkInputV1;
+  /** The flow's dedicated payload; the one payload-kind gate rejects it on another kind. */
+  flow?: FlowPayloadV1;
   expectedPointerRevision?: number | null;
 };
 export type RecordNoteReviewArgs = {
@@ -183,9 +186,10 @@ export function recordNoteRequestOf(args: RecordNoteArgs, commandId: string): Re
       replaces: args.replaces ?? [],
       contradicts: args.contradicts ?? [],
       coexistWith: args.coexistWith ?? [],
-      // Keep a caller-supplied link on every kind branch: a mismatched payload
+      // Keep a caller-supplied link/flow on every kind branch: a mismatched payload
       // must reach the one payload-kind gate instead of being silently dropped.
       ...(args.link === undefined ? {} : { link: args.link }),
+      ...(args.flow === undefined ? {} : { flow: args.flow }),
     };
     const note: NoteDraftV1 = args.kind === 'understanding'
       ? { ...common, kind: 'understanding', sections: args.sections as NoteSectionsV1 }
@@ -193,8 +197,10 @@ export function recordNoteRequestOf(args: RecordNoteArgs, commandId: string): Re
         ? { ...common, kind: 'repair', body: args.body as string, repair: args.repair as RepairInputV1 }
         : args.kind === 'link'
           ? { ...common, kind: 'link', body: args.body as string, link: args.link as LinkInputV1 }
-          : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding' | 'repair' | 'link'>,
-              body: args.body as string };
+          : args.kind === 'flow'
+            ? { ...common, kind: 'flow', body: args.body as string, flow: args.flow as FlowPayloadV1 }
+            : { ...common, kind: args.kind as Exclude<NoteKind, 'understanding' | 'repair' | 'link' | 'flow'>,
+                body: args.body as string };
     return { op: 'write', request: { commandId, note,
       expectedPointerRevision: args.expectedPointerRevision ?? null, goalId: null } };
   }
@@ -334,6 +340,8 @@ export type NoteItemV1 = { noteId: string; version: number; storedState: NoteSta
   anchorSlots: NoteCheckV1['anchorSlots'];
   /** Present exactly on a `link` note. */
   link?: LinkReadPayloadV1;
+  /** Present exactly on a `flow` note; only the read side's `expandFlowForHead` builds it. */
+  flow?: NoteFlowReadV1;
   retiredExtraAnchors: string[];
   unresolvedFacts: NoteCheckV1['unresolvedFacts']; uncheckedFacts: number[]; hints: NoteHintV1[];
   matchedTerms: string[]; score: number;

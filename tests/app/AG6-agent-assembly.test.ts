@@ -95,12 +95,13 @@ const WORK = `# Platform work（共同工作原则）
 
 - 什么时候写：任务结束、返工、采用计划、归档（MVP B09）。把做对的约定、踩过的坑、定下的取舍和还没有答案的问题记下来。
 - 挂哪儿：先问“这个任务明天取消，这条还对吗？”——还成立就挂架构锚点（模块、接口、文件），只有依赖这个任务本身时才挂任务、阶段或目标。
-- 九种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）。
+- 十种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）、\`flow\`（流程）。
 - 结论一句话；事实只给指针（\`facts\`），从不抄原文。
 - \`open_question\` 由点它的 \`decision\` 用 \`replaces\` 收掉。
 - 写后读回执里的 \`check\`（L22），按它报的问题撤下或重写。
 - 只有 \`currentEligible: true\` 的条目才是现行结论（§11.3）。
 关系类注记（\`link\`）要写清两端和证据：关系要求的每个角色各给一条范围内能找到的证据；运行时才拼出的名字写 \`key: null\`；缺证据或证据落在范围外时，按回执的 \`evidenceIndexes\` 只改那几条再试；先把每一步记成 \`link\`，再记串起这些步骤的流程；同一范围内的共现只是线索，不算接线。
+流程类注记（\`flow\`）按 \`noteId\` 记有序步骤：给 2–20 条不重复、属于本项目且当前（\`accepted\` 或 \`reviewed\`）的步骤，第一步的 \`from\` 就是流程的锚点；步骤后来被取代时读作 \`not_current\`，流程不改写。
 ` + D89_WORK;
 
 const SECRETARY = `# Platform secretary（平台秘书）
@@ -129,10 +130,11 @@ const SECRETARY = `# Platform secretary（平台秘书）
 
 - 什么时候写：任务结束、返工、采用计划、归档（MVP B09）。把做对的约定、踩过的坑、定下的取舍和还没有答案的问题记下来。
 - 挂哪儿：先问“这个任务明天取消，这条还对吗？”——还成立就挂架构锚点（模块、接口、文件）；项目级的取舍挂项目锚点。
-- 九种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）。
+- 十种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）、\`flow\`（流程）。
 - 结论一句话；事实只给指针（\`facts\`），从不抄原文。\`open_question\` 由点它的 \`decision\` 用 \`replaces\` 收掉。
 - 写后读回执里的 \`check\`（L22），按它报的问题撤下或重写；只有 \`currentEligible: true\` 的条目才是现行结论（§11.3）。
 关系类注记（\`link\`）要写清两端和证据：关系要求的每个角色各给一条范围内能找到的证据；运行时才拼出的名字写 \`key: null\`；缺证据或证据落在范围外时，按回执的 \`evidenceIndexes\` 只改那几条再试；先把每一步记成 \`link\`，再记串起这些步骤的流程；同一范围内的共现只是线索，不算接线。
+流程类注记（\`flow\`）按 \`noteId\` 记有序步骤：给 2–20 条不重复、属于本项目且当前（\`accepted\` 或 \`reviewed\`）的步骤，第一步的 \`from\` 就是流程的锚点；步骤后来被取代时读作 \`not_current\`，流程不改写。
 
 接手已有项目、要重构到新架构时，按这套做：
 
@@ -166,12 +168,13 @@ const SCRIBE = `# Platform scribe（平台书记）
 
 - 什么时候写：任务结束、返工、采用计划、归档（MVP B09）。把这些时刻的事实、取舍和未决问题整理成注记。
 - 挂哪儿：先问“这个任务明天取消，这条还对吗？”——还成立就挂架构锚点（模块、接口、文件），只有依赖这个任务本身时才挂任务、阶段或目标。
-- 九种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）。
+- 十种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）、\`flow\`（流程）。
 - 结论一句话；事实只给指针（\`facts\`），从不抄原文。
 - \`open_question\` 由点它的 \`decision\` 用 \`replaces\` 收掉。
 - 写后读回执里的 \`check\`（L22），按它报的问题撤下或重写。
 - 只有 \`currentEligible: true\` 的条目才是现行结论（§11.3）。
 关系类注记（\`link\`）要写清两端和证据：关系要求的每个角色各给一条范围内能找到的证据；运行时才拼出的名字写 \`key: null\`；缺证据或证据落在范围外时，按回执的 \`evidenceIndexes\` 只改那几条再试；先把每一步记成 \`link\`，再记串起这些步骤的流程；同一范围内的共现只是线索，不算接线。
+流程类注记（\`flow\`）按 \`noteId\` 记有序步骤：给 2–20 条不重复、属于本项目且当前（\`accepted\` 或 \`reviewed\`）的步骤，第一步的 \`from\` 就是流程的锚点；步骤后来被取代时读作 \`not_current\`，流程不改写。
 - 两条 agent 注记互相矛盾而没牵涉用户时，你收下要带 \`resolution: 'supersede' | 'coexist'\`（§11.6）：\`supersede\` 在同一次提交里取代仍现行的一方，\`coexist\` 记成并存。矛盾只牵涉用户写的或确认过的注记时，出卡给用户，不替用户决定。
 - 用户确认过的注记你不能撤下，除非你就是它的作者；要改就新写一条去取代。
 - 项目的当前理解是你的项目文档（§11.4）：只有管项目的书记或用户能写，整篇正文进每次上下文；用户写的版本被你改写时直接生效，原版留在历史里。
@@ -220,12 +223,13 @@ const ADVISER = `# Platform adviser（平台参谋）
 
 - 什么时候写：任务结束、返工、采用计划、归档（MVP B09）。把调查得到的约定、踩过的坑、选型取舍和还没有答案的问题记下来。
 - 挂哪儿：先问“这个任务明天取消，这条还对吗？”——还成立就挂架构锚点（模块、接口、文件），只有依赖这个任务本身时才挂任务、阶段或目标。
-- 九种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）。
+- 十种里选一种：\`convention\`（约定）、\`pitfall\`（坑）、\`tradeoff\`（取舍）、\`open_question\`（待解问题）、\`preference\`（偏好）、\`decision\`（决定）、\`understanding\`（当前理解）、\`repair\`（修补，只能暂存）、\`link\`（联系）、\`flow\`（流程）。
 - 结论一句话；事实只给指针（\`facts\`），从不抄原文。
 - \`open_question\` 由点它的 \`decision\` 用 \`replaces\` 收掉。
 - 写后读回执里的 \`check\`（L22），按它报的问题撤下或重写。
 - 只有 \`currentEligible: true\` 的条目才是现行结论（§11.3）。
 关系类注记（\`link\`）要写清两端和证据：关系要求的每个角色各给一条范围内能找到的证据；运行时才拼出的名字写 \`key: null\`；缺证据或证据落在范围外时，按回执的 \`evidenceIndexes\` 只改那几条再试；先把每一步记成 \`link\`，再记串起这些步骤的流程；同一范围内的共现只是线索，不算接线。
+流程类注记（\`flow\`）按 \`noteId\` 记有序步骤：给 2–20 条不重复、属于本项目且当前（\`accepted\` 或 \`reviewed\`）的步骤，第一步的 \`from\` 就是流程的锚点；步骤后来被取代时读作 \`not_current\`，流程不改写。
 
 ## 边界
 

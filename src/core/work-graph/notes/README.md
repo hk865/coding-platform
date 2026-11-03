@@ -33,7 +33,7 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createNoteService` | `src/core/work-graph/notes/note-service.ts:730` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点；文件锚点的存在、候选、符号读和基准文件的读经 `noteCheckWorkspace`，写入、准入、额度和存下的作者仍是调用者 | 注入给 composition；所有注记写入与处置走它 |
+| `createNoteService` | `src/core/work-graph/notes/note-service.ts:756` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点；文件锚点的存在、候选、符号读和基准文件的读经 `noteCheckWorkspace`，写入、准入、额度和存下的作者仍是调用者 | 注入给 composition；所有注记写入与处置走它 |
 | `createRepairActivationService` | `src/core/work-graph/notes/activate-repair.ts:713` | 绑定 records/catalog/evidence 等依赖，返回 `readBoundRepairRound`/`activateRepair`/`attemptRepairsForGoal`；激活检查轮 PASS、批准、footprint 并一次提交注记与 catalog 修订 | 组合根装配 repair 激活；不要另开激活入口 |
 | `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:411` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空） | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
 | `createSemanticLayerRead` | `src/core/work-graph/notes/semantic-layer-read.ts:40` | 语义联系层的唯一读端口：`readSemanticLinks`（project/module/file，limit 1–100，一页一次核对） | Host 的 `architecture/semantic-links` 路由；不要另写范围、分页或 item 映射 |

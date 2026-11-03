@@ -344,6 +344,8 @@ describe('S4A N-16 header rendering', () => {
       conclusion: '先冻结接口' }, '决定(任务 t1)!：先冻结接口'],
     ['link', { kind: 'link', anchor: { kind: 'file', path: 'src/a.ts' }, structural: false,
       conclusion: '调用前鉴权', relation: 'calls', to: 'src/b.ts#b' }, '联系·调用(src/a.ts→src/b.ts#b)：调用前鉴权'],
+    ['flow', { kind: 'flow', anchor: { kind: 'file', path: 'src/a.ts' }, structural: false,
+      conclusion: '先鉴权再执行', firstFrom: 'src/a.ts' }, '流程(src/a.ts)：先鉴权再执行'],
   ];
   it.each(cases)('N-16 %s renders the exact header line', (_name, note, expected) => {
     expect(renderNoteHeader(note)).toBe(expected);

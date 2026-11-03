@@ -377,7 +377,7 @@ export type SampleSections = { status: string; decided: string; open: string; ne
 /** A current understanding as `notes/write` returned its ids, with the text the test wrote. */
 export type SampleUnderstanding = { noteId: string; version: number; conclusion: string; sections: SampleSections | null };
 export type SampleNoteKind = 'convention' | 'pitfall' | 'tradeoff' | 'open_question' | 'preference' | 'decision'
-  | 'understanding' | 'repair' | 'link';
+  | 'understanding' | 'repair' | 'link' | 'flow';
 /** A current note as `notes/write` returned its ids, with the draft the test wrote. */
 export type SampleNote = {
   noteId: string; version: number; kind: SampleNoteKind; anchor: NoteDraftAnchorV1; conclusion: string; structural: boolean;
@@ -386,7 +386,7 @@ export type SampleNote = {
 /** Kind labels (strings.json:25–32). */
 const KIND_LABELS: Readonly<Record<SampleNoteKind, string>> = {
   convention: '约定', pitfall: '坑', tradeoff: '取舍', open_question: '待解问题', preference: '偏好', decision: '决定',
-  understanding: '当前理解', repair: '修补', link: '联系',
+  understanding: '当前理解', repair: '修补', link: '联系', flow: '流程',
 };
 
 /** `renderNoteHeader` (src/contracts/note.ts): `<kind>(<anchor>)<!>：<conclusion>`, anchor prefixes strings.json:33–40. */

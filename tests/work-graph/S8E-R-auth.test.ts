@@ -158,7 +158,7 @@ describe('R-auth: a secretary request round admits the link tool and writes a li
       // The real factory's admitted kinds are the secretary admission; link is in it.
       expect(configs.some(config => config.kinds.includes('link'))).toBe(true);
       expect(configs.at(-1)?.kinds).toEqual(['convention', 'pitfall', 'tradeoff', 'open_question', 'preference',
-        'decision', 'understanding', 'link']);
+        'decision', 'understanding', 'link', 'flow']);
       // The note tool holds the Runtime's own query_run principal, never a context built here.
       expect(configs.at(-1)?.context.principal).toMatchObject({ kind: 'query_run', queryRunRef: round.query.run.ref });
     });

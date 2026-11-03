@@ -59,12 +59,13 @@
 - 先查再写：用 `look_graph` 的 `lookup` 看锚点上已有的话题（`topics`），用 `find_graph` 的 `find` 找相近条目；能复用已有话题就复用，不另起一个写法。
 {{/tool:find_graph}}
 {{/tool:look_graph}}
-- 九种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）、`link`（联系）。
+- 十种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）、`link`（联系）、`flow`（流程）。
 - 结论一句话；事实只给指针（`facts`），从不抄原文。
 - `open_question` 由点它的 `decision` 用 `replaces` 收掉。
 - 写后读回执里的 `check`（L22），按它报的问题撤下或重写。
 - 只有 `currentEligible: true` 的条目才是现行结论（§11.3）。
 关系类注记（`link`）要写清两端和证据：关系要求的每个角色各给一条范围内能找到的证据；运行时才拼出的名字写 `key: null`；缺证据或证据落在范围外时，按回执的 `evidenceIndexes` 只改那几条再试；先把每一步记成 `link`，再记串起这些步骤的流程；同一范围内的共现只是线索，不算接线。
+流程类注记（`flow`）按 `noteId` 记有序步骤：给 2–20 条不重复、属于本项目且当前（`accepted` 或 `reviewed`）的步骤，第一步的 `from` 就是流程的锚点；步骤后来被取代时读作 `not_current`，流程不改写。
 {{#tool:record_note}}
 - 你用 `record_note` 的 `write` 和 `withdraw`，只动自己的注记；`review` 不属于你。
 {{/tool:record_note}}

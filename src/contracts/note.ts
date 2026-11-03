@@ -46,7 +46,7 @@ export type NoteDraftAnchorV1 =
 export type NoteSectionsV1 = { status: string; decided: string; open: string; next: string; risks: string };
 
 export type NoteKind = 'convention' | 'pitfall' | 'tradeoff' | 'open_question' | 'preference' | 'decision'
-  | 'understanding' | 'repair' | 'link';
+  | 'understanding' | 'repair' | 'link' | 'flow';
 /** The six general kinds, in spec order. */
 export const NOTE_GENERAL_KINDS: readonly NoteKind[] =
   ['convention', 'pitfall', 'tradeoff', 'open_question', 'preference', 'decision'];
@@ -57,15 +57,16 @@ export function isGeneral(kind: string): boolean {
 }
 
 /** The one complete kind list; the codec, service and tool group point at it. */
-export const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair', 'link'];
+export const NOTE_KINDS: readonly NoteKind[] = [...NOTE_GENERAL_KINDS, 'understanding', 'repair', 'link', 'flow'];
 
 /**
  * The one per-kind payload table: the kind's dedicated field and whether it is
- * required. 8C owns `repair`; 8E adds `link` (and later `flow`) here.
+ * required. 8C owns `repair`; 8E adds `link` and `flow` here.
  */
 export const NOTE_PAYLOAD_KINDS: Readonly<Partial<Record<NoteKind, { field: string; required: boolean }>>> = {
   repair: { field: 'repair', required: true },
   link: { field: 'link', required: true },
+  flow: { field: 'flow', required: true },
 };
 
 /**
@@ -81,13 +82,13 @@ export function payloadKindProblem(body: Record<string, unknown>, kind: string,
     const present = body[entry.field] !== undefined;
     if (kind === payloadKind) {
       if (entry.required && !present) {
-        if (payloadKind === 'link' && label === undefined) return 'payload_kind_mismatch';
+        if ((payloadKind === 'link' || payloadKind === 'flow') && label === undefined) return 'payload_kind_mismatch';
         return label === undefined
           ? `a ${payloadKind} note requires the ${entry.field} payload`
           : `${label}.${entry.field} is required for ${payloadKind}`;
       }
     } else if (present) {
-      if (payloadKind === 'link' && label === undefined) return 'payload_kind_mismatch';
+      if ((payloadKind === 'link' || payloadKind === 'flow') && label === undefined) return 'payload_kind_mismatch';
       return label === undefined
         ? `the ${entry.field} payload is only for a ${payloadKind} note`
         : `${label}.${entry.field} is only for ${payloadKind}`;
@@ -167,6 +168,9 @@ export type LinkPayloadV1 = {
   verification: Extract<LinkVerificationV1, { status: 'verified' | 'unverifiable' }>;   // the write-time result
 };
 
+/** Stored in `NoteBodyV1.flow`: ordered steps, each the `noteId` of a `link` note; no versions. */
+export type FlowPayloadV1 = { steps: { link: string }[] };
+
 export type CatalogRepairOpV1 =
   | { op: 'set_responsibility'; moduleId: string; text: string }
   | { op: 'set_module_name'; moduleId: string; name: string }
@@ -203,14 +207,15 @@ type NoteDraftCommonV1 = { topic: string; conclusion: string; anchor: NoteDraftA
 
 /**
  * Strict per-kind union: `understanding` gives sections, `repair` gives its payload,
- * `link` gives its payload, every other kind a body. The general arm excludes
- * `link` too, so a link cannot bypass the payload-kind gate.
+ * `link` and `flow` give theirs, every other kind a body. The general arm excludes
+ * all three too, so a dedicated payload cannot bypass the payload-kind gate.
  */
 export type NoteDraftV1 =
-  | NoteDraftCommonV1 & { kind: Exclude<NoteKind, 'understanding' | 'repair' | 'link'>; body: string }
+  | NoteDraftCommonV1 & { kind: Exclude<NoteKind, 'understanding' | 'repair' | 'link' | 'flow'>; body: string }
   | NoteDraftCommonV1 & { kind: 'understanding'; sections: NoteSectionsV1 }
   | NoteDraftCommonV1 & { kind: 'repair'; body: string; repair: RepairInputV1 }
-  | NoteDraftCommonV1 & { kind: 'link'; body: string; link: LinkInputV1 };
+  | NoteDraftCommonV1 & { kind: 'link'; body: string; link: LinkInputV1 }
+  | NoteDraftCommonV1 & { kind: 'flow'; body: string; flow: FlowPayloadV1 };
 
 export type LinkDraftV1 = Extract<NoteDraftV1, { kind: 'link' }>;
 
@@ -235,7 +240,7 @@ export type NoteFactV1 =
 export type NoteReviewReason = 'structural' | 'contradiction' | 'quota_full' | 'user_note_replaced';
 
 export type NoteBodyV1 = { kind: NoteKind; topic: string; topicKey: string; conclusion: string; body: string;
-  sections?: NoteSectionsV1; repair?: RepairPayloadV1; link?: LinkPayloadV1;
+  sections?: NoteSectionsV1; repair?: RepairPayloadV1; link?: LinkPayloadV1; flow?: FlowPayloadV1;
   anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; facts: NoteFactV1[];
   basis: { planRevision: number | null; catalogRevision: number | null; files: { path: string; digest: string }[] };
   structural: boolean; replaces: string[]; contradicts: string[];
@@ -286,8 +291,8 @@ function displayOfAnchor(anchor: NoteAnchorV1): string {
 
 /**
  * `<类名>(<锚点显示>)<!>：<结论>` for the old kinds; a link renders
- * `<类名>·<关系>(<from>→<to>)：<结论>`. The `!` appears only for `structural`,
- * which link never is.
+ * `<类名>·<关系>(<from>→<to>)：<结论>`, a flow `<类名>(<first from>)：<结论>`.
+ * The `!` appears only for `structural`, which link and flow never are.
  */
 export function renderNoteHeader(note: {
   kind: NoteKind;
@@ -296,6 +301,7 @@ export function renderNoteHeader(note: {
   conclusion: string;
   relation?: SemanticRelationV1;  // link
   to?: string;                    // the link's "to" display
+  firstFrom?: string;             // the flow's first-step "from" display
 }): string {
   // Display label per kind. The compiler is the checklist: every kind needs a label.
   const labels: Record<NoteKind, string> = {
@@ -308,6 +314,7 @@ export function renderNoteHeader(note: {
     understanding: PLATFORM_PROMPT_PACK_V1.strings['note.kind.understanding'],
     repair: PLATFORM_PROMPT_PACK_V1.strings['note.kind.repair'],
     link: PLATFORM_PROMPT_PACK_V1.strings['note.kind.link'],
+    flow: PLATFORM_PROMPT_PACK_V1.strings['note.kind.flow'],
   };
   const anchor = displayOfAnchor(note.anchor);
   if (note.kind === 'link' && note.relation !== undefined && note.to !== undefined) {
@@ -321,24 +328,28 @@ export function renderNoteHeader(note: {
     };
     return `${labels.link}·${relationLabels[note.relation]}(${anchor}→${note.to})：${note.conclusion}`;
   }
+  if (note.kind === 'flow' && note.firstFrom !== undefined) {
+    return `${labels.flow}(${note.firstFrom})：${note.conclusion}`;
+  }
   const marker = note.structural ? '!' : '';
   return `${labels[note.kind]}(${anchor})${marker}：${note.conclusion}`;
 }
 
 /**
- * The optional extras `renderNoteHeader` takes for a link, so the call sites do
- * not each re-derive them. A caller with a `NoteItemV1` projects `kind`,
- * `anchor`, `extraAnchors` and `link` only.
+ * The optional extras `renderNoteHeader` takes for a link or a flow, so the
+ * call sites do not each re-derive them. A caller with a `NoteItemV1` projects
+ * `kind`, `anchor`, `extraAnchors` and `link` only.
  */
 export function headerExtrasOf(note: {
   kind: NoteKind;
   anchor: NoteAnchorV1;
   extraAnchors?: readonly NoteAnchorV1[];
   link?: { relation: SemanticRelationV1 };
-}): { relation?: SemanticRelationV1; to?: string } {
+}): { relation?: SemanticRelationV1; to?: string; firstFrom?: string } {
   if (note.kind === 'link' && note.link !== undefined) {
     const to = note.extraAnchors?.[0];
     return { relation: note.link.relation, ...(to === undefined ? {} : { to: displayOfAnchor(to) }) };
   }
+  if (note.kind === 'flow') return { firstFrom: displayOfAnchor(note.anchor) };
   return {};
 }

@@ -402,6 +402,7 @@ export function noteBodyOf(head: PendingNoteHeadSnapshot): NoteBodyV1 {
   if (head.sections !== undefined) body.sections = head.sections;
   if (head.repair !== undefined) body.repair = head.repair;
   if (head.link !== undefined) body.link = head.link;
+  if (head.flow !== undefined) body.flow = head.flow;
   return body;
 }
 

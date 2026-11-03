@@ -19,19 +19,19 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 // decision 89 and 8E L3 row 4 append the skill paragraphs; each Skill template carries its own version.
 const V2_TEMPLATES = {
     'base': '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
-    'skill-platform-work': 'fac6185e8cc70d38562662a101d6ff5d1c27b9329635e7ede0405b7e3f2ee716',
-    'skill-platform-secretary': 'f96d6dbfa65cc9a9d5b8dc92a68b4ad57304624457597d098dde5cae9ff5d7b0',
-    'skill-platform-adviser': '04d626e345fde72e1347f81f6373c93eb2d31e3ffec1bbf375820725122f27f5',
-    'skill-platform-scribe': 'ce369cc31801f802005aa78187e9466307cce2cb021e4dc9264c1aec26b14917',
+    'skill-platform-work': '969337c084fcacc0329016857821d4230adf4239a5072b11e0004469fffd1b60',
+    'skill-platform-secretary': 'b8b7203b8ca2426506aee0f9e161ff7838c8a897c8646301c3b3e82cf9ea2706',
+    'skill-platform-adviser': '909e43e0b6d1ffe17ee05a5a9612efca002a12464d7ba00676ea7185e1358d93',
+    'skill-platform-scribe': '9b705856ce463730c2100dc70ef965739bf1417dbabd91c41020aeb4e154ca29',
     'skill-platform-reviewer': '4fa780b2a47de2e01145fef5363a2cac93409fc49f220ed63b1c9e77b474fc9a',
 } as const;
 
 /** The v1 Skill texts PC-1 pinned plus the decision 89 and 8E L3 row 4 paragraphs, hand-written. */
 const V1_SKILL_DIGESTS = {
-    'skill-platform-work': '3a041e0e6fdc9e59dcd7ca4c2e7bbdd467f7e242c4f333d853bba14e5f0b1632',
-    'skill-platform-secretary': 'c7def5ac86f07ac55fecd079252dbf3e25dd818027793cd72bc62ddf138ea680',
-    'skill-platform-adviser': '7769a22f6d83e4fc2be6ae5927fdd5baabe6eb01f9384cd84ef9095b715352f7',
-    'skill-platform-scribe': '22ed3e1bbe13c26fa989d4ad3dc200d52b190cfd71ce91f48bdeb03da5028ca6',
+    'skill-platform-work': '5771a2986830942f114a37c6a34903c5de601925480c2c9b2ba02afdc6b3881e',
+    'skill-platform-secretary': '116ed1a4ba8a6fc49c290b2381f8fefc3a3f111256eb311107453fca653e674f',
+    'skill-platform-adviser': 'ee0225e22c39db9d85546703b0ee2d47e510dc584a7f12886e76045e38df3493',
+    'skill-platform-scribe': 'd2bb56de3d626409470acd006c2e46d6c25e28916101aa5539ddb8a012ac6509',
     'skill-platform-reviewer': 'c92a9343df26d1a1fd8e4db5d0aad055ad0100a9cf757670f2179f495ce8218b',
 } as const;
 
@@ -50,8 +50,8 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         for (const [id, expectedDigest] of Object.entries(V2_TEMPLATES)) {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
-                version: id === 'base' ? 2 : id === 'skill-platform-adviser' ? 6
-                    : id === 'skill-platform-reviewer' ? 3 : 5,
+                version: id === 'base' ? 2 : id === 'skill-platform-adviser' ? 7
+                    : id === 'skill-platform-reviewer' ? 3 : 6,
                 mentionsTools: [],
             });
             const text = templates[id];
@@ -129,10 +129,10 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-brief-executor': { packId: 'platform', version: 1, mentionsTools: ['read'] },
             'handoff-brief-adviser': { packId: 'platform', version: 1, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 2, mentionsTools: [] },
-            'skill-platform-work': { packId: 'platform', version: 5, mentionsTools: [] },
-            'skill-platform-secretary': { packId: 'platform', version: 5, mentionsTools: [] },
-            'skill-platform-adviser': { packId: 'platform', version: 6, mentionsTools: [] },
-            'skill-platform-scribe': { packId: 'platform', version: 5, mentionsTools: [] },
+            'skill-platform-work': { packId: 'platform', version: 6, mentionsTools: [] },
+            'skill-platform-secretary': { packId: 'platform', version: 6, mentionsTools: [] },
+            'skill-platform-adviser': { packId: 'platform', version: 7, mentionsTools: [] },
+            'skill-platform-scribe': { packId: 'platform', version: 6, mentionsTools: [] },
             'skill-platform-reviewer': { packId: 'platform', version: 3, mentionsTools: [] },
         });
     });

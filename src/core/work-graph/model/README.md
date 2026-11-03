@@ -117,8 +117,8 @@
 | `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:480` | notice 项的读取与排序 | notice 来源适配 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:17`、`src/core/work-graph/model/goal-copy-contracts.ts:22`、`src/core/work-graph/model/goal-copy-contracts.ts:15` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（C 的正本再导出；失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:100` | 注记写入、审核、撤回 | 注记写 owner |
-| `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:349` | 注记按引用/列表/版本读取 | 注记读模型 |
-| `NoteMemoryReadPort` | `src/core/work-graph/model/note-contracts.ts:449` | 记忆 lookup/neighbors/history/conflicts/find/stale | 注记检索 |
+| `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:357` | 注记按引用/列表/版本读取 | 注记读模型 |
+| `NoteMemoryReadPort` | `src/core/work-graph/model/note-contracts.ts:457` | 记忆 lookup/neighbors/history/conflicts/find/stale | 注记检索 |
 | `mapExecutedFilesToModules` | `src/core/work-graph/model/architecture-footprint.ts:17` | 把执行文件按当前 catalog 的最长合法路径映射到模块，无唯一 owner 时 `moduleRef: null`，不猜 | repair footprint 与 goal-conflict 读共用；不要另写路径归属 |
 | `UnknownCallReviewPort` | `src/core/work-graph/model/unknown-call-review-contracts.ts:59` | 未知调用审查的读与写 | 审查/重跑链路 |
 | `WorkLineReadPort` | `src/core/work-graph/model/work-line-contracts.ts:21` | 工作线列表、详情、分页与对话来源 | 工作线读模型 |

@@ -512,6 +512,7 @@ function recordNoteArgs(note: NoteDraftV1): Record<string, unknown> {
     replaces: [...note.replaces], contradicts: [...note.contradicts], coexistWith: [...note.coexistWith],
   };
   if (note.kind === 'link') return { ...common, body: note.body, link: structuredClone(note.link) };
+  if (note.kind === 'flow') return { ...common, body: note.body, flow: structuredClone(note.flow) };
   if (note.kind === 'understanding') return { ...common, sections: structuredClone(note.sections) };
   if (note.kind === 'repair') return { ...common, body: note.body, repair: structuredClone(note.repair) };
   return { ...common, body: note.body };

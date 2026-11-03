@@ -31,6 +31,7 @@
   "note.kind.understanding": "当前理解",
   "note.kind.repair": "修补",
   "note.kind.link": "联系",
+  "note.kind.flow": "流程",
   "note.relation.calls": "调用",
   "note.relation.injects": "注入",
   "note.relation.callback": "回调",

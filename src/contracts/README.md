@@ -102,8 +102,8 @@
 - `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:131`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:137`）/ `compareCursors`（`src/contracts/ledger.ts:149`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:151`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）。
 - `line-delta.ts` — 真实文本行 diff 的唯一正本：`lineDelta`（LCS，超过 250k 格改用 Myers；返回 `added`/`deleted`/`totalLines`）与 `contentLines`，`MAX_LCS_CELLS` 私有；两者从 `src/app/attention-observer.ts` 搬来，注意力和 Run activity tally 共用（`core` 不 import `app`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
-- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS` 与 `payloadKindProblem`、`renderNoteHeader`；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
-- `semantic-layer.ts` — 语义链接的纯类型：`SemanticEndV1`、`SemanticLinkV1`、`LinkReadPayloadV1`、`SemanticScopeV1`、`SemanticPageV1<T>`；只声明形状，无运行时导出。
+- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`/`link`/`flow`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS`（`repair`/`link`/`flow`）与 `payloadKindProblem`、`renderNoteHeader`（旧种类、link 与 flow 三种形式）；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null。
+- `semantic-layer.ts` — 语义链接与流程的纯类型：`SemanticEndV1`、`SemanticLinkV1`、`LinkReadPayloadV1`、`SemanticFlowStepV1`、`SemanticFlowV1`、`NoteFlowReadV1`、`SemanticScopeV1`、`SemanticPageV1<T>`；只声明形状，无运行时导出。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
 - `platform-duty.ts` — `PlatformDutyV1`：五种平台职责；`PLATFORM_DUTIES` 是它唯一的运行时列表。
 - `resource-caps.ts` — 资源上限：`MIB`、`RESOURCE_CAP_*`、`defaultResourceCapSettings`、报告与不可用原因。
@@ -203,8 +203,8 @@
 | `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:839` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
 | `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
 | `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
-| `renderNoteHeader` | `src/contracts/note.ts:290` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
-| `headerExtrasOf` | `src/contracts/note.ts:331` | link 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 注记时；不要另写一份 header 拼接 |
+| `renderNoteHeader` | `src/contracts/note.ts:297` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
+| `headerExtrasOf` | `src/contracts/note.ts:343` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
 | `planValidationError` | `src/contracts/plan.ts:307` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:313` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:18`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
