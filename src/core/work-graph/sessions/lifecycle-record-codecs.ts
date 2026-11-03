@@ -13,6 +13,7 @@
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { ResponsibilityBasisV1 } from '../model/session-facts-contracts.js';
 import {
   hasOnlyKeys, invalid, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
@@ -25,6 +26,7 @@ import {
   type PendingSessionWorkLink, type Problem,
 } from './session-record-codecs.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
+import { decisionChangeProofProblem } from '../persistence/decision-record-codecs.js';
 
 export const SESSION_WORK_LINK_CHANGED_EVENT = 'SessionWorkLinkChanged';
 export const SESSION_ARCHIVED_EVENT = 'SessionArchived';
@@ -59,6 +61,8 @@ export type SessionLifecycleChangedEventV1 = {
   projectId: string;
   session: SessionRecord;
   reason: string;
+  /** 7D2: the formal archive release's `DecisionChangeProofV1`; absent on reactivate or a plain archive. */
+  proof?: DecisionChangeProofV1;
 };
 
 /**
@@ -104,6 +108,8 @@ export type SessionResponsibilityChangedEventV1 = Slice1EventHeaderV1 & {
   openedBound: 'since' | null;
   archiveStep: ArchiveStepRefV1 | null;
   basis: ResponsibilityBasisV1;
+  /** 7D2: the merge option's link/claim contribution as the one proof. */
+  proof?: DecisionChangeProofV1;
 };
 
 /** Event type selectors of the three slice-1 replay events. */
@@ -120,7 +126,7 @@ const WORK_LINK_CHANGED_EVENT_KEYS: readonly string[] = [
   'sessionRef', 'sessionRevision', 'active', 'link', 'boundField',
 ];
 const LIFECYCLE_CHANGED_EVENT_KEYS: readonly string[] = [
-  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'session', 'reason',
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'session', 'reason', 'proof',
 ];
 const HEALTH_OBSERVED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'hostInstanceId', 'observed', 'probe',
@@ -192,6 +198,10 @@ function checkLifecycleChangedBody(body: UnknownRecord, lifecycle: 'archived' | 
   if (lifecycle === 'active' && session['archivedAt'] !== null) {
     return 'a reactivated Session event must clear archivedAt';
   }
+  if (body['proof'] !== undefined) {
+    const problem = decisionChangeProofProblem(body['proof']);
+    if (problem !== null) return `Session lifecycle event proof: ${problem}`;
+  }
   return null;
 }
 
@@ -243,7 +253,7 @@ const ARCHIVE_CHANGED_EVENT_KEYS: readonly string[] = [
 ];
 const RESPONSIBILITY_CHANGED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId',
-  'mode', 'source', 'destination', 'closed', 'opened', 'openedBound', 'archiveStep', 'basis',
+  'mode', 'source', 'destination', 'closed', 'opened', 'openedBound', 'archiveStep', 'basis', 'proof',
 ];
 const ARCHIVE_STEP_KINDS: readonly string[] = [
   'stop', 'anchor', 'requeue', 'responsibility', 'reply_handler', 'wait_cancel', 'archive',
@@ -414,6 +424,10 @@ function checkResponsibilityChangedBody(body: UnknownRecord): Problem {
     if (basis.terminalCause === null) {
       return 'a terminal responsibility change requires a terminal cause';
     }
+  }
+  if (body['proof'] !== undefined) {
+    const problem = decisionChangeProofProblem(body['proof']);
+    if (problem !== null) return `SessionResponsibilityChanged proof: ${problem}`;
   }
   return null;
 }

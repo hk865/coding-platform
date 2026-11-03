@@ -409,3 +409,12 @@ export function upgradeSessionOperationActionV1(value: unknown): unknown {
   }
   return value;
 }
+
+// The `role_line` arm's vocabulary and shape live in `state/` (the `module-maintainer-assignment` precedent); this
+// file re-exports them so every operation-arm reader keeps one import site.
+export {
+  ROLE_LINE_ACTIONS, ROLE_LINE_STEP_KEYS, ROLE_LINE_STEP_STATES, COLD_START_PHASES,
+  ColdStartExplorationQueryRefShape, RoleLineActionShape,
+  type RoleLineStepKeyV1, type RoleLineStepStateV1, type ColdStartPhaseV1,
+  type ColdStartExplorationQueryRefV1, type RoleLineActionV1,
+} from '../state/role-line-action.js';

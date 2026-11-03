@@ -194,7 +194,7 @@ async function unfinishedPinsOf(records: Pick<RecordLookupPort, 'lookup'>, scope
       if (decoded.status !== 'decoded') return rejected('unavailable', `an unfinished operation is damaged: ${decoded.reason}`);
       const operation = decoded.value;
       if (operation.action.kind !== 'create' && operation.action.kind !== 'member_create'
-        && operation.action.kind !== 'maintainer_assignment'
+        && operation.action.kind !== 'maintainer_assignment' && operation.action.kind !== 'role_line'
         && sameRef(operation.action.input.source, source)) {
         pins.push({ ref: operation.ref, revision: operation.revision });
       }

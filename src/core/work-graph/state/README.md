@@ -22,6 +22,7 @@
 - `session-responsibility.ts` — Session 责任转移/关闭机器：同一提交游标关闭源链接、打开目标链接。
 - `role-scope.ts` — 角色范围的纯规则：`regionContains`/`moduleDepth`/`deepestContainingRegion`（从 `notes/scribe-scope.ts` 搬来的唯一副本）、`effectiveRegions`（同职责更深 region 扣除后的生效模块）、`responsibilityClaimChanges`/`foldRoleScopeClaimChanges` 与 `EffectiveScopeReadPort`/`RegionClaimV1`/`EffectiveScopeV1`；不读存储、不写。
 - `reanchor.ts` — 责任换挂靠的纯迁移计划 `planReanchor`：逐来源关闭、逐去向 `openDestination`，目标记录/占位/授权/目录/Goal 事实全在输入里，拒绝时 `{ok:false, refusals}` 不给计划；`REANCHOR_REASONS` 是八个原因的运行时列表。
+- `role-line-action.ts` — `role_line` 操作分支的纯词表与字段表（D-11 先例 `module-maintainer-assignment.ts`）：七个动作 `ROLE_LINE_ACTIONS`、三个 start_lines 步骤键 `ROLE_LINE_STEP_KEYS`、七个步骤状态 `ROLE_LINE_STEP_STATES`、六个冷启动阶段 `COLD_START_PHASES`、探索 Query 的 ref 形状 `ColdStartExplorationQueryRefShape` 与整臂字段表 `RoleLineActionShape`（必填可空的 `goalRef`、可选的拆线载荷和七个冷启动载荷字段）；`sessions/session-record-codecs.ts` 用它做唯一的 `checkShape` 臂，`model/session-operation-arms.ts` 只再导出。
 - `role-line-allocation.ts` — 保留名额记录的唯一初始化器 `allocationNext`：六个分支（reserve/convert/add_holder/cancel_reservation/release_holder/move_holder）各自按对象键幂等，`revision` 递增，新条目的游标为 `null`、搬 holder 保留原 `since`。
 - `role-facts.ts` — Session 角色事实记录的唯一构造 `sessionRoleFactsRecord`：由 `SessionRecord`、`roleFactsOf` 已决定的 `creator`/`openedBy` 和创建操作 ref 生成整条 `SessionRoleFactsV1`（`name` 为 null，revision 1）；不读存储、不另判 duty 或只读副本。
 - `role-limits.ts` — 项目额度记录的唯一构造 `projectRoleLimitsNext`：核对 `expectedRevision`，按部分更新合并 `running`/`open`，递增 revision 并返回完整 `ProjectRoleLimitsV1`；`RoleLimitsLevelsV1`、`RoleLimitsChangeV1` 和 `RoleLimitsDecisionV1` 是它的输入/输出形状。降低 `open` 不撤销任何名额。
@@ -100,6 +101,7 @@
 | `MemberCreationStepV1`、`acceptedMemberCreation`、`advancedMemberCreation` | `src/core/work-graph/state/member-creation.ts:176`、`:190`、`:207` | 成员创建的纯 progress 步骤与阶段迁移：接已存 action 和事实，返回下一个 action 与 phase；revision/时刻/编码/提交由 `tasks/member-service.ts` 写 | 写 accepted、决定、建线、拒绝或恢复进度时；不要另写阶段或 phase 判断 |
 | `MAINTAINER_ASSIGNMENT_STAGES`、`MAINTAINER_ASSIGNMENT_ANSWERS`、`MAINTAINER_ASSIGNMENT_VERDICTS`、`MaintainerAssignmentActionShape` | `src/core/work-graph/state/module-maintainer-assignment.ts:21`、`:24`、`:26`、`:74` | `maintainer_assignment` 的三张表（五个阶段、人的 `approve`/`reject`、`automatic`/`needs_decision`）与字段表（reason 1..2000 UTF-8 字节） | 操作 codec 分支与维护者 owner；不要另写 |
 | `MaintainerAssignmentStepV1`、`acceptedMaintainerAssignment`、`advancedMaintainerAssignment` | `src/core/work-graph/state/module-maintainer-assignment.ts:108`、`:121`、`:138` | 维护者操作的纯 progress 步骤与阶段迁移：接已存 action 和 phase，返回下一对；revision 和时间由写入者加 | 维护者 owner 写每一步；调用者不自定阶段、phase 或结果 |
+| `ROLE_LINE_ACTIONS`、`ROLE_LINE_STEP_KEYS`、`ROLE_LINE_STEP_STATES`、`COLD_START_PHASES`、`ColdStartExplorationQueryRefShape`、`RoleLineActionShape` | `src/core/work-graph/state/role-line-action.ts:16`、`:18`、`:19`、`:22`、`:28`、`:50` | `role_line` 分支的词表（七个动作、三个步骤键、七个步骤状态、六个冷启动阶段）、探索 Query 的 ref 形状和整臂字段表 | `sessions/session-record-codecs.ts` 的 `checkShape` 臂；`model/session-operation-arms.ts` 只再导出；不要另写第二份 |
 | `newArchitectureCaptureRequestRecord` | `src/core/work-graph/state/architecture-capture.ts:37` | 建 status=requested 的捕获请求记录（revision/requestSeq 递增） | 接受一次自动捕获触发时 |
 | `architectureAutoCaptureState` | `src/core/work-graph/state/architecture-capture.ts:56` | 自动捕获的公开投影，pending 由 satisfiedRequestSeq 算出 | 判断是否该触发捕获 |
 | `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:231` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
@@ -121,8 +123,8 @@
 | `controlIntentStateOf` | `src/core/work-graph/state/control-intent-machine.ts:333` | 意图快照的机器状态 | 迁移前 |
 | `transitionControlIntent` | `src/core/work-graph/state/control-intent-machine.ts:886` | 意图主迁移（Queued→Applied/Superseded/OutcomeUnknown） | 控制请求提交与观测 |
 | `decisionActionPolicy` | `src/core/work-graph/state/decision-policy.ts:31` | 自主级别 × 动作的唯四值表 | owner、工具、Workflow、路由都查它 |
-| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:76` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
-| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:123` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
+| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:82` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
+| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:129` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
 | `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:24` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里，同一 ref 勾选两次也是 `invalid`；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`selection_only`/`retraction_pending`，`retract` 非空即后者） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
 | `planReanchorHook` | `src/core/work-graph/state/goal-copy.ts:12` | 7D1 要填的具名 seam：把目标参谋/书记的负责关系挪到新 Goal；现在只返回 `not_implemented`，不写事实、不给回执 | 复制确认里预留的负责关系迁移点；不要另开一条迁移路径 |
 | `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:97` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |

@@ -1452,6 +1452,78 @@
       "name": "SemanticFlowV1",
       "reason": "kept-for",
       "note": "8E-2 F2 的 readSemanticFlows 返回类型（8E 开工裁定 v5 :1962，书 :908–910），slice 8 of the orchestration design；F2 落地时删这一条"
+    },
+    {
+      "file": "src/contracts/role-lines.ts",
+      "name": "ROLE_LINE_OPEN_DUTIES",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `role-lines/open` accepts `reviewer` and refuses `executor`; O1b deletes this entry when its open path lands"
+    },
+    {
+      "file": "src/contracts/role-lines.ts",
+      "name": "RoleLineOpenDutyV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the type of 7D2 O1b's open-duty refusal (`invalid/role_line_duty`); O1b deletes this entry when its open path lands"
+    },
+    {
+      "file": "src/contracts/role-lines.ts",
+      "name": "isRoleLineOpenDuty",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `role-lines/open` narrows its requested duty with it; O1b deletes this entry when its open path lands"
+    },
+    {
+      "file": "src/contracts/role-lines.ts",
+      "name": "workLinkTargetOf",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `B/line-creation.ts` builds `roleScopes` responsible links with it; O1b deletes this entry when `ensureLine` lands"
+    },
+    {
+      "file": "src/contracts/role-lines.ts",
+      "name": "GoalAdviserQueueEntryV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O4a's `enqueueGoal`/queue value uses the entry type; O4a deletes this entry when the queue owner lands"
+    },
+    {
+      "file": "src/core/work-graph/model/session-contracts.ts",
+      "name": "RoleLineOperationV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3's card source and O5a's `role-lines/operations` read project it; they delete this entry when their readers land"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-orchestration-codecs.ts",
+      "name": "roleLineSplitSavedCodec",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `startRoleLineSplit` canonicalizes and re-reads the saved split body with it; O1b deletes this entry when the split port lands"
+    },
+    {
+      "file": "src/core/work-graph/state/role-line-action.ts",
+      "name": "ROLE_LINE_STEP_KEYS",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `start_lines` step machine writes the three keys; O1b deletes this entry when the operation lands"
+    },
+    {
+      "file": "src/core/record-store/event-page-ports.ts",
+      "name": "RecordEventPagePort.eventPage",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O2's `W/sessions/role-line-maintenance.ts` types its dependency as `Pick<RecordEventPagePort, 'eventPage'>` and O5b passes the same store; O2 deletes this entry when the maintenance page lands"
+    },
+    {
+      "file": "src/core/record-store/sqlite-record-store.ts",
+      "name": "EventPageRow",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the SQLite `eventPage` row type, read only by the method O2's maintenance page consumes; O2 deletes this entry when the maintenance page lands"
+    },
+    {
+      "file": "src/core/record-store/sqlite-record-store.ts",
+      "name": "READ_EVENT_PAGE_SQL",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the SQLite `eventPage` keyset statement, used only by the method O2's maintenance page consumes; O2 deletes this entry when the maintenance page lands"
+    },
+    {
+      "file": "src/core/record-store/sqlite-record-store.ts",
+      "name": "READ_EVENT_AFTER_SQL",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the SQLite `eventPage` continuation probe, used only by the method O2's maintenance page consumes; O2 deletes this entry when the maintenance page lands"
     }
   ]
 }

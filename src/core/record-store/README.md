@@ -32,7 +32,8 @@
 | `GoalRecordTransactionPort` | `src/core/record-store/ports.ts:188` | 记录存储端口：`readMany`/`lookupCommit`/`commit`/`eventAt`。 | WorkGraph/AgentRuntime 声明记录依赖时只依赖端口，不依赖具体 backend。 |
 | `readMany`、`RecordBatchRead` | `src/core/record-store/ports.ts:193`、`src/core/record-store/ports.ts:142` | 一次读多个完整 key，返回 records/missing/readThrough。 | 需要成组事实时；不要另写 batch reader，也不要把 missing 当成功空事实（FP-05、M1-28）。 |
 | `lookupCommit` **正本** | `src/core/record-store/ports.ts:194` | 按 identityKey+fingerprint 找已提交回执。 | 重放、提交抛错后的恢复；不要重跑提交或从今天的快照重建结果（M1-14、M1-15、M1-26）。 |
-| `RecordCommitIdentityPort`、`readCommitByIdentity` | `src/core/record-store/ports.ts:206`、`src/core/record-store/in-memory-record-store.ts:468`、`src/core/record-store/sqlite-record-store.ts:553` | 只读一个已提交 identity 行的回执和提交时的 fingerprint；缺行 `not_found`，坏行 `corrupt`。 | 按 commandId 重放父写入、不能拿当前输入重算 fingerprint 时；它是 store 对象上 `records` 之外的独立成员。 |
+| `RecordCommitIdentityPort`、`readCommitByIdentity` | `src/core/record-store/ports.ts:206`、`src/core/record-store/in-memory-record-store.ts:471`、`src/core/record-store/sqlite-record-store.ts:559` | 只读一个已提交 identity 行的回执和提交时的 fingerprint；缺行 `not_found`，坏行 `corrupt`。 | 按 commandId 重放父写入、不能拿当前输入重算 fingerprint 时；它是 store 对象上 `records` 之外的独立成员。 |
+| `RecordEventPagePort`、`eventPage` | `src/core/record-store/event-page-ports.ts:10`、`src/core/record-store/in-memory-record-store.ts:524`、`src/core/record-store/sqlite-record-store.ts:604` | 按提交顺序有界读事件：`after` 独占，`next` 只在还有更多行时给最后一条的 cursor；逐行走同一个 `decodeStoredEventBody`/schema/`applyEventSchema` 解码。 | 维护页等需要事件顺序翻页时；它是 store 对象上 `records` 之外的独立只读成员，下一包按 `Pick<RecordEventPagePort, 'eventPage'>` 注入，不要另写解码器或索引。 |
 | `commit`、`eventAt` | `src/core/record-store/ports.ts:198`、`src/core/record-store/ports.ts:199` | 原子提交一个 `PreparedCommit`；按游标精确读一条事件。 | 所有记录写入与原始结果重放；不要从事件头扫描或倒推 cursor。 |
 | `PreparedCommit`、`RecordGuard`、`UniqueClaimChange`、`StoreCommitReceipt` | `src/core/record-store/ports.ts:114`、`src/core/record-store/ports.ts:83`、`src/core/record-store/ports.ts:86`、`src/core/record-store/ports.ts:131` | 一次提交的全部机械内容：guard、记录、claim、事件、回执。 | 把一组耦合写入合成一个 commit；`expectedRevision:null` 表示必须不存在，数字（含 0）表示必须存在且等于该 revision。 |
 | `StoreFailure`、`StoreResult`、`StoreError`、`DecodeResult` | `src/core/record-store/ports.ts:38`、`src/core/record-store/ports.ts:62`、`src/core/record-store/ports.ts:28`、`src/core/record-store/ports.ts:64` | 机械失败/结果/解码结果；conflict 带事务内观察到的 current。 | 保留 `revision_conflict`/`unique_conflict` 的现场，不要重读最新版本替换它。 |
@@ -51,8 +52,8 @@
 | `RawArtifactStorePort`、`RawArtifactPut`、`RawArtifactRecord`、`MaterialOrigin` | `src/core/record-store/body-ports.ts:23`、`src/core/record-store/body-ports.ts:10`、`src/core/record-store/body-ports.ts:17`、`src/core/record-store/body-ports.ts:7` | 原始正文端口：put 内容寻址、read 校验；origin 只记录来源，不解释授权。 | Runtime/WorkGraph 存取 artifact 正文时。 |
 | `RawArtifactBodyStore` | `src/core/record-store/body-store.ts:24` | 内存正文实现，共享 put/read 规则，Map seam 可替换。 | 内存存储的组合根或测试。 |
 | `createSqliteRawArtifactStore` | `src/core/record-store/sqlite-body-store.ts:25` | SQLite `artifacts` 表实现，`close` 幂等。 | 持久化内容寻址正文时。 |
-| `createInMemoryRecordBackend` | `src/core/record-store/in-memory-record-store.ts:71` | 内存记录 backend，同一事务契约，支持 `beforeWrite`。 | 内存模式与测试；不要把它当第二个业务真相源。 |
-| `createSqliteRecordBackend` | `src/core/record-store/sqlite-record-store.ts:111` | SQLite 记录 backend，一个连接、事务、部分表达式索引。 | 持久模式；组合根唯一创建处。 |
+| `createInMemoryRecordBackend` | `src/core/record-store/in-memory-record-store.ts:77` | 内存记录 backend，同一事务契约，支持 `beforeWrite`。 | 内存模式与测试；不要把它当第二个业务真相源。 |
+| `createSqliteRecordBackend` | `src/core/record-store/sqlite-record-store.ts:120` | SQLite 记录 backend，一个连接、事务、部分表达式索引。 | 持久模式；组合根唯一创建处。 |
 | `isArtifactRef` | `src/core/record-store/body-codec.ts:59` | 校验完整 `ArtifactRef`（kind/contentType/digest/sizeBytes/source）。 | WorkGraph 解码嵌套 artifact ref 时复用，不要另写一份。 |
 | `compareRefKeys` | `src/core/record-store/lookup-index.ts:587` | 按 canonical refKey 的 UTF-8 字节序比较。 | 排序/合并 canonical key；不要用 JS 默认字符串序。 |
 | `compareRefKeysFast` | `src/core/record-store/text-scan.ts:46` | 同一字节序的免分配实现，ill-formed 时回退 Buffer。 | 内存全文扫描/热路径；与 `compareRefKeys` 同一排序规则，正本待 lead 定。 |

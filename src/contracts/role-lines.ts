@@ -19,11 +19,13 @@ import {
   defineEvent, defineRecord, defineShape, f, type InferPending, type InferRecord, type InferShape,
 } from './data-format.js';
 import {
-  ActorRefField, id, OperationRefShape, ProjectScopeShape, SessionRefShape,
+  ActorRefField, GoalRefShape, id, ModuleRefShape, OperationRefShape, ProjectScopeShape, SessionMessageRefShape,
+  SessionRefShape,
 } from './data-format-refs.js';
 import { canonicalJson, canonicalKey } from './fingerprint.js';
-import { DecisionSubjectShape } from './goal-decisions.js';
+import { DecisionSubjectShape, RULE_ACTIONS, type DecisionSubjectV1 } from './goal-decisions.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
+import { GoalScreeningShape } from './query-job.js';
 import { hasOnlyKeys, isRecord, nonEmpty } from './validation/common.js';
 
 // ------------------------------------------------------------------------ //
@@ -141,8 +143,13 @@ export const CreatorRefField = f.union('kind', {
 export type CreatorRefV1 = { kind: 'session'; ref: SessionRef } | { kind: 'human'; actor: ActorRef } | { kind: 'platform' };
 export type CreatorContactV1 = { kind: 'session'; session: SessionRef } | { kind: 'human'; actor: ActorRef }
   | { kind: 'platform' } | { kind: 'lapsed' } | { kind: 'unknown' };
-export type RoleFactsParentV1 = { kind: 'member_create'; caller: { session: SessionRef } | null }
-  | { kind: 'handoff'; source: SessionRef; sourceCreator: CreatorRefV1 } | { kind: 'other' };
+export type RoleFactsParentV1 =
+  | { kind: 'member_create'; caller: { session: SessionRef } | null }
+  | { kind: 'start_lines'; operation: OperationRef }
+  | { kind: 'cold_start'; operation: OperationRef }
+  | { kind: 'secretary_create'; caller: { session: SessionRef } }
+  | { kind: 'handoff'; source: SessionRef; sourceCreator: CreatorRefV1 }
+  | { kind: 'other' };
 export const SESSION_OPENED_BY = ['start_lines', 'human', 'platform_rule', 'agent_proposal', 'secretary_create',
   'member_create', 'handoff', 'cold_start', 'legacy'] as const;
 export type SessionOpenedByV1 = (typeof SESSION_OPENED_BY)[number];
@@ -160,6 +167,12 @@ export function roleFactsOf(input: { principal: CoreCallContext['principal']; du
   { creator: CreatorRefV1; openedBy: SessionOpenedByV1 } | null {
   const { principal, duty, parentOperation, provenance } = input;
   if (duty === 'unknown' || provenance.kind === 'readonly_copy') return null;
+  if (parentOperation?.kind === 'start_lines' || parentOperation?.kind === 'cold_start') {
+    return { creator: { kind: 'platform' }, openedBy: parentOperation.kind };
+  }
+  if (parentOperation?.kind === 'secretary_create') {
+    return { creator: { kind: 'session', ref: parentOperation.caller.session }, openedBy: 'secretary_create' };
+  }
   if (parentOperation?.kind === 'handoff') return { creator: parentOperation.sourceCreator, openedBy: 'handoff' };
   const hostHuman = principal.kind === 'host' && principal.actor.kind === 'human';
   const fallback: CreatorRefV1 = hostHuman ? { kind: 'human', actor: principal.actor } : { kind: 'platform' };
@@ -168,6 +181,21 @@ export function roleFactsOf(input: { principal: CoreCallContext['principal']; du
       ? fallback : { kind: 'session', ref: parentOperation.caller.session }, openedBy: 'member_create' };
   }
   return { creator: fallback, openedBy: hostHuman ? 'human' : 'platform_rule' };
+}
+
+export const ROLE_LINE_OPEN_DUTIES = ['secretary', 'adviser', 'scribe', 'reviewer'] as const;
+export type RoleLineOpenDutyV1 = (typeof ROLE_LINE_OPEN_DUTIES)[number];
+export function isRoleLineOpenDuty(value: unknown): value is RoleLineOpenDutyV1 {
+  return typeof value === 'string' && (ROLE_LINE_OPEN_DUTIES as readonly string[]).includes(value);
+}
+
+/** The inverse of `roleScopeOfTarget` (`:56`), one arm per scope; the project arm needs the project ref. */
+export function workLinkTargetOf(projectRef: ProjectScope, scope: RoleScopeV1): WorkLinkTarget {
+  switch (scope.kind) {
+    case 'project': return { kind: 'project', ref: projectRef };
+    case 'goal': return { kind: 'goal', ref: scope.goalRef };
+    case 'region': return { kind: 'module', ref: scope.moduleRef };
+  }
 }
 export type RoleLineLifecycleFactsV1 = { session: SessionRef; lifecycle: 'active' | 'archived';
   archivedAt: string | null; archiveRequest: SessionArchiveRequestV1 | null };
@@ -274,10 +302,17 @@ export const ProjectRoleLimitsChangedFormat = defineEvent({ name: 'ProjectRoleLi
   schemaVersion: 1, fields: { projectId: id, workspaceId: id,
     from: f.object({ running: f.object(roleLimitFields), open: f.object(roleLimitFields) }),
     to: f.object({ running: f.object(roleLimitFields), open: f.object(roleLimitFields) }),
-    actor: ActorRefField, revision: f.integer({ min: 1 }) } });
-export const PROJECT_NOTICE_KINDS = ['module_maintainer_assigned'] as const;   // 7D2 appends
+    actor: ActorRefField, revision: f.integer({ min: 1 }),
+    /** `DecisionChangeProofV1 | undefined`; the one validator is `decisionChangeProofProblem`. */
+    proof: f.optional(f.json()) } });
+export const PROJECT_NOTICE_KINDS = ['module_maintainer_assigned', 'automatic_adjustment'] as const;   // :268, `7D2 appends`
 export type ProjectNoticeKindV1 = (typeof PROJECT_NOTICE_KINDS)[number];
-export type NotifyProjectInputV1 = { projectRef: ProjectScope; kind: ProjectNoticeKindV1; summary: string; operation: OperationRef };
+// :270, the one widened writer input; `DecisionSubjectV1` is the existing goal/project union, not a new type.
+export type NotifyProjectInputV1 = { projectRef: ProjectScope; subject?: DecisionSubjectV1;
+  kind: ProjectNoticeKindV1; summary: string; operation: OperationRef };
+// b02: the `planned` body of a `role_line_split` operation; O1b writes/reads it, O2 only plans.
+export type RoleLineSplitSavedV1 = { source: SessionRef; move: readonly RoleScopeV1[];
+  keep: readonly RoleScopeV1[]; reason: 'too_long' | 'too_slow' | 'agent_proposal' };
 export const PROJECT_NOTICES_BY_PROJECT_LOOKUP = 'project-notices-by-project';
 export const ProjectNoticeRefShape = defineShape({ name: 'ProjectNoticeRef', fields: {
   aggregateType: f.literal('ProjectNotice'), projectId: id, noticeId: f.sha256() } });
@@ -291,3 +326,85 @@ export const ProjectNoticeCreatedFormat = defineEvent({ name: 'ProjectNoticeCrea
   schemaVersion: 1, fields: { projectId: id, workspaceId: f.nullable(id), notice: f.object({ ref: f.ref(ProjectNoticeRefShape),
     subject: DecisionSubjectShape.fields['subject']!, kind: f.enumOf(PROJECT_NOTICE_KINDS),
     summary: f.string({ min: 1, max: 512, unit: 'utf8Bytes' }), operation: f.ref(OperationRefShape) }) } });
+
+// ------------------------------------------------------------------------ //
+// 7D2 R1 records: queue, autonomy rules, capacity episodes and their events  //
+// ------------------------------------------------------------------------ //
+
+export const AUTONOMY_RULES_BY_PROJECT_LOOKUP = 'autonomy-rules-by-project';
+export const ROLE_CAPACITY_EPISODES_BY_PROJECT_DUTY_LOOKUP = 'role-capacity-episodes-by-project-duty';
+export const GoalAdviserQueueRefShape = defineShape({ name: 'GoalAdviserQueueRef', fields: {
+  aggregateType: f.literal('GoalAdviserQueue'), projectId: id } });
+export const GoalAdviserQueueFormat = defineRecord({ name: 'GoalAdviserQueue', schemaId: 'GoalAdviserQueue@1',
+  aggregateType: 'GoalAdviserQueue', fields: {
+    ref: f.ref(GoalAdviserQueueRefShape), revision: f.revision({ min: 1 }),
+    projectRef: f.ref(ProjectScopeShape),
+    entries: f.array(f.object({
+      goalRef: f.ref(GoalRefShape),
+      enqueuedAt: f.boundCursor('entries[].enqueuedAt'),
+      screening: f.nullable(f.ref(GoalScreeningShape)),
+    })) } });
+export type GoalAdviserQueueV1 = InferRecord<(typeof GoalAdviserQueueFormat)['fields']>;
+export type GoalAdviserQueueRef = GoalAdviserQueueV1['ref'];
+export type GoalAdviserQueueEntryV1 = GoalAdviserQueueV1['entries'][number];
+
+/** D-16: the queue commit's one event; it anchors the receipt and replay, the value is the owner's record re-read. */
+export const GoalAdviserQueueChangedFormat = defineEvent({ name: 'GoalAdviserQueueChanged',
+  eventType: 'GoalAdviserQueueChanged', schemaVersion: 1, fields: { projectId: id, workspaceId: id,
+    actor: ActorRefField, revision: f.integer({ min: 1 }) } });
+
+/** L-1: one `…Changed` per aggregate whose writes publish no record ref; the shape is the queue event's. */
+export const AutonomyRuleSetChangedFormat = defineEvent({ name: 'AutonomyRuleSetChanged',
+  eventType: 'AutonomyRuleSetChanged', schemaVersion: 1, fields: { projectId: id, workspaceId: id,
+    actor: ActorRefField, revision: f.integer({ min: 1 }) } });
+export const RoleCapacityEpisodeChangedFormat = defineEvent({ name: 'RoleCapacityEpisodeChanged',
+  eventType: 'RoleCapacityEpisodeChanged', schemaVersion: 1, fields: { projectId: id, workspaceId: id,
+    actor: ActorRefField, revision: f.integer({ min: 1 }) } });
+/** L-1: `role_line` and `cold_start` operation writes share this one event; `operationRef` names the written record. */
+export const RoleLineOperationChangedFormat = defineEvent({ name: 'RoleLineOperationChanged',
+  eventType: 'RoleLineOperationChanged', schemaVersion: 1, fields: { projectId: id, workspaceId: id,
+    actor: ActorRefField, revision: f.integer({ min: 1 }), operationRef: f.ref(OperationRefShape) } });
+
+export const AutonomyRuleRefShape = defineShape({ name: 'AutonomyRuleRef', fields: {
+  aggregateType: f.literal('AutonomyRule'), projectId: id, ruleId: id } });
+const ruleOpenLimits = { secretary: f.optional(f.integer({ min: 1 })),
+  adviser: f.optional(f.integer({ min: 1 })), scribe: f.optional(f.integer({ min: 1 })),
+  executor: f.optional(f.integer({ min: 1 })) } as const;
+export const AutonomyRuleFormat = defineRecord({ name: 'AutonomyRule', schemaId: 'AutonomyRule@1',
+  aggregateType: 'AutonomyRule', fields: {
+    ref: f.ref(AutonomyRuleRefShape), revision: f.revision({ min: 1 }),
+    projectRef: f.ref(ProjectScopeShape),
+    actions: f.array(f.enumOf(RULE_ACTIONS), { min: 1 }),
+    scope: f.array(f.union('kind', {
+      project: { kind: f.literal('project') },
+      goal: { kind: f.literal('goal'), goalRef: f.ref(GoalRefShape) },
+      region: { kind: f.literal('region'), moduleRef: f.ref(ModuleRefShape) } }), { min: 1 }),
+    limits: f.nullable(f.object({ open: f.optional(f.object(ruleOpenLimits)) })),
+    expiresAt: f.nullable(f.isoTime()), approvedBy: ActorRefField,
+    approvedFrom: f.nullable(f.object({ cardKey: id, answerMessageRef: f.ref(SessionMessageRefShape) })),
+    state: f.enumOf(['active', 'revoked'] as const) },
+  lookups: [{ name: AUTONOMY_RULES_BY_PROJECT_LOOKUP, equal: ['ref.projectId'] }] });
+export type AutonomyRuleV1 = InferRecord<(typeof AutonomyRuleFormat)['fields']>;
+export type AutonomyRuleRef = AutonomyRuleV1['ref'];
+
+export const AutonomyRuleSetRefShape = defineShape({ name: 'AutonomyRuleSetRef', fields: {
+  aggregateType: f.literal('AutonomyRuleSet'), projectId: id } });
+export const AutonomyRuleSetFormat = defineRecord({ name: 'AutonomyRuleSet', schemaId: 'AutonomyRuleSet@1',
+  aggregateType: 'AutonomyRuleSet', fields: { ref: f.ref(AutonomyRuleSetRefShape),
+    revision: f.revision({ min: 1 }), projectRef: f.ref(ProjectScopeShape) } });
+export type AutonomyRuleSetV1 = InferRecord<(typeof AutonomyRuleSetFormat)['fields']>;
+export type AutonomyRuleSetRef = AutonomyRuleSetV1['ref'];
+
+export const RoleCapacityEpisodeRefShape = defineShape({ name: 'RoleCapacityEpisodeRef', fields: {
+  aggregateType: f.literal('RoleCapacityEpisode'), projectId: id,
+  duty: f.enumOf(ROLE_LINE_DUTIES), episode: f.integer({ min: 1 }) } });
+export const RoleCapacityEpisodeFormat = defineRecord({ name: 'RoleCapacityEpisode',
+  schemaId: 'RoleCapacityEpisode@1', aggregateType: 'RoleCapacityEpisode', fields: {
+    ref: f.ref(RoleCapacityEpisodeRefShape), revision: f.revision({ min: 1 }),
+    projectRef: f.ref(ProjectScopeShape), duty: f.enumOf(ROLE_LINE_DUTIES),
+    episode: f.integer({ min: 1 }), capValue: f.integer({ min: 0 }),
+    openedAt: f.boundCursor('openedAt'), closedAt: f.nullable(f.boundCursor('closedAt')) },
+  lookups: [{ name: ROLE_CAPACITY_EPISODES_BY_PROJECT_DUTY_LOOKUP,
+    equal: ['ref.projectId', 'duty'], orderBy: { path: 'episode', valueType: 'integer' } }] });
+export type RoleCapacityEpisodeV1 = InferRecord<(typeof RoleCapacityEpisodeFormat)['fields']>;
+export type RoleCapacityEpisodeRef = RoleCapacityEpisodeV1['ref'];

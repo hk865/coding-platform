@@ -151,7 +151,6 @@ import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.j
 import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../core/agent-runtime/check-execution.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
-
 import { createExecutionHistoryService } from '../core/work-graph/tasks/execution-history-service.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../core/work-graph/persistence/execution-history-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../core/work-graph/persistence/execution-entry-codecs.js';
@@ -211,6 +210,7 @@ import type { HandoffWorkflowDependencies } from '../business/workflow/contracts
 import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
 import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
 import { ROLE_LINE_RECORD_SCHEMAS } from '../core/work-graph/sessions/role-line-record-codecs.js';
+import { ROLE_LINE_ORCHESTRATION_SCHEMAS } from '../core/work-graph/sessions/role-line-orchestration-codecs.js';
 import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits-service.js';
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
 import { createProjectNoticeSource } from '../core/work-graph/views/project-notice-notices.js';
@@ -1003,7 +1003,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
       ...REWORK_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
-      ...ROLE_LINE_RECORD_SCHEMAS.records],
+      ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1022,7 +1022,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
       ...REWORK_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
-      ...ROLE_LINE_RECORD_SCHEMAS.events],
+      ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1041,7 +1041,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
-      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? []],
+      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? []],
   };
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared

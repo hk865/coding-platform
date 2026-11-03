@@ -27,7 +27,7 @@ import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/f
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import {
-  hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, parseObject, type UnknownRecord,
+  hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, parseObject, utf8Bytes, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
 import { isNonZeroPlatformCursor, isPlatformCursor } from '../../../contracts/validation/cursors.js';
 import type {
@@ -44,9 +44,8 @@ import type {
   MaintainerAssignmentOperationV1, SessionCreateOperationRecord, SessionOperationRecord,
 } from '../model/session-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP } from '../model/session-facts-contracts.js';
-import {
-  ActorRefField, HandoffActionShape, SecretaryArchiveActionShape, upgradeSessionOperationActionV1,
-} from '../model/session-operation-arms.js';
+import { ActorRefField, HandoffActionShape, RoleLineActionShape, SecretaryArchiveActionShape,
+  upgradeSessionOperationActionV1 } from '../model/session-operation-arms.js';
 import {
   MemberCreateActionShape, checkMemberCreatedEventBody,
   memberCreationAcceptedEventFormat, memberCreationDecidedEventFormat, memberCreatedEventFormat,
@@ -443,7 +442,7 @@ export function checkSecretaryCreated(value: unknown): Problem {
 export function checkSessionCreationIntent(value: unknown): Problem {
   if (value === null) return null;
   if (!isRecord(value) || !hasOnlyKeys(value, ['duty', 'scope', 'reason', 'creator',
-    'delegationCeiling', 'secretaryCreated'])) {
+    'delegationCeiling', 'secretaryCreated', 'name'])) {
     return 'creation must be null or {duty,scope,reason,creator,delegationCeiling?,secretaryCreated?}';
   }
   if (!(PLATFORM_DUTIES as readonly string[]).includes(String(value['duty']))) return 'creation duty is not recognized';
@@ -469,6 +468,7 @@ export function checkSessionCreationIntent(value: unknown): Problem {
     const pin = checkSecretaryCreated(value['secretaryCreated']);
     if (pin !== null) return pin;
   }
+  if (value['name'] !== undefined && value['name'] !== null && (typeof value['name'] !== 'string' || value['name'].length === 0 || utf8Bytes(value['name']) > 512)) return 'creation name must be null or 1..512 UTF-8 bytes';
   return null;
 }
 
@@ -743,7 +743,7 @@ function checkSessionOperationBody(body: UnknownRecord): Problem {
       : kind === 'secretary_archive' ? checkShape(SecretaryArchiveActionShape, action, 'stored')
         : kind === 'member_create' ? checkShape(MemberCreateActionShape, action, 'stored')
           : kind === 'maintainer_assignment' ? checkShape(MaintainerAssignmentActionShape, action, 'stored')
-            : 'action.kind is not recognized';
+            : kind === 'role_line' ? checkShape(RoleLineActionShape, action, 'stored') : 'action.kind is not recognized';
   if (arm !== null) return arm;
   // The archive arm names no workspace: the top-level field is its only one.
   const armWorkspace = kind === 'create' ? (action['workspace'] as UnknownRecord)['workspaceId']

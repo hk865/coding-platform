@@ -83,6 +83,6 @@ it.each(['memory', 'sqlite'] as const)('%s: Goal creation uses only the new Stor
     if (first.status !== 'committed') throw Error('created Goal missing');
     expect(await backend.records.eventAt(first.cursor)).toMatchObject({ status: 'ready',
       value: { event: { eventType: 'GoalCreated', eventId: expect.stringContaining('goal-event-') } } });
-    expect(Object.keys(backend).sort()).toEqual(['close', 'commitIdentities', 'records']);
+    expect(Object.keys(backend).sort()).toEqual(['close', 'commitIdentities', 'eventPage', 'records']);
   } finally { await backend.close(); }
 });

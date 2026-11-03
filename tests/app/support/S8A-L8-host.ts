@@ -105,7 +105,8 @@ export function createSharedMemoryBackend(): SharedMemoryBackend {
         const backend = physical;
         // The platform's logical close must not physically close the one backend
         // the rest of the world still reads (in-memory refuses after close).
-        return { records: backend.records, commitIdentities: backend.commitIdentities, close: async () => undefined };
+        return { records: backend.records, commitIdentities: backend.commitIdentities, eventPage: backend.eventPage,
+          close: async () => undefined };
       });
       return () => spy.mockRestore();
     },

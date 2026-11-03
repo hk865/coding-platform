@@ -42,6 +42,7 @@ import type { LookupValue, OrderedLookupRequest, RecordCountPort, RecordCountReq
 import { createSqliteTextScan } from "./sqlite-text-scan.js";
 import { migrateLookupIndexes } from "./sqlite-lookup-indexes.js";
 import { aggregateTypeTerm, literalLimit } from "./sqlite-sql-literals.js";
+import type { RecordEventPagePort } from "./event-page-ports.js";
 import type { DecodeResult, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordCommitIdentityPort, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion, UniqueClaimChange, EncodedDomainEvent, EncodedRecord } from "./ports.js";
 
 export type SqliteRecordBackendOptions = {
@@ -54,6 +55,8 @@ export type SqliteRecordBackend = {
   readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort & RecordTextSearchPort;
   /** Read only, from the idempotency row; the separate member the composition injects. */
   readonly commitIdentities: RecordCommitIdentityPort;
+  /** Read only, in commit order, from the one events table; the separate page member. */
+  readonly eventPage: RecordEventPagePort;
   close(): Promise<void>;
 };
 
@@ -65,6 +68,7 @@ type IdempotencyRow = {
   commit_cursor: string;
 };
 type EventRow = { event_json: string };
+type EventPageRow = { id: number; event_json: string };
 
 /** Validated paths are plain member names; quote is belt-and-braces only. */
 function lookupJsonPath(path: string): string {
@@ -110,6 +114,8 @@ const UPSERT_CLAIM_SQL = "INSERT INTO identity_claims (claim_key, owner_key) VAL
 const READ_MAX_EVENT_ID_SQL = "SELECT MAX(id) AS max_id FROM events";
 const READ_SNAPSHOT_SQL = "SELECT snapshot_json FROM snapshots WHERE ref_key = ?";
 const READ_EVENT_SQL = "SELECT event_json FROM events WHERE id = ?";
+const READ_EVENT_PAGE_SQL = "SELECT id, event_json FROM events WHERE id > ? ORDER BY id ASC LIMIT ?";
+const READ_EVENT_AFTER_SQL = "SELECT 1 FROM events WHERE id > ? LIMIT 1";
 
 export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): SqliteRecordBackend {
   if (typeof options !== "object" || options === null) {
@@ -552,6 +558,29 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
 
   const commitIdentities: RecordCommitIdentityPort = { readCommitByIdentity };
 
+  /**
+   * The ONE stored-event decode pipeline: `decodeStoredEventBody`, the registered
+   * schema and `applyEventSchema`. `eventAt` and `eventPage` both go through it;
+   * there is no second decoder.
+   */
+  const decodeEventRow = (
+    cursor: CommitCursor,
+    eventJson: string,
+  ): StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }> => {
+    if (typeof eventJson !== "string") return corruptFailure(`event ${String(cursor)} is not stored as text`);
+    const decoded = decodeStoredEventBody(eventJson);
+    if (decoded.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${decoded.reason}`);
+    const schema = registry.eventByTypeVersion(decoded.value.event.eventType, decoded.value.event.schemaVersion);
+    if (schema === undefined) {
+      return unsupportedFailure(
+        `no event schema registered for ${decoded.value.event.eventType}@${decoded.value.event.schemaVersion}`,
+      );
+    }
+    const applied = applyEventSchema(decoded.value, schema);
+    if (applied.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${applied.reason}`);
+    return { status: "ready", value: { cursor, event: applied.value.event } };
+  };
+
   const eventAt = async (
     cursor: CommitCursor,
   ): Promise<StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>> => {
@@ -564,18 +593,42 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     }
     const row = getStatement(READ_EVENT_SQL).get(seq) as EventRow | undefined;
     if (row === undefined) return notFoundFailure(`no event at cursor ${String(cursor)}`);
-    if (typeof row.event_json !== "string") return corruptFailure(`event ${String(cursor)} is not stored as text`);
-    const decoded = decodeStoredEventBody(row.event_json);
-    if (decoded.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${decoded.reason}`);
-    const schema = registry.eventByTypeVersion(decoded.value.event.eventType, decoded.value.event.schemaVersion);
-    if (schema === undefined) {
-      return unsupportedFailure(
-        `no event schema registered for ${decoded.value.event.eventType}@${decoded.value.event.schemaVersion}`,
-      );
-    }
-    const applied = applyEventSchema(decoded.value, schema);
-    if (applied.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${applied.reason}`);
-    return { status: "ready", value: { cursor, event: applied.value.event } };
+    return decodeEventRow(cursor, row.event_json);
+  };
+
+  /**
+   * The one commit-order page over the `events` primary key: `after` is
+   * exclusive (`id > seq`), `next` is the last returned cursor only while more
+   * rows remain. No index and no second event store.
+   */
+  const eventPage: RecordEventPagePort = {
+    eventPage: async (input) => {
+      assertOpen();
+      let afterSeq = 0;
+      if (input.after !== null) {
+        try {
+          afterSeq = seqOfCommitCursor(input.after);
+        } catch (error) {
+          return invalidFailure(`not a ledger cursor: ${messageOf(error)}`);
+        }
+      }
+      if (!Number.isSafeInteger(input.limit) || input.limit <= 0) {
+        return invalidFailure("eventPage limit must be a positive integer");
+      }
+      const rows = getStatement(READ_EVENT_PAGE_SQL).all(afterSeq, input.limit) as unknown as EventPageRow[];
+      const steps: { cursor: CommitCursor; event: EncodedDomainEvent }[] = [];
+      for (const row of rows) {
+        const cursor = makeCommitCursor(row.id);
+        const decoded = decodeEventRow(cursor, row.event_json);
+        if (decoded.status !== "ready") return decoded;
+        steps.push(decoded.value);
+      }
+      const tail = rows[rows.length - 1];
+      const next = tail !== undefined && getStatement(READ_EVENT_AFTER_SQL).get(tail.id) !== undefined
+        ? makeCommitCursor(tail.id)
+        : null;
+      return { status: "ready", value: { events: steps, next } };
+    },
   };
 
   /** Registered candidate lookup: expression-index keyset then exact readMany. */
@@ -867,5 +920,5 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     }
   };
 
-  return { records, commitIdentities, close };
+  return { records, commitIdentities, eventPage, close };
 }

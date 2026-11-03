@@ -18,6 +18,7 @@ import type { ReworkRequestRef } from './rework-request.js';
 import type { TaskRequeueRef } from './task-requeue.js';
 import type { VerificationRoundRef } from './verification.js';
 import type { ArchitectureProposalBatchRef } from './architecture-proposal.js';
+import type { RoleLineDutyV1 } from './role-lines.js'; // type-only: the runtime edge stays role-lines → goal-decisions
 import { defineShape, f, type InferShape } from './data-format.js';
 import { GoalRefShape, ProjectScopeShape } from './data-format-refs.js';
 import { canonicalJson, canonicalKey } from './fingerprint.js';
@@ -104,10 +105,9 @@ export function decisionSubjectKey(subject: DecisionSubjectV1): string { return 
 
 export type DecisionSourceV1 = {
   kind: 'message' | 'goal_cause' | 'candidate' | 'note_review'
-    | 'planning_question' | 'goal_conflict' | 'message_release'
-    | 'unknown_call_review' | 'command_rerun_request'
+    | 'planning_question' | 'goal_conflict' | 'message_release' | 'unknown_call_review' | 'command_rerun_request'
     | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation'
-    | 'module_maintainer_assignment' | 'repair_approval' | 'structural_proposal';
+    | 'module_maintainer_assignment' | 'repair_approval' | 'structural_proposal' | 'role_capacity' | 'role_line_change';
   key: string; subject: DecisionSubjectV1; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
@@ -137,11 +137,10 @@ export type UserDecisionBodyV1 = {
 /** The shared autonomy table's action vocabulary (spec §3.2). */
 export type DecisionActionV1 =
   | 'confirm_goal' | 'adopt_first_plan' | 'remember_user_preference'
-  | 'refine_future' | 'system_requeue' | 'agent_requeue' | 'auto_reverify'
-  | 'minor_semantic_patch' | 'structural_patch' | 'change_goal'
-  | 'exceed_budget' | 'escalate' | 'secretary_action' | 'secretary_inquiry'
-  | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty'
-  | 'create_member' | 'role_line_add' | 'module_maintainer';
+  | 'refine_future' | 'system_requeue' | 'agent_requeue' | 'auto_reverify' | 'minor_semantic_patch'
+  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'secretary_action' | 'secretary_inquiry'
+  | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty' | 'role_line_split' | 'role_line_reuse'
+  | 'create_member' | 'role_line_add' | 'module_maintainer' | 'goal_queue_assign' | 'short_change_duty';
 
 // ------------------------------------------------------------------------ //
 // Exact content bases, control rebases, footprints and change proofs (§2.8) //
@@ -239,7 +238,9 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'adviser_creation'; trigger:
       { kind: 'requeue'; ref: TaskRequeueRef } | { kind: 'round'; ref: VerificationRoundRef } }
   | { kind: 'repair_approval'; note: VersionPin }
-  | { kind: 'structural_proposal'; batch: ArchitectureProposalBatchRef };
+  | { kind: 'structural_proposal'; batch: ArchitectureProposalBatchRef }
+  | { kind: 'role_capacity'; duty: RoleLineDutyV1; capValue: number; episode: number }
+  | { kind: 'role_line_change'; operationRef: OperationRef };
 
 const goalKey = (goalRef: GoalRef): string => canonicalJson(goalRef as never);
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -308,9 +309,30 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
       return canonicalJson({ kind: 'repair_approval', note: identity.note } as never);
     case 'structural_proposal':
       return canonicalJson({ kind: 'structural_proposal', batch: identity.batch } as never);
+    case 'role_capacity':
+      return canonicalJson({ kind: 'role_capacity', duty: identity.duty, capValue: identity.capValue,
+        episode: identity.episode } as never);
+    case 'role_line_change':
+      return canonicalJson({ kind: 'role_line_change', operationRef: identity.operationRef } as never);
     default: {
       const unknownKind: never = identity;
       throw new Error(`unknown decision source identity ${JSON.stringify(unknownKind)}`);
     }
   }
 }
+
+// ------------------------------------------------------------------------ //
+// The autonomy table's own closed set (7D2)                                  //
+// ------------------------------------------------------------------------ //
+
+/**
+ * The autonomy table's own closed set: the nine always-you names are excluded, leaving the 16 rule-coverable actions
+ * (25 − 9, including `secretary_too_long` and `module_maintainer`).
+ */
+export type RuleActionV1 = Exclude<DecisionActionV1,
+  | 'confirm_goal' | 'adopt_first_plan' | 'remember_user_preference'
+  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'long_handoff' | 'change_duty'>;
+export const RULE_ACTIONS = ['refine_future', 'system_requeue', 'agent_requeue', 'auto_reverify',
+  'minor_semantic_patch', 'secretary_action', 'secretary_inquiry', 'short_handoff', 'secretary_too_long',
+  'create_member', 'role_line_add', 'module_maintainer', 'role_line_split', 'role_line_reuse', 'goal_queue_assign',
+  'short_change_duty'] as const satisfies readonly RuleActionV1[];

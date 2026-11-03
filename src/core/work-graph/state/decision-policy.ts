@@ -70,6 +70,9 @@ export function decisionActionPolicy(input: {
     case 'module_maintainer':
       // The adviser's assignment asks under every-step; after plan confirmation the owner applies it directly.
       return everyStep ? 'needs_decision' : 'automatic';
+    case 'role_line_split': case 'role_line_reuse': case 'goal_queue_assign': case 'short_change_duty':
+      // O3 replaces (7D2 v4 §4, :3735); no package produces these four before O3, so deferring to a human is the safe default.
+      return 'needs_decision';
     default:
       return unreachable(input.action, 'decision action');
   }

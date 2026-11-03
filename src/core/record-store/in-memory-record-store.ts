@@ -35,6 +35,7 @@ import { findClaimConflicts, ledgerHorizonMatches, RejectedInsideTransaction } f
 import { compareOrderedValues, compareRefKeys, createRecordLookupRegistry, decodeCountRequest, decodeLookupRequest, decodeOrderedLookupRequest, decodeTextSearchRequest, distinctLookupValueKeyOf, encodeLookupValues, lookupIndexKeyOf, matchesOrderedRequest, orderedLookupCandidateOf, type RecordLookupRegistry, type RegisteredLookupIndex } from "./lookup-index.js";
 import type { OrderedLookupRequest, OrderedLookupValue, RecordCountPort, RecordCountRequest, RecordCountResult, RecordOrderedLookupPage, RecordOrderedLookupPort, RecordLookupPage, RecordLookupPort, RecordLookupRequest, RecordTextSearchPort, TextSearchPage, TextSearchRequest } from "./lookup-ports.js";
 import { captureTextScanRow, createTextScanIndex, mergePending, putIndexRow, removeTextScanRow, restoreTextScanRow, scanEntries, textScanRowOf, type TextScanIndex, type TextScanUndo } from "./text-scan.js";
+import type { RecordEventPagePort } from "./event-page-ports.js";
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PersistedIdempotencyRecord, PreparedCommit, RecordBackendSchemas, RecordBatchRead, RecordCommitIdentityPort, RecordGuard, StoreCommitReceipt, StoreResult, StoredVersion } from "./ports.js";
 
 export type InMemoryRecordBackendOptions = {
@@ -46,6 +47,8 @@ export type InMemoryRecordBackend = {
   readonly records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordCountPort & RecordTextSearchPort;
   /** Read only, from the idempotency row; the separate member the composition injects. */
   readonly commitIdentities: RecordCommitIdentityPort;
+  /** Read only, in commit order, from the one event log; the separate page member. */
+  readonly eventPage: RecordEventPagePort;
   close(): Promise<void>;
 };
 
@@ -467,6 +470,34 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
 
   const commitIdentities: RecordCommitIdentityPort = { readCommitByIdentity };
 
+  /**
+   * The ONE stored-event decode pipeline: `decodeStoredEventBody`, the registered
+   * schema and `applyEventSchema`. `eventAt` and `eventPage` both go through it;
+   * there is no second decoder.
+   */
+  const decodeEventRow = (
+    cursor: CommitCursor,
+    event: Record<string, unknown>,
+  ): StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }> => {
+    let json: string;
+    try {
+      json = JSON.stringify(event);
+    } catch (error) {
+      return corruptFailure(`event ${String(cursor)} is not JSON serializable: ${messageOf(error)}`);
+    }
+    const decoded = decodeStoredEventBody(json);
+    if (decoded.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${decoded.reason}`);
+    const schema = registry.eventByTypeVersion(decoded.value.event.eventType, decoded.value.event.schemaVersion);
+    if (schema === undefined) {
+      return unsupportedFailure(
+        `no event schema registered for ${decoded.value.event.eventType}@${decoded.value.event.schemaVersion}`,
+      );
+    }
+    const applied = applyEventSchema(decoded.value, schema);
+    if (applied.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${applied.reason}`);
+    return { status: "ready", value: { cursor, event: applied.value.event } };
+  };
+
   const eventAt = async (
     cursor: CommitCursor,
   ): Promise<StoreResult<{ cursor: CommitCursor; event: EncodedDomainEvent }>> => {
@@ -482,23 +513,42 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     // a failed commit restores the log, so a canonical cursor can only point here.
     const positioned = direct !== undefined && direct.cursor === cursor ? direct : undefined;
     if (positioned === undefined) return notFoundFailure(`no event at cursor ${String(cursor)}`);
-    let json: string;
-    try {
-      json = JSON.stringify(positioned.event);
-    } catch (error) {
-      return corruptFailure(`event ${String(cursor)} is not JSON serializable: ${messageOf(error)}`);
-    }
-    const decoded = decodeStoredEventBody(json);
-    if (decoded.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${decoded.reason}`);
-    const schema = registry.eventByTypeVersion(decoded.value.event.eventType, decoded.value.event.schemaVersion);
-    if (schema === undefined) {
-      return unsupportedFailure(
-        `no event schema registered for ${decoded.value.event.eventType}@${decoded.value.event.schemaVersion}`,
-      );
-    }
-    const applied = applyEventSchema(decoded.value, schema);
-    if (applied.status === "invalid") return corruptFailure(`event ${String(cursor)} is damaged: ${applied.reason}`);
-    return { status: "ready", value: { cursor, event: applied.value.event } };
+    return decodeEventRow(cursor, positioned.event);
+  };
+
+  /**
+   * The one commit-order page over `eventLog`: `after` is exclusive (the first
+   * row strictly after it), `next` is the last returned cursor only while more
+   * rows remain. No index and no second event store.
+   */
+  const eventPage: RecordEventPagePort = {
+    eventPage: async (input) => {
+      assertOpen();
+      let afterSeq = 0;
+      if (input.after !== null) {
+        try {
+          afterSeq = seqOfCommitCursor(input.after);
+        } catch (error) {
+          return invalidFailure(`not a ledger cursor: ${messageOf(error)}`);
+        }
+      }
+      if (!Number.isSafeInteger(input.limit) || input.limit <= 0) {
+        return invalidFailure("eventPage limit must be a positive integer");
+      }
+      const steps: { cursor: CommitCursor; event: EncodedDomainEvent }[] = [];
+      const end = Math.min(state.eventLog.length, afterSeq + input.limit);
+      for (let index = afterSeq; index < end; index += 1) {
+        const row = state.eventLog[index] as { cursor: CommitCursor; event: Record<string, unknown> };
+        const decoded = decodeEventRow(row.cursor, row.event);
+        if (decoded.status !== "ready") return decoded;
+        steps.push(decoded.value);
+      }
+      const last = steps[steps.length - 1];
+      return {
+        status: "ready",
+        value: { events: steps, next: last !== undefined && end < state.eventLog.length ? last.cursor : null },
+      };
+    },
   };
 
   /** Registered candidate lookup; the caller must re-read canonical rows. */
@@ -681,5 +731,5 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
     closed = true;
   };
 
-  return { records, commitIdentities, close };
+  return { records, commitIdentities, eventPage, close };
 }

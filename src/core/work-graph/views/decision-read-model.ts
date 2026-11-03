@@ -1738,6 +1738,9 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
       return foreignRef(identity.requestRef) ? forbidden : null;
     case 'adviser_creation':
       return foreignRef(identity.trigger.ref) ? forbidden : null;
+    // O3 replaces; no card has these two sources before O3.
+    case 'role_capacity': case 'role_line_change':
+      return forbidden;
     default: {
       const unknown: never = identity;
       void unknown;
