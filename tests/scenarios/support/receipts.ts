@@ -51,6 +51,8 @@ export async function performOnce(h: HostScenario, input: WorkflowAdvanceInput, 
   const result = await h.answer('workflow/advance', plain(AG2B_SCOPE, input)) as WorkflowAdvanceResult;
   if (result.status !== 'ready') throw new Error(`${label}: the Workflow call was not ready: ${JSON.stringify(result)}`);
   const receipt = result.value.receipt;
+  // O1b (L26): as `advance()`, a step with a receipt lets the opening lines it may have started land first.
+  if (receipt !== null) await h.settleStartLines();
   if (receipt !== null) await assertInvariants(h, label, stepOfReceipt(receipt, h.stepActor(), h.automationPolicy(), label));
   if (receipt?.kind === 'finalize_checks') await h.settleAutoCapture();
   return result.value;

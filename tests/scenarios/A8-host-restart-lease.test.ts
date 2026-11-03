@@ -29,6 +29,7 @@ import type { TaskExecutionRecord } from '../../src/app/core-http-types.js';
 import { HOST_INSTANCE_LOCK_FILE } from '../../src/app/host-instance-lease.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import {
   AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, claimBusyQuery, createAG2bSession, graphWrite, plain,
@@ -37,7 +38,9 @@ import {
 import {
   answer, claimQueryOn, deferred, moveKernelAside, post, publicDirectory, readGoal, readQuery, selectWork, tempDir, writeStaleLock,
 } from '../helpers/A2-restart-fixture.js';
-import { assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, type InvariantTarget } from './harness.js';
+import {
+  assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, type InvariantTarget,
+} from './harness.js';
 import { NO_REDRIVE, execution, lockLedgerAfter, openWorkRoot, putKernelBack, stepOf } from './support/common.js';
 import { expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf, ledgerEvents, recordedInterruptions } from './support/restart.js';
 
@@ -196,7 +199,15 @@ it('A8-Q2 (Q-02, QRR-02, SES-09): a QueryRun whose begin committed and whose Ker
 }, 180_000);
 
 it('A8-Q3 (Q-03, QRR-03, SES-08): the Kernel answered the Query and the answer was never booked; the restart books the Kernel\'s own terminal (R source) and writes the Answer', async () => {
-  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass' });
+  const h = await openHostScenario({ check: 'pass' });
+  // O1b: the seed's first workspace births `start_lines`; with the start-up re-drive on, this Host drives it, and
+  // openHostScenario already waited for it to end (the one wait, harness `settleStartLines`). It must have completed
+  // before the crash below, so the restart (re-drive off from here on) has no opening line to create.
+  const lines = await h.post<ReadResult<RoleLineOperationReadV1[]>>('role-lines/operations',
+    plain(AG2B_SCOPE, { workspace: AG2B_SCOPE }));
+  expect(lines.status === 'ready' && lines.value.some(row => row.action === 'role_line' && row.phase === 'completed'),
+    'start_lines completed').toBe(true);
+  await h.saveAutomation(NO_REDRIVE);
   const session = await createAG2bSession(h.host, 'a8-q3-session');
   const refs = await claimBusyQuery(h.host, session, 'a8-q3');
   await assertInvariants(h, 'a8-q3 claimed', stepOf(h, 'other', 'a8-q3 claimed'));

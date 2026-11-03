@@ -34,6 +34,8 @@ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
+import { ROLE_LINE_STEP_KEYS } from '../../src/core/work-graph/state/role-line-action.js';
+import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import {
   BOOTSTRAP_SUFFIX,
   CORE_API_PREFIX,
@@ -422,6 +424,51 @@ export async function settleAutoCapture(host: AG2bHost): Promise<void> {
       if (capture === null || !capture.pending || capture.status === 'failed') return;
     }
     if (Date.now() >= deadline) throw new Error(`the automatic capture did not settle within 30 s: ${JSON.stringify(state)}`);
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+
+/**
+ * O1b (L26): a Host with the lease drives the project's `start_lines` operation in the background (born by the first
+ * workspace's registration). A case whose next window must write nothing lets it end first, through the ONE public
+ * `role-lines/operations` read and the one wait (`startLinesEnded`, 30 s, loud on timeout). A Host without the lease
+ * drives nothing, and an actor the read answers `forbidden` cannot see it, so nothing is awaited there.
+ */
+export async function settleStartLines(host: Pick<AG2bHost, 'host' | 'base' | 'token'>,
+  scope: CoreScope = AG2B_SCOPE): Promise<void> {
+  if (host.host.reconcile.lease !== 'owned') return;
+  const workspace = { projectId: scope.projectId, workspaceId: scope.workspaceId };
+  await startLinesEnded(async () => await (await corePost(host.base, 'role-lines/operations', host.token,
+    plain(scope, { workspace }))).json() as unknown);
+}
+
+/** The project's `start_lines` row of `role-lines/operations`: the one `role_line` row whose steps are the three
+ *  opening keys, in order (O1b, L26). */
+export type StartLinesRow = Extract<RoleLineOperationReadV1, { action: 'role_line' }>;
+
+function startLinesRowOf(rows: readonly RoleLineOperationReadV1[]): StartLinesRow | null {
+  const keys = ROLE_LINE_STEP_KEYS.join(',');
+  for (const row of rows) {
+    if (row.action === 'role_line' && row.steps.map(step => step.key).join(',') === keys) return row;
+  }
+  return null;
+}
+
+/**
+ * O1b (L26): the first workspace's registration births the project's `start_lines` operation, and the Host opens the
+ * three opening lines (secretary, adviser, scribe) in the background, each taking a seat. THE one wait for it: `read`
+ * is one `role-lines/operations` answer of the workspace, polled every 10 ms for at most 30 s until the operation is
+ * completed or failed; answers that row, or null when the read answers `forbidden` (an actor that may not read it).
+ * Past the deadline it throws with the last answer: a wait that never ends is a red, never a silent pass.
+ */
+export async function startLinesEnded(read: () => Promise<unknown>): Promise<StartLinesRow | null> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const answer = await read() as ReadResult<readonly RoleLineOperationReadV1[]>;
+    if (answer.status === 'rejected' && answer.code === 'forbidden') return null;
+    const row = answer.status === 'ready' ? startLinesRowOf(answer.value) : null;
+    if (row !== null && (row.phase === 'completed' || row.phase === 'failed')) return row;
+    if (Date.now() >= deadline) throw new Error(`the start_lines operation did not end within 30 s: ${JSON.stringify(answer)}`);
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }

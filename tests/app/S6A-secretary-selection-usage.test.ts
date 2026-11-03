@@ -53,7 +53,7 @@ import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { claimProfile, claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import { byIdentityPrefix, commitBarrier, type CommitHold } from '../helpers/S6A-commit-barrier.js';
 import {
-  ensureProjectPointers, openS6AHostWorld, queryStepCommitOn, usageOf, type S6AHostWorld,
+  ensureProjectPointers, openingLinesOf, openS6AHostWorld, queryStepCommitOn, usageOf, type S6AHostWorld,
 } from '../helpers/S6A-host-fixture.js';
 import { S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { platformRecordSchemas } from '../state/invariants.js';
@@ -273,6 +273,7 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
   it('orders by ran-this-goal then known-not-too-long, and opens a line when nobody is free', async () => {
     const world = remember(await openS6AHostWorld({ backend, secretaryBudget: { contextWindowTokens: WINDOW_TOKENS },
       extraHostOptions: { requestDriver: 'on' } }));
+    const opening = await openingLinesOf(world);
     // Both pointers present: a Secretary round is the ordinary one, whose answer this row
     // scripts, not the initial-planning branch.
     await ensureProjectPointers(world);
@@ -280,7 +281,8 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
     const handoffOfC = holdAutomaticHandoff('c');
     // C: 500,000 = too long for this window; it never becomes a candidate. Its measured
     // input comes from its own entered round (0.8 × 625,000 = 500,000 is the threshold).
-    const c = await world.createSecretary('c', { at: '2026-10-23T09:30:00.000Z' });
+    // C is the project's opening secretary (O1b, L26), so no idle line is left once the four are busy or too long.
+    const c = opening.secretary;
     await world.scripted.script(c, [{ kind: 'text', text: answerBodyOf('S6A C goal-1 answer'),
       usage: usageOf(500_000) }]);
     const cRound = await submitOrThrow(world, { goalId: S6A_GOAL_1.goalId, text: 'S6A C goal-1 round' });
@@ -356,7 +358,7 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
     const fourthPosted = world.submit({ commandId: nextId('submit'), goalId: S6A_GOAL_1.goalId,
       text: 'S6A R-01b pick 4', continues: null, recipient: null });
     await intake.reached;
-    const known = [a.ref.sessionId, b.ref.sessionId, c.ref.sessionId, d.ref.sessionId];
+    const known = [opening.adviser, opening.scribe, a, b, c, d].map(line => line.ref.sessionId);
     const openedCards = (await world.listSessions()).filter(card => !known.includes(card.record.ref.sessionId));
     expect(openedCards).toHaveLength(1);
     const openedCard = openedCards[0]!;
@@ -403,7 +405,8 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
       expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
     expect(capSet.status).toBe('committed');
     await ensureProjectPointers(world);
-    const p = await world.createSecretary('p');
+    // The opening secretary (O1b, L26) holds the one open seat: P is that line.
+    const p = (await openingLinesOf(world)).secretary;
     // P's too-long round starts the automatic handoff; its accept is held, so P keeps no successor in this row.
     const handoffOfP = holdAutomaticHandoff('p');
     // One Run, two model requests: the second-to-last reported 500,000, the last none. A
@@ -443,7 +446,8 @@ describe.each(BACKENDS)('R-01b secretary selection usage (%s)', backend => {
       expectedRevision: capLimits.value.revision, open: { secretary: 1 } }))).body as { status: string };
     expect(capSet.status).toBe('committed');
     await ensureProjectPointers(world);
-    const q = await world.createSecretary('q');
+    // The opening secretary (O1b, L26) holds the one open seat: Q is that line.
+    const q = (await openingLinesOf(world)).secretary;
     // Q's too-long round starts the automatic handoff; its accept is held, so Q stays live and keeps no successor.
     const handoffOfQ = holdAutomaticHandoff('q');
     await world.scripted.script(q, [{ kind: 'text', text: answerBodyOf('S6A old-usage answer'),
@@ -681,7 +685,8 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
       // The project's two pointers through their governance: the merged round is the ordinary
       // secretary round (not the initial-coordination branch), so its scripted answer is valid.
       await ensureProjectPointers(world);
-      const s0 = await world.createSecretary('s0');
+      // The opening secretary (O1b, L26) holds one of the two open seats: S0 is that line.
+      const s0 = (await openingLinesOf(world)).secretary;
       const b = await world.createSecretary('b');
       // The two plain Queries are the only work besides the request; both are full lines, so
       // the two inputs wait unassigned.
@@ -719,7 +724,8 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
       expect(idleS0.record.occupancy).toBeNull();
       expect(idleS0.record.health).toBe('available');
       expect((await world.readSession(b)).record.occupancy).toBeNull();
-      expect(await world.listSessions()).toHaveLength(2);
+      // The three opening lines (O1b: S0 is the secretary among them) and B.
+      expect(await world.listSessions()).toHaveLength(4);
       expect((await world.readRequest(first.requestRoot)).assignment).toBe('assigned');
 
       // The replies the merged round may consume; one more than the single round needs, so a

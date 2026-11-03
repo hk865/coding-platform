@@ -61,9 +61,11 @@ import {
   type WorkflowStepReceipt,
 } from '../../src/app/core-http-types.js';
 import { PLATFORM_TOKEN_META_NAME, writeHostPage } from '../helpers/host-page.js';
-import { cleanupAG2b, readPageToken, startCliHost } from '../helpers/AG2b-collaboration-fixture.js';
+import { cleanupAG2b, readPageToken, settleStartLines, startCliHost } from '../helpers/AG2b-collaboration-fixture.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { TargetPlatformOptions } from '../../src/composition/create-platform.js';
+import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
+import { ROLE_LINE_STEP_KEYS } from '../../src/core/work-graph/state/role-line-action.js';
 
 const scope: CoreScope = { projectId: 'r6-host-project', workspaceId: 'r6-host-workspace' };
 const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: 'r6-goal' };
@@ -148,6 +150,12 @@ async function corePost(base: string, suffix: string, token: string | undefined,
 const graphWrite = (input: unknown, requestId: string, expected: unknown[] = []) =>
   ({ scope, request: { input, meta: { requestId, expected } } });
 const plain = (input: unknown) => ({ scope, input });
+
+/** O1b (L26): the templates of the project's three opening lines, which the first workspace's registration opens. */
+const OPENING_LINE_TEMPLATES = ROLE_LINE_STEP_KEYS.map(duty => platformRoleProfile(duty).template.templateId);
+/** A Session card's legacy template id; every Session this file reads is created from one. */
+const templateOf = (card: SessionCard): string | null =>
+  card.record.role.kind === 'legacy_template' ? card.record.role.templateId : null;
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
@@ -443,6 +451,8 @@ describe('R6.1a domain routes (expected red until phase 2)', () => {
         graphWrite({ workspace: scope }, 'r6b-workspace-1',
           [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }]))).json())
         .toMatchObject({ status: 'committed' });
+      // O1b (L26): the registration births `start_lines`; the Host opens the three opening lines in the background.
+      await settleStartLines(started, scope);
 
       const created = await corePost(started.base, 'sessions/create', started.token, createBody);
       expect(created.status).toBe(200);
@@ -454,8 +464,12 @@ describe('R6.1a domain routes (expected red until phase 2)', () => {
 
       const found = await corePost(started.base, 'sessions/find', started.token,
         plain({ workspace: scope, includeArchived: false, page: { limit: 10 } }));
-      expect(await found.json()).toMatchObject({ status: 'ready', value: {
-        items: [{ record: { ref: { sessionId: sessionRef.sessionId } } }] } });
+      // O1b (L26): the created Session beside the project's three opening lines.
+      const firstFound = await found.json() as ReadResult<SessionPage<SessionCard>>;
+      if (firstFound.status !== 'ready') throw new Error('the Session directory is unavailable');
+      expect(firstFound.value.items.map(templateOf).sort()).toEqual([role.templateId, ...OPENING_LINE_TEMPLATES].sort());
+      expect(firstFound.value.items.filter(item => templateOf(item) === role.templateId)
+        .map(item => item.record.ref.sessionId)).toEqual([sessionRef.sessionId]);
 
       const read = await corePost(started.base, 'sessions/read', started.token, plain(sessionRef));
       expect(await read.json()).toMatchObject({ status: 'ready', value: {
@@ -505,11 +519,11 @@ describe('R6.1a domain routes (expected red until phase 2)', () => {
       const found = await corePost(reopened.base, 'sessions/find', reopened.token,
         plain({ workspace: scope, includeArchived: false, page: { limit: 10 } }));
       const foundBody = await found.json() as ReadResult<SessionPage<SessionCard>>;
-      expect(foundBody).toMatchObject({ status: 'ready', value: {
-        items: [{ record: { ref: { projectId: scope.projectId } } }] } });
       if (foundBody.status !== 'ready') throw new Error('reopened Session directory is unavailable');
-      expect(foundBody.value.items).toHaveLength(1);
-      const reopenedRecord = foundBody.value.items[0]!.record;
+      // O1b (L26): the reopened directory holds the created Session and the three opening lines.
+      expect(foundBody.value.items.map(templateOf).sort()).toEqual([role.templateId, ...OPENING_LINE_TEMPLATES].sort());
+      const reopenedRecord = foundBody.value.items.find(item => templateOf(item) === role.templateId)!.record;
+      expect(reopenedRecord.ref.projectId).toBe(scope.projectId);
       const reopenedRef: SessionRef = { projectId: reopenedRecord.ref.projectId, sessionId: reopenedRecord.ref.sessionId };
 
       const inbox = await corePost(reopened.base, 'messages/inbox', reopened.token,

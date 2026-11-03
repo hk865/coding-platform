@@ -33,6 +33,9 @@ import type {
 } from '../core/work-graph/model/communication-contracts.js';
 import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
 import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
+import type { RoleLineOperationsPort } from '../core/work-graph/sessions/role-line-operations.js';
+import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
+import type { CoreRouteBindings } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
@@ -341,6 +344,8 @@ export type CoreRouteSuffix =
   | 'projects/role-limits'
   | 'projects/role-limits/set'
   | 'role-lines/allocation'
+  // O1b: open a role line, change its scope, read the role-line operations.
+  | 'role-lines/open' | 'role-lines/change-scope' | 'role-lines/operations'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
   | 'goals/dispatch-basis'
   // The person's overlap-gate release and the Goal's gate page.
@@ -711,11 +716,20 @@ export type ProjectsRoleLimitsSetBody = PlainBody<RoleLimitsPort['setRoleLimits'
 export type ProjectsRoleLimitsSetResponse = RouteResponse<RoleLimitsPort['setRoleLimits']>;
 export type RoleLinesAllocationBody = PlainBody<RoleLineAllocationReadPort['readRoleLineAllocation']>;
 export type RoleLinesAllocationResponse = RouteResponse<RoleLineAllocationReadPort['readRoleLineAllocation']>;
+export type RoleLinesOpenBody = GraphWriteBody<CoreRouteBindings['openRoleLine']>;
+export type RoleLinesOpenResponse = RouteResponse<RoleLineOperationsPort['open']>;
+export type RoleLinesChangeScopeBody = GraphWriteBody<CoreRouteBindings['changeRoleLineScope']>;
+export type RoleLinesChangeScopeResponse = RouteResponse<RoleLineOperationsPort['changeScope']>;
+export type RoleLinesOperationsBody = PlainBody<RoleLineOperationReadPort['readRoleLineOperations']>;
+export type RoleLinesOperationsResponse = RouteResponse<RoleLineOperationReadPort['readRoleLineOperations']>;
 /** The typed assembly of the three suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
 export type RoleLineCoreRouteDto = {
   'projects/role-limits': { body: ProjectsRoleLimitsBody; response: ProjectsRoleLimitsResponse };
   'projects/role-limits/set': { body: ProjectsRoleLimitsSetBody; response: ProjectsRoleLimitsSetResponse };
   'role-lines/allocation': { body: RoleLinesAllocationBody; response: RoleLinesAllocationResponse };
+  'role-lines/open': { body: RoleLinesOpenBody; response: RoleLinesOpenResponse };
+  'role-lines/change-scope': { body: RoleLinesChangeScopeBody; response: RoleLinesChangeScopeResponse };
+  'role-lines/operations': { body: RoleLinesOperationsBody; response: RoleLinesOperationsResponse };
 };
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */

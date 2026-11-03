@@ -59,6 +59,9 @@
  * - The request commands through their HTTP routes (`requests/submit`, `requests/route` manual or `dropped`,
  *   `requests/select-idea`) as the Host's human actor, the owner read `requestFacts.readRequest`, and bounded
  *   polling of that read (`waitFor` of tests/scenarios/harness.ts) for states the Host reaches on its own.
+ * - The project's three opening lines (`openingLinesOf`, O1b L26): the seed's first workspace registration births
+ *   `start_lines` and the Host opens them in the background; the helper waits through `role-lines/operations`
+ *   (`startLinesEnded`, the one wait) and names each line from its step's child create (`sessions/operation`).
  * - The project's two pointers (`ensureProjectPointers`) through the governance of the memory fixture
  *   (tests/helpers/S6A-memory-fixture.ts, `seedS6AMemory(...).governance`): it reads both pointers and every guard
  *   revision through public reads, then installs and activates the policy and adopts the architecture where missing.
@@ -84,14 +87,19 @@ import type { WorkbenchRuntimeConfiguration, WorkbenchRuntimeProviderDependencie
 import type {
   RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
 } from '../../src/business/workflow/request-intake.js';
-import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
+import type { SessionCreateOperationRecord } from '../../src/core/work-graph/model/session-contracts.js';
+import { ROLE_LINE_STEP_KEYS } from '../../src/core/work-graph/state/role-line-action.js';
 import { waitFor } from '../scenarios/harness.js';
 import { deferred, driveWorkflow, writeStaleLock, type Deferred } from './A2-restart-fixture.js';
-import { AG2B_WORK_TASK_ID, ag2bPlanDraft, createAG2bSession, graphWrite } from './AG2b-collaboration-fixture.js';
+import {
+  AG2B_WORK_TASK_ID, ag2bPlanDraft, createAG2bSession, graphWrite, plain, startLinesEnded,
+} from './AG2b-collaboration-fixture.js';
 import { commitBarrier, type CommitMatch } from './S6A-commit-barrier.js';
 import { seedS6AMemory, type S6AGovernance, type S6AMemoryWorld } from './S6A-memory-fixture.js';
 import {
@@ -817,3 +825,40 @@ export function callPublishedOwnerAsHost(world: S6AHostWorld, prefix: string, ca
 }
 
 export { asRecord };
+
+/** The project's three opening lines (O1b, L26). */
+export type S6AOpeningLines = { readonly secretary: S6ASession; readonly adviser: S6ASession; readonly scribe: S6ASession };
+
+/**
+ * O1b (L26): the seed's first workspace registration births the project's `start_lines` operation, and the Host opens
+ * the secretary, adviser and scribe lines in the background, each taking a seat. Waits until the operation ends
+ * (`startLinesEnded`, the one wait), fails unless it completed, and names each line from its step's `childOperation`:
+ * `sessions/operation` gives the create's planned Session, `sessions/read` its card.
+ */
+export async function openingLinesOf(world: Pick<S6AHostWorld, 'post' | 'readSession'>,
+  scope: WorkspaceScope = S6A_SCOPE): Promise<S6AOpeningLines> {
+  const workspace = { projectId: scope.projectId, workspaceId: scope.workspaceId };
+  const row = await startLinesEnded(async () => (await world.post('role-lines/operations', plain(scope, { workspace }))).body);
+  if (row === null || row.phase !== 'completed') {
+    throw new Error(`S6A: the start_lines operation did not complete: ${JSON.stringify(row)}`);
+  }
+  const lines: Partial<Record<(typeof ROLE_LINE_STEP_KEYS)[number], S6ASession>> = {};
+  for (const step of row.steps) {
+    const duty = ROLE_LINE_STEP_KEYS.find(key => key === step.key);
+    if (duty === undefined || step.childOperation === null) {
+      throw new Error(`S6A: a start_lines step names no opening line: ${JSON.stringify(step)}`);
+    }
+    const child = (await world.post('sessions/operation', plain(scope, step.childOperation))).body as
+      ReadResult<SessionCreateOperationRecord>;
+    if (child.status !== 'ready') throw new Error(`S6A: the ${duty} step's child create: ${JSON.stringify(child)}`);
+    const ref = child.value.action.plannedSessionRef;
+    const card = await world.readSession(ref);
+    lines[duty] = { label: `opening-${duty}`, ref, aggregateRef: card.record.ref,
+      role: structuredClone(card.record.role), createdAt: card.record.createdAt };
+  }
+  const { secretary, adviser, scribe } = lines;
+  if (secretary === undefined || adviser === undefined || scribe === undefined) {
+    throw new Error(`S6A: the start_lines operation does not name all three opening lines: ${JSON.stringify(row.steps)}`);
+  }
+  return { secretary, adviser, scribe };
+}

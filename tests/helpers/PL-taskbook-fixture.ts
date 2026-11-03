@@ -3,7 +3,7 @@
  * `mkdtemp` directory, so `plans/apply` can export taskbooks outside the
  * workspace. It composes the frozen helpers only:
  * `withConfiguredHost` (`S7C-member-fixture.ts:147`) around the real Host
- * factory, `openS6AHostWorld` (`S6A-host-fixture.ts:438`), `governS6B`
+ * factory, `openS6AHostWorld` (`S6A-host-fixture.ts:446`), `governS6B`
  * (`S6B1-fixture.ts:62`), `s6aCardsWorkspace` (`S6A-cards-fixture.ts:178`),
  * `createS6BLine`/`adoptS6BPlan` (`S6B1-fixture.ts:88`/`:71`), `plain`,
  * `checkConfiguration`, `OPERATOR`, `S6A_SCOPE`, `S6A_WORK_ROLE`.

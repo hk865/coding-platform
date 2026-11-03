@@ -40,8 +40,9 @@ it('2C-13 (1) a Goal pause pauses the running line with reason paused_by_goal an
   expect(row.status.bucket).toBe('standby');
 
   // L19: pausing the Goal does not suppress attention. The line is not empty of work; the
-  // explicit attention assertion belongs to the card cases (2C-12). The line stays a line.
-  expect(list.rows.length).toBe(1);
+  // explicit attention assertion belongs to the card cases (2C-12). The line stays a line, beside the
+  // project's three opening lines (O1b, L26).
+  expect(list.rows.map(line => line.duty).sort()).toEqual(['adviser', 'executor', 'scribe', 'secretary']);
 }, 240_000);
 
 it('2C-13 (2) a Goal pause turns an idle line that owns an unfinished Task to standby paused_by_goal, not waiting_dispatch', async () => {

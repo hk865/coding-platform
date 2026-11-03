@@ -213,6 +213,8 @@ import { ROLE_LINE_RECORD_SCHEMAS } from '../core/work-graph/sessions/role-line-
 import { ROLE_LINE_ORCHESTRATION_SCHEMAS } from '../core/work-graph/sessions/role-line-orchestration-codecs.js';
 import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits-service.js';
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
+import { createRoleLineOperationsRead } from '../core/work-graph/views/role-line-operations-read.js';
+import { createRoleLineOperations, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
 import { createProjectNoticeSource } from '../core/work-graph/views/project-notice-notices.js';
 import { notifyProject } from '../core/work-graph/communication/project-notice-service.js';
 import { SESSION_RECORD_SCHEMAS, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, decodeSessionRecord,
@@ -297,7 +299,7 @@ import type { SessionOperationRecord } from '../core/work-graph/model/session-co
 import { lookupAll } from '../core/work-graph/persistence/lookup-all.js';
 // The one unfinished-operation index the lifecycle queue and the handoff's automatic entry both read.
 import {
-  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord,
+  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord, encodeSessionOperationRecord,
   readMaintainerAssignmentOperation,
 } from '../core/work-graph/sessions/session-record-codecs.js';
 import type { ModuleMaintainerPort } from '../core/work-graph/model/module-maintainer-contracts.js';
@@ -1101,7 +1103,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readRoleSpec: roleService.readRoleSpec.bind(roleService),
       configuration: () => workflowDependencies.configuration,
     });
-    const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID });
+    const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID,
+      // O1b (L26): the start_lines birth, encoded by the sessions codec.
+      startLines: (input) => encodeSessionOperationRecord(startLinesInitialRecord(input)) });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
     // production Host injects `operatorActor` from its trusted start snapshot,
     // never from HTTP JSON or a model tool argument. The checks-executor
@@ -1850,6 +1854,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const requestLineCreation = createLineCreation({
       sessions: sessionOperations, operations: sessionDirectory,
     });
+    // O1b: the one role_line owner and its read; the Host's third arm and the two routes bind this same instance.
+    const roleLineOperationsRead = createRoleLineOperationsRead({ records: backend.records });   // v4 :6446
+    const roleLineOperations = createRoleLineOperations({ records: backend.records, createLine: requestLineCreation,
+      operations: sessionDirectory, responsibility: sessionResponsibility, now,
+      platformRole: (duty) => platformRoleProfile(duty).template, duty: sessionDutyResolver });
     // M's ONE member owner: the request and decision ports over the SAME records, identity read, Session directory,
     // line admission, request facts, secretary rounds, duty resolver and Run read the rest of the platform uses.
     // The child line's Role is the normal executor template; the creator's accepted permissions ride as its ceiling.
@@ -3819,6 +3828,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readPlanReview: (...args) => trackedCall(() => planReadersOwner.readPlanReview(...args), unavailable),
     };
     let closing: Promise<void> | undefined;
+    // O1b: the role_line owner and its read, every member drained through the one trackedCall/close path.
+    const trackedRoleLines: typeof roleLineOperations = {
+      continueOperation: (ctx, input) => trackedCall(() => roleLineOperations.continueOperation(ctx, input), unavailable),
+      open: (ctx, input) => trackedCall(() => roleLineOperations.open(ctx, input), unavailable),
+      changeScope: (ctx, input) => trackedCall(() => roleLineOperations.changeScope(ctx, input), unavailable),
+      reuse: (ctx, input) => trackedCall(() => roleLineOperations.reuse(ctx, input), unavailable),
+      openRegionLine: (ctx, input) => trackedCall(() => roleLineOperations.openRegionLine(ctx, input), unavailable),
+      startRoleLineSplit: (ctx, input) => trackedCall(() => roleLineOperations.startRoleLineSplit(ctx, input), unavailable),
+    };
+    const trackedRoleLineOperationsRead: typeof roleLineOperationsRead = {
+      readRoleLineOperations: (ctx, input) =>
+        trackedCall(() => roleLineOperationsRead.readRoleLineOperations(ctx, input), unavailable),
+    };
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       messageExpiry: messageExpiryPort,
@@ -3890,16 +3912,24 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       listUnfinishedOperations: (ctx: CoreCallContext) => trackedCall(async () => {
         const read = await readUnfinishedOperations(ctx);
         if (read.status !== 'ready') return read;
-        const arms: { operation: OperationRef; revision: number; kind: 'handoff' | 'secretary_archive' }[] = [];
+        const arms: { operation: OperationRef; revision: number;
+          kind: 'handoff' | 'secretary_archive' | 'role_line' }[] = [];
         for (const record of read.value) {
           const kind = record.action.kind;
-          // Only the two lifecycle arms are answered, each with its kind: another unfinished operation is not a
-          // handoff to continue, and a manual archive resumes through its own entry.
-          if (kind !== 'handoff' && kind !== 'secretary_archive') continue;
+          // The two lifecycle arms and the role_line arm are answered, each with its kind: another unfinished
+          // operation is not one to continue, and a manual archive resumes through its own entry.
+          // b02: a `role_line_split` action has kind 'role_line' and is already in this arm.
+          if (kind !== 'handoff' && kind !== 'secretary_archive' && kind !== 'role_line') continue;
+          // O4a's waiting card owns `goal_queue_assign`; the Host never resumes it.
+          if (record.action.kind === 'role_line' && record.action.action === 'goal_queue_assign') continue;
           arms.push({ operation: record.ref as OperationRef, revision: record.revision, kind });
         }
         return { status: 'ready' as const, value: arms };
       }, unavailable),
+      // O1b: the role_line owner (the Host's third arm), the same instance the routes bind, and its read.
+      roleLineOperations: trackedRoleLines,
+      roleLines: trackedRoleLines,
+      roleLineOperationsRead: trackedRoleLineOperationsRead,
       readSecretaryHandoffBasis: (ctx: CoreCallContext, session: SessionRef) =>
         trackedCall(() => readHandoffBasis(ctx, session), unavailable),
       /**
@@ -3998,7 +4028,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'moduleMaintainers',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
-      'consumableSessions', 'readCandidateCard'] as const) {
+      'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

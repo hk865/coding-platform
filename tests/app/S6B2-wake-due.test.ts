@@ -7,7 +7,7 @@ import {
 } from '../helpers/S6B2-handoff-scene.js';
 import { S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
-import { usageOf } from '../helpers/S6A-host-fixture.js';
+import { openingLinesOf, usageOf } from '../helpers/S6A-host-fixture.js';
 import { AG2B_CONSUMER_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { deferred, readQuery, type Deferred } from '../helpers/A2-restart-fixture.js';
 import { waitFor } from '../scenarios/harness.js';
@@ -409,18 +409,20 @@ describe('the Host lifecycle wiring', () => {
 
   it('stores a stable successor refusal once and still calls the child on a later subscribed commit', async () => {
     // A partial handoff: the source keeps one unassigned task, so the successor must take its own seat. The
-    // non-source secretary fills the other seat under the cap; the real successor-capacity child refuses.
+    // project's opening secretary (start_lines, O1b L26) and the non-source secretary fill the other two seats
+    // under the cap; the real successor-capacity child refuses.
     const opened = await scene.open('memory', { requestDriver: 'on' });
     const ws = await s6b2Workspace(opened.world);
     const { tasks } = await adoptS6BPlan(ws, opened.world.goals.first, { label: 'hr9',
       taskIds: ['hr9-assigned', 'hr9-residual'], role: S6A_WORK_ROLE.templateId });
     const first = await createS6BLine(ws, { label: 'hr9-first', role: S6A_SECRETARY_ROLE, tasks });
     const second = await opened.world.createSecretary('hr9-second', { at: '2026-10-26T00:00:01.000Z' });
+    await openingLinesOf(opened.world);
     const capLimits = (await opened.world.post('projects/role-limits', plain(S6A_SCOPE,
       { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
     expect(capLimits.status).toBe('ready');
     const capSet = (await opened.world.post('projects/role-limits/set', plain(S6A_SCOPE,
-      { commandId: 's6b2-wake-hr9-open', expectedRevision: capLimits.value.revision, open: { secretary: 2 } })))
+      { commandId: 's6b2-wake-hr9-open', expectedRevision: capLimits.value.revision, open: { secretary: 3 } })))
       .body as { status: string };
     expect(capSet.status).toBe('committed');
 

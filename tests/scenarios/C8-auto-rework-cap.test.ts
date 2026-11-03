@@ -26,6 +26,7 @@ import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import { AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, performs, SCENARIO_OPERATOR } from './harness.js';
 import { finalizeOutcomesOf, operatorRequeue, requeueRequestsOf } from './support/common.js';
+import { performedOf } from './support/restart.js';
 import { claimInputsOf, cleanupRework, performsNth, requeuedOf } from './support/rework.js';
 
 afterEach(async () => {
@@ -78,18 +79,26 @@ it('C8 (§13.4 #15, AV-8, GOAL-30): three automatic requeues, then stopped/auto_
     cause: { code: 'auto_rework_cap_reached', taskId: AG2B_WORK_TASK_ID, detail: { operation: 'requeue' } },
     causes: expect.arrayContaining([{ code: 'auto_rework_count', taskId: AG2B_WORK_TASK_ID, operation: 'requeue', n: 3, cap: 3 }]) });
 
-  // Another 推进, Task-level or Goal-level: 0 model calls, 0 writes (ledger, Kernel, checks).
+  // Another 推进, Task-level or Goal-level: 0 model calls, 0 writes (ledger, Kernel, checks); except that the first
+  // Goal-level one sends the stopped Task's deviation round to the opening adviser (PL-2, one message), once.
   const atStop = h.counts();
   expect(await h.advance(h.select('c8-cap-1-again', AG2B_WORK_TASK_ID))).toMatchObject({ state: 'waiting', receipts: [] });
-  expect(await h.advance(h.select('c8-cap-1-goal'))).toMatchObject({ state: 'waiting', receipts: [] });
-  expect(h.counts()).toEqual(atStop);
+  const goalSelect = h.select('c8-cap-1-goal');
+  const deviation = await h.advance(goalSelect);
+  expect(deviation).toMatchObject({ state: 'waiting', receipts: [{ kind: 'send_system_round' }] });
+  expect(performedOf(goalSelect, deviation, 'send_system_round').input)
+    .toMatchObject({ operation: { request: { round: { kind: 'deviation', cause: 'stop' } } } });
+  expect(h.counts()).toEqual({ ...atStop, ledgerEvents: atStop.ledgerEvents + 1 });
+  const atRound = h.counts();
+  expect(await h.advance(h.select('c8-cap-1-goal-again'))).toMatchObject({ state: 'waiting', receipts: [] });
+  expect(h.counts()).toEqual(atRound);
 
   // The cap goes to 5 (`automation/save`): the stop lifts at once, with no person acting and nothing written.
   await h.saveAutomation({ schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: 'auto' });
   expect(await h.taskRow()).toMatchObject({ failure: { automation: { cap: 5, requeueAutoCount: 3,
     verdict: { kind: 'requeue', failureClass: 'check_failed', retryAfterRefusal: false } } } });
   expect(await h.goalDisplay()).toMatchObject({ phase: 'RUNNING', row: 'GOAL-27' });
-  expect(h.counts()).toEqual(atStop);
+  expect(h.counts()).toEqual(atRound);
 
   // The next 推进 requeues automatically twice more (#4, #5); after 6 Runs the cap stops it again.
   const raised = await h.advance(h.select('c8-cap-2', AG2B_WORK_TASK_ID));

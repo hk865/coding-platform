@@ -1219,9 +1219,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }
       for (const { operation, revision, kind } of unfinished.value) {
         try {
-          const result = kind === 'handoff'
-            ? await handoffOwner.continueHandoff(ctx, { operation })
-            : await handoffOwner.manualArchive(ctx, { operation });
+          // b02: the `role_line` arm also resumes `action.action === 'role_line_split'`; no second kind branch.
+          const result = kind === 'handoff' ? await handoffOwner.continueHandoff(ctx, { operation })
+            : kind === 'role_line' ? await platform.roleLineOperations.continueOperation(ctx, { operation })
+              : await handoffOwner.manualArchive(ctx, { operation });
           if (result.status === 'ready') {
             if (result.value.revision > revision) continued += 1;
             else blocked += 1;

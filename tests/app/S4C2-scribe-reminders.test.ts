@@ -39,6 +39,7 @@ import { C2_SKILL_ROOT } from '../helpers/C2-runtime-platform-fixture.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { attentionConfig } from '../helpers/orchestration-fixture.js';
+import { startLinesEnded } from '../helpers/AG2b-collaboration-fixture.js';
 
 function goalAnchor(goalId: string): NoteDraftV1['anchor'] { return { kind: 'goal', goalId }; }
 
@@ -151,9 +152,21 @@ function hostOptionsFor(f: S4ANoteFixture, clock: { ms: number }, port: NoteScri
   };
 }
 
-function countingPort(f: S4ANoteFixture, counters: { cursor: number; todos: number }): NoteScribeTodoPort {
+/** O1b (L26): the fixture's workspace registration births `start_lines`, and the real Host on the same SQLite store
+ *  opens the three opening lines in the background. Waits (the one wait) until that operation completed. */
+async function startLinesCompleted(f: S4ANoteFixture): Promise<void> {
+  const row = await startLinesEnded(() => f.platform.roleLineOperationsRead.readRoleLineOperations(f.ctx(),
+    { workspace: { projectId: f.scope.projectId, workspaceId: f.scope.workspaceId } }));
+  if (row?.phase !== 'completed') throw new Error(`S4C2: the start_lines operation did not complete: ${JSON.stringify(row)}`);
+}
+
+/** `afterStartLines`: the first cursor read waits for the opening lines, whose commits move the ledger cursor. */
+function countingPort(f: S4ANoteFixture, counters: { cursor: number; todos: number },
+  options: { afterStartLines?: boolean } = {}): NoteScribeTodoPort {
+  let settled: Promise<void> | undefined;
   return {
     async readLedgerCursor(ctx) {
+      if (options.afterStartLines === true) await (settled ??= startLinesCompleted(f));
       counters.cursor += 1;
       return f.platform.notes.readLedgerCursor(ctx);
     },
@@ -174,10 +187,13 @@ async function startHostOn(f: S4ANoteFixture, scribeRef: SessionRef, options: {
   clock?: { ms: number }; port?: NoteScribeTodoPort;
   /** Use the PRODUCTION to-do port (omit `noteScribeTodos` entirely). */
   realPort?: boolean; failFirstSend?: boolean; writer?: CoreCallContext;
+  /** The counting port's first cursor read waits for the opening lines (O1b, `countingPort`). */
+  afterStartLines?: boolean;
 } = {}): Promise<RealScribe> {
   const clock = options.clock ?? { ms: HOST_CLOCK_START };
   const counters = { cursor: 0, todos: 0 };
-  const port = options.realPort === true ? undefined : (options.port ?? countingPort(f, counters));
+  const port = options.realPort === true ? undefined
+    : (options.port ?? countingPort(f, counters, { afterStartLines: options.afterStartLines === true }));
   const sent: Sent[] = [];
   let failOnce = options.failFirstSend ?? false;
   const send = (async (ctx: CoreCallContext, request: { input: { recipient: SessionRef; text: string };
@@ -195,7 +211,8 @@ async function startHostOn(f: S4ANoteFixture, scribeRef: SessionRef, options: {
  * a real executor Run under `anchorQuota: 1` (the first accepted, the rest
  * `pending_review`). */
 async function startRealScribe(options: { pendingNotes?: number; scribeRequests?: string[];
-  failFirstSend?: boolean; port?: (f: S4ANoteFixture) => NoteScribeTodoPort } = {}): Promise<RealScribe> {
+  failFirstSend?: boolean; port?: (f: S4ANoteFixture) => NoteScribeTodoPort; afterStartLines?: boolean } = {}):
+Promise<RealScribe> {
   const f = await createS4ANoteFixture('sqlite', { anchorQuota: 1 });
   await writeFile(join(f.root, 'README.md'), 's4c2 scribe real workspace\n');
   const scribeCreated = await f.createSession((options.scribeRequests ?? ['scribe-a'])[0]!, 'scribe');
@@ -214,6 +231,7 @@ async function startRealScribe(options: { pendingNotes?: number; scribeRequests?
     ...(options.failFirstSend === undefined ? {} : { failFirstSend: options.failFirstSend }),
     ...(options.port === undefined ? {} : { port: options.port(f) }),
     ...(writer === null ? {} : { writer }),
+    ...(options.afterStartLines === undefined ? {} : { afterStartLines: options.afterStartLines }),
   });
 }
 
@@ -741,7 +759,7 @@ it('S4C2 item 5: the restart recovery crosses inbox pages and a failed page read
 }, 120_000);
 
 it('S4C2 NE6: the cursor/period gate reads the injected clock and skips unchanged cursors', async () => {
-  const started = await startRealScribe({ pendingNotes: 9 });
+  const started = await startRealScribe({ pendingNotes: 9, afterStartLines: true });
   try {
     await waitFor(() => started.counters.cursor >= 1 && started.counters.todos >= 1);
     expect(started.sent).toHaveLength(0); // below the pending threshold
@@ -772,7 +790,7 @@ it('S4C2 NE6: the cursor/period gate reads the injected clock and skips unchange
 }, 60_000);
 
 it('S4C2 D-18: a failed send retries the SAME requestId without re-reading the to-dos', async () => {
-  const started = await startRealScribe({ pendingNotes: 10, failFirstSend: true });
+  const started = await startRealScribe({ pendingNotes: 10, failFirstSend: true, afterStartLines: true });
   try {
     await waitFor(() => started.sent.length === 1 && started.counters.todos >= 1);
     expect(started.sent).toHaveLength(1); // the failed attempt captured its request id

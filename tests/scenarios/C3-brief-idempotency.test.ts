@@ -50,7 +50,7 @@ import {
   NOTES_FILE, NO_REDRIVE, authorizeWithoutBegin, briefOf, codeOf, editThenText, execution, performsAfterRequeues, preparedOf,
   selectedRun, sessionKey, sourceDigestOf, stepOf, turnStarts,
 } from './support/common.js';
-import { countsAllowingInterruptions, recordedInterruptions } from './support/restart.js';
+import { countsAllowingInterruptions, countsAllowingStartWrites, recordedInterruptions, reworkNoticesSince } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -106,12 +106,16 @@ it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every
   // 2. W-24 (C3-R1): the Host stops before RUN-02. The reconcile leaves Run 2 alone and writes nothing.
   const report = await h.restart({ crash: true });
   expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [], problems: [] } });
-  const allowed = countsAllowingInterruptions(beforeCrash, report.report, 'C3-R1: the crash restart');
-  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call, check or ledger write').toEqual(allowed);
+  const allowed = await countsAllowingStartWrites(h.database, beforeCrash, report.report, 'C3-R1: the crash restart');
+  const notices = reworkNoticesSince(h.database, beforeCrash.ledgerEvents);
+  expect(notices, 'C3-R1: the crash restart sends Run 1\'s rework notice').toBe(1);
+  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call or check; the ledger gets the interruption and the notice')
+    .toEqual(allowed);
   expect((await execution(h, run2Ref)).run).toEqual(claimed.run);
   const againRestart = await h.restart({ crash: true });
-  expect(h.counts(), 'another start on the same data writes nothing')
-    .toEqual(countsAllowingInterruptions(allowed, againRestart.report, 'C3-R1: another start'));
+  const allowedAgain = await countsAllowingStartWrites(h.database, allowed, againRestart.report, 'C3-R1: another start');
+  expect(reworkNoticesSince(h.database, allowed.ledgerEvents), 'C3-R1: another start sends no notice again').toBe(0);
+  expect(h.counts(), 'another start on the same data writes nothing').toEqual(allowedAgain);
 
   // The Workflow prepares again: the workspace is unchanged, so it is the same brief. The crash restart recorded the
   // Goal interruption, whose pending decision is one more reminder in the input: the only difference, so the manifest
@@ -139,7 +143,8 @@ it('C3-R1 (W-24), W-02, W-05 → RUN-16 → RUN-03: one requeue Run passes every
   // The envelope's bundle is that stored body: its digest and size move with it.
   const bundleAside = (ref: typeof p1.envelope.bundleRef) => ({ ...ref, digest: null, sizeBytes: null });
   expect(bundleAside(p2.envelope.bundleRef)).toEqual(bundleAside(p1.envelope.bundleRef));
-  const artifactsWithP2 = artifacts + 1;
+  // The rework notice the crash restart sent stored its body too.
+  const artifactsWithP2 = artifacts + 1 + notices;
   expect(artifactCount(h.database), 'one more stored body').toBe(artifactsWithP2);
   expect((await execution(h, run2Ref)).run, 'Run 2 is still Claimed').toEqual(claimed.run);
 
@@ -289,15 +294,18 @@ it('C3-R2 (W-25): after a restart the facts Run\'s Kernel store is not registere
   const restarted = await h.restart({ crash: true, noKernelStores: true });
   expect(restarted.report).toMatchObject({ sessions: [{ ref: sessionKey(claimed.session), row: 'H-03', status: 'left' }],
     runs: [], problems: [] });
-  const quiet = countsAllowingInterruptions(preRestart, restarted.report, 'C3-R2: the host_config restart');
-  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call, check or ledger write').toEqual(quiet);
+  const quiet = await countsAllowingStartWrites(h.database, preRestart, restarted.report, 'C3-R2: the host_config restart');
+  expect(reworkNoticesSince(h.database, preRestart.ledgerEvents), 'C3-R2: the restart sends Run 1\'s rework notice').toBe(1);
+  expect(h.counts(), '§12.10 step 4: no Kernel Turn, model call or check; the ledger gets the interruption and the notice')
+    .toEqual(quiet);
   expect((await execution(h, run2Ref)).run).toEqual(claimed.run);
   // Another start on the same data (still without the registration) writes nothing either.
   const again = await h.restart({ crash: true });
   expect(again.report).toMatchObject({ sessions: [{ ref: sessionKey(claimed.session), row: 'H-03', status: 'left' }],
     runs: [], problems: [] });
-  expect(h.counts(), 'another start on the same data writes nothing')
-    .toEqual(countsAllowingInterruptions(quiet, again.report, 'C3-R2: another start'));
+  const quietAgain = await countsAllowingStartWrites(h.database, quiet, again.report, 'C3-R2: another start');
+  expect(reworkNoticesSince(h.database, quiet.ledgerEvents), 'C3-R2: another start sends no notice again').toBe(0);
+  expect(h.counts(), 'another start on the same data writes nothing').toEqual(quietAgain);
   expect((await execution(h, run2Ref)).run).toEqual(claimed.run);
   const before = h.counts();
   const artifacts = artifactCount(h.database);
@@ -346,7 +354,10 @@ it('C3-R2 (W-25) with a transient Kernel read: the Kernel store is held by anoth
     const restarted = await h.restart({ crash: true });
     expect(restarted.report).toMatchObject({ sessions: [{ ref: sessionKey(claimed.session), row: 'H-03', status: 'left' }],
       runs: [], problems: [] });
-    const eventsAfterRestart = events + recordedInterruptions(restarted.report, 'C3-R2 transient: the crash restart');
+    const eventsAfterRestart = (await countsAllowingStartWrites(h.database, { ledgerEvents: events }, restarted.report,
+      'C3-R2 transient: the crash restart')).ledgerEvents;
+    const notices = reworkNoticesSince(h.database, events);
+    expect(notices, 'C3-R2 transient: the crash restart sends Run 1\'s rework notice').toBe(1);
     expect(h.ledgerEventTypes(), 'the reconcile writes nothing').toHaveLength(eventsAfterRestart);
     for (const flowId of ['c3-r2t-2', 'c3-r2t-3']) {
       // W-25: `prepare` cannot read the facts Run's Turn now: unavailable, no manifest stored, the Run unchanged.
@@ -356,7 +367,7 @@ it('C3-R2 (W-25) with a transient Kernel read: the Kernel store is held by anoth
       expect(waiting.reason, flowId).toMatch(/the previous Turn is not readable now: .*database is locked/);
       expect((await execution(h, run2Ref)).run, `${flowId}: Run 2 is unchanged (Claimed)`).toEqual(claimed.run);
       expect(h.ledgerEventTypes(), `${flowId}: nothing is written`).toHaveLength(eventsAfterRestart);
-      expect(artifactCount(h.database), `${flowId}: no degraded brief is stored`).toBe(artifacts);
+      expect(artifactCount(h.database), `${flowId}: no degraded brief is stored (the notice's body is)`).toBe(artifacts + notices);
     }
     expect(h.modelCalls(), 'only Run 1 called the model').toBe(2);
   } finally {

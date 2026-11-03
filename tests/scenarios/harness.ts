@@ -80,7 +80,8 @@ import { limitHold } from '../helpers/hold-limit.js';
 import {
   AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION,
   AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain,
-  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, settleAutoCapture, startAG2bHost, writeAG2bWorkspace, type AG2bHost,
+  seedAG2bWorkGraph, seedAG2bWorkGraphThrough, settleAutoCapture, settleStartLines, startAG2bHost, writeAG2bWorkspace,
+  type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   answer, cleanupRestart, deferred, post, publicDirectory, tempDir, writeAutomationSettings, writeStaleLock, type AdvanceValue, type Deferred,
@@ -653,6 +654,12 @@ export abstract class ScenarioBase {
    * platform scenario has no Host, so nothing captures there. `advance()` calls it after a check round.
    */
   async settleAutoCapture(): Promise<void> {}
+  /**
+   * O1b (L26): waits until the live Host's `start_lines` operation (the three opening lines) is completed or failed
+   * (`settleStartLines`). A platform scenario has no Host, so nothing drives it there. `advance()` calls it after every
+   * step with a receipt, and the host-mode seed after the seed when the start-up position is not `off`.
+   */
+  async settleStartLines(): Promise<void> {}
 
   /** `select_work` on the seeded Goal; Goal-level unless `taskId` is given. */
   select(flowId: string, taskId?: string): WorkflowAdvanceInput {
@@ -678,6 +685,8 @@ export abstract class ScenarioBase {
       const receipt = result.value.receipt;
       if (receipt !== null) {
         receipts.push(receipt);
+        // O1b (L26): the step's queue wake may have started the opening lines; the next window must not see them land.
+        await this.settleStartLines();
         if (invariants !== false) {
           const label = `${invariants.label}#${step} ${receipt.kind}`;
           await assertInvariants(this, label, stepOfReceipt(receipt, this.stepActor(), this.policy, label));
@@ -1036,8 +1045,13 @@ export class HostScenario extends ScenarioBase {
       options.automation ?? DEFAULT_TASK_AUTOMATION_POLICY, gitWorkspace, options.commitObserver, options.commitGate);
     scenario.backendWrapHeld = true;
     opened.push(scenario);
-    if (options.workIds !== null) await seedAG2bWorkGraph(first.host, options.workIds ?? [AG2B_WORK_TASK_ID],
-      options.lineTaskIds === undefined ? {} : { lineTaskIds: options.lineTaskIds });
+    if (options.workIds !== null) {
+      await seedAG2bWorkGraph(first.host, options.workIds ?? [AG2B_WORK_TASK_ID],
+        options.lineTaskIds === undefined ? {} : { lineTaskIds: options.lineTaskIds });
+      // O1b (L26): the seed's workspace registration births `start_lines`; with the start-up position not `off` the
+      // Host's armed lifecycle queue opens the three lines at once. With `off` the first arming step does (advance()).
+      if (scenario.automationPolicy().resumeOnStartup !== 'off') await scenario.settleStartLines();
+    }
     // Arm only after the seed: the option must fail the test's own call, not a seed write.
     if (options.failNextLookupCommitOnce === true) scenario.failNextLookupCommitOnce();
     return scenario;
@@ -1068,6 +1082,7 @@ export class HostScenario extends ScenarioBase {
   /** The live Host (a new one after every restart). */
   get host(): AG2bHost { return this.current.host; }
   override async settleAutoCapture(): Promise<void> { await settleAutoCapture(this.current.host); }
+  override async settleStartLines(): Promise<void> { await settleStartLines(this.current.host); }
   /** The start-up reconcile report of the live Host (§12.1 step 7). */
   get reconcile(): HostReconcileReportV1 { return this.current.host.host.reconcile; }
   stepActor(): WorkbenchActor { return this.settings.actor; }

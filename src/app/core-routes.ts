@@ -37,6 +37,10 @@ import type {
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
 import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
+import type {
+  RoleLineChangeScopeCommandV1, RoleLineOpenCommandV1, RoleLineOperationsPort,
+} from '../core/work-graph/sessions/role-line-operations.js';
+import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 // The two secretary lifecycle commands' accept owners; the body and progress types are the DTOs derived from them.
 import type { SessionHandoffPort, SessionSecretaryArchivePort } from '../core/work-graph/sessions/session-handoff-service.js';
@@ -331,6 +335,13 @@ export type CoreRouteBindings = {
   readRoleLimits: RoleLimitsPort['readRoleLimits'];
   setRoleLimits: RoleLimitsPort['setRoleLimits'];
   readRoleLineAllocation: RoleLineAllocationReadPort['readRoleLineAllocation'];
+  // O1b: the two role-line writes take the existing `GraphWrite`; the binding unwraps it once and passes
+  // `commandId: request.meta.requestId`, so the owner port stays flat. The operations read is person-only too.
+  openRoleLine: (ctx: CoreCallContext, request: GraphWrite<Omit<RoleLineOpenCommandV1, 'commandId'>>)
+    => ReturnType<RoleLineOperationsPort['open']>;
+  changeRoleLineScope: (ctx: CoreCallContext, request: GraphWrite<Omit<RoleLineChangeScopeCommandV1, 'commandId'>>)
+    => ReturnType<RoleLineOperationsPort['changeScope']>;
+  readRoleLineOperations: RoleLineOperationReadPort['readRoleLineOperations'];
   // The two Goal-card commands and the initialization adoption are person-only, so their binding can answer a
   // `forbidden` rejection; the copy preview is a read like the other reads.
   confirmGoalDraft: GoalConfirmPort['confirmDraft'];
@@ -453,6 +464,9 @@ export type CoreRoutePlatform = {
    *  platform without them answers `unsupported`. */
   roleLimits?: RoleLimitsPort;
   roleLineAllocation?: RoleLineAllocationReadPort;
+  /** O1b: the role-line writes and the operations read; internal like the other owner groups. */
+  roleLines?: Pick<RoleLineOperationsPort, 'open' | 'changeScope'>;
+  roleLineOperationsRead?: RoleLineOperationReadPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -681,6 +695,10 @@ export const CORE_ROUTE_SPECS: Record<
   'projects/role-limits': { kind: 'plain', binding: 'readRoleLimits', owner: 'roleLimits.readRoleLimits' },
   'projects/role-limits/set': { kind: 'plain', binding: 'setRoleLimits', owner: 'roleLimits.setRoleLimits' },
   'role-lines/allocation': { kind: 'plain', binding: 'readRoleLineAllocation', owner: 'roleLineAllocation.readRoleLineAllocation' },
+  'role-lines/open': { kind: 'graph_write', binding: 'openRoleLine', owner: 'roleLines.open' },
+  'role-lines/change-scope': { kind: 'graph_write', binding: 'changeRoleLineScope', owner: 'roleLines.changeScope' },
+  'role-lines/operations': { kind: 'plain', binding: 'readRoleLineOperations',
+    owner: 'roleLineOperationsRead.readRoleLineOperations' },
 };
 
 export type ParsedCoreRequest =
@@ -1280,6 +1298,18 @@ export function createPlatformCoreRouteBindings(
     readRoleLineAllocation: platform.roleLineAllocation === undefined
       ? unsupported('the platform does not publish the role-line allocation read (readRoleLineAllocation)')
       : platform.roleLineAllocation.readRoleLineAllocation.bind(platform.roleLineAllocation),
+    // O1b: person-only BEFORE the owner runs, the read included (L44).
+    openRoleLine: platform.roleLines === undefined
+      ? unsupported('the platform does not publish roleLines.open')
+      : personEntry((ctx, request) => platform.roleLines!.open(ctx,
+          { ...request.input, commandId: request.meta.requestId })),
+    changeRoleLineScope: platform.roleLines === undefined
+      ? unsupported('the platform does not publish roleLines.changeScope')
+      : personEntry((ctx, request) => platform.roleLines!.changeScope(ctx,
+          { ...request.input, commandId: request.meta.requestId })),
+    readRoleLineOperations: platform.roleLineOperationsRead === undefined
+      ? unsupported('the platform does not publish roleLineOperationsRead.readRoleLineOperations')
+      : personEntry(platform.roleLineOperationsRead.readRoleLineOperations.bind(platform.roleLineOperationsRead)),
     // The Goal service's three card owners; the Host's adoption owner arrives as the sixth argument.
     confirmGoalDraft: personEntry(platform.goals.confirmDraft.bind(platform.goals)),
     readGoalCopyDraft: platform.goals.readGoalCopyDraft.bind(platform.goals),
@@ -1566,6 +1596,9 @@ export async function dispatchCoreRoute(
       case 'projects/role-limits': return bindings.readRoleLimits(ctx, plain.input as never);
       case 'projects/role-limits/set': return bindings.setRoleLimits(ctx, plain.input as never);
       case 'role-lines/allocation': return bindings.readRoleLineAllocation(ctx, plain.input as never);
+      case 'role-lines/open': return bindings.openRoleLine(ctx, graphWrite.request as never);
+      case 'role-lines/change-scope': return bindings.changeRoleLineScope(ctx, graphWrite.request as never);
+      case 'role-lines/operations': return bindings.readRoleLineOperations(ctx, plain.input as never);
       // The two Goal-card commands, the copy preview and the initialization adoption.
       case 'goals/confirm-draft': return bindings.confirmGoalDraft(ctx, plain.input as never);
       case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);

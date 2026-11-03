@@ -58,7 +58,8 @@ import {
   stepOf, taskRefOf,
 } from './support/common.js';
 import {
-  crashMidTurn, expectQuietHarnessRestart, expectQuietRestart, forceTurnOnKernelSession, performedOf,
+  countsAllowingStartWrites, crashMidTurn, expectQuietHarnessRestart, expectQuietRestart, forceTurnOnKernelSession, performedOf,
+  reworkNoticesSince,
 } from './support/restart.js';
 
 afterEach(cleanupScenarios);
@@ -268,7 +269,10 @@ it('A8-3l, A8-3p (W-20, RUN-24, LA-1, C3, C4, §13.4 #23/#24; K KA-07, KA-04): a
   const settled = h.counts();
   const again = await h.restart({ crash: true });
   expect(again.report).toMatchObject({ runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] });
-  expect(h.counts()).toEqual(settled);
+  const settledAgain = await countsAllowingStartWrites(h.database, settled, again.report, 'a8-3l');
+  expect(reworkNoticesSince(h.database, settled.ledgerEvents), 'a8-3l: another start sends the check_failed rework notice')
+    .toBe(1);
+  expect(h.counts()).toEqual(settledAgain);
   expect((await execution(h, run1Ref)).session).toMatchObject({ lifecycle: 'active', health: 'available', healthConclusion: null,
     historyCursor: run3.session.historyCursor });
   expect(run3.session.historyCursor, 'S1\'s cursor moved past the closure (K L3)').not.toBe(s1Cursor);

@@ -41,8 +41,9 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   const h = await openHostScenario({ workIds: [AG2B_WORK_TASK_ID, WORK_2],
     script: { replies: [...editThenText('smoke-work-1'), { kind: 'text', text: 'scenario smoke: work-2 finds the result file' }] } });
   await assertInvariants(h, 'seeded');
-  // The seed holds one line per work Task, one Kernel Session record each.
-  expect(h.counts()).toMatchObject({ modelCalls: 0, kernelRecords: 2, kernelTurnsStarted: 0, kernelSessionRevisions: 2, checksBegun: 0 });
+  // The seed holds one line per work Task, one Kernel Session record each; O1b (L26): the project's three opening
+  // lines (secretary, adviser, scribe) hold one more each.
+  expect(h.counts()).toMatchObject({ modelCalls: 0, kernelRecords: 5, kernelTurnsStarted: 0, kernelSessionRevisions: 5, checksBegun: 0 });
 
   const first = await h.advance(h.select('smoke-1', AG2B_WORK_TASK_ID));
   expect(kinds(first)).toEqual(expect.arrayContaining(['claim_task', 'start', 'open_checks', 'run_check',
@@ -58,7 +59,7 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   expect(afterRun.kernelRecords).toBeGreaterThan(1);
   expect(afterRun.kernelSessionRevisions).toBeGreaterThan(0);
   const kernelAfterRun = h.kernelSnapshot();
-  expect(kernelAfterRun.sessions).toHaveLength(2);
+  expect(kernelAfterRun.sessions).toHaveLength(5);
   expect(h.ledgerEventTypes()).toEqual(expect.arrayContaining(['TaskClaimed', 'ExecutionEntryAuthorized']));
 
   // HL-06 then HL-01: nothing was left open, so the reconcile has nothing to do and writes nothing. The new

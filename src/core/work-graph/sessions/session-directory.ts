@@ -83,6 +83,7 @@ import {
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import { allocationNext } from '../state/role-line-allocation.js';
+import { roleLineStepTransition } from '../state/role-line-operation.js';
 import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from '../state/role-scope.js';
 import { seatInheritanceOf } from '../state/session-handoff-contracts.js';
 import { openLimitOf, createAllocationRead, seatAtCap } from './allocation-read.js';
@@ -1063,6 +1064,29 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       internal = seat.internal;
 
       const now = new Date().toISOString();
+      // O1b (v4 §2.2, TS-6): a role_line parent's step is `reserved`, with this child, in the SAME commit as the
+      // child's seat; a failed admission writes neither. This is the only writer of `reserved`. C1's cold_start
+      // parent keeps no step.
+      let parentStep: { record: EncodedRecord; guard: RecordGuard } | null = null;
+      if (input.parentOperation !== null) {
+        const parentRead = await getSessionOperation(ctx, input.parentOperation);
+        if (parentRead.status !== 'ready') {
+          return parentRead.status === 'rejected' ? parentRead
+            : reject('unavailable', 'the parent Session operation is not readable');
+        }
+        const parent = parentRead.value;
+        if (parent.action.kind === 'role_line' && parent.action.action !== 'cold_start') {
+          const counted = input.creation === null ? null : roleLineDutyOf(input.creation.duty);
+          const index = parent.action.steps.findIndex((step) => step.duty === counted);
+          const stepped = roleLineStepTransition(parent.action, index, { state: 'reserved', childOperation: operationRef });
+          if (!stepped.ok) return reject('unavailable', `the role line step cannot be reserved: ${stepped.reason}`);
+          parentStep = {
+            record: encodeSessionOperationRecord({ ...parent, revision: parent.revision + 1, updatedAt: now,
+              action: stepped.action }),
+            guard: { refKey: operationRefKey(parent.ref), expectedRevision: parent.revision },
+          };
+        }
+      }
       const operation: SessionCreateOperationRecord = {
         ref: operationRef,
         revision: 1,
@@ -1103,12 +1127,14 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         { refKey: operationRefKey(operation.ref), expectedRevision: null },
         { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(plannedSessionRef)), expectedRevision: null },
         ...provenanceGuards,
+        ...(parentStep === null ? [] : [parentStep.guard]),
       ];
       const prepared: PreparedCommit = {
         identityKey,
         fingerprint,
         guards: [...guards, ...(seat.fragment?.guards ?? [])],
-        records: [encodeSessionOperationRecord(operation), ...(seat.fragment?.records ?? [])],
+        records: [encodeSessionOperationRecord(operation), ...(seat.fragment?.records ?? []),
+          ...(parentStep === null ? [] : [parentStep.record])],
         claims: seat.fragment?.claims ?? [],
         indexGuards: [],
         indexChanges: [],
@@ -1230,6 +1256,11 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         if (current.value.allocation === null) {
           return reject('unavailable', 'the reserved Session has no allocation record');
         }
+        // O1B-R1-02 (v4 :2011): a terminal role_line op cancelled this reservation in its failed commit; no later
+        // registration. The allocation guard below makes a cancel that lands meanwhile retry into this check.
+        if (!current.value.allocation.reservations.some((entry) => operationRefKey(entry.operationRef) === opKey)) {
+          return reject('revision_conflict', 'the reservation was cancelled: the line operation ended');
+        }
         const contribution = roleLineCommitContribution({ projectRef, records: [], guards: [],
           links: [], claimChanges: [], bindings: [], events: [],
           allocation: allocationNext({ projectRef, duty: counted, current: current.value.allocation,
@@ -1291,8 +1322,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       }
 
       // The initial open responsible goal/project links take their claims in this same commit, with the saved
-      // counted duty and no second duty read.
-      const initialChanges = seated === null || seated.duty === 'unknown' ? []
+      // counted duty and no second duty read. A reviewer takes no claim (lead 5); its counted duty stays executor.
+      const reviewer = createAction.creation?.duty === 'reviewer';
+      const initialChanges = reviewer || seated === null || seated.duty === 'unknown' ? []
         : foldRoleScopeClaimChanges(projectRef, responsibilityClaimChanges({
             projectRef, close: [],
             open: pendingLinks.map((link) => ({ link: link.ref, duty: seated.duty as RoleLineDutyV1 })),

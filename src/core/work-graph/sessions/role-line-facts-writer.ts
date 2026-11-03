@@ -42,8 +42,11 @@ export async function roleFactsContribution(
     parentOperation: parent.value, provenance: input.session.provenance });
   if (decided === null) return { status: 'ready', value: null };
   const session = input.session.ref;
+  // A platform-born line's origin is its parent operation (lead 8); every other line's is its own create.
+  const origin = parent.value?.kind === 'start_lines' || parent.value?.kind === 'cold_start'
+    ? parent.value.operation : input.operation.ref;
   const record: SessionRoleFactsV1 = sessionRoleFactsRecord({ session: input.session, decided,
-    originOperation: input.operation.ref });
+    originOperation: origin, name: input.operation.action.creation?.name ?? null });
   return { status: 'ready', value: { record: sessionRoleFactsCodec.encode(record),
     guard: { refKey: canonicalJson({ aggregateType: 'SessionRoleFacts', projectId: session.projectId,
       sessionId: session.sessionId } as unknown as JsonValue), expectedRevision: null } } };
@@ -85,6 +88,11 @@ async function parentFactsOf(
     const caller = parent.action.input.caller;
     return { status: 'ready', value: { kind: 'member_create',
       caller: caller.kind === 'host_pick' ? null : { session: caller.session } } };
+  }
+  if (parent.action.kind === 'role_line') {
+    if (parent.action.action === 'start_lines') return { status: 'ready', value: { kind: 'start_lines', operation: parent.ref } };
+    if (parent.action.action === 'cold_start') return { status: 'ready', value: { kind: 'cold_start', operation: parent.ref } };
+    return { status: 'ready', value: { kind: 'other' } };
   }
   return { status: 'ready', value: { kind: 'other' } };
 }

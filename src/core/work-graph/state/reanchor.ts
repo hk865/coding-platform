@@ -45,7 +45,11 @@ function authorizationCovers(scope: readonly RoleScopeV1[], target: RoleScopeV1,
 }
 
 export function planReanchor(input: { projectRef: ProjectScope; duty: RoleLineDutyV1;
-  moves: readonly ReanchorMoveV1[]; facts: ReanchorFactsV1;
+  moves: readonly ReanchorMoveV1[];
+  /** D-3: destinations with no source link (a standby line's reuse / scope change); folded like a move's
+   *  destinations, with no event material (the owner writes their link events). */
+  open?: readonly { link: SessionWorkLinkRef; target: WorkLinkTarget }[];
+  facts: ReanchorFactsV1;
   authorization: { actor: ActorRef; scope: readonly RoleScopeV1[] };                       // actor: the owner's
   proposed: { goal?: { ref: GoalRef; snapshot: GoalSnapshot; version: VersionPin };
     catalog?: ReanchorCatalogFactsV1 } | null }):                                         // the owner's pins
@@ -71,9 +75,9 @@ export function planReanchor(input: { projectRef: ProjectScope; duty: RoleLineDu
   }
 
   // (3) Per destination: its Session, role scope, project, catalog/goal facts and authorization.
-  for (const move of moves) {
+  for (const destinations of [...moves.map((move) => move.destinations), input.open ?? []]) {
     const namedLinks = new Set<string>();
-    for (const destination of move.destinations) {
+    for (const destination of destinations) {
       const key = canonicalKey(destination.link);
       if (namedLinks.has(key)) {
         refusals.push(rejected('invalid', 'two destinations name one link'));
@@ -139,6 +143,24 @@ export function planReanchor(input: { projectRef: ProjectScope; duty: RoleLineDu
   const untilBindings: RoleLineBindingIntentV1[] = [];
   const sinceBindings: RoleLineBindingIntentV1[] = [];
   const events: ReanchorEventMaterialV1[] = [];
+  const foldDestination = (destination: { link: SessionWorkLinkRef; target: WorkLinkTarget }) => {
+    const key = canonicalKey(destination.link);
+    let folded = linkDestinations.get(key);
+    if (folded === undefined) {
+      rememberSession(facts.sessions.get(destination.link.sessionId)!);
+      const existing = facts.links.get(key) ?? null;
+      const { opened, openedBound } = openDestination(
+        existing, { projectId: destination.link.projectId, sessionId: destination.link.sessionId }, destination.target);
+      const next = openedBound === 'since' ? opened : null;
+      folded = { link: destination.link, next };
+      linkDestinations.set(key, folded);
+      if (next !== null) {
+        sinceBindings.push({ link: destination.link, field: 'since' });
+        openClaims.push({ link: destination.link, duty });   // (1) refused any move whose duty differs
+      }
+    }
+    return folded;
+  };
 
   for (const move of moves) {
     const sourceLink = facts.links.get(canonicalKey(move.source))!;
@@ -153,24 +175,12 @@ export function planReanchor(input: { projectRef: ProjectScope; duty: RoleLineDu
       continue;
     }
     for (const destination of move.destinations) {
-      const key = canonicalKey(destination.link);
-      let folded = linkDestinations.get(key);
-      if (folded === undefined) {
-        rememberSession(facts.sessions.get(destination.link.sessionId)!);
-        const existing = facts.links.get(key) ?? null;
-        const { opened, openedBound } = openDestination(
-          existing, { projectId: destination.link.projectId, sessionId: destination.link.sessionId }, destination.target);
-        const next = openedBound === 'since' ? opened : null;
-        folded = { link: destination.link, next };
-        linkDestinations.set(key, folded);
-        if (next !== null) {
-          sinceBindings.push({ link: destination.link, field: 'since' });
-          openClaims.push({ link: destination.link, duty: move.duty });
-        }
-      }
+      const folded = foldDestination(destination);
       events.push({ closed: move.source, opened: destination.link, openedBound: folded.next === null ? null : 'since' });
     }
   }
+  // D-3: a destination with no source opens with no event material; the owner writes its link event.
+  for (const destination of input.open ?? []) foldDestination(destination);
 
   // (5) One owner per claim slot: two open claims on one key with different owners are a duplicate move.
   const claimOwner = new Map<string, SessionWorkLinkRef>();

@@ -21,7 +21,7 @@ import type {
   ProjectCompletionPolicyActiveSnapshot,
 } from '../../../contracts/governance.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
-import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { CompletionPolicyReadPort } from '../model/completion-policy-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 
@@ -113,12 +113,17 @@ export interface CompletionPolicyConfigurationPort {
  * Trusted deps for the two services. `records` is the same physical WorkGraph
  * backend the Goal/Plan writers use; `now`/`eventId` are materialized only for
  * a request that is not an exact replay. The Host supplies these, never model
- * input: no root, permission predicate, Store, actor or callback is accepted.
+ * input: no root, permission predicate, Store or actor is accepted, and the only
+ * callback is the composition root's `startLines` encoder.
  */
 export type ProjectBootstrapDependencies = {
   records: GoalRecordTransactionPort;
   now(): string;
   eventId(): string;
+  /** O1b (L26): the project's one start_lines operation record, born in the first workspace's registration commit.
+   *  The Host's composition supplies the sessions encoder (configuration may not import sessions); absent writes no
+   *  birth (D-2 precedent). */
+  startLines?: (input: { projectId: string; workspaceId: string; now: string }) => EncodedRecord;
 };
 
 /** The public grouping the composition root publishes as `platform.projects`

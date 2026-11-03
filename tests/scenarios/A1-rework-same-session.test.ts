@@ -44,6 +44,7 @@ import { readExecution } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, checkRevisionOf, cleanupScenarios, openHostScenario, performs } from './harness.js';
 import {
   NOTES_FILE, editThenText, finalizeOutcomesOf, kernelRecordRows, receiptsOf, requiredBriefOf, turnStarts,
+  type KernelRecordRow,
 } from './support/common.js';
 import { claimInputsOf, cleanupRework, roundsOfTask } from './support/rework.js';
 
@@ -86,7 +87,9 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
   expect(run1ChainEvidenceIds.length).toBeGreaterThan(0);
   const run1Before = await readExecution(h.host, run1Ref);
   const kernelAfterRun1 = kernelRecordRows(h.database);
-  expect(new Set(kernelAfterRun1.map(row => row.sessionId)).size, 'Run 1 wrote one Kernel session').toBe(1);
+  // O1b (L26): the project's three opening lines (secretary, adviser, scribe) hold a Kernel session each.
+  expect(new Set(kernelAfterRun1.map(row => row.sessionId)).size, 'Run 1 wrote one Kernel session beside the three opening lines')
+    .toBe(4);
   const run1Requests = h.modelRequests();
   expect(run1Requests).toHaveLength(2);
 
@@ -144,9 +147,9 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
   expect(await h.goalDisplay()).toMatchObject({ phase: 'COMPLETED' });
   expect(h.host.scripted.calls(), 'Run 1 (the notes edit, then text), then Run 2 (edit and final text)').toBe(4);
 
-  // Same Session (row: "Session ID 不变"): one Kernel session holds both Turns.
+  // Same Session (row: "Session ID 不变"): one Kernel session holds both Turns (O1b: beside the three opening lines').
   expect(run2.session.ref.sessionId).toBe(run1.session.ref.sessionId);
-  expect(h.kernelSnapshot().sessions).toHaveLength(1);
+  expect(h.kernelSnapshot().sessions).toHaveLength(4);
   expect(h.counts()).toMatchObject({ kernelTurnsStarted: 2, modelCalls: 4 });
 
   // Old Attempt, Run and round kept (ATT-16: the requeue claim opened a second Attempt with the requeueRef).
@@ -164,9 +167,12 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
 
   // Only the incremental input: Run 1's Kernel records are kept as they were and the new Turn follows them;
   // Run 2's first model request is Run 1's history (its last request, then its final answer) plus one user message.
-  const kernelAtEnd = kernelRecordRows(h.database);
-  expect(kernelAtEnd.slice(0, kernelAfterRun1.length)).toEqual(kernelAfterRun1);
-  expect(kernelAtEnd.length).toBeGreaterThan(kernelAfterRun1.length);
+  // O1b (L26): the store also holds the opening lines' Kernel sessions, so Run 1's Kernel session is compared alone.
+  const ofRun1 = (rows: KernelRecordRow[]) => rows.filter(row => row.sessionId === run1.session.kernel.kernelSessionId);
+  const run1KernelAfterRun1 = ofRun1(kernelAfterRun1);
+  const kernelAtEnd = ofRun1(kernelRecordRows(h.database));
+  expect(kernelAtEnd.slice(0, run1KernelAfterRun1.length)).toEqual(run1KernelAfterRun1);
+  expect(kernelAtEnd.length).toBeGreaterThan(run1KernelAfterRun1.length);
   const requests = h.modelRequests();
   const run1Last = run1Requests[1]!;
   const run2First = requests[2]!;

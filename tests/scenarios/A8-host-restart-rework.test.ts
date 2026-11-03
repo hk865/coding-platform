@@ -20,7 +20,9 @@ import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, p
 import { claimQueryOn } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, waitFor } from './harness.js';
 import { editThenText, execution, redrivePolicy, replayOf, stepOf } from './support/common.js';
-import { countsAllowingInterruptions, expectQuietHarnessRestart, performedOf, RUN1_WITHOUT_FILE } from './support/restart.js';
+import {
+  countsAllowingStartWrites, expectQuietHarnessRestart, performedOf, reworkNoticesSince, RUN1_WITHOUT_FILE,
+} from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -56,11 +58,12 @@ it('A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim;
       redriveGoals: [{ goalRef: { goalId: AG2B_GOAL_REF.goalId }, taskIds: [AG2B_WORK_TASK_ID] }] });
     if (!resumeOnStartup) {
       expect(report.report?.queries).toEqual([]);
-      const recorded = report.report?.interruptedGoals.filter(entry => entry.status === 'recorded').length ?? 0;
       expect(report.report?.interruptedGoals.every(entry => entry.status === 'recorded' || entry.status === 'kept'),
         'the restart leaves only Goal interruption records').toBe(true);
-      expect(h.counts(), 'the reconcile writes only the Goal interruption for the unfinished work')
-        .toEqual({ ...atCrash, ledgerEvents: atCrash.ledgerEvents + recorded });
+      const atRestart = await countsAllowingStartWrites(h.database, atCrash, report.report, label);
+      expect(reworkNoticesSince(h.database, atCrash.ledgerEvents), `${label}: the restart sends the requeue's rework notice`).toBe(1);
+      expect(h.counts(), 'the reconcile writes only the Goal interruption for the unfinished work, the start the rework notice')
+        .toEqual(atRestart);
       expect(await h.taskRow()).toMatchObject({ effectivePhase: 'pending', phaseCause: { code: 'requeued' } });
       expect(h.lastWorld?.runs, 'no Run claims the requeue before a 推进').toHaveLength(1);
       const later = await h.advance(h.select(`${label}-later`));
@@ -117,10 +120,22 @@ it('A8-R2 (W-22, C8, ND-8): a committed no_new_basis refusal survives the restar
 
   const report = await h.restart({ crash: true });
   expect(report.report).toMatchObject({ runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] });
-  const atRestart = countsAllowingInterruptions(atCrash, report.report, 'A8-R2');
-  expect(h.counts(), 'the reconcile writes only the Goal interruption; no driver starts').toEqual(atRestart);
+  const atRestart = await countsAllowingStartWrites(h.database, atCrash, report.report, 'A8-R2');
+  expect(reworkNoticesSince(h.database, atCrash.ledgerEvents), 'A8-R2: the restart sends the first requeue\'s rework notice')
+    .toBe(1);
+  expect(h.counts(), 'the reconcile writes only the Goal interruption, the start the rework notice; no driver starts')
+    .toEqual(atRestart);
   expect(await h.taskRow(), 'no Run ended in the reconcile, so the refusal is not stale').toMatchObject(stopped);
-  expect(await h.advance(h.select('a8-r2-after'))).toMatchObject({ state: 'waiting', receipts: [] });
-  expect(h.counts()).toEqual(atRestart);
+  // PL-2: the stopped Task is a deviation; the Goal-level 推进 sends its round to the opening adviser once (one
+  // message), then a further 推进 writes nothing.
+  const deviationSelect = h.select('a8-r2-after');
+  const deviation = await h.advance(deviationSelect);
+  expect(deviation).toMatchObject({ state: 'waiting', receipts: [{ kind: 'send_system_round' }] });
+  expect(performedOf(deviationSelect, deviation, 'send_system_round').input)
+    .toMatchObject({ operation: { request: { round: { kind: 'deviation', cause: 'stop' } } } });
+  const atRound = { ...atRestart, ledgerEvents: atRestart.ledgerEvents + 1 };
+  expect(h.counts()).toEqual(atRound);
+  expect(await h.advance(h.select('a8-r2-after-2'))).toMatchObject({ state: 'waiting', receipts: [] });
+  expect(h.counts()).toEqual(atRound);
   await h.drainAbandoned();
 }, 180_000);

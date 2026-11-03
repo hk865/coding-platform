@@ -14,6 +14,7 @@ import {
   graphChangedElements,
 } from '../../src/app/attention-observer.js';
 import { lineDelta } from '../../src/contracts/line-delta.js';
+import type { WorkLineListV1 } from '../../src/contracts/work-line.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import type { SessionMessage, SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { ToolCall, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
@@ -357,8 +358,9 @@ it('delivers a real Host attention change into the original idle Session once', 
   try {
     host = await f.startAG2bHost(publicDir);
     await f.seedAG2bWorkGraph(host, undefined, { lineTaskIds: [] });
-    // The attention recipient must carry a readable fixed duty so the adviser-first resolution answers `ready null`;
-    // the AG2b work role is the world's Work binding role, so this row still means "no adviser, configured target wins".
+    // The configured attention target carries a readable fixed duty (the AG2b work role, the world's Work binding role).
+    // Since O1b the project's first workspace opens the three opening lines, so the adviser-first resolution answers the
+    // opening adviser: the opening adviser receives the change, not the configured target.
     const member = await f.createAG2bSession(host, 'attention-recipient', f.AG2B_WORK_ROLE);
     const { root, database } = host;
     await host.host.close();
@@ -373,34 +375,41 @@ it('delivers a real Host attention change into the original idle Session once', 
     });
     await new Promise(resolve => setTimeout(resolve, 200));
     expect(host.queryScripted.calls()).toBe(0);
+    const lines = await f.corePost(host.base, 'lines/list', host.token, f.plain(f.AG2B_SCOPE, { workspace: f.AG2B_SCOPE }));
+    const adviser = (await lines.json() as { value?: WorkLineListV1 }).value?.rows.find(row => row.duty === 'adviser')?.key;
+    if (adviser === undefined) throw new Error('lines/list must list the opening adviser line');
     await writeFile(join(root, 'src/module.ts'), 'export const ag2bMarker = "ATTENTION_CHANGED";\n');
     let message: SessionMessage | undefined;
     const until = Date.now() + 15_000;
     while (Date.now() < until) {
       const response = await f.corePost(host.base, 'messages/inbox', host.token,
-        f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
+        f.plain(f.AG2B_SCOPE, { recipient: adviser, page: { limit: 20 } }));
       const inbox = await response.json() as { status: string; value?: { items: SessionMessage[] } };
       message = inbox.value?.items.find(item => item.intent === 'notify');
       if (message !== undefined) break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    expect(message, 'the attention change is delivered into the idle inbox').toBeDefined();
+    expect(message, 'the attention change is delivered into the opening adviser\'s idle inbox').toBeDefined();
     expect(message?.intent).toBe('notify');
-    expect(message?.recipient).toEqual(member.sessionRef);
+    expect(message?.recipient).toEqual(adviser);
     expect(message?.delivery).toBe('queued');
     expect(message?.acceptedInputs ?? []).toEqual([]);
     expect(message?.response).toBeNull(); // a notify is recorded, not a fabricated reply request
     expect(host.queryScripted.calls()).toBe(0);
     const cards = await f.listSessions(host);
-    expect(cards).toHaveLength(1); // ordinary attention did not fork A′
+    expect(cards).toHaveLength(4); // the member and the three opening lines: ordinary attention did not fork A′
     await new Promise(resolve => setTimeout(resolve, 250));
     expect(host.queryScripted.calls()).toBe(0);
     const final = await f.corePost(host.base, 'messages/inbox', host.token,
-      f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
+      f.plain(f.AG2B_SCOPE, { recipient: adviser, page: { limit: 20 } }));
     const finalItems = (await final.json() as { value: { items: SessionMessage[] } }).value.items;
     expect(finalItems).toHaveLength(1);
     expect(finalItems[0]?.ref).toEqual(message?.ref);
     expect(finalItems[0]?.delivery).toBe('queued');
+    const memberInbox = await f.corePost(host.base, 'messages/inbox', host.token,
+      f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
+    expect((await memberInbox.json() as { value: { items: SessionMessage[] } }).value.items, 'the configured target gets nothing')
+      .toEqual([]);
   } finally {
     await host?.host.close();
     if (host !== undefined) { await rm(host.root, { recursive: true, force: true }); await rm(host.database, { recursive: true, force: true }); }

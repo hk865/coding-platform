@@ -18,7 +18,7 @@ import type { MemberRequestResultV1 } from '../../src/core/work-graph/tasks/memb
 import { driveWorkflow } from './A2-restart-fixture.js';
 import { byIdentityPrefix, commitBarrier } from './S6A-commit-barrier.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
-import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
+import { openingLinesOf, openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6ABackend, type S6ASession } from './S6A-request-fixture.js';
 import { governS6B, seedS6BHandoffLines } from './S6B1-fixture.js';
 import { driveS6BHandoff } from './S6B2-fixture.js';
@@ -95,6 +95,9 @@ export type S7D1RoleFactsChain = {
 export async function seedS7D1RoleFactsChain(options: { backend: S6ABackend }): Promise<S7D1RoleFactsChain> {
   const world = await openConfiguredWorld(options.backend);
   try {
+    // O1b (L26): the Host opens the three opening lines in the background, each with its own `session-register:`
+    // commit; they land before `heldRegistration` holds the first registration it is waiting for.
+    await openingLinesOf(world);
     const main: S6ACardsWorkspace = s6aCardsWorkspace(world, S6A_SCOPE);
     await governS6B(world, main, world.goals);
     const goal = world.goals.first;

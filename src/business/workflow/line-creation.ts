@@ -18,6 +18,9 @@ import type { CoreRejection, OperationReceipt, ReadResult } from '../../contract
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import type { TaskTriple } from '../../contracts/dispatch.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
+import {
+  roleScopeOfTarget, workLinkTargetOf, type CapacityAtCapDetailV1, type RoleScopeV1,
+} from '../../contracts/role-lines.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import { TaskTripleShape } from '../../contracts/data-format-refs.js';
 import { checkShape } from '../../contracts/validation/data-format.js';
@@ -41,13 +44,17 @@ export type LineCreationInput = {
   replaces?: SessionRef | null;
   /** The handoff operation that creates this successor; absent is null. */
   parentOperation?: OperationRef | null;
+  /** L27 role lines: the responsible links opened in the registration commit. */
+  roleScopes?: RoleScopeV1[];
+  /** L27: the stored name; forwarded only when the caller gives it (O1b-08). */
+  name?: string | null;
 };
 
 export type LineCreationResultV1 =
   | { status: 'created' | 'replayed'; session: SessionRef }
   | { status: 'accepted'; operationRef: OperationRef }
-  | { status: 'capacity_blocked'; duty: PlatformDutyV1 }
-  | { status: 'rejected'; code: string; reason: string };
+  | { status: 'capacity_blocked'; duty: PlatformDutyV1; detail: CapacityAtCapDetailV1 | null }
+  | CoreRejection;
 
 export type LineCreationLookupV1 = { status: 'none' } | { status: 'found'; input: LineCreationInput };
 
@@ -64,8 +71,9 @@ export type LineCreationDependencies = {
   operations: Pick<SessionDirectoryPort, 'getSessionOperation'>;
 };
 
+/** The original rejection, `current`/`scopeOwned`/`detail` intact (v4 §2.2). */
 function rejectedResult(rejection: CoreRejection): LineCreationResultV1 {
-  return { status: 'rejected', code: rejection.code, reason: rejection.reason };
+  return rejection;
 }
 
 function errorReason(error: unknown): string {
@@ -89,10 +97,13 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         workspace,
         role: input.roleConfiguration,
         recommendedRefs: [],
-        // A task line starts as its Task's responsible holder; a project line opens none.
-        initialLinks: input.scope.kind === 'task'
-          ? [{ target: { kind: 'task', ref: input.scope.task }, relation: 'responsible' }]
-          : [],
+        // A task line starts as its Task's responsible holder; a project line opens none; a role line opens its
+        // role scopes (L27).
+        initialLinks: input.roleScopes === undefined
+          ? (input.scope.kind === 'task'
+            ? [{ target: { kind: 'task', ref: input.scope.task }, relation: 'responsible' as const }] : [])
+          : input.roleScopes.map((scope) => ({ target: workLinkTargetOf({ projectId: ctx.projectId }, scope),
+            relation: 'responsible' as const })),
         meta: { requestId: input.commandId, expected: [] },
         provenance: input.provenance,
         // The creator is the trusted Host actor of THIS call, never the caller's field.
@@ -100,6 +111,7 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
           duty: input.duty, scope: input.scope, reason: input.reason, creator: actor,
           ...(input.delegationCeiling === undefined ? {} : { delegationCeiling: input.delegationCeiling }),
           ...(input.secretaryCreated === undefined ? {} : { secretaryCreated: input.secretaryCreated }),
+          ...(input.name === undefined ? {} : { name: input.name }),
         },
         // The parent operation is the runtime request's own optional member; `replaces` is not, so it rides as the
         // one extra member the admission reads.
@@ -116,7 +128,8 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         session: { projectId: receipt.value.ref.projectId, sessionId: receipt.value.ref.sessionId },
       };
     }
-    if (receipt.code === 'capacity') return { status: 'capacity_blocked', duty: input.duty };
+    // The admission's at-cap refusal always carries A1a's detail (`allocation-read.ts` seatAtCap).
+    if (receipt.code === 'capacity') return { status: 'capacity_blocked', duty: input.duty, detail: receipt.detail ?? null };
     return rejectedResult(receipt);
   }
 
@@ -204,6 +217,13 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
             ...(creation.secretaryCreated === undefined ? {} : { secretaryCreated: creation.secretaryCreated }),
             replaces: read.value.action.provenance.kind === 'handoff' ? read.value.action.provenance.from : null,
             parentOperation: read.value.action.parentOperation,
+            // D-4: O1b's two role-line inputs, restored from what ensureLine stored (initialLinks, creation.name).
+            ...(creation.name === undefined ? {} : { name: creation.name }),
+            ...(creation.scope.kind === 'project' && read.value.action.initialLinks.length > 0 ? {
+              roleScopes: read.value.action.initialLinks.flatMap((link) => {
+                const roleScope = roleScopeOfTarget(link.target);
+                return roleScope === null ? [] : [roleScope];
+              }) } : {}),
           },
         },
       };

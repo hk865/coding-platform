@@ -194,7 +194,7 @@ async function personSend(world: S6AHostWorld, to: S6ASession, requestId: string
 /**
  * The scenario's own Host input (H-06): the frozen S6A fixture cannot add a Work profile through
  * `extraHostOptions`/`extraBindings`, so this wraps `createLocalWorkbenchHost` the way its `hostStart` does
- * (`S6A-host-fixture.ts:533`/`:539`), adding the Work role's Query profile before the real factory runs.
+ * (`S6A-host-fixture.ts:541`/`:547`), adding the Work role's Query profile before the real factory runs.
  * The wrapper stays installed until the world closes (or its open fails), so a SQLite `crash()`/reopen starts
  * the replacement Host with the same profile instead of losing it when the first start returns.
  */

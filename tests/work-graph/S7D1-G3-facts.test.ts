@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { SessionRoleFactsV1 } from '../../src/contracts/role-lines.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { openingLinesOf } from '../helpers/S6A-host-fixture.js';
 import { type S6ABackend } from '../helpers/S6A-request-fixture.js';
 import {
   archiveS7D1Session, openS7D1AllocationWorld, reactivateS7D1Session, readS7D1Allocation, readS7D1Limits,
@@ -67,9 +68,10 @@ const CASES: readonly FactsCase[] = [
     async run(chain) {
       // The real Host path: the open secretary cap leaves the request waiting, and the public raise of the cap
       // wakes the Host's own queue, which creates the line and commits the registration under the system actor.
+      // O1b (L26): the opening secretary holds the one open seat; occupying it leaves the request waiting.
+      const busy = (await openingLinesOf(chain.world)).secretary;
       const limits = await readS7D1Limits(chain.world);
       await setS7D1Open(chain.world, 'secretary', 1, limits.revision, 's7d1-facts-platform-seat');
-      const busy = await chain.world.createSecretary('s7d1-facts-busy');
       await chain.world.occupy(busy);
       const submitted = await chain.world.submit({
         commandId: 's7d1-facts-platform-request', goalId: chain.goal.goalId, text: 'S7D1 platform request',

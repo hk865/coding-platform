@@ -11,13 +11,15 @@ export function sessionRoleFactsRecord(input: {
   session: SessionRecord;
   decided: { creator: CreatorRefV1; openedBy: SessionOpenedByV1 };
   originOperation: OperationRef;
+  /** L27: the stored name (the create operation's `creation.name`); `null` writes none. */
+  name: string | null;
 }): SessionRoleFactsV1 {
   const session = input.session.ref;
   return {
     ref: { aggregateType: 'SessionRoleFacts', projectId: session.projectId, sessionId: session.sessionId },
     revision: 1,
     sessionRef: { projectId: session.projectId, sessionId: session.sessionId },
-    name: null,
+    name: input.name,
     creator: input.decided.creator,
     openedBy: input.decided.openedBy,
     originOperation: input.originOperation,

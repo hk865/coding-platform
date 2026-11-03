@@ -678,13 +678,23 @@ async function registerWorkspace(
     payload: { value: snapshot },
   };
   const workspaceKey = canonicalJson(snapshot.ref as unknown as JsonValue);
+  // O1b (L26): the first workspace's commit births the project's start_lines operation; a later one skips it.
+  // C2 (rework-1): the birth takes the registration event's own time; no second clock read.
+  const birth = deps.startLines?.({ projectId, workspaceId, now: event.occurredAt });
+  let born: EncodedRecord | null = null;
+  if (birth !== undefined) {
+    const existing = await deps.records.readMany([birth.refKey]);
+    if (existing.status !== 'ready') return mapStoreFailure(existing);
+    if (existing.value.records.every((record) => record.refKey !== birth.refKey)) born = birth;
+  }
   return commitBootstrap(deps.records, {
     binding, signal: bound.signal, fingerprint: fingerprint.value,
     guards: [
       { refKey: project.key, expectedRevision: project.revision },
       { refKey: workspaceKey, expectedRevision: null },
+      ...(born === null ? [] : [{ refKey: born.refKey, expectedRevision: null }]),
     ],
-    records: [encodeWorkspaceSnapshot(snapshot)],
+    records: [encodeWorkspaceSnapshot(snapshot), ...(born === null ? [] : [born])],
     event: encodeProjectWorkspaceRegisteredEvent(event),
     fresh: snapshot,
   });

@@ -12,7 +12,7 @@
  * - The A8-3l step 6 negative control: a Turn forced on the frozen Kernel's own store.
  * - §12.10 step 4 "再次重启（同一数据、新实例）后不产生新的写入": `expectQuietHarnessRestart` (a
  *   `HostScenario`) and `expectQuietRestart` (a moved case's own files), over the harness's `fileCounts`
- *   and `reportChanges`.
+ *   and `reportChanges`; the start's own writes they allow (`countsAllowingStartWrites`, `reworkNoticesSince`).
  *
  * Scripted model replies only; no real model is called.
  */
@@ -144,9 +144,11 @@ async function autoReworkLimitOf(database: string): Promise<number> {
 }
 
 /**
- * (E) The only allowance an "another start wrote nothing" comparison makes: a Host start records one Goal
+ * (E) The allowances an "another start wrote nothing" comparison makes: a Host start records one Goal
  * interruption per report entry it lists `recorded` (one `GoalInterruptionChanged` ledger event each); every
  * other entry is `kept` and writes nothing. Returns how many ledger events that start's report accounts for.
+ * The start may also send the rework notices the previous life left for its next heartbeat (since O1b they have
+ * a recipient, the opening secretary and adviser): `countsAllowingStartWrites` allows those, two rows each.
  */
 export function recordedInterruptions(report: HostReconcileReportV1['report'], label: string): number {
   const entries = report?.interruptedGoals ?? [];
@@ -161,6 +163,79 @@ export function countsAllowingInterruptions<T extends { ledgerEvents: number }>(
   return { ...counts, ledgerEvents: counts.ledgerEvents + recordedInterruptions(report, label) };
 }
 
+/** A Host rework notice's requestId (`host.ts` `deliverReworkNotice`: the secretary's arm, then the adviser's). */
+const REWORK_NOTICE_REQUEST = /^rework-notice(-adviser)?:/;
+
+type LedgerRow = { eventType: string; requestId?: unknown;
+  hostOutbox?: { item?: { request?: { meta?: { requestId?: unknown } } } } };
+
+/** The ledger's rows after its first `fromEvent`, in commit order (its own read-only connection; none without the file). */
+function ledgerRowsAfter(database: string, fromEvent: number): LedgerRow[] {
+  return readSqlite(join(database, 'ledger.sqlite'), ledger => (ledger.prepare('SELECT event_json FROM events ORDER BY id LIMIT -1 OFFSET ?')
+    .all(fromEvent) as Array<{ event_json: string }>).map(row => JSON.parse(row.event_json) as LedgerRow), []);
+}
+
+/**
+ * (E) The rework notices a Host start sent after the ledger's first `fromEvent` rows: a new Host's first heartbeat
+ * sends the notice a requeue or rework round of the previous life left. Each notice is exactly two rows, paired by
+ * its requestId: the Host system outbox record saved before the send (`HostSystemOutboxAppended`) and the send
+ * (`SessionMessageSent`). Strict: a notice row without exactly one outbox record and one send of its requestId
+ * throws. Rows of any other kind are not counted, so a comparison that adds twice this count allows no other row.
+ */
+export function reworkNoticesSince(database: string, fromEvent: number): number {
+  const notices = new Map<string, { outbox: number; sent: number }>();
+  for (const row of ledgerRowsAfter(database, fromEvent)) {
+    const sentId = row.eventType === 'SessionMessageSent' ? row.requestId : undefined;
+    const outboxId = row.eventType === 'HostSystemOutboxAppended' ? row.hostOutbox?.item?.request?.meta?.requestId : undefined;
+    const requestId = sentId ?? outboxId;
+    if (typeof requestId !== 'string' || !REWORK_NOTICE_REQUEST.test(requestId)) continue;
+    const notice = notices.get(requestId) ?? { outbox: 0, sent: 0 };
+    if (sentId === undefined) notice.outbox += 1; else notice.sent += 1;
+    notices.set(requestId, notice);
+  }
+  const unpaired = [...notices].filter(([, notice]) => notice.outbox !== 1 || notice.sent !== 1);
+  if (unpaired.length > 0) {
+    throw new Error(`rework notices after ledger row ${String(fromEvent)} must each be one outbox record and one send: `
+      + JSON.stringify(unpaired));
+  }
+  return notices.size;
+}
+
+/** The ledger's row count (its own read-only connection; 0 without the file). */
+function ledgerRowCount(database: string): number {
+  return readSqlite(join(database, 'ledger.sqlite'), ledger =>
+    Number((ledger.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n), 0);
+}
+
+/**
+ * Waits until the ledger's row count is the same on two reads 50 ms apart (a new Host's first heartbeat sends the
+ * rework notices in the background, beside the start's answer); still moving after 2 s throws.
+ */
+async function settleLedger(database: string, label: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  let last = ledgerRowCount(database);
+  for (;;) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const now = ledgerRowCount(database);
+    if (now === last) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`${label}: the ledger still grows 2 s after the start (${String(last)} -> ${String(now)} rows)`);
+    }
+    last = now;
+  }
+}
+
+/**
+ * `counts` as that same start leaves them, read once the ledger settled: its `recorded` interruptions and the rework
+ * notices its first heartbeat sent (`reworkNoticesSince`, two rows each) are the only additions.
+ */
+export async function countsAllowingStartWrites<T extends { ledgerEvents: number }>(database: string, counts: T,
+  report: HostReconcileReportV1['report'], label: string): Promise<T> {
+  await settleLedger(database, label);
+  return { ...counts, ledgerEvents: counts.ledgerEvents + recordedInterruptions(report, label)
+    + 2 * reworkNoticesSince(database, counts.ledgerEvents) };
+}
+
 /**
  * §12.10 step 4 on a `HostScenario`. The abandoned Hosts are drained first (draining lets an abandoned
  * Host's Kernel end a Turn it held: new Kernel data, no restart's write) and the live Host's automatic
@@ -168,7 +243,8 @@ export function countsAllowingInterruptions<T extends { ledgerEvents: number }>(
  * that `advance()` never awaited; the crash below leaves that Host running); then a crash restart on the same
  * data with the start-up re-drive off (step 5: only the reconcile runs) owns the lease, changes no record
  * (every report line `left`) and writes nothing (`counts()` equal: no model call, Kernel Turn or check
- * start). The re-drive stays off afterwards.
+ * start) but its Goal interruptions and the rework notices it owed (`countsAllowingStartWrites`). The re-drive
+ * stays off afterwards.
  */
 export async function expectQuietHarnessRestart(h: HostScenario, label: string): Promise<HostReconcileReportV1> {
   await h.drainAbandoned();
@@ -177,15 +253,17 @@ export async function expectQuietHarnessRestart(h: HostScenario, label: string):
   const restarted = await h.restart({ crash: true, automation: { ...h.automationPolicy(), resumeOnStartup: 'off' } });
   expect(restarted, label).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { problems: [] } });
   expect(reportChanges(restarted.report), `${label}: another start reconciles nothing`).toEqual([]);
-  expect(h.counts(), `${label}: another start writes only its Goal interruptions`)
-    .toEqual(countsAllowingInterruptions(before, restarted.report, label));
+  const allowed = await countsAllowingStartWrites(h.database, before, restarted.report, label);
+  expect(h.counts(), `${label}: another start writes only its Goal interruptions and the rework notices it owed`)
+    .toEqual(allowed);
   return restarted;
 }
 
 /**
  * §12.10 step 4 on a moved case's own files: a Host started on them with the start-up re-drive off (the
  * case's rework limit kept) owns the lease, changes no record (every report line `left`), writes nothing
- * (`fileCounts` equal) and calls no model; then `whileOpen` runs on it and it is closed. Every Host of the
+ * (`fileCounts` equal) but its Goal interruptions and the rework notices it owed (`countsAllowingStartWrites`)
+ * and calls no model; then `whileOpen` runs on it and it is closed. Every Host of the
  * case must be closed first, except a crashed Host whose model call is still held (draining it lets its
  * Kernel end that Turn, which is new Kernel data), so call this before releasing such a Host.
  */
@@ -202,8 +280,9 @@ export async function expectQuietRestart(database: string, publicDir: string, ro
     const reconcile = host.host.reconcile;
     expect(reconcile, label).toMatchObject({ lease: 'owned', report: { problems: [] } });
     expect(reportChanges(reconcile.report), `${label}: the reconcile changes nothing again`).toEqual([]);
-    expect(fileCounts(database), `${label}: only its Goal interruptions are written`)
-      .toEqual(countsAllowingInterruptions(before, reconcile.report, label));
+    const allowed = await countsAllowingStartWrites(database, before, reconcile.report, label);
+    expect(fileCounts(database), `${label}: only its Goal interruptions and the rework notices it owed are written`)
+      .toEqual(allowed);
     expect(host.scripted.calls() + host.queryScripted.calls(), `${label}: no model call`).toBe(0);
     await options.whileOpen?.(host);
     return reconcile;

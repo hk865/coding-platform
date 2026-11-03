@@ -84,7 +84,9 @@ import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contr
 import { draftFrom } from '../scenarios/support/common.js';
 import { driveWorkflow } from './A2-restart-fixture.js';
 import { AG2B_WORK_ROLE, AG2B_WORK_TASK_ID, ag2bPlanDraft, createAG2bSession, graphWrite, plain, writeAG2bWorkspace } from './AG2b-collaboration-fixture.js';
-import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions } from './S6A-host-fixture.js';
+import {
+  ensureProjectPointers, openingLinesOf, openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions,
+} from './S6A-host-fixture.js';
 import type { S6AGovernance } from './S6A-memory-fixture.js';
 import {
   openS6ARequestWorld, S6A_SCOPE, S6A_SECOND_SCOPE, S6A_SECRETARY_PROFILE_ID,
@@ -698,11 +700,13 @@ export type S7D1DrainWorld = {
 export async function openS7D1DrainWorld(): Promise<S7D1DrainWorld> {
   const cards = await openS6ACardsWorld({ backend: 'memory', extraHostOptions: { requestDriver: 'on' } });
   const world = cards.world;
+  // O1b (L26): the project's opening secretary takes a seat; it is the first of the two seats the requests wait on.
+  const opening = (await openingLinesOf(world)).secretary;
   const limits = readyValue<{ revision: number }>((await world.post('projects/role-limits', plain(S6A_SCOPE,
     { projectRef: { projectId: S6A_SCOPE.projectId } }))).body, 'the project limits');
   committedBody((await world.post('projects/role-limits/set', plain(S6A_SCOPE, { commandId: 's7d1-drain-open-2',
     expectedRevision: limits.revision, open: { secretary: 2 } }))).body, 'the open secretary limit 2');
-  const first = await world.createSecretary('s7d1-drain-a');
+  const first = opening;
   const second = await world.createSecretary('s7d1-drain-b');
   await world.occupy(first);
   await world.occupy(second);

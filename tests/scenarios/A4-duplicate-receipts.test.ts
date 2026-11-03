@@ -74,7 +74,7 @@ import {
 import {
   OPERATOR_RETRY, eventCount, failCommitOf, kernelRecordsContaining, performOnce, rawAdvance, rawPost, writeStatusOf,
 } from './support/receipts.js';
-import { countsAllowingInterruptions } from './support/restart.js';
+import { countsAllowingInterruptions, countsAllowingStartWrites, reworkNoticesSince } from './support/restart.js';
 
 afterEach(cleanupScenarios);
 
@@ -206,7 +206,9 @@ it('A4, W-23: a requeue and its committed refusal that fail inside the commit le
   expect(await performOnce(h, requeueInput, 'W-23 answer lost')).toEqual({ ...requeued, receipt: replayOf(requeued.receipt) });
   const second = await h.restart({ crash: true });
   expect(await performOnce(h, requeueInput, 'W-23 after a crash')).toEqual({ ...requeued, receipt: replayOf(requeued.receipt) });
-  expect(h.counts()).toEqual(countsAllowingInterruptions(afterRequeue, second.report, 'W-23: the requeue crash restart'));
+  const afterRequeueRestart = await countsAllowingStartWrites(h.database, afterRequeue, second.report, 'W-23: the requeue crash restart');
+  expect(reworkNoticesSince(h.database, afterRequeue.ledgerEvents), 'W-23: the crash restart sends the requeue\'s rework notice').toBe(1);
+  expect(h.counts()).toEqual(afterRequeueRestart);
 
   // Run 2 claims the requeue and FAILs the same way: the next request is the second automatic requeue.
   const toRefusal = await h.advance(requeued.next!, { stopBefore: performs('requeue_task') });
@@ -307,7 +309,11 @@ it('A4, C-05: an automatic reverify and its committed refusal that fail inside t
   expect(await performOnce(h, reverifyInput, 'C-05 answer lost')).toEqual({ ...reverified, receipt: replayOf(reverified.receipt) });
   const reverifyCrash = await h.restart({ crash: true });
   expect(await performOnce(h, reverifyInput, 'C-05 after a crash')).toEqual({ ...reverified, receipt: replayOf(reverified.receipt) });
-  expect(h.counts()).toEqual(countsAllowingInterruptions(afterReverify, reverifyCrash.report, 'C-05: the reverify replay restart'));
+  const afterReverifyRestart = await countsAllowingStartWrites(h.database, afterReverify, reverifyCrash.report,
+    'C-05: the reverify replay restart');
+  expect(reworkNoticesSince(h.database, afterReverify.ledgerEvents), 'C-05: the crash restart sends the reverify\'s rework notice')
+    .toBe(1);
+  expect(h.counts()).toEqual(afterReverifyRestart);
   expect(h.lastWorld?.rounds).toHaveLength(2);
 
   // The successor's check times out the same way on the same source: the next automatic reverify is the

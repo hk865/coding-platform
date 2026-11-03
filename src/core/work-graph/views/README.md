@@ -15,6 +15,7 @@
 做工作线列表/详情、图节点、图上下文与轨道条读取的去这组。
 
 - `role-line-allocation-reader.ts` — `role-lines/allocation` 的读：一次 `readMany` 读四个 `RoleLineAllocation` 和 `ProjectRoleLimits`，缺键是零占用/默认额度、其它读失败是 `unavailable`；holder 的 `name` 和 `creator` 由同一份角色事实经 `creatorOf` 派生，完整交接沿每个涉及 workspace 的一次 completed 操作枚举得到后继；`createRoleLineAllocationReader` 是入口，依赖 `RoleLineAllocationReaderDependenciesV1`，`RoleLineContactFactsV1` 是一条 holder 的读时事实形状。
+- `role-line-operations-read.ts` — `role-lines/operations` 的读 `createRoleLineOperationsRead`（`RoleLineOperationReadPort`）：按工作区和五个记录阶段翻唯一的操作索引，`role_line` 一行带记录阶段、`actionPhase`、步骤、结果和冷启动的可选字段，`member_create` 一行带 `progress`；坏记录是 `unavailable`，不跳过、不补字段。
 - `work-line-reader.ts` — 工作线列表/归档/详情/分区页的唯一组装路径；线摘要也被悬停复用。线的最早未消费等待取自一次 Session facts 读（`readSessionFacts` 的 `wait`/`waits`），不再从最新 Run 的 continuation 读，也不再读 `TaskLease` 和等待消息。消息分节对每条消息调一次 `deriveMessageDelivery`：事实取记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，收件线的 `archived`/`retired` 取 `resolveLine` 已读线头的 `lifecycle === 'archived'`/`health === 'unavailable'`，不另开读取；`release` 取记录的字段，一次结果填 `delivery`/`deliveredTo`/`evidence`/`reason`/`disposition`（记录上存的 `delivery` 仍不读），`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。
 - `node-detail-reader.ts` — 图悬停（只用已读数据）与单节点分区详情。
 - `graph-context-reader.ts` — 上下文事实、图 look/find、注意力图的唯一只读视图；look/find 的 `goalRef` 为 `null` 时读项目分支（架构 module、项目 Session、请求点名的 Goal 只读），需要 Goal 的节点/关系拒绝。

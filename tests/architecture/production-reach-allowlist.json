@@ -1322,36 +1322,6 @@
       "note": "waits for 7D2's reanchor-hook connection (planReanchorHook), slice 7 of the orchestration design"
     },
     {
-      "file": "src/core/work-graph/sessions/session-responsibility-service.ts",
-      "name": "ReanchorInputV1",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/sessions/session-responsibility-service.ts",
-      "name": "ReanchorResultV1",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/sessions/session-responsibility-service.ts",
-      "name": "SessionResponsibilityPort.reanchorSessionResponsibility",
-      "reason": "kept-for",
-      "note": "W publishes it on platform.responsibilities, but no src/ caller reads it; waits for 8B-2's reanchor action entry (reanchorSessionResponsibility), slice 8 of the orchestration design, slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/state/reanchor.ts",
-      "name": "ReanchorReasonV1",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/state/reanchor.ts",
-      "name": "REANCHOR_REASONS",
-      "reason": "kept-for",
-      "note": "waits for 8B-2's reanchor action entry (planReanchor), slice 8 of the orchestration design"
-    },
-    {
       "file": "src/core/work-graph/state/role-scope.ts",
       "name": "RegionClaimV1",
       "reason": "kept-for",
@@ -1455,51 +1425,69 @@
     },
     {
       "file": "src/contracts/role-lines.ts",
-      "name": "ROLE_LINE_OPEN_DUTIES",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `role-lines/open` accepts `reviewer` and refuses `executor`; O1b deletes this entry when its open path lands"
-    },
-    {
-      "file": "src/contracts/role-lines.ts",
-      "name": "RoleLineOpenDutyV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the type of 7D2 O1b's open-duty refusal (`invalid/role_line_duty`); O1b deletes this entry when its open path lands"
-    },
-    {
-      "file": "src/contracts/role-lines.ts",
-      "name": "isRoleLineOpenDuty",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `role-lines/open` narrows its requested duty with it; O1b deletes this entry when its open path lands"
-    },
-    {
-      "file": "src/contracts/role-lines.ts",
-      "name": "workLinkTargetOf",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `B/line-creation.ts` builds `roleScopes` responsible links with it; O1b deletes this entry when `ensureLine` lands"
-    },
-    {
-      "file": "src/contracts/role-lines.ts",
       "name": "GoalAdviserQueueEntryV1",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: 7D2 O4a's `enqueueGoal`/queue value uses the entry type; O4a deletes this entry when the queue owner lands"
     },
     {
-      "file": "src/core/work-graph/model/session-contracts.ts",
-      "name": "RoleLineOperationV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O3's card source and O5a's `role-lines/operations` read project it; they delete this entry when their readers land"
-    },
-    {
       "file": "src/core/work-graph/sessions/role-line-orchestration-codecs.ts",
       "name": "roleLineSplitSavedCodec",
       "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `startRoleLineSplit` canonicalizes and re-reads the saved split body with it; O1b deletes this entry when the split port lands"
+      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `startRoleLineSplit` canonicalizes and re-reads the saved split body with it, and that port member is reached only when O2's split tool calls it; O2 deletes this entry then"
     },
     {
       "file": "src/core/work-graph/state/role-line-action.ts",
       "name": "ROLE_LINE_STEP_KEYS",
       "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `start_lines` step machine writes the three keys; O1b deletes this entry when the operation lands"
+      "note": "kept for slice 7 of the orchestration design: O1b's `startLinesInitialRecord` (TS-10 item 3, moved verbatim) spells the three keys literally and only tests read this list; the first package that reads the keys in production deletes this entry"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineSplitPlanV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O2's split planner returns it and calls `startRoleLineSplit` with it (TS-10 item 6); O2 deletes this entry when the planner lands"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineSplitStartV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the answer of `startRoleLineSplit`, read by 7D2 O2's `propose_role_split` path (TS-8); O2 deletes this entry when it calls the port"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineSplitPort.startRoleLineSplit",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O2's split tool calls this one starter (b02, D-6); O2 deletes this entry when it calls the port"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineReuseCommandV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O4b's chooser (`reuseStandby`, TS-16) and C1's region open (L-9) build this command; the first of them to call `reuse` deletes this entry"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineOperationsPort.reuse",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O4b's chooser (TS-16) and C1's region open (L-9) call it (X-4); the first of them to call it deletes this entry"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineRegionOpenInputV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the input of `openRegionLine`, which 7D2 C1's `openPendingRegions` binds by symbol (v4 :8049-:8058, :9066); C1 deletes this entry when it calls it"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineRegionOpenResultV1",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: the answer of `openRegionLine`, read by 7D2 C1's `openPendingRegions` (v4 :8049-:8058); C1 deletes this entry when it calls it"
+    },
+    {
+      "file": "src/core/work-graph/sessions/role-line-operations.ts",
+      "name": "RoleLineOperationsPort.openRegionLine",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 C1's cold start opens one adviser line per top-level module through it (v4 :7935, :9066); C1 deletes this entry when it calls it"
     },
     {
       "file": "src/core/record-store/event-page-ports.ts",

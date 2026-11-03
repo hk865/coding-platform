@@ -50,9 +50,10 @@ import {
   type OwnedRequest, type TrustedContext,
 } from './trusted-context.js';
 import {
-  SESSION_ARCHIVE_REQUESTED_EVENT, SESSION_RESPONSIBILITY_CHANGED_EVENT,
-  encodeSessionResponsibilityChangedEvent, sessionArchiveChangedEventFromEvent,
-  sessionResponsibilityChangedEventFromEvent, type SessionResponsibilityChangedEventV1,
+  SESSION_ARCHIVE_REQUESTED_EVENT, SESSION_RESPONSIBILITY_CHANGED_EVENT, SESSION_WORK_LINK_CHANGED_EVENT,
+  encodeSessionResponsibilityChangedEvent, encodeSessionWorkLinkChangedEvent, sessionArchiveChangedEventFromEvent,
+  sessionResponsibilityChangedEventFromEvent, sessionWorkLinkChangedPayloadFromEvent,
+  type SessionResponsibilityChangedEventV1,
 } from './lifecycle-record-codecs.js';
 import {
   destinationEligible, transitionResponsibility, type PendingResponsibleLinkV1, type ResponsibilityGuardV1,
@@ -76,7 +77,14 @@ export type ReanchorInputV1 = {
   close: readonly SessionWorkLinkRef[];
   open: readonly { target: WorkLinkTarget }[];
   reason: ReanchorReasonV1;
+  /** O1b's change-scope step: folded into the same commit as the links and claims. */
+  operation?: { record: EncodedRecord; expectedRevision: number | null };  // null = must not exist yet
+  /** Lead (11-04, O1b's split link): a split's other Session — the destinations open on it, in the same commit as the
+   *  source's close; only with `reason: 'split'` and never `session` itself. */
+  destination?: SessionRef;
 };
+/** The committed Session; an open-only replay (no source link) answers the Session as read now, because link events
+ *  carry no Session record (L-7). */
 export type ReanchorResultV1 = {
   session: SessionRecord;
   closed: readonly SessionWorkLinkRef[];
@@ -151,6 +159,8 @@ export async function scopeClaimChangesOf(
   if (resolved.value === 'unknown' || counted === null) {
     return { ok: false, rejection: reject('unavailable', 'the Session duty is unknown') };
   }
+  // O1b (lead 5): a reviewer counts as executor but takes no claim, like the secretary.
+  if (resolved.value === 'reviewer') return { ok: true, duty: 'reviewer', changes: [] };
   return {
     ok: true,
     duty: resolved.value,
@@ -966,6 +976,8 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
 
   type ReanchorFactReadV1 = {
     duty: RoleLineDutyV1;
+    /** O1b-02 (lead 5): a reviewer counts as executor but takes no claim. */
+    reviewer: boolean;
     goals: ReadonlyMap<string, ReanchorGoalFactsV1>;
     catalog: ReanchorCatalogFactsV1;
     guards: readonly RecordGuard[];
@@ -1015,15 +1027,17 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
         guards.push(...window.guards);
       }
     }
-    return { duty: counted, goals, catalog, guards };
+    return { duty: counted, reviewer: resolved.value === 'reviewer', goals, catalog, guards };
   }
 
-  function resultOf(plan: ReanchorPlanV1): ReanchorResultV1 {
-    const projectId = plan.sessions[0]!.ref.projectId;
+  function resultOf(plan: ReanchorPlanV1, scope: WorkspaceScope, sessionRef: SessionRef): ReanchorResultV1 {
+    const projectId = scope.projectId;
     return {
-      session: plan.sessions[0]!,
+      // Every committed plan folds its own Session (the commit needs an event; each comes from a move or an opened link).
+      session: plan.sessions.find((entry) => entry.ref.sessionId === sessionRef.sessionId)!,
       closed: plan.events.map((event) => event.closed),
-      opened: plan.events.flatMap((event) => event.opened === null ? [] : [event.opened]),
+      opened: [...plan.events.flatMap((event) => event.opened === null ? [] : [event.opened]),
+        ...(plan.events.length > 0 ? [] : plan.links.flatMap((entry) => entry.next === null ? [] : [entry.link]))],
       // The public projection uses the same key mapping as the commit contribution: an
       // executor's region target is the module-maintainer claim, every other change the
       // role-scope claim. An old reanchor replay keeps its stored `owners: []`.
@@ -1060,6 +1074,21 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       if (String(at.value.cursor) !== String(cursor) || at.value.event.eventId !== eventId) {
         return reject('unavailable', 'the recorded reanchor receipt disagrees with its events');
       }
+      // D-3: an open-only reanchor's receipt names link events only.
+      if (at.value.event.eventType === SESSION_WORK_LINK_CHANGED_EVENT) {
+        const linked = sessionWorkLinkChangedPayloadFromEvent(at.value.event);
+        if (linked.status !== 'decoded') {
+          return reject('unavailable', `the recorded reanchor event is not decodable: ${linked.reason}`);
+        }
+        if (linked.value.projectId !== scope.projectId || linked.value.workspaceId !== scope.workspaceId) {
+          return reject('unavailable', 'the recorded reanchor event belongs to another scope');
+        }
+        if (linked.value.sessionRef.sessionId !== sessionRef.sessionId) {
+          return reject('unavailable', 'the recorded reanchor event belongs to another Session');
+        }
+        opened.push(linked.value.link.ref);
+        continue;
+      }
       const decoded = sessionResponsibilityChangedEventFromEvent(at.value.event);
       if (decoded.status !== 'decoded') {
         return reject('unavailable', `the recorded reanchor event is not decodable: ${decoded.reason}`);
@@ -1078,9 +1107,18 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       closed.push(event.closed.ref);
       if (event.opened !== null) opened.push(event.opened.ref);
     }
+    if (session === null) {
+      // D-3: link events carry no Session record; the open-only replay answers the Session as read now (L-7).
+      const key = sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
+      const read = await records.readMany([key]);
+      if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+      const current = await sessionFromRead(read.value.records, key, scope);
+      if ('status' in current) return current;
+      session = current;
+    }
     return {
       status: 'committed', replayed: true, cursor: receipt.cursor,
-      value: { session: session!, closed, opened, owners: [] },
+      value: { session, closed, opened, owners: [] },
     };
   }
 
@@ -1102,6 +1140,14 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     }
     if (!(REANCHOR_REASONS as readonly unknown[]).includes(input.reason)) {
       return reject('invalid', 'reanchorSessionResponsibility requires a recognized reason');
+    }
+    if (input.destination !== undefined) {
+      const destinationProblem = checkPlainSessionRef(input.destination);
+      if (destinationProblem !== null) return reject('invalid', `reanchor destination: ${destinationProblem}`);
+      if (input.reason !== 'split' || input.destination.projectId !== scope.projectId
+        || input.destination.sessionId === input.session.sessionId) {
+        return reject('invalid', 'a reanchor destination is only the other Session of a split');
+      }
     }
     if (!Array.isArray(input.close) || !Array.isArray(input.open)) {
       return reject('invalid', 'reanchorSessionResponsibility requires close and open arrays');
@@ -1129,21 +1175,34 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const sources = input.close;
     const sourceKeys = sources.map(sessionWorkLinkRefKey);
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.session));
+    // Lead (split link): the destinations open on the split's other Session when one is named.
+    const destinationKey = input.destination === undefined ? null
+      : sessionAggregateRefKey(plainSessionRefToAggregate(input.destination));
     const destinationRefs: SessionWorkLinkRef[] = input.open.map((entry) => ({
-      ...input.session, aggregateType: 'SessionWorkLink' as const, target: entry.target, relation: 'responsible' as const,
+      ...(input.destination ?? input.session), aggregateType: 'SessionWorkLink' as const, target: entry.target,
+      relation: 'responsible' as const,
     }));
     const identityKey = identityKeyOf('session-responsibility-reanchor:', actor, scope, owned.requestId);
+    // D-5 (book :329): a role-line command replays by its public command; the re-read close and pins stay guards only.
+    // The split's link commit replays the same way (lead 11-04, q-o1b-split-pins: its pins are read fresh).
+    const publicCommand = input.reason === 'human_scope_change' || input.reason === 'reuse' || input.reason === 'split';
+    const named = input.destination === undefined ? {} : { destination: input.destination };
     const fingerprint = fingerprintOf('session-responsibility-reanchor-request', actor, scope,
-      { session: input.session, close: input.close, open: input.open, reason: input.reason }, owned.expected);
+      publicCommand ? { session: input.session, open: input.open, reason: input.reason, ...named }
+        : { session: input.session, close: input.close, open: input.open, reason: input.reason, ...named },
+      publicCommand ? [] : owned.expected);
     if (ctx.signal?.aborted) return reject('cancelled', 'the scope reanchor was cancelled before lookup');
     const existing = await records.lookupCommit({ identityKey, fingerprint });
     if (existing.status === 'ready') return readReanchorResult(existing.value, scope, input.session);
     if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
     const reanchorAttempt = async (): Promise<WriteResult<ReanchorResultV1>> => {
-      const read = await records.readMany([sessionKey, ...sourceKeys, ...destinationRefs.map(sessionWorkLinkRefKey)]);
+      const read = await records.readMany([sessionKey, ...(destinationKey === null ? [] : [destinationKey]),
+        ...sourceKeys, ...destinationRefs.map(sessionWorkLinkRefKey)]);
       if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
       const session = await sessionFromRead(read.value.records, sessionKey, scope);
       if ('status' in session) return session;
+      const destination = destinationKey === null ? null : await sessionFromRead(read.value.records, destinationKey, scope);
+      if (destination !== null && 'status' in destination) return destination;
       const factsLinks = new Map<string, SessionWorkLink>();
       for (const [index, source] of sources.entries()) {
         const key = sourceKeys[index]!;
@@ -1171,32 +1230,52 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
         projectRef: { projectId: scope.projectId }, duty: facts.duty,
         moves: sources.map((source) => ({
           duty: facts.duty, source,
-          destinations: input.open.map((entry, i) => ({ link: destinationRefs[i]!, target: entry.target })),
+          // Lead (split link): a split pairs each close only with the open of the same target.
+          destinations: input.open.flatMap((entry, i) => input.reason === 'split'
+            && canonicalKey(entry.target) !== canonicalKey(source.target) ? []
+            : [{ link: destinationRefs[i]!, target: entry.target }]),
         })),
+        // D-3: no source link -> the destinations open on their own (a standby line's reuse / scope change).
+        open: sources.length > 0 ? []
+          : input.open.map((entry, i) => ({ link: destinationRefs[i]!, target: entry.target })),
         facts: {
-          sessions: new Map([[input.session.sessionId, session]]), links: factsLinks,
+          sessions: new Map([[input.session.sessionId, session],
+            ...(destination === null ? [] : [[destination.ref.sessionId, destination] as const])]), links: factsLinks,
           goals: facts.goals, catalog: facts.catalog,
         },
         authorization: { actor, scope: [{ kind: 'project' }] },
         proposed: null,
       });
       if (!plan.ok) return plan.refusals[0]!;
+      const committedSession = (ref: SessionRef) => plan.plan.sessions.find((entry) => entry.ref.sessionId === ref.sessionId)!;
+      // O1b-02 (lead 5): a reviewer's plan contributes no claim, and its result names no owner.
+      const planned = facts.reviewer ? { ...plan.plan, claimChanges: [] } : plan.plan;
       const basisBySource = new Map<string, ResponsibilityBasisV1>();
       for (const source of sources) {
         const proof = await basis.readResponsibilityBasis(ctx, { sessionRef: input.session, target: source.target });
         if (proof.status !== 'ready') return mapReadFailure(proof);
         basisBySource.set(sessionWorkLinkRefKey(source), proof.value.basis);
       }
+      // D-3: an open-only plan has no responsibility event; each link it writes gets the event `sessions/link` writes.
+      const openedEvents = sources.length > 0 ? [] : plan.plan.links.flatMap((entry, index) => entry.next === null ? []
+        : [encodeSessionWorkLinkChangedEvent({
+          eventId: eventIdOf(identityKey, `link:${index}`), eventType: SESSION_WORK_LINK_CHANGED_EVENT,
+          schemaVersion: 1, occurredAt: now(), projectId: scope.projectId, workspaceId: scope.workspaceId,
+          sessionRef: input.session, sessionRevision: session.revision + 1,   // rememberSession's one bump
+          active: true, link: entry.next, boundField: 'since' })]);
       const contribution = roleLineCommitContribution({
         projectRef: { projectId: scope.projectId },
-        records: plan.plan.sessions.map(encodeSessionRecord),
+        records: [...plan.plan.sessions.map(encodeSessionRecord),
+          ...(input.operation === undefined ? [] : [input.operation.record])],
         guards: [...owned.expected.map((pin) => ({
           refKey: canonicalKey(pin.ref), expectedRevision: cas(pin.revision),
-        })), ...destinationGuards, ...facts.guards],
-        links: plan.plan.links, claimChanges: plan.plan.claimChanges, bindings: plan.plan.bindings,
-        events: plan.plan.events.map((event, index) => encodeSessionResponsibilityChangedEvent(buildEvent({
+        })), ...destinationGuards, ...facts.guards,
+          ...(input.operation === undefined ? [] : [{ refKey: input.operation.record.refKey,
+            expectedRevision: input.operation.expectedRevision }])],
+        links: plan.plan.links, claimChanges: planned.claimChanges, bindings: plan.plan.bindings,
+        events: [...plan.plan.events.map((event, index) => encodeSessionResponsibilityChangedEvent(buildEvent({
           scope, mode: event.opened === null ? 'drop' : 'transfer',
-          source: plan.plan.sessions[0]!, destination: plan.plan.sessions[0]!,
+          source: committedSession(input.session), destination: committedSession(input.destination ?? input.session),
           closed: plan.plan.links.find((entry) => canonicalKey(entry.link) === canonicalKey(event.closed))!.next!,
           opened: event.opened === null ? null
             : plan.plan.links.find((entry) => canonicalKey(entry.link) === canonicalKey(event.opened))?.next
@@ -1204,7 +1283,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
           openedBound: event.openedBound, archiveStep: null,
           basis: basisBySource.get(sessionWorkLinkRefKey(event.closed))!,
           eventId: eventIdOf(identityKey, `responsibility:${index}`),
-        }))),
+        }))), ...openedEvents],
         allocation: null,
       }, null);
       if (!contribution.ok) return contribution.rejection;
@@ -1218,7 +1297,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       if (committed.replayed) return readReanchorResult(committed, scope, input.session);
       return {
         status: 'committed', replayed: false, cursor: committed.cursor,
-        value: resultOf(plan.plan),
+        value: resultOf(planned, scope, input.session),
       };
     };
     const refused = await reanchorAttempt();
