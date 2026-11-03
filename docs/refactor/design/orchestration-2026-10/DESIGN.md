@@ -930,7 +930,7 @@ Workflow 做一个组合动作。界面的归档按钮只走它，只有一条�
 | --- | --- |
 | 时限 | 消息上可选的“答复期限”；不写就用项目默认值 |
 | 发现到期 | 【7B-1】Host 每次心跳为每个工作区读一页到期等待（`readDueWaits`，deadline 升序；读页失败下次心跳重试，不当成没有到期），逐条 `recordExpiry` 记 `expiredAt` [app/host.ts · `expireDueWaits`]。让出了的那次执行从等待读里得知“不再 open” [app/collaboration-driver.ts · `awaitWake`]；不再由驱动比对期限 |
-| 到期事实 | 【已定（决定 49）；7B-1】同一处理点已有回复，不再按“到期没答”处理；到期已处理后才来的回复按普通新输入，重复扫描不重复到期。记下 `expiredAt` 不消费等待；Kernel 接受 `expiry:<message key>` 输入的那次提交才拿 `wait-consumed` 认领、把等待记成 `consumed` [W/communication/mailbox-service.ts · `recordInputAccepted`] |
+| 到期事实 | 【已定（决定 49）；7B-1】同一处理点已有回复，不再按“到期没答”处理；到期已处理后才来的回复按普通新输入，重复扫描不重复到期。记下 `expiredAt` 不消费等待；Kernel 接受 `expiry:<message key>` 输入的那次提交才拿 `wait-consumed` 认领、把等待记成 `consumed` [W/communication/mailbox-commands.ts · `recordInputAccepted`（2026-11-03 邮箱拆分前在 `mailbox-service.ts`）] |
 | 到期后 | Work：在原任务、原 Session 按 `expiry` 接续 [R/execution-inputs.ts · `expiry`]，输入是 `wait-expiry-delivery`（含 `expiryCount`）。秘书：到期先记下，再唤醒请求轮队列（队列开着时），由它在请求现在的秘书上追加 `expiry` 轮（7B-2 落地） |
 | 秘书发的“请回答” | 秘书不让出执行。回复到了或到期，都在这个请求现在的秘书上开下一轮，带上回复或“到期没答复”（§1.1、§2.11）；7B-2 落地为 `reply`/`expiry` 轮 |
 | 迟到的回复 | 照常保存，下一个安全点作为普通输入送达；不重开已用掉的等待 |

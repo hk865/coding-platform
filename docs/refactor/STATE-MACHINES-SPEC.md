@@ -3386,6 +3386,8 @@ stateDiagram-v2
 
 本节依赖的决定（2026-10-03 已确认，D-6、D-4(b) 按原推荐）：D-17（不做“让出前即持久化的等待关联”）、D-6（重启补账，U-6）、D-4(b)（人工认定，Kernel 可能不可读；属 U-4；只经持实例租约的 Host 入口，lead 决定 L-1），以及 §6 的 RD-3（重启时 Kernel 终态为 yielded：由持久事实重建 continuation 后按原结果入账；只在本 Turn 恰好一条等待发信时重建，否则记为未知，lead 决定 L-5）。
 
+（2026-11-03 补注，邮箱拆分 `6d9dd139`，决定 112-1）本节、§15 和 §17 的对照表写的 `mailbox-service.ts` 是拆分前的位置，行号也是当时的。现在入口 `communication/mailbox-service.ts` 只留两个工厂和按原名转出的导出，函数搬到同目录：`sendMessage`、`sendUserMessage` 在 `mailbox-send.ts`；`ackMessage`、`respondMessage`、`respondFromQueryAnswer`、`recordConsultationDerivation`、`recordInputAccepted`、`withdrawMessage`、`releaseMessage` 在 `mailbox-commands.ts`；`disposeArchiveWait` 在 `mailbox-archive.ts`；`authorizeNewWorkRunAction` 在 `mailbox-identity.ts`；读在 `mailbox-access.ts`、`mailbox-pages.ts`。按函数名找；行为没变。
+
 ### 10.1 持久位置与状态枚举
 
 | 字段 | 位置（file:line） | 取值 | 可变性 |
