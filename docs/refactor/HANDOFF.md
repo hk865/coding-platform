@@ -1,6 +1,6 @@
 # 无对话记忆的 Agent 接手说明
 
-## 2026-10-06 原型获批，以及 10-05 晚到 11-04 的决定（20–118）
+## 2026-10-06 原型获批，以及 10-05 晚到 11-04 的决定（20–119）
 
 **当前状态：** 以 [STATUS](STATUS.md) 为准，那里统一记录已完成批次、推送、缺口和下一步；本页保留用户决定与各批历史，不用旧状态段判断当前进度。
 
@@ -2261,6 +2261,58 @@
             - 来源：`impl/s7d2/close-todo.md:60`、`:94`、`:105`；`impl/s8e/close-todo.md:66`。
           - **118-10 下一步。** 8E-2：R 在施工（07:06 开工，Opus 施工者加 Opus 测试编写者），W 和 R 一起落；之后 G、H、S（S 在 7D2 O5b 之后）。7D2：O2b 的说明书照审查改完、冻结，Opus 施工者和另一个 Opus 测试编写者同时开工，之后审查、落地；再 7D2-1 其余半包，O3b 照已冻结的卡补充（`impl/sgl/book/7d2-card-supplement.frozen.md`）开工。再 6C、K2-P1、K2-P2（第 9 片 G6 之前）。等用户：118-9 的四件；第 9 片 G6 的时间窗和授权文字；第二批大文件。下一次真实模型冒烟加事件循环延迟探针（115-3），并数 `record_note` 写成几次、`facts` 带对没有、写后核对跑了几次（115-4）。完整规划闭环验收等 7D2 的真实线。推送：远端 `feat/orchestration-slices` 在 `2ee9310e`（用户 11-04 01:24 推的，决定 117 的文档）；之后的 `761915a3`、`6d184b36`、`30c5b57d`、`623f3343`、`c0efafbc`、`14269fc2`、`d57dccc1` 和这批文档等用户推送（`git push origin feat/reliability-and-structure:feat/orchestration-slices`），远端 `next-main` 不动。
             - 来源：两份 close-todo 的 11-04 各条；两份开工裁定的“审查之后”；`git log 2ee9310e..HEAD`；`git reflog show origin/feat/orchestration-slices`（11-04 01:24:59 推到 `2ee9310e`）。
+
+        - **119 7D2 O2b、8E-2 W 和 R 合入，O2b 合并时的红，R 的 PL-19 红和增量读，叠包全量查出的两种拆线竞争，叠包的教训，O3b 冻结，额度，规格质量分，要问用户的，下一步（11-04 上午）。**
+          - **119-1 三个包叠在一棵树上合入（12:13）。** 照 118-2：O2b 终稿加 W、R 的 34 个提交叠在一棵树上，再加 lead 的 README 一笔、两处拆线竞争的修（119-4）和 RL-13 D6 的停点，得到 `6d45b17`；在这棵树上跑一次全量和规模批，按包分三笔提交，提交前核对子目录哈希，和 `6d45b17` 相同。
+            - **7D2 O2b（`6f7f1b5b`）。** 角色线的维护页（新文件 `role-line-maintenance.ts`）：Host 每个工作区的空闲一趟在 Session 维护页之后跑一页，只看参谋和书记线；太长或太慢的线才读位置、规划，有严格子范围就经 O1b 的拆线 owner 起拆线，没有时太长的走 6B 共用的交接入口，太慢的只显示负担。`propose_role_split` 的 owner 绑上了：用固定的系统 Host 身份读拆线事实、起拆线，存下的 `reason: 'agent_proposal'` 记下是 agent 提的（`src` 里的角色授权还没列这个工具，产品里今天只有维护页会起拆线）。准入碰到保留上限时先回收一条闲着的同职责线，每次准入最多一条。归档一条持有项目范围的参谋或书记线时，范围在同一次归档提交里挪给主工作区负担最轻的同职责线。拆线的 `admitted` 在准入那次提交里经 `roleLineStepTransition` 写。`SessionCard` 多 `roleFacts`，`archiveSession` 多可选的 `{ proof, operation }`；只读咨询副本不算角色线；内部巡检按末卡的 Session 键翻页。叠包全量查出的两处拆线竞争由 lead 修，并进这一笔。测试 RL-13、RL-14 和 RL-01 的 `roleFacts` 一句另由一个 Opus 写（117-7）。大小：src 16 个文件 +1,120/−67，测试 17 个 +632/−189，README 8 个 +54/−47。
+            - **8E-2 W（`5f30a517`）。** 每个 Host 一个分析线程做第二档的引用查询，结论只放 Host 内存，读从不建 TS 程序（W1–W9）；单文件语法事实（名字、范围、按整码点判的左边界，W4、W10）；Python/C++ 单文件查用常驻进程，复用 preamble，C++ 分析器可以只读地读编译器自己的头文件目录（W11，117-3 选乙）；Kernel 的 `WorkspaceSandbox.readMany` 一批只开一次根，本地盘（按 `statfs`：ext2/3/4、xfs、btrfs、tmpfs）同步读，其余异步读，src 一侧一批读工作树（W12，117-3 选丙）。Opus 施工，生产约规格估的 1.9 倍，超预算审查过了（118-5）；验收行 E2-01、E2-02、E2-03、E2-31a、E2-31b、E2-34 另由一个 Opus 写，18/18，6 个点名的改坏都护住；Codex 四份并行审 18 条，筛成 11 条加 lead 一条（返工一），第二轮 2 条（返工二），第三轮可合入。两个分析脚本在 `runtime-assets.json` 里的摘要在 R 那一笔重算。大小：src 12 个文件 +1,347/−52，脚本和 Kernel 补丁源、dist 7 个 +1,483/−163，测试 4 个 +417，README 6 个 +44/−19。
+            - **8E-2 R（`1ffbacd4`）。** 第一档的读（R1–R10）：读注记时比存下的摘要，文件变了只按这一个文件的语法判（断了，或存疑读 `refs_pending`），从不建程序；Host 内存按路径、摘要、范围和名字留结论和解析答案；配置门比解码文字的摘要；过时的 `brokenLinks` 条目读到时移出。R11：只因引用待核的存疑联系超过 3 条，合成一行。R12：Run 改断的联系在它的下一个安全点作为平台输入送到，增量读（119-3）。R13：`architecture/semantic-links/check` 路由经 `trackedCall`。R14：注记背后接上平台的引用分析器和单文件查；`reference-analyzer.ts` 对不在项目输入清单里的文件答 `not_in_project`（118-6 第 3 条）。`skill-platform-work` 到第 8 版，加 `link-breaks-input` 模板；lead 重新生成平台包、重算 `runtime-assets.json`（含 W 的两个分析脚本）；叠包后的 README 行号和测试个数也在这一笔。Opus 施工，src 比估的多约 135–170 行（超预算审查：没有能删的）；验收的 29 行和 E-35 一格另由一个 Opus 写，合并全绿，29/29 个具名改坏都护住。大小：src 17 个文件 +1,082/−214，测试 21 个 +1,425/−45，README 9 个 +55/−50，包和 assets 5 个 +19/−6。
+            - **检查。** 叠包树 `6d45b17`（bubblewrap，11:53–12:12）：全量 1,354 个文件、14,663 项过、1 项跳过、1,159.39 秒；规模批 15 个文件 44 项、765.61 秒。
+            - 来源：三个提交的说明；`impl/s6a/checks/full-stk4.txt`、`scale-stk4s.txt`；`impl/s7d2/close-todo.md:122`、`:126`。
+          - **119-2 O2b：两边各写各的，合并后 RL-13 有 9 项红，三个原因都归规格没写清，另有一个停点竞争。**
+            - **施工和写测试。** Opus 施工 77 分钟（生产 14 个文件 +1,058/−50），另一个 Opus 写 RL-13（A、B1、B2、C、D1–D6）、RL-14 三格、RL-01 的 `roleFacts` 一句和世界末尾的停点（+541/−6），互不相看。施工方报的两件，lead 裁：S-1 照 (a)，项目范围移交不另写 `SessionResponsibilityChanged`（读它的只有决定应用的证明；移交已在同一次归档提交里，目标线的项目链接带 `since`；写了会让归档重放读回 `unavailable`），撤回 o2b 裁定第 16 条，记修订；S-2 准，8 个手搭的测试存储补注册 `SessionRoleFacts`，不改断言。
+            - **合并（`c0e27c5`）。** RL-14 3/3、RL-01 1/1 绿，RL-13 9/10 红。Opus 追查：三个原因都归规格没写清。① 工具这条路用 Run 的身份读事实、起拆线，先后被 Host 和 O1b 拒（冻结的 M1 照原样传 `ctx`，没写 owner 用谁的身份）。② 区域负担的观察照 8A 每种语言的 `complete` 判，语言 `other` 天生不完整，有非源码文件的工作区负担永远读不出；这是 lead 自己在 o2b 裁定第 1 条写错的。③ O1b 的拆线一次建完线时不写 `admitted`，冻结行要五个阶段。另有 ④ 停点竞争：D 段扣住的时候，Host 的生命周期队列把拆线推到了 `done`。RL-14 合并时的绿不算数（三格都因 ① 被拒）。
+            - **lead 的裁定。** ① 工具这条路用固定的系统 Host 身份读和起（照 `member-service.ts` 的先例），不借 `platformCheckContext`；② 观察只要翻页走完就算完整，改判 o2b 裁定第 1 条；③ `admitted` 在准入那次提交里写，经 state 的现成转换；④ 写测试的改停点。返工一（生产 +18/−9）后 RL-14 三格各自的原因都对上（`observation_failed`、`ownership_ambiguous`、`containment_unknown`）；RL-13 8/10：`admitted` 和 `planned` 一样外层读 `accepted`，改测试期望（不让目录服务写外层的生命周期）；D 段仍是停点竞争，换成冻结式停点（`freezeS7D2SplitAfter`：扣住以后，同一拆线的每次提交都扣到崩溃）。之后 RL-13 10/10，D 段单跑 5 次，每格 5/5。
+            - **合并后的审查。** Codex 第一轮 4 条，lead 全收，返工二：只读咨询副本不算角色线、不进回收候选；维护页按末卡的 Session 键翻页（缓存的目录游标会被这一页自己的写弄过期）；项目范围移交只在主工作区里挑；`admitted` 挪进 `roleLineStepTransition`。第二轮 1 条，是原有的遗漏：回收扫整个项目，第二个工作区的同职责线进了候选，主工作区唯一的线失去“最后一条不回收”的保护；lead 照 Codex 的唯一改法直接改（94-5，+7/−2）：回收只限主工作区。施工方报的文件级互引（`role-line-operations.ts` 和 `session-responsibility-service.ts`，只在函数体里用），Codex 判不违反现行规则，进清理清单。
+            - **改坏验证。** 9 个里 8 个能让测试变红（干净的 5 个；不干净的 3 个也都护住）。剩下的一个（“续作从活线重新规划”）在 D1–D4 这四格里测不出：L1 的范围没变，重新规划和存下的一样；同一改坏让 D6 红，lead 判由 D6 护着、不加测试，规格的改坏描述记“没写清”1 处。
+            - **O2b 单独的全量。** `6c7a8f6`（bubblewrap）：1,344 个文件全过、14,604 项过、1 项跳过、1,335.54 秒；规模批 15 个文件 44 项、893.34 秒。
+            - **记下的。** `role-line-position.ts:78` 由 `complete: false` 得出的 `observation_incomplete` 一支，生产已经走不到（O2a 的文件），交 O5b-R2 收尾时看要不要删 `complete`。
+            - 来源：`impl/s7d2/close-todo.md:108`、`:110`、`:111`、`:114`–`:121`；`impl/s7d2/o2b-red-trace-reply.md`、`o2b-mutations-reply.md`；`impl/s6a/checks/full-o2b1.txt`、`scale-o2b1s.txt`。
+          - **119-3 8E-2 R：合并全绿，改坏都护住；全量里 PL-19 红，查出 R12 每个安全点都重放整个 Turn，lead 裁定甲′。**
+            - **施工和合并。** Opus 施工约 2 小时，src 生产 +994/−201，估 +620–860，超约 135–170 行，合入前按超预算审。合并（`aeb1488`）后 R 的 9 个测试文件 77/77 绿，合并时对不上的 0 处；写测试方看不清的 11 点留到改坏时验。改坏验证 29/29 都护住、都干净。
+            - **Codex 第一轮（超预算口径）。** 没找到能删掉 135–170 行又保住冻结要求的依据；6 条要改，lead 全收（都有规格的行），返工一（生产 +92/−65）：函数只挪了行也判断（应先按名字找、再按存下的范围消歧）；`checkSemanticLinks` 没进 `trackedCall`、关闭时不排空；名字的答案按整组缓存（规格要逐名）；旧版本的答案删掉新版本的存疑项；原生的等待挡住了后面的 TS 解析；截止以后回来的原生答案仍进了这次读取。
+            - **PL-19 红。** W + R 的全量（`aeb1488`）1,352 个文件里 1 个红（`PL-19-request-retention` 2 项，`fetch failed / other side closed`）、14,648 项过、1 项跳过、1,302.04 秒；规模批 15 个文件 44 项、852.70 秒。单跑也红（124 秒断开），在只有 W 的树上 2/2 绿、每项约 34 秒：R 让它慢了约 3.6 倍。返工二查清：R12 的 `linkBreakInputsFor` 每个安全点都从已完成的边界读到 Kernel 尾，冻结文字（规格 R12）本来就这样要求；时间不在读 Kernel 页（每次 1–8 毫秒），在纯计数每次把整个 Turn 从头重放（`reduceTurnFromStart`，约是记录数的平方：598 条要 2.3 秒）；断开是 Host 核心路由的 120 秒套接字超时（推断）。
+            - **lead 裁定甲′。** 理由是产品优先：长 Run 多花的这约 110 秒，真实使用里一样会有。每个 Run 留住已解码的记录、续读位置和归约后的 Turn，每个安全点只读新增的，用已有的 `applyTurnEvents` 接上新事件（左折叠，和从头重放相同）；结果和冻结文字逐字相同，不算偏离；重启后没有内存里的续读位置，就照原样从已完成的边界读。白名单加 `run-activity-reader.ts`、`run-activity-tally.ts`，只许加可选的续读输入。253 次续读和整读比对全同；PL-19 单跑 39.6、39.4 秒（只有 W 的树约 34 秒）。生产 +40/−8。
+            - **Codex 第二轮 1 条（R-R2-01）。** 超过 64×200 条的读上限以后，续读的缓存仍先追加、归约、写回，再回 `capacity`，缓存和计算继续涨。返工三：上限先于追加，超限不更新续读状态，和整读同一个条件（生产 +8/−5；110 次整读对续读全同；PL-19 单跑 38.6–39.3 秒）。
+            - **drvfs 上第一档偏慢。** 施工方实测：本地 ext4 第一次读 146.6 / 144.1 毫秒（中位 / 最小），再读 9.2 毫秒；`/mnt/d`（drvfs）第一次读 552–589 / 484–499 毫秒，再读 358–445 / 308–315 毫秒，超过冻结的“最坏约 450 毫秒”（117-3 选 A）。lead 核过：`/mnt/d` 的 `statfs` 类型 `0x1021997`（9p）不在同步名单里，走的是异步读，自动选择是对的；多出来的是 Windows 盘读文件本身（只读不解析就 308–445 毫秒）。异步读不卡 Host，只是这一次读等得久。规格不做 stat 缓存和 `fs.watch`（用户 11-04 定的提速范围），要更快只能放开这一条。要告诉用户，lead 倾向接受。
+            - 来源：`impl/s8e/close-todo.md:89`–`:97`；`impl/s8e/8e2-r-reply.md`“返工二”“返工三”两节；`impl/s8e/r-mutations-reply.md`；`impl/s6a/checks/full-wr1.txt`、`scale-wr1s.txt`。
+          - **119-4 叠包树的全量查出拆线的两种竞争。** 都是 O1b 的代码（`role-line-operations.ts` 的拆线续做），O2b 让拆线有了调用者才露出来；生产里 Host 的生命周期队列一直在跑，也会偶发。
+            - **现象。** 叠包树 `883e5be` 的全量 1,354 个文件里 1 个红（RL-13 A）、14,662 项过、1 项跳过、1,160.64 秒；规模批 15 个文件 44 项、758.36 秒。负载下拆线结局是 `failed`：`identity session-responsibility-reanchor:… was committed with a different fingerprint`。
+            - **RACE-01，阶段回退。** lead 第一版的读法（第二个续作撞上已提交的 `:linked` 就当暂时性交还）被 Codex 推翻：A 从 `admitted` 进建线，B 已推到 `linked`，A 建线回来、重读到最新记录，照样写回 `created`（版本号用的是重读后的，检查挡不住），之后子区域每轮都归成“挪走的”、每轮撞同一个 `:linked` 冲突；lead 的第一版会让它永远卡住，比 `failed` 更糟。照 Codex 的改法：建线回来、重读以后，读到 `completed`/`failed` 或 `action.phase` 是 `created`/`linked`，就按读到的阶段重新分派（`continueRoleLineSplit(ctx, current)`）。负载下 D6 也偶红，和 D-created 是同一种停点竞争，lead 照 94-5 改 D6 用 D1–D4 的冻结式停点，期望不变。
+            - **RACE2-01，准入被抢先。** Codex 复核：工具和 Host 同时读到 `planned`、还没有子操作；Host 先占了最后一席，写 `admitted`/`reserved`；工具拿旧身份申请收到 `capacity`，重读以后写成 `failed`，合法的拆线被提前终止。照改法加一条重新分派的条件（原来没有子操作、现在有了）。RL-13 负载下连跑 4 轮全绿。
+            - **RACE2-02（测试的证明力）。** `stopMatching()` 是全局停止匹配，旧 Host 的续作可能先写完失败，D6（和 D1–D4 一样）证明不了重启后的续作。产品行为不受影响，照 94-5 记进以后的测试设施清理：把冻结限定到旧 backend 实例（要改 `S6A-commit-barrier.ts`，让 pass 带上 backend），D1–D6 一起改。
+            - 两处的修并进 O2b 的提交；中间两棵树（`4a40477`、`805957b`）的全量都停了，`4a40477` 上的规模批 15 个文件 44 项过（作废的改法，只作参考）。
+            - 来源：`impl/s7d2/close-todo.md:124`–`:126`；`codex2/egrp/RVqrace.out.md`、`RVq2race.out.md`；`impl/s6a/checks/full-stk1.txt`、`scale-stk1s.txt`、`scale-stk2s.txt`。
+          - **119-5 叠包时的两条教训。**
+            - **冲突的 README 只按冲突块取一侧。** 叠 W、R 时冲突只在 README（`src/app/README.md`、`src/composition/README.md` 的行号，`tests/README.md` 的个数）。先用了 `git checkout --theirs`，它换掉整份文件，把 O2b 在这三份里的改动冲掉了；改成只按冲突块取 W、R 一侧（`tools/tmp-resolve-theirs.py`）重新叠。`tests/README.md` 以 O2b 的版本为底，加 W、R 改的两行，只重数三个包碰过的文件夹。
+            - **行号重指不能靠“最近的同名行”。** readme-check 只看 ±3 行（118-3）。两份 src README 有 23 处行号要重指：16 处按两边到叠包树的真实行映射重指；剩下 7 处和映射落点不准的 13 处，按“最近的同名行”自动挪的不可靠，lead 照声明行手改（如 `trackedCall`、`trackDetached`、`createTargetPlatform`、`TargetPlatformOptions`）。之后 readme-check 27 个目录 0 个问题。README 行号清理清单再加：composition README 第 11 行“同文件”那几处、`createSecretaryArchiveService` 等旧引用。
+            - 来源：`impl/s7d2/close-todo.md:122`。
+          - **119-6 O3b 的说明书冻结，没开工。** Opus 起草 54 分钟（施工 192 行、测试 129 行、白名单 36 + 8 行、问题 27 条）。lead 裁定 27 条：26 条照建议；Q7 改判一半，`openScopesOf` 的纯筛选提成导出函数，O1b 和 `decision-actions` 共用，不另抄一份（旧副本规则）；Q12 现在就改（O3b 的写测试方把 RL-13 B1 的 `episode` 改成 1）；Q25 记成过渡状态（O3b 到 O5b 之间，取消预留以后容量卡要等下一次观察才关）。为省 Claude 额度，没开四视角的 Opus 审查，先送 Codex：第一轮 13 条，lead 全收，原起草的 Opus 照改。再按 O2b 的真实代码（`7baec99`）核起草方列的 12 个名字：10 条对上，2 条改行号或原文。lead 另裁两处：拆线判定从存下的 `reason: 'agent_proposal'` 认出 `agent`（O2b 用固定系统身份起拆线；照 Codex 的改法，判定口加可选的 `splitReason`，CP 按它给 `actorClass`）；写测试方顺手改 RL-13 文件头的 `episode: null` 注释。Codex 快速核对：上一轮 13 条都关，2 条照它的替换句改。两份说明书和白名单 11:0x 冻结。没开工：施工交 Opus 还是 DSH，等用户对额度的意见（119-7）。
+            - 来源：`impl/s7d2/o3b-start-rulings.md`（审查之后的在 `:37`–`:40`）；`impl/s7d2/close-todo.md:109`、`:112`、`:113`、`:123`。
+          - **119-7 Claude 额度。** 每周（全部模型）07:40 已用 73%，10:50 到 81%，3 小时涨 8%；照这个速度今天傍晚用完，11-10 15:00 才重置。07:4x 起 C1a（最后才落）和 8E-2 G 的起草先不开，只做关键路径（R、O2b、O3b）；10:50 起 lead 只做在跑的工作，不开新的 Opus 施工者。要问用户：说明书的审查改交 Codex、Opus 只留给难包的施工和写测试，还是 O3b 起的施工交 DSH。
+            - 来源：`impl/s7d2/close-todo.md:107`、`:109`、`:123`。
+          - **119-8 规格质量分（117-7，写测试时看不清的 / 合并时对不上的）。**
+            - **O2b：0 / 4。** 对不上的四处（身份、完整、`admitted`、停点竞争）都归规格或裁定；改坏描述没写清 1 处（D1–D4）。另有施工方报的 N-1–N-3（冻结的 TS 编译不过或名字对不上，照最小改法）和 `planned` 停点的外层生命周期（冻结行写 `running`，实际 `accepted`），记修订。
+            - **R：11 / 0。** 写测试时看不清的 11 处都留到改坏时验，改坏 29/29 护住；规格没写清的有两处：E2-30 的改坏栏（说之后的读也 `verified`，照代码推是 `broken [0]`，推的，没跑），和 R12 没说每次全读的花费（119-3）。
+            - **O1b：2。** 拆线续作没写两种并发交错（阶段回退、准入被别的续作抢先，119-4）。
+            - 这几处冻结后改规格那一栏。
+            - 来源：`impl/s7d2/close-todo.md:106`、`:110`、`:114`、`:118`、`:126`；`impl/s8e/close-todo.md:89`、`:91`、`:93`、`:94`。
+          - **119-9 要告诉用户、问用户的。**
+            - **118-9 的四件仍等着。** O2b Q19（重新启用秘书线时要不要恢复项目范围）；CLI 启动、没配秘书 profile 时返工通知挂着；Python 语法错时一般注记整次 `unavailable`；单条通知要不要汇总。
+            - **额度怎么省（119-7）。** 说明书的审查交 Codex、Opus 只留给难包的施工和写测试，还是 O3b 起的施工交 DSH。
+            - **drvfs 上第一档 0.5–0.6 秒（119-3）。** 超过冻结的“最坏约 450 毫秒”，慢在 Windows 盘本身；接不接受，lead 倾向接受。
+          - **119-10 下一步。** 8E-2：W、R 已落；之后 G、H、S（S 在 7D2 O5b 之后），G 的起草等额度的意见。7D2：O3b 已冻结，施工交谁等用户；再 7D2-1 其余半包，C1a 最后落。再 6C、K2-P1、K2-P2（第 9 片 G6 之前）。等用户：119-9 的几件；第 9 片 G6 的时间窗和授权文字；第二批大文件。下一次真实模型冒烟加事件循环延迟探针（115-3），并数 `record_note` 写成几次、`facts` 带对没有、写后核对跑了几次（115-4）。完整规划闭环验收等 7D2 的真实线。以后一次做的：测试设施清理（RACE2-02）、README 行号清理（119-5）。推送：远端 `feat/orchestration-slices` 仍在 `2ee9310e`；之后的 11 个提交（`761915a3` 到 `1ffbacd4`）和这批文档等用户推送（`git push origin feat/reliability-and-structure:feat/orchestration-slices`），远端 `next-main` 不动。
+            - 来源：两份 close-todo 的 11-04 07:4x 以后各条；`git log origin/feat/orchestration-slices..HEAD`。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
