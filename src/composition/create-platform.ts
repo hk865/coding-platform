@@ -19,6 +19,8 @@ import { createMaterialService } from '../core/work-graph/materials/material-ser
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
 import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../core/workspace/access.js';
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
+import { createReferenceAnalyzer } from '../core/workspace/reference-analyzer.js';
+import { createNativeSingleFile } from '../core/workspace/native-single-file.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
 import { createPlatformPromptPackSource, type PromptPackSourcePort } from '../contracts/prompts/prompt-pack.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
@@ -545,7 +547,7 @@ export type TargetPlatformOptions = {
     readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
     textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
     anchorLinkQuota?: number; goalLinkQuota?: number; projectFlowQuota?: number;
-    linkRecheckMax?: number; flowCandidateMax?: number;
+    flowCandidateMax?: number; readParseBytesMax?: number; checkDeadlineMs?: number;
   };
   /**
    * Slice 4C-2 D-03: the injectable note id generator (`createNoteService`'s
@@ -2746,10 +2748,20 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // containment) and the L7 per-scope current count.
     const scribeScope = createScribeScope({ records: backend.records, sessions: sessionDirectory,
       architecture: catalog, duties: sessionDutyResolver });
+    // The second tier's reference analyzer and the one Python/C++ single-file
+    // lookup read the workspace through the handle's batch read with the ctx they
+    // are called with, which the note module gives its platform identity. Each
+    // starts its thread or processes on first use; both are closed with the platform.
+    const referenceAnalyzer = createReferenceAnalyzer({ readWorkspaceFiles: workspace.readWorkspaceFiles,
+      listWorkspaceInputs: workspace.listWorkspaceInputs });
+    const nativeSingleFile = createNativeSingleFile({ readWorkspaceFiles: workspace.readWorkspaceFiles,
+      ...(options.sourceAnalyzers === undefined ? {} : { sourceAnalyzers: options.sourceAnalyzers }) });
     // Slice 4A P10: the note module never sees a trusted workspace revision; this
     // wrapper resolves it through the same access factory the workspace tools use.
     const noteWorkspace = {
       readWorkspace: workspace.tools.readWorkspace,
+      // The read side's gate files: one access for the whole list.
+      readWorkspaceFiles: workspace.readWorkspaceFiles,
       querySource: workspace.tools.querySource,
       // Item 14/L14: the symbol capture is best-effort released after use; the
       // note module never sees the trusted workspace revision.
@@ -2764,6 +2776,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return workspace.tools.captureSourceChanges(callCtx, { workspace: workspaceRef,
           workspaceRevision: revision, provider: request.provider });
       },
+      verify: referenceAnalyzer.verify,
+      lookup: nativeSingleFile.lookup,
     };
     const noteWrite: NoteService = createNoteService({
       records: backend.records,
@@ -2945,6 +2959,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         listPlanVersions, listCatalogVersions,
         readSemanticLinks: semanticLinks.readSemanticLinks,
         readSemanticFlows: semanticLinks.readSemanticFlows,
+        // The re-check runs the second tier; platform close waits for it before closing the analyzer.
+        checkSemanticLinks: (...args) => trackedCall(() => semanticLinks.checkSemanticLinks(...args), unavailable),
         readScribeTodos: noteScribeTodos.readScribeTodos,
         readLedgerCursor: noteScribeTodos.readLedgerCursor,
         goalIdsForWorkspace,
@@ -4065,6 +4081,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         isClosing = true;
         closing ??= (async () => {
           await Promise.allSettled([...pending]);
+          // The analysis thread and the resident processes read through the workspace tools.
+          await Promise.allSettled([referenceAnalyzer.close(), nativeSingleFile.close()]);
           try { await workspace.close(); }
           finally {
             try { await closeBodies?.(); }

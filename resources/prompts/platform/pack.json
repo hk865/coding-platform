@@ -48,6 +48,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "link-breaks-input": {
+      "file": "templates/link-breaks-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "intervention-planning": {
       "file": "templates/intervention-planning.txt",
       "version": 1,
@@ -151,7 +156,7 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 7,
+      "version": 8,
       "mentionsTools": []
     },
     "skill-platform-secretary": {

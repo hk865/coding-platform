@@ -34,7 +34,9 @@
  *   of the object) is counted and faulted too. It returns the real factories,
  *   exposes the counters/faults, and restores both module exports and the
  *   workspace methods in `close()`. No `vi.spyOn`, no new Host option or
- *   port, no product change.
+ *   port, no product change. 8E-2 R (§4.1 :708, :712): where the object has
+ *   them, `verify` is counted (`builds()`), faulted and gated, and the read
+ *   fault also hits `readWorkspaceFiles` path by path.
  * - A secretary round helper that is `holdS6BRequestRound` on this same world.
  * - The `noteLimits` small-quota wrapper (DR-8E L2-04): ONE plain delegating
  *   function around the real `createTargetPlatform` module export, installed
@@ -65,9 +67,10 @@ import type {
 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type {
-  CaptureSummary, ReadWorkspaceRequest, SourcePage, SourcePageRequest, SourceProvider,
-  WorkspaceFile, WorkspaceResult,
+  CaptureSummary, ReadWorkspaceRequest, ReferenceAnalyzerPort, ReferenceCheckRequestV1, ReferenceCheckResultV1,
+  SourcePage, SourcePageRequest, SourceProvider, WorkspaceFile, WorkspaceResult,
 } from '../../src/core/workspace/ports.js';
+import type { WorkspaceToolsHandle } from '../../src/core/workspace/workspace-tools.js';
 import * as noteServiceModule from '../../src/core/work-graph/notes/note-service.js';
 import * as noteViewsModule from '../../src/core/work-graph/views/note-views.js';
 import { driveWorkflow } from './A2-restart-fixture.js';
@@ -392,16 +395,30 @@ export type S8ESourceQueryFault = (request: SourcePageRequest) => WorkspaceResul
 /** A fault for one `readWorkspace` call; `null` delegates to the real read. */
 export type S8EWorkspaceReadFault = (request: ReadWorkspaceRequest) => WorkspaceResult<WorkspaceFile> | null;
 
+/** 8E-2 R (§4.1): a fault for one `verify` call; non-null is that call's result and no program is built. */
+export type S8EVerifyFault = (request: ReferenceCheckRequestV1) => WorkspaceResult<ReferenceCheckResultV1> | null;
+/** 8E-2 R (§4.1, A3/F9): the next `verify` resolves `entered` and waits for `release()`; `settled` follows its result. */
+export type S8EVerifyGate = { entered: Promise<void>; release(): void; settled: Promise<void> };
+
 export type S8ELinkCheckProbe = {
   counters(): S8ELinkCheckCounters;
   reset(): void;
   faultCaptures(fault: S8ECaptureFault | null): void;
   faultQueries(fault: S8ESourceQueryFault | null): void;
+  /** Also hits each path of `readWorkspaceFiles` (as a working-tree `readWorkspace` request). */
   faultReads(fault: S8EWorkspaceReadFault | null): void;
+  /** 8E-2 R: second-tier program builds (one per `verify` handed to the real analyzer); `reset()` zeroes it. */
+  builds(): number;
+  faultVerify(fault: S8EVerifyFault | null): void;
+  holdVerify(): S8EVerifyGate;
 };
 
 type CheckDependencies = Parameters<typeof noteViewsModule.createNoteCheck>[0];
-type CheckWorkspace = NonNullable<CheckDependencies['workspace']>;
+/** Widened locally: before 8E-2 R the shared `noteWorkspace` has neither `verify` nor `readWorkspaceFiles`. */
+type CheckWorkspace = NonNullable<CheckDependencies['workspace']> & {
+  verify?: ReferenceAnalyzerPort['verify'];
+  readWorkspaceFiles?: WorkspaceToolsHandle['readWorkspaceFiles'];
+};
 
 /**
  * Installs ONE plain delegating function around each of the real
@@ -420,6 +437,9 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
   let captureFault: S8ECaptureFault | null = null;
   let queryFault: S8ESourceQueryFault | null = null;
   let readFault: S8EWorkspaceReadFault | null = null;
+  let builds = 0;
+  let verifyFault: S8EVerifyFault | null = null;
+  let verifyGate: { enter(): void; released: Promise<void>; settle(): void } | null = null;
   const restores: (() => void)[] = [];
   const proxied = new WeakSet<object>();
 
@@ -429,6 +449,53 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
       const originalCapture = workspace.capture;
       const originalQuery = workspace.querySource;
       const originalRead = workspace.readWorkspace;
+      const originalVerify = workspace.verify;
+      const originalReadFiles = workspace.readWorkspaceFiles;
+      if (originalVerify !== undefined) {
+        // One `verify` handed to the real analyzer is one program build (8E-2 §4.1 :708);
+        // a faulted call is short-circuited and builds nothing.
+        workspace.verify = async (ctx, request) => {
+          const gate = verifyGate;
+          verifyGate = null;
+          try {
+            if (gate !== null) {
+              gate.enter();
+              await gate.released;
+            }
+            const faulted = verifyFault?.(request) ?? null;
+            if (faulted !== null) return faulted;
+            builds += 1;
+            return await originalVerify(ctx, request);
+          } finally {
+            gate?.settle();
+          }
+        };
+      }
+      if (originalReadFiles !== undefined) {
+        // The read fault hits each path as the working-tree read it stands for; the
+        // rest goes to the real batch read once, merged back in `paths` order.
+        workspace.readWorkspaceFiles = async (ctx, input) => {
+          const fault = readFault;
+          if (fault === null) return await originalReadFiles(ctx, input);
+          const faulted = input.paths.map(path => fault({ workspace: input.workspace, path,
+            maxBytes: input.maxBytes, version: { kind: 'working_tree' } }));
+          const rest = input.paths.filter((_, index) => faulted[index] === null);
+          let real: WorkspaceResult<WorkspaceFile>[] = [];
+          if (rest.length > 0) {
+            const outer = await originalReadFiles(ctx, { ...input, paths: rest });
+            if (outer.status !== 'ready') return outer;
+            real = outer.value;
+          }
+          let next = 0;
+          return { status: 'ready', value: faulted.map(entry => {
+            if (entry !== null) return entry;
+            const answer = real[next];
+            next += 1;
+            if (answer === undefined) throw new Error('S8E: readWorkspaceFiles answered fewer paths than asked');
+            return answer;
+          }) };
+        };
+      }
       if (originalCapture !== undefined) {
         workspace.capture = async (ctx, request) => {
           counters = { ...counters, captures: counters.captures + 1 };
@@ -452,6 +519,8 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
         if (originalCapture !== undefined) workspace.capture = originalCapture;
         if (originalQuery !== undefined) workspace.querySource = originalQuery;
         workspace.readWorkspace = originalRead;
+        if (originalVerify !== undefined) workspace.verify = originalVerify;
+        if (originalReadFiles !== undefined) workspace.readWorkspaceFiles = originalReadFiles;
       });
     }
   };
@@ -469,10 +538,22 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
     { value: serviceWrapper, configurable: true, writable: true });
   const probe: S8ELinkCheckProbe = {
     counters: () => ({ ...counters }),
-    reset: () => { counters = { captures: 0, queries: 0, textQueries: 0 }; },
+    reset: () => { counters = { captures: 0, queries: 0, textQueries: 0 }; builds = 0; },
     faultCaptures: fault => { captureFault = fault; },
     faultQueries: fault => { queryFault = fault; },
     faultReads: fault => { readFault = fault; },
+    builds: () => builds,
+    faultVerify: fault => { verifyFault = fault; },
+    holdVerify: () => {
+      let enter = (): void => undefined;
+      let release = (): void => undefined;
+      let settle = (): void => undefined;
+      const entered = new Promise<void>(resolve => { enter = resolve; });
+      const released = new Promise<void>(resolve => { release = resolve; });
+      const settled = new Promise<void>(resolve => { settle = resolve; });
+      verifyGate = { enter, released, settle };
+      return { entered, release, settled };
+    },
   };
   let restored = false;
   return {

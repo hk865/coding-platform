@@ -152,7 +152,7 @@ describe('S4B M-15 anchor status', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('M-15 %s: a spent symbol-recheck budget leaves the later item unchecked', async kind => {
+  it.each(['memory', 'sqlite'] as const)('M-15 %s: a spent single-file parse budget (files) leaves the later item unchecked', async kind => {
     const f = await createS4BNoteCheckFixture(kind, { check: { symbolRecheckMax: 1 } });
     try {
       const first = await writeNote(f, draft({ topic: 's1', anchor: { kind: 'file', path: 'src/a/x.ts',

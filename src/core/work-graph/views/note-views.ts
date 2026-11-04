@@ -2,8 +2,13 @@
  * Slice 4B L22/L23: `NoteCheckPort` — the one implementation of the derived
  * per-note fields (`freshness`, `changedFiles`, `sourceUnavailable`, `invalid`,
  * `conflicting`, `overQuota`, `updateDue`, `currentEligible`, the L23 anchor
- * status, `unresolvedFacts`/`uncheckedFacts`, the L2a class-5 hints). It is a
- * pure read layer: it never writes a record or stores anything.
+ * status, `unresolvedFacts`/`uncheckedFacts`, the L2a class-5 hints, a link's
+ * read-time verification). It writes no record. Two kinds of Host memory live
+ * in its closure, one per Host because the platform builds this check once: the
+ * second tier's link conclusions with the doubtful and broken link registers,
+ * and the single-file parse answers kept by text digest. Both only answer later
+ * reads sooner and are gone on restart. A read never builds a TS program; only
+ * `checkNotes` with `verifyLinks` hands doubtful links to the second tier.
  *
  * P9: every fact kind is resolved through a reader that already exists:
  * `record` pointers go through the record transaction port (a `SessionMessage`
@@ -19,10 +24,11 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult, CoreRejection } from '../../../contracts/core/results.js';
 import { okFalse } from '../../../contracts/core/rejections.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import type { LinkPayloadV1, NoteAnchorV1, NoteFactV1, NoteHeadSnapshot, NoteSectionsV1, NoteVersionSnapshot } from '../../../contracts/note.js';
+import type { LinkEvidenceStoredV1, LinkPayloadV1, LinkVerificationV1, NoteAnchorV1, NoteFactV1, NoteHeadSnapshot,
+  NoteSectionsV1, NoteVersionSnapshot, SymbolLocatorV1 } from '../../../contracts/note.js';
 import { headerExtrasOf, renderNoteHeader } from '../../../contracts/note.js';
 import { bigramWindows, normalizeSearchText } from '../../record-store/lookup-index.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
@@ -30,17 +36,22 @@ import { decodeRefKey } from '../../record-store/record-codec.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPort, ArchitectureRevision, ModuleDefinition } from '../architecture/catalog-contracts.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import type { NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteSimilarV1,
-  NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
-import { NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
-  NOTE_LINK_RECHECK_MAX, NOTE_PROJECT_FLOW_QUOTA, NOTE_READ_FACTS_MAX,
-  NOTE_READ_FILES_MAX, NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN, NOTE_SYMBOL_HITS_MAX,
-  NOTE_SYMBOL_RECHECK_MAX } from '../model/note-contracts.js';
+import type { NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteLinkVerifyV1,
+  NoteSimilarV1, NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
+import { NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_CHECK_DEADLINE_MS, NOTE_GOAL_LINK_QUOTA,
+  NOTE_GOAL_QUOTA, NOTE_LINK_VERIFY_MAX, NOTE_NATIVE_READ_WAIT_MS, NOTE_PROJECT_FLOW_QUOTA, NOTE_READ_FACTS_MAX,
+  NOTE_READ_FILES_MAX, NOTE_READ_PARSE_BYTES_MAX, NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN,
+  NOTE_SYMBOL_RECHECK_MAX, analysedDigestsMatch } from '../model/note-contracts.js';
 import { anchorKeyOf, isSafeRelativePath, noteCheckWorkspace, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
 import { anchorSlots } from '../notes/note-related-scope.js';
 import { foldInputOf, foldUpdateDue } from '../notes/note-update-due.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
-import type { CaptureSummary, SourceHit, SourceProvider } from '../../workspace/ports.js';
+import type { ReferenceAnswerV1, ReferenceCheckResultV1, ReferenceQuestionV1, WorkspaceFile, WorkspaceResult } from '../../workspace/ports.js';
+import type { NativeLookupV1 } from '../../workspace/native-single-file.js';
+import { fileSyntaxOf, namesInRanges, syntaxTreeOf, type FileSyntaxV1, type LineRange, type NameUseV1, type NavItemV1,
+  type SyntaxTreeV1 } from '../../workspace/single-file-syntax.js';
+import { languageOfPath } from '../../workspace/architecture-language-provider.js';
+import { evidenceScopeOf, literalInScope, referenceFieldsOf, relationNeedsKey, type EvidenceScopeV1 } from '../notes/link-evidence.js';
 import {
   createNoteHeadDerivations, mapStoreFailure, newHeadCache,
   type HeadCache, type NoteHeadDerivations, type NoteHeadLike,
@@ -69,8 +80,10 @@ export type NoteCheckLimits = {
   anchorLinkQuota?: number;
   goalLinkQuota?: number;
   projectFlowQuota?: number;
-  /** The read-time link recheck budget; this run only initialises it. */
-  linkRecheckMax?: number;
+  /** One call's single-file parses read at most this much text in total (`NOTE_READ_PARSE_BYTES_MAX`). */
+  readParseBytesMax?: number;
+  /** How long an `agent` check waits for the second tier (`NOTE_CHECK_DEADLINE_MS`). */
+  checkDeadlineMs?: number;
 };
 
 export type NoteCheckDependencies = {
@@ -127,23 +140,43 @@ function bodyOfVersion(version: NoteVersionSnapshot): CheckBody {
     ...(version.link === undefined ? {} : { link: version.link }) };
 }
 
-type FileRead = { status: 'ready'; digest: string } | { status: 'missing' | 'forbidden' | 'capacity' | 'unavailable' };
+/**
+ * One path's working-tree read. `digest` hashes the raw bytes; `textDigest` hashes the decoded
+ * text the read port gives (BOM removed), the basis of a symbol locator's `fileDigest` and of a
+ * configuration digest. Only a path whose decoded text a locator, a link gate or a configuration
+ * needs keeps `content` and `textDigest`; `sizeBytes` is the read port's raw size.
+ */
+type FileRead = { status: 'ready'; digest: string; textDigest: string | null; content: string | null; sizeBytes: number }
+  | { status: 'missing' | 'forbidden' | 'capacity' | 'unavailable' };
+type ReadyRead = Extract<FileRead, { status: 'ready' }>;
 
 /**
- * MF3/R3: the one per-`checkNotes` observation budget. A path is read at most
- * once per call; the 257th distinct path (and every later one) is `exhausted`
- * and reported as an `unchecked` observation, never silently skipped.
+ * MF3/R3: the one per-call observation budget. A path is read at most once per
+ * call; the 257th distinct path in item order (and every later one) is
+ * `exhausted` and reported as an `unchecked` observation, never silently skipped.
  */
-type PathRead = { status: 'ready'; digest: string }
-  | { status: 'missing' | 'forbidden' | 'capacity' | 'unavailable' | 'exhausted' };
+type PathRead = FileRead | { status: 'exhausted' };
+
+/** R3: one call's Python/C++ lookups; the call waits for them together at most `NOTE_NATIVE_READ_WAIT_MS`. */
+type NativeReads = {
+  sent: Map<string, Promise<NativeLookupV1>>;
+  settled: Map<string, NativeLookupV1>;
+  expired: boolean;
+  deadline: Promise<void> | null;
+  timer: ReturnType<typeof setTimeout> | null;
+};
 
 type CheckBudget = {
-  filesMax: number;
   reads: Map<string, PathRead>;
-  readCount: number;
   factsRemaining: number;
+  /** R4: distinct files the call may still parse on its own, the file anchors and the link gates together. */
   symbolRechecksRemaining: number;
-  linkRechecksRemaining: number;
+  /** R4: text bytes those parses may still take; a file is charged once per call. */
+  parseBytesRemaining: number;
+  parsed: Set<string>;
+  /** One syntax tree per file and call. */
+  trees: Map<string, SyntaxTreeV1>;
+  natives: NativeReads;
 };
 
 /** The per-item observations, deduplicated by path, in first-encounter order. */
@@ -199,10 +232,10 @@ function newCheckCaches(): CheckCaches {
 }
 
 function newCheckBudget(limits: NoteCheckLimits): CheckBudget {
-  return { filesMax: limits.readFilesMax ?? NOTE_READ_FILES_MAX, reads: new Map(), readCount: 0,
-    factsRemaining: limits.readFactsMax ?? NOTE_READ_FACTS_MAX,
+  return { reads: new Map(), factsRemaining: limits.readFactsMax ?? NOTE_READ_FACTS_MAX,
     symbolRechecksRemaining: limits.symbolRecheckMax ?? NOTE_SYMBOL_RECHECK_MAX,
-    linkRechecksRemaining: limits.linkRecheckMax ?? NOTE_LINK_RECHECK_MAX };
+    parseBytesRemaining: limits.readParseBytesMax ?? NOTE_READ_PARSE_BYTES_MAX, parsed: new Set(), trees: new Map(),
+    natives: { sent: new Map(), settled: new Map(), expired: false, deadline: null, timer: null } };
 }
 
 type FactOutcome =
@@ -215,11 +248,143 @@ type FactOutcome =
   | { kind: 'source_unavailable' }
   | { kind: 'basis_note_retired' };
 
-/** R4: the read-side symbol recheck outcome. */
+/** R3: a changed file's symbol locator found again in that file alone. */
 type SymbolRecheck = { status: 'live' } | { status: 'changed' } | { status: 'missing' } | { status: 'unchecked' };
 
-const SYMBOL_RECHECK_LANGUAGES: readonly string[] = ['typescript', 'python', 'cpp'];
-const SYMBOL_RECHECK_PAGE = 32;
+/** R7's second exception: the parse answers kept across calls, LRU by source bytes. */
+const PARSE_ANSWERS_SOURCE_BYTES_MAX = 8 * 1024 * 1024;
+type NameAnswer = { name: string; textual: boolean; uses: NameUseV1[] };
+/** `names`: one answer per (ranges, name). */
+type ParseAnswers = { bytes: number; items?: NavItemV1[]; syntax?: FileSyntaxV1; names: Map<string, NameAnswer> };
+
+type StoredReason = Extract<LinkVerificationV1, { status: 'unverifiable' }>['reason'];
+/**
+ * One part of a link's read: an evidence's own rules (`question: null`), one evidence × one
+ * definition it must reference, or a stored reason the link's shape gives. `doubt` is a reference
+ * part only the second tier can decide; it always carries its question.
+ */
+type LinkPartStatus = 'ok' | 'broken' | 'doubt' | 'unavailable' | 'budget' | StoredReason;
+type LinkPart = { evidence: number | null; question: ReferenceQuestionV1 | null; status: LinkPartStatus };
+/** The first tier's parts, the raw digests of the gate files it read and its read of the stored configuration. */
+type LinkRead = { parts: LinkPart[]; files: Map<string, string>; config: { path: string; digest: string } | null };
+/** R7: a second-tier conclusion, valid while the version and every gate digest are as recorded. */
+type LinkConclusion = { version: number; gate: { files: ReadonlyMap<string, string>; config: { path: string; digest: string } | null };
+  conclusion: LinkVerificationV1 };
+type LinkRegisterEntry = { projectId: string; workspaceId: string; noteId: string; version: number };
+type ReferenceField = ReturnType<typeof referenceFieldsOf>[number];
+type Definition = { path: string; name: string; line: number | null; locator: SymbolLocatorV1 | undefined };
+
+const STORED_ORDER: readonly StoredReason[] = ['key_not_literal', 'language_unsupported', 'analyzer_unavailable'];
+/** A plain identifier; a computed name, an index or a call/construct signature is not one. */
+const PLAIN_NAME = /^[A-Za-z_$][\w$]*$/;
+const MEMBER_PARENTS: ReadonlySet<string> = new Set(['class', 'interface', 'enum']);
+const isTsPath = (path: string): boolean => languageOfPath(path) === 'typescript';
+
+/**
+ * R5's merge, 8E C6's order: any definite break is `broken` with every broken evidence index; then
+ * an unreadable part (`unavailable` before `budget`); then a doubtful one (`refs_pending`); then a
+ * stored reason, in the write side's order; else `verified`.
+ */
+function linkVerificationOfParts(parts: readonly LinkPart[]): LinkVerificationV1 {
+  const missing = [...new Set(parts.flatMap(part => part.status === 'broken' && part.evidence !== null ? [part.evidence] : []))]
+    .sort((left, right) => left - right);
+  if (missing.length > 0) return { status: 'broken', missing };
+  const has = (status: LinkPartStatus): boolean => parts.some(part => part.status === status);
+  if (has('unavailable')) return { status: 'unchecked', reason: 'unavailable' };
+  if (has('budget')) return { status: 'unchecked', reason: 'budget' };
+  if (has('doubt')) return { status: 'unchecked', reason: 'refs_pending' };
+  const stored = STORED_ORDER.find(reason => has(reason));
+  return stored === undefined ? { status: 'verified' } : { status: 'unverifiable', reason: stored };
+}
+
+/** R6: a second-tier answer as a part. An answer it cannot decide is `analyzer_unavailable`; a failed one is unread. */
+function answeredStatus(answer: ReferenceAnswerV1 | undefined): LinkPartStatus {
+  if (answer === undefined || answer.status === 'failed') return 'unavailable';
+  if (answer.status === 'found') return 'ok';
+  return answer.status === 'not_found' ? 'broken' : 'analyzer_unavailable';
+}
+
+/** R7: only an answer with a definite reason is kept; `undecided` and `failed` are asked again. */
+const recordableAnswer = (answer: ReferenceAnswerV1): boolean => answer.status === 'found' || answer.status === 'not_found'
+  || (answer.status === 'unverifiable' && answer.reason !== 'undecided');
+
+/** R10: a link is current only while its read is neither broken nor unchecked. */
+const linkReadCurrent = (verification: LinkVerificationV1 | undefined): boolean =>
+  verification === undefined || (verification.status !== 'broken' && verification.status !== 'unchecked');
+
+/** The definitions an evidence of this role must reference: L3a's fields, and the symbol key when the relation names one. */
+function partFieldsOf(link: LinkPayloadV1, evidence: LinkEvidenceStoredV1): ReferenceField[] {
+  return [...referenceFieldsOf(link.relation, evidence.role),
+    ...(relationNeedsKey(link.relation) && link.key?.kind === 'symbol' ? ['key' as const] : [])];
+}
+
+/** The definition behind a reference field: its file, its stored name and name line, and its locator when written. */
+function definitionOf(link: LinkPayloadV1, extraAnchors: readonly NoteAnchorV1[], field: ReferenceField): Definition | null {
+  if (field === 'key') {
+    const key = link.key;
+    if (key?.kind !== 'symbol') return null;
+    return { path: key.path, name: key.symbol?.qualifiedName ?? key.symbolRequest.name,
+      line: key.symbol?.range.startLine ?? key.symbolRequest.range?.startLine ?? null, locator: key.symbol };
+  }
+  const end = field === 'to' ? link.ends.to : link.ends.via;
+  const anchor = extraAnchors[field === 'to' ? 0 : 1];
+  if (end?.kind !== 'file' || end.symbolRequest === undefined || anchor?.kind !== 'file') return null;
+  return { path: anchor.path, name: anchor.symbol?.qualifiedName ?? end.symbolRequest.name,
+    line: anchor.symbol?.range.startLine ?? end.symbolRequest.range?.startLine ?? null, locator: anchor.symbol };
+}
+
+/**
+ * R5 rules 4–5: the single-file facts that show the evidence's range no longer references X.
+ * `names` answers X's name first, then each of the evidence file's import names.
+ */
+function referenceGone(x: NavItemV1, definitionFile: FileSyntaxV1, evidenceFile: FileSyntaxV1,
+  names: readonly NameAnswer[]): boolean {
+  const own = names[0]!;
+  const importsAbsent = names.slice(1).every(entry => !entry.textual);
+  // Rule 4: a member is wired by its name; a top-level X by its name or an import's.
+  if (x.parentKind !== null) return MEMBER_PARENTS.has(x.parentKind) && !own.textual;
+  if (!own.textual) return importsAbsent;
+  // Rule 5: every use is free, nothing in the evidence file binds it, and X's module file is not global.
+  return definitionFile.isModule && !definitionFile.globalAugmented && own.uses.every(use => use === 'free')
+    && !evidenceFile.boundNames.includes(x.name) && importsAbsent;
+}
+
+/** The Python/C++ symbol locators of one note body. */
+function nativeLocatorsOf(body: CheckBody): { path: string; symbol: SymbolLocatorV1; language: 'python' | 'cpp' }[] {
+  const located: { path: string; symbol: SymbolLocatorV1; language: 'python' | 'cpp' }[] = [];
+  for (const anchor of [body.anchor, ...body.extraAnchors]) {
+    if (anchor.kind !== 'file' || anchor.symbol === undefined) continue;
+    const language = anchor.symbol.language;
+    if (language === 'python' || language === 'cpp') located.push({ path: anchor.path, symbol: anchor.symbol, language });
+  }
+  return located;
+}
+
+/** One item's checked result, kept until the call's second tier and registers are done. */
+type CheckedItem = { result: NoteCheckV1; head: NoteHeadSnapshot;
+  link: { read: LinkRead | null; eligibleBase: boolean } | null };
+
+/**
+ * R3/R5: one item's single-file judgements, made for every item in item order before the call
+ * waits for its Python/C++ lookups: each changed locator file's recheck by slot (`null` for a
+ * Python/C++ locator, answered after the wait) and the link's read (kept conclusion or first tier).
+ */
+type ItemJudgement = { locators: Map<number, SymbolRecheck | null>;
+  link: { verification: LinkVerificationV1; read: LinkRead | null } | null };
+
+/**
+ * R3: the locator among the same-name symbols of its changed file: several pick the stored name
+ * lines; none is `missing` only after an exact parse; the signature digest is compared as written.
+ */
+function locatorRecheck(content: string, symbol: SymbolLocatorV1, found: readonly {
+  start: { line: number; column: number }; end: { line: number; column: number } }[], exact: boolean): SymbolRecheck {
+  if (found.length === 0) return exact ? { status: 'missing' } : { status: 'unchecked' };
+  const chosen = found.length === 1 ? found[0]
+    : found.find(item => item.start.line === symbol.range.startLine && item.end.line === symbol.range.endLine);
+  if (chosen === undefined) return { status: 'unchecked' };
+  const digest = signatureDigestOf(symbolRangeText(content, chosen.start, chosen.end));
+  return digest === symbol.signatureDigest ? { status: 'live' } : { status: 'changed' };
+}
 
 /** L22: the bounded size of the one similar-notes anchor-lookup page. */
 export const NOTE_SIMILAR_SCAN = 100;
@@ -240,6 +405,20 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
   // The file reads are the platform's checks (`noteCheckWorkspace`); the caller's own goal still decides eligibility.
   const workspace = deps.workspace === undefined ? undefined : noteCheckWorkspace(deps.workspace);
+
+  // Host memory, keyed project, workspace and note. R7: the second tier's conclusion per link (head
+  // version), with the gate digests it holds for. R8: head-version links read `refs_pending` with no
+  // conclusion, the Host's background batch takes them. R9: accepted/reviewed head-version links read
+  // `broken`, the scribe's count. R7's second exception: the parse answers by (path, text digest).
+  const linkConclusions = new Map<string, LinkConclusion>();
+  const doubtful = new Map<string, LinkRegisterEntry>();
+  const broken = new Map<string, LinkRegisterEntry & { heldByRun: string | null }>();
+  const parseAnswers = new Map<string, ParseAnswers>();
+  let parseAnswerBytes = 0;
+  const linkKey = (ctx: CoreCallContext, noteId: string): string =>
+    canonicalJson([ctx.projectId, ctx.workspaceId ?? '', noteId]);
+  const registerEntry = (ctx: CoreCallContext, head: NoteHeadSnapshot): LinkRegisterEntry =>
+    ({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '', noteId: head.noteId, version: head.version });
 
   async function readHead(projectId: string, noteId: string): Promise<Outcome<NoteHeadSnapshot | null>> {
     const refKey = noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId });
@@ -278,42 +457,97 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     return { ok: true, value: decoded.value };
   }
 
-  async function readCurrentFile(ctx: CoreCallContext, path: string): Promise<FileRead> {
-    if (workspace === undefined) return { status: 'unavailable' };
-    try {
-      const read = await workspace.readWorkspace(ctx,
-        { workspace: workspaceRef(ctx), path, maxBytes: basisFileMaxBytes, version: { kind: 'working_tree' } });
-      if (read.status === 'ready') return { status: 'ready', digest: read.value.digest };
-      if (read.code === 'not_found') return { status: 'missing' };
-      if (read.code === 'forbidden') return { status: 'forbidden' };
-      if (read.code === 'capacity') return { status: 'capacity' };
-      return { status: 'unavailable' };
-    } catch {
-      return { status: 'unavailable' };
-    }
-  }
-
-  /** R3: read one path at most once per call; past the budget it is `exhausted`. */
-  async function readPathOnce(ctx: CoreCallContext, budget: CheckBudget, path: string): Promise<PathRead> {
-    const hit = budget.reads.get(path);
-    if (hit !== undefined) return hit;
-    if (budget.readCount >= budget.filesMax) {
-      const exhausted: PathRead = { status: 'exhausted' };
-      budget.reads.set(path, exhausted);
-      return exhausted;
-    }
-    budget.readCount += 1;
-    const file = await readCurrentFile(ctx, path);
-    const result: PathRead = file.status === 'ready' ? { status: 'ready', digest: file.digest } : { status: file.status };
-    budget.reads.set(path, result);
-    return result;
-  }
-
-  /** R3: one path's observation against one expected digest (null = existence only). */
-  function observationFor(path: string, read: PathRead, expectedDigest: string | null): NoteFileObservationV1 {
+  /** One batch item as the check keeps it: only a path that compares or parses decoded text keeps the text. */
+  function fileReadOf(read: WorkspaceResult<WorkspaceFile>, keepText: boolean): FileRead {
     if (read.status === 'ready') {
+      return { status: 'ready', digest: read.value.digest, sizeBytes: read.value.sizeBytes,
+        content: keepText ? read.value.content : null, textDigest: keepText ? sha256Hex(read.value.content) : null };
+    }
+    if (read.code === 'not_found') return { status: 'missing' };
+    if (read.code === 'forbidden') return { status: 'forbidden' };
+    if (read.code === 'capacity') return { status: 'capacity' };
+    return { status: 'unavailable' };
+  }
+
+  /** R4: one access for these paths; an access that does not open leaves every one of them unreadable. */
+  async function readBatch(ctx: CoreCallContext, budget: CheckBudget, paths: readonly string[],
+    keepText: ReadonlyMap<string, boolean>): Promise<void> {
+    if (paths.length === 0) return;
+    const unreadable = (): void => { for (const path of paths) budget.reads.set(path, { status: 'unavailable' }); };
+    if (workspace === undefined) { unreadable(); return; }
+    let batch: Awaited<ReturnType<NoteAnchorWorkspace['readWorkspaceFiles']>>;
+    try {
+      batch = await workspace.readWorkspaceFiles(ctx, { workspace: workspaceRef(ctx), paths, maxBytes: basisFileMaxBytes });
+    } catch {
+      unreadable();
+      return;
+    }
+    if (batch.status !== 'ready') { unreadable(); return; }
+    const files = batch.value;
+    paths.forEach((path, index) => { budget.reads.set(path, fileReadOf(files[index]!, keepText.get(path) === true)); });
+  }
+
+  /** The file paths one item reads, in the order it reads them; `text` marks a path whose decoded text it needs. */
+  function itemPaths(ctx: CoreCallContext, body: CheckBody, factsLeft: { value: number },
+    add: (path: string, text: boolean) => void): void {
+    for (const file of body.basis.files) add(file.path, false);
+    for (const fact of body.facts) {
+      if (factsLeft.value <= 0) break;
+      factsLeft.value -= 1;
+      if (fact.kind === 'file' && FILE_DIGEST.test(fact.digest) && isSafeRelativePath(fact.path)) add(fact.path, false);
+    }
+    for (const anchor of [body.anchor, ...body.extraAnchors]) {
+      if (anchor.kind === 'file' && (anchor.deleted !== true || anchor.symbol !== undefined)) add(anchor.path, anchor.symbol !== undefined);
+    }
+    if (body.kind !== 'link' || body.link === undefined) return;
+    const link = body.link;
+    // R5's gate: every evidence file, each definition file it references, the stored configuration,
+    // and the configuration a kept conclusion was decided under.
+    for (const evidence of link.evidence) {
+      add(evidence.at.path, true);
+      for (const field of partFieldsOf(link, evidence)) {
+        const definition = definitionOf(link, body.extraAnchors, field);
+        if (definition !== null) add(definition.path, true);
+      }
+    }
+    if (link.analysisConfig.path !== null) add(link.analysisConfig.path, true);
+    const kept = linkConclusions.get(linkKey(ctx, body.noteId))?.gate.config;
+    if (kept !== undefined && kept !== null) add(kept.path, true);
+  }
+
+  /**
+   * R4: every path the call's items read, listed in item order first (deduplicated; the first
+   * `readFilesMax` are read, every later one is past the budget), then read in one access, or in two
+   * when a Python/C++ locator is among them: those files first, so their lookups are on their way
+   * while the rest is read and the TS files are parsed.
+   */
+  async function readPlanned(ctx: CoreCallContext, bodies: readonly CheckBody[], budget: CheckBudget): Promise<void> {
+    const keepText = new Map<string, boolean>();
+    const factsLeft = { value: limits.readFactsMax ?? NOTE_READ_FACTS_MAX };
+    for (const body of bodies) {
+      itemPaths(ctx, body, factsLeft, (path, text) => { keepText.set(path, text || keepText.get(path) === true); });
+    }
+    const ordered = [...keepText.keys()];
+    const admitted = ordered.slice(0, limits.readFilesMax ?? NOTE_READ_FILES_MAX);
+    for (const path of ordered.slice(admitted.length)) budget.reads.set(path, { status: 'exhausted' });
+    const native = new Set(bodies.flatMap(body => nativeLocatorsOf(body).map(located => located.path)));
+    await readBatch(ctx, budget, admitted.filter(path => native.has(path)), keepText);
+    sendNativeLookups(ctx, budget, bodies);
+    await readBatch(ctx, budget, admitted.filter(path => !native.has(path)), keepText);
+  }
+
+  /** R3: a path's read in this call; every path was read, or marked past the budget, before any item is judged. */
+  function readPathOnce(budget: CheckBudget, path: string): PathRead {
+    return budget.reads.get(path) ?? { status: 'unavailable' };
+  }
+
+  /** R3: one path's observation against one expected digest (null = existence only), by raw bytes or decoded text. */
+  function observationFor(path: string, read: PathRead, expectedDigest: string | null,
+    basis: 'raw' | 'text'): NoteFileObservationV1 {
+    if (read.status === 'ready') {
+      const current = basis === 'text' ? read.textDigest : read.digest;
       return { path, digest: read.digest,
-        outcome: expectedDigest !== null && read.digest !== expectedDigest ? 'changed' : 'same' };
+        outcome: expectedDigest !== null && current !== expectedDigest ? 'changed' : 'same' };
     }
     const outcome: NoteFileObservationV1['outcome'] =
       read.status === 'missing' ? 'deleted' : read.status === 'exhausted' ? 'unchecked' : read.status;
@@ -325,93 +559,304 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
    * computed against its own expected digest, while the item keeps the first
    * observation of that path and the call-level budget reads the file once.
    */
-  async function observeForItem(ctx: CoreCallContext, budget: CheckBudget, itemObs: ItemObservations,
-    path: string, expectedDigest: string | null): Promise<NoteFileObservationV1> {
-    const read = await readPathOnce(ctx, budget, path);
-    const observed = observationFor(path, read, expectedDigest);
+  function observeForItem(budget: CheckBudget, itemObs: ItemObservations, path: string,
+    expectedDigest: string | null, basis: 'raw' | 'text'): NoteFileObservationV1 {
+    const observed = observationFor(path, readPathOnce(budget, path), expectedDigest, basis);
     if (!itemObs.has(path)) itemObs.set(path, observed);
     return observed;
   }
 
   /**
-   * MF4/R4: the read-side symbol recheck. It matches by name only, uses the
-   * stored range to pick among several same-name hits, and never turns an
-   * incomplete analysis (cap, unsupported language, read failure, missing
-   * capture) into `symbol_missing`. The capture is always released.
+   * R3: one `read` lookup per changed Python/C++ locator file, sent before the rest is read; each
+   * is charged to the parse budget first. The first one starts the call's one wait.
    */
-  async function recheckSymbol(ctx: CoreCallContext, anchor: Extract<NoteAnchorV1, { kind: 'file' }>,
-    hitsMax: number): Promise<SymbolRecheck> {
-    const symbol = anchor.symbol;
-    if (symbol === undefined || workspace === undefined || workspace.capture === undefined
-      || workspace.querySource === undefined) return { status: 'unchecked' };
-    if (!SYMBOL_RECHECK_LANGUAGES.includes(symbol.language)) return { status: 'unchecked' };
-    // R4: a scan that cannot look at any hit is stopped at the cap, never a
-    // definite `symbol_missing`.
-    if (hitsMax <= 0) return { status: 'unchecked' };
-    let capture: CaptureSummary;
-    try {
-      const captured = await workspace.capture(ctx, { provider: symbol.language as SourceProvider });
-      if (captured.status !== 'ready') return { status: 'unchecked' };
-      capture = captured.value;
-    } catch {
-      return { status: 'unchecked' };
-    }
-    try {
-      const hits: Extract<SourceHit, { kind: 'symbol' }>[] = [];
-      let cursor: string | null = null;
-      let scanned = 0;
-      while (scanned < hitsMax) {
-        const limit = Math.min(hitsMax - scanned, SYMBOL_RECHECK_PAGE);
-        let page: Awaited<ReturnType<NonNullable<NoteAnchorWorkspace['querySource']>>>;
-        try {
-          page = await workspace.querySource(ctx,
-            { capture: capture.ref, query: { kind: 'symbols', path: anchor.path }, cursor, limit });
-        } catch {
-          return { status: 'unchecked' };
-        }
-        if (page.status !== 'ready') return { status: 'unchecked' };
-        for (const hit of page.value.items) {
-          if (hit.kind !== 'symbol' || hit.name !== symbol.qualifiedName) continue;
-          hits.push(hit);
-        }
-        scanned += page.value.items.length;
-        cursor = page.value.nextCursor;
-        if (cursor === null) break;
+  function sendNativeLookups(ctx: CoreCallContext, budget: CheckBudget, bodies: readonly CheckBody[]): void {
+    const lookup = workspace?.lookup;
+    if (lookup === undefined) return;
+    const natives = budget.natives;
+    for (const body of bodies) {
+      for (const located of nativeLocatorsOf(body)) {
+        const read = budget.reads.get(located.path);
+        if (natives.sent.has(located.path) || read?.status !== 'ready' || read.textDigest === located.symbol.fileDigest) continue;
+        if (!chargeParse(budget, located.path, read.sizeBytes)) continue;
+        const answer = lookup(ctx, { language: located.language, path: located.path, text: read.content!,
+          digest: read.digest, mode: 'read' });
+        natives.sent.set(located.path, answer);
+        // An answer after the deadline is not part of this read; the process still finishes and keeps it.
+        void answer.then(value => { if (!natives.expired) natives.settled.set(located.path, value); });
+        // At the deadline the loop yields once, so an answer already in takes part; the rest read unchecked.
+        natives.deadline ??= new Promise<void>(resolve => {
+          natives.timer = setTimeout(() => setImmediate(() => { natives.expired = true; resolve(); }), NOTE_NATIVE_READ_WAIT_MS);
+        });
       }
-      // A scan stopped at the hits cap is incomplete, never a definitive answer.
-      if (cursor !== null) return { status: 'unchecked' };
-      // R4: a definite `symbol_missing` needs the captured file to have been
-      // read and analysed. A file missing from the capture or unreadable is an
-      // incomplete analysis, never a retirement.
-      if (hits.length === 0) {
-        let read: Awaited<ReturnType<NonNullable<NoteAnchorWorkspace['readWorkspace']>>>;
-        try {
-          read = await workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
-            projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path: anchor.path,
-            maxBytes: basisFileMaxBytes, version: { kind: 'capture', capture: capture.ref } });
-        } catch {
-          return { status: 'unchecked' };
-        }
-        return read.status === 'ready' ? { status: 'missing' } : { status: 'unchecked' };
-      }
-      hits.sort((left, right) => left.location.start.line - right.location.start.line
-        || left.location.start.column - right.location.start.column);
-      const chosen = hits.length === 1 ? hits[0]
-        : hits.find(hit => hit.location.start.line === symbol.range.startLine
-          && hit.location.end.line === symbol.range.endLine);
-      // Several same-name hits and none at the stored range: unverifiable.
-      if (chosen === undefined) return { status: 'unchecked' };
-      const read = await workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
-        projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path: anchor.path,
-        maxBytes: basisFileMaxBytes, version: { kind: 'capture', capture: capture.ref } });
-      if (read.status !== 'ready') return { status: 'unchecked' };
-      const digest = signatureDigestOf(symbolRangeText(read.value.content, chosen.location.start, chosen.location.end));
-      return digest === symbol.signatureDigest ? { status: 'live' } : { status: 'changed' };
-    } finally {
-      try { await workspace.releaseCapture?.(ctx, capture.ref); } catch { /* best-effort */ }
     }
   }
 
+  /** R3: the call's one wait for its Python/C++ lookups: until every one has answered or the deadline passed. */
+  async function settleNatives(budget: CheckBudget): Promise<void> {
+    const natives = budget.natives;
+    if (natives.deadline !== null) await Promise.race([Promise.all(natives.sent.values()), natives.deadline]);
+  }
+
+  /** R4: a file is parsed on its own only within the call's file and byte budgets; a file already parsed in the call is free. */
+  function chargeParse(budget: CheckBudget, path: string, bytes: number): boolean {
+    if (budget.parsed.has(path)) return true;
+    if (budget.symbolRechecksRemaining <= 0 || bytes > budget.parseBytesRemaining) return false;
+    budget.symbolRechecksRemaining -= 1;
+    budget.parseBytesRemaining -= bytes;
+    budget.parsed.add(path);
+    return true;
+  }
+
+  function treeOf(budget: CheckBudget, path: string, read: ReadyRead): SyntaxTreeV1 | null {
+    const built = budget.trees.get(path);
+    if (built !== undefined) return built;
+    if (!chargeParse(budget, path, read.sizeBytes)) return null;
+    const tree = syntaxTreeOf(path, read.content!);
+    budget.trees.set(path, tree);
+    return tree;
+  }
+
+  /**
+   * R7's second exception: the answers of earlier parses, by path and decoded text digest, so the
+   * same text is parsed once; a hit is not a parse and takes no budget. Only answers are kept.
+   */
+  const parseKey = (path: string, read: ReadyRead): string => `${path}\u0000${read.textDigest!}`;
+  function keptParse(key: string): ParseAnswers | undefined {
+    const entry = parseAnswers.get(key);
+    if (entry !== undefined) { parseAnswers.delete(key); parseAnswers.set(key, entry); }
+    return entry;
+  }
+  function keepParse(key: string, bytes: number): ParseAnswers {
+    const kept = keptParse(key);
+    if (kept !== undefined) return kept;
+    const entry: ParseAnswers = { bytes, names: new Map() };
+    parseAnswers.set(key, entry);
+    parseAnswerBytes += bytes;
+    for (const [oldest, value] of parseAnswers) {
+      if (parseAnswerBytes <= PARSE_ANSWERS_SOURCE_BYTES_MAX || oldest === key) break;
+      parseAnswers.delete(oldest);
+      parseAnswerBytes -= value.bytes;
+    }
+    return entry;
+  }
+
+  /** A file's navigation items; `null` when the parse budget is spent. */
+  function navItemsOf(budget: CheckBudget, path: string, read: ReadyRead): NavItemV1[] | null {
+    const key = parseKey(path, read);
+    const kept = keptParse(key)?.items;
+    if (kept !== undefined) return kept;
+    const tree = treeOf(budget, path, read);
+    if (tree === null) return null;
+    const items = tree.navigationItems();
+    keepParse(key, read.sizeBytes).items = items;
+    return items;
+  }
+
+  function fileSyntaxIn(budget: CheckBudget, path: string, read: ReadyRead): FileSyntaxV1 | null {
+    const key = parseKey(path, read);
+    const kept = keptParse(key)?.syntax;
+    if (kept !== undefined) return kept;
+    const tree = treeOf(budget, path, read);
+    if (tree === null) return null;
+    const syntax = fileSyntaxOf(tree);
+    keepParse(key, read.sizeBytes).syntax = syntax;
+    return syntax;
+  }
+
+  function namesIn(budget: CheckBudget, path: string, read: ReadyRead, ranges: LineRange[] | null,
+    names: readonly string[]): NameAnswer[] | null {
+    const key = parseKey(path, read);
+    const nameKey = (name: string): string => JSON.stringify([ranges, name]);
+    let answers = keptParse(key)?.names;
+    // Only the names not answered before for these ranges are looked up.
+    const missing = [...new Set(names)].filter(name => answers?.has(nameKey(name)) !== true);
+    if (missing.length > 0) {
+      const tree = treeOf(budget, path, read);
+      if (tree === null) return null;
+      answers = keepParse(key, read.sizeBytes).names;
+      for (const answer of namesInRanges(tree, ranges, missing)) answers.set(nameKey(answer.name), answer);
+    }
+    return names.map(name => answers!.get(nameKey(name))!);
+  }
+
+  /**
+   * R3: a changed file's symbol locator found again in that file alone by its stored name. TS reads
+   * its navigation items now (a spent budget is `unchecked`); a Python/C++ locator is `null` here
+   * and answered from its lookup after the call's wait (`nativeRecheck`); another language is `unchecked`.
+   */
+  function recheckLocator(budget: CheckBudget, path: string, read: ReadyRead,
+    symbol: SymbolLocatorV1): SymbolRecheck | null {
+    if (symbol.language === 'python' || symbol.language === 'cpp') return null;
+    if (symbol.language !== 'typescript') return { status: 'unchecked' };
+    const items = navItemsOf(budget, path, read);
+    if (items === null) return { status: 'unchecked' };
+    return locatorRecheck(read.content!, symbol, items.filter(item => item.name === symbol.qualifiedName), true);
+  }
+
+  /** R3: a Python/C++ locator from its lookup's answer; not sent, failed or later than the deadline is `unchecked`. */
+  function nativeRecheck(budget: CheckBudget, path: string, read: ReadyRead, symbol: SymbolLocatorV1): SymbolRecheck {
+    const answer = budget.natives.settled.get(path);
+    if (answer?.status !== 'parsed') return { status: 'unchecked' };
+    return locatorRecheck(read.content!, symbol, answer.symbols.filter(item => item.name === symbol.qualifiedName),
+      answer.exact);
+  }
+
+  /** R3/R5: one item's single-file judgements in its order: the changed locator files, then the link. */
+  function judgeItem(ctx: CoreCallContext, body: CheckBody, budget: CheckBudget): ItemJudgement {
+    const locators = new Map<number, SymbolRecheck | null>();
+    [body.anchor, ...body.extraAnchors].forEach((anchor, index) => {
+      if (anchor.kind !== 'file' || anchor.symbol === undefined) return;
+      const read = readPathOnce(budget, anchor.path);
+      if (read.status === 'ready' && read.textDigest !== anchor.symbol.fileDigest) {
+        locators.set(index, recheckLocator(budget, anchor.path, read, anchor.symbol));
+      }
+    });
+    if (body.kind !== 'link' || body.link === undefined) return { locators, link: null };
+    const kept = keptConclusion(ctx, body, budget);
+    if (kept !== null) return { locators, link: { verification: kept, read: null } };
+    const read = firstTierLinkParts(body.link, body.extraAnchors, budget);
+    return { locators, link: { verification: linkVerificationOfParts(read.parts), read } };
+  }
+  /** An evidence's scope in its file now: the named function's declaration spans, else its range or the whole file. */
+  function evidenceScope(budget: CheckBudget, read: ReadyRead,
+    at: LinkEvidenceStoredV1['at']): EvidenceScopeV1 | LinkPartStatus {
+    const request = at.symbolRequest;
+    if (request === undefined) return evidenceScopeOf(at, undefined);
+    const items = navItemsOf(budget, at.path, read);
+    if (items === null) return 'budget';
+    const named = items.filter(item => item.name === request.name);
+    // Rule 1: the function the range was named by is gone; one that only moved is still there.
+    if (named.length === 0) return 'broken';
+    const stored = at.symbol?.range;
+    const chosen = named.length === 1 ? named[0] : named.find(item => stored !== undefined
+      && item.start.line === stored.startLine && item.end.line === stored.endLine);
+    if (chosen === undefined) return 'unavailable';
+    return evidenceScopeOf(at, { kind: 'symbol', name: chosen.name, symbolKind: chosen.kind,
+      location: { path: at.path, digest: read.textDigest!, start: chosen.start, end: chosen.end },
+      declarationRanges: chosen.declarationRanges });
+  }
+
+  /** R5 rules 3–5 for one evidence × definition, from the two files' single-file syntax. */
+  function referenceRule(budget: CheckBudget, definition: Definition, definitionRead: ReadyRead, path: string,
+    read: ReadyRead, ranges: LineRange[] | null): LinkPartStatus {
+    const items = navItemsOf(budget, definition.path, definitionRead);
+    if (items === null) return 'budget';
+    const named = items.filter(item => item.name === definition.name);
+    // Rule 3: X is gone from its file (its slot reads retired by the anchor check).
+    if (named.length === 0) return 'broken';
+    const x = named.length === 1 ? named[0] : named.find(item => item.start.line === definition.line);
+    // Several of that name and none on the stored name line (8E N3).
+    if (x === undefined) return 'unavailable';
+    if (x.name === 'constructor' || x.name === 'default' || !PLAIN_NAME.test(x.name)) return 'doubt';
+    const definitionFile = fileSyntaxIn(budget, definition.path, definitionRead);
+    const evidenceFile = fileSyntaxIn(budget, path, read);
+    if (definitionFile === null || evidenceFile === null) return 'budget';
+    const names = namesIn(budget, path, read, ranges, [x.name, ...evidenceFile.importNames]);
+    if (names === null) return 'budget';
+    return referenceGone(x, definitionFile, evidenceFile, names) ? 'broken' : 'doubt';
+  }
+
+  /**
+   * R5, the link's first tier: one part per evidence's own rules and per evidence × definition it
+   * references, from file digests and single-file syntax only. A part whose files and configuration
+   * are as written keeps the write-time result; an evidence `fileDigest` of null, a definition
+   * without a locator, or a stored `analyzer_unavailable` redo it on every read. A reference part
+   * whose evidence file or definition file is not TS/JS keeps the stored `language_unsupported`
+   * without a parse. The definite rules (1–5) break the evidence; any other change waits for the
+   * second tier (`doubt`), and a changed configuration only makes the reference parts doubtful.
+   */
+  function firstTierLinkParts(link: LinkPayloadV1, extraAnchors: readonly NoteAnchorV1[],
+    budget: CheckBudget): LinkRead {
+    const parts: LinkPart[] = [];
+    const files = new Map<string, string>();
+    const gateRead = (path: string): PathRead => {
+      const read = readPathOnce(budget, path);
+      if (read.status === 'ready') files.set(path, read.digest);
+      return read;
+    };
+    const unreadable = (read: PathRead): LinkPartStatus => read.status === 'exhausted' ? 'budget' : 'unavailable';
+    const needsKey = relationNeedsKey(link.relation);
+    const key = link.key ?? null;
+    const redoAlways = link.verification.status === 'unverifiable' && link.verification.reason === 'analyzer_unavailable';
+    // The write side's own language_unsupported: an end or the symbol key asked in another language.
+    if ([link.ends.from, link.ends.to, link.ends.via].some(end => end?.kind === 'file' && end.symbolRequest !== undefined
+      && !isTsPath(end.path)) || (needsKey && key?.kind === 'symbol' && !isTsPath(key.path))) {
+      parts.push({ evidence: null, question: null, status: 'language_unsupported' });
+    }
+    // No stored configuration path is no configuration gate; the selection rule is not rerun here.
+    let configuration: 'same' | 'changed' | 'unavailable' | 'budget' = 'same';
+    let config: LinkRead['config'] = null;
+    if (link.analysisConfig.path !== null) {
+      const read = readPathOnce(budget, link.analysisConfig.path);
+      if (read.status === 'ready') {
+        config = { path: link.analysisConfig.path, digest: read.textDigest! };
+        configuration = read.textDigest === link.analysisConfig.digest ? 'same' : 'changed';
+      } else {
+        configuration = read.status === 'missing' ? 'changed' : read.status === 'exhausted' ? 'budget' : 'unavailable';
+      }
+    }
+
+    const referencePart = (definition: Definition, path: string, read: ReadyRead, same: boolean,
+      scopeOf: () => EvidenceScopeV1 | LinkPartStatus): { question: ReferenceQuestionV1 | null; status: LinkPartStatus } => {
+      if (!isTsPath(path) || !isTsPath(definition.path)) return { question: null, status: 'language_unsupported' };
+      const definitionRead = gateRead(definition.path);
+      if (definitionRead.status === 'missing') return { question: null, status: 'broken' };
+      if (definitionRead.status !== 'ready') return { question: null, status: unreadable(definitionRead) };
+      const redo = !same || redoAlways || definition.locator === undefined
+        || definitionRead.textDigest !== definition.locator.fileDigest;
+      if (!redo && configuration === 'same') return { question: null, status: 'ok' };
+      const scoped = scopeOf();
+      if (typeof scoped === 'string') return { question: null, status: scoped };
+      const question: ReferenceQuestionV1 = {
+        definition: { path: definition.path, name: definition.name, line: definition.line },
+        evidence: { path, ranges: scoped.kind === 'whole_file' ? null : scoped.ranges } };
+      const single = redo ? referenceRule(budget, definition, definitionRead, path, read, question.evidence.ranges) : 'doubt';
+      if (single !== 'doubt') return { question, status: single };
+      return { question, status: configuration === 'unavailable' || configuration === 'budget' ? configuration : 'doubt' };
+    };
+
+    for (const [index, evidence] of link.evidence.entries()) {
+      const path = evidence.at.path;
+      const own = (status: LinkPartStatus): void => { parts.push({ evidence: index, question: null, status }); };
+      const read = gateRead(path);
+      // Rule 1: the evidence file is gone.
+      if (read.status === 'missing') { own('broken'); continue; }
+      if (read.status !== 'ready') { own(unreadable(read)); continue; }
+      const same = evidence.fileDigest !== null && read.digest === evidence.fileDigest;
+      let scope: EvidenceScopeV1 | LinkPartStatus | undefined;
+      const scopeOf = (): EvidenceScopeV1 | LinkPartStatus => scope ??= evidenceScope(budget, read, evidence.at);
+      if (!same) {
+        // Rule 1: the line range now runs past the end of the file, or the named function is gone.
+        if (evidence.at.range !== undefined && evidence.at.range.endLine > read.content!.split('\n').length) { own('broken'); continue; }
+        const scoped = scopeOf();
+        if (typeof scoped === 'string') { own(scoped); continue; }
+        // Rule 2: the literal key is on no line of the scope.
+        if (needsKey && key?.kind === 'literal' && !literalInScope(read.content!, key.text, scoped)) own('broken');
+      }
+      if (needsKey && key === null) own('key_not_literal');
+      for (const field of partFieldsOf(link, evidence)) {
+        const definition = definitionOf(link, extraAnchors, field);
+        if (definition !== null) parts.push({ evidence: index, ...referencePart(definition, path, read, same, scopeOf) });
+      }
+    }
+    return { parts, files, config };
+  }
+
+  /** R7: the kept second-tier conclusion, when the version and every gate digest are as it was decided under. */
+  function keptConclusion(ctx: CoreCallContext, body: CheckBody, budget: CheckBudget): LinkVerificationV1 | null {
+    const kept = linkConclusions.get(linkKey(ctx, body.noteId));
+    if (kept === undefined || kept.version !== body.version) return null;
+    for (const [path, digest] of kept.gate.files) {
+      const read = readPathOnce(budget, path);
+      if (read.status !== 'ready' || read.digest !== digest) return null;
+    }
+    if (kept.gate.config !== null) {
+      const read = readPathOnce(budget, kept.gate.config.path);
+      if (read.status !== 'ready' || read.textDigest !== kept.gate.config.digest) return null;
+    }
+    return kept.conclusion;
+  }
   /** §9: a failed plan read is `unavailable`, never a definite "no plan". */
   async function currentPlan(ctx: CoreCallContext, goalId: string,
     caches: CheckCaches): Promise<Outcome<PlanRevisionSnapshot | null>> {
@@ -639,12 +1084,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
 
   /**
    * L23: the MAIN anchor's retirement decides `anchorStatus`; a retired extra
-   * anchor only appears in `retiredExtraAnchors`. Symbol rechecks are bounded
-   * (`NOTE_SYMBOL_RECHECK_MAX`), scan at most `NOTE_SYMBOL_HITS_MAX` hits, and
-   * each recheck consumes the `NOTE_READ_FILES_MAX` distinct-file budget.
+   * anchor only appears in `retiredExtraAnchors`. A symbol locator compares its
+   * file by decoded text; a changed file is parsed on its own (R3) within the
+   * call's parse budgets, shared with the link gates (R4).
    */
   async function anchorStatusOf(ctx: CoreCallContext, body: CheckBody, budget: CheckBudget,
-    itemObs: ItemObservations, caches: CheckCaches):
+    itemObs: ItemObservations, caches: CheckCaches, judgement: ItemJudgement):
   Promise<Outcome<{ retired: boolean; reasons: StaleReason[]; retiredExtraAnchors: string[]; unchecked: boolean;
     staleReasons: string[]; anchorSlots: NoteCheckV1['anchorSlots'] }>> {
     const retiredExtraAnchors: string[] = [];
@@ -709,8 +1154,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         }
         case 'file': {
           if (anchor.deleted === true) return { ok: true, value: [] };
-          const observed = await observeForItem(ctx, budget, itemObs, anchor.path,
-            anchor.symbol?.fileDigest ?? null);
+          const observed = observeForItem(budget, itemObs, anchor.path, anchor.symbol?.fileDigest ?? null, 'text');
           if (observed.outcome === 'deleted') return { ok: true, value: ['file_deleted'] };
           if (observed.outcome !== 'same' && observed.outcome !== 'changed') unchecked = true;
           return { ok: true, value: [] };
@@ -731,15 +1175,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     for (let index = 0; index < all.length; index += 1) {
       const anchor = all[index]!;
       if (anchor.kind !== 'file' || anchor.symbol === undefined) continue;
-      const observed = await observeForItem(ctx, budget, itemObs, anchor.path, anchor.symbol.fileDigest);
-      if (observed.outcome === 'same') continue; // stored fileDigest matches: no recheck
+      const read = readPathOnce(budget, anchor.path);
+      const observed = observeForItem(budget, itemObs, anchor.path, anchor.symbol.fileDigest, 'text');
+      if (observed.outcome === 'same') continue; // the stored decoded-text digest matches: no parse
       if (observed.outcome === 'deleted') continue; // file_deleted already handled
-      // R3/L23: the path is already charged to the distinct-file budget by the
-      // observation above; only the recheck count is charged here.
-      if (observed.outcome !== 'changed') { unchecked = true; continue; }
-      if (budget.symbolRechecksRemaining <= 0) { unchecked = true; continue; }
-      budget.symbolRechecksRemaining -= 1;
-      const rechecked = await recheckSymbol(ctx, anchor, limits.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX);
+      if (observed.outcome !== 'changed' || read.status !== 'ready') { unchecked = true; continue; }
+      const rechecked = judgement.locators.get(index) ?? nativeRecheck(budget, anchor.path, read, anchor.symbol);
       if (rechecked.status === 'changed') staleReasons.push('symbol_signature_changed');
       else if (rechecked.status === 'missing') {
         slotReasons[index]!.push('symbol_missing');
@@ -954,7 +1395,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         if (!FILE_DIGEST.test(fact.digest)) return { ok: true, value: { kind: 'unresolved', reason: 'invalid_file_digest' } };
         if (!isSafeRelativePath(fact.path)) return { ok: true, value: { kind: 'unresolved', reason: 'forbidden' } };
         // R3: the fact's path shares the call-level observation budget.
-        const observed = await observeForItem(ctx, budget, itemObs, fact.path, fact.digest);
+        const observed = observeForItem(budget, itemObs, fact.path, fact.digest, 'raw');
         if (observed.outcome === 'unchecked') return { ok: true, value: { kind: 'budget' } };
         if (observed.outcome === 'deleted') return { ok: true, value: { kind: 'changed', path: fact.path, deleted: true } };
         if (observed.outcome === 'same') return { ok: true, value: { kind: 'untouched' } };
@@ -1093,27 +1534,29 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     return { ok: true, value: scored.slice(0, NOTE_SIMILAR_MAX) };
   }
 
+  /** S2.5: the item's body: the head, or the asked version (a supplied `snapshot` is ignored at the head version). */
+  async function bodyOfItem(ctx: CoreCallContext, item: NoteHeadCheckItemV1): Promise<Outcome<CheckBody>> {
+    if (item.version === item.head.version) return { ok: true, value: bodyOfHead(item.head) };
+    let snapshot = item.snapshot;
+    if (snapshot === undefined) {
+      const version = await readVersion(ctx.projectId, item.head.noteId, item.version);
+      if (!version.ok) return version;
+      if (version.value === null) return okFalse('not_found', 'the note version does not exist');
+      snapshot = version.value;
+    }
+    return { ok: true, value: bodyOfVersion(snapshot) };
+  }
+
   /**
    * S2.5: the one item body shared by `checkNotes` (which reads the head and
-   * version first) and `checkHeads` (which is handed them). A supplied
-   * `snapshot` is ignored when `version === head.version`.
+   * version first) and `checkHeads` (which is handed them). Every file it
+   * observes was read before the call's first item (R4).
    */
-  async function checkItem(ctx: CoreCallContext, item: NoteHeadCheckItemV1, budget: CheckBudget,
-    withSimilar: boolean, caches: CheckCaches):
-  Promise<Outcome<NoteCheckV1>> {
+  async function checkItem(ctx: CoreCallContext, item: NoteHeadCheckItemV1, body: CheckBody, judgement: ItemJudgement,
+    budget: CheckBudget, withSimilar: boolean, caches: CheckCaches):
+  Promise<Outcome<CheckedItem>> {
     const head = item.head;
-    let body = bodyOfHead(head);
     const stagedRunKey: string | null = head.stagedRunKey;
-    if (item.version !== head.version) {
-      let snapshot = item.snapshot;
-      if (snapshot === undefined) {
-        const version = await readVersion(ctx.projectId, head.noteId, item.version);
-        if (!version.ok) return version;
-        if (version.value === null) return okFalse('not_found', 'the note version does not exist');
-        snapshot = version.value;
-      }
-      body = bodyOfVersion(snapshot);
-    }
 
     const cache = caches.heads;
     // S2.6 (b4): `conflicting`/`overQuota` are memoized per noteId@head.version.
@@ -1146,7 +1589,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     // R3: the check's ONE observation pass. Basis files first, then file facts,
     // then file anchors; all share the call's distinct-file budget.
     for (const file of body.basis.files) {
-      const observation = await observeForItem(ctx, budget, itemObs, file.path, file.digest);
+      const observation = observeForItem(budget, itemObs, file.path, file.digest, 'raw');
       if (observation.outcome === 'changed') { changedFiles.push({ path: observation.path, deleted: false }); staleReasons.push('file_changed'); }
       else if (observation.outcome === 'deleted') { changedFiles.push({ path: observation.path, deleted: true }); staleReasons.push('file_deleted'); }
       else if (observation.outcome !== 'same') unchecked = true;
@@ -1202,10 +1645,14 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     if (!hintOutcome.ok) return hintOutcome;
     hints.push(...hintOutcome.value);
 
-    const anchor = await anchorStatusOf(ctx, body, budget, itemObs, caches);
+    const anchor = await anchorStatusOf(ctx, body, budget, itemObs, caches, judgement);
     if (!anchor.ok) return anchor;
     staleReasons.push(...anchor.value.staleReasons);
     if (anchor.value.unchecked) unchecked = true;
+
+    // R5/R7: a link reads its kept second-tier conclusion, else its first tier (judged before the items).
+    const linkVerification = judgement.link?.verification;
+    const linkRead = judgement.link?.read ?? null;
 
     let freshness: NoteCheckV1['freshness'] = 'fresh';
     if (unchecked || unresolvedFacts.length > 0) freshness = 'unchecked';
@@ -1225,8 +1672,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     // own-goal term does not apply to it.
     const ownGoalEligible = body.kind === 'link' || isProjectUnderstanding || body.state !== 'accepted'
       || callerGoalId === null || head.goalId === callerGoalId || head.confirmedByUser;
-    const currentEligible = stateEligible && ownGoalEligible && isHeadVersion && freshness === 'fresh'
-      && !derived.conflicting && !invalid && !sourceUnavailable && !anchor.value.retired && unresolvedFacts.length === 0;
+    // R10: a link is current only while every anchor slot is live and its read is neither broken nor unchecked.
+    const slotsLive = body.kind !== 'link' || anchor.value.anchorSlots.every(slot => slot.status === 'live');
+    const eligibleBase = stateEligible && ownGoalEligible && isHeadVersion && freshness === 'fresh'
+      && !derived.conflicting && !invalid && !sourceUnavailable && !anchor.value.retired && unresolvedFacts.length === 0
+      && slotsLive;
+    const currentEligible = eligibleBase && linkReadCurrent(linkVerification);
 
     let similar: NoteSimilarV1[] | undefined;
     if (withSimilar) {
@@ -1247,7 +1698,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       updateDue = status.value.updateDue;
     }
 
-    return { ok: true, value: {
+    const result: NoteCheckV1 = {
       noteId: body.noteId, version: body.version,
       observedFiles: [...itemObs.values()],
       freshness, changedFiles, staleReasons,
@@ -1258,11 +1709,137 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       anchorSlots: anchor.value.anchorSlots,
       retiredExtraAnchors: anchor.value.retiredExtraAnchors,
       unresolvedFacts, uncheckedFacts, hints,
-      // The read side carries the stored write-time result here; a later read
-      // may replace it with its own recheck result.
-      ...(body.kind === 'link' && body.link !== undefined ? { linkVerification: body.link.verification } : {}),
+      // The read-time result: the first tier's, or the kept second-tier conclusion.
+      ...(linkVerification === undefined ? {} : { linkVerification }),
       ...(similar === undefined ? {} : { similar }),
-    } };
+    };
+    return { ok: true, value: { result, head, link: body.kind === 'link' ? { read: linkRead, eligibleBase } : null } };
+  }
+
+  /** R8/R9: a link's read updates the doubtful queue and the broken register of its head version. */
+  function registerLinkRead(ctx: CoreCallContext, entry: CheckedItem, heldByRun: string | undefined): void {
+    const verification = entry.result.linkVerification;
+    if (entry.link === null || verification === undefined) return;
+    const head = entry.head;
+    const key = linkKey(ctx, head.noteId);
+    // Every state change bumps the version, so an entry of an older version is out of date.
+    if (doubtful.get(key)?.version !== head.version) doubtful.delete(key);
+    if (broken.get(key)?.version !== head.version) broken.delete(key);
+    if (entry.result.version !== head.version) return;
+    if (verification.status === 'unchecked' && verification.reason === 'refs_pending') doubtful.set(key, registerEntry(ctx, head));
+    else if (verification.status !== 'unchecked') doubtful.delete(key);
+    registerBroken(ctx, head, verification, heldByRun);
+  }
+
+  /** R9: an accepted/reviewed head version read `broken` is registered, with the Run it was read for when given. */
+  function registerBroken(ctx: CoreCallContext, head: NoteHeadSnapshot, verification: LinkVerificationV1,
+    heldByRun: string | undefined): void {
+    const key = linkKey(ctx, head.noteId);
+    if (verification.status !== 'broken' || (head.state !== 'accepted' && head.state !== 'reviewed')) {
+      broken.delete(key);
+      return;
+    }
+    const held = broken.get(key);
+    broken.set(key, { ...registerEntry(ctx, head),
+      heldByRun: heldByRun ?? (held?.version === head.version ? held.heldByRun : null) });
+  }
+
+  /** The shared pass of both entries: the bodies, the one gate read, each item, then the Host registers. */
+  async function checkAll(ctx: CoreCallContext, items: readonly NoteHeadCheckItemV1[], caches: CheckCaches,
+    withSimilar: boolean, heldByRun: string | undefined): Promise<Outcome<CheckedItem[]>> {
+    const bodies: CheckBody[] = [];
+    for (const item of items) {
+      const body = await bodyOfItem(ctx, item);
+      if (!body.ok) return body;
+      bodies.push(body.value);
+    }
+    const budget = newCheckBudget(limits);
+    try {
+      await readPlanned(ctx, bodies, budget);
+      // R3: every item's single-file work first, in item order, while the Python/C++ lookups run; then the one wait.
+      const judgements = bodies.map(body => judgeItem(ctx, body, budget));
+      await settleNatives(budget);
+      const checked: CheckedItem[] = [];
+      for (const [index, item] of items.entries()) {
+        const outcome = await checkItem(ctx, item, bodies[index]!, judgements[index]!, budget, withSimilar, caches);
+        if (!outcome.ok) return outcome;
+        checked.push(outcome.value);
+      }
+      for (const entry of checked) registerLinkRead(ctx, entry, heldByRun);
+      return { ok: true, value: checked };
+    } finally {
+      if (budget.natives.timer !== null) clearTimeout(budget.natives.timer);
+    }
+  }
+
+  /**
+   * R6: the head-version links read `refs_pending` (no kept conclusion), by `noteId`, at most
+   * `NOTE_LINK_VERIFY_MAX`, go to one second-tier request, one group per link of its doubtful parts.
+   * The answers replace those parts and the link is merged again. An `agent` caller waits at most
+   * `checkDeadlineMs`; past it the whole batch reads `budget`, while the request still finishes and
+   * is kept as if it had been waited for. Failure in any form is a `failed` answer.
+   */
+  async function verifyDoubtful(ctx: CoreCallContext, checked: readonly CheckedItem[],
+    priority: NoteLinkVerifyV1['priority'], heldByRun: string | undefined): Promise<void> {
+    const byNote = new Map<string, CheckedItem[]>();
+    for (const entry of checked) {
+      const verification = entry.result.linkVerification;
+      if (entry.link?.read == null || entry.result.version !== entry.head.version
+        || verification?.status !== 'unchecked' || verification.reason !== 'refs_pending') continue;
+      byNote.set(entry.head.noteId, [...(byNote.get(entry.head.noteId) ?? []), entry]);
+    }
+    const links = [...byNote.keys()].sort().slice(0, NOTE_LINK_VERIFY_MAX).map(noteId => byNote.get(noteId)!);
+    if (links.length === 0) return;
+    const reads = links.map(entries => entries[0]!.link!.read!);
+    const groups = reads.map(read => read.parts.flatMap(part => part.status === 'doubt' && part.question !== null ? [part.question] : []));
+    const verify = workspace?.verify;
+    const answered: Promise<ReferenceCheckResultV1 | null> = verify === undefined ? Promise.resolve(null)
+      : verify(ctx, { workspace: workspaceRef(ctx), priority, groups })
+        .then(result => result.status === 'ready' ? result.value : null, () => null);
+    const settled = answered.then(result => links.map((entries, index) =>
+      settleLink(ctx, entries[0]!.head, reads[index]!, result, index, heldByRun)));
+    let conclusions: LinkVerificationV1[] | null;
+    if (priority === 'agent') {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), limits.checkDeadlineMs ?? NOTE_CHECK_DEADLINE_MS); });
+      conclusions = await Promise.race([settled, deadline]);
+      clearTimeout(timer);
+    } else {
+      conclusions = await settled;
+    }
+    links.forEach((entries, index) => {
+      const verification: LinkVerificationV1 = conclusions?.[index] ?? { status: 'unchecked', reason: 'budget' };
+      for (const entry of entries) {
+        entry.result = { ...entry.result, linkVerification: verification,
+          currentEligible: entry.link!.eligibleBase && linkReadCurrent(verification) };
+      }
+    });
+  }
+
+  /**
+   * R6/R7: one link's second-tier answers merged into its first tier. The conclusion is kept only
+   * when every answer has a definite reason and the analysed files (and the configuration, when it
+   * is the gate's) still have the digests the first tier read; otherwise this read is `unavailable`.
+   */
+  function settleLink(ctx: CoreCallContext, head: NoteHeadSnapshot, read: LinkRead, result: ReferenceCheckResultV1 | null,
+    index: number, heldByRun: string | undefined): LinkVerificationV1 {
+    const answers = result?.answers[index];
+    let next = 0;
+    const parts = read.parts.map(part => part.status === 'doubt' && part.question !== null
+      ? { ...part, status: answeredStatus(answers?.[next++]) } : part);
+    const configAgrees = result?.config == null || read.config === null || result.config.path !== read.config.path
+      || result.config.digest === read.config.digest;
+    let conclusion = linkVerificationOfParts(parts);
+    const key = linkKey(ctx, head.noteId);
+    if (result !== null && (!analysedDigestsMatch(result.analysed, read.files) || !configAgrees)) {
+      conclusion = { status: 'unchecked', reason: 'unavailable' };
+    } else if (result !== null && answers !== undefined && answers.every(recordableAnswer)) {
+      linkConclusions.set(key, { version: head.version, gate: { files: read.files, config: result.config }, conclusion });
+      // A newer version queued meanwhile has no conclusion yet and stays queued.
+      if (doubtful.get(key)?.version === head.version) doubtful.delete(key);
+    }
+    registerBroken(ctx, head, conclusion, heldByRun);
+    return conclusion;
   }
 
   return {
@@ -1272,10 +1849,9 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
      */
     async checkNotes(ctx, input): Promise<ReadResult<NoteCheckV1[]>> {
       if (!Array.isArray(input.items)) return { status: 'rejected', code: 'invalid', reason: 'items must be an array' };
-      // R2: one cache set per call; nothing survives the call.
+      // R2: the record caches live for one call; only the Host memory above outlives it.
       const caches = newCheckCaches();
-      const budget = newCheckBudget(limits);
-      const results: NoteCheckV1[] = [];
+      const items: NoteHeadCheckItemV1[] = [];
       for (const item of input.items) {
         if (typeof item?.noteId !== 'string' || item.noteId.length === 0 || !Number.isSafeInteger(item.version)) {
           return { status: 'rejected', code: 'invalid', reason: 'each item needs a note id and a version' };
@@ -1283,12 +1859,12 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         const headOutcome = await readHeadCached(ctx, item.noteId, caches);
         if (!headOutcome.ok) return mapStoreFailure(headOutcome);
         if (headOutcome.value === null) return mapStoreFailure(okFalse('not_found', 'the note does not exist'));
-        const outcome = await checkItem(ctx,
-          { head: headOutcome.value, version: item.version }, budget, input.withSimilar === true, caches);
-        if (!outcome.ok) return mapStoreFailure(outcome);
-        results.push(outcome.value);
+        items.push({ head: headOutcome.value, version: item.version });
       }
-      return { status: 'ready', value: results };
+      const checked = await checkAll(ctx, items, caches, input.withSimilar === true, input.heldByRun);
+      if (!checked.ok) return mapStoreFailure(checked);
+      if (input.verifyLinks !== undefined) await verifyDoubtful(ctx, checked.value, input.verifyLinks.priority, input.heldByRun);
+      return { status: 'ready', value: checked.value.map(entry => entry.result) };
     },
     /**
      * S2.5: the internal entry the read model uses. The heads arrive from
@@ -1314,17 +1890,15 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         // per-anchor pointer and head reads for the whole call.
         for (const [key, seed] of input.understandingPointers) caches.understandingSeed.set(key, seed);
       }
-      const budget = newCheckBudget(limits);
-      const results: NoteCheckV1[] = [];
       for (const item of input.items) {
         if (item?.head === undefined || typeof item.head.noteId !== 'string'
           || !Number.isSafeInteger(item.version)) {
           return { status: 'rejected', code: 'invalid', reason: 'each item needs a head and a version' };
         }
-        const outcome = await checkItem(ctx, item, budget, false, caches);
-        if (!outcome.ok) return mapStoreFailure(outcome);
-        results.push(outcome.value);
       }
+      const checked = await checkAll(ctx, input.items, caches, false, undefined);
+      if (!checked.ok) return mapStoreFailure(checked);
+      const results = checked.value.map(entry => entry.result);
       // U-3: the same caches answer the requested understanding anchors
       // (pointers, triggers and the plan), so `lookup` no longer reads its own.
       const understanding: UnderstandingStatusV1[] = [];
@@ -1334,6 +1908,17 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         understanding.push(status.value);
       }
       return { status: 'ready', value: { items: results, understanding } };
+    },
+    doubtfulLinks(scope, max) {
+      return [...doubtful.values()]
+        .filter(entry => entry.projectId === scope.projectId && entry.workspaceId === scope.workspaceId)
+        .sort((left, right) => (left.noteId < right.noteId ? -1 : left.noteId > right.noteId ? 1 : 0))
+        .slice(0, max).map(entry => ({ noteId: entry.noteId, version: entry.version }));
+    },
+    brokenLinks(scope) {
+      return [...broken.values()]
+        .filter(entry => entry.projectId === scope.projectId && entry.workspaceId === scope.workspaceId)
+        .map(entry => ({ noteId: entry.noteId, version: entry.version, heldByRun: entry.heldByRun }));
     },
   };
 }

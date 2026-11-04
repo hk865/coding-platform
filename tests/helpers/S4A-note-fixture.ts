@@ -51,7 +51,7 @@ export type S4ANoteLimits = {
   readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
   textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
   anchorLinkQuota?: number; goalLinkQuota?: number; projectFlowQuota?: number;
-  linkRecheckMax?: number; flowCandidateMax?: number;
+  flowCandidateMax?: number; readParseBytesMax?: number; checkDeadlineMs?: number;
 };
 
 let suffixCounter = 0;

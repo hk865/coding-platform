@@ -50,6 +50,8 @@
   "note.warning.conflict": "冲突",
   "note.warning.sourceUnavailable": "来源不可用",
   "note.warning.link_broken": "证据对不上",
+  "note.warning.links_pending.prefix": "这些节点上另有 ",
+  "note.warning.links_pending.suffix": " 条联系待核，不能当现行结论",
   "note.warning.separator": "：",
   "note.warning.suffix": "，不能当现行结论",
   "contextExtension.decisionPrefix": "待决定：",

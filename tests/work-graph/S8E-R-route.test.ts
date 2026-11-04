@@ -436,3 +436,38 @@ describe('rejects: F2 E2-27 a bad scope is invalid on both semantic reads', () =
       }
     }, 180_000);
 });
+
+// E2-09 (8E-2 :833; R13 :421; §2.0 :156, :251): the check route takes 1 to 20
+// items; 21 (K1 and K3 in turn) and 0 are both `invalid` and build nothing (A6:
+// the builds are the read that nothing ran). K1 and K3 are both doubtful after
+// compose.ts line 10 changes (R5 :355), so a route without the bound would answer
+// `ready` with one build. The reason text is not asserted (the spec writes none).
+// The file helpers are imported inside the row so every line above stays as it is.
+describe('rejects: R E2-09 the check route takes 1 to 20 items', () => {
+  it.each([21, 0])('E2-09 %i items: invalid, no value, no build', async count => {
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const world = await openS8ESemanticWorld({ scribeTasks: 1 });
+    try {
+      const refs: { noteId: string; version: number }[] = [];
+      for (const name of ['K1', 'K3'] as const) {
+        const write = await world.writePerson(s8eLinkDraft(S8E_LINKS[name]));
+        if (write.status !== 'accepted') throw new Error(`${name} was not accepted: ${JSON.stringify(write)}`);
+        refs.push({ noteId: write.noteId, version: write.version });
+      }
+      const compose = join(world.root, 'src/compose.ts');
+      const lines = (await readFile(compose, 'utf8')).split('\n');
+      lines[9] = 'export const begin = (id: string) => runModel(access, id);';
+      await writeFile(compose, lines.join('\n'), 'utf8');
+
+      const before = world.linkCheck.builds();
+      const result = await world.route('architecture/semantic-links/check',
+        { items: Array.from({ length: count }, (_, index) => refs[index % 2]!) });
+      expect(result).toMatchObject({ status: 'rejected', code: 'invalid' });
+      expect(result).not.toHaveProperty('value');
+      expect(world.linkCheck.builds() - before).toBe(0);
+    } finally {
+      await world.close();
+    }
+  }, 180_000);
+});

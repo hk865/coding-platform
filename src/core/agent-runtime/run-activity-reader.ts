@@ -17,7 +17,7 @@
 import { RUN_ACTIVITY_MAX_PAGES, unknownFacts } from '../../contracts/run-activity.js';
 import type { RunActivityBound, RunActivityFactsV1 } from '../../contracts/run-activity.js';
 import type { SessionRecord } from '../../contracts/core/session.js';
-import { decodeKernelEntry, type DecodedKernelRecord } from './kernel-turn-facts.js';
+import { applyTurnEvents, decodeKernelEntry, reduceTurnFromStart, type DecodedKernelRecord } from './kernel-turn-facts.js';
 import { tallyTurnActivity } from './run-activity-tally.js';
 import type { SessionHistoryCursorOwner } from './session-operations.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
@@ -28,6 +28,17 @@ export { unknownFacts } from '../../contracts/run-activity.js';
 
 /** L6: the answer of one window read. `retry_later` writes nothing and is retried later. */
 export type RunActivityRead = { kind: 'facts'; facts: RunActivityFactsV1 } | { kind: 'retry_later'; reason: string };
+
+/**
+ * Kept by a caller that reads the same window again and again (one `fromPosition` and `kernel`,
+ * `through: 'kernel_tail'`): the records already decoded and the last position they reach. A read
+ * then fetches only the records after it and tallies all of them, which answers exactly what
+ * reading the whole window again answers; a read that does not reach the tail within the window's
+ * bound adds nothing.
+ */
+export type RunActivityResume = { decoded: DecodedKernelRecord[]; position: number | null;
+  /** The fixed Turn reduced over `decoded`, so a later read applies only the new events. */
+  reduced: { state: NonNullable<ReturnType<typeof reduceTurnFromStart>>; position: number } | null };
 
 const PAGE_LIMIT = 200;
 
@@ -54,6 +65,7 @@ export async function readRunActivityFacts(
     probeFirst: boolean;
     signal: AbortSignal;
     maxPages?: number;
+    resume?: RunActivityResume;
   },
 ): Promise<RunActivityRead> {
   const maxPages = input.maxPages ?? RUN_ACTIVITY_MAX_PAGES;
@@ -68,8 +80,10 @@ export async function readRunActivityFacts(
     if (probe.verdict !== 'ready') return { kind: 'retry_later', reason: probe.reason };
   }
   const bound: RunActivityBound = input.through === 'kernel_tail' ? 'kernel_tail' : input.through.bound;
-  const decoded: DecodedKernelRecord[] = [];
-  let cursor = Math.max(0, input.fromPosition - 1);
+  // The whole window holds at most `maxPages` pages; a resumed read counts the records it already holds.
+  const cap = maxPages * PAGE_LIMIT;
+  const decoded: DecodedKernelRecord[] = [...(input.resume?.decoded ?? [])];
+  let cursor = input.resume?.position ?? Math.max(0, input.fromPosition - 1);
   let expected = cursor + 1;
   let throughPosition: number | null = input.through === 'kernel_tail' ? null : input.through.position;
   for (let page = 0; page < maxPages; page += 1) {
@@ -91,6 +105,7 @@ export async function readRunActivityFacts(
     }
     throughPosition = window.value.throughPosition;
     for (const entry of window.value.entries) {
+      if (decoded.length === cap) return { kind: 'facts', facts: unknownFacts('capacity', `the activity window exceeds ${String(maxPages)} pages`) };
       const item = decodeKernelEntry(entry);
       if (item === null) return { kind: 'facts', facts: unknownFacts('history_damaged', 'a raw history entry is damaged or not a Kernel Session record') };
       if (item.position !== expected) return { kind: 'facts', facts: unknownFacts('history_damaged', 'the Kernel history positions are not contiguous') };
@@ -98,10 +113,22 @@ export async function readRunActivityFacts(
       decoded.push(item);
     }
     cursor = window.value.nextPosition;
+    if (window.value.hasMore && decoded.length === cap) {
+      return { kind: 'facts', facts: unknownFacts('capacity', `the activity window exceeds ${String(maxPages)} pages`) };
+    }
     if (!window.value.hasMore) {
+      const resume = input.resume;
+      // The Kernel reducer is a left fold, so applying the new events to the kept state is the full reduction.
+      const reduced = resume === undefined ? undefined : resume.reduced === null ? reduceTurnFromStart(decoded, input.kernel)
+        : applyTurnEvents(resume.reduced.state, decoded, input.kernel, resume.reduced.position);
+      if (resume !== undefined) {
+        resume.decoded = decoded;
+        resume.position = expected - 1;
+        resume.reduced = reduced == null ? null : { state: reduced, position: expected - 1 };
+      }
       const facts = tallyTurnActivity(decoded, input.kernel, {
         fromPosition: input.fromPosition, throughPosition: throughPosition ?? input.fromPosition, bound,
-      });
+      }, reduced);
       return { kind: 'facts', facts };
     }
     if (page === maxPages - 1) {

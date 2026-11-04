@@ -134,7 +134,7 @@ export type LinkVerificationV1 =
   | { status: 'verified' }
   | { status: 'broken'; missing: number[] }     // missing evidence indexes, 0-based; read time only
   | { status: 'unverifiable'; reason: 'key_not_literal' | 'language_unsupported' | 'analyzer_unavailable' }
-  | { status: 'unchecked'; reason: 'budget' | 'unavailable' };   // read time only
+  | { status: 'unchecked'; reason: 'budget' | 'unavailable' | 'refs_pending' };   // read time only
 
 /** Stored in `NoteBodyV1.link`: the raw selectors, resolved locations, file digests and the write-time result. */
 export type LinkEvidenceStoredV1 = {

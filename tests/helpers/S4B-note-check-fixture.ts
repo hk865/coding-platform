@@ -125,7 +125,12 @@ export async function createS4BNoteCheckFixture(kind: S4ANoteFixtureKind = 'memo
         }
         return handle.tools.readWorkspace(...args);
       } };
-    return { ...handle, tools };
+    // The same switch fails every path of the batch read the note check's gate goes through.
+    const readWorkspaceFiles: typeof handle.readWorkspaceFiles = async (ctx, input) => workspaceFault
+      ? { status: 'ready', value: input.paths.map(() => ({ status: 'rejected' as const, code: 'unavailable' as const,
+        reason: 's4b injected workspace failure' })) }
+      : handle.readWorkspaceFiles(ctx, input);
+    return { ...handle, tools, readWorkspaceFiles };
   });
   // R16/R4: every injected limit must reach the production holder through the
   // single `noteLimits` option; the old read-model factory spy is gone.

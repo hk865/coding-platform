@@ -152,6 +152,11 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         messageId: { required: true },
         body: { required: true },
     },
+    'link-breaks-input': {
+        noteId: { required: true },
+        version: { required: true },
+        missing: { required: true },
+    },
     'scribe-reminder': {
         marker: { required: true },
         pendingCount: { required: true },

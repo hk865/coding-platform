@@ -174,7 +174,7 @@ export function createReferenceAnalyzer(deps: ReferenceAnalyzerDependencies): Re
     const groups: (ReferenceWorkerQuestion | null)[][] = request.groups.map((group, groupIndex) => group.map((question, index) => {
       const decide = (value: ReferenceAnswerV1) => { answers[groupIndex]![index] = value; return null; };
       const { definition, evidence } = question;
-      if (!inventory.has(definition.path) || !inventory.has(evidence.path)) return decide({ status: 'not_found' });
+      if (!inventory.has(definition.path) || !inventory.has(evidence.path)) return decide({ status: 'unverifiable', reason: 'not_in_project' });
       const definitionFile = read.get(definition.path), evidenceFile = read.get(evidence.path);
       if (!definitionFile || !evidenceFile) return decide(FAILED);
       if (!projectFiles.has(SOURCE_ROOT + definition.path) || !projectFiles.has(SOURCE_ROOT + evidence.path))

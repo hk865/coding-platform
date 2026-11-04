@@ -222,7 +222,11 @@ function evidenceOutsideEnd(role: LinkEvidenceRoleV1, path: string,
   }
 }
 
-function referenceFieldsOf(relation: SemanticRelationV1, role: LinkEvidenceRoleV1): ReferenceField[] {
+/** The relations whose link names a key; injects and callback name none. */
+export function relationNeedsKey(relation: SemanticRelationV1): boolean { return relation !== 'injects' && relation !== 'callback'; }
+
+/** The definitions one evidence of this role must reference (L3a). */
+export function referenceFieldsOf(relation: SemanticRelationV1, role: LinkEvidenceRoleV1): ReferenceField[] {
   switch (relation) {
     case 'injects':
     case 'callback': return role === 'wire' ? ['to', 'via'] : ['via'];
@@ -231,7 +235,8 @@ function referenceFieldsOf(relation: SemanticRelationV1, role: LinkEvidenceRoleV
   }
 }
 
-function literalInScope(text: string, literal: string, scope: EvidenceScopeV1): boolean {
+/** Some line of the scope contains the literal (a trailing CR is not part of the line). */
+export function literalInScope(text: string, literal: string, scope: EvidenceScopeV1): boolean {
   const lines = text.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const line = index + 1;
@@ -381,7 +386,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
 
   const endHasSymbol = (end: LinkEndRequestV1 | null): boolean =>
     end !== null && end.kind === 'file' && end.symbolRequest !== undefined;
-  const needsKey = relation !== 'injects' && relation !== 'callback';
+  const needsKey = relationNeedsKey(relation);
   const needsCapture = endHasSymbol(ends.from) || endHasSymbol(ends.to) || endHasSymbol(ends.via)
     || rawKey?.kind === 'symbol'
     || draft.link.evidence.some(evidence => evidence.at.symbolRequest !== undefined);

@@ -309,22 +309,24 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
       expect(checkOf(envelope).linkVerification).toEqual({ status: 'unverifiable', reason: 'language_unsupported' });
     }, 60_000);
 
-  it.each<[string, (target: S8ESemanticWorld) => void]>([
+  it.each<[string, (target: S8ESemanticWorld) => void, Record<string, unknown>]>([
     ['capture failure', target => {
       target.linkCheck.faultCaptures(request => request.provider === 'typescript'
         ? { status: 'rejected', code: 'unavailable', reason: 'the capture cannot be read' }
         : null);
-    }],
+    }, { status: 'unverifiable', reason: 'language_unsupported' }],
     ['content read failure', target => {
       target.linkCheck.faultReads(request => request.path === 'config/handlers.json'
         && request.version.kind === 'working_tree'
         ? { status: 'rejected', code: 'unavailable', reason: 'the JSON working tree cannot be read' }
         : null);
-    }],
-  ])('E-35 %s: a non-TS register evidence keeps language_unsupported', async (topic, install) => {
-    // The stored check's linkVerification is the write-time language verdict:
-    // a non-TS evidence is language_unsupported before the failed capture/read,
-    // never analyzer_unavailable.
+    }, { status: 'unchecked', reason: 'unavailable' }],
+  ])('E-35 %s: a non-TS register evidence is accepted with evidence_unverifiable', async (topic, install, check) => {
+    // The write keeps the non-TS evidence's language verdict (language_unsupported
+    // before the failed capture/read, never analyzer_unavailable). The check after
+    // the write is a first-tier read; the read fault also hits its batch read, so an
+    // unreadable JSON file reads unchecked/unavailable (8E-2 R5 :357, :359;
+    // r-start-rulings 6).
     const draft = s8eLinkDraft(S8E_LINKS.K3, { topic });
     draft.link.evidence[0] = { role: 'register',
       at: { path: 'config/handlers.json', range: { startLine: 1, endLine: 1 } } };
@@ -342,8 +344,7 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     expect(write.status).toBe('accepted');
     expect(write.version).toBe(1);
     expect(write.warnings).toEqual(['evidence_unverifiable']);
-    expect(checkOf(envelope).linkVerification)
-      .toEqual({ status: 'unverifiable', reason: 'language_unsupported' });
+    expect(checkOf(envelope).linkVerification).toEqual(check);
   }, 60_000);
 
   it('E-35 second: changing the JSON line away from the key is evidence_missing at [0]', async () => {
@@ -391,8 +392,8 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
       expect(write.version).toBe(1);
       expect(write.warnings).toEqual(['evidence_unverifiable']);
       const item = await itemOf(world, write.noteId);
-      expect(item.link?.verification).toEqual({ status: 'unverifiable', reason: 'analyzer_unavailable' });
-      expect(checkOf(envelope).linkVerification).toEqual({ status: 'unverifiable', reason: 'analyzer_unavailable' });
+      expect(item.link?.verification).toEqual({ status: 'verified' });
+      expect(checkOf(envelope).linkVerification).toEqual({ status: 'verified' });
       // The stored raw selector/no-symbol/null-digest stay on the evidence item.
       const stored = item.link?.evidence[0];
       expect(stored?.at.symbolRequest?.name).toBe('saveReport');

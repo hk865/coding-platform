@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "c6f6384c37c8b519ee918c7ca61c5d02b6ccd5e84f882a2c771bbc17653a4ab4"
+    "sha256": "c835531aa46d6814b1dbb774171224131c2670963b7da679fbf43e1cb194326e"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "6da33894f7fbf42d2ea7b2de9525668ec5c4db3dd8d1c5ed75d5a295ea58b852"
+    "sha256": "092b6a09e88a42666aadfe4b926d7c04a06860da0e9aefa08440489c7b22b93a"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
@@ -133,7 +133,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "f60681b96cceae0db4550a8548e324818871d1819bf671683935abe3bcf1d2e2"
+    "sha256": "a638a4488ff359e2af7c6d4fa70d92f4636418ade3f399aca5a19d460d37d91a"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
@@ -329,11 +329,11 @@
   },
   {
     "path": "scripts/cpp-source-query.py",
-    "sha256": "bd4b3a4ebd42a02381d737d9f981f421ab7a98dbb5bea4060fe2244b84736936"
+    "sha256": "de672ce9ef3458fb823b5f2a75363d3b81dc9364f83659bc7473f6890d225408"
   },
   {
     "path": "scripts/python-source-query.py",
-    "sha256": "3a3491a59d93404dbd7d471110a4a1eeaaa93014833b59c3221765e72e42d8e1"
+    "sha256": "9e90e3a5e2f0a3ee8469f27f88a341aef62f254e6bd79279296863e06ec50fde"
   },
   {
     "path": "vendor/coding-agent/resources/README.md",
@@ -362,5 +362,9 @@
   {
     "path": "vendor/coding-agent/resources/skills/project-conventions/skill.json",
     "sha256": "bf7c1d7ca0f73eeda520bb702acd2e4dcd43f6966829afb584e05b43fb942c5a"
+  },
+  {
+    "path": "resources/prompts/platform/templates/link-breaks-input.txt",
+    "sha256": "78396998076ca5a7a26627b019f0c4123df2e4544ac01badca7bbf6bcf5d51f8"
   }
 ]

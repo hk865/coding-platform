@@ -44,7 +44,7 @@ import type {
 } from '../model/note-contracts.js';
 import { FIND_RELATED_FILES_MAX, MEMORY_PAGE_MAX, MEMORY_PAGE_DEFAULT, MEMORY_RESULT_MAX_BYTES, MEMORY_TOPICS_MAX,
   NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BODY_PAGE_BYTES, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
-  NOTE_PROJECT_FLOW_QUOTA, NOTE_RANK_WEIGHT_BODY,
+  NOTE_DOUBT_LINES_MAX, NOTE_PROJECT_FLOW_QUOTA, NOTE_RANK_WEIGHT_BODY,
   NOTE_RANK_WEIGHT_CONCLUSION, NOTE_RANK_WEIGHT_TOPIC,
   PROJECT_NORMS_CHECK_MAX, PROJECT_NORMS_MAX, TEXT_SEARCH_CANDIDATE_MAX,
   TEXT_SEARCH_MAX_TERMS } from '../model/note-contracts.js';
@@ -2257,6 +2257,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       head.confirmedByUser ? 0 : head.goalId === goalId ? 1 : 2;
     const general: NoteIndexRowV1[] = [];
     const S = PLATFORM_PROMPT_PACK_V1.strings;
+    // The links whose only review reason is references still waiting for the
+    // second tier, with their place in `general`; past NOTE_DOUBT_LINES_MAX
+    // they collapse into one counted row after the loop.
+    const pendingOnly: { at: number; head: NoteHeadSnapshot }[] = [];
     for (const head of generalHeads
       .filter(candidate => inContextNoteSection(candidate.kind) && visibleByDefault(candidate, goalId)
         && !excluded.has(candidate.noteId))
@@ -2277,8 +2281,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (head.kind === 'link') {
         // A current link renders its conclusion header; a broken one renders
         // only the broken warning (even when it is also stale/conflicting/
-        // source-unavailable); otherwise one row per applicable reason, and an
-        // `unchecked`-only link renders no row.
+        // source-unavailable). Otherwise a stale reason, or cross-file
+        // references still waiting for the second tier (`refs_pending`), give
+        // one review row, and conflicting/source-unavailable one row each; a
+        // link unchecked only as `unavailable`/`budget` renders no row.
         if (item.currentEligible) {
           general.push(row(renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
             conclusion: head.conclusion, ...headerExtrasOf(item) })));
@@ -2288,7 +2294,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
           general.push(row(warningLabelOf(S['note.warning.link_broken'], head)));
           continue;
         }
-        if (item.freshness === 'stale') general.push(row(warningLabelOf(S['note.warning.stale'], head)));
+        const verification = item.link?.verification;
+        const stale = item.freshness === 'stale' || item.staleReasons.length > 0;
+        const refsPending = verification?.status === 'unchecked' && verification.reason === 'refs_pending';
+        if (stale || refsPending) {
+          if (!stale) pendingOnly.push({ at: general.length, head });
+          general.push(row(warningLabelOf(S['note.warning.stale'], head)));
+        }
         if (item.conflicting) general.push(row(warningLabelOf(S['note.warning.conflict'], head)));
         if (item.sourceUnavailable) general.push(row(warningLabelOf(S['note.warning.sourceUnavailable'], head)));
         continue;
@@ -2307,6 +2319,18 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       const label = generalWarningLabel(item, head);
       if (label === null) continue;
       general.push(row(label));
+    }
+    // More than NOTE_DOUBT_LINES_MAX rows that exist only because the links'
+    // references wait for the second tier would crowd the section, so they
+    // become one counted row at the first one's place, carrying the identity
+    // of the smallest noteId among them.
+    if (pendingOnly.length > NOTE_DOUBT_LINES_MAX) {
+      const first = pendingOnly.reduce((min, entry) =>
+        (compareText(entry.head.noteId, min.head.noteId) < 0 ? entry : min)).head;
+      general[pendingOnly[0]!.at] = { anchorKey: displayAnchorOf(first), noteId: first.noteId, version: first.version,
+        kind: first.kind, conclusion: '', freshness: 'unchecked',
+        label: S['note.warning.links_pending.prefix'] + String(pendingOnly.length) + S['note.warning.links_pending.suffix'] };
+      for (const entry of pendingOnly.slice(1).reverse()) general.splice(entry.at, 1);
     }
 
     const reminders = pageBuilt.value.understanding.map(status => ({ anchorKey: status.anchorKey,

@@ -186,6 +186,7 @@ export type CoreRouteSuffix =
   | 'architecture/proposals/read'
   | 'architecture/semantic-links'
   | 'architecture/semantic-flows'
+  | 'architecture/semantic-links/check'
   | 'architecture/capture'
   | 'architecture/query'
   | 'architecture/compare'
@@ -393,12 +394,15 @@ export type ArchitectureSemanticLinksBody = PlainBody<SemanticLinksReader['readS
 export type ArchitectureSemanticLinksResponse = RouteResponse<SemanticLinksReader['readSemanticLinks']>;
 export type ArchitectureSemanticFlowsBody = PlainBody<SemanticLinksReader['readSemanticFlows']>;
 export type ArchitectureSemanticFlowsResponse = RouteResponse<SemanticLinksReader['readSemanticFlows']>;
+export type ArchitectureSemanticLinksCheckBody = PlainBody<SemanticLinksReader['checkSemanticLinks']>;
+export type ArchitectureSemanticLinksCheckResponse = RouteResponse<SemanticLinksReader['checkSemanticLinks']>;
 /** The architecture routes' body/result pairs; the route table names it so the aliases stay in the production graph. */
 export type ArchitectureCoreRouteDto = {
   'architecture/revise': { body: ArchitectureReviseBody; response: ArchitectureReviseResponse };
   'architecture/proposals/read': { body: ArchitectureProposalsReadBody; response: ArchitectureProposalsReadResponse };
   'architecture/semantic-links': { body: ArchitectureSemanticLinksBody; response: ArchitectureSemanticLinksResponse };
   'architecture/semantic-flows': { body: ArchitectureSemanticFlowsBody; response: ArchitectureSemanticFlowsResponse };
+  'architecture/semantic-links/check': { body: ArchitectureSemanticLinksCheckBody; response: ArchitectureSemanticLinksCheckResponse };
 };
 /** L8 (P16): the public manual capture body. The driver's trusted start
  * watermark (`requestSeq`) is not a public input, so the DTO omits it; the port

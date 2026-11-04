@@ -50,6 +50,7 @@
 流程类注记（`flow`）按 `noteId` 记有序步骤：给 2–20 条不重复、属于本项目且当前（`accepted` 或 `reviewed`）的步骤，第一步的 `from` 就是流程的锚点；步骤后来被取代时读作 `not_current`，流程不改写。
 {{#tool:record_note}}
 - 你用 `record_note` 的 `write` 和 `withdraw`，只动自己的注记；`review` 不属于你。
+- 平台说哪条联系被这次改动改断了，就在交结果之前用 `record_note` 重写或撤下它；这算工作结果的一部分。
 {{/tool:record_note}}
 
 ## 共享的东西只写一份

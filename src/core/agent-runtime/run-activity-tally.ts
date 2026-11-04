@@ -145,7 +145,8 @@ function changedLinesOf(
 }
 
 export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kernel: KernelExecutionBinding,
-  window: { fromPosition: number; throughPosition: number; bound: RunActivityBound }): RunActivityFactsV1 {
+  window: { fromPosition: number; throughPosition: number; bound: RunActivityBound },
+  reducedTurn?: ReturnType<typeof reduceTurnFromStart>): RunActivityFactsV1 {
   const inWindow = records.filter((record) => record.position <= window.throughPosition);
   const start = inWindow.find((record) => isTurnStart(record, kernel));
   if (start === undefined) {
@@ -163,7 +164,8 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
     lastRecordAt = record.record.recordedAt;
   }
 
-  const reduced = reduceTurnFromStart(inWindow, kernel);
+  // A caller that already reduced the Turn over these records hands it over.
+  const reduced = reducedTurn === undefined ? reduceTurnFromStart(inWindow, kernel) : reducedTurn;
   const turnTerminal = reduced !== null && TERMINAL_STATUSES.has(reduced.status);
 
   const started = new Map<string, StartedCall>();

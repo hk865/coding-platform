@@ -38,11 +38,21 @@ export const NOTE_ANCHOR_CANDIDATE_SCAN = 2000;
 // Slice 4B §2 constants (L11/L22/L23). All injectable, unmeasured initial values.
 export const NOTE_READ_FILES_MAX = 256;
 export const NOTE_READ_FACTS_MAX = 256;
+/** One call parses at most this many distinct files on their own, the file anchors and the link gates together. */
 export const NOTE_SYMBOL_RECHECK_MAX = 20;
+/** One call's single-file parses read at most this much text in total; equal to `NOTE_BASIS_FILE_MAX_BYTES`, so any readable file fits. */
+export const NOTE_READ_PARSE_BYTES_MAX = 1024 * 1024;
+/** One second-tier check takes at most this many links. */
+export const NOTE_LINK_VERIFY_MAX = 20;
+/** How long an `agent` check waits for the second tier before it answers `budget`. */
+export const NOTE_CHECK_DEADLINE_MS = 8_000;
+/** More doubtful-only link lines than this in one input section fold into one line. */
+export const NOTE_DOUBT_LINES_MAX = 3;
+/** How long one call waits in total for its Python/C++ lookups, from the first one sent. */
+export const NOTE_NATIVE_READ_WAIT_MS = 300;
 // 8E L1 link constants (slice-8E spec §2). `NOTE_LINK_EVIDENCE_MAX` is also the
 // write shape's evidence cap and takes no injectable field.
 export const NOTE_LINK_EVIDENCE_MAX = 8;
-export const NOTE_LINK_RECHECK_MAX = 10;
 export const NOTE_FLOW_CANDIDATE_MAX = 500;
 export const NOTE_ANCHOR_LINK_QUOTA = 30;
 export const NOTE_GOAL_LINK_QUOTA = 300;
@@ -240,14 +250,39 @@ export interface NoteDecisionApplyPort {
 
 export type NoteHintV1 = 'basis_outside_anchor' | 'file_module_mismatch' | 'deleted_path_unverified';
 
+/** Who asked for a second-tier check; the analyzer serves them in this order after the write gate. */
+export type NoteLinkVerifyV1 = { priority: 'run_end' | 'button' | 'agent' | 'background' };
+
+/**
+ * The second tier's `analysed` digests agree with the raw-byte digests read before it: every
+ * analysed path that was also read there has the same digest. A single-file judgement made on bytes
+ * that changed before the program was built must not stand for the new bytes.
+ */
+export function analysedDigestsMatch(analysed: readonly { path: string; digest: string }[],
+  read: ReadonlyMap<string, string>): boolean {
+  return analysed.every(entry => {
+    const digest = read.get(entry.path);
+    return digest === undefined || digest === entry.digest;
+  });
+}
+
 /**
  * Slice 4B L22: the one derived-field implementation, injected into the note
- * read model (L18: `notes` never imports `views`). Only reads; it never writes
- * or stores anything. Both the six memory reads and the write-after check call
- * this same function.
+ * read model (L18: `notes` never imports `views`). It writes no record. It keeps
+ * two kinds of Host memory: the second tier's link conclusions with the doubtful
+ * and broken link registers, and the single-file parse answers by text digest;
+ * both only make later reads cheaper and are gone on restart. Both the six memory
+ * reads and the write-after check call this same function.
  */
 export interface NoteCheckPort {
-  checkNotes(ctx: CoreCallContext, input: { items: { noteId: string; version: number }[]; withSimilar?: boolean }):
+  /**
+   * Without `verifyLinks` this is the first tier only and never builds a program;
+   * with it, the doubtful head-version links also go to the second tier.
+   * `heldByRun` names the Run this read is for (`canonicalJson(runRef)`); a broken
+   * link read in it is registered with that Run.
+   */
+  checkNotes(ctx: CoreCallContext, input: { items: { noteId: string; version: number }[]; withSimilar?: boolean;
+    verifyLinks?: NoteLinkVerifyV1; heldByRun?: string }):
     Promise<ReadResult<NoteCheckV1[]>>;
 }
 
@@ -294,6 +329,10 @@ export interface NoteHeadCheckPort extends NoteCheckPort {
       head: NoteHeadSnapshot | null;
     }>;
   }): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[] }>>;
+  /** The Host-memory queue of head-version links read `refs_pending` with no conclusion yet, by `noteId`. */
+  doubtfulLinks(scope: { projectId: string; workspaceId: string }, max: number): { noteId: string; version: number }[];
+  /** The Host-memory register of accepted/reviewed head-version links last read `broken`. */
+  brokenLinks(scope: { projectId: string; workspaceId: string }): { noteId: string; version: number; heldByRun: string | null }[];
 }
 
 export type NoteFileOutcome = 'same' | 'changed' | 'deleted' | 'forbidden' | 'capacity' | 'unavailable' | 'unchecked';
@@ -311,7 +350,11 @@ export type NoteCheckV1 = { noteId: string; version: number;
   /** One entry per slot: the primary anchor first, then `extraAnchors` order. */
   anchorSlots: { status: 'live' | 'retired'; reasons: ('module_removed' | 'interface_removed' | 'file_deleted'
     | 'task_ended' | 'stage_not_in_current_plan' | 'symbol_missing')[] }[];
-  /** The stored narrow result overlaid by the read side; 8E-1 only produces verified/unverifiable. */
+  /**
+   * The link's read-time result: the first tier's, or the second tier's conclusion kept in memory. It is
+   * `broken` or `unchecked` only at read time (`refs_pending` = the names are still there and the cross-file
+   * references wait for the second tier); the stored write-time result is only verified/unverifiable.
+   */
   linkVerification?: LinkVerificationV1;
   retiredExtraAnchors: string[];
   // R1: `invalid_file_digest` mirrors `invalid_commit_format` for a file fact

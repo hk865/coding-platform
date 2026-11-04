@@ -1334,6 +1334,18 @@
       "note": "called only by the frozen board logic after it is compiled at runtime (slice 9 of the orchestration design, E3-1 page shell); static reach analysis cannot see the generated class"
     },
     {
+      "file": "src/core/work-graph/model/note-contracts.ts",
+      "name": "NoteHeadCheckPort.doubtfulLinks",
+      "reason": "kept-for",
+      "note": "read by the Host's background link batch (8E-2 H), slice 8 of the orchestration design; delete this entry when H lands"
+    },
+    {
+      "file": "src/core/work-graph/model/note-contracts.ts",
+      "name": "NoteHeadCheckPort.brokenLinks",
+      "reason": "kept-for",
+      "note": "read by the scribe reminder's broken-link count (8E-2 S), slice 8 of the orchestration design; delete this entry when S lands"
+    },
+    {
       "file": "src/core/work-graph/architecture/proposal-service.ts",
       "name": "ArchitectureProposalService.freezeArchitectureProposalBatch",
       "reason": "kept-for",

@@ -19,7 +19,7 @@
 - `execution-history-contracts.ts` — 原历史分页与图执行历史的请求/端口类型。
 - `execution-control.ts` — 内部安全点控制协调器：pause/cancel 的 live handle 与退出证明。
 - `model-admission.ts` — 运行中并发的唯一准入口 `createModelAdmission`：每组一把内存锁，读项目额度与每个占用 Session 的持久相位，收集 `{duty, phase}` 后调用 `running-admission.ts` 的唯一纯计数；通过时返回 `admitted` 和 `release()`（调用方在 begin 提交后释放），不保存计数器，重启按持久相位重建。
-- `execution-driver.ts` — Work fresh 执行驱动与 shell blocked/allowance hook。 工具组的 owner 事实带上 `memberCreation`、`claims`（`request_rework` 的 requeue 入口）和 `evidence`（`request_recheck` 的复核入口），并把 Work Run 的 `runRef` 交给成员工具作可信身份；缺 owner 时对应工具名显式 `unsupported`，不静默丢弃；`owners.roleSplit` 和工厂参数 `roleSplit` 都跟随 `deps.roleSplit`。L31（A1b）：fresh begin 之前先经 `admission.admitModelCall`（`{projectId,duty,ref,kind:'run'}`，duty 由 `admission.dutyOfRole` 对 Session 的角色求出，就是计数用的同一个 Session 职责解析器；没有职责依据（`unknown`）的按执行者计）；未准入原样返回，Run 停在 `starting/authorized`；begin 无论提交或抛错都在 `finally` 释放 grant。没有注入 `admission` 就不设闸门。
+- `execution-driver.ts` — Work fresh 执行驱动与 shell blocked/allowance hook。 工具组的 owner 事实带上 `memberCreation`、`claims`（`request_rework` 的 requeue 入口）和 `evidence`（`request_recheck` 的复核入口），并把 Work Run 的 `runRef` 交给成员工具作可信身份；缺 owner 时对应工具名显式 `unsupported`，不静默丢弃；`owners.roleSplit` 和工厂参数 `roleSplit` 都跟随 `deps.roleSplit`。L31（A1b）：fresh begin 之前先经 `admission.admitModelCall`（`{projectId,duty,ref,kind:'run'}`，duty 由 `admission.dutyOfRole` 对 Session 的角色求出，就是计数用的同一个 Session 职责解析器；没有职责依据（`unknown`）的按执行者计）；未准入原样返回，Run 停在 `starting/authorized`；begin 无论提交或抛错都在 `finally` 释放 grant。没有注入 `admission` 就不设闸门。普通 Work Run 每个 `before_model` 安全点的平台输入是控制输入之后接 `linkBreakInputsFor`（`src/core/agent-runtime/execution-driver.ts:1074`，两者合成 `controlAndLinkBreakInputsFor` 交给 `createMailboxInputSupply` 的 `controlInputs`；审查轮不接）：经 `readRunActivityFacts` 取这次 Run 改过的文件（`definite ∪ possible`，去掉 `'.'`），按文件锚点翻页读上面 `accepted`/`reviewed` 的联系，用 Run 自己的上下文和 `heldByRun` 做第一档核对；确定断了的每条交一个 `link-breaks-input` 输入（`inputId`、文字只由编号、版本和下标定，已接受的不再交）；`refs_pending` 的头版本不在 `linksInFlight`（键 `noteId@version`）里的，最多 `NOTE_LINK_VERIFY_MAX` 条，用内部 signal 在后台交第二档（`priority: 'run_end'`，不等），结论之后的安全点从核对的内存读到再交；任何失败都不交、不抛，不让 Run 失败。
 
 ### 执行准备与输入
 做 Work 准备、输入通道、模型预算、注册检查和 Role profile 的去这组。
@@ -90,7 +90,7 @@
 - `run-reconcile.ts` — 启动与进程内 Run/Query 对账分类器；QRR-04 用已读窗口写活动计数，QRR-06 的 attestation 事实带计数（Kernel 不可读或无固定 Turn 时是显式 `unknown`）。重建的 yielded continuation 只写 `kind: 'wait_reply'`，`expiry`/`intervention` 是 claim 的选择，不由 yield 写入。
 - `session-anomaly-facts.ts` — 归档异常锚点旁的变更文件快照。
 - `unknown-call-draft.ts` — unknown-call review 草稿读取与工作区捕获。
-- `run-activity-reader.ts` — 有界活动窗口读取；`unknownFacts` 从 `src/contracts/run-activity.ts` 的正本转出。
+- `run-activity-reader.ts` — 有界活动窗口读取；`unknownFacts` 从 `src/contracts/run-activity.ts` 的正本转出。同一个窗口反复读的调用方（Run 里改文件后的检查）带 `RunActivityResume`，只读上次之后的新记录、对全部记录计数，答案和整段重读相同。
 - `run-activity-tally.ts` — 纯 Turn 活动计数。
 
 ### 查询与来源绑定
@@ -111,7 +111,7 @@
 | `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:135` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
 | `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:376` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
 | `createWorkHandoffBriefRead` | `src/core/agent-runtime/execution-preparation.ts:91` | 记录 5 的只读就绪读：按 successor Session 查最新记录，再核对交接操作的传输已完成；成功空页是旧路径 `null`，读失败（页面或操作）一律 `unavailable` | 准备 Work Run 时决定是否交出交接 brief |
-| `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:311` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
+| `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:315` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:247` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:232` | Query 有界输入准备 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:219` | 一次 fresh QueryRun 驱动；秘书轮按准入多建注记、邮箱、成员和请求读组 | 正式 Query 启动 |
@@ -140,7 +140,7 @@
 | `reduceTurnFromStart` | `src/core/agent-runtime/kernel-turn-facts.ts:53` | 从 turn 起点归约 `RunState` | 观察、对账、brief |
 | `applyTurnEvents` | `src/core/agent-runtime/kernel-turn-facts.ts:62` | 在已归约状态上应用增量 | 增量观察 |
 | `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:81` | 列未闭合工具调用 | 判断 Turn 能否完成 |
-| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:47` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
+| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:58` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
 | `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:147` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
 | `countQueryActivity` | `src/core/agent-runtime/runtime.ts:944` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |

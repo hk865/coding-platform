@@ -144,6 +144,7 @@ export type CoreRouteBindings = {
   readArchitectureProposal: ArchitectureProposalService['readArchitectureProposal'];
   readSemanticLinks: SemanticLinksReader['readSemanticLinks'];
   readSemanticFlows: SemanticLinksReader['readSemanticFlows'];
+  checkSemanticLinks: SemanticLinksReader['checkSemanticLinks'];
   captureArchitectureSource: ObservedArchitecturePort['captureSourceChanges'];
   queryArchitecture: ObservedArchitecturePort['queryArchitecture'];
   // Slice 8A §2: the two observed-domain comparisons and the impact read.
@@ -454,6 +455,7 @@ export type CoreRoutePlatform = {
       Promise<ReadResult<VersionListPageV1>>;
     readSemanticLinks: SemanticLinksReader['readSemanticLinks'];
     readSemanticFlows: SemanticLinksReader['readSemanticFlows'];
+    checkSemanticLinks: SemanticLinksReader['checkSemanticLinks'];
   };
   /** The non-enumerable overlap-gate owner. A narrow platform without it answers `unsupported`. */
   overlapGates?: OverlapGatePort;
@@ -527,6 +529,7 @@ export const CORE_ROUTE_SPECS: Record<
   'architecture/proposals/read': { kind: 'plain', binding: 'readArchitectureProposal', owner: 'architecture.readArchitectureProposal' },
   'architecture/semantic-links': { kind: 'plain', binding: 'readSemanticLinks', owner: 'notes.readSemanticLinks' },
   'architecture/semantic-flows': { kind: 'plain', binding: 'readSemanticFlows', owner: 'notes.readSemanticFlows' },
+  'architecture/semantic-links/check': { kind: 'plain', binding: 'checkSemanticLinks', owner: 'notes.checkSemanticLinks' },
   'architecture/capture': { kind: 'graph_write', binding: 'captureArchitectureSource', owner: 'architecture.captureSourceChanges' },
   'architecture/query': { kind: 'plain', binding: 'queryArchitecture', owner: 'architecture.queryArchitecture' },
   'architecture/compare': { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' },
@@ -946,6 +949,9 @@ export function createPlatformCoreRouteBindings(
     readSemanticFlows: platform.notes === undefined
       ? unsupported('the platform does not publish notes.readSemanticFlows')
       : platform.notes.readSemanticFlows.bind(platform.notes),
+    checkSemanticLinks: platform.notes === undefined
+      ? unsupported('the platform does not publish notes.checkSemanticLinks')
+      : platform.notes.checkSemanticLinks.bind(platform.notes),
     captureArchitectureSource: platform.architecture.captureSourceChanges.bind(platform.architecture),
     queryArchitecture: platform.architecture.queryArchitecture.bind(platform.architecture),
     compareArchitecture: platform.architecture.compareArchitecture.bind(platform.architecture),
@@ -1463,6 +1469,7 @@ export async function dispatchCoreRoute(
       case 'architecture/proposals/read': return bindings.readArchitectureProposal(ctx, plain.input as never);
       case 'architecture/semantic-links': return bindings.readSemanticLinks(ctx, plain.input as never);
       case 'architecture/semantic-flows': return bindings.readSemanticFlows(ctx, plain.input as never);
+      case 'architecture/semantic-links/check': return bindings.checkSemanticLinks(ctx, plain.input as never);
       case 'architecture/capture': return bindings.captureArchitectureSource(ctx, graphWrite.request as never);
       case 'architecture/query': return bindings.queryArchitecture(ctx, plain.input as never);
       case 'architecture/compare': return bindings.compareArchitecture(ctx, plain.input as never);

@@ -28,8 +28,10 @@ import { runObservedModel } from './observed-model-run.js';
 import { readPromptTexts } from './prompt-set-texts.js';
 import { sessionHistoryDecision } from './context-history-facts.js';
 import { promptSelectionOf, type PromptSetV1 } from '../../contracts/prompts/prompt-set.js';
+import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../../contracts/review-admission.js';
 import { createControlOnlyInputSupply, createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
+import { readRunActivityFacts, type RunActivityResume } from './run-activity-reader.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { ModelBudget } from './model-budget.js';
@@ -57,6 +59,7 @@ import type {
 import type { CommandRecognizer } from '../work-graph/model/command-recognition-contracts.js';
 import type { SessionMessage } from '../work-graph/model/communication-contracts.js';
 import { toolCommitRequestId } from '../work-graph/model/tool-commit-arguments.js';
+import { NOTE_LINK_VERIFY_MAX } from '../work-graph/model/note-contracts.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
 import type {
@@ -1043,6 +1046,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         return { kind: 'continue' };
       };
 
+      // The link-break source reads this Run's window at every safe point; it goes on from where
+      // its last read stopped instead of reading the window again. Cleared when the Run ends.
+      const linkActivity: RunActivityResume = { decoded: [], position: null, reduced: null };
       try {
         try {
           // One unified input channel: ordinary mail, saved replies, steer and
@@ -1055,6 +1061,82 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               return point.acceptedInputIds.includes(inputId) || intent.reason === null ? [] : [{ inputId, text: intent.reason, sourceRef: { kind: 'ControlIntent', intentRef: intent.ref } }];
             });
           };
+          // At every model safe point the links on the files this Run changed
+          // are read with the first tier (milliseconds, never a program build):
+          // each broken one becomes one platform input for the executor, and a
+          // doubtful head version goes to the second tier in the background,
+          // not awaited; its conclusion stays in the check's memory and a later
+          // safe point delivers it. The input id and text depend only on the
+          // note, its version and the missing indexes, so the same break offered
+          // again never conflicts. Any failure supplies nothing: this source
+          // never fails the Run.
+          const linksInFlight = new Set<string>();
+          const linkBreakInputsFor: InputSupply = async (point, options) => {
+            const memory = deps.notes?.memory;
+            const check = deps.notes?.check;
+            if (memory === undefined || check === undefined) return [];
+            try {
+              const activity = await readRunActivityFacts(cursorOwner, { session: record.session, kernel: kernelBinding,
+                fromPosition: (boundary.cursor === null ? 0 : boundary.position) + 1, through: 'kernel_tail',
+                probeFirst: false, signal: options.signal, resume: linkActivity });
+              if (activity.kind !== 'facts' || activity.facts.status !== 'counted') return [];
+              const changed = activity.facts.changedFiles;
+              const paths = [...new Set([...changed.definite, ...changed.possible])].filter(path => path !== '.');
+              const runCtx: CoreCallContext = { ...toolContext, signal: options.signal };
+              // noteId -> the head version the anchor read returned.
+              const heads = new Map<string, number>();
+              for (const path of paths) {
+                let cursor: string | null = null;
+                do {
+                  const page = await memory.memoryLookup(runCtx,
+                    { v: 1, op: 'lookup', anchor: { kind: 'file', path }, limit: 100, cursor });
+                  // A file no note is anchored on holds no link.
+                  if (page.status === 'rejected' && page.code === 'not_found' && page.reason === 'anchor_not_found') break;
+                  if (page.status !== 'ready') return [];
+                  for (const item of page.value.items) {
+                    if (item.kind === 'link' && (item.storedState === 'accepted' || item.storedState === 'reviewed')) {
+                      heads.set(item.noteId, item.version);
+                    }
+                  }
+                  cursor = page.value.next;
+                } while (cursor !== null);
+              }
+              if (heads.size === 0) return [];
+              const heldByRun = canonicalJson(runRef as never);
+              const rows = await check.checkNotes(runCtx,
+                { items: [...heads].map(([noteId, version]) => ({ noteId, version })), heldByRun });
+              if (rows.status !== 'ready') return [];
+              const doubtful = rows.value.filter(row => row.version === heads.get(row.noteId)
+                && row.linkVerification?.status === 'unchecked' && row.linkVerification.reason === 'refs_pending'
+                && !linksInFlight.has(`${row.noteId}@${String(row.version)}`))
+                .slice(0, NOTE_LINK_VERIFY_MAX).map(row => ({ noteId: row.noteId, version: row.version }));
+              if (doubtful.length > 0) {
+                const keys = doubtful.map(item => `${item.noteId}@${String(item.version)}`);
+                for (const key of keys) linksInFlight.add(key);
+                // The internal signal, as `finishing` uses: the second tier reads
+                // `ctx.signal`, and a check cut by this Run's end would record
+                // no conclusion and register no break.
+                void check.checkNotes({ ...toolContext, signal: internalSignal },
+                  { items: doubtful, verifyLinks: { priority: 'run_end' }, heldByRun })
+                  .catch(() => {})
+                  .finally(() => { for (const key of keys) linksInFlight.delete(key); });
+              }
+              return rows.value.flatMap(row => {
+                const verification = row.linkVerification;
+                if (verification?.status !== 'broken') return [];
+                const inputId = `link-break:${row.noteId}@${String(row.version)}:${verification.missing.join(',')}`;
+                if (point.acceptedInputIds.includes(inputId)) return [];
+                const text = renderTemplate(promptTexts.value, 'link-breaks-input', { noteId: row.noteId,
+                  version: String(row.version), missing: verification.missing.join('、') }, manifest.promptSet.toolNames).text;
+                return [{ inputId, text, sourceRef: { kind: 'NoteLinkBreak', runRef, noteId: row.noteId, version: row.version } }];
+              });
+            } catch {
+              return [];
+            }
+          };
+          // An ordinary Work Run's platform inputs: the control inputs, then the link breaks.
+          const controlAndLinkBreakInputsFor: InputSupply = async (point, options) =>
+            [...await controlInputsFor(point, options), ...await linkBreakInputsFor(point, options)];
           // K3 L13: a review/proposal round has no collaboration tools, so it
           // builds ONLY the control-input channel; Session letters and saved
           // replies stay for the later continuation. Every ordinary Work Run
@@ -1067,7 +1149,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               context: () => toolContext,
               sessionRef,
               runRef,
-              controlInputs: controlInputsFor,
+              controlInputs: controlAndLinkBreakInputsFor,
               // The whole continuation: a saved reply, an expiry claim, or an
               // intervention that carries no reply.
               ...(record.run.consumedWait === undefined ? {} : { consumedWait: record.run.consumedWait }),
@@ -1144,6 +1226,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         if (enteredFailure !== undefined) return enteredFailure;
         return reconciled;
       } finally {
+        linkActivity.decoded = [];
+        linkActivity.position = null;
+        linkActivity.reduced = null;
         handle.settled = true;
         settleDone();
         owned.signal.removeEventListener('abort', abortFromCaller);

@@ -57,9 +57,14 @@ describe('R-pack: the frozen link strings and the record_note text', () => {
     for (const [key, value] of Object.entries(LINK_RELATIONS)) {
       expect(strings[key as keyof typeof strings]).toBe(value);
     }
+    // 8E-2 R11 :390, §4.4 :905: the merged doubt line's two strings (first draft), in the pack and its source.
+    const LINKS_PENDING = { 'note.warning.links_pending.prefix': '这些节点上另有 ',
+      'note.warning.links_pending.suffix': ' 条联系待核，不能当现行结论' } as const;
+    for (const [key, value] of Object.entries(LINKS_PENDING)) expect(strings[key as keyof typeof strings]).toBe(value);
     const source = JSON.parse(await readFile(new URL('strings.json', PACK_ROOT), 'utf8')) as Record<string, string>;
     expect(source['note.kind.link']).toBe('联系');
     expect(source['note.warning.link_broken']).toBe('证据对不上');
+    for (const [key, value] of Object.entries(LINKS_PENDING)) expect(source[key]).toBe(value);
     for (const [key, value] of Object.entries(LINK_RELATIONS)) expect(source[key]).toBe(value);
   });
 

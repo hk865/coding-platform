@@ -169,6 +169,11 @@ describe('S8E L3 R-context: the work input notes section', () => {
     run2Ref = await runRefOf(world, task.taskId);
     expect(run2Ref.runId).not.toBe(run1Ref.runId);
 
+    // The ended Run's last safe point may have sent K1 to the background check; check it once so the
+    // notes section below does not depend on whether that check has answered yet.
+    const checked = await world.route('architecture/semantic-links/check',
+      { items: [{ noteId: k1Id, version: k1Version }] });
+    expect(checked).toMatchObject({ status: 'ready', value: { items: [{ verification: { status: 'verified' } }] } });
     const prepared = await world.platform.runtime.prepareExecution(world.humanContext(), {
       runRef: run2Ref, requestId: 's8e-r-context-prepare',
     });

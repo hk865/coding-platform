@@ -65,7 +65,7 @@
 
 做注记派生、请知悉来源/分组/排序/token 的去这组。
 
-- `note-views.ts` — `NoteCheckPort`：注记的 freshness、changedFiles、冲突、配额等派生字段。
+- `note-views.ts` — `NoteCheckPort`：注记的 freshness、changedFiles、冲突、配额等派生字段，联系的第一档读和第二档核对入口，以及每个 Host 一份的联系结论、存疑队列、断了的联系和解析答案。
 - `note-review-notices.ts` — `note_review` 请知悉来源：三类注记版本流；`goalId: null` 的版本是项目 subject 的行，按绑定的项目作用域读，Goal 过滤页不收。
 - `project-notice-notices.ts` — `project_notice` 请知悉来源：一项一条 `ProjectNotice@1` 记录，先读 watermark 作 `sourceCursor`，再按 `since` 从已看位置（含）读到尾；坏记录、缺 `since` 或位置低于已看位置为 `unavailable`；Goal 过滤页给空页，不折行、不合并。
 - `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮。
@@ -160,7 +160,7 @@
 | `readEqualityAll` | `src/core/work-graph/views/activity-read-helpers.ts:94` | 把等值索引候选集读完并计预算 | 需要完整等值事实集时 |
 | `readOneKeyed` | `src/core/work-graph/views/activity-read-helpers.ts:117` | 按 key 读一条记录并计预算（miss 也计） | 活动读里按键取记录时 |
 | `activityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:326` | 把 `RunActivity` 快照投影成 `RunActivityViewV1` | 活动/轨道读投影时 |
-| `createNoteCheck` | `src/core/work-graph/views/note-views.ts:226` | 注记派生字段的唯一检查端口（freshness、changedFiles、冲突、配额、link 每槽状态等）；文件读经 `noteCheckWorkspace`，调用者自己的目标仍决定 `currentEligible` | 注记读模型要派生字段时；不要另写检查 |
+| `createNoteCheck` | `src/core/work-graph/views/note-views.ts:392` | 注记派生字段的唯一检查端口（freshness、changedFiles、冲突、配额、link 每槽状态和读时的 `linkVerification` 等）；文件读经 `noteCheckWorkspace`，调用者自己的目标仍决定 `currentEligible`。一次调用先把要读的门文件按项的顺序列全、经 `readWorkspaceFiles` 一次读完（有 Python/C++ 定位时分两次），再逐项判；第一档只比摘要和单文件语法，从不建程序；`checkNotes` 带 `verifyLinks` 才把存疑的联系交第二档（`agent` 有时限）。闭包里每个 Host 一份内存：第二档的联系结论、存疑队列、断了的联系、按（路径，文字摘要）记的解析答案（LRU，`PARSE_ANSWERS_SOURCE_BYTES_MAX` 8 MiB 源码字节） | 注记读模型要派生字段时；不要另写检查 |
 | `latestActivityAt`（**正本**） | `src/core/work-graph/state/session-activity.ts:25` | 线卡时钟的纯规则：Session 创建时刻与调用方给的时刻取最大 ISO 串，空集回退 `createdAt` | 线卡/选择读时钟；不要另写一份 |
 | `readClaimedAtForRun`（**正本**） | `src/core/work-graph/tasks/line-clock.ts:190` | Run 无起止时间时，从按代排序的 Work claim 索引顶行读 claim 时间，只认本 Run | claimedAt 回退；本层与 `secretary-selection.ts` 都调这一份 |
 | `indexActiveCopies` | `src/core/work-graph/tasks/line-clock.ts:51` | 从 Session 列表按来源索引 active 的只读副本 | 线卡/选择要数副本时 |

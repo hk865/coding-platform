@@ -216,7 +216,7 @@ const rows: readonly WriteRow[] = [
         expect(envelope.write.status).toBe('accepted');
         if (envelope.write.status !== 'accepted') return;
         expect(checkOf(envelope).linkVerification)
-          .toEqual({ status: 'unverifiable', reason: 'analyzer_unavailable' });
+          .toEqual({ status: 'unchecked', reason: 'refs_pending' });
       }
       if (k1.write.status !== 'accepted' || k3.write.status !== 'accepted') return;
       const steps = [k1.write.noteId, k3.write.noteId];

@@ -23,7 +23,7 @@ const BODY = 'S7B person body';
 /** `DELIVERY_SET_TEMPLATE_IDS` hand-written: the samples helper is not used here. */
 const DELIVERY_IDS = [
   'action-request-delivery', 'inquiry-delivery', 'notify-delivery', 'wait-reply-delivery',
-  'wait-expiry-delivery', 'intervention-delivery', 'user-decision-response',
+  'wait-expiry-delivery', 'intervention-delivery', 'user-decision-response', 'link-breaks-input',
 ] as const;
 
 const rendered = (template: string, messageId: string): string =>

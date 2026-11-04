@@ -9,16 +9,20 @@
  * the note check (so freshness, per-slot anchor statuses and the link
  * verification share one budget), and mapped with the stored payload. A failed
  * catalog/records/check read is never flattened into an empty page.
+ *
+ * `checkSemanticLinks` is the person's re-check of a few named notes: the same
+ * note check with the second tier asked, answered as each item's read-time
+ * link verification.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
-import type { LinkEndRequestV1, NoteHeadSnapshot } from '../../../contracts/note.js';
+import type { LinkEndRequestV1, LinkVerificationV1, NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { NoteFlowReadV1, SemanticEndV1, SemanticFlowStepV1, SemanticFlowV1, SemanticLinkV1,
   SemanticPageV1, SemanticScopeV1 } from '../../../contracts/semantic-layer.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { NoteCheckV1, NoteHeadCheckPort } from '../model/note-contracts.js';
-import { NOTE_FLOW_CANDIDATE_MAX } from '../model/note-contracts.js';
+import { NOTE_FLOW_CANDIDATE_MAX, NOTE_LINK_VERIFY_MAX } from '../model/note-contracts.js';
 import { REQUEST_PAGE_SIZE } from '../model/request-contracts.js';
 import type { NoteReadDependencies } from './note-read-model.js';
 import type { ReadOutcome } from './note-base-reader.js';
@@ -40,11 +44,16 @@ export type SemanticReadInput = {
 export type SemanticReadDeps = Pick<NoteReadDependencies, 'records' | 'architecture'>
   & { check: NoteHeadCheckPort; flowCandidateMax?: number };
 
+/** One item's read-time link verification, in the order asked; `null` when the note is not a link. */
+type SemanticLinkChecks = { items: { noteId: string; version: number; verification: LinkVerificationV1 | null }[] };
+
 export type SemanticLinksReader = {
   readSemanticLinks(ctx: CoreCallContext, input: SemanticReadInput):
     Promise<ReadResult<SemanticPageV1<SemanticLinkV1>>>;
   readSemanticFlows(ctx: CoreCallContext, input: SemanticReadInput):
     Promise<ReadResult<SemanticPageV1<SemanticFlowV1>>>;
+  checkSemanticLinks(ctx: CoreCallContext, input: { items: { noteId: string; version: number }[] }):
+    Promise<ReadResult<SemanticLinkChecks>>;
 };
 
 export function createSemanticLayerRead(deps: SemanticReadDeps): SemanticLinksReader {
@@ -54,6 +63,9 @@ export function createSemanticLayerRead(deps: SemanticReadDeps): SemanticLinksRe
     },
     readSemanticFlows(ctx, input) {
       return readFlows(deps, ctx, input);
+    },
+    checkSemanticLinks(ctx, input) {
+      return checkLinks(deps, ctx, input);
     },
   };
 }
@@ -207,6 +219,33 @@ async function readFlows(
     });
   }
   return { status: 'ready', value: { items, next, catalogRevision } };
+}
+
+/**
+ * The person's re-check: one note check with the second tier asked at the
+ * button's priority. The HTTP body is not type-checked, so anything but 1 to
+ * `NOTE_LINK_VERIFY_MAX` entries is `invalid` before the check runs. A check
+ * that is not ready (an unknown note id answers `not_found`) is returned as is.
+ */
+async function checkLinks(
+  deps: SemanticReadDeps,
+  ctx: CoreCallContext,
+  input: { items: { noteId: string; version: number }[] },
+): Promise<ReadResult<SemanticLinkChecks>> {
+  const items = input?.items;
+  if (!Array.isArray(items) || items.length === 0 || items.length > NOTE_LINK_VERIFY_MAX) {
+    return { status: 'rejected', code: 'invalid', reason: `items must hold 1 to ${NOTE_LINK_VERIFY_MAX} entries` };
+  }
+  const checked = await deps.check.checkNotes(ctx, { items, verifyLinks: { priority: 'button' } });
+  if (checked.status !== 'ready') return checked;
+  return { status: 'ready', value: linkChecksOf(checked.value) };
+}
+
+/** The re-check answer from the check's rows: the read-time verification, `null` for a note that is not a link. */
+export function linkChecksOf(rows: readonly NoteCheckV1[]): SemanticLinkChecks {
+  return {
+    items: rows.map(row => ({ noteId: row.noteId, version: row.version, verification: row.linkVerification ?? null })),
+  };
 }
 
 /**

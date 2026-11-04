@@ -41,21 +41,6 @@ describe('S4B MF4 symbol rechecks', () => {
     } finally { await f.close(); }
   });
 
-  it.each(['memory', 'sqlite'] as const)('MF4 %s: a capped symbol scan is unchecked, not symbol_missing', async kind => {
-    const f = await createS4BNoteCheckFixture(kind, { check: { symbolHitsMax: 2 } });
-    try {
-      const noteId = await writeSymbolNote(f);
-      await writeFile(join(f.root, 'src/a/x.ts'), 'export const a = 2;\nexport const b = 2;\nexport const c = 3;\n');
-      const read = await f.notes.readNote(f.ctx(), { noteId });
-      expect(read.status).toBe('ready');
-      if (read.status !== 'ready') return;
-      expect(read.value.anchorStatus).toBe('live');
-      expect(read.value.anchorRetiredReasons).toEqual([]);
-      expect(read.value.freshness).toBe('unchecked');
-      expect(read.value.currentEligible).toBe(false);
-    } finally { await f.close(); }
-  });
-
   it.each(['memory', 'sqlite'] as const)('MF4 %s: two same-name hits use the hit at the stored range', async kind => {
     const f = await createS4BNoteCheckFixture(kind);
     try {

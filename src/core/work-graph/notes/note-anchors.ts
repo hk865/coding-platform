@@ -20,8 +20,10 @@ import { sha256Hex } from '../../../contracts/fingerprint.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { NoteAnchorCandidateV1 } from '../model/note-contracts.js';
 import type {
-  CaptureSummary, SourceHit, SourceProvider, WorkspaceResult, WorkspaceToolsPort,
+  CaptureSummary, ReferenceAnalyzerPort, SourceHit, SourceProvider, WorkspaceResult, WorkspaceToolsPort,
 } from '../../workspace/ports.js';
+import type { NativeSingleFilePort } from '../../workspace/native-single-file.js';
+import type { WorkspaceToolsHandle } from '../../workspace/workspace-tools.js';
 import type { ArchitectureCatalogPort, CatalogModuleFacts } from '../architecture/catalog-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
@@ -42,10 +44,16 @@ import { platformCheckContext } from '../model/platform-check-context.js';
  * note module never sees or supplies one.
  */
 export type NoteAnchorWorkspace = Pick<WorkspaceToolsPort, 'readWorkspace'> & {
+  /** One access for a whole list of working-tree paths: the read side's gate files come in one batch. */
+  readWorkspaceFiles: WorkspaceToolsHandle['readWorkspaceFiles'];
   capture?(ctx: CoreCallContext, request: { provider: SourceProvider }): Promise<WorkspaceResult<CaptureSummary>>;
   querySource?: WorkspaceToolsPort['querySource'];
   /** L14: best-effort release of the write's symbol capture after use. */
   releaseCapture?: WorkspaceToolsPort['releaseCapture'];
+  /** The second tier's reference check (one program per request, on the analysis thread). */
+  verify?: ReferenceAnalyzerPort['verify'];
+  /** The Python/C++ single-file lookup of one file's functions and classes. */
+  lookup?: NativeSingleFilePort['lookup'];
 };
 
 export type NoteAnchorFactsDeps = {
@@ -857,11 +865,14 @@ const NOTE_CHECK_ACTOR: { kind: 'system'; id: string } = Object.freeze({ kind: '
 
 export function noteCheckWorkspace(workspace: NoteAnchorWorkspace): NoteAnchorWorkspace {
   const checking = (ctx: CoreCallContext): CoreCallContext => platformCheckContext(ctx, NOTE_CHECK_ACTOR);
-  const { capture, querySource, releaseCapture } = workspace;
-  const checked: NoteAnchorWorkspace = { readWorkspace: (ctx, input) => workspace.readWorkspace(checking(ctx), input) };
+  const { capture, querySource, releaseCapture, verify, lookup } = workspace;
+  const checked: NoteAnchorWorkspace = { readWorkspace: (ctx, input) => workspace.readWorkspace(checking(ctx), input),
+    readWorkspaceFiles: (ctx, input) => workspace.readWorkspaceFiles(checking(ctx), input) };
   if (capture !== undefined) checked.capture = (ctx, input) => capture(checking(ctx), input);
   if (querySource !== undefined) checked.querySource = (ctx, input) => querySource(checking(ctx), input);
   if (releaseCapture !== undefined) checked.releaseCapture = (ctx, ref) => releaseCapture(checking(ctx), ref);
+  if (verify !== undefined) checked.verify = (ctx, req) => verify(checking(ctx), req);
+  if (lookup !== undefined) checked.lookup = (ctx, input) => lookup(checking(ctx), input);
   return checked;
 }
 
