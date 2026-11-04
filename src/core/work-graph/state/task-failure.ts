@@ -1320,7 +1320,7 @@ function reworkSummary(view: WorkView, policy: TaskAutomationPolicyV1): TaskRewo
 }
 
 /** The Run chain ending at `from`, oldest first; `requeueRef.afterRunId` and `previousRun.runId` link it. */
-function chainRunIds(from: RunSnapshot | null, runs: readonly ChainRun[]): string[] {
+function chainRunIds(from: ChainRun | null, runs: readonly ChainRun[]): string[] {
   const byRunId = new Map(runs.map((run) => [run.ref.runId, run]));
   const ids: string[] = [];
   let current: ChainRun | undefined = from ?? undefined;
@@ -1330,6 +1330,14 @@ function chainRunIds(from: RunSnapshot | null, runs: readonly ChainRun[]): strin
     current = previousId === undefined ? undefined : byRunId.get(previousId);
   }
   return ids.reverse();
+}
+
+/** The attempt the Run belongs to, counted from 1: each Run on its chain (oldest first, `chainRunIds`)
+ * that carries a `requeueRef` opened a new attempt; a continuation (`previousRun`) stays in it. */
+export function attemptOrdinalOf(from: ChainRun, runs: readonly ChainRun[]): number {
+  const byRunId = new Map(runs.map((run) => [run.ref.runId, run]));
+  return 1 + chainRunIds(from, runs)
+    .filter((runId) => ((runId === from.ref.runId ? from : byRunId.get(runId))?.requeueRef ?? null) !== null).length;
 }
 
 // ------------------------------------------------------------------------ //

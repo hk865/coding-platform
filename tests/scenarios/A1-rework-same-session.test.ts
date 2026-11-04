@@ -37,9 +37,11 @@ import {
   continuationBriefDigest, continuationBriefMarker, renderContinuationBriefZh,
 } from '../../src/contracts/continuation-brief.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { ReadResult } from '../../src/contracts/core/results.js';
+import type { TrackBarsPageV1 } from '../../src/core/work-graph/views/track-read-model.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import { DEFAULT_WORK_RUN_TOKEN_BUDGET } from '../../src/app/host-settings-types.js';
-import { AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { readExecution } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, checkRevisionOf, cleanupScenarios, openHostScenario, performs } from './harness.js';
 import {
@@ -61,6 +63,8 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
       newText: 'A1: Run 1 notes, the result file is still missing\n' } }] },
     { kind: 'text', text: RUN1_TEXT }, ...editThenText('a2-rework-run2')] } });
   await assertInvariants(h, 'seeded');
+  // No Run is selected yet, so the task row carries no attempt number.
+  expect(await h.taskRow()).not.toHaveProperty('attemptOrdinal');
 
   // 1. Run 1 FAILs; stop before the automatic requeue the selection answers with.
   const toRequeue = await h.advance(h.select('a2-rework-1'), { stopBefore: performs('requeue_task') });
@@ -130,11 +134,20 @@ it('A1 (C8, §15.2 5.8, AV-12, W-21, L-3, C3): a FAILed round is requeued automa
   expect(claimInputsOf(steps)[0]).not.toHaveProperty('requeueRef');
 
   const done = await h.taskRow();
+  expect(done.attemptOrdinal, 'Run 2 is the second attempt').toBe(2);
   expect(done).toMatchObject({ effectivePhase: 'satisfied', rework: { requeueAutoCount: 1, cap: 3,
     entries: [{ afterRunRef: run1Ref, failureClass: 'check_failed', automatic: true, autoCount: 1,
       requestedBy: WORKFLOW_AUTOMATION_ACTOR, reason: 'auto-rework:check_failed#1' }] } });
   const run2Ref = done.execution;
   if (run2Ref === null || run2Ref.runId === run1Ref.runId) throw new Error('Run 2 must be the selected Run');
+  // The run bar of Run 2 names the automatic requeue that opened its attempt.
+  const track = await h.post<ReadResult<TrackBarsPageV1>>('activity/track', plain(AG2B_SCOPE, {
+    goalRef: AG2B_GOAL_REF, from: '2026-01-01T00:00:00.000Z', to: '2027-01-01T00:00:00.000Z', cursor: null, limit: 50 }));
+  if (track.status !== 'ready') throw new Error(`activity/track was not ready: ${JSON.stringify(track)}`);
+  const run2Bar = track.value.bars.find((bar) => bar.kind === 'run' && bar.runRef.runId === run2Ref.runId);
+  expect(run2Bar).toMatchObject({ kind: 'run', attempt: { ordinal: 2, requeue: {
+    actorClass: 'system', failureClass: 'check_failed', goalResume: false, interruption: null,
+    requestedAt: done.rework?.entries[0]?.requestedAt } } });
   const run1 = await readExecution(h.host, run1Ref);
   const run2 = await readExecution(h.host, run2Ref);
   expect(run2.run).toMatchObject({ requeueRef, status: 'ended', outcome: 'completed' });

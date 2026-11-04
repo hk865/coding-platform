@@ -141,7 +141,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B-r2 2B-27 moving window (%s)', 
     expect(bar.reason).toBeNull();
     expect(bar.pauses).toEqual([]);
     expect(bar.previous).toBeNull();
-    expect(bar.attempt).toEqual({ attemptId: expect.any(String), via: 'first', requeue: null });
+    expect(bar.attempt).toEqual({ attemptId: expect.any(String), via: 'first', ordinal: 1, requeue: null });
     expect(bar.activity).toMatchObject({
       status: 'counted', reason: null, error: false,
       totals: { steps: 5, edits: 2, editsUnknown: 0 },

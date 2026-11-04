@@ -50,7 +50,7 @@ export type SecretaryPreparationFactsV1 = {
   executionRoles: readonly string[];
   architecture: { baselineId: string; revision: number; catalog: AdoptedArchitecture } | null;
   completionPolicy: { policyId: string; revision: number } | null;
-  goals: { goalId: string; desiredState: GoalDesiredState; objective: string }[];
+  goals: { goalId: string; desiredState: GoalDesiredState; objective: string; ordinal: number | null }[];
   executionKind: 'semantic_query' | 'initial_coordination';
   guards: RecordGuard[];
   watermark: CommitCursor | null;

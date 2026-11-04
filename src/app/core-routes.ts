@@ -21,7 +21,7 @@ import type { UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
 import { reworkFenceOf } from '../core/work-graph/state/task-failure.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
 import type { CommitCursor } from '../contracts/command-event.js';
-import { seqOfCommitCursor } from '../contracts/ledger.js';
+import { seqOfCommitCursor, type GoalRef } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
@@ -62,7 +62,7 @@ import type {
   GoalConfirmPort, GoalCopyPort,
 } from '../core/work-graph/model/goal-card-contracts.js';
 import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
-import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
+import type { GoalReadV1, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { WorkspaceCapturePort, WorkspaceToolsPort } from '../core/workspace/ports.js';
 import type { MaterialPort } from '../core/work-graph/model/material-contracts.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
@@ -138,7 +138,7 @@ export type CoreRouteBindings = {
   activateCompletionPolicy: CompletionPolicyConfigurationPort['activateCompletionPolicy'];
   readCurrentCompletionPolicy: NonNullable<CompletionPolicyConfigurationPort['readCurrentCompletionPolicy']>;
   createGoal: GoalTaskPort['createGoal'];
-  queryGoal: PlanTaskPort['queryGoal'];
+  queryGoal: (ctx: CoreCallContext, ref: GoalRef) => Promise<ReadResult<GoalReadV1>>;
   adoptInitialArchitecture: ArchitectureCatalogPort['adoptInitialArchitecture'];
   reviseArchitectureCatalog: ArchitectureCatalogPort['reviseArchitectureCatalog'];
   readArchitectureRevision: ArchitectureCatalogPort['readArchitectureRevision'];
@@ -952,7 +952,16 @@ export function createPlatformCoreRouteBindings(
       ? unsupported('the Host does not publish the current completion policy read')
       : platform.completionPolicies.readCurrentCompletionPolicy.bind(platform.completionPolicies),
     createGoal: platform.goals.createGoal.bind(platform.goals),
-    queryGoal: platform.plans.queryGoal.bind(platform.plans),
+    queryGoal: async (ctx, ref) => {
+      const read = await platform.plans.queryGoal(ctx, ref);
+      if (read.status !== 'ready') return read;
+      // The number is a person-facing read: a damaged Goal in the project (or a port that cannot read it) only
+      // drops the number. Unlike `queryGoal`'s damaged `continuedBy` refusal, this Goal's page still opens.
+      const ordinal = platform.plans.readGoalOrdinal === undefined
+        ? null
+        : await platform.plans.readGoalOrdinal(ctx, read.value.goal.ref);
+      return { ...read, value: { ...read.value, ordinal } };
+    },
     adoptInitialArchitecture: platform.architecture.adoptInitialArchitecture.bind(platform.architecture),
     // The person's op-form catalog revision; the same service the composition
     // wraps, with `meta.requestId` as the command id.

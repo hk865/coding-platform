@@ -315,7 +315,8 @@ export async function assembleSecretaryContext(
     ...(secretary.goals.length === 0
       ? [packString(texts, 'context.none')]
       : secretary.goals.map((entry) =>
-        `- ${entry.goalId} [${entry.desiredState}] ${goalLineObjective(entry.objective)}`)),
+        `- ${entry.ordinal === null ? '' : `目标 ${String(entry.ordinal)} · `}${entry.goalId} `
+          + `[${entry.desiredState}] ${goalLineObjective(entry.objective)}`)),
   ];
   const goalSection = [...goalLines, goalPayloadText].join('\n');
 

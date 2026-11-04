@@ -44,7 +44,7 @@
 - `context-types.ts` — 装配器类型、模板 id（含 `secretary-round`）、节序与历史判定词汇；`RuntimeExecutionDependencies.secretaryFacts?` 是同一准备端口的注入点（装配器只接收准备读好的值）；请求轮的准备在最终工具名单之前读一次，装配输入 `secretaryFacts` 带着同一个值。
 - `context-work-recipe.ts` — Work 上下文装配配方。
 - `context-query-recipe.ts` — Query 上下文装配配方；请求轮先按 `isRequestRound` 转到秘书配方。`intervention_planning` 走自己的 `intervention-planning` 模板：`plan` 槽是 `task` 段、`message` 槽放问题，`callKind` 记 `intervention_planning`，不渲染 footprint。
-- `context-secretary-recipe.ts` — 秘书轮上下文装配：用准备读好并传入的 `secretaryFacts` 值（配方不再读端口），`memoryMaterial` 仍按声明依赖读，由共享渲染器写 `secretary-round` 的三个 task 槽与 notes 预算。`roundMaterial` 渲染一轮的材料：输入行、选中的思路，再是 `ask` 带的卡片引用（`## Cards` 下每个引用一行，写钉住的版本；对象动过加 `(now @当前版本)`，不存在加 `(not found)`）。可选输入 `handoff: SecretaryHandoffPromptFactsV1`（旧秘书的 understanding 目标清单，或继任者的一份交接 brief）经两个交接模板渲染后加在 task 段开头；所需交接材料属于 task 材料，不放进可截断的 notes。
+- `context-secretary-recipe.ts` — 秘书轮上下文装配（目标清单行在有号时写 `- 目标 n · <goalId> …`，读不到号时照旧）：用准备读好并传入的 `secretaryFacts` 值（配方不再读端口），`memoryMaterial` 仍按声明依赖读，由共享渲染器写 `secretary-round` 的三个 task 槽与 notes 预算。`roundMaterial` 渲染一轮的材料：输入行、选中的思路，再是 `ask` 带的卡片引用（`## Cards` 下每个引用一行，写钉住的版本；对象动过加 `(now @当前版本)`，不存在加 `(not found)`）。可选输入 `handoff: SecretaryHandoffPromptFactsV1`（旧秘书的 understanding 目标清单，或继任者的一份交接 brief）经两个交接模板渲染后加在 task 段开头；所需交接材料属于 task 材料，不放进可截断的 notes。
 - `context-review-recipe.ts` — review 轮上下文装配。
 - `context-continuation-recipe.ts` — continuation 段的 blocked commands 与 brief 事实。
 - `context-history-facts.ts` — Session 历史模式/基线判定与 Kernel 命令事实。

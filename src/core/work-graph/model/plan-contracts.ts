@@ -64,6 +64,9 @@ export type HostProposePlan = (
   request: GraphWrite<ProposedPlanRequestV1>,
 ) => Promise<EffectWriteResultV1<PlanProposal>>;
 export type GoalDetail = { goal: GoalSnapshot; pendingPlan: PlanProposal | null; continuedBy: GoalRef[] };
+/** The person-facing `goals/read`: `ordinal` is the Goal's "目标 n" in its project, or null when the project's
+ * Goals cannot all be read (never a shifted number). The internal `queryGoal` keeps `GoalDetail` unchanged. */
+export type GoalReadV1 = GoalDetail & { ordinal: number | null };
 /**
  * 只读规划诊断（W2 §4.2）。它由已采用的 Plan + canonical task facts 在内存投影，
  * 不写入 Task/Goal 的运行状态，也不是第二套持久 completeness 表；缺省表示该生产者
@@ -136,6 +139,8 @@ export type TaskRow = { ref: TaskTriple; definition: RuntimeTask; effectivePhase
   failure?: TaskFailureFactsV1;
   /** C8 requeue history and automatic count; read-only. */
   rework?: TaskReworkSummaryV1;
+  /** The attempt the selected Run belongs to, counted from 1; absent without a selected Run. */
+  attemptOrdinal?: number;
   /** C7 latest disposition change through a future-only adoption; read-only. */
   dispositionChange?: TaskDispositionChangeV1;
   /** K3 L7: the selected Run's review record; absent when no key exists. */
@@ -293,6 +298,12 @@ export interface PlanTaskPort {
   queryGoalResumeContinuations?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalResumeContinuationsRead>>;
   /** K3 L4: the read-only committed-receipt lookup for `propose_future_plan`. */
   lookupToolCommit?: ToolCommitLookup;
+  /**
+   * The Goal's "目标 n" in its project, read through the same `readGoalOrdinals` as the secretary facts.
+   * Optional only so the older read-only `PlanTaskPort` doubles keep compiling; the real Plan service
+   * always publishes it. Null when the project's Goals cannot all be read.
+   */
+  readGoalOrdinal?(ctx: CoreCallContext, ref: GoalRef): Promise<number | null>;
 }
 
 /**
@@ -314,7 +325,7 @@ export type AdoptionStopTargetsV1 = {
  */
 export type PlanServicePort = PlanTaskPort
   & Required<Pick<PlanTaskPort, 'proposeInitialPlanFromAnswer' | 'queryGoalDisplay' | 'queryGoalLiveRuns'
-    | 'queryGoalResumeContinuations'>>
+    | 'queryGoalResumeContinuations' | 'readGoalOrdinal'>>
   & {
     /**
      * PS §3.2 read-only seam: the affected disposition-only Tasks and their Runs,

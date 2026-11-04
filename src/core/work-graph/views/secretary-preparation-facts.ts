@@ -45,6 +45,7 @@ import {
 import { operationRefKey, plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
 import { successorOperationsOf } from '../sessions/session-handoff-service.js';
 import { liveUnderstandingGrants } from '../state/request-rounds.js';
+import { readGoalOrdinals } from '../tasks/plan-readers.js';
 import { readAnswers } from '../tasks/request-facts.js';
 import { readInitializationPointers } from '../tasks/initialization-pointers.js';
 import { listWorkspaceGoals, readWatermark } from './goal-conflicts.js';
@@ -476,10 +477,12 @@ async function readSecretaryFactsOnce(
       : rejected('unavailable', `the workspace Goals read failed: ${messageOf(error)}`);
   }
   if (listed.truncated) return rejected('incomplete', 'the workspace Goal list is truncated');
+  const ordinals = await readGoalOrdinals(deps.records, projectId);
   const goals: SecretaryPreparationFactsV1['goals'] = listed.goals.map((goal) => ({
     goalId: goal.ref.goalId,
     desiredState: goal.desiredState,
     objective: goal.objective,
+    ordinal: ordinals?.get(goal.ref.goalId) ?? null,
   }));
   const goalGuards: RecordGuard[] = listed.goals.map((goal) => ({
     refKey: canonicalJson(goal.ref as unknown as JsonValue), expectedRevision: goal.revision,

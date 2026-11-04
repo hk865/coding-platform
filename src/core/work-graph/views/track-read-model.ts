@@ -65,8 +65,8 @@ import {
 } from '../tasks/run-activity-codecs.js';
 import { RUN_BY_TASK_INDEX, RUN_BY_WORKSPACE_STATUS_INDEX, S2B_RUN_BY_GOAL_ENDED_LOOKUP } from '../tasks/plan-readers.js';
 import { isPausedInterrupted } from '../state/run-machine.js';
-import { runErrorOf } from '../state/task-failure.js';
-import { reworkActorClassOf } from '../../../contracts/task-requeue.js';
+import { attemptOrdinalOf, runErrorOf } from '../state/task-failure.js';
+import { reworkActorClassOf, type ReworkFailureClass } from '../../../contracts/task-requeue.js';
 import { storeFailureToRejection } from './goal-conflicts.js';
 import {
   activityViewOf, Budget, CapacityError, claimingSessionOf, classifyMissingActivity, gateInfoOf,
@@ -90,7 +90,10 @@ export type TrackRunBarV1 = {
   reason: string | null;
   pauses: { from: string; to: string | null; intentRef: ControlIntentRef }[];
   attempt: { attemptId: string; via: 'first' | 'same_attempt' | 'requeue' | 'wait_continuation';
-    requeue: { actorClass: string; automaticCount: number | null; reason: string } | null };
+    ordinal: number;
+    requeue: { actorClass: string; automaticCount: number | null; reason: string;
+      failureClass: ReworkFailureClass; goalResume: boolean; requestedAt: string;
+      interruption: 'executing' | 'paused' | null } | null };
   previous: RunRef | null;
   activity: RunActivityViewV1;
 };
@@ -396,7 +399,7 @@ async function activityViewFor(
   return runMissingActivityViewOf(run.ref, classifyMissingActivity(runMissingActivityFacts(run, ctx.since)));
 }
 
-type RequeueInfo = { actorClass: string; automaticCount: number | null; reason: string };
+type RequeueInfo = NonNullable<TrackRunBarV1['attempt']['requeue']>;
 
 async function requeueInfoOf(
   records: TrackReadModelDependencies['records'],
@@ -414,6 +417,10 @@ async function requeueInfoOf(
     actorClass: reworkActorClassOf(null, value.requestedBy) ?? value.requestedBy.kind,
     automaticCount: value.automation.automatic ? value.automation.autoCount : null,
     reason: value.reason,
+    failureClass: value.failureClass,
+    goalResume: value.trigger !== undefined,
+    requestedAt: value.requestedAt,
+    interruption: value.interruption,
   };
 }
 
@@ -541,7 +548,8 @@ async function runBarWith(
   const requeue = await requeueInfoOf(records, run, budget);
   const pauses = await pausesOf(records, run, budget);
   const activity = await activityViewFor(ctx, run);
-  return runBarOf(run, sessionRef, pauses, { attemptId: run.attemptId, via, requeue }, previous, activity);
+  return runBarOf(run, sessionRef, pauses,
+    { attemptId: run.attemptId, via, ordinal: attemptOrdinalOf(run, taskRuns), requeue }, previous, activity);
 }
 
 async function scanRunsEnded(

@@ -449,6 +449,21 @@ export async function readGoalsByProject(
   return { status: 'ready', goals, readThrough: batch.watermark };
 }
 
+/** "目标 n": a Goal's place in its project's creation order (ascending `since`, then goal id), counted from 1.
+ * Goals are never deleted and `since` never changes, so a number is never reused; a cancelled Goal keeps its own. */
+export function goalOrdinals(goals: readonly Pick<GoalSnapshot, 'ref' | 'since'>[]): Map<string, number> {
+  const ordered = [...goals].sort((a, b) => (a.since !== b.since ? (a.since < b.since ? -1 : 1)
+    : a.ref.goalId < b.ref.goalId ? -1 : a.ref.goalId > b.ref.goalId ? 1 : 0));
+  return new Map(ordered.map((goal, index) => [goal.ref.goalId, index + 1]));
+}
+
+/** Every Goal number of one project; null when the project's Goals cannot all be read (no number then, never a
+ * shifted one). Only the person-facing reads call it (`goals/read`'s Host binding, the secretary's facts). */
+export async function readGoalOrdinals(records: Pick<RecordLookupPort, 'lookup'>, projectId: string): Promise<Map<string, number> | null> {
+  const read = await readGoalsByProject(records, projectId);
+  return read.status === 'ready' ? goalOrdinals(read.goals) : null;
+}
+
 /**
  * Every Goal of one workspace in creation order (ascending `since`, the store's
  * cursor order). The first entry is the oldest Goal by creation; its `since` is

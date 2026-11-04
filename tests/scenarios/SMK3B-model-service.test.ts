@@ -18,6 +18,7 @@ import type { TaskExecutionPage, TaskRow } from '../../src/app/core-http-types.j
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
+import type { TrackBarsPageV1 } from '../../src/core/work-graph/views/track-read-model.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
@@ -111,7 +112,16 @@ it('SMK3B-4: a model-service failure interrupts the work (one Run, a stopped Tas
     schemaVersion: 1, goalRef: goal, flowId: 'smk3b-model-service-continue', sessionHint: null,
     kind: 'select_work', taskId: TASK,
   }, queryProfileIds: [] }))).body).toMatchObject({ status: 'ready' });
-  await waitFor(runs, items => items.length === 2, 'the continued Run');
+  await waitFor(runs, items => items.some(item => item.run.ref.runId !== failedRun.runId && item.run.status === 'ended'),
+    'the continued Run to end');
+  // The second bar names the person's continue; the interruption was `executing` (a model-service failure), not paused.
+  const continued = (await runs()).find((item) => item.run.ref.runId !== failedRun.runId)!;
+  const track = readReady<TrackBarsPageV1>((await world.post('activity/track', plain(S6A_SCOPE, {
+    goalRef: goal, from: '2026-01-01T00:00:00.000Z', to: '2027-01-01T00:00:00.000Z', cursor: null, limit: 50 }))).body as
+    ReadResult<TrackBarsPageV1>, 'activity/track');
+  const continuedBar = track.bars.find((bar) => bar.kind === 'run' && bar.runRef.runId === continued.run.ref.runId);
+  expect(continuedBar).toMatchObject({ kind: 'run', attempt: { requeue: {
+    actorClass: 'human', failureClass: 'interrupted', interruption: 'executing', goalResume: false } } });
 }, 240_000);
 
 it('R2-01: a paused every_step Goal shows no automation-confirmation card for a model-service interruption', async () => {

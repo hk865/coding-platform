@@ -20,7 +20,7 @@
 - `node-detail-reader.ts` — 图悬停（只用已读数据）与单节点分区详情。
 - `graph-context-reader.ts` — 上下文事实、图 look/find、注意力图的唯一只读视图；look/find 的 `goalRef` 为 `null` 时读项目分支（架构 module、项目 Session、请求点名的 Goal 只读），需要 Goal 的节点/关系拒绝。
 - `pointer-facts.ts` — `createGoalPointerFacts`：一次读取 Goal 理解指针的版本、CAS 地址与同次读取水位；缺失为 `'none'`/null 版本期待，失败不当缺失。
-- `track-read-model.ts` — 轨道条读模型：Run、验收轮、Query 区间的有界分页。Query 条带带各自的 `QueryActivity` 视图。每个选中 Session 自己的 Query 先按它的 provenance 定画法（`queryOwnScanOf`）：普通 Session 画自己的 turn（按轨道 Goal 过滤）；只读副本画成从来源被问的 consultation，不按 Goal 过滤；来源也被选中时由来源的副本流画，副本自己不画——与 `sessionRefs` 顺序无关。`dedupeQueryBarsByRunRef` 只是按完整 `QueryRunRef` 的身份防重；`queryBarAskedOf` 优先取记录的正式被问 Session、否则取副本来源。
+- `track-read-model.ts` — 轨道条读模型：Run、验收轮、Query 区间的有界分页。Run 条带 `attempt.ordinal`（第几次尝试，`attemptOrdinalOf`）；重新入队时 `attempt.requeue` 另带 `failureClass`、`goalResume`、`requestedAt` 与 `interruption`。Query 条带带各自的 `QueryActivity` 视图。每个选中 Session 自己的 Query 先按它的 provenance 定画法（`queryOwnScanOf`）：普通 Session 画自己的 turn（按轨道 Goal 过滤）；只读副本画成从来源被问的 consultation，不按 Goal 过滤；来源也被选中时由来源的副本流画，副本自己不画——与 `sessionRefs` 顺序无关。`dedupeQueryBarsByRunRef` 只是按完整 `QueryRunRef` 的身份防重；`queryBarAskedOf` 优先取记录的正式被问 Session、否则取副本来源。
 
 ### 可消费 Session
 
@@ -143,7 +143,7 @@
 | `mapExecutedFilesToModules` | `src/core/work-graph/model/architecture-footprint.ts:17` | 已执行路径按架构目录做最长合法段匹配；无唯一主人保持 `unmapped`；`goal-conflicts.ts` 再导出它 | 需要把文件映射到 `ModuleRef` 时；不要按名字猜 |
 | `createSecretaryHandoffFacts` **正本** | `src/core/work-graph/views/secretary-handoff-facts.ts:264` | 覆盖、路由集、简报状态与简报引用的唯一读取：完整分页打开请求、每根走 owner 读、每个 Goal 读 CurrentPointer/NoteHead/NoteVersion（正文一次解码），返回一个首读 horizon；路由集 `closed:true` 只在本次读完整时给出；`readBriefState` 只在归档成功且路由集完整后给 `ready`，否则 `waiting`；`readBriefGoalRefs` 给推进返回每 Goal 的 saved 引用 | 推进的 coverage/fence/recheck/routing 扫描、brief 引用与后继轮的准备；不要另写覆盖、路由或简报读 |
 | `createHandoffNoticeSource`、`noticePositionOf` | `src/core/work-graph/views/handoff-notices.ts:176`、`:53` | `handoff` 请知悉来源与单条位置读：每个操作一项，位置是原通知写的提交；身份只用操作保存的 actor/workspace/键/generation 重建；subject 取 assignments 的 Task Goal（恰好一个 Goal 才按 Goal，否则项目），项目读与 Goal 读不相交 | I1 注入 `createDecisionReadModel` 的 `noticeSources`；只读，不写记录或事件 |
-| `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:549` | 秘书请求轮准备事实的唯一读取：请求轮材料（含执行轮与批轮各自的理解命令投影）与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals、唯一的 `briefRef`/`understandingGrants` 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史、治理指针或重算授权集 |
+| `createSecretaryPreparationFacts` **正本** | `src/core/work-graph/views/secretary-preparation-facts.ts:552` | 秘书请求轮准备事实的唯一读取：请求轮材料（含执行轮与批轮各自的理解命令投影）与批、早先 Session 历史（答案/无答案/未结束）、workspace、当前架构、完成策略指针、Goals、唯一的 `briefRef`/`understandingGrants` 与合并后的 guards/watermark | Runtime 准备请求轮；不要另读请求轮历史、治理指针或重算授权集 |
 | `workspaceScopeProblem` | `src/core/work-graph/views/goal-conflicts.ts:94` | 在任何记录读之前比较显式 workspace 与 `ctx` 范围 | 每个显式 workspace 输入的读 |
 | `listWorkspaceGoals` | `src/core/work-graph/views/goal-conflicts.ts:121` | 读完一个 workspace 的 Goal 集合，带 watermark 与 truncated | 需要 Goal 全集的读 |
 | `readGoalTerminalState` | `src/core/work-graph/views/goal-conflicts.ts:165` | 判断 Goal 是否 cancelled 或由 GoalPhase 证明 completed；读失败不当“未终止” | 冲突卡片是否需要关闭时 |
@@ -152,7 +152,7 @@
 | `createActivityReadModel` | `src/core/work-graph/views/activity-read-model.ts:1125` | 日历（Goal/workspace 范围，含 Query 步数与查询覆盖）、单 Run 与单 Query 活动视图 | 活动页、Run/Query 活动列 |
 | `classifyMissingActivity` | `src/core/work-graph/views/activity-read-helpers.ts:171` | Work 与 Query 共用的缺失记录规则：never entered、进行中、未补记/未记录/无记录起点 | 任何按活动记录判空/判未知的读；不要另写一份 |
 | `queryActivityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:343` | 把 `QueryActivity` 快照投影成 `QueryActivityViewV1`（含补记 late 规则） | Query 活动读投影时 |
-| `createTrackReadModel` | `src/core/work-graph/views/track-read-model.ts:1277` | 轨道条：Run/验收轮/Query 的重叠窗口分页 | 轨道页；composition 把 `readTrackBars` 与 `TrackReadPort` 装到一起 |
+| `createTrackReadModel` | `src/core/work-graph/views/track-read-model.ts:1282` | 轨道条：Run/验收轮/Query 的重叠窗口分页 | 轨道页；composition 把 `readTrackBars` 与 `TrackReadPort` 装到一起 |
 | `createTaskStateTimeline` | `src/core/work-graph/views/task-state-timeline.ts:534` | 任务状态时间条，按已存时间点折段 | 任务时间视图 |
 | `readStableActivityWindow` | `src/core/work-graph/views/activity-stable-window.ts:29` | 跑一次活动读 attempt：新预算、前后水位相等、最多四次 | 写新的活动读循环时；不要再复制重试 |
 | `Budget` | `src/core/work-graph/views/activity-read-helpers.ts:42` | 一次活动读的存储读次数预算 | 活动读的每次 attempt |

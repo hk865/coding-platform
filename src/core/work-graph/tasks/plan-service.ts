@@ -59,7 +59,7 @@ import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
 } from '../model/tool-commit-arguments.js';
 import {
-  automationVerdict, buildTaskFailureFacts,
+  attemptOrdinalOf, automationVerdict, buildTaskFailureFacts,
   type GateFailureInputV1, type WorkFailureInputV1,
 } from '../state/task-failure.js';
 import { gateCoveredTaskIds, gateFixInProgress } from '../state/decision-policy.js';
@@ -141,6 +141,7 @@ import {
   findPendingProposal,
   readCanonicalTaskFacts,
   readGoal,
+  readGoalOrdinals,
   readGoalPlanWindow,
   readGoalInterruption,
   readGoalPhase,
@@ -962,6 +963,9 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
   const eligibility = evaluateEligibility({ plan, goalDesiredState: rework.goalDesiredState, taskId,
     effectivePhases: phases, lease: state.lease });
   const failure = taskFailureRead(plan, definition, state, facts, rework, goalId);
+  const executionRuns = state.execution === null ? [] : facts.runsByTaskId.get(taskId) ?? [];
+    const selectedRun = state.execution === null ? undefined
+    : executionRuns.find((candidate) => sameJson(candidate.ref, state.execution));
   const coveringRequeueRef = state.requeueRef;
   const requeueBudget = coveringRequeueRef === null ? null
     : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameJson(requeue.ref, coveringRequeueRef))?.budget ?? null;
@@ -980,6 +984,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     // C1: the structured failure facts and the requeue history (read-only).
     ...(failure.failure === undefined ? {} : { failure: failure.failure }),
     ...(failure.rework === undefined ? {} : { rework: failure.rework }),
+    ...(selectedRun === undefined ? {} : { attemptOrdinal: attemptOrdinalOf(selectedRun, executionRuns) }),
     disposition: definition.disposition,
     ...(dispositionChange === undefined ? {} : { dispositionChange }),
     currentAttempt: state.currentAttempt,
@@ -1855,6 +1860,17 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return { status: 'ready', value: { goal: pending.goal, pendingPlan: pending.proposal, continuedBy } };
   }
 
+  /**
+   * The Goal's "目标 n" for the person-facing `goals/read`; the internal `queryGoal` above never reads it.
+   * Null when the read is not authorized or the project's Goals cannot all be read: the page of one Goal still
+   * opens, unlike `queryGoal`'s intended refusal when `continuedBy` is damaged.
+   */
+  async function readGoalOrdinal(ctx: CoreCallContext, ref: GoalRef): Promise<number | null> {
+    const authority = authorizeReadContext(ctx, ref.projectId);
+    if (authority.status !== 'ok') return null;
+    return (await readGoalOrdinals(records, ref.projectId))?.get(ref.goalId) ?? null;
+  }
+
   async function readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposal>> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'readPlanProposal was cancelled');
     const validated = planProposalRefFromUnknown(ref);
@@ -2310,7 +2326,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return toolCommitLookupResult(lookup);
   }
 
-  return { queryGoal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
+  return { queryGoal, readGoalOrdinal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
     readInitialPlanAnswerFacts, readAdoptionStopTargets,
     queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations,
     lookupToolCommit };

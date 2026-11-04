@@ -435,8 +435,9 @@ function trackBar(bar: typeof raw.runs[number]): TrackBarV1 {
     startAt: bar.startAt, endAt: bar.endAt, result: RUN_RESULT[bar.result] ?? 'running',
     reason: bar.reason === '' ? null : bar.reason, pauses: [],
     attempt: {
-      attemptId: bar.id + '-attempt', via: bar.attempt > 1 ? 'requeue' : 'first',
-      requeue: bar.attempt > 1 ? { actorClass: 'human', automaticCount: null, reason: bar.gap ?? '' } : null,
+      attemptId: bar.id + '-attempt', via: bar.attempt > 1 ? 'requeue' : 'first', ordinal: bar.attempt,
+      requeue: bar.attempt > 1 ? { actorClass: 'human', automaticCount: null, reason: bar.gap ?? '',
+        failureClass: 'check_failed', goalResume: false, requestedAt: bar.startAt, interruption: null } : null,
     },
     previous: previousRef(bar) as RunRef | null, activity: runActivity(bar),
   };

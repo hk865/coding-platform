@@ -98,7 +98,7 @@ Omit<SecretaryInputSample, 'round' | 'batched' | 'earlier'> {
     executionRoles: ['builder'],
     architecture: architecture === null ? null : architectureSample(architecture),
     policy: policy === null ? null : { policyId: policy.policyId, revision: policy.revision },
-    goals: memory.goals.map(entry => ({ goalId: entry.goalId, desiredState: entry.desiredState, objective: entry.objective })),
+    goals: memory.goals.map((entry, index) => ({ goalId: entry.goalId, desiredState: entry.desiredState, objective: entry.objective, ordinal: index + 1 })),
     request: {
       kind: 'goal',
       goal: {

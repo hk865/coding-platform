@@ -305,7 +305,7 @@ export function secretaryRoleSlot(role: SecretaryRoleSample): string {
 export type SampleModule = { projectId: string; moduleId: string; responsibility: string };
 export type SampleArchitecture = { baselineId: string; revision: number; topLevelModules: readonly SampleModule[] };
 export type SamplePolicy = { policyId: string; revision: number };
-export type SampleGoalListEntry = { goalId: string; desiredState: string; objective: string };
+export type SampleGoalListEntry = { goalId: string; desiredState: string; objective: string; ordinal: number | null };
 
 /**
  * The architecture as the goal section shows it, from what the adoption or revision returned: the modules that are
@@ -353,7 +353,8 @@ export function workspaceBlock(input: {
 
 /** One goal line. */
 export function goalListLine(goal: SampleGoalListEntry): string {
-  return `- ${goal.goalId} [${goal.desiredState}] ${goalLineObjective(goal.objective)}`;
+  return `- ${goal.ordinal === null ? '' : `目标 ${String(goal.ordinal)} · `}${goal.goalId} `
+    + `[${goal.desiredState}] ${goalLineObjective(goal.objective)}`;
 }
 
 /**

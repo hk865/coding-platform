@@ -23,6 +23,8 @@
 - `tests/ui/` — 画板运行时的 E31 七行（解析/指令、§1.5 计数、示例数据首渲染、事件绑定与 `setState` 重算、`componentDidUpdate(prevProps)` 的提交后调用、挂载后的 DOM 提交、入口页链接）和 E3-2 的 E32 行（真实 Host 的 `TaskMap` 目标/任务/状态词、选中与悬停卡、空世界、`host-client` 的 HTTP/令牌、画板令牌 meta 与无令牌启动、构建源、`bootBoardPage` 的 `updateProps`）、E3-4 的 E34-1/2/3 行（真实 DAG 与大纲/详情同源、无依赖计划的独立节点与未排定带、真实门和 `scope.stageId` 归属、50 个真实任务的身份/边/关键路径/选中）以及 E3-3 的页面自动刷新行（真实 Host 的外部写入、选中/展开保留、空世界建目标、九块板 `changes` 零请求，以及受控读的断连/2 秒重连/重读失败/首读重试、首次打开流补读、重连首帧 `change`/`reset`、Host 重启后从页面原文换令牌）；`TaskMap` 用工作副本，其余九块用冻结原件（纯 Node，`tests/ui/helpers/dom.ts` 提供假 DOM，`tests/ui/helpers/boot-page.ts` 提供页面原文、令牌 meta、请求转发和页面销毁，无 jsdom）。E3-4b 的整屏对照用 `tests/ui/helpers/task-map-scene.ts`（只导出 `scene.now` 和 `scene.reply`）与 `tests/ui/fixtures/task-map-scene.json`：41 个任务、同一个目标门、原型的工作线、记号、刻度和日历。E3-4c 的 `E34C-1` 经 Host 的 `workspaces/open` 设置路由打开另一个项目的第二个工作区、在那里建目标，再用 `?goal=` 打开页面。E3-5 的 E35 行用两个助手：`tests/ui/helpers/e35-scene.ts` 把基础场景适配一次，在工作副本上渲染、记下 `readMore` 的需要，另给小时格和日格的日历读；`tests/ui/helpers/e35-host.ts` 是一个目标、一个待执行任务的假 Host，每行可以换某个路由或 `changes` 的回复。
 - `tests/work-graph/` — WorkGraph 域服务和读模型（539 个），是夹具使用最密集的文件夹；`PL-12-activity-runs-readings.test.ts`、`PL-20-same-session-usage.test.ts` 经 `PL-readings-fixture.ts` 核对 `activity/runs` 的三个 Run 读数。
 
+E3-6B 的新文件：`tests/work-graph/E36B-attempt-ordinal.test.ts`（真实 requeue 与接续后的 `attempt.ordinal`）、`tests/app/E36B-goal-ordinal.test.ts`（`goals/read` 的目标号，取消后留号、按项目编）、`tests/app/E36B-goal-resume-attempt.test.ts`（GOAL-29 恢复接续的横条来由）。
+
 ## tests/helpers/ 的夹具
 
 ### Host 和平台
