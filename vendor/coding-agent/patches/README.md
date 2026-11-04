@@ -66,3 +66,11 @@ node scripts/build-kernel-patch.mjs --write
 `--write` 改了这九个源的 32 份产物：每个源的 `.js`、`.js.map`、`.d.ts.map`，以及 `session-store-port.d.ts`、`session-history.d.ts`、`sqlite-stores.d.ts`、`public-api.d.ts`、`composition-contracts.d.ts`；`session-projection.d.ts`、`context-selection-policy.d.ts`、`composition-root.d.ts`、`resume-composition.d.ts` 不变，其余源的产物不变。
 
 命令不变：`node scripts/build-kernel-patch.mjs --check`（0）与 `--write`。
+
+## 2026-11-04 8E-2 一次读多个文件（slice-8E2-SPEC W12）
+
+受管源 `sandbox/workspace/workspace-sandbox.ts` 的 `WorkspaceSandbox` 加 `readMany(relativePaths, maxBytes?, { signal?, via? })`：结果和输入同序，每项是 `{ ok: true; file }` 或 `{ ok: false; error }`，和逐个 `read(path, maxBytes)` 的结果或它抛的 `WorkspaceSandboxError`（码、消息）相同，一项失败不影响别的，读到的照样记进会话一致性检查；只开一次根。第一次调用时对工作区根 `statfs` 一次、实例记下：ext2/3/4、xfs、btrfs、tmpfs 用同步系统调用（路径排序后按目录栈走，每个目录只开一次，连续做满约 1.5 毫秒让出一次事件循环），其余文件系统和 `statfs` 失败用异步读（目录句柄按前缀缓存，同时读 4 个）；`via` 只给测试强制选一种。批末从根按名字把这批开过的目录再开一遍比 dev:ino，对不上的目录下的路径都回 `io_error`。取消时整个调用失败。`#readAt` 打开文件之后的检查（普通文件、大小上限、读后再 fstat、解码、摘要）抽成模块内的 `readOpenedFile`，`read` 和两种读法共用这一份，`read` 的行为不变。没有新错误码，没有新导出的类型。
+
+改前源 SHA-256 `6ef2637d1b8e69a46c116596f84262f0bd82447c6d2efce62a97d663f814dd42`，改后 `0125e688752e530d68cfa4421ff881db954d31d89b8bd1ec8166ffb79390445a`；四份产物为 `fcebefc3c3637199a65794e8617a0b587d657f1631638e7c091b0ebe6fb02887`（js）、`cd7aacd3d6856a343388df26e6e0dee5505aa32a90cf08e505b2a91f30f39573`（js.map）、`4b78ab8ee570bd2ba03d5fa20f89cb4cab605cbff1b5de16100a165996ac824f`（d.ts）、`f36e00a626769b30cdf76546b7fd676299fcf835e8dae3188d3fe6dc62345d44`（d.ts.map）。
+
+命令不变：`node scripts/build-kernel-patch.mjs --check`（0，十九个源、76 份产物）与 `--write`；`--write` 只改 `dist/sandbox/workspace/workspace-sandbox.*` 这四份，其余产物不变。

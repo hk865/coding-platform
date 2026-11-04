@@ -1,18 +1,22 @@
 """Read-only analysis of an isolated, permission-filtered source snapshot.
 
-Two operations share this file, routed on argv before the old top-level body:
+Three operations share this file, routed on argv before the old top-level body:
   * ``import_graph`` (argv[1]) is the light, standard-library-only scanner used by
     the observation. It reads an NDJSON header and files from stdin and writes one
     NDJSON line per protocol event; one unit is one Python file.
+  * ``single_file`` (argv[1]) is the resident, standard-library-only lookup of one
+    file's ``def``/``async def``/``class`` names with their name spans (slice-8E2-SPEC W11).
   * ``python_index`` (any other argv) is the heavy Jedi semantic provider; its
     only 8D-rework changes are argv[1] as the analyzers directory, ``-S`` and
     the missing-Jedi message.
 """
 import ast
+import bisect
 import configparser
 import hashlib
 import io
 import json
+import re
 import sys
 import tempfile
 import zipfile
@@ -569,10 +573,94 @@ def run_import_graph():
     emit({'t': 'end'})
 
 
+# --------------------------------------------------------------------------------- single_file
+
+# slice-8E2-SPEC W11. One resident process answers one line per request:
+#   in:  {"t": "hello"}                                   out: {"t": "ready", ...} | {"t": "unavailable", ...}
+#   in:  {"t": "lookup", "path", "digest", "text"}        out: {"t": "result", "symbols": [...]} | {"t": "failed", "reason"}
+# A symbol is {name, kind, start: {line, column}, end: {line, column}}: every FunctionDef,
+# AsyncFunctionDef and ClassDef at any depth, the exploration visitor's rule
+# (exploration-tools.ts PYTHON_AST), kinds `function`/`class`; the span is the name
+# itself, one-based lines split on '\n' only and one-based UTF-16 columns, end
+# exclusive, the convention of `symbolRangeText`. Results are kept per (path, digest).
+SINGLE_FILE_CACHE_MAX = 4096
+SINGLE_FILE_MIN_VERSION = (3, 8)   # decorated defs carry the `def` line, nodes carry end positions
+# The tokenizer's line breaks (`ast` line numbers count `\r` alone as one).
+AST_LINE_BREAK = re.compile(r'\r\n|\r|\n')
+# Between `async`, `def`/`class` and the name only blanks and backslash continuations
+# can stand; a comment would end the statement. The name runs as far as `str.isidentifier`
+# holds, the tokenizer's own rule (`\w` misses combining marks and Other_ID_Start/Continue).
+DEFINITION_HEAD = re.compile(r'(?:async(?:[ \t\f]|\\(?:\r\n|\r|\n))+)?(?:def|class)(?:[ \t\f]|\\(?:\r\n|\r|\n))+')
+
+
+def single_file_symbols(text):
+    tree = ast.parse(text)
+    ast_starts = [0] + [match.end() for match in AST_LINE_BREAK.finditer(text)]
+    line_starts = [0] + [index + 1 for index, char in enumerate(text) if char == '\n']
+
+    def position(offset):
+        line = bisect.bisect_right(line_starts, offset) - 1
+        return {'line': line + 1, 'column': len(text[line_starts[line]:offset].encode('utf-16-le')) // 2 + 1}
+
+    symbols = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        line_start = ast_starts[node.lineno - 1]
+        line_end = ast_starts[node.lineno] if node.lineno < len(ast_starts) else len(text)
+        # col_offset counts UTF-8 bytes of the statement's own line.
+        prefix = text[line_start:line_end].encode('utf-8')[:node.col_offset].decode('utf-8')
+        head = DEFINITION_HEAD.match(text, line_start + len(prefix))
+        if head is None:
+            raise ValueError('definition name not found at line %d' % node.lineno)
+        start = end = head.end()
+        while end < len(text) and text[start:end + 1].isidentifier():
+            end += 1
+        symbols.append({'name': node.name, 'kind': 'class' if isinstance(node, ast.ClassDef) else 'function',
+                        'start': position(start), 'end': position(end)})
+    symbols.sort(key=lambda row: (row['start']['line'], row['start']['column']))
+    return symbols
+
+
+def run_single_file():
+    sys.stdin.readline()
+    if sys.version_info < SINGLE_FILE_MIN_VERSION:
+        emit({'t': 'unavailable', 'message': 'Python 3.8 or newer is required for single_file'})
+        return
+    emit({'t': 'ready', 'engine': 'python-ast', 'engineVersion': '%d.%d.%d' % sys.version_info[:3]})
+    cache = {}
+    for raw in sys.stdin:
+        if not raw.strip():
+            continue
+        request = json.loads(raw)
+        key = (request['path'], request['digest'])
+        reply = cache.pop(key, None)
+        if reply is None:
+            try:
+                reply = {'t': 'result', 'symbols': single_file_symbols(request['text'])}
+            except (SyntaxError, ValueError) as error:
+                message = error.msg if isinstance(error, SyntaxError) else str(error)
+                reply = {'t': 'failed', 'reason': first200('{}: {}'.format(type(error).__name__, message))}
+            except (RecursionError, MemoryError) as error:
+                emit({'t': 'failed', 'reason': first200('{}: {}'.format(type(error).__name__, str(error)))})
+                continue
+        cache[key] = reply
+        if len(cache) > SINGLE_FILE_CACHE_MAX:
+            del cache[next(iter(cache))]
+        emit(reply)
+
+
 # --------------------------------------------------------------------------------- routing
 
 # §11.3/§11.5: route on argv before the python_index body. import_graph uses only
 # the standard library and checks the interpreter version first.
+if sys.argv[1:2] == ['single_file']:
+    try:
+        run_single_file()
+    except Exception as error:
+        emit({'t': 'failed', 'reason': '{}: {}'.format(type(error).__name__, first200(str(error)))})
+    sys.exit(0)
+
 if sys.argv[1:2] == ['import_graph']:
     if sys.version_info < (3, 11):
         emit({'t': 'unavailable', 'message': 'Python 3.11 or newer is required for import_graph'})

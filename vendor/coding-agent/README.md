@@ -31,3 +31,7 @@ R4c.2b 在本目录保存 `SqliteStores.read` 的[补丁源码](patches/storage/
 ## 2026-11-03 K2-K 压缩记录
 
 受管源新增[会话投影补丁源码](patches/core/ports/session_store/session-projection.ts)，现十九个源、76 份产物。Kernel 会话记录多一种 `context.compacted` 压缩记录，由公开的 `appendCompactionRecord` 追加；恢复历史时按最新一条 `compacted` 拼视图（摘要消息、旧工具结果的桩、可选的 `viewPosition`），原记录不动；`selectContext` 保护摘要消息；`kernelSessionApiVersion` 是 4。平台还不调压缩（slice-K2-SPEC K2-P1）。九个改了的源的哈希、产物清单和命令见[补丁维护说明](patches/README.md)。
+
+## 2026-11-04 8E-2 一次读多个文件
+
+受管的[工作区沙箱补丁源码](patches/sandbox/workspace/workspace-sandbox.ts)给 `WorkspaceSandbox` 加 `readMany`：一次读多个文件，每项同逐个 `read` 的结果或错（码、消息），只开一次根；按工作区根的 `statfs`，本地盘用同步系统调用，其余用异步读，批末复核开过的目录。源仍十九个、76 份产物。来源与四份产物哈希、命令见[补丁维护说明](patches/README.md)。

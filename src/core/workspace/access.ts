@@ -66,15 +66,26 @@ export interface WorkspaceReadAccess {
    * `mode` is the Kernel's real file mode when the reader exposes it; a mixed comparison treats a
    * missing mode as unsupported rather than guessing 100644. */
   read(path: string, maxBytes: number): Promise<{ content: string; revision: string; byteLength: number; mode?: number }>;
+  /**
+   * Several reads of one access in one Kernel batch (`WorkspaceSandbox.readMany`): same order as
+   * `paths`, each item what `read` returns or throws. Optional like `listObservationFiles`, so a
+   * hand-built access keeps type-checking; callers then read one by one.
+   */
+  readMany?(paths: readonly string[], maxBytes: number): Promise<WorkspaceBatchRead[]>;
   sourceIdentity(): Promise<{ workspace: string; commit: string | null }>;
   /** Releases this adapter's own resources; the Kernel sandbox has no same-named method. */
   release(): Promise<void>;
 }
+export type WorkspaceBatchRead =
+  | { ok: true; file: { content: string; revision: string; byteLength: number; mode?: number } }
+  | { ok: false; error: unknown };
 export interface WorkspaceAccessFactory {
   open(ctx: CoreCallContext, workspace: WorkspaceRef): Promise<WorkspaceResult<WorkspaceReadAccess>>;
 }
 
 const rejected = (code: 'cancelled' | 'forbidden' | 'unavailable', reason: string): WorkspaceResult<never> => ({ status: 'rejected', code, reason });
+/** A batch path outside the current read scope; `readFailure` maps the Kernel code to `forbidden`. */
+const outsideScope = (): Error => Object.assign(new Error('path outside readable scope'), { code: 'permission_denied' });
 
 /**
  * Every `open` re-runs resolveRoot + authorize and creates a fresh sandbox; the kernel
@@ -143,6 +154,18 @@ export function createWorkspaceAccessFactory(bindings: WorkspaceHostBindings): W
           const file = await sandbox.read(path, maxBytes);
           ctx.signal.throwIfAborted();
           return { content: file.content, revision: file.revision, byteLength: file.byteLength, mode: file.mode };
+        },
+        async readMany(paths, maxBytes) {
+          live();
+          const results: WorkspaceBatchRead[] = paths.map(() => ({ ok: false, error: outsideScope() }));
+          const readable = paths.flatMap((path, index) => allowed(path) ? [index] : []);
+          const read = await sandbox.readMany(readable.map(index => paths[index]!), maxBytes, { signal: ctx.signal });
+          ctx.signal.throwIfAborted();
+          read.forEach((item, at) => {
+            results[readable[at]!] = item.ok ? { ok: true, file: { content: item.file.content, revision: item.file.revision,
+              byteLength: item.file.byteLength, mode: item.file.mode } } : { ok: false, error: item.error };
+          });
+          return results;
         },
         async sourceIdentity() { live(); return readSourceIdentity(root, sandbox.identity); },
         async release() { released = true; },

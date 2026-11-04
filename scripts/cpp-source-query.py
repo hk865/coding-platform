@@ -2,17 +2,24 @@
 
 API: clang.llvm.org/doxygen/group__CINDEX.html; LLVM 18 redirect-only VFS:
 github.com/llvm/llvm-project/blob/llvmorg-18.1.3/llvm/include/llvm/Support/VirtualFileSystem.h
+
+Three operations, routed on argv: ``cpp_index`` (no argv, one JSON request on stdin),
+``import_graph`` (the observation's NDJSON scan) and ``single_file`` (slice-8E2-SPEC W11: the
+resident lookup of one file's functions and classes with preamble reuse).
 """
 import collections
 import ctypes as C
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import posixpath
 import re
 import shlex
+import shutil
 import sys
 import tempfile
+import time
 
 
 class Unsupported(Exception):
@@ -33,6 +40,125 @@ class Location(C.Structure):
 
 class Range(C.Structure):
     _fields_ = [('ptr_data', C.c_void_p * 2), ('begin_int_data', C.c_uint), ('end_int_data', C.c_uint)]
+
+
+def database_source(entry):
+    """An entry's `directory` + `file` as one normalized name: (directory, file, physical, absolute)."""
+    directory = entry['directory'].replace('\\', '/')
+    file = entry['file'].replace('\\', '/')
+    physical = posixpath.normpath(posixpath.join(directory, file))
+    return directory, file, physical, bool(physical.startswith('/') or re.match(r'^[A-Za-z]:/', physical))
+
+
+def compile_unit(entry, source_paths, files):
+    """One compilation database entry to `{path, args, working, ignoredArguments}` with every
+    path rebased into the redirect-only VFS. `source_paths` are the readable sources an entry
+    may name; `files` answers whether a forced include is readable. Unknown arguments raise
+    Unsupported rather than being dropped."""
+    if not isinstance(entry, dict) or not isinstance(entry.get('directory'), str) or not isinstance(entry.get('file'), str):
+        raise Unsupported('Invalid compilation database entry')
+    # Absolute build paths are aliases only. They are matched to a unique
+    # readable source suffix; they never authorize access to that host path.
+    directory, file, physical, absolute = database_source(entry)
+    if absolute:
+        matches = [p for p in source_paths if physical.endswith('/' + p)]
+        if len(matches) != 1:
+            raise Unsupported('Absolute compilation source cannot map uniquely to readable snapshot: ' + file)
+        path = matches[0]
+        base = physical[:-len(path)].rstrip('/')
+        directory = posixpath.normpath(directory)
+        if directory != base and not directory.startswith(base + '/'):
+            raise Unsupported('Compilation directory is outside mapped workspace')
+        working = directory[len(base):].strip('/')
+    else:
+        base, working, path = None, posixpath.normpath(directory), physical
+        if path not in source_paths or working == '..' or working.startswith('../'):
+            raise Unsupported('Compilation source is outside readable snapshot: ' + file)
+
+    def mapped(value, require_file=False):
+        value = value.replace('\\', '/')
+        if value.startswith('/') or re.match(r'^[A-Za-z]:/', value):
+            if base is None or (value != base and not value.startswith(base + '/')):
+                raise Unsupported('External compilation paths require an explicitly readable in-workspace dependency: ' + value)
+            relative = posixpath.normpath(value[len(base):].strip('/') or '.')
+        else:
+            relative = posixpath.normpath(posixpath.join(working, value))
+        if relative == '..' or relative.startswith('../') or relative.startswith('/'):
+            raise Unsupported('Compilation path escapes workspace: ' + value)
+        if require_file and relative not in files:
+            raise Unsupported('Forced include is unavailable in snapshot: ' + value)
+        return '/workspace' + (('/' + relative) if relative != '.' else '')
+
+    raw = entry.get('arguments')
+    if raw is None and isinstance(entry.get('command'), str):
+        raw = shlex.split(entry['command'], posix=True)
+    if not isinstance(raw, list) or not raw or len(raw) > 512 or not all(isinstance(v, str) and '\0' not in v for v in raw):
+        raise Unsupported('Invalid compiler argument array')
+    compiler = PurePosixPath(raw[0].replace('\\', '/')).name
+    if not re.fullmatch(r'(?:clang\+\+|clang|gcc|g\+\+|cc|c\+\+)(?:-[0-9.]+)?', compiler):
+        raise Unsupported('Compiler wrappers/shells are not executed or inferred: ' + compiler)
+    args, ignored_args = [], []
+    i = 1
+    while i < len(raw):
+        arg = raw[i]
+        if any(token in arg for token in ['\n', '\r', '`', '$(', ';', '&&', '||']) or arg.startswith('@'):
+            raise Unsupported('Shell syntax/response files are not supported compiler arguments')
+        if arg in ['-o', '-MF', '-MT', '-MQ']:
+            if i + 1 >= len(raw):
+                raise Unsupported('Missing compiler argument: ' + arg)
+            ignored_args.extend(raw[i:i + 2]); i += 2; continue
+        if arg in ['-c', '-MMD', '-MD', '-MP', '-pipe']:
+            ignored_args.append(arg); i += 1; continue
+        option = next((flag for flag in ['-isystem', '-iquote', '-include', '-imacros', '-I', '-D', '-U'] if arg == flag or (flag in ['-I', '-D', '-U'] and arg.startswith(flag))), None)
+        if option:
+            if arg == option:
+                i += 1
+                if i >= len(raw):
+                    raise Unsupported('Missing compiler argument: ' + option)
+                value = raw[i]
+            else:
+                value = arg[len(option):]
+            args.extend([option, value if option in ['-D', '-U'] else mapped(value, option in ['-include', '-imacros'])])
+        elif arg in ['-x', '-target', '--target']:
+            i += 1
+            if i >= len(raw) or not re.fullmatch(r'[A-Za-z0-9_+.-]+', raw[i]) or (arg == '-x' and raw[i] not in ['c', 'c++']):
+                raise Unsupported('Invalid language/target option')
+            args.extend([arg, raw[i]])
+        elif re.fullmatch(r'-std=(?:c|gnu)(?:\+\+)?[0-9a-z]+', arg) or re.fullmatch(r'--target=[A-Za-z0-9_+.-]+', arg) or re.fullmatch(r'-O[0-3szg]', arg) or re.fullmatch(r'-g(?:[0-3]|dwarf-[2-5])?', arg) or re.fullmatch(r'-W(?:no-)?[A-Za-z0-9=-]+', arg):
+            args.append(arg)
+        elif arg in ['-pthread', '-m32', '-m64', '-fshort-wchar', '-fno-exceptions', '-fexceptions', '-fno-rtti', '-frtti', '-fms-extensions', '-fms-compatibility', '-fPIC', '-fpic', '-fPIE', '-fpie', '-fno-builtin', '-funsigned-char', '-fsigned-char', '-nostdinc', '-nostdinc++']:
+            args.append(arg)
+        elif not arg.startswith('-') and mapped(arg) == '/workspace/' + path:
+            pass
+        else:
+            raise Unsupported('Unsupported compiler option; configuration was not silently discarded: ' + arg)
+        i += 1
+    return {'path': path, 'args': args, 'working': mapped('.'), 'ignoredArguments': ignored_args}
+
+
+def one_variant_per_source(units):
+    """A source compiled with two different argument lists has no single precise reading."""
+    variants = {}
+    for unit in units:
+        identity = json.dumps(unit['args'])
+        if unit['path'] in variants and variants[unit['path']] != identity:
+            raise Unsupported('Multiple compilation variants for one source; select a database with one explicit configuration per translation unit: ' + unit['path'])
+        variants[unit['path']] = identity
+    return list({unit['path']: unit for unit in units}.values())
+
+
+def semantic_arguments(args, overlay, system_headers=False, error_limit=30):
+    """The fixed tail every semantic parse adds to the filtered arguments. Without system headers
+    only the overlay's workspace files are visible (-nostdinc/-nostdinc++); with them the overlay
+    also maps the compiler's own header directories file by file (slice-8E2-SPEC W11 rule 1)."""
+    isolation = [] if system_headers else ['-nostdinc', '-nostdinc++']
+    return args + ['-ivfsoverlay', overlay] + isolation + ['-fno-modules', '-fno-implicit-modules', '-fsyntax-only', '-ferror-limit=%d' % error_limit]
+
+
+def utf16_column(line_text, byte_column):
+    """libclang columns count UTF-8 bytes from 1; locations report UTF-16 units from 1."""
+    prefix = line_text.encode('utf-8')[:max(0, byte_column - 1)].decode('utf-8', errors='replace')
+    return len(prefix.encode('utf-16-le')) // 2 + 1
 
 
 def main(request):
@@ -103,8 +229,7 @@ def main(request):
             return None
         lines = files[path]['content'].split('\n')
         text = lines[line.value - 1] if 0 < line.value <= len(lines) else ''
-        prefix = text.encode('utf-8')[:max(0, column.value - 1)].decode('utf-8', errors='replace')
-        return {'path': path, 'digest': files[path]['digest'], 'line': line.value, 'column': len(prefix.encode('utf-16-le')) // 2 + 1}
+        return {'path': path, 'digest': files[path]['digest'], 'line': line.value, 'column': utf16_column(text, column.value)}
 
     def loc_cursor(cursor):
         loc = location(cursor_location(cursor))
@@ -121,98 +246,7 @@ def main(request):
         raise Unsupported('Compilation database exceeds 512 translation units; select a narrower database')
     source_paths = [p for p in files if re.search(r'\.(c|cc|cpp|cxx|C)$', p)]
 
-    def compile_unit(entry):
-        if not isinstance(entry, dict) or not isinstance(entry.get('directory'), str) or not isinstance(entry.get('file'), str):
-            raise Unsupported('Invalid compilation database entry')
-        directory = entry['directory'].replace('\\', '/')
-        file = entry['file'].replace('\\', '/')
-        # Absolute build paths are aliases only. They are matched to a unique
-        # readable source suffix; they never authorize access to that host path.
-        physical = posixpath.normpath(posixpath.join(directory, file))
-        absolute = physical.startswith('/') or re.match(r'^[A-Za-z]:/', physical)
-        if absolute:
-            matches = [p for p in source_paths if physical.endswith('/' + p)]
-            if len(matches) != 1:
-                raise Unsupported('Absolute compilation source cannot map uniquely to readable snapshot: ' + file)
-            path = matches[0]
-            base = physical[:-len(path)].rstrip('/')
-            directory = posixpath.normpath(directory)
-            if directory != base and not directory.startswith(base + '/'):
-                raise Unsupported('Compilation directory is outside mapped workspace')
-            working = directory[len(base):].strip('/')
-        else:
-            base, working, path = None, posixpath.normpath(directory), physical
-            if path not in source_paths or working == '..' or working.startswith('../'):
-                raise Unsupported('Compilation source is outside readable snapshot: ' + file)
-
-        def mapped(value, require_file=False):
-            value = value.replace('\\', '/')
-            if value.startswith('/') or re.match(r'^[A-Za-z]:/', value):
-                if base is None or (value != base and not value.startswith(base + '/')):
-                    raise Unsupported('External compilation paths require an explicitly readable in-workspace dependency: ' + value)
-                relative = posixpath.normpath(value[len(base):].strip('/') or '.')
-            else:
-                relative = posixpath.normpath(posixpath.join(working, value))
-            if relative == '..' or relative.startswith('../') or relative.startswith('/'):
-                raise Unsupported('Compilation path escapes workspace: ' + value)
-            if require_file and relative not in files:
-                raise Unsupported('Forced include is unavailable in snapshot: ' + value)
-            return '/workspace' + (('/' + relative) if relative != '.' else '')
-
-        raw = entry.get('arguments')
-        if raw is None and isinstance(entry.get('command'), str):
-            raw = shlex.split(entry['command'], posix=True)
-        if not isinstance(raw, list) or not raw or len(raw) > 512 or not all(isinstance(v, str) and '\0' not in v for v in raw):
-            raise Unsupported('Invalid compiler argument array')
-        compiler = PurePosixPath(raw[0].replace('\\', '/')).name
-        if not re.fullmatch(r'(?:clang\+\+|clang|gcc|g\+\+|cc|c\+\+)(?:-[0-9.]+)?', compiler):
-            raise Unsupported('Compiler wrappers/shells are not executed or inferred: ' + compiler)
-        args, ignored_args = [], []
-        i = 1
-        while i < len(raw):
-            arg = raw[i]
-            if any(token in arg for token in ['\n', '\r', '`', '$(', ';', '&&', '||']) or arg.startswith('@'):
-                raise Unsupported('Shell syntax/response files are not supported compiler arguments')
-            if arg in ['-o', '-MF', '-MT', '-MQ']:
-                if i + 1 >= len(raw):
-                    raise Unsupported('Missing compiler argument: ' + arg)
-                ignored_args.extend(raw[i:i + 2]); i += 2; continue
-            if arg in ['-c', '-MMD', '-MD', '-MP', '-pipe']:
-                ignored_args.append(arg); i += 1; continue
-            option = next((flag for flag in ['-isystem', '-iquote', '-include', '-imacros', '-I', '-D', '-U'] if arg == flag or (flag in ['-I', '-D', '-U'] and arg.startswith(flag))), None)
-            if option:
-                if arg == option:
-                    i += 1
-                    if i >= len(raw):
-                        raise Unsupported('Missing compiler argument: ' + option)
-                    value = raw[i]
-                else:
-                    value = arg[len(option):]
-                args.extend([option, value if option in ['-D', '-U'] else mapped(value, option in ['-include', '-imacros'])])
-            elif arg in ['-x', '-target', '--target']:
-                i += 1
-                if i >= len(raw) or not re.fullmatch(r'[A-Za-z0-9_+.-]+', raw[i]) or (arg == '-x' and raw[i] not in ['c', 'c++']):
-                    raise Unsupported('Invalid language/target option')
-                args.extend([arg, raw[i]])
-            elif re.fullmatch(r'-std=(?:c|gnu)(?:\+\+)?[0-9a-z]+', arg) or re.fullmatch(r'--target=[A-Za-z0-9_+.-]+', arg) or re.fullmatch(r'-O[0-3szg]', arg) or re.fullmatch(r'-g(?:[0-3]|dwarf-[2-5])?', arg) or re.fullmatch(r'-W(?:no-)?[A-Za-z0-9=-]+', arg):
-                args.append(arg)
-            elif arg in ['-pthread', '-m32', '-m64', '-fshort-wchar', '-fno-exceptions', '-fexceptions', '-fno-rtti', '-frtti', '-fms-extensions', '-fms-compatibility', '-fPIC', '-fpic', '-fPIE', '-fpie', '-fno-builtin', '-funsigned-char', '-fsigned-char', '-nostdinc', '-nostdinc++']:
-                args.append(arg)
-            elif not arg.startswith('-') and mapped(arg) == '/workspace/' + path:
-                pass
-            else:
-                raise Unsupported('Unsupported compiler option; configuration was not silently discarded: ' + arg)
-            i += 1
-        return {'path': path, 'args': args, 'working': mapped('.'), 'ignoredArguments': ignored_args}
-
-    units = [compile_unit(entry) for entry in configs]
-    variants = {}
-    for unit in units:
-        identity = json.dumps(unit['args'])
-        if unit['path'] in variants and variants[unit['path']] != identity:
-            raise Unsupported('Multiple compilation variants for one source; select a database with one explicit configuration per translation unit: ' + unit['path'])
-        variants[unit['path']] = identity
-    units = list({unit['path']: unit for unit in units}.values())
+    units = one_variant_per_source([compile_unit(entry, source_paths, files) for entry in configs])
     diagnostics, declarations, references, calls, imports = [], [], [], [], []
     targets = set()
     with tempfile.TemporaryDirectory(prefix='platform-cpp-source-') as scratch:
@@ -243,7 +277,7 @@ def main(request):
                 # All source and include arguments have already been rebased to
                 # absolute VFS paths. Do not ask Clang's driver to chdir into a
                 # virtual directory before its overlay has been installed.
-                args = unit['args'] + ['-ivfsoverlay', str(overlay), '-nostdinc', '-nostdinc++', '-fno-modules', '-fno-implicit-modules', '-fsyntax-only', '-ferror-limit=30']
+                args = semantic_arguments(unit['args'], str(overlay))
                 encoded = [arg.encode() for arg in args]
                 argv = (char * len(encoded))(*encoded)
                 code = parse(index, ('/workspace/' + unit['path']).encode(), argv, len(argv), None, 0, 1, C.byref(tu))
@@ -1073,8 +1107,620 @@ def graph_import():
         graph_emit({'t': 'failed', 'reason': type(error).__name__ + ': ' + str(error)[:200]})
 
 
+# ---------------------------------------------------------------------------
+# Single-file lookup (slice-8E2-SPEC W11).  One resident process, one JSON object per line
+# in both directions:
+#   in   {"t": "hello", "libraryPath"}
+#   out  {"t": "ready", "engine", "engineVersion", "precise", "systemDirectories",
+#         "systemFiles", "overlayMs", "probes"} | {"t": "unavailable", "message"}
+#   in   {"t": "lookup", "path", "text", "mode": "read" | "write", "entries": [...] | null}
+#   out  any number of {"t": "read", "paths", "content": bool}, each answered by
+#   in   {"t": "files", "files": [{"path", "digest", "content"?} | {"path", "absent": true}]}
+#        | {"t": "files", "failed": reason}
+#   out  {"t": "result", "exact", "symbols", "warm"?} | {"t": "unsupported", "message"}
+#        | {"t": "failed", "reason"}
+# `entries` are the root database's entries that may name this file (null: no
+# database).  Workspace files reach the process only through `read`, answered by
+# the platform's reads; the compiler's own header directories are read directly,
+# read-only (W11 rule 1, decision 117).
+# ---------------------------------------------------------------------------
+SINGLE_PRECISE = 0x04 | 0x100 | 0x200   # PrecompiledPreamble|CreatePreambleOnFirstParse|KeepGoing
+SINGLE_FALLBACK = 0x400 | 0x200         # SingleFileParse|KeepGoing
+# Retained translation units, least recently used dropped first (about 43 MiB each, slice-8E2-SPEC §3.2 item 9).
+CPP_RETAINED_UNITS_MAX = 8
+# Discovery parses (only for includes named through a macro); each adds at least one asked path.
+CPP_DISCOVERY_ROUNDS_MAX = 16
+# Struct, Class, Function, CXXMethod, Constructor, Destructor, FunctionTemplate, ClassTemplate.
+SINGLE_KINDS = frozenset([2, 4, 8, 21, 24, 25, 30, 31])
+PROBE_PATH = 'platform-probe.cpp'
+PROBE_SOURCE = b'#include <cstddef>\n'
+SEARCH_START = '#include <...> search starts here:'
+SEARCH_END = 'End of search list.'
+VALUED_ARGUMENTS = ('-isystem', '-iquote', '-include', '-imacros', '-I', '-D', '-U', '-x', '-target', '--target')
+CONDITION_RE = re.compile(r'^\s*#\s*(?:el)?if')
+HAS_INCLUDE_RE = re.compile(r'__has_include(?:_next)?\s*\(\s*(?:"([^"\n]+)"|<([^>\n]+)>)')
+
+
+class CXUnsavedFile(C.Structure):
+    _fields_ = [('Filename', C.c_char_p), ('Contents', C.c_char_p), ('Length', C.c_ulong)]
+
+
+class LookupFailed(Exception):
+    """This lookup cannot finish (a read failed, libclang could not parse); the process goes on."""
+
+
+class Clang18Single(Clang18):
+    """The import-graph bindings plus what a retained, reparsed translation unit needs."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        lib = C.CDLL(path)
+
+        def bind(name, result, *args):
+            function = getattr(lib, name)
+            function.restype, function.argtypes = result, list(args)
+            return function
+
+        pointer, uint, char = C.c_void_p, C.c_uint, C.c_char_p
+        self.parse_unsaved = bind('clang_parseTranslationUnit2', C.c_int, pointer, char, C.POINTER(char), C.c_int,
+                                  C.POINTER(CXUnsavedFile), uint, uint, C.POINTER(pointer))
+        self.reparse = bind('clang_reparseTranslationUnit', C.c_int, pointer, uint, C.POINTER(CXUnsavedFile), uint)
+        self.kind_spelling = bind('clang_getCursorKindSpelling', CXString, uint)
+        self.spelling_location = bind('clang_getSpellingLocation', None, Location, C.POINTER(pointer), C.POINTER(uint), C.POINTER(uint), C.POINTER(uint))
+        self.get_file = bind('clang_getFile', pointer, pointer, char)
+        self.name_range = bind('clang_Cursor_getSpellingNameRange', Range, Cursor, uint, uint)
+        self.range_end = bind('clang_getRangeEnd', Location, Range)
+
+
+class RequiredPaths:
+    """Stands for `files` in compile_unit: records each forced include instead of checking it;
+    the lookup reads them and rejects the unit when one is absent."""
+
+    def __init__(self):
+        self.paths = []
+
+    def __contains__(self, path):
+        if path not in self.paths:
+            self.paths.append(path)
+        return True
+
+
+class RetainedUnit:
+    def __init__(self, tu, scratch, workspace, system):
+        self.tu = tu
+        self.scratch = scratch
+        self.workspace = workspace   # every workspace path this unit asked about: {digest, content} or None
+        self.system = system         # every compiler header it included: listed path -> sha256 at inclusion
+
+
+def names_source(entry, path):
+    """Whether an entry is this file, read as compile_unit reads it: an absolute name ends with
+    '/' + path, a relative one is path."""
+    if not isinstance(entry, dict) or not isinstance(entry.get('directory'), str) or not isinstance(entry.get('file'), str):
+        return False
+    _directory, _file, physical, absolute = database_source(entry)
+    return physical.endswith('/' + path) if absolute else physical == path
+
+
+def include_search(args):
+    search = {'-iquote': [], '-I': [], '-isystem': []}
+    index = 0
+    while index < len(args):
+        if args[index] in VALUED_ARGUMENTS and index + 1 < len(args):
+            if args[index] in search:
+                search[args[index]].append(args[index + 1])
+            index += 2
+        else:
+            index += 1
+    return search
+
+
+def include_candidates(includer, name, quoted, search):
+    """Workspace paths an include can resolve to, in the compiler's search order: the
+    includer's directory and -iquote for quoted names, then -I, then -isystem. Absolute
+    names and names that leave the workspace have none."""
+    if not name or name.startswith('/'):
+        return []
+    directories = ([posixpath.dirname('/workspace/' + includer)] + search['-iquote'] if quoted else []) + search['-I'] + search['-isystem']
+    candidates = []
+    for directory in directories:
+        relative = graph_overlay_rel(posixpath.join(directory, name))
+        if relative and relative not in candidates:
+            candidates.append(relative)
+    return candidates
+
+
+def vfs_roots(mapped):
+    """{absolute VFS path: external file} to redirect-only overlay roots, one per top-level
+    directory, every file its own `file` entry (no directory remaps)."""
+    tree = {}
+    for name in sorted(mapped):
+        node, parts = tree, name.strip('/').split('/')
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+            if not isinstance(node, dict):
+                break
+        else:
+            node.setdefault(parts[-1], mapped[name])
+
+    def entry(name, node):
+        if isinstance(node, str):
+            return {'type': 'file', 'name': name, 'external-contents': node}
+        return {'type': 'directory', 'name': name, 'contents': [entry(key, value) for key, value in node.items()]}
+    return [entry('/' + key, value) for key, value in tree.items()]
+
+
+def system_headers(directories):
+    """W11 rule 1: every file under the listed include directories whose real path (symlinks
+    resolved) is still inside one of them, keyed by its listed path. Symlinked directories are
+    followed only to the same places; a directory reached twice is walked once."""
+    reals = [os.path.realpath(directory) for directory in directories]
+
+    def inside(real):
+        return any(graph_under(real, root) for root in reals)
+
+    mapped = {}
+    for directory in directories:
+        base = posixpath.normpath(directory)
+        if graph_under(base, '/workspace'):
+            continue
+        visited = set()
+        for top, names, files in os.walk(directory, followlinks=True):
+            real_top = os.path.realpath(top)
+            if real_top in visited or not inside(real_top):
+                names[:] = []
+                continue
+            visited.add(real_top)
+            relative = posixpath.relpath(top, directory)
+            prefix = base if relative == '.' else posixpath.join(base, relative)
+            for name in files:
+                real = os.path.realpath(posixpath.join(top, name))
+                if inside(real) and os.path.isfile(real):
+                    mapped.setdefault(posixpath.join(prefix, name), real)
+    return mapped
+
+
+def search_list(text):
+    """The `-v` angled search list, in order; empty when the markers are missing."""
+    lines = [line.rstrip('\r') for line in text.split('\n')]
+    if SEARCH_START not in lines:
+        return []
+    directories = []
+    for line in lines[lines.index(SEARCH_START) + 1:]:
+        if line == SEARCH_END:
+            return directories
+        entry = line.strip()
+        if entry.endswith(' (framework directory)'):
+            entry = entry[:-len(' (framework directory)')]
+        if entry.startswith('/'):
+            directories.append(entry)
+    return []
+
+
+def file_digest(path):
+    try:
+        with open(path, 'rb') as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def read_files(paths, content):
+    """Asks the main thread for workspace files, which it reads through the platform."""
+    graph_emit({'t': 'read', 'paths': paths, 'content': content})
+    raw = sys.stdin.readline()
+    if not raw:
+        raise SystemExit(0)
+    message = json.loads(raw)
+    if message.get('failed') is not None:
+        raise LookupFailed(str(message['failed']))
+    rows = {row['path']: row for row in message['files']}
+    return {path: None if rows[path].get('absent') else {'digest': rows[path]['digest'], 'content': rows[path].get('content')}
+            for path in paths}
+
+
+class SingleFileLookup:
+    def __init__(self, cl, scratch):
+        self.cl, self.scratch = cl, scratch
+        self.index = cl.create_index(0, 0)
+        self.units = collections.OrderedDict()   # (path, json.dumps(args)) -> RetainedUnit
+        self.system, self.system_roots, self.precise = {}, [], False
+        self.empty_overlay = self.write_overlay(scratch, {}, 'empty.json')
+        self.ready = self.probe()
+
+    def close(self):
+        for key in list(self.units):
+            self.drop(key)
+        self.cl.dispose_index(self.index)
+
+    # -- parsing ------------------------------------------------------------
+    def parse(self, path, data, args, options):
+        encoded = [argument.encode() for argument in args]
+        argv = (C.c_char_p * len(encoded))(*encoded)
+        unsaved = (CXUnsavedFile * 1)(CXUnsavedFile(('/workspace/' + path).encode(), data, len(data)))
+        tu = C.c_void_p()
+        code = self.cl.parse_unsaved(self.index, ('/workspace/' + path).encode(), argv, len(argv), unsaved, 1, options, C.byref(tu))
+        if code != 0 or not tu.value:
+            if tu.value:
+                self.cl.dispose_tu(tu)
+            raise LookupFailed('libclang 解析不了（code %d）' % code)
+        return tu
+
+    def errors(self, tu):
+        count = 0
+        for number in range(self.cl.diagnostic_count(tu)):
+            diagnostic = self.cl.get_diagnostic(tu, number)
+            try:
+                count += self.cl.diagnostic_severity(diagnostic) >= 3
+            finally:
+                self.cl.dispose_diagnostic(diagnostic)
+        return count
+
+    def write_overlay(self, directory, workspace, name):
+        """One overlay file per parse: the pre-serialized compiler headers plus this unit's
+        workspace files (stacked overlays with fallthrough=false would not see each other)."""
+        roots = [json.dumps(root) for root in vfs_roots(workspace)] or [json.dumps({'type': 'directory', 'name': '/workspace', 'contents': []})]
+        path = posixpath.join(directory, name)
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write('{"version": 0, "case-sensitive": true, "use-external-names": false, "fallthrough": false, "roots": ['
+                         + ', '.join(self.system_roots + roots) + ']}')
+        return path
+
+    def probe(self):
+        """Rule 4: whether the compiler's own headers work, from a parse of an in-memory
+        `#include <cstddef>` with `-v` (which also prints the search list) and the same
+        parse through the overlay that maps them. Either failing: workspace files only."""
+        def errors_of(args):
+            try:
+                tu = self.parse(PROBE_PATH, PROBE_SOURCE, args, 0)
+            except LookupFailed:
+                return 1
+            try:
+                return self.errors(tu)
+            finally:
+                self.cl.dispose_tu(tu)
+
+        with tempfile.TemporaryFile() as capture:
+            saved = os.dup(2)
+            os.dup2(capture.fileno(), 2)
+            try:
+                search_errors = errors_of(['-x', 'c++', '-v'])
+            finally:
+                os.dup2(saved, 2)
+                os.close(saved)
+            capture.seek(0)
+            listed = search_list(capture.read().decode('utf-8', errors='replace'))
+        started = time.perf_counter()
+        system = system_headers(listed)
+        roots = [json.dumps(root) for root in vfs_roots(system)]
+        overlay_ms = round((time.perf_counter() - started) * 1000)
+        self.system, self.system_roots = system, roots
+        overlay_errors = errors_of(semantic_arguments(['-x', 'c++'], self.write_overlay(self.scratch, {}, 'probe.json'), system_headers=True))
+        self.precise = bool(listed) and search_errors == 0 and overlay_errors == 0
+        if not self.precise:
+            self.system, self.system_roots = {}, []
+        return {'t': 'ready', 'engine': 'libclang', 'engineVersion': self.cl.version, 'precise': self.precise,
+                'systemDirectories': listed, 'systemFiles': len(system), 'overlayMs': overlay_ms,
+                'probes': {'searchErrors': search_errors, 'overlayErrors': overlay_errors}}
+
+    # -- what a unit needs and used -------------------------------------------
+    def directive_needs(self, tu, contents, known, search):
+        """After a discovery parse (detailed preprocessing record): for every include in a
+        workspace file, the candidates searched before the one it resolved to (all of them
+        when it resolved outside the workspace or not at all) that were not asked yet."""
+        cl, cache, needed, errors = self.cl, {}, [], []
+
+        @cl.Visitor
+        def visitor(cursor, parent, data):
+            try:
+                if cursor.kind == 503:  # CXCursor_InclusionDirective
+                    source, line = self.expansion(cl.cursor_location(cursor))
+                    includer = graph_overlay_rel(source)
+                    if includer in contents:
+                        specifier = graph_include_specifier(graph_logical_directive(cache, contents, includer, line)) or ''
+                        included = cl.included_file(cursor)
+                        target = graph_overlay_rel(cl.string(cl.file_name(included))) if included else None
+                        candidates = include_candidates(includer, cl.string(cl.spelling(cursor)), not specifier.startswith('<'), search)
+                        if target in candidates:
+                            candidates = candidates[:candidates.index(target)]
+                        needed.extend(path for path in candidates if path not in known and path not in needed)
+                return 1
+            except Exception as error:
+                errors.append(error)
+                return 0
+
+        cl.visit_children(cl.tu_cursor(tu), visitor, None)
+        if errors:
+            raise errors[0]
+        return needed
+
+    @staticmethod
+    def text_needs(relative, contents, cache, known, search, needed):
+        """Adds to `needed` the not yet asked candidates of one file's include lines and
+        `__has_include` names, read as text (inactive branches included). True when an
+        include names its file through a macro, which only a parse can resolve."""
+        macro = False
+        for number, line in enumerate(graph_physical_lines(cache, contents[relative]), start=1):
+            names = []
+            if GRAPH_DIRECTIVE_RE.match(line):
+                specifier = graph_include_specifier(graph_logical_directive(cache, contents, relative, number)) or ''
+                if len(specifier) >= 2 and specifier[0] in '"<':
+                    names.append((specifier[1:-1], specifier[0] == '"'))
+                else:
+                    macro = macro or bool(specifier)
+            elif CONDITION_RE.match(line):
+                # `__has_include` looks files up without a directive or a diagnostic, so
+                # only the text shows which workspace paths it depends on.
+                names.extend((quoted or angled, bool(quoted)) for quoted, angled in HAS_INCLUDE_RE.findall(line))
+            for name, quoted in names:
+                needed.extend(candidate for candidate in include_candidates(relative, name, quoted, search)
+                              if candidate not in known and candidate not in needed)
+        return macro
+
+    def system_used(self, tu, previous):
+        """Rule 3: the digest of every compiler header the unit included, read directly; a
+        header recorded before keeps the digest it had then."""
+        cl, names, errors = self.cl, set(), []
+
+        @cl.InclusionVisitor
+        def visit(included, stack, depth, data):
+            try:
+                name = posixpath.normpath(cl.string(cl.file_name(included)))
+                if name in self.system:
+                    names.add(name)
+            except Exception as error:
+                errors.append(error)
+
+        cl.get_inclusions(tu, visit, None)
+        if errors:
+            raise errors[0]
+        return {name: previous[name] if name in previous else file_digest(self.system[name]) for name in names}
+
+    def expansion(self, value):
+        file_ptr, line, column, offset = C.c_void_p(), C.c_uint(), C.c_uint(), C.c_uint()
+        self.cl.expansion_location(value, C.byref(file_ptr), C.byref(line), C.byref(column), C.byref(offset))
+        return (self.cl.string(self.cl.file_name(file_ptr)) if file_ptr.value else None), line.value
+
+    def symbols(self, tu, path, text):
+        """Rule 2: functions, methods, constructors, destructors, classes, structs and their
+        templates whose name is spelled in the looked-up file; the span is the name."""
+        cl, lines, rows, errors = self.cl, text.split('\n'), [], []
+        main = cl.get_file(tu, ('/workspace/' + path).encode())
+        if not main:
+            return rows
+
+        @cl.Visitor
+        def visitor(cursor, parent, data):
+            try:
+                location = cl.cursor_location(cursor)
+                file_ptr, line, column, offset = C.c_void_p(), C.c_uint(), C.c_uint(), C.c_uint()
+                # A declaration of this file sits only under cursors written (after macro
+                # expansion) in this file; a namespace named by a command-line macro included.
+                cl.expansion_location(location, C.byref(file_ptr), C.byref(line), C.byref(column), C.byref(offset))
+                if file_ptr.value != main:
+                    return 1
+                if cursor.kind in SINGLE_KINDS:
+                    cl.spelling_location(location, C.byref(file_ptr), C.byref(line), C.byref(column), C.byref(offset))
+                    if file_ptr.value == main and 0 < line.value <= len(lines):
+                        name, text_line, start_line = cl.string(cl.spelling(cursor)), lines[line.value - 1], line.value
+                        start = utf16_column(text_line, column.value)
+                        # The name as written (`Wrapper` of `Wrapper<T>`'s constructor, `~ Wrapper`),
+                        # else the spelling's own length.
+                        cl.spelling_location(cl.range_end(cl.name_range(cursor, 0, 0)), C.byref(file_ptr), C.byref(line), C.byref(column), C.byref(offset))
+                        end = utf16_column(text_line, column.value) if file_ptr.value == main and line.value == start_line else 0
+                        if end <= start:
+                            end = start + len(name.encode('utf-16-le')) // 2
+                        rows.append({'name': name, 'kind': cl.string(cl.kind_spelling(cursor.kind)),
+                                     'start': {'line': start_line, 'column': start}, 'end': {'line': start_line, 'column': end}})
+                return 2
+            except Exception as error:
+                errors.append(error)
+                return 0
+
+        cl.visit_children(cl.tu_cursor(tu), visitor, None)
+        if errors:
+            raise errors[0]
+        rows.sort(key=lambda row: (row['start']['line'], row['start']['column'], row['name'], row['kind']))
+        return rows
+
+    # -- units ----------------------------------------------------------------
+    def build(self, path, text, unit, known, ask):
+        """The precise parse that leaves a preamble, after every workspace path its includes
+        can name was asked. `known` holds the content of every present path. The include lines
+        of every file read are followed as text first; only when one names its file through a
+        macro do discovery parses (with the preprocessing record) look for more."""
+        scratch = tempfile.mkdtemp(prefix='unit-', dir=self.scratch)
+        written, search, data, scanned = {}, include_search(unit['args']), text.encode('utf-8'), set()
+        macro = False
+
+        def prefetch():
+            nonlocal macro
+            while True:
+                contents, cache, needed = self.contents(path, text, known), {}, []
+                for relative in contents:
+                    if relative not in scanned:
+                        scanned.add(relative)
+                        macro = self.text_needs(relative, contents, cache, known, search, needed) or macro
+                if not needed:
+                    return
+                known.update(ask(needed, True))
+
+        # libclang keeps a preamble across reparses only when the main file exists in the file
+        # system it parsed with; its text still always comes from the unsaved buffer.
+        main_copy = posixpath.join(scratch, 'main')
+
+        def overlay(name):
+            for relative, file in known.items():
+                if file is not None and relative not in written:
+                    target = posixpath.join(scratch, str(len(written)))
+                    with open(target, 'w', encoding='utf-8', newline='') as handle:
+                        handle.write(file['content'])
+                    written[relative] = target
+            files = {'/workspace/' + relative: target for relative, target in written.items()}
+            files['/workspace/' + path] = main_copy
+            return self.write_overlay(scratch, files, name)
+
+        try:
+            with open(main_copy, 'w', encoding='utf-8', newline='') as handle:
+                handle.write(text)
+            for number in range(CPP_DISCOVERY_ROUNDS_MAX + 1):
+                prefetch()
+                if not macro:
+                    break
+                tu = self.parse(path, data, semantic_arguments(unit['args'], overlay('discover-%d.json' % number), self.precise, error_limit=0), GRAPH_OPTIONS)
+                try:
+                    needed = self.directive_needs(tu, self.contents(path, text, known), known, search)
+                finally:
+                    self.cl.dispose_tu(tu)
+                if not needed or number == CPP_DISCOVERY_ROUNDS_MAX:
+                    break
+                known.update(ask(needed, True))
+            tu = self.parse(path, data, semantic_arguments(unit['args'], overlay('unit.json'), self.precise), SINGLE_PRECISE)
+            try:
+                return RetainedUnit(tu, scratch, dict(known), self.system_used(tu, {}))
+            except BaseException:
+                self.cl.dispose_tu(tu)
+                raise
+        except BaseException:
+            shutil.rmtree(scratch, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def contents(path, text, known):
+        return dict({relative: file['content'] for relative, file in known.items() if file is not None}, **{path: text})
+
+    def unchanged(self, retained, current):
+        for relative, before in retained.workspace.items():
+            now = current.get(relative)
+            if (before is None) != (now is None) or (before is not None and before['digest'] != now['digest']):
+                return False
+        return all(file_digest(self.system[name]) == digest for name, digest in retained.system.items())
+
+    def reparse(self, retained, path, text):
+        data = text.encode('utf-8')
+        unsaved = (CXUnsavedFile * 1)(CXUnsavedFile(('/workspace/' + path).encode(), data, len(data)))
+        if self.cl.reparse(retained.tu, 1, unsaved, 0) != 0:
+            return False   # the unit is unusable after a failed reparse; the caller drops it
+        retained.system = self.system_used(retained.tu, retained.system)
+        return True
+
+    def keep(self, key, retained):
+        self.units[key] = retained
+        while len(self.units) > CPP_RETAINED_UNITS_MAX:
+            self.drop(next(iter(self.units)))
+
+    def drop(self, key):
+        retained = self.units.pop(key, None)
+        if retained is not None:
+            self.cl.dispose_tu(retained.tu)
+            shutil.rmtree(retained.scratch, ignore_errors=True)
+
+    def result(self, tu, path, text, precise, warm=False):
+        reply = {'t': 'result', 'exact': precise and self.errors(tu) == 0, 'symbols': self.symbols(tu, path, text)}
+        if warm:
+            reply['warm'] = True
+        return reply
+
+    def fallback(self, path, text, args, warm):
+        """No usable precise unit: the main file alone, includes not processed, no database
+        flags but its -std; nothing else is visible to it."""
+        standard = [argument for argument in args if argument.startswith('-std=')]
+        tu = self.parse(path, text.encode('utf-8'), semantic_arguments(['-x', 'c++'] + standard, self.empty_overlay), SINGLE_FALLBACK)
+        try:
+            return self.result(tu, path, text, False, warm)
+        finally:
+            self.cl.dispose_tu(tu)
+
+    def lookup(self, request, ask):
+        path, text, mode = request['path'], request['text'], request['mode']
+        entries = [entry for entry in (request.get('entries') or []) if names_source(entry, path)]
+        if not entries:
+            return self.fallback(path, text, [], warm=False)
+        forced = RequiredPaths()
+        unit = one_variant_per_source([compile_unit(entry, [path], forced) for entry in entries])[0]
+        key = (path, json.dumps(unit['args']))
+        for other in [known_key for known_key in self.units if known_key[0] == path and known_key != key]:
+            self.drop(other)
+        seed = {}
+        retained = self.units.get(key)
+        if retained is not None:
+            current = ask(sorted(retained.workspace), False) if retained.workspace else {}
+            if self.unchanged(retained, current):
+                if self.reparse(retained, path, text):
+                    self.units.move_to_end(key)
+                    # The headers are as built; only the new main text can name a path not asked
+                    # yet (an include named through a macro is read at the next build).
+                    needed = []
+                    self.text_needs(path, self.contents(path, text, retained.workspace), {}, retained.workspace,
+                                    include_search(unit['args']), needed)
+                    if not needed:
+                        return self.result(retained.tu, path, text, True)
+                    if mode == 'read':
+                        # The unit cannot see those headers, so the preamble for this text is not built
+                        # yet: fall back and warm (slice-8E2-SPEC W11); the kept unit stays as the seed.
+                        return self.fallback(path, text, unit['args'], warm=True)
+                seed = retained.workspace
+            else:
+                seed = current
+            self.drop(key)
+        if mode == 'read':
+            return self.fallback(path, text, unit['args'], warm=True)
+        known = dict(seed)
+        wanted = [relative for relative, file in known.items() if file is not None and file.get('content') is None]
+        wanted += [relative for relative in forced.paths if relative not in known]
+        if wanted:
+            known.update(ask(wanted, True))
+        absent = [relative for relative in forced.paths if known.get(relative) is None]
+        if absent:
+            raise Unsupported('Forced include is unavailable in snapshot: ' + absent[0])
+        built = self.build(path, text, unit, known, ask)
+        self.keep(key, built)
+        return self.result(built.tu, path, text, True)
+
+    def answer(self, request):
+        try:
+            return self.lookup(request, read_files)
+        except Unsupported as error:
+            return {'t': 'unsupported', 'message': str(error)[:1000]}
+        except LookupFailed as error:
+            return {'t': 'failed', 'reason': str(error)[:200]}
+        except Exception as error:
+            return {'t': 'failed', 'reason': type(error).__name__ + ': ' + str(error)[:200]}
+
+
+def single_file_run():
+    hello = json.loads(sys.stdin.readline() or 'null')
+    library = hello.get('libraryPath') if isinstance(hello, dict) else None
+    if not isinstance(library, str) or not posixpath.isabs(library) or not Path(library).is_file():
+        raise GraphUnavailable('libclang unavailable: ' + str(library))
+    try:
+        cl = Clang18Single(library)
+    except (OSError, AttributeError) as error:
+        raise GraphUnavailable('libclang unavailable: ' + str(error))
+    with tempfile.TemporaryDirectory(prefix='platform-cpp-single-') as scratch:
+        state = SingleFileLookup(cl, scratch)
+        try:
+            graph_emit(state.ready)
+            for raw in iter(sys.stdin.readline, ''):
+                if raw.strip():
+                    graph_emit(state.answer(json.loads(raw)))
+        finally:
+            state.close()
+
+
+def single_file():
+    try:
+        single_file_run()
+    except GraphUnavailable as error:
+        graph_emit({'t': 'unavailable', 'message': str(error)})
+    except Exception as error:
+        graph_emit({'t': 'failed', 'reason': type(error).__name__ + ': ' + str(error)[:200]})
+
+
 if len(sys.argv) > 1 and sys.argv[1] == 'import_graph':
     graph_import()
+elif len(sys.argv) > 1 and sys.argv[1] == 'single_file':
+    single_file()
 else:
     try:
         print(json.dumps(main(json.load(sys.stdin)), ensure_ascii=False))

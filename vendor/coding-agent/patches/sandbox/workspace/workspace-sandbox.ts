@@ -6,9 +6,10 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import { link, lstat, open, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
+import { link, lstat, open, readdir, realpath, rename, stat, statfs, unlink } from "node:fs/promises";
 
 import type { ToolEffects } from "../../core/ports/tool_executor/tool-executor-port.js";
 import { normalizeWorkspacePath } from "../../policy/permissions/permission-policy.js";
@@ -153,11 +154,94 @@ function mapIoError(error: unknown, relativePath: string): WorkspaceSandboxError
   return new WorkspaceSandboxError("io_error", `${relativePath} 文件操作失败`);
 }
 
+const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+const FILE_READ_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW;
+
+/**
+ * readMany 只在这些本地盘上用同步系统调用（statfs type：ext2/3/4、xfs、btrfs、tmpfs）。
+ * 其余文件系统（WSL 的 drvfs/9p、NFS、FUSE、overlay、认不出的）每次同步调用都要往返一趟，
+ * 同时异步读几个反而快，statfs 失败也按这一类处理。
+ */
+const SYNC_READ_FILESYSTEMS: ReadonlySet<number> = new Set([
+  0xef53, 0x58465342, 0x9123683e, 0x01021994,
+]);
+/** 同步读连续做满这么久就让出一次事件循环（按时间，不按文件个数）。 */
+const SYNC_READ_SLICE_MS = 1.5;
+const ASYNC_READ_CONCURRENCY = 4;
+
+type ReadOutcome = { ok: true; file: WorkspaceFile } | { ok: false; error: WorkspaceSandboxError };
+type PendingRead = { readonly index: number; readonly normalized: string };
+
+/** 打开之后对文件做的操作：同步读给同步值，异步读给 Promise。 */
+interface OpenedFile {
+  stat(): Stats | Promise<Stats>;
+  read(buffer: Buffer): number | Promise<number>;
+}
+
+/**
+ * 文件打开之后的检查只有这一份，read 和两种 readMany 都经它：是不是普通文件、大小上限、
+ * 读后再 fstat 比 dev:ino/size/mtime、UTF-8 解码、内容摘要。
+ */
+async function readOpenedFile(
+  file: OpenedFile,
+  normalized: string,
+  limit: number,
+): Promise<WorkspaceFile> {
+  const before = await file.stat();
+  if (!before.isFile()) {
+    throw new WorkspaceSandboxError("not_file", `${normalized} 不是普通文件`);
+  }
+  if (before.size > limit) {
+    throw new WorkspaceSandboxError("too_large", `${normalized} 超过读取上限`);
+  }
+  const allocated = Buffer.alloc(Math.min(limit + 1, before.size + 1));
+  const bytesRead = await file.read(allocated);
+  if (bytesRead > limit) {
+    throw new WorkspaceSandboxError("too_large", `${normalized} 超过读取上限`);
+  }
+  const buffer = allocated.subarray(0, bytesRead);
+  const after = await file.stat();
+  if (
+    identity(before) !== identity(after) ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs
+  ) {
+    throw new WorkspaceSandboxError("file_changed", `${normalized} 在读取期间发生变化`);
+  }
+  return {
+    path: normalized,
+    content: decodeUtf8(buffer, normalized),
+    byteLength: buffer.byteLength,
+    revision: hash(buffer),
+    mode: before.mode & 0o777,
+    identity: identity(before),
+  };
+}
+
+/** 批末复核用：按名字开目录（最后一段 O_NOFOLLOW），回它的 dev:ino。 */
+function directoryIdentitySync(path: string): string {
+  const fd = openSync(path, DIRECTORY_FLAGS);
+  try {
+    return identity(fstatSync(fd));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+async function directoryIdentity(path: string): Promise<string> {
+  const handle = await open(path, DIRECTORY_FLAGS);
+  try {
+    return identity(await handle.stat());
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
  * Linux /proc/self/fd 路径始终锚定到已经打开的目录句柄。
  * 即使原目录名随后被替换，也不会重新从可变的 workspace 字符串路径解析。
  */
-function handlePath(handle: FileHandle, child?: string): string {
+function handlePath(handle: { readonly fd: number }, child?: string): string {
   const base = `/proc/self/fd/${String(handle.fd)}`;
   return child === undefined ? base : `${base}/${child}`;
 }
@@ -179,6 +263,7 @@ export class WorkspaceSandbox {
   >();
   #acceptedWorkspaceSnapshot: WorkspaceSnapshot | null = null;
   #gitStatusAvailable: boolean | null = null;
+  #batchReadVia: "sync" | "async" | null = null;
 
   private constructor(
     root: string,
@@ -348,6 +433,75 @@ export class WorkspaceSandbox {
     } finally {
       await capability.parent.close();
     }
+  }
+
+  /**
+   * 一次读多个文件。结果和 relativePaths 同序，每项就是 read(path, maxBytes) 的结果或它抛的错，
+   * 一项失败不影响别的；只开一次根。工作区根在本地盘上（第一次调用时 statfs 一次，实例记下）
+   * 用同步系统调用，否则同时异步读几个。via 只给测试强制选一种，生产不传。
+   * 取消时不回部分结果，整个调用失败。
+   */
+  async readMany(
+    relativePaths: readonly string[],
+    maxBytes = this.#maxFileBytes,
+    options: { signal?: AbortSignal; via?: "sync" | "async" } = {},
+  ): Promise<({ ok: true; file: WorkspaceFile } | { ok: false; error: WorkspaceSandboxError })[]> {
+    const limit = Math.min(maxBytes, this.#maxFileBytes);
+    const results: ReadOutcome[] = new Array<ReadOutcome>(relativePaths.length);
+    const pending: PendingRead[] = [];
+    relativePaths.forEach((relativePath, index) => {
+      try {
+        const normalized = this.#normalize(relativePath);
+        if (!Number.isSafeInteger(limit) || limit <= 0) {
+          throw new WorkspaceSandboxError("too_large", "读取上限非法");
+        }
+        pending.push({ index, normalized });
+      } catch (error) {
+        results[index] = { ok: false, error: error as WorkspaceSandboxError };
+      }
+    });
+    if (pending.length === 0) return results;
+    const via = options.via ?? (this.#batchReadVia ??= await this.#batchReadViaOfFilesystem());
+    let root: FileHandle;
+    try {
+      root = await this.#openRoot();
+    } catch (error) {
+      for (const { index } of pending) {
+        results[index] = { ok: false, error: error as WorkspaceSandboxError };
+      }
+      return results;
+    }
+    const opened = new Map<string, string>();
+    try {
+      if (via === "sync") {
+        await this.#readManySync(root, pending, limit, results, opened, options.signal);
+      } else {
+        await this.#readManyAsync(root, pending, limit, results, opened, options.signal);
+      }
+    } finally {
+      await root.close();
+    }
+    if (options.signal?.aborted) throw new Error("批量读取已取消");
+    // 读的期间目录被改名替换时，句柄读到的是别处的内容；这批里经过换掉的目录的路径都算读不了，
+    // 不把别处的内容记在原名下。
+    const replaced = await this.#replacedDirectories(
+      opened,
+      via === "sync" ? directoryIdentitySync : directoryIdentity,
+    );
+    for (const { index, normalized } of pending) {
+      if (replaced.some((path) => path === "" || normalized.startsWith(`${path}/`))) {
+        results[index] = {
+          ok: false,
+          error: new WorkspaceSandboxError("io_error", `${normalized} 所在目录在读取期间被替换`),
+        };
+        continue;
+      }
+      const outcome = results[index]!;
+      if (outcome.ok) {
+        this.#sessionExpected.set(normalized, { kind: "content", revision: outcome.file.revision });
+      }
+    }
+    return results;
   }
 
   async replace(
@@ -842,43 +996,193 @@ export class WorkspaceSandbox {
   ): Promise<WorkspaceFile> {
     let handle: FileHandle | undefined;
     try {
-      handle = await open(
-        handlePath(parent, name),
-        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      handle = await open(handlePath(parent, name), FILE_READ_FLAGS);
+      const file = handle;
+      return await readOpenedFile(
+        {
+          stat: () => file.stat(),
+          read: async (buffer) => (await file.read(buffer, 0, buffer.byteLength, 0)).bytesRead,
+        },
+        normalized,
+        limit,
       );
-      const before = await handle.stat();
-      if (!before.isFile()) {
-        throw new WorkspaceSandboxError("not_file", `${normalized} 不是普通文件`);
-      }
-      if (before.size > limit) {
-        throw new WorkspaceSandboxError("too_large", `${normalized} 超过读取上限`);
-      }
-      const allocated = Buffer.alloc(Math.min(limit + 1, before.size + 1));
-      const { bytesRead } = await handle.read(allocated, 0, allocated.byteLength, 0);
-      if (bytesRead > limit) {
-        throw new WorkspaceSandboxError("too_large", `${normalized} 超过读取上限`);
-      }
-      const buffer = allocated.subarray(0, bytesRead);
-      const after = await handle.stat();
-      if (
-        identity(before) !== identity(after) ||
-        before.size !== after.size ||
-        before.mtimeMs !== after.mtimeMs
-      ) {
-        throw new WorkspaceSandboxError("file_changed", `${normalized} 在读取期间发生变化`);
-      }
-      return {
-        path: normalized,
-        content: decodeUtf8(buffer, normalized),
-        byteLength: buffer.byteLength,
-        revision: hash(buffer),
-        mode: before.mode & 0o777,
-        identity: identity(before),
-      };
     } catch (error) {
       throw mapIoError(error, normalized);
     } finally {
       await handle?.close();
+    }
+  }
+
+  async #batchReadViaOfFilesystem(): Promise<"sync" | "async"> {
+    const type = await statfs(this.#root).then(
+      (result) => result.type,
+      () => null,
+    );
+    return type !== null && SYNC_READ_FILESYSTEMS.has(type) ? "sync" : "async";
+  }
+
+  /**
+   * 同步读：路径排序后按目录栈走，每个目录从父目录句柄只开一次，离开这段子树就关，同时最多开
+   * “深度 + 1”个句柄。某一级目录开不了，它下面的文件都回这个错，消息按各自的路径给（同 read）。
+   * 连续做满 SYNC_READ_SLICE_MS 就让出一次事件循环，让出回来已取消就停。
+   */
+  async #readManySync(
+    root: FileHandle,
+    pending: readonly PendingRead[],
+    limit: number,
+    results: ReadOutcome[],
+    opened: Map<string, string>,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const order = [...pending].sort((left, right) =>
+      left.normalized < right.normalized ? -1 : left.normalized > right.normalized ? 1 : 0,
+    );
+    const stack: { readonly path: string; readonly fd: number }[] = [{ path: "", fd: root.fd }];
+    // 赋值在嵌套的 catch 里，按声明的类型读，不让控制流收窄成 null。
+    let failed = null as { readonly path: string; readonly error: unknown } | null;
+    let sliceStart = performance.now();
+    try {
+      for (const { index, normalized } of order) {
+        if (performance.now() - sliceStart >= SYNC_READ_SLICE_MS) {
+          await new Promise<void>((resolve) => setImmediate(() => resolve()));
+          if (signal?.aborted) return;
+          sliceStart = performance.now();
+        }
+        const cut = normalized.lastIndexOf("/");
+        const directory = cut < 0 ? "" : normalized.slice(0, cut);
+        let fd: number | undefined;
+        try {
+          if (failed && isWithin(directory, failed.path)) throw failed.error;
+          failed = null;
+          while (stack.length > 1 && !isWithin(directory, stack.at(-1)!.path)) {
+            closeSync(stack.pop()!.fd);
+          }
+          const have = stack.at(-1)!.path;
+          for (const segment of (have === "" ? directory : directory.slice(have.length + 1))
+            .split("/")
+            .filter(Boolean)) {
+            const parent = stack.at(-1)!;
+            const path = parent.path === "" ? segment : `${parent.path}/${segment}`;
+            let next: number | undefined;
+            try {
+              next = openSync(handlePath(parent, segment), DIRECTORY_FLAGS);
+              const metadata = fstatSync(next);
+              if (!metadata.isDirectory()) {
+                throw new WorkspaceSandboxError("parent_missing", "父目录不存在");
+              }
+              opened.set(path, identity(metadata));
+            } catch (error) {
+              if (next !== undefined) closeSync(next);
+              failed = { path, error };
+              throw error;
+            }
+            stack.push({ path, fd: next });
+          }
+          fd = openSync(handlePath(stack.at(-1)!, normalized.slice(cut + 1)), FILE_READ_FLAGS);
+          const file = fd;
+          results[index] = {
+            ok: true,
+            file: await readOpenedFile(
+              {
+                stat: () => fstatSync(file),
+                read: (buffer) => readSync(file, buffer, 0, buffer.byteLength, 0),
+              },
+              normalized,
+              limit,
+            ),
+          };
+        } catch (error) {
+          results[index] = { ok: false, error: mapIoError(error, normalized) };
+        } finally {
+          if (fd !== undefined) closeSync(fd);
+        }
+      }
+    } finally {
+      for (const { fd } of stack.slice(1)) closeSync(fd);
+    }
+  }
+
+  /** 异步读：目录句柄按前缀缓存，同时读 ASYNC_READ_CONCURRENCY 个，每个文件经 #readAt；已取消就不再领新的。 */
+  async #readManyAsync(
+    root: FileHandle,
+    pending: readonly PendingRead[],
+    limit: number,
+    results: ReadOutcome[],
+    opened: Map<string, string>,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const handles: FileHandle[] = [];
+    const directories = new Map<string, Promise<FileHandle>>([["", Promise.resolve(root)]]);
+    const directory = (path: string): Promise<FileHandle> => {
+      let entry = directories.get(path);
+      if (entry === undefined) {
+        const cut = path.lastIndexOf("/");
+        entry = directory(cut < 0 ? "" : path.slice(0, cut)).then(async (parent) => {
+          const next = await open(handlePath(parent, path.slice(cut + 1)), DIRECTORY_FLAGS);
+          handles.push(next);
+          const metadata = await next.stat();
+          if (!metadata.isDirectory()) {
+            throw new WorkspaceSandboxError("parent_missing", "父目录不存在");
+          }
+          opened.set(path, identity(metadata));
+          return next;
+        });
+        // 失败的目录留在缓存里，下面的文件都回这个错。
+        directories.set(path, entry);
+      }
+      return entry;
+    };
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < pending.length && !signal?.aborted) {
+        const { index, normalized } = pending[cursor++]!;
+        const cut = normalized.lastIndexOf("/");
+        try {
+          const parent = await directory(cut < 0 ? "" : normalized.slice(0, cut));
+          results[index] = {
+            ok: true,
+            file: await this.#readAt(parent, normalized.slice(cut + 1), normalized, limit),
+          };
+        } catch (error) {
+          results[index] = { ok: false, error: mapIoError(error, normalized) };
+        }
+      }
+    };
+    try {
+      await Promise.all(Array.from({ length: ASYNC_READ_CONCURRENCY }, worker));
+    } finally {
+      await Promise.all(handles.map((handle) => handle.close()));
+    }
+  }
+
+  /**
+   * 批末复核：从根按名字把这批开过的目录再开一遍，dev:ino 不同或开不了的就是读的期间被换掉了；
+   * 根是 ""。每个目录只有最后一段按 O_NOFOLLOW 开，它的祖先也都在这批开过的目录里、各自核过，
+   * 所以中间一段换成符号链接会在那个祖先上对不上。
+   */
+  async #replacedDirectories(
+    opened: ReadonlyMap<string, string>,
+    identityAt: (path: string) => string | Promise<string>,
+  ): Promise<string[]> {
+    let root: FileHandle;
+    try {
+      root = await this.#openRoot();
+    } catch {
+      return [""];
+    }
+    try {
+      const checked = await Promise.all(
+        [...opened].map(async ([path, expected]) => {
+          try {
+            return (await identityAt(handlePath(root, path))) === expected ? null : path;
+          } catch {
+            return path;
+          }
+        }),
+      );
+      return checked.filter((path): path is string => path !== null);
+    } finally {
+      await root.close();
     }
   }
 

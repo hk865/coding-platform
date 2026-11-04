@@ -69,6 +69,22 @@ export declare class WorkspaceSandbox {
     acceptAgentChanges(snapshot: WorkspaceSnapshot, changedPaths: readonly string[]): Promise<WorkspaceSnapshot>;
     checkConsistency(requestedScope?: "session" | "workspace"): Promise<WorkspaceConsistencyReport>;
     read(relativePath: string, maxBytes?: number): Promise<WorkspaceFile>;
+    /**
+     * 一次读多个文件。结果和 relativePaths 同序，每项就是 read(path, maxBytes) 的结果或它抛的错，
+     * 一项失败不影响别的；只开一次根。工作区根在本地盘上（第一次调用时 statfs 一次，实例记下）
+     * 用同步系统调用，否则同时异步读几个。via 只给测试强制选一种，生产不传。
+     * 取消时不回部分结果，整个调用失败。
+     */
+    readMany(relativePaths: readonly string[], maxBytes?: number, options?: {
+        signal?: AbortSignal;
+        via?: "sync" | "async";
+    }): Promise<({
+        ok: true;
+        file: WorkspaceFile;
+    } | {
+        ok: false;
+        error: WorkspaceSandboxError;
+    })[]>;
     replace(relativePath: string, oldText: string, newText: string, expectedRevision: string): Promise<WorkspaceWriteResult>;
     createFile(relativePath: string, content: string): Promise<WorkspaceWriteResult>;
     /** Bounded inventory for host analysis, independent of Git status/ignores. */

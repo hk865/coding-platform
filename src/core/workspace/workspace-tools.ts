@@ -1,7 +1,9 @@
 import { CaptureRegistry } from './capture.js';
 import { createPythonLanguageProvider } from './architecture-language-provider.js';
 import type { WorkspaceAccessFactory } from './access.js';
-import type { WorkspaceCaptureLimits, WorkspaceToolsPort } from './ports.js';
+import type { WorkspaceCaptureLimits, WorkspaceFile, WorkspaceResult, WorkspaceToolsPort } from './ports.js';
+import type { WorkspaceRef } from '../../contracts/ledger.js';
+import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import {
   readContinuationBaselineBlob, readContinuationCurrentFile, type ContinuationWorkspaceBytes,
 } from './continuation-diff-reads.js';
@@ -52,6 +54,15 @@ export type WorkspaceToolsHandle = {
   readContinuationBaselineBlob(root: string, objectRef: string): Promise<ContinuationWorkspaceBytes>;
   /** K3 L6: the current side of one continuation file diff (protected-aware, symlink-refusing). */
   readContinuationCurrentFile(root: string, path: string): Promise<ContinuationWorkspaceBytes>;
+  /**
+   * slice-8E2-SPEC W12: one access, every path read in one Kernel batch. The outer result is
+   * opening the access; the inner list is in `paths` order, each item exactly what `readWorkspace`
+   * (`version: working_tree`) answers for that path. Not on `WorkspaceToolsPort`.
+   */
+  readWorkspaceFiles(ctx: CoreCallContext, input: { workspace: WorkspaceRef; paths: readonly string[]; maxBytes: number }):
+    Promise<WorkspaceResult<WorkspaceResult<WorkspaceFile>[]>>;
+  /** slice-8E2-SPEC W3: the workspace's current project-input paths (the TS capture's inventory filter), relisted per call. */
+  listWorkspaceInputs(ctx: CoreCallContext, input: { workspace: WorkspaceRef }): Promise<WorkspaceResult<{ paths: string[] }>>;
   close(): Promise<void>;
 };
 
@@ -103,6 +114,8 @@ export function createWorkspaceTools(deps: WorkspaceToolsDependencies): Workspac
     tools,
     readContinuationBaselineBlob: (root, objectRef) => readContinuationBaselineBlob(root, objectRef),
     readContinuationCurrentFile: (root, path) => readContinuationCurrentFile(root, path, deniedPrefixes),
+    readWorkspaceFiles: (ctx, input) => registry.readFiles(ctx, input),
+    listWorkspaceInputs: (ctx, input) => registry.listInputs(ctx, input),
     close: () => registry.close(),
   };
 }

@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import { isSafeSourcePath, isSourcePath, ProjectSourceFailure, sha256Text, SOURCE_ROOT, type CapturedProjectFile, type ProjectSourceSnapshot } from './project-source-snapshot.js';
 import { scopeContains } from './workspace-read.js';
 import type { ComparedMaterialV1, WorkspaceResult } from './ports.js';
+import { navigationItemsOf } from './single-file-syntax.js';
 
 /**
  * WorkspaceTools — frozen TS/JS project analysis.
@@ -87,6 +88,9 @@ type ResolutionInvalidatingHost = ts.LanguageServiceHost & {
   hasInvalidatedResolutions?(filePath: ts.Path): boolean;
 };
 
+/** The default library file of every TS program over workspace material: the workspace's own TypeScript, read like any file. */
+export const TYPESCRIPT_DEFAULT_LIB_FILE = SOURCE_ROOT + 'node_modules/typescript/lib/lib.d.ts';
+
 /** One project configuration resolved against frozen material; paths keyed by `SOURCE_ROOT`. */
 export type TypeScriptProjectConfiguration = {
   options: ts.CompilerOptions;
@@ -97,9 +101,12 @@ export type TypeScriptProjectConfiguration = {
 /**
  * Resolve the explicit/default configuration against one frozen capture and return the
  * compiler options plus root files. This is the one configuration decision shared by the
- * query language service and the observation light scan; it reads no host state.
+ * query language service, the observation light scan and the reference analyzer; it reads no
+ * host state. Every project path is a key (`include`/`exclude` match the keys); only the
+ * configuration file and its `extends` chain need `content`, so an entry without `content` is
+ * a file that exists but was not read (never an empty file).
  */
-export function configureTypeScriptProject(installed: ReadonlyMap<string, CapturedProjectFile>, configPath?: string | null): TypeScriptProjectConfiguration {
+export function configureTypeScriptProject(installed: ReadonlyMap<string, { readonly content?: string }>, configPath?: string | null): TypeScriptProjectConfiguration {
   const path = configPath ?? (installed.has(SOURCE_ROOT + 'tsconfig.json') ? 'tsconfig.json' : installed.has(SOURCE_ROOT + 'jsconfig.json') ? 'jsconfig.json' : undefined);
   const readFile = (name: string) => installed.get(posix.normalize(name))?.content;
   const matches = (name: string, base: string, pattern: string) => {
@@ -204,22 +211,15 @@ export class TypeScriptSourceAnalyzer {
         if (overflow) break;
         signal.throwIfAborted();
         if (query.operation === 'symbols') {
-          const visit = (item: ts.NavigationTree) => {
-            if (overflow) return;
-            const span = item.nameSpan ?? item.spans[0];
-            if (span) {
-              const located = location(file.fileName, span.start, span.length);
-              if (located) {
-                const declarationRanges = item.spans.flatMap((entry) => {
-                  const declared = location(file.fileName, entry.start, entry.length);
-                  return declared === null ? [] : [{ startLine: declared.line, endLine: declared.endLine }];
-                });
-                push({ name: item.text, kind: item.kind, ...located, declarationRanges });
-              }
-            }
-            item.childItems?.forEach(visit);
-          };
-          service.getNavigationTree(file.fileName).childItems?.forEach(visit);
+          // The single-file navigation walk (W10) over the same installed text; offsets come
+          // back from its one-based positions, so `symbolId` and every location are unchanged.
+          const at = (point: { line: number; column: number }) => file.getPositionOfLineAndCharacter(point.line - 1, point.column - 1);
+          for (const item of navigationItemsOf(file.fileName, files.get(file.fileName)!.content)) {
+            if (overflow) break;
+            const start = at(item.start);
+            const located = location(file.fileName, start, at(item.end) - start);
+            if (located) push({ name: item.name, kind: item.kind, ...located, declarationRanges: item.declarationRanges });
+          }
         } else {
           const visit = (node: ts.Node) => {
             if (overflow) return;
@@ -302,7 +302,7 @@ export class TypeScriptSourceAnalyzer {
       // currently installed map, while project/script versions push incremental re-analysis.
       const host: ResolutionInvalidatingHost = {
         getCompilationSettings: () => this.options, getCurrentDirectory: () => SOURCE_ROOT,
-        getDefaultLibFileName: () => SOURCE_ROOT + 'node_modules/typescript/lib/lib.d.ts',
+        getDefaultLibFileName: () => TYPESCRIPT_DEFAULT_LIB_FILE,
         getScriptFileNames: () => this.rootNames, getScriptVersion: name => this.installed.get(name)?.digest ?? '',
         getScriptSnapshot: name => { const file = this.installed.get(name); return file ? ts.ScriptSnapshot.fromString(file.content) : undefined; },
         getProjectVersion: () => String(this.projectVersion), useCaseSensitiveFileNames: () => true,

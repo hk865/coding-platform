@@ -4,14 +4,14 @@ import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
-import { captureObservationSource, captureProjectSource, isProjectInputPath, isSourcePath, projectSnapshotOf, ProjectSourceFailure, SOURCE_ENGINE, type ObservedProjectSource, type ProjectSourceAccess, type ProjectSourceSnapshot } from './project-source-snapshot.js';
+import { captureObservationSource, captureProjectSource, isProjectInputPath, isSourcePath, projectInputPaths, projectSnapshotOf, ProjectSourceFailure, SOURCE_ENGINE, type ObservedProjectSource, type ProjectSourceAccess, type ProjectSourceSnapshot } from './project-source-snapshot.js';
 import { TypeScriptSourceAnalyzer } from './typescript-source-query.js';
 import { createCppLanguageProvider, languageOfPath, type ArchitectureLanguageProviderV1, type ProjectFileGraphNodeV1, type ProjectFileGraphV1 } from './architecture-language-provider.js';
 import { COVERAGE_ISSUES_MAX, type LanguageCoverageV1 } from '../../contracts/architecture-inspection.js';
 import { scanTypeScript, type LightScanFault, type LightScanResult } from './typescript-light-scan.js';
 import { captureTextSource, TEXT_ENGINE, type TextSourceFile } from './text-source-snapshot.js';
 import { mapArchitectureSource, type ArchitectureSourceMaterial } from './architecture-source.js';
-import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWorkingTreeFile, scopeContains, summaryChanges } from './workspace-read.js';
+import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWorkingTreeFile, readWorkingTreeFiles, scopeContains, summaryChanges } from './workspace-read.js';
 import { compareGitWorkspaceTrees, compareGitWorkingTree, isCompleteCommitOid, readGitWorkspaceFile } from './git-read.js';
 import { duplicateCandidates, DUPLICATE_LIMITS } from './duplicate-candidates.js';
 import { querySource, toSourceDiagnostic, toSourceFileEntry, toSourceRelation } from './source-query.js';
@@ -194,6 +194,41 @@ export class CaptureRegistry {
       return this.withEntry(ctx, ref, signal, async entry => {
         const result = readCapturedFile(entry, input, this.deps.now);
         return result.status === 'ready' ? { status: 'ready', value: deepFreeze(result.value) } : result;
+      });
+    });
+  }
+  /**
+   * Several working-tree files over ONE access (slice-8E2-SPEC W12): the request is checked like a
+   * working-tree `read`; each path then gets `readWorkingTreeFile`'s checks and result, in order.
+   */
+  readFiles(ctx: CoreCallContext, input: { workspace: WorkspaceRef; paths: readonly string[]; maxBytes: number }):
+    Promise<WorkspaceResult<WorkspaceResult<WorkspaceFile>[]>> {
+    return this.track(ctx, async signal => {
+      if (!input || typeof input !== 'object' || !input.workspace || input.workspace.aggregateType !== 'Workspace') return rejected('invalid', 'workspace scope required');
+      if (!Array.isArray(input.paths)) return rejected('invalid', 'paths must be an array');
+      if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1 || input.maxBytes > this.limits.maxFileBytes)
+        return rejected('invalid', 'maxBytes must be a positive safe integer within the configured per-file limit');
+      if (ctx.projectId !== input.workspace.projectId || ctx.workspaceId !== input.workspace.workspaceId)
+        return rejected('forbidden', 'call context scope does not match the requested workspace');
+      return this.withAccess(ctx, input.workspace, signal, async access =>
+        ({ status: 'ready', value: await readWorkingTreeFiles(access, input, signal, this.deps.now, this.limits.maxFileBytes) }));
+    });
+  }
+  /**
+   * The current project-input paths of one workspace (slice-8E2-SPEC W3): the inventory of one
+   * fresh access with the TS capture's filter (`projectInputPaths`), sorted; nothing is read.
+   */
+  listInputs(ctx: CoreCallContext, input: { workspace: WorkspaceRef }): Promise<WorkspaceResult<{ paths: string[] }>> {
+    return this.track(ctx, async signal => {
+      if (!input || typeof input !== 'object' || !input.workspace || input.workspace.aggregateType !== 'Workspace') return rejected('invalid', 'workspace scope required');
+      if (ctx.projectId !== input.workspace.projectId || ctx.workspaceId !== input.workspace.workspaceId)
+        return rejected('forbidden', 'call context scope does not match the requested workspace');
+      return this.withAccess(ctx, input.workspace, signal, async access => {
+        const inventory = await access.listFiles(this.limits.maxInventoryFiles);
+        signal.throwIfAborted();
+        if (inventory.truncated) return rejected('capacity', 'project inventory incomplete; choose a narrower workspace');
+        const paths = projectInputPaths(inventory.paths, path => access.authorization.allowsRead(path));
+        return { status: 'ready', value: { paths } };
       });
     });
   }

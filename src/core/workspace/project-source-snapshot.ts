@@ -102,6 +102,9 @@ export const isIgnoredSourcePath = (path: string) => path.split('/').some(segmen
 export const isSafeSourcePath = (path: string) => !!path && !/[\\:\0]/.test(path) &&
   !path.split('/').some(segment => !segment || segment === '.' || segment === '..');
 export const isProjectInputPath = (path: string) => isSourcePath(path) || path.endsWith('.json');
+/** The capture's project-input file set (F18) from one inventory: safe, not ignored, allowed to read, a project input; sorted. */
+export const projectInputPaths = (paths: readonly string[], allowed: (path: string) => boolean): string[] =>
+  [...new Set(paths)].filter(path => isSafeSourcePath(path) && !isIgnoredSourcePath(path) && allowed(path) && isProjectInputPath(path)).sort();
 
 /**
  * Capture the full readable project input range exactly once. Each call owns independent
@@ -117,9 +120,7 @@ export async function captureProjectSource(access: ProjectSourceAccess, signal: 
   const inventory = await access.inventory(signal);
   signal.throwIfAborted();
   if (inventory.truncated) throw new ProjectSourceFailure('rejected', 'project inventory incomplete; choose a narrower workspace');
-  const paths = [...new Set(inventory.paths)]
-    .filter(path => isSafeSourcePath(path) && !isIgnoredSourcePath(path) && access.allowed(path) && isProjectInputPath(path))
-    .sort();
+  const paths = projectInputPaths(inventory.paths, access.allowed);
   const files = new Map<string, CapturedProjectFile>();
   let bytes = 0;
   for (const path of paths) {

@@ -9,23 +9,27 @@
 - 不决定架构职责、不改任务图、不判断完成；changed paths 只是失效提示，不能证明其他文件没变。
 
 ## 文件
-- `access.ts` — 根绑定与每次读取资格：包装 `WorkspaceSandbox`，把 Host 授权与内核路径策略取交集。
+- `access.ts` — 根绑定与每次读取资格：包装 `WorkspaceSandbox`，把 Host 授权与内核路径策略取交集；`readMany` 把一次访问的多个读交给 Kernel 的 `readMany`（slice-8E2-SPEC W12），逐路径先判授权。
 - `path-validation.ts` — `isSafeSourceRelativePath`：唯一的词法源相对路径规则（非空、≤4096 UTF-16、无 `\`/`:`/NUL、每段非空且不是 `.`/`..`）。
-- `ports.ts` — 本层请求/结果/端口 DTO，`deepFreeze` 与 `validateSourceQuery`。
-- `workspace-tools.ts` — 装配唯一公开工具面 `WorkspaceToolsPort`、Host 限额校验与 continuation 读取。
-- `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、关闭。
+- `ports.ts` — 本层请求/结果/端口 DTO，`deepFreeze` 与 `validateSourceQuery`；第二档引用核对的六个类型（`ReferencePriority`、`ReferenceQuestionV1`、`ReferenceAnswerV1`、`ReferenceCheckRequestV1`、`ReferenceCheckResultV1`、`ReferenceAnalyzerPort`，slice-8E2-SPEC §2.0）。
+- `workspace-tools.ts` — 装配唯一公开工具面 `WorkspaceToolsPort`、Host 限额校验与 continuation 读取；句柄另有 `readWorkspaceFiles`（一次访问读多个工作树文件）和 `listWorkspaceInputs`（列当前项目输入路径），都不在 `WorkspaceToolsPort` 上。
+- `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、一次访问读多个文件（`readFiles`）、列项目输入（`listInputs`）、关闭。
 - `denied-prefixes.ts` — `WORKSPACE_DENIED_PREFIXES`：拒绝前缀的唯一来源。
 - `git-read.ts` — 固定 argv/环境、只读的 Git 文件/树读取与 commit↔commit、git↔工作树比较。
-- `workspace-read.ts` — 当前或冻结文件的精确读取与同范围内容比较。
+- `workspace-read.ts` — 当前或冻结文件的精确读取与同范围内容比较；`readWorkingTreeFiles` 是多个工作树文件的同一套前置检查和错误码。
 - `duplicate-candidates.ts` — 比较后侧的重复候选：顶层声明与字符串字面量经 `readTopLevelDeclarations`/`readStringLiterals` 两读，按新位置、上限与字节预算出报告。
 - `project-source-snapshot.ts` — TS/JS 与观测的 live 清单/正文/身份捕获、摘要、跳过与容量拒绝。
-- `typescript-source-query.ts` — 冻结 TS/JS 分析（Language Service）与 tsconfig/jsconfig 配置选择。
+- `typescript-source-query.ts` — 冻结 TS/JS 分析（Language Service）与 tsconfig/jsconfig 配置选择；`symbols` 走 `navigationItemsOf`。
+- `single-file-syntax.ts` — 单文件 TS/JS 语法事实（slice-8E2-SPEC W4、W10）：一份文字在只含这一个文件的 Syntactic 语言服务里解析一次，导航项、`fileSyntaxOf`、`namesInRanges` 都读这棵树；纯函数，主线程，不建程序。
+- `reference-analyzer.ts` — 第二档的引用核对（slice-8E2-SPEC W1–W9）主线程一侧：先后队列、每次重列项目输入、预取、配置、找 X，经读口读线程要的文件。
+- `reference-analyzer-worker.ts` — 第二档的分析线程：每次请求建一个程序、用完就丢，共用一份按内容摘要的解析缓存，`getDocumentHighlights` 搜整个程序；只导入 TypeScript 和 Node。
+- `native-single-file.ts` — Python/C++ 单文件查（slice-8E2-SPEC W11）：一个端口一个常驻 Python `ast` 进程、一个常驻 libclang 进程，`lookup` 回一个文件里函数、类的名字和名字那一段；C++ 每次用调用方的上下文读工作区根的 `compile_commands.json` 和进程要的头文件，进程自己不读工作区。
 - `typescript-light-scan.ts` — 观测用 TS/JS 纯语法轻扫（不建 Program/LanguageService）。
 - `source-query.ts` — 从同一份冻结捕获切页的查询、游标和 wire 形状映射。
 - `source-index.ts` — 显式文件集的只读 TS 语义查询（symbol/definition/reference）与 excerpt。
 - `python-source-index.ts` — 经分析器 NDJSON 协议解析 Python 来源的索引。
 - `cpp-source-index.ts` — 经 libclang 解析 C/C++ 来源的索引，不执行项目自带编译器。
-- `analysis-runner.ts` — Python/C++ 共用的有界 NDJSON 子进程执行器（超时、重启、输出上限）。
+- `analysis-runner.ts` — Python/C++ 共用的有界 NDJSON 子进程执行器（超时、重启、输出上限）；`createResidentAnalyzer` 是它的常驻模式（一个进程、请求一次一个、崩了或超时下次重起）。
 - `architecture-language-provider.ts` — 语言 provider seam，以及 Python/C++ provider 与路径语言判定。
 - `architecture-source.ts` — 只按显式 mapping 把冻结 imports 折叠成架构源图（纯函数）。
 - `text-source-snapshot.ts` — 严格文本捕获：每个选中文件必须是可读 UTF-8、无 NUL。
@@ -40,9 +44,9 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:83` | 用 Host 的 `resolveRoot`/`authorize` 打开一次绑定的读取资格 | 组合根给本模块注入真实根与权限时 |
-| `createWorkspaceTools` | `src/core/workspace/workspace-tools.ts:74` | 组装唯一 `WorkspaceToolsPort`（捕获/查询/读/比较）与 continuation 读取 | 组合根装配 `platform.workspace` 时；消费方不要再建 registry |
-| `WorkspaceToolsPort` | `src/core/workspace/ports.ts:213` | 本模块对外的窄端口与结果类型 | 消费方只注入端口，不拿 registry/sandbox |
+| `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:95` | 用 Host 的 `resolveRoot`/`authorize` 打开一次绑定的读取资格 | 组合根给本模块注入真实根与权限时 |
+| `createWorkspaceTools` | `src/core/workspace/workspace-tools.ts:85` | 组装唯一 `WorkspaceToolsPort`（捕获/查询/读/比较）与 continuation 读取；句柄上的 `readWorkspaceFiles`、`listWorkspaceInputs` 可单独传出去用（闭包，不靠 `this`） | 组合根装配 `platform.workspace` 时；消费方不要再建 registry |
+| `WorkspaceToolsPort` | `src/core/workspace/ports.ts:218` | 本模块对外的窄端口与结果类型 | 消费方只注入端口，不拿 registry/sandbox |
 | `WORKSPACE_DENIED_PREFIXES` | `src/core/workspace/denied-prefixes.ts:31` | 拒绝前缀的唯一清单（内核默认 + 平台追加） | 命令检查、取材、运行时读源码需要同一路径边界时 |
 | `isProtectedWorkspacePath` | `src/core/workspace/continuation-diff-reads.ts:57` | 规范化 workspace 相对路径后判断是否落在 Host 拒绝前缀内 | AgentRuntime 过滤受保护路径；先 `normalizeWorkspaceRelativePath`，不要另写前缀匹配 |
 | `CaptureRegistry` | `src/core/workspace/capture.ts:124` | 有界保留的捕获、游标、容量、失效与导出 | 只要实现捕获/查询语义时；不直接实例化第二份 |
@@ -60,18 +64,25 @@
 | `VerificationWorkspaceReader` | `src/core/workspace/verification-workspace-reader.ts:12` | 验证轮的当前源码/基准比较/requeue digest 来源 | 装配 `VerificationRoundSourcePort` 时 |
 | `CandidateWorkspaceReader` | `src/core/workspace/candidate-workspace-reader.ts:64` | candidate 范围的整树快照与 git entry | 需要 candidate 级摘要或验证基准时 |
 | `SourceIndex` | `src/core/workspace/source-index.ts:29` | 显式文件集的只读 TS 语义查询与有界 excerpt | 探索工具要符号/定义/引用时；不是全仓索引 |
-| `TypeScriptSourceAnalyzer` | `src/core/workspace/typescript-source-query.ts:135` | 对一份冻结快照做同步 TS 分析 | 捕获后重复分析且不能再有 I/O 时 |
+| `TypeScriptSourceAnalyzer` | `src/core/workspace/typescript-source-query.ts:143` | 对一份冻结快照做同步 TS 分析 | 捕获后重复分析且不能再有 I/O 时 |
 | `readTopLevelDeclarations` | `src/core/workspace/typescript-source-query.ts:330` | 只列顶层声明，不走进嵌套节点 | 需要在比较材料里按顶层名字找重复时 |
 | `readStringLiterals` | `src/core/workspace/typescript-source-query.ts:357` | 列出字符串字面量的位置、预览、长度与 digest | 需要在比较材料里找重复字面量时 |
+| `syntaxTreeOf` | `src/core/workspace/single-file-syntax.ts:45` | 一份 TS/JS 文字解析一次，给出那棵树和它的导航项 | 同一份文字既要导航项又要 `fileSyntaxOf`/`namesInRanges` 时；不另调 `ts.createSourceFile` |
+| `navigationItemsOf` | `src/core/workspace/single-file-syntax.ts:71` | 单文件导航项（名字、种类、外层种类、`nameSpan ?? spans[0]` 的起止、全部 span），和捕获的 `symbols` 同一次访问 | 不建程序按名字找函数（第一档读、写入闸门） |
+| `fileSyntaxOf` | `src/core/workspace/single-file-syntax.ts:128` | 是不是模块、import 的本地名、全部声明名、有没有全局扩充 | 第一档判断“导入没了”“接线的字没了”时 |
+| `namesInRanges` | `src/core/workspace/single-file-syntax.ts:183` | 范围原文里按词边界找名字，每一处标 `free`/`other` | 第一档判断名字还在不在、是不是自由标识符时 |
+| `createReferenceAnalyzer` | `src/core/workspace/reference-analyzer.ts:55` | 建第二档的 `ReferenceAnalyzerPort`：`verify` 一次建一个程序，按 `priority` 排队；`close` 停分析线程 | 组合根建一个、接进注记的工作区；依赖传句柄的 `readWorkspaceFiles`、`listWorkspaceInputs` |
+| `createNativeSingleFile` | `src/core/workspace/native-single-file.ts:105` | 建 `NativeSingleFilePort`：`lookup` 查一个 Python/C++ 文件的函数、类；`read` 只用留着的翻译单元、没有就退回单文件解析并后台预热，`write` 照真实编译参数解析；`close` 停两个常驻进程 | 第一档读 Python/C++ 定位、一般注记写 Python/C++ 符号；一个 Host 只建一个 |
+| `createResidentAnalyzer` | `src/core/workspace/analysis-runner.ts:572` | 分析脚本的常驻模式：同一套起进程、行读取、输出上限、超时、杀进程；`exchange` 一次一个，`close` 先关输入、等它退出，超时再杀 | 要长住的分析进程时；不另写进程管理 |
 | `CppSourceIndex` | `src/core/workspace/cpp-source-index.ts:16` | 权限过滤后的 C/C++ 来源查询 | 探索工具要 C/C++ 符号/import 时 |
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |
 | `readSourceIdentity` | `src/core/workspace/source-identity.ts:4` | 读 workspace 的固定 HEAD 身份 | 需要来源 pin、又不想引入完整 Git 读取时 |
 
-路径校验的共用词法规则是 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）；真实路径包含判断在 app 的 `isPathWithin`，Query 范围规则是 `validateSourceQuery`（`src/core/workspace/ports.ts:243`）。
+路径校验的共用词法规则是 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）；真实路径包含判断在 app 的 `isPathWithin`，Query 范围规则是 `validateSourceQuery`（`src/core/workspace/ports.ts:282`）。
 
 ## 内部用
-- 捕获/读取内部件：`captureProjectSource`、`captureObservationSource`、`projectSnapshotOf`、`observationSkipReason`、`normalizeCoverageNotes`、`captureTextSource`、`scanTypeScript`、`querySource`、`toSourceLocation`、`toSourceRelation`、`toCallRelation`、`toSourceDiagnostic`、`toSourceFileEntry`、`readCapturedFile`、`readWorkingTreeFile`、`diffContent`、`summaryChanges`、`comparisonChanges`、`compareCapturedFiles`、`scopeContains`、`manifestOf`、`readFailure`、`deepFreeze`、`validateSourceQuery`。
-- 常量与纯规则：`SOURCE_ROOT`、`SOURCE_ENGINE`、`TEXT_ENGINE`、`sha256Text`、`textSourceKey`、`isSourcePath`、`isIgnoredSourcePath`、`isSafeSourcePath`、`isProjectInputPath`、`isObservationSkippedPath`、`OBSERVATION_SKIP_DIRECTORIES`、`OBSERVATION_INVENTORY_CAPACITY`、`CONFIG_DATABASE_FILE_BYTES`、`MAX_COMPARISON_BYTES`、`CONTINUATION_DIFF_MAX_BYTES`、`normalizeWorkspaceRelativePath`、`WORKSPACE_CAPTURE_MAX_CHANGES`、`WORKSPACE_CAPTURE_NOT_VISIBLE_MAX`、`WORKSPACE_CAPTURE_FIXED_IGNORED`、`DEFAULT_WORKSPACE_LIMITS`、`DUP_MIN_STRING_CHARS`、`DUP_LIMIT`、`DUP_LITERAL_PREVIEW_CHARS`、`DUP_REPORT_MAX_BYTES`、`DUPLICATE_LIMITS`、`isCompleteCommitOid`、`GIT_TREE_OUTPUT_LIMIT_BYTES`、`GIT_PROJECT_LISTING_MAX_RECORDS`、`GIT_PROJECT_LISTING_MAX_BYTES`、`formatProjectListingCapacity`、`languageOfPath`、`createCppLanguageProvider`、`createPythonLanguageProvider`、`mapArchitectureSource`、`runAnalysis`、`candidateWorkspaceIncludesPath`、`configureTypeScriptProject`、`ProjectSourceFailure`。
+- 捕获/读取内部件：`captureProjectSource`、`captureObservationSource`、`projectSnapshotOf`、`observationSkipReason`、`normalizeCoverageNotes`、`captureTextSource`、`scanTypeScript`、`querySource`、`toSourceLocation`、`toSourceRelation`、`toCallRelation`、`toSourceDiagnostic`、`toSourceFileEntry`、`readCapturedFile`、`readWorkingTreeFile`、`readWorkingTreeFiles`、`diffContent`、`summaryChanges`、`comparisonChanges`、`compareCapturedFiles`、`scopeContains`、`manifestOf`、`readFailure`、`deepFreeze`、`validateSourceQuery`。
+- 常量与纯规则：`SOURCE_ROOT`、`SOURCE_ENGINE`、`TEXT_ENGINE`、`sha256Text`、`textSourceKey`、`isSourcePath`、`isIgnoredSourcePath`、`isSafeSourcePath`、`isProjectInputPath`、`projectInputPaths`（捕获和第二档列项目输入共用的文件集）、`isObservationSkippedPath`、`OBSERVATION_SKIP_DIRECTORIES`、`OBSERVATION_INVENTORY_CAPACITY`、`CONFIG_DATABASE_FILE_BYTES`、`MAX_COMPARISON_BYTES`、`CONTINUATION_DIFF_MAX_BYTES`、`normalizeWorkspaceRelativePath`、`WORKSPACE_CAPTURE_MAX_CHANGES`、`WORKSPACE_CAPTURE_NOT_VISIBLE_MAX`、`WORKSPACE_CAPTURE_FIXED_IGNORED`、`DEFAULT_WORKSPACE_LIMITS`、`DUP_MIN_STRING_CHARS`、`DUP_LIMIT`、`DUP_LITERAL_PREVIEW_CHARS`、`DUP_REPORT_MAX_BYTES`、`DUPLICATE_LIMITS`、`isCompleteCommitOid`、`GIT_TREE_OUTPUT_LIMIT_BYTES`、`GIT_PROJECT_LISTING_MAX_RECORDS`、`GIT_PROJECT_LISTING_MAX_BYTES`、`formatProjectListingCapacity`、`languageOfPath`、`createCppLanguageProvider`、`createPythonLanguageProvider`、`mapArchitectureSource`、`runAnalysis`、`candidateWorkspaceIncludesPath`、`configureTypeScriptProject`、`ProjectSourceFailure`、`TYPESCRIPT_DEFAULT_LIB_FILE`（捕获和第二档程序共用的默认库文件名）、`REFERENCE_ANALYZER_WORKER_URL`、`REFERENCE_ANALYZER_ROLE`（分析线程模块的自身 URL 和起线程的标记，只给 `reference-analyzer.ts`）。
 
 ## 不要做
 - 不要在别处复制拒绝前缀或另建根；`denied-prefixes.ts` 是唯一来源，真实根与 `allowsRead` 只由 Host 注入。
@@ -79,8 +90,10 @@
 - 不要用模型参数指定绝对根、放宽 `allowsRead`，或让 Git 接受 ref/短哈希与外部环境（`git-read.ts` 只收完整 OID）。
 - 不要另写捕获、分页游标或各语言索引规则；用 `CaptureRegistry` 和同一 capture 的游标。
 - 不要用 shell/hook/外部 diff 读仓库，也不要让项目自带的编译器执行；Git 与解析器调用已有固定入口。
+- 不要另起 Python/C++ 分析进程或另写进程管理（经 `createNativeSingleFile` / `createResidentAnalyzer`）；C++ 单文件查的进程只直接读编译器自己的头文件目录（slice-8E2-SPEC W11 第 1 条），工作区文件只经 `readWorkspaceFiles` 由主线程读了交给它。
+- 不要在分析线程模块里值导入本仓库的别的模块：测试里线程直接从 TS 源码起（Node 去类型），相对的 `.js` 导入解析不到；线程要的东西由主线程交过去。
 - 不要承诺“完整工作树”：capture 的 scope/coverage 有明确上限，`complete` 不等于整个仓库或完整调用图。
 - `isSafeSourcePath`（`src/core/workspace/project-source-snapshot.ts:102`）是源码捕获的路径规则，不做 4096 上限；它不是 `isSafeSourceRelativePath` 的副本。
 - `isSafeWorkspaceRelativePath`（`src/core/workspace/continuation-diff-reads.ts:37`）先 `path.normalize` 再判定，用于 diff 路径，不是词法规则的副本。
 - `reviewerSourcePathAllowed`（`src/core/workspace/reviewer-source-reader.ts:5`）在词法规则上再加 Candidate 排除项；它保留自己的规则。
-- `validateSourceQuery`（`src/core/workspace/ports.ts:243`）是 Query 范围规则；`capture.ts`、`workspace-read.ts` 与 `ports.ts` 都只调 `isSafeSourceRelativePath`，不另写词法校验。
+- `validateSourceQuery`（`src/core/workspace/ports.ts:282`）是 Query 范围规则；`capture.ts`、`workspace-read.ts` 与 `ports.ts` 都只调 `isSafeSourceRelativePath`，不另写词法校验。

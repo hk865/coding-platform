@@ -48,19 +48,31 @@ export function readFailure(error: unknown): WorkspaceResult<never> {
   if (code === 'invalid_path') return rejected('invalid', reason);
   if (code === 'permission_denied') return rejected('forbidden', reason);
   if (code === 'too_large') return rejected('capacity', reason);
-  if (code === 'binary_file' || code === 'invalid_encoding' || code === 'not_file') return rejected('unsupported', reason);
+  if (code === 'binary_file' || code === 'invalid_encoding' || code === 'not_file') return { status: 'rejected', code: 'unsupported', reason, kind: code };
   if (code === 'file_changed') return rejected('source_stale', reason);
   return rejected('unavailable', reason);
 }
 
-/** One authorized raw-byte read of the current working tree; no inventory, HEAD or AST. */
-export async function readWorkingTreeFile(access: WorkspaceReadAccess, input: Pick<ReadWorkspaceRequest, 'path' | 'maxBytes'>,
-  signal: AbortSignal, now: () => string, maxFileBytes: number): Promise<WorkspaceResult<WorkspaceFile>> {
+/** The checks before one working-tree read; null when the read may go to the Kernel. */
+function workingTreeReadRefusal(access: WorkspaceReadAccess, input: Pick<ReadWorkspaceRequest, 'path' | 'maxBytes'>,
+  signal: AbortSignal, maxFileBytes: number): WorkspaceResult<never> | null {
   if (!safeRelative(input.path)) return rejected('invalid', 'path must be a normalized workspace-relative path');
   if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1) return rejected('invalid', 'maxBytes must be a positive safe integer');
   if (input.maxBytes > maxFileBytes) return rejected('invalid', 'maxBytes exceeds the configured per-file limit');
   signal.throwIfAborted();
   if (!access.authorization.allowsRead(input.path)) return rejected('forbidden', 'path is outside the current read scope');
+  return null;
+}
+
+const workingTreeFile = (path: string, file: { content: string; revision: string; byteLength: number }, now: () => string): WorkspaceResult<WorkspaceFile> =>
+  ({ status: 'ready', value: { path, content: file.content, digest: file.revision, sizeBytes: file.byteLength,
+    digestBasis: 'raw_bytes', version: { kind: 'working_tree' }, readAt: now() } });
+
+/** One authorized raw-byte read of the current working tree; no inventory, HEAD or AST. */
+export async function readWorkingTreeFile(access: WorkspaceReadAccess, input: Pick<ReadWorkspaceRequest, 'path' | 'maxBytes'>,
+  signal: AbortSignal, now: () => string, maxFileBytes: number): Promise<WorkspaceResult<WorkspaceFile>> {
+  const refusal = workingTreeReadRefusal(access, input, signal, maxFileBytes);
+  if (refusal) return refusal;
   let file: { content: string; revision: string; byteLength: number };
   try { file = await access.read(input.path, input.maxBytes); }
   catch (error) {
@@ -68,8 +80,35 @@ export async function readWorkingTreeFile(access: WorkspaceReadAccess, input: Pi
     return readFailure(error);
   }
   signal.throwIfAborted();
-  return { status: 'ready', value: { path: input.path, content: file.content, digest: file.revision, sizeBytes: file.byteLength,
-    digestBasis: 'raw_bytes', version: { kind: 'working_tree' }, readAt: now() } };
+  return workingTreeFile(input.path, file, now);
+}
+
+/**
+ * Several working-tree reads over one access (slice-8E2-SPEC W12): each path gets the same checks
+ * and the same result or failure code as `readWorkingTreeFile`, in `paths` order; one failure never
+ * affects another. The reads that pass the checks go to the Kernel as one `readMany` batch; an
+ * access without `readMany` (only hand-built test doubles) is read one by one.
+ */
+export async function readWorkingTreeFiles(access: WorkspaceReadAccess, input: { paths: readonly string[]; maxBytes: number },
+  signal: AbortSignal, now: () => string, maxFileBytes: number): Promise<WorkspaceResult<WorkspaceFile>[]> {
+  const results: WorkspaceResult<WorkspaceFile>[] = new Array(input.paths.length);
+  const pending: number[] = [];
+  input.paths.forEach((path, index) => {
+    const refusal = workingTreeReadRefusal(access, { path, maxBytes: input.maxBytes }, signal, maxFileBytes);
+    if (refusal) results[index] = refusal;
+    else pending.push(index);
+  });
+  if (access.readMany === undefined) {
+    for (const index of pending) results[index] = await readWorkingTreeFile(access, { path: input.paths[index]!, maxBytes: input.maxBytes }, signal, now, maxFileBytes);
+    return results;
+  }
+  const read = await access.readMany(pending.map(index => input.paths[index]!), input.maxBytes);
+  signal.throwIfAborted();
+  read.forEach((item, at) => {
+    const index = pending[at]!;
+    results[index] = item.ok ? workingTreeFile(input.paths[index]!, item.file, now) : readFailure(item.error);
+  });
+  return results;
 }
 
 /** Frozen read from one capture's stored Map; no disk, inventory, identity or analyzer call. */

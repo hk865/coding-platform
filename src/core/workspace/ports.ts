@@ -4,6 +4,7 @@ import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
 import type { ProjectFileGraphV1 } from './architecture-language-provider.js';
 import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
+import type { LineRange } from './single-file-syntax.js';
 
 /**
  * WorkspaceTools wire contract. `WorkspaceCapturePort` is the R2c capture subset; the full
@@ -13,8 +14,10 @@ import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 export type WorkspaceError = 'invalid' | 'forbidden' | 'not_found'
   | 'source_stale' | 'capture_expired' | 'cursor_mismatch' | 'capacity'
   | 'unsupported' | 'unavailable' | 'cancelled';
+/** Which Kernel failure a working-tree read's `unsupported` is: not a regular file (a directory), binary, or not UTF-8. */
+export type UnsupportedReadKind = 'not_file' | 'binary_file' | 'invalid_encoding';
 export type WorkspaceResult<T> = { status: 'ready'; value: T }
-  | { status: 'rejected'; code: WorkspaceError; reason: string };
+  | { status: 'rejected'; code: WorkspaceError; reason: string; kind?: UnsupportedReadKind };
 export type SourceProvider = 'text' | 'typescript' | 'python' | 'cpp';
 export type SourceLocation = {
   path: string; digest: string;
@@ -217,6 +220,40 @@ export interface WorkspaceToolsPort extends WorkspaceCapturePort {
     Promise<WorkspaceResult<WorkspaceFile>>;
   compareWorkspace(ctx: CoreCallContext, input: WorkspaceComparisonRequest):
     Promise<WorkspaceResult<WorkspaceComparison>>;
+}
+
+/**
+ * The second tier's reference check (slice-8E2-SPEC W1–W9): one program per request, built for it
+ * and dropped. Requests run one at a time in this order of priority, equal ones first come first.
+ */
+export type ReferencePriority = 'write' | 'run_end' | 'button' | 'agent' | 'background';
+export type ReferenceQuestionV1 = {
+  /** X: found by name among its file's navigation items; several of that name → the one on `line`. */
+  definition: { path: string; name: string; line: number | null };
+  /** `ranges: null` is the whole file. */
+  evidence: { path: string; ranges: LineRange[] | null };
+};
+export type ReferenceAnswerV1 =
+  | { status: 'found' } | { status: 'not_found' }
+  | { status: 'unverifiable'; reason: 'not_in_project' | 'project_references' | 'undecided' }
+  /** Unreadable, cancelled, the thread died, or a background group yielded before it ran. No deadline here. */
+  | { status: 'failed' };
+export type ReferenceCheckRequestV1 = {
+  workspace: WorkspaceRef; priority: ReferencePriority;
+  /** One group is one link's questions. */
+  groups: ReferenceQuestionV1[][];
+};
+export type ReferenceCheckResultV1 = {
+  /** Same shape as `groups`. */
+  answers: ReferenceAnswerV1[][];
+  /** Raw-byte digest of every file the main thread handed to the analysis (the read port's `digest`). */
+  analysed: { path: string; digest: string }[];
+  /** The configuration this program used; `digest` hashes its decoded text. */
+  config: { path: string; digest: string } | null;
+};
+export interface ReferenceAnalyzerPort {
+  verify(ctx: CoreCallContext, request: ReferenceCheckRequestV1): Promise<WorkspaceResult<ReferenceCheckResultV1>>;
+  close(): Promise<void>;
 }
 
 /** Retention/capacity policy. Host-configured; never model-supplied. */
