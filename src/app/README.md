@@ -12,8 +12,8 @@
 
 ### Host 启动与选项
 做 Host 装配、CLI、单实例锁和启动对账的去这组。
-- `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁时建 `createWakeLoop` 并注册 `goal_waits`；`requestDriver` 不是 `'off'` 时再注册两条请求队列、生命周期队列 `LIFECYCLE_QUEUE` 和释放队列 `MESSAGE_RELEASE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列；关闭顺序是关闭信号先于全部 drain（在途 HTTP、协作驱动、Goal 扇出、平台，实例锁最后释放），关闭中的 Host 让在跑的 Work 在下一个安全点暂停、由下一次启动按 W-11 结清）。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。
-  受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1516`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1861`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
+- `host.ts` — 唯一 Host 装配：配置进 `createTargetPlatform`、实例 token、幂等 `close()` drain、运行期设置扩展，以及请求驱动（持锁时建 `createWakeLoop` 并注册 `goal_waits`；`requestDriver` 不是 `'off'` 时再注册两条请求队列、生命周期队列 `LIFECYCLE_QUEUE` 和释放队列 `MESSAGE_RELEASE_QUEUE`，在启动 reconcile 之后 `start`；秘书轮结束后只在 `basis.tooLong` 时经 H 的 `startHandoff` 自动交接；`close` 依次等唤醒循环、生命周期队列和请求队列；关闭顺序是关闭信号先于全部 drain（在途 HTTP、协作驱动、Goal 扇出、平台，实例锁最后释放），关闭中的 Host 让在跑的 Work 在下一个安全点暂停、由下一次启动按 W-11 结清）。心跳在每个工作区依次跑书记提醒、返工通知和后台联系核对（`runLinkBatchCheck`，`src/app/host.ts:2605`）：`platform.notes.doubtfulLinks` 非空，且平台空闲满 `linkBatchIdleMs`（默认 60 秒）或积压满 `linkBatchBacklog`（默认 20）条、距上次批量满 `linkBatchBacklogGapMs`（默认 10 分钟）时，用注入时钟交一批 `priority: 'background'` 的第二档并在这里 await；三个数都是 Host 启动选项（测试缝），不进设置、CLI 或路由，也不新开计时器或队列。本地授权的只读工具是 `LOCAL_READ_TOOL_NAMES`（`src/app/host.ts:380`）：`read`、`look_graph`、`find_graph` 和 `check_links`。设置里打开并选了模型的目录发布两个运行期 profile：本地工作台在前，平台秘书在后（`local-secretary-query-*`，平台秘书 legacy 模板、只读工具加 `record_note`、`platformDuty: 'secretary'`，文件写范围仍为空）。已有启动 runtime binding 的 scope 跳过这一步、保持它自己声明的 profile，不会得到本地秘书：它的启动配置必须自己声明秘书 binding **和**对应的 query profile，否则 `requests/submit` 回答 `no_secretary_binding`。
+  受信任的检查配置只由一个 builder 构建（`buildCheckConfiguration`，`src/app/host.ts:1537`）：设置恢复 `installFromSettings` 和 adoption 的检查阶段共用它，批准的空数组也安装（替换旧配置和静态回退）；有设置时 Host 建 adoption 组合 `createInitializationAdoptionHost`（`src/app/host.ts:1888`），作为 `createPlatformCoreRouteBindings` 的第六个参数交给路由。
   Work Run token 预算在设置可用时从私有快照安装（默认 400000000，存储值为 1…600000000）；每次推送只把每个 scope 的生效预算写进已有的 Workflow binding，保留它自己的 sessionRole、roleBinding 和 deadline，所以自定义启动角色不被本地默认角色替换、下一次 Work Run 无需重启即用新值，已被 claim 的 Run 保持自己的预算。
 - `main.ts` — CLI：读一份 JSON 配置，启动 loopback Host，只打印不含 token 的地址。
 - `host-instance-lease.ts` — SQLite 旁的单实例锁：存活、陈旧、损坏的判定与 takeover。
@@ -57,8 +57,8 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createLocalWorkbenchHost` | `src/app/host.ts:471` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
-| `consumeStatus` | `src/app/host.ts:249` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
+| `createLocalWorkbenchHost` | `src/app/host.ts:492` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
+| `consumeStatus` | `src/app/host.ts:260` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
 | `createWorkbenchServer` | `src/app/server.ts:205` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，给画板 HTML 注入令牌 meta 并 `no-store`，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
 | `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:839` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
 | `dispatchCoreRoute` | `src/app/core-routes.ts:1471` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
@@ -97,8 +97,8 @@
 | `listDiskPromptPacks` | `src/app/prompt-packs.ts:335` | 生成 `prompts/packs/list`：platform 在前，其余按 id | 设置页列出提示词包时 |
 | `parseWorkbenchCliConfig` | `src/app/main.ts:72` | 把可序列化 CLI 文件纯转换成本地 Host 选项 | CLI 与测试复用同一份配置转换 |
 | `runWorkbenchCli` | `src/app/main.ts:196` | 读配置、启动 loopback Host、返回退出码 | `main` 入口；token 不落盘、不打印 |
-| `messageExpiry` | `src/composition/create-platform.ts:1330` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
-| `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2324` / `:2482` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问 adviser（`platform.recipients.resolveDutyRecipient`），没有再回配置目标；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
+| `messageExpiry` | `src/composition/create-platform.ts:1331` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
+| `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2348` / `:2506` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问 adviser（`platform.recipients.resolveDutyRecipient`），没有再回配置目标；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
 
 ## 内部用
 以下导出只供本层（含 Host 内部与测试）使用，不应成为其他层的依赖：`validateAttentionConfig`、`withinAttentionScope`、`graphChangedElements`、`graphChanges`、`attentionSignalToJson`、`AUTO_CAPTURE_ACTOR`、`changeKindOf`、`CoreRouteRejectionError`、`CORE_ROUTE_SPECS`、`parseChangeStreamResume`、`SETTINGS_API_PREFIX`、`DEFAULT_WORK_RUN_TOKEN_BUDGET`、`MAX_WORK_RUN_TOKEN_BUDGET`、`SETTINGS_ROUTE_SUFFIXES`、`isSettingsRoute`、`validateSettingsBaseUrl`、`HOST_INSTANCE_LOCK_FILE`、`localWorkbenchGrant`、`readonlyCommandsDisabledScopes`、`HOST_RECONCILE_ACTOR`、`emptyStartupReport`、`WORKBENCH_CLI_USAGE`、`loadWorkbenchCliConfig`、`isPromptPackId`、`isPathWithin`、`effectiveTemplateVersionOf`、`effectiveToolTextOf`、`settingsModelSecretVariable`、`runtimeModelId`、`sameRoleConfiguration`、`PLATFORM_TOKEN_HEADER`、`PLATFORM_TOKEN_PLACEHOLDER`、`WORKBENCH_PATH`、`CORE_API_PREFIX`、`BOOTSTRAP_SUFFIX`、`CHANGES_SUFFIX`、`LAST_EVENT_ID_HEADER`、`LOCAL_WORKBENCH_TEMPLATE_ID`、`LOCAL_WORKBENCH_TEMPLATE_REVISION`、`LOCAL_WORKBENCH_GUIDANCE`、`LOCAL_WORKBENCH_ROLE`、`LOCAL_WORKBENCH_ROLE_BINDING`、`LOCAL_WORKBENCH_HOST_TEMPLATE`、`LOCAL_WORKBENCH_BUDGET`、`LIFECYCLE_QUEUE`、`LIFECYCLE_WAKE_AGGREGATE_TYPES`、`createHandoffQueue`；`lineDelta` 的正本在 `src/contracts/line-delta.ts:19`。
@@ -106,7 +106,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:2118`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:2119`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:51`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。

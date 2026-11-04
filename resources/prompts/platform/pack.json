@@ -156,22 +156,22 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 8,
+      "version": 9,
       "mentionsTools": []
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 7,
+      "version": 8,
       "mentionsTools": []
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 8,
+      "version": 9,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
       "file": "templates/skill-platform-scribe.txt",
-      "version": 7,
+      "version": 8,
       "mentionsTools": []
     },
     "skill-platform-reviewer": {
@@ -216,6 +216,7 @@
     "record_decision_application": "tools/record_decision_application.json",
     "look_graph": "tools/look_graph.json",
     "find_graph": "tools/find_graph.json",
+    "check_links": "tools/check_links.json",
     "find_related_sessions": "tools/find_related_sessions.json",
     "read_session_card": "tools/read_session_card.json",
     "record_unknown_call_review": "tools/record_unknown_call_review.json",

@@ -324,6 +324,7 @@ import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
 import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
 import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { isRecord } from '../contracts/validation/common.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
   ContinuationWorkspaceSource, ReadonlyCommandAccessInput, RuntimeExecutionDependencies, RuntimeHostBindings,
@@ -2603,6 +2604,32 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const checks: RegisteredCheckRunner = {
       runRegisteredCheck: (...args) => trackedCall(() => rawCheckRunner.runRegisteredCheck(...args), unavailable),
     };
+    // The ONE in-flight count of Runs and QueryRuns entered through `startRun`/`startQuery`, memory
+    // only. Entering call counts one; a re-entrant call that only observes an already running Run
+    // returns early, so its release must not drop the still-running entry. `idleSince` is the
+    // injected-clock moment the map last became empty; its initial value is the moment it is first
+    // read (the platform build does not read the clock); the Host reads it only while the count is zero.
+    const inFlight = new Map<string, number>();
+    let idleSince: string | null = null;
+    function countInFlight<T>(ref: unknown, call: () => Promise<T>): Promise<T> {
+      // A public start route's body is not type-checked: a non-record ref never counts and is
+      // forwarded unchanged, so the execution owner still answers its own `invalid`.
+      if (!isRecord(ref)) return call();
+      const key = canonicalJson(ref as JsonValue);
+      inFlight.set(key, (inFlight.get(key) ?? 0) + 1);
+      return call().finally(() => {
+        const n = (inFlight.get(key) ?? 1) - 1;
+        if (n > 0) inFlight.set(key, n);
+        else {
+          inFlight.delete(key);
+          if (inFlight.size === 0) idleSince = now();
+        }
+      });
+    }
+    const countedStartRun: typeof runtime.port.startRun = (ctx, request) =>
+      countInFlight(request?.prepared?.claim?.runRef, () => runtime.port.startRun(ctx, request));
+    const countedStartQuery = (...args: Parameters<NonNullable<typeof runtime.port.startQuery>>) =>
+      countInFlight(args[1]?.prepared?.queryRunRef, () => runtime.port.startQuery!(...args));
     const runtimePort = {
       ...runtime.port,
       async capabilities(...args: Parameters<RuntimeExecutionPort['capabilities']>): Promise<ReadResult<RuntimeCapabilities>> {
@@ -2632,7 +2659,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return sessionCall(() => runtime.port.prepareExecution(...args));
       },
       startRun(...args: Parameters<typeof runtime.port.startRun>) {
-        return sessionCall(() => runtime.port.startRun(...args));
+        return sessionCall(() => countedStartRun(...args));
       },
       observeRun(...args: Parameters<typeof runtime.port.observeRun>) {
         return sessionCall(() => runtime.port.observeRun(...args));
@@ -2665,7 +2692,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return sessionCall(() => runtime.port.prepareQuery!(...args));
       },
       startQuery(...args: Parameters<NonNullable<typeof runtime.port.startQuery>>) {
-        return sessionCall(() => runtime.port.startQuery!(...args));
+        return sessionCall(() => countedStartQuery(...args));
       },
       observeQuery(...args: Parameters<NonNullable<typeof runtime.port.observeQuery>>) {
         return sessionCall(() => runtime.port.observeQuery!(...args));
@@ -2677,6 +2704,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // the whole public advanceWork call is drained as one tracked unit below.
     const rawRuntime = {
       ...runtime.port,
+      startRun: countedStartRun,
+      startQuery: countedStartQuery,
       createSession: (...args: Parameters<typeof sessionOperations.createSession>) =>
         sessionOperations.createSession(...args),
     };
@@ -3022,7 +3051,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         duty: 'scribe',
       });
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
-      & NoteListReadPort & SemanticLinksReader & typeof noteVersions & {
+      & NoteListReadPort & SemanticLinksReader & typeof noteVersions & Pick<NoteHeadCheckPort, 'doubtfulLinks'> & {
         readScribeTodos: NoteScribeTodoPort['readScribeTodos'];
         readLedgerCursor: NoteScribeTodoPort['readLedgerCursor'];
         goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
@@ -3041,6 +3070,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         checkSemanticLinks: (...args) => trackedCall(() => semanticLinks.checkSemanticLinks(...args), unavailable),
         readScribeTodos: noteScribeTodos.readScribeTodos,
         readLedgerCursor: noteScribeTodos.readLedgerCursor,
+        doubtfulLinks: noteCheck.doubtfulLinks,
         goalIdsForWorkspace,
         resolveScribeRecipient,
       };
@@ -4043,6 +4073,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // overlap routes use. Internal like the other owner groups.
       overlapGates: overlapGatePort,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
+      // The ONE in-flight count of Runs and QueryRuns entered through startRun/startQuery; memory only.
+      runtimeInFlight: { count: (): number => inFlight.size, idleSince: (): string => idleSince ??= now() },
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.
       graphContext, taskInputs,
@@ -4203,7 +4235,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'moduleMaintainers',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
-      'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead'] as const) {
+      'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
+      'runtimeInFlight'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

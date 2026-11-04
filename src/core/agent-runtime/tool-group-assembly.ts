@@ -28,6 +28,7 @@ import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
+import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
 import { createArchitectureTools, ARCHITECTURE_TOOL_NAMES } from './architecture-tools.js';
 import {
@@ -75,7 +76,7 @@ export const EXPLORATION_TOOL_NAMES = [
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
   ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
-  ...GRAPH_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES, ...ARCHITECTURE_TOOL_NAMES,
+  ...GRAPH_TOOL_NAMES, ...LINK_CHECK_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES, ...ARCHITECTURE_TOOL_NAMES,
   PROPOSE_ROLE_SPLIT_TOOL_NAME,
 ]);
 /** K3 group 3: the L13 exploration names a review-round manifest may select.
@@ -265,6 +266,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
+  const linkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name));
   const handoffNames = HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
   const architectureNames = ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
@@ -278,7 +280,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const reworkClaims = input.claims?.requeueTask;
   const reworkEvidence = input.evidence?.reverifyRound;
   if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
-    && graphNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
+    && graphNames.length === 0 && linkCheckNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
     && architectureNames.length === 0
     && memberNames.length === 0 && maintainerNames.length === 0 && reworkNames.length === 0
     && roleSplitNames.length === 0) {
@@ -303,6 +305,9 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (noteNames.length > 0 && (input.notes?.write === undefined || input.notes.check === undefined)) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
+  }
+  if (linkCheckNames.length > 0 && input.notes?.check === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects check_links but no note check dependency is bound: ${linkCheckNames.join(', ')}`) };
   }
   if (handoffNames.length > 0 && (input.handoffs === undefined || input.duty === undefined)) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects hand_off but no handoff entry or formal Session duty is bound: ${handoffNames.join(', ')}`) };
@@ -356,6 +361,13 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
         hostContext: graphDeps.hostContext,
       }),
       ...(input.notes?.memory === undefined ? {} : { notes: input.notes.memory }),
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
+  }
+  if (linkCheckNames.length > 0) {
+    handles.push(createLinkCheckTools({
+      context: input.context,
+      check: input.notes!.check!,
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
@@ -445,7 +457,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
-  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...noteNames,
+  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...linkCheckNames, ...noteNames,
     ...handoffNames, ...architectureNames, ...memberNames, ...maintainerNames, ...roleSplitNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };
@@ -670,6 +682,8 @@ export type FinalToolListInputV1 = {
     roleSplit?: boolean;
     /** The structural-proposal owner behind `propose_architecture_revision`. */
     architectureProposals?: boolean;
+    /** The note check behind `check_links`; optional for the same reason. */
+    linkCheck?: boolean;
   };
   readonlyCommand: {
     requested: boolean;
@@ -713,6 +727,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
+  const linkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none'));
   // Only the Work Runtime builds the proposal tool; a Query's projection never reaches its factory.
   const architectureNames = query ? [] : ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
@@ -746,6 +761,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (noteNames.length > 0 && !owners.notes) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects note tools but no note write/check dependency is bound: ${noteNames.join(', ')}`) };
   }
+  if (linkCheckNames.length > 0 && owners.linkCheck === false) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects check_links but no note check dependency is bound: ${linkCheckNames.join(', ')}`) };
+  }
   if (architectureNames.length > 0 && owners.architectureProposals === false) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects propose_architecture_revision but no proposal owner is bound: ${architectureNames.join(', ')}`) };
   }
@@ -772,7 +790,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
     return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
   }
   const coordinationNames = [...mailboxNames, ...handoffNames, ...decisionNames, ...whiteboardNames,
-    ...discoveryNames, ...graphNames, ...noteNames, ...architectureNames, ...memberNames, ...maintainerNames,
+    ...discoveryNames, ...graphNames, ...linkCheckNames, ...noteNames, ...architectureNames, ...memberNames, ...maintainerNames,
     ...roleSplitNames, ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };

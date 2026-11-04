@@ -220,10 +220,10 @@ function entryOf(read: QueryRead): { hostConfigurationRevision: string; permissi
   return entry as { hostConfigurationRevision: string; permissions: unknown };
 }
 
-const localTools = ['read', 'look_graph', 'find_graph', 'run_readonly_command'];
-// The secretary's Query projection: the three read tools and the note writer, always; never a file write scope or a
+const localTools = ['read', 'look_graph', 'find_graph', 'check_links', 'run_readonly_command'];
+// The secretary's Query projection: the four read tools and the note writer, always; never a file write scope or a
 // command tool. The ordinary semantic Query ceiling still strips every coordination name.
-const secretaryTools = ['read', 'look_graph', 'find_graph', 'record_note'];
+const secretaryTools = ['read', 'look_graph', 'find_graph', 'check_links', 'record_note'];
 // The local secretary BINDING's own tool list: the Query projection above plus the six coordination names. The
 // binding's tools are the revision material, so the hash below uses this list while the Query assertion keeps the four.
 const secretaryBindingTools = [...secretaryTools,

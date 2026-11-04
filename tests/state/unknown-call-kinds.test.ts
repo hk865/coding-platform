@@ -21,6 +21,7 @@ const READ_ONLY_NAMES = [
   // L3 row 2
   'read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
   'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'look_graph', 'find_graph',
+  'check_links',
   // L3 row 3
   'run_readonly_command',
 ];

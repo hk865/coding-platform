@@ -16,6 +16,7 @@ import {
 import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { REQUEST_COMMAND_RERUN_TOOL_NAMES } from '../../src/core/agent-runtime/command-rerun-tools.js';
 import { GRAPH_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
+import { LINK_CHECK_TOOL_NAMES } from '../../src/core/agent-runtime/link-check-tool.js';
 import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
 import { ANSWER_TOOL_NAMES } from '../../src/core/agent-runtime/answer-tools.js';
 import { HANDOFF_TOOL_NAMES } from '../../src/core/agent-runtime/handoff-tools.js';
@@ -42,6 +43,7 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     ...WHITEBOARD_TOOL_NAMES,
     ...SESSION_DISCOVERY_TOOL_NAMES,
     ...GRAPH_TOOL_NAMES,
+    ...LINK_CHECK_TOOL_NAMES,
     ...NOTE_TOOL_NAMES,
     ...RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES,
     ...PROPOSE_SAFER_METHOD_TOOL_NAMES,
@@ -73,10 +75,10 @@ const EXEMPTIONS: readonly ExemptionV1[] = [
     { templateId: 'initial-planning-answer', word: 'check', line: 22, reason: "planning answer's plain 'check' (shape sample disclaimer)" },
     { templateId: 'initial-planning-answer', word: 'check', line: 56, reason: "planning answer's plain 'check' (sample verification text)" },
     { templateId: 'initial-planning-answer', word: 'check', line: 86, reason: "planning answer's checks sample field" },
-    { templateId: 'skill-platform-work', word: 'check', line: 47, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-secretary', word: 'check', line: 42, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-adviser', word: 'check', line: 65, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-scribe', word: 'check', line: 32, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-work', word: 'check', line: 50, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-secretary', word: 'check', line: 45, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-adviser', word: 'check', line: 68, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-scribe', word: 'check', line: 35, reason: 'record_note receipt field, not the reserved Kernel tool' },
 ];
 
 /** The literal text the model would see if every tool were absent: text nodes outside any tool block. */
@@ -112,7 +114,7 @@ describe('PC-19 platform tool-name scan (ruling 18)', () => {
     it('scans every builtin, reserved and extension tool name the platform can register', () => {
         expect(EVERY_TOOL_NAME.size).toBe(RESERVED_TOOL_NAMES.size + SESSION_MAILBOX_TOOL_NAMES.length
             + USER_DECISION_TOOL_NAMES.length + WHITEBOARD_TOOL_NAMES.length + SESSION_DISCOVERY_TOOL_NAMES.length
-            + GRAPH_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
+            + GRAPH_TOOL_NAMES.length + LINK_CHECK_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
             + ANSWER_TOOL_NAMES.length + READ_REQUESTS_TOOL_NAMES.length + 1
             + REWORK_TOOL_NAMES.length + 5);

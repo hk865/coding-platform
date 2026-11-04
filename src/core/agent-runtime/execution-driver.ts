@@ -553,6 +553,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           plans: deps.plans !== undefined,
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
           notes: deps.notes?.write !== undefined && deps.notes?.check !== undefined,
+          linkCheck: deps.notes?.check !== undefined,
           unknownCallReviews: deps.unknownCallReviews !== undefined,
           commandRerunRequests: deps.commandRerunRequests !== undefined,
           memberCreation: deps.memberCreation !== undefined,

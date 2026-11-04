@@ -50,22 +50,28 @@
  * every write returns the receipt the platform produced, and K1's `noteId` is
  * whatever that receipt says.
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
+import type { ModelRequest, ToolResult } from '../../vendor/coding-agent/dist/public-api.js';
 import * as platformModule from '../../src/composition/create-platform.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type {
-  LinkDraftV1, LinkEndRequestV1, LinkEvidenceV1, LinkKeyV1, NoteDraftAnchorV1, NoteDraftV1,
+  LinkDraftV1, LinkEndRequestV1, LinkEvidenceV1, LinkKeyV1, LinkVerificationV1, NoteDraftAnchorV1, NoteDraftV1,
   SemanticRelationV1, SymbolRequestV1,
 } from '../../src/contracts/note.js';
+import type { SemanticLinkV1, SemanticPageV1 } from '../../src/contracts/semantic-layer.js';
+import type { ReadResult } from '../../src/contracts/core/results.js';
 import { isRecord } from '../../src/contracts/validation/common.js';
 import type {
   NoteItemV1, WriteNoteEnvelopeV1, WriteNoteResult,
 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
+import { localWorkbenchGrant, type WorkbenchWorkspaceConfig } from '../../src/app/host.js';
+import {
+  LOCAL_WORKBENCH_BUDGET, LOCAL_WORKBENCH_ROLE, LOCAL_WORKBENCH_ROLE_BINDING, type WorkbenchQueryProfile,
+} from '../../src/app/runtime-configuration.js';
 import type {
   ReadWorkspaceRequest, ReferenceAnalyzerPort, ReferenceCheckRequestV1, ReferenceCheckResultV1,
   WorkspaceFile, WorkspaceResult,
@@ -74,14 +80,17 @@ import type { WorkspaceToolsHandle } from '../../src/core/workspace/workspace-to
 import * as noteServiceModule from '../../src/core/work-graph/notes/note-service.js';
 import * as noteViewsModule from '../../src/core/work-graph/views/note-views.js';
 import { driveWorkflow } from './A2-restart-fixture.js';
-import { graphWrite, plain } from './AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from './S6A-host-fixture.js';
 import { committedValue, readyValue } from './S6A-memory-fixture.js';
-import { S6A_SCRIBE_ROLE, S6A_SCOPE, type S6AExtraBinding } from './S6A-request-fixture.js';
 import {
-  adoptS6BPlan, createS6BLine, holdS6BRequestRound, type S6BHeldRound,
+  S6A_SCRIBE_ROLE, S6A_SCOPE, type S6AExtraBinding, type S6ASession,
+} from './S6A-request-fixture.js';
+import {
+  adoptS6BPlan, createS6BLine, holdS6BRequestRound, type S6BHeldRound, type S6BLine,
 } from './S6B1-fixture.js';
+import { sessionOf } from './S7A-fixture.js';
 import type { S4ANoteLimits } from './S4A-note-fixture.js';
 
 // ---------------------------------------------------------------------------
@@ -228,6 +237,11 @@ export const S8E_SCOPE = S6A_SCOPE;
 export const S8E_GOAL_REF: GoalRef = { aggregateType: 'Goal', projectId: S8E_SCOPE.projectId, goalId: 's8e-goal' };
 export const S8E_BASELINE_ID = 's8e-baseline';
 export const S8E_POLICY_ID = 's8e-policy';
+/** E2-14a/E2-14b: the second Goal, its one Plan task and line, the grant binding and the Query profile. */
+export const S8E_LOCAL_GOAL_ID = 's8e-h-local-goal';
+export const S8E_LOCAL_TASK_ID = 's8e-h-local-task';
+export const S8E_LOCAL_WORKBENCH_BINDING_ID = 's8e-h-local-workbench';
+export const S8E_LOCAL_WORKBENCH_PROFILE_ID = 's8e-h-local-workbench-query';
 
 // ---------------------------------------------------------------------------
 // K1–K7, the seven contacts of spec §5.2
@@ -594,6 +608,20 @@ export type S8EWorldOptions = {
    * (the five-module §5.2 world); no step or default changes.
    */
   catalogModules?: readonly S8ECatalogModule[];
+  /**
+   * 8E2 H: extra real Host options, passed through untyped to
+   * `openS6AHostWorld`'s `extraHostOptions` (the link-batch knobs and the
+   * injected clock). Omitted keeps the Host exactly as it is today.
+   */
+  hostOptions?: Record<string, unknown>;
+  /**
+   * 8E2 H (E2-14a/E2-14b): add ONE new binding whose grant is the production
+   * `localWorkbenchGrant` (a read-only workspace with no write prefix and no
+   * command), its Workflow row for the `local-workbench` role and its Query
+   * profile, then create a second Goal, Plan task and line for it. The
+   * existing fixture binding, Goal, Plan and scribe line are untouched.
+   */
+  localWorkbench?: true;
 };
 
 export type S8EPersonWriteOptions = {
@@ -624,6 +652,21 @@ export type S8ESecretaryRoundInput = {
   replies?: (manifest: PreparedQueryManifestV1) => S6AReply[];
 };
 
+/**
+ * E2-14a/E2-14b: the second Goal, its one Plan task, the line responsible for
+ * it (the real `sessions/read` handle) and the Query profile registered for the
+ * same grant. `profile` is the configuration object handed to the Host, not a
+ * bootstrap read; a Query row still drives it through the public routes.
+ */
+export type S8ELocalWorkbench = {
+  readonly bindingId: string;
+  readonly goalRef: GoalRef;
+  readonly task: TaskTriple;
+  readonly line: S6BLine;
+  readonly session: S6ASession;
+  readonly profile: WorkbenchQueryProfile;
+};
+
 export type S8ESemanticWorld = S6AHostWorld & {
   readonly scope: typeof S8E_SCOPE;
   readonly root: string;
@@ -633,6 +676,10 @@ export type S8ESemanticWorld = S6AHostWorld & {
   nextScribeTask(): TaskTriple;
   /** The program-build counter and the faults; proxy installed before the Host is built. */
   readonly linkCheck: S8ELinkCheckProbe;
+  /** The scribe line the world's own Goal/Plan belongs to (`holdS8EScribeRun` holds its Run). */
+  readonly scribeLine: S6BLine;
+  /** The `localWorkbench: true` Goal/task/line/session/profile; null when the option is omitted. */
+  readonly localWorkbench: S8ELocalWorkbench | null;
 
   /** Person write through the real `notes/write` route; returns the owner's `WriteNoteResult`. */
   writePerson(note: NoteDraftV1, options?: S8EPersonWriteOptions): Promise<WriteNoteResult>;
@@ -664,6 +711,36 @@ export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promi
   const backend = options.backend ?? 'memory';
   const restoreQuota = installQuotaWrapper(options.noteLimits ?? {});
   const linkCheck = installLinkCheckProbe();
+  let localProfile: WorkbenchQueryProfile | null = null;
+  const extraBindings: S6AExtraBinding[] = [...(options.extraBindings ?? [])];
+  if (options.localWorkbench === true) {
+    // The production grant's source: a read-only workspace (no write prefix, no
+    // command), so the binding gets `read`, the graph tools and the check tool
+    // when H ships it, and the Query projection keeps the same ceiling.
+    const workspace: WorkbenchWorkspaceConfig = { scope: S8E_SCOPE, name: 'S8E local workbench',
+      root: '/workspace', workspaceRevision: 1, readPrefixes: ['.'] };
+    localProfile = {
+      id: S8E_LOCAL_WORKBENCH_PROFILE_ID, label: 'S8E local workbench query', scope: S8E_SCOPE,
+      runtimeBindingId: S8E_LOCAL_WORKBENCH_BINDING_ID,
+      sessionRole: structuredClone(LOCAL_WORKBENCH_ROLE),
+      roleBinding: structuredClone(LOCAL_WORKBENCH_ROLE_BINDING),
+      runtimeBudget: structuredClone(LOCAL_WORKBENCH_BUDGET), budget: { maxTokens: null, deadline: null },
+      consumerId: AG2B_CONSUMER_ID,
+    };
+    extraBindings.push({
+      binding: {
+        id: S8E_LOCAL_WORKBENCH_BINDING_ID, label: 'S8E local workbench binding', scope: S8E_SCOPE,
+        role: structuredClone(LOCAL_WORKBENCH_ROLE), configurationRevision: 's8e-h-local-workbench@1',
+        model: { revision: 's8e-h-local-workbench-model@1', provider: 'deepseek',
+          model: 's8e-h-local-workbench-scripted' },
+        grant: localWorkbenchGrant(workspace, { id: 's8e-h-local-workbench', label: 'S8E local workbench model',
+          provider: 'deepseek', model: 'deepseek-flash' }),
+      },
+      workflow: { workspace: S8E_SCOPE, sessionRole: structuredClone(LOCAL_WORKBENCH_ROLE),
+        roleBinding: structuredClone(LOCAL_WORKBENCH_ROLE_BINDING), budget: { tokenBudget: 1_000_000, deadline: null } },
+      queryProfile: localProfile,
+    });
+  }
   let hostWorld: S6AHostWorld;
   try {
     // `scribe: true` gives the Runtime and Workflow the platform scribe binding;
@@ -671,7 +748,8 @@ export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promi
     // is created below through its own route).
     hostWorld = await openS6AHostWorld({ backend, scribe: true, defaultGoals: false,
       ...(options.secretaryTools === undefined ? {} : { secretaryTools: options.secretaryTools }),
-      ...(options.extraBindings === undefined ? {} : { extraBindings: options.extraBindings }) });
+      ...(extraBindings.length === 0 ? {} : { extraBindings }),
+      ...(options.hostOptions === undefined ? {} : { extraHostOptions: options.hostOptions }) });
   } catch (error) {
     linkCheck.restore();
     restoreQuota();
@@ -737,6 +815,27 @@ export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promi
     const { tasks } = await adoptS6BPlan(ws, S8E_GOAL_REF, { label: 's8e', role: S6A_SCRIBE_ROLE.templateId, taskIds });
     const line = await createS6BLine(ws, { label: 's8e-scribe', role: S6A_SCRIBE_ROLE });
 
+    // 4. E2-14a/E2-14b: a second Goal, its one Plan task assigned to the
+    // `local-workbench` template and the line responsible for it, all public.
+    // The fixture Goal/Plan/scribe line above are already built and untouched.
+    let localWorkbench: S8ELocalWorkbench | null = null;
+    if (options.localWorkbench === true) {
+      if (localProfile === null) throw new Error('S8E: the local workbench profile was not built');
+      const localRole = LOCAL_WORKBENCH_ROLE;
+      if (localRole.kind !== 'legacy_template') throw new Error('S8E: the local workbench role is not a template');
+      const localGoalRef: GoalRef = { aggregateType: 'Goal', projectId: scope.projectId, goalId: S8E_LOCAL_GOAL_ID };
+      await ws.createGoal(localGoalRef.goalId, 'S8E local workbench goal');
+      const localPlan = await adoptS6BPlan(ws, localGoalRef, { label: 's8e-h-local',
+        taskIds: [S8E_LOCAL_TASK_ID], role: localRole.templateId });
+      const localTask = localPlan.tasks[0];
+      if (localTask === undefined) throw new Error('S8E: the local workbench Plan has no task');
+      const localLine = await createS6BLine(ws, { label: 's8e-h-local-line', role: localRole,
+        tasks: localPlan.tasks });
+      const localSession = await sessionOf(hostWorld, localLine);
+      localWorkbench = { bindingId: S8E_LOCAL_WORKBENCH_BINDING_ID, goalRef: localGoalRef, task: localTask,
+        line: localLine, session: localSession, profile: localProfile };
+    }
+
     const closeHost = hostWorld.close.bind(hostWorld);
     let taskCursor = 0;
     let commandSeq = 0;
@@ -763,6 +862,8 @@ export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promi
       tasks,
       nextScribeTask,
       linkCheck: linkCheck.probe,
+      scribeLine: line,
+      localWorkbench,
       async writePersonEnvelope(note: NoteDraftV1,
         writeOptions: S8EPersonWriteOptions = {}): Promise<WriteNoteEnvelopeV1> {
         commandSeq += 1;
@@ -849,3 +950,100 @@ export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promi
 export type S8ELinkName = S8ELinkSpec['name'];
 /** The raw symbol request type, re-exported so rows do not import production contracts twice. */
 export type { SymbolRequestV1 };
+
+// ---------------------------------------------------------------------------
+// 8E2 H: one Run that calls `check_links`, and one scribe Run held at its model request
+// ---------------------------------------------------------------------------
+
+/** The check Run's second model request (the one carrying the tool result), the result and its request slice. */
+export type S8ECheckLinksRun = { readonly request: ModelRequest; readonly toolResult: ToolResult;
+  readonly requests: readonly ModelRequest[] };
+
+/**
+ * E2-14a/E2-14b: one real Work Run of `input.line` that calls `check_links`
+ * with `input.args` and then answers. The returned `toolResult` is exactly what
+ * the Kernel delivered to the model, error results included; only a missing
+ * tool message throws.
+ */
+export async function runS8ECheckLinks(world: S8ESemanticWorld, input: {
+  goalRef: GoalRef; task: TaskTriple; line: S6BLine; label: string; args: Record<string, unknown>;
+}): Promise<S8ECheckLinksRun> {
+  const callId = `s8e-check-links-${input.label}`;
+  const before = world.model.calls();
+  world.scriptReplies([
+    { kind: 'calls', calls: [{ callId, name: 'check_links', args: input.args }] },
+    { kind: 'text', text: `S8E checked links ${input.label}` },
+  ]);
+  await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: input.goalRef, flowId: `s8e-${input.label}`,
+    sessionHint: input.line.ref, kind: 'select_work', taskId: input.task.taskId });
+  const requests = world.model.requests.slice(before);
+  const request = requests[1];
+  if (request === undefined) {
+    throw new Error(`S8E: the check_links Run ${input.label} made no second model request`);
+  }
+  const delivered = request.messages.find(message => message.role === 'tool' && message.callId === callId);
+  if (delivered === undefined || delivered.role !== 'tool') {
+    throw new Error(`S8E: the check_links result for ${input.label} was not delivered to the model`);
+  }
+  return { request, toolResult: delivered.result, requests };
+}
+
+/** The held scribe Run: its task, the line's handle and the release that lets the Run finish. */
+export type S8EHeldScribeRun = { readonly task: TaskTriple; readonly session: S6ASession;
+  release(): Promise<void> };
+
+/**
+ * E2-19c: claim and start the next scribe task and hold its first model
+ * request (the `holdPLTaskRequest` shape). `release()` lets that request answer
+ * and awaits the Run; the caller must release.
+ */
+export async function holdS8EScribeRun(world: S8ESemanticWorld, label: string): Promise<S8EHeldScribeRun> {
+  const task = world.nextScribeTask();
+  const session = await sessionOf(world, world.scribeLine);
+  world.scriptReplies([{ kind: 'text', text: `S8E held scribe ${label}` }]);
+  const gate = await world.gates.modelRequest(session);
+  const driving = driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: S8E_GOAL_REF,
+    flowId: `s8e-${label}`, sessionHint: world.scribeLine.ref, kind: 'select_work', taskId: task.taskId });
+  await gate.reached;
+  return { task, session, release: async () => { gate.release(); await driving; } };
+}
+
+// ---------------------------------------------------------------------------
+// Shared public steps of the H rows (E3 read, compose line, person write)
+// ---------------------------------------------------------------------------
+
+/** E3: the project page of `architecture/semantic-links`; `ready` or the row stops. */
+export async function s8eLinkPage(world: S8ESemanticWorld): Promise<readonly SemanticLinkV1[]> {
+  const answer = await world.route('architecture/semantic-links',
+    { scope: { kind: 'project' }, cursor: null, limit: 100 });
+  const read = answer as ReadResult<SemanticPageV1<SemanticLinkV1>>;
+  if (read.status !== 'ready') throw new Error(`the semantic read was not ready: ${JSON.stringify(answer)}`);
+  return read.value.items;
+}
+
+/** E3: the read-time verification of exactly one note version. */
+export async function s8eLinkVerification(world: S8ESemanticWorld, noteId: string,
+  version: number): Promise<LinkVerificationV1> {
+  const item = (await s8eLinkPage(world)).find(candidate => candidate.noteId === noteId
+    && candidate.version === version);
+  if (item === undefined) throw new Error(`the semantic read has no ${noteId}@${String(version)}`);
+  return item.verification;
+}
+
+/** `compose.ts` line 10 becomes `begin`, the edit that makes K1's stored verdict refs-pending. */
+export async function s8eChangeComposeLine10(world: S8ESemanticWorld): Promise<void> {
+  const target = join(world.root, 'src/compose.ts');
+  const lines = (await readFile(target, 'utf8')).split('\n');
+  lines[9] = 'export const begin = (id: string) => runModel(access, id);';
+  await writeFile(target, lines.join('\n'), 'utf8');
+}
+
+/** One person write of a link draft through the real `notes/write` route; accepted or it throws. */
+export async function s8eWriteLink(world: S8ESemanticWorld,
+  spec: S8ELinkSpec): Promise<{ noteId: string; version: number }> {
+  const write = await world.writePerson(s8eLinkDraft(spec));
+  if (write.status !== 'accepted') {
+    throw new Error(`the ${spec.name} write was not accepted: ${JSON.stringify(write)}`);
+  }
+  return { noteId: write.noteId, version: write.version };
+}

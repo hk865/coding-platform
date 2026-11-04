@@ -29,10 +29,10 @@ const EXISTING_DIGESTS = {
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
     'initial-planning-answer': '48f4e0beec1750b2ee7dc29c85ed1aa594a7164bc88a11ec62a735d86abb2806',
     base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
-    'skill-platform-work': 'a638a4488ff359e2af7c6d4fa70d92f4636418ade3f399aca5a19d460d37d91a',
-    'skill-platform-secretary': '5f0a124e2ed4f4ce0ea4cdcce071fadfc86c7919d739cea002eb2f6318ed189f',
-    'skill-platform-adviser': '1ed98dd10a962c66682dd9925788de15106f0d54c6d09ed2051cf032e38d4bae',
-    'skill-platform-scribe': '6dd3de6bae3dad8ff35245fe17f9f9dd225b4a22b036f4d66152bbd3f69d70b3',
+    'skill-platform-work': 'c0c2e3748822f87c9e38e4f2325c7a75644b372d3aaa24da7e4aa0908ca1522f',
+    'skill-platform-secretary': '1796b4ef8b3e1a49807173dc4a9d466a56d22e460228722bcd92415fa51accaa',
+    'skill-platform-adviser': '4985fe618f77831a52a61590a2c9879b6135759e972cd46f91e2d6db82e8767d',
+    'skill-platform-scribe': '7e7d2ea6b21f44f407d7dcd2d2847651e7b156306ae97fdc5a1bceb92ee4bd94',
     'skill-platform-reviewer': '4fa780b2a47de2e01145fef5363a2cac93409fc49f220ed63b1c9e77b474fc9a',
 } as const;
 

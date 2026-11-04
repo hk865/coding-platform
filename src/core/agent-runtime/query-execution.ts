@@ -44,6 +44,7 @@ import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
+import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import {
   answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
 } from './answer-tools.js';
@@ -383,6 +384,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           sessions: false, plans: false,
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
           notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
+          linkCheck: deps.notes?.check !== undefined,
         },
         // The read-only command is a Host-gated capability: the start reads the
         // real whole-workspace read policy again (the same fact preparation
@@ -409,6 +411,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // group exposes only the note names the frozen list selected: the
       // admission alone never widens the Host grant.
       const grantedGraphNames = GRAPH_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
+      const grantedLinkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
       const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       // The answer tools follow the frozen request kind, never the Host grant.
       const submitNames = answerSubmitNamesIn(frozenToolNames);
@@ -429,8 +432,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (grantedGraphNames.length > 0 && graphDeps === null) {
         return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
       }
+      if (grantedLinkCheckNames.length > 0 && deps.notes?.check === undefined) {
+        return rejected('unsupported', `the Query grant selects check_links but no note check dependency is bound: ${grantedLinkCheckNames.join(', ')}`);
+      }
       let coordinationTools: ToolGroup | null = null;
-      if (grantedGraphNames.length > 0 || noteAdmission.class !== 'none' || submitNames.length > 0
+      if (grantedGraphNames.length > 0 || grantedLinkCheckNames.length > 0 || noteAdmission.class !== 'none' || submitNames.length > 0
         || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
@@ -489,6 +495,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             texts: toolTexts,
           });
         }
+        const linkCheckTools = grantedLinkCheckNames.length > 0
+          ? createLinkCheckTools({ context: toolContext, check: deps.notes!.check!, texts: toolTexts })
+          : null;
         let noteTools: NoteToolsHandle | null = null;
         if (noteAdmission.class !== 'none') {
           if (noteOwners === null) {
@@ -569,7 +578,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           });
         }
         const names = [
-          ...grantedGraphNames, ...noteNames, ...secretaryMailboxNames, ...memberNames, ...readRequestNames,
+          ...grantedGraphNames, ...grantedLinkCheckNames, ...noteNames, ...secretaryMailboxNames, ...memberNames, ...readRequestNames,
           ...submitNames,
         ];
         if (names.length > 0) {
@@ -577,6 +586,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             names,
             create: (workspace) => [
               ...(graphTools?.create(workspace) ?? []),
+              ...(linkCheckTools?.create(workspace) ?? []),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
               ...(mailboxTools?.create(workspace) ?? []).filter(definition => secretaryMailboxNames.includes(definition.name)),
               ...(memberTools?.create(workspace) ?? []).filter(definition => memberNames.includes(definition.name)),

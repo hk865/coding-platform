@@ -88,7 +88,7 @@
 - `rework-request.ts` — `ReworkRequest`（record 3）的唯一字段表与格式：`REWORK_REQUEST_FIELDS`/`REWORK_REQUEST_FORMAT`（`REWORK_REQUEST_ACTOR_FIELDS`/`REWORK_REQUEST_OUTCOME_FIELDS` 是与事件共用的两个子表），`rework-request-by-goal` 只有三个等值键（不含 `state`）并按 `since` 排序；`newReworkRequest` 返回未绑定 `since` 的 pending 记录，`applyReworkRequest`/`closeReworkRequestRecord` 产出下一版 pending 记录（revision、state、outcome、closedBy），`since` 只由提交的 `commitCursorBindings` 绑定。输入类型从字段表派生，本文件不 import `model/`，两个 owner 的 `RequeueTaskInput`/`ReverifyRoundInput` 留在调用侧。
 - `command-normalization.ts` — 命令文本规范化、sha256、action key 与 shell 动作解析（纯）。
 - `context-input.ts` — 上下文/声明输入的纯守卫：冻结段序、结构、渲染区间、字节数、Goal 段、平台职责；`secretary` 调用必须有 `goal` 和 `task` 两段（没有目标时 `goal` 段照旧渲染 Workspace、目标列表和 `secretary.noGoal`）。
-- `unknown-call-kinds.ts` — 固定工具种类表（自上而下首个匹配）与主机停止/清理接管判定；7C-1 的平台写工具行加入 `create_member`、`request_rework`、`request_recheck` 与 `withdraw_session_message`。
+- `unknown-call-kinds.ts` — 固定工具种类表（自上而下首个匹配）与主机停止/清理接管判定；7C-1 的平台写工具行加入 `create_member`、`request_rework`、`request_recheck` 与 `withdraw_session_message`；只读行加入 `check_links`（只读，不查提交回执）。
 - `unknown-call-review.ts` — UnknownCallReview 聚合机器：创建、截断、准入、迁移与上限常量。
 - `architecture-capture.ts` — `ArchitectureAutoCapture@1` 的唯一写入：捕获请求、当前状态、失败记录。
 - `ref-equality.ts` — 与键序无关的 ref 结构相等；`sameRef` 的唯一正本。
@@ -266,8 +266,8 @@
 | `declaredInputProblem` | `src/core/work-graph/state/context-input.ts:478` | 检查声明输入 | 校验工具/上下文输入时 |
 | `observationPairingProblem` | `src/core/work-graph/state/control-intent-machine.ts:294` | 意图与观察的配对检查 | 提交观察结果前 |
 | `unreachable` | `src/core/work-graph/state/transition.ts:53` | 穷尽检查的兜底 | switch 的 never 分支 |
-| `UNKNOWN_CALL_KIND_TABLE` | `src/core/work-graph/state/unknown-call-kinds.ts:19` | 固定工具种类表，首个匹配生效；含 `create_member`、`request_rework`、`request_recheck` 与 `withdraw_session_message` | 分类未知调用 |
-| `unknownCallKindOf` | `src/core/work-graph/state/unknown-call-kinds.ts:49` | 按 Kernel 工具名取种类，默认值在表里 | 未知调用审查 |
+| `UNKNOWN_CALL_KIND_TABLE` | `src/core/work-graph/state/unknown-call-kinds.ts:19` | 固定工具种类表，首个匹配生效；含 `create_member`、`request_rework`、`request_recheck`、`withdraw_session_message` 与只读的 `check_links` | 分类未知调用 |
+| `unknownCallKindOf` | `src/core/work-graph/state/unknown-call-kinds.ts:50` | 按 Kernel 工具名取种类，默认值在表里 | 未知调用审查 |
 | `newUnknownCallReview` | `src/core/work-graph/state/unknown-call-review.ts:163` | 建 UnknownCallReview | 发现未知调用 |
 | `transitionUnknownCallReview` | `src/core/work-graph/state/unknown-call-review.ts:245` | 审查主迁移（UCR-01..15） | 审查写入 |
 | `admitUnknownCallReview` | `src/core/work-graph/state/unknown-call-review.ts:217` | 审查准入 | 开审前 |

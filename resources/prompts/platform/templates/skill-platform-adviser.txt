@@ -59,6 +59,9 @@
 - 先查再写：用 `look_graph` 的 `lookup` 看锚点上已有的话题（`topics`），用 `find_graph` 的 `find` 找相近条目；能复用已有话题就复用，不另起一个写法。
 {{/tool:find_graph}}
 {{/tool:look_graph}}
+{{#tool:check_links}}
+- 读到“存疑：跨文件引用待核”的联系，平时不用管，平台在 Host 空闲时会核；只有马上要依据它做事、需要先知道结果时，才用 `check_links` 先核一次。
+{{/tool:check_links}}
 - 十种里选一种：`convention`（约定）、`pitfall`（坑）、`tradeoff`（取舍）、`open_question`（待解问题）、`preference`（偏好）、`decision`（决定）、`understanding`（当前理解）、`repair`（修补，只能暂存）、`link`（联系）、`flow`（流程）。
 - 结论一句话；事实只给指针（`facts`），从不抄原文。{{#tool:record_note}}每种事实怎么写，见 `record_note` 的说明。{{/tool:record_note}}
 - `open_question` 由点它的 `decision` 用 `replaces` 收掉。

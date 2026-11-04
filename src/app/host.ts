@@ -45,6 +45,7 @@ import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
+import { NOTE_LINK_VERIFY_MAX } from '../core/work-graph/model/note-contracts.js';
 import type {
   HostOutboxItemV1, HostOutboxKeysetV1, HostOutboxSourceV1, HostOutboxStoredItemV1,
   SessionMailboxPort, SessionMessage, SessionMessageSendInputV1,
@@ -90,6 +91,7 @@ import {
 import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.js';
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
 import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
+import { LINK_CHECK_TOOL_NAMES } from '../core/agent-runtime/link-check-tool.js';
 import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
@@ -233,6 +235,14 @@ export type LocalWorkbenchHostOptions = {
   resolveScribeRecipient?: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
   /** Slice 4C-2 §11.5: the scribe reminder heartbeat period; default 60_000 ms. */
   scribeReminderPeriodMs?: number;
+  /** How long the platform must have had no Run or QueryRun in flight before the
+   * Host re-checks doubtful links in the background; default 60_000 ms. */
+  linkBatchIdleMs?: number;
+  /** How many doubtful links have to wait before the Host re-checks a batch even
+   * while a Run is in flight; default 20. */
+  linkBatchBacklog?: number;
+  /** The least time between backlog-triggered background batches; default 600_000 ms. */
+  linkBatchBacklogGapMs?: number;
   /** Test seam over the EXISTING platform message sender; never a new sender. */
   sendScribeReminder?: SessionMailboxPort['sendMessage'];
   publicDir?: string;
@@ -260,6 +270,15 @@ const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.
 const SCRIBE_PENDING_THRESHOLD = 10;
 const SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 const SCRIBE_REMINDER_PERIOD_MS = 60_000;
+// Background link batch: re-check doubtful links when the platform has been idle
+// long enough, or when enough are waiting and the last batch is old enough. A
+// Run that starts and ends between two heartbeats still counts as activity, so
+// idleness is read from the platform's own in-flight count and its last-empty
+// moment, never sampled. The backlog gap keeps a busy Host from re-checking the
+// same links on every heartbeat.
+const NOTE_LINK_IDLE_MS = 60_000;
+const NOTE_LINK_BACKLOG = 20;
+const NOTE_LINK_BACKLOG_GAP_MS = 10 * 60_000;
 const SCRIBE_REMINDER_MARKER = PLATFORM_PROMPT_PACK_V1.strings['scribe.marker'];
 
 /** Segment-aware prefix match for trusted read prefixes; `'.'` means the whole
@@ -356,13 +375,13 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
   return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens };
 }
 
-/** The local grant's read tools: the Kernel file read and the two read-only
- * graph tools. The local secretary gets these only. */
-const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES];
+/** The local grant's read tools: the Kernel file read and the read-only graph
+ * and link-check tools. The local secretary gets these only. */
+const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES, ...LINK_CHECK_TOOL_NAMES];
 
-/** The local secretary's tools: the read tools plus the note writer and the six coordination names (the mailbox
- *  sender/ack/respond/withdraw, member creation and the request read). `record_note` writes WorkGraph notes only, so
- *  the grant below keeps the file write scope empty. */
+/** The local secretary's tools: the read tools (including `check_links`) plus the note writer and the six coordination
+ *  names (the mailbox sender/ack/respond/withdraw, member creation and the request read). `record_note` writes
+ *  WorkGraph notes only, so the grant below keeps the file write scope empty. */
 const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
   'send_session_message', 'ack_session_message', 'respond_session_message', 'withdraw_session_message',
   'create_member', 'read_requests'];
@@ -382,8 +401,8 @@ function localSecretaryRoleBinding(): WorkbenchQueryProfile['roleBinding'] {
 }
 
 /** The local secretary's grant: the local grant's model and budget with its read
- * tools and the note writer, the platform secretary duty and the secretary behavior. It never
- * carries a write scope, a command tool or command access. */
+ * tools (including `check_links`) and the note writer, the platform secretary duty and the secretary behavior. It
+ * never carries a write scope, a command tool or command access. */
 function localSecretaryGrant(localGrant: WorkbenchRuntimeBinding['grant']): WorkbenchRuntimeBinding['grant'] {
   const template = platformRoleProfile('secretary').template;
   return {
@@ -433,9 +452,10 @@ export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: 
     budget: localWorkbenchBudget(model),
     hostTemplate: { ...LOCAL_WORKBENCH_HOST_TEMPLATE },
     // Slice 3 (T5): the new grant lists the read-only graph tools `look_graph`
-    // and `find_graph` instead of the three old read names. The old adapters
-    // keep their exports and behavior for already-bound Runs and explicit
-    // callers; the read-only Query ceiling still strips every mailbox name.
+    // and `find_graph` and the read-only link check `check_links` instead of the
+    // three old read names. The old adapters keep their exports and behavior for
+    // already-bound Runs and explicit callers; the read-only Query ceiling still
+    // strips every mailbox name.
     // RW-1 (4C): `record_note` is a coordination tool that writes WorkGraph
     // records, so it follows the same `writeAllowed` condition as the mailbox
     // tools; a read-only or Query ceiling still strips it.
@@ -2225,6 +2245,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const resolveScribeRecipient = options.resolveScribeRecipient ?? platform.notes.resolveScribeRecipient;
   const sendScribeReminder = options.sendScribeReminder ?? platform.messages.sendMessage.bind(platform.messages);
   const scribeReminderPeriodMs = options.scribeReminderPeriodMs ?? SCRIBE_REMINDER_PERIOD_MS;
+  const linkBatchIdleMs = options.linkBatchIdleMs ?? NOTE_LINK_IDLE_MS;
+  const linkBatchBacklog = options.linkBatchBacklog ?? NOTE_LINK_BACKLOG;
+  const linkBatchBacklogGapMs = options.linkBatchBacklogGapMs ?? NOTE_LINK_BACKLOG_GAP_MS;
   const nowIso = options.now ?? (() => new Date().toISOString());
   const clockMs = (): number => Date.parse(nowIso());
 
@@ -2571,6 +2594,28 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     await sendPendingScribeReminder(ctx, state);
   }
 
+  // The background link batch: one batch per workspace at a time, run from the
+  // heartbeat loop so only the lease-holding Host does it. A batch is due when
+  // the platform has been idle for `linkBatchIdleMs`, or when `linkBatchBacklog`
+  // links wait and the last batch (or the Host start) is `linkBatchBacklogGapMs`
+  // old. The check's own failures leave the links queued for the next trigger;
+  // nothing is recorded, no event is written and no scribe is woken.
+  const lastLinkBatch = new Map<string, number>();
+  const linkBatchFrom = clockMs();
+  async function runLinkBatchCheck(scope: CoreScope): Promise<void> {
+    const queued = platform.notes.doubtfulLinks(scope, Math.max(NOTE_LINK_VERIFY_MAX, linkBatchBacklog));
+    if (queued.length === 0) return;
+    const now = clockMs();
+    const idle = platform.runtimeInFlight.count() === 0
+      && now - Date.parse(platform.runtimeInFlight.idleSince()) >= linkBatchIdleMs;
+    const backlog = queued.length >= linkBatchBacklog
+      && now - (lastLinkBatch.get(scopeKey(scope)) ?? linkBatchFrom) >= linkBatchBacklogGapMs;
+    if (!idle && !backlog) return;
+    lastLinkBatch.set(scopeKey(scope), now);
+    await platform.notes.checkNotes(hostContext(scope),
+      { items: queued.slice(0, NOTE_LINK_VERIFY_MAX), verifyLinks: { priority: 'background' } });
+  }
+
   // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
   const attentionDone: Promise<void> = !leaseOwned ? Promise.resolve() : (async () => {
     const scanner = createAttentionScanner({ workspace: platform.workspace, messages: platform.messages,
@@ -2712,7 +2757,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (attentionAbort.signal.aborted) break;
         try { await runScribeReminderCheck(workspace.scope); } catch { /* retried next heartbeat */ }
         try { await runReworkNoticeCheck(workspace.scope); } catch { /* retried next heartbeat */ }
+        try { await runLinkBatchCheck(workspace.scope); } catch { /* retried next heartbeat */ }
       }
+      if (attentionAbort.signal.aborted) break;
       await sleepUntilAbort(period, attentionAbort.signal);
     }
   })();

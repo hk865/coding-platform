@@ -15,6 +15,7 @@ import {
   BUILTIN_TOOL_NAMES, RESERVED_TOOL_NAMES,
 } from '../../src/core/agent-runtime/execution-driver.js';
 import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
+import { LINK_CHECK_TOOL_NAMES } from '../../src/core/agent-runtime/link-check-tool.js';
 import { containedByHostStop, kernelToolNameOf, unknownCallKindOf } from '../../src/core/work-graph/state/unknown-call-kinds.js';
 
 const READ_ONLY_MAILBOX = ['read_session_inbox', 'read_session_message', 'read_session_message_body'];
@@ -26,6 +27,7 @@ describe('K3-34 tool-name constants', () => {
     for (const name of READ_ONLY_MAILBOX) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
     for (const name of READ_ONLY_DISCOVERY) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
     for (const name of READ_ONLY_GRAPH) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
+    for (const name of LINK_CHECK_TOOL_NAMES) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
     expect(unknownCallKindOf('read_user_decision')).toBe('read_only');
     expect(unknownCallKindOf('query_task_graph')).toBe('read_only');
     expect(unknownCallKindOf('query_ready_tasks')).toBe('read_only');
@@ -35,6 +37,7 @@ describe('K3-34 tool-name constants', () => {
     }
     // K3 row 4 / decision 72 (U1): the note tool constant names exactly record_note.
     expect([...NOTE_TOOL_NAMES].sort()).toEqual(['record_note']);
+    expect([...LINK_CHECK_TOOL_NAMES]).toEqual(['check_links']);
   });
 
   it('K3-34 maps BUILTIN_TOOL_NAMES through write -> edit into the table', () => {
