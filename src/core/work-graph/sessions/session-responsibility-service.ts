@@ -15,6 +15,9 @@ import type {
   SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkTarget, WorkspaceScope,
 } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import type {
   ArchiveTaskChoiceV1, ArchiveStepRefV1, SessionArchiveRequestV1,
@@ -41,10 +44,13 @@ import type {
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import { readCurrentCatalogWindow } from '../architecture/catalog-service.js';
 import {
+  SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
   checkPlainSessionRef, checkTarget, checkWorkLinkRef, decodeSessionRecord, decodeSessionWorkLink,
   encodePendingSessionWorkLink, encodeSessionRecord, plainSessionRefToAggregate,
   sessionAggregateRefKey, sessionWorkLinkRefKey,
 } from './session-record-codecs.js';
+import { readSessionWorkLinks } from './session-links.js';
+import { lookupAll } from '../persistence/lookup-all.js';
 import {
   eventIdOf, fingerprintOf, identityKeyOf, ownRequest, trustedContext,
   type OwnedRequest, type TrustedContext,
@@ -56,8 +62,8 @@ import {
   type SessionResponsibilityChangedEventV1,
 } from './lifecycle-record-codecs.js';
 import {
-  destinationEligible, transitionResponsibility, type PendingResponsibleLinkV1, type ResponsibilityGuardV1,
-  type ResponsibilityStateV1,
+  destinationEligible, openDestination, transitionResponsibility, type PendingResponsibleLinkV1,
+  type ResponsibilityGuardV1, type ResponsibilityStateV1,
 } from '../state/session-responsibility.js';
 import {
   planReanchor, REANCHOR_REASONS, type ReanchorCatalogFactsV1, type ReanchorGoalFactsV1,
@@ -66,6 +72,7 @@ import {
 import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from '../state/role-scope.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
 import { readGoalRecord } from './session-targets.js';
+import { readMainWorkspace } from './role-line-operations.js';
 
 /** The saved four numbers of one handoff transfer plus the task it moves. */
 export type SavedTransferInputV1 = {
@@ -100,12 +107,14 @@ export interface SessionResponsibilityPort {
   transferSessionResponsibility(ctx: CoreCallContext, request: GraphWrite<{
     from: SessionRef; to: SessionRef; target: WorkLinkTarget;
   }>): Promise<WriteResult<{ from: SessionWorkLink; to: SessionWorkLink }>>;
-  disposeArchiveResponsibility(ctx: CoreCallContext, step: ArchiveStepRefV1):
+  disposeArchiveResponsibility(ctx: CoreCallContext, step: ArchiveStepRefV1,
+    proof?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] }):
     Promise<WriteResult<{ closed: SessionWorkLink; opened: SessionWorkLink | null }>>;
   closeTerminalResponsibility(ctx: CoreCallContext, request: GraphWrite<{
     sessionRef: SessionRef; target: WorkLinkTarget;
   }>): Promise<WriteResult<SessionWorkLink>>;
-  reanchorSessionResponsibility(ctx: CoreCallContext, request: GraphWrite<ReanchorInputV1>):
+  reanchorSessionResponsibility(ctx: CoreCallContext, request: GraphWrite<ReanchorInputV1>,
+    proof?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] }):
     Promise<WriteResult<ReanchorResultV1>>;
 }
 
@@ -188,6 +197,95 @@ function targetProblem(target: unknown, scope: WorkspaceScope): string | null {
   return null;
 }
 
+/**
+ * b12: the proof is built from the commit's real pins and the card answer; a plain call passes no options. The one
+ * copy for the archive event and the two responsibility writers.
+ */
+export const proofOfAnswer = (options: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] } | undefined,
+  changed: readonly { before: VersionPin; after: VersionPin }[]): DecisionChangeProofV1 | undefined =>
+  options === undefined ? undefined : {
+    acknowledgementRef: structuredClone(options.answerRef),
+    capturedPins: options.capturedPins.map((pin) => structuredClone(pin)),
+    changes: changed.map(({ before, after }) => ({ before: structuredClone(before), after: structuredClone(after) })),
+    basisRebases: [],
+  };
+
+export type ProjectScopeMoveV1 = {
+  destination: SessionRef;
+  open: PendingResponsibleLinkV1;                 // the destination's project link
+  claimChange: RoleScopeClaimChangeV1;            // null → the destination link
+  destinationGuard: RecordGuard; destinationSessionGuard: RecordGuard;
+};
+
+/**
+ * L38 (book :708-:712): one adviser and one scribe line hold the project scope. When that line is archived its
+ * project link moves, in the archive's own commit, to the active same-duty line of the project's main workspace
+ * (v4 :2931; the call's workspace when the project has none, as every role-line operation reads it) with the fewest
+ * open responsible goal/module links, tie by the smaller `sessionId`. With no other line the answer is `null`: the link is
+ * released and the next line opened for the duty receives it. A secretary's project link is a filter and takes no
+ * claim (book :710-:711), so it never moves.
+ */
+export async function moveProjectScope(
+  ctx: CoreCallContext,
+  stores: { records: GoalRecordTransactionPort; lookups: RecordLookupPort; duty: SessionDutyReadPort },
+  input: { source: SessionRef; duty: PlatformDutyV1; links: readonly SessionWorkLink[] },
+): Promise<ReadResult<ProjectScopeMoveV1 | null>> {
+  if (input.duty !== 'adviser' && input.duty !== 'scribe') return { status: 'ready', value: null };
+  const held = input.links.find((link) => link.until === null && link.ref.relation === 'responsible'
+    && link.ref.target.kind === 'project');
+  if (held === undefined) return { status: 'ready', value: null };
+  const main = await readMainWorkspace(stores.records, input.source.projectId);
+  if (main.status !== 'ready') return main;
+  let active: readonly EncodedRecord[];
+  try {
+    active = (await lookupAll(stores.lookups, SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
+      [input.source.projectId, main.value ?? ctx.workspaceId ?? '', 'active'])).items;
+  } catch (error) {
+    return reject('unavailable', `the project's active Sessions cannot be read: ${messageOf(error)}`);
+  }
+  // A role's duty is read once per workspace and role; every line of the main workspace is a candidate.
+  const duties = new Map<string, PlatformDutyV1 | 'unknown'>();
+  let best: { session: SessionRecord; links: readonly SessionWorkLink[]; load: number } | null = null;
+  for (const record of active) {
+    const decoded = decodeSessionRecord(record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `a project Session is damaged: ${decoded.reason}`);
+    const session = decoded.value;
+    if (session.ref.sessionId === input.source.sessionId || !destinationEligible(session)) continue;
+    const roleKey = `${session.workspaceId}:${canonicalOf(session.role) ?? ''}`;
+    let sessionDuty = duties.get(roleKey);
+    if (sessionDuty === undefined) {
+      const read = await stores.duty(session.role, { ...ctx, workspaceId: session.workspaceId });
+      if (read.status !== 'ready') {
+        return read.status === 'rejected' ? read : reject('unavailable', 'a same-project Session duty is not ready');
+      }
+      sessionDuty = read.value;
+      duties.set(roleKey, sessionDuty);
+    }
+    if (sessionDuty !== input.duty) continue;
+    const links = await readSessionWorkLinks(stores.lookups, session.ref.projectId, session.ref.sessionId);
+    if (!links.ok) return links.rejection;
+    const load = links.links.filter((link) => link.until === null && link.ref.relation === 'responsible'
+      && (link.ref.target.kind === 'goal' || link.ref.target.kind === 'module')).length;
+    if (best === null || load < best.load
+      || (load === best.load && session.ref.sessionId < best.session.ref.sessionId)) {
+      best = { session, links: links.links, load };
+    }
+  }
+  if (best === null) return { status: 'ready', value: null };
+  const destination: SessionRef = { projectId: best.session.ref.projectId, sessionId: best.session.ref.sessionId };
+  const existing = best.links.find((link) => link.ref.relation === 'responsible'
+    && link.ref.target.kind === 'project') ?? null;
+  const { opened } = openDestination(existing, destination, held.ref.target);
+  const [claimChange] = responsibilityClaimChanges({ projectRef: { projectId: input.source.projectId }, close: [],
+    open: [{ link: opened.ref, duty: input.duty }] });
+  return { status: 'ready', value: {
+    destination, open: opened, claimChange: claimChange!,
+    destinationGuard: { refKey: sessionWorkLinkRefKey(opened.ref), expectedRevision: existing?.revision ?? null },
+    destinationSessionGuard: { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(destination)),
+      expectedRevision: best.session.revision },
+  } };
+}
+
 export function createSessionResponsibilityService(stores: SessionResponsibilityStores):
   SessionResponsibilityPort & SessionResponsibilityReceiptReadPort {
   const { records, basis, duty, now } = stores;
@@ -211,6 +309,8 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     archiveStep: ArchiveStepRefV1 | null;
     basis: ResponsibilityBasisV1;
     eventId: string;
+    /** b12: a card-applied change's proof; absent on a plain call. */
+    proof?: DecisionChangeProofV1;
   }): SessionResponsibilityChangedEventV1 {
     return {
       eventId: args.eventId,
@@ -227,6 +327,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       openedBound: args.openedBound,
       archiveStep: args.archiveStep,
       basis: args.basis,
+      ...(args.proof === undefined ? {} : { proof: args.proof }),
     };
   }
 
@@ -630,6 +731,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
   async function disposeArchiveResponsibility(
     ctx: CoreCallContext,
     step: ArchiveStepRefV1,
+    cardProof?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] },
   ): Promise<WriteResult<{ closed: SessionWorkLink; opened: SessionWorkLink | null }>> {
     const trusted: TrustedContext = trustedContext(ctx, 'a Session responsibility call');
     if (!trusted.ok) return trusted.rejection;
@@ -670,7 +772,8 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     const existing = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
     if (existing.status === 'ready') return readEventResult(existing.value, scope, sessionAggregateRefKey(plainSessionRefToAggregate(ownedStep.sessionRef)));
     if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
-    const attempt = await runDisposeAttempt({ ctx, scope, step: ownedStep, request, choice, identity });
+    const attempt = await runDisposeAttempt({ ctx, scope, step: ownedStep, request, choice, identity,
+      ...(cardProof === undefined ? {} : { cardProof }) });
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const again = await records.lookupCommit({ identityKey: identity.identityKey, fingerprint: identity.fingerprint });
     if (again.status === 'ready') return readEventResult(again.value, scope, sessionAggregateRefKey(plainSessionRefToAggregate(ownedStep.sessionRef)));
@@ -681,6 +784,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
   async function runDisposeAttempt(args: {
     ctx: CoreCallContext; scope: WorkspaceScope; step: ArchiveStepRefV1; request: SessionArchiveRequestV1;
     choice: ArchiveTaskChoiceV1; identity: { identityKey: string; fingerprint: string; eventId: string };
+    cardProof?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] };
   }): Promise<WriteResult<{ closed: SessionWorkLink; opened: SessionWorkLink | null }>> {
     const { ctx, scope, step, choice, request, identity } = args;
     const target = choice.target;
@@ -754,10 +858,24 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
       throw new Error('a responsibility disposal must write the responsibility links');
     }
     const mode: SessionResponsibilityChangedEventV1['mode'] = transfer === null ? 'drop' : 'transfer';
+    // b12: the disposal's real before/after pins (the effect's records), only when a card answer is supplied.
+    const eventProof = proofOfAnswer(args.cardProof, [
+      { before: { ref: source.ref, revision: source.revision },
+        after: { ref: effect.source.ref, revision: effect.source.revision } },
+      { before: { ref: effect.closed.ref, revision: sourceLink?.revision ?? 0 },
+        after: { ref: effect.closed.ref, revision: effect.closed.revision } },
+      ...(destination === null || effect.destination === null ? [] : [{
+        before: { ref: destination.ref, revision: destination.revision },
+        after: { ref: effect.destination.ref, revision: effect.destination.revision } }]),
+      ...(effect.opened === null || effect.openedBound === null ? [] : [{
+        before: { ref: effect.opened.ref, revision: destinationLink?.revision ?? 0 },
+        after: { ref: effect.opened.ref, revision: effect.opened.revision } }]),
+    ]);
     const responsibilityEvent = buildEvent({
       scope, mode, source: effect.source, destination: effect.destination,
       closed: effect.closed, opened: effect.opened, openedBound: effect.openedBound,
       archiveStep: step, basis: proof.basis, eventId: identity.eventId,
+      ...(eventProof === undefined ? {} : { proof: eventProof }),
     });
     // §5.2: a drop releases only the source claim; a module hand-over releases the source and takes the
     // destination's claim, and the one fold covers both lists. No second duty read: the destination duty came
@@ -1124,6 +1242,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
 
   async function reanchorSessionResponsibility(
     ctx: CoreCallContext, request: GraphWrite<ReanchorInputV1>,
+    cardProof?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] },
   ): Promise<WriteResult<ReanchorResultV1>> {
     const trusted = trustedContext(ctx, 'a Session responsibility call');
     if (!trusted.ok) return trusted.rejection;
@@ -1263,6 +1382,17 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
           schemaVersion: 1, occurredAt: now(), projectId: scope.projectId, workspaceId: scope.workspaceId,
           sessionRef: input.session, sessionRevision: session.revision + 1,   // rememberSession's one bump
           active: true, link: entry.next, boundField: 'since' })]);
+      // b12: the plan's real before/after pins (its Sessions and links), only when a card answer is supplied.
+      const readSessions = [session, ...(destination === null ? [] : [destination])];
+      const eventProof = proofOfAnswer(cardProof, [
+        ...plan.plan.sessions.map((next) => ({
+          before: { ref: next.ref, revision: readSessions.find((read) => read.ref.sessionId === next.ref.sessionId)
+            ?.revision ?? 0 },
+          after: { ref: next.ref, revision: next.revision } })),
+        ...plan.plan.links.flatMap((entry) => entry.next === null ? [] : [{
+          before: { ref: entry.link, revision: factsLinks.get(sessionWorkLinkRefKey(entry.link))?.revision ?? 0 },
+          after: { ref: entry.link, revision: entry.next.revision } }]),
+      ]);
       const contribution = roleLineCommitContribution({
         projectRef: { projectId: scope.projectId },
         records: [...plan.plan.sessions.map(encodeSessionRecord),
@@ -1283,6 +1413,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
           openedBound: event.openedBound, archiveStep: null,
           basis: basisBySource.get(sessionWorkLinkRefKey(event.closed))!,
           eventId: eventIdOf(identityKey, `responsibility:${index}`),
+          ...(eventProof === undefined ? {} : { proof: eventProof }),
         }))), ...openedEvents],
         allocation: null,
       }, null);

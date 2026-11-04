@@ -15,7 +15,7 @@ import { roleLineIdleOf, type RoleLineIdleFactsV1 } from './session-availability
 
 export type ReclaimSeatV1 = {
   reclaimed: SessionRef;
-  allocation: RoleLineAllocationV1 | null; limits: ProjectRoleLimitsV1;
+  allocation: RoleLineAllocationV1 | null; limits: ProjectRoleLimitsV1 | null;
   /** The record-store guard's shape, written structurally (pure state imports only contracts; D-11). */
   allocationGuard: { refKey: string; expectedRevision: number | null };
   limitsGuard: { refKey: string; expectedRevision: number | null };
@@ -53,7 +53,8 @@ export function reclaimIdleLineOf(input: {
 }): SessionRef | null {
   let chosen: RoleLineIdleFactsV1 | null = null;
   for (const line of input.lines) {
-    if (line.duty !== input.duty || line.lastUnarchivedOfDuty || line.pendingDecisionCard) continue;
+    if (line.duty !== input.duty || line.lastUnarchivedOfDuty || line.pendingDecisionCard
+      || line.unfinishedSplitLine) continue;
     if (!roleLineIdleOf(line).idle) continue;
     if (chosen === null || line.lastActivityAt < chosen.lastActivityAt
       || (line.lastActivityAt === chosen.lastActivityAt && line.session.sessionId < chosen.session.sessionId)) {

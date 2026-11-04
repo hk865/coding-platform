@@ -182,7 +182,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -204,7 +204,7 @@ import { createHandoffNoticeSource } from '../core/work-graph/views/handoff-noti
 import type {
   SecretaryArchiveConditionPort, SecretaryHandoffBasisV1,
 } from '../core/work-graph/model/secretary-lifecycle-contracts.js';
-import { readSecretaryHandoffBasis } from '../core/work-graph/tasks/secretary-handoff-basis.js';
+import { readSecretaryHandoffBasis, roleLineInputBasis } from '../core/work-graph/tasks/secretary-handoff-basis.js';
 // The two secretary lifecycle commands' Workflow dependency bag: the composite stays the Workflow's, this root only
 // fills what it injects.
 import type { HandoffWorkflowDependencies } from '../business/workflow/contracts.js';
@@ -216,6 +216,10 @@ import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
 import { createRoleLineOperationsRead } from '../core/work-graph/views/role-line-operations-read.js';
 import { createRoleLineOperations, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
+import {
+  createRoleLineMaintenance, type RoleLineMaintenancePort,
+} from '../core/work-graph/sessions/role-line-maintenance.js';
+import { planRoleLineSplit } from '../core/work-graph/state/role-line-split.js';
 import { createProjectNoticeSource } from '../core/work-graph/views/project-notice-notices.js';
 import { notifyProject } from '../core/work-graph/communication/project-notice-service.js';
 import { SESSION_RECORD_SCHEMAS, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, decodeSessionRecord,
@@ -556,6 +560,10 @@ export type TargetPlatformOptions = {
  * platform material reads and mailbox body storage; it never replaces the real
  * command actor/sender. */
 const SYSTEM_ACTOR = Object.freeze({ kind: 'system' as const, id: 'platform-composition-host' });
+/** O2b RW1-1 (lead): the fixed system Host identity `propose_role_split`'s owner reads the split facts and starts
+ * the split under, once the tool adapter bound the Work Run (the `member-service.ts` `systemContext` precedent);
+ * the saved `reason: 'agent_proposal'` keeps that an agent proposed it. */
+const ROLE_SPLIT_ACTOR = Object.freeze({ kind: 'system' as const, id: 'role-split-owner' });
 
 /** Slice 4C-2 U6: the four note-card options the notes owner accepts. */
 type NoteOptionId = 'accept' | 'reject' | 'supersede' | 'coexist';
@@ -1199,8 +1207,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       recognize: commandRecognizer,
       now, eventId: randomUUID,
     });
+    // O2: the retained-cap reclaim enters both admissions through this holder, filled once the role-line maintenance
+    // instance is built below (the `archiveCondition` pattern); before that the at-cap refusal stands unchanged.
+    let roleLineMaintenance: RoleLineMaintenancePort | undefined;
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
-      duty: sessionDutyResolver });
+      duty: sessionDutyResolver, reclaim: () => roleLineMaintenance });
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
@@ -1842,7 +1853,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
       sessionFacts, duty: sessionDutyResolver, archiveCondition: { check: async (ctx, input) => archiveCondition === null
         ? { status: 'rejected', code: 'unavailable', reason: 'the archive condition is not wired' }
-        : archiveCondition.check(ctx, input) } });
+        : archiveCondition.check(ctx, input) }, reclaim: () => roleLineMaintenance });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
@@ -2134,6 +2145,25 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // R2: the adviser's `assign_module_maintainer` entry, the SAME tracked
         // maintainer owner the route binds.
         maintainerAssignments: moduleMaintainers,
+        // O2 (v4 :3007-:3020): the one `propose_role_split` owner validates on the maintenance page's own facts read
+        // and starts the same split operation; both instances are read when a tool call runs.
+        roleSplit: {
+          async requestSplit(ctx, input) {
+            const owned: CoreCallContext = { ...ctx, principal: { kind: 'host', actor: { ...ROLE_SPLIT_ACTOR } },
+              materialReader: { kind: 'host', projectId: ctx.projectId, actor: { ...ROLE_SPLIT_ACTOR },
+                ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }) } };
+            const facts = await maintenance.readSplitFacts(owned, input.caller.session);   // the page's own read
+            if (facts.status === 'rejected') return facts;
+            if (facts.status !== 'ready') return rejected('unavailable', 'the split facts are not readable');
+            const plan = planRoleLineSplit({ ...facts.value, move: input.move, tooLong: false, tooSlow: false });
+            if (plan === null) return rejected('invalid', 'the move is not a strict subrange of the caller line');
+            const started = await roleLineOperations.startRoleLineSplit(owned, { source: input.caller.session, plan });
+            if (started.status === 'rejected') return started;
+            return started.status === 'ready'
+              ? { status: 'accepted', operation: started.value.operation, revision: started.value.revision }
+              : rejected('unavailable', 'the role-line split could not be started');
+          },
+        },
         mainSurface: rawMainSurface,
         evidence: rawEvidence,
         // Ruling 30: the Work permit read over the SAME record backend. The pack
@@ -2987,6 +3017,28 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       releaseOverlapGate: (...args) => trackedCall(() => overlapGates.releaseOverlapGate(...args), unavailable),
       readOverlapGates: (...args) => trackedCall(() => overlapGates.readOverlapGates(...args), unavailable),
     };
+    // O2 (v4 §3.1.3, N-7): the one role-line maintenance instance — the Workflow's page, the reclaim both admissions
+    // call and the `propose_role_split` owner's facts read. The tasks/notes reads are their owners' functions.
+    const maintenance = createRoleLineMaintenance({
+      directory: sessionDirectory, lifecycle: sessionLifecycle, duty: sessionDutyResolver,
+      splits: roleLineOperations,
+      handoff: { startHandoff: (ctx, input) => rawWorkflow.sessionHandoff!.startHandoff(ctx, input) },
+      records: backend.records, eventPage: rawBackend.eventPage, observed,
+      readGoal, readGoalPhase, readGoalsByProject, roleLineInputBasis,
+      contextWindowOf: async (ctx, role) => {
+        const resolveRole = options.runtime?.resolveRoleConfiguration;
+        if (resolveRole === undefined) return null;
+        try {
+          const configured = await resolveRole(ctx, { role });
+          return configured.status === 'ready' ? configured.value.budget.contextWindowTokens : null;
+        } catch {
+          return null;
+        }
+      },
+      bindings: bindingReads, notes: { countCurrentNotes }, scribeTodos: noteScribeTodos, plans: planService,
+      sessionFacts, now,
+    });
+    roleLineMaintenance = maintenance;
     const workflowDependencies: WorkflowDependencies & {
       sessionHandoff?: HandoffWorkflowDependencies;
     } = {
@@ -3247,6 +3299,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // and writes through (the SAME instance the activity reads and the end
       // commits use, §0.4).
       runActivity,
+      roleLines: roleLineMaintenance,
       // K3 L7/L11/L12/L16: the SAME UnknownCallReview owner the routes and
       // Runtime publish; the Workflow reads the selected Run's record and
       // performs `settle_review` through it.
@@ -3257,6 +3310,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         handoff, archive: publishedArchive, facts: handoffFacts, lines: requestLineCreation,
         responsibilities: sessionResponsibility, requests: rawRequestRounds,
         unfinishedOperations: (ctx) => readUnfinishedOperations(ctx),
+        duty: sessionDutyResolver,
       } satisfies HandoffWorkflowDependencies,
       // PL §3.4/§6.7.1: the nine optional Workflow reads the real composition
       // supplies. `send` is the Host's app-layer wrapper bound here to the ONE

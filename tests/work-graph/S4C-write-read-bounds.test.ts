@@ -75,14 +75,15 @@ describe('RW-12a write and disposition read bounds', () => {
         replaces: [idOf(t1)], coexistWith: [idOf(t2)] }), 's4a-goal');
       expect(result.status).toBe('accepted');
       // §11.7 write row, hand-derived for this fixture:
-      //  readMany 12 = runFacts 3 (Run/Outbox/Session)
+      //  readMany 13 = runFacts 3 (Run/Outbox/Session)
       //              + anchor facts 5 (Goal, Goal, PlanRevision, PlanRevision, architecture)
       //              + scribe scope facts ONCE 3 (catalog pointer, catalog revision, one Run)
+      //              + the scope-facts session page's role facts 1 (one batched read per page)
       //              + the write-path relation heads 1 (the two targets batched in ONE readMany)
       //  lookup 12  = anchor-set 5 (the one file anchor x 5 slots)
       //              + goal review-status 4 (accepted/reviewed/pending/staged)
       //              + the scope-facts session scan 3 (one page + two links)
-      expect(counter).toEqual({ searchText: 0, lookup: 12, lookupOrdered: 0, readMany: 12 });
+      expect(counter).toEqual({ searchText: 0, lookup: 12, lookupOrdered: 0, readMany: 13 });
     } finally { await f.close(); }
   });
 
@@ -103,12 +104,13 @@ describe('RW-12a write and disposition read bounds', () => {
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', resolution: 'supersede', reason: '收下' });
       expect(result).toMatchObject({ status: 'done' });
       // §11.7 disposition row, hand-derived for this fixture:
-      //  readMany 9 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //  readMany 10 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //             + the scope-facts session page's role facts 1
       //             + relationAnchorsOf 1 batched read of the three targets
       //             + userReasonTargetsOf 1 batched read of the same three
       //               (supersessionOf reuses the preread heads, so no third read)
       //  lookup 4  = the scope-facts session scan (one page + three links)
-      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 0, readMany: 9 });
+      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 0, readMany: 10 });
     } finally { await f.close(); }
   });
 
@@ -130,7 +132,8 @@ describe('RW-12a write and disposition read bounds', () => {
       expect(result).toMatchObject({ status: 'done' });
       // §11.7 disposition row, hand-derived for this fixture (two stage-anchored
       // targets of the one goal s4a-goal):
-      //  readMany 11 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //  readMany 12 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //              + the scope-facts session page's role facts 1
       //              + relationAnchorsOf 1 batched read of the two targets
       //              + userReasonTargetsOf 1 batched read of the same two
       //              + the goal plan window ONCE 2 (readGoal + readPlan), shared
@@ -138,7 +141,7 @@ describe('RW-12a write and disposition read bounds', () => {
       //  lookup             4 = the scope-facts session scan (one page + three links)
       //  lookupOrdered      1 = planStagesByRevisionOf reads the plan-revision index
       //                         once and is already memoized across the two targets
-      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 1, readMany: 11 });
+      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 1, readMany: 12 });
     } finally { await f.close(); }
   });
 
@@ -166,7 +169,8 @@ describe('RW-12a write and disposition read bounds', () => {
       expect(result).toMatchObject({ status: 'done' });
       // §11.7 disposition row, hand-derived for this fixture (one stage target
       // and two task targets of the one goal s4a-goal):
-      //  readMany 11 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //  readMany 12 = runFacts 3 + subject head 1 + scope facts ONCE 3
+      //              + the scope-facts session page's role facts 1
       //              + relationAnchorsOf 1 batched read of the three targets
       //              + userReasonTargetsOf 1 batched read of the same three
       //              + the goal plan window ONCE 2 (readGoal + readPlan), shared
@@ -176,7 +180,7 @@ describe('RW-12a write and disposition read bounds', () => {
       //  RED on the old code: readMany 17; each task target re-read the Goal and
       //  then readGoalPlanWindow (Goal + PlanRevision), so the one window's 2+2+2
       //  extra reads replace the shared 2: the old-new difference is exactly 6.
-      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 1, readMany: 11 });
+      expect(counter).toEqual({ searchText: 0, lookup: 4, lookupOrdered: 1, readMany: 12 });
     } finally { await f.close(); }
   });
 
@@ -208,7 +212,7 @@ describe('RW-12a write and disposition read bounds', () => {
       // §11.7 write row: `record_note`/`notes/write` = the 4A write path + the
       // tool's post-write `checkNotes` C(1). Hand-derived for this fixture and
       // confirmed by the measured subtotals (identical on memory and sqlite):
-      //  write path (RW-12a, same two-relation draft)   readMany 12, lookup 12
+      //  write path (RW-12a, same two-relation draft)   readMany 13, lookup 12 (role facts 1 included)
       //  C(1) base                                      readMany  5, lookup  9
       //    head/version batch 1 (the head read; the version read is skipped
       //      because the checked version is the head version); conflictingOf 5
@@ -217,8 +221,8 @@ describe('RW-12a write and disposition read bounds', () => {
       //      read in `readCurrentCatalogWindow`); author Run 1 + bound plan 1
       //      (the authoring Run's task scope in `agentRunTaskScope`).
       //  C(1) `withSimilar: true` (the tool always sends it)  lookup +5
-      //  totals                                        readMany 17, lookup 26
-      expect(counter).toEqual({ searchText: 0, lookup: 26, lookupOrdered: 0, readMany: 17 });
+      //  totals                                        readMany 18, lookup 26
+      expect(counter).toEqual({ searchText: 0, lookup: 26, lookupOrdered: 0, readMany: 18 });
     } finally { await f.close(); }
   });
 });

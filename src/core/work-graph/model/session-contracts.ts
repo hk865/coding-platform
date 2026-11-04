@@ -11,7 +11,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
-import type { RoleLineAllocationRef, RoleLineAllocationReportV1, RoleLineDutyV1 } from '../../../contracts/role-lines.js';
+import type { RoleLineAllocationRef, RoleLineAllocationReportV1, RoleLineDutyV1, SessionRoleFactsV1 } from '../../../contracts/role-lines.js';
 import type { HandoffActionV1, RoleLineActionV1, SecretaryArchiveActionV1 } from './session-operation-arms.js';
 import type { MemberCreateActionV1 } from '../state/member-creation.js';
 import type { MaintainerAssignmentActionV1 } from '../state/module-maintainer-assignment.js';
@@ -137,6 +137,8 @@ export type SessionCard = {
   availability: 'idle' | 'busy' | 'recoverable' | 'unavailable';
   links: SessionWorkLink[];
   recommendationReasons: string[];
+  /** a17: the stored facts row, or null when it is absent; never a second record or write. */
+  roleFacts: SessionRoleFactsV1 | null;
 };
 export interface SessionDirectoryPort {
   admitSessionCreation(ctx: CoreCallContext, request: GraphWrite<SessionCreationInput>): Promise<WriteResult<SessionCreateOperationRecord>>;

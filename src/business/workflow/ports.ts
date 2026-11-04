@@ -53,6 +53,7 @@ import type { SessionHandoffWorkflowPort } from '../../core/work-graph/model/ses
 import type { SessionMaintenancePort } from './session-maintenance.js';
 import type { DecisionApplicationAdapter } from './decision-actions.js';
 import type { RunActivityPort } from '../../core/work-graph/tasks/run-activity-service.js';
+import type { RoleLineMaintenancePort } from '../../core/work-graph/sessions/role-line-maintenance.js';
 import type { DeviationInputV1 } from '../../contracts/plan-deviation.js';
 import type { RequestSubmitPort } from './request-intake.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
@@ -261,6 +262,11 @@ export type WorkflowDependencies = {
    * operations stay explicitly unsupported.
    */
   runActivity?: RunActivityPort;
+  /**
+   * 7D2 O2: the adviser/scribe maintenance page (too long, too slow, the split) and the retained-cap reclaim it
+   * extends. `maintainSessions` runs its one page after the Session page; absent, maintenance is unchanged.
+   */
+  roleLines?: RoleLineMaintenancePort;
   /**
    * K3 (L7/L11/L12/L16, §3.4): the SAME UnknownCallReview owner the routes and
    * the Runtime publish. The Workflow reads the selected Run's record before

@@ -678,3 +678,70 @@ export async function openS7D2ProjectWorld(options: S7D2RoleLineWorldOptions): P
     throw error;
   }
 }
+
+/**
+ * O2b's RL-13 stops (o2b start ruling 3; v4 :3250): the first commit that writes the `role_line_split` record whose
+ * `action.phase` is `state` — `planned` is the acceptance's first write, `linked` the scope move's commit that carries
+ * the `linked` record. `'after'` lets it land and keeps its answer (`holdAfter`), `'before'` keeps it before it
+ * commits (`hold`). The record is picked by `roleLineStepCommit` (the split step only reaches these three states) and
+ * its phase is read from the same `record.json`.
+ */
+export function holdS7D2SplitStep(state: 'planned' | 'admitted' | 'created' | 'linked',
+  when: 'before' | 'after'): CommitHold {
+  const isSplit = roleLineStepCommit('role_line_split', 'split', ['pending', 'reserved', 'created']);
+  const match: CommitMatch = commit => commit.records.some(record => isSplit({ ...commit, records: [record] })
+    && (JSON.parse(record.json) as { action: { phase?: unknown } }).action.phase === state);
+  const label = `S7D2 role_line_split: ${when} the ${state} write`;
+  return when === 'after' ? commitBarrier.holdAfter(match, label) : commitBarrier.hold(match, label);
+}
+
+/** `freezeS7D2SplitAfter`'s handle: `stopMatching()` before the crash; `release()` lets every held commit go. */
+export type S7D2SplitFreeze = CommitHold & { stopMatching(): void };
+
+/**
+ * O2b-RW1 (lead 11-04): the RL-13 D stop that also stops the split there. The first commit that writes the
+ * `role_line_split` record at `state` is picked as `holdS7D2SplitStep` picks it and kept after it lands (`holdAfter`);
+ * from that commit on, every later commit that writes the same operation record is kept before it commits (one
+ * `hold` each, the next armed in the same match), so no second driver (the Host's lifecycle queue) moves the operation
+ * past `state` while the test reads it and crashes. `stopMatching()` lets the new Host's commits through and keeps the
+ * held ones held; `release()` also stops matching and lets every held commit go.
+ */
+export function freezeS7D2SplitAfter(state: 'planned' | 'admitted' | 'created' | 'linked'): S7D2SplitFreeze {
+  const isSplit = roleLineStepCommit('role_line_split', 'split', ['pending', 'reserved', 'created']);
+  const operationIdOf = (json: string): unknown => {
+    let value: unknown;
+    try { value = JSON.parse(json) as unknown; } catch { return null; }
+    const ref = isRecord(value) ? value['ref'] : null;
+    return isRecord(ref) && ref['aggregateType'] === 'CoreOperation' ? ref['operationId'] : null;
+  };
+  let operationId: unknown = null;
+  let matching = true;
+  const label = `S7D2 role_line_split: after the ${state} write, then frozen`;
+  const first = commitBarrier.holdAfter(commit => {
+    const record = commit.records.find(entry => isSplit({ ...commit, records: [entry] })
+      && (JSON.parse(entry.json) as { action: { phase?: unknown } }).action.phase === state);
+    if (record === undefined) return false;
+    operationId = operationIdOf(record.json);
+    return true;
+  }, label);
+  const later: CommitHold[] = [];
+  const arm = (): void => {
+    later.push(commitBarrier.hold(commit => {
+      if (!matching || operationId === null || !commit.records.some(record => operationIdOf(record.json) === operationId)) {
+        return false;
+      }
+      arm();
+      return true;
+    }, `${label}: later write ${String(later.length + 1)}`));
+  };
+  arm();
+  return {
+    reached: first.reached,
+    stopMatching() { matching = false; },
+    release() {
+      matching = false;
+      first.release();
+      for (const hold of later) hold.release();
+    },
+  };
+}

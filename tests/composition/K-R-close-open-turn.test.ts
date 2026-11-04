@@ -121,7 +121,7 @@ function depsFor(input: {
   const recordSessionHealth = input.recordSessionHealth ?? (async () => ({ status: 'observed' as const, session: input.session }));
   return {
     executions: { readExecution: async () => ({ status: 'ready', value: input.record }) },
-    sessions: { readSession: async () => ({ status: 'ready', value: { record: input.session, availability: 'idle', links: [], recommendationReasons: [] } }),
+    sessions: { readSession: async () => ({ status: 'ready', value: { record: input.session, availability: 'idle', links: [], recommendationReasons: [], roleFacts: null } }),
       findSessions: input.findSessions ?? (async () => ({ status: 'ready', value: { items: [], nextCursor: null, sourceCursor: {} as never } })) },
     kernelStores: input.registry,
     kernel: input.kernelModule ?? kernel,
@@ -174,7 +174,7 @@ describe('KA-12 Runtime closeOpenTurn fallback causes', () => {
       provenance: { schemaVersion: 1, kind: 'handoff', from: { projectId: P, sessionId: SESSION_ID } } });
     const close = await runtimeWith({ registry, record: run19(), session: sessionRecord(),
       findSessions: async (_ctx, request) => ({ status: 'ready', value: { items: request.includeArchived === true
-        ? [{ record: successor, availability: 'idle' as const, links: [], recommendationReasons: [] }] : [],
+        ? [{ record: successor, availability: 'idle' as const, links: [], recommendationReasons: [], roleFacts: null }] : [],
         nextCursor: null, sourceCursor: {} as never } }) });
     expect(await close(ctx, { sessionRef, afterRunRef: runRef('run-A'), requeueRef: null }))
       .toEqual({ status: 'refused', reason: 'handed_over' });

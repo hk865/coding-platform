@@ -179,6 +179,20 @@ function roleLineReadFailure<T>(read: ReadResult<T>, what: string): CoreRejectio
   return rejected('unavailable', `${what} is ${read.status === 'not_found' ? 'missing' : 'not ready'}`);
 }
 
+/** v4 §2.2 item 4: the project's main workspace, the `start_lines` operation's; `null` when the project has none.
+ *  The one read behind `lineContextOf` and L38's project-scope move (O2B-R1-03). */
+export async function readMainWorkspace(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string):
+  Promise<ReadResult<string | null>> {
+  const key = operationRefKey(roleLineOperationRef(projectId, 'start_lines', 'start_lines'));
+  const read = await records.readMany([key]);
+  if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+  const stored = read.value.records.find((record) => record.refKey === key);
+  if (stored === undefined) return { status: 'ready', value: null };
+  const decoded = decodeSessionOperationRecord(stored);
+  if (decoded.status !== 'decoded') return rejected('unavailable', `the start_lines operation is damaged: ${decoded.reason}`);
+  return { status: 'ready', value: decoded.value.workspaceId };
+}
+
 export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLineOperationsPort & RoleLineSplitPort {
   const allocationRead = createAllocationRead({ records: deps.records });
 
@@ -192,16 +206,12 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
   /** v4 §2.2 item 4: every line lives in the project's main workspace, the `start_lines` operation's; a project
    *  without one uses the call's workspace and infers none. */
   async function lineContextOf(ctx: CoreCallContext): Promise<ReadResult<CoreCallContext>> {
-    const key = operationRefKey(roleLineOperationRef(ctx.projectId, 'start_lines', 'start_lines'));
-    const read = await deps.records.readMany([key]);
-    if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
-    const stored = read.value.records.find((record) => record.refKey === key);
-    if (stored === undefined) return { status: 'ready', value: ctx };
-    const decoded = decodeSessionOperationRecord(stored);
-    if (decoded.status !== 'decoded') return rejected('unavailable', `the start_lines operation is damaged: ${decoded.reason}`);
-    const main = decoded.value.workspaceId;
-    if (main === ctx.workspaceId || ctx.principal.kind !== 'host') return { status: 'ready', value: ctx };
-    return { status: 'ready', value: handoffContextOf({ ...ctx, workspaceId: main }, ctx.principal) };
+    const main = await readMainWorkspace(deps.records, ctx.projectId);
+    if (main.status !== 'ready') return main;
+    if (main.value === null || main.value === ctx.workspaceId || ctx.principal.kind !== 'host') {
+      return { status: 'ready', value: ctx };
+    }
+    return { status: 'ready', value: handoffContextOf({ ...ctx, workspaceId: main.value }, ctx.principal) };
   }
 
   /**
@@ -741,6 +751,12 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     const fresh = await readRoleLineRecord(runCtx, saved.ref);
     if (fresh.status !== 'ready') return fresh;
     const current = fresh.value;
+    // RACE-01 (11-04): another continuation may have moved the split past `admitted` while this one waited on the
+    // line; go on from the phase just read and never write an earlier phase over it.
+    if (current.phase === 'completed' || current.phase === 'failed'
+      || current.action.phase === 'created' || current.action.phase === 'linked'
+      // RACE2-01: another continuation's admission reserved the child meanwhile; go on as its creator.
+      || (child === null && (current.action.steps[0]?.childOperation ?? null) !== null)) return continueRoleLineSplit(ctx, current);
     const stepState = current.action.steps[0]?.state ?? null;
     if (line.status === 'capacity_blocked') {
       // TS-8: at cap the split ends failed (no reservation yet) and the refusal is `open`'s one mapping.

@@ -2620,6 +2620,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         const after = consumeCursors.get(key) ?? null;
         const job = consumeIdle(workspace.scope, after)
           .then(next => { consumeCursors.set(key, next); })
+          // 7D2 O2 (book :395-:400): one bounded maintenance page in the same idle job; no second loop or timer.
+          .then(async () => { await platform.workflow.maintainSessions?.(hostContext(workspace.scope),
+            { workspace: workspace.scope, after: null }); })
           .catch(() => { /* original facts remain retryable */ })
           .finally(() => inputJobs.delete(key))
           .finally(() => { for (const resolve of consumeBarrierWaiters.splice(0)) resolve(); });

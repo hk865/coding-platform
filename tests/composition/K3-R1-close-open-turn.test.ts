@@ -80,7 +80,7 @@ function run25(): TaskExecutionRecord {
 function depsFor(input: { registry: KernelStoreRegistry; record: TaskExecutionRecord; session: SessionRecord }): RuntimeExecutionDependencies {
   return {
     executions: { readExecution: async () => ({ status: 'ready', value: input.record }) },
-    sessions: { readSession: async () => ({ status: 'ready', value: { record: input.session, availability: 'idle', links: [], recommendationReasons: [] } }),
+    sessions: { readSession: async () => ({ status: 'ready', value: { record: input.session, availability: 'idle', links: [], recommendationReasons: [], roleFacts: null } }),
       findSessions: async () => ({ status: 'ready', value: { items: [], nextCursor: null, sourceCursor: {} as never } }) },
     kernelStores: input.registry,
     kernel,

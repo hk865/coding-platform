@@ -66,7 +66,7 @@ import type {
 } from '../model/secretary-lifecycle-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type {
-  ArchiveSessionInput, LinkSessionWorkInput, SessionLifecyclePort,
+  ArchiveSessionInput, ArchiveSessionOptionsV1, LinkSessionWorkInput, SessionLifecyclePort,
   SessionLifecycleStores,
 } from './lifecycle-contracts.js';
 import {
@@ -84,12 +84,14 @@ import {
 } from './lifecycle-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
 import { readSessionWorkLinks } from './session-links.js';
-import { scopeClaimChangesOf } from './session-responsibility-service.js';
+import { moveProjectScope, proofOfAnswer, scopeClaimChangesOf } from './session-responsibility-service.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
 import { createAllocationRead } from './allocation-read.js';
 import { allocationOnlyConflict, retryAllocationCommit } from './allocation-retry.js';
-import { reactivationSeatOf } from './session-directory.js';
+import { reactivationSeatOf, reclaimOnceOf } from './session-directory.js';
 import { planArchiveRelease, type ArchiveReleaseInputV1 } from '../state/session-archive-release.js';
+import type { RoleCapacityPort, RoleLineReclaimPort } from '../state/role-line-reclaim.js';
+import { foldRoleScopeClaimChanges } from '../state/role-scope.js';
 import {
   eventIdOf, fingerprintOf, identityKeyOf, ownRequest, trustedContext,
   type HostActor, type OwnedRequest, type TrustedContext,
@@ -267,6 +269,10 @@ function sessionWrite(
  */
 export type SessionLifecycleServiceStores = SessionLifecycleStores & {
   archiveCondition?: SecretaryArchiveConditionPort | null;
+  /** O2: the retained-cap reclaim the re-admission tries once at cap; absent leaves the refusal unchanged. */
+  reclaim?: () => RoleLineReclaimPort | undefined;
+  /** O2 (b11): the one capacity close after a committed archive; absent writes nothing. */
+  roleCapacity?: RoleCapacityPort;
 };
 
 export function createSessionLifecycleService(stores: SessionLifecycleServiceStores): SessionLifecyclePort {
@@ -656,7 +662,8 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
    */
   async function archiveReleaseOf(ctx: CoreCallContext, scope: WorkspaceScope, session: SessionRecord,
     links: readonly SessionWorkLink[], successor: ArchiveReleaseInputV1['successor']):
-    Promise<{ ok: true; fragment: CommitFragment; allocationKeys: readonly string[] }
+    Promise<{ ok: true; fragment: CommitFragment; allocationKeys: readonly string[];
+      changed: readonly { before: VersionPin; after: VersionPin }[] }
       | { ok: false; rejection: CoreRejection }> {
     const resolved = await dutyRead(session.role, ctx);
     if (resolved.status !== 'ready') {
@@ -679,21 +686,38 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       session: plainSessionRef(session.ref), links, duty, allocation: currentAllocation, successor,
     });
     if (!plan.ok) return { ok: false, rejection: plan.refusals[0]! };
+    // L38 (v4 :2934-:2940): an adviser's or scribe's project scope moves to its least-loaded peer in this same
+    // commit — the destination link, its `since` and the folded claim; with no peer the link is released and waits.
+    const move = duty === 'unknown' ? null : await moveProjectScope(ctx, { records, lookups, duty: dutyRead },
+      { source: plainSessionRef(session.ref), duty, links });
+    if (move !== null && move.status !== 'ready') return { ok: false, rejection: mapReadFailure(move) };
+    const moved = move?.value ?? null;
     const closeKeys = new Set(plan.plan.close.map(sessionWorkLinkRefKey));
     const closingLinks = links.filter((link) => closeKeys.has(sessionWorkLinkRefKey(link.ref)));
     const closing = closingLinks.map((link) => ({ link: link.ref, next: { ...link, revision: link.revision + 1, until: null } }));
     const contribution = roleLineCommitContribution({
       projectRef,
       records: [],
-      guards: closingLinks.map((link) => ({ refKey: sessionWorkLinkRefKey(link.ref), expectedRevision: link.revision })),
-      links: closing,
-      claimChanges: plan.plan.claimChanges,
-      bindings: plan.plan.bindings,
+      guards: [
+        ...closingLinks.map((link) => ({ refKey: sessionWorkLinkRefKey(link.ref), expectedRevision: link.revision })),
+        ...(moved === null ? [] : [moved.destinationGuard, moved.destinationSessionGuard]),
+      ],
+      links: [...closing, ...(moved === null ? [] : [{ link: moved.open.ref, next: moved.open }])],
+      claimChanges: moved === null ? plan.plan.claimChanges
+        : foldRoleScopeClaimChanges(projectRef, [...plan.plan.claimChanges, moved.claimChange]),
+      bindings: [...plan.plan.bindings, ...(moved === null ? [] : [{ link: moved.open.ref, field: 'since' as const }])],
       events: [],
       allocation: plan.plan.allocation,
     }, currentAllocation);
     if (!contribution.ok) return { ok: false, rejection: contribution.rejection };
-    return { ok: true, fragment: contribution.fragment, allocationKeys };
+    // The release's real link pins: each closed link, and the moved project link's open.
+    const changed = [
+      ...closingLinks.map((link) => ({ before: { ref: link.ref, revision: link.revision },
+        after: { ref: link.ref, revision: link.revision + 1 } })),
+      ...(moved === null ? [] : [{ before: { ref: moved.open.ref, revision: moved.open.revision - 1 },
+        after: { ref: moved.open.ref, revision: moved.open.revision } }]),
+    ];
+    return { ok: true, fragment: contribution.fragment, allocationKeys, changed };
   }
 
   /** Merge the one release fragment into an archive commit; the empty plan leaves the commit as it was. */
@@ -721,10 +745,12 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     expectedSession: VersionPin;
     identityKey: string;
     fingerprint: string;
+    options?: ArchiveSessionOptionsV1;
   }): Promise<WriteResult<SessionRecord>> {
     const { ctx, scope, input, kind, expectedEvent, expectedSession, identityKey, fingerprint } = args;
     const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
     let internal: readonly string[] = [];
+    const reclaim = reclaimOnceOf(stores.reclaim);
     const lifecycleAttempt = async (): Promise<WriteResult<SessionRecord> | { storeFailure: StoreFailure }> => {
       // Every attempt restores its own receipt first, so an allocation-only retry re-reads and a landed
       // commit whose answer was lost is never re-derived.
@@ -761,6 +787,15 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
       }
       const { session: nextSession } = sessionWrite(session, verdict.effects, expectedEvent);
 
+      // The direct `sessions/archive` only releases: a borrowing successor is the formal archive step's.
+      const release = kind === 'archive' ? await archiveReleaseOf(ctx, scope, session, archiveLinks, null) : null;
+      if (release !== null && !release.ok) return release.rejection;
+      // b12: a card-applied archive's proof names this commit's real pins (the Session and its release).
+      const proof = release === null ? undefined : proofOfAnswer(args.options?.proof, [
+        { before: { ref: session.ref, revision: session.revision },
+          after: { ref: nextSession.ref, revision: nextSession.revision } },
+        ...release.changed,
+      ]);
       const event: SessionLifecycleChangedEventV1 = {
         eventId: eventIdOf(identityKey, kind),
         eventType: expectedEvent,
@@ -769,6 +804,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
         projectId: scope.projectId,
         session: nextSession,
         reason: input.reason,
+        ...(proof === undefined ? {} : { proof }),
       };
       let prepared: PreparedCommit = {
         identityKey,
@@ -780,10 +816,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
         indexChanges: [],
         events: [encodeSessionLifecycleChangedEvent(event)],
       };
-      if (kind === 'archive') {
-        // The direct `sessions/archive` only releases: a borrowing successor is the formal archive step's.
-        const release = await archiveReleaseOf(ctx, scope, session, archiveLinks, null);
-        if (!release.ok) return release.rejection;
+      if (release !== null) {
         internal = release.allocationKeys;
         const merged = mergeArchiveRelease(prepared, release.fragment);
         if (!merged.ok) return merged.rejection;
@@ -804,10 +837,10 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
           const allocation = await allocationRead.readAllocationForCommit(ctx, { projectRef, duty: pool.duty });
           if (allocation.status !== 'ready') return mapReadFailure(allocation);
           // The allocation's holder stores the plain SessionRef; the record's ref carries the aggregate tag.
-          const seat = reactivationSeatOf({ projectRef, duty: resolved.value,
+          const seat = await reactivationSeatOf({ ctx, projectRef, duty: resolved.value,
             session: { ...session, ref: plainSessionRef(session.ref) } as SessionRecord,
             allocation: allocation.value.allocation, limits: allocation.value.limits,
-            limitsGuard: allocation.value.limitsGuard });
+            limitsGuard: allocation.value.limitsGuard, reclaim });
           if (seat.status === 'refused') return seat.rejection;
           if (seat.status === 'seat') {
             internal = [seat.guard.refKey, seat.limitsGuard.refKey];
@@ -838,6 +871,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     ctx: CoreCallContext,
     request: GraphWrite<ArchiveSessionInput>,
     kind: 'archive' | 'reactivate',
+    options?: ArchiveSessionOptionsV1,
   ): Promise<WriteResult<SessionRecord>> {
     const trusted: TrustedContext = trustedContext(ctx, 'a Session lifecycle call');
     if (!trusted.ok) return trusted.rejection;
@@ -867,7 +901,18 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
 
     const attempt = await runTransitionAttempt({
       ctx, scope, input, kind, expectedEvent, expectedSession: expected.session, identityKey, fingerprint,
+      ...(options === undefined ? {} : { options }),
     });
+    // D-7 (b11): the archive owner's one success exit closes a stale capacity episode once; a replay already did.
+    if (kind === 'archive' && attempt.status === 'committed' && !attempt.replayed) {
+      const resolved = await dutyRead(attempt.value.role, ctx);
+      const counted = resolved.status === 'ready' ? roleLineDutyOf(resolved.value) : null;
+      if (counted !== null) {
+        await stores.roleCapacity?.closeIfStale(ctx, {
+          projectRef: { projectId: scope.projectId }, duty: counted, operation: options?.operation ?? null });
+        // A rejection is the close's own answer: the release is already committed and is never undone.
+      }
+    }
     if (attempt.status !== 'rejected' || attempt.code === 'cancelled') return attempt;
     const restored = await recheckLifecycleAfterMiss(identityKey, fingerprint, scope, input.sessionRef, expectedEvent);
     return restored ?? attempt;
@@ -1644,7 +1689,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
 
   return {
     linkSessionWork,
-    archiveSession: (ctx, request) => runLifecycleTransition(ctx, request, 'archive'),
+    archiveSession: (ctx, request, options) => runLifecycleTransition(ctx, request, 'archive', options),
     reactivateSession: (ctx, request) => runLifecycleTransition(ctx, request, 'reactivate'),
     requestSessionArchive,
     readSessionArchiveRequestReceipt,

@@ -610,6 +610,7 @@ export type RoleLineIdleFactsV1 = {
   openQuestionSent: boolean;      // an action_request/inquiry it sent with no response
   pendingDecisionCard: boolean;   // exclusion (c), not one of the six
   lastUnarchivedOfDuty: boolean;  // exclusion (a)
+  unfinishedSplitLine: boolean;   // exclusion (d): the new line or the source of an unfinished split
   readable: boolean;
 };
 export type RoleLineIdleV1 = { idle: true } | { idle: false; reason: RoleLineIdleReasonV1 };

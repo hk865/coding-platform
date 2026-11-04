@@ -36,7 +36,7 @@ function pickCardOf(sessionId: string, createdAt = '2026-10-01T00:00:00.000Z',
   projectId = PURE_PROJECT): SessionCard {
   return {
     record: sessionRecord({ ref: { aggregateType: 'Session', projectId, sessionId }, createdAt }),
-    availability: 'idle', links: [], recommendationReasons: [],
+    availability: 'idle', links: [], recommendationReasons: [], roleFacts: null,
   };
 }
 

@@ -22,11 +22,12 @@ import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import { executorArchiveDue, openResponsibleLinkOf } from '../../core/work-graph/state/session-availability.js';
 import { destinationEligible } from '../../core/work-graph/state/session-responsibility.js';
 import { sessionResponsibilityChangedEventFromEvent } from '../../core/work-graph/sessions/lifecycle-record-codecs.js';
-import { plainSessionRef } from '../../core/work-graph/sessions/session-record-codecs.js';
+import { plainSessionRef, plainSessionRefKey } from '../../core/work-graph/sessions/session-record-codecs.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { WorkflowDependencies } from './ports.js';
 import type { WorkflowCalls, WorkflowCloseEventReader } from './contracts.js';
 import type { ArchiveLineResultV1, SessionArchivePort } from './session-archive.js';
+import type { RoleLineMaintenancePort } from '../../core/work-graph/sessions/role-line-maintenance.js';
 
 /**
  * `turnClosureCaller` is SES-19a (2C-22(2)): the Workflow's own maintenance
@@ -96,6 +97,8 @@ export type SessionMaintenanceDependencies = Pick<WorkflowDependencies,
      * read) is `incomplete`, never a fallback to the last `Run.endedAt`.
      */
     records?: CloseEventReader;
+    /** 7D2 O2: the one adviser/scribe page after the Session page; absent keeps the old maintenance. */
+    roleLines?: RoleLineMaintenancePort;
   };
 
 const PAGE_LIMIT_MAX = 100;
@@ -154,8 +157,9 @@ function callerProblem(ctx: CoreCallContext): CoreRejection | null {
 export function createSessionMaintenanceService(
   deps: SessionMaintenanceDependencies,
 ): SessionMaintenancePort {
-  /** §4.2: the per-workspace page continuation; reset on the last page. */
-  const cursors = new Map<string, string | null>();
+  /** §4.2: the per-workspace page continuation; reset on the last page. O2B-R1-02: it is the last card's Session
+   *  key, never the directory cursor, which binds the ledger head that this page's archives and splits move. */
+  const cursors = new Map<string, string>();
 
   /** The optional mailbox used to confirm an answered copy's attachment/acceptance. */
   function mailboxRead():
@@ -572,12 +576,14 @@ export function createSessionMaintenanceService(
       }
       const workspaceKey = canonical(workspace) ?? `${workspace.projectId}/${workspace.workspaceId}`;
       const fromInput = typeof after === 'string' && after.length > 0 ? after : null;
-      const cursor = fromInput ?? cursors.get(workspaceKey) ?? null;
+      const savedKey = fromInput === null ? cursors.get(workspaceKey) : undefined;
       const automation = contextForActor(ctx, SESSION_ARCHIVE_AUTOMATION_ACTOR);
 
       const found = await sessions.findSessions(ctx, {
         workspace, includeArchived: false,
-        page: cursor === null ? { limit } : { limit, cursor },
+        // A caller's explicit `after` keeps the directory cursor contract; the internal patrol pages by the key.
+        page: fromInput !== null ? { limit, cursor: fromInput }
+          : savedKey === undefined ? { limit } : { limit, afterSessionKey: savedKey },
       });
       if (found.status !== 'ready') {
         if (found.status === 'rejected') return found;
@@ -739,8 +745,16 @@ export function createSessionMaintenanceService(
         }
       }
 
+      // 7D2 O2 (v4 §3.1.9): one bounded adviser/scribe page; a line's own failure joins this page's failures.
+      const rolePage = deps.roleLines === undefined ? null : await deps.roleLines.maintain(ctx, { workspace });
+      if (rolePage !== null && rolePage.status !== 'ready') {
+        return rolePage.status === 'rejected' ? rolePage : reject('incomplete', 'the role-line maintenance page is not ready');
+      }
+      if (rolePage?.status === 'ready') failures.push(...rolePage.value.failures);
       const nextCursor = found.value.nextCursor;
-      cursors.set(workspaceKey, nextCursor);
+      const last = found.value.items[found.value.items.length - 1];
+      if (nextCursor === null || last === undefined) cursors.delete(workspaceKey);
+      else cursors.set(workspaceKey, plainSessionRefKey(last.record.ref));
       return { status: 'ready', value: { processed: found.value.items.length, nextCursor, archived, pending, failures } };
     },
   };

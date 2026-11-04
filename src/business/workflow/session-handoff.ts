@@ -344,9 +344,19 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
       const identity = sha256Hex(canonicalJson({ source: input.source, run: basis.run,
         requestIndex: basis.requestIndex } as unknown as JsonValue));
       const commandId = `handoff-auto-${identity}`;
+      // b05: the successor continues the source's own duty; a secretary source keeps the secretary assignment.
+      const card = await deps.operations.readSession(ctx, input.source);
+      if (card.status !== 'ready') {
+        return card.status === 'rejected' ? card : unavailable('the handoff source Session read is not ready');
+      }
+      const duty = await deps.duty(card.value.record.role, ctx);
+      if (duty.status !== 'ready') {
+        return duty.status === 'rejected' ? duty : unavailable('the handoff source duty read is not ready');
+      }
+      if (duty.value === 'unknown') return rejected('invalid', 'the handoff source has no duty to continue');
       const accepted = await deps.handoff.acceptHandoff(ctx, { commandId, workspace: scope as { projectId: string;
         workspaceId: string }, source: input.source, trigger: 'too_long',
-        assignments: [{ target: { kind: 'create', duty: 'secretary' }, tasks: [] }] });
+        assignments: [{ target: { kind: 'create', duty: duty.value }, tasks: [] }] });
       if (accepted.status === 'committed') return advance(ctx, { operation: accepted.value.operation as OperationRef });
       if (accepted.status === 'rejected' && accepted.code === 'busy') {
         // The busy answer is only a pointer: re-read the real unfinished operations and continue only a handoff

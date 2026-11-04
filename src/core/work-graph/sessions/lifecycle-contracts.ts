@@ -12,7 +12,9 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { SessionRef, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin, WorkLinkRelation, WorkLinkTarget } from '../../../contracts/core/identity.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { ArchiveStepRefV1, RequestSessionArchiveInput } from '../../../contracts/core/session-archive.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
@@ -53,6 +55,13 @@ export type ReactivateSessionInput = {
   reason: string;
 };
 
+/** O2-03 / D-7: a card-applied archive carries its proof pair; a line operation's release names its operation for
+ *  the one capacity close. Both absent on a plain `sessions/archive`. */
+export type ArchiveSessionOptionsV1 = {
+  proof?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[] };
+  operation?: OperationRef;
+};
+
 /**
  * Independent SessionLifecyclePort. The composition root merges this with the
  * existing session directory; this does not change
@@ -67,6 +76,7 @@ export interface SessionLifecyclePort {
   archiveSession(
     ctx: CoreCallContext,
     request: GraphWrite<ArchiveSessionInput>,
+    options?: ArchiveSessionOptionsV1,
   ): Promise<WriteResult<SessionRecord>>;
   reactivateSession(
     ctx: CoreCallContext,

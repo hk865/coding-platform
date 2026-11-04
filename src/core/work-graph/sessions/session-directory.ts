@@ -87,8 +87,9 @@ import { roleLineStepTransition } from '../state/role-line-operation.js';
 import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from '../state/role-scope.js';
 import { seatInheritanceOf } from '../state/session-handoff-contracts.js';
 import { openLimitOf, createAllocationRead, seatAtCap } from './allocation-read.js';
+import type { RoleCapacityPort, RoleLineReclaimPort } from '../state/role-line-reclaim.js';
 import { allocationOnlyConflict, retryAllocationCommit } from './allocation-retry.js';
-import { roleLineAllocationCodec } from './role-line-record-codecs.js';
+import { roleLineAllocationCodec, sessionRoleFactsCodec } from './role-line-record-codecs.js';
 import { roleFactsContribution } from './role-line-facts-writer.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
 import type { MemberCreateActionV1, MemberCreatedEventV1 } from '../state/member-creation.js';
@@ -107,6 +108,10 @@ export type SessionDirectoryStores = {
   lookups: RecordLookupPort;
   /** Required: an admission that cannot read the duty may not count, so it may not admit. */
   duty: SessionDutyReadPort;
+  /** O2: the one retained-cap reclaim; absent leaves the at-cap refusal unchanged. */
+  reclaim?: () => RoleLineReclaimPort | undefined;
+  /** O2 declares it (the type is imported from `../state/role-line-reclaim.js`); O3 reads it at the platform at-cap refusal. */
+  roleCapacity?: RoleCapacityPort;
 };
 
 // --------------------------------------------------------------------------
@@ -591,19 +596,51 @@ export type ReactivationSeatV1 =
   | { status: 'seat'; record: EncodedRecord; guard: RecordGuard; limitsGuard: RecordGuard; binding: 'holders[].since' }
   | { status: 'none'; reason: 'unknown_duty' | 'readonly_copy' }
   | { status: 'refused'; rejection: CoreRejection };
-export function reactivationSeatOf(input: { projectRef: ProjectScope; session: SessionRecord;
+export async function reactivationSeatOf(input: {
+  ctx: CoreCallContext; projectRef: ProjectScope; session: SessionRecord;
   duty: PlatformDutyV1 | 'unknown'; allocation: RoleLineAllocationV1 | null;
-  limits: ProjectRoleLimitsV1 | null; limitsGuard: RecordGuard }): ReactivationSeatV1 {
+  limits: ProjectRoleLimitsV1 | null; limitsGuard: RecordGuard;
+  reclaim?: () => RoleLineReclaimPort | undefined;
+}): Promise<ReactivationSeatV1> {
   if (input.session.provenance.kind === 'readonly_copy') return { status: 'none', reason: 'readonly_copy' };
   const duty = roleLineDutyOf(input.duty);
   if (duty === null) return { status: 'none', reason: 'unknown_duty' };
-  const atCap = seatAtCap({ duty, open: openLimitOf(input.limits, duty), holders: input.allocation?.holders.length ?? 0,
-    reservations: input.allocation?.reservations.length ?? 0 });
+  let { allocation, limits, limitsGuard } = input;
+  // O2: four fields; `episode` stays omitted (null) on this human re-admission (only the platform add counts it).
+  let atCap = seatAtCap({ duty, open: openLimitOf(limits, duty),
+    holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0 });
+  if (atCap !== null) {
+    const reclaimed = await input.reclaim?.()?.reclaimForAdmission(input.ctx, { projectRef: input.projectRef, duty });
+    if (reclaimed?.status === 'ready' && reclaimed.value !== null) {
+      ({ allocation, limits, limitsGuard } = reclaimed.value);
+      atCap = seatAtCap({ duty, open: openLimitOf(limits, duty),
+        holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0 });
+    }
+  }
   if (atCap !== null) return { status: 'refused', rejection: atCap };
   const record = roleLineAllocationCodec.encode(allocationNext({ projectRef: input.projectRef, duty,
-    current: input.allocation, change: { kind: 'add_holder', sessionRef: input.session.ref } }));
-  return { status: 'seat', record, limitsGuard: input.limitsGuard, binding: 'holders[].since',
-    guard: { refKey: record.refKey, expectedRevision: input.allocation?.revision ?? null } };
+    current: allocation, change: { kind: 'add_holder', sessionRef: input.session.ref } }));
+  return { status: 'seat', record, limitsGuard, binding: 'holders[].since',
+    guard: { refKey: record.refKey, expectedRevision: allocation?.revision ?? null } };
+}
+
+/**
+ * One reclaim per admission (v4 :2792): an admission's attempts run inside the allocation retry, so the getter they
+ * share answers the reclaim port on its first call only and a retried attempt never archives a second line.
+ */
+export function reclaimOnceOf(reclaim: (() => RoleLineReclaimPort | undefined) | undefined):
+  () => RoleLineReclaimPort | undefined {
+  let tried = false;
+  return () => {
+    if (tried) return undefined;
+    tried = true;
+    return reclaim?.();
+  };
+}
+
+/** a17: the stored role facts' one key (the facts writer's record), read by `readSession` and both find pages. */
+function roleFactsKeyOf(projectId: string, sessionId: string): string {
+  return canonicalJson({ aggregateType: 'SessionRoleFacts', projectId, sessionId } as unknown as JsonValue);
 }
 
 // --------------------------------------------------------------------------
@@ -901,7 +938,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
    */
   async function decideSeat(args: { ctx: CoreCallContext; scope: WorkspaceScope; role: RoleConfigurationRef;
     provenance: SessionProvenanceV1; parentOperation: OperationRef | null; plannedSessionRef: SessionRef;
-    operationRef: OperationRef; requestId: string }): Promise<SeatOutcome> {
+    operationRef: OperationRef; requestId: string;
+    reclaim: () => RoleLineReclaimPort | undefined }): Promise<SeatOutcome> {
     const decidedAt = new Date().toISOString();
     const projectRef: ProjectScope = { projectId: args.scope.projectId };
     const notCountedSeat = (reason: 'unknown_duty' | 'readonly_copy'): SeatOutcome => ({ ok: true, internal: [],
@@ -933,10 +971,19 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       return { ok: false, rejection: current.status === 'rejected' ? current
         : reject('unavailable', 'the role-line allocation read answered not_found') };
     }
-    const { allocation, allocationGuard, limitsGuard } = current.value;
+    let { allocation, limits, allocationGuard, limitsGuard } = current.value;
     const internal = [allocationGuard.refKey, limitsGuard.refKey];
-    const atCap = seatAtCap({ duty: counted, open: openLimitOf(current.value.limits, counted),
+    // O2: four fields, `episode` omitted (null); at cap, one reclaim and one more `seatAtCap` on what it re-read.
+    let atCap = seatAtCap({ duty: counted, open: openLimitOf(limits, counted),
       holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0 });
+    if (atCap !== null) {
+      const reclaimed = await args.reclaim()?.reclaimForAdmission(args.ctx, { projectRef, duty: counted });
+      if (reclaimed?.status === 'ready' && reclaimed.value !== null) {
+        ({ allocation, limits, allocationGuard, limitsGuard } = reclaimed.value);
+        atCap = seatAtCap({ duty: counted, open: openLimitOf(limits, counted),
+          holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0 });
+      }
+    }
     if (atCap !== null) return { ok: false, rejection: atCap };
     const pending = allocationNext({ projectRef, duty: counted, current: allocation,
       change: { kind: 'reserve', operationRef: args.operationRef } });
@@ -1012,6 +1059,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     } as unknown as JsonValue));
 
     let internal: readonly string[] = [];
+    const reclaim = reclaimOnceOf(stores.reclaim);
     const allocateAttempt = async (_index: number): Promise<WriteResult<SessionCreateOperationRecord> | { storeFailure: StoreFailure }> => {
       const existing = await records.lookupCommit({ identityKey, fingerprint });
       if (existing.status === 'ready') {
@@ -1059,7 +1107,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       }
 
       const seat = await decideSeat({ ctx, scope, role: input.role, provenance: createdProvenance,
-        parentOperation: input.parentOperation, plannedSessionRef, operationRef, requestId });
+        parentOperation: input.parentOperation, plannedSessionRef, operationRef, requestId, reclaim });
       if (!seat.ok) return seat.rejection;
       internal = seat.internal;
 
@@ -1080,6 +1128,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           const index = parent.action.steps.findIndex((step) => step.duty === counted);
           const stepped = roleLineStepTransition(parent.action, index, { state: 'reserved', childOperation: operationRef });
           if (!stepped.ok) return reject('unavailable', `the role line step cannot be reserved: ${stepped.reason}`);
+          // A split's `admitted` rides in this same commit: the transition moves it with the step (O2B-R1-04).
           parentStep = {
             record: encodeSessionOperationRecord({ ...parent, revision: parent.revision + 1, updatedAt: now,
               action: stepped.action }),
@@ -1624,6 +1673,30 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     return { ok: true, scope, actorKey };
   }
 
+  /**
+   * a17/b33: one `records.readMany` fills the cards' `roleFacts` — an absent row is `null`, a damaged one
+   * `unavailable` — and an empty page reads nothing. The row is written once, with the line's registration, so the
+   * read takes no part in a find page's water level.
+   */
+  async function withRoleFacts(projectId: string, cards: readonly Omit<SessionCard, 'roleFacts'>[]):
+    Promise<{ ok: true; cards: SessionCard[] } | { ok: false; rejection: CoreRejection }> {
+    if (cards.length === 0) return { ok: true, cards: [] };
+    const keys = cards.map((card) => roleFactsKeyOf(projectId, card.record.ref.sessionId));
+    const read = await records.readMany(keys);
+    if (read.status !== 'ready') return { ok: false, rejection: sessionStoreFailureToRejection(read) };
+    const stored = new Map(read.value.records.map((entry) => [entry.refKey, entry]));
+    const filled: SessionCard[] = [];
+    for (const [index, card] of cards.entries()) {
+      const found = stored.get(keys[index]!);
+      const decoded = found === undefined ? null : sessionRoleFactsCodec.decode(found);
+      if (decoded !== null && decoded.status !== 'decoded') {
+        return { ok: false, rejection: reject('unavailable', `the Session role facts are damaged: ${decoded.reason}`) };
+      }
+      filled.push({ ...card, roleFacts: decoded?.value ?? null });
+    }
+    return { ok: true, cards: filled };
+  }
+
   async function readSession(ctx: CoreCallContext, ref: SessionRef): Promise<ReadResult<SessionCard>> {
     // The read binding may suspend, so freeze the caller's ref BEFORE the first
     // await; a failed isolation keeps the original synchronous `invalid` shape.
@@ -1651,10 +1724,10 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     }
     const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
     if (!links.ok) return links.rejection;
-    return {
-      status: 'ready',
-      value: { record: session, availability: deriveAvailability(session), links: links.value, recommendationReasons: [] },
-    };
+    const card = await withRoleFacts(scope.projectId,
+      [{ record: session, availability: deriveAvailability(session), links: links.value, recommendationReasons: [] }]);
+    if (!card.ok) return card.rejection;
+    return { status: 'ready', value: card.cards[0]! };
   }
 
   async function fetchLookup(plan: LookupPlan, after: string | undefined, want: number): Promise<Fetched> {
@@ -1770,7 +1843,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       return null;
     };
 
-    const items: SessionCard[] = [];
+    const items: Omit<SessionCard, 'roleFacts'>[] = [];
     let scanned = 0;
     while (items.length < limit) {
       for (const relation of SESSION_WORK_LINK_RELATIONS) {
@@ -1856,7 +1929,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         positions, exhausted, sourceCursor,
       })
       : null;
-    return { status: 'ready', value: { items, nextCursor, sourceCursor } };
+    const cards = await withRoleFacts(scope.projectId, items);
+    if (!cards.ok) return cards.rejection;
+    return { status: 'ready', value: { items: cards.cards, nextCursor, sourceCursor } };
   }
 
   async function findSessions(
@@ -1979,7 +2054,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     let lastReturnedKey: string | null = null;
     let lastProcessedKey: string | null = after ?? null;
     let cursorAfter = after;
-    const items: SessionCard[] = [];
+    const items: Omit<SessionCard, 'roleFacts'>[] = [];
 
     while (items.length < limit) {
       const budget = MAX_DIRECTORY_SCAN - scanned;
@@ -2055,7 +2130,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         sourceCursor,
       })
       : null;
-    return { status: 'ready', value: { items, nextCursor, sourceCursor } };
+    const cards = await withRoleFacts(scope.projectId, items);
+    if (!cards.ok) return cards.rejection;
+    return { status: 'ready', value: { items: cards.cards, nextCursor, sourceCursor } };
   }
 
   return {

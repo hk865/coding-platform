@@ -1370,34 +1370,10 @@
       "note": "kept for slice 7 of the orchestration design: 7D2 O4a's `enqueueGoal`/queue value uses the entry type; O4a deletes this entry when the queue owner lands"
     },
     {
-      "file": "src/core/work-graph/sessions/role-line-orchestration-codecs.ts",
-      "name": "roleLineSplitSavedCodec",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O1b's `startRoleLineSplit` canonicalizes and re-reads the saved split body with it, and that port member is reached only when O2's split tool calls it; O2 deletes this entry then"
-    },
-    {
       "file": "src/core/work-graph/state/role-line-action.ts",
       "name": "ROLE_LINE_STEP_KEYS",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: O1b's `startLinesInitialRecord` (TS-10 item 3, moved verbatim) spells the three keys literally and only tests read this list; the first package that reads the keys in production deletes this entry"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineSplitPlanV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2's split planner returns it and calls `startRoleLineSplit` with it (TS-10 item 6); O2 deletes this entry when the planner lands"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineSplitStartV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the answer of `startRoleLineSplit`, read by 7D2 O2's `propose_role_split` path (TS-8); O2 deletes this entry when it calls the port"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineSplitPort.startRoleLineSplit",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2's split tool calls this one starter (b02, D-6); O2 deletes this entry when it calls the port"
     },
     {
       "file": "src/core/work-graph/sessions/role-line-operations.ts",
@@ -1430,154 +1406,16 @@
       "note": "kept for slice 7 of the orchestration design: 7D2 C1's cold start opens one adviser line per top-level module through it (v4 :7935, :9066); C1 deletes this entry when it calls it"
     },
     {
-      "file": "src/core/record-store/event-page-ports.ts",
-      "name": "RecordEventPagePort.eventPage",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2's `W/sessions/role-line-maintenance.ts` types its dependency as `Pick<RecordEventPagePort, 'eventPage'>` and O5b passes the same store; O2 deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/record-store/sqlite-record-store.ts",
-      "name": "EventPageRow",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the SQLite `eventPage` row type, read only by the method O2's maintenance page consumes; O2 deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/record-store/sqlite-record-store.ts",
-      "name": "READ_EVENT_PAGE_SQL",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the SQLite `eventPage` keyset statement, used only by the method O2's maintenance page consumes; O2 deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/record-store/sqlite-record-store.ts",
-      "name": "READ_EVENT_AFTER_SQL",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the SQLite `eventPage` continuation probe, used only by the method O2's maintenance page consumes; O2 deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "MAX_GOALS_PER_ADVISER",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `goalPositionOf`; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "REGION_SLOT_LINE_BUDGET",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `regionPositionOf`; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "SCRIBE_SLOT_NOTE_LIMIT",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `planRoleLineSplit`; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "AdviserGoalLinkV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) builds the adviser links `goalPositionOf` reads; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "GoalPositionV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reads the goal position `goalPositionOf` returns; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "goalPositionOf",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) computes each goal scope's position with it; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "RegionBurdenUnknownReason",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `regionPositionOf`; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "RegionPositionV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reads the region position `regionPositionOf` returns; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "regionPositionOf",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) computes each region scope's burden with it; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-position.ts",
-      "name": "RoleLinePositionV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) passes the line's positions to `planRoleLineSplit`; O2b deletes this entry when the maintenance page lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-split.ts",
-      "name": "planRoleLineSplit",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) and O5b's `roleSplit.requestSplit` owner plan the split with it; O2b deletes this entry when the maintenance page lands"
-    },
-    {
       "file": "src/core/work-graph/state/role-line-reclaim.ts",
-      "name": "ReclaimSeatV1",
+      "name": "RoleCapacityPort.observeAtCap",
       "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `reclaimForAdmission` returns it to `W/sessions/session-directory.ts`'s at-cap seat retry; O2b deletes this entry when the reclaim lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-reclaim.ts",
-      "name": "RoleLineReclaimPort",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `RoleLineMaintenancePort` extends it and `W/sessions/session-directory.ts` calls `reclaimForAdmission`; O2b deletes this entry when the reclaim lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-reclaim.ts",
-      "name": "reclaimIdleLineOf",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `reclaimForAdmission` picks the line to archive with it; O2b deletes this entry when the reclaim lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-reclaim.ts",
-      "name": "CapacityCloseV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/session-lifecycle.ts` reads the `roleCapacity?.closeIfStale` result; O2b deletes this entry when the archive release lands"
-    },
-    {
-      "file": "src/core/work-graph/state/role-line-reclaim.ts",
-      "name": "RoleCapacityPort",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/session-lifecycle.ts` takes `roleCapacity?: RoleCapacityPort` and calls `closeIfStale`; O3b implements it and calls `observeAtCap`; O2b deletes this entry when the archive release lands"
+      "note": "kept for slice 7 of the orchestration design: 7D2 O3b: the platform automatic add's one call after O2's reclaim (the `decideSeat` at-cap `episode`); O3b's `role-capacity-service` implements the port and calls it, and deletes this entry then"
     },
     {
       "file": "src/core/work-graph/state/role-line-reclaim.ts",
       "name": "RoleCapacityObservationV1",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: 7D2 O3b's `role-capacity-service.ts` returns it from `observeAtCap`; O3b deletes this entry when the capacity service lands"
-    },
-    {
-      "file": "src/core/work-graph/state/session-availability.ts",
-      "name": "RoleLineIdleReasonV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reads the reason `roleLineIdleOf` gives; O2b deletes this entry when the reclaim lands"
-    },
-    {
-      "file": "src/core/work-graph/state/session-availability.ts",
-      "name": "RoleLineIdleFactsV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reads the six idle facts into it for `reclaimIdleLineOf`; O2b deletes this entry when the reclaim lands"
-    },
-    {
-      "file": "src/core/work-graph/state/session-availability.ts",
-      "name": "RoleLineIdleV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `roleLineIdleOf`; O2b deletes this entry when the reclaim lands"
-    },
-    {
-      "file": "src/core/work-graph/state/session-availability.ts",
-      "name": "roleLineIdleOf",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O2b's `W/sessions/role-line-maintenance.ts` (`readSplitFacts` and the maintenance page) reaches it through `reclaimIdleLineOf`; O2b deletes this entry when the reclaim lands"
     },
     {
       "file": "src/core/work-graph/state/autonomy-rules.ts",

@@ -11,6 +11,7 @@ import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memo
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
@@ -33,7 +34,7 @@ const creation = (requestId: string) => ({
   meta: { requestId, expected: [] },
 });
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
+  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],

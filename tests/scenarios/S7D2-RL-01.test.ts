@@ -13,9 +13,11 @@
  * `created`, or `registered`, and at the end exactly one operation with outer `phase:'completed'`,
  * `actionPhase:'done'`, the three steps `done` and `result:{status:'done',reason:null}`; the three lines
  * (`sessions/find` on the project target, `sessions/read` of each) each have one open `responsible` `{kind:'project'}`
- * link; `role-lines/allocation` counts each line once as a holder of its duty with no reservation, so the restart made
- * no second line and no second reservation. Hand count: 3 steps done, 3 lines, 3 holders (3/3). The row asserts no
- * `openedBy`/`creator`/`originOperation` (O2's, run sheet `:48`).
+ * link and the role facts `{openedBy:'start_lines',creator:{kind:'platform'},originOperation:<the start_lines
+ * operation>}`; `role-lines/allocation` counts each line once as a holder of its duty with no reservation, so the
+ * restart made no second line and no second reservation. Hand count: 3 steps done, 3 lines, 3 holders (3/3). The three
+ * role facts are asserted on `sessions/read`'s `roleFacts` (O2b's half, revision 11-03 item 2; v4 :8839, :3107); their
+ * named mutation is `readSession`'s `roleFacts` always `null` (v4 :3100), which turns that assertion red on each card.
  *
  * Named mutation: skip the `registered` step marker (mark `created`, then `done`): the `registered` stop reads
  * `created`.
@@ -60,6 +62,8 @@ async function expectEnd(world: S7D2RoleLineWorld): Promise<void> {
     const card = await world.readCard(world.lines[duty]);
     expect(card.record.lifecycle).toBe('active');
     expect(openTargetsOf(card)).toEqual([world.targets.project]);
+    expect(card.roleFacts).toMatchObject({ openedBy: 'start_lines', creator: { kind: 'platform' },
+      originOperation: world.startLines });
   }
 
   // Each line is its duty's one holder and no reservation is left: 3/3.

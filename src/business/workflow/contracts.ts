@@ -34,6 +34,7 @@ import type { InternalSessionArchivePort } from './session-archive.js';
 import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecycle-contracts.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionDirectoryPort, SessionOperationRecord } from '../../core/work-graph/model/session-contracts.js';
+import type { SessionDutyReadPort } from '../../core/work-graph/model/work-line-contracts.js';
 import type { RequestRoundPort, InternalRouteCommandV1 } from '../../core/work-graph/tasks/request-service.js';
 import type {
   SecretaryHandoffFactsPort, HandoffBriefStateV1,
@@ -495,6 +496,8 @@ export interface HandoffWorkflowDependencies {
    */
   unfinishedOperations(ctx: CoreCallContext, source: SessionRef):
     Promise<ReadResult<readonly SessionOperationRecord[]>>;
+  /** b05: the source's duty, so an automatic handoff creates its successor with the same duty. */
+  duty: SessionDutyReadPort;
 }
 
 /** The two owners `createWorkflow` itself already holds; the composite factory gets them locally. */

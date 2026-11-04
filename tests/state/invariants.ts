@@ -89,6 +89,7 @@ import {
 } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { decodeSessionRecord, SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import {
   decodeDispatchOutboxEntry, decodeTaskAttemptSnapshot, decodeTaskRequeueSnapshot, decodeTaskReworkRefusalSnapshot,
   TASK_CLAIM_RECORD_SCHEMAS, taskClaimedEventFromEvent, taskRequeuedEventFromEvent, taskReworkRefusedEventFromEvent,
@@ -300,7 +301,7 @@ export function invariantStoreOf(directory: string): InvariantStore {
 export function platformRecordSchemas(): RecordBackendSchemas {
   const groups: RecordBackendSchemas[] = [materialRecordSchemas(), PLAN_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS,
     PLAN_GOVERNANCE_RECORD_SCHEMAS, SESSION_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS, ROLE_RECORD_SCHEMAS,
-    UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
+    ROLE_LINE_RECORD_SCHEMAS, UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
     OBSERVED_ARCHITECTURE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, TASK_CLAIM_RECORD_SCHEMAS,
     EXECUTION_ENTRY_RECORD_SCHEMAS, MODEL_REQUEST_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
     PROJECT_BOOTSTRAP_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS,
