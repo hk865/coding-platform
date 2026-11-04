@@ -149,9 +149,9 @@ describe('S8E L2 W-refuse: link write refusals', () => {
         // red-first row; row 5's RED evidence is E-27 5a.
         const draft = s8eLinkDraft(K3, { topic: 'E-24-unreadable' });
         draft.link.key = null;
-        // Capture reads of both evidence files fail, so neither content can be
-        // loaded; the anchors' working-tree existence probes (maxBytes:1) are not hit.
-        world.linkCheck.faultReads(request => request.version.kind === 'capture'
+        // The working-tree reads of both evidence files fail, so neither content
+        // can be loaded; the anchors' existence probes (maxBytes:1) are not hit.
+        world.linkCheck.faultReads(request => request.version.kind === 'working_tree'
           && request.maxBytes > 1
           && (request.path === 'src/runtime/run.ts' || request.path === 'src/compose.ts')
           ? { status: 'rejected', code: 'unavailable', reason: 'the evidence cannot be read' }
@@ -237,16 +237,11 @@ describe('S8E L2 W-refuse: link write refusals', () => {
     {
       name: 'E-40: a forbidden symbol selector on evidence [0] is still evidence_invalid',
       run: async (world, via, label) => {
-        // The symbol query itself is forbidden, so the shared resolver folds it
-        // to unavailable; the evidence read is still attempted and its forbidden
-        // read must win, never evidence_unverifiable.
+        // The read of the evidence file is forbidden, so the write falls back to
+        // evidence_invalid (M1), never evidence_unverifiable (8E-2 §4.4 :883).
         const draft = s8eLinkDraft(S8E_LINKS.K2, { topic: 'E-40-symbol-forbidden' });
         draft.link.evidence[0] = { role: 'wire', at: { path: 'src/compose.ts',
           symbolRequest: { language: 'typescript', name: 'hooks' } } };
-        world.linkCheck.faultQueries(query => query.query.kind === 'symbols'
-          && query.query.path === 'src/compose.ts'
-          ? { status: 'rejected', code: 'forbidden', reason: 'forbidden by the E-40 symbol fault' }
-          : null);
         world.linkCheck.faultReads(request => request.path === 'src/compose.ts'
           ? { status: 'rejected', code: 'forbidden', reason: 'forbidden by the E-40 read fault' }
           : null);
@@ -257,7 +252,6 @@ describe('S8E L2 W-refuse: link write refusals', () => {
           expect(write.code).toBe('invalid');
           expect(write.reason).toBe('evidence_invalid: link.evidence[0].at.path');
         } finally {
-          world.linkCheck.faultQueries(null);
           world.linkCheck.faultReads(null);
         }
       },

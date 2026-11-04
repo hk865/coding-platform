@@ -16,8 +16,9 @@
  * later supersede" belong to F2's F-flow-read; this row adds no reader and no
  * store assertion.
  *
- * DR-8E F1-03: no capture-ban assertion is made; the E-47 link writes use the
- * real anchor path while the analyzer's capture is unavailable.
+ * DR-8E F1-03: no capture-ban assertion is made. 8E-2 G (§4.3 :819): the E-47
+ * link writes use the real anchor path while the working-tree reads of their
+ * four end files and the second tier both fail.
  */
 import { describe, expect, it } from 'vitest';
 import type { NoteDraftAnchorV1, NoteDraftV1 } from '../../src/contracts/note.js';
@@ -198,25 +199,34 @@ const rows: readonly WriteRow[] = [
   {
     name: 'E-47: two flows over [K1,K3], the second anchored at dispatch is refused flow_anchor_mismatch',
     run: async world => {
-      // The analyzer is unavailable at write: the capture refusal shape the L2
-      // E-27 capture-down case uses (S8E-L2-link-write.test.ts:259–264). K1/K3
-      // and both flows go through the real E1 record_note.
-      world.linkCheck.faultCaptures(request => request.provider === 'typescript'
-        ? { status: 'rejected', code: 'unavailable', reason: 'the capture cannot be read' }
+      // The analyzer is unavailable at write (8E-2 :819): the working-tree reads of
+      // the four end files fail above maxBytes 1 (the existence probe passes, F13),
+      // and the second tier fails. K1/K3 and both flows go through the real E1
+      // record_note.
+      world.linkCheck.faultReads(request => request.version.kind === 'working_tree' && request.maxBytes > 1
+        && ['src/runtime/run.ts', 'src/wg/permit.ts', 'src/wg/audit.ts', 'src/contracts/access.ts'].includes(request.path)
+        ? { status: 'rejected', code: 'unavailable', reason: 'the working tree cannot be read' }
         : null);
+      world.linkCheck.faultVerify(() => ({ status: 'rejected', code: 'unavailable', reason: 'the second tier is down' }));
       const writtenK1 = await world.writeAgentLink(S8E_LINKS.K1, { label: 'F-write-E47-K1' });
       const writtenK3 = await world.writeAgentLink(S8E_LINKS.K3, { label: 'F-write-E47-K3' });
-      world.linkCheck.faultCaptures(null);
+      world.linkCheck.faultReads(null);
+      world.linkCheck.faultVerify(null);
       const k1 = writtenK1.envelope;
       const k3 = writtenK3.envelope;
       if (k1 === null || k3 === null) throw new Error('the E-47 links returned no {write, check}');
       // The stored endpoints keep the raw requests, so [K1,K3] are two distinct
-      // endpoints; the write-time verdict is analyzer_unavailable.
+      // endpoints. An unreadable end is not a miss (G2 :434): both are stored
+      // analyzer_unavailable (evidence_unverifiable), and the check after the
+      // write, its gate reads still failing, is unchecked/unavailable (R5 :357).
+      // Mutation (8E-2 :819): G2 reads a failed read as no hit → K1 is refused
+      // link_end_unresolved: extraAnchors[0], and the first `accepted` below is red.
       for (const envelope of [k1, k3]) {
         expect(envelope.write.status).toBe('accepted');
         if (envelope.write.status !== 'accepted') return;
+        expect(envelope.write.warnings).toEqual(['evidence_unverifiable']);
         expect(checkOf(envelope).linkVerification)
-          .toEqual({ status: 'unchecked', reason: 'refs_pending' });
+          .toEqual({ status: 'unchecked', reason: 'unavailable' });
       }
       if (k1.write.status !== 'accepted' || k3.write.status !== 'accepted') return;
       const steps = [k1.write.noteId, k3.write.noteId];

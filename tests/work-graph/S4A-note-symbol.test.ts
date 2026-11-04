@@ -3,7 +3,7 @@
  * (item 14 / spec §0.1, L11, L14, §4 rule 14, §6 4A line, §7 G-01 exception).
  *
  * Both backends, real workspace tools on the temp workspace: the TypeScript
- * provider is captured and queried for real; no provider is doubled. The
+ * file is read from the working tree and parsed on its own; nothing is doubled. The
  * literal hex digests below are sha256 of the exact literal file text (and of
  * the folded hit-range text), computed by hand with node:crypto in
  * `./.dsh-scratch/digests.mjs`, never through product code.
@@ -51,21 +51,6 @@ const PAGED_CONTENT = Array.from({ length: 60 }, (_, index) => {
 const PAGED_DIGEST = 'af9f4f3ec64968e0d2794cecf86d66a80d93358a3d3efc46295ccd52687fe3c4';
 const F55_SIG = 'c4e043842448b9c10545394fcbfcd2054c6db96ddb8cb50f7345b75416d36dde';
 
-const THREE_CONTENT = [
-  'export function f01() {',
-  '  return 1;',
-  '}',
-  '',
-  'export function f02() {',
-  '  return 2;',
-  '}',
-  '',
-  'export function f03() {',
-  '  return 3;',
-  '}',
-  '',
-].join('\n');
-
 function general(anchor: NoteDraftAnchorV1, overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return {
     kind: 'pitfall', topic: 'symbol topic', conclusion: 'symbol conclusion', anchor, extraAnchors: [],
@@ -79,7 +64,7 @@ function symAnchor(path: string, symbolRequest: SymbolRequestV1): NoteDraftAncho
 }
 
 async function withFixture<T>(kind: S4ANoteFixtureKind,
-  options: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number } = {},
+  options: { anchorQuota?: number; goalQuota?: number } = {},
   body: (fixture: S4ANoteFixture) => Promise<T>): Promise<T> {
   const fixture = await createS4ANoteFixture(kind, options);
   try { return await body(fixture); } finally { await fixture.close(); }
@@ -173,7 +158,7 @@ describe('S4A G-01(4A) write-side symbolRequest resolution', () => {
     });
   });
 
-  it.each(KINDS)('G-01(4A) %s the symbol scan follows cursors across pages', async kind => {
+  it.each(KINDS)('G-01(4A) %s a single-file read finds f55 on line 217', async kind => {
     await withFixture(kind, {}, async f => {
       await writeFile(join(f.root, 'src/paged.ts'), PAGED_CONTENT);
       const ctx = f.ctx();
@@ -188,17 +173,6 @@ describe('S4A G-01(4A) write-side symbolRequest resolution', () => {
     });
   });
 
-  it.each(KINDS)('G-01(4A) %s hitting the hits cap never stores a locator', async kind => {
-    await withFixture(kind, { symbolHitsMax: 2 }, async f => {
-      await writeFile(join(f.root, 'src/three.ts'), THREE_CONTENT);
-      const ctx = f.ctx();
-      const result = await f.write(ctx,
-        general(symAnchor('src/three.ts', { language: 'typescript', name: 'f03' })), null);
-      expect(result.status).toBe('accepted');
-      expect(warningsOf(result)).toEqual(['symbol_unresolved']);
-      expect(await readAnchor(f, ctx, result)).toEqual({ kind: 'file', path: 'src/three.ts' });
-    });
-  });
 
   it.each(KINDS)('G-01(4A) %s a malformed symbolRequest is refused invalid with the draft', async kind => {
     await withFixture(kind, {}, async f => {

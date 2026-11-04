@@ -90,6 +90,8 @@ type ResolutionInvalidatingHost = ts.LanguageServiceHost & {
 
 /** The default library file of every TS program over workspace material: the workspace's own TypeScript, read like any file. */
 export const TYPESCRIPT_DEFAULT_LIB_FILE = SOURCE_ROOT + 'node_modules/typescript/lib/lib.d.ts';
+/** The root project configuration files in order: the first one that exists is the project's configuration. */
+export const TYPESCRIPT_CONFIG_FILES = ['tsconfig.json', 'jsconfig.json'] as const;
 
 /** One project configuration resolved against frozen material; paths keyed by `SOURCE_ROOT`. */
 export type TypeScriptProjectConfiguration = {
@@ -107,7 +109,7 @@ export type TypeScriptProjectConfiguration = {
  * a file that exists but was not read (never an empty file).
  */
 export function configureTypeScriptProject(installed: ReadonlyMap<string, { readonly content?: string }>, configPath?: string | null): TypeScriptProjectConfiguration {
-  const path = configPath ?? (installed.has(SOURCE_ROOT + 'tsconfig.json') ? 'tsconfig.json' : installed.has(SOURCE_ROOT + 'jsconfig.json') ? 'jsconfig.json' : undefined);
+  const path = configPath ?? TYPESCRIPT_CONFIG_FILES.find(name => installed.has(SOURCE_ROOT + name));
   const readFile = (name: string) => installed.get(posix.normalize(name))?.content;
   const matches = (name: string, base: string, pattern: string) => {
     const full = posix.resolve(base, pattern);

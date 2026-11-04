@@ -29,14 +29,14 @@
  * - `linkCheck` is ONE plain delegating wrapper around each of the real
  *   `createNoteService` and `createNoteCheck` module exports. Both receive the
  *   SAME `noteWorkspace` object, and the first wrapper proxies that object's
- *   `capture`/`querySource`/`readWorkspace` before the real factory runs, so
- *   the write-time evidence gate (the note service's `noteCheckWorkspace` view
- *   of the object) is counted and faulted too. It returns the real factories,
- *   exposes the counters/faults, and restores both module exports and the
- *   workspace methods in `close()`. No `vi.spyOn`, no new Host option or
- *   port, no product change. 8E-2 R (§4.1 :708, :712): where the object has
- *   them, `verify` is counted (`builds()`), faulted and gated, and the read
- *   fault also hits `readWorkspaceFiles` path by path.
+ *   `readWorkspace`/`readWorkspaceFiles`/`verify` before the real factory runs,
+ *   so the write-time evidence gate (the note service's `noteCheckWorkspace`
+ *   view of the object) is counted and faulted too. It returns the real
+ *   factories, exposes the build counter and the faults, and restores both
+ *   module exports and the workspace methods in `close()`. No `vi.spyOn`, no
+ *   new Host option or port, no product change. 8E-2 (§4.1 :708, :712): where
+ *   the object has them, `verify` is counted (`builds`), faulted and gated, and
+ *   the read fault also hits `readWorkspaceFiles` path by path.
  * - A secretary round helper that is `holdS6BRequestRound` on this same world.
  * - The `noteLimits` small-quota wrapper (DR-8E L2-04): ONE plain delegating
  *   function around the real `createTargetPlatform` module export, installed
@@ -67,8 +67,8 @@ import type {
 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type {
-  CaptureSummary, ReadWorkspaceRequest, ReferenceAnalyzerPort, ReferenceCheckRequestV1, ReferenceCheckResultV1,
-  SourcePage, SourcePageRequest, SourceProvider, WorkspaceFile, WorkspaceResult,
+  ReadWorkspaceRequest, ReferenceAnalyzerPort, ReferenceCheckRequestV1, ReferenceCheckResultV1,
+  WorkspaceFile, WorkspaceResult,
 } from '../../src/core/workspace/ports.js';
 import type { WorkspaceToolsHandle } from '../../src/core/workspace/workspace-tools.js';
 import * as noteServiceModule from '../../src/core/work-graph/notes/note-service.js';
@@ -384,14 +384,11 @@ function installQuotaWrapper(limits: S4ANoteLimits): () => void {
 }
 
 // ---------------------------------------------------------------------------
-// The check / workspace proxy (counters and faults)
+// The check / workspace proxy (the build counter and faults)
 // ---------------------------------------------------------------------------
 
-export type S8ELinkCheckCounters = { captures: number; queries: number; textQueries: number };
-/** A fault for one `capture` call; `null` delegates to the real capture. */
-export type S8ECaptureFault = (request: { provider: SourceProvider }) => WorkspaceResult<CaptureSummary> | null;
-/** A fault for one `querySource` call; `null` delegates to the real query. */
-export type S8ESourceQueryFault = (request: SourcePageRequest) => WorkspaceResult<SourcePage> | null;
+/** 8E-2 G (§4.1 :708, :886): the one counter left is the second tier's program builds. */
+export type S8ELinkCheckCounters = { builds: number };
 /** A fault for one `readWorkspace` call; `null` delegates to the real read. */
 export type S8EWorkspaceReadFault = (request: ReadWorkspaceRequest) => WorkspaceResult<WorkspaceFile> | null;
 
@@ -403,8 +400,6 @@ export type S8EVerifyGate = { entered: Promise<void>; release(): void; settled: 
 export type S8ELinkCheckProbe = {
   counters(): S8ELinkCheckCounters;
   reset(): void;
-  faultCaptures(fault: S8ECaptureFault | null): void;
-  faultQueries(fault: S8ESourceQueryFault | null): void;
   /** Also hits each path of `readWorkspaceFiles` (as a working-tree `readWorkspace` request). */
   faultReads(fault: S8EWorkspaceReadFault | null): void;
   /** 8E-2 R: second-tier program builds (one per `verify` handed to the real analyzer); `reset()` zeroes it. */
@@ -426,16 +421,13 @@ type CheckWorkspace = NonNullable<CheckDependencies['workspace']> & {
  * shared `noteWorkspace` object to both; the first wrapper that sees it
  * proxies that object's three workspace methods IN PLACE before the real
  * factory runs (the note service builds its `noteCheckWorkspace` view from the
- * methods it finds then), counts capture/query calls, offers optional faults,
- * and returns the real factory's result unchanged. `restore()` puts both module
- * exports and every proxied method back.
+ * methods it finds then), counts the program builds of `verify`, offers
+ * optional faults, and returns the real factory's result unchanged. `restore()`
+ * puts both module exports and every proxied method back.
  */
 function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => void } {
   const actual = noteViewsModule.createNoteCheck;
   const actualService = noteServiceModule.createNoteService;
-  let counters: S8ELinkCheckCounters = { captures: 0, queries: 0, textQueries: 0 };
-  let captureFault: S8ECaptureFault | null = null;
-  let queryFault: S8ESourceQueryFault | null = null;
   let readFault: S8EWorkspaceReadFault | null = null;
   let builds = 0;
   let verifyFault: S8EVerifyFault | null = null;
@@ -446,8 +438,6 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
   const proxyInPlace = (workspace: CheckWorkspace | undefined): void => {
     if (workspace !== undefined && !proxied.has(workspace)) {
       proxied.add(workspace);
-      const originalCapture = workspace.capture;
-      const originalQuery = workspace.querySource;
       const originalRead = workspace.readWorkspace;
       const originalVerify = workspace.verify;
       const originalReadFiles = workspace.readWorkspaceFiles;
@@ -496,28 +486,11 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
           }) };
         };
       }
-      if (originalCapture !== undefined) {
-        workspace.capture = async (ctx, request) => {
-          counters = { ...counters, captures: counters.captures + 1 };
-          const faulted = captureFault?.(request);
-          return faulted ?? await originalCapture(ctx, request);
-        };
-      }
-      if (originalQuery !== undefined) {
-        workspace.querySource = async (ctx, request) => {
-          counters = { ...counters, queries: counters.queries + 1,
-            ...(request.query.kind === 'text' ? { textQueries: counters.textQueries + 1 } : {}) };
-          const faulted = queryFault?.(request);
-          return faulted ?? await originalQuery(ctx, request);
-        };
-      }
       workspace.readWorkspace = async (ctx, request) => {
         const faulted = readFault?.(request);
         return faulted ?? await originalRead(ctx, request);
       };
       restores.push(() => {
-        if (originalCapture !== undefined) workspace.capture = originalCapture;
-        if (originalQuery !== undefined) workspace.querySource = originalQuery;
         workspace.readWorkspace = originalRead;
         if (originalVerify !== undefined) workspace.verify = originalVerify;
         if (originalReadFiles !== undefined) workspace.readWorkspaceFiles = originalReadFiles;
@@ -537,10 +510,8 @@ function installLinkCheckProbe(): { probe: S8ELinkCheckProbe; restore: () => voi
   Object.defineProperty(noteServiceModule, 'createNoteService',
     { value: serviceWrapper, configurable: true, writable: true });
   const probe: S8ELinkCheckProbe = {
-    counters: () => ({ ...counters }),
-    reset: () => { counters = { captures: 0, queries: 0, textQueries: 0 }; builds = 0; },
-    faultCaptures: fault => { captureFault = fault; },
-    faultQueries: fault => { queryFault = fault; },
+    counters: () => ({ builds }),
+    reset: () => { builds = 0; },
     faultReads: fault => { readFault = fault; },
     builds: () => builds,
     faultVerify: fault => { verifyFault = fault; },
@@ -660,7 +631,7 @@ export type S8ESemanticWorld = S6AHostWorld & {
   readonly catalogRevision: number;
   readonly tasks: readonly TaskTriple[];
   nextScribeTask(): TaskTriple;
-  /** The check/capture counters and faults; proxy installed before the Host is built. */
+  /** The program-build counter and the faults; proxy installed before the Host is built. */
   readonly linkCheck: S8ELinkCheckProbe;
 
   /** Person write through the real `notes/write` route; returns the owner's `WriteNoteResult`. */

@@ -23,6 +23,8 @@ import type {
   CaptureSummary, ReferenceAnalyzerPort, SourceHit, SourceProvider, WorkspaceResult, WorkspaceToolsPort,
 } from '../../workspace/ports.js';
 import type { NativeSingleFilePort } from '../../workspace/native-single-file.js';
+import { navigationItemsOf, type NavItemV1 } from '../../workspace/single-file-syntax.js';
+import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { WorkspaceToolsHandle } from '../../workspace/workspace-tools.js';
 import type { ArchitectureCatalogPort, CatalogModuleFacts } from '../architecture/catalog-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -33,7 +35,7 @@ import type { AnchorGoalPlanFacts } from './note-anchor-facts.js';
 import { readAnchorGoalFacts } from './note-anchor-facts.js';
 import {
   NOTE_ANCHOR_CANDIDATES_MAX, NOTE_ANCHOR_CANDIDATE_SCAN, NOTE_BASIS_FILE_MAX_BYTES,
-  NOTE_CONCLUSION_MAX_CODEPOINTS, NOTE_SYMBOL_HITS_MAX,
+  NOTE_CONCLUSION_MAX_CODEPOINTS,
 } from '../model/note-contracts.js';
 import { platformCheckContext } from '../model/platform-check-context.js';
 
@@ -48,7 +50,7 @@ export type NoteAnchorWorkspace = Pick<WorkspaceToolsPort, 'readWorkspace'> & {
   readWorkspaceFiles: WorkspaceToolsHandle['readWorkspaceFiles'];
   capture?(ctx: CoreCallContext, request: { provider: SourceProvider }): Promise<WorkspaceResult<CaptureSummary>>;
   querySource?: WorkspaceToolsPort['querySource'];
-  /** L14: best-effort release of the write's symbol capture after use. */
+  /** Best-effort release of the missing-file candidates' one text capture after use. */
   releaseCapture?: WorkspaceToolsPort['releaseCapture'];
   /** The second tier's reference check (one program per request, on the analysis thread). */
   verify?: ReferenceAnalyzerPort['verify'];
@@ -258,7 +260,7 @@ Promise<{ candidates: NoteAnchorCandidateV1[]; unavailable: boolean }> {
     }
     return { candidates: fileCandidates(paths.slice(0, NOTE_ANCHOR_CANDIDATE_SCAN), path), unavailable: false };
   } finally {
-    // Best-effort release, as in `resolveSymbol`: the capture is the Host's shared pool's, and a failed release never
+    // Best-effort release: the capture is the Host's shared pool's, and a failed release never
     // changes the candidates.
     try { await workspace.releaseCapture?.(ctx, capture.ref); } catch { /* best-effort */ }
   }
@@ -268,17 +270,6 @@ Promise<{ candidates: NoteAnchorCandidateV1[]; unavailable: boolean }> {
 // L14 write-side symbol resolution
 // --------------------------------------------------------------------------
 
-/** The languages L14 resolves; anything else is `unsupported` → warning (R10). */
-const SYMBOL_LANGUAGES: readonly SourceProvider[] = ['typescript', 'python', 'cpp'];
-
-/**
- * Symbol-scan page size. The spec fixes only the total cap
- * (`NOTE_SYMBOL_HITS_MAX`); scanning in bounded pages is what proves the
- * cursor path. The floor with the remaining budget keeps
- * the cap exact.
- */
-const SYMBOL_SCAN_PAGE = 32;
-
 /**
  * L14: fold every whitespace run in the hit's range text to one space, then
  * sha256. Exported for 4B's L23 re-resolution to reuse the exact rule.
@@ -287,15 +278,7 @@ export function signatureDigestOf(text: string): string {
   return sha256Hex(text.replace(/\s+/g, ' '));
 }
 
-type SymbolHit = Extract<SourceHit, { kind: 'symbol' }>;
-
-type SymbolResolution =
-  | { status: 'resolved'; symbol: SymbolLocatorV1; hit: SymbolHit }
-  | { status: 'unresolved' }
-  | { status: 'ambiguous'; candidates: { name: string; range: { startLine: number; endLine: number } }[] }
-  | { status: 'rejected'; code: 'unavailable'; reason: string };
-
-/** The one-based UTF-16 line/column slice of the frozen capture content (end column exclusive). */
+/** The one-based UTF-16 line/column slice of a file's text (end column exclusive). */
 export function symbolRangeText(content: string, start: { line: number; column: number },
   end: { line: number; column: number }): string {
   const lines = content.split('\n');
@@ -306,121 +289,86 @@ export function symbolRangeText(content: string, start: { line: number; column: 
   return parts.join('\n');
 }
 
-/** The one-based UTF-16 line/column slice of the frozen capture content. */
-function rangeTextOf(content: string, hit: SymbolHit): string {
-  return symbolRangeText(content, hit.location.start, hit.location.end);
+/** One named item of a single-file walk: the one-based UTF-16 span of its name. */
+type SymbolCandidate = { name: string; start: { line: number; column: number }; end: { line: number; column: number } };
+
+/** One symbol request's pick among a file's items; a resolved pick keeps the chosen item as the walk gave it. */
+export type SymbolPick<T extends SymbolCandidate> =
+  | { status: 'unresolved' }
+  | { status: 'ambiguous'; candidates: { name: string; range: { startLine: number; endLine: number } }[] }
+  | { status: 'resolved'; symbol: SymbolLocatorV1; item: T };
+
+/**
+ * L14's one match over a single file's items, every language alike: the items of the requested
+ * name (and of the requested name lines, when a range is given), ordered by start line and column.
+ * Exactly one stores the locator: its name lines, the sha256 of the decoded text (the read side
+ * compares the decoded text, never the raw bytes) and the signature digest of the name span; none
+ * is `unresolved`; two or more are `ambiguous`.
+ */
+export function pickSymbol<T extends SymbolCandidate>(request: SymbolRequestV1, text: string,
+  found: readonly T[]): SymbolPick<T> {
+  const matches = found.filter(item => item.name === request.name && (request.range === undefined
+    || (item.start.line === request.range.startLine && item.end.line === request.range.endLine)))
+    .sort((left, right) => left.start.line - right.start.line || left.start.column - right.start.column);
+  if (matches.length === 0) return { status: 'unresolved' };
+  if (matches.length >= 2) {
+    return { status: 'ambiguous', candidates: matches.map(item =>
+      ({ name: item.name, range: { startLine: item.start.line, endLine: item.end.line } })) };
+  }
+  const item = matches[0]!;
+  return { status: 'resolved', item, symbol: { language: request.language, qualifiedName: item.name,
+    range: { startLine: item.start.line, endLine: item.end.line }, fileDigest: sha256Hex(text),
+    signatureDigest: signatureDigestOf(symbolRangeText(text, item.start, item.end)) } };
 }
 
-function symbolCandidatesOf(hits: readonly SymbolHit[]): { name: string; range: { startLine: number; endLine: number } }[] {
-  return hits.map(hit => ({ name: hit.name, range: { startLine: hit.location.start.line, endLine: hit.location.end.line } }));
+/** A TS/JS file's pick from its single-file navigation items: one parse of the text, no pages, no hit cap. */
+export function pickTypeScriptSymbol(path: string, request: SymbolRequestV1, text: string): SymbolPick<NavItemV1> {
+  return pickSymbol(request, text, navigationItemsOf(path, text));
+}
+
+type SymbolRejection = { status: 'rejected'; code: 'unavailable'; reason: string };
+type SymbolResolution = SymbolPick<SymbolCandidate> | SymbolRejection;
+
+/** A symbol's working-tree file: `not_found` is no hit; any other read failure rejects the write (R10). */
+async function symbolFileText(ctx: CoreCallContext, path: string, workspace: NoteAnchorWorkspace):
+Promise<{ status: 'ready'; text: string; digest: string } | { status: 'unresolved' } | SymbolRejection> {
+  const read = await workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
+    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path, maxBytes: NOTE_BASIS_FILE_MAX_BYTES,
+    version: { kind: 'working_tree' } });
+  if (read.status === 'ready') return { status: 'ready', text: read.value.content, digest: read.value.digest };
+  return read.code === 'not_found' ? { status: 'unresolved' }
+    : { status: 'rejected', code: 'unavailable', reason: read.reason };
 }
 
 /**
- * L14: one capture with the language's provider, then page `querySource` over
- * the file's symbols up to `hitsMax`, keeping the hits whose name (and range,
- * when given) match. Exactly one complete match stores the locator; 0/1 at the
- * cap and no match are `unresolved`; 2+ are `ambiguous` (ordered by start
- * line). A capture/query failure is a write rejection (`unavailable`), never
- * a silent `unresolved` (R10).
- *
- * A caller that already owns the link's one capture passes it as `capture`;
- * this function then uses it and does NOT release it (the caller's
- * `checkLinkDraft` releases in its own `finally`). Without it, the function
- * opens and releases its own capture exactly as before. In the shared-capture
- * branch a page that still has `nextCursor` at the hit cap means the scan did
- * not finish, so it is `unavailable` for the gate's `analyzer_unavailable`
- * rather than a definite no-hit/ambiguity; the old callers keep their exit.
+ * L14: a general note's `symbolRequest`, found in its working-tree file on its own (no capture, no
+ * program). `typescript` picks among a TS/JS file's navigation items. `python` and `cpp` go to the
+ * single-file lookup (`mode: 'write'`; a hit is stored whether or not the parse was exact) unless
+ * the path's extension names another known language: then the request is a slip and the file is
+ * not read for it; a path of no known language (a script without extension) is looked up. Any other
+ * language is `unresolved`, and so are a file the working tree does not have and a lookup that does
+ * not support the file. Any other read or lookup failure rejects the write (`unavailable`), never a
+ * silent `unresolved` (R10).
  */
 export async function resolveSymbol(ctx: CoreCallContext, path: string, request: SymbolRequestV1,
-  workspace: NoteAnchorWorkspace | undefined, hitsMax: number, capture?: CaptureSummary): Promise<SymbolResolution> {
-  if (workspace === undefined || workspace.querySource === undefined) {
-    return { status: 'unresolved' };
+  workspace: NoteAnchorWorkspace | undefined): Promise<SymbolResolution> {
+  if (workspace === undefined) return { status: 'unresolved' };
+  const language = request.language;
+  const pathLanguage = languageOfPath(path);
+  if (language === 'typescript') {
+    if (pathLanguage !== 'typescript') return { status: 'unresolved' };
+    const read = await symbolFileText(ctx, path, workspace);
+    return read.status === 'ready' ? pickTypeScriptSymbol(path, request, read.text) : read;
   }
-  if (capture === undefined && workspace.capture === undefined) return { status: 'unresolved' };
-  if (!SYMBOL_LANGUAGES.includes(request.language as SourceProvider)) return { status: 'unresolved' };
-  const provider = request.language as SourceProvider;
-  let usedCapture: CaptureSummary;
-  let ownedCapture = false;
-  if (capture !== undefined) {
-    usedCapture = capture;
-  } else {
-    try {
-      const captured = await workspace.capture!(ctx, { provider });
-      if (captured.status !== 'ready') {
-        if (captured.code === 'unsupported') return { status: 'unresolved' };
-        return { status: 'rejected', code: 'unavailable', reason: captured.reason };
-      }
-      usedCapture = captured.value;
-      ownedCapture = true;
-    } catch {
-      return { status: 'rejected', code: 'unavailable', reason: 'the symbol capture cannot be read' };
-    }
-  }
-  try {
-    const matches: SymbolHit[] = [];
-    let cursor: string | null = null;
-    let scanned = 0;
-    while (scanned < hitsMax) {
-      const limit = Math.min(hitsMax - scanned, SYMBOL_SCAN_PAGE);
-      let page: Awaited<ReturnType<WorkspaceToolsPort['querySource']>>;
-      try {
-        page = await workspace.querySource(ctx,
-          { capture: usedCapture.ref, query: { kind: 'symbols', path }, cursor, limit });
-      } catch {
-        return { status: 'rejected', code: 'unavailable', reason: 'the symbol scan cannot be read' };
-      }
-      if (page.status !== 'ready') {
-        if (page.code === 'unsupported') return { status: 'unresolved' };
-        return { status: 'rejected', code: 'unavailable', reason: page.reason };
-      }
-      for (const hit of page.value.items) {
-        if (hit.kind !== 'symbol' || hit.name !== request.name) continue;
-        if (request.range !== undefined
-          && (hit.location.start.line !== request.range.startLine || hit.location.end.line !== request.range.endLine)) continue;
-        matches.push(hit);
-      }
-      scanned += page.value.items.length;
-      cursor = page.value.nextCursor;
-      if (cursor === null) break;
-    }
-    const sorted = [...matches].sort((left, right) => left.location.start.line - right.location.start.line
-      || left.location.start.column - right.location.start.column);
-    // Stopping at the cap with more pages never stores a locator. The one
-    // shared capture must tell the gate the scan was incomplete (L2 DR-05:
-    // analyzer_unavailable), while the old callers keep the old exit.
-    if (cursor !== null) {
-      if (capture !== undefined) {
-        return { status: 'rejected', code: 'unavailable',
-          reason: 'the symbol scan stopped at the hit cap before the file was exhausted' };
-      }
-      return sorted.length >= 2
-        ? { status: 'ambiguous', candidates: symbolCandidatesOf(sorted) }
-        : { status: 'unresolved' };
-    }
-    if (sorted.length === 0) return { status: 'unresolved' };
-    if (sorted.length >= 2) return { status: 'ambiguous', candidates: symbolCandidatesOf(sorted) };
-    const hit = sorted[0]!;
-    const read = await workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
-      projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path, maxBytes: NOTE_BASIS_FILE_MAX_BYTES,
-      version: { kind: 'capture', capture: usedCapture.ref } });
-    if (read.status !== 'ready') {
-      // R10(iii): only a file that is not in the capture is a success warning;
-      // every other read failure (capacity, unavailable, ...) rejects the write.
-      return read.code === 'not_found'
-        ? { status: 'unresolved' }
-        : { status: 'rejected', code: 'unavailable', reason: read.reason };
-    }
-    return { status: 'resolved', hit, symbol: { language: request.language, qualifiedName: hit.name,
-      range: { startLine: hit.location.start.line, endLine: hit.location.end.line },
-      fileDigest: hit.location.digest, signatureDigest: signatureDigestOf(rangeTextOf(read.value.content, hit)) } };
-  } finally {
-    // Best-effort release: the locator is already computed, so a failed release
-    // never changes the write's outcome. A passed-in capture belongs to the
-    // caller and is released there.
-    if (ownedCapture) {
-      try { await workspace.releaseCapture?.(ctx, usedCapture.ref); } catch { /* best-effort */ }
-    }
-  }
+  const lookup = workspace.lookup;
+  if ((language !== 'python' && language !== 'cpp') || (pathLanguage !== 'other' && pathLanguage !== language)
+    || lookup === undefined) return { status: 'unresolved' };
+  const read = await symbolFileText(ctx, path, workspace);
+  if (read.status !== 'ready') return read;
+  const found = await lookup(ctx, { language, path, text: read.text, digest: read.digest, mode: 'write' });
+  if (found.status === 'unsupported') return { status: 'unresolved' };
+  if (found.status === 'unavailable') return { status: 'rejected', code: 'unavailable', reason: found.reason };
+  return pickSymbol(request, read.text, found.symbols);
 }
 
 /** L2 (rule 4.1): the topic is 1–40 code points and carries no newline. */
@@ -523,8 +471,6 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   boundPlanRef?: PlanRevisionRef | null;
   /** Read path: existence checks need no L11/L14 basis, so skip those reads. */
   includeBasis?: boolean;
-  /** The injectable symbol-scan cap; defaults to the spec's `NOTE_SYMBOL_HITS_MAX`. */
-  symbolHitsMax?: number;
   /** L2: the duplicate rule. `'path'` (default) is the old eight kinds; `'end'` is only for `kind === 'link'` (book :895, :229–232). */
   duplicateIdentity?: 'path' | 'end';
   /** L2: `false` makes this step store the plain file anchor and the raw
@@ -533,7 +479,6 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
    * keeps the old eight kinds' per-anchor resolution (book :253–254, :895). */
   resolveSymbols?: boolean;
 }, deps: NoteAnchorFactsDeps): Promise<{ status: 'ok'; value: ResolvedNoteAnchors } | NoteAnchorFailure> {
-  const symbolHitsMax = input.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
   const drafts: NoteDraftAnchorV1[] = [input.main, ...input.extraAnchors];
   for (const [index, draft] of drafts.entries()) {
     const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
@@ -587,7 +532,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   for (const [index, draft] of drafts.entries()) {
     const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
     const resolved = await resolveOne(ctx, draft, field, deps, goalPlanFacts,
-      { isAgent, runGoalId: input.goalId, facts: input.facts ?? [], symbolHitsMax,
+      { isAgent, runGoalId: input.goalId, facts: input.facts ?? [],
         ...(input.resolveSymbols === undefined ? {} : { resolveSymbols: input.resolveSymbols }) });
     if (resolved.status === 'rejected') return resolved;
     if (resolved.ended) anchorEnded = true;
@@ -716,7 +661,7 @@ export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFa
 
 async function resolveOne(ctx: CoreCallContext, draft: NoteDraftAnchorV1, field: string, deps: NoteAnchorFactsDeps,
   goalPlanFacts: (goalId: string, field: string) => Promise<GoalPlanEntry | NoteAnchorFailure>,
-  context: { isAgent: boolean; runGoalId: string | null; facts: readonly NoteFactV1[]; symbolHitsMax: number;
+  context: { isAgent: boolean; runGoalId: string | null; facts: readonly NoteFactV1[];
     resolveSymbols?: boolean }):
 Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: boolean } | NoteAnchorFailure> {
   const notFound = (candidates?: NoteAnchorCandidateV1[], unavailable?: boolean): NoteAnchorFailure => ({
@@ -774,7 +719,7 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
       // L14: resolution runs after the class-2 existence check. The
       // symbolRequest is write-only; only the resolved locator is stored.
       if (draft.symbolRequest !== undefined && context.resolveSymbols !== false) {
-        const resolution = await resolveSymbol(ctx, path, draft.symbolRequest, deps.workspace, context.symbolHitsMax);
+        const resolution = await resolveSymbol(ctx, path, draft.symbolRequest, deps.workspace);
         if (resolution.status === 'rejected') {
           return { status: 'rejected', code: resolution.code, reason: resolution.reason, field };
         }

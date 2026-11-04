@@ -19,10 +19,13 @@
  * for K6's module attribution, through the Host's `architecture/semantic-links`
  * route (that field exists only on the semantic item).
  *
- * The capture/query counters and the `source_stale` fault come from the
- * world's ONE delegating wrapper around the real `createNoteCheck` export: it
- * proxies the shared `noteWorkspace`, so the write-time evidence gate and the
- * read-time check use the same counters/fault, and `close()` restores both.
+ * The program-build counter (`counters()`/`builds()`, 8E-2 §4.1 :708) and the
+ * read and second-tier faults (:712) come from the world's ONE delegating
+ * wrapper around the real `createNoteCheck` export: it proxies the shared
+ * `noteWorkspace`, so the write-time evidence gate and the read-time check use
+ * the same counter/faults, and `close()` restores both. 8E-2 G: E-37 (8E-2
+ * :814; 8E :752) opens its own world; E-38 (:815; 8E :753) also reads the
+ * link back after `run.ts` line 10 changes.
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -35,7 +38,7 @@ import type {
 } from '../../src/core/work-graph/model/note-contracts.js';
 import {
   openS8ESemanticWorld, s8eLinkDraft, S8E_LINKS, type S8ELinkName, type S8ESemanticWorld,
-  type S8ESourceQueryFault,
+  type S8EWorkspaceReadFault,
 } from '../helpers/S8E-semantic-world.js';
 
 type AcceptedWrite = Extract<WriteNoteResult, { status: 'accepted' | 'pending_review' | 'staged' }>;
@@ -238,13 +241,14 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     expect(checkOf(envelope).linkVerification).toEqual({ status: 'unverifiable', reason: 'language_unsupported' });
   }, 60_000);
 
-  it('E-27 a failed capture keeps the language verdict and both warnings', async () => {
-    // The link's one TypeScript capture cannot be opened, but both ends are
-    // Python: the extension still says language_unsupported, so the write keeps
-    // symbol_unresolved plus evidence_unverifiable. The old order answered
-    // analyzer_unavailable first and dropped symbol_unresolved.
+  it('E-27 unreadable end files keep the language verdict and both warnings', async () => {
+    // The three Python end files cannot be read from the working tree (the
+    // existence probe, maxBytes:1, is left alone). The extension says
+    // language_unsupported before any read (F44), so the write keeps
+    // symbol_unresolved plus evidence_unverifiable; reading first would answer
+    // analyzer_unavailable and drop symbol_unresolved (8E-2 §4.4 :875).
     const draft = linkDraft({
-      topic: 'E-27-capture-down', conclusion: 'drive main starts teleop through Publisher',
+      topic: 'E-27-ends-unreadable', conclusion: 'drive main starts teleop through Publisher',
       relation: 'injects',
       from: pythonEnd('src/robot/drive.py', 'main'),
       to: pythonEnd('src/robot/teleop.py', 'start'),
@@ -256,14 +260,15 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
       ],
     });
     world.linkCheck.reset();
-    world.linkCheck.faultCaptures(request => request.provider === 'typescript'
-      ? { status: 'rejected', code: 'unavailable', reason: 'the capture cannot be read' }
+    world.linkCheck.faultReads(request => request.version.kind === 'working_tree' && request.maxBytes > 1
+      && ['src/robot/drive.py', 'src/robot/teleop.py', 'src/robot/ports.py'].includes(request.path)
+      ? { status: 'rejected', code: 'unavailable', reason: 'the end files cannot be read' }
       : null);
     let envelope: WriteNoteEnvelopeV1;
     try {
       envelope = await world.writePersonEnvelope(draft);
     } finally {
-      world.linkCheck.faultCaptures(null);
+      world.linkCheck.faultReads(null);
     }
     const write = acceptedWrite(envelope);
     expect(write.warnings).toEqual(['symbol_unresolved', 'evidence_unverifiable']);
@@ -310,11 +315,6 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     }, 60_000);
 
   it.each<[string, (target: S8ESemanticWorld) => void, Record<string, unknown>]>([
-    ['capture failure', target => {
-      target.linkCheck.faultCaptures(request => request.provider === 'typescript'
-        ? { status: 'rejected', code: 'unavailable', reason: 'the capture cannot be read' }
-        : null);
-    }, { status: 'unverifiable', reason: 'language_unsupported' }],
     ['content read failure', target => {
       target.linkCheck.faultReads(request => request.path === 'config/handlers.json'
         && request.version.kind === 'working_tree'
@@ -323,8 +323,8 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     }, { status: 'unchecked', reason: 'unavailable' }],
   ])('E-35 %s: a non-TS register evidence is accepted with evidence_unverifiable', async (topic, install, check) => {
     // The write keeps the non-TS evidence's language verdict (language_unsupported
-    // before the failed capture/read, never analyzer_unavailable). The check after
-    // the write is a first-tier read; the read fault also hits its batch read, so an
+    // before the failed read, never analyzer_unavailable). The check after the
+    // write is a first-tier read; the read fault also hits its batch read, so an
     // unreadable JSON file reads unchecked/unavailable (8E-2 R5 :357, :359;
     // r-start-rulings 6).
     const draft = s8eLinkDraft(S8E_LINKS.K3, { topic });
@@ -336,7 +336,6 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     try {
       envelope = await world.writePersonEnvelope(draft);
     } finally {
-      world.linkCheck.faultCaptures(null);
       world.linkCheck.faultReads(null);
       world.linkCheck.reset();
     }
@@ -361,59 +360,69 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     expect(envelope.write.evidenceIndexes).toEqual([0]);
   }, 60_000);
 
-  it('E-37 a source_stale capture query still accepts the link with evidence_unverifiable',
+  const PENDING = { status: 'unchecked', reason: 'refs_pending' };
+
+  /** E3: the link's read-time verification on the project page, and the read's program builds (8E-2 :800). */
+  async function readLink(target: S8ESemanticWorld, noteId: string): Promise<[unknown, number]> {
+    const before = target.linkCheck.builds();
+    const item = (await semanticPage(target, { kind: 'project' })).items.find(candidate => candidate.noteId === noteId);
+    if (item === undefined) throw new Error(`${noteId} is not on the project page`);
+    return [item.verification, target.linkCheck.builds() - before];
+  }
+
+  /** E6: one `architecture/semantic-links/check` of one link (8E-2 §2.0 :250–252), and the check's builds. */
+  async function checkLink(target: S8ESemanticWorld, ref: { noteId: string; version: number }): Promise<[unknown, number]> {
+    const before = target.linkCheck.builds();
+    const result = await target.route('architecture/semantic-links/check', { items: [ref] }) as
+      { status: string; value?: { items: { verification: unknown }[] } };
+    if (result.status !== 'ready' || result.value === undefined) {
+      throw new Error(`the check was not ready: ${JSON.stringify(result)}`);
+    }
+    return [result.value.items[0]?.verification, target.linkCheck.builds() - before];
+  }
+
+  it('E-37 K1 written while the second tier fails: refs_pending until a check that works verifies it',
     async () => {
-      const draft = linkDraft({
-        topic: 'E-37', conclusion: 'saveReport emits reports/latest.json for loadReport',
-        from: fileEnd('src/runtime/run.ts'),
-        to: fileEnd('src/wg/permit.ts'),
-        key: { kind: 'literal', text: 'reports/latest.json' },
-        evidence: [
-          { role: 'emit', at: { path: 'src/runtime/run.ts',
-            symbolRequest: { language: 'typescript', name: 'saveReport' } } },
-          { role: 'receive', at: { path: 'src/wg/permit.ts', range: { startLine: 5, endLine: 7 } } },
-        ],
-      });
-      world.linkCheck.reset();
-      // The capture query for [0] reports source_stale; the gate maps it to
-      // analyzer_unavailable and keeps the raw selector.
-      world.linkCheck.faultQueries(query => query.query.kind === 'symbols'
-        && query.query.path === 'src/runtime/run.ts'
-        ? { status: 'rejected', code: 'source_stale',
-          reason: 'the captured text and the working tree differ' }
-        : null);
-      let envelope: WriteNoteEnvelopeV1;
+      // 8E-2 :814 (G2 :434, G4 :436; R5 :347, :359; R7 :375): the second tier fails at
+      // write, so K1 is stored unverifiable/analyzer_unavailable; its ends still have
+      // locators (single file). A check that fails is not kept; one that works builds 1.
+      const own = await openS8ESemanticWorld({ scribeTasks: 1 });
       try {
-        envelope = await world.writePersonEnvelope(draft);
+        own.linkCheck.faultVerify(() => ({ status: 'rejected', code: 'unavailable', reason: 'the second tier is down' }));
+        const envelope = await own.writePersonEnvelope(s8eLinkDraft(S8E_LINKS.K1, { topic: 'E-37' }));
+        const write = acceptedWrite(envelope);
+        expect(write.version).toBe(1);
+        expect(write.warnings).toEqual(['evidence_unverifiable']);
+        const item = await itemOf(own, write.noteId);
+        expect([item.anchor, ...item.extraAnchors].map(end => end.kind === 'file' ? end.symbol?.qualifiedName : end.kind))
+          .toEqual(['runModel', 'authorize', 'beforeCall']);
+        expect(item.link?.evidence.map(entry => entry.fileDigest === null)).toEqual([false, false]);
+        // Mutation (8E-2 :814): R5 reads the stored analyzer_unavailable as unverifiable → this is red.
+        expect(checkOf(envelope).linkVerification).toEqual({ status: 'unchecked', reason: 'refs_pending' });
+        const ref = { noteId: write.noteId, version: write.version };
+        expect(await readLink(own, ref.noteId)).toEqual([PENDING, 0]);
+        expect(await checkLink(own, ref)).toEqual([{ status: 'unchecked', reason: 'unavailable' }, 0]);
+        expect(await readLink(own, ref.noteId)).toEqual([PENDING, 0]);
+        own.linkCheck.faultVerify(null);
+        expect(await checkLink(own, ref)).toEqual([{ status: 'verified' }, 1]);
+        expect(await readLink(own, ref.noteId)).toEqual([{ status: 'verified' }, 0]);
       } finally {
-        world.linkCheck.faultQueries(null);
+        await own.close();
       }
-      const write = acceptedWrite(envelope);
-      expect(write.version).toBe(1);
-      expect(write.warnings).toEqual(['evidence_unverifiable']);
-      const item = await itemOf(world, write.noteId);
-      expect(item.link?.verification).toEqual({ status: 'verified' });
-      expect(checkOf(envelope).linkVerification).toEqual({ status: 'verified' });
-      // The stored raw selector/no-symbol/null-digest stay on the evidence item.
-      const stored = item.link?.evidence[0];
-      expect(stored?.at.symbolRequest?.name).toBe('saveReport');
-      expect(stored?.at).not.toHaveProperty('symbol');
-      expect(stored?.fileDigest).toBeNull();
-    }, 60_000);
+    }, 180_000);
 
   it('E-37 an unavailable selector is not checked as the whole file', async () => {
-    // The frozen E-37 above uses a key that happens to occur in the whole file,
-    // so the old whole-file fallback goes unnoticed. This variant removes that
-    // occurrence from run.ts: an unresolved selector must leave its evidence
-    // unverifiable (accepted), never turn the file scan into evidence_missing.
-    // The stored fileDigest:null half is L3's readback.
+    // An evidence selector whose file cannot be read (the working-tree read of
+    // run.ts fails; the existence probe, maxBytes:1, is left alone) is not
+    // checked as the whole file: run.ts loses its literal here, and the
+    // unreadable [0] must stay unverifiable (accepted), never a whole-file scan
+    // that turns into evidence_missing (8E-2 §4.4 :878).
     const runPath = join(world.root, 'src/runtime/run.ts');
     const original = await readFile(runPath, 'utf8');
     await writeFile(runPath, original.replace('reports/latest.json', 'reports/other.json'), 'utf8');
-    const fault: S8ESourceQueryFault = query =>
-      query.query.kind === 'symbols' && query.query.path === 'src/runtime/run.ts'
-        ? { status: 'rejected', code: 'source_stale',
-          reason: 'the captured text and the working tree differ' }
+    const fault: S8EWorkspaceReadFault = request =>
+      request.path === 'src/runtime/run.ts' && request.version.kind === 'working_tree' && request.maxBytes > 1
+        ? { status: 'rejected', code: 'unavailable', reason: 'the working tree cannot be read' }
         : null;
     try {
       const accepted = linkDraft({
@@ -428,12 +437,12 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
         ],
       });
       world.linkCheck.reset();
-      world.linkCheck.faultQueries(fault);
+      world.linkCheck.faultReads(fault);
       let envelope: WriteNoteEnvelopeV1;
       try {
         envelope = await world.writePersonEnvelope(accepted);
       } finally {
-        world.linkCheck.faultQueries(null);
+        world.linkCheck.faultReads(null);
       }
       const write = acceptedWrite(envelope);
       expect(write.warnings).toEqual(['evidence_unverifiable']);
@@ -452,12 +461,12 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
         ],
       });
       world.linkCheck.reset();
-      world.linkCheck.faultQueries(fault);
+      world.linkCheck.faultReads(fault);
       let rejected: WriteNoteEnvelopeV1;
       try {
         rejected = await world.writePersonEnvelope(missing);
       } finally {
-        world.linkCheck.faultQueries(null);
+        world.linkCheck.faultReads(null);
       }
       expect(rejected.write.status).toBe('rejected');
       if (rejected.write.status !== 'rejected') return;
@@ -469,9 +478,9 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
   }, 60_000);
 
   it('W-write an unavailable working-tree read keeps the evidence unverifiable', async () => {
-    // The capture still has run.ts, but its working-tree comparison cannot be
-    // read (the anchor existence probe uses maxBytes:1 and is left alone). The
-    // digest stays null and the receipt says evidence_unverifiable, never verified.
+    // run.ts cannot be read from the working tree (the anchor existence probe
+    // uses maxBytes:1 and is left alone) and there is no captured text to keep:
+    // the receipt says evidence_unverifiable, never verified (8E-2 §4.4 :879).
     const draft = s8eLinkDraft(S8E_LINKS.K1, { topic: 'W-write-worktree-unavailable' });
     world.linkCheck.reset();
     world.linkCheck.faultReads(request => request.path === 'src/runtime/run.ts'
@@ -486,101 +495,54 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     }
     const write = acceptedWrite(envelope);
     expect(write.warnings).toEqual(['evidence_unverifiable']);
-    // The stored fileDigest:null and the read-side analyzer_unavailable verdict
-    // are the blocked L3 readback halves.
+    // The readback: [0] has no digest, and the "from" end runModel, unreadable
+    // too, is stored as a plain file anchor (G2 :434, G3 :435).
+    const item = await itemOf(world, write.noteId);
+    expect(item.link?.evidence[0]?.fileDigest).toBeNull();
+    expect(item.anchor).not.toHaveProperty('symbol');
   }, 60_000);
 
-  it.each([['the capture is up', false], ['the capture is down', true]] as const)(
-    'W-write a TS evidence file the working tree does not have is evidence_missing [1] (%s)',
-    async (_label, down) => {
-      // Row 6 of the sheet's result table collects every definite miss. A file
-      // that is not in the working tree is one, whether or not the capture
-      // could check the evidence's symbolRequest.
-      const draft = s8eLinkDraft(S8E_LINKS.K1, { topic: `W-write-gone-${down ? 'down' : 'up'}` });
-      draft.link.evidence[1] = { role: 'wire', at: { path: 'src/gone.ts',
-        symbolRequest: { language: 'typescript', name: 'compose' } } };
-      world.linkCheck.reset();
-      if (down) {
-        world.linkCheck.faultCaptures(request => request.provider === 'typescript'
-          ? { status: 'rejected', code: 'unavailable', reason: 'the capture cannot be read' }
-          : null);
-      }
-      let envelope: WriteNoteEnvelopeV1;
-      try {
-        envelope = await world.writePersonEnvelope(draft);
-      } finally {
-        world.linkCheck.faultCaptures(null);
-      }
-      const write = envelope.write;
-      expect(write.status).toBe('rejected');
-      if (write.status !== 'rejected') return;
-      expect(write.reason).toBe('evidence_missing');
-      expect(write.evidenceIndexes).toEqual([1]);
-    }, 60_000);
+  it('W-write a TS evidence file the working tree does not have is evidence_missing [1]', async () => {
+    // Row 6 of the sheet's result table collects every definite miss: a file
+    // that is not in the working tree is one (8E-2 §4.4 :880).
+    const draft = s8eLinkDraft(S8E_LINKS.K1, { topic: 'W-write-gone-up' });
+    draft.link.evidence[1] = { role: 'wire', at: { path: 'src/gone.ts',
+      symbolRequest: { language: 'typescript', name: 'compose' } } };
+    world.linkCheck.reset();
+    const write = (await world.writePersonEnvelope(draft)).write;
+    expect(write.status).toBe('rejected');
+    if (write.status !== 'rejected') return;
+    expect(write.reason).toBe('evidence_missing');
+    expect(write.evidenceIndexes).toEqual([1]);
+  }, 60_000);
 
-  it.each([['the capture still has it', false], ['the capture read fails', true]] as const)(
-    'W-write an evidence file the working tree no longer has is evidence_missing [1] (%s)',
-    async (_label, captureDown) => {
-      // compose.ts was deleted from the working tree after the capture. The
-      // spec's workspace table: a working-tree not_found at write time means
-      // this evidence is not found, whatever the capture read says.
-      const draft = s8eLinkDraft(S8E_LINKS.K1, { topic: `W-write-gone-tree-${captureDown ? 'down' : 'up'}` });
-      world.linkCheck.reset();
-      world.linkCheck.faultReads(request => {
-        if (request.path !== 'src/compose.ts' || request.maxBytes <= 1) return null;
-        if (request.version.kind === 'working_tree') {
-          return { status: 'rejected', code: 'not_found', reason: 'the file is not in the working tree' };
-        }
-        return captureDown ? { status: 'rejected', code: 'unavailable', reason: 'the capture cannot be read' } : null;
-      });
-      let envelope: WriteNoteEnvelopeV1;
-      try {
-        envelope = await world.writePersonEnvelope(draft);
-      } finally {
-        world.linkCheck.faultReads(null);
+  it('W-write an evidence file the working tree no longer has is evidence_missing [1]', async () => {
+    // compose.ts reads not_found from the working tree (its existence probe,
+    // maxBytes:1, is left alone). The spec's workspace table: a working-tree
+    // not_found at write time means this evidence is not found (8E-2 §4.4 :880).
+    const draft = s8eLinkDraft(S8E_LINKS.K1, { topic: 'W-write-gone-tree-up' });
+    world.linkCheck.reset();
+    world.linkCheck.faultReads(request => {
+      if (request.path !== 'src/compose.ts' || request.maxBytes <= 1) return null;
+      if (request.version.kind === 'working_tree') {
+        return { status: 'rejected', code: 'not_found', reason: 'the file is not in the working tree' };
       }
-      const write = envelope.write;
-      expect(write.status).toBe('rejected');
-      if (write.status !== 'rejected') return;
-      expect(write.reason).toBe('evidence_missing');
-      expect(write.evidenceIndexes).toEqual([1]);
-    }, 60_000);
-
-  it('E-37 a symbol scan stopped at the hit cap is unverifiable, not a miss', async () => {
-    // 205 declarations come before saveReport: the symbols query fills
-    // NOTE_SYMBOL_HITS_MAX = 200 with a live nextCursor. The write must keep the
-    // evidence unverifiable (analyzer_unavailable), not report it missing. This
-    // row is green first; ignoring nextCursor (the truncation exit) makes it red.
-    // The run.ts literal is removed here so a whole-file fallback would also be
-    // visible; the key is found in permit.ts [1].
-    const runPath = join(world.root, 'src/runtime/run.ts');
-    const original = await readFile(runPath, 'utf8');
-    const fillers = Array.from({ length: 205 }, (_, index) => `export function filler${String(index)}() {}`);
-    await writeFile(runPath, [...fillers,
-      'export function saveReport(write: (path: string, text: string) => void) {',
-      "  write('reports/latest.json', '{}');",
-      '}'].join('\n') + '\n', 'utf8');
+      return null;
+    });
+    let envelope: WriteNoteEnvelopeV1;
     try {
-      const draft = linkDraft({
-        topic: 'E-37-hit-cap', conclusion: 'saveReport emits reports/latest.json for loadReport',
-        from: fileEnd('src/runtime/run.ts'),
-        to: fileEnd('src/wg/permit.ts'),
-        key: { kind: 'literal', text: 'reports/latest.json' },
-        evidence: [
-          { role: 'emit', at: { path: 'src/runtime/run.ts',
-            symbolRequest: { language: 'typescript', name: 'saveReport' } } },
-          { role: 'receive', at: { path: 'src/wg/permit.ts', range: { startLine: 5, endLine: 7 } } },
-        ],
-      });
-      world.linkCheck.reset();
-      const write = acceptedWrite(await world.writePersonEnvelope(draft));
-      expect(write.warnings).toEqual(['evidence_unverifiable']);
+      envelope = await world.writePersonEnvelope(draft);
     } finally {
-      await writeFile(runPath, original, 'utf8');
+      world.linkCheck.faultReads(null);
     }
+    const write = envelope.write;
+    expect(write.status).toBe('rejected');
+    if (write.status !== 'rejected') return;
+    expect(write.reason).toBe('evidence_missing');
+    expect(write.evidenceIndexes).toEqual([1]);
   }, 60_000);
 
-  it('E-38 literal-only data: accepted, verified write, 0 captures and 0 text queries', async () => {
+  it('E-38 literal-only data: accepted, verified write, builds 0; run.ts line 10 changed reads broken [0]', async () => {
     const draft = linkDraft({
       topic: 'E-38', conclusion: 'saveReport writes the report loadReport reads',
       from: fileEnd('src/runtime/run.ts'),
@@ -596,11 +558,24 @@ describe('S8E L2 W-write: K1–K7 and the evidence cases through notes/write', (
     const write = acceptedWrite(envelope);
     expect(write.version).toBe(1);
     expect(write.warnings).toEqual([]);
-    expect(world.linkCheck.counters()).toEqual({ captures: 0, queries: 0, textQueries: 0 });
+    // Mutation (G4 :436, ruling 9): the gate always calls the second tier → { builds: 1 }, red.
+    expect(world.linkCheck.counters()).toEqual({ builds: 0 });
     const item = await itemOf(world, write.noteId);
     expect(item.link?.analysisConfig).toEqual({ path: null, digest: null });
     expect(item.link?.verification).toEqual({ status: 'verified' });
     expect(checkOf(envelope).linkVerification).toEqual({ status: 'verified' });
+    // 8E :753's read half: run.ts line 10 names another path; the E3 read is broken at [0] (R5 rule 2 :350).
+    const runPath = join(world.root, 'src/runtime/run.ts');
+    const original = await readFile(runPath, 'utf8');
+    await writeFile(runPath, original.replace("  write('reports/latest.json', '{}');",
+      "  write('reports/other.json', '{}');"), 'utf8');
+    try {
+      world.linkCheck.reset();
+      expect((await readLink(world, write.noteId))[0]).toEqual({ status: 'broken', missing: [0] });
+      expect(world.linkCheck.counters()).toEqual({ builds: 0 });
+    } finally {
+      await writeFile(runPath, original, 'utf8');
+    }
   }, 60_000);
 });
 

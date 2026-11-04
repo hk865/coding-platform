@@ -1,26 +1,29 @@
 // W/notes/link-evidence.ts (L2): the one endpoint identity, module ownership,
-// evidence range, literal-key bound and evidence-role table. The orchestrated
-// write check appends below these pure rules.
+// evidence range, literal-key bound and evidence-role table. The write-time gate
+// below them finds symbols file by file and asks the second tier for references.
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type {
   LinkDraftV1, LinkEndRequestV1, LinkEvidenceRoleV1, LinkEvidenceStoredV1, LinkEvidenceV1,
   LinkKeyStoredV1, LinkPayloadV1, NoteAnchorV1, SemanticRelationV1, SymbolLocatorV1, SymbolRequestV1,
 } from '../../../contracts/note.js';
-import type { CaptureSummary, SourceHit } from '../../workspace/ports.js';
+import { sha256Hex } from '../../../contracts/fingerprint.js';
+import type { ReferenceCheckResultV1, ReferenceQuestionV1, SourceHit } from '../../workspace/ports.js';
 import { validateSourceQuery } from '../../workspace/ports.js';
+import type { NavItemV1 } from '../../workspace/single-file-syntax.js';
+import { TYPESCRIPT_CONFIG_FILES } from '../../workspace/typescript-source-query.js';
 import { pathOwnershipOf } from '../../../contracts/path-ownership.js';
 import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
-import { NOTE_BASIS_FILE_MAX_BYTES, NOTE_SYMBOL_HITS_MAX, type WriteNoteResult } from '../model/note-contracts.js';
-import { normalizePath, resolveSymbol, type NoteAnchorWorkspace } from './note-anchors.js';
+import { NOTE_BASIS_FILE_MAX_BYTES, analysedDigestsMatch, type WriteNoteResult } from '../model/note-contracts.js';
+import { normalizePath, pickTypeScriptSymbol, type NoteAnchorWorkspace } from './note-anchors.js';
 
 /** book :879. The catalog is the window read at write time; `catalog.activeRevision` is the stored catalogRevision. */
 export type LinkDraftCheckInput = { draft: LinkDraftV1; anchors: NoteAnchorV1[];
   catalog: Extract<CurrentCatalogWindow, { status: 'ready' }> | null };
 
-/** book :880. The workspace is note-anchors' narrow port; hitsMax is passed by writeNote as `symbolHitsMax`. */
-export type LinkDraftDeps = { workspace: NoteAnchorWorkspace; symbolHitsMax: number };
+/** book :880. The workspace is note-anchors' narrow port, the platform-identity view `writeNote` holds. */
+export type LinkDraftDeps = { workspace: NoteAnchorWorkspace };
 
 /** book :881. Success carries warnings; rejection carries no draft, which writeNote adds. */
 export type LinkDraftResult =
@@ -113,9 +116,8 @@ export function evidenceRoleProblem(relation: SemanticRelationV1,
 
 type LinkEndField = 'anchor' | 'extraAnchors[0]' | 'extraAnchors[1]' | 'link.key';
 type ReferenceField = 'to' | 'via' | 'key';
-type SymbolHit = Extract<SourceHit, { kind: 'symbol' }>;
 type SymbolCheck =
-  | { status: 'resolved'; symbol: SymbolLocatorV1; hit: SymbolHit }
+  | { status: 'resolved'; symbol: SymbolLocatorV1; item: NavItemV1 }
   | { status: 'missing' }
   | { status: 'unsupported' }
   | { status: 'unavailable' }
@@ -125,23 +127,16 @@ type TextRead =
   | { status: 'missing' }
   | { status: 'forbidden' }
   | { status: 'unavailable' };
-type EvidenceContent =
-  | { status: 'ready'; text: string; fileDigest: string | null; worktreeUnavailable?: true }
-  | { status: 'missing' }
-  | { status: 'forbidden' }
-  | { status: 'unavailable' };
-type ReferenceRead = { ok: true; hits: SourceHit[] } | { ok: false };
 
 function workspaceRefOf(ctx: CoreCallContext): { aggregateType: 'Workspace'; projectId: string; workspaceId: string } {
   return { aggregateType: 'Workspace', projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
 }
 
-async function readText(ctx: CoreCallContext, workspace: NoteAnchorWorkspace, path: string,
-  version: { kind: 'working_tree' } | { kind: 'capture'; capture: CaptureSummary['ref'] }): Promise<TextRead> {
+async function readText(ctx: CoreCallContext, workspace: NoteAnchorWorkspace, path: string): Promise<TextRead> {
   let read: Awaited<ReturnType<NoteAnchorWorkspace['readWorkspace']>>;
   try {
     read = await workspace.readWorkspace(ctx, { workspace: workspaceRefOf(ctx), path,
-      maxBytes: NOTE_BASIS_FILE_MAX_BYTES, version });
+      maxBytes: NOTE_BASIS_FILE_MAX_BYTES, version: { kind: 'working_tree' } });
   } catch {
     return { status: 'unavailable' };
   }
@@ -235,6 +230,12 @@ export function referenceFieldsOf(relation: SemanticRelationV1, role: LinkEviden
   }
 }
 
+/** The definitions one evidence of this role must reference: L3a's fields, and the symbol key when the relation names one. */
+export function partFieldsOf(relation: SemanticRelationV1, role: LinkEvidenceRoleV1,
+  keyKind: LinkKeyStoredV1['kind'] | undefined): ReferenceField[] {
+  return [...referenceFieldsOf(relation, role), ...(relationNeedsKey(relation) && keyKind === 'symbol' ? ['key' as const] : [])];
+}
+
 /** Some line of the scope contains the literal (a trailing CR is not part of the line). */
 export function literalInScope(text: string, literal: string, scope: EvidenceScopeV1): boolean {
   const lines = text.split('\n');
@@ -247,122 +248,57 @@ export function literalInScope(text: string, literal: string, scope: EvidenceSco
   return false;
 }
 
-function referenceInScope(hit: SourceHit, evidencePath: string, scope: EvidenceScopeV1,
-  definition: SymbolHit): boolean {
-  if (hit.kind !== 'location') return false;
-  const location = hit.location;
-  if (normalizePath(location.path) !== evidencePath) return false;
-  const line = location.start.line;
-  if (scope.kind === 'ranges' && !scope.ranges.some(range => line >= range.startLine && line <= range.endLine)) return false;
-  // The definition's own position never counts as a reference (book :330–334).
-  return !(normalizePath(definition.location.path) === evidencePath
-    && line === definition.location.start.line && location.start.column === definition.location.start.column);
+/** Resolve one end/key/evidence request in its TS/JS file, from the write's one read of that file. */
+async function checkSymbol(path: string, request: SymbolRequestV1,
+  readOnce: (path: string) => Promise<TextRead>): Promise<SymbolCheck> {
+  // The extension decides language support before any read failure, so
+  // a known `language_unsupported` is never masked by IO.
+  if (languageOfPath(path) !== 'typescript') return { status: 'unsupported' };
+  const read = await readOnce(path);
+  // A file the working tree does not have is no hit. A forbidden file only cannot be checked
+  // here: an evidence file's own content read refuses the write (M1).
+  if (read.status === 'missing') return { status: 'missing' };
+  if (read.status !== 'ready') return { status: 'unavailable' };
+  const picked = pickTypeScriptSymbol(path, request, read.text);
+  return picked.status === 'unresolved' ? { status: 'missing' } : picked;
 }
 
-async function openLinkCapture(ctx: CoreCallContext,
-  workspace: NoteAnchorWorkspace): Promise<CaptureSummary | null> {
-  if (workspace.capture === undefined) return null;
+/** The link's one second-tier call, one group; an absent analyzer, a throw or a failed call answers nothing. */
+async function referenceCheckOf(ctx: CoreCallContext, workspace: NoteAnchorWorkspace,
+  questions: ReferenceQuestionV1[]): Promise<ReferenceCheckResultV1 | null> {
+  if (workspace.verify === undefined) return null;
   try {
-    const captured = await workspace.capture(ctx, { provider: 'typescript' });
-    return captured.status === 'ready' ? captured.value : null;
+    const checked = await workspace.verify(ctx, { workspace: workspaceRefOf(ctx), priority: 'write', groups: [questions] });
+    return checked.status === 'ready' ? checked.value : null;
   } catch {
     return null;
   }
 }
 
-/** Resolve one end/key/evidence request with the link's one capture (never a second one). */
-async function checkSymbol(ctx: CoreCallContext, path: string, request: SymbolRequestV1,
-  workspace: NoteAnchorWorkspace, hitsMax: number, capture: CaptureSummary | null): Promise<SymbolCheck> {
-  // The extension decides language support before any capture/read failure, so
-  // a known `language_unsupported` is never masked by IO.
-  if (languageOfPath(path) !== 'typescript') return { status: 'unsupported' };
-  if (capture === null) return { status: 'unavailable' };
-  const resolution = await resolveSymbol(ctx, path, request, workspace, hitsMax, capture);
-  switch (resolution.status) {
-    case 'resolved': return resolution;
-    case 'ambiguous': return resolution;
-    case 'unresolved': return { status: 'missing' };
-    case 'rejected': return { status: 'unavailable' };
-  }
-}
-
-/** One `references` query per definition, paged to the symbol-hit cap (book :330–340). */
-async function referenceHits(ctx: CoreCallContext, workspace: NoteAnchorWorkspace, capture: CaptureSummary,
-  definition: SymbolHit): Promise<ReferenceRead> {
-  if (workspace.querySource === undefined) return { ok: false };
-  const hits: SourceHit[] = [];
-  let cursor: string | null = null;
-  while (hits.length < NOTE_SYMBOL_HITS_MAX) {
-    let page: Awaited<ReturnType<NonNullable<NoteAnchorWorkspace['querySource']>>>;
-    try {
-      page = await workspace.querySource(ctx, { capture: capture.ref,
-        query: { kind: 'references', path: normalizePath(definition.location.path),
-          line: definition.location.start.line, column: definition.location.start.column },
-        cursor, limit: Math.min(NOTE_SYMBOL_HITS_MAX - hits.length, 200) });
-    } catch {
-      return { ok: false };
-    }
-    if (page.status !== 'ready') return { ok: false };
-    hits.push(...page.value.items);
-    cursor = page.value.nextCursor;
-    if (cursor === null) break;
-  }
-  return cursor === null ? { ok: true, hits } : { ok: false };
-}
-
 /**
- * Read one evidence file. A TS/JS file with a capture comes from that capture
- * and is compared with the working tree: the `raw_bytes` digest is stored only
- * when the decoded texts agree; a working tree that cannot be read keeps the
- * captured text and stores `null` (C1/C2), and a file the working tree does not
- * have is not found (the spec's workspace table). Other languages and the
- * no-capture case read the working tree.
+ * The configuration stored when the second tier gave none: the reference check's own rule, the
+ * first root file of `TYPESCRIPT_CONFIG_FILES` the working tree has, with the sha256 of its
+ * decoded text as the second tier reports it. A file that exists but cannot be read keeps its
+ * path without a digest and ends the search.
  */
-async function loadEvidenceContent(ctx: CoreCallContext, workspace: NoteAnchorWorkspace, path: string,
-  capture: CaptureSummary | null): Promise<EvidenceContent> {
-  if (capture !== null) {
-    const captured = await readText(ctx, workspace, path, { kind: 'capture', capture: capture.ref });
-    if (captured.status === 'forbidden') return { status: 'forbidden' };
-    const worktree = await readText(ctx, workspace, path, { kind: 'working_tree' });
-    if (worktree.status === 'forbidden') return { status: 'forbidden' };
-    // A file the working tree does not have is not found, whatever the capture
-    // read says; a capture without the file or one that cannot be read is not
-    // checked this time (the spec's workspace table).
-    if (worktree.status === 'missing') return { status: 'missing' };
-    if (captured.status !== 'ready') return { status: 'unavailable' };
-    if (worktree.status === 'ready') {
-      if (captured.text !== worktree.text) return { status: 'unavailable' };
-      return { status: 'ready', text: captured.text, fileDigest: worktree.digest };
-    }
-    // The capture has the file but the working tree cannot be read: keep the
-    // captured text for the checks, store no digest and let the read retry.
-    // The caller records the failure as analyzer_unavailable (book :345).
-    return { status: 'ready', text: captured.text, fileDigest: null, worktreeUnavailable: true };
+async function workingTreeConfigOf(readOnce: (path: string) => Promise<TextRead>):
+Promise<LinkPayloadV1['analysisConfig']> {
+  for (const path of TYPESCRIPT_CONFIG_FILES) {
+    const read = await readOnce(path);
+    if (read.status === 'missing') continue;
+    return { path, digest: read.status === 'ready' ? sha256Hex(read.text) : null };
   }
-  const worktree = await readText(ctx, workspace, path, { kind: 'working_tree' });
-  if (worktree.status === 'forbidden') return { status: 'forbidden' };
-  if (worktree.status === 'missing') return { status: 'missing' };
-  if (worktree.status !== 'ready') return { status: 'unavailable' };
-  return { status: 'ready', text: worktree.text, fileDigest: worktree.digest };
-}
-
-/** The capture's own config record; no capture is opened just to find it (book :360–363). */
-async function analysisConfigOf(ctx: CoreCallContext, workspace: NoteAnchorWorkspace,
-  capture: CaptureSummary | null): Promise<{ path: string | null; digest: string | null }> {
-  if (capture === null) return { path: null, digest: null };
-  const path = capture.coverage.projectConfiguration;
-  if (path === null) return { path: null, digest: null };
-  const read = await readText(ctx, workspace, path, { kind: 'capture', capture: capture.ref });
-  return { path, digest: read.status === 'ready' ? read.digest : null };
+  return { path: null, digest: null };
 }
 
 /**
  * L3b's one write-time evidence pass. Shape is already judged by
  * `writeInputProblem`; this function computes containment without a lookup,
  * resolves the ends and the key by field order and the evidence requests by
- * index in one capture, then applies the result table in order:
- * ends/key → `evidence_outside_end` → evidence ambiguity → `evidence_missing`
- * → accept (`verified` or `unverifiable` plus warnings).
+ * index, each in its single TS/JS file (one working-tree read per path), asks
+ * the second tier once for every reference, then applies the result table in
+ * order: ends/key → `evidence_outside_end` → evidence ambiguity →
+ * `evidence_missing` → accept (`verified` or `unverifiable` plus warnings).
  */
 export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheckInput,
   deps: LinkDraftDeps): Promise<LinkDraftResult> {
@@ -376,29 +312,28 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     to: draft.extraAnchors[0] as LinkEndRequestV1,
     via: (draft.extraAnchors[1] ?? null) as LinkEndRequestV1 | null,
   };
+  // One working-tree read per path for the whole write: the ends, the key, the evidence, the
+  // digests compared with the second tier's and the configuration all see the same bytes.
+  const reads = new Map<string, Promise<TextRead>>();
+  const readFileOnce = (path: string): Promise<TextRead> => {
+    let read = reads.get(path);
+    if (read === undefined) {
+      read = readText(ctx, workspace, path);
+      reads.set(path, read);
+    }
+    return read;
+  };
 
-  // 1. Containment first: no lookup, no capture (book :318–325). Its refusal is
+  // 1. Containment first: no lookup, no read (book :318–325). Its refusal is
   // returned only after the ends/key row, which the table puts before it.
   const outside: number[] = [];
   draft.link.evidence.forEach((evidence, index) => {
     if (evidenceOutsideEnd(evidence.role, normalizePath(evidence.at.path), ends, catalog)) outside.push(index);
   });
 
-  const endHasSymbol = (end: LinkEndRequestV1 | null): boolean =>
-    end !== null && end.kind === 'file' && end.symbolRequest !== undefined;
   const needsKey = relationNeedsKey(relation);
-  const needsCapture = endHasSymbol(ends.from) || endHasSymbol(ends.to) || endHasSymbol(ends.via)
-    || rawKey?.kind === 'symbol'
-    || draft.link.evidence.some(evidence => evidence.at.symbolRequest !== undefined);
-
-  let capture: CaptureSummary | null = null;
   let analyzerUnavailable = false;
-  if (needsCapture) {
-    capture = await openLinkCapture(ctx, workspace);
-    if (capture === null) analyzerUnavailable = true;
-  }
 
-  try {
   // The resolved anchors replace the anchor step's plain file anchors.
   const anchors: NoteAnchorV1[] = input.anchors.map(anchor => ({ ...anchor }));
   const setSymbol = (slot: number, symbol: SymbolLocatorV1): void => {
@@ -413,7 +348,9 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     }
   };
 
-  const definitionHits = new Map<ReferenceField, SymbolHit>();
+  // The definitions the evidence must reference, as the second tier's question names X:
+  // the file, the resolved name and its name line (which picks among same-name items).
+  const definitions = new Map<ReferenceField, ReferenceQuestionV1['definition']>();
   const warnings: ('symbol_unresolved' | 'evidence_unverifiable')[] = [];
   let symbolUnresolved = false;
   let keyNotLiteral = false;
@@ -427,7 +364,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     required: boolean, referenceField: ReferenceField | null): Promise<LinkDraftResult | null> => {
     if (end === null || end.kind !== 'file' || end.symbolRequest === undefined) return null;
     const path = normalizePath(end.path);
-    const check = await checkSymbol(ctx, path, end.symbolRequest, workspace, deps.symbolHitsMax, capture);
+    const check = await checkSymbol(path, end.symbolRequest, readFileOnce);
     if (check.status === 'ambiguous') {
       return { status: 'rejected', code: 'invalid', reason: `symbol_ambiguous: ${field}`,
         symbolCandidates: check.candidates };
@@ -448,7 +385,9 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
       return null;
     }
     setSymbol(slot, check.symbol);
-    if (referenceField !== null) definitionHits.set(referenceField, check.hit);
+    if (referenceField !== null) {
+      definitions.set(referenceField, { path, name: check.symbol.qualifiedName, line: check.symbol.range.startLine });
+    }
     return null;
   };
 
@@ -466,7 +405,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
       storedKey = { kind: 'literal', text: rawKey.text };
     } else {
       const path = normalizePath(rawKey.anchor.path);
-      const check = await checkSymbol(ctx, path, rawKey.anchor.symbolRequest, workspace, deps.symbolHitsMax, capture);
+      const check = await checkSymbol(path, rawKey.anchor.symbolRequest, readFileOnce);
       if (check.status === 'ambiguous') {
         return { status: 'rejected', code: 'invalid', reason: 'symbol_ambiguous: link.key',
           symbolCandidates: check.candidates };
@@ -482,7 +421,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
         storedKey = { kind: 'symbol', path, symbolRequest: rawKey.anchor.symbolRequest };
       } else {
         storedKey = { kind: 'symbol', path, symbolRequest: rawKey.anchor.symbolRequest, symbol: check.symbol };
-        definitionHits.set('key', check.hit);
+        definitions.set('key', { path, name: check.symbol.qualifiedName, line: check.symbol.range.startLine });
       }
     }
   }
@@ -497,30 +436,24 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
   }
 
   // 4. Evidence symbolRequests by index; the first ambiguity is row 5.
-  const evidenceSymbols: (SymbolLocatorV1 | undefined)[] = [];
-  const evidenceHits: (SymbolHit | undefined)[] = [];
+  const evidenceSymbols: (Extract<SymbolCheck, { status: 'resolved' }> | undefined)[] = [];
   const evidenceSymbolMissing = new Set<number>();
-  // An evidence selector whose query/capture is unavailable is unverifiable as
-  // a whole: it must not fall back to `whole_file` or be scanned below.
-  const evidenceUnchecked = new Set<number>();
   let ambiguousEvidence: { index: number; candidates: { name: string; range: { startLine: number; endLine: number } }[] } | null = null;
   for (const [index, evidence] of draft.link.evidence.entries()) {
     const request = evidence.at.symbolRequest;
-    if (request === undefined) { evidenceSymbols.push(undefined); evidenceHits.push(undefined); continue; }
-    const check = await checkSymbol(ctx, normalizePath(evidence.at.path), request, workspace,
-      deps.symbolHitsMax, capture);
+    if (request === undefined) { evidenceSymbols.push(undefined); continue; }
+    const check = await checkSymbol(normalizePath(evidence.at.path), request, readFileOnce);
     if (check.status === 'ambiguous') { ambiguousEvidence = { index, candidates: check.candidates }; break; }
-    if (check.status === 'missing') { evidenceSymbolMissing.add(index); evidenceSymbols.push(undefined); evidenceHits.push(undefined); continue; }
+    if (check.status === 'missing') { evidenceSymbolMissing.add(index); evidenceSymbols.push(undefined); continue; }
     if (check.status === 'unsupported') {
       languageUnsupported = true;
-      evidenceSymbols.push(undefined); evidenceHits.push(undefined); continue;
+      evidenceSymbols.push(undefined); continue;
     }
     if (check.status === 'unavailable') {
       analyzerUnavailable = true;
-      evidenceUnchecked.add(index);
-      evidenceSymbols.push(undefined); evidenceHits.push(undefined); continue;
+      evidenceSymbols.push(undefined); continue;
     }
-    evidenceSymbols.push(check.symbol); evidenceHits.push(check.hit);
+    evidenceSymbols.push(check);
   }
   if (ambiguousEvidence !== null) {
     return { status: 'rejected', code: 'invalid',
@@ -528,66 +461,74 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
       symbolCandidates: ambiguousEvidence.candidates };
   }
 
-  // 5. Reads, literal keys and references. Missing indexes are collected and
-  // returned only after every checkable item has had its say (row 6).
+  // 5. Reads, literal keys and the reference questions. Missing indexes are
+  // collected and returned only after every checkable item has had its say (row 6).
   const missing = new Set<number>(evidenceSymbolMissing);
   const fileDigests: (string | null)[] = draft.link.evidence.map(() => null);
-  const referenceCache = new Map<ReferenceField, ReferenceRead>();
-
-  const referencesFor = async (field: ReferenceField, definition: SymbolHit): Promise<SourceHit[] | null> => {
-    const cached = referenceCache.get(field);
-    if (cached !== undefined) return cached.ok ? cached.hits : null;
-    if (capture === null) return null;
-    const queried = await referenceHits(ctx, workspace, capture, definition);
-    referenceCache.set(field, queried);
-    return queried.ok ? queried.hits : null;
-  };
+  // Each question's evidence index and the raw-byte digests this write read for its two files.
+  const questions: ReferenceQuestionV1[] = [];
+  const asked: { index: number; read: Map<string, string> }[] = [];
 
   for (const [index, evidence] of draft.link.evidence.entries()) {
     if (evidenceSymbolMissing.has(index)) continue;
     const path = normalizePath(evidence.at.path);
     const isTs = languageOfPath(path) === 'typescript';
+    // The references of this role (L3a) and, for a symbol key, the key's definition (8E :434).
+    const fields = partFieldsOf(relation, evidence.role, rawKey?.kind);
     // A non-TS evidence that needs a symbol/reference check is unsupported
     // before any read or definition lookup, so IO cannot mask the language (book :333-334).
-    if (!isTs && (referenceFieldsOf(relation, evidence.role).length > 0
-      || (needsKey && rawKey?.kind === 'symbol'))) languageUnsupported = true;
-    const content = await loadEvidenceContent(ctx, workspace, path, isTs ? capture : null);
+    if (!isTs && fields.length > 0) languageUnsupported = true;
+    // The same read as its selector's: an unreadable selector file is the same failure here,
+    // so a selector that could not be checked never falls back to `whole_file`.
+    const content = await readFileOnce(path);
     // A forbidden workspace read still refuses the write (book :987).
     if (content.status === 'forbidden') { forbiddenIndex ??= index; continue; }
-    // A file the working tree does not have is a definite miss even when its
-    // selector could not be checked (row 6 collects every definite miss).
+    // A file the working tree does not have is a definite miss (row 6 collects every definite miss).
     if (content.status === 'missing') { missing.add(index); continue; }
-    if (evidenceUnchecked.has(index)) continue;
     if (content.status === 'unavailable') { analyzerUnavailable = true; continue; }
-    if (content.worktreeUnavailable === true) analyzerUnavailable = true;
-    fileDigests[index] = content.fileDigest;
-    const scope = evidenceScopeOf(evidence.at, evidenceHits[index]);
+    fileDigests[index] = content.digest;
+    const resolved = evidenceSymbols[index];
+    const scope = evidenceScopeOf(evidence.at, resolved === undefined ? undefined
+      : { kind: 'symbol', name: resolved.item.name, symbolKind: resolved.item.kind,
+        location: { path, digest: resolved.symbol.fileDigest, start: resolved.item.start, end: resolved.item.end },
+        declarationRanges: resolved.item.declarationRanges });
     if (evidence.at.range !== undefined && evidence.at.range.endLine > content.text.split('\n').length) {
       missing.add(index);
       continue;
     }
 
-    if (needsKey && rawKey !== null) {
-      if (rawKey.kind === 'literal') {
-        if (!literalInScope(content.text, rawKey.text, scope)) missing.add(index);
-      } else if (isTs) {
-        const definition = definitionHits.get('key');
-        if (definition === undefined) analyzerUnavailable = true;
-        else {
-          const hits = await referencesFor('key', definition);
-          if (hits === null) analyzerUnavailable = true;
-          else if (!hits.some(hit => referenceInScope(hit, path, scope, definition))) missing.add(index);
-        }
-      }
-    }
+    if (needsKey && rawKey?.kind === 'literal' && !literalInScope(content.text, rawKey.text, scope)) missing.add(index);
 
     if (!isTs) continue;
-    for (const field of referenceFieldsOf(relation, evidence.role)) {
-      const definition = definitionHits.get(field);
+    for (const field of fields) {
+      const definition = definitions.get(field);
       if (definition === undefined) { analyzerUnavailable = true; continue; }
-      const hits = await referencesFor(field, definition);
-      if (hits === null) { analyzerUnavailable = true; continue; }
-      if (!hits.some(hit => referenceInScope(hit, path, scope, definition))) missing.add(index);
+      const read = new Map([[path, content.digest]]);
+      const definitionRead = await readFileOnce(definition.path);
+      if (definitionRead.status === 'ready') read.set(definition.path, definitionRead.digest);
+      questions.push({ definition, evidence: { path, ranges: scope.kind === 'whole_file' ? null : scope.ranges } });
+      asked.push({ index, read });
+    }
+  }
+
+  // The references go to the second tier once, unless there is no question or a forbidden
+  // evidence read already refuses the write. A part whose files the second tier analysed with
+  // other bytes than this write read (8E C2's race) is not judged, whatever it answered.
+  let analysisConfig: LinkPayloadV1['analysisConfig'] = { path: null, digest: null };
+  if (questions.length > 0 && forbiddenIndex === null) {
+    const checked = await referenceCheckOf(ctx, workspace, questions);
+    if (checked === null) {
+      analyzerUnavailable = true;
+      analysisConfig = await workingTreeConfigOf(readFileOnce);
+    } else {
+      if (checked.config !== null) analysisConfig = { path: checked.config.path, digest: checked.config.digest };
+      asked.forEach((entry, position) => {
+        const answer = checked.answers[0]![position]!;
+        if (!analysedDigestsMatch(checked.analysed, entry.read)) analyzerUnavailable = true;
+        else if (answer.status === 'not_found') missing.add(entry.index);
+        // `unverifiable` (not in the project, project references, undecided) and `failed`.
+        else if (answer.status !== 'found') analyzerUnavailable = true;
+      });
     }
   }
 
@@ -613,7 +554,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
   if (verification.status === 'unverifiable') warnings.push('evidence_unverifiable');
 
   const evidence: LinkEvidenceStoredV1[] = draft.link.evidence.map((entry, index) => {
-    const symbol = evidenceSymbols[index];
+    const symbol = evidenceSymbols[index]?.symbol;
     return {
       role: entry.role,
       at: {
@@ -632,15 +573,8 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     ends: { from: ends.from, to: ends.to, via: ends.via },
     key: storedKey,
     evidence,
-    analysisConfig: await analysisConfigOf(ctx, workspace, capture),
+    analysisConfig,
     verification,
   };
   return { status: 'ok', anchors, link, warnings };
-  } finally {
-    // Best-effort release: the link's one capture is owned here, never by the
-    // shared resolver; a failed release never changes the result.
-    if (capture !== null) {
-      try { await workspace.releaseCapture?.(ctx, capture.ref); } catch { /* best-effort */ }
-    }
-  }
 }

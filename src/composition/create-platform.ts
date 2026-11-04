@@ -549,7 +549,7 @@ export type TargetPlatformOptions = {
    * limits of the production `platform.notes` holder.
    */
   noteLimits?: {
-    anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; basisFileMaxBytes?: number;
+    anchorQuota?: number; goalQuota?: number; basisFileMaxBytes?: number;
     readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
     textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
     anchorLinkQuota?: number; goalLinkQuota?: number; projectFlowQuota?: number;

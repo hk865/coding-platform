@@ -51,7 +51,7 @@ import type { NativeLookupV1 } from '../../workspace/native-single-file.js';
 import { fileSyntaxOf, namesInRanges, syntaxTreeOf, type FileSyntaxV1, type LineRange, type NameUseV1, type NavItemV1,
   type SyntaxTreeV1 } from '../../workspace/single-file-syntax.js';
 import { languageOfPath } from '../../workspace/architecture-language-provider.js';
-import { evidenceScopeOf, literalInScope, referenceFieldsOf, relationNeedsKey, type EvidenceScopeV1 } from '../notes/link-evidence.js';
+import { evidenceScopeOf, literalInScope, partFieldsOf, referenceFieldsOf, relationNeedsKey, type EvidenceScopeV1 } from '../notes/link-evidence.js';
 import {
   createNoteHeadDerivations, mapStoreFailure, newHeadCache,
   type HeadCache, type NoteHeadDerivations, type NoteHeadLike,
@@ -72,7 +72,6 @@ export type NoteCheckLimits = {
   readFilesMax?: number;
   readFactsMax?: number;
   symbolRecheckMax?: number;
-  symbolHitsMax?: number;
   basisFileMaxBytes?: number;
   anchorQuota?: number;
   goalQuota?: number;
@@ -312,11 +311,6 @@ const recordableAnswer = (answer: ReferenceAnswerV1): boolean => answer.status =
 const linkReadCurrent = (verification: LinkVerificationV1 | undefined): boolean =>
   verification === undefined || (verification.status !== 'broken' && verification.status !== 'unchecked');
 
-/** The definitions an evidence of this role must reference: L3a's fields, and the symbol key when the relation names one. */
-function partFieldsOf(link: LinkPayloadV1, evidence: LinkEvidenceStoredV1): ReferenceField[] {
-  return [...referenceFieldsOf(link.relation, evidence.role),
-    ...(relationNeedsKey(link.relation) && link.key?.kind === 'symbol' ? ['key' as const] : [])];
-}
 
 /** The definition behind a reference field: its file, its stored name and name line, and its locator when written. */
 function definitionOf(link: LinkPayloadV1, extraAnchors: readonly NoteAnchorV1[], field: ReferenceField): Definition | null {
@@ -505,7 +499,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     // and the configuration a kept conclusion was decided under.
     for (const evidence of link.evidence) {
       add(evidence.at.path, true);
-      for (const field of partFieldsOf(link, evidence)) {
+      for (const field of partFieldsOf(link.relation, evidence.role, link.key?.kind)) {
         const definition = definitionOf(link, body.extraAnchors, field);
         if (definition !== null) add(definition.path, true);
       }
@@ -835,7 +829,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         if (needsKey && key?.kind === 'literal' && !literalInScope(read.content!, key.text, scoped)) own('broken');
       }
       if (needsKey && key === null) own('key_not_literal');
-      for (const field of partFieldsOf(link, evidence)) {
+      for (const field of partFieldsOf(link.relation, evidence.role, link.key?.kind)) {
         const definition = definitionOf(link, extraAnchors, field);
         if (definition !== null) parts.push({ evidence: index, ...referencePart(definition, path, read, same, scopeOf) });
       }

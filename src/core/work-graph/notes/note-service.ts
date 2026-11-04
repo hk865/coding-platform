@@ -59,7 +59,7 @@ import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import {
   NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILES_MAX, NOTE_BASIS_FILE_MAX_BYTES, NOTE_BODY_MAX_BYTES,
   NOTE_EXISTING_TOPICS_MAX, NOTE_EXTRA_ANCHORS_MAX, NOTE_FACTS_MAX, NOTE_GOAL_LINK_QUOTA, NOTE_GOAL_QUOTA,
-  NOTE_LINK_EVIDENCE_MAX, NOTE_PROJECT_FLOW_QUOTA, NOTE_SYMBOL_HITS_MAX, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
+  NOTE_LINK_EVIDENCE_MAX, NOTE_PROJECT_FLOW_QUOTA, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
   UNDERSTANDING_BODY_MAX_BYTES,
 } from '../model/note-contracts.js';
 import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
@@ -123,8 +123,6 @@ export type NoteServiceDependencies = {
   goalLinkQuota?: number;
   /** F1's flow-only project quota (100): a soft quota that never refuses a write. */
   projectFlowQuota?: number;
-  /** The injectable L14 symbol-scan cap; production uses `NOTE_SYMBOL_HITS_MAX`. */
-  symbolHitsMax?: number;
   basisFileMaxBytes?: number;
 };
 
@@ -763,7 +761,6 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const anchorLinkQuota = deps.anchorLinkQuota ?? NOTE_ANCHOR_LINK_QUOTA;
   const goalLinkQuota = deps.goalLinkQuota ?? NOTE_GOAL_LINK_QUOTA;
   const projectFlowQuota = deps.projectFlowQuota ?? NOTE_PROJECT_FLOW_QUOTA;
-  const symbolHitsMax = deps.symbolHitsMax ?? NOTE_SYMBOL_HITS_MAX;
   const basisFileMaxBytes = Math.min(deps.basisFileMaxBytes ?? NOTE_BASIS_FILE_MAX_BYTES, deps.workspaceMaxFileBytes);
   // The anchor and basis-file reads are the platform's checks (`noteCheckWorkspace`).
   const checkedWorkspace = noteCheckWorkspace(deps.workspace);
@@ -1519,7 +1516,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // duplicates by endpoint identity and stores plain file anchors; its ends,
     // key and evidence are resolved once by `checkLinkDraft` below.
     const anchorRead = await resolveNoteAnchors(ctx, { main: draft.anchor, extraAnchors: draft.extraAnchors,
-      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef, symbolHitsMax,
+      goalId: storedGoalId, facts: draft.facts, boundPlanRef: caller.planRef,
       ...(draft.kind === 'link' ? { duplicateIdentity: 'end' as const, resolveSymbols: false } : {}) },
     anchorFactsOf(call));
     if (anchorRead.status === 'rejected') {
@@ -1589,9 +1586,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // L14: a symbolRequest that resolved to no unique locator keeps the
     // plain file anchor and reports the success warning exactly once.
     if (resolved.symbolUnresolved) warnings.push('symbol_unresolved');
-    // L3b: a link's ends, symbol key and evidence resolve in ONE capture and the
-    // write-time verification is fixed here. A refusal writes nothing; the
-    // resolved anchors replace the anchor step's plain file anchors.
+    // L3b: a link's ends, symbol key and evidence symbols are found in their single files, its
+    // references go to the second tier once, and the write-time verification is fixed here. A
+    // refusal writes nothing; the resolved anchors replace the anchor step's plain file anchors.
     let linkAnchors: NoteAnchorV1[] = resolved.anchors;
     let linkPayload: LinkPayloadV1 | undefined;
     if (draft.kind === 'link') {
@@ -1599,7 +1596,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       if (window.status === 'rejected') return rejectedInput(input, 'unavailable', window.reason);
       const checked = await checkLinkDraft(ctx, { draft,
         anchors: resolved.anchors, catalog: window.status === 'ready' ? window : null },
-      { workspace: checkedWorkspace, symbolHitsMax });
+      { workspace: checkedWorkspace });
       if (checked.status !== 'ok') return { ...checked, draft: input };
       linkAnchors = checked.anchors;
       linkPayload = checked.link;

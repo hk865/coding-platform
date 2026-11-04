@@ -27,7 +27,6 @@ export const UNDERSTANDING_BODY_MAX_BYTES = 6144;
 export const NOTE_FACTS_MAX = 16;
 export const NOTE_BASIS_FILES_MAX = 32;
 export const NOTE_BASIS_FILE_MAX_BYTES = 1024 * 1024;
-export const NOTE_SYMBOL_HITS_MAX = 200;
 export const NOTE_EXTRA_ANCHORS_MAX = 4;
 export const NOTE_ANCHOR_QUOTA = 5;
 export const NOTE_GOAL_QUOTA = 200;

@@ -13,7 +13,7 @@
 `note-read-model.ts` — 注记读端口：按 id/锚点读取、六种记忆读、`find`、记忆材料（无 Goal 时只读项目理解与 norms）；并转出基础读法与唯一的记忆游标 helper（`encodeMemoryCursor`/`parseMemoryCursor`/`callerIdentityOf`）；`NoteReadDependencies.expandFlowForHead` 是 flow 项的展开依赖，`flowCheckOf` 合成流程的 freshness/currentEligible，`readSemanticCatalog` 是语义页的唯一目录读。
 `semantic-layer-read.ts` — 语义层的读侧：`readSemanticLinks` 按 project/module/file 范围读 `link` 的三状态页，`readSemanticFlows` 读 `flow` 的三状态页并按存储的步骤 id 展开（module/file 范围先取范围里任意状态的 `link`）；两页都一次 `checkHeads`，分别映射成 `SemanticLinkV1`/`SemanticFlowV1`。
 `activate-repair.ts` — 8C 的唯一 repair 激活 owner 与纯 footprint 判定：把 staged `repair` 注记绑到 Run 轮链的有效 head，检查轮 PASS、批准与 footprint，再一次 `PreparedCommit` 提交 `staged → accepted` 与 catalog revision contribution；`readBoundRepairRound`、`footprintProblem`、`activateRepair`、`readObservation`、`attemptRepairsForGoal` 与 `createRepairActivationService`。
-`note-anchors.ts` — 锚点 key、主题归一化、写时锚点解析（含 symbol 定位）。
+`note-anchors.ts` — 锚点 key、主题归一化、写时锚点解析（含 symbol 定位：TS/JS 在工作树单文件的导航项里找，Python/C++ 经单文件查 `lookup`，都不开捕获）。
 `note-anchor-facts.ts` — 锚点校验所需的 Goal/Plan 窗口事实读取，不经通用 Plan 服务。
 `note-related-scope.ts` — `find` 的 related 范围解析，以及纯 key 集合/相关谓词。
 `note-update-due.ts` — `updateDue` 的纯 fold，以及 Goal 锚点集合的唯一共享读取。
@@ -51,16 +51,18 @@
 | `foldInputOf` | `src/core/work-graph/notes/note-update-due.ts:48` | `updateDue` 的 baseline 规则：当前版才计，stage 无当前版时用 plan 接受时间 | 构造 `foldUpdateDue` 输入时 |
 | `foldUpdateDue` | `src/core/work-graph/notes/note-update-due.ts:57` | 纯 fold：trigger 相对 baseline，返回 `updateDue` 与 `latestTriggerCursor` | 需要更新到期判断时；不要另写规则 |
 | `stageContinuityOf` | `src/core/work-graph/notes/note-continuity.ts:18` | 纯 stage 连续性：revision 窗口内缺席即 `retired`，读不到为 `unchecked` | 注记派生字段的 stage 退役判断 |
-| `anchorKeyOf` | `src/core/work-graph/notes/note-anchors.ts:452` | 唯一 anchor key 规则；file key 只含路径、不含 symbol | 任何锚点比较/存储前 |
-| `moduleRefOf` | `src/core/work-graph/notes/note-anchors.ts:464` | 由 `projectId` 和 `moduleId` 组成 `ModuleRef` | 要 `ModuleRef` 时；不要另写构造器 |
-| `relationNeedsKey`、`referenceFieldsOf`、`literalInScope` | `src/core/work-graph/notes/link-evidence.ts:226`、`src/core/work-graph/notes/link-evidence.ts:229`、`src/core/work-graph/notes/link-evidence.ts:239` | 关系要不要 key（injects、callback 不要）；一条证据按角色要引用的定义（L3a 的表）；字面 key 在范围里逐行找得到 | 写入闸门和读时第一档共用；不要另写 |
-| `checkLinkDraft` | `src/core/work-graph/notes/link-evidence.ts:367`（`checkLinkDraft`）、`src/core/work-graph/notes/link-evidence.ts:44`（`endpointIdentityOf`）、`src/core/work-graph/notes/link-evidence.ts:58`（`moduleOfFile`）、`src/core/work-graph/notes/link-evidence.ts:73`（`evidenceScopeOf`）、`src/core/work-graph/notes/link-evidence.ts:86`（`literalKeyProblem`）、`src/core/work-graph/notes/link-evidence.ts:100`（`evidenceRoleProblem`） | 一条联系的一次捕获与一张结果表：包含判定不查找；按字段顺序解析端与符号 key、按下标解析证据 `symbolRequest`；读文件、比工作树与捕获文字、存 `raw_bytes` 摘要、扫字面 key、查需要的 `references`；成功返回解析后的锚点、`LinkPayloadV1` 与 warnings，退回带 `evidenceIndexes`/`symbolCandidates` | `writeNote` 在锚点第 1–3 类之后、依据文件之前调用；不要另写符号解析、包含、范围或摘要规则 |
-| `topicKeyOf` | `src/core/work-graph/notes/note-anchors.ts:117` | 主题归一化：NFC、空白折叠、ASCII 小写 | 主题比较/查重 |
-| `isSafeRelativePath` | `src/core/work-graph/notes/note-anchors.ts:444` | 安全的 workspace 相对路径（无 `\`、盘符、`.`/`..`） | file 锚点/路径输入 |
-| `normalizePath` | `src/core/work-graph/notes/note-anchors.ts:638` | 去掉前导 `./`；其余由 class-1 提前拒绝 | 锚点 key 归一化 |
-| `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:286` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
-| `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:299` | 一基 UTF-16 行/列切片（结束列不含） | 从捕获内容取 symbol 文本 |
-| `noteCheckWorkspace` | `src/core/work-graph/notes/note-anchors.ts:866` | 注记的工作区读口包一层：`readWorkspace`/`readWorkspaceFiles`/`capture`/`querySource`/`releaseCapture`/`verify`/`lookup` 都用 `platformCheckContext` 换成固定的内部 Host 身份（`system`/`note-workspace-check`；Host 只给自己的 principal 授权工作区读），Host 调用者不变 | 注记写入的锚点和基准文件读、注记检查的文件读、读模型的锚点存在读；写入、准入、额度、作者和非工作区读仍用调用者的上下文 |
+| `anchorKeyOf` | `src/core/work-graph/notes/note-anchors.ts:400` | 唯一 anchor key 规则；file key 只含路径、不含 symbol | 任何锚点比较/存储前 |
+| `moduleRefOf` | `src/core/work-graph/notes/note-anchors.ts:412` | 由 `projectId` 和 `moduleId` 组成 `ModuleRef` | 要 `ModuleRef` 时；不要另写构造器 |
+| `relationNeedsKey`、`referenceFieldsOf`、`partFieldsOf`、`literalInScope` | `src/core/work-graph/notes/link-evidence.ts:221`、`src/core/work-graph/notes/link-evidence.ts:224`、`src/core/work-graph/notes/link-evidence.ts:234`、`src/core/work-graph/notes/link-evidence.ts:240` | 关系要不要 key（injects、callback 不要）；一条证据按角色要引用的定义（L3a 的表）；再加上关系要 key、key 是符号时的 `'key'`（一条证据要查的全部引用）；字面 key 在范围里逐行找得到 | 写入闸门和读时第一档共用；不要另写 |
+| `checkLinkDraft` | `src/core/work-graph/notes/link-evidence.ts:303`（`checkLinkDraft`）、`src/core/work-graph/notes/link-evidence.ts:47`（`endpointIdentityOf`）、`src/core/work-graph/notes/link-evidence.ts:61`（`moduleOfFile`）、`src/core/work-graph/notes/link-evidence.ts:76`（`evidenceScopeOf`）、`src/core/work-graph/notes/link-evidence.ts:89`（`literalKeyProblem`）、`src/core/work-graph/notes/link-evidence.ts:103`（`evidenceRoleProblem`） | 一条联系的一张结果表：包含判定不查找；按字段顺序解析端与符号 key、按下标解析证据 `symbolRequest`，都在各自的 TS/JS 单文件里找（一次写每个路径只读一次工作树）；存 `raw_bytes` 摘要、扫字面 key；要引用的定义一次交第二档（`verify`，`priority: 'write'`，一组），第二档分析的文件摘要和这次读到的不同时那一部分记 `analyzer_unavailable`；`analysisConfig` 存第二档用的配置，第二档失败时按 `TYPESCRIPT_CONFIG_FILES` 在工作树找；成功返回解析后的锚点、`LinkPayloadV1` 与 warnings，退回带 `evidenceIndexes`/`symbolCandidates` | `writeNote` 在锚点第 1–3 类之后、依据文件之前调用；不要另写符号解析、包含、范围或摘要规则 |
+| `topicKeyOf` | `src/core/work-graph/notes/note-anchors.ts:119` | 主题归一化：NFC、空白折叠、ASCII 小写 | 主题比较/查重 |
+| `isSafeRelativePath` | `src/core/work-graph/notes/note-anchors.ts:392` | 安全的 workspace 相对路径（无 `\`、盘符、`.`/`..`） | file 锚点/路径输入 |
+| `normalizePath` | `src/core/work-graph/notes/note-anchors.ts:583` | 去掉前导 `./`；其余由 class-1 提前拒绝 | 锚点 key 归一化 |
+| `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:277` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
+| `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:282` | 一基 UTF-16 行/列切片（结束列不含） | 从文件文字取 symbol 名字那一段（写时定位和读时重查共用） |
+| `pickSymbol` | `src/core/work-graph/notes/note-anchors.ts:308` | 泛型：一个 `symbolRequest` 在一个文件的条目（TS 导航项或 Python/C++ 单文件查的符号）里按名字挑，带 `range` 时也比名字行；一个 → 定位（名字行、解码文字的 sha256、签名摘要）和挑中的条目原样，没有 → `unresolved`，多个 → `ambiguous`（按起始行、列排的候选） | 写时的符号定位，各语言共用；不要另写匹配 |
+| `pickTypeScriptSymbol` | `src/core/work-graph/notes/note-anchors.ts:325` | TS/JS 文件文字的 `navigationItemsOf` 交给 `pickSymbol`，成功时带回 `NavItemV1`（种类、全部声明段）；不分页、没有命中上限、不建程序 | 联系的端、符号 key、证据和一般注记的 TS 符号；不要另开捕获 |
+| `noteCheckWorkspace` | `src/core/work-graph/notes/note-anchors.ts:811` | 注记的工作区读口包一层：`readWorkspace`/`readWorkspaceFiles`/`capture`/`querySource`/`releaseCapture`/`verify`/`lookup` 都用 `platformCheckContext` 换成固定的内部 Host 身份（`system`/`note-workspace-check`；Host 只给自己的 principal 授权工作区读），Host 调用者不变 | 注记写入的锚点和基准文件读、注记检查的文件读、读模型的锚点存在读；写入、准入、额度、作者和非工作区读仍用调用者的上下文 |
 | `createNoteHeadDerivations` | `src/core/work-graph/notes/note-read-model.ts:300` | 从已存 head 派生 `conflicting`/`overQuota` 等注记字段 | 注记读/检查；不要另算 |
 | `newHeadCache` | `src/core/work-graph/notes/note-read-model.ts:264` | 一次读内的 anchors/goals 缓存 | 与 `createNoteHeadDerivations` 配套 |
 | `selectRelatedFiles` | `src/core/work-graph/notes/note-related-scope.ts:102` | 纯：从 Run 事实选 related 文件，definite 先于 possible、去重、截断 | `find` 的 related 文件段 |

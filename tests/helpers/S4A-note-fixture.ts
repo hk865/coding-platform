@@ -42,12 +42,12 @@ export type S4ANoteFixtureKind = 'memory' | 'sqlite';
 /**
  * Slice 4B round 2 (R16): the injectable note limits the composition root
  * forwards. This is the one additive change to this 4A fixture: the existing
- * top-level `anchorQuota`/`goalQuota`/`symbolHitsMax` options keep working, and
+ * top-level `anchorQuota`/`goalQuota` options keep working, and
  * a caller may also pass any of these through `noteLimits` (the read-model
  * limits reach `platform.notes`' own read model).
  */
 export type S4ANoteLimits = {
-  anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; basisFileMaxBytes?: number;
+  anchorQuota?: number; goalQuota?: number; basisFileMaxBytes?: number;
   readFilesMax?: number; readFactsMax?: number; symbolRecheckMax?: number;
   textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
   anchorLinkQuota?: number; goalLinkQuota?: number; projectFlowQuota?: number;
@@ -100,7 +100,7 @@ function bindingFor(role: S4ARole, id: string): RoleBindingRefV1 {
 }
 
 export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
-  options: { anchorQuota?: number; goalQuota?: number; symbolHitsMax?: number; noteLimits?: S4ANoteLimits;
+  options: { anchorQuota?: number; goalQuota?: number; noteLimits?: S4ANoteLimits;
     /** Slice 4C-2 item 2: the trusted Host runtime binding, so a test can drive
      * the public `prepareExecution`/`startRun` over a real claim in this fixture. */
     runtime?: RuntimeHostBindings;
@@ -145,7 +145,6 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     ...(options.noteLimits ?? {}),
     ...(options.anchorQuota === undefined ? {} : { anchorQuota: options.anchorQuota }),
     ...(options.goalQuota === undefined ? {} : { goalQuota: options.goalQuota }),
-    ...(options.symbolHitsMax === undefined ? {} : { symbolHitsMax: options.symbolHitsMax }),
   };
   const platform = await createTargetPlatform({
     storage: kind === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory: join(directory, 'storage') },

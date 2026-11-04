@@ -74,8 +74,7 @@ export async function fileDigestOf(path: string): Promise<string> {
 
 export async function createS4BNoteCheckFixture(kind: S4ANoteFixtureKind = 'memory',
   options: { anchorQuota?: number; goalQuota?: number; check?: NoteCheckLimits;
-    textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number;
-    symbolHitsMax?: number } = {}): Promise<S4BNoteCheckFixture> {
+    textSearchCandidateMax?: number; textSearchMaxTerms?: number; resultMaxBytes?: number } = {}): Promise<S4BNoteCheckFixture> {
   let faultNeedle: string | null = null;
   let architectureFault = false;
   let workspaceFault = false;
@@ -137,7 +136,6 @@ export async function createS4BNoteCheckFixture(kind: S4ANoteFixtureKind = 'memo
   const noteLimits: S4ANoteLimits = {
     ...(options.anchorQuota === undefined ? {} : { anchorQuota: options.anchorQuota }),
     ...(options.goalQuota === undefined ? {} : { goalQuota: options.goalQuota }),
-    ...(options.symbolHitsMax === undefined ? {} : { symbolHitsMax: options.symbolHitsMax }),
     ...(options.check ?? {}),
     ...(options.textSearchCandidateMax === undefined ? {} : { textSearchCandidateMax: options.textSearchCandidateMax }),
     ...(options.textSearchMaxTerms === undefined ? {} : { textSearchMaxTerms: options.textSearchMaxTerms }),
