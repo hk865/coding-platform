@@ -39,7 +39,7 @@ describe('E35-3 reason words', () => {
     ['3.6 unknown_call_review', stop('unknown_call_review'), '结果未知的调用待核对'],
     ['3.6 interrupted_pending_resume', stop('interrupted_pending_resume'), '被中断，等你继续'],
     ['3.6 an unknown stop falls back to the phase cause', { ...cause('check_failed'), ...stop('not_reworkable', { cause: 'e35_new' }) }, '检查未通过'],
-    ['3.7 claimable', { effectivePhase: 'ready' }, '等成员领取'],
+    ['3.7 claimable', { effectivePhase: 'ready', eligibility: { eligible: true, reasons: [] } }, '等成员领取'],
     ['3.8 a deferred Task says why it was deferred', { disposition: 'deferred', dispositionChange: { traced: false, reason: { text: '先做别的' } } }, '先做别的'],
     ['3.14 a deferred Task that ran keeps its phase and reason', { disposition: 'deferred', ...cause('check_failed'),
       dispositionChange: { traced: true, reason: { text: '先做别的' } } }, '失败，检查未通过'],

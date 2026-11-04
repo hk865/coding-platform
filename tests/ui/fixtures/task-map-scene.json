@@ -281,7 +281,7 @@
             "failureClass": "执行失败",
             "reason": "读取路径写错，回放测试 2 项未通过",
             "automatic": false,
-            "requestedAt": "2026-10-03T10:00:00+08:00"
+            "requestedAt": "2026-10-03T09:34:00+08:00"
           }
         ],
         "requeueAutoCount": 0,
@@ -429,7 +429,7 @@
             "failureClass": "检查未通过",
             "reason": "lint 2 项，回放测试 1 项",
             "automatic": true,
-            "requestedAt": "2026-10-03T10:00:00+08:00"
+            "requestedAt": "2026-10-04T14:00:00+08:00"
           }
         ],
         "requeueAutoCount": 1,
@@ -664,7 +664,7 @@
             "failureClass": "检查未通过",
             "reason": "lint 3 项",
             "automatic": true,
-            "requestedAt": "2026-10-03T10:00:00+08:00"
+            "requestedAt": "2026-10-04T09:08:00+08:00"
           },
           {
             "index": 2,
@@ -673,7 +673,7 @@
             "failureClass": "检查未通过",
             "reason": "lint 2 项，类型检查 1 项",
             "automatic": true,
-            "requestedAt": "2026-10-04T10:01:00+08:00"
+            "requestedAt": "2026-10-04T09:46:00+08:00"
           },
           {
             "index": 3,
@@ -682,7 +682,7 @@
             "failureClass": "检查未通过",
             "reason": "lint 2 项",
             "automatic": true,
-            "requestedAt": "2026-10-05T10:02:00+08:00"
+            "requestedAt": "2026-10-04T10:18:00+08:00"
           }
         ],
         "requeueAutoCount": 3,
@@ -856,7 +856,7 @@
             "failureClass": "检查未通过",
             "reason": "样式检查 4 项",
             "automatic": false,
-            "requestedAt": "2026-10-03T10:00:00+08:00"
+            "requestedAt": "2026-10-03T15:40:00+08:00"
           }
         ],
         "requeueAutoCount": 0,
@@ -2505,7 +2505,7 @@
       "id": "s16c",
       "member": "SM",
       "task": "T19",
-      "attempt": 1,
+      "attempt": 2,
       "kind": "run",
       "startAt": "2026-10-03T13:52:00+08:00",
       "endAt": "2026-10-03T14:25:00+08:00",
@@ -2667,7 +2667,7 @@
       "id": "v08",
       "member": "SV",
       "task": "T27",
-      "attempt": 2,
+      "attempt": 3,
       "kind": "run",
       "startAt": "2026-10-03T15:41:00+08:00",
       "endAt": "2026-10-03T15:58:00+08:00",

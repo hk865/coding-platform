@@ -39,7 +39,7 @@ describe('E34C-1 the page reads a goal in the project that holds it', () => {
     try {
       await until(() => /这个目标还没有采用的计划|找不到这个目标/.test(page.root.textContent), 20_000);
       expect(page.root.textContent).not.toContain('找不到这个目标');
-      expect(findClass(page.root, 'tm-gname')!.textContent).toBe('E34C 第二个项目的目标');
+      expect(findClass(page.root, 'tm-gname')!.textContent).toBe('目标 1 · E34C 第二个项目的目标');
       expect(page.root.textContent).toContain('这个目标还没有采用的计划');
     } finally {
       await page.restore();

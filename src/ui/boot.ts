@@ -445,7 +445,8 @@ async function readNodeDetail(
   const change = row?.dispositionChange ?? null;
   const changeAt = change === null ? '' : await acceptedAtText(client, scope, goalRef, asRecord(change).setIn);
   return adaptTaskMapDetail(summary, participants, null,
-    catalog as Parameters<typeof adaptTaskMapDetail>[3], state, mapWhy, change, changeAt, risks);
+    catalog as Parameters<typeof adaptTaskMapDetail>[3], state, mapWhy, change, changeAt, risks,
+    typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null);
 }
 
 /** Ruling 7: the one write path. Read the real Workspace pin, commit, then let

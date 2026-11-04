@@ -4,7 +4,7 @@ import type { GoalSnapshot } from '../../../src/contracts/ledger.js';
 import type {
   Disposition, Phase, PlanRevisionSnapshot, RuntimeTask, TaskKind, TaskScope,
 } from '../../../src/contracts/plan.js';
-import type { GoalDisplayRead, GoalDetail, TaskGraph, TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
+import type { GoalDisplayRead, GoalReadV1, TaskGraph, TaskRow } from '../../../src/core/work-graph/model/plan-contracts.js';
 import type {
   ArchivedLinePageV1, LineBriefV1, LineRowV1, LineStatusV1, NodeDetailV1, WorkLineDetailV1,
   WorkLineListV1, GraphHoverReadV1, GroupHoverV1, TaskHoverV1,
@@ -151,6 +151,7 @@ function failureFactsOf(task: typeof raw.tasks[number]): TaskFailureFactsV1 | un
 function taskRow(task: typeof raw.tasks[number]): TaskRow {
   const definition = runtimeTask(task);
   const failure = failureFactsOf(task);
+  const attempts = raw.runs.filter((bar) => bar.kind === 'run' && bar.task === task.taskId).map((bar) => bar.attempt);
   const row: TaskRow = {
     ref: { projectId: PROJECT, goalId: GOAL, taskId: task.taskId },
     definition,
@@ -159,12 +160,14 @@ function taskRow(task: typeof raw.tasks[number]): TaskRow {
     currentAttempt: null,
     execution: null,
     eligibilityScope: 'task_state',
-    eligibility: { eligible: false, reasons: [] },
+    eligibility: { eligible: task.st === 'claimable', reasons: [] },
     relations: [],
     inputRequirements: [],
     legacyDependencies: [],
     ...(task.phaseCause === null ? {} : { phaseCause: { code: phaseCauseCode(task.phaseCause.code) } }),
     ...(failure === undefined ? {} : { failure }),
+    /* the selected Run's attempt: the Task's latest run bar (the scene's rows carry no execution) */
+    ...(attempts.length === 0 ? {} : { attemptOrdinal: Math.max(...attempts) }),
   };
   const rework = reworkSummary(task);
   if (rework === undefined) return row;
@@ -207,8 +210,8 @@ function taskGraph(): TaskGraph {
   return { plan: planSnapshot(), tasks: raw.tasks.map(taskRow), sourceCursor: CURSOR };
 }
 
-function goalDetail(): GoalDetail {
-  return { goal: goalSnapshot(), pendingPlan: null, continuedBy: [] };
+function goalDetail(): GoalReadV1 {
+  return { goal: goalSnapshot(), pendingPlan: null, continuedBy: [], ordinal: 1 };
 }
 
 function goalDisplay(): GoalDisplayRead {
@@ -411,6 +414,24 @@ function previousRef(bar: typeof raw.runs[number]): RunRef | VerificationRoundRe
   return queryRef(prev.id, prev.id);
 }
 
+/* The requeue facts of the reworked bars the prototype tells (prototype:1379-1414), so a bar card's 尝试 row reads as
+   the prototype's: who requeued, the count, the reason, the class, a GOAL-29 resume, the interruption and when (the
+   end of the failure it answers). Other requeued bars keep the plain default; s35's 接续 repeat is a known difference. */
+type SceneRequeue = NonNullable<TrackRunBarV1['attempt']['requeue']>;
+const requeueOf = (actorClass: string, automaticCount: number | null, reason: string, failureClass: SceneRequeue['failureClass'],
+  requestedAt: string, goalResume = false, interruption: SceneRequeue['interruption'] = null): SceneRequeue =>
+  ({ actorClass, automaticCount, reason, failureClass, goalResume, requestedAt, interruption });
+const REQUEUE: Record<string, SceneRequeue> = {
+  s10: requeueOf('agent', null, '读取路径写错，回放测试 2 项未通过', 'run_failed', '2026-10-03T09:34:00+08:00'),
+  s16c: requeueOf('system', 0, 'goal g1 resumed at epoch 1', 'interrupted', '2026-10-03T13:52:00+08:00', true, 'paused'),
+  v06: requeueOf('system', 0, 'auto-rework:interrupted#0', 'interrupted', '2026-10-03T15:12:00+08:00', false, 'executing'),
+  v08: requeueOf('human', null, '样式检查 4 项', 'check_failed', '2026-10-03T15:40:00+08:00'),
+  s21: requeueOf('system', 1, 'auto-rework:check_failed#1', 'check_failed', '2026-10-04T09:08:00+08:00'),
+  s23: requeueOf('system', 2, 'auto-rework:check_failed#2', 'check_failed', '2026-10-04T09:46:00+08:00'),
+  s32: requeueOf('system', 3, 'auto-rework:check_failed#3', 'check_failed', '2026-10-04T10:18:00+08:00'),
+  s27: requeueOf('system', 1, 'auto-rework:run_failed#1', 'run_failed', '2026-10-03T16:20:00+08:00'),
+};
+
 function trackBar(bar: typeof raw.runs[number]): TrackBarV1 {
   const owner = sessionRef(bar.session.sessionId);
   if (bar.kind === 'check') {
@@ -436,7 +457,7 @@ function trackBar(bar: typeof raw.runs[number]): TrackBarV1 {
     reason: bar.reason === '' ? null : bar.reason, pauses: [],
     attempt: {
       attemptId: bar.id + '-attempt', via: bar.attempt > 1 ? 'requeue' : 'first', ordinal: bar.attempt,
-      requeue: bar.attempt > 1 ? { actorClass: 'human', automaticCount: null, reason: bar.gap ?? '',
+      requeue: bar.attempt > 1 ? REQUEUE[bar.id] ?? { actorClass: 'human', automaticCount: null, reason: bar.gap ?? '',
         failureClass: 'check_failed', goalResume: false, requestedAt: bar.startAt, interruption: null } : null,
     },
     previous: previousRef(bar) as RunRef | null, activity: runActivity(bar),
@@ -608,7 +629,7 @@ function reply(route: string, input: unknown): SceneReply {
       status: 'ready',
       value: { footprintCompleteness: [{ goalRef }] },
     } satisfies Ready<{ footprintCompleteness: Array<{ goalRef: typeof goalRef }> }>);
-    case 'goals/read': return { status: 'ready', value: goalDetail() } satisfies Ready<GoalDetail>;
+    case 'goals/read': return { status: 'ready', value: goalDetail() } satisfies Ready<GoalReadV1>;
     case 'goals/display': return { status: 'ready', value: goalDisplay() } satisfies Ready<GoalDisplayRead>;
     case 'tasks/query': return { status: 'ready', value: taskGraph() } satisfies Ready<TaskGraph>;
     case 'lines/list': return { status: 'ready', value: activeLines() } satisfies Ready<WorkLineListV1>;

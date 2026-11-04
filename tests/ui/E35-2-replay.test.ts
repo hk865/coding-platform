@@ -27,7 +27,7 @@ describe('E35-2 replay', () => {
     view.instance.setState({ sel: 'task:T13', t: before });
     vals().dag.nodes.find((n) => n.id === 'task:T13')!.hover();
     const card = (vals().dag as unknown as { card: { rows: Row[] } }).card.rows.find((row) => row.k === '负责')!;
-    expect([card.v, (vals().det as unknown as Row).agent]).toEqual(['执行者 · 重新入队与失败类别 · 工作中（现在）', '执行者 · 重新入队与失败类别 · 工作中（现在）']);
+    expect([card.v, (vals().det as unknown as Row).agent]).toEqual(['执行者 · 重新入队与失败类别 · 工作中，第 2 次尝试（现在）', '执行者 · 重新入队与失败类别 · 工作中，第 2 次尝试（现在）']);
   });
 
   it('E35-2 2.3 in replay a complete participant list says it runs to now, not only to the cursor', () => {

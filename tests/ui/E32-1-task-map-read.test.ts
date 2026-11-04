@@ -126,7 +126,7 @@ describe('E32-1 the real goal and tasks reach the DAG and the outline', () => {
     expect(node).toBeDefined();
     expect(withClass([node!], 'dg-node')).toBe(node);
     const aria = node!.attrs.find((attr) => attr.name === 'aria-label');
-    expect(typeof aria?.value === 'string' ? aria.value : '').toContain('待执行');
+    expect(typeof aria?.value === 'string' ? aria.value : '').toContain('可领取');
 
     /* The outline is a click, not the starting view; it shows the same real
        rows and no sample fact. */

@@ -47,7 +47,7 @@ describe('E34-1 one real Task across DAG, outline and detail', () => {
   it('E34-1 shows the same name and current state in all three views; hover issues no request', async () => {
     const data = await readE34Map(world!, S6A_GOAL_1.goalId);
     expect(data.tasks.find((task) => task.id === 'e34-a')?.name).toBe('Independent work e34-a');
-    expect(data.tasks.find((task) => task.id === 'e34-a')?.st).toBe('pending');
+    expect(data.tasks.find((task) => task.id === 'e34-a')?.st).toBe('claimable');
 
     const routes: string[] = [];
     let changesSeen!: () => void;
@@ -68,7 +68,7 @@ describe('E34-1 one real Task across DAG, outline and detail', () => {
       await until(() => page.root.textContent.includes('Independent work e34-a'), 20_000);
       const node = findButton(page.root, 'Independent work e34-a')!;
       expect(node).toBeDefined();
-      expect(node.getAttribute('aria-label')).toContain('待执行');
+      expect(node.getAttribute('aria-label')).toContain('可领取');
       expect(node.getAttribute('class')).toContain('dg-node');
 
       /* Hover is local: after the page settled (the stream attempt is the
@@ -89,7 +89,7 @@ describe('E34-1 one real Task across DAG, outline and detail', () => {
       await until(() => (findClass(page.root, 'detail')?.textContent ?? '').includes('Perform independent work e34-a'), 20_000);
       const detail = findClass(page.root, 'detail')!;
       expect(detail.textContent).toContain('Independent work e34-a');
-      expect(detail.textContent).toContain('待执行');
+      expect(detail.textContent).toContain('可领取');
       /* Only the summary supplies `responsibleNow`: discarding `graph/detail`
          drops this row. */
       expect(detail.textContent).toContain('负责的 Agent');
@@ -102,7 +102,7 @@ describe('E34-1 one real Task across DAG, outline and detail', () => {
       findButton(page.root, '大纲')!.dispatch('click');
       expect(findButton(page.root, 'Independent work e34-a')).toBeDefined();
       expect(page.root.textContent).toContain('Independent work e34-a');
-      expect(page.root.textContent).toContain('待执行');
+      expect(page.root.textContent).toContain('可领取');
     } finally {
       await page.restore();
     }

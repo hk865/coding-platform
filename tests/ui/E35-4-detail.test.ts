@@ -118,7 +118,7 @@ describe('E35-4 the detail', () => {
     view.instance.setState({ sel: 'task:T13' });
     const rel = (vals().det as unknown as { rel: Array<{ k: string; items: Pick[]; text: string }> }).rel.filter((g) => g.k === '重叠' || g.k === '');
     expect(rel.map((g) => [g.items.map((item) => item.name).slice(0, 2), g.items.length, g.text])).toEqual([
-      [['R1 · 调度（没有连线）', 'R2 · src/f2.ts（没有连线）'], 6, '另有 1 个任务也改这些文件'], [[], 0, '依赖是需要它的产出，不必等它整个结束；没有连线的也会改同一个文件']]);
+      [['R1 · 调度（没有连线）', 'R2 · f2.ts（没有连线）'], 6, '另有 1 个任务也改这些文件'], [[], 0, '依赖是需要它的产出，不必等它整个结束；没有连线的也会改同一个文件']]);
   });
 
   it('E35-4 4.11 the Goal’s owner adds the working, else the paused lines', () => {
@@ -132,7 +132,7 @@ describe('E35-4 the detail', () => {
   it('E35-4 4.3 an unfinished Task nobody is responsible for says 未分配; a satisfied or superseded one hides the row', () => {
     /* Named mutations: the adapter leaves 负责 empty again; the board draws 负责 for every Task. */
     const phases = ['ready', 'pending', 'failed', 'satisfied'];
-    const graph = { plan: { stages: [], executionDag: { dependsOn: [] } }, tasks: phases.map((phase) => ({ definition: { taskId: phase, title: phase }, effectivePhase: phase })) };
+    const graph = { plan: { stages: [], executionDag: { dependsOn: [] } }, tasks: phases.map((phase) => ({ definition: { taskId: phase, title: phase }, effectivePhase: phase, eligibility: { eligible: phase === 'ready', reasons: [] } })) };
     const owners = adaptTaskMap(value('goals/read'), graph, value('goals/display'), { hover: { tasks: phases.map((phase) => ({ task: { taskId: phase }, owners: [] })) } }).dag.owners;
     const detail = (state: string) => adaptTaskMapDetail({ section: 'summary', task: { task: { taskId: 't' }, responsibility: 'none' } } as TaskMapSummaryRead, [], null, null, state)!.owner;
     const data = sceneData(); delete data.dag.owners.T01;

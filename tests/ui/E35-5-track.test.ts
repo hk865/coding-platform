@@ -134,13 +134,13 @@ describe('E35-5 the track', () => {
     /* Named mutation: count the segment from the line's first Session (第 1 段 for the latest). */
     const data = sceneData();
     const bar = (id: string) => data.time!.rows.flatMap((row) => row.bars).find((b) => b.id.endsWith('/' + id + '//'))!;
-    bar('v08').attempt!.requeue!.actorClass = 'system'; bar('v06').attempt = { via: 'wait_continuation', requeue: null };
+    bar('v08').attempt!.requeue!.actorClass = 'system'; bar('v06').attempt = { via: 'wait_continuation', ordinal: null, requeue: null };
     const { view, vals } = sceneView([], data);
     view.instance.setState({ view: 'lanes', wlWin: 'week' });
     const card = (id: string) => { (vals().wl.rows.flatMap((row) => row.bars).find((b) => b.id.endsWith('/' + id + '//')) as unknown as { hover(): void }).hover();
       return (vals().wl as unknown as { card: { rows: Row[] } }).card.rows.filter((row) => row.k === '记录' || row.k === '尝试' || row.k === '类型').map((row) => row.v); };
     expect([card('v04'), card('v06'), card('v08')]).toEqual([['工作记录第 2 段，共 2 段'],
-      ['工作记录第 1 段，共 2 段', '接续'], ['工作记录第 1 段，共 2 段', '系统自动重新入队']]);
+      ['工作记录第 1 段，共 2 段', '接续'], ['工作记录第 1 段，共 2 段', '第 3 次尝试 · 系统自动重新入队']]);
   });
 
   it('E35-5 5.10 the open track reads the execution index on 今天: 未排期 is written and the track stays today', async () => {

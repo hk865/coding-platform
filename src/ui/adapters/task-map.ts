@@ -23,8 +23,9 @@ export type GoalDisplayPhaseCode =
   | 'PLANNING' | 'RUNNING' | 'CHANGE_PENDING' | 'NEEDS_DECISION' | 'BLOCKED' | 'FAILED'
   | 'PAUSED' | 'CANCELLED' | 'COMPLETED' | 'ACCEPTED_PARTIAL';
 
-/** The unwrapped `ReadResult<GoalDetail>` value (ruling item 3: boot unwraps). */
-export type TaskMapGoalRead = { goal: { ref: { goalId: string }; objective: string } };
+/** The unwrapped `ReadResult<GoalReadV1>` value (ruling item 3: boot unwraps). `ordinal` is the
+ * Goal's 目标 n in its project, null or absent when the Host cannot tell. */
+export type TaskMapGoalRead = { goal: { ref: { goalId: string }; objective: string }; ordinal?: number | null };
 
 /** The unwrapped `ReadResult<GoalDisplayRead>` value. */
 export type TaskMapDisplayRead = { display: { phase: GoalDisplayPhaseCode } };
@@ -48,6 +49,8 @@ export type TaskMapTask = {
   rework: string[];
   /** `rework.cap`: the automatic requeue count on a bar reads (n/cap). */
   reworkCap: number | null;
+  /** The row's `attemptOrdinal` (its selected Run's attempt); null when the row has none. */
+  attempt: number | null;
 };
 
 export type TaskMapDagEdge = {
@@ -75,7 +78,8 @@ export type TaskMapDag = {
 };
 
 export type TaskMapData = {
-  goal: { id: string; name: string; st: string; word: string };
+  /** `ordinal`: the Host's number only; never counted from the Goal list. */
+  goal: { id: string; name: string; st: string; word: string; ordinal?: number | null };
   stages: Array<{ id: string; name: string; description: string }>;
   tasks: TaskMapTask[];
   dag: TaskMapDag;
@@ -161,12 +165,15 @@ function automationStopOf(row: Record<string, unknown>): string {
   return asText(verdict.kind) === 'stopped' ? asText(verdict.reason) : '';
 }
 function taskState(
-  phase: string, intent: unknown, disposition: unknown, cause = '', stopReason = '',
+  phase: string, intent: unknown, disposition: unknown, cause: string, stopReason: string,
+  /** The row's `eligibility.eligible`: claimable is the platform's verdict
+   * (E3I:142), which never waits on dependencies (UIW:96); a ready Task under a
+   * paused Goal is not claimable. */
+  eligible: boolean,
 ): string | null {
   if (disposition === 'cancelled' || disposition === 'superseded') return null;
   if (disposition === 'deferred') return 'deferred';
-  if (phase === 'ready') return 'claimable';
-  if (phase === 'pending') return intent === 'plan_only' ? 'future' : 'pending';
+  if (phase === 'ready' || phase === 'pending') return intent === 'plan_only' ? 'future' : eligible ? 'claimable' : 'pending';
   if (phase === 'blocked') {
     if (cause === 'run_outcome_unknown') return 'decide';
     if (cause === 'continuation_paused' || cause === 'paused_interrupted') return 'waiting';
@@ -225,7 +232,7 @@ function taskWhyOf(row: Record<string, unknown>, st: string): string {
     const change = asRecord(row.dispositionChange);
     if (change.traced !== true) return asText(asRecord(change.reason).text);
     const phaseSt = taskState(asText(row.effectivePhase), asRecord(row.definition).executionIntent, '',
-      asText(asRecord(row.phaseCause).code), stop) ?? '';
+      asText(asRecord(row.phaseCause).code), stop, false) ?? '';
     const reason = taskWhyOf(row, phaseSt);
     return (PHASE_WORD[phaseSt] ?? '') + (reason !== '' ? '，' + reason : '');
   }
@@ -295,6 +302,12 @@ function anchorWhyOf(extra: TaskMapExtraReads | undefined): Record<string, strin
 function unassignedOf(st: string): string {
   if (st === 'satisfied' || st === 'cancelled' || st === 'superseded') return '';
   return '未分配' + (st === 'claimable' ? '，等成员领取' : '') + (st === 'claimable' || st === 'pending' ? '；开工时开一条工作线' : '');
+}
+
+/** The user's rule (HO:2390): the first attempt says nothing; from the second on 第 n 次尝试 (A.2, E3I:47).
+ * The board writes the same words with its own copy (the board does not import the adapter). */
+function attemptText(n: number | null): string {
+  return typeof n === 'number' && n >= 2 ? '第 ' + String(n) + ' 次尝试' : '';
 }
 
 /** `none`: the Tasks the hover read with an empty `owners`. */
@@ -418,7 +431,8 @@ export function adaptTaskMap(
   const goalBody = goal.goal;
   const goalRef = goalBody.ref;
   const state = goalDisplayState(display.display.phase);
-  const goalData = { id: asText(goalRef.goalId), name: asText(goalBody.objective), st: state.st, word: state.word };
+  const goalData = { id: asText(goalRef.goalId), name: asText(goalBody.objective), st: state.st, word: state.word,
+    ordinal: typeof goal.ordinal === 'number' ? goal.ordinal : null };
   const owners = ownersOf(extra);
   const anchors = anchorWhyOf(extra);
   const emptyDag: TaskMapDag = { edges: [], nodes: [], band: [], dropped: [], gateIds: [], crit: [], owners: {}, goalOwner: '' };
@@ -439,7 +453,7 @@ export function adaptTaskMap(
     const disposition = asText(row.disposition) || asText(definition.disposition);
     const cause = asText(asRecord(row.phaseCause).code);
     const st = taskState(asText(row.effectivePhase), definition.executionIntent, disposition, cause,
-      automationStopOf(row));
+      automationStopOf(row), asRecord(row.eligibility).eligible === true);
     if (st === null) {
       const replaced = asText(asRecord(row.dispositionChange).replacedByTaskId) || asText(definition.replacedByTaskId);
       const why = asText(asRecord(asRecord(row.dispositionChange).reason).text);
@@ -450,6 +464,9 @@ export function adaptTaskMap(
       continue;
     }
     const stage = stageOf(definition);
+    const attempt = typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null;
+    /* 负责 names the attempt after a line from the second on (prototype:2276); 未分配 has none */
+    if (owners.byTask[id] !== undefined && attemptText(attempt) !== '') owners.byTask[id] += '，' + attemptText(attempt);
     /* the cards read `dag.owners`, so 未分配 goes there too */
     const unassigned = owners.byTask[id] === undefined && owners.none.has(id) ? unassignedOf(st) : '';
     if (unassigned !== '') owners.byTask[id] = unassigned;
@@ -466,6 +483,7 @@ export function adaptTaskMap(
       instruction: instructions.get(id) ?? '',
       rework: reworkLines(row.rework),
       reworkCap: typeof asRecord(row.rework).cap === 'number' ? asRecord(row.rework).cap as number : null,
+      attempt,
     });
   }
   const keptById = new Map(kept.map((task) => [task.id, task]));
@@ -527,7 +545,9 @@ export function adaptTaskMap(
  * is approximate and the segments are half-open; `not_in_plan` and `unknown`
  * keep their own state rather than a guessed one. */
 export type TaskMapTimelineRead = {
-  tasks: Array<{ taskId: string; segments: Array<{ from: string | null; to: string | null; state: string }> }>;
+  tasks: Array<{ taskId: string; segments: Array<{ from: string | null; to: string | null; state: string;
+    /** The point that opened the segment (`TaskStateSegmentV1.point`). */
+    point?: { kind?: unknown; source?: unknown } | null }> }>;
 };
 /** One Task's state at an instant: the board state word, the raw timeline state
  * and the two flags only the timeline can justify. */
@@ -535,6 +555,9 @@ export type TaskMapHistoricalState = {
   st: string; word: string; raw: string; off?: boolean; faint?: boolean;
   /** `not_in_plan`: when the Task joined, the next segment's `from`. */
   addedAt?: string;
+  /** The Run whose end opened the segment, in the run bar's key: its reason is
+   * that bar's, never the Task's last bar's. */
+  runKey?: string;
 };
 
 /** Raw timeline state -> the board's square state and word. `not_in_plan` is the
@@ -571,14 +594,17 @@ export function taskMapStatesAt(
   for (const task of timeline.tasks) {
     let found = 'unknown';
     let next: string | null = null;
+    let point: Record<string, unknown> = {};
     for (const [index, segment] of task.segments.entries()) {
       /* Half-open [from, to): the ending instant belongs to the next segment. */
       const from = segment.from === null ? -Infinity : Date.parse(segment.from);
       const to = segment.to === null ? Infinity : Date.parse(segment.to);
-      if (from <= instant && instant < to) { found = segment.state; next = task.segments[index + 1]?.from ?? null; break; }
+      if (from <= instant && instant < to) { found = segment.state; next = task.segments[index + 1]?.from ?? null; point = asRecord(segment.point); break; }
     }
     const known = HISTORICAL_STATE[found] ?? { st: 'pending', word: '未知' };
-    out.set(task.taskId, { ...known, raw: found, ...(found === 'not_in_plan' && next !== null ? { addedAt: next } : {}) });
+    const ran = point.kind === 'run_end' && asRecord(point.source).aggregateType === 'Run';
+    out.set(task.taskId, { ...known, raw: found, ...(found === 'not_in_plan' && next !== null ? { addedAt: next } : {}),
+      ...(ran ? { runKey: previousKeyOf(point.source) } : {}) });
   }
   return out;
 }
@@ -625,8 +651,8 @@ export type TaskMapNodeDetailData = {
   participantsLoaded: boolean;
   participantsComplete: boolean;
   countsComplete: boolean;
-  /** No route returns an attempt ordinal; the row stays hidden. */
-  attemptOrdinal: null;
+  /** The `tasks/query` row's `attemptOrdinal`; it shows words only from the second attempt on. */
+  attemptOrdinal: number | null;
   /** Decision 26: 重叠, one row per risk (`<task> · <module | file>（没有连线）`). */
   overlaps: Array<{ id: string; text: string }>; overlapsComplete: boolean;
   /** E3I:244 without 从 <from> (`active` has no word): 由 <actor> 于计划 <time> 改为 <to>：<reason>. */
@@ -707,7 +733,7 @@ function participantText(item: Record<string, unknown>, counts: TaskMapParticipa
 /** Pure detail projection (design §6): no request, no DOM. `summary` is the
  * unwrapped `graph/detail` summary; participants are its `section:'participants'`
  * pages; `catalog` names planned modules and groups actual files. Planned
- * files, per-file line counts, "未提交" and attempt ordinals are never shown. */
+ * files, per-file line counts and "未提交" are never shown. */
 export function adaptTaskMapDetail(
   summary: TaskMapSummaryRead, participants: readonly TaskMapParticipantRead[],
   counts: TaskMapParticipationCounts, catalog: TaskMapCatalogRead,
@@ -723,6 +749,8 @@ export function adaptTaskMapDetail(
   dispositionChange: unknown = null, changeAt = '',
   /** The `risks` pages read with the detail. */
   risks: readonly TaskMapRiskRead[] = [],
+  /** The `tasks/query` row's `attemptOrdinal`; 负责 names it after a line, never after 未分配. */
+  attempt: number | null = null,
 ): TaskMapNodeDetailData | null {
   const task = summary.task;
   if (task === null) return null;
@@ -730,8 +758,9 @@ export function adaptTaskMapDetail(
   const id = asText(body.taskId);
   const disposition = asText(task.disposition) || asText(body.disposition);
   const word = PHASE_WORD[state] ?? '未知';
-  const who = ownerWords(task.responsibleNow) || ownerWords(task.owners)
-    || (asRecord(task).responsibility === 'none' ? unassignedOf(state) : '');
+  const line = ownerWords(task.responsibleNow) || ownerWords(task.owners);
+  const who = line !== '' ? line + (attemptText(attempt) !== '' ? '，' + attemptText(attempt) : '')
+    : asRecord(task).responsibility === 'none' ? unassignedOf(state) : '';
   const modules = (catalog?.modules ?? []).flatMap((entry) => {
     const paths = (Array.isArray(entry.paths) ? entry.paths : []).filter((path): path is string => typeof path === 'string');
     /* a module with paths: [] stays: it can be planned, and pathOwnershipOf skips it for real files */
@@ -743,28 +772,32 @@ export function adaptTaskMapDetail(
     const child = asText(edge.child?.moduleId);
     if (parent !== '' && child !== '') parents.set(child, parent);
   }
-  const crumbOf = (moduleId: string): string => {
-    const names: string[] = [];
+  /* the module and its catalog ancestors, the module first */
+  const chainOf = (moduleId: string): Array<{ id: string; name: string }> => {
+    const chain: Array<{ id: string; name: string }> = [];
     let cur = moduleId;
     for (let step = 0; cur !== '' && step < 32; step += 1) {
       const found = modules.find((entry) => entry.value.id === cur);
       if (found === undefined) break;
-      names.unshift(found.value.name);
+      chain.push(found.value);
       cur = parents.get(cur) ?? '';
     }
-    return names.join(' / ');
+    return chain;
   };
+  const crumbOf = (moduleId: string): string => chainOf(moduleId).map((entry) => entry.name).reverse().join(' / ');
   const actual = asRecord(task.actualFiles);
   /* Contract `FromExecutedFilesV1` carries `availability`; `status` is never a
    * field of it, so reading `status` hid every real file (design §3/§5). */
   const executed = actual.availability === 'available' && Array.isArray(actual.value) ? actual.value : [];
   const groups = new Map<string, TaskMapDetailFile[]>();
+  const planned = new Set<string>();
   /* Decision 26's 计划要改: the plan records modules only (DESIGN `:151`), so each
    * planned module is one row named by the module, under its catalog path. */
   for (const ref of Array.isArray(task.plannedModules) ? task.plannedModules : []) {
     const moduleId = asText(asRecord(ref).moduleId);
     const crumb = moduleId === '' ? '' : crumbOf(moduleId);
     if (crumb === '') continue;
+    planned.add(moduleId);
     groups.set(crumb, [...(groups.get(crumb) ?? []),
       { path: '', name: crumb.split(' / ').pop() ?? crumb, certainty: 'planned', tag: '计划要改' }]);
   }
@@ -776,9 +809,12 @@ export function adaptTaskMapDetail(
     const moduleId = own.status === 'owner' ? String(own.owner.id) : '';
     const crumb = moduleId === '' ? '未归入模块' : crumbOf(moduleId);
     const certainty = asText(file.certainty) === 'possible' ? 'possible' : 'definite';
+    /* 不在计划里 (prototype:3382), judged by module: the file's module is neither a
+     * planned module nor under one, or it has none; a plan without modules says nothing. */
+    const outside = planned.size > 0 && !chainOf(moduleId).some((entry) => planned.has(entry.id));
     const list = groups.get(crumb) ?? [];
     list.push({ path, name: path.split('/').pop() ?? path, certainty,
-      tag: certainty === 'definite' ? '实际改过' : '可能改过' });
+      tag: (certainty === 'definite' ? '实际改过' : '可能改过') + (outside ? ' · 不在计划里' : '') });
     groups.set(crumb, list);
   }
   const lines: TaskMapNodeDetailData['participants'] = [];
@@ -809,12 +845,13 @@ export function adaptTaskMapDetail(
     overlaps: risks.flatMap((page) => (Array.isArray(page.items) ? page.items : []).map((entry) => {
       const risk = asRecord(entry); const shared = asRecord(risk.shared);
       const moduleId = asText(asRecord(shared.module).moduleId);
-      const what = shared.kind === 'module' ? (modules.find((m) => m.value.id === moduleId)?.value.name ?? '') : asText(shared.path);
+      /* a shared file is named by its file name, as the prototype does (prototype:3400) */
+      const what = shared.kind === 'module' ? (modules.find((m) => m.value.id === moduleId)?.value.name ?? '') : asText(shared.path).split('/').pop() ?? '';
       return { id: 'task:' + asText(asRecord(risk.task).taskId), text: asText(risk.title) + (what !== '' ? ' · ' + what : '') + '（没有连线）' };
     })),
     overlapsComplete: (risks[risks.length - 1]?.nextCursor ?? null) === null,
     countsComplete: counts !== null && counts.complete,
-    attemptOrdinal: null,
+    attemptOrdinal: attempt,
     disposition: (disposition === 'cancelled' || disposition === 'superseded' || disposition === 'deferred') ? (() => {
       const change = asRecord(dispositionChange);
       const word = PHASE_WORD[disposition] ?? disposition;
@@ -918,6 +955,9 @@ export type TaskMapTimeBar = {
   /** The same instants at the adapter fact boundary (design §4). */
   startMinute: number; endMinute: number | null;
   result: string; word: string; taskId: string; ordinal: number | null; via: string;
+  /** A Run's crash error or cancel reason as the Host wrote it (`TrackRunBarV1.reason`),
+   * shown verbatim and cut by the layout; '' for a check or a query. */
+  reason: string;
   /** The bar's own Session as a `project/session` key; '' when the bar carries none. */
   sessionRef: string;
   /** The formal predecessor on the same line, for the link under the bars. */
@@ -925,9 +965,15 @@ export type TaskMapTimeBar = {
   /** The real pauses with their intervals and intents; never a fabricated count. */
   pauses: Array<{ from: string; to: string | null; intentRef: unknown }>;
   /** A Run's attempt facts; a check/query bar has none. */
-  attempt: { via: string; requeue: { actorClass: string; automaticCount: number | null; reason: string;
+  attempt: { via: string;
+    /** The Host's attempt ordinal (every requeue counts, a wait continuation does not); null when absent. */
+    ordinal: number | null;
+    requeue: { actorClass: string; automaticCount: number | null; reason: string;
     /** The class word parsed from an automatic `auto-rework:<class>#<n>` reason; '' otherwise. */
-    classWord: string } | null } | null;
+    classWord: string;
+    /** Where the requeue came from (TaskRequeue facts): its failure class, a GOAL-29 resume, when it was asked and,
+     * for an interruption, whether the Run was paused or executing; '' / false / '' / null when absent. */
+    failureClass: string; goalResume: boolean; requestedAt: string; interruption: 'executing' | 'paused' | null } | null } | null;
   /** A check's real ordinal and the number of checks begun; no cursor-completed count. */
   checksBegun: number | null;
   /** Run/Query activity totals; a check bar has only its begun count. */
@@ -1387,13 +1433,19 @@ export function adaptTaskMapTime(
     const attemptRaw = kind === 'run' ? asRecord(bar.attempt) : {};
     const requeueRaw = asRecord(attemptRaw.requeue);
     const attemptVia = asText(attemptRaw.via);
-    const attempt = kind === 'run' && attemptVia !== '' ? {
+    const interruption = requeueRaw.interruption;
+    const attempt: TaskMapTimeBar['attempt'] = kind === 'run' && attemptVia !== '' ? {
       via: attemptVia,
+      ordinal: typeof attemptRaw.ordinal === 'number' ? attemptRaw.ordinal : null,
       requeue: Object.keys(requeueRaw).length === 0 ? null : {
         actorClass: asText(requeueRaw.actorClass),
         automaticCount: typeof requeueRaw.automaticCount === 'number' ? requeueRaw.automaticCount : null,
         reason: asText(requeueRaw.reason),
         classWord: FAILURE_CLASS_WORD[/^auto-rework:([a-z_]+)#\d+$/.exec(asText(requeueRaw.reason))?.[1] ?? ''] ?? '',
+        failureClass: asText(requeueRaw.failureClass),
+        goalResume: requeueRaw.goalResume === true,
+        requestedAt: asText(requeueRaw.requestedAt),
+        interruption: interruption === 'executing' || interruption === 'paused' ? interruption : null,
       },
     } : null;
     const marks: string[] = [];
@@ -1414,10 +1466,10 @@ export function adaptTaskMapTime(
         startMinute: Number.isNaN(startMs) ? 0 : startMs / 60000,
         endMinute: endAt === null || Number.isNaN(endMs) ? null : endMs / 60000,
         taskId: asText(bar.taskId),
-        /* A check has a real ordinal; a Run has none (no invented attempt ordinal). */
+        /* A check's round ordinal; a Run's attempt ordinal is the Host's, in `attempt`. */
         ordinal: kind === 'check' && typeof bar.ordinal === 'number' ? bar.ordinal : null,
         checksBegun: kind === 'check' && typeof bar.checksBegun === 'number' ? bar.checksBegun : null,
-        via: asText(bar.via), previousId: previousKey,
+        via: asText(bar.via), reason: kind === 'run' ? asText(bar.reason) : '', previousId: previousKey,
         sessionRef: trackSessionKeyOf(bar.sessionRef) === '/' ? '' : trackSessionKeyOf(bar.sessionRef),
         pauses, attempt, marks,
         activity: kind === 'check' ? null : (() => {

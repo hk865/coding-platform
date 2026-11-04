@@ -94,7 +94,7 @@ describe('E33-1 an external write reaches the open page', () => {
       findButton(page.root, '大纲')!.dispatch('click');
       findButton(page.root, 'E33 阶段 A')!.dispatch('click');
       expect(page.root.textContent).toContain('Independent work e33-a');
-      expect(page.root.textContent).toContain('待执行');
+      expect(page.root.textContent).toContain('可领取');
       await defer('e33-a', 'e33-plan-defer-a');
       await until(() => page.root.textContent.includes('已延后'), 10_000);
       expect(page.root.textContent).toContain('Independent work e33-a');
@@ -126,7 +126,7 @@ describe('E33-2 the person’s selection and expansion survive a reread', () => 
       findButton(page.root, 'E33 阶段 B')!.dispatch('click');
       findButton(page.root, 'Independent work e33-b')!.dispatch('click');
       await until(() => (findClass(page.root, 'detail')?.textContent ?? '').includes('Independent work e33-b'), 10_000);
-      expect(findClass(page.root, 'detail')!.textContent).toContain('待执行');
+      expect(findClass(page.root, 'detail')!.textContent).toContain('可领取');
       await defer('e33-b', 'e33-plan-defer-b');
       await until(() => (findClass(page.root, 'detail')?.textContent ?? '').includes('已延后'), 10_000);
       expect(findClass(page.root, 'detail')!.textContent).toContain('Independent work e33-b');

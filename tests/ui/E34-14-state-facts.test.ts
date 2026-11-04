@@ -280,7 +280,7 @@ describe('E34-14 the route facts keep their state, result and reason words', () 
     expect(vals.wl.selSub).not.toContain('起');
   });
 
-  it('E34-14 the now column carries the bar’s changed files and check round, never an attempt ordinal or a cursor-time x/y', async () => {
+  it('E34-14 the now column carries the bar’s changed files and check round, never a first-attempt ordinal or a cursor-time x/y', async () => {
     /* Named mutation: build the now sum from `x.why` only (drop the bar facts);
        the real 已改至少 3 个文件 / 正式检查第 2 轮进行中 / 已开始 5 项 disappear. */
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -310,12 +310,12 @@ describe('E34-14 the route facts keep their state, result and reason words', () 
       expect(now.textContent).not.toContain('5 个文件');
       expect(now.textContent).toContain('正式检查第 2 轮进行中');
       expect(now.textContent).toContain('已开始 5 项');
-      /* `checksBegun` is begun, not completed; there is no attempt ordinal and
-         no cursor-time x/y in these reads (the prototype's 9/14 项已完成,
+      /* `checksBegun` is begun, not completed; a first attempt has no ordinal
+         (T13's second attempt says 第 2 次尝试) and there is no cursor-time x/y in these reads (the prototype's 9/14 项已完成,
          prototype:783). A.2's （n/cap） is a real count (DESIGN `:606`) and is
          cut out first. Named mutation: print `checksBegun + '/14 项'`. */
       expect(now.textContent).not.toContain('已完成');
-      expect(now.textContent).not.toContain('次尝试');
+      expect(now.textContent).not.toContain('第 1 次尝试');
       expect(now.textContent.replace(/（\d+\/\d+）/g, '')).not.toMatch(/\d+\s*\/\s*\d+/);
     } finally {
       await page?.restore();

@@ -802,7 +802,7 @@ class Component extends DCLogic {
     });
     (data.tasks || []).forEach((t) => {
       const node = { id: 'task:' + t.id, name: t.name, kind: 'task', st: t.st, why: t.why || '', sem: t.instruction || '',
-        gate: t.gate, att: null, stageId: t.stageId || null, owner: t.owner || '',
+        gate: t.gate, att: t.attempt, stageId: t.stageId || null, owner: t.owner || '',
         files: [], rework: t.rework || [], reworkCap: typeof t.reworkCap === 'number' ? t.reworkCap : null, deps: (t.deps || []).map((d) => 'task:' + d), next: [], kids: [] };
       const home = t.stageId && nodes['stage:' + t.stageId] ? nodes['stage:' + t.stageId] : root;
       home.kids.push(node);
@@ -1114,9 +1114,14 @@ class Component extends DCLogic {
     return [n.sat + '/' + n.leaves + ' 已满足'].concat(parts).join(' · ');
   }
   taskTip(n) { const W = this.words(); return n.kids.length ? n.name + '，' + this.countLine(n) : n.name + '，' + W[n.st] + (n.gate ? '（验收）' : '') + (n.why ? '：' + n.why : ''); }
+  /* the Goal as the top bar and 目标验收's 归属 name it (prototype:89, :3163): 目标 n · <name> when the Host numbered it */
+  goalLabel(goal) { return typeof goal.ordinal === 'number' ? '目标 ' + goal.ordinal + ' · ' + goal.name : goal.name; }
   shortPath(byId, n) {
     const up = this.crumbsOf(byId, n.id).slice(1, -1).map((c) => c.name);
-    return up.length ? up.join(' / ') : n.parent ? byId[n.parent].name : '';
+    if (up.length) return up.join(' / ');
+    const p = n.parent ? byId[n.parent] : null; const goal = (this.props.data || {}).goal;
+    /* a Task right under the Goal belongs to 目标 n · <name>; a Stage writes the name only (prototype:920) */
+    return !p ? '' : n.kind === 'task' && p.kind === 'goal' && goal ? this.goalLabel(goal) : p.name;
   }
   /* 负责 comes from the formal owners in `props.data`; a Stage has no single
      owner and returns the empty value (design §3). */
@@ -1138,8 +1143,8 @@ class Component extends DCLogic {
     /* A Task's 语义 is the adopted assignment's instruction (taskModel, f10). */
     const sem = n.sem || '';
     const c = { show: true, name: n.name, path: path, hasPath: !!path, sem: sem, hasSem: !!sem };
-    if (n.kind === 'task') { const agent = this.taskAgent(n);
-      return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: n.why ? '：' + n.why : '', agent: agent, hasAgent: this.fieldHasValue(agent) }); }
+    if (n.kind === 'task') { const agent = this.taskAgent(n); const why = this.liveWhy(n.id, n.why);
+      return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: why ? '：' + why : '', agent: agent, hasAgent: this.fieldHasValue(agent) }); }
     if (n.kind === 'goal') { const agent = this.goalAgent();
       return Object.assign(c, { sq: 'sq z10 s-' + this.goalSt(), word: this.goalWord(), tx: 'tx-' + this.goalSt(), why: ' · ' + this.cardCount(n), agent: agent, hasAgent: this.fieldHasValue(agent) }); }
     /* a Stage has no single owner: group counts are not an owner (design §3). */
@@ -1217,7 +1222,7 @@ class Component extends DCLogic {
     const item = (tid, line, tail) => { const t = tree.byId[tid]; return { name: t.name + (tail || ''), sq: sqOf(t), go: () => go.sel(tid), over: line ? () => hov.on(tid) : noop, out: line ? hov.off : noop }; };
     const grp = (k, items, text) => ({ k: k, items: items, files: [], lines: [], hasText: !!text, text: text || '' });
     /* The opened detail is the adapted `graph/detail` projection for this node;
-       no attempt ordinal, planned file, per-file count or invented owner. */
+       the attempt ordinal only as the row gives it; no planned file, per-file count or invented owner. */
     const real = n.kind === 'task' && data.detailFor === String(id).replace(/^task:/, '') && data.detail ? data.detail : null;
     if (n.kind === 'task') {
       const deps = n.deps.filter((d) => tree.byId[d]);
@@ -1279,7 +1284,7 @@ class Component extends DCLogic {
         const bar = { id: b.id, m: row.id, task: b.taskId ? 'task:' + b.taskId : null, att: null,
           kind: b.kind === 'query' && b.via === 'turn' ? 'talk' : b.kind,
           s: b.startAt, e: b.endAt, s0: s0, e0: e0, live: live, res: this.tlResultOf(b.kind, b.result),
-          why: '', prev: null, gap: '', n: { st: b.activity ? b.activity.steps : 0, ed: b.activity ? b.activity.edits : 0, ck: 0, rq: 0 },
+          why: b.kind === 'run' ? (b.reason || '') : '', prev: null, gap: '', n: { st: b.activity ? b.activity.steps : 0, ed: b.activity ? b.activity.edits : 0, ck: 0, rq: 0 },
           cf: b.activity && b.activity.changedFiles ? b.activity.changedFiles : null,
           p: null, v: null, g: null, round: b.ordinal === null ? null : b.ordinal, checksBegun: b.checksBegun,
           pauses: b.pauses || [], bmarks: b.marks || [], previousKey: b.previousId || '', attempt: b.attempt || null, sref: b.sessionRef || '' };
@@ -2062,6 +2067,9 @@ class Component extends DCLogic {
     const hist = !live && time && typeof time.historyAt === 'function'
       ? time.historyAt(new Date(tt * 60000).toISOString()) : null;
     const ACT = ['running', 'verifying', 'waiting', 'decide'];
+    /* a stop opened by a Run's end: the prototype's own prefix (prototype:2934-2936, execfail / interrupted / unknown)
+       before that Run bar's why; never the timeline word, never the Task's last bar */
+    const RES = { run_failed: '执行失败：', interrupted: '平台中断：', outcome_unknown: '执行结果待核对：' };
     /* each Task's first real execution: the read bars and, once read, the execution index */
     const first = {}; const seen = (id, at) => { if (Number.isFinite(at) && !(first[id] <= at)) first[id] = at; };
     if (!live) {
@@ -2073,10 +2081,11 @@ class Component extends DCLogic {
       const h = hist ? hist.get(String(n.id).replace(/^task:/, '')) : null;
       /* before it joined the plan: its plan word, and when it joined (prototype:2945) */
       const plan = h && h.raw === 'not_in_plan' ? (n.st === 'future' || n.st === 'deferred' ? n.st : 'pending') : null;
+      const ran = h && h.runKey && RES[h.raw] ? this.tlData().runs.find((r) => r.id === 'run:' + h.runKey) : null;
       const o = live ? { st: n.st, why: n.why || '', word: W[n.st] + (n.gate ? '（验收）' : '') }
         : plan ? { st: plan, why: '这时还不在计划里' + (h.addedAt ? '（' + this.stamp(Date.parse(h.addedAt) / 60000) + ' 加入）' : ''), word: W[plan] + (n.gate ? '（验收）' : ''), off: true, faint: true, raw: h.raw }
         /* the state word at t; the timeline's own word, when it differs, is the reason; the timeline's 未知 stays 未知 */
-        : h ? { st: h.st, why: h.word !== '未知' && h.word !== W[h.st] ? h.word : '', word: (h.word === '未知' ? h.word : W[h.st]) + (n.gate ? '（验收）' : ''), off: h.off, faint: h.faint, raw: h.raw }
+        : h ? { st: h.st, why: ran && ran.why ? RES[h.raw] + ran.why : h.word !== '未知' && h.word !== W[h.st] ? h.word : '', word: (h.word === '未知' ? h.word : W[h.st]) + (n.gate ? '（验收）' : ''), off: h.off, faint: h.faint, raw: h.raw }
           : { st: n.st, why: n.why || '', word: W[n.st] + (n.gate ? '（验收）' : '') };
       /* 待执行 at t with a later real execution (prototype:2951); none known, no reason */
       if (o.raw === 'pending' && first[n.id] > tt) o.why = '这时还没开始，' + this.stamp(first[n.id]) + ' 第一次执行';
@@ -2276,7 +2285,9 @@ class Component extends DCLogic {
       if (c.hasPath) rows.push({ k: '归属', v: c.path, cls: '' });
       if (c.hasAgent) rows.push({ k: '负责', v: c.agent + now, cls: '' });
       if (c.hasSem) rows.push({ k: '语义', v: c.sem, cls: 'hc-sem' });
-      return { sq: 'sq z10 ' + this.sqAt(x.st), name: n.name, word: x.word, tx: 'tx-' + x.st, why: (x.why ? '：' + x.why : '') + at, rows: rows, hint: hint };
+      /* a replayed head keeps its reason at t alone (no duration on the DAG card) */
+      const why = S.live ? this.liveWhy(id, x.why) : x.why;
+      return { sq: 'sq z10 ' + this.sqAt(x.st), name: n.name, word: x.word, tx: 'tx-' + x.st, why: (why ? '：' + why : '') + at, rows: rows, hint: hint };
     }
     const g = this.groupAt(n, S); const c = this.taskCard(n);
     const rows = []; if (c.hasPath) rows.push({ k: '归属', v: c.path, cls: '' });
@@ -2751,12 +2762,11 @@ class Component extends DCLogic {
       if (segI >= 0) rowsC.push({ k: '记录', v: '工作记录第 ' + (L.sessions - segI) + ' 段，共 ' + L.sessions + ' 段' });
       if (b.kind === 'check') { if (b.round !== null) rowsC.push({ k: '尝试', v: '第 ' + b.round + ' 轮正式检查' }); }
       else if (b.kind === 'run') {
-        /* how this attempt came (no ordinal); a first run or the same attempt has no row */
-        const a = b.attempt; const q = a && a.requeue; const cap = (this.taskModel().byId[b.task] || {}).reworkCap;
-        const how = !a || (a.via !== 'requeue' && a.via !== 'wait_continuation') ? ''
-          : q && q.actorClass === 'system' ? '系统自动重新入队' + (typeof q.automaticCount === 'number' && typeof cap === 'number' ? '（' + q.automaticCount + '/' + cap + '）' : '')
-          : q && q.actorClass === 'human' ? '你重新入队' : '接续';
-        if (how) rowsC.push({ k: '尝试', v: how });
+        /* 第 n 次尝试 from the second on and how it came (prototype:3684); a first run has no row. The dock and the
+           full track share this card. */
+        const a = b.attempt; const cap = (this.taskModel().byId[b.task] || {}).reworkCap;
+        const tried = [this.attemptText(a && a.ordinal), this.attemptHow(a, cap, 'card')].filter(Boolean).join(' · ');
+        if (tried) rowsC.push({ k: '尝试', v: tried });
       }
       else rowsC.push({ k: '类型', v: b.kind === 'query' ? '只读副本回答，不写回工作记录' : '工作记录里的一轮' });      rowsC.push({ k: '时间', v: this.stamp(b.s0) + (b.live ? ' 起，已 ' + this.tlDur(b.s0, now) : '–' + this.tlHM(b.e0) + ' · ' + this.tlDur(b.s0, b.e0)) });
       if (b.checksBegun !== null && b.checksBegun !== undefined) rowsC.push({ k: '检查', v: '已启动 ' + b.checksBegun + ' 项' });
@@ -2887,54 +2897,82 @@ class Component extends DCLogic {
   }
 
   /* ------------------------------------------------------------ the right column (U5c): tasks active at t, then what is held */
+  /* The task's last bar at or before the cursor. Its own facts fill the
+     prototype's line: a Run's 接续 (a requeue or a wait continuation; the
+     system's requeue with its count and class) and real changed files (`changedFiles.definite`, 已改至少 when
+     possiblyIncomplete), or a check's real ordinal and begun-item count
+     (已开始, never 已完成). The attempt ordinal is the Host's; no cursor-time x/y. */
+  lastAt(id, S) {
+    let last = null;
+    this.tlData().runs.forEach((r) => { if (r.task === id && r.s0 <= S.t && (last === null || r.s0 >= last.s0)) last = r; });
+    return last;
+  }
+  factText(r, S) {
+    const tm = this.taskModel();
+    if (!r) return '';
+    /* in replay a bar across the cursor says its round or 接续 and how long so far; its counts are today's, not then's */
+    const across = !S.live && S.t < r.e0; const sofar = '已 ' + this.tlDur(r.s0, S.t);
+    if (r.kind === 'check') {
+      if (across) return '正式检查' + (typeof r.round === 'number' ? '第 ' + r.round + ' 轮' : '') + '，' + sofar;
+      const begun = typeof r.checksBegun === 'number' ? '已开始 ' + r.checksBegun + ' 项' : '';
+      if (r.live && typeof r.round === 'number') return ['正式检查第 ' + r.round + ' 轮进行中', begun].filter(Boolean).join('，');
+      const parts = [];
+      if (typeof r.round === 'number') parts.push('第 ' + r.round + ' 轮正式检查');
+      if (begun) parts.push(begun);
+      return parts.join(' · ');
+    }
+    const a = r.attempt; const q = a && a.requeue;
+    const cap = q ? (tm.byId[r.task] || {}).reworkCap : null;
+    /* 第 n 次尝试 from the second on, then how this attempt came (DESIGN `:1066`: 第 2 次尝试 · 接续) */
+    const tried = [this.attemptText(a && a.ordinal), this.attemptHow(a, cap, 'rail')].filter(Boolean).join(' · ');
+    if (across) return [tried, sofar].filter(Boolean).join('，');
+    const files = r.cf && typeof r.cf.definite === 'number' ? '已改' + (r.cf.possiblyIncomplete === true ? '至少 ' : ' ') + r.cf.definite + ' 个文件' : '';
+    return [tried, files].filter(Boolean).join(' · ');
+  }
+  /* the user's rule (HO:2390): the first attempt says nothing; from the second on 第 n 次尝试 (A.2) */
+  attemptText(n) { return typeof n === 'number' && n >= 2 ? '第 ' + n + ' 次尝试' : ''; }
+  /* How a new attempt came, for the now column ('rail') and the bar cards ('card'), from the requeue's own facts:
+     a GOAL-29 resume or a person's continue after a pause (prototype:1579, at the requeue's time), a Host restart's
+     re-drive (prototype:1392), the system's rework with its count (an interruption is not counted) and class, a
+     person's requeue; an agent's requeue or a wait continuation is 接续. '' for a first run. */
+  attemptHow(a, cap, where) {
+    if (!a || (a.via !== 'requeue' && a.via !== 'wait_continuation')) return '';
+    const q = a.requeue; const req = a.via === 'requeue' && q;
+    if (req && (q.goalResume || (q.actorClass === 'human' && q.failureClass === 'interrupted' && q.interruption === 'paused'))) {
+      return '接续：你在 ' + this.tlHM(this.tlMin(q.requestedAt)) + ' 继续，从暂停处接着做';
+    }
+    if (req && q.actorClass === 'system' && q.failureClass === 'interrupted') return '接续：带上接续说明，从停下的地方接着做';
+    const auto = q && q.actorClass === 'system' ? '系统自动重新入队' + (typeof q.automaticCount === 'number' && typeof cap === 'number' ? '（' + q.automaticCount + '/' + cap + '）' : '')
+      + (q.classWord ? '：' + q.classWord : '') : '';
+    if (where === 'rail') return '接续' + (!q ? '' : auto ? '，' + auto : q.reason ? '，' + q.reason : '');
+    return auto || (q && q.actorClass === 'human' ? '你重新入队' : '接续');
+  }
+  /* the timeline says it waits for its check: since its last run ended (prototype:2962) */
+  handed(id, S) {
+    const ran = this.tlData().runs.filter((r) => r.task === id && r.kind === 'run' && r.e0 <= S.t).reduce((a, r) => (!a || r.e0 >= a.e0 ? r : a), null);
+    return '已交给正式检查，等检查开始' + (ran ? '，已 ' + this.tlDur(ran.e0, S.t) : '');
+  }
+  /* The now column's sentence at S: the reason, then the task's last bar's facts (prototype:3778 `sum: x.why`). */
+  nowSum(id, S, why) {
+    const x = S.map[id] || {};
+    const r = this.lastAt(id, S);
+    /* a running check's own line already says 正式检查…进行中; the phase word would say it twice */
+    return [r && r.kind === 'check' && r.live ? '' : !S.live && x.raw === 'awaiting_check' ? this.handed(id, S) : why || '', this.factText(r, S)].filter(Boolean).join(' · ');
+  }
+  /* The task's reason as the detail head and the hover cards say it: one sentence with the now column (prototype:799,
+     :3778) while a bar of it is in progress now; else the reason alone (a finished task's last bar adds nothing). */
+  liveWhy(id, why) {
+    const N = this.statesAt(null); const r = this.lastAt(id, N);
+    return r && r.live ? this.nowSum(id, N, why) : why || '';
+  }
   nowList(s, S, go, detId) {
     const tm = this.taskModel();
-    const D = this.tlData();
     const name = (id) => (tm.byId[id] || {}).name || '';
     const ORD = ['decide', 'waiting', 'running', 'verifying', 'failed', 'blocked'];
     const ids = Object.keys(S.map).filter((id) => !!tm.byId[id] && !S.map[id].off);
-    /* The task's last bar at or before the cursor. Its own facts fill the
-       prototype's line: a Run's 接续 (a requeue or a wait continuation; the
-       system's requeue with its count and class) and real changed files (`changedFiles.definite`, 已改至少 when
-       possiblyIncomplete), or a check's real ordinal and begun-item count
-       (已开始, never 已完成). No attempt ordinal and no cursor-time x/y. */
-    const lastAt = (id) => {
-      let last = null;
-      D.runs.forEach((r) => { if (r.task === id && r.s0 <= S.t && (last === null || r.s0 >= last.s0)) last = r; });
-      return last;
-    };
-    const factText = (r) => {
-      if (!r) return '';
-      /* in replay a bar across the cursor says its round or 接续 and how long so far; its counts are today's, not then's */
-      const across = !S.live && S.t < r.e0; const sofar = '已 ' + this.tlDur(r.s0, S.t);
-      if (r.kind === 'check') {
-        if (across) return '正式检查' + (typeof r.round === 'number' ? '第 ' + r.round + ' 轮' : '') + '，' + sofar;
-        const begun = typeof r.checksBegun === 'number' ? '已开始 ' + r.checksBegun + ' 项' : '';
-        if (r.live && typeof r.round === 'number') return ['正式检查第 ' + r.round + ' 轮进行中', begun].filter(Boolean).join('，');
-        const parts = [];
-        if (typeof r.round === 'number') parts.push('第 ' + r.round + ' 轮正式检查');
-        if (begun) parts.push(begun);
-        return parts.join(' · ');
-      }
-      const a = r.attempt; const q = a && a.requeue;
-      const cap = q ? (tm.byId[r.task] || {}).reworkCap : null;
-      const cont = !a || (a.via !== 'requeue' && a.via !== 'wait_continuation') ? ''
-        : '接续' + (!q ? '' : q.actorClass !== 'system' ? (q.reason ? '，' + q.reason : '')
-          : '，系统自动重新入队' + (typeof q.automaticCount === 'number' && typeof cap === 'number' ? '（' + q.automaticCount + '/' + cap + '）' : '') + (q.classWord ? '：' + q.classWord : ''));
-      if (across) return [cont, sofar].filter(Boolean).join('，');
-      const files = r.cf && typeof r.cf.definite === 'number' ? '已改' + (r.cf.possiblyIncomplete === true ? '至少 ' : ' ') + r.cf.definite + ' 个文件' : '';
-      return [cont, files].filter(Boolean).join(' · ');
-    };
-    /* the timeline says it waits for its check: since its last run ended (prototype:2962) */
-    const handed = (id) => {
-      const ran = D.runs.filter((r) => r.task === id && r.kind === 'run' && r.e0 <= S.t).reduce((a, r) => (!a || r.e0 >= a.e0 ? r : a), null);
-      return '已交给正式检查，等检查开始' + (ran ? '，已 ' + this.tlDur(ran.e0, S.t) : '');
-    };
     const item = (id) => {
       const x = S.map[id];
-      const r = lastAt(id);
-      /* a running check's own line already says 正式检查…进行中; the phase word would say it twice */
-      const sum = [r && r.kind === 'check' && r.live ? '' : !S.live && x.raw === 'awaiting_check' ? handed(id) : x.why || '', factText(r)].filter(Boolean).join(' · ');
+      const sum = this.nowSum(id, S, x.why);
       return { name: name(id), sq: 'sq z10 ' + this.sqAt(x.st), word: x.word, tx: 'dg-now-w tx-' + x.st, sum: sum, cls: 'dg-now-row' + (s.sel === id ? ' is-on' : ''),
         go: () => { if ((this.state || {}).sel === id) go.unsel({ sel: null }); else go.sel(id); } };
     };
@@ -2986,7 +3024,8 @@ class Component extends DCLogic {
       out.hasAgent = !!out.agent;
       if (out.hasAgent && !S.live) out.agent += '（现在）';
       out.word = real ? real.word : det.word;
-      out.why = real && real.why ? '：' + real.why : det.why;
+      const why = this.liveWhy(id, real && real.why ? real.why : n.why);
+      out.why = why ? '：' + why : '';
       /* 依赖 / 后续: the real edges (transitive ones included); a line means
          "needs an output of", never a claim condition. */
       const item = (tid) => ({ name: (tm.byId[tid] || {}).name || '', sq: sqT(tid), go: () => go.sel(tid), over: () => hov.on(tid), out: hov.off });
@@ -3007,7 +3046,7 @@ class Component extends DCLogic {
          per-file count or uncommitted number. */
       const arch = real && real.hasFiles ? real.files.map((g) => ({ crumb: g.crumb,
         files: g.files.map((f) => ({ path: f.path, name: f.name, sq: f.certainty === 'planned' ? '' : 'sq z8 ' + (f.certainty === 'definite' ? 's-satisfied' : 's-pending'),
-          tagCls: 'd-arch-tag' + (f.certainty === 'planned' ? '' : f.certainty === 'definite' ? ' is-real' : ' is-possible'), tag: f.tag })) })) : [];
+          tagCls: 'tag' + (f.certainty === 'planned' ? '' : ' is-act'), tag: f.tag })) })) : [];
       out.hasArch = arch.length > 0;
       out.archSum = arch.some((g) => g.files.some((f) => f.path !== '')) ? '实际改过／可能改过（现在）' : '';
       out.arch = out.hasArch ? arch : [];
@@ -3151,7 +3190,7 @@ class Component extends DCLogic {
         legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
         /* the 600-task legend line stays off until big plans fold by stage again (decision 26) */
         legendFold: false,
-        goalName: goal ? goal.name : '', hasGoal: !!goal, goalSq: goal ? this.sqAt(goal.st) : '', goalWord: goal ? goal.word : '',
+        goalName: goal ? this.goalLabel(goal) : '', hasGoal: !!goal, goalSq: goal ? this.sqAt(goal.st) : '', goalWord: goal ? goal.word : '',
         barWhy: barWhy,
         viewDagCls: 'seg-btn', viewOutlineCls: 'seg-btn', viewLanesCls: 'seg-btn',
         isDag: false, isOutline: false, isLanes: false, hasWl: false,
@@ -3300,7 +3339,7 @@ class Component extends DCLogic {
     })() : null;
     return {
       rootMod: theme === 'light' ? 't-light' : '',
-      goalName: data.goal.name, hasGoal: true, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word,
+      goalName: this.goalLabel(data.goal), hasGoal: true, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word,
       /* in replay (no reread text standing): the lines working and waiting at the cursor, and when (prototype:4048);
          with the track or the timeline unread, no number */
       barWhy: S.live || (read && read.stale && read.staleText) ? barWhy : !data.time || typeof data.time.historyAt !== 'function' ? ''
