@@ -2,28 +2,46 @@
  * The project role-limits owner: the one read (`projects/role-limits`) and the one R2 command
  * (`projects/role-limits/set`). The pure expected-revision check, partial merge and complete next record live in
  * `state/role-limits.ts`; this file reads the record, checks the candidate with its codec and encodes the decision.
+ *
+ * A capacity card's cap raise carries the decision proof on the limits event; after every committed set (a replay
+ * included) each duty's stale capacity episode is closed, because a moved cap is what makes an episode stale.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { ProjectScope } from '../../../contracts/core/identity.js';
+import type { ProjectScope, VersionPin } from '../../../contracts/core/identity.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import {
-  ROLE_LINE_DEFAULT_LIMITS, type ProjectRoleLimitsV1, type RoleLimitsSetRequestV1, type RoleLimitsViewV1,
+  ROLE_LINE_DEFAULT_LIMITS, ROLE_LINE_DUTIES, type ProjectRoleLimitsV1, type RoleLimitsSetRequestV1,
+  type RoleLimitsViewV1,
 } from '../../../contracts/role-lines.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { executeWriteCommand } from '../persistence/command-executor.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import type { RoleCapacityPort } from '../state/role-line-reclaim.js';
 import { projectRoleLimitsNext } from '../state/role-limits.js';
 import { eventIdOf, trustedContext } from './trusted-context.js';
 import { projectRoleLimitsChangedCodec, projectRoleLimitsCodec } from './role-line-record-codecs.js';
 
-export type RoleLimitsServiceDependenciesV1 = { records: GoalRecordTransactionPort; now: () => Date };
+export type RoleLimitsServiceDependenciesV1 = {
+  records: GoalRecordTransactionPort;
+  now: () => Date;
+  /** The capacity service's one close method; absent keeps the public set working (a project with no episode). */
+  capacity?: Pick<RoleCapacityPort, 'closeIfStale'>;
+};
 
 export interface RoleLimitsPort {
   readRoleLimits(ctx: CoreCallContext, input: { projectRef: ProjectScope }): Promise<ReadResult<RoleLimitsViewV1>>;
-  setRoleLimits(ctx: CoreCallContext, request: RoleLimitsSetRequestV1): Promise<WriteResult<RoleLimitsViewV1>>;
+  setRoleLimits(ctx: CoreCallContext, request: RoleLimitsSetRequestV1,
+    options?: { answerRef: SessionMessageRef; capturedPins: readonly VersionPin[];
+      /** The application's stable notice identity, `roleLineOperationRef(answerRef.projectId,
+       *  'capacity-resolution', requestId)`; never read from the source or the episode. A public set passes none. */
+      capacityOperation?: OperationRef }):
+    Promise<WriteResult<RoleLimitsViewV1>>;
 }
 
 export function createRoleLimitsService(deps: RoleLimitsServiceDependenciesV1): RoleLimitsPort {
@@ -43,7 +61,7 @@ export function createRoleLimitsService(deps: RoleLimitsServiceDependenciesV1): 
   }
 
   async function setRoleLimits(
-    ctx: CoreCallContext, request: RoleLimitsSetRequestV1,
+    ctx: CoreCallContext, request: RoleLimitsSetRequestV1, options?: Parameters<RoleLimitsPort['setRoleLimits']>[2],
   ): Promise<WriteResult<RoleLimitsViewV1>> {
     const trusted = trustedContext(ctx, 'a role-limits set');
     if (!trusted.ok) return trusted.rejection;
@@ -75,17 +93,28 @@ export function createRoleLimitsService(deps: RoleLimitsServiceDependenciesV1): 
         return problem === null ? { decision: next.decision }
           : { refuse: rejected('invalid', `the role limits are invalid: ${problem}`) };
       },
-      build: (decision, keys) => ({
-        records: [projectRoleLimitsCodec.encode(decision.record)],
-        claims: [],
-        events: [projectRoleLimitsChangedCodec.encode({
-          eventId: eventIdOf(keys.identityKey, 'changed'), eventType: 'ProjectRoleLimitsChanged',
-          schemaVersion: 1, occurredAt: deps.now().toISOString(), projectId: projectRef.projectId,
-          workspaceId: trusted.scope.workspaceId, from: decision.from, to: decision.to,
-          actor: { kind: 'human', id: trusted.actor.id }, revision: decision.revision })],
-        // `0` never reaches a stored revision: the first write's guard is absence.
-        guards: [{ refKey: key, expectedRevision: decision.revision === 1 ? null : decision.revision - 1 }],
-      }),
+      build: (decision, keys) => {
+        // A card application proves its one change: the limits record's revision before and after this commit.
+        const proof: DecisionChangeProofV1 | undefined = options === undefined ? undefined : {
+          acknowledgementRef: structuredClone(options.answerRef),
+          capturedPins: options.capturedPins.map((pin) => ({ ref: structuredClone(pin.ref), revision: pin.revision })),
+          changes: [{ before: { ref: structuredClone(decision.record.ref), revision: decision.revision - 1 },
+            after: { ref: structuredClone(decision.record.ref), revision: decision.revision } }],
+          basisRebases: [],
+        };
+        return {
+          records: [projectRoleLimitsCodec.encode(decision.record)],
+          claims: [],
+          events: [projectRoleLimitsChangedCodec.encode({
+            eventId: eventIdOf(keys.identityKey, 'changed'), eventType: 'ProjectRoleLimitsChanged',
+            schemaVersion: 1, occurredAt: deps.now().toISOString(), projectId: projectRef.projectId,
+            workspaceId: trusted.scope.workspaceId, from: decision.from, to: decision.to,
+            actor: { kind: 'human', id: trusted.actor.id }, revision: decision.revision,
+            ...(proof === undefined ? {} : { proof }) })],
+          // `0` never reaches a stored revision: the first write's guard is absence.
+          guards: [{ refKey: key, expectedRevision: decision.revision === 1 ? null : decision.revision - 1 }],
+        };
+      },
       result: { eventType: 'ProjectRoleLimitsChanged', schemaVersion: 1,
         decode: event => projectRoleLimitsChangedCodec.decode(event),
         // The event has no `operationRef`: the scope and the receipt are its whole proof.
@@ -98,6 +127,14 @@ export function createRoleLimitsService(deps: RoleLimitsServiceDependenciesV1): 
     });
     if (result.status === 'refused') return result.refusal;
     if (result.status === 'rejected') return rejectedWithCurrent(result.code, result.reason, result.current);
+    // Each stale episode closes in its own commit after the limits commit; a close refusal is the answer, and a
+    // retry replays the limits and runs the closes again.
+    for (const duty of ROLE_LINE_DUTIES) {
+      const closed = await deps.capacity?.closeIfStale(ctx, {
+        projectRef, duty, operation: options?.capacityOperation ?? null,
+      });
+      if (closed !== undefined && closed.status === 'rejected') return closed;
+    }
     return { status: 'committed', value: result.value, replayed: result.replayed, cursor: result.cursor };
   }
 

@@ -35,6 +35,11 @@ import { createStructuralProposalSource } from '../core/work-graph/views/structu
 import { createRepairApprovalSource, readRepairApprovalObjects } from '../core/work-graph/views/repair-approval-source.js';
 import { createGoalSettingsService } from '../core/work-graph/tasks/goal-settings-service.js';
 import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.js';
+import { matchAutonomyRule } from '../core/work-graph/state/autonomy-rules.js';
+import { createAutonomyRuleService, type AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
+import { createRoleCapacityService } from '../core/work-graph/tasks/role-capacity-service.js';
+import { createAllocationRead, openLimitOf } from '../core/work-graph/sessions/allocation-read.js';
+import type { RecordGuard } from '../core/record-store/ports.js';
 import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
 import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
 import { createDeviationFactsReader } from '../core/work-graph/tasks/goal-deviation-facts.js';
@@ -55,7 +60,7 @@ import {
   candidateCardFacts, createCollectionCardSource, createCommandRerunRequestCardSource, createDecisionReadModel,
   createGoalCauseCardSource, createMemberCreationCardSource, createNoteReviewCardSource,
   createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createMessageReleaseCardSource,
-  createMaintainerAssignmentCardSource,
+  createMaintainerAssignmentCardSource, createRoleCapacityCardSource, createRoleLineChangeCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createPlanAdoptionNoticeSource } from '../core/work-graph/views/plan-adoption-notices.js';
 import { createPlanNoticeSource } from '../core/work-graph/views/plan-notices.js';
@@ -99,7 +104,8 @@ import { servingBinding, servedRoleIds } from '../business/workflow/role-binding
 import {
   createCommandRerunRequestApplicationAdapter, createMemberCreationApplicationAdapter,
   createMessageReleaseApplicationAdapter, createReworkRequestApplicationAdapter,
-  createMaintainerAssignmentApplicationAdapter,
+  createMaintainerAssignmentApplicationAdapter, createRoleCapacityApplicationAdapter,
+  createRoleLineChangeApplicationAdapter,
 } from '../business/workflow/decision-actions.js';
 import type { DecisionApplicationAdapter } from '../business/workflow/decision-actions.js';
 import { createSessionDutyResolver } from './session-duty.js';
@@ -371,7 +377,7 @@ import { isRequestRound, queryExecutionBindingOf } from '../contracts/query-job.
 import type { WriteResult } from '../contracts/core/results.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
-  type ResumeOnStartupMode, type TaskAutomationPolicyV1,
+  type ResumeOnStartupMode, type ReworkActorClass, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
 // Slice 2C (spec §6): the line/detail read owners, the pin write owner and the
 // Host-assembled conversation, plus the persisted line-pin event schema.
@@ -566,6 +572,11 @@ const SYSTEM_ACTOR = Object.freeze({ kind: 'system' as const, id: 'platform-comp
  * the split under, once the tool adapter bound the Work Run (the `member-service.ts` `systemContext` precedent);
  * the saved `reason: 'agent_proposal'` keeps that an agent proposed it. */
 const ROLE_SPLIT_ACTOR = Object.freeze({ kind: 'system' as const, id: 'role-split-owner' });
+/** Card supplement C2: the line adjustment's actor class is the caller's principal — a Work or Query Run is an agent,
+ *  a Host call is its actor's kind (the platform is `system`, never `platform`; O3-01). */
+function actorClassOf(ctx: CoreCallContext): ReworkActorClass {
+  return ctx.principal.kind === 'host' ? ctx.principal.actor.kind : 'agent';
+}
 
 /** Slice 4C-2 U6: the four note-card options the notes owner accepts. */
 type NoteOptionId = 'accept' | 'reject' | 'supersede' | 'coexist';
@@ -1212,8 +1223,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // O2: the retained-cap reclaim enters both admissions through this holder, filled once the role-line maintenance
     // instance is built below (the `archiveCondition` pattern); before that the at-cap refusal stands unchanged.
     let roleLineMaintenance: RoleLineMaintenancePort | undefined;
+    // O3b M6: the one autonomy-rule owner; the limits read is a delayed arrow (the limits owner is built below).
+    const autonomyRules = createAutonomyRuleService({ records: backend.records, now: () => new Date(now()),
+      limits: { readRoleLimits: (ctx, input) => roleLimitsOwner.readRoleLimits(ctx, input) } });
+    // O3b M8: the one capacity owner; the owners it applies through are built after the directory that needs it.
+    const roleCapacityService = createRoleCapacityService({
+      records: backend.records, commitIdentities: rawBackend.commitIdentities, now: () => new Date(now()),
+      notices: (input) => notifyProject({ records: backend.records, now }, input),
+      limits: { readRoleLimits: (ctx, input) => roleLimitsOwner.readRoleLimits(ctx, input),
+        setRoleLimits: (ctx, request, options) => roleLimitsOwner.setRoleLimits(ctx, request, options) },
+      lifecycle: { archiveSession: (ctx, request, options) => sessionLifecycle.archiveSession(ctx, request, options) },
+      responsibility: { reanchorSessionResponsibility: (ctx, request, proof) =>
+        sessionResponsibility.reanchorSessionResponsibility(ctx, request, proof) },
+      sessions: { readSession: (ctx, ref) => sessionDirectory.readSession(ctx, ref) },
+    });
+    const capacityAllocation = createAllocationRead({ records: backend.records });
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
-      duty: sessionDutyResolver, reclaim: () => roleLineMaintenance });
+      duty: sessionDutyResolver, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService });
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
@@ -1802,7 +1828,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       createMemberCreationCardSource({ records: backend.records }),
       createMaintainerAssignmentCardSource({ records: backend.records }),
       createRepairApprovalSource({ records: backend.records, observation: observed }),
-      createStructuralProposalSource({ records: backend.records })];
+      createStructuralProposalSource({ records: backend.records }),
+      createRoleCapacityCardSource({ records: backend.records }), createRoleLineChangeCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
       cardSources: decisionCardSources,
@@ -1855,7 +1882,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
       sessionFacts, duty: sessionDutyResolver, archiveCondition: { check: async (ctx, input) => archiveCondition === null
         ? { status: 'rejected', code: 'unavailable', reason: 'the archive condition is not wired' }
-        : archiveCondition.check(ctx, input) }, reclaim: () => roleLineMaintenance });
+        : archiveCondition.check(ctx, input) }, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
@@ -1869,7 +1896,53 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const roleLineOperationsRead = createRoleLineOperationsRead({ records: backend.records });   // v4 :6446
     const roleLineOperations = createRoleLineOperations({ records: backend.records, createLine: requestLineCreation,
       operations: sessionDirectory, responsibility: sessionResponsibility, now,
-      platformRole: (duty) => platformRoleProfile(duty).template, duty: sessionDutyResolver });
+      platformRole: (duty) => platformRoleProfile(duty).template, duty: sessionDutyResolver,
+      adjustments: {
+        // Card supplement C3: rules -> match -> the five-layer policy; the guards ride the writer's own first commit.
+        async judge(ctx, input) {
+          const projectRef = { projectId: ctx.projectId };
+          const rules = await autonomyRules.read(ctx, { projectRef });
+          if (rules.status !== 'ready') return rules;
+          const guards: RecordGuard[] = [{ refKey: canonicalJson(rules.value.set.ref as unknown as JsonValue),
+            expectedRevision: rules.value.set.revision === 0 ? null : rules.value.set.revision }];
+          const affectedGoals = [];
+          for (const goalRef of input.affectedGoals) {
+            // the goal record itself, read by its canonical ref and decoded like the Goal reads below (not the
+            // workspace-bound settings route: a line's goal may live in another workspace of the project)
+            const goalKey = canonicalJson(goalRef as unknown as JsonValue);
+            const read = await backend.records.readMany([goalKey]);
+            if (read.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: read.reason };
+            const record = read.value.records.find((candidate) => candidate.refKey === goalKey);
+            if (record === undefined) return { status: 'rejected', code: 'unavailable', reason: 'an affected goal is missing' };
+            const decoded = decodeGoalSnapshot(record);
+            if (decoded.status !== 'decoded') return { status: 'rejected', code: 'unavailable', reason: 'a goal record is damaged' };
+            const goal = decoded.value;
+            affectedGoals.push({ goalRef, autonomy: readEffectiveGoalSettings(goal).autonomy, settingsRevision: goal.revision });
+            guards.push({ refKey: goalKey, expectedRevision: goal.revision });
+          }
+          const seat = await capacityAllocation.readAllocationForCommit(ctx, { projectRef, duty: input.duty });
+          if (seat.status !== 'ready') return seat;
+          const counts = { holders: seat.value.allocation?.holders.length ?? 0,
+            reservations: seat.value.allocation?.reservations.length ?? 0, open: openLimitOf(seat.value.limits, input.duty) };
+          // the current catalog; `not_found` is a lawful "none adopted"
+          const window = await readCurrentCatalogWindow(backend.records, ctx.projectId);
+          if (window.status !== 'ready' && window.status !== 'not_found') return window;
+          const catalog = window.status === 'ready' ? window.catalog.catalog : null;
+          const matchedRule = matchAutonomyRule({ action: input.action, tool: null, objects: input.objects,
+            rules: rules.value.rules, now: now(), catalog, delegation: null, roleCeiling: null,
+            createMemberAuthorized: false, duty: input.duty, counts,
+            newReservations: input.action === 'role_line_reuse' ? 0 : 1 });
+          if (matchedRule?.limits?.open?.[input.duty] !== undefined) guards.push(seat.value.allocationGuard);
+          // The tool's split starts under the fixed split owner (a system principal); its saved reason says an
+          // agent proposed it (book :414).
+          const verdict = decisionActionPolicy({ action: input.action,
+            actorClass: input.splitReason === 'agent_proposal' ? 'agent' : actorClassOf(ctx), affectedGoals,
+            matchedRule, ruleSetRevision: rules.value.set.revision, counts });
+          return { status: 'ready', value: { verdict: verdict === 'needs_decision' ? 'needs_decision' : 'automatic_notice', guards } };
+        },
+        notify: (ctx, input) => notifyProject({ records: backend.records, now }, input),
+      },
+    });
     // M's ONE member owner: the request and decision ports over the SAME records, identity read, Session directory,
     // line admission, request facts, secretary rounds, duty resolver and Run read the rest of the platform uses.
     // The child line's Role is the normal executor template; the creator's accepted permissions ride as its ceiling.
@@ -1908,6 +1981,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         return { status: 'ready', value: structuredClone(binding.sessionRole) };
       },
       reuse: memberReuse,
+      autonomyRules: { read: (ctx, input) => autonomyRules.read(ctx, input) }, allocation: capacityAllocation,
       now, eventId: randomUUID,
     });
     // R2 L9: the ONE module maintainer owner. `executions` and `goalSettings`
@@ -2161,6 +2235,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
             if (plan === null) return rejected('invalid', 'the move is not a strict subrange of the caller line');
             const started = await roleLineOperations.startRoleLineSplit(owned, { source: input.caller.session, plan });
             if (started.status === 'rejected') return started;
+            if (started.status === 'ready' && started.value.cardKey !== undefined) {
+              // card supplement C7: the split waits for a person's card; the tool answers at once
+              return { status: 'needs_decision', cardKey: started.value.cardKey, operation: started.value.operation };
+            }
             return started.status === 'ready'
               ? { status: 'accepted', operation: started.value.operation, revision: started.value.revision }
               : rejected('unavailable', 'the role-line split could not be started');
@@ -3310,6 +3388,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           readOperation: (ref) => readMaintainerAssignmentOperation(backend.records, ref),
           maintainers: moduleMaintainers,
         }),
+        // O3b M9 (v4 :6514–:6520): the two 7D2 rows, both unconditional.
+        role_capacity: createRoleCapacityApplicationAdapter({ capacity: roleCapacityService, messages: rawDecisionMessages }),
+        role_line_change: createRoleLineChangeApplicationAdapter({ roleLines: roleLineOperations }),
       },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
@@ -3863,10 +3944,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The two project role-limits commands and the one project allocation read. The limits owner and the
     // allocation reader are the only implementations of their ports; `setRoleLimits` and `notifyProject` are the
     // two R2 commands this root owns. The notice writer is published with no route and no producer.
-    const roleLimitsOwner = createRoleLimitsService({ records: backend.records, now: () => new Date(now()) });
+    const roleLimitsOwner = createRoleLimitsService({ records: backend.records, now: () => new Date(now()),
+      capacity: roleCapacityService });
     const roleLimits: RoleLimitsPort = {
       readRoleLimits: (...args) => trackedCall(() => roleLimitsOwner.readRoleLimits(...args), unavailable),
       setRoleLimits: (...args) => trackedCall(() => roleLimitsOwner.setRoleLimits(...args), unavailable),
+    };
+    // The four person-only autonomy-rule routes' owner, drained like the limits commands; the policy's internal
+    // readers keep the raw owner.
+    const trackedAutonomyRules: AutonomyRulePort = {
+      read: (...args) => trackedCall(() => autonomyRules.read(...args), unavailable),
+      create: (...args) => trackedCall(() => autonomyRules.create(...args), unavailable),
+      revoke: (...args) => trackedCall(() => autonomyRules.revoke(...args), unavailable),
+      update: (...args) => trackedCall(() => autonomyRules.update(...args), unavailable),
     };
     const allocationReader = createRoleLineAllocationReader({ records: backend.records, lookups: backend.records });
     const roleLineAllocation: RoleLineAllocationReadPort = {
@@ -3917,6 +4007,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       reuse: (ctx, input) => trackedCall(() => roleLineOperations.reuse(ctx, input), unavailable),
       openRegionLine: (ctx, input) => trackedCall(() => roleLineOperations.openRegionLine(ctx, input), unavailable),
       startRoleLineSplit: (ctx, input) => trackedCall(() => roleLineOperations.startRoleLineSplit(ctx, input), unavailable),
+      applyRoleLineChangeDecision: (ctx, input) => trackedCall(() => roleLineOperations.applyRoleLineChangeDecision(ctx, input), () => ({ status: 'refused', rejection: unavailable() })),
     };
     const trackedRoleLineOperationsRead: typeof roleLineOperationsRead = {
       readRoleLineOperations: (ctx, input) =>
@@ -3969,6 +4060,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The project role-limits owner (read/set), the allocation read, and the one project-notice writer.
       // Internal like the other owner groups: the route table reads them by property.
       roleLimits, roleLineAllocation, projectNoticeWriter,
+      autonomyRules: trackedAutonomyRules,
       // The module maintainer owner (read + assign + the operation entries); the
       // route table binds `modules/assign-maintainer` to it. Internal like the
       // other owner groups, and every call drains through `trackedCall` above.
@@ -4107,7 +4199,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
       'repairs', 'readArchitectureProposal', 'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
-      'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter',
+      'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter', 'autonomyRules',
       'moduleMaintainers',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',

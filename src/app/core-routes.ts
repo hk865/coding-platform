@@ -41,6 +41,7 @@ import type {
   RoleLineChangeScopeCommandV1, RoleLineOpenCommandV1, RoleLineOperationsPort,
 } from '../core/work-graph/sessions/role-line-operations.js';
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
+import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 // The two secretary lifecycle commands' accept owners; the body and progress types are the DTOs derived from them.
 import type { SessionHandoffPort, SessionSecretaryArchivePort } from '../core/work-graph/sessions/session-handoff-service.js';
@@ -339,11 +340,25 @@ export type CoreRouteBindings = {
   readRoleLineAllocation: RoleLineAllocationReadPort['readRoleLineAllocation'];
   // O1b: the two role-line writes take the existing `GraphWrite`; the binding unwraps it once and passes
   // `commandId: request.meta.requestId`, so the owner port stays flat. The operations read is person-only too.
-  openRoleLine: (ctx: CoreCallContext, request: GraphWrite<Omit<RoleLineOpenCommandV1, 'commandId'>>)
+  // `affectedGoals` is a platform caller's field (card supplement C4): a person's open never names it.
+  openRoleLine: (ctx: CoreCallContext,
+    request: GraphWrite<Omit<RoleLineOpenCommandV1, 'commandId' | 'affectedGoals'>>)
     => ReturnType<RoleLineOperationsPort['open']>;
   changeRoleLineScope: (ctx: CoreCallContext, request: GraphWrite<Omit<RoleLineChangeScopeCommandV1, 'commandId'>>)
     => ReturnType<RoleLineOperationsPort['changeScope']>;
   readRoleLineOperations: RoleLineOperationReadPort['readRoleLineOperations'];
+  // The autonomy rules: the read and the three writes are person-only; each write unwraps its `GraphWrite` once
+  // like the role-line writes.
+  readAutonomyRules: AutonomyRulePort['read'];
+  createAutonomyRule: (ctx: CoreCallContext,
+    request: GraphWrite<Omit<Parameters<AutonomyRulePort['create']>[1], 'commandId'>>)
+    => ReturnType<AutonomyRulePort['create']>;
+  revokeAutonomyRule: (ctx: CoreCallContext,
+    request: GraphWrite<Omit<Parameters<AutonomyRulePort['revoke']>[1], 'commandId'>>)
+    => ReturnType<AutonomyRulePort['revoke']>;
+  updateAutonomyRule: (ctx: CoreCallContext,
+    request: GraphWrite<Omit<Parameters<AutonomyRulePort['update']>[1], 'commandId'>>)
+    => ReturnType<AutonomyRulePort['update']>;
   // The two Goal-card commands and the initialization adoption are person-only, so their binding can answer a
   // `forbidden` rejection; the copy preview is a read like the other reads.
   confirmGoalDraft: GoalConfirmPort['confirmDraft'];
@@ -471,6 +486,8 @@ export type CoreRoutePlatform = {
   /** O1b: the role-line writes and the operations read; internal like the other owner groups. */
   roleLines?: Pick<RoleLineOperationsPort, 'open' | 'changeScope'>;
   roleLineOperationsRead?: RoleLineOperationReadPort;
+  /** The autonomy-rule owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
+  autonomyRules?: Pick<AutonomyRulePort, 'read' | 'create' | 'revoke' | 'update'>;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -705,6 +722,10 @@ export const CORE_ROUTE_SPECS: Record<
   'role-lines/change-scope': { kind: 'graph_write', binding: 'changeRoleLineScope', owner: 'roleLines.changeScope' },
   'role-lines/operations': { kind: 'plain', binding: 'readRoleLineOperations',
     owner: 'roleLineOperationsRead.readRoleLineOperations' },
+  'autonomy-rules': { kind: 'plain', binding: 'readAutonomyRules', owner: 'autonomyRules.read' },
+  'autonomy-rules/create': { kind: 'graph_write', binding: 'createAutonomyRule', owner: 'autonomyRules.create' },
+  'autonomy-rules/revoke': { kind: 'graph_write', binding: 'revokeAutonomyRule', owner: 'autonomyRules.revoke' },
+  'autonomy-rules/update': { kind: 'graph_write', binding: 'updateAutonomyRule', owner: 'autonomyRules.update' },
 };
 
 export type ParsedCoreRequest =
@@ -1313,8 +1334,12 @@ export function createPlatformCoreRouteBindings(
     // O1b: person-only BEFORE the owner runs, the read included (L44).
     openRoleLine: platform.roleLines === undefined
       ? unsupported('the platform does not publish roleLines.open')
-      : personEntry((ctx, request) => platform.roleLines!.open(ctx,
-          { ...request.input, commandId: request.meta.requestId })),
+      : personEntry((ctx, request) => {
+        // A JSON body may still carry the platform-only key; it is dropped, never forwarded (card supplement C4).
+        const { affectedGoals: _platformOnly, ...input } = request.input as typeof request.input
+          & { affectedGoals?: unknown };
+        return platform.roleLines!.open(ctx, { ...input, commandId: request.meta.requestId });
+      }),
     changeRoleLineScope: platform.roleLines === undefined
       ? unsupported('the platform does not publish roleLines.changeScope')
       : personEntry((ctx, request) => platform.roleLines!.changeScope(ctx,
@@ -1322,6 +1347,23 @@ export function createPlatformCoreRouteBindings(
     readRoleLineOperations: platform.roleLineOperationsRead === undefined
       ? unsupported('the platform does not publish roleLineOperationsRead.readRoleLineOperations')
       : personEntry(platform.roleLineOperationsRead.readRoleLineOperations.bind(platform.roleLineOperationsRead)),
+    // The autonomy rules: person-only BEFORE the owner runs, the read included; the three write owners check the
+    // person again, so the route is not the only guard.
+    readAutonomyRules: platform.autonomyRules === undefined
+      ? unsupported('the platform does not publish autonomyRules.read')
+      : personEntry(platform.autonomyRules.read.bind(platform.autonomyRules)),
+    createAutonomyRule: platform.autonomyRules === undefined
+      ? unsupported('the platform does not publish autonomyRules.create')
+      : personEntry((ctx, request) => platform.autonomyRules!.create(ctx,
+          { ...request.input, commandId: request.meta.requestId })),
+    revokeAutonomyRule: platform.autonomyRules === undefined
+      ? unsupported('the platform does not publish autonomyRules.revoke')
+      : personEntry((ctx, request) => platform.autonomyRules!.revoke(ctx,
+          { ...request.input, commandId: request.meta.requestId })),
+    updateAutonomyRule: platform.autonomyRules === undefined
+      ? unsupported('the platform does not publish autonomyRules.update')
+      : personEntry((ctx, request) => platform.autonomyRules!.update(ctx,
+          { ...request.input, commandId: request.meta.requestId })),
     // The Goal service's three card owners; the Host's adoption owner arrives as the sixth argument.
     confirmGoalDraft: personEntry(platform.goals.confirmDraft.bind(platform.goals)),
     readGoalCopyDraft: platform.goals.readGoalCopyDraft.bind(platform.goals),
@@ -1613,6 +1655,10 @@ export async function dispatchCoreRoute(
       case 'role-lines/open': return bindings.openRoleLine(ctx, graphWrite.request as never);
       case 'role-lines/change-scope': return bindings.changeRoleLineScope(ctx, graphWrite.request as never);
       case 'role-lines/operations': return bindings.readRoleLineOperations(ctx, plain.input as never);
+      case 'autonomy-rules': return bindings.readAutonomyRules(ctx, plain.input as never);
+      case 'autonomy-rules/create': return bindings.createAutonomyRule(ctx, graphWrite.request as never);
+      case 'autonomy-rules/revoke': return bindings.revokeAutonomyRule(ctx, graphWrite.request as never);
+      case 'autonomy-rules/update': return bindings.updateAutonomyRule(ctx, graphWrite.request as never);
       // The two Goal-card commands, the copy preview and the initialization adoption.
       case 'goals/confirm-draft': return bindings.confirmGoalDraft(ctx, plain.input as never);
       case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);

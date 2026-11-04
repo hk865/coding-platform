@@ -137,6 +137,7 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   ProjectCompletionPolicyActive: { strings: ['projectId'] },
   ProjectArchitectureBaselineActive: { strings: ['projectId'] },
   ProjectRoleLimits: { strings: ['projectId'] },
+  RoleCapacityEpisode: { strings: ['projectId', 'duty'], integers: ['episode'] },
   PlanRevision: { strings: ['projectId', 'planId'] },
   TaskLease: { strings: ['projectId', 'goalId', 'taskId'] },
   TaskAttempt: { strings: ['projectId', 'goalId', 'taskId', 'attemptId'] },

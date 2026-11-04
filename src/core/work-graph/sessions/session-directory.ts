@@ -686,7 +686,7 @@ function directoryCandidatePlan(scope: { projectId: string; workspaceId?: string
 // --------------------------------------------------------------------------
 
 export function createSessionDirectory(stores: SessionDirectoryStores): SessionDirectoryPort {
-  const { records, lookups, duty } = stores;
+  const { records, lookups, duty, roleCapacity } = stores;
   // The one read is bound once; each seat decision and each registration attempt calls it, never each entry.
   const allocationRead = createAllocationRead({ records });
 
@@ -939,7 +939,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
   async function decideSeat(args: { ctx: CoreCallContext; scope: WorkspaceScope; role: RoleConfigurationRef;
     provenance: SessionProvenanceV1; parentOperation: OperationRef | null; plannedSessionRef: SessionRef;
     operationRef: OperationRef; requestId: string;
-    reclaim: () => RoleLineReclaimPort | undefined }): Promise<SeatOutcome> {
+    reclaim: () => RoleLineReclaimPort | undefined;
+    /** The platform's automatic add (a saved add, split or cold-start parent): only it observes a capacity episode. */
+    automaticAdd: boolean }): Promise<SeatOutcome> {
     const decidedAt = new Date().toISOString();
     const projectRef: ProjectScope = { projectId: args.scope.projectId };
     const notCountedSeat = (reason: 'unknown_duty' | 'readonly_copy'): SeatOutcome => ({ ok: true, internal: [],
@@ -984,7 +986,24 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0 });
       }
     }
-    if (atCap !== null) return { ok: false, rejection: atCap };
+    if (atCap !== null) {
+      // Still at cap: the automatic add observes the episode; a human open never calls the port, so its detail keeps
+      // `episode: null`. Only an episode open after the observation lends its number; no seat is retried here.
+      const observation = args.automaticAdd && roleCapacity !== undefined
+        ? await roleCapacity.observeAtCap(args.ctx, {
+          projectRef, duty: counted, operation: args.operationRef,
+          capValue: openLimitOf(limits, counted),
+          holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0,
+          open: openLimitOf(limits, counted),
+        })
+        : undefined;
+      if (observation !== undefined && observation.status !== 'committed') return { ok: false, rejection: observation };
+      return { ok: false, rejection: observation !== undefined && observation.value.opened
+        ? seatAtCap({ duty: counted, open: openLimitOf(limits, counted),
+          holders: allocation?.holders.length ?? 0, reservations: allocation?.reservations.length ?? 0,
+          episode: observation.value.episode.episode })!
+        : atCap };
+    }
     const pending = allocationNext({ projectRef, duty: counted, current: allocation,
       change: { kind: 'reserve', operationRef: args.operationRef } });
     const contribution = roleLineCommitContribution({ projectRef, records: [], guards: [],
@@ -1106,8 +1125,15 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         provenanceGuards = chain.guards;
       }
 
+      // The saved parent action decides an automatic add: a human `open`'s child also names a parent, and a human
+      // reviewer is saved as `role_line_add`, so neither a parent ref nor that action alone is proof.
+      const parentRead = input.parentOperation === null ? null : await getSessionOperation(ctx, input.parentOperation);
+      const parentAction = parentRead !== null && parentRead.status === 'ready'
+        && parentRead.value.action.kind === 'role_line' ? parentRead.value.action.action : null;
+      const automaticAdd = (parentAction === 'role_line_add' && input.creation?.duty !== 'reviewer')
+        || parentAction === 'role_line_split' || parentAction === 'cold_start';
       const seat = await decideSeat({ ctx, scope, role: input.role, provenance: createdProvenance,
-        parentOperation: input.parentOperation, plannedSessionRef, operationRef, requestId, reclaim });
+        parentOperation: input.parentOperation, plannedSessionRef, operationRef, requestId, reclaim, automaticAdd });
       if (!seat.ok) return seat.rejection;
       internal = seat.internal;
 

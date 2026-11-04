@@ -54,6 +54,9 @@ import {
 import type { MemberCallerV1, MemberCreateActionV1, MemberCreationStepV1 } from '../state/member-creation.js';
 import { acceptedMemberCreation, advancedMemberCreation, memberCreateInputProblem } from '../state/member-creation.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
+import { matchAutonomyRule } from '../state/autonomy-rules.js';
+import { openLimitOf, type createAllocationRead } from '../sessions/allocation-read.js';
+import type { AutonomyRulePort, AutonomyRuleViewV1 } from './autonomy-rule-service.js';
 import { commandIdentity, commandKeys, executeWriteCommand } from '../persistence/command-executor.js';
 import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
@@ -172,6 +175,12 @@ export type MemberServiceDependenciesV1 = {
   commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
   /** P's `createSessionChooser.reusable`, injected by L1; absent means no reuse (the positive half joins L1). */
   reuse?: SessionReusePortV1;
+  /**
+   * The project's autonomy rules and the executor seat read, both needed for a rule match (L37): a rule is checked
+   * against the executor quota after this one more line. Without both the request keeps the factory default.
+   */
+  autonomyRules?: Pick<AutonomyRulePort, 'read'>;
+  allocation?: Pick<ReturnType<typeof createAllocationRead>, 'readAllocationForCommit'>;
   now(): string;
   eventId(): string;
 };
@@ -344,6 +353,14 @@ type RequestFactsBase = {
   actionInput: MemberCreateActionV1['input'];
   guards: RecordGuard[];
 };
+type RuleMatchInput = Parameters<typeof matchAutonomyRule>[0];
+/** A Work caller's accepted delegation as the rule match reads it; a secretary caller has none. */
+type MemberRuleDelegationV1 = NonNullable<RuleMatchInput['delegation']>;
+/** The rules a request is judged with, the executor seat counts, and the guards of both reads. */
+type MemberRuleFactsV1 = {
+  view: AutonomyRuleViewV1; setGuard: RecordGuard;
+  counts: RuleMatchInput['counts']; allocationGuard: RecordGuard;
+};
 type RequestFacts =
   | (RequestFactsBase & { kind: 'host_pick'; ceiling?: undefined })
   | (RequestFactsBase & {
@@ -351,6 +368,9 @@ type RequestFacts =
       goal: GoalSnapshot;
       reused: SessionRef | null;
       ceiling?: MemberDelegationCeilingV1;
+      delegation?: MemberRuleDelegationV1;
+      /** `null` when the service has no rule reads: the factory default decides. */
+      rules: MemberRuleFactsV1 | null;
     });
 
 type ResolvedRequestCaller =
@@ -362,6 +382,7 @@ type ResolvedRequestCaller =
       plan: PlanRevisionSnapshot;
       guards: RecordGuard[];
       ceiling?: MemberDelegationCeilingV1;
+      delegation?: MemberRuleDelegationV1;
     };
 
 type DecisionFacts = { operation: MemberOperationRecordV1; plan: PlanRevisionSnapshot | null };
@@ -402,9 +423,13 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     return { identityKey, fingerprint: read.fingerprint, cursor: read.receipt.cursor };
   }
 
-  /** The Work caller's one Run read: its accepted permissions admit the request and become the child ceiling. */
+  /**
+   * The Work caller's one Run read: its accepted permissions admit the request and become the child ceiling, and with
+   * the role binding's version they are the delegation a rule match checks.
+   */
   async function readWorkCaller(ctx: CoreCallContext, caller: Extract<MemberCallerV1, { kind: 'work' }>):
-    Promise<{ ceiling: MemberDelegationCeilingV1; guard: RecordGuard } | CoreRejection> {
+    Promise<{ ceiling: MemberDelegationCeilingV1; delegation: MemberRuleDelegationV1; guard: RecordGuard }
+      | CoreRejection> {
     let read;
     try {
       read = await deps.executions.readExecution(systemContext(ctx), structuredClone(caller.run));
@@ -423,6 +448,10 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     return {
       ceiling: {
         tools: [...permissions.tools], writeScope: [...permissions.writeScope], createMember: true,
+      },
+      delegation: {
+        revision: run.envelope.roleBinding.bindingVersion, tools: [...permissions.tools],
+        writeScope: [...permissions.writeScope], policyRevision: permissions.policyRevision,
       },
       guard: { refKey: canonicalJson(run.ref as unknown as JsonValue), expectedRevision: run.revision },
     };
@@ -473,6 +502,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       return {
         kind: 'work', caller: structuredClone(input.caller), goal: window.goal, plan,
         guards: [goalGuard(window.goal), planGuard(plan), work.guard], ceiling: work.ceiling,
+        delegation: work.delegation,
       };
     }
     if (ctx.principal.kind !== 'query_run') {
@@ -618,24 +648,68 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     }
     const reused = await findReusable(ctx, workspace, task, structuredClone(role.value));
     if (reused !== null && 'status' in reused) return reused;
+    // The project's rules and the executor seat, read in this attempt so a retried commit judges fresh ones.
+    let rules: MemberRuleFactsV1 | null = null;
+    if (deps.autonomyRules !== undefined && deps.allocation !== undefined) {
+      const projectRef = { projectId: ctx.projectId };
+      const view = await deps.autonomyRules.read(ctx, { projectRef });
+      if (view.status !== 'ready') {
+        return view.status === 'rejected' ? view : rejected('unavailable', 'the autonomy rules are not readable');
+      }
+      const seat = await deps.allocation.readAllocationForCommit(ctx, { projectRef, duty: 'executor' });
+      if (seat.status !== 'ready') {
+        return seat.status === 'rejected' ? seat : rejected('unavailable', 'the executor seats are not readable');
+      }
+      const set = view.value.set;
+      rules = {
+        view: view.value,
+        // a set never written reads as revision 0 and is guarded as absent
+        setGuard: { refKey: canonicalJson(set.ref as unknown as JsonValue),
+          expectedRevision: set.revision === 0 ? null : set.revision },
+        counts: { holders: seat.value.allocation?.holders.length ?? 0,
+          reservations: seat.value.allocation?.reservations.length ?? 0,
+          open: openLimitOf(seat.value.limits, 'executor') },
+        allocationGuard: seat.value.allocationGuard,
+      };
+    }
     return {
       status: 'ready',
       facts: {
         kind: resolved.kind, workspace: structuredClone(workspace), caller: resolved.caller, actionInput,
         guards: resolved.guards, goal: resolved.goal, reused,
         ...(resolved.ceiling === undefined ? {} : { ceiling: structuredClone(resolved.ceiling) }),
+        ...(resolved.delegation === undefined ? {} : { delegation: structuredClone(resolved.delegation) }),
+        rules,
       },
     };
   }
 
-  function decideRequest(facts: RequestFacts): RequestDecision {
-    if (facts.kind === 'host_pick') return { kind: 'needs_decision' };
-    if (facts.reused !== null) return { kind: 'reused', session: structuredClone(facts.reused) };
+  /**
+   * The verdict and the guards it rests on. A matching rule (L37) is the policy's third layer; it is matched with
+   * this attempt's clock, so an expiry between the read and the commit is judged at the commit. The commit guards the
+   * rule set it was judged against, matched or not, and the executor seat when the matched rule's executor limit
+   * counted it.
+   */
+  function decideRequest(facts: RequestFacts): { decision: RequestDecision; ruleGuards: RecordGuard[] } {
+    if (facts.kind === 'host_pick') return { decision: { kind: 'needs_decision' }, ruleGuards: [] };
+    if (facts.reused !== null) {
+      return { decision: { kind: 'reused', session: structuredClone(facts.reused) }, ruleGuards: [] };
+    }
+    const rules = facts.rules;
+    const matchedRule = rules === null ? null : matchAutonomyRule({
+      action: 'create_member', tool: 'create_member', objects: [{ kind: 'goal', goalRef: facts.goal.ref }],
+      rules: rules.view.rules, now: deps.now(), catalog: null, delegation: facts.delegation ?? null, roleCeiling: null,
+      createMemberAuthorized: facts.kind === 'work' ? facts.ceiling?.createMember === true : true,
+      duty: 'executor', counts: rules.counts, newReservations: 1,
+    });
     // `create_member` is the two-verdict action of the one autonomy table.
     const verdict = decisionActionPolicy({
       autonomy: facts.goal.settings.autonomy, action: 'create_member', actorClass: 'system', countedNext: null, cap: 0,
+      matchedRule, ...(rules === null ? {} : { ruleSetRevision: rules.view.set.revision }),
     }) as 'needs_decision' | 'automatic_notice';
-    return { kind: verdict };
+    const ruleGuards = rules === null ? []
+      : [rules.setGuard, ...(matchedRule?.limits?.open?.executor === undefined ? [] : [rules.allocationGuard])];
+    return { decision: { kind: verdict }, ruleGuards };
   }
 
   /** The accepted write: `member.request` at revision 1 with the caller's command id, through the shared executor. */
@@ -649,6 +723,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
   > {
     let facts: RequestFacts | null = null;
     let decision: RequestDecision | null = null;
+    let ruleGuards: RecordGuard[] = [];
     let built: MemberOperationRecordV1 | null = null;
     const result = await executeWriteCommand<RequestFacts, RequestDecision, CoreRejection, AcceptedEventV1,
       { ref: OperationRef; revision: number }>(deps.records, {
@@ -664,8 +739,9 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       },
       decide: (readFacts) => {
         const decided = decideRequest(readFacts);
-        decision = decided;
-        return { decision: decided };
+        decision = decided.decision;
+        ruleGuards = decided.ruleGuards;
+        return { decision: decided.decision };
       },
       build: (_decision, keys) => {
         const readFacts = facts!;
@@ -675,12 +751,16 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
         });
         built = record;
         return {
-          guards: [{ refKey: operationRefKey(ref), expectedRevision: null }, ...readFacts.guards],
+          guards: [{ refKey: operationRefKey(ref), expectedRevision: null }, ...readFacts.guards, ...ruleGuards],
           records: [encodeMemberRecord(record)],
           events: [acceptedEvent(deps, record)],
           claims: [],
         };
       },
+      // A rule-set change between the read and the commit re-runs the read, the match and the policy, so the request
+      // is judged by the rules that hold at its commit (a revoked rule gives the factory card); no other guard retries.
+      retryable: { guard: (key) => facts !== null && facts.kind !== 'host_pick' && facts.rules !== null
+        && key === facts.rules.setGuard.refKey },
       result: {
         eventType: 'MemberCreationAccepted',
         schemaVersion: 1,

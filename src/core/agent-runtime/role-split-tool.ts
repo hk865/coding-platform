@@ -4,7 +4,8 @@
  * One thin adapter over the role-split owner's `requestSplit`: the strict model arguments name the scopes to move and
  * the reason; the trusted Work caller, the command id and the context are bound by the factory. The owner validates
  * the move with the same split planner the maintenance page uses and refuses at once; a refusal goes back to the model
- * as the tool result, never a suspended call. This file adds no second validator.
+ * as the tool result, never a suspended call. A split that waits for a person's card is a success with one sentence,
+ * as `hand_off`'s is. This file adds no second validator.
  */
 import type { ActorRef } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
@@ -18,6 +19,7 @@ import type { RoleScopeV1 } from '../../contracts/role-lines.js';
 import {
   toolSchema as z, type ToolCall, type ToolDefinition, type ToolResult, type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+import { noneEffects, success as successWithText } from './command-rerun-tools.js';
 import { failure, rejectedResult, success } from './graph-tools.js';
 
 /** Typed view: the generated pack's literal `tools` object has no string index signature. */
@@ -30,7 +32,10 @@ export type RoleSplitToolOwnerV1 = {
     commandId: string;
     caller: { kind: 'work'; actor: Extract<ActorRef, { kind: 'agent' }>; session: SessionRef; run: RunRef };
     move: readonly RoleScopeV1[]; reason: string;
-  }): Promise<{ status: 'accepted'; operation: OperationRef; revision: number } | CoreRejection>;
+  }): Promise<{ status: 'accepted'; operation: OperationRef; revision: number }
+    /** The split waits for a person's `role_line_change` card (card supplement C7). */
+    | { status: 'needs_decision'; cardKey: string; operation: OperationRef }
+    | CoreRejection>;
 };
 
 export type RoleSplitToolsConfig = {
@@ -97,7 +102,18 @@ export function createRoleSplitTools(config: RoleSplitToolsConfig):
       move: structuredClone(parsed.data.move),
       reason: parsed.data.reason,
     });
-    if (result.status === 'rejected') return rejectedResult(callId, result, result.reason);
+    if (result.status === 'rejected') {
+      // `cancelled` (e.g. a plan declined on its card, card supplement §2.2) is the tool's own cancelled result; the
+      // refusal stays in the output.
+      if (result.code === 'cancelled') {
+        return { schemaVersion: 1, callId, status: 'cancelled', reason: result.reason,
+          output: [{ kind: 'json', value: result as never }], effects: noneEffects() };
+      }
+      return rejectedResult(callId, result, result.reason);
+    }
+    if (result.status === 'needs_decision') {
+      return successWithText(callId, result, '拆线已登记，等人在卡上决定；这一轮不要重复提交。');
+    }
     return success(callId, result);
   }
 

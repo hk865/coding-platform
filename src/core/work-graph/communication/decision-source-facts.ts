@@ -69,6 +69,7 @@ import { readReworkRequestSource } from './decision-source/rework-request.js';
 import type { DecisionSourceBranchFacts } from './decision-source/types.js';
 import { roleCapacityEpisodeCodec } from '../sessions/role-line-orchestration-codecs.js';
 import { decodeSessionOperationRecord } from '../sessions/session-record-codecs.js';
+import type { RoleLineOperationV1 } from '../model/session-contracts.js';
 
 /** The one Store seam this reader uses, the same instance every other WorkGraph reader shares. */
 export type DecisionSourceFactsDependencies = {
@@ -251,6 +252,25 @@ export const ROLE_LINE_CHANGE_OPTIONS: readonly DecisionOptionV1[] = Object.free
   Object.freeze({ id: 'reject', label: '不执行', effect: 'apply' as const }),
 ]);
 
+/**
+ * The `role_line_change` card's two options for one saved operation; the card source and its answer facts both use
+ * it. A line add and a queue assignment spell out each answer's consequence (an add without any adviser line stops
+ * the Goal until the person acts); a split and a reuse keep the plain pair.
+ */
+export function roleLineChangeOptionsOf(operation: RoleLineOperationV1): DecisionOptionV1[] {
+  if (operation.action.action === 'goal_queue_assign') return [
+    { id: 'approve', label: '执行：分给现在有空的参谋', effect: 'apply' },
+    { id: 'reject', label: '不执行：留在队里，等你手动分配', effect: 'apply' },
+  ];
+  if (operation.action.action !== 'role_line_add') return ROLE_LINE_CHANGE_OPTIONS.map((option) => ({ ...option }));
+  const noLine = operation.action.result?.reason === 'no_adviser_line';
+  return [
+    { id: 'approve', label: '执行：给这个目标新开一条参谋线', effect: 'apply' },
+    { id: 'reject', label: noLine ? '不执行：会停在这里，直到你开线或指定参谋' : '不执行：目标排队，等现有参谋',
+      effect: 'apply' },
+  ];
+}
+
 /** The `role_capacity` answer fact is the open episode of its identity; a closed episode or a moved cap is stale. */
 async function readRoleCapacitySource(support: SourceReadSupport, ctx: CoreCallContext,
   source: DecisionSourceV1, identity: Extract<DecisionSourceIdentityV1, { kind: 'role_capacity' }>):
@@ -298,7 +318,7 @@ async function readRoleLineChangeSource(support: SourceReadSupport, ctx: CoreCal
   return { status: 'ready', value: {
     goal: goal === null ? null : goal.value,
     objects: [{ kind: 'aggregate', pin: structuredClone(pin), label: '角色线调整' }],
-    options: ROLE_LINE_CHANGE_OPTIONS.map((option) => ({ ...option })),
+    options: roleLineChangeOptionsOf({ ...operation.value, action }),
     pins: [pin], goalBases: [], closed: false, allowedReaderSessionRefs: [],
   } };
 }

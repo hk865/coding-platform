@@ -74,11 +74,11 @@
 | `runRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:114` | 校验完整 Work RunRef | Work Run 字段，注意不是 QueryRunRef |
 | `sessionRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整的普通 `{projectId,sessionId}` SessionRef；**正本** | 普通 SessionRef 输入及嵌套字段；旧副本见“不要做”（CS-11、M1-31） |
 | `taskTripleProblem` | `src/core/work-graph/persistence/rework-codecs.ts:107` | 校验 Task 三元组（project/goal/task） | 需要 Task 身份时 |
-| `aggregateRefProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:189` | 校验已知聚合判别式与全部身份字段 | VersionedRef/card 引用 |
-| `isWorkLinkRelation`、`checkTarget`、`checkWorkLinkRef` | `src/core/work-graph/persistence/decision-record-codecs.ts:210`、`src/core/work-graph/persistence/decision-record-codecs.ts:214`、`src/core/work-graph/persistence/decision-record-codecs.ts:252` | 五个 `WorkLinkTarget` 臂的关系/目标/完整 ref 校验 | 会话链接与角色线目标校验；不要另写本地判别 |
-| `versionPinProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:275` | VersionPin 的唯一校验：`{ref,revision}` 的 ref 已知、revision 为正整数；`allowAbsence` 允许 0（变更证明的 before） | 需要校验 `{ref,revision}` pin 时；不要另写本地 pin 检查 |
-| `decisionChangeProofProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:344` | 校验决定变更证明 | 编码/解码决定写事件时 |
-| `decodeNoticeOrigin` | `src/core/work-graph/persistence/decision-record-codecs.ts:430` | 解码 wire-only 的 notice origin | SessionMessage/TaskRequeue/轮次共享 |
+| `aggregateRefProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:190` | 校验已知聚合判别式与全部身份字段 | VersionedRef/card 引用 |
+| `isWorkLinkRelation`、`checkTarget`、`checkWorkLinkRef` | `src/core/work-graph/persistence/decision-record-codecs.ts:211`、`src/core/work-graph/persistence/decision-record-codecs.ts:214`、`src/core/work-graph/persistence/decision-record-codecs.ts:253` | 五个 `WorkLinkTarget` 臂的关系/目标/完整 ref 校验 | 会话链接与角色线目标校验；不要另写本地判别 |
+| `versionPinProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:276` | VersionPin 的唯一校验：`{ref,revision}` 的 ref 已知、revision 为正整数；`allowAbsence` 允许 0（变更证明的 before） | 需要校验 `{ref,revision}` pin 时；不要另写本地 pin 检查 |
+| `decisionChangeProofProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:345` | 校验决定变更证明 | 编码/解码决定写事件时 |
+| `decodeNoticeOrigin` | `src/core/work-graph/persistence/decision-record-codecs.ts:431` | 解码 wire-only 的 notice origin | SessionMessage/TaskRequeue/轮次共享 |
 | `runControlStateProblem` | `src/core/work-graph/persistence/control-record-codecs.ts:85` | 校验 Run 的 controlState 形状；不判断能否执行 | Run 记录读取器 |
 | `createEventCodec` | `src/core/work-graph/persistence/event-codec-factory.ts:42` | 由一份事件描述生成 encode/decode/注册，固定校验顺序与首错 | 新增兼容事件格式时 |
 | `createRecordCodec` | `src/core/work-graph/persistence/field-table-codec.ts:57` | 由字段表记录格式生成 check/encode/decode/注册/lookup：键是完整 ref 的 `canonicalJson`，encode 先按 pending 检查、不排序不补值，decode 先核对信封（`decodeRefKey`、`decodeRecordBody`）再按 stored 检查 | 新记录格式；顶层字段和数组元素里的可绑定游标（含 `holders[].since`、`reservations[].reservedAt`、`entries[].enqueuedAt`，以及 `openedAt`/`closedAt` 两个顶层名）自动声明为 `commitCursorFields` |

@@ -130,7 +130,7 @@ import { ROLE_CAPACITY_EPISODES_BY_PROJECT_DUTY_LOOKUP, ROLE_LINE_DUTIES,
   type RoleCapacityEpisodeV1 } from '../../../contracts/role-lines.js';
 import type { RoleLineOperationV1 } from '../model/session-contracts.js';
 import { roleCapacityEpisodeCodec } from '../sessions/role-line-orchestration-codecs.js';
-import { ROLE_CAPACITY_OPTIONS, ROLE_LINE_CHANGE_OPTIONS } from '../communication/decision-source-facts.js';
+import { ROLE_CAPACITY_OPTIONS, roleLineChangeOptionsOf } from '../communication/decision-source-facts.js';
 
 /**
  * The views' read seam plus the two commit reads the member notice rebuilds its position from. The composition root
@@ -195,7 +195,7 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
   'unknown_call_review', 'command_rerun_request',
   'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation', 'module_maintainer_assignment',
-  'repair_approval', 'structural_proposal',
+  'repair_approval', 'structural_proposal', 'role_capacity', 'role_line_change',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
@@ -1317,6 +1317,20 @@ async function readDecisionQueueWindow(
         const live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
         if (live !== null) raw = mergeCards(raw, live);
       }
+      // An answered role-line change reads its operation once: one that left `waiting` (approved and carried on, or
+      // not carried out) is the resolved source, so an answer the owner already acted on is history, not "待应用".
+      // `deriveOpenCard` has no project arm, so a project card reads the source by key in the bound workspace.
+      if (raw.source.kind === 'role_line_change' && raw.answer !== null && raw.closedReason === null) {
+        let live: DecisionCardV1 | null = null;
+        if (rawGoalRef !== null) {
+          live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
+        } else {
+          const byKey = await injectedCards.get('role_line_change')?.readByKey?.(ctx, { workspace, source: raw.source });
+          if (byKey?.status === 'ready') live = byKey.value;
+          else if (byKey !== undefined && byKey.status !== 'not_found') throw byKey;
+        }
+        if (live !== null) raw = mergeCards(raw, live);
+      }
       source = await refreshSourcePins(deps.records, raw.source);
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
@@ -1550,8 +1564,10 @@ async function readDecisionCard(
         try {
           const live = await provider.readByKey(ctx, { workspace, source });
           if (live.status === 'ready' && live.value !== null) {
-            // The real source's stored time wins over the synthetic answer's; the answer result stays.
-            projectCard = { ...projectCard, openedAt: live.value.openedAt ?? projectCard.openedAt };
+            // The real source's stored time and its close win over the synthetic answer's; the answer result stays,
+            // so the single card reads as resolved exactly when the queue does.
+            projectCard = { ...projectCard, openedAt: live.value.openedAt ?? projectCard.openedAt,
+              closedReason: live.value.closedReason ?? projectCard.closedReason };
           }
         } catch {
           // A failed source read keeps the saved answer's card.
@@ -1618,7 +1634,11 @@ async function readDecisionCard(
           card = answered;
           try {
             const live = await deriveOpenCard(deps, ctx, source, goal, candidateRead);
-            if (live !== null) card = { ...answered, openedAt: live.openedAt ?? answered.openedAt };
+            // the source's stored time and its close win, as on the project arm
+            if (live !== null) {
+              card = { ...answered, openedAt: live.openedAt ?? answered.openedAt,
+                closedReason: live.closedReason ?? answered.closedReason };
+            }
           } catch {
             // A failed source read keeps the saved answer's card.
           }
@@ -2116,9 +2136,10 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
     }
     if (card.application !== null) return { ...card, state: 'applied', readOnly: false, actions: [] };
     if (card.answer.decision.requiresApplication) {
-      // A resolved member operation's or rework request's answer stays history instead of a pending application.
-      if ((card.source.kind === 'member_creation' || card.source.kind === 'rework_request')
-        && card.closedReason !== null) {
+      // A resolved member operation's, rework request's or role-line change's answer stays history instead of a
+      // pending application: its owner already carried the answer out (or refused it) on the source.
+      if ((card.source.kind === 'member_creation' || card.source.kind === 'rework_request'
+        || card.source.kind === 'role_line_change') && card.closedReason !== null) {
         return { ...card, state: 'answered_no_application', readOnly: false, actions: [] };
       }
       return { ...card, state: 'answered_pending_application', readOnly: false, actions: ['apply', 'record_application'] };
@@ -2490,7 +2511,7 @@ function roleLineChangeCard(operation: RoleLineOperationV1, subject: DecisionSub
       pins: [pin], goalBases: [] },
     state: 'waiting_answer', subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
     objects: [{ kind: 'aggregate', pin: structuredClone(pin), label: '角色线调整' }],
-    options: ROLE_LINE_CHANGE_OPTIONS.map((option) => ({ ...option })),
+    options: roleLineChangeOptionsOf(operation),
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
     openedAt: operation.requestedAt, readOnly: false, actions: ['answer'],

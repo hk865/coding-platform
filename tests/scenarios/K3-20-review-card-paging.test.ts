@@ -118,7 +118,8 @@ describe('K3-20 review card source paging', () => {
     const reviewCards = cards.filter(card => card.source.kind === 'unknown_call_review');
     expect(reviewCards).toHaveLength(4);
     expect(new Set(reviewCards.map(card => card.source.key)).size).toBe(4);
-    expect(JSON.stringify(queueFinal)).not.toContain('capacity');
+    // The capability list names every card source kind, `role_capacity` among them; the rest of the read is compared.
+    expect(JSON.stringify({ ...queueFinal, capabilities: [] })).not.toContain('capacity');
     // Hand-computed total: the four review cards plus the shared S5 fixture's
     // four pre-existing waiting cards (candidates Q1/Q2, the Goal A/B conflict,
     // and the pending decision message).
@@ -305,7 +306,8 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
       emptyCardSource('member_creation'), emptyCardSource('rework_request'),
       emptyCardSource('handoff_approval'), emptyCardSource('adviser_creation'),
       emptyCardSource('module_maintainer_assignment'),
-      emptyCardSource('repair_approval'), emptyCardSource('structural_proposal')],
+      emptyCardSource('repair_approval'), emptyCardSource('structural_proposal'),
+      emptyCardSource('role_capacity'), emptyCardSource('role_line_change')],
     noticeSources: (['second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
       'continuation', 'disconnect', 'project_notice', 'plan_adoption', 'plan_notice'] as const).map(emptyNoticeSource),
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),

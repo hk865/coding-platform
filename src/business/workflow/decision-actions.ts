@@ -18,30 +18,36 @@
  * as never answered and a committed step is never undone.
  */
 import type { CommitCursor } from '../../contracts/command-event.js';
-import type { VersionPin } from '../../contracts/core/identity.js';
+import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { OperationRef } from '../../contracts/core/operations.js';
+import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef, UserMessageResponseV1 } from '../../contracts/core/session-message.js';
-import type { DecisionSelectionV1, DecisionSourceV1 } from '../../contracts/goal-decisions.js';
+import type { DecisionSelectionV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import type { ReworkRequestRef } from '../../contracts/rework-request.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
 import { OperationRefShape, ReworkRequestRefShape } from '../../contracts/data-format-refs.js';
 import { checkShape } from '../../contracts/validation/data-format.js';
-import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
-import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
+import { canonicalJson, canonicalOf, type JsonValue } from '../../contracts/fingerprint.js';
+import { isRecord, nonEmpty, parseObject } from '../../contracts/validation/common.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import type { CommandRerunRequestPort } from '../../core/work-graph/model/command-rerun-request-contracts.js';
 import { commandRerunRequestRefOfSource } from '../../core/work-graph/tasks/command-rerun-request-codecs.js';
 import { nestedSourceObject, parseDecisionSourceKey } from '../../core/work-graph/tasks/decision-source-identity.js';
 import type { MemberDecisionPortV1 } from '../../core/work-graph/tasks/member-service.js';
 import type { ReworkRequestService } from '../../core/work-graph/tasks/rework-requests.js';
+import type { CapacityAnswerV1, RoleCapacityServicePort } from '../../core/work-graph/tasks/role-capacity-service.js';
+import type { RoleLineOperationsPort } from '../../core/work-graph/sessions/role-line-operations.js';
+import { checkPlainSessionRef } from '../../core/work-graph/sessions/session-record-codecs.js';
 import type { MaintainerAssignmentOperationV1 } from '../../core/work-graph/model/session-contracts.js';
 import type { ModuleMaintainerPort } from '../../core/work-graph/model/module-maintainer-contracts.js';
 import { maintainerBindingOfOperation } from '../../core/work-graph/model/module-maintainer-contracts.js';
-import { maintainerCallBindingOf, type MaintainerCallBranchV1, type TrustedMaintainerCallV1 } from '../../contracts/role-lines.js';
+import {
+  isRoleScopeV1, maintainerCallBindingOf, type MaintainerCallBranchV1, type TrustedMaintainerCallV1,
+} from '../../contracts/role-lines.js';
 import type {
   DecisionMessagePort,
   GoalExecutedFilesPort,
@@ -549,6 +555,135 @@ export function createReworkRequestApplicationAdapter(
       return { status: 'ready', value: { action: null,
         receipt: result.proofReceipt ?? (deps.applicationReceipt === undefined ? null
           : await deps.applicationReceipt(ctx, result.cursor)) } };
+    },
+  };
+}
+
+/** The capacity object's key the card printed: the episode pin as one aggregate object labelled `容量`. */
+function capacityEpisodeObjectKey(pin: VersionPin): string | null {
+  return canonicalOf({ kind: 'aggregate', pin, label: '容量' });
+}
+
+/**
+ * The one capacity answer body, read from the saved answer: `raise_cap` is a decimal open number with no annotation,
+ * `merge_scopes` and `archive_line` are one annotation on the capacity object carrying the line (and the merged
+ * scope), `wait` carries nothing. No answer field is added.
+ */
+function parseCapacityAnswer(answer: UserDecisionBodyV1, selection: DecisionSelectionV1,
+  source: DecisionSourceV1): CapacityAnswerV1 | CoreRejection {
+  if (selection.kind !== 'option') return rejected('invalid', 'a capacity answer selects one option');
+  const annotation = answer.annotations.length === 1 ? answer.annotations[0]! : null;
+  const episodeKey = capacityEpisodeObjectKey(source.pins[0]!);
+  switch (selection.optionId) {
+    case 'raise_cap': {
+      if (answer.annotations.length !== 0 || !/^[1-9][0-9]*$/.test(answer.text.trim())) {
+        return rejected('invalid', 'raise_cap takes one decimal open number and no annotation');
+      }
+      return { kind: 'raise_cap', open: Number(answer.text.trim()) };
+    }
+    case 'merge_scopes': {
+      if (annotation === null || annotation.objectKey !== episodeKey) {
+        return rejected('invalid', 'merge_scopes takes one annotation on the capacity object');
+      }
+      return mergeScopesPayload(annotation.text);
+    }
+    case 'archive_line': {
+      if (annotation === null || annotation.objectKey !== episodeKey) {
+        return rejected('invalid', 'archive_line takes one annotation on the capacity object');
+      }
+      return archiveLinePayload(annotation.text);
+    }
+    case 'wait':
+      return answer.text.trim() === '' && answer.annotations.length === 0
+        ? { kind: 'wait' } : rejected('invalid', 'wait carries no text and no annotation');
+    default:
+      return rejected('invalid', 'the capacity option is not one of the four');
+  }
+}
+
+/** `{"line":<SessionRef>,"scope":<RoleScopeV1[]>}`; anything else is `invalid`. */
+function mergeScopesPayload(text: string): CapacityAnswerV1 | CoreRejection {
+  const body = parseObject(text);
+  if (body === null || checkPlainSessionRef(body['line']) !== null
+    || !Array.isArray(body['scope']) || !body['scope'].every(isRoleScopeV1)) {
+    return rejected('invalid', 'merge_scopes names {"line":<SessionRef>,"scope":<role scopes>}');
+  }
+  return { kind: 'merge_scopes', line: body['line'] as SessionRef, scope: body['scope'] };
+}
+
+/** `{"line":<SessionRef>}`; anything else is `invalid`. */
+function archiveLinePayload(text: string): CapacityAnswerV1 | CoreRejection {
+  const body = parseObject(text);
+  if (body === null || checkPlainSessionRef(body['line']) !== null) {
+    return rejected('invalid', 'archive_line names {"line":<SessionRef>}');
+  }
+  return { kind: 'archive_line', line: body['line'] as SessionRef };
+}
+
+/**
+ * The `role_capacity` step ② adapter: the saved answer (it must be this card answer) is parsed into one of the four
+ * options and applied by the capacity service with the card's proof pair. An applied change answers its receipt, a
+ * refusal its rejection (`application_not_recorded`), and a defer answers the card only.
+ */
+export type RoleCapacityApplicationDependencies = {
+  capacity: Pick<RoleCapacityServicePort, 'applyOption'>;
+  messages: Pick<DecisionMessagePort, 'readDecisionAnswer'>;
+};
+export function createRoleCapacityApplicationAdapter(
+  deps: RoleCapacityApplicationDependencies,
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answerRef, source, selection, requestId, expected }) {
+      const read = await deps.messages.readDecisionAnswer(ctx, { source });
+      if (read.status !== 'ready' || read.value.message === null || read.value.body === null) {
+        return { status: 'ready', value: { action: rejected('invalid', 'the saved capacity answer is not readable'),
+          receipt: null } };
+      }
+      if (read.value.message.ref.projectId !== answerRef.projectId
+        || read.value.message.ref.messageId !== answerRef.messageId
+        || canonicalOf(read.value.body.selection) !== canonicalOf(selection)) {
+        return { status: 'ready', value: { action: rejected('invalid',
+          'the saved answer disagrees with this card answer'), receipt: null } };
+      }
+      const parsed = parseCapacityAnswer(read.value.body, selection, source);
+      if ('status' in parsed) return { status: 'ready', value: { action: parsed, receipt: null } };
+      const result = await deps.capacity.applyOption(ctx,
+        { answerRef, source, selection, answer: parsed, requestId, expected,
+          proof: { answerRef, capturedPins: expected } });
+      if (result.status === 'applied') {
+        return { status: 'ready', value: { action: null, receipt: result.receipt } };
+      }
+      if (result.status === 'refused') {
+        return { status: 'ready', value: { action: result.rejection, receipt: null } };
+      }
+      return { status: 'ready', value: { action: null, receipt: null } };   // the defer answers the card only
+    },
+  };
+}
+
+/**
+ * The `role_line_change` step ② adapter: the role-line writer owns the decision and its follow-through; executing
+ * and not executing both answer the card only (the source then reads closed), and a refused follow-through is the
+ * rejection.
+ */
+export type RoleLineChangeApplicationDependencies = {
+  /** The port owns the method; the adapter depends on that member only, never a second shape. */
+  roleLines: Pick<RoleLineOperationsPort, 'applyRoleLineChangeDecision'>;
+};
+export function createRoleLineChangeApplicationAdapter(
+  deps: RoleLineChangeApplicationDependencies,
+): DecisionApplicationAdapter {
+  return {
+    async apply(ctx, { answerRef, source, selection, requestId, expected }) {
+      const result = await deps.roleLines.applyRoleLineChangeDecision(ctx,
+        { answerRef, source, selection, requestId, expected });
+      if (result.status === 'applied') {
+        return { status: 'ready', value: { action: null, receipt: result.receipt } };
+      }
+      if (result.status === 'refused') {
+        return { status: 'ready', value: { action: result.rejection, receipt: null } };
+      }
+      return { status: 'ready', value: { action: null, receipt: null } };
     },
   };
 }

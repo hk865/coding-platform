@@ -35,6 +35,7 @@ import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/w
 import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
 import type { RoleLineOperationsPort } from '../core/work-graph/sessions/role-line-operations.js';
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
+import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { CoreRouteBindings } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -348,6 +349,8 @@ export type CoreRouteSuffix =
   | 'role-lines/allocation'
   // O1b: open a role line, change its scope, read the role-line operations.
   | 'role-lines/open' | 'role-lines/change-scope' | 'role-lines/operations'
+  // The project's autonomy rules: the read and the three person-only writes.
+  | 'autonomy-rules' | 'autonomy-rules/create' | 'autonomy-rules/revoke' | 'autonomy-rules/update'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
   | 'goals/dispatch-basis'
   // The person's overlap-gate release and the Goal's gate page.
@@ -730,7 +733,15 @@ export type RoleLinesChangeScopeBody = GraphWriteBody<CoreRouteBindings['changeR
 export type RoleLinesChangeScopeResponse = RouteResponse<RoleLineOperationsPort['changeScope']>;
 export type RoleLinesOperationsBody = PlainBody<RoleLineOperationReadPort['readRoleLineOperations']>;
 export type RoleLinesOperationsResponse = RouteResponse<RoleLineOperationReadPort['readRoleLineOperations']>;
-/** The typed assembly of the three suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type AutonomyRulesBody = PlainBody<AutonomyRulePort['read']>;
+export type AutonomyRulesResponse = RouteResponse<AutonomyRulePort['read']>;
+export type AutonomyRulesCreateBody = GraphWriteBody<CoreRouteBindings['createAutonomyRule']>;
+export type AutonomyRulesCreateResponse = RouteResponse<AutonomyRulePort['create']>;
+export type AutonomyRulesRevokeBody = GraphWriteBody<CoreRouteBindings['revokeAutonomyRule']>;
+export type AutonomyRulesRevokeResponse = RouteResponse<AutonomyRulePort['revoke']>;
+export type AutonomyRulesUpdateBody = GraphWriteBody<CoreRouteBindings['updateAutonomyRule']>;
+export type AutonomyRulesUpdateResponse = RouteResponse<AutonomyRulePort['update']>;
+/** The typed assembly of the role-line suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
 export type RoleLineCoreRouteDto = {
   'projects/role-limits': { body: ProjectsRoleLimitsBody; response: ProjectsRoleLimitsResponse };
   'projects/role-limits/set': { body: ProjectsRoleLimitsSetBody; response: ProjectsRoleLimitsSetResponse };
@@ -738,6 +749,10 @@ export type RoleLineCoreRouteDto = {
   'role-lines/open': { body: RoleLinesOpenBody; response: RoleLinesOpenResponse };
   'role-lines/change-scope': { body: RoleLinesChangeScopeBody; response: RoleLinesChangeScopeResponse };
   'role-lines/operations': { body: RoleLinesOperationsBody; response: RoleLinesOperationsResponse };
+  'autonomy-rules': { body: AutonomyRulesBody; response: AutonomyRulesResponse };
+  'autonomy-rules/create': { body: AutonomyRulesCreateBody; response: AutonomyRulesCreateResponse };
+  'autonomy-rules/revoke': { body: AutonomyRulesRevokeBody; response: AutonomyRulesRevokeResponse };
+  'autonomy-rules/update': { body: AutonomyRulesUpdateBody; response: AutonomyRulesUpdateResponse };
 };
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */

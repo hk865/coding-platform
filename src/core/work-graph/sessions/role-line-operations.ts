@@ -17,13 +17,18 @@ import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejection
 import type { SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import { canonicalKey, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { decisionSourceKey, type DecisionSelectionV1, type DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
+import { truncateUtf8 } from '../../../contracts/utf8.js';
 import {
   isRoleLineOpenDuty, isRoleScopeV1, roleLineDutyOf, roleScopeOfTarget, workLinkTargetOf,
-  type CapacityAtCapDetailV1, type RoleLineDutyV1, type RoleLineOpenDutyV1, type RoleLineSplitSavedV1,
-  type RoleScopeV1,
+  type CapacityAtCapDetailV1, type NotifyProjectInputV1, type RoleLineDutyV1, type RoleLineOpenDutyV1,
+  type RoleLineSplitSavedV1, type RoleScopeV1,
 } from '../../../contracts/role-lines.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { CommitFragment } from '../persistence/command-executor.js';
 import { executeWriteCommand } from '../persistence/command-executor.js';
@@ -39,7 +44,7 @@ import {
   ROLE_LINE_CHANGE_SCOPE_PHASE, roleLineChildCommandId, roleLineOperationRef, roleLineStepTransition,
   type START_LINES_PHASES,
 } from '../state/role-line-operation.js';
-import { createAllocationRead, seatAtCap } from './allocation-read.js';
+import { createAllocationRead, openLimitOf, seatAtCap } from './allocation-read.js';
 import { roleLineOperationChangedCodec, roleLineSplitSavedCodec } from './role-line-orchestration-codecs.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
 import { stableSessionCreationIdentity } from './session-directory.js';
@@ -55,7 +60,8 @@ export type RoleLineSplitPhaseV1 = (typeof ROLE_LINE_SPLIT_PHASES)[number];
 /** TS-10 item 6: the planner's answer is the saved body without its source. */
 export type RoleLineSplitPlanV1 = Omit<RoleLineSplitSavedV1, 'source'>;
 
-export type RoleLineLineV1 = { operation: OperationRef; session: SessionRef | null; revision: number };
+/** `cardKey` (card supplement C7): the adjustment waits for a person's `role_line_change` card. */
+export type RoleLineLineV1 = { operation: OperationRef; session: SessionRef | null; revision: number; cardKey?: string };
 export type RoleLineContinueResultV1 = { revision: number;
   state: 'done' | 'waiting' | 'created' | 'registered' | 'blocked';
   capacity: CapacityAtCapDetailV1 | null };
@@ -76,8 +82,9 @@ export interface RoleLineCreatePort {
       & { name?: string | null; roleScopes?: RoleScopeV1[] } }>>;
 }
 
+/** `affectedGoals` (card supplement C4): only a platform caller passes it; the `role-lines/open` route never forwards it. */
 export type RoleLineOpenCommandV1 = { commandId: string; duty: RoleLineOpenDutyV1;
-  scope: RoleScopeV1[]; name?: string };
+  scope: RoleScopeV1[]; name?: string; affectedGoals?: GoalRef[] };
 export type RoleLineChangeScopeCommandV1 = { commandId: string; session: SessionRef; scope: RoleScopeV1[] };
 export type RoleLineReuseCommandV1 = { commandId: string; session: SessionRef; scope: RoleScopeV1[] };
 /** d05: C1's region open (v4 :8049–:8058): one adviser line on one top-level module under the cold-start parent. */
@@ -95,8 +102,17 @@ export interface RoleLineOperationsPort {
   reuse(ctx: CoreCallContext, input: RoleLineReuseCommandV1): Promise<WriteResult<RoleLineLineV1>>;
   /** d05 / v4 :9066: C1 binds this by symbol and creates no line itself. */
   openRegionLine(ctx: CoreCallContext, input: RoleLineRegionOpenInputV1): Promise<RoleLineRegionOpenResultV1>;
+  /** c32: the one decision-application entry. This file writes the shared decision commit and the split arm; the
+   *  queue-assign approval goes through O4a's `allocate` with `approval`, and a line add's approve / reject call
+   *  `allocate` / its `rejection` (card supplement §3.3). */
+  applyRoleLineChangeDecision(ctx: CoreCallContext, input: {
+    answerRef: SessionMessageRef; source: DecisionSourceV1; selection: DecisionSelectionV1;
+    requestId: string; expected: readonly VersionPin[];
+  }): Promise<{ status: 'applied'; receipt: DecisionApplicationReceiptV1 }
+    | { status: 'deferred' } | { status: 'refused'; rejection: CoreRejection }>;
 }
-export type RoleLineSplitStartV1 = { operation: OperationRef; revision: number };
+/** `cardKey` (card supplement C7): the split waits for a person's `role_line_change` card. */
+export type RoleLineSplitStartV1 = { operation: OperationRef; revision: number; cardKey?: string };
 export interface RoleLineSplitPort {
   /** b02: the one starter/continuer; O2 only calls it. */
   startRoleLineSplit(ctx: CoreCallContext, input: { source: SessionRef; plan: RoleLineSplitPlanV1 }):
@@ -116,6 +132,17 @@ export type RoleLineOperationsDeps = {
   platformRole(duty: PlatformDutyV1): RoleConfigurationRef;
   /** The split source's duty, read through the one Session duty resolver (CP's `sessionDutyResolver`). */
   duty: SessionDutyReadPort;
+  /** Card supplement C2/C3: the platform's and the agent's line adjustments are judged by the five-layer policy before
+   *  their first write; the guards ride that write. Absent, every adjustment takes the direct path. `duty` is the
+   *  counted duty (the rule's per-duty limit and its counts); `splitReason` is passed by the split only. */
+  adjustments?: {
+    judge(ctx: CoreCallContext, input: { action: 'role_line_add' | 'role_line_split' | 'role_line_reuse';
+      affectedGoals: readonly GoalRef[]; objects: readonly RoleScopeV1[]; duty: RoleLineDutyV1;
+      splitReason?: RoleLineSplitPlanV1['reason'] }):
+      Promise<ReadResult<{ verdict: 'automatic_notice' | 'needs_decision'; guards: RecordGuard[] }>>;
+    /** C13: one project notice after a platform or agent adjustment is done (`notifyProject`). */
+    notify(ctx: CoreCallContext, input: NotifyProjectInputV1): Promise<unknown>;
+  };
   now(): string;
 };
 
@@ -129,6 +156,11 @@ export function startLinesInitialRecord(input: { projectId: string; workspaceId:
       steps: (['secretary', 'adviser', 'scribe'] as const).map((key) => ({
         key, duty: key, childOperation: null, state: 'pending' as const })) } };
 }
+
+type RoleLineAdjustmentsV1 = NonNullable<RoleLineOperationsDeps['adjustments']>;
+type AdjustmentJudgeInputV1 = Parameters<RoleLineAdjustmentsV1['judge']>[1];
+/** What an adjustment's first commit writes: the record (its card when `card`) and the judgement's guards. */
+type AdjustmentWriteV1 = { status: 'ready'; record: RoleLineOperationV1; extra: CommitFragment | undefined; card: boolean };
 
 /** The outcome of one step drive: what was written (or not) and the refusal a caller answers with. */
 type StepOutcomeV1 =
@@ -161,6 +193,20 @@ function singleGoalRefOf(scope: readonly RoleScopeV1[]): RoleLineActionV1['goalR
   return scope.length === 1 && scope[0]!.kind === 'goal' ? scope[0]!.goalRef : null;
 }
 
+/** C5: the stored goal of a set of affected goals — exactly one is that goal, none or several is the project. */
+function onlyGoalOf(goals: readonly GoalRef[]): RoleLineActionV1['goalRef'] {
+  return goals.length === 1 ? goals[0]! : null;
+}
+
+/** C13: a notice names the stored goal, else `none` (ids bounded as the maintainer notice bounds them, so the
+ *  512-byte summary always fits). */
+function noticeTargetOf(record: RoleLineOperationV1, none: string): string {
+  return record.action.goalRef === null ? none : `目标 ${truncateUtf8(record.action.goalRef.goalId, 160)}`;
+}
+/** C13: the rule part of v4 :4971's "what was done; the rule; how to undo"; the writer keeps no record of which one
+ *  allowed the adjustment, so the notice names the three that can. */
+const ADJUSTMENT_RULE = '规则：自治规则、出厂默认或卡上的批准';
+
 /** `open`'s and the split's one at-cap mapping (v4 :1993–:1994): the admission's refusal, rebuilt from its detail
  *  by `seatAtCap`, the one copy of the sentence. The admission always fills `detail` (A1a; reply list B). */
 function capacityRefusal(line: Extract<RoleLineCreateResultV1, { status: 'capacity_blocked' }>): CoreRejection {
@@ -172,6 +218,23 @@ function roleScopeListProblem(scope: unknown): string | null {
   if (!Array.isArray(scope) || !scope.every(isRoleScopeV1)) return 'the scope must be a list of role scopes';
   const keys = new Set(scope.map((entry) => canonicalKey(entry as unknown as JsonValue)));
   return keys.size === scope.length ? null : 'the scope names one role scope twice';
+}
+
+/** The Session's open `responsible` role-scope links that the requested scope drops — what a scope write closes
+ *  (O1B-R1-01; v4 :2021 read as the links the new scope no longer names) — and the pins that guard the Session and
+ *  those links in the reanchor commit (D-5 keeps them out of the fingerprint). The one copy: the line's scope change
+ *  and the capacity card's `merge_scopes` both close by it. */
+export function droppedScopeLinksOf(card: SessionCard, requested: readonly RoleScopeV1[]):
+  { close: SessionWorkLinkRef[]; pins: VersionPin[] } {
+  const kept = new Set(requested.map((scope) => canonicalKey(scope as unknown as JsonValue)));
+  const open = card.links.filter((link) => {
+    if (link.until !== null || link.ref.relation !== 'responsible') return false;
+    const scope = roleScopeOfTarget(link.ref.target);
+    return scope !== null && !kept.has(canonicalKey(scope as unknown as JsonValue));   // a kept scope stays open
+  });
+  return { close: open.map((link) => link.ref),
+    pins: [{ ref: card.record.ref, revision: card.record.revision },
+      ...open.map((link) => ({ ref: link.ref, revision: link.revision }))] };
 }
 
 function roleLineReadFailure<T>(read: ReadResult<T>, what: string): CoreRejection {
@@ -266,6 +329,80 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       action: { ...action, phase: 'failed', result: { status: 'failed', reason: refusal.reason } } };
   }
 
+  /** A line's counted duty (its role's duty through the one resolver): the split's source and the reused line. */
+  async function countedDutyOf(ctx: CoreCallContext, session: SessionRef, what: string):
+    Promise<ReadResult<RoleLineDutyV1>> {
+    const card = await deps.operations.readSession(ctx, session);
+    if (card.status !== 'ready') return card;
+    const duty = await deps.duty(card.value.record.role, ctx);
+    if (duty.status !== 'ready') return roleLineReadFailure(duty, `${what} duty`);
+    const counted = roleLineDutyOf(duty.value);
+    return counted === null ? rejected('invalid', `${what} has no line duty`) : { status: 'ready', value: counted };
+  }
+
+  /**
+   * Card supplement §3.1 (C2, C6, C9): an adjustment's command before its accepted write. A saved operation answers as
+   * saved and is never judged again — waiting: its card (the accepted receipt replays); refused on the card: the
+   * stored refusal; approved or never carded: the writer's own replay. A new one is judged once: a card is the
+   * accepted commit itself (`waiting`, nothing driven), an automatic notice hands its guards to that commit.
+   */
+  async function adjustmentWriteOf(adjustments: RoleLineAdjustmentsV1, ctx: CoreCallContext,
+    accepted: RoleLineOperationV1,
+    judgeInput: () => Promise<{ status: 'ready'; value: AdjustmentJudgeInputV1 } | CoreRejection>):
+    Promise<AdjustmentWriteV1 | CoreRejection> {
+    const saved = await readRoleLineRecord(ctx, accepted.ref);
+    if (saved.status === 'ready') {
+      const stored = saved.value;
+      if (stored.action.result?.status === 'waiting') {
+        return { status: 'ready', record: stored, extra: undefined, card: true };
+      }
+      if (stored.phase === 'failed' && stored.failure !== null) {
+        return rejected(stored.failure.code as CoreError, stored.failure.reason);   // L-6, for the add and the reuse too
+      }
+      return { status: 'ready', record: accepted, extra: undefined, card: false };
+    }
+    if (saved.status !== 'not_found') return roleLineReadFailure(saved, 'the role-line operation');
+    const input = await judgeInput();
+    if (input.status !== 'ready') return input;
+    const judged = await adjustments.judge(ctx, input.value);
+    if (judged.status !== 'ready') return roleLineReadFailure(judged, 'the adjustment judgement');
+    const extra: CommitFragment = { records: [], claims: [], events: [], guards: judged.value.guards };   // book :656–:659
+    if (judged.value.verdict === 'automatic_notice') return { status: 'ready', record: accepted, extra, card: false };
+    let reason: string | null = null;
+    if (input.value.action === 'role_line_add') {
+      // §2.1: a carded add reads its seat first; at cap nothing is written and the refusal is the admission's, so the
+      // caller queues the goal (no admission, no reclaim, no episode). No adviser line changes the card's "reject" text.
+      const duty = input.value.duty;
+      const seat = await allocationRead.readAllocationForCommit(ctx, { projectRef: { projectId: ctx.projectId }, duty });
+      if (seat.status !== 'ready') return roleLineReadFailure(seat, 'the role-line allocation');
+      const holders = seat.value.allocation?.holders.length ?? 0;
+      const full = seatAtCap({ duty, open: openLimitOf(seat.value.limits, duty), holders,
+        reservations: seat.value.allocation?.reservations.length ?? 0 });
+      if (full !== null) return full;
+      if (duty === 'adviser' && holders === 0) reason = 'no_adviser_line';
+    }
+    // C6: three differences from the uncarded write — the action phase, the waiting result, and nothing driven.
+    return { status: 'ready', extra, card: true,
+      record: { ...accepted, action: { ...accepted.action, phase: 'waiting', result: { status: 'waiting', reason } } } };
+  }
+
+  /** C7: the card reply of a waiting adjustment, at the cursor of the commit that wrote the card. */
+  function cardReplyOf(written: Extract<WriteResult<unknown>, { status: 'committed' }>, record: RoleLineOperationV1):
+    WriteResult<RoleLineLineV1> {
+    return { status: 'committed', replayed: written.replayed, cursor: written.cursor,
+      value: { operation: record.ref, session: null, revision: record.revision,
+        cardKey: decisionSourceKey({ kind: 'role_line_change', operationRef: record.ref }) } };
+  }
+
+  /** C13 (book :863–:871): one project notice after a platform or agent adjustment is done. The subject is the stored
+   *  goal (none: the project); a replay is the notice's own identity, and its refusal never undoes the done. */
+  async function noticeDone(ctx: CoreCallContext, record: RoleLineOperationV1, summary: string): Promise<void> {
+    const projectRef: ProjectScope = { projectId: record.ref.projectId };
+    const goalRef = record.action.goalRef;
+    await deps.adjustments?.notify(ctx, { projectRef, kind: 'automatic_adjustment', summary, operation: record.ref,
+      subject: goalRef === null ? { kind: 'project', projectRef } : { kind: 'goal', goalRef } });
+  }
+
   /** One step transition; when every step is done the operation completes in the same write. */
   async function advanceStep(ctx: CoreCallContext, record: RoleLineOperationV1, index: number,
     state: RoleLineStepStateV1): Promise<StepOutcomeV1> {
@@ -282,6 +419,13 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       return { kind: 'raced', record };
     }
     if (written.status !== 'committed') return { kind: 'rejected', rejection: written };
+    // C13: a platform add is done only by this write (the caller's drive and the Host's resume alike); a reviewer, a
+    // person's open and `start_lines` write no notice.
+    const step = next.action.steps[index]!;
+    if (completed && next.action.action === 'role_line_add' && step.key !== 'reviewer') {
+      await noticeDone(ctx, next, `开线：给${noticeTargetOf(next, '项目')}新开一条 ${step.duty} 线`
+        + `（${ADJUSTMENT_RULE}；可归档这条线或调上限）`);
+    }
     return { kind: 'progressed', record: next, cursor: written.cursor };
   }
 
@@ -415,6 +559,10 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     if (record.phase === 'completed' || record.phase === 'failed') {
       return { status: 'ready', value: { revision: record.revision, state: 'done', capacity: null } };
     }
+    // C8: an operation waiting for its `role_line_change` card is not the Host's to drive; only the answer moves it.
+    if (record.action.result?.status === 'waiting') {
+      return { status: 'ready', value: { revision: record.revision, state: 'waiting', capacity: null } };
+    }
     if (record.action.action === 'role_line_split') return continueRoleLineSplit(ctx, record);
     if (record.action.action === 'role_line_add') {
       // D-4: resume only from the saved child creation; a `pending` step has no child, so its caller replays it.
@@ -506,36 +654,37 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     const ref = roleLineOperationRef(ctx.projectId, 'open:add', input.commandId);
     const key = input.duty === 'reviewer' ? 'reviewer' : 'line';
     const now = deps.now();
+    // C5: a platform caller's affected goals name the stored goal; without them the requested scope does.
+    const goalRef = input.affectedGoals === undefined ? singleGoalRefOf(input.scope) : onlyGoalOf(input.affectedGoals);
     const accepted: RoleLineOperationV1 = { ref, revision: 1, workspaceId: lineCtx.value.workspaceId!, phase: 'accepted',
       requestedAt: now, updatedAt: now, observation: null, failure: null,
-      action: { kind: 'role_line', action: savedAction, phase: 'reserve', goalRef: singleGoalRefOf(input.scope), result: null,
+      action: { kind: 'role_line', action: savedAction, phase: 'reserve', goalRef, result: null,
         steps: [{ key, duty: roleLineDutyOf(input.duty), childOperation: null, state: 'pending' }] } };
-    const written = await writeOperation(lineCtx.value, null, accepted, { commandId: ref.operationId,
+    // O3-02: only the platform's add is an automatic adjustment; a person's open and any reviewer are never judged.
+    const gate = savedAction === 'role_line_add' && input.duty !== 'reviewer' && deps.adjustments !== undefined
+      ? await adjustmentWriteOf(deps.adjustments, lineCtx.value, accepted, async () => {
+        const affectedGoals = input.affectedGoals ?? [];
+        return { status: 'ready', value: { action: 'role_line_add', affectedGoals, duty: roleLineDutyOf(input.duty)!,
+          objects: [...input.scope, ...affectedGoals.map((goal) => ({ kind: 'goal' as const, goalRef: goal }))] } };
+      })
+      : { status: 'ready' as const, record: accepted, extra: undefined, card: false };
+    if (gate.status !== 'ready') return gate;
+    const written = await writeOperation(lineCtx.value, null, gate.record, { commandId: ref.operationId,
       fingerprintInput: { kind: 'role_line_operation', action: savedAction,
-        command: { duty: input.duty, scope: input.scope, name } } as unknown as JsonValue });
+        command: { duty: input.duty, scope: input.scope, name } } as unknown as JsonValue }, gate.extra);
     if (written.status !== 'committed') return written;
+    if (gate.card) return cardReplyOf(written, gate.record);
     return driveLine(lineCtx.value, ref, { commandId: roleLineChildCommandId(ref.operationId, key), duty: input.duty,
       scope: { kind: 'project' }, reason: savedAction, provenance: { schemaVersion: 1, kind: 'new' },
       roleConfiguration: deps.platformRole(input.duty), name, roleScopes: [...input.scope], parentOperation: ref },
     written);
   }
 
-  /** The Session's open `responsible` role-scope links that the requested scope drops — what a scope write closes
-   *  (O1B-R1-01; v4 :2021 read as the links the new scope no longer names) — and the pins that guard the Session and
-   *  those links in the reanchor commit (D-5 keeps them out of the fingerprint). */
   async function openScopesOf(ctx: CoreCallContext, session: SessionRef, requested: readonly RoleScopeV1[]):
     Promise<ReadResult<{ close: SessionWorkLinkRef[]; pins: VersionPin[] }>> {
     const card = await deps.operations.readSession(ctx, session);
     if (card.status !== 'ready') return card;
-    const kept = new Set(requested.map((scope) => canonicalKey(scope as unknown as JsonValue)));
-    const open = card.value.links.filter((link) => {
-      if (link.until !== null || link.ref.relation !== 'responsible') return false;
-      const scope = roleScopeOfTarget(link.ref.target);
-      return scope !== null && !kept.has(canonicalKey(scope as unknown as JsonValue));   // a kept scope stays open
-    });
-    return { status: 'ready', value: { close: open.map((link) => link.ref),
-      pins: [{ ref: card.value.record.ref, revision: card.value.record.revision },
-        ...open.map((link) => ({ ref: link.ref, revision: link.revision }))] } };
+    return { status: 'ready', value: droppedScopeLinksOf(card.value, requested) };
   }
 
   async function changeScope(ctx: CoreCallContext, input: RoleLineChangeScopeCommandV1):
@@ -579,10 +728,20 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       requestedAt: now, updatedAt: now, observation: null, failure: null,
       action: { kind: 'role_line', action: 'role_line_reuse', phase: 'link', goalRef: singleGoalRefOf(input.scope),
         steps: [], result: null } };
-    const written = await writeOperation(lineCtx.value, null, accepted, { commandId: ref.operationId,
+    // C4: the reuse's one producer (C1's region open) affects no goal; the counted duty is the reused line's.
+    const gate = deps.adjustments === undefined ? { status: 'ready' as const, record: accepted, extra: undefined, card: false }
+      : await adjustmentWriteOf(deps.adjustments, lineCtx.value, accepted, async () => {
+        const duty = await countedDutyOf(lineCtx.value, input.session, 'the reused line');
+        if (duty.status !== 'ready') return roleLineReadFailure(duty, 'the reused line');
+        return { status: 'ready',
+          value: { action: 'role_line_reuse', affectedGoals: [], objects: input.scope, duty: duty.value } };
+      });
+    if (gate.status !== 'ready') return gate;
+    const written = await writeOperation(lineCtx.value, null, gate.record, { commandId: ref.operationId,
       fingerprintInput: { kind: 'role_line_operation', action: 'role_line_reuse',
-        command: { session: input.session, scope: input.scope } } as unknown as JsonValue });
+        command: { session: input.session, scope: input.scope } } as unknown as JsonValue }, gate.extra);
     if (written.status !== 'committed') return written;
+    if (gate.card) return cardReplyOf(written, gate.record);
     const stored = await readRoleLineRecord(lineCtx.value, ref);
     if (stored.status !== 'ready') return roleLineReadFailure(stored, 'the role-line operation');
     if (stored.value.phase === 'completed') {
@@ -603,6 +762,8 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       phase: 'completed', action: { ...stored.value.action, phase: 'done', result: { status: 'done', reason: null } } };
     const finished = await writeOperation(lineCtx.value, stored.value, done);
     if (finished.status !== 'committed') return finished;
+    await noticeDone(lineCtx.value, done, `复用：线 ${truncateUtf8(input.session.sessionId, 160)} 接手`
+      + `${noticeTargetOf(done, '新的范围')}（${ADJUSTMENT_RULE}；可改回这条线的范围）`);   // C13
     return { status: 'committed', value: { operation: ref, session: input.session, revision: done.revision },
       replayed: false, cursor: finished.cursor };
   }
@@ -667,20 +828,27 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       if (existing.status === 'ready') saved = existing.value;
       else if (existing.status !== 'not_found') return existing;
       else {
-        const card = await deps.operations.readSession(lineCtx.value, input.source);
-        if (card.status !== 'ready') return card;
-        const duty = await deps.duty(card.value.record.role, lineCtx.value);
-        if (duty.status !== 'ready') return roleLineReadFailure(duty, 'the split source duty');
-        const counted = duty.value === 'unknown' ? null : roleLineDutyOf(duty.value);
-        if (counted === null) return rejected('invalid', 'the split source has no line duty');
+        const counted = await countedDutyOf(lineCtx.value, input.source, 'the split source');
+        if (counted.status !== 'ready') return counted;
+        // C4/C5: only the moved goals are affected; exactly one is the stored goal, whatever regions move with it.
+        const goals = body.move.flatMap((scope) => scope.kind === 'goal' ? [scope.goalRef] : []);
+        // §3.2: judged once, before the planned write; the guards ride that write (book :656–:659).
+        const judged = deps.adjustments === undefined ? null : await deps.adjustments.judge(lineCtx.value, {
+          action: 'role_line_split', affectedGoals: goals, objects: body.move, duty: counted.value,
+          splitReason: body.reason });
+        if (judged !== null && judged.status !== 'ready') return judged;
+        const card = judged?.value.verdict === 'needs_decision';
+        const extra = judged === null ? undefined : { records: [], claims: [], events: [], guards: judged.value.guards };
         const now = deps.now();
+        // C6: a carded split is the planned commit with the action waiting; TS-8's push does not run.
         const planned: RoleLineOperationV1 = { ref, revision: 1, workspaceId: lineCtx.value.workspaceId!,
           phase: 'accepted', requestedAt: now, updatedAt: now, observation: null, failure: null,
-          action: { kind: 'role_line', action: 'role_line_split', phase: 'planned', goalRef: singleGoalRefOf(body.move),
-            split: roleLineSplitSavedCodec.decode(canonical), result: null,
-            steps: [{ key: 'split', duty: counted, childOperation: null, state: 'pending' }] } };
+          action: { kind: 'role_line', action: 'role_line_split', phase: card ? 'waiting' : 'planned',
+            goalRef: onlyGoalOf(goals), split: roleLineSplitSavedCodec.decode(canonical),
+            result: card ? { status: 'waiting', reason: null } : null,
+            steps: [{ key: 'split', duty: counted.value, childOperation: null, state: 'pending' }] } };
         const written = await writeOperation(lineCtx.value, null, planned, { commandId: ref.operationId,
-          fingerprintInput: { kind: 'role_line_operation', action: 'role_line_split', command: canonical } });
+          fingerprintInput: { kind: 'role_line_operation', action: 'role_line_split', command: canonical } }, extra);
         if (written.status !== 'committed') return written;
         const stored = await readRoleLineRecord(lineCtx.value, ref);
         if (stored.status !== 'ready') return stored;
@@ -690,6 +858,11 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     // L-6: a same-identity split that already failed answers its stored failure and is not driven again.
     if (saved.phase === 'failed') {
       return rejected((saved.failure?.code ?? 'unavailable') as CoreError, saved.failure?.reason ?? 'the split failed');
+    }
+    // C9: a split waiting for its card — this plan's, or another plan's of the same source — answers that card.
+    if (saved.action.result?.status === 'waiting') {
+      return { status: 'ready', value: { operation: saved.ref, revision: saved.revision,
+        cardKey: decisionSourceKey({ kind: 'role_line_change', operationRef: saved.ref }) } };
     }
     // D-6 (book :413, :415): the one call drives the saved split through admission; no pre-check — admission is the check.
     const pushed = await continueRoleLineSplit(lineCtx.value, saved);
@@ -736,7 +909,15 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       runCtx = restored.value;
     }
     const phase = saved.action.phase as RoleLineSplitPhaseV1;
-    if (phase === 'linked') return splitPhase(runCtx, saved, 'done', null);
+    if (phase === 'linked') {
+      // C13: every split (the tool's, the page's, an approved card's) is done only here.
+      const done = await splitPhase(runCtx, saved, 'done', null);
+      if (done.status === 'ready') {
+        await noticeDone(runCtx, saved, `拆线：从线 ${truncateUtf8(body.source.sessionId, 160)} 拆出一条新线接手`
+          + `${noticeTargetOf(saved, '移出的范围')}（${ADJUSTMENT_RULE}；可合并范围或归档新线）`);
+      }
+      return done;
+    }
     if (phase === 'created') return linkSplit(runCtx, saved, body);
     // planned / admitted: the new line has the source's duty and role (`record.role`) and opens standby.
     const card = await deps.operations.readSession(runCtx, body.source);
@@ -854,6 +1035,119 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     return refusal;
   }
 
-  return { continueOperation, open: openLine, changeScope, reuse, openRegionLine, startRoleLineSplit };
+  // ------------------------------------------------------------------------
+  // role_line_change (card supplement §3.3): the card's answer
+  // ------------------------------------------------------------------------
+
+  /**
+   * C10/C11: the answer's one decision commit (L-1: one `RoleLineOperationChanged`). The answer's `requestId` is the
+   * command, so a repeated answer replays its receipt; the operation is re-read inside the executor, and one that no
+   * longer waits at the card's revision is `source_stale`. Approve sends the action back to its first phase with no
+   * result; reject ends it failed `{cancelled, decision_rejected}`, with nothing to undo because nothing was done.
+   */
+  async function writeDecision(ctx: CoreCallContext, operation: RoleLineOperationV1, expectedRevision: number,
+    optionId: 'approve' | 'reject', input: { requestId: string; answerRef: SessionMessageRef }):
+    Promise<WriteResult<RoleLineOperationV1>> {
+    const trusted = trustedContext(ctx, 'a role_line_change decision');
+    if (!trusted.ok) return trusted.rejection;
+    const key = operationRefKey(operation.ref);
+    let built: RoleLineOperationV1 | null = null;
+    const result = await executeWriteCommand(deps.records, {
+      operation: 'role-line-decision',
+      principal: ctx.principal as unknown as JsonValue,
+      commandId: input.requestId,
+      scope: { projectId: operation.ref.projectId, workspaceId: operation.workspaceId },
+      fingerprintInput: { operation: operation.ref, optionId, answerRef: input.answerRef } as unknown as JsonValue,
+      read: async () => {
+        const current = await readRoleLineRecord(ctx, operation.ref);
+        return current.status === 'ready' ? { status: 'ready' as const, facts: current.value }
+          : roleLineReadFailure(current, 'the role-line operation');
+      },
+      decide: (current: RoleLineOperationV1): { refuse: CoreRejection } | { decision: RoleLineOperationV1 } => {
+        if (current.action.result?.status !== 'waiting' || current.revision !== expectedRevision) {
+          return { refuse: rejected('source_stale', 'the role-line operation no longer waits on this card') };
+        }
+        if (optionId === 'reject') {
+          return { decision: failedRecordOf(current, current.action, rejected('cancelled', 'decision_rejected')) };
+        }
+        const first = current.action.action === 'role_line_split' ? 'planned'
+          : current.action.action === 'role_line_reuse' ? 'link' : 'reserve';
+        return { decision: { ...current, revision: current.revision + 1, updatedAt: deps.now(),
+          action: { ...current.action, phase: first, result: null } } };
+      },
+      build: (next, keys) => {
+        built = next;
+        return { records: [encodeSessionOperationRecord(next)], claims: [],
+          events: [roleLineOperationChangedCodec.encode({
+            eventId: eventIdOf(keys.identityKey, 'changed'), eventType: 'RoleLineOperationChanged', schemaVersion: 1,
+            occurredAt: deps.now(), projectId: next.ref.projectId, workspaceId: next.workspaceId,
+            actor: trusted.actor, revision: next.revision, operationRef: next.ref })],
+          guards: [{ refKey: key, expectedRevision }] };
+      },
+      result: { eventType: 'RoleLineOperationChanged', schemaVersion: 1,
+        decode: (event) => roleLineOperationChangedCodec.decode(event),
+        validate: (event, receipt, keys) => operationRefKey(event.operationRef) !== key
+          ? 'the event records another operation'
+          : receipt.identityKey === keys.identityKey ? null : 'the receipt belongs to another command',
+        project: (event) => ({ revision: event.revision }) },
+    });
+    if (result.status === 'refused') return result.refusal;
+    if (result.status === 'rejected') return rejectedWithCurrent(result.code, result.reason, result.current);
+    if (!result.replayed) return { status: 'committed', value: built!, replayed: false, cursor: result.cursor };
+    // A replay answers the operation as it is now: the push after the decision replays by its own identities.
+    const current = await readRoleLineRecord(ctx, operation.ref);
+    if (current.status !== 'ready') return roleLineReadFailure(current, 'the role-line operation');
+    return { status: 'committed', value: current.value, replayed: true, cursor: result.cursor };
+  }
+
+  /** Card supplement §3.3: check the card, write the one decision, then drive only an approved split; an answer is
+   *  never judged again (C10). The receipt is the card's source closing (C12), so every success is `deferred`. */
+  async function applyRoleLineChangeDecision(ctx: CoreCallContext, input: {
+    answerRef: SessionMessageRef; source: DecisionSourceV1; selection: DecisionSelectionV1;
+    requestId: string; expected: readonly VersionPin[];
+  }): Promise<{ status: 'applied'; receipt: DecisionApplicationReceiptV1 }
+    | { status: 'deferred' } | { status: 'refused'; rejection: CoreRejection }> {
+    const pin = input.expected[0];                                       // the card's one pin is its operation
+    if (pin === undefined || input.source.kind !== 'role_line_change'
+      || input.source.key !== decisionSourceKey({ kind: 'role_line_change', operationRef: pin.ref as OperationRef })) {
+      return { status: 'refused', rejection: rejected('invalid', 'not a role_line_change card') };
+    }
+    const optionId = input.selection.kind === 'option' ? input.selection.optionId : null;
+    if (optionId !== 'approve' && optionId !== 'reject') {
+      return { status: 'refused', rejection: rejected('invalid', 'a role_line_change card answers approve or reject') };
+    }
+    // The operation lives in the main workspace, wherever the card was answered (v4 §2.2 item 4).
+    const lineCtx = await lineContextOf(ctx);
+    if (lineCtx.status !== 'ready') {
+      return { status: 'refused', rejection: roleLineReadFailure(lineCtx, 'the main workspace') };
+    }
+    const read = await readRoleLineRecord(lineCtx.value, pin.ref as OperationRef);
+    if (read.status !== 'ready') {
+      return { status: 'refused', rejection: roleLineReadFailure(read, 'the role-line operation') };
+    }
+    const decided = await writeDecision(lineCtx.value, read.value, pin.revision, optionId,
+      { requestId: input.requestId, answerRef: input.answerRef });
+    if (decided.status !== 'committed') return { status: 'refused', rejection: decided };
+    switch (read.value.action.action) {
+      case 'role_line_split': {
+        if (optionId === 'reject') return { status: 'deferred' };
+        // An approved split that already ended failed (at cap, TS-8) answers its stored refusal on every replay of the
+        // answer (L-6); the continuation would read the terminal record as done.
+        const settled = decided.value;
+        if (settled.phase === 'failed' && settled.failure !== null) {
+          return { status: 'refused', rejection: rejected(settled.failure.code as CoreError, settled.failure.reason) };
+        }
+        // TS-8's one push, as the platform (C10): the approved split's child is created under this identity.
+        const platform = handoffContextOf(lineCtx.value, { kind: 'host', actor: { ...WORKFLOW_AUTOMATION_ACTOR } });
+        const pushed = await continueRoleLineSplit(platform, decided.value);
+        return pushed.status === 'ready' ? { status: 'deferred' }
+          : { status: 'refused', rejection: roleLineReadFailure(pushed, 'the approved split') };
+      }
+      default: return { status: 'deferred' };          // an approved reuse goes on by its caller's replay (§2.3)
+    }
+  }
+
+  return { continueOperation, open: openLine, changeScope, reuse, openRegionLine, startRoleLineSplit,
+    applyRoleLineChangeDecision };
 }
 

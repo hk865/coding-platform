@@ -27,7 +27,7 @@
  * keep:[region src], reason:'agent_proposal'}`, the new line has L1's role and the open `src/a` link, L1 keeps `src`
  * (a moved child region leaves the parent in `keep`, v4 :2492–:2494), and a later call with the same move is the same
  * operation and no second line. B — at the cap with no idle line the call is the literal `capacity` refusal with
- * `detail:{duty:'adviser',holders:N,reservations:0,open:N,episode:null}` and the row ends failed with that failure; with
+ * `detail:{duty:'adviser',holders:N,reservations:0,open:N,episode:1}` and the row ends failed with that failure; with
  * one idle standby line it is reclaimed (archived), the split is accepted and ends done, the holders stay N. C — one
  * maintenance page hands L3 off (successor provenance `handoff` from L3, an adviser holder) and leaves L4: no
  * successor, no split, its goal link open. D — a crash after the `planned`, `admitted`, `created`, `linked` write, or
@@ -247,8 +247,10 @@ describe('RL-13 B: at the open cap', () => {
     const { task, busy, n } = await atCap(handle, 's7d2-rl13-b1', false);
     await splitRun(handle, task, 'rl13-b1', [splitCall('rl13-b1-split', 'src/a')]);
     const reason = `at_cap: adviser has ${String(n)} holder(s) and 0 reservation(s) against open limit ${String(n)}`;
+    // o3b-start-rulings.md item 12 (Q12; later-rows-rulings.md:11 Q6, merged K9): after O3b the split is a platform
+    // automatic add, so this at-cap refusal opens capacity episode 1 (v4 :3391–:3392, :3409–:3413).
     expect(await resultOf(handle, 'rl13-b1-split')).toEqual({ status: 'rejected', code: 'capacity', reason,
-      detail: { duty: 'adviser', holders: n, reservations: 0, open: n, episode: null } });
+      detail: { duty: 'adviser', holders: n, reservations: 0, open: n, episode: 1 } });
     const rows = splitRows(await handle.operations());
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ phase: 'failed' });
