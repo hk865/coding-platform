@@ -2,7 +2,7 @@
 
 2026-09-26 行为细化：[MVP 产品行为与端到端验收](MVP-BEHAVIOR.md)区分首条 E2E 贯通与产品 MVP，定义用户入口、推进/返工、并行、控制恢复及验收场景；不缩减本文既有首版承诺，不代表实现完成。
 
-更新：2026-10-15。状态：**当前产品目标**，不表示全部能力已实现。历史有效承诺继续保留；后续明确纠正以 [HANDOFF 顶部决定 1–63](refactor/HANDOFF.md)为准，早期承诺的处置见产品意图审阅（已归档：`docs/refactor/reviews/product-intent-review.md`）。
+更新：2026-11-05（加 §9.2）。状态：**当前产品目标**，不表示全部能力已实现。历史有效承诺继续保留；后续明确纠正以 [HANDOFF 顶部决定 1–63](refactor/HANDOFF.md)为准，早期承诺的处置见产品意图审阅（已归档：`docs/refactor/reviews/product-intent-review.md`）。
 
 **接手、设计、实现或审阅时须一起查看：**本产品文档、[STATUS](refactor/STATUS.md)、[HANDOFF 顶部](refactor/HANDOFF.md)、[编排设计目录](refactor/design/orchestration-2026-10/README.md)、[当前架构](refactor/ARCHITECTURE.md)及[模块索引](refactor/modules/README.md)。追溯早期要求时读用户原始对话（已归档：`docs/refactor/intent/ORIGINAL-DIALOGUE.md`）、[意图与决定](refactor/intent/INTENT-AND-DECISIONS.md)和14 段用户原话（已归档：`docs/history/before-2026-09-22/agent-platform-user-replies-numbered.md`）。原始对话同时包含用户发言和助手当时回答，不能把助手建议当作用户已确认要求。同工作区并行以本文 §4、§10 和用户 9-23/9-24 的并行与白板原话（已归档：`docs/refactor/intent/2026-09-23-PARALLEL-AND-PRODUCT.md`）为准；派工补充规则见[决定 49](refactor/HANDOFF.md)和[设计书](refactor/design/orchestration-2026-10/DESIGN.md) §2.11，冲突处理见设计书 §2.5（J14）；并行协作设计（已归档：`docs/refactor/PARALLEL-COLLABORATION.md`）已标历史，只作追溯。
 
@@ -532,6 +532,27 @@ Session 的原始记录与当前模型输入分开；保留明确表达的决定
 | 软件工厂 | 以目标为输入，用任务图拆解；自动推进；启动时核对和恢复；按目标设自治级别，加上「需要你决定」队列（人工闸门） | — | 接入外部需求（GitHub Issues、Jira、飞书、线上报警转成目标）；按规则自动合并、发布；跨项目的常驻工作池和组织级调度（首版按项目隔离，见上表“跨项目”） | 外部需求接入：中等（转成目标）；组织级调度：大 |
 
 已有的能力以 [STATUS](refactor/STATUS.md) 和[能力索引](refactor/IMPLEMENTED-CAPABILITIES.md)为准；“已定、还没做”的各片见[编排设计书](refactor/design/orchestration-2026-10/DESIGN.md) §8。以后要把某一项排进施工，由用户另做决定。
+
+### 9.2 以后可以做的（MVP 之外，一处总表）
+
+2026-11-05 用户问 MVP 之外以后可以做什么、有没有记录，lead 把散在本文、设计书和决定里的条目收到这一张表，每条写明出处。**这不是施工计划，也不改 MVP 范围；哪一项要排进施工，由用户另定。** 还在 MVP 里、只是排在后面的事（E3 推后的三项、多工作区的消息投递、K2 等）不在这里，看 [STATUS](refactor/STATUS.md) 的“下一步”。
+
+| 方面 | 以后可以做的 | 出处 |
+| --- | --- | --- |
+| 解析和仓库套具 | tree-sitter 当后备解析器：兜住 TS/JS、Python、C/C++ 以外的语言，以及写坏的文件（今天 Python 文件有语法错时整个文件解析不了）；三种语言照旧用各自的官方解析器 | 用户 11-05 同意记为以后做（[决定 121-18](refactor/HANDOFF.md)） |
+| 解析和仓库套具 | 项目专属脚本（起测试库、改结构后重新生成代码等）登记后交给 agent 调用；每次改完文件立刻跑的轻量检查 | §9.1 |
+| 解析和仓库套具 | Windows 上的适配：WSL 读 Windows 盘时第一档 0.5–0.6 秒先接受，以后再看 | [决定 120-3](refactor/HANDOFF.md) |
+| 检查和交付 | 按改动只跑受影响的检查；提交、推送、开 PR、部署；把外部 CI 的结果当检查证据；每个分支或任务的预览环境和浏览器验收 | §9.1 |
+| 多 agent 协作 | 每个 agent 一个独立 worktree、做完再合并回来；三方合并；接口约定锁 | §9.1 |
+| 软件工厂 | 接外部需求（GitHub Issues、Jira、飞书、线上报警）转成目标；按规则自动合并、发布；跨项目的常驻工作池和组织级调度 | §9.1 |
+| 记忆和知识 | 检索排序调优；在真实 bug 上评估效果；再往后：长期领域专家、完整知识库、自动积累经验、跨项目共享 | §6.4、§9；[决定 23](refactor/HANDOFF.md) |
+| 记忆和知识 | 换手、归档多了以后，原始历史长期保留多少（还没定） | §1.4；设计书 §9.5 |
+| 规模 | 超大工程：从少量上下文开始，逐步形成架构和分工，按复杂度展开工作者；“一个 agent 约 1–2 万行、上下文接近 500K”只是待验证的参考 | §1.4、§2.1 |
+| 不只是软件 | 领域对象扩展到软件以外；领域专家 = 知识库 + Skill + 配置，不是一种新的 agent | §1.4 |
+| 跨项目 | 跨项目只读检索、通信和执行，以后明确授权后分别开放 | §9 |
+| 工程整理 | 结构重构：先完成 MVP；主线还在改的大文件等 MVP 之后再拆 | [决定 99-1、112-4](refactor/HANDOFF.md) |
+
+明确不做的（§9“平台边界”）：跨机器共识、多租户、完整 IDE、通用工作流 DSL、无限自主 spawn。
 
 ## 10. 验收与成功标准
 
