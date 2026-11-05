@@ -3042,13 +3042,13 @@ class Component extends DCLogic {
         out.rel = out.rel.concat([{ k: '处置', items: [], files: [], lines: [real.disposition.text], hasText: false, text: '' }]);
       }
       /* 架构: the planned modules (计划要改, no square: no real file state) and the
-         adapted actual files, grouped by the formal catalog; no planned file,
-         per-file count or uncommitted number. */
+         adapted actual files, grouped by the formal catalog; no planned file;
+         an actual file's +/− and （未提交） are in its tag (E3-7). */
       const arch = real && real.hasFiles ? real.files.map((g) => ({ crumb: g.crumb,
         files: g.files.map((f) => ({ path: f.path, name: f.name, sq: f.certainty === 'planned' ? '' : 'sq z8 ' + (f.certainty === 'definite' ? 's-satisfied' : 's-pending'),
           tagCls: 'tag' + (f.certainty === 'planned' ? '' : ' is-act'), tag: f.tag })) })) : [];
       out.hasArch = arch.length > 0;
-      out.archSum = arch.some((g) => g.files.some((f) => f.path !== '')) ? '实际改过／可能改过（现在）' : '';
+      out.archSum = arch.some((g) => g.files.some((f) => f.path !== '')) ? '实际改过／可能改过（现在）' + (real && real.filesNote ? ' · ' + real.filesNote : '') : '';
       out.arch = out.hasArch ? arch : [];
       /* 参与: the already-adapted participants, never rediscovered from the
          window's bars; an unread or incomplete list says so instead of "none". */

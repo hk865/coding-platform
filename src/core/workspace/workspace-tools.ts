@@ -97,6 +97,7 @@ export function createWorkspaceTools(deps: WorkspaceToolsDependencies): Workspac
     providers, ...(analyzers === undefined ? {} : { analyzers }),
     ...(deps.lightScan === undefined ? {} : { lightScan: deps.lightScan }),
     ...(deps.fileGraph ? { fileGraph: deps.fileGraph } : {}) });
+  const deniedPrefixes = deps.deniedPrefixes ?? WORKSPACE_DENIED_PREFIXES;
   const tools: WorkspaceToolsPort = {
     captureSourceChanges: (ctx, input) => registry.capture(ctx, input),
     captureObservation: (ctx, input) => registry.captureObservation(ctx, input),
@@ -108,8 +109,8 @@ export function createWorkspaceTools(deps: WorkspaceToolsDependencies): Workspac
     captureFileGraph: (ctx, input) => registry.captureFileGraph(ctx, input),
     readWorkspace: (ctx, input) => registry.read(ctx, input),
     compareWorkspace: (ctx, input) => registry.compare(ctx, input),
+    readUncommittedFiles: (ctx, input) => registry.readUncommitted(ctx, input, deniedPrefixes),
   };
-  const deniedPrefixes = deps.deniedPrefixes ?? WORKSPACE_DENIED_PREFIXES;
   return {
     tools,
     readContinuationBaselineBlob: (root, objectRef) => readContinuationBaselineBlob(root, objectRef),

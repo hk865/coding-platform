@@ -12,7 +12,7 @@ import {
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
   type TaskMapParticipantRead, type TaskMapRiskRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
-  type TaskMapTrackLineRead, type TaskMapTrackPageRead,
+  type TaskMapTrackLineRead, type TaskMapTrackPageRead, type TaskMapUncommittedRead,
 } from './adapters/task-map.js';
 
 /** Ruling item 5: the top-bar line while the change stream is down. */
@@ -430,6 +430,21 @@ async function readNodeDetail(
   const needsCatalog = (actual.availability === 'available' && Array.isArray(actual.value) && actual.value.length > 0)
     || (Array.isArray(task.plannedModules) && task.plannedModules.length > 0)
     || risks.some((page) => (page.items ?? []).some((item) => asRecord(asRecord(item).shared).kind === 'module'));
+  /* E3-7: the Task's distinct actual paths (summary order) against HEAD; the Host takes at most
+   * 100 (UNCOMMITTED_FILES_MAX_PATHS). A failed read only hides the numbers. */
+  const paths = actual.availability === 'available' && Array.isArray(actual.value)
+    ? [...new Set(actual.value.map((entry) => asText(asRecord(entry).path)).filter((path) => path !== ''))].slice(0, 100)
+    : [];
+  let uncommitted: TaskMapUncommittedRead = null;
+  if (paths.length > 0) {
+    try {
+      uncommitted = readyRouteValue<NonNullable<TaskMapUncommittedRead>>(await client.post('files/uncommitted', scope, {
+        workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, paths,
+      }), 'files/uncommitted');
+    } catch {
+      uncommitted = null;
+    }
+  }
   let catalog: { modules?: unknown[]; containment?: unknown } | null = null;
   if (needsCatalog) {
     try {
@@ -446,7 +461,7 @@ async function readNodeDetail(
   const changeAt = change === null ? '' : await acceptedAtText(client, scope, goalRef, asRecord(change).setIn);
   return adaptTaskMapDetail(summary, participants, null,
     catalog as Parameters<typeof adaptTaskMapDetail>[3], state, mapWhy, change, changeAt, risks,
-    typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null);
+    typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null, uncommitted);
 }
 
 /** Ruling 7: the one write path. Read the real Workspace pin, commit, then let

@@ -116,6 +116,7 @@ import {
   type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type RoleLineCoreRouteDto,
+  type WorkspaceFilesCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
   type SecretariesHandoffBody,
@@ -220,6 +221,8 @@ export type CoreRouteBindings = {
   saveWorkspaceFile: WorkbenchToolsPort['saveFile'];
   listWorkspaceFiles: WorkbenchToolsPort['listFiles'];
   compareWorkspaceFiles: WorkspaceToolsPort['compareWorkspace'];
+  /** E3-7: the task map's uncommitted line counts, forwarded to the WorkspaceTools owner. */
+  readUncommittedWorkspaceFiles: WorkspaceToolsPort['readUncommittedFiles'];
   startCommand: WorkbenchToolsPort['startCommand'];
   readCommand: WorkbenchToolsPort['readCommand'];
   stopCommand: WorkbenchToolsPort['stopCommand'];
@@ -544,7 +547,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof ArchitectureCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
-  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto,
+  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -629,6 +632,7 @@ export const CORE_ROUTE_SPECS: Record<
   'files/save': { kind: 'plain', binding: 'saveWorkspaceFile', owner: 'workbench.saveFile' },
   'files/list': { kind: 'plain', binding: 'listWorkspaceFiles', owner: 'workbench.listFiles' },
   'files/compare': { kind: 'plain', binding: 'compareWorkspaceFiles', owner: 'workspace.compareWorkspace' },
+  'files/uncommitted': { kind: 'plain', binding: 'readUncommittedWorkspaceFiles', owner: 'workspace.readUncommittedFiles' },
   'commands/start': { kind: 'plain', binding: 'startCommand', owner: 'workbench.startCommand' },
   'commands/read': { kind: 'plain', binding: 'readCommand', owner: 'workbench.readCommand' },
   'commands/stop': { kind: 'plain', binding: 'stopCommand', owner: 'workbench.stopCommand' },
@@ -1097,6 +1101,7 @@ export function createPlatformCoreRouteBindings(
       ? unsupported('the Host does not publish workbench tools (listFiles)')
       : workbenchTools.listFiles.bind(workbenchTools),
     compareWorkspaceFiles: platform.workspace.compareWorkspace.bind(platform.workspace),
+    readUncommittedWorkspaceFiles: platform.workspace.readUncommittedFiles.bind(platform.workspace),
     startCommand: workbenchTools === undefined
       ? unsupported('the Host does not publish workbench tools (startCommand)')
       : workbenchTools.startCommand.bind(workbenchTools),
@@ -1626,6 +1631,7 @@ export async function dispatchCoreRoute(
       case 'files/save': return bindings.saveWorkspaceFile(ctx, plain.input as never);
       case 'files/list': return bindings.listWorkspaceFiles(ctx, plain.input as never);
       case 'files/compare': return bindings.compareWorkspaceFiles(ctx, plain.input as never);
+      case 'files/uncommitted': return bindings.readUncommittedWorkspaceFiles(ctx, plain.input as never);
       case 'commands/start': return bindings.startCommand(ctx, plain.input as never);
       case 'commands/read': return bindings.readCommand(ctx, plain.input as never);
       case 'commands/stop': return bindings.stopCommand(ctx, plain.input as never);

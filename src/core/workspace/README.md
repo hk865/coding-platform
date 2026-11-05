@@ -35,7 +35,8 @@
 - `text-source-snapshot.ts` — 严格文本捕获：每个选中文件必须是可读 UTF-8、无 NUL。
 - `continuation-diff-reads.ts` — continuation 单文件 diff 两侧的 1 MiB 有界只读字节。
 - `workspace-baseline-artifact.ts` — 从 prepared manifest bundle / capture Artifact 读 baseline 与完整变更。
-- `workspace-change-capture.ts` — run 起始 baseline 与结算 change capture 共用的只读遍历。
+- `workspace-change-capture.ts` — run 起始 baseline 与结算 change capture 共用的只读遍历。其中只读 git 辅助（gitTopLevel、readHead、readTree、gitBlobId、pickObjectFormat）也给 uncommitted-files.ts 用。
+- `uncommitted-files.ts` — 任务图的“未提交”读：给定路径此刻相对 HEAD 的状态和 git 口径的加减行，只读、不存。
 - `candidate-workspace-reader.ts` — candidate 范围快照、摘要与 git entry（含符号链接/特殊文件规则）。
 - `verification-workspace-reader.ts` — 验证轮来源：当前源码、Git 基准比较与 requeue source digest。
 - `reviewer-source-reader.ts` — reviewer 路径允许规则（复用 candidate 排除项）。
@@ -46,21 +47,24 @@
 | --- | --- | --- | --- |
 | `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:95` | 用 Host 的 `resolveRoot`/`authorize` 打开一次绑定的读取资格 | 组合根给本模块注入真实根与权限时 |
 | `createWorkspaceTools` | `src/core/workspace/workspace-tools.ts:85` | 组装唯一 `WorkspaceToolsPort`（捕获/查询/读/比较）与 continuation 读取；句柄上的 `readWorkspaceFiles`、`listWorkspaceInputs` 可单独传出去用（闭包，不靠 `this`） | 组合根装配 `platform.workspace` 时；消费方不要再建 registry |
-| `WorkspaceToolsPort` | `src/core/workspace/ports.ts:218` | 本模块对外的窄端口与结果类型 | 消费方只注入端口，不拿 registry/sandbox |
+| `WorkspaceToolsPort` | `src/core/workspace/ports.ts:237` | 本模块对外的窄端口与结果类型 | 消费方只注入端口，不拿 registry/sandbox |
+| `WorkspaceToolsPort.readUncommittedFiles` | `src/core/workspace/ports.ts:243` | `files/uncommitted` 的 owner | Host 路由和界面 |
+| `UNCOMMITTED_FILES_MAX_PATHS` | `src/core/workspace/ports.ts:181` | 一次未提交读最多几条路径（100） | 校验请求与界面截断路径时 |
 | `WORKSPACE_DENIED_PREFIXES` | `src/core/workspace/denied-prefixes.ts:31` | 拒绝前缀的唯一清单（内核默认 + 平台追加） | 命令检查、取材、运行时读源码需要同一路径边界时 |
-| `isProtectedWorkspacePath` | `src/core/workspace/continuation-diff-reads.ts:57` | 规范化 workspace 相对路径后判断是否落在 Host 拒绝前缀内 | AgentRuntime 过滤受保护路径；先 `normalizeWorkspaceRelativePath`，不要另写前缀匹配 |
+| `isProtectedWorkspacePath` | `src/core/workspace/continuation-diff-reads.ts:58` | 规范化 workspace 相对路径后判断是否落在 Host 拒绝前缀内 | AgentRuntime 过滤受保护路径；先 `normalizeWorkspaceRelativePath`，不要另写前缀匹配 |
 | `CaptureRegistry` | `src/core/workspace/capture.ts:124` | 有界保留的捕获、游标、容量、失效与导出 | 只要实现捕获/查询语义时；不直接实例化第二份 |
 | `createWorkspaceGitReadAccess` | `src/core/workspace/git-read.ts:399` | 绑定到已授权 root 的只读 Git 读取能力 | 已有 `WorkspaceReadAccess` 时要 commit/树读取 |
 | `readGitWorkspaceFile` | `src/core/workspace/git-read.ts:510` | 读某个完整 commit 下的一个文本文件 | 读固定 Git 版本文件时 |
 | `compareGitWorkspaceTrees` | `src/core/workspace/git-read.ts:537` | 比较两个完整 commit 的文本树 | Git↔Git 来源比较时 |
 | `compareGitWorkingTree` | `src/core/workspace/git-read.ts:617` | 比较 Git commit 与工作树的普通文本和 mode | Git↔working tree 比较时 |
 | `duplicateCandidates` | `src/core/workspace/duplicate-candidates.ts:66` | 在一次比较的 after 材料上列出新的重复定义与字面量候选，带两处位置与 coverage | 比较请求带 `duplicates: true` 时；由 capture/git 两臂调用，不要另建索引 |
-| `readWorkspaceBaseline` | `src/core/workspace/workspace-change-capture.ts:230` | 一次只读遍历得到 run 起始 baseline | 执行前冻结工作区基线时 |
-| `captureWorkspaceChange` | `src/core/workspace/workspace-change-capture.ts:276` | 同一次遍历得到结算变更、notVisible 与样本 | 执行结束后取变更时；不要另走目录遍历 |
+| `readWorkspaceBaseline` | `src/core/workspace/workspace-change-capture.ts:249` | 一次只读遍历得到 run 起始 baseline | 执行前冻结工作区基线时 |
+| `captureWorkspaceChange` | `src/core/workspace/workspace-change-capture.ts:295` | 同一次遍历得到结算变更、notVisible 与样本 | 执行结束后取变更时；不要另走目录遍历 |
+| `uncommittedFilesOf` | `src/core/workspace/uncommitted-files.ts:36` | 给定路径相对当前 HEAD 的 clean/uncommitted/unknown 和加减行 | 要按文件看未提交改动时；不要另跑 git diff/status |
 | `readWorkspaceBaselineFromBundle` | `src/core/workspace/workspace-baseline-artifact.ts:34` | 读 prepared manifest 内的 baseline，坏/缺都降级为 null | 需要 run 起始快照且不能因坏 Artifact 失败时 |
 | `readWorkspaceCaptureChanges` | `src/core/workspace/workspace-baseline-artifact.ts:60` | 读 `WorkspaceCaptureV1` 背后的完整变更记录 | 需要变更全量分类、而不是样本时 |
-| `readContinuationBaselineBlob` | `src/core/workspace/continuation-diff-reads.ts:88` | 用 `git cat-file blob` 读 diff 旧侧，失败返回 typed unavailable | continuation 文件 diff 的旧侧 |
-| `readContinuationCurrentFile` | `src/core/workspace/continuation-diff-reads.ts:118` | 读 diff 新侧，拒绝 protected prefix 与符号链接逃逸 | continuation 文件 diff 的新侧 |
+| `readContinuationBaselineBlob` | `src/core/workspace/continuation-diff-reads.ts:89` | 用 `git cat-file blob` 读 diff 旧侧，失败返回 typed unavailable；给了 signal 时每次读后查取消，取消了就抛 | continuation 文件 diff 的旧侧 |
+| `readContinuationCurrentFile` | `src/core/workspace/continuation-diff-reads.ts:130` | 读 diff 新侧，拒绝 protected prefix 与符号链接逃逸；文件不存在时原因是 missing；给了 `allowsRead` 时，看路径之前先核真实上层目录加文件名，读字节之前再核真实路径；signal 同上 | continuation 文件 diff 的新侧 |
 | `VerificationWorkspaceReader` | `src/core/workspace/verification-workspace-reader.ts:12` | 验证轮的当前源码/基准比较/requeue digest 来源 | 装配 `VerificationRoundSourcePort` 时 |
 | `CandidateWorkspaceReader` | `src/core/workspace/candidate-workspace-reader.ts:64` | candidate 范围的整树快照与 git entry | 需要 candidate 级摘要或验证基准时 |
 | `SourceIndex` | `src/core/workspace/source-index.ts:29` | 显式文件集的只读 TS 语义查询与有界 excerpt | 探索工具要符号/定义/引用时；不是全仓索引 |
@@ -78,7 +82,7 @@
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |
 | `readSourceIdentity` | `src/core/workspace/source-identity.ts:4` | 读 workspace 的固定 HEAD 身份 | 需要来源 pin、又不想引入完整 Git 读取时 |
 
-路径校验的共用词法规则是 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）；真实路径包含判断在 app 的 `isPathWithin`，Query 范围规则是 `validateSourceQuery`（`src/core/workspace/ports.ts:282`）。
+路径校验的共用词法规则是 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）；真实路径包含判断在 app 的 `isPathWithin`，Query 范围规则是 `validateSourceQuery`（`src/core/workspace/ports.ts:304`）。
 
 ## 内部用
 - 捕获/读取内部件：`captureProjectSource`、`captureObservationSource`、`projectSnapshotOf`、`observationSkipReason`、`normalizeCoverageNotes`、`captureTextSource`、`scanTypeScript`、`querySource`、`toSourceLocation`、`toSourceRelation`、`toCallRelation`、`toSourceDiagnostic`、`toSourceFileEntry`、`readCapturedFile`、`readWorkingTreeFile`、`readWorkingTreeFiles`、`diffContent`、`summaryChanges`、`comparisonChanges`、`compareCapturedFiles`、`scopeContains`、`manifestOf`、`readFailure`、`deepFreeze`、`validateSourceQuery`。
@@ -94,6 +98,6 @@
 - 不要在分析线程模块里值导入本仓库的别的模块：测试里线程直接从 TS 源码起（Node 去类型），相对的 `.js` 导入解析不到；线程要的东西由主线程交过去。
 - 不要承诺“完整工作树”：capture 的 scope/coverage 有明确上限，`complete` 不等于整个仓库或完整调用图。
 - `isSafeSourcePath`（`src/core/workspace/project-source-snapshot.ts:102`）是源码捕获的路径规则，不做 4096 上限；它不是 `isSafeSourceRelativePath` 的副本。
-- `isSafeWorkspaceRelativePath`（`src/core/workspace/continuation-diff-reads.ts:37`）先 `path.normalize` 再判定，用于 diff 路径，不是词法规则的副本。
+- `isSafeWorkspaceRelativePath`（`src/core/workspace/continuation-diff-reads.ts:39`）先 `path.normalize` 再判定，用于 diff 路径，不是词法规则的副本。
 - `reviewerSourcePathAllowed`（`src/core/workspace/reviewer-source-reader.ts:5`）在词法规则上再加 Candidate 排除项；它保留自己的规则。
-- `validateSourceQuery`（`src/core/workspace/ports.ts:282`）是 Query 范围规则；`capture.ts`、`workspace-read.ts` 与 `ports.ts` 都只调 `isSafeSourceRelativePath`，不另写词法校验。
+- `validateSourceQuery`（`src/core/workspace/ports.ts:304`）是 Query 范围规则；`capture.ts`、`workspace-read.ts` 与 `ports.ts` 都只调 `isSafeSourceRelativePath`，不另写词法校验。

@@ -11,7 +11,7 @@
 - `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（36 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
 - `tests/context/` — 上下文装配，只有 `verification-workspace-reader.test.ts` 一个。
-- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（26 个），例如 `PC-prompt-set-v1.test.ts`。
+- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（27 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（56 个），例如 `R2e-git-operations.test.ts`。
 - `tests/helpers/` — 共享测试夹具，共 203 个文件；本清单主体在下一节。
@@ -24,6 +24,8 @@
 - `tests/work-graph/` — WorkGraph 域服务和读模型（548 个），是夹具使用最密集的文件夹；`PL-12-activity-runs-readings.test.ts`、`PL-20-same-session-usage.test.ts` 经 `PL-readings-fixture.ts` 核对 `activity/runs` 的三个 Run 读数。
 
 E3-6B 的新文件：`tests/work-graph/E36B-attempt-ordinal.test.ts`（真实 requeue 与接续后的 `attempt.ordinal`）、`tests/app/E36B-goal-ordinal.test.ts`（`goals/read` 的目标号，取消后留号、按项目编）、`tests/app/E36B-goal-resume-attempt.test.ts`（GOAL-29 恢复接续的横条来由）。
+
+E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLines` 照 git 切行、`lineEditCounts` 和 Myers 的上限、`lineDelta` 不变，纯表）、`tests/app/E37-files-uncommitted.test.ts`（真实 Host 的 `files/uncommitted` 在真实 git 仓库上逐路径判、`not_git` 和三种拒绝，memory）、`tests/ui/E37-1-detail-lines.test.ts`（适配的“+2 −1（未提交）”标签、一个文件一行、`filesNote` 三种情形，以及页面按实际文件发 `files/uncommitted`）。
 
 ## tests/helpers/ 的夹具
 

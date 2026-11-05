@@ -15,10 +15,11 @@ import { compareCapturedFiles, diffContent, manifestOf, readCapturedFile, readWo
 import { compareGitWorkspaceTrees, compareGitWorkingTree, isCompleteCommitOid, readGitWorkspaceFile } from './git-read.js';
 import { duplicateCandidates, DUPLICATE_LIMITS } from './duplicate-candidates.js';
 import { querySource, toSourceDiagnostic, toSourceFileEntry, toSourceRelation } from './source-query.js';
-import { deepFreeze } from './ports.js';
+import { deepFreeze, UNCOMMITTED_FILES_MAX_PATHS } from './ports.js';
+import { uncommittedFilesOf } from './uncommitted-files.js';
 import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 import type { WorkspaceAccessFactory, WorkspaceReadAccess } from './access.js';
-import type { CaptureContentScope, CaptureSourceRequest, CaptureSummary, ComparedMaterialV1, GitWorkspaceVersion, GitWorkingTreePair, ReadWorkspaceRequest, SourceCaptureMaterial, SourceCoverage, SourceDiagnostic, SourceFileEntry, SourceHit, SourcePage, SourcePageRequest, SourceRelation, WorkspaceCaptureLimits, WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceError, WorkspaceFile, WorkspaceResult, WorkspaceVersion } from './ports.js';
+import type { UncommittedFilesRequest, UncommittedFilesV1, CaptureContentScope, CaptureSourceRequest, CaptureSummary, ComparedMaterialV1, GitWorkspaceVersion, GitWorkingTreePair, ReadWorkspaceRequest, SourceCaptureMaterial, SourceCoverage, SourceDiagnostic, SourceFileEntry, SourceHit, SourcePage, SourcePageRequest, SourceRelation, WorkspaceCaptureLimits, WorkspaceComparison, WorkspaceComparisonRequest, WorkspaceError, WorkspaceFile, WorkspaceResult, WorkspaceVersion } from './ports.js';
 
 /** One opaque page cursor: bound to capture, subject, permission revision, query and ordering. */
 export type CursorRecord = {
@@ -282,6 +283,26 @@ export class CaptureRegistry {
         const report = await duplicateCandidates(
           { before: comparedMaterialOf(beforeEntry), after: comparedMaterialOf(afterEntry) }, DUPLICATE_LIMITS);
         return { status: 'ready', value: { ...result.value, duplicates: report } };
+      });
+    });
+  }
+  /**
+   * E3-7: the given paths against the current HEAD (`uncommittedFilesOf`), over one fresh access.
+   * The access's `allowsRead` (the Host's read scope and the sandbox policy) decides which paths
+   * are opened at all; the others answer `unknown`.
+   */
+  readUncommitted(ctx: CoreCallContext, input: UncommittedFilesRequest, deniedPrefixes: readonly string[]):
+    Promise<WorkspaceResult<UncommittedFilesV1>> {
+    return this.track(ctx, async signal => {
+      if (!input || typeof input !== 'object' || !input.workspace || input.workspace.aggregateType !== 'Workspace') return rejected('invalid', 'workspace scope required');
+      if (!Array.isArray(input.paths) || input.paths.length === 0 || input.paths.length > UNCOMMITTED_FILES_MAX_PATHS
+        || input.paths.some(path => typeof path !== 'string')) return rejected('invalid', 'paths must be 1 to 100 strings');
+      if (ctx.projectId !== input.workspace.projectId || ctx.workspaceId !== input.workspace.workspaceId)
+        return rejected('forbidden', 'call context scope does not match the requested workspace');
+      return this.withAccess(ctx, input.workspace, signal, async access => {
+        const root = access.hostRoot;
+        if (root === undefined) return rejected('unavailable', 'the workspace access has no host root');
+        return uncommittedFilesOf({ root, paths: input.paths, allowsRead: path => access.authorization.allowsRead(path), deniedPrefixes, signal });
       });
     });
   }

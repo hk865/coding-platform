@@ -248,6 +248,7 @@ export type CoreRouteSuffix =
   | 'projects/read'
   | 'files/save'
   | 'files/compare'
+  | 'files/uncommitted'
   | 'commands/start'
   | 'commands/read'
   | 'commands/stop'
@@ -855,6 +856,12 @@ export type FilesSaveBody = PlainBody<WorkbenchToolsPort['saveFile']>;
 export type FilesSaveResponse = RouteResponse<WorkbenchToolsPort['saveFile']>;
 export type FilesCompareBody = PlainBody<WorkspaceToolsPort['compareWorkspace']>;
 export type FilesCompareResponse = RouteResponse<WorkspaceToolsPort['compareWorkspace']>;
+export type FilesUncommittedBody = PlainBody<WorkspaceToolsPort['readUncommittedFiles']>;
+export type FilesUncommittedResponse = RouteResponse<WorkspaceToolsPort['readUncommittedFiles']>;
+/** E3-7: the task map's per-file uncommitted read; the route table names it so the aliases stay in the production graph. */
+export type WorkspaceFilesCoreRouteDto = {
+  'files/uncommitted': { body: FilesUncommittedBody; response: FilesUncommittedResponse };
+};
 export type CommandsStartBody = PlainBody<WorkbenchToolsPort['startCommand']>;
 export type CommandsStartResponse = RouteResponse<WorkbenchToolsPort['startCommand']>;
 export type CommandsReadBody = PlainBody<WorkbenchToolsPort['readCommand']>;

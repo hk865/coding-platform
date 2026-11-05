@@ -12,6 +12,8 @@
  * Git is invoked read-only with optional locks and fsmonitor disabled; no
  * repository filter, hook or external diff runs. Blob identities are computed
  * by the platform from raw bytes, never by `git hash-object` or `git diff`.
+ * The task map's uncommitted read (uncommitted-files.ts) reuses the read-only
+ * git helpers below.
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -86,7 +88,7 @@ async function git(root: string, args: readonly string[]): Promise<string> {
 const COMPLETE_OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 
 /** The real work-tree top level, and only when the given root IS that level. */
-async function gitTopLevel(root: string): Promise<string | null> {
+export async function gitTopLevel(root: string): Promise<string | null> {
   try {
     const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim();
     if (top === '') return null;
@@ -105,11 +107,11 @@ function isUnder(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix + '/');
 }
 
-function gitBlobId(body: Buffer, format: ObjectFormat): string {
+export function gitBlobId(body: Uint8Array, format: ObjectFormat): string {
   return createHash(format).update(`blob ${body.length}\0`).update(body).digest('hex');
 }
 
-async function readHead(root: string): Promise<string | null> {
+export async function readHead(root: string): Promise<string | null> {
   try {
     const head = (await git(root, ['rev-parse', '--verify', 'HEAD'])).trim();
     return COMPLETE_OID.test(head) ? head : null;
@@ -126,7 +128,7 @@ async function readIgnoredNames(root: string): Promise<string[]> {
   return output.split('\0').filter(name => name.length > 0);
 }
 
-function pickObjectFormat(commit: string): ObjectFormat {
+export function pickObjectFormat(commit: string): ObjectFormat {
   return commit.length === 64 ? 'sha256' : 'sha1';
 }
 
@@ -198,9 +200,21 @@ async function traverse(
   return { entries, digest: hash.digest('hex'), notVisible, notVisibleOmitted, ignoredNames };
 }
 
-/** The committed tree of `commit` as platform-computed blob identities. */
-async function readTree(root: string, commit: string, format: ObjectFormat): Promise<Map<string, TreeEntry>> {
-  const output = await git(root, ['ls-tree', '-r', '-z', '--full-tree', commit]);
+/**
+ * The committed tree of `commit` as platform-computed blob identities. Without `paths` it is the
+ * whole tree, recursive, and any non-blob entry fails it. With `paths` it lists those literal paths
+ * in one call without recursing (the single-entry read of git-read.ts), and `-t` keeps a requested
+ * directory's own entry even when another requested path lies under it: a directory, submodule or
+ * symlink stays one entry with its own mode, so the caller can answer it as a non-regular file and
+ * the listing stays bounded by the paths. Entries git lists on the way down are not kept.
+ */
+export async function readTree(
+  root: string, commit: string, format: ObjectFormat, paths?: readonly string[],
+): Promise<Map<string, TreeEntry>> {
+  const output = await git(root, paths === undefined
+    ? ['ls-tree', '-r', '-z', '--full-tree', commit]
+    : ['--literal-pathspecs', 'ls-tree', '-t', '-z', '--full-tree', commit, '--', ...paths]);
+  const wanted = paths === undefined ? null : new Set(paths);
   const tree = new Map<string, TreeEntry>();
   for (const raw of output.split('\0')) {
     if (raw.length === 0) continue;
@@ -213,6 +227,11 @@ async function readTree(root: string, commit: string, format: ObjectFormat): Pro
     const mode = match?.[1];
     const kind = match?.[2];
     const blobId = match?.[3];
+    if (wanted !== null && mode !== undefined && blobId !== undefined) {
+      // Any kind of entry, kept with its own mode (040000 tree, 160000 commit, 120000 symlink).
+      if (wanted.has(path)) tree.set(path, { mode, blobId });
+      continue;
+    }
     if (mode === undefined || kind !== 'blob' || blobId === undefined || mode === '160000') {
       throw new WorkspaceCaptureReadError('the git tree has no complete file comparison');
     }

@@ -18,4 +18,4 @@
 - 不调用路由、不读令牌、不写日志；`goals/read` 和 `tasks/query` 的读取顺序在 `src/ui/boot.ts`。
 - 不认识的字段值不做猜测：缺省的任务状态词落在 `pending`；Goal 的状态词只来自 `goals/display` 的 `phase`，没有采用计划时由 `planMissing` 和 `NO_PLAN_TEXT` 表示。
 - `adaptTaskMapTime` 不推算：没有正式 `previous` 就不连线；没有 Task 引用的 Query 只落在线上；执行横条带上 Host 给的尝试序号（`attempt.ordinal`）、重新入队的事实（`attempt.requeue`）和失败原因，界面不自己数，第 2 次起才写序号；缺失的历史原因不出现，状态词和时间段照常保留。
-- `adaptTaskMapDetail` / `TaskMapNodeDetailData`：`graph/detail` 的 summary 与 participants 页的纯转换；只显示 `actualFiles` 的“实际改过／可能改过”并按 `pathOwnershipOf` 与正式 containment 归组，实际文件不在计划模块（或它的子模块）下时标“不在计划里”，没读到目录时不标；计划文件、逐文件行数和未提交不出现；负责工作线后面的尝试序号取任务行的 `attemptOrdinal`，第 2 次起才写；计数不完整时只显示参与线。
+- `adaptTaskMapDetail` / `TaskMapNodeDetailData`：`graph/detail` 的 summary 与 participants 页的纯转换；只显示 `actualFiles` 的“实际改过／可能改过”并按 `pathOwnershipOf` 与正式 containment 归组，实际文件不在计划模块（或它的子模块）下时标“不在计划里”，没读到目录时不标；计划文件不出现；实际文件同一路径只出一行（有一条 `definite` 就是“实际改过”），带 `files/uncommitted` 读到的“+a −d（未提交）”或“（未提交）”，读不到就不写；总述的后半句是 `filesNote`；负责工作线后面的尝试序号取任务行的 `attemptOrdinal`，第 2 次起才写；计数不完整时只显示参与线。

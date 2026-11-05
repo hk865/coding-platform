@@ -177,6 +177,25 @@ export type GitWorkingTreeComparison = GitWorkingTreePair & {
 };
 export type WorkspaceComparison = CapturedWorkspaceComparison | GitWorkspaceComparison | GitWorkingTreeComparison;
 
+/** E3-7: at most this many paths per `readUncommittedFiles` request. */
+export const UNCOMMITTED_FILES_MAX_PATHS = 100;
+/** E3-7: some workspace paths, each answered against the workspace's current HEAD. */
+export type UncommittedFilesRequest = { workspace: WorkspaceRef; paths: string[] };
+/**
+ * One path now against HEAD, what `git diff HEAD` would say of it: `clean` (no difference, or
+ * absent on both sides), `uncommitted` with the added/deleted line counts (`null` when they
+ * cannot be given: binary, over a byte bound or past the line-diff bound), or `unknown` (not
+ * readable here, not a regular file, or too large to compare).
+ */
+export type UncommittedFileV1 =
+  | { path: string; state: 'clean' }
+  | { path: string; state: 'uncommitted'; lines: { added: number; deleted: number } | null }
+  | { path: string; state: 'unknown' };
+/** `not_git`: the root is not a git work-tree top level, or the repository has no HEAD commit. */
+export type UncommittedFilesV1 =
+  | { repository: 'git'; files: UncommittedFileV1[] }
+  | { repository: 'not_git' };
+
 export type DuplicateLocationV1 = { path: string; line: number };
 export type DuplicateCandidateV1 =
   | { kind: 'definition'; name: string; first: DuplicateLocationV1; second: DuplicateLocationV1 }
@@ -220,6 +239,9 @@ export interface WorkspaceToolsPort extends WorkspaceCapturePort {
     Promise<WorkspaceResult<WorkspaceFile>>;
   compareWorkspace(ctx: CoreCallContext, input: WorkspaceComparisonRequest):
     Promise<WorkspaceResult<WorkspaceComparison>>;
+  /** E3-7: the given paths against the current HEAD, now; read only, nothing stored. */
+  readUncommittedFiles(ctx: CoreCallContext, input: UncommittedFilesRequest):
+    Promise<WorkspaceResult<UncommittedFilesV1>>;
 }
 
 /**

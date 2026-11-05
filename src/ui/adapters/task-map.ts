@@ -14,7 +14,7 @@
 
 import { pathOwnershipOf } from '../../contracts/path-ownership.js';
 import { revisionAssignments } from '../../contracts/plan.js';
-import { asRecord, asText } from '../values.js';
+import { asRecord, asText, type JsonRecord } from '../values.js';
 
 /** Ruling item 1: a Goal with no adopted Plan shows this empty text. */
 export const NO_PLAN_TEXT = '这个目标还没有采用的计划。';
@@ -634,6 +634,11 @@ export type TaskMapCatalogRead = {
 } | null;
 
 export type TaskMapDetailFile = { path: string; name: string; certainty: string; tag: string };
+/** `files/uncommitted`'s value (E3-7): the Task's files against the workspace's HEAD, now. */
+export type TaskMapUncommittedRead = {
+  repository?: unknown;
+  files?: Array<{ path?: unknown; state?: unknown; lines?: { added?: unknown; deleted?: unknown } | null }>;
+} | null;
 export type TaskMapDetailArchGroup = { crumb: string; files: TaskMapDetailFile[] };
 export type TaskMapNodeDetailData = {
   id: string; word: string; why: string;
@@ -643,6 +648,8 @@ export type TaskMapNodeDetailData = {
   ownerNow: boolean;
   files: TaskMapDetailArchGroup[];
   hasFiles: boolean;
+  /** E3-7: what the 架构 summary adds after 实际改过／可能改过（现在）, without the ` · `; '' adds nothing. */
+  filesNote: string;
   /** `archived`: the line's `status.bucket`; the track opens it among the archived lines. */
   participants: Array<{ name: string; text: string; key: { projectId: string; sessionId: string } | null; archived: boolean; role: string }>;
   hasParticipants: boolean;
@@ -733,7 +740,7 @@ function participantText(item: Record<string, unknown>, counts: TaskMapParticipa
 /** Pure detail projection (design §6): no request, no DOM. `summary` is the
  * unwrapped `graph/detail` summary; participants are its `section:'participants'`
  * pages; `catalog` names planned modules and groups actual files. Planned
- * files, per-file line counts and "未提交" are never shown. */
+ * files are never shown; an actual file's line counts and "未提交" come only from the `files/uncommitted` read (E3-7). */
 export function adaptTaskMapDetail(
   summary: TaskMapSummaryRead, participants: readonly TaskMapParticipantRead[],
   counts: TaskMapParticipationCounts, catalog: TaskMapCatalogRead,
@@ -751,6 +758,8 @@ export function adaptTaskMapDetail(
   risks: readonly TaskMapRiskRead[] = [],
   /** The `tasks/query` row's `attemptOrdinal`; 负责 names it after a line, never after 未分配. */
   attempt: number | null = null,
+  /** E3-7: the `files/uncommitted` value for this Task's actual paths; null when it was not read or failed. */
+  uncommitted: TaskMapUncommittedRead = null,
 ): TaskMapNodeDetailData | null {
   const task = summary.task;
   if (task === null) return null;
@@ -801,22 +810,45 @@ export function adaptTaskMapDetail(
     groups.set(crumb, [...(groups.get(crumb) ?? []),
       { path: '', name: crumb.split(' / ').pop() ?? crumb, certainty: 'planned', tag: '计划要改' }]);
   }
+  /* E3-7: one row per file. Several Runs of the Task can name the same path; one `definite`
+   * makes it 实际改过. The first appearance keeps its place (the summary is sorted by path). */
+  const certaintyOf = new Map<string, 'definite' | 'possible'>();
   for (const entry of executed) {
     const file = asRecord(entry);
     const path = asText(file.path);
     if (path === '') continue;
+    const certainty = asText(file.certainty) === 'possible' ? 'possible' : 'definite';
+    if (certaintyOf.get(path) !== 'definite') certaintyOf.set(path, certainty);
+  }
+  /* E3-7: how each path stands against HEAD now. No read, not_git or a path the read does not
+   * name writes no number (decision 112-3: no real value, nothing shown). */
+  const headRead = asRecord(uncommitted);
+  const stateOf = new Map<string, JsonRecord>();
+  if (headRead.repository === 'git' && Array.isArray(headRead.files)) {
+    for (const entry of headRead.files) stateOf.set(asText(asRecord(entry).path), asRecord(entry));
+  }
+  for (const [path, certainty] of certaintyOf) {
     const own = pathOwnershipOf(path, modules);
     const moduleId = own.status === 'owner' ? String(own.owner.id) : '';
     const crumb = moduleId === '' ? '未归入模块' : crumbOf(moduleId);
-    const certainty = asText(file.certainty) === 'possible' ? 'possible' : 'definite';
     /* 不在计划里 (prototype:3382), judged by module: the file's module is neither a
      * planned module nor under one, or it has none; a plan without modules says nothing. */
     const outside = planned.size > 0 && !chainOf(moduleId).some((entry) => planned.has(entry.id));
+    const vsHead = stateOf.get(path);
+    const counts = asRecord(vsHead?.lines);
+    /* prototype:3381-3382: ` +a −d（未提交）`, the minus is U+2212 */
+    const mark = vsHead?.state !== 'uncommitted' ? ''
+      : typeof counts.added === 'number' && typeof counts.deleted === 'number'
+        ? ' +' + String(counts.added) + ' −' + String(counts.deleted) + '（未提交）' : '（未提交）';
     const list = groups.get(crumb) ?? [];
     list.push({ path, name: path.split('/').pop() ?? path, certainty,
-      tag: (certainty === 'definite' ? '实际改过' : '可能改过') + (outside ? ' · 不在计划里' : '') });
+      tag: (certainty === 'definite' ? '实际改过' : '可能改过') + mark + (outside ? (mark === '' ? ' · ' : '· ') + '不在计划里' : '') });
     groups.set(crumb, list);
   }
+  /* E3-7: the summary's second half, from the same read (E3I:291; prototype:3389's first clause) */
+  const shown = [...certaintyOf.keys()].map((path) => stateOf.get(path)?.state);
+  const filesNote = shown.includes('uncommitted') ? '工作区里还没提交的改动，可能混有别的执行的改动'
+    : shown.length > 0 && shown.every((entry) => entry === 'clean') ? '工作区里没有它未提交的改动' : '';
   const lines: TaskMapNodeDetailData['participants'] = [];
   const responsibleNow = new Set((Array.isArray(task.responsibleNow) ? task.responsibleNow : [])
     .map((entry) => trackSessionKeyOf(asRecord(entry).key)));
@@ -840,6 +872,7 @@ export function adaptTaskMapDetail(
     owner: who, hasOwner: who !== '', ownerNow: true,
     files: [...groups.entries()].map(([crumb, files]) => ({ crumb, files })),
     hasFiles: groups.size > 0,
+    filesNote,
     participants: lines, hasParticipants: lines.length > 0, noParticipants: lines.length === 0,
     participantsLoaded, participantsComplete,
     overlaps: risks.flatMap((page) => (Array.isArray(page.items) ? page.items : []).map((entry) => {

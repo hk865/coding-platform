@@ -64,6 +64,7 @@ function sourceCapability() {
     captureSourceChanges: unavailable, captureObservation: unavailable, querySource: unavailable, exportCapture: unavailable,
     verifyCapture: unavailable, releaseCapture: unavailable, captureArchitectureSource: unavailable,
     captureFileGraph: unavailable, readWorkspace: unavailable, compareWorkspace: unavailable,
+    readUncommittedFiles: unavailable,
   };
   const state = { closeFailure: undefined as Error | undefined };
   // This is an explicitly granted test Host capability, not a fabricated production Run.

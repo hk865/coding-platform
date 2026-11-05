@@ -118,6 +118,7 @@ function sourceCapability(capture?: WorkspaceToolsPort['captureSourceChanges']) 
     captureSourceChanges, captureObservation: unavailable, querySource: unavailable, exportCapture: unavailable,
     verifyCapture: unavailable, releaseCapture: unavailable, captureArchitectureSource: unavailable,
     captureFileGraph: unavailable, readWorkspace: unavailable, compareWorkspace: unavailable,
+    readUncommittedFiles: unavailable,
   };
   const access: RuntimeSourceCaptureAccess = {
     port, workspace,

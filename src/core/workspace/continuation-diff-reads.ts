@@ -4,13 +4,15 @@
  * The old side is the Run-start baseline blob (`git cat-file blob`, no filters,
  * hooks or external diff); the new side is the current workspace file. Both are
  * bounded to 1 MiB and never throw: every failure is a typed `unavailable` the
- * assembly degrades to "no diff" on. Deliberately not `CandidateWorkspaceReader`
+ * assembly degrades to "no diff" on. The one exception is a signal the caller
+ * passes: it is checked after every read, and once aborted it throws, so no
+ * further read starts. Deliberately not `CandidateWorkspaceReader`
  * (L5): this helper reads only the exact paths the stored review names and runs
  * no repository filter.
  */
 import { execFile } from 'node:child_process';
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { messageOf } from '../../contracts/error-message.js';
 import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
@@ -84,12 +86,15 @@ function isReadableBaselineObjectRef(objectRef: string): boolean {
  * `objectRef` is either a Run-start baseline blob id or a `<headCommit>:<path>`
  * tree ref (L6 line 215); both are read with `git cat-file blob` (no filters).
  */
-export async function readContinuationBaselineBlob(root: string, objectRef: string): Promise<ContinuationWorkspaceBytes> {
+export async function readContinuationBaselineBlob(
+  root: string, objectRef: string, signal?: AbortSignal,
+): Promise<ContinuationWorkspaceBytes> {
   if (!isReadableBaselineObjectRef(objectRef)) return { status: 'unavailable', reason: 'the baseline object reference is not a git object id' };
   try {
     const size = await execute('git', gitArgs(root, ['cat-file', '-s', objectRef]), {
       timeout: 15_000, maxBuffer: 4 * 1024, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
     });
+    signal?.throwIfAborted();
     const parsed = Number.parseInt(size.stdout.trim(), 10);
     if (!Number.isSafeInteger(parsed) || parsed < 0) return { status: 'unavailable', reason: 'the baseline blob size could not be read' };
     if (parsed > CONTINUATION_DIFF_MAX_BYTES) return { status: 'unavailable', reason: 'too_large' };
@@ -97,10 +102,12 @@ export async function readContinuationBaselineBlob(root: string, objectRef: stri
       timeout: 15_000, maxBuffer: CONTINUATION_DIFF_MAX_BYTES + 1, windowsHide: true, encoding: 'buffer',
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
     });
+    signal?.throwIfAborted();
     const bytes = result.stdout as unknown as Uint8Array;
     if (bytes.byteLength > CONTINUATION_DIFF_MAX_BYTES) return { status: 'unavailable', reason: 'too_large' };
     return { status: 'ready', bytes };
   } catch (error) {
+    signal?.throwIfAborted();
     return { status: 'unavailable', reason: messageOf(error) };
   }
 }
@@ -113,34 +120,69 @@ export async function readContinuationBaselineBlob(root: string, objectRef: stri
  * then a symlink final component is status only (`not_text`); then the real
  * path must stay inside the real workspace root; and a real path that resolves
  * into a protected prefix through a directory symlink is `protected` too.
+ * A caller with its own read scope passes `allowsRead`: a directory symlink
+ * inside the scope can point outside it. A path that is not there has no real
+ * path of its own, so before the path is looked at, its real parent joined with
+ * its name must pass the same checks (even "not there" is not answered for a
+ * place outside the scope), and the real path passes them again before any byte
+ * is read.
  */
 export async function readContinuationCurrentFile(
   root: string, path: string, deniedPrefixes: readonly string[] = WORKSPACE_DENIED_PREFIXES,
+  { allowsRead, signal }: { allowsRead?: (path: string) => boolean; signal?: AbortSignal } = {},
 ): Promise<ContinuationWorkspaceBytes> {
   const normalized = normalizeWorkspaceRelativePath(path);
   if (normalized === null) return { status: 'unavailable', reason: 'the workspace path is not representable' };
   if (isProtectedWorkspacePath(normalized, deniedPrefixes)) return { status: 'unavailable', reason: 'protected' };
   try {
     const absolute = join(root, normalized);
+    const realRoot = await realpath(root);
+    signal?.throwIfAborted();
+    if (allowsRead !== undefined) {
+      const realParent = await realpath(dirname(absolute));
+      signal?.throwIfAborted();
+      const refused = realPathRefusal(realRoot, join(realParent, basename(absolute)), deniedPrefixes, allowsRead);
+      if (refused !== null) return refused;
+    }
     const meta = await lstat(absolute);
+    signal?.throwIfAborted();
     if (meta.isSymbolicLink()) return { status: 'unavailable', reason: 'not_text' };
     if (!meta.isFile()) return { status: 'unavailable', reason: 'the path is not a regular file' };
     const realAbsolute = await realpath(absolute);
-    const realRoot = await realpath(root);
-    if (realAbsolute !== realRoot && !realAbsolute.startsWith(realRoot + sep)) {
-      return { status: 'unavailable', reason: 'the path is outside the workspace root' };
-    }
-    // Codex 9(a): a directory symlink inside the root can point at a protected
-    // directory, so the protection rule runs again on the real workspace-relative path.
-    const realRelative = relative(realRoot, realAbsolute).split(sep).join('/');
-    if (isProtectedWorkspacePath(realRelative, deniedPrefixes)) {
-      return { status: 'unavailable', reason: 'protected' };
-    }
+    signal?.throwIfAborted();
+    const refused = realPathRefusal(realRoot, realAbsolute, deniedPrefixes, allowsRead);
+    if (refused !== null) return refused;
     if (meta.size > CONTINUATION_DIFF_MAX_BYTES) return { status: 'unavailable', reason: 'too_large' };
     const bytes = await readFile(realAbsolute);
+    signal?.throwIfAborted();
     if (bytes.byteLength > CONTINUATION_DIFF_MAX_BYTES) return { status: 'unavailable', reason: 'too_large' };
     return { status: 'ready', bytes };
   } catch (error) {
+    signal?.throwIfAborted();
+    // E3-7: a path that is not there has its own reason, so a reader can tell a deleted file from a failed read.
+    // ENOTDIR: a parent became a file (src/dir/a.ts after src/dir was replaced by a file), so the path is gone too.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { status: 'unavailable', reason: 'missing' };
     return { status: 'unavailable', reason: messageOf(error) };
   }
+}
+
+/**
+ * Why a real absolute path may not be read, or null. It must stay inside the real root; a
+ * directory symlink inside the root can point at a protected directory, so the protection rule
+ * runs again on the real workspace-relative path, and so does the caller's read scope.
+ */
+function realPathRefusal(
+  realRoot: string, realAbsolute: string, deniedPrefixes: readonly string[],
+  allowsRead: ((path: string) => boolean) | undefined,
+): ContinuationWorkspaceBytes | null {
+  if (realAbsolute !== realRoot && !realAbsolute.startsWith(realRoot + sep)) {
+    return { status: 'unavailable', reason: 'the path is outside the workspace root' };
+  }
+  const realRelative = relative(realRoot, realAbsolute).split(sep).join('/');
+  if (isProtectedWorkspacePath(realRelative, deniedPrefixes)) return { status: 'unavailable', reason: 'protected' };
+  if (allowsRead !== undefined && !allowsRead(realRelative)) {
+    return { status: 'unavailable', reason: 'the real path is outside the read scope' };
+  }
+  return null;
 }
