@@ -37,6 +37,7 @@ import type { SessionCard } from '../../core/work-graph/model/session-contracts.
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
 import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
+import { plainSessionRefKey } from '../../core/work-graph/sessions/session-record-codecs.js';
 import { liveWaitMessage } from '../../core/work-graph/tasks/session-facts.js';
 import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
@@ -74,7 +75,7 @@ import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
 import type { PlanProposal } from '../../core/work-graph/model/plan-contracts.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
-import { deriveSessionInputId, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import { deriveSessionInputId, type SessionMessage, type SessionMessageSendInputV1 } from '../../core/work-graph/model/communication-contracts.js';
 import {
   effectiveReplyHandler, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
   type DeliveryFactsV1, type DeliveryResponseWaitV1,
@@ -941,7 +942,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return { rejection: rejection('unavailable', 'the Goal workspace record is not readable') };
   }
 
-  const { chooseSession, responsibleSessionFor, chooseExcluded } = createSessionChooser(deps);
+  const { chooseSession, responsibleSessionFor, chooseExcluded, resolveRecipient } = createSessionChooser(deps);
 
   /**
    * K slice L7: has this line already started its fallback? A continuation
@@ -1504,6 +1505,23 @@ export function createWorkflow(deps: WorkflowDependencies & {
     findSessions: (ctx, input) => deps.sessions.findSessions(ctx, input),
     dutyOfRole: (ctx, role) => deps.sessionDuty!(role, ctx),
   });
+  /**
+   * O4b (v4 §5.2 (d)): the one adviser read of the four adviser sends. With `recipients` wired it is the L35
+   * resolver through the chooser at send time (`none`/`human` = the site's old no-adviser branch); a narrow double
+   * keeps the old workspace duty read, which never has a copy. A failed read is a rejection.
+   */
+  async function adviserOf(owned: Owned, goal: GoalSnapshot, asker: SessionRef | null):
+  Promise<{ session: SessionRef | null; copy: SessionRef | null } | CoreRejection> {
+    if (deps.recipients !== undefined) {
+      const resolved = await resolveRecipient(owned, { goalRef: goal.ref, moduleRef: null, kind: 'general', asker });
+      if ('status' in resolved) return resolved;
+      return resolved.kind === 'line' ? { session: resolved.session, copy: resolved.copy } : { session: null, copy: null };
+    }
+    if (suggestionDutyRecipient === null) return { session: null, copy: null };
+    const read = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
+      workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser' });
+    return read.status === 'ready' ? { session: read.value, copy: null } : readRejection(read);
+  }
   type SuggestionSend = { toolName: 'send_session_message'; arguments: unknown; requestId: string };
   type SuggestionStep =
     | { operation: WorkflowOperation; send: SuggestionSend | null }
@@ -1513,15 +1531,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const taskRef: TaskTriple = { projectId: owned.projectId, goalId: goal.ref.goalId, taskId: task.taskId };
     const text = `Task ${task.taskId} has no suitable member; create one executor line for this task.`;
     const commandId = `pick-suggest:${task.taskId}:${planRef.planId}`;
-    // An uninstalled duty resolver seam is a narrow double's legacy, not an
-    // unreadable adviser read: it has no adviser to resolve.
-    let recipient: SessionRef | null = null;
-    if (suggestionDutyRecipient !== null) {
-      const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
-        workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser' });
-      if (adviser.status !== 'ready') return { rejection: readRejection(adviser) };
-      recipient = adviser.value;
-    }
+    // The one adviser read (`adviserOf`); an unwired narrow double has no adviser to resolve.
+    const adviser = await adviserOf(owned, goal, null);
+    if ('status' in adviser) return { rejection: adviser };
+    const recipient = adviser.session;
     if (recipient !== null) {
       const request = {
         input: {
@@ -1628,18 +1641,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const round = candidateWait?.inFlight === true ? null : refinementRoundOf({
         basis, goalRef: goal.ref, planRevision: graph.plan.planRevision, target: target ?? null });
       if (round !== null && suggestionDutyRecipient !== null) {
-        const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
-          workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser',
-        });
-        if (adviser.status !== 'ready') return readRejection(adviser);
-        if (adviser.value !== null) {
+        const adviser = await adviserOf(owned, goal, null);
+        if ('status' in adviser) return adviser;
+        if (adviser.session !== null) {
           const requestId = systemRoundRequestId(round);
           if (requestId.status !== 'ready') return requestId;
           const text = `${requestId.value}\n细化${target!.kind === 'stage'
             ? `阶段 ${target!.stageId}` : `目标级占位任务 ${target!.taskId}`}；只输出这一段/这一版。`;
           // Build the send from the one `systemRoundSendInput` original so the receipt
           // read uses the system round's own identity and arguments.
-          const request = systemRoundSendInput({ round, recipient: adviser.value, text });
+          const request = systemRoundSendInput({ round, recipient: adviser.session, text });
           if (request.status !== 'ready') return request;
           if (await readHostSendReceipt(
             systemRoundContext({ projectId: owned.projectId, workspaceId: owned.workspaceId }, owned.ctx.signal),
@@ -1651,7 +1662,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
             return waiting(null, candidateWait === null ? pending : `${pending}; ${candidateWait.reason}`, undefined, basis);
           }
           return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
-            round, recipient: adviser.value, text,
+            round, recipient: adviser.session, text,
           } }), null, null, basis);
         }
         // L33: a refinement round with no adviser goes to the queue's one entry, which tries a candidate, then a
@@ -2179,26 +2190,46 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const reminders = taskRemindersOfGoal(facts.value);
     if (deviations.length === 0 && reminders.length === 0) return null;
     if (suggestionDutyRecipient === null) return null;
-    const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
-      workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser',
-    });
-    if (adviser.status !== 'ready') return readRejection(adviser);
-    // §7.1.3: never the secretary; the derived card is the no-adviser exit.
-    if (adviser.value === null) return null;
     for (const deviation of deviations) {
       const requestId = deviationRequestId(deviation);
+      // O4b (v4 :5480–:5493): the Run that raised this deviation is the asker, read inside the loop that binds it;
+      // only the resolver path needs it. The round keeps `deviationRequestId(deviation)` and the same text.
+      let asker: SessionRef | null = null;
+      if (deviation.runRef !== null && deps.recipients !== undefined) {
+        const run = await deps.executions.readExecution(owned.ctx, deviation.runRef);
+        if (run.status !== 'ready') return readRejection(run);
+        asker = run.value.run.executionHistory?.sessionRef ?? null;
+      }
+      const adviser = await adviserOf(owned, goal, asker);
+      if ('status' in adviser) return adviser;
+      // §7.1.3: no fallback to the Goal's secretary; with no line this deviation writes nothing (the derived card is
+      // the exit).
+      if (adviser.session === null) continue;
       const ref = systemRoundMessageRef({ projectId: owned.projectId, workspaceId: owned.workspaceId }, requestId);
       if (ref.status !== 'ready') return ref;
       const sent = await hostSendCommitted(owned, ref.value);
       if (typeof sent !== 'string') return sent;
       if (sent === 'sent') continue;
+      if (adviser.copy !== null && deps.messages !== undefined) {
+        // v4 :5459–:5466 (book :588–:591): one `notify` to the creator, deduped by (source operation, final
+        // recipient); a reply still goes to the sender. It goes out before the round, so a sent round has its copy.
+        const copyInput: SessionMessageSendInputV1['input'] = { recipient: adviser.copy, intent: 'notify',
+          goalRef: goal.ref, text: `请知悉（抄送，不需要回复）：任务 ${deviation.taskRef.taskId} 的偏差已发给负责的参谋（${requestId}）。` };
+        const copied = await deps.messages.sendMessage(automationContext(owned), {
+          input: copyInput, meta: { requestId: `recipient-copy:${requestId}:${plainSessionRefKey(adviser.copy)}`, expected: [] },
+        });
+        if (copied.status !== 'committed') return copied;
+      }
       const round: SystemRoundV1 = { kind: 'deviation', goalRef: goal.ref,
         taskId: deviation.taskRef.taskId, cause: deviation.kind, planRevision: deviation.planRevision };
       return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
-        round, recipient: adviser.value, text: `${requestId}\n${deviationText(deviation, null)}`,
+        round, recipient: adviser.session, text: `${requestId}\n${deviationText(deviation, null)}`,
         taskRef: deviation.taskRef,
       } }));
     }
+    const reminderAdviser = await adviserOf(owned, goal, null);
+    if ('status' in reminderAdviser) return reminderAdviser;
+    if (reminderAdviser.session === null) return null;
     for (const reminder of reminders) {
       const ref = reminderMessageRef(owned, reminder);
       if (ref.status !== 'ready') return ref;
@@ -2208,7 +2239,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const requestId = `plan-reminder:${reminder.goalRef.goalId}:${reminder.taskRef.taskId}:${reminder.planRevision}`;
       return advancing(null, makePerform(base, { kind: 'notify_plan_reminder', request: {
         input: {
-          recipient: adviser.value,
+          recipient: reminderAdviser.session,
           text: `${requestId}\n提醒（不需要开轮或改计划）：任务 ${reminder.taskRef.taskId} 在计划版本 `
             + `${reminder.planRevision} 的上下文增长量已达 ${reminder.growthTokens} tokens（${reminder.sizeClass} 档）。`,
           intent: 'notify' as const, needsReply: false,
@@ -2529,11 +2560,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
             } }), null, null, candidateBasis('plan_review_pending'));
           }
           if (decision.action === 'request_fix') {
-            const adviser = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
-              workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'adviser',
-            });
-            if (adviser.status !== 'ready') return readRejection(adviser);
-            if (adviser.value === null) {
+            const adviser = await adviserOf(owned, goal, null);
+            if ('status' in adviser) return adviser;
+            if (adviser.session === null) {
               // §6.1.4 line 1139: no adviser line -> the candidate is a card, never a send.
               candidateWait = { reason: 'review_fix: the Goal has no adviser line',
                 basis: candidateBasis('plan_candidate_waiting:review_fix'), source: cardRead.value.card.source };
@@ -2544,7 +2573,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
               proposalId: proposal.ref.proposalId, proposalRevision: proposal.revision,
             };
             return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
-              round, recipient: adviser.value,
+              round, recipient: adviser.session,
               text: `${decision.requestId}\n按审阅意见改这一版候选；返修上限 3。\n审阅意见：${findingsText}\n机械诊断：${diagnosisText}\n答案用 submit_plan_round 填。`,
             } }), null, null, candidateBasis('plan_fix_pending'));
           }

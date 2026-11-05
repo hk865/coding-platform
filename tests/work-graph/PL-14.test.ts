@@ -35,7 +35,8 @@ import type { TrustedCheckConfiguration } from '../../src/contracts/verification
 import { usageOf } from '../helpers/S6A-host-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
-import { checkConfiguration, sessionOf } from '../helpers/S7A-fixture.js';
+import { checkConfiguration, committed, sessionOf } from '../helpers/S7A-fixture.js';
+import { openLink } from '../helpers/S7D1-role-line-world.js';
 
 // The gate-round read fault sits on the real record-store boundary (A2/A4):
 // `S2B_ROUND_BY_GOAL_LOOKUP` is the ordered lookup the notice source uses for
@@ -276,6 +277,11 @@ describe('PL-14: stage end notice', () => {
 
       const adviserLine = await createS6BLine(world.main, { label: 'pl14-gate-adviser', role: ADVISER_ROLE });
       const adviser = await sessionOf(world.world, adviserLine);
+      // 7D2 O4b-2 (o4b2 ruling 2 (a)): the deviation goes to the Goal's responsible adviser (book 7D2 §3.8 item 2);
+      // a gate stopped at the cap reaches no refine round, so nothing allocated one and this adviser holds the link.
+      const linked = await openLink(world.world, { line: adviser, target: { kind: 'goal', ref: world.goal },
+        requestId: 'pl14-gate-adviser-goal-link' });
+      committed(linked.result, 'the pl14-gate-adviser Goal link');
       const send = await advanceUntil(world.world.ag2b, { schemaVersion: 1, goalRef: world.goal,
         flowId: 'pl14-gate-cap-send', sessionHint: null, kind: 'select_work' }, 'send_system_round');
       if (send.kind !== 'perform' || send.operation.kind !== 'send_system_round') {

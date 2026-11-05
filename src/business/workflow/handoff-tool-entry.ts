@@ -265,8 +265,9 @@ export function createHandoffToolEntry(deps: HandoffToolEntryDependenciesV1):
     };
     const assignments = input.assignments.map(assignment => ({
       target: assignment.target.kind === 'create'
-        // The book's rule: a created successor's duty follows the source line's fixed duty.
-        ? { kind: 'create' as const, duty: admitted.sourceDuty }
+        // A create target keeps its own duty: a different one is a change duty, its tier read from the source line
+        // (book :735, :737).
+        ? { kind: 'create' as const, duty: assignment.target.duty }
         : { kind: 'existing' as const, session: structuredClone(assignment.target.session) },
       tasks: assignment.tasks.map(task => ({ ...task })),
     }));

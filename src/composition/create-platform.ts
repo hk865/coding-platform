@@ -53,6 +53,7 @@ import {
 import { createTrackReadModel, type TrackReadPort } from '../core/work-graph/views/track-read-model.js';
 import { createTaskStateTimeline, type TaskTimelineReadPort } from '../core/work-graph/views/task-state-timeline.js';
 import { createGoalDecisionCauseReader } from '../core/work-graph/tasks/goal-decision-reader.js';
+import { createResponsibilityRecipient, type ResponsibilityRecipientPort } from '../core/work-graph/tasks/responsibility-recipient.js';
 import { createPlanningQuestionReader } from '../core/work-graph/tasks/planning-question-reader.js';
 import { createDecisionSettingsService } from '../core/work-graph/configuration/decision-settings-service.js';
 import { createMessageDutiesFactsAdapter } from '../core/work-graph/configuration/message-duties-adapter.js';
@@ -1626,9 +1627,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // §5.5.3 / DR-P5-01: the ONE Goal-cause reader with the real duty recipient.
     // The answer-card recheck and the queue source both read this instance; a
     // private reader without `recipients` could never see the derived `no_adviser`.
+    // O4b (M25, o4b2 ruling 2): the one L35 resolver for everything built before it (M23 below); the arrow reads
+    // `responsibilityRecipient` at call time, never at construction.
+    const lateRecipients: ResponsibilityRecipientPort = {
+      resolveResponsibilityRecipient: (ctx, input) => responsibilityRecipient.resolveResponsibilityRecipient(ctx, input),
+    };
     const goalDecisionCauseReader = createGoalDecisionCauseReader({
       records: backend.records, plans: planService,
       recipients: { resolveDutyRecipient },
+      responsibleAdviser: lateRecipients,
       readDeviationFacts,
     });
     // The one automatic-rework projector: the C3 adviser facts, its card source and the Host's tracked read all share
@@ -1646,7 +1653,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input),
       // The same projection instance and duty resolver the rest of the root uses; without them the source is
       // explicitly `unavailable`.
-      adviserCreation: { notices: automaticReworkNotices, resolveDutyRecipient },
+      adviserCreation: { notices: automaticReworkNotices, resolveDutyRecipient, responsibleAdviser: lateRecipients },
       // The same records-only object read the structural card source uses; the answer facts store the card's
       // frozen digest/ops/moves and member reasons, not a label-only batch.
       structuralProposalObjects: readStructuralProposalObjects,
@@ -1814,7 +1821,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The `adviser_creation` card: the second-or-later counted rework of one Task with no adviser. It reuses the ONE
     // rework projection and the ONE duty resolver; the generic adapter owns the answer/terminal overlay.
     const adviserCreationDeps: AdviserCreationSourceDependencies = {
-      notices: automaticReworkNotices, resolveDutyRecipient,
+      notices: automaticReworkNotices, resolveDutyRecipient, responsibleAdviser: lateRecipients,
     };
     const adviserCreationCards = createCollectionCardSource<AdviserCreationNoticeItemV1>({
       kind: 'adviser_creation',
@@ -3251,6 +3258,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       sessionDuty: sessionDutyResolver,
       // L33: the two Workflow triggers allocate through the one queue owner (a deferred read of the const above).
       goalAdviserQueue: { allocate: (ctx, input) => goalAdviserQueue.allocate(ctx, input) },
+      recipients: lateRecipients,
       // The startup Workflow is only the seed: `registerWorkflowBinding` replaces
       // this dependency afterwards, and every reader above resolves it live.
       ...(options.workflow === undefined ? {} : { configuration: structuredClone(options.workflow) }),
@@ -4054,6 +4062,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const roleLineAllocation: RoleLineAllocationReadPort = {
       readRoleLineAllocation: (...args) => trackedCall(() => allocationReader.readRoleLineAllocation(...args), unavailable),
     };
+    // O4b M23 (TS-20 ①): the one L35 resolver; the Workflow, the Host's two sends, the goal-cause and adviser-creation
+    // reads and O5a-2's two readers share it.
+    const responsibilityRecipient = createResponsibilityRecipient({
+      records: backend.records, duty: sessionDutyResolver, catalog, allocation: roleLineAllocation });
     const projectNoticeWriter = (input: Parameters<typeof notifyProject>[1]): ReturnType<typeof notifyProject> =>
       trackedCall(() => notifyProject({ records: backend.records, now }, input), unavailable);
     // PL §6.7.1: the ONE goal-loop reader factory, built from the owners above. The Host's restart
@@ -4174,6 +4186,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           trackedCall(() => resolveDutyRecipient(...args), unavailable),
         resolveGoalSecretary: (...args: Parameters<typeof resolveGoalSecretary>) =>
           trackedCall(() => resolveGoalSecretary(...args), unavailable),
+        resolveRecipient: (...args: Parameters<ResponsibilityRecipientPort['resolveResponsibilityRecipient']>) =>
+          trackedCall(() => responsibilityRecipient.resolveResponsibilityRecipient(...args), unavailable),
       },
       // The initialization binding read, the adoption operation owner and the installed-checks confirmation;
       // internal like the request owners.

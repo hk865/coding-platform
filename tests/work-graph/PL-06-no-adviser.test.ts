@@ -28,10 +28,11 @@ import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { openS6AHostWorld } from '../helpers/S6A-host-fixture.js';
-import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
+import { S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
 import { committed, sessionOf } from '../helpers/S7A-fixture.js';
+import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 
 const worlds: S6AHostWorld[] = [];
 afterEach(async () => {
@@ -159,8 +160,19 @@ describe('PL-06 no_adviser', () => {
 
     // The real adviser line: the SAME formal read and the SAME queue drop the
     // derived cause, and the same Plan version can now emit its one `refine:`.
-    const adviser = await sessionOf(world,
-      await createS6BLine(ws, { label: 'adviser', role: platformRoleProfile('adviser').template }));
+    // L33 (7D2 O4a): the select_work advance above already allocated the Goal an adviser (a platform line);
+    // since 7D2 O4b-2 the round goes to the Goal's responsible adviser, so the test reads that line (as PL-14).
+    const linked = (await world.post('sessions/find', plain(S6A_SCOPE, { workspace: S6A_SCOPE,
+      target: { kind: 'goal', ref: goal.ref }, includeArchived: false, page: { limit: 100 } })))
+      .body as { status: string; value: { items: SessionCard[] } };
+    const advisers = linked.value.items.filter(card => card.links.some(link => link.until === null
+      && link.ref.relation === 'responsible' && link.ref.target.kind === 'goal'
+      && link.ref.target.ref.goalId === goal.ref.goalId));
+    expect(advisers).toHaveLength(1);
+    const allocated = advisers[0]!.record;
+    const adviser: S6ASession = { label: 'pl06-adviser',
+      ref: { projectId: allocated.ref.projectId, sessionId: allocated.ref.sessionId }, aggregateRef: allocated.ref,
+      role: structuredClone(allocated.role), createdAt: allocated.createdAt };
     const after = await reader.readGoalDecisionCauses(ctx, { goalRef: goal.ref });
     expect(after.status).toBe('ready');
     if (after.status !== 'ready') return;

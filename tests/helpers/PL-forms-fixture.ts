@@ -35,7 +35,8 @@ import {
   awaitPlanningAnswer, questionCards, readQueryAnswer,
 } from './IV-host-fixture.js';
 import { openS7C1World, type S7C1World } from './S7C-member-fixture.js';
-import { sessionOf } from './S7A-fixture.js';
+import { committed, sessionOf } from './S7A-fixture.js';
+import { openLink } from './S7D1-role-line-world.js';
 
 const REVIEWER = platformRoleProfile('reviewer');
 const ADVISER = platformRoleProfile('adviser');
@@ -345,6 +346,12 @@ export async function openPLReviewCandidateWorld(options: {
     const adviser = options.adviser === true
       ? await sessionOf(opened.world, await createS6BLine(main, { label: 'pl-adviser', role: ADVISER.template }))
       : null;
+    // 7D2 O4b-2: the review fix goes to the Goal's responsible adviser, so the adviser holds the Goal link.
+    if (adviser !== null) {
+      const linked = await openLink(opened.world, { line: adviser, target: { kind: 'goal', ref: goal },
+        requestId: 'pl-adviser-goal-link' });
+      committed(linked.result, 'the pl-adviser Goal link');
+    }
     return {
       ...opened,
       main,
@@ -417,6 +424,10 @@ export async function openPlanOnlyWorld(
     const adviser = await sessionOf(world, await createS6BLine(main, {
       label: `${label}-adviser`, role: ADVISER.template,
     }));
+    // 7D2 O4b-2: the refine round goes to the Goal's responsible adviser, so the adviser holds the Goal link.
+    const linked = await openLink(world, { line: adviser, target: { kind: 'goal', ref: goal },
+      requestId: `${label}-adviser-goal-link` });
+    committed(linked.result, `the ${label}-adviser Goal link`);
     return { world, goal, stageId, taskId, adviser, close: () => world.close() };
   } catch (error) {
     await world.close();

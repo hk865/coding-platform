@@ -2492,11 +2492,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const card = await platform.decisions.readDecisionCard(ctx, { source: savedCard });
       return card.status === 'ready';                                  // readable is the card branch's confirmation
     }
-    const adviser = await platform.recipients.resolveDutyRecipient(ctx,
-      { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId }, duty: 'adviser' });
-    if (adviser.status !== 'ready') return false;
-    if (adviser.value !== null) {
-      const adviserRequest = systemNotifyRequest({ recipient: adviser.value, text: item.summary,
+    const recipient = await platform.recipients.resolveRecipient(ctx, { projectId: scope.projectId, goalRef, moduleRef: null, kind: 'general', asker: null });
+    if (recipient.status !== 'ready') return false;
+    const adviser = recipient.value.kind === 'session' ? recipient.value.session : null;
+    if (adviser !== null) {
+      const adviserRequest = systemNotifyRequest({ recipient: adviser, text: item.summary,
         requestId: `rework-notice-adviser:${sourceKey}` });
       if (!(await appendReworkDelivery(ctx, scope, item, source, 'adviser_delivery', adviserRequest, saved))) return false;
       return await sendPendingNotice(ctx, platform.messages.sendMessage.bind(platform.messages), adviserRequest) === 'sent';
@@ -2721,14 +2721,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (attentionAbort.signal.aborted) break;
         if (entry.observer.processed === null) entry.observer.prime(snapshot);
         const delivery = entry.observer.observe(snapshot, clockMs());
-        // The Goal's adviser receives attention first; with no adviser the configured target keeps today's value. A
-        // failed adviser read leaves the input unprocessed and is retried next heartbeat.
+        // The Goal's responsible adviser (the one L35 read) receives attention first; with no adviser the configured
+        // target keeps today's value. A failed adviser read leaves the input unprocessed and is retried next heartbeat.
         let recipient: SessionRef | null = entry.scope.targetSession;
         if (delivery !== null) {
-          const adviser = await platform.recipients.resolveDutyRecipient(hostCtx,
-            { workspace: scope, duty: 'adviser' });
-          if (adviser.status !== 'ready') continue;
-          if (adviser.value !== null) recipient = adviser.value;
+          const read = await platform.recipients.resolveRecipient(hostCtx, { projectId: scope.projectId, goalRef: entry.scope.goalRef, moduleRef: null, kind: 'general', asker: null });
+          if (read.status !== 'ready') continue;
+          if (read.value.kind === 'session') recipient = read.value.session;
         }
         if (delivery === null || recipient === null) continue;
         // Slice 3 C8 (§4.5): the notification text carries only the CHANGES of

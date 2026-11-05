@@ -60,11 +60,11 @@ describe('T-02', () => {
     await expect.poll(async () => (await reworkNotices(opened.world, opened.secretary.ref)).length,
       { timeout: 20_000, interval: 25 }).toBe(2);
     const first = (await reworkNotices(opened.world, opened.secretary.ref))[0]!;
-    // A real later heartbeat: a watched-path change is delivered to the adviser, so the loop ran again.
-    const before = (await attentionNotices(opened.world, opened.adviser!.ref)).length;
+    // A real later heartbeat: a watched-path change is delivered to the configured target, so the loop ran again.
+    const before = (await attentionNotices(opened.world, opened.target.ref)).length;
     await mkdir(join(opened.world.root, 'src'), { recursive: true });
     await writeFile(join(opened.world.root, S7C_L2_ATTENTION_PATH), 'S7C T-02: the second heartbeat\n');
-    await expect.poll(async () => (await attentionNotices(opened.world, opened.adviser!.ref)).length,
+    await expect.poll(async () => (await attentionNotices(opened.world, opened.target.ref)).length,
       { timeout: 20_000, interval: 25 }).toBeGreaterThan(before);
     const after = await reworkNotices(opened.world, opened.secretary.ref);
     expect(after).toHaveLength(2);

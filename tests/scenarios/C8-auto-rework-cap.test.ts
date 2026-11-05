@@ -21,9 +21,11 @@
  * Scripted model replies only; no real model is called.
  */
 import { afterEach, expect, it } from 'vitest';
+import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
+import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
-import { AG2B_WORK_TASK_ID } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, performs, SCENARIO_OPERATOR } from './harness.js';
 import { finalizeOutcomesOf, operatorRequeue, requeueRequestsOf } from './support/common.js';
 import { performedOf } from './support/restart.js';
@@ -44,6 +46,21 @@ const STOPPED_ON_CAP = 'the selected Task ag2b-work is not executable right now'
 
 it('C8 (§13.4 #15, AV-8, GOAL-30): three automatic requeues, then stopped/auto_rework_cap_reached with no refusal; a raised cap continues without a person; an operator requeue resets the count', async () => {
   const h = await openHostScenario({ check: 'fail', script: { replies: Array.from({ length: 7 }, (_, index) => RUN(index + 1)).flat() } });
+  // The deviation round goes to the Goal's responsible adviser; the opening adviser holds that link after this step.
+  const lineRows = await h.answer('lines/list', plain(AG2B_SCOPE, { workspace: AG2B_SCOPE })) as
+    { value?: { rows?: Array<{ duty?: string; key: SessionRef }> } };
+  const adviserRef = lineRows.value?.rows?.find(row => row.duty === 'adviser')?.key;
+  if (adviserRef === undefined) throw new Error('C8: lines/list must list the opening adviser line');
+  const adviserCard = await h.answer('sessions/read', plain(AG2B_SCOPE, adviserRef)) as
+    { value?: { record: { ref: SessionRef; revision: number } } };
+  if (adviserCard.value === undefined) throw new Error('C8: the opening adviser card must be readable');
+  const linked = await h.answer('sessions/link', graphWrite(AG2B_SCOPE, {
+    sessionRef: adviserRef, target: { kind: 'goal', ref: AG2B_GOAL_REF }, relation: 'responsible', active: true,
+  }, 'c8-adviser-goal-link', [
+    { ref: adviserCard.value.record.ref, revision: adviserCard.value.record.revision },
+    { ref: responsibleLinkRef(adviserRef, { kind: 'goal', ref: AG2B_GOAL_REF }), revision: 0 },
+  ])) as { status?: string };
+  if (linked.status !== 'committed') throw new Error(`C8: the adviser Goal link did not commit: ${JSON.stringify(linked)}`);
   await assertInvariants(h, 'seeded');
 
   // Run 1 FAILs: the verdict is AV-12 requeue, so the Goal is RUNNING "等待推进" (GOAL-27), not FAILED (GOAL-24, C8).

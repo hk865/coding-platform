@@ -1319,7 +1319,7 @@
       "file": "src/core/work-graph/state/role-scope.ts",
       "name": "EffectiveScopeReadPort.effectiveRegionOf",
       "reason": "kept-for",
-      "note": "waits for O4b-2's adviser resolver (readEffectiveRegionAdviser) over the reached effective-scope read; slice 7 of the orchestration design"
+      "note": "no 7D2 package calls it: the region adviser read (readEffectiveRegionAdviser) uses effectiveRegions directly (v4 :5409-:5411); slice 7 of the orchestration design"
     },
     {
       "file": "src/core/work-graph/views/role-line-allocation-reader.ts",
@@ -1386,18 +1386,6 @@
       "name": "ROLE_LINE_STEP_KEYS",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: O1b's `startLinesInitialRecord` (TS-10 item 3, moved verbatim) spells the three keys literally and only tests read this list; the first package that reads the keys in production deletes this entry"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineReuseCommandV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O4b's chooser (`reuseStandby`, TS-16) and C1's region open (L-9) build this command; the first of them to call `reuse` deletes this entry"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineOperationsPort.reuse",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O4b's chooser (TS-16) and C1's region open (L-9) call it (X-4); the first of them to call it deletes this entry"
     },
     {
       "file": "src/core/work-graph/sessions/role-line-operations.ts",

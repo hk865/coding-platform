@@ -19,7 +19,7 @@ import { messageOf } from '../../../contracts/error-message.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import { HAND_OFF_TOOL_NAME, type HandoffApprovalV1, type HandoffToolFragmentV1,
   type HandoffTriggerV1 } from '../../../contracts/handoff.js';
-import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionWorkLink } from '../../../contracts/core/session.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
@@ -204,11 +204,11 @@ async function unfinishedPinsOf(records: Pick<RecordLookupPort, 'lookup'>, scope
 }
 
 /**
- * The approval tier (book-7c §3.5 item 4): an adviser line and an executor line holding an open module
- * `responsible` link are long-lived; every other executor line is short-lived.
+ * The approval tier (book-7c §3.5 item 4): an adviser, secretary or scribe line, and an executor line holding an open
+ * module `responsible` link, are long-lived; every other executor line is short-lived.
  */
 function handoffRequiredOf(duty: PlatformDutyV1 | 'unknown', links: readonly SessionWorkLink[]): 'short' | 'long' {
-  if (duty === 'adviser') return 'long';
+  if (duty === 'adviser' || duty === 'secretary' || duty === 'scribe') return 'long';
   if (duty !== 'executor') return 'short';
   return links.some(link => link.ref.relation === 'responsible' && link.until === null
     && link.ref.target.kind === 'module') ? 'long' : 'short';
@@ -263,10 +263,15 @@ export function createSessionHandoffService(deps: {
     }
     const unfinished = await unfinishedPinsOf(deps.records, input.workspace, input.source);
     if (unfinished.status !== 'ready') return unfinished;
-    const required = source.fact.kind === 'present' ? handoffRequiredOf(source.fact.duty, source.links) : 'short';
+    const present = source.fact.kind === 'present' ? source.fact : null;
+    const required = present === null ? 'short' : handoffRequiredOf(present.duty, source.links);
     let needsDecision = false;
     if (input.trigger === 'tool') {
-      const action = required === 'long' ? 'long_handoff' as const : 'short_handoff' as const;
+      const targetDutyDiffers = present !== null && input.assignments.some((assignment) =>
+        assignment.target.kind === 'create' && assignment.target.duty !== present.duty);
+      const action = targetDutyDiffers
+        ? (required === 'long' ? 'change_duty' as const : 'short_change_duty' as const)
+        : (required === 'long' ? 'long_handoff' as const : 'short_handoff' as const);
       // `long_handoff` is `needs_decision` at both levels, so its autonomy never enters the verdict.
       const goalRef = required === 'long' ? null : firstTaskGoalOf(input.assignments);
       let autonomy: 'every_step' | 'after_plan_confirmation' = 'every_step';
@@ -499,6 +504,10 @@ export type SessionHandoffAdvanceDependencies = {
   archive: Pick<SessionLifecyclePort, 'readSessionArchiveRequestReceipt'>;
   /** The one trusted duty read: the source Session's own role decides the secretary steps. */
   duty: SessionDutyReadPort;
+  /** D-9: a change-duty successor's Role, from the same source each duty opens a line with (the composition root
+   *  injects it). Absent keeps the source Session's role, as an old narrow double did. */
+  roleOfDuty?(duty: PlatformDutyV1, tasks: readonly TaskTriple[], ctx: CoreCallContext):
+    Promise<ReadResult<RoleConfigurationRef>>;
   /** The successor step's complete-material seam; the composition root implements it from AgentRuntime's assembler. */
   brief: HandoffBriefMaterialAssembler;
   now(): string;
@@ -1227,12 +1236,20 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
           }
           const saved = assignment.createInput;
           if (saved === null) {
-            // The source card this call already read carries the role and the revision its guard pins.
+            // The source card this call already read carries the role and the revision its guard pins; a change
+            // duty takes the target duty's own Role (book :739, :743), saved here so a replay reads it back.
+            let roleConfiguration = sourceCard.value.record.role;
+            if (target.duty !== sourceDuty && deps.roleOfDuty !== undefined) {
+              const role = await deps.roleOfDuty(target.duty, action.input.assignments[index]!.tasks, savedCtx);
+              if (role.status !== 'ready') return role.status === 'rejected' ? role
+                : unavailable('the successor duty role read is not ready');
+              roleConfiguration = role.value;
+            }
             const input: HandoffSavedCreateInputV1 = {
               commandId: `${operation.operationId}:create:${index}`,
               duty: target.duty, scope: { kind: 'project' }, reason: 'handoff',
               provenance: { schemaVersion: 1, kind: 'handoff', from: source },
-              roleConfiguration: sourceCard.value.record.role,
+              roleConfiguration,
               replaces: source, parentOperation: operation,
             };
             const stable = stableSessionCreationIdentity(principal.actor, operation.projectId, input.commandId);

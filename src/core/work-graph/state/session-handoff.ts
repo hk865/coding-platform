@@ -5,9 +5,10 @@
  *
  * A handoff is refused at the first failing step: the caller (a `manual` handoff is the Host person's, a `too_long`
  * one the trusted Host system's), the scope, the shape of the built action, the source (in the workspace, not
- * archived, not a read-only copy) and each `existing` target (in the workspace), the duty (every target's duty is the
- * source's), and unfinished work (another handoff or archive of the same source). The owner runs the first three
- * steps before it reads (`read: null`), then all of them on its facts.
+ * archived, not a read-only copy) and each `existing` target (in the workspace), the duty (every existing target's duty
+ * is the source's; a create target carries its own duty, a change duty), and unfinished work (another handoff or
+ * archive of the same source). The owner runs the first three steps before it reads (`read: null`), then all of them on
+ * its facts.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -94,7 +95,9 @@ export function admitHandoff(facts: HandoffAdmissionFactsV1): OperationAdmission
       && (target.session.duty !== 'executor' || target.session.archived || target.session.readonlyCopy)) {
       return guardRefusal('invalid', `assignments[${index}].target is not an active executor line`);
     }
-    const duty = target.kind === 'create' ? target.duty : target.session.kind === 'present' ? target.session.duty : 'unknown';
+    // a create target carries the target duty: the change-duty successor is admitted under it (book :733)
+    if (target.kind === 'create') continue;
+    const duty = target.session.kind === 'present' ? target.session.duty : 'unknown';
     if (duty === 'unknown') return guardRefusal('invalid', `assignments[${index}].target has no known duty`);
     if (duty !== source.duty) {
       return guardRefusal('invalid', `assignments[${index}].target's duty ${duty} is not the source Session's duty ${source.duty}`);

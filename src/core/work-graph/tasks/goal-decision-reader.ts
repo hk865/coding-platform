@@ -39,6 +39,7 @@ import type { GoalDisplayCauseV1 } from '../state/goal-machine.js';
 import { modelServiceOf } from '../state/task-failure.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../state/verification-machine.js';
 import { readInitializationPointers } from './initialization-pointers.js';
+import type { ResponsibilityRecipientPort } from './responsibility-recipient.js';
 
 /** The read-only Store subset this reader needs: canonical reads, eventAt and lookup. */
 export type GoalDecisionCauseReaderRecords =
@@ -70,6 +71,8 @@ export type GoalDecisionCauseReaderDependencies = {
    * fabricated when the recipient cannot be read).
    */
   recipients?: Pick<DutyRecipientPort, 'resolveDutyRecipient'>;
+  /** o4b2 ruling 2 (b): the one L35 resolver's Goal step (`asker: null`); absent keeps the workspace duty read of a narrow double */
+  responsibleAdviser?: Pick<ResponsibilityRecipientPort, 'resolveResponsibilityRecipient'>;
   /**
    * §5.5.3 / §7.5: the ONE shared deviation facts read (`readDeviationFacts`)
    * for the deviation-need arm. Optional so an old narrow construction keeps
@@ -491,16 +494,28 @@ export function createGoalDecisionCauseReader(
       deviationNeed = deviationsOfGoal(facts.value).length > 0;
     }
     if (!refinement && !deviationNeed) return { ok: true, causes: [] };
-    if (deps.recipients === undefined) return { ok: true, causes: [] };
-    const workspace: WorkspaceScope = {
-      projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId,
-    };
-    const read = await deps.recipients.resolveDutyRecipient(ctx, { workspace, duty: 'adviser' });
-    if (read.status !== 'ready') {
-      if (read.status === 'rejected') return { ok: false, rejection: read };
-      return { ok: false, rejection: unavailable(`the adviser recipient could not be read (${read.status})`) };
+    let hasAdviser: boolean;
+    if (deps.responsibleAdviser !== undefined) {
+      const resolved = await deps.responsibleAdviser.resolveResponsibilityRecipient(ctx, {
+        projectId: goal.workspaceRef.projectId, goalRef: goal.ref, moduleRef: null, kind: 'general', asker: null });
+      if (resolved.status !== 'ready') {
+        if (resolved.status === 'rejected') return { ok: false, rejection: resolved };
+        return { ok: false, rejection: unavailable(`the adviser recipient could not be read (${resolved.status})`) };
+      }
+      hasAdviser = resolved.value.kind === 'session';
+    } else {
+      if (deps.recipients === undefined) return { ok: true, causes: [] };
+      const workspace: WorkspaceScope = {
+        projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId,
+      };
+      const read = await deps.recipients.resolveDutyRecipient(ctx, { workspace, duty: 'adviser' });
+      if (read.status !== 'ready') {
+        if (read.status === 'rejected') return { ok: false, rejection: read };
+        return { ok: false, rejection: unavailable(`the adviser recipient could not be read (${read.status})`) };
+      }
+      hasAdviser = read.value !== null;
     }
-    if (read.value !== null) return { ok: true, causes: [] };
+    if (hasAdviser) return { ok: true, causes: [] };
     return { ok: true, causes: [cause({
       goal, code: 'no_adviser', action: null, affected: [], taskRef: null, runRef: null,
     })] };

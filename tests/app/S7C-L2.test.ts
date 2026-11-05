@@ -25,6 +25,7 @@ import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { committed, ready } from '../helpers/S7A-fixture.js';
 import { holdS6BRequestRound } from '../helpers/S6B1-fixture.js';
+import { openLink } from '../helpers/S7D1-role-line-world.js';
 import { adoptL46Plan } from '../helpers/S7B-L46-fixture.js';
 import { localWorkbenchGrant, type WorkbenchWorkspaceConfig } from '../../src/app/host.js';
 import { LOCAL_WORKBENCH_ROLE } from '../../src/app/runtime-configuration.js';
@@ -89,11 +90,11 @@ it('is not empty', async () => {
 
 describe('L2-attention', () => {
   it.each([{ adviser: true }, { adviser: false }])(
-    'a watched-path delivery notifies the adviser once, or targetSession when no adviser exists ($adviser)',
+    'a watched-path delivery notifies the configured target when the attention scope has no Goal ($adviser)',
     async ({ adviser }) => {
       const opened = await openS7CSystemWorld({ adviser });
       worlds.push(opened.world);
-      const recipient = adviser ? opened.adviser! : opened.target;
+      const recipient = opened.target;
       await mkdir(join(opened.world.root, 'src'), { recursive: true });
       await writeFile(join(opened.world.root, S7C_L2_ATTENTION_PATH), 'S7C L2: the watched path changed\n');
       await expect.poll(async () => (await attentionNotices(opened.world, recipient.ref)).length,
@@ -101,30 +102,8 @@ describe('L2-attention', () => {
       const notices = await attentionNotices(opened.world, recipient.ref);
       expect(notices[0]!).toMatchObject({ intent: 'notify',
         recipient: { projectId: recipient.ref.projectId, sessionId: recipient.ref.sessionId } });
-      if (adviser) expect(await attentionNotices(opened.world, opened.target.ref)).toHaveLength(0);
+      if (adviser) expect(await attentionNotices(opened.world, opened.adviser!.ref)).toHaveLength(0);
     });
-
-  // A failed duty read leaves the input unprocessed and the next heartbeat retries it; the configured target is not a
-  // fallback delivery. The real RoleSpec pin is the unprofiled secretary's own role.
-  it('a failed duty read retries the same delivery and never falls back to the configured target', async () => {
-    const opened = await openS7CSystemWorld();
-    worlds.push(opened.world);
-    const unprofiled = await opened.world.createUnprofiledSecretary('s7c-l2-unprofiled');
-    if (unprofiled.role.kind !== 'role_spec') {
-      throw new Error('L2-attention: the unprofiled secretary does not carry a RoleSpec role');
-    }
-    const fault = commitBarrier.failReads(canonicalRefKey(unprofiled.role.pin.ref), 'throw-always');
-    await mkdir(join(opened.world.root, 'src'), { recursive: true });
-    await writeFile(join(opened.world.root, S7C_L2_ATTENTION_PATH), 'S7C L2: a failed duty read is retried\n');
-    await expect.poll(() => fault.calls(), { timeout: 20_000, interval: 25 }).toBeGreaterThan(0);
-    // The failed pass delivered nowhere: not to the adviser and not to the fallback target.
-    expect(await attentionNotices(opened.world, opened.target.ref)).toHaveLength(0);
-    expect(await attentionNotices(opened.world, opened.adviser!.ref)).toHaveLength(0);
-    fault.release();
-    await expect.poll(async () => (await attentionNotices(opened.world, opened.adviser!.ref)).length,
-      { timeout: 20_000, interval: 25 }).toBe(1);
-    expect(await attentionNotices(opened.world, opened.target.ref)).toHaveLength(0);
-  });
 
   // L2-13: the adviser-creation projection returns the failed duty read as a ReadResult, so the queue answers
   // `unavailable` (a plain read keeps its rejected body) instead of the route's 500.
@@ -135,6 +114,11 @@ describe('L2-attention', () => {
     if (unprofiled.role.kind !== 'role_spec') {
       throw new Error('L2-attention: the unprofiled secretary does not carry a RoleSpec role');
     }
+    // The queue's adviser-creation read follows the Goal's responsible links; the unprofiled secretary is linked so
+    // resolving its duty reaches the failed read (the new premise of L2-13).
+    const linked = await openLink(opened.world, { line: unprofiled, target: { kind: 'goal', ref: opened.goal },
+      requestId: 's7c-l2-unprofiled-goal-link' });
+    committed(linked.result, 'the unprofiled secretary Goal link');
     const fault = commitBarrier.failReads(canonicalRefKey(unprofiled.role.pin.ref), 'throw-always');
     try {
       const queue = await opened.world.post('decisions/queue', plain(S6A_SCOPE, {

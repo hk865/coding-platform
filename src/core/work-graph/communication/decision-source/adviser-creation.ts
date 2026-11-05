@@ -24,6 +24,7 @@ import type { VerificationRoundRef } from '../../../../contracts/verification.js
 import type {
   DecisionCardV1, DecisionNoticeSourcePort, NoticeItemV1,
 } from '../../model/decision-contracts.js';
+import type { ResponsibilityRecipientPort } from '../../tasks/responsibility-recipient.js';
 import { goalBasis } from './read-support.js';
 import type { SourceReadResult, SourceReadSupport } from './types.js';
 
@@ -41,6 +42,8 @@ export type AdviserCreationSourceDependencies = {
   /** The one adviser resolver; an existing adviser closes the item as `source_resolved`. */
   resolveDutyRecipient(ctx: CoreCallContext, input: { workspace: WorkspaceScope; duty: 'adviser' }):
     Promise<ReadResult<SessionRef | null>>;
+  /** o4b2 ruling 2 (b): the one L35 resolver's Goal step (`asker: null`); absent keeps the workspace duty read of a narrow double */
+  responsibleAdviser?: Pick<ResponsibilityRecipientPort, 'resolveResponsibilityRecipient'>;
 };
 
 /** One projection page width; the walk is paged to its end with no `after`. */
@@ -99,10 +102,20 @@ async function readAdviserCreationItems(
   // No second counted rework on this subject: there is no card to close, so the adviser is never resolved (the one
   // projection walk is the whole cost of a read with no candidate).
   if (items.length === 0) return { status: 'ready', value: [] };
-  // One resolver read per read: an existing adviser closes every listed item.
-  const adviser = await deps.resolveDutyRecipient(ctx, { workspace: input.workspace, duty: 'adviser' });
-  if (adviser.status !== 'ready') return adviser;
-  const closedReason = adviser.value === null ? null : 'source_resolved' as const;
+  // One resolver read per read: the Goal's own adviser (o4b2 ruling 2 (b)) closes every listed item; a narrow
+  // double without the resolver keeps the workspace duty read.
+  let hasAdviser: boolean;
+  if (deps.responsibleAdviser !== undefined) {
+    const resolved = await deps.responsibleAdviser.resolveResponsibilityRecipient(ctx, {
+      projectId: input.workspace.projectId, goalRef: goalRef ?? null, moduleRef: null, kind: 'general', asker: null });
+    if (resolved.status !== 'ready') return resolved;
+    hasAdviser = resolved.value.kind === 'session';
+  } else {
+    const adviser = await deps.resolveDutyRecipient(ctx, { workspace: input.workspace, duty: 'adviser' });
+    if (adviser.status !== 'ready') return adviser;
+    hasAdviser = adviser.value !== null;
+  }
+  const closedReason = hasAdviser ? 'source_resolved' as const : null;
   return { status: 'ready', value: items.map((item) => ({ ...item, closedReason })) };
 }
 

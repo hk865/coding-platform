@@ -5,7 +5,6 @@ import type { HandoffSeatFactsV1, SessionWorkLink } from '../../../contracts/cor
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
-import { roleLineDutyOf } from '../../../contracts/role-lines.js';
 import { openResponsibleLinkOf } from './session-availability.js';
 import { openScopeLinkOf } from './session-archive-release.js';
 export type SeatInheritanceV1 =
@@ -28,9 +27,7 @@ export function seatInheritanceOf(input: { parentOperation: OperationRef | null;
   const operation = input.operation;
   if (operation === null || operation.action.kind !== 'handoff' || canonicalKey(operation.ref) !== canonicalKey(input.parentOperation))
     return { kind: 'none', reason: 'not_our_parent' };
-  const duty = roleLineDutyOf(input.duty);
-  const sourceDuty = input.sourceDuty === 'unknown' ? null : roleLineDutyOf(input.sourceDuty);
-  if (duty === null || sourceDuty === null || duty !== sourceDuty) return { kind: 'none', reason: 'other_duty' };
+  if (input.duty !== input.sourceDuty) return { kind: 'none', reason: 'other_duty' };
   const firstCreate = operation.action.input.assignments.findIndex((entry) => entry.target.kind === 'create');
   const progress = firstCreate === -1 ? undefined : operation.progress.assignments[firstCreate];
   if (firstCreate === -1 || progress === undefined || progress.createInput === null || progress.createInput.commandId !== input.createCommandId)

@@ -50,6 +50,7 @@ import { createS6BLine, holdS6BRequestRound } from './S6B1-fixture.js';
 import { checkConfiguration, claimedRunOf, crashS7AHost, ready, receiptOf, sessionOf } from './S7A-fixture.js';
 import { understandingNote } from './S4C2-note-card-fixture.js';
 import { withConfiguredHost } from './S7C-member-fixture.js';
+import { openLink } from './S7D1-role-line-world.js';
 import { plain } from './AG2b-collaboration-fixture.js';
 import { inboxOf } from './S7B-F-support.js';
 import { readBody } from './IV-host-fixture.js';
@@ -432,6 +433,13 @@ export async function openS7CSystemWorld(options: S7CSystemWorldOptions = {}): P
     const adviserLine = adviser
       ? await sessionOf(world, await createS6BLine(main, { label: 's7c-l2-adviser', role: ADVISER_ROLE }))
       : null;
+    if (adviserLine !== null) {
+      const linked = await openLink(world, { line: adviserLine, target: { kind: 'goal', ref: goal },
+        requestId: 's7c-l2-adviser-goal-link' });
+      if (linked.result.status !== 'committed') {
+        throw new Error(`S7C L2: the adviser Goal link did not commit: ${JSON.stringify(linked.result)}`);
+      }
+    }
     // The refs exist first; the one restart configures attention and the trusted checks. Memory reopens through
     // the A4 shared records/body seam the caller's test file installs; SQLite needs none.
     await reopenSystemHost(world, tools, {

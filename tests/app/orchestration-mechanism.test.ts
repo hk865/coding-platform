@@ -16,6 +16,8 @@ import {
 import { lineDelta } from '../../src/contracts/line-delta.js';
 import type { WorkLineListV1 } from '../../src/contracts/work-line.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
+import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
+import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionMessage, SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { ToolCall, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
 import {
@@ -358,6 +360,23 @@ it('delivers a real Host attention change into the original idle Session once', 
   try {
     host = await f.startAG2bHost(publicDir);
     await f.seedAG2bWorkGraph(host, undefined, { lineTaskIds: [] });
+    // The attention scope's Goal is AG2B_GOAL_REF; the opening adviser is that Goal's responsible adviser only after
+    // the public `sessions/link`, so the adviser-first resolution finds it (o4b2 ruling 2(a)).
+    const openingLines = await f.corePost(host.base, 'lines/list', host.token, f.plain(f.AG2B_SCOPE, { workspace: f.AG2B_SCOPE }));
+    const adviserRef = (await openingLines.json() as { value?: WorkLineListV1 }).value?.rows
+      .find(row => row.duty === 'adviser')?.key;
+    if (adviserRef === undefined) throw new Error('lines/list must list the opening adviser line');
+    const cardAnswer = await f.corePost(host.base, 'sessions/read', host.token, f.plain(f.AG2B_SCOPE, adviserRef));
+    const card = (await cardAnswer.json() as { value: SessionCard }).value;
+    const linked = await f.corePost(host.base, 'sessions/link', host.token, f.graphWrite(f.AG2B_SCOPE, {
+      sessionRef: adviserRef, target: { kind: 'goal', ref: f.AG2B_GOAL_REF }, relation: 'responsible', active: true,
+    }, 'orchestration-adviser-goal-link', [
+      { ref: card.record.ref, revision: card.record.revision },
+      { ref: responsibleLinkRef(adviserRef, { kind: 'goal', ref: f.AG2B_GOAL_REF }), revision: 0 },
+    ]));
+    if ((await linked.json() as { status?: string }).status !== 'committed') {
+      throw new Error('the opening adviser Goal link must commit');
+    }
     // The configured attention target carries a readable fixed duty (the AG2b work role, the world's Work binding role).
     // Since O1b the project's first workspace opens the three opening lines, so the adviser-first resolution answers the
     // opening adviser: the opening adviser receives the change, not the configured target.

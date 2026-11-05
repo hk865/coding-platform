@@ -2,6 +2,7 @@
  * A missing schema/index/provider is incomplete, never an empty set of facts. */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionWorkLink } from '../../../contracts/core/session.js';
@@ -64,6 +65,7 @@ import { taskLeaseSnapshotProblem } from '../persistence/execution-entry-codecs.
 import {
   derivePlanProposalStatus, derivePlanRevisionStatus, type FutureChangeTaskFactsV1, type TracedTaskFactsV1,
 } from '../state/plan-machine.js';
+import { effectiveRegions, type RegionClaimV1 } from '../state/role-scope.js';
 import { projectTaskPhase, type TaskPhaseFacts } from '../state/task-machine.js';
 import { countEndedGoalRuns } from '../state/task-failure.js';
 import { UNKNOWN_CALL_REVIEW_MAX_ROUNDS } from '../state/unknown-call-review.js';
@@ -2518,6 +2520,29 @@ export async function readOpenResponsibilityLines(
     if (lineDuty !== null) lines.push({ session, link, duty: lineDuty });
   }
   return { status: 'ready', value: lines };
+}
+
+/**
+ * O4b (v4 §5.2 (b)): the narrowest effective region adviser of one module, over the shared open-link read. The
+ * project's open responsible module links of adviser lines are the claims of 7D1's `effectiveRegions`; the
+ * claim whose effective modules hold the module is the narrowest (deeper same-duty claims were subtracted), and
+ * its Session answers; none is `null`. A failed page, link or duty read is the read's own answer, never `null`.
+ */
+export async function readEffectiveRegionAdviser(
+  records: GoalRecordTransactionPort & RecordLookupPort, ctx: CoreCallContext,
+  input: { projectId: string; moduleRef: ModuleRef; catalog: AdoptedArchitecture | null },
+  duty: SessionDutyReadPort,
+): Promise<ReadResult<SessionRef | null>> {
+  const lines = await readOpenResponsibilityLines(records, ctx, { projectId: input.projectId }, duty);
+  if (lines.status !== 'ready') return lines;
+  const regions: RegionClaimV1[] = [];
+  for (const line of lines.value) {
+    if (line.duty !== 'adviser' || line.link.ref.target.kind !== 'module') continue;
+    regions.push({ session: line.session, duty: line.duty, moduleRef: line.link.ref.target.ref });
+  }
+  const found = effectiveRegions({ regions, catalog: input.catalog }).find((region) => region.modules.some(
+    (module) => module.projectId === input.moduleRef.projectId && module.moduleId === input.moduleRef.moduleId));
+  return { status: 'ready', value: found === undefined ? null : found.session };
 }
 
 // --------------------------------------------------------------------------

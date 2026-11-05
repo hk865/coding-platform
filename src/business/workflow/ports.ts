@@ -32,6 +32,7 @@ import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecy
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../../core/work-graph/tasks/session-anomaly-service.js';
 import type { GoalAdviserQueuePort } from '../../core/work-graph/tasks/goal-adviser-queue-service.js';
+import type { ResponsibilityRecipientPort } from '../../core/work-graph/tasks/responsibility-recipient.js';
 import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
 import type {
@@ -178,6 +179,8 @@ export type WorkflowDependencies = {
   sessionDuty?: SessionDutyResolver;
   /** L33: the project's one adviser-allocation entry; a composition without it keeps the old no-adviser wait. */
   goalAdviserQueue?: Pick<GoalAdviserQueuePort, 'allocate'>;
+  /** 7D2 O4b: the one L35 recipient read of the platform's adviser sends and where that line lives; absent keeps the old workspace duty read. */
+  recipients?: ResponsibilityRecipientPort;
   /**
    * Slice 1 (L-g, S:597): every new time the Workflow archive/maintenance
    * supplies comes from this injected clock. Without injection the old

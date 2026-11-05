@@ -128,8 +128,6 @@ describe('rejects: a handoff, each refusal before anything is written', () => {
     }, rejection('invalid', 'the source Session is a read-only copy')],
     ['an existing target not in the workspace', async () => ({ input: accept('r-10', setup.lines.source.ref, [{ target: { kind: 'existing', session: nobody }, tasks: [] }]) }),
       rejection('not_found', 'assignments[0].target is not a Session of the workspace')],
-    ['a new successor of another duty', async () => ({ input: accept('r-11', setup.lines.source.ref, [{ target: { kind: 'create', duty: 'secretary' }, tasks: [] }]) }),
-      rejection('invalid', "assignments[0].target's duty secretary is not the source Session's duty executor")],
     ['an existing target of another duty', async () => {
       const secretary = await setup.world.createSecretary('s6b-other-duty');
       return { input: accept('r-12', setup.lines.source.ref, [{ target: { kind: 'existing', session: secretary.ref }, tasks: [] }]) };
@@ -155,6 +153,20 @@ describe('rejects: a handoff, each refusal before anything is written', () => {
     counter.release();
     expect(accepts).toBe(0);
     expect(await sessions()).toEqual(before);
+  });
+
+  it('accepts a new successor of another duty as a change duty', async () => {
+    const source = await setup.world.createWorkSession('s6b-change-duty-source');
+    let accepts = 0;
+    const counter = commitBarrier.hold(commit => {
+      if (byIdentityPrefix('handoff.accept:')(commit)) accepts += 1;
+      return false;
+    }, 'the accept commit counter');
+    expect(await setup.world.platform.sessionHandoff.acceptHandoff(setup.world.humanContext(),
+      accept('r-11', source.ref, [{ target: { kind: 'create', duty: 'secretary' }, tasks: [] }])))
+      .toMatchObject({ status: 'committed', replayed: false, value: { stage: 'accepted', phase: 'accepted', approval: null } });
+    counter.release();
+    expect(accepts).toBe(1);
   });
 });
 

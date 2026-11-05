@@ -15,8 +15,10 @@
  * start on the same data that changes and writes nothing. No real model is called.
  */
 import { afterEach, expect, it } from 'vitest';
+import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
-import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { claimQueryOn } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, waitFor } from './harness.js';
 import { editThenText, execution, redrivePolicy, replayOf, stepOf } from './support/common.js';
@@ -108,6 +110,21 @@ it('A8-R1 (W-21, C8, LA-6): a crash between the automatic requeue and its claim;
 it('A8-R2 (W-22, C8, ND-8): a committed no_new_basis refusal survives the restart: the verdict stays stopped, the start-up re-drive does not select the Goal, and a 推进 writes nothing', async () => {
   const h = await openHostScenario({ secretaryQueryProfile: true, script: { replies: [RUN1_WITHOUT_FILE,
     { kind: 'text', text: 'restart scenario A8-R2: Run 2 changes nothing either' }] } });
+  // The deviation round goes to the Goal's responsible adviser; the opening adviser holds that link after this step.
+  const lineRows = await h.answer('lines/list', plain(AG2B_SCOPE, { workspace: AG2B_SCOPE })) as
+    { value?: { rows?: Array<{ duty?: string; key: SessionRef }> } };
+  const adviserRef = lineRows.value?.rows?.find(row => row.duty === 'adviser')?.key;
+  if (adviserRef === undefined) throw new Error('A8-R2: lines/list must list the opening adviser line');
+  const adviserCard = await h.answer('sessions/read', plain(AG2B_SCOPE, adviserRef)) as
+    { value?: { record: { ref: SessionRef; revision: number } } };
+  if (adviserCard.value === undefined) throw new Error('A8-R2: the opening adviser card must be readable');
+  const linked = await h.answer('sessions/link', graphWrite(AG2B_SCOPE, {
+    sessionRef: adviserRef, target: { kind: 'goal', ref: AG2B_GOAL_REF }, relation: 'responsible', active: true,
+  }, 'a8-r2-adviser-goal-link', [
+    { ref: adviserCard.value.record.ref, revision: adviserCard.value.record.revision },
+    { ref: responsibleLinkRef(adviserRef, { kind: 'goal', ref: AG2B_GOAL_REF }), revision: 0 },
+  ])) as { status?: string };
+  if (linked.status !== 'committed') throw new Error(`A8-R2: the adviser Goal link did not commit: ${JSON.stringify(linked)}`);
   // Run 1 and Run 2 fail the same way with nothing changed: the second automatic requeue is refused (§13.4 #2).
   const refused = await h.advance(h.select('a8-r2', AG2B_WORK_TASK_ID));
   expect(refused.state).toBe('waiting');

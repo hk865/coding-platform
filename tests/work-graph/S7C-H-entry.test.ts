@@ -115,7 +115,7 @@ describe('H-entry: the understanding is the source Run\'s own', () => {
 });
 
 describe('H-entry: the caller and the source line', () => {
-  it('normalizes a create target\'s duty to the source line\'s duty', async () => {
+  it('keeps a create target\'s own duty', async () => {
     const target = opened!;
     const card = await target.world.readSession(target.lines.creator);
     const link = card.links.find(candidate => candidate.ref.relation === 'responsible'
@@ -132,6 +132,10 @@ describe('H-entry: the caller and the source line', () => {
       tasks: [link.ref.target.ref], target: { kind: 'create', duty: 'adviser' },
     }, 'duty-normalized'));
     expect(result).toMatchObject({ status: 'accepted' });
+    if (result.status !== 'accepted') return;
+    const operation = await target.world.post('sessions/operation', plain(S6A_SCOPE, result.operation));
+    expect(operation.body).toMatchObject({ status: 'ready', value: { action: { kind: 'handoff',
+      input: { assignments: [{ target: { kind: 'create', duty: 'adviser' } }] } } } });
   });
 
   it('refuses an adviser tool handoff whose existing target is another adviser', async () => {

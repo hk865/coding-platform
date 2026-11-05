@@ -1,17 +1,20 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import { rejected as rejection } from '../../contracts/core/rejections.js';
-import type { CoreRejection } from '../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/identity.js';
 import type { RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import { sameJson as sameCanonical } from '../../contracts/fingerprint.js';
 import type { PickBasisV1 } from '../../contracts/pick-basis.js';
+import type { RoleLineDutyV1, RoleScopeV1 } from '../../contracts/role-lines.js';
 import type { SessionActivityReadPort } from '../../core/work-graph/model/session-activity-contracts.js';
-import type { SessionCard, SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
+import type { RoleLineAllocationReadPort, SessionCard, SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type { SessionFactsPort } from '../../core/work-graph/model/session-facts-contracts.js';
 import type { PreClaimAuthorizationPortV1, SessionReuseVerdictV1 } from '../../core/work-graph/model/pick-ports.js';
 import type { WorkLineReadPort } from '../../core/work-graph/model/work-line-contracts.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
+import type { RoleLineLineV1, RoleLineOperationsPort } from '../../core/work-graph/sessions/role-line-operations.js';
+import type { ResponsibilityRecipientInputV1, ResponsibilityRecipientPort } from '../../core/work-graph/tasks/responsibility-recipient.js';
 import { plainSessionRefKey } from '../../core/work-graph/sessions/session-record-codecs.js';
 import { latestActivityAt } from '../../core/work-graph/tasks/line-clock.js';
 import { comparePickCandidates, pickBasisRank, type PickCandidateV1 } from './pick-ranking.js';
@@ -59,6 +62,13 @@ export function createSessionChooser(deps: {
   sessions: SessionDirectoryPort;
   sessionFacts?: SessionFactsPort;
   responsibilities?: SessionResponsibilityPort;
+  recipients?: ResponsibilityRecipientPort;     // O4b: the one L35 read
+  /** L39 (book :716): O1b's one reuse writer; the chooser only picks (ruling :2206, :2216–:2218). */
+  roleLineReuse?: Pick<RoleLineOperationsPort, 'reuse'>;
+  standby?: {
+    allocation: RoleLineAllocationReadPort;            // each duty's seat holders (C/role-lines.ts:222–:225)
+    tooLong(ctx: CoreCallContext, session: SessionRef): Promise<ReadResult<{ tooLong: boolean }>>;
+  };
   pick?: PickReadsV1;
 }) {
   /**
@@ -161,6 +171,69 @@ export function createSessionChooser(deps: {
       return { reusable: false, because: 'archive_requested' };
     }
     return { reusable: false, because: 'waiting' };
+  }
+
+  async function resolveRecipient(owned: Owned, input: Omit<ResponsibilityRecipientInputV1, 'projectId'>):
+  Promise<{ kind: 'line'; session: SessionRef; copy: SessionRef | null } | { kind: 'none' } | CoreRejection> {
+    if (deps.recipients === undefined) return { kind: 'none' };
+    const read = await deps.recipients.resolveResponsibilityRecipient(owned.ctx,
+      { ...input, projectId: owned.projectId });
+    if (read.status !== 'ready') {
+      return read.status === 'rejected' ? read
+        : rejection('unavailable', 'the responsibility recipient read is not ready');
+    }
+    return read.value.kind === 'human' ? { kind: 'none' }
+      : { kind: 'line', session: read.value.session, copy: read.value.copy };
+  }
+
+  /**
+   * L39: one standby line of `duty` for `scope`. Eligible: holds a seat, no open responsible link, idle (the
+   * pick's own verdict and `exclusionOf`), not too long, and a prior responsible module link inside `modules`;
+   * the latest activity wins. The claim check and the commit are O1b's `reuse`; a card is O1b/O3's.
+   */
+  async function reuseStandby(owned: Owned, input: {
+    commandId: string; duty: RoleLineDutyV1; scope: RoleScopeV1[]; modules: ReadonlySet<string> | 'all';
+  }): Promise<{ kind: 'reused'; line: RoleLineLineV1 } | { kind: 'none' } | CoreRejection> {
+    if (deps.roleLineReuse === undefined || deps.standby === undefined) return { kind: 'none' };
+    const allocation = await deps.standby.allocation.readRoleLineAllocation(owned.ctx, {});
+    if (allocation.status !== 'ready') {
+      return allocation.status === 'rejected' ? allocation
+        : rejection('unavailable', 'the line allocation read is not ready');
+    }
+    let best: { session: SessionRef; activityAt: string } | null = null;
+    for (const holder of allocation.value.duties[input.duty].holders) {
+      const card = await deps.sessions.readSession(owned.ctx, holder.session);
+      if (card.status === 'not_found') continue;            // another workspace's line (session-directory.ts:1613)
+      if (card.status !== 'ready') {
+        return card.status === 'rejected' ? card : rejection('unavailable', 'a standby line read is not ready');
+      }
+      const record = card.value.record;
+      if (record.lifecycle !== 'active' || record.health !== 'available' || record.occupancy !== null) continue;
+      const responsible = card.value.links.filter(link => link.ref.relation === 'responsible');
+      if (responsible.some(link => link.until === null)) continue;                    // not standby
+      if (!responsible.some(link => link.ref.target.kind === 'module'
+        && (input.modules === 'all' || input.modules.has(link.ref.target.ref.moduleId)))) continue;
+      if ((await exclusionOf(owned.ctx, card.value)).excluded) continue;
+      const long = await deps.standby.tooLong(owned.ctx, holder.session);
+      if (long.status !== 'ready') {
+        return long.status === 'rejected' ? long : rejection('unavailable', 'the line length read is not ready');
+      }
+      if (long.value.tooLong) continue;
+      let activityAt = record.createdAt;
+      if (deps.pick?.activity !== undefined) {
+        const activity = await deps.pick.activity.record.readSessionActivity(owned.ctx, { session: holder.session });
+        if (activity.status === 'ready') {
+          activityAt = latestActivityAt(record.createdAt, [activity.value.lastActivityAt]);
+        } else if (activity.status !== 'not_found') {
+          return rejection('unavailable', 'the standby line activity read is not ready');
+        }
+      }
+      if (best === null || activityAt > best.activityAt) best = { session: holder.session, activityAt };
+    }
+    if (best === null) return { kind: 'none' };
+    const reused = await deps.roleLineReuse.reuse(owned.ctx,
+      { commandId: input.commandId, session: best.session, scope: input.scope });
+    return reused.status === 'committed' ? { kind: 'reused', line: reused.value } : reused;
   }
 
   async function chooseSession(
@@ -327,5 +400,5 @@ export function createSessionChooser(deps: {
       basis: { rank: pickBasisRank(ranked), incomplete, candidates: ranked.length } };
   }
 
-  return { chooseSession, responsibleSessionFor, chooseExcluded, reusable };
+  return { chooseSession, responsibleSessionFor, chooseExcluded, reusable, resolveRecipient, reuseStandby };
 }

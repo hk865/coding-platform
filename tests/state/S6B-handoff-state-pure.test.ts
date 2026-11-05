@@ -32,7 +32,7 @@ describe('rejects: a handoff, the earlier step first', () => {
       blocked('invalid', 'the source Session is archived')],
     ['a missing target before the duty', handoff({}, { source: line('unknown'), targets: [{ kind: 'existing', session: { kind: 'missing' } }] }),
       blocked('not_found', 'assignments[0].target is not a Session of the workspace')],
-    ['the duty before unfinished work', handoff({}, { targets: [{ kind: 'create', duty: 'adviser' }], unfinished: busy.current }),
+    ['the duty before unfinished work', handoff({}, { targets: [{ kind: 'existing', session: line('adviser') }], unfinished: busy.current }),
       blocked('invalid', "assignments[0].target's duty adviser is not the source Session's duty executor")],
   ])('%s', (_case, facts, expected) => {
     expect(admitHandoff(facts as never)).toEqual(expected);
