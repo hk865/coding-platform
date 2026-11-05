@@ -4,7 +4,7 @@
  * executes directly; (3) the agent's split of two goals is one project `role_line_change` card that waits, and its
  * “不执行” answer (card supplement T3 `:346–:351`); (6) `create_member` is a card under every-step and a notice
  * after plan confirmation; (8) the policy's layers 1–3 as a pure table (layer 4 is O3a's, `S5-decision-policy`);
- * T5, the four adjustments' card options (card supplement §3.4 `:285–:297`). (2) is O4a's, (4) C1's RL-23, (5) and
+ * T5, the four adjustments' card options (card supplement §3.4 `:285–:297`). (2) runs on the queue world, (4) C1's RL-23, (5) and
  * the caller half of (7) are deleted (brief `:81`, lead Q17).
  *
  * World of (1), (3), (6): `openS7D2CapacityWorld` (tests/helpers/S7D2-capacity-world.ts), memory. Goals come from
@@ -23,7 +23,7 @@
  * line, link or seat changed; the same move again answers the JSON block `{rejected, cancelled,
  * decision_rejected}` (C9 `:74`, §2.2 `:122`; the outer tool status is not read, lead ruling on reply 7.5).
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
@@ -40,6 +40,7 @@ import { adoptPLMixedPlan, PL_ADVISER_ROLE } from '../helpers/PL-consumption-fix
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { valueOf } from '../helpers/S6B3-fixture.js';
 import { openS7D2CapacityWorld, type S7D2CapacityWorld } from '../helpers/S7D2-capacity-world.js';
+import { openS7D2QueueWorld, type S7D2QueueWorld } from '../helpers/S7D2-queue-world.js';
 import { askS7D2Member, openTargetsOf } from '../helpers/S7D2-role-line-world.js';
 import { waitFor } from '../scenarios/harness.js';
 
@@ -273,5 +274,125 @@ describe('RL-16 T5: the role_line_change card options (pure)', () => {
       { id: 'reject', label: '不执行：留在队里，等你手动分配', effect: 'apply' }]],
   ])('RL-16 T5 #%s %s', (_n, _name, operation, expected) => {
     expect(roleLineChangeOptionsOf(operation)).toEqual(expected);
+  });
+});
+
+// --------------------------------------------------------------------------------------------------------------- //
+// RL-16 (2) (O4a; move ruling Q8; card supplement T1, T2 :333–:344, U1; write-tests brief tests-7d2-o4a.txt:100–). //
+// --------------------------------------------------------------------------------------------------------------- //
+
+/**
+ * The platform's add for an every-step goal with no candidate and free seats waits on its card; “执行” opens a line
+ * and assigns the goal to it, “不执行” queues the goal (U1). World: `openS7D2QueueWorld` (o4a Q17), memory, fixed
+ * clock, one world for both `it`s (T2 runs between T1 (c) and (d), CARD-R1-05): A (the opening adviser) and B hold
+ * three in-progress `small` goals each (no candidate), `open.adviser = 4` (two free seats, T1 `:335`), drafts G1 and
+ * G3 every-step and `small`. Expected (by hand): the add card's options and literals card supplement §2.1 `:103–:107`
+ * (`reason` null: the project has adviser lines), the waiting operation C6 `:53`, “不执行” C11 `:81` and the queue
+ * (§2.1 `:110`), the card closing C12 `:86`, the two notices of G1 C13 `:89` and v4 `:4971`. `role-lines/operations`
+ * rows carry `action: 'role_line'`; the stored action name is read from `sessions/operation`.
+ */
+// The two `it`s below run in order on ONE shared world (opened by the first, closed by `afterAll`, lead 04:1x item 3):
+// the second continues from the first's state and its G1 card, so it fails whenever the first did not get that far.
+describe('RL-16 (2): the add card\'s “执行” and “不执行” (T1, T2) on the queue world', () => {
+  let q: S7D2QueueWorld | null = null;
+  let g1Card: DecisionCardV1 | null = null;
+  afterAll(async () => { await q?.close(); });
+  const world = (): S7D2QueueWorld => { if (q === null) throw new Error('RL-16 (2): no world'); return q; };
+  const addOptions = (reject: string) => [{ id: 'approve', label: '执行：给这个目标新开一条参谋线', effect: 'apply' },
+    { id: 'reject', label: reject, effect: 'apply' }];
+  const operationOf = (card: DecisionCardV1): OperationRef =>
+    (JSON.parse(card.source.key) as { operationRef: OperationRef }).operationRef;
+  const rowOf = async (card: DecisionCardV1): Promise<RoleLineOperationReadV1 | undefined> =>
+    (await world().operations()).find(row => row.operation.operationId === operationOf(card).operationId);
+  const addCardsOf = async (goal: GoalRef): Promise<DecisionCardV1[]> =>
+    cardsOf(await world().decisions(), 'role_line_change')
+      .filter(card => card.subject.kind === 'goal' && card.subject.goalRef.goalId === goal.goalId);
+  const lineNoticesOf = async (goal: GoalRef): Promise<string[]> => projectNotices(await world().notices())
+    .filter(item => item.subject.kind === 'goal' && item.subject.goalRef.goalId === goal.goalId
+      && (item.summary.startsWith('开线：') || item.summary.startsWith('队列分配：'))).map(item => item.summary);
+
+  /*
+   * Named mutation (T1 `:338`): the platform's add opens the line without the judgement -> step 2 finds no card and
+   * step 3's holders are already three (D exists), red.
+   */
+  it('RL-16 (2) T1 (a)–(c) (memory): G1 confirmed; its add waits on one goal card; no line, not queued', async () => {
+    q = await openS7D2QueueWorld({ backend: 'memory', advisers: true, drafts: [
+      { name: 'g1', autonomy: 'every_step' }, { name: 'g3', autonomy: 'every_step' }] });
+    const { a, b } = q.advisers!;
+    await q.setOpen('adviser', 4, 'rl16-2-cap-4');
+
+    // 1. T1 (a)
+    expect(await q.confirm('g1')).toMatchObject({ status: 'committed' });
+    const g1 = q.goalOf('g1');
+    // 2. T1 (b)
+    const cards = cardsOf(await q.decisions(), 'role_line_change');
+    expect(cards).toHaveLength(1);
+    g1Card = cards[0]!;
+    expect(g1Card.subject).toEqual({ kind: 'goal', goalRef: g1 });
+    expect(g1Card.options).toEqual(addOptions('不执行：目标排队，等现有参谋'));
+    // 3. T1 (c)
+    expect(await rowOf(g1Card)).toMatchObject({ phase: 'accepted', actionPhase: 'waiting',
+      result: { status: 'waiting', reason: null } });
+    expect(await q.operation(operationOf(g1Card))).toMatchObject({ action: { action: 'role_line_add' } });
+    expect(holderIds(await q.allocation())).toEqual([a.ref.sessionId, b.ref.sessionId].sort());
+    expect(await q.queueIds()).toEqual([]);
+  });
+
+  /*
+   * Named mutation (T2 `:344`): after “不执行” the goal is not queued -> step 6's `entries` is `[]`, red.
+   */
+  it('RL-16 (2) T2 (a)–(e) then T1 (d)–(f) (memory): “不执行” queues G3; “执行” opens D for G1, once', async () => {
+    const live = world();
+    const { a, b } = live.advisers!;
+    const card1 = g1Card;
+    if (card1 === null) throw new Error('RL-16 (2): T1 (b) found no G1 card');
+    const g1 = live.goalOf('g1');
+
+    // 4. T2 (a)–(b)
+    expect(await live.confirm('g3')).toMatchObject({ status: 'committed' });
+    const g3 = live.goalOf('g3');
+    const g3Cards = await addCardsOf(g3);
+    expect(g3Cards).toHaveLength(1);
+    const card3 = g3Cards[0]!;
+    expect(card3.options.find(option => option.id === 'reject')?.label).toBe('不执行：目标排队，等现有参谋');
+    // 5. T2 (c)
+    expect(await live.answer(card3, 'reject', 'rl16-t2-reject')).toMatchObject({ status: 'ready',
+      value: { state: 'answered' } });
+    // 6. T2 (d)
+    expect(await rowOf(card3)).toMatchObject({ phase: 'failed',
+      result: { status: 'failed', reason: 'decision_rejected' } });
+    expect(holderIds(await live.allocation())).toEqual([a.ref.sessionId, b.ref.sessionId].sort());
+    expect(await live.queueIds()).toEqual([g3.goalId]);
+    const read = await live.decisions(ALL);
+    expect(read.history.filter(card => card.cardKey === card3.cardKey)).toMatchObject([
+      { state: 'answered_no_application', closedReason: 'source_resolved' }]);
+    expect([...read.waitingAnswer, ...read.answeredPendingApplication].map(card => card.cardKey))
+      .not.toContain(card3.cardKey);
+    expect((await lineNoticesOf(g3)).filter(summary => summary.startsWith('开线：'))).toEqual([]);
+    // 7. T2 (e): the same requestId and body again
+    expect(await live.answer(card3, 'reject', 'rl16-t2-reject')).toMatchObject({ status: 'ready',
+      value: { state: 'answered' } });
+    expect(await live.queueIds()).toEqual([g3.goalId]);
+
+    // 8. T1 (d)
+    expect(await live.answer(card1, 'approve', 'rl16-t1-approve')).toMatchObject({ status: 'ready',
+      value: { state: 'answered' } });
+    // 9. T1 (e): a third adviser line D holds G1; the operation completed; the card closed; G1's two notices
+    const holders = await waitFor(async () => holderIds(await live.allocation()), ids => ids.length === 3,
+      'a third adviser line');
+    const d = holders.find(id => id !== a.ref.sessionId && id !== b.ref.sessionId);
+    expect(await waitFor(() => live.linesOf(g1), lines => lines.length > 0, 'G1 to be assigned')).toEqual([d]);
+    expect(await rowOf(card1)).toMatchObject({ phase: 'completed', result: { status: 'done', reason: null } });
+    expect(await live.card(card1.source)).toMatchObject({ state: 'answered_no_application',
+      closedReason: 'source_resolved' });
+    const notices = await waitFor(() => lineNoticesOf(g1), summaries => summaries.length > 1, 'G1\'s two notices');
+    expect(notices.filter(summary => summary.startsWith('开线：'))).toHaveLength(1);
+    expect(notices.filter(summary => summary.startsWith('队列分配：')))
+      .toEqual([`队列分配：${g1.goalId} → 顾问 ${String(d)}（规则：队列顺序；可重排或调高上限）`]);
+    // 10. T1 (f): the same requestId again changes no line, link or notice
+    await live.answer(card1, 'approve', 'rl16-t1-approve');
+    expect(holderIds(await live.allocation())).toEqual(holders);
+    expect(await live.linesOf(g1)).toEqual([d]);
+    expect(await lineNoticesOf(g1)).toEqual(notices);
   });
 });

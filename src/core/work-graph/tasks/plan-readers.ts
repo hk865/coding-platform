@@ -3,7 +3,9 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import type { ModuleRef } from '../../../contracts/core/identity.js';
+import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
+import type { SessionWorkLink } from '../../../contracts/core/session.js';
+import { roleLineDutyOf, type RoleLineDutyV1 } from '../../../contracts/role-lines.js';
 import type {
   RunSnapshot,
   TaskAttemptRef,
@@ -82,6 +84,11 @@ import { messageOf } from '../../../contracts/error-message.js';
 import type { QueryJobPort, QueryJobRecord } from '../queries/contracts.js';
 import type { NoteRunTaskResolver, NoteUpdateDueTriggerV1 } from '../model/note-contracts.js';
 import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import {
+  SESSION_LINKS_BY_GOAL_LOOKUP, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, decodeSessionRecord, decodeSessionWorkLink,
+  plainSessionRefKey,
+} from '../sessions/session-record-codecs.js';
 import { unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import {
   isBasisUnsupported, planTaskFacts, taskOriginVerdict, verifyBasisDelegation,
@@ -2461,6 +2468,56 @@ export function createSessionResponsibilityBasisReader(
       } };
     },
   };
+}
+
+/** One open responsible link of a goal or of a project's module regions, with its line's fixed duty. */
+export type OpenResponsibilityLineV1 = { session: SessionRef; link: SessionWorkLink; duty: RoleLineDutyV1 };
+
+/**
+ * L-8: the open `responsible` links of one goal, or of the project's module (region) targets, each with its line's
+ * fixed duty resolved once per Session (`duty(record.role)` then `roleLineDutyOf`). A Session whose role has no line
+ * duty holds no role-line responsibility and is left out; a failed page, a damaged link or Session, and a duty that
+ * cannot be read are `unavailable`, never an empty list.
+ */
+export async function readOpenResponsibilityLines(
+  records: GoalRecordTransactionPort & RecordLookupPort, ctx: CoreCallContext,
+  input: { goalRef: GoalRef } | { projectId: string }, duty: SessionDutyReadPort,
+): Promise<ReadResult<readonly OpenResponsibilityLineV1[]>> {
+  const [index, values] = 'goalRef' in input
+    ? [SESSION_LINKS_BY_GOAL_LOOKUP, [input.goalRef.projectId, 'goal', input.goalRef.goalId, 'responsible', null]] as const
+    : [SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, [input.projectId, 'module', 'responsible', null]] as const;
+  let batch;
+  try {
+    batch = await lookupAll(records, index, values);
+  } catch (error) {
+    return unavailable(`the open responsibility links read failed: ${messageOf(error)}`);
+  }
+  const duties = new Map<string, RoleLineDutyV1 | null>();
+  const lines: OpenResponsibilityLineV1[] = [];
+  for (const record of batch.items) {
+    const decoded = decodeSessionWorkLink(record);
+    if (decoded.status !== 'decoded') return unavailable(`an open responsibility link is damaged: ${decoded.reason}`);
+    const link = decoded.value;
+    const session: SessionRef = { projectId: link.ref.projectId, sessionId: link.ref.sessionId };
+    const key = plainSessionRefKey(session);
+    let lineDuty = duties.get(key);
+    if (lineDuty === undefined) {
+      const read = await readBatch(records, [key]);
+      if (read.status !== 'ready') return read;
+      const stored = read.batch.present.get(key);
+      if (stored === undefined) return unavailable(`the Session ${session.sessionId} of an open link is missing`);
+      const sessionRecord = decodeSessionRecord(stored);
+      if (sessionRecord.status !== 'decoded') return unavailable(`the Session ${session.sessionId} is damaged`);
+      const resolved = await duty(sessionRecord.value.role, ctx);
+      if (resolved.status !== 'ready') {
+        return unavailable(`the duty of Session ${session.sessionId} cannot be read`);
+      }
+      lineDuty = roleLineDutyOf(resolved.value);
+      duties.set(key, lineDuty);
+    }
+    if (lineDuty !== null) lines.push({ session, link, duty: lineDuty });
+  }
+  return { status: 'ready', value: lines };
 }
 
 // --------------------------------------------------------------------------

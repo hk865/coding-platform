@@ -54,8 +54,8 @@ it('PL-08: a candidate committed after the read and before the registration wake
 
     await startGoalDriver(workflow.world, workflow.goal, 'pl-08-goal');
     const woken = await waitDriver(workflow.world, workflow.goal, undefined, snapshot =>
-      snapshot.last?.status === 'ready' && (snapshot.last.value.waitBasis?.reasons ?? [])
-        .includes('plan_candidate_waiting'),
+      snapshot.state === 'waiting_for_reply' && snapshot.last?.status === 'ready'
+        && (snapshot.last.value.waitBasis?.reasons ?? []).includes('plan_candidate_waiting'),
     'PL-08: the driver wakes and reads the candidate committed before its registration');
     if (candidate === undefined) throw new Error('PL-08: the candidate was never committed');
     expect(woken.state, 'the wake leaves a registered driver parked on the new read').toBe('waiting_for_reply');

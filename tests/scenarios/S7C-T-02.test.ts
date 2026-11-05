@@ -1,8 +1,8 @@
 /**
  * T-02 (book 1390; drill L2-10/12): one passive notice per counted rework, the second counted rework reaches the
  * adviser and the secretary as two messages (the mixed requeue-then-recheck chain), the notice is
- * delivered once across a second heartbeat, and the no-adviser card answers `unavailable` from
- * `decisions/answer` (its `action`, never `decisions/application`); with an adviser the card is history closed
+ * delivered once across a second heartbeat, and the no-adviser card's approval allocates an adviser through the
+ * queue owner (no application receipt; the answered card is history); with an adviser the card is history closed
  * `source_resolved` with the triggering rework's own `requestedAt`.
  *
  * The world is FL-1 (`openS7CSystemWorld`), whose own counted chain is the real check FAIL requeue then the real
@@ -17,6 +17,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
@@ -235,10 +236,20 @@ describe('T-02', () => {
     const result = await answerDecisionCard(opened.world, card, answer, `s7c-l2-adviser-card-${answer}`);
     expect(result.answer).toMatchObject({ status: 'committed' });
     if (answer === 'approve') {
-      // L2-12: the refusal is the `action` of `decisions/answer`, never a `decisions/application` row.
-      expect(result.action).toMatchObject({ status: 'rejected', code: 'unavailable' });
-      expect(result.action?.status === 'rejected' ? result.action.reason : '')
-        .toContain('role_line_action_unavailable');
+      // the approval allocates through the queue owner (Q16): no application receipt, the answer is `answered`.
+      expect(result.action).toBeNull();
+      expect(result.state).toBe('answered');
+      // No adviser had room, so the approval opened a line and gave it the Goal: one open responsible adviser link.
+      const linked = ready<{ items: SessionCard[] }>(await opened.world.post('sessions/find', plain(S6A_SCOPE, {
+        workspace: S6A_SCOPE, target: { kind: 'goal', ref: opened.goal }, includeArchived: false, page: { limit: 100 },
+      })), 'the Goal sessions').items.filter(found => found.links.some(link => link.until === null
+        && link.ref.relation === 'responsible' && link.ref.target.kind === 'goal'
+        && link.ref.target.ref.goalId === opened.goal.goalId));
+      expect(linked).toHaveLength(1);
+      // The card's source closed with the adviser, so the answered card is history with no application.
+      await expect.poll(async () => (await decisionQueueOf(opened.world, opened.goal, ['history'])).history
+        .find(entry => entry.source.key === card.source.key)?.state, { timeout: 20_000, interval: 25 })
+        .toBe('answered_no_application');
     } else {
       expect(result.action).toBeNull();
       const history = await decisionQueueOf(opened.world, opened.goal, ['waiting_answer', 'history']);

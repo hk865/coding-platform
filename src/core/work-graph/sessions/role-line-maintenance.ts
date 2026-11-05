@@ -583,6 +583,26 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
     return ready(false);
   }
 
+  /**
+   * A line that holds an active goal through an open responsible goal link works for that goal even before the goal
+   * has a plan or a task (o4a ruling 51): reclaiming it would leave the goal with no adviser and outside the adviser
+   * queue. A paused, cancelled or formally completed goal does not keep the line; a failed read keeps it (not idle).
+   */
+  async function holdsActiveGoalOf(links: readonly SessionWorkLink[]): Promise<ReadResult<boolean>> {
+    for (const link of links) {
+      if (link.until !== null || link.ref.relation !== 'responsible' || link.ref.target.kind !== 'goal') continue;
+      const goalRef = link.ref.target.ref;
+      const goal = await deps.readGoal(deps.records, goalRef);
+      if (goal.status !== 'ready') return goal;
+      if (goal.goal.desiredState !== 'active') continue;
+      const phase = await deps.readGoalPhase(deps.records,
+        { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId });
+      if (phase.status !== 'ready') return phase;
+      if (phase.snapshot === null) return ready(true);
+    }
+    return ready(false);
+  }
+
   /** A pending-review note in scope: its goals' buckets, and every bucket for a project scope. */
   async function pendingNoteOf(ctx: CoreCallContext, goals: readonly GoalRef[], project: boolean):
     Promise<ReadResult<boolean>> {
@@ -619,6 +639,8 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
     if (goals.status !== 'ready') return unread;
     const inProgress = await inProgressTaskOf(lineCtx, goals.value, card.links);
     if (inProgress.status !== 'ready') return unread;
+    const heldGoal = inProgress.value ? ready(true) : await holdsActiveGoalOf(card.links);
+    if (heldGoal.status !== 'ready') return unread;
     const pendingNote = await pendingNoteOf(lineCtx, goals.value, scopes.some((scope) => scope.kind === 'project'));
     if (pendingNote.status !== 'ready') return unread;
     const facts = await deps.sessionFacts.readSessionFacts(lineCtx, session);
@@ -628,7 +650,8 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
       lastActivityAt: activityRead.value.lastActivityAt,
       unacceptedInput: backlog.value > 0,
       handoffFenceOpen: fence.value.held,
-      inProgressTaskInScope: inProgress.value,
+      // an active goal held through an open goal link counts as work in scope, a plan or not
+      inProgressTaskInScope: inProgress.value || heldGoal.value,
       pendingNoteInScope: pendingNote.value,
       openQuestionSent: facts.value.waits.some((wait) => wait.state.state === 'open'),
       readable: true,

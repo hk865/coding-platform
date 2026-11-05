@@ -11,7 +11,7 @@
 
 ## 文件
 
-本目录 88 个 `.ts`，按主题分组。
+本目录 95 个 `.ts`，按主题分组。
 
 ### 请求、秘书与决定卡（20 个）
 
@@ -40,7 +40,7 @@
 - `unknown-call-review-service.ts` — `UnknownCallReview` 读写 owner。
 - `unknown-call-review-target-digests.ts` — review 卡目标路径工作树摘要的单一读取。
 
-### 计划与 Goal（21 个）
+### 计划与 Goal（28 个）
 
 做 Plan 采用/校验、Goal 设置/控制/读取与 Goal 创建入口的去这组。
 
@@ -49,7 +49,8 @@
 - `goal-confirm-service.ts` — `goals/confirm-draft` 的两个构造器：binding reader 与 confirm owner。人确认一张草稿时，confirm 把 Goal 出生（`compileGoalCreate`）、不可变 initialization binding（`state/goal-confirm.ts` 的 `newInitializationBinding`）和归属轮（`request-tail-fragment.ts` 的非提交 prepare）合成**一次** `records.commit`；只走执行器的单命令重试与回执重放，结果事件 `goal_draft_confirmed` 是提交里最后一条，回执只由它和游标投影；`confirmDraft` 只返回写入口。reader 实现 `InitializationBindingReadPort`：按 answer+draft 读缺记录是 `not_found`、按 Goal 读无 binding 是正常空数组、坏记录 `unavailable`。store、请求事实/binding 读、归属 prepare 与时钟由组合根注入（给 L 的接缝），服务自己不再构造 binding、不另写 Goal 出生。
 - `goal-control.ts` — Goal desired state（GOAL-04…06）的可信 Host 入口。
 - `goal-copy-progress.ts` — 复制取消的分项结果：`GoalCopyRetractionShape`、`copyRetractionSettledCodec`（`GoalCopyRetractionSettled@1`）与 `settleCopyItem` 一次 R2 事件写入（身份 `goal.copyRetraction.settle`）；只存 `retracted`/`not_retractable`，没有 progress 记录、CAS 或状态机。
-- `goal-copy-service.ts` — `GoalCopyPort` 的 owner，复制一个 `cancelled` 目标的两个入口：`readDraft` 是 `goals/copy-draft` 的读（源 Goal 与理解指针，装了干预读端口时再读全部候选，读失败让整份草稿失败而不是答不可用；不写），`confirm` 是 `goals/copy-confirm` 的**唯一** R2 出生提交——经 `executeWriteCommand` + `compileGoalCreate` 一次写新 active Goal（`continuedFrom`/`copiedInterventions`）、`GoalCopied` 事件与回执，源 Goal 只做 CAS guard 不写；决定本身来自 `state/goal-copy.ts`。同文件的 `GoalCopied` 事件字段表与 `GOAL_COPY_RECORD_SCHEMAS` 登记 `GoalCopied@1` 与 `GoalCopyRetractionSettled@1` 的事件类型、schema 版本与字段表，撤回项形状用 `goal-copy-progress.ts` 导出的那一份。干预读端口与撤回端口是可选的 7A 注入：未装时非空勾选被 `invalid` 拒绝（owner 无法核对所有权/状态），`selection` 由决定的 `retract` 是否为空给出；装了就每页 200 一直读到 `nextCursor === null`，出生事件的 `retractions` 来自决定的 `retract`；提交后逐条续接——重放先查这条已存的 settle，再撤回一次，再存 settle——失败留 `unfinished`，只有重放同一次确认才重试，不再提交。
+- `goal-copy-service.ts` — `GoalCopyPort` 的 owner，复制一个 `cancelled` 目标的两个入口：`readDraft` 是 `goals/copy-draft` 的读（源 Goal 与理解指针，装了干预读端口时再读全部候选，读失败让整份草稿失败而不是答不可用；不写），`confirm` 是 `goals/copy-confirm` 的**唯一** R2 出生提交——经 `executeWriteCommand` + `compileGoalCreate` 一次写新 active Goal（`continuedFrom`/`copiedInterventions`）、`GoalCopied` 事件与回执，源 Goal 只做 CAS guard 不写；决定本身来自 `state/goal-copy.ts`。出生提交里迁参谋和书记（7D2 O4a）：`build` 用 `readOpenResponsibilityLines` 读源目标开着的负责链接，职责是 adviser 或 scribe 的每种调一次 `planReanchorHook`，计划的 Session、链接、claim、游标绑定和 `SessionResponsibilityChanged` 并进同一次出生提交（计划被拒不迁、不算复制失败，读失败拒绝复制）；迁了线才在提交后经 `notifyProject` 写一条项目通知，重放时从原出生回执的事件判断迁过没有。同文件的 `GoalCopied` 事件字段表与 `GOAL_COPY_RECORD_SCHEMAS` 登记 `GoalCopied@1` 与 `GoalCopyRetractionSettled@1` 的事件类型、schema 版本与字段表，撤回项形状用 `goal-copy-progress.ts` 导出的那一份。干预读端口与撤回端口是可选的 7A 注入：未装时非空勾选被 `invalid` 拒绝（owner 无法核对所有权/状态），`selection` 由决定的 `retract` 是否为空给出；装了就每页 200 一直读到 `nextCursor === null`，出生事件的 `retractions` 来自决定的 `retract`；提交后逐条续接——重放先查这条已存的 settle，再撤回一次，再存 settle——失败留 `unfinished`，只有重放同一次确认才重试，不再提交。
+- `goal-adviser-queue-service.ts` — 项目参谋队列的 owner `createGoalAdviserQueueService`（7D2 O4a，`GoalAdviserQueuePort`）：`allocate` 是唯一的分配入口（先按身份恢复已有的分配回执；“不执行”加线卡的 `rejection` 臂先恢复自己的入队回执，再入队并把加线操作写成 failed；已有参谋回 `goal_has_adviser`；有候选（有归档请求的线不算）就分配，没有就经 O1b 的 `open` 开一条参谋线再分配，出卡回 `needs_decision`，满额或加线被拒才入队；队列提交输给别的写者时恢复回执、核卡的 pin，只有队列真变了、或候选时选中的参谋 Session 变了，才重读事实重算一次），`write` 是唯一的内部写（先恢复回执，再比这次依据的队列 revision、核批准的 pin；分配经 `planReanchor` 的 `open` 一支在同一次提交里写链接、claim 和参谋 Session 的下一个版本，移出队列、关掉在等的卡，守卫队列、Goal、`GoalPhase`、候选那一刻读到的参谋 Session 版本和链接，目的线已不合格就拒；提交后写一条目标通知），`drain` 按队列顺序走一页（已取消、已完成或已有参谋的移出；暂停的跳过；每步确认的目标有候选时存一张队列分配卡；其余以平台身份 `allocate`，16 只限实际提交的分配），`read` 读队列。每次队列提交都经共享写入器带一个 `GoalAdviserQueueChanged`，结果是重读的队列。平台调用一律用 `WORKFLOW_AUTOMATION_ACTOR` 和 `goal-queue:<goalId>`，工作区绑到目标自己的。
 - `goal-decision-reader.ts` — Goal 需要决定的原因读取（只读，不写 GoalPhase）；`no_adviser` 由“必需 `plan_only` 细化需求或共享偏差判定非空 + 权威参谋收件人为 null”派生，读失败原样返回。
 - `goal-deviation-facts.ts` — 偏差事实的 I/O owner（§7.5）：`createDeviationFactsReader`/`ReadDeviationFacts` 经 `readGoal`/`readPlan`、公开执行分页（`DEVIATION_RUN_PAGE_LIMIT` 100）和活动读（`DEVIATION_ACTIVITY_BATCH` 200，空集合不调用）、复用现成聚合与 `GoalExecutedFilesPort` 的改动文件投影；`readTaskRunActivities`、`TaskRunActivityReadV1`、`DeviationFactsDependencies` 与结构化的 `DeviationActivityReadPort`/`DeviationActivityReadingV1` 也供阶段通知共用分页/分批。
 - `goal-executed-files-reader.ts` — Goal 已执行文件的真实端口，按 Goal 索引分页到结尾。
@@ -60,7 +61,7 @@
 - `initialization-pointers.ts` — 项目两个 active 治理指针（完成策略、架构基线）的唯一读取与 `activeRevision` 解码；缺失是 `null`，坏读是 `unavailable`。
 - `overlap-gates.ts` — 模块重叠门的四条纯规则：`moduleOverlapOf`（同 Goal、同模块的 running 任务构成重叠）、`splitNonOverlapping`（按每个候选的重叠判定稳定分组）、`overlapBasisDigest`（对 planRevision、waitingAttempt 与 running 集合做规范摘要）、`overlapGateSatisfied`（门已放行，或有够晚的 module/interface 注记）；事实/状态类型 `ModuleOverlapFactsV1`、`ModuleOverlapV1`、`OverlapBasisV1`、`OverlapGateStatusV1` 也在这里。同一文件追加记录 4 的 owner `createOverlapGateService`（`OverlapGatePort`）：`openOverlapGate` 以 `overlap-open:<gate ref key>:<basis digest>` 打开或给新 basis 开新 revision，`requestOverlapNote` 经注入的 resolver 与 `sendMessage` 发一条 `action_request` 并在同一 basis 的命令里写 `noteRequest` 与 `ModuleOverlapNoteRequested`，`readOverlapGate` 走唯一的单记录读取，`checkOverlapGate` 把真实当前注记交给 `overlapGateSatisfied`，`releaseOverlapGate` 先判满足再由人释放，`readOverlapGates` 按 `overlap-gate-by-goal` 页读。
 - `plan-commit-compiler.ts` — 初始/未来 Plan 采用的一次性 `PreparedCommit` 编译。
-- `plan-readers.ts` — canonical Task/Goal/Plan/治理/closure 的读取总汇与记录 schema/索引名；`policyRefFromBody`/`architectureRefFromBody` 是治理指针体的唯一解析器。
+- `plan-readers.ts` — canonical Task/Goal/Plan/治理/closure 的读取总汇与记录 schema/索引名；`policyRefFromBody`/`architectureRefFromBody` 是治理指针体的唯一解析器；L-8 的 `readOpenResponsibilityLines`（一个目标或项目模块目标上开着的负责链接，每条带线的固定职责 `OpenResponsibilityLineV1`；没有线职责的 Session 不列，读失败是 `unavailable`）也在这里。
 - `plan-result-helpers.ts` — 计划服务共用的 `Owned`/`Rejection` 形状与 `mapStoreReadFailure`/`asWriteRejection`；`messageOf`、`rejected` 直接用 `src/contracts` 的正本。
 - `plan-service.ts` — Plan 采用与 task 读的协调 owner，另有 request candidate service。提案（Host、替换、初始化答案、Agent）读当前 catalog：候选记下 `catalogPin`（没有 active catalog 时为 `null`），module 作用域任务按 `plan-validation.ts` 的模块规则判；初始采用按治理选定的架构基线的 catalog 判（候选的 pin 不参与），未来采用按采用时的当前 catalog 判并把 catalog 守卫交给提交；草稿里没有 module 作用域任务时采用不读 catalog。`queryGoal` 的 `continuedBy` 按 `GOAL_BY_CONTINUED_FROM_INDEX` 读全并按键序给出副本 GoalRef，原 Goal 上不另存（DESIGN :335）。PS 的只读 `readAdoptionStopTargets` 复用公开 `readPlanProposal` 的授权，取 `deriveFuturePlanDelta` 的 `dispositionOnlyTaskIds` 再读 `readDispositionChangeTaskFacts`，只返回有 Run 的任务。
 - `plan-task-basis.ts` — Task 有效 basis、冻结执行定义与 origin 判定的纯规则。
@@ -104,7 +105,7 @@
 - `run-reconcile-service.ts` — 无 Kernel terminal 的 Run end 判定、未知结果处置与一 commit。`commitDecided` 在 `bindsStart` 时并入记录 5 的同一次消费贡献：读 Run 的冻结 manifest，无 binding 不贡献，有 binding 按它精确读记录，再调与正常进入提交共用的 `handoffBriefConsumptionForCommit`；这是 FH-2 的崩溃恢复提交。
 - `run-state-service.ts` — 精确 Task execution 读取：三段 `readMany`，只在引用漂移时重试。
 
-### 记录读取与共享纯规则（12 个）
+### 记录读取与共享纯规则（13 个）
 
 做工作线时钟、owner 单条读、receipt 重放、路由守卫与阻塞命令纯规则的去这组。
 
@@ -120,6 +121,7 @@
 - `session-anomaly-service.ts` — 异常锚的写入/读取 owner（每 Run 一个，不可变）。
 - `task-review-reader.ts` — Task review 的分页读取，失败原样返回。
 - `trusted-context.ts` — 可信 Host 上下文绑定与同步请求隔离的共用缝。
+- `adviser-slots.ts` — 参谋候选的纯比较器 `adviserCandidateOf`（`AdviserSlotFactsV1`、`AdviserCandidateV1`）：先判资格（可用、不在交接、active、未退役、进行中的目标少于 `MAX_GOALS_PER_ADVISER`，一个都没有，或这个目标和它进行中的目标都是 `small`），再按进行中目标数、未结束任务数、最近活动最早、Session 键排；已正式完成的目标由队列服务的事实读去掉。秘书选人的比较键不同，不复用它。
 
 ### 编解码（10 个）
 
@@ -143,8 +145,8 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `readOwnerRecord` **正本** | `owner-record-read.ts:22` | 一次 `readMany` 读一条 owner 记录、解码，并区分缺失与坏记录 | 单记录 owner 读取；不要自己写 `readOne` |
-| `readBatch`、`readRevisionNumber` | `plan-readers.ts:393`、`plan-readers.ts:409` | 批量读完整 key（present/missing/readThrough），并取某 key 的 revision | 一次要读多条事实、据实读版本生成 guard |
-| `sameCursor`、`laterCursor` | `plan-readers.ts:374`、`plan-readers.ts:383` | 比较两个 commit cursor、取较晚的一个 | 保留真实水位，合并多次读 |
+| `readBatch`、`readRevisionNumber` | `plan-readers.ts:400`、`plan-readers.ts:416` | 批量读完整 key（present/missing/readThrough），并取某 key 的 revision | 一次要读多条事实、据实读版本生成 guard |
+| `sameCursor`、`laterCursor` | `plan-readers.ts:381`、`plan-readers.ts:383` | 比较两个 commit cursor、取较晚的一个 | 保留真实水位，合并多次读 |
 | `mergeGuards` **正本** | `src/core/work-graph/persistence/record-guards.ts:12` | 按 refKey 合并 guards；同 key 不同 revision 应当拒绝 | 提交前合并全部读依赖；已合成，只剩这一份 |
 | `pinRevision` | `revision-guard.ts:19` | 从 `meta.expected` 取某引用的唯一非负 revision | 校验 pins；不要另写数组扫描 |
 | `replayCommittedReceipt` | `receipt-replay.ts:85` | 在 receipt cursor 处定位原事件、核对 receipt/事件与身份、投影结果 | 已提交重放，以及 commit 抛错后的恢复 |
@@ -169,23 +171,23 @@
 | `latestActivityAt` **正本**、`indexActiveCopies`、`readActiveCopies` | `src/core/work-graph/state/session-activity.ts:25`、`line-clock.ts:51`、`line-clock.ts:66` | 工作线时钟（规范化实现在 `state/session-activity.ts`，`line-clock.ts` 只再导出它）、活跃只读副本索引与完整分页枚举 | 工作线卡、秘书选择；不要把时钟或副本另读一份 |
 | `readLatestQueryRun`、`readQueryRunByRef`、`readQueryJobGoal` | `line-clock.ts:89`、`line-clock.ts:117`、`line-clock.ts:145` | 最近 Query、按 ref 读 QueryRun、读其 QueryJob 的 goal；失败经 sink 原样报 | 线卡与只读副本的阶段；`readQueryJobGoal` 由线卡和副本共用 |
 | `copyPhase`、`readClaimedAtForRun` **正本** | `line-clock.ts:172`、`line-clock.ts:190` | 副本的阶段/开始时刻；Run 无起止时间时按 claim 索引回退读 claimedAt | 线卡、秘书选择；不要把 claimedAt 另读一份 |
-| `readCanonicalTaskFacts`、`readTaskClosure`、`taskClosureOf` | `plan-readers.ts:1699`、`plan-readers.ts:2023`、`plan-readers.ts:2003` | 规范 Task 事实（Plan、phase、lease、requeue/refusal）与 Task closure | 认领、完成、对账、节点详情读 Task |
-| `readGoal`、`readGoalScope`、`readPlan`、`readProposal`、`readProposalOrigin` | `plan-readers.ts:415`、`plan-readers.ts:499`、`plan-readers.ts:530`、`plan-readers.ts:544`、`plan-readers.ts:567` | 单条 Goal/Plan/Proposal 及其来源的 canonical 读取 | 任何 owner 要一条已存记录时 |
-| `readGoalsByWorkspaceCreated` | `plan-readers.ts:472` | 按 `s6-goal-by-workspace-created` 升序分页读完一个工作区的全部 Goal（第一项即最早创建的 Goal） | `main/read` 取“首目标”与其前目标区边界 |
-| `readGoalsByProject` | `plan-readers.ts:433` | 一个项目的完整 Goal 候选集：按 `a2-goal-by-project` 读，水位取第一页的 `readThrough`，删除提交按 `ledgerHorizon` 冲突而不是漏读 | 目录删除/修订前读整个项目的 Goal |
-| `goalOrdinals`、`readGoalOrdinals` | `plan-readers.ts:454`、`plan-readers.ts:462` | 一个项目的“目标 n”：按创建游标 `since`（同游标按 goal id）排序，从 1 编；读不全时整个返回 `null`，不给错位的号 | `goals/read` 的 Host 绑定与秘书准备事实；内部 `queryGoal` 不读号 |
-| `readGoalPlanWindow`、`confirmActivePlan`、`findPendingProposal`、`terminalProposalOf` | `plan-readers.ts:1082`、`plan-readers.ts:1066`、`plan-readers.ts:618`、`plan-readers.ts:861` | Goal 的 Plan 窗口、active Plan 确认与 proposal 终态 | 采用、决定队列、完成判定 |
+| `readCanonicalTaskFacts`、`readTaskClosure`、`taskClosureOf` | `plan-readers.ts:1706`、`plan-readers.ts:2030`、`plan-readers.ts:2010` | 规范 Task 事实（Plan、phase、lease、requeue/refusal）与 Task closure | 认领、完成、对账、节点详情读 Task |
+| `readGoal`、`readGoalScope`、`readPlan`、`readProposal`、`readProposalOrigin` | `plan-readers.ts:422`、`plan-readers.ts:506`、`plan-readers.ts:537`、`plan-readers.ts:551`、`plan-readers.ts:574` | 单条 Goal/Plan/Proposal 及其来源的 canonical 读取 | 任何 owner 要一条已存记录时 |
+| `readGoalsByWorkspaceCreated` | `plan-readers.ts:479` | 按 `s6-goal-by-workspace-created` 升序分页读完一个工作区的全部 Goal（第一项即最早创建的 Goal） | `main/read` 取“首目标”与其前目标区边界 |
+| `readGoalsByProject` | `plan-readers.ts:440` | 一个项目的完整 Goal 候选集：按 `a2-goal-by-project` 读，水位取第一页的 `readThrough`，删除提交按 `ledgerHorizon` 冲突而不是漏读 | 目录删除/修订前读整个项目的 Goal |
+| `goalOrdinals`、`readGoalOrdinals` | `plan-readers.ts:461`、`plan-readers.ts:469` | 一个项目的“目标 n”：按创建游标 `since`（同游标按 goal id）排序，从 1 编；读不全时整个返回 `null`，不给错位的号 | `goals/read` 的 Host 绑定与秘书准备事实；内部 `queryGoal` 不读号 |
+| `readGoalPlanWindow`、`confirmActivePlan`、`findPendingProposal`、`terminalProposalOf` | `plan-readers.ts:1089`、`plan-readers.ts:1073`、`plan-readers.ts:625`、`plan-readers.ts:868` | Goal 的 Plan 窗口、active Plan 确认与 proposal 终态 | 采用、决定队列、完成判定 |
 | `createDispatchBasisReader`、`readDispatchFacts`、`readDispatchBasis` **正本** | `dispatch-basis.ts:64`、`dispatch-basis.ts:144`、`dispatch-basis.ts:172` | 一个水位读出 Plan revision、指针 revision（缺失 `'none'`）和计数器 sequence（缺失 0），并给出 Goal/指针/计数器三个 guards；窗口不齐只重读一次，并固定最后一次计数器读取的 watermark，第二次必须内部一致且仍等于该 watermark，任何再次移动为 `revision_conflict` | 发送前的三版本读取、`look_graph` 的 Goal 卡；不要把三个值分开读，也不要把读失败当 0 |
-| `enumerateGoalCandidates`、`enumerateClosedGoalCandidates`、`readGoalTriggerRecords`、`readGoalRunsForCount` | `plan-readers.ts:719`、`plan-readers.ts:769`、`plan-readers.ts:1427`、`plan-readers.ts:1400` | 按索引枚举 Goal 候选、触发记录与 Run 计数 | 决定队列、预算/上限判断 |
-| `createPlanReaders`、`successorParentsOf` | `src/core/work-graph/tasks/plan-readers.ts:2604`、`src/core/work-graph/tasks/plan-readers.ts:2588` | Goal 环的读取工厂（canonical Task/Goal/Plan/治理/closure、候选链、审阅与问题组读，全部只读已存记录），以及一次枚举里每个后继的来源父候选集合（来源链跨过 `planfix:` 即替换旧候选；后继自己的终态不影响） | 组合根发布 `planReaders`、候选卡与最新候选筛选；不要另装第二套读或另写继承判断 |
+| `enumerateGoalCandidates`、`enumerateClosedGoalCandidates`、`readGoalTriggerRecords`、`readGoalRunsForCount` | `plan-readers.ts:726`、`plan-readers.ts:776`、`plan-readers.ts:1434`、`plan-readers.ts:1407` | 按索引枚举 Goal 候选、触发记录与 Run 计数 | 决定队列、预算/上限判断 |
+| `createPlanReaders`、`successorParentsOf` | `src/core/work-graph/tasks/plan-readers.ts:2661`、`src/core/work-graph/tasks/plan-readers.ts:2645` | Goal 环的读取工厂（canonical Task/Goal/Plan/治理/closure、候选链、审阅与问题组读，全部只读已存记录），以及一次枚举里每个后继的来源父候选集合（来源链跨过 `planfix:` 即替换旧候选；后继自己的终态不影响） | 组合根发布 `planReaders`、候选卡与最新候选筛选；不要另装第二套读或另写继承判断 |
 | `resolveNoteQueryRun`、`createPlanningQueryRun` | `src/core/work-graph/tasks/planning-query-run.ts:217`、`src/core/work-graph/tasks/planning-query-run.ts:263` | 注记 owner 的唯一分派：规划轮（`plan_round`/`plan_review`，或来源是 Host 系统 `action_request` 的 `text` 轮）走规划解析器，其余交秘书解析器；工厂给出 `NoteQueryRunSourcePort` | 注记写入前解析运行中的轮；不要另写第二条链 |
 | `mergeStageRefinement` | `src/core/work-graph/tasks/stage-segment.ts:48` | 一次细分段并入 base：按 key 替换并追加，保留 base 的审阅协议与已采用 origin，丢弃被段任务拥有的旧边再追加新边 | 细化采用前；不要另写合并 |
 | `planSourceLineageOf` | `src/core/work-graph/tasks/plan-lineage.ts:43` | 从候选来源消息沿 `planfix:`/`planresume:` 走到最早的源，返回根消息、最近的修复轮与它修的候选 | `successorParentsOf` 与修复候选的读共用；不要另写走查 |
-| `readRunRoundChain`、`readGateRoundChain`、`readPointerIntents`、`readPinnedCompletionPolicy` | `plan-readers.ts:1329`、`plan-readers.ts:1366`、`plan-readers.ts:1563`、`plan-readers.ts:1015` | Run/gate 的 round 链、控制指针意图、钉住的完成策略 | 对账、完成、控制扇出 |
+| `readRunRoundChain`、`readGateRoundChain`、`readPointerIntents`、`readPinnedCompletionPolicy` | `plan-readers.ts:1336`、`plan-readers.ts:1373`、`plan-readers.ts:1570`、`plan-readers.ts:1022` | Run/gate 的 round 链、控制指针意图、钉住的完成策略 | 对账、完成、控制扇出 |
 | `readInitializationPointers` **正本** | `src/core/work-graph/tasks/initialization-pointers.ts:49` | 项目两个 active 治理指针的读取与 `activeRevision` 解码：返回架构基线/完成策略的 id 与 revision；缺失为 `null`，坏读为 `unavailable` | 判断项目是否已初始化、或者要指针里的 id/revision 时；不要另读这两个指针 |
-| `readGoalPhase`、`readOriginPlans`、`readFutureChangeTaskFacts`、`readDispositionChangeTaskFacts` | `plan-readers.ts:2087`、`plan-readers.ts:2272`、`plan-readers.ts:2128`、`plan-readers.ts:2212` | 阶段、来源 Plan、未来/处置变更的 Task 事实 | 各 owner 的定向读 |
-| `readUnknownCallReviewOutcome`、`readRequestCandidateHead`、`taskRecordRefKey`、`createNoteRunTaskResolver`、`createSessionResponsibilityBasisReader` | `plan-readers.ts:1226`、`plan-readers.ts:677`、`plan-readers.ts:1277`、`plan-readers.ts:1536`、`plan-readers.ts:2318` | 审查结果、候选头、Task/Lease 记录键与两个窄读取器 | 各 owner 的定向读；不要另写同一索引遍历 |
-| `PLAN_STATE_RECORD_SCHEMAS`、`PLAN_GOVERNANCE_RECORD_SCHEMAS`、`RUN_BY_TASK_INDEX`、`RUN_BY_WORKSPACE_STATUS_INDEX`、`GOAL_BY_WORKSPACE_INDEX`、`GOAL_BY_PROJECT_INDEX`、`GOAL_BY_WORKSPACE_CREATED_LOOKUP`、`RUN_BY_WORKSPACE_OUTCOME_INDEX`、`S2B_RUN_BY_GOAL_ENDED_LOOKUP`、`S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP`、`GOAL_BY_CONTINUED_FROM_INDEX` | `plan-readers.ts:325`、`plan-readers.ts:357`、`plan-readers.ts:121`、`plan-readers.ts:123`、`plan-readers.ts:125`、`plan-readers.ts:127`、`plan-readers.ts:129`、`plan-readers.ts:131`、`plan-readers.ts:133`、`plan-readers.ts:135`、`plan-readers.ts:137` | 记录 schema 注册组与已注册索引名 | 组合根注册、按索引读；不要自造索引名 |
+| `readGoalPhase`、`readOriginPlans`、`readFutureChangeTaskFacts`、`readDispositionChangeTaskFacts` | `plan-readers.ts:2094`、`plan-readers.ts:2279`、`plan-readers.ts:2135`、`plan-readers.ts:2219` | 阶段、来源 Plan、未来/处置变更的 Task 事实 | 各 owner 的定向读 |
+| `readUnknownCallReviewOutcome`、`readRequestCandidateHead`、`taskRecordRefKey`、`createNoteRunTaskResolver`、`createSessionResponsibilityBasisReader` | `plan-readers.ts:1233`、`plan-readers.ts:684`、`plan-readers.ts:1284`、`plan-readers.ts:1543`、`plan-readers.ts:2325` | 审查结果、候选头、Task/Lease 记录键与两个窄读取器 | 各 owner 的定向读；不要另写同一索引遍历 |
+| `PLAN_STATE_RECORD_SCHEMAS`、`PLAN_GOVERNANCE_RECORD_SCHEMAS`、`RUN_BY_TASK_INDEX`、`RUN_BY_WORKSPACE_STATUS_INDEX`、`GOAL_BY_WORKSPACE_INDEX`、`GOAL_BY_PROJECT_INDEX`、`GOAL_BY_WORKSPACE_CREATED_LOOKUP`、`RUN_BY_WORKSPACE_OUTCOME_INDEX`、`S2B_RUN_BY_GOAL_ENDED_LOOKUP`、`S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP`、`GOAL_BY_CONTINUED_FROM_INDEX` | `plan-readers.ts:332`、`plan-readers.ts:364`、`plan-readers.ts:128`、`plan-readers.ts:130`、`plan-readers.ts:132`、`plan-readers.ts:134`、`plan-readers.ts:136`、`plan-readers.ts:138`、`plan-readers.ts:140`、`plan-readers.ts:142`、`plan-readers.ts:144` | 记录 schema 注册组与已注册索引名 | 组合根注册、按索引读；不要自造索引名 |
 | `planTaskFacts`、`buildEffectiveTaskBasis`、`isBasisUnsupported` | `plan-task-basis.ts:238`、`plan-task-basis.ts:102`、`plan-task-basis.ts:73` | Task 有效 basis 的每 Plan 索引与不可用判定 | 读 Plan 的 Task 与采用编译 |
 | `entryPlanVerdict`、`taskOriginVerdict` | `plan-task-basis.ts:379`、`plan-task-basis.ts:318` | 旧 Plan 的 claim 能否进入；来源 Plan 的事实是否描述所选 Plan 的 Task | 进入授权、证据归属 |
 | `validatePlanDraft`、`validatePlanAssignments` | `plan-validation.ts:46`、`plan-validation.ts:222` | Plan 草稿的义务/DAG/assignment 校验、唯一 task id（`duplicate_task_id`，propose 和 apply 共用）与 assignment 唯一性 | 采用前校验；不要另写一套 |
@@ -235,8 +237,11 @@
 | `createRunControlService`、`controlIntentRefFor`、`createRunStateReader` | `control-service.ts:598`、`control-service.ts:161`、`run-state-service.ts:407` | Run 控制服务、确定性的 intent 引用与执行读取器 | 组合根、Goal 扇出、执行读取 |
 | `createRunReconcileService`、`createExecutionHistoryService`、`createRunActivityService`、`runActivityRefOf` | `run-reconcile-service.ts:646`、`execution-history-service.ts:204`、`run-activity-service.ts:376`、`run-activity-service.ts:277` | Run 对账、执行历史定位器、活动回填与活动引用 | 启动对账与活动回填 |
 | `createGoalSettingsService`、`setGoalControlFromHost`、`createGoalDecisionCauseReader` | `goal-settings-service.ts:174`、`goal-control.ts:125`、`goal-decision-reader.ts:137` | Goal 设置、desired state 与决定原因读取 | 组合根、Host 控制、决定队列 |
-| `GOAL_COPY_RECORD_SCHEMAS` | `goal-copy-service.ts:148` | 复制出生与逐项结算两个事件的记录 schema 注册组：`GoalCopied@1` 的出生数据（`continuedFrom`、`copiedInterventions`、`settings`、`selection`、撤回项）全在事件里，`goal.since` 为 `null`，游标由提交填；`GoalCopyRetractionSettled@1` 的 codec 来自 `goal-copy-progress.ts`，只在这一组注册一次 | 组合根注册与复制确认的重放；不要另造第二个复制事件，也不要另注册同一个 settle 事件 |
-| `createGoalCopyService` | `goal-copy-service.ts:183` | `GoalCopyPort` 的 owner：`goals/copy-draft` 的只读预览与 `goals/copy-confirm` 的唯一出生提交（一次 `executeWriteCommand`，源只做 CAS guard）；干预读/撤回两个端口可空，7A 注入；同文件的 `createCopiedInterventionForwarding` 负责首次 Plan 采用后的复制干预转发（逐条经 F 的可信入口，确定性命令 id 重放） | 组合根接线（复制草稿与确认）；不要另写复制提交 |
+| `GOAL_COPY_RECORD_SCHEMAS` | `goal-copy-service.ts:166` | 复制出生与逐项结算两个事件的记录 schema 注册组：`GoalCopied@1` 的出生数据（`continuedFrom`、`copiedInterventions`、`settings`、`selection`、撤回项）全在事件里，`goal.since` 为 `null`，游标由提交填；`GoalCopyRetractionSettled@1` 的 codec 来自 `goal-copy-progress.ts`，只在这一组注册一次 | 组合根注册与复制确认的重放；不要另造第二个复制事件，也不要另注册同一个 settle 事件 |
+| `createGoalCopyService` | `goal-copy-service.ts:324` | `GoalCopyPort` 的 owner：`goals/copy-draft` 的只读预览与 `goals/copy-confirm` 的唯一出生提交（一次 `executeWriteCommand`，源只做 CAS guard）；干预读/撤回两个端口可空，7A 注入；同文件的 `createCopiedInterventionForwarding` 负责首次 Plan 采用后的复制干预转发（逐条经 F 的可信入口，确定性命令 id 重放） | 组合根接线（复制草稿与确认）；不要另写复制提交 |
+| `createGoalAdviserQueueService`、`GoalAdviserQueuePort`、`GoalAdviserQueueDependenciesV1`、`GoalQueueWriteV1`、`GoalAdviserAllocationV1`、`GoalDrainResultV1` | `goal-adviser-queue-service.ts:170`、`goal-adviser-queue-service.ts:96`、`goal-adviser-queue-service.ts:62`、`goal-adviser-queue-service.ts:78`、`goal-adviser-queue-service.ts:85`、`goal-adviser-queue-service.ts:91` | 项目参谋队列的唯一 owner：唯一的分配入口 `allocate`（四臂 `assigned`/`queued`/`line_pending`/`needs_decision` 都是提交了的值）、人的 `reorder`/`assign`、一页 `drain` 和 `read` | 确认目标、Workflow 两处触发、加线卡和队列分配卡、7C 无参谋卡的批准、Host 每趟的 drain 都调这一个实例；不要另写分配或入队 |
+| `adviserCandidateOf`、`AdviserSlotFactsV1`、`AdviserCandidateV1` | `adviser-slots.ts:29`、`adviser-slots.ts:9`、`adviser-slots.ts:20` | 参谋候选的唯一纯比较：资格在先，再按负担排 | 分配、队列分配卡出卡前和批准时选参谋；不要另写比较 |
+| `readOpenResponsibilityLines`、`OpenResponsibilityLineV1` | `plan-readers.ts:2482`、`plan-readers.ts:2474` | 一个目标或项目模块目标上开着的负责链接加每条线的固定职责 | 判断目标已有参谋、复制时找要迁的线；不要另写开着链接的读 |
 | `createGoalExecutedFilesReader`、`createPlanningQuestionReader` | `goal-executed-files-reader.ts:72`、`planning-question-reader.ts:89` | Goal 已执行文件与已保存 planning question 的只读端口。读法一页有三种来源的发现：普通 Query 按 by-Goal 的 QueryJob 索引，绑定来源按初始化绑定的 by-Goal 索引，`prepared_goal` 每次装配只走一遍 workspace 已答的 request round；两种来源都按冻结的 Goal 判，并用解析出的 `bindingRef`/Goal 核对，不一致是 `source_stale` | 决定队列与 Host 读；不要把这两类来源的 Goal 从原 Job 推 |
 | `admitRequestSecretary` **正本** | `secretary-selection.ts:188` | 请求秘书的唯一准入检查：caller scope、occupancy 可用性、Query 派发、duty 与 profile；占用只表示 busy；准入结果只带 Session/profile，等待由 Session facts 读取 | 分配、转交与候选列表都走它；不要复制准入算法 |
 | `secretaryHandoffBasis` **正本**、`roleLineInputBasis` **正本**、`readSecretaryHandoffBasis` | `secretary-handoff-basis.ts:46`、`secretary-handoff-basis.ts:69`、`secretary-handoff-basis.ts:161` | 交接 too-long 的唯一纯规则与唯一读取（QueryRun 加给定任务的 Work Run）：阈值、`tooLong`、最后 input、run/请求下标、有序读的水位；坏读是 `unavailable`；`readSecretaryHandoffBasis` 是不带 tasks 的包装 | 任何 too-long 判断与水位都调它们；不要另算阈值、另写索引分页 |

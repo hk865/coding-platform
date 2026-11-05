@@ -1654,6 +1654,24 @@ export function createWorkflow(deps: WorkflowDependencies & {
             round, recipient: adviser.value, text,
           } }), null, null, basis);
         }
+        // L33: a refinement round with no adviser goes to the queue's one entry, which tries a candidate, then a
+        // role_line_add, and appends only at the cap; the command identity makes a repeat a replay. An adviser that
+        // the Goal already has (`goal_has_adviser`) keeps the ordinary wait below.
+        if (deps.goalAdviserQueue !== undefined) {
+          const allocated = await deps.goalAdviserQueue.allocate(automationContext(owned), {
+            commandId: `goal-queue:${goal.ref.goalId}`, goalRef: goal.ref,
+          });
+          if (!(allocated.status === 'rejected' && allocated.code === 'revision_conflict'
+            && allocated.reason === 'goal_has_adviser')) {
+            if (allocated.status !== 'committed') return waiting(null, 'goal_queue: the allocation did not commit');
+            const kept = candidateWait === null
+              ? result.value.reason ?? 'the Goal is waiting'
+              : `${result.value.reason ?? 'the Goal is waiting'}; ${candidateWait.reason}`;
+            return waiting(result.value.receipt, `no_adviser: the Goal is queued for an adviser; ${kept}`,
+              (result.value.source ?? candidateWait?.source) ?? undefined,
+              mergeWaitBasis([basis, goalWaitBasisOf(goal, ['no_adviser'], ['Goal', 'Session', 'GoalPhase'])]));
+          }
+        }
       }
       const reason = candidateWait === null
         ? result.value.reason ?? 'the Goal is waiting'
@@ -2331,6 +2349,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (goal.continuedFrom !== null && forward !== undefined) {
       const forwarded = await forward(owned.ctx, { goalRef: goal.ref });
       if (forwarded !== null) return forwarded;
+      // L39: a source line that was reused or archived leaves the copy without an adviser, so the queue's one entry
+      // resolves it once; a copy that already has one (L-8 (i), `goal_has_adviser`) goes on to the selection.
+      if (deps.goalAdviserQueue !== undefined) {
+        const allocated = await deps.goalAdviserQueue.allocate(automationContext(owned), {
+          commandId: `goal-queue:${goal.ref.goalId}`, goalRef: goal.ref,
+        });
+        if (allocated.status !== 'committed'
+          && !(allocated.code === 'revision_conflict' && allocated.reason === 'goal_has_adviser')) {
+          return waiting(null, 'goal_queue: the allocation did not commit');
+        }
+      }
     }
     const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
     if (graphRead.status !== 'ready') return readRejection(graphRead);

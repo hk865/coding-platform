@@ -56,6 +56,8 @@ import { interventionPlanningQueryRefs, queryJobRefFor } from '../contracts/quer
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
 import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
+import { QUEUE_DRAIN_BATCH } from '../core/work-graph/state/goal-adviser-queue.js';
+import type { GoalDrainResultV1 } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
@@ -1258,18 +1260,30 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       return { continued, blocked };
     };
     /**
-     * One whole lifecycle traversal: pending round ends, then every unfinished operation once. A transient item is
-     * recorded and stepped past; only a traversal that progressed nothing throws, so the loop's own back-off reruns the
-     * whole traversal.
+     * One whole lifecycle traversal: pending round ends, every unfinished operation once, then one bounded page of the
+     * project's Goal adviser queue. A transient item is recorded and stepped past; only a traversal that progressed
+     * nothing throws, so the loop's own back-off reruns the whole traversal. The drain runs after
+     * `continueUnfinished`, so a `role_line_add` the previous drain accepted is driven first; `more` is the next
+     * pass's continuation, never a loop inside this one.
      */
-    const runLifecyclePass = async (ctx: CoreCallContext): Promise<{ continued: number; blocked: number }> => {
+    const runLifecyclePass = async (ctx: CoreCallContext):
+      Promise<{ continued: number; blocked: number; queue: GoalDrainResultV1 | null }> => {
       const failures: string[] = [];
       await startPendingHandoffs(ctx, failures);
-      const { continued, blocked } = await continueUnfinished(ctx, failures);
+      let { continued, blocked } = await continueUnfinished(ctx, failures);
+      const drained = await platform.goalAdviserQueue.drain(ctx, { limit: QUEUE_DRAIN_BATCH });
+      let queue: GoalDrainResultV1 | null = null;
+      if (drained.status !== 'ready') {
+        if (transient(drained)) failures.push(notReady('the goal adviser queue drain', drained).message);
+        else blocked += 1;
+      } else {
+        queue = drained.value;
+        continued += queue.assigned;               // a blocked/queued entry is not progress
+      }
       if (continued === 0 && failures.length > 0) {
         throw new Error(`the lifecycle pass failed: ${failures.join('; ')}`);
       }
-      return { continued, blocked };
+      return { continued, blocked, queue };
     };
     // The lifecycle queue: one handler call is one whole traversal. The composition binds the reads and the
     // Workflow owners.
@@ -1297,7 +1311,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         const pass = await lifecycle.run(ctx);
         // The third step, after `continueUnfinished`: `scope` is `drain`'s own, and N's request ids make a repeat a no-op.
         await announceDisconnections();
-        return { progressed: pass.continued, more: false, continuation: null, wrapped: true, blocked: pass.blocked };
+        // The progress is the pass's, and `more` is the queue drain's continuation.
+        return { progressed: pass.continued, more: pass.queue?.more ?? false, continuation: null,
+          wrapped: true, blocked: pass.blocked };
       },
     };
     loop.register(LIFECYCLE_QUEUE, lifecycleHandler, { aggregateTypes: LIFECYCLE_WAKE_AGGREGATE_TYPES });

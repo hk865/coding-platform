@@ -33,7 +33,8 @@ import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { usageOf } from '../helpers/S6A-host-fixture.js';
-import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import { checkConfiguration, sessionOf } from '../helpers/S7A-fixture.js';
 
 // The gate-round read fault sits on the real record-store boundary (A2/A4):
@@ -151,8 +152,18 @@ describe('PL-14: stage end notice', () => {
       // sends the real `refine:` round for `stage-two`, the Host planning
       // consumption answers it on the adviser line, and the round's public
       // Query is the observed progress (not merely "the advance returned").
-      const adviserLine = await createS6BLine(world.main, { label: 'pl14-adviser', role: ADVISER_ROLE });
-      const adviser = await sessionOf(world.world, adviserLine);
+      // L33: the gate advance already allocated the Goal an adviser (a platform line); the round goes to that line.
+      const linked = (await world.world.post('sessions/find', plain(S6A_SCOPE, { workspace: S6A_SCOPE,
+        target: { kind: 'goal', ref: world.goal }, includeArchived: false, page: { limit: 100 } })))
+        .body as { status: string; value: { items: SessionCard[] } };
+      const advisers = linked.value.items.filter(card => card.links.some(link => link.until === null
+        && link.ref.relation === 'responsible' && link.ref.target.kind === 'goal'
+        && link.ref.target.ref.goalId === world.goal.goalId));
+      expect(advisers).toHaveLength(1);
+      const allocated = advisers[0]!.record;
+      const adviser: S6ASession = { label: 'pl14-adviser',
+        ref: { projectId: allocated.ref.projectId, sessionId: allocated.ref.sessionId }, aggregateRef: allocated.ref,
+        role: structuredClone(allocated.role), createdAt: allocated.createdAt };
       await world.world.scripted.script(adviser, [
         { kind: 'text', text: 'PL-14 stage two refine acknowledged' },
       ]);

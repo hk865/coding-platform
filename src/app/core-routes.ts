@@ -42,6 +42,7 @@ import type {
 } from '../core/work-graph/sessions/role-line-operations.js';
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
+import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 // The two secretary lifecycle commands' accept owners; the body and progress types are the DTOs derived from them.
 import type { SessionHandoffPort, SessionSecretaryArchivePort } from '../core/work-graph/sessions/session-handoff-service.js';
@@ -359,6 +360,8 @@ export type CoreRouteBindings = {
   updateAutonomyRule: (ctx: CoreCallContext,
     request: GraphWrite<Omit<Parameters<AutonomyRulePort['update']>[1], 'commandId'>>)
     => ReturnType<AutonomyRulePort['update']>;
+  // The project's Goal adviser queue read is person-only.
+  readGoalAdviserQueue: GoalAdviserQueuePort['read'];
   // The two Goal-card commands and the initialization adoption are person-only, so their binding can answer a
   // `forbidden` rejection; the copy preview is a read like the other reads.
   confirmGoalDraft: GoalConfirmPort['confirmDraft'];
@@ -488,6 +491,8 @@ export type CoreRoutePlatform = {
   roleLineOperationsRead?: RoleLineOperationReadPort;
   /** The autonomy-rule owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
   autonomyRules?: Pick<AutonomyRulePort, 'read' | 'create' | 'revoke' | 'update'>;
+  /** The Goal adviser queue owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
+  goalAdviserQueue?: Pick<GoalAdviserQueuePort, 'read' | 'reorder' | 'assign'>;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -726,6 +731,7 @@ export const CORE_ROUTE_SPECS: Record<
   'autonomy-rules/create': { kind: 'graph_write', binding: 'createAutonomyRule', owner: 'autonomyRules.create' },
   'autonomy-rules/revoke': { kind: 'graph_write', binding: 'revokeAutonomyRule', owner: 'autonomyRules.revoke' },
   'autonomy-rules/update': { kind: 'graph_write', binding: 'updateAutonomyRule', owner: 'autonomyRules.update' },
+  'goals/adviser-queue': { kind: 'plain', binding: 'readGoalAdviserQueue', owner: 'goalAdviserQueue.read' },
 };
 
 export type ParsedCoreRequest =
@@ -1373,6 +1379,10 @@ export function createPlatformCoreRouteBindings(
       ? unsupported('the platform does not publish autonomyRules.update')
       : personEntry((ctx, request) => platform.autonomyRules!.update(ctx,
           { ...request.input, commandId: request.meta.requestId })),
+    // The Goal adviser queue read: person-only BEFORE the owner runs.
+    readGoalAdviserQueue: platform.goalAdviserQueue === undefined
+      ? unsupported('the platform does not publish goalAdviserQueue.read')
+      : personEntry(platform.goalAdviserQueue.read.bind(platform.goalAdviserQueue)),
     // The Goal service's three card owners; the Host's adoption owner arrives as the sixth argument.
     confirmGoalDraft: personEntry(platform.goals.confirmDraft.bind(platform.goals)),
     readGoalCopyDraft: platform.goals.readGoalCopyDraft.bind(platform.goals),
@@ -1668,6 +1678,8 @@ export async function dispatchCoreRoute(
       case 'autonomy-rules/create': return bindings.createAutonomyRule(ctx, graphWrite.request as never);
       case 'autonomy-rules/revoke': return bindings.revokeAutonomyRule(ctx, graphWrite.request as never);
       case 'autonomy-rules/update': return bindings.updateAutonomyRule(ctx, graphWrite.request as never);
+      // The Goal adviser queue read takes the explicit empty input, like `role-lines/allocation`.
+      case 'goals/adviser-queue': return bindings.readGoalAdviserQueue(ctx, plain.input as never);
       // The two Goal-card commands, the copy preview and the initialization adoption.
       case 'goals/confirm-draft': return bindings.confirmGoalDraft(ctx, plain.input as never);
       case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);

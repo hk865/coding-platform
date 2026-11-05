@@ -4,13 +4,19 @@ import type {
 import { sameJson } from '../../../contracts/fingerprint.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { isLegalSettings } from './goal-settings-machine.js';
+import { planReanchor, type ReanchorPlanV1, type ReanchorRefusalV1 } from './reanchor.js';
 
 export type DecideGoalCopy =
   (facts: GoalCopyFactsV1, input: GoalCopyDraftInputV1 | GoalCopyConfirmInputV1) => GoalCopyDecisionV1;
 
-/** The named plan re-anchor hook: it returns no receipt and changes no fact, and reports that plan re-anchoring is not implemented. */
-export function planReanchorHook(): { status: 'not_implemented'; reason: 'planReanchor is 7D1' } {
-  return { status: 'not_implemented', reason: 'planReanchor is 7D1' };
+export type PlanReanchorHookInputV1 = Parameters<typeof planReanchor>[0];
+export type PlanReanchorHookResultV1 =
+  | { ok: true; plan: ReanchorPlanV1 }
+  | { ok: false; refusals: readonly ReanchorRefusalV1[] };
+
+/** The copy's one named re-anchor seam, 7D1's plan: receipt-less and pure, no second migration path. */
+export function planReanchorHook(input: PlanReanchorHookInputV1): PlanReanchorHookResultV1 {
+  return planReanchor(input);
 }
 
 /**

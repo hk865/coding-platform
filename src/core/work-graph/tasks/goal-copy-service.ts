@@ -5,53 +5,71 @@
  *   candidate; with no reader the preview answers `{ available: false }`.
  * - `confirm`: the single birth commit (`goal.copyConfirm`) — the new active Goal with `continuedFrom` /
  *   `copiedInterventions`, its `GoalCopied` event and the receipt. The source Goal is only CAS-guarded, never written.
+ *   The same commit moves the source Goal's adviser and scribe lines onto the new Goal, and a copy that moved a line
+ *   writes one project notice after it.
  *   A retraction failure after the commit is the owner's continuation: the Goal stays, and replaying the same confirm
  *   finishes the still-unfinished items; it never commits again.
  *
  * The commit's result event is `GoalCopied`: the event carries the complete birth data and `goal.since: null`, and the
  * projection fills the birth cursor.
  */
-import type { CommitCursor, CreateGoalCommand } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor, CreateGoalCommand } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { ProjectScope, SessionRef, SessionWorkLinkRef, VersionPin } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { defineEvent, defineShape, f, type InferEvent } from '../../../contracts/data-format.js';
 import {
   ActorRefField, GoalRefShape, PlanRevisionRefShape, SessionMessageRefShape, WorkspaceRefShape, id,
 } from '../../../contracts/data-format-refs.js';
 import { messageOf } from '../../../contracts/error-message.js';
-import { sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalKey, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   GoalCopyConfirmInputV1, GoalCopyConfirmResultV1, GoalCopyDecisionV1, GoalCopyDraftInputV1,
   GoalCopyDraftResultV1, GoalCopyFactsV1, GoalUnderstandingPinV1,
 } from '../../../contracts/goal-card.js';
 import type { GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
+import type { NotifyProjectInputV1, ProjectNoticeV1, RoleLineDutyV1 } from '../../../contracts/role-lines.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
-  EncodedDomainEvent, GoalRecordTransactionPort, RecordBackendSchemas,
+  CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas,
+  RecordCommitIdentityPort, RecordGuard, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { SessionMessageCommandPort } from '../model/communication-contracts.js';
 import type { CopyInterventionReadPort, CopyInterventionRetractionPort } from '../model/goal-copy-contracts.js';
 import type { GoalCopyPort, GoalUnderstandingReadPort } from '../model/goal-card-contracts.js';
 import type { MessageForwardingPort } from '../model/communication-contracts.js';
+import type { SessionResponsibilityBasisPort } from '../model/session-facts-contracts.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import { FORWARD_DESTINATION_GONE } from '../state/message-machine.js';
 import { compileGoalCreate } from '../persistence/commit-compiler.js';
 import {
-  commandIdentity, executeWriteCommand, type CommandResult, type Keys,
+  commandIdentity, executeWriteCommand, type CommandResult, type CommitFragment, type Keys,
 } from '../persistence/command-executor.js';
 import { createEventCodec, formatSchemas } from '../persistence/field-table-codec.js';
+import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
 import { GoalCopyFieldsShape, canonicalRefKey, goalSettingsProblem } from '../persistence/record-codecs.js';
+import { mergeGuards } from '../persistence/record-guards.js';
 import { decideGoalCopy, planReanchorHook } from '../state/goal-copy.js';
 import { newGoalSnapshot } from '../state/goal-machine.js';
+import { encodeSessionResponsibilityChangedEvent } from '../sessions/lifecycle-record-codecs.js';
+import { roleLineCommitContribution } from '../sessions/role-scope-commit.js';
+import {
+  decodeSessionRecord, encodeSessionRecord, plainSessionRef, plainSessionRefKey, sessionWorkLinkRefKey,
+} from '../sessions/session-record-codecs.js';
+import { responsibleLinkRef } from '../sessions/session-responsibility-service.js';
+import { eventIdOf } from '../sessions/trusted-context.js';
 import { bindTrustedContext } from './execution-entry-service.js';
 import {
   GoalCopyRetractionShape, copyRetractionSettledCodec, settleCopyItem, type CopyRetractionSettleScopeV1,
 } from './goal-copy-progress.js';
+import { readOwnerRecord } from './owner-record-read.js';
 import { asWriteRejection } from './plan-result-helpers.js';
-import { readGoal, readGoalScope } from './plan-readers.js';
+import { readGoal, readGoalScope, readOpenResponsibilityLines } from './plan-readers.js';
 
 const GOAL_COPIED_EVENT_TYPE = 'GoalCopied' as const;
 const GOAL_COPIED_EVENT_SCHEMA_VERSION = 1 as const;
@@ -152,12 +170,21 @@ export const GOAL_COPY_RECORD_SCHEMAS: RecordBackendSchemas =
 // --------------------------------------------------------------------------
 
 export type GoalCopyServiceDependencies = {
-  records: GoalRecordTransactionPort;
+  /** The Goal records, plus the source Goal's open responsible links and their Session records. */
+  records: GoalRecordTransactionPort & RecordLookupPort;
   understanding: GoalUnderstandingReadPort;
   /** Optional, injected by the intervention reader's owner: a non-empty selection cannot be verified without it. */
   interventions?: CopyInterventionReadPort;
   /** Optional, injected alongside the intervention reader. */
   retractions?: CopyInterventionRetractionPort;
+  /** Each source line's fixed duty: only an adviser or a scribe line moves with the copy. */
+  duty: SessionDutyReadPort;
+  /** The moved line's responsibility basis, carried by its `SessionResponsibilityChanged` event. */
+  responsibility: Pick<SessionResponsibilityBasisPort, 'readResponsibilityBasis'>;
+  /** The one project notice writer: the continuation notice after a birth commit that moved a line. */
+  notices: { projectNoticeWriter(input: NotifyProjectInputV1): Promise<WriteResult<ProjectNoticeV1>> };
+  /** A replay skips `build`, so it reads the original birth receipt by identity to learn whether a line moved. */
+  commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
   now(): string;
   eventId(): string;
 };
@@ -178,6 +205,120 @@ type CopyBasis = {
   workspaceRevision: number;
   pin: GoalUnderstandingPinV1;
 };
+
+/** What the birth commit adds for the source Goal's moved lines. */
+type CopyLineContributionV1 =
+  | { ok: true; guards: readonly RecordGuard[]; records: readonly EncodedRecord[];
+      claims: readonly UniqueClaimChange[]; events: readonly EncodedDomainEvent[];
+      commitCursorBindings: readonly CommitCursorBinding[] }
+  | { ok: false; rejection: CoreRejection };
+
+/** The two duties whose lines follow a continued Goal; a goal-scope secretary link stays on the source. */
+const MOVED_DUTIES: readonly RoleLineDutyV1[] = ['adviser', 'scribe'];
+
+/** A moved line's responsibility event id: a replay recognizes the original move by it in the birth receipt. */
+function moveEventIdOf(identityKey: string, duty: RoleLineDutyV1, index: number): string {
+  return eventIdOf(identityKey, `goal-copy:${duty}:${index}`);
+}
+
+/**
+ * The source Goal's open responsible goal links whose line has the adviser or scribe duty, each moved onto the new
+ * Goal by one plan per duty and merged into the birth commit. The moved Session, its source link and the new link
+ * are guarded at the revisions read here, so a concurrent scope change or archive conflicts with the birth instead of
+ * being repaired after it. A refused plan moves nothing and is not a copy failure: the copy is left unassigned and
+ * re-resolves its lines on its next advance. A read failure refuses the copy, never reads as "no line".
+ */
+async function goalContinuationContribution(
+  deps: GoalCopyServiceDependencies, ctx: CoreCallContext, keys: Keys,
+  input: { projectRef: ProjectScope; actor: ActorRef; source: GoalSnapshot;
+    next: { ref: GoalRef; snapshot: PendingGoalSnapshot; version: VersionPin }; occurredAt: string },
+): Promise<CopyLineContributionV1> {
+  const { projectRef, actor, source, next, occurredAt } = input;
+  // The source Goal's open responsible lines and their duties: the one L-8 read; a failure is never "no line".
+  const open = await readOpenResponsibilityLines(deps.records, ctx, { goalRef: source.ref }, deps.duty);
+  if (open.status !== 'ready') {
+    return { ok: false, rejection: asWriteRejection(open, "the source Goal's open lines could not be read") };
+  }
+  const lines: { link: SessionWorkLink; session: SessionRecord; sessionKey: string; duty: RoleLineDutyV1 }[] = [];
+  for (const line of open.value) {
+    if (!MOVED_DUTIES.includes(line.duty)) continue;
+    const sessionKey = plainSessionRefKey(line.session);
+    const session = await readOwnerRecord({ store: deps.records, refKey: sessionKey, decode: decodeSessionRecord,
+      readError: (message) => rejected('unavailable', `the source Goal line Session could not be read: ${message}`) });
+    if (!session.ok) {
+      return { ok: false, rejection: 'rejection' in session ? session.rejection
+        : rejected('unavailable', 'the source Goal line has no Session record') };
+    }
+    lines.push({ link: line.link, session: session.value, sessionKey, duty: line.duty });
+  }
+  const sessions = new Map(lines.map((line) => [line.session.ref.sessionId, line.session] as const));
+  const links = new Map(lines.map((line) => [canonicalKey(line.link.ref), line.link] as const));
+  const goals = new Map([[source.ref.goalId, { state: 'present' as const, ref: source.ref, snapshot: source,
+    version: { ref: source.ref, revision: source.revision } }]]);
+  const fragments: CommitFragment[] = [];
+  for (const duty of MOVED_DUTIES) {
+    // One open responsible link per (duty, Goal): the role-scope claim admits a single owner.
+    const line = lines.find((entry) => entry.duty === duty);
+    if (line === undefined) continue;
+    const sourceLink = line.link;
+    const destination = responsibleLinkRef(plainSessionRef(sourceLink.ref), { kind: 'goal', ref: next.ref });
+    const plan = planReanchorHook({
+      projectRef, duty,
+      moves: [{ duty, source: sourceLink.ref,
+        destinations: [{ link: destination, target: { kind: 'goal', ref: next.ref } }] }],
+      facts: { sessions, links, goals, catalog: { state: 'none', revision: 0 } },
+      authorization: { actor, scope: [{ kind: 'project' }] },
+      proposed: { goal: next },
+    });
+    if (!plan.ok) continue;
+    // The read's pins: the moved Session and its source link at the revisions read above, the new link at null.
+    const sourceGuards: RecordGuard[] = [
+      { refKey: line.sessionKey, expectedRevision: line.session.revision },
+      { refKey: sessionWorkLinkRefKey(sourceLink.ref), expectedRevision: sourceLink.revision },
+      { refKey: sessionWorkLinkRefKey(destination), expectedRevision: null },
+    ];
+    const pending = (ref: SessionWorkLinkRef) =>
+      plan.plan.links.find((entry) => canonicalKey(entry.link) === canonicalKey(ref))?.next ?? null;
+    const moved = plan.plan.sessions[0]!;
+    const basisRead = await deps.responsibility.readResponsibilityBasis(ctx,
+      { sessionRef: plainSessionRef(moved.ref), target: sourceLink.ref.target });
+    if (basisRead.status !== 'ready') {
+      return { ok: false, rejection: asWriteRejection(basisRead, 'the moved line responsibility basis could not be read') };
+    }
+    const contribution = roleLineCommitContribution({
+      projectRef,
+      records: plan.plan.sessions.map(encodeSessionRecord),
+      guards: sourceGuards,
+      links: plan.plan.links,
+      claimChanges: plan.plan.claimChanges,
+      bindings: plan.plan.bindings,
+      // The moved Session's own workspace: the event's Session record must agree with the event scope, and the
+      // line may live in another workspace than the copied Goal.
+      events: plan.plan.events.map((material, index) => encodeSessionResponsibilityChangedEvent({
+        eventId: moveEventIdOf(keys.identityKey, duty, index),
+        eventType: 'SessionResponsibilityChanged', schemaVersion: 1, occurredAt,
+        projectId: projectRef.projectId, workspaceId: moved.workspaceId,
+        mode: material.opened === null ? 'drop' : 'transfer',
+        source: moved, destination: moved,
+        closed: pending(material.closed)!,
+        opened: material.opened === null ? null : pending(material.opened),
+        openedBound: material.openedBound, archiveStep: null, basis: basisRead.value.basis,
+      })),
+      allocation: null,
+    }, null);
+    if (!contribution.ok) return contribution;
+    fragments.push(contribution.fragment);
+  }
+  const merged = mergeGuards(fragments.flatMap((fragment) => fragment.guards));
+  if (!merged.ok) return merged;
+  return {
+    ok: true, guards: merged.guards,
+    records: fragments.flatMap((fragment) => fragment.records),
+    claims: fragments.flatMap((fragment) => fragment.claims),
+    events: fragments.flatMap((fragment) => fragment.events),
+    commitCursorBindings: fragments.flatMap((fragment) => fragment.commitCursorBindings ?? []),
+  };
+}
 
 export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCopyPort {
   async function readInterventionCandidates(ctx: CoreCallContext, goalRef: GoalRef,
@@ -333,6 +474,8 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
     });
 
     let basis!: CopyBasis;
+    // Set by the `build` that committed: whether this birth moved a line. A replay skips `build` and reads the receipt.
+    let movedLine = false;
     const command = {
       operation: OPERATION,
       scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
@@ -379,7 +522,7 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
           ? { refuse: rejected(decided.code, decided.reason) }
           : { decision: decided };
       },
-      build(decision: CopyCreateDecision, keys: Keys) {
+      async build(decision: CopyCreateDecision, keys: Keys) {
         const goalId = copiedGoalId(keys);
         const at = deps.now();
         const eventId = deps.eventId();
@@ -431,11 +574,22 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
               status: 'unfinished', reason: null })),
           },
         };
+        // One commit, one time: the moved lines' events take the birth's `at`.
+        const move = await goalContinuationContribution(deps, ownedCtx, keys, {
+          projectRef: { projectId: scope.projectId }, actor, source: basis.goal,
+          next: { ref: goalRef, snapshot: goal, version: { ref: goalRef, revision: 1 } }, occurredAt: at,
+        });
+        if (!move.ok) return move.rejection;
+        movedLine = move.events.length > 0;
+        const merged = mergeGuards([...compiled.guards, ...move.guards]);
+        if (!merged.ok) return merged.rejection;
         return {
-          guards: compiled.guards, records: compiled.records, claims: compiled.claims,
-          ...(compiled.commitCursorBindings === undefined
-            ? {} : { commitCursorBindings: compiled.commitCursorBindings }),
-          events: [goalCopiedCodec.encode(event)],
+          guards: merged.guards,
+          records: [...compiled.records, ...move.records],
+          claims: [...compiled.claims, ...move.claims],
+          events: [...move.events, goalCopiedCodec.encode(event)],
+          ...(compiled.commitCursorBindings === undefined && move.commitCursorBindings.length === 0
+            ? {} : { commitCursorBindings: [...(compiled.commitCursorBindings ?? []), ...move.commitCursorBindings] }),
         };
       },
       result: {
@@ -478,9 +632,25 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
       await executeWriteCommand<GoalCopyFactsV1, CopyCreateDecision, CoreRejection, GoalCopiedEvent,
         GoalCopyConfirmResultV1>(deps.records, command);
     if (result.status === 'committed') {
-      // The hook is where the real re-anchor lands; it returns no receipt and changes no fact, and a replay
-      // recovers the original copy without a second effect.
-      if (!result.replayed) planReanchorHook();
+      // The continuation notice, only when the copy moved a line. A replay's `build` did not run here, so the
+      // original birth receipt decides: the copy moved a line when the receipt holds a move event's id.
+      let moved = movedLine;
+      if (result.replayed) {
+        const original = await lookupCommittedReceiptByIdentity(deps.commitIdentities, confirmIdentity);
+        moved = original.status === 'found' && MOVED_DUTIES.some((duty) =>
+          original.receipt.eventIds.includes(moveEventIdOf(confirmIdentity, duty, 0)));
+      }
+      // The notice identity (subject, kind, operation) writes no second notice on a replay; a refused notice leaves
+      // the committed copy as it is.
+      if (moved) {
+        await deps.notices.projectNoticeWriter({
+          projectRef: { projectId: scope.projectId },
+          subject: { kind: 'project', projectRef: { projectId: scope.projectId } },
+          kind: 'automatic_adjustment',
+          summary: `目标已延续：${sourceGoalRef.goalId} → ${result.value.goal.ref.goalId}；顾问与记录员已随目标迁移（可归档或重排）`,
+          operation: { aggregateType: 'CoreOperation', projectId: scope.projectId, operationId: commandId },
+        });
+      }
       const value = await finishRetractions(ownedCtx, result.value, {
         scope,
         principal,

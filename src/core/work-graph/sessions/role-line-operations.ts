@@ -143,8 +143,38 @@ export type RoleLineOperationsDeps = {
     /** C13: one project notice after a platform or agent adjustment is done (`notifyProject`). */
     notify(ctx: CoreCallContext, input: NotifyProjectInputV1): Promise<unknown>;
   };
+  /** Card supplement §3.3: the goal adviser queue's one entry (structural: `sessions` does not import `tasks`). A
+   *  queue-assign card's approve is `allocate` with `approval`; a line-add card's reject is `allocate` with
+   *  `rejection`; an approved line add is allocated again as the platform. Absent, those three answers refuse. */
+  queue?: { allocate(ctx: CoreCallContext, input: { commandId: string; goalRef: GoalRef;
+    approval?: { operationRef: OperationRef; expectedRevision: number };
+    rejection?: { operationRef: OperationRef; expectedRevision: number } }): Promise<WriteResult<unknown> | CoreRejection> };
   now(): string;
 };
+
+/** The one failed record: the record, the action's phase and result, and the stored refusal (L-6 replays it); `at`
+ *  is the write's one clock read. The queue's line-add reject writes the same record. */
+export function failedRoleLineRecordOf(record: RoleLineOperationV1, action: RoleLineActionV1, refusal: CoreRejection,
+  at: string): RoleLineOperationV1 {
+  return { ...record, revision: record.revision + 1, updatedAt: at, phase: 'failed',
+    failure: { code: refusal.code, reason: refusal.reason },
+    action: { ...action, phase: 'failed', result: { status: 'failed', reason: refusal.reason } } };
+}
+
+/** One saved operation by its own key (not bound to the caller's workspace); a missing or damaged record and a
+ *  non-role-line one are refusals. */
+async function readRoleLineOperationByRef(records: Pick<GoalRecordTransactionPort, 'readMany'>, ref: OperationRef):
+  Promise<ReadResult<RoleLineOperationV1>> {
+  const key = operationRefKey(ref);
+  const read = await records.readMany([key]);
+  if (read.status !== 'ready') return sessionStoreFailureToRejection(read);
+  const stored = read.value.records.find((record) => record.refKey === key);
+  if (stored === undefined) return rejected('not_found', 'the role-line operation does not exist');
+  const decoded = decodeSessionOperationRecord(stored);
+  if (decoded.status !== 'decoded') return rejected('unavailable', `the role-line operation is damaged: ${decoded.reason}`);
+  if (decoded.value.action.kind !== 'role_line') return rejected('invalid', 'not a role_line operation');
+  return { status: 'ready', value: decoded.value as RoleLineOperationV1 };
+}
 
 /** `start_lines`' one record, born in the project's first workspace-registration commit (L26; TS-10 item 3). */
 export function startLinesInitialRecord(input: { projectId: string; workspaceId: string; now: string }):
@@ -321,12 +351,9 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     return { status: 'committed', value: result.value, replayed: result.replayed, cursor: result.cursor };
   }
 
-  /** The one failed record: the record, the action's phase and result, and the stored refusal (L-6 replays it). */
   function failedRecordOf(record: RoleLineOperationV1, action: RoleLineActionV1, refusal: CoreRejection):
     RoleLineOperationV1 {
-    return { ...record, revision: record.revision + 1, updatedAt: deps.now(), phase: 'failed',
-      failure: { code: refusal.code, reason: refusal.reason },
-      action: { ...action, phase: 'failed', result: { status: 'failed', reason: refusal.reason } } };
+    return failedRoleLineRecordOf(record, action, refusal, deps.now());
   }
 
   /** A line's counted duty (its role's duty through the one resolver): the split's source and the reused line. */
@@ -1116,19 +1143,27 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     if (optionId !== 'approve' && optionId !== 'reject') {
       return { status: 'refused', rejection: rejected('invalid', 'a role_line_change card answers approve or reject') };
     }
-    // The operation lives in the main workspace, wherever the card was answered (v4 §2.2 item 4).
-    const lineCtx = await lineContextOf(ctx);
-    if (lineCtx.status !== 'ready') {
-      return { status: 'refused', rejection: roleLineReadFailure(lineCtx, 'the main workspace') };
-    }
-    const read = await readRoleLineRecord(lineCtx.value, pin.ref as OperationRef);
+    // The operation is read by its own key: a queue-assign card's lives in the goal's workspace, a line add's and a
+    // split's in the main one (v4 §2.2 item 4). Its writes run in its own workspace, under the answerer's actor.
+    const read = await readRoleLineOperationByRef(deps.records, pin.ref as OperationRef);
     if (read.status !== 'ready') {
       return { status: 'refused', rejection: roleLineReadFailure(read, 'the role-line operation') };
     }
-    const decided = await writeDecision(lineCtx.value, read.value, pin.revision, optionId,
+    const operation = read.value;
+    const operationCtx = ctx.principal.kind === 'host'
+      ? handoffContextOf({ ...ctx, workspaceId: operation.workspaceId }, ctx.principal) : ctx;
+    // A queue-assign card's approve IS the assignment commit, and a line-add card's reject IS the queue append (U1):
+    // neither writes the decision commit first. The queue writes keep the answerer's principal.
+    if (operation.action.action === 'goal_queue_assign' && optionId === 'approve') {
+      return approveQueueAssign(ctx, operation, pin.revision, input.requestId);
+    }
+    if (operation.action.action === 'role_line_add' && optionId === 'reject') {
+      return rejectLineAdd(ctx, operation, pin.revision, input.requestId);
+    }
+    const decided = await writeDecision(operationCtx, operation, pin.revision, optionId,
       { requestId: input.requestId, answerRef: input.answerRef });
     if (decided.status !== 'committed') return { status: 'refused', rejection: decided };
-    switch (read.value.action.action) {
+    switch (operation.action.action) {
       case 'role_line_split': {
         if (optionId === 'reject') return { status: 'deferred' };
         // An approved split that already ended failed (at cap, TS-8) answers its stored refusal on every replay of the
@@ -1138,13 +1173,52 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
           return { status: 'refused', rejection: rejected(settled.failure.code as CoreError, settled.failure.reason) };
         }
         // TS-8's one push, as the platform (C10): the approved split's child is created under this identity.
-        const platform = handoffContextOf(lineCtx.value, { kind: 'host', actor: { ...WORKFLOW_AUTOMATION_ACTOR } });
+        const platform = handoffContextOf(operationCtx, { kind: 'host', actor: { ...WORKFLOW_AUTOMATION_ACTOR } });
         const pushed = await continueRoleLineSplit(platform, decided.value);
         return pushed.status === 'ready' ? { status: 'deferred' }
           : { status: 'refused', rejection: roleLineReadFailure(pushed, 'the approved split') };
       }
+      case 'role_line_add': return allocateAfterDecision(ctx, operation);
       default: return { status: 'deferred' };          // an approved reuse goes on by its caller's replay (§2.3)
     }
+  }
+
+  /** An approved line add is allocated again as the platform, the confirm's command (TS-19): a candidate takes the
+   *  goal, else `open` replays this approved operation and drives it, else the goal is queued. */
+  async function allocateAfterDecision(ctx: CoreCallContext, operation: RoleLineOperationV1):
+    Promise<{ status: 'deferred' } | { status: 'refused'; rejection: CoreRejection }> {
+    const goalRef = operation.action.goalRef;
+    if (deps.queue === undefined || goalRef === null) return { status: 'deferred' };
+    const allocated = await deps.queue.allocate(
+      handoffContextOf(ctx, { kind: 'host', actor: { ...WORKFLOW_AUTOMATION_ACTOR } }),
+      { commandId: `goal-queue:${goalRef.goalId}`, goalRef });
+    if (allocated.status === 'committed') return { status: 'deferred' };
+    if (allocated.code === 'revision_conflict' && allocated.reason === 'goal_has_adviser') return { status: 'deferred' };
+    return { status: 'refused', rejection: allocated };
+  }
+
+  /** A queue-assign card's approve: the candidate step with the card's pin; a commit closes the card's source. */
+  async function approveQueueAssign(ctx: CoreCallContext, operation: RoleLineOperationV1, expectedRevision: number,
+    requestId: string): Promise<{ status: 'deferred' } | { status: 'refused'; rejection: CoreRejection }> {
+    const goalRef = operation.action.goalRef;
+    if (deps.queue === undefined || goalRef === null) {
+      return { status: 'refused', rejection: rejected('unsupported', 'the adviser queue is not wired') };
+    }
+    const allocated = await deps.queue.allocate(ctx, { commandId: requestId, goalRef,
+      approval: { operationRef: operation.ref, expectedRevision } });
+    return allocated.status === 'committed' ? { status: 'deferred' } : { status: 'refused', rejection: allocated };
+  }
+
+  /** U1, a line-add card's reject: the goal is queued and the operation ends failed in the queue's one commit. */
+  async function rejectLineAdd(ctx: CoreCallContext, operation: RoleLineOperationV1, expectedRevision: number,
+    requestId: string): Promise<{ status: 'deferred' } | { status: 'refused'; rejection: CoreRejection }> {
+    const goalRef = operation.action.goalRef;
+    if (deps.queue === undefined || goalRef === null) {
+      return { status: 'refused', rejection: rejected('unsupported', 'the adviser queue is not wired') };
+    }
+    const queued = await deps.queue.allocate(ctx, { commandId: requestId, goalRef,
+      rejection: { operationRef: operation.ref, expectedRevision } });
+    return queued.status === 'committed' ? { status: 'deferred' } : { status: 'refused', rejection: queued };
   }
 
   return { continueOperation, open: openLine, changeScope, reuse, openRegionLine, startRoleLineSplit,

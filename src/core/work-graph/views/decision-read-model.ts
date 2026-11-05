@@ -2139,7 +2139,7 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
       // A resolved member operation's, rework request's or role-line change's answer stays history instead of a
       // pending application: its owner already carried the answer out (or refused it) on the source.
       if ((card.source.kind === 'member_creation' || card.source.kind === 'rework_request'
-        || card.source.kind === 'role_line_change') && card.closedReason !== null) {
+        || card.source.kind === 'role_line_change' || card.source.kind === 'adviser_creation') && card.closedReason !== null) {
         return { ...card, state: 'answered_no_application', readOnly: false, actions: [] };
       }
       return { ...card, state: 'answered_pending_application', readOnly: false, actions: ['apply', 'record_application'] };

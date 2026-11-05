@@ -1,7 +1,7 @@
 // pure; the frozen reanchor-plan seam
 import type { SessionRecord, SessionWorkLink, PendingSessionWorkLink } from '../../../contracts/core/session.js';
 import type { ProjectScope, SessionWorkLinkRef, VersionPin, WorkLinkTarget } from '../../../contracts/core/identity.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot, PendingGoalSnapshot } from '../../../contracts/ledger.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
@@ -51,7 +51,7 @@ export function planReanchor(input: { projectRef: ProjectScope; duty: RoleLineDu
   open?: readonly { link: SessionWorkLinkRef; target: WorkLinkTarget }[];
   facts: ReanchorFactsV1;
   authorization: { actor: ActorRef; scope: readonly RoleScopeV1[] };                       // actor: the owner's
-  proposed: { goal?: { ref: GoalRef; snapshot: GoalSnapshot; version: VersionPin };
+  proposed: { goal?: { ref: GoalRef; snapshot: GoalSnapshot | PendingGoalSnapshot; version: VersionPin };
     catalog?: ReanchorCatalogFactsV1 } | null }):                                         // the owner's pins
   { ok: true; plan: ReanchorPlanV1 } | { ok: false; refusals: readonly ReanchorRefusalV1[] } {
   const { projectRef, duty, moves, facts } = input;

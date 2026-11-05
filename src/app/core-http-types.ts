@@ -36,6 +36,7 @@ import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-ser
 import type { RoleLineOperationsPort } from '../core/work-graph/sessions/role-line-operations.js';
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
+import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { CoreRouteBindings } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -351,6 +352,8 @@ export type CoreRouteSuffix =
   | 'role-lines/open' | 'role-lines/change-scope' | 'role-lines/operations'
   // The project's autonomy rules: the read and the three person-only writes.
   | 'autonomy-rules' | 'autonomy-rules/create' | 'autonomy-rules/revoke' | 'autonomy-rules/update'
+  // The project's Goal adviser queue read.
+  | 'goals/adviser-queue'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
   | 'goals/dispatch-basis'
   // The person's overlap-gate release and the Goal's gate page.
@@ -741,6 +744,8 @@ export type AutonomyRulesRevokeBody = GraphWriteBody<CoreRouteBindings['revokeAu
 export type AutonomyRulesRevokeResponse = RouteResponse<AutonomyRulePort['revoke']>;
 export type AutonomyRulesUpdateBody = GraphWriteBody<CoreRouteBindings['updateAutonomyRule']>;
 export type AutonomyRulesUpdateResponse = RouteResponse<AutonomyRulePort['update']>;
+export type GoalsAdviserQueueBody = PlainBody<GoalAdviserQueuePort['read']>;
+export type GoalsAdviserQueueResponse = RouteResponse<GoalAdviserQueuePort['read']>;
 /** The typed assembly of the role-line suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
 export type RoleLineCoreRouteDto = {
   'projects/role-limits': { body: ProjectsRoleLimitsBody; response: ProjectsRoleLimitsResponse };
@@ -753,6 +758,7 @@ export type RoleLineCoreRouteDto = {
   'autonomy-rules/create': { body: AutonomyRulesCreateBody; response: AutonomyRulesCreateResponse };
   'autonomy-rules/revoke': { body: AutonomyRulesRevokeBody; response: AutonomyRulesRevokeResponse };
   'autonomy-rules/update': { body: AutonomyRulesUpdateBody; response: AutonomyRulesUpdateResponse };
+  'goals/adviser-queue': { body: GoalsAdviserQueueBody; response: GoalsAdviserQueueResponse };
 };
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */

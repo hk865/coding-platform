@@ -45,6 +45,7 @@ import type { RecordCommitNotice } from '../composition/commit-observer.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../contracts/core/identity.js';
 import { backoffMsFor } from '../core/work-graph/model/request-contracts.js';
+import type { GoalDrainResultV1 } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 
 export type WakeSource = 'request_command' | 'commit' | 'advance_settled' | 'line_registered' | 'start'
   | 'release_armed';
@@ -58,12 +59,13 @@ export const MESSAGE_RELEASE_QUEUE = 'message_release';
 /**
  * The lifecycle queue's own wake types: SessionActivity/CurrentPointer guard the coverage commit; NoteHead/
  * NoteVersion feed the brief; PlanProposal/Goal end a request's processing, which the routing set and the
- * handoff archive condition read. Static, not conditional: a pass without a pending operation costs one
+ * handoff archive condition read; GoalPhase (a formal completion) and ProjectRoleLimits (a raised cap) wake the
+ * Goal adviser queue drain. Static, not conditional: a pass without a pending operation costs one
  * indexed read.
  */
 export const LIFECYCLE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
   'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal',
-  'NoteHead', 'NoteVersion', 'CurrentPointer',
+  'NoteHead', 'NoteVersion', 'CurrentPointer', 'GoalPhase', 'ProjectRoleLimits',
 ]);
 
 /**
@@ -116,8 +118,8 @@ export type WakeLoopDependencies = {
 
 /** The lifecycle queue's port: one handler call runs one whole traversal. */
 export interface HandoffQueuePort {
-  /** The whole traversal: pending round ends, then every unfinished operation once. */
-  run(ctx: CoreCallContext): Promise<{ continued: number; blocked: number }>;
+  /** The whole traversal: pending round ends, every unfinished operation once, then one Goal adviser queue page. */
+  run(ctx: CoreCallContext): Promise<{ continued: number; blocked: number; queue: GoalDrainResultV1 | null }>;
   /** Waits for every started call under the loop's close rule. */
   close(): Promise<void>;
 }
@@ -130,7 +132,7 @@ export interface HandoffQueuePort {
  */
 export type HandoffQueueDependencies = {
   /** One whole traversal; a transient item failure is recorded and stepped past. */
-  pass: (ctx: CoreCallContext) => Promise<{ continued: number; blocked: number }>;
+  pass: (ctx: CoreCallContext) => Promise<{ continued: number; blocked: number; queue: GoalDrainResultV1 | null }>;
 };
 
 export function createHandoffQueue(deps: HandoffQueueDependencies): HandoffQueuePort {
@@ -146,7 +148,7 @@ export function createHandoffQueue(deps: HandoffQueueDependencies): HandoffQueue
 
   return {
     async run(ctx) {
-      if (closed) return { continued: 0, blocked: 0 };
+      if (closed) return { continued: 0, blocked: 0, queue: null };
       const call = deps.pass(ctx);
       trackStarted(call);
       return await call;

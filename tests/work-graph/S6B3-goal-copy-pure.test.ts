@@ -10,10 +10,15 @@ import type {
   GoalCopyConfirmInputV1, GoalCopyDraftInputV1, GoalCopyFactsV1, GoalUnderstandingPinV1,
 } from '../../src/contracts/goal-card.js';
 import type { GoalSettingsV1 } from '../../src/contracts/goal-decisions.js';
-import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
+import type { GoalRef, GoalSnapshot, PendingGoalSnapshot } from '../../src/contracts/ledger.js';
 import type { CopyInterventionCandidateV1 } from '../../src/contracts/goal-copy-retraction.js';
+import type { SessionWorkLinkRef } from '../../src/contracts/core/identity.js';
+import type { SessionRecord, SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import { decideGoalCopy, planReanchorHook } from '../../src/core/work-graph/state/goal-copy.js';
+import { canonicalKey } from '../../src/contracts/fingerprint.js';
+import {
+  decideGoalCopy, planReanchorHook, type PlanReanchorHookInputV1,
+} from '../../src/core/work-graph/state/goal-copy.js';
 import { isLegalSettings } from '../../src/core/work-graph/state/goal-settings-machine.js';
 
 const GOAL: GoalRef = { aggregateType: 'Goal', projectId: 'p1', goalId: 'g-source' };
@@ -159,8 +164,59 @@ describe('create: a verified selection decides the copied and retracted sets', (
 });
 
 describe('planReanchorHook', () => {
-  it('returns the named 7D1 stub, no receipt and no fact', () => {
-    expect(planReanchorHook()).toEqual({ status: 'not_implemented', reason: 'planReanchor is 7D1' });
+  // One adviser line s1 holds the cancelled source; the copy moves its responsible link onto the new Goal, which
+  // exists only as the birth commit's pending snapshot.
+  const NEW_GOAL: GoalRef = { aggregateType: 'Goal', projectId: 'p1', goalId: 'g-copy' };
+  const BIRTH: PendingGoalSnapshot = {
+    ...SOURCE, ref: NEW_GOAL, desiredState: 'active', desiredStateRevision: 1, revision: 1, since: null,
+  };
+  const ADVISER: SessionRecord = {
+    ref: { aggregateType: 'Session', projectId: 'p1', sessionId: 's1' }, revision: 4,
+    kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' }, lifecycle: 'active', health: 'available',
+    healthConclusion: null, role: { kind: 'legacy_template', templateId: 'tpl', templateRevision: 'r1' },
+    workspaceId: 'w1', lastExecutionRef: null, occupancy: null, historyCursor: null,
+    createdAt: '2026-11-01T00:00:00.000Z', archivedAt: null, provenance: { schemaVersion: 1, kind: 'new' },
+    archiveRequest: null, unavailableSince: null,
+  };
+  const SOURCE_LINK: SessionWorkLink = {
+    ref: { aggregateType: 'SessionWorkLink', projectId: 'p1', sessionId: 's1',
+      target: { kind: 'goal', ref: GOAL }, relation: 'responsible' },
+    revision: 2, since: 'c0000000003' as SessionWorkLink['since'], until: null,
+  };
+  const DESTINATION: SessionWorkLinkRef = {
+    aggregateType: 'SessionWorkLink', projectId: 'p1', sessionId: 's1',
+    target: { kind: 'goal', ref: NEW_GOAL }, relation: 'responsible',
+  };
+  const INPUT: PlanReanchorHookInputV1 = {
+    projectRef: { projectId: 'p1' }, duty: 'adviser',
+    moves: [{ duty: 'adviser', source: SOURCE_LINK.ref,
+      destinations: [{ link: DESTINATION, target: { kind: 'goal', ref: NEW_GOAL } }] }],
+    facts: {
+      sessions: new Map([['s1', ADVISER]]),
+      links: new Map([[canonicalKey(SOURCE_LINK.ref), SOURCE_LINK]]),
+      goals: new Map([['g-source', { state: 'present', ref: GOAL, snapshot: SOURCE, version: { ref: GOAL, revision: 7 } }]]),
+      catalog: { state: 'none', revision: 0 },
+    },
+    authorization: { actor: { kind: 'human', id: 'person-1' }, scope: [{ kind: 'project' }] },
+    proposed: { goal: { ref: NEW_GOAL, snapshot: BIRTH, version: { ref: NEW_GOAL, revision: 1 } } },
+  };
+
+  it('moves the one adviser link onto the proposed new Goal: no receipt, every piece of the plan', () => {
+    expect(planReanchorHook(INPUT)).toEqual({ ok: true, plan: {
+      // The one Session is written once, one revision up.
+      sessions: [{ ...ADVISER, revision: 5 }],
+      // The source link closes one revision up with its `until` left to bind; the absent destination opens at 1.
+      links: [
+        { link: SOURCE_LINK.ref, next: { ref: SOURCE_LINK.ref, revision: 3, since: 'c0000000003', until: null } },
+        { link: DESTINATION, next: { ref: DESTINATION, revision: 1, since: null, until: null } },
+      ],
+      claimChanges: [
+        { duty: 'adviser', target: { kind: 'goal', goalRef: GOAL }, expectedOwner: SOURCE_LINK.ref, nextOwner: null },
+        { duty: 'adviser', target: { kind: 'goal', goalRef: NEW_GOAL }, expectedOwner: null, nextOwner: DESTINATION },
+      ],
+      bindings: [{ link: SOURCE_LINK.ref, field: 'until' }, { link: DESTINATION, field: 'since' }],
+      events: [{ closed: SOURCE_LINK.ref, opened: DESTINATION, openedBound: 'since' }],
+    } });
   });
 });
 

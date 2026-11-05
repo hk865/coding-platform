@@ -38,6 +38,9 @@ import { decisionActionPolicy } from '../core/work-graph/state/decision-policy.j
 import { matchAutonomyRule } from '../core/work-graph/state/autonomy-rules.js';
 import { createAutonomyRuleService, type AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import { createRoleCapacityService } from '../core/work-graph/tasks/role-capacity-service.js';
+import {
+  createGoalAdviserQueueService, type GoalAdviserQueuePort,
+} from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import { createAllocationRead, openLimitOf } from '../core/work-graph/sessions/allocation-read.js';
 import type { RecordGuard } from '../core/record-store/ports.js';
 import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
@@ -183,7 +186,7 @@ import { createMemberService, type MemberRequestPortV1 } from '../core/work-grap
 import { createReworkRequestService } from '../core/work-graph/tasks/rework-requests.js';
 import { REWORK_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/rework-request-codecs.js';
 import { createOverlapGateService, type OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
-import { decisionSourceKey, decisionSubjectKey } from '../contracts/goal-decisions.js';
+import { decisionSourceKey, decisionSubjectGoalRef, decisionSubjectKey } from '../contracts/goal-decisions.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
@@ -377,7 +380,7 @@ import type { QueryRunRef } from '../contracts/query-job.js';
 import { isRequestRound, queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
-  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
+  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES, WORKFLOW_AUTOMATION_ACTOR,
   type ResumeOnStartupMode, type ReworkActorClass, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
 // Slice 2C (spec §6): the line/detail read owners, the pin write owner and the
@@ -1943,7 +1946,28 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         },
         notify: (ctx, input) => notifyProject({ records: backend.records, now }, input),
       },
+      // Card supplement §3.3: the three queue answers of a role_line_change card go through the queue owner below.
+      queue: { allocate: (ctx, input) => goalAdviserQueue.allocate(ctx, input) },
     });
+    // O4a M14: the one goal adviser queue owner (book :530); its notices go through the one notifyProject writer.
+    const goalAdviserQueue = createGoalAdviserQueueService({
+      records: backend.records, commitIdentities: rawBackend.commitIdentities, duty: sessionDutyResolver,
+      sessions: sessionDirectory, activity: createSessionActivityReader({ records: backend.records }),
+      bindings: bindingReads, lines: roleLineOperations,
+      notices: { projectNoticeWriter: (input) => notifyProject({ records: backend.records, now }, input) },
+      now, eventId: randomUUID });
+    // TS-19's platform context (终稿 :1349–:1356): the confirm's success exit and the 7C adviser_creation approval
+    // allocate as the Workflow's automation (`automationContext`, workflow.ts:718–:723), so the command identity
+    // (command-executor.ts:31–:39 folds the principal in) is the Workflow arm's.
+    const queueAutomationContext = (projectId: string, workspaceId: string, signal: AbortSignal): CoreCallContext => {
+      const actor = { ...WORKFLOW_AUTOMATION_ACTOR };
+      return {
+        projectId, workspaceId,
+        principal: { kind: 'host', actor },
+        materialReader: { kind: 'host', projectId, workspaceId, actor: { ...actor } },
+        signal,
+      };
+    };
     // M's ONE member owner: the request and decision ports over the SAME records, identity read, Session directory,
     // line admission, request facts, secretary rounds, duty resolver and Run read the rest of the platform uses.
     // The child line's Role is the normal executor template; the creator's accepted permissions ride as its ceiling.
@@ -2329,7 +2353,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const requestTail = createRequestTailFragment();
     const goalConfirm = createGoalConfirmService({ records: backend.records, tail: requestTail, bindings: bindingReads, now });
     const goalCopy = createGoalCopyService({ records: backend.records, understanding: goalUnderstanding,
-      interventions: copyInterventions, retractions: copyInterventions, now, eventId: randomUUID });
+      interventions: copyInterventions, retractions: copyInterventions,
+      duty: sessionDutyResolver, responsibility: responsibilityBasis,
+      notices: { projectNoticeWriter: (input) => notifyProject({ records: backend.records, now }, input) },
+      commitIdentities: rawBackend.commitIdentities, now, eventId: randomUUID });
     const goalInterruptions = createGoalInterruptionService({ records: backend.records, now,
       hostInstanceId: hostInstance?.hostInstanceId ?? 'platform' });
     // The completion methods are published on the SAME Goal service and drained
@@ -2344,7 +2371,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The Goal read region's basis route: the SAME instance the graph reader and the mailbox take.
       readDispatchBasis: (...args) => trackedCall(() => dispatchBasis.readDispatchBasis(...args), unavailable),
       // The draft confirmation and the copy preview and confirmation, under the route table's owner names.
-      confirmDraft: (...args) => trackedCall(() => goalConfirm.confirmDraft(...args), unavailable),
+      // D-17 (book :533): the first allocation is the confirm's success exit, through the SAME `allocate`, so a later
+      // `attachRefinement` call or a retried confirm replays it. A goal that already has an adviser is confirmed.
+      confirmDraft: (ctx, input) => trackedCall(async () => {
+        const confirmed = await goalConfirm.confirmDraft(ctx, input);
+        if (confirmed.status !== 'committed') return confirmed;
+        const { goal } = confirmed.value;
+        const allocated = await goalAdviserQueue.allocate(
+          queueAutomationContext(goal.workspaceRef.projectId, goal.workspaceRef.workspaceId, ctx.signal),
+          { commandId: `goal-queue:${goal.ref.goalId}`, goalRef: goal.ref });
+        return allocated.status === 'committed' || (allocated.status === 'rejected'
+          && allocated.code === 'revision_conflict' && allocated.reason === 'goal_has_adviser') ? confirmed : allocated;
+      }, unavailable),
       readGoalCopyDraft: (...args) => trackedCall(() => goalCopy.readDraft(...args), unavailable),
       confirmGoalCopy: (...args) => trackedCall(() => goalCopy.confirm(...args), unavailable),
       // The candidate page has no route; the row reads it in process through the one published-owner helper.
@@ -3211,6 +3249,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // back to the ordinary Work bindings' `sessionRole` (I-1, L5). Slice 2C
       // L7: the hoisted instance is the SAME one the line read receives.
       sessionDuty: sessionDutyResolver,
+      // L33: the two Workflow triggers allocate through the one queue owner (a deferred read of the const above).
+      goalAdviserQueue: { allocate: (ctx, input) => goalAdviserQueue.allocate(ctx, input) },
       // The startup Workflow is only the seed: `registerWorkflowBinding` replaces
       // this dependency afterwards, and every reader above resolves it live.
       ...(options.workflow === undefined ? {} : { configuration: structuredClone(options.workflow) }),
@@ -3421,6 +3461,28 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         // O3b M9 (v4 :6514–:6520): the two 7D2 rows, both unconditional.
         role_capacity: createRoleCapacityApplicationAdapter({ capacity: roleCapacityService, messages: rawDecisionMessages }),
         role_line_change: createRoleLineChangeApplicationAdapter({ roleLines: roleLineOperations }),
+        // O4a (book :1490, :1509): the 7C no-adviser card's approval allocates through the queue owner as the
+        // platform, replacing 7C's placeholder. The queue event proves no decision application, so a commit answers
+        // with no receipt and the card closes with its source; rejecting only answers the card.
+        adviser_creation: {
+          async apply(ctx, { source, selection }) {
+            if (selection.kind !== 'option' || selection.optionId !== 'approve') {
+              return { status: 'ready', value: { action: null, receipt: null } };
+            }
+            const goalRef = decisionSubjectGoalRef(source);
+            if (goalRef === null) {
+              return { status: 'ready',
+                value: { action: rejected('invalid', 'an adviser_creation card names a goal'), receipt: null } };
+            }
+            // a decision answer is always bound to its workspace
+            const allocated = await goalAdviserQueue.allocate(
+              queueAutomationContext(ctx.projectId, ctx.workspaceId!, ctx.signal),
+              { commandId: `goal-queue:${goalRef.goalId}`, goalRef });
+            const settled = allocated.status === 'committed'
+              || (allocated.code === 'revision_conflict' && allocated.reason === 'goal_has_adviser');
+            return { status: 'ready', value: { action: settled ? null : allocated, receipt: null } };
+          },
+        },
       },
       // Slice 2B P12: the WorkGraph RunActivity owner the Workflow backfill scans
       // and writes through (the SAME instance the activity reads and the end
@@ -4043,6 +4105,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       readRoleLineOperations: (ctx, input) =>
         trackedCall(() => roleLineOperationsRead.readRoleLineOperations(ctx, input), unavailable),
     };
+    // O4a: the goal adviser queue owner (the route read, the Host's drain), every member drained the same way.
+    const trackedGoalAdviserQueue: GoalAdviserQueuePort = {
+      read: (ctx, input) => trackedCall(() => goalAdviserQueue.read(ctx, input), unavailable),
+      reorder: (ctx, input) => trackedCall(() => goalAdviserQueue.reorder(ctx, input), unavailable),
+      assign: (ctx, input) => trackedCall(() => goalAdviserQueue.assign(ctx, input), unavailable),
+      allocate: (ctx, input) => trackedCall(() => goalAdviserQueue.allocate(ctx, input), unavailable),
+      drain: (ctx, input) => trackedCall(() => goalAdviserQueue.drain(ctx, input), unavailable),
+    };
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       messageExpiry: messageExpiryPort,
@@ -4135,6 +4205,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       roleLineOperations: trackedRoleLines,
       roleLines: trackedRoleLines,
       roleLineOperationsRead: trackedRoleLineOperationsRead,
+      goalAdviserQueue: trackedGoalAdviserQueue,
       readSecretaryHandoffBasis: (ctx: CoreCallContext, session: SessionRef) =>
         trackedCall(() => readHandoffBasis(ctx, session), unavailable),
       /**
@@ -4236,7 +4307,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
-      'runtimeInFlight'] as const) {
+      'goalAdviserQueue', 'runtimeInFlight'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

@@ -31,6 +31,7 @@ import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/ses
 import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../../core/work-graph/tasks/session-anomaly-service.js';
+import type { GoalAdviserQueuePort } from '../../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
 import type {
@@ -175,6 +176,8 @@ export type WorkflowDependencies = {
   ) => Promise<WriteResult<QueryExecutionRecord>>;
   archivePolicy?: SessionArchivePolicyV1;
   sessionDuty?: SessionDutyResolver;
+  /** L33: the project's one adviser-allocation entry; a composition without it keeps the old no-adviser wait. */
+  goalAdviserQueue?: Pick<GoalAdviserQueuePort, 'allocate'>;
   /**
    * Slice 1 (L-g, S:597): every new time the Workflow archive/maintenance
    * supplies comes from this injected clock. Without injection the old

@@ -1370,10 +1370,16 @@
       "note": "waits for 7D2 C1 batch freeze (the public batch-freeze entry), slice 7 of the orchestration design"
     },
     {
-      "file": "src/contracts/role-lines.ts",
-      "name": "GoalAdviserQueueEntryV1",
+      "file": "src/core/work-graph/tasks/goal-adviser-queue-service.ts",
+      "name": "GoalAdviserQueuePort.reorder",
       "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O4a's `enqueueGoal`/queue value uses the entry type; O4a deletes this entry when the queue owner lands"
+      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's person route `goals/adviser-queue/reorder` binds this wrapper over the queue's one write; O5b deletes this entry when the route lands"
+    },
+    {
+      "file": "src/core/work-graph/tasks/goal-adviser-queue-service.ts",
+      "name": "GoalAdviserQueuePort.assign",
+      "reason": "kept-for",
+      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's person route `goals/adviser-queue/assign` binds this wrapper over the queue's one write; O5b deletes this entry when the route lands"
     },
     {
       "file": "src/core/work-graph/state/role-line-action.ts",
