@@ -429,6 +429,7 @@ async function readNodeDetail(
   /* `FromExecutedFilesV1` says `availability`; `status` was never its field. */
   const needsCatalog = (actual.availability === 'available' && Array.isArray(actual.value) && actual.value.length > 0)
     || (Array.isArray(task.plannedModules) && task.plannedModules.length > 0)
+    || (Array.isArray(task.plannedFiles) && task.plannedFiles.length > 0)
     || risks.some((page) => (page.items ?? []).some((item) => asRecord(asRecord(item).shared).kind === 'module'));
   /* E3-7: the Task's distinct actual paths (summary order) against HEAD; the Host takes at most
    * 100 (UNCOMMITTED_FILES_MAX_PATHS). A failed read only hides the numbers. */

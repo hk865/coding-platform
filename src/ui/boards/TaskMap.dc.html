@@ -3042,13 +3042,18 @@ class Component extends DCLogic {
         out.rel = out.rel.concat([{ k: '处置', items: [], files: [], lines: [real.disposition.text], hasText: false, text: '' }]);
       }
       /* 架构: the planned modules (计划要改, no square: no real file state) and the
-         adapted actual files, grouped by the formal catalog; no planned file;
+         adapted actual files, grouped by the formal catalog; the plan's listed files (计划要改, no square while only planned);
          an actual file's +/− and （未提交） are in its tag (E3-7). */
       const arch = real && real.hasFiles ? real.files.map((g) => ({ crumb: g.crumb,
         files: g.files.map((f) => ({ path: f.path, name: f.name, sq: f.certainty === 'planned' ? '' : 'sq z8 ' + (f.certainty === 'definite' ? 's-satisfied' : 's-pending'),
           tagCls: 'tag' + (f.certainty === 'planned' ? '' : ' is-act'), tag: f.tag })) })) : [];
       out.hasArch = arch.length > 0;
-      out.archSum = arch.some((g) => g.files.some((f) => f.path !== '')) ? '实际改过／可能改过（现在）' + (real && real.filesNote ? ' · ' + real.filesNote : '') : '';
+      /* 总述 (prototype:3387-3389): 计划要改 n 个文件, then the actual sentence or 还没开始改 for an idle task */
+      const nPlan = real && real.plannedFileCount ? real.plannedFileCount : 0;
+      const changed = !!(real && real.hasFiles && real.files.some((g) => g.files.some((f) => f.certainty !== 'planned')));
+      const idle = ['pending', 'claimable', 'future', 'deferred'].indexOf(n.st) >= 0;
+      out.archSum = [nPlan ? '计划要改 ' + nPlan + ' 个文件' : '',
+        changed ? '实际改过／可能改过（现在）' + (real && real.filesNote ? ' · ' + real.filesNote : '') : nPlan && idle ? '还没开始改' : ''].filter((s) => s).join(' · ');
       out.arch = out.hasArch ? arch : [];
       /* 参与: the already-adapted participants, never rediscovered from the
          window's bars; an unread or incomplete list says so instead of "none". */

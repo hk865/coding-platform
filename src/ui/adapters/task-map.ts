@@ -615,7 +615,7 @@ export function taskMapStatesAt(
 export type TaskMapDetailTaskRead = {
   task: unknown; planRef?: unknown; title?: unknown; phase?: unknown; phaseCause?: unknown;
   disposition?: unknown; owners?: unknown; participatedLines?: unknown; failure?: unknown;
-  actualFiles?: unknown; responsibleNow?: unknown; plannedModules?: unknown;
+  actualFiles?: unknown; responsibleNow?: unknown; plannedModules?: unknown; plannedFiles?: unknown;
 };
 export type TaskMapSummaryRead = { section: 'summary'; task: TaskMapDetailTaskRead | null };
 /** One `graph/detail` `section:'risks'` page: Tasks with no edge to this one that share its module or a file. */
@@ -648,6 +648,8 @@ export type TaskMapNodeDetailData = {
   ownerNow: boolean;
   files: TaskMapDetailArchGroup[];
   hasFiles: boolean;
+  /** How many files the plan lists (prototype:3388 计划要改 n 个文件); 0 when it lists none. */
+  plannedFileCount: number;
   /** E3-7: what the 架构 summary adds after 实际改过／可能改过（现在）, without the ` · `; '' adds nothing. */
   filesNote: string;
   /** `archived`: the line's `status.bucket`; the track opens it among the archived lines. */
@@ -739,8 +741,8 @@ function participantText(item: Record<string, unknown>, counts: TaskMapParticipa
 
 /** Pure detail projection (design §6): no request, no DOM. `summary` is the
  * unwrapped `graph/detail` summary; participants are its `section:'participants'`
- * pages; `catalog` names planned modules and groups actual files. Planned
- * files are never shown; an actual file's line counts and "未提交" come only from the `files/uncommitted` read (E3-7). */
+ * pages; `catalog` names planned modules and groups actual files. A plan that lists
+ * files names them (计划要改); an actual file's line counts and "未提交" come only from the `files/uncommitted` read (E3-7). */
 export function adaptTaskMapDetail(
   summary: TaskMapSummaryRead, participants: readonly TaskMapParticipantRead[],
   counts: TaskMapParticipationCounts, catalog: TaskMapCatalogRead,
@@ -799,16 +801,29 @@ export function adaptTaskMapDetail(
    * field of it, so reading `status` hid every real file (design §3/§5). */
   const executed = actual.availability === 'available' && Array.isArray(actual.value) ? actual.value : [];
   const groups = new Map<string, TaskMapDetailFile[]>();
+  const push = (crumb: string, row: TaskMapDetailFile): void => {
+    const rows = groups.get(crumb) ?? [];
+    rows.push(row);
+    groups.set(crumb, rows);
+  };
+  const ownerOf = (path: string): string => {
+    const own = pathOwnershipOf(path, modules);
+    return own.status === 'owner' ? String(own.owner.id) : '';
+  };
+  const crumbOfPath = (path: string): string => { const moduleId = ownerOf(path); return moduleId === '' ? '未归入模块' : crumbOf(moduleId); };
+  /* 计划要改 (prototype:3381-3383, decision 121-10): a plan that lists files names each one under its own module, in
+   * the plan's order and ahead of the other actual files; a plan without a list keeps one row per planned module. */
+  const listed = (Array.isArray(task.plannedFiles) ? task.plannedFiles : []).map(asText).filter((path) => path !== '');
+  const inList = new Set(listed);
   const planned = new Set<string>();
-  /* Decision 26's 计划要改: the plan records modules only (DESIGN `:151`), so each
-   * planned module is one row named by the module, under its catalog path. */
-  for (const ref of Array.isArray(task.plannedModules) ? task.plannedModules : []) {
-    const moduleId = asText(asRecord(ref).moduleId);
-    const crumb = moduleId === '' ? '' : crumbOf(moduleId);
-    if (crumb === '') continue;
-    planned.add(moduleId);
-    groups.set(crumb, [...(groups.get(crumb) ?? []),
-      { path: '', name: crumb.split(' / ').pop() ?? crumb, certainty: 'planned', tag: '计划要改' }]);
+  if (inList.size === 0) {
+    for (const ref of Array.isArray(task.plannedModules) ? task.plannedModules : []) {
+      const moduleId = asText(asRecord(ref).moduleId);
+      const crumb = moduleId === '' ? '' : crumbOf(moduleId);
+      if (crumb === '') continue;
+      planned.add(moduleId);
+      push(crumb, { path: '', name: crumb.split(' / ').pop() ?? crumb, certainty: 'planned', tag: '计划要改' });
+    }
   }
   /* E3-7: one row per file. Several Runs of the Task can name the same path; one `definite`
    * makes it 实际改过. The first appearance keeps its place (the summary is sorted by path). */
@@ -827,23 +842,31 @@ export function adaptTaskMapDetail(
   if (headRead.repository === 'git' && Array.isArray(headRead.files)) {
     for (const entry of headRead.files) stateOf.set(asText(asRecord(entry).path), asRecord(entry));
   }
-  for (const [path, certainty] of certaintyOf) {
-    const own = pathOwnershipOf(path, modules);
-    const moduleId = own.status === 'owner' ? String(own.owner.id) : '';
-    const crumb = moduleId === '' ? '未归入模块' : crumbOf(moduleId);
-    /* 不在计划里 (prototype:3382), judged by module: the file's module is neither a
-     * planned module nor under one, or it has none; a plan without modules says nothing. */
-    const outside = planned.size > 0 && !chainOf(moduleId).some((entry) => planned.has(entry.id));
+  /* E3-7's words for one actual file against HEAD, with this plan's outside (decision 121-10) */
+  const actualTag = (path: string, certainty: 'definite' | 'possible', outside: boolean): string => {
     const vsHead = stateOf.get(path);
     const counts = asRecord(vsHead?.lines);
     /* prototype:3381-3382: ` +a −d（未提交）`, the minus is U+2212 */
     const mark = vsHead?.state !== 'uncommitted' ? ''
       : typeof counts.added === 'number' && typeof counts.deleted === 'number'
         ? ' +' + String(counts.added) + ' −' + String(counts.deleted) + '（未提交）' : '（未提交）';
-    const list = groups.get(crumb) ?? [];
-    list.push({ path, name: path.split('/').pop() ?? path, certainty,
-      tag: (certainty === 'definite' ? '实际改过' : '可能改过') + mark + (outside ? (mark === '' ? ' · ' : '· ') + '不在计划里' : '') });
-    groups.set(crumb, list);
+    return (certainty === 'definite' ? '实际改过' : '可能改过') + mark + (outside ? (mark === '' ? ' · ' : '· ') + '不在计划里' : '');
+  };
+  /* a listed file that ran: 计划要改 · 实际改过 (prototype:3381); one that has not: 计划要改 (prototype:3383) */
+  for (const path of listed) {
+    const certainty = certaintyOf.get(path);
+    push(crumbOfPath(path), certainty === undefined
+      ? { path, name: path.split('/').pop() ?? path, certainty: 'planned', tag: '计划要改' }
+      : { path, name: path.split('/').pop() ?? path, certainty, tag: '计划要改 · ' + actualTag(path, certainty, false) });
+  }
+  for (const [path, certainty] of certaintyOf) {
+    if (inList.has(path)) continue;
+    const moduleId = ownerOf(path);
+    /* 不在计划里 (prototype:3382): with a list, by file; without one, by module (E3-6 item 6): the file's module
+     * is neither a planned module nor under one, or it has none; a plan without modules says nothing. */
+    const outside = inList.size > 0 || (planned.size > 0 && !chainOf(moduleId).some((chain) => planned.has(chain.id)));
+    push(moduleId === '' ? '未归入模块' : crumbOf(moduleId),
+      { path, name: path.split('/').pop() ?? path, certainty, tag: actualTag(path, certainty, outside) });
   }
   /* E3-7: the summary's second half, from the same read (E3I:291; prototype:3389's first clause) */
   const shown = [...certaintyOf.keys()].map((path) => stateOf.get(path)?.state);
@@ -872,6 +895,7 @@ export function adaptTaskMapDetail(
     owner: who, hasOwner: who !== '', ownerNow: true,
     files: [...groups.entries()].map(([crumb, files]) => ({ crumb, files })),
     hasFiles: groups.size > 0,
+    plannedFileCount: inList.size,
     filesNote,
     participants: lines, hasParticipants: lines.length > 0, noParticipants: lines.length === 0,
     participantsLoaded, participantsComplete,
