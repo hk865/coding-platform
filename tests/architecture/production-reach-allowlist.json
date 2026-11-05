@@ -1370,18 +1370,6 @@
       "note": "waits for 7D2 C1 batch freeze (the public batch-freeze entry), slice 7 of the orchestration design"
     },
     {
-      "file": "src/core/work-graph/tasks/goal-adviser-queue-service.ts",
-      "name": "GoalAdviserQueuePort.reorder",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's person route `goals/adviser-queue/reorder` binds this wrapper over the queue's one write; O5b deletes this entry when the route lands"
-    },
-    {
-      "file": "src/core/work-graph/tasks/goal-adviser-queue-service.ts",
-      "name": "GoalAdviserQueuePort.assign",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's person route `goals/adviser-queue/assign` binds this wrapper over the queue's one write; O5b deletes this entry when the route lands"
-    },
-    {
       "file": "src/core/work-graph/state/role-line-action.ts",
       "name": "ROLE_LINE_STEP_KEYS",
       "reason": "kept-for",
@@ -1404,42 +1392,6 @@
       "name": "RoleLineOperationsPort.openRegionLine",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: 7D2 C1's cold start opens one adviser line per top-level module through it (v4 :7935, :9066); C1 deletes this entry when it calls it"
-    },
-    {
-      "file": "src/contracts/work-line.ts",
-      "name": "RoleLineSeatV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's `role-lines/read` route DTO carries this seat; O5b deletes this entry when the route lands"
-    },
-    {
-      "file": "src/core/work-graph/views/role-line-read.ts",
-      "name": "RoleLineReadV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's `role-lines/read` route reads this row through `createRoleLineRead`; O5b deletes this entry when the route lands"
-    },
-    {
-      "file": "src/core/work-graph/views/role-line-read.ts",
-      "name": "RoleLineReadResultV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's `role-lines/read` route returns this result; O5b deletes this entry when the route lands"
-    },
-    {
-      "file": "src/core/work-graph/views/role-line-read.ts",
-      "name": "RoleLineReadPort",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's `role-lines/read` route calls `readRoleLines`; O5b deletes this entry when the route lands"
-    },
-    {
-      "file": "src/core/work-graph/views/role-line-read.ts",
-      "name": "createRoleFactsRead",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's CP `workLineDeps` injects it as `roleFacts`; O5b deletes this entry when the wiring lands"
-    },
-    {
-      "file": "src/core/work-graph/views/role-line-read.ts",
-      "name": "createRoleLineRead",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 O5b's CP builds `roleLineRead` from it for the `role-lines/read` route; O5b deletes this entry when they land"
     }
   ]
 }

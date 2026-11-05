@@ -60,7 +60,8 @@ function foldItemKey(kind: FoldKind, subject: DecisionSubjectV1): string {
 /**
  * L43: the summary reads the notice's own event time from `occurredAtOf` (keyed by `itemKey`); an item without one
  * is its own line. Every other strategy is `groupNoticesWithoutSummary`'s and ignores the times. No summary record
- * is stored and no timer runs: the lines are recomputed on every read.
+ * is stored and no timer runs: the lines are recomputed on every read. A window of one keeps its own line; only two
+ * or more become the summary line (decision 120-3).
  */
 export function groupNotices(items: readonly NoticeItemV1[], strategy: NoticeGroupingStrategyV1,
   occurredAtOf: ReadonlyMap<string, string> = new Map()): NoticeLineV1[] {
@@ -98,7 +99,7 @@ function summarizeBySubjectWindow(lines: readonly NoticeLineV1[],
     current.views.push(line);
     if (compareNoticePositions(line.position, current.newest.position) >= 0) current.newest = line;
   });
-  const out = windows.map((window) => window.views.length === 1 && Number.isNaN(window.start)
+  const out = windows.map((window) => window.views.length === 1
     ? window.views[0]!
     : {
       itemKey: `notice_summary:${decisionSubjectKey(window.subject)}:${window.views[0]!.itemKey}`,

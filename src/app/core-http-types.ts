@@ -37,6 +37,7 @@ import type { RoleLineOperationsPort } from '../core/work-graph/sessions/role-li
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
+import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
 import type { CoreRouteBindings } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -348,12 +349,12 @@ export type CoreRouteSuffix =
   | 'projects/role-limits'
   | 'projects/role-limits/set'
   | 'role-lines/allocation'
-  // O1b: open a role line, change its scope, read the role-line operations.
-  | 'role-lines/open' | 'role-lines/change-scope' | 'role-lines/operations'
+  // O1b: open a role line, change its scope, read the role-line operations; O5b: read the role lines.
+  | 'role-lines/open' | 'role-lines/change-scope' | 'role-lines/operations' | 'role-lines/read'
   // The project's autonomy rules: the read and the three person-only writes.
   | 'autonomy-rules' | 'autonomy-rules/create' | 'autonomy-rules/revoke' | 'autonomy-rules/update'
-  // The project's Goal adviser queue read.
-  | 'goals/adviser-queue'
+  // The project's Goal adviser queue read and its two person writes.
+  | 'goals/adviser-queue' | 'goals/adviser-queue/reorder' | 'goals/adviser-queue/assign'
   // §3.6 item 5: the Goal card's three-version read, the one Goal read of the release/dispatch chain.
   | 'goals/dispatch-basis'
   // The person's overlap-gate release and the Goal's gate page.
@@ -746,6 +747,12 @@ export type AutonomyRulesUpdateBody = GraphWriteBody<CoreRouteBindings['updateAu
 export type AutonomyRulesUpdateResponse = RouteResponse<AutonomyRulePort['update']>;
 export type GoalsAdviserQueueBody = PlainBody<GoalAdviserQueuePort['read']>;
 export type GoalsAdviserQueueResponse = RouteResponse<GoalAdviserQueuePort['read']>;
+export type GoalsAdviserQueueReorderBody = GraphWriteBody<CoreRouteBindings['reorderGoalAdviserQueue']>;
+export type GoalsAdviserQueueReorderResponse = RouteResponse<GoalAdviserQueuePort['reorder']>;
+export type GoalsAdviserQueueAssignBody = GraphWriteBody<CoreRouteBindings['assignGoalAdviser']>;
+export type GoalsAdviserQueueAssignResponse = RouteResponse<GoalAdviserQueuePort['assign']>;
+export type RoleLinesReadBody = PlainBody<RoleLineReadPort['readRoleLines']>;
+export type RoleLinesReadResponse = RouteResponse<RoleLineReadPort['readRoleLines']>;
 /** The typed assembly of the role-line suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
 export type RoleLineCoreRouteDto = {
   'projects/role-limits': { body: ProjectsRoleLimitsBody; response: ProjectsRoleLimitsResponse };
@@ -759,6 +766,9 @@ export type RoleLineCoreRouteDto = {
   'autonomy-rules/revoke': { body: AutonomyRulesRevokeBody; response: AutonomyRulesRevokeResponse };
   'autonomy-rules/update': { body: AutonomyRulesUpdateBody; response: AutonomyRulesUpdateResponse };
   'goals/adviser-queue': { body: GoalsAdviserQueueBody; response: GoalsAdviserQueueResponse };
+  'goals/adviser-queue/reorder': { body: GoalsAdviserQueueReorderBody; response: GoalsAdviserQueueReorderResponse };
+  'goals/adviser-queue/assign': { body: GoalsAdviserQueueAssignBody; response: GoalsAdviserQueueAssignResponse };
+  'role-lines/read': { body: RoleLinesReadBody; response: RoleLinesReadResponse };
 };
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */

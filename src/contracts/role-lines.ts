@@ -149,6 +149,7 @@ export type RoleFactsParentV1 =
   | { kind: 'cold_start'; operation: OperationRef }
   | { kind: 'secretary_create'; caller: { session: SessionRef } }
   | { kind: 'handoff'; source: SessionRef; sourceCreator: CreatorRefV1 }
+  | { kind: 'role_line_split'; source: SessionRef; reason: RoleLineSplitSavedV1['reason'] }
   | { kind: 'other' };
 export const SESSION_OPENED_BY = ['start_lines', 'human', 'platform_rule', 'agent_proposal', 'secretary_create',
   'member_create', 'handoff', 'cold_start', 'legacy'] as const;
@@ -174,6 +175,13 @@ export function roleFactsOf(input: { principal: CoreCallContext['principal']; du
     return { creator: { kind: 'session', ref: parentOperation.caller.session }, openedBy: 'secretary_create' };
   }
   if (parentOperation?.kind === 'handoff') return { creator: parentOperation.sourceCreator, openedBy: 'handoff' };
+  // A split line is opened for its source line's own `propose_role_split` (an agent proposal) or by the
+  // platform's split rule (too long, too slow); the line card says which (lead O5b ruling 19).
+  if (parentOperation?.kind === 'role_line_split') {
+    return parentOperation.reason === 'agent_proposal'
+      ? { creator: { kind: 'session', ref: parentOperation.source }, openedBy: 'agent_proposal' }
+      : { creator: { kind: 'platform' }, openedBy: 'platform_rule' };
+  }
   const hostHuman = principal.kind === 'host' && principal.actor.kind === 'human';
   const fallback: CreatorRefV1 = hostHuman ? { kind: 'human', actor: principal.actor } : { kind: 'platform' };
   if (parentOperation?.kind === 'member_create') {

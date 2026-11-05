@@ -183,7 +183,7 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
 import type { RoleBindingFacts, RoleBindingFactsPort, RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
 import type { PreClaimAuthorizationPortV1 } from '../core/work-graph/model/pick-ports.js';
 import { hostRolePermissionsAdmitted, projectRunPermissions } from '../core/work-graph/tasks/pick-authorization.js';
-import { createMemberService, type MemberRequestPortV1 } from '../core/work-graph/tasks/member-service.js';
+import { createMemberService, type MemberRequestPortV1, type MemberServiceDependenciesV1 } from '../core/work-graph/tasks/member-service.js';
 import { createReworkRequestService } from '../core/work-graph/tasks/rework-requests.js';
 import { REWORK_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/rework-request-codecs.js';
 import { createOverlapGateService, type OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
@@ -227,6 +227,11 @@ import { ROLE_LINE_ORCHESTRATION_SCHEMAS } from '../core/work-graph/sessions/rol
 import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits-service.js';
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
 import { createRoleLineOperationsRead } from '../core/work-graph/views/role-line-operations-read.js';
+import { createRoleFactsRead, createRoleLineRead, type RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
+import type { LineRowV1 } from '../contracts/work-line.js';
+import type { EffectiveScopeV1 } from '../core/work-graph/state/role-scope.js';
+import type { RoleLinePositionV1 } from '../core/work-graph/state/role-line-position.js';
+import type { RoleScopeV1 } from '../contracts/role-lines.js';
 import { createRoleLineOperations, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
 import {
   createRoleLineMaintenance, type RoleLineMaintenancePort,
@@ -990,6 +995,24 @@ const readGoalUnderstandingFrom = (notes: NoteReadPort): GoalUnderstandingReadPo
       note: { noteId: pointer.noteId, version: note.value.version },
     } };
   };
+
+/** The responsibility keys of a line's scopes under the effective read's project-first rule
+ *  (role-scope-reader.ts:144): a project scope is the whole scope; a region is its root alone (an effective
+ *  region's `modules` are derived). Sorted, so two reads compare as sets. */
+function responsibilityKeysOf(scopes: readonly (RoleScopeV1 | EffectiveScopeV1)[]): string[] {
+  if (scopes.some((scope) => scope.kind === 'project')) return [canonicalKey({ kind: 'project' })];
+  return scopes.map((scope) => canonicalKey(scope.kind === 'region'
+    ? { kind: 'region', moduleRef: scope.moduleRef } : scope)).sort();
+}
+
+/** The O2 position that answers one effective scope: same goal, same region root, or the scribe's note scope. */
+function positionCoversScope(position: RoleLinePositionV1, scope: EffectiveScopeV1): boolean {
+  if (position.kind === 'goal') return scope.kind === 'goal' && scope.goalRef.goalId === position.goalRef.goalId;
+  if (position.kind === 'region') return scope.kind === 'region' && scope.moduleRef.moduleId === position.moduleRef.moduleId;
+  if (scope.kind === 'project') return position.scope.kind === 'project';
+  if (scope.kind === 'goal') return position.scope.kind === 'goal' && position.scope.goalId === scope.goalRef.goalId;
+  return position.scope.kind === 'region' && position.scope.moduleId === scope.moduleRef.moduleId;
+}
 
 /** Trusted local composition root. Old Ledger/Index/Vault instances cannot be
  * supplied. No business bootstrap/claim API is invented by the storage factory. */
@@ -1955,6 +1978,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       },
       // Card supplement §3.3: the three queue answers of a role_line_change card go through the queue owner below.
       queue: { allocate: (ctx, input) => goalAdviserQueue.allocate(ctx, input) },
+      // b11 (v4 :1894–:1897): a cancelled reservation closes a stale capacity card at once, through the same
+      // capacity owner the archive (:1919) and the limits owner (:4123) call.
+      closeStale: (ctx, input) => roleCapacityService.closeIfStale(ctx, input),
     });
     // O4a M14: the one goal adviser queue owner (book :530); its notices go through the one notifyProject writer.
     const goalAdviserQueue = createGoalAdviserQueueService({
@@ -1980,6 +2006,29 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // The child line's Role is the normal executor template; the creator's accepted permissions ride as its ceiling.
     // P's ONE reuse body over the same directory/facts owners the Workflow's chooser reads; `reusable` needs no
     // `pick` read, so the member service takes the port before the Workflow dependency bag is assembled below.
+    // The executor line's Role for one Task, named once: the member service's executor line and a change-duty
+    // handoff successor (`roleOfDuty` below) read the same served binding.
+    const executorRoleOf: MemberServiceDependenciesV1['executorRole'] = async (_ctx, { workspace, task }) => {
+      const window = await readGoalPlanWindow(backend.records,
+        { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId });
+      if (window.status !== 'ready') return window;
+      if (window.plan === null) return rejected('not_found', 'the Task has no active Plan');
+      const assignment = revisionAssignments(window.plan)
+        .find(candidate => candidate.taskId === task.taskId);
+      if (assignment === undefined) {
+        return rejected('not_found', `the Task ${task.taskId} has no role assignment`);
+      }
+      const configuration = workflowDependencies.configuration;
+      if (configuration === undefined) {
+        return rejected('unsupported', 'no trusted Workflow configuration is registered for the executor role');
+      }
+      const binding = servingBinding(configuration.bindings,
+        workspace.projectId, workspace.workspaceId, assignment.role);
+      if (binding === null) {
+        return rejected('unsupported', `no trusted Workflow binding matches workspace ${workspace.workspaceId} and role ${assignment.role}`);
+      }
+      return { status: 'ready', value: structuredClone(binding.sessionRole) };
+    };
     const memberReuse = {
       reusable: createSessionChooser({ sessions: sessionDirectory, sessionFacts }).reusable,
     };
@@ -1994,27 +2043,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       advisers: lateRecipients,
       messages: mailbox,
       executions: executionReader,
-      executorRole: async (_ctx, { workspace, task }) => {
-        const window = await readGoalPlanWindow(backend.records,
-          { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId });
-        if (window.status !== 'ready') return window;
-        if (window.plan === null) return rejected('not_found', 'the Task has no active Plan');
-        const assignment = revisionAssignments(window.plan)
-          .find(candidate => candidate.taskId === task.taskId);
-        if (assignment === undefined) {
-          return rejected('not_found', `the Task ${task.taskId} has no role assignment`);
-        }
-        const configuration = workflowDependencies.configuration;
-        if (configuration === undefined) {
-          return rejected('unsupported', 'no trusted Workflow configuration is registered for the executor role');
-        }
-        const binding = servingBinding(configuration.bindings,
-          workspace.projectId, workspace.workspaceId, assignment.role);
-        if (binding === null) {
-          return rejected('unsupported', `no trusted Workflow binding matches workspace ${workspace.workspaceId} and role ${assignment.role}`);
-        }
-        return { status: 'ready', value: structuredClone(binding.sessionRole) };
-      },
+      executorRole: executorRoleOf,
       reuse: memberReuse,
       autonomyRules: { read: (ctx, input) => autonomyRules.read(ctx, input) }, allocation: capacityAllocation,
       now, eventId: randomUUID,
@@ -2839,7 +2868,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, commitIdentities: rawBackend.commitIdentities, operations: sessionDirectory,
       coverage: handoffFacts, basis: (session, scope) => readHandoffBasis(lifecycleReadContext(scope), session),
       requests: rawRequestRounds, transfers: sessionResponsibility, archive: sessionLifecycle,
-      duty: sessionDutyResolver, brief: handoffBriefsMaterial, now,
+      duty: sessionDutyResolver,
+      roleOfDuty: async (duty, tasks, ctx) => {
+        const workspace = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+        if (duty === 'secretary') {                                    // request-intake.ts:241, :256
+          const profile = await rawSecretaryProfiles.forNewLine(ctx, { workspace });
+          if (profile.status !== 'ready') return profile;
+          return profile.value === null ? rejected('unavailable', 'no_secretary_binding')
+            : { status: 'ready', value: profile.value.sessionRole };
+        }
+        if (duty === 'executor') {                                     // the member service's own source
+          const task = tasks[0];
+          return task === undefined ? rejected('invalid', 'an executor successor needs a handed Task')
+            : executorRoleOf(ctx, { workspace, task });
+        }
+        return { status: 'ready', value: platformRoleProfile(duty).template };
+      },
+      brief: handoffBriefsMaterial, now,
     });
     /** The one handoff owner the routes accept through and the Workflow advances: the same instance, never a second. */
     const handoff: SessionHandoffPort = {
@@ -3908,6 +3953,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // the Workflow's `decisionReads` use, so a `waiting_answer` card lands on
       // its line. No second queue implementation exists.
       decisions: rawDecisionReads,
+      // O5a/O5b (v4 :5877): the ONE batch read of the stored line names; absent kept every name derived.
+      roleFacts: createRoleFactsRead({ records: backend.records }),
     };
     const workLines: WorkLineReadPort = createWorkLineReader(workLineDeps);
     const nodeDetail: NodeDetailReadPort = createNodeDetailReader({
@@ -3952,6 +3999,29 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // line read, never a second array.
     const effectiveScope = createEffectiveScopeReader({
       records: backend.records, architecture, duties: sessionDutyResolver });
+    // O5b (v4 :5926–:5931, :6816–:6818; rulings 14, 37): one O2 value per effective scope, in order, from the
+    // maintenance page's own split facts (the same goal, catalog, observation and count reads); never a second
+    // position rule. Only an adviser or a scribe line has an O2 arm, and an adviser's project scope has none (v4 :5929).
+    const positionOfLine = async (ctx: CoreCallContext, input: { row: LineRowV1; scope: EffectiveScopeV1[] }):
+      Promise<ReadResult<readonly RoleLinePositionV1[]>> => {
+      if (input.row.duty !== 'adviser' && input.row.duty !== 'scribe') return { status: 'ready', value: [] };
+      const facts = await maintenance.readSplitFacts(ctx, input.row.key);
+      if (facts.status !== 'ready') return facts;
+      // The two reads must see the same whole responsibility scope before a value is picked: a concurrent scope
+      // change (a scope added, removed or swapped) fails the read; it never drops or adds a scope.
+      const first = responsibilityKeysOf(input.scope);
+      const second = responsibilityKeysOf(facts.value.line.scopes);
+      if (first.length !== second.length || first.some((key, index) => key !== second[index])) {
+        return rejected('unavailable', 'the line scope changed while its position was read');
+      }
+      const positions: RoleLinePositionV1[] = [];
+      for (const scope of input.scope) {
+        if (input.row.duty === 'adviser' && scope.kind === 'project') continue;
+        // the same scopes, so the page's facts carry this scope's own value (role-line-maintenance.ts:352–:382)
+        positions.push(facts.value.positions.find((position) => positionCoversScope(position, scope))!);
+      }
+      return { status: 'ready', value: positions };
+    };
     const requestSelection = createSecretarySelection({
       records: backend.records,
       sessionFacts,
@@ -4066,6 +4136,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const allocationReader = createRoleLineAllocationReader({ records: backend.records, lookups: backend.records });
     const roleLineAllocation: RoleLineAllocationReadPort = {
       readRoleLineAllocation: (...args) => trackedCall(() => allocationReader.readRoleLineAllocation(...args), unavailable),
+    };
+    // O5b (v4 :6442–:6445): the ONE `role-lines/read` owner over the same line list, effective-scope read (BK-15's
+    // instance, :4000) and allocation read the pick and the allocation route use; never a second array.
+    const roleLineRead = createRoleLineRead({
+      lines: workLines, scopes: effectiveScope, allocation: allocationReader, positionOf: positionOfLine,
+    });
+    const trackedRoleLineRead: RoleLineReadPort = {
+      readRoleLines: (ctx, input) => trackedCall(() => roleLineRead.readRoleLines(ctx, input), unavailable),
     };
     // O4b M23 (TS-20 ①): the one L35 resolver; the Workflow, the Host's two sends, the goal-cause and adviser-creation
     // reads and O5a-2's two readers share it.
@@ -4224,6 +4302,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       roleLineOperations: trackedRoleLines,
       roleLines: trackedRoleLines,
       roleLineOperationsRead: trackedRoleLineOperationsRead,
+      roleLineRead: trackedRoleLineRead,
       goalAdviserQueue: trackedGoalAdviserQueue,
       readSecretaryHandoffBasis: (ctx: CoreCallContext, session: SessionRef) =>
         trackedCall(() => readHandoffBasis(ctx, session), unavailable),
@@ -4326,7 +4405,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
-      'goalAdviserQueue', 'runtimeInFlight'] as const) {
+      'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     return platform;

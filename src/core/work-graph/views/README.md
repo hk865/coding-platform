@@ -16,7 +16,7 @@
 
 - `role-line-allocation-reader.ts` — `role-lines/allocation` 的读：一次 `readMany` 读四个 `RoleLineAllocation` 和 `ProjectRoleLimits`，缺键是零占用/默认额度、其它读失败是 `unavailable`；holder 的 `name` 和 `creator` 由同一份角色事实经 `creatorOf` 派生，完整交接沿每个涉及 workspace 的一次 completed 操作枚举得到后继；`createRoleLineAllocationReader` 是入口，依赖 `RoleLineAllocationReaderDependenciesV1`，`RoleLineContactFactsV1` 是一条 holder 的读时事实形状。
 - `role-line-operations-read.ts` — `role-lines/operations` 的读 `createRoleLineOperationsRead`（`RoleLineOperationReadPort`）：按工作区和五个记录阶段翻唯一的操作索引，`role_line` 一行带记录阶段、`actionPhase`、步骤、结果和冷启动的可选字段，`member_create` 一行带 `progress`；坏记录是 `unavailable`，不跳过、不补字段。
-- `role-line-read.ts` — `role-lines/read` 的读口 `createRoleLineRead`（`RoleLineReadPort`）：每行是 2C 的线行加有效范围数组、创建者、席位和 O2 的位置；席位只从 allocation 的 holders 得 `held`、不是 holder 是 `none`（`reserved` 留类型不落行）；范围或位置读失败整次读失败，不折成 `[]`。`createRoleFactsRead`（`RoleFactsReadPort`）是存名的一次批量读：一次 `readMany`，缺记录是没有存名、损坏是 `unavailable`，空输入回空 Map（唯一实现，读法同 allocation reader）。
+- `role-line-read.ts` — `role-lines/read` 的读口 `createRoleLineRead`（`RoleLineReadPort`）：每行是 2C 的线行加有效范围数组、创建者、席位和 O2 的位置；席位只从 allocation 的 holders 得 `held`、不是 holder 是 `none`（`reserved` 留类型不落行）；范围或位置读失败整次读失败，不折成 `[]`；经 `role-lines/read` 发布。`createRoleFactsRead`（`RoleFactsReadPort`）是存名的一次批量读：一次 `readMany`，缺记录是没有存名、损坏是 `unavailable`，空输入回空 Map（唯一实现，读法同 allocation reader）。
 - `work-line-reader.ts` — 工作线列表/归档/详情/分区页的唯一组装路径；线摘要也被悬停复用。线的最早未消费等待取自一次 Session facts 读（`readSessionFacts` 的 `wait`/`waits`），不再从最新 Run 的 continuation 读，也不再读 `TaskLease` 和等待消息。消息分节对每条消息调一次 `deriveMessageDelivery`：事实取记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，收件线的 `archived`/`retired` 取 `resolveLine` 已读线头的 `lifecycle === 'archived'`/`health === 'unavailable'`，不另开读取；`release` 取记录的字段，一次结果填 `delivery`/`deliveredTo`/`evidence`/`reason`/`disposition`（记录上存的 `delivery` 仍不读），`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。存名由可选的 `roleFacts` 一次读完这一页的线头，`deriveName` 的存名分支排在最前；缺省时与旧路径相同。
 - `node-detail-reader.ts` — 图悬停（只用已读数据）与单节点分区详情；目标负责人含目标的参谋线（每条开着的 Goal 负责链接，经 O4a 的完整读并按 duty 过滤）、线摘要按各 Session 自己的工作区装配（一个工作区一次），任务读带 `adviserWait`（O4b 的 resolver，`asker: null`，同一目标同一模块一次读；已结束的任务不读）。
 - `graph-context-reader.ts` — 上下文事实、图 look/find、注意力图的唯一只读视图；look/find 的 `goalRef` 为 `null` 时读项目分支（架构 module、项目 Session、请求点名的 Goal 只读），需要 Goal 的节点/关系拒绝。
@@ -68,7 +68,7 @@
 
 - `note-views.ts` — `NoteCheckPort`：注记的 freshness、changedFiles、冲突、配额等派生字段，联系的第一档读和第二档核对入口，以及每个 Host 一份的联系结论、存疑队列、断了的联系和解析答案。
 - `note-review-notices.ts` — `note_review` 请知悉来源：三类注记版本流；`goalId: null` 的版本是项目 subject 的行，按绑定的项目作用域读，Goal 过滤页不收。
-- `project-notice-notices.ts` — `project_notice` 请知悉来源：一项一条 `ProjectNotice@1` 记录，先读 watermark 作 `sourceCursor`，再按 `since` 从已看位置（含）读到尾；坏记录、缺 `since` 或位置低于已看位置为 `unavailable`；Goal 过滤页给空页，不折行、不合并。
+- `project-notice-notices.ts` — `project_notice` 请知悉来源：一项一条 `ProjectNotice@1` 记录，先读 watermark 作 `sourceCursor`，再按 `since` 从已看位置（含）读到尾；坏记录、缺 `since` 或位置低于已看位置为 `unavailable`；Goal 过滤页按通知存的 subject 筛（D-8），不折行。
 - `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮。
 - `handoff-notices.ts` — `handoff` 请知悉来源：每个走到通知写的交接操作一项；位置由 `noticePositionOf` 从操作保存的 Host principal、workspace、通知键和 `advanceGeneration` 重建原写身份并读回执与事件，缺回执或校验不符为 `unavailable`，绝不给无位置条目。item 的 subject 直接调用 `communication/decision-source/handoff-approval.ts` 的 `handoffApprovalSubjectOf`（恰好一个 Goal 是 `{kind:'goal'}`，两个以上或没有 Task 是项目），审批卡和通知共用这一份规则；项目读只出项目 subject、Goal 读只出该 Goal 的条目，两读按构造不相交，合并不会重复同一个 `itemKey`。
 - `undelivered-reply-notices.ts` — `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复。
@@ -78,7 +78,7 @@
 - `plan-adoption-notices.ts` — `plan_adoption` 请知悉来源（§6.4.1–§6.4.3）：`createPlanAdoptionNoticeSource` 每个已采用 PlanRevision 一项（读采用候选、采用前版本的审阅、任务书探针与只对未来生效的 delta；失败探针是条目上的文字，不写、不发、不重试）；`planAdoptionSummaryOf` 是唯一的采用文本构造（纯）；`planNoticeGoalRefs` 是两个通知来源共用的 Goal 枚举（读失败或截断是 `unavailable`，不折成空列表）；`noticeUnavailableOf` 把非 ready 读统一成 `unavailable`；`idsTextOf` 空列表写“无”、否则顿号连接。
 - `taskbook-markdown.ts` — 一个 Plan revision 的一个阶段的任务书 markdown（§5.3.4）：`renderTaskbookMarkdown` 只读传入的 Plan，渲染阶段、归属于它的任务（依赖、验收、指令）与 `revisionAssignments` 的完整指令；阶段不在 Plan 里返回 `null`，由调用方报失败。`taskbookRelativePath` 给出 `<settingsDirectory>/taskbooks` 下的相对路径，每个 id 编码成一段，文件名含 planId（共享 `basedOn` 的候选共享 goal/stage/revision）。
 - `notice-display-token.ts` — 请知悉展示页的 HMAC token；密钥由 composition 注入。
-- `notice-grouping.ts` — 请知悉分组的唯一纯函数与 seenThrough 推进；折行与筛选都按带标记的 `decisionSubjectKey`（一个 Goal 或一个项目各折各的），主对话把每个 subject 的自动返工折成一行，`summary` 模式再把同一类别、同一 subject、`NOTICE_SUMMARY_WINDOW_MS` 窗口内有事件时间的行汇总成一行（正好在边界上的留在前一个窗口，没有时间的行原样），`noticePage` 放指定 subject 的行；推进仍按全部显示行的连续前缀算，别的 subject 的行挡住就不越过。
+- `notice-grouping.ts` — 请知悉分组的唯一纯函数与 seenThrough 推进；折行与筛选都按带标记的 `decisionSubjectKey`（一个 Goal 或一个项目各折各的），主对话把每个 subject 的自动返工折成一行，`summary` 模式再把同一类别、同一 subject、`NOTICE_SUMMARY_WINDOW_MS` 窗口内有事件时间的行汇总成一行（正好在边界上的留在前一个窗口，没有时间的行原样；一个窗口只有一条时照原样，两条以上才汇总成“n 条自动调整”），`noticePage` 放指定 subject 的行；推进仍按全部显示行的连续前缀算，别的 subject 的行挡住就不越过。
 - `notice-position.ts` — `NoticePositionV1` 的唯一排序与分页合并点。
 
 ## 可以复用的能力
@@ -94,7 +94,7 @@
 | `secretaryNumbering` | `src/core/work-graph/views/work-line-reader.ts:301` | 由每个非副本 Session 的角色种类和职责得出编号：秘书才算；旧模板角色为 unknown 跳过；RoleSpec 角色为 unknown 时编号读不到（纯函数） | 编号读取的唯一判定；不要另写 unknown 的处理 | 线名；不要另排秘书顺序 |
 | `readLatestQueryGoal` | `src/core/work-graph/views/work-line-reader.ts:1361` | 线头最近一次 Query 的目标，读法与线自己的一致 | 图悬停的 Goal owners 过滤；不要拿线名判断 |
 | `createNodeDetailReader` | `src/core/work-graph/views/node-detail-reader.ts:1581` | 悬停与单节点分区详情的读端口 | 图悬停、节点面板 |
-| `createRoleLineRead` | `src/core/work-graph/views/role-line-read.ts:71` | `role-lines/read` 的唯一读口：每行是 2C 线行加有效范围、创建者、席位和 O2 位置；范围/位置失败整次失败 | 要角色线读时；不要另走一遍线列表、分配或位置 |
+| `createRoleLineRead` | `src/core/work-graph/views/role-line-read.ts:71` | `role-lines/read` 的唯一读口：每行是 2C 线行加有效范围、创建者、席位和 O2 位置；范围/位置失败整次失败；经 `role-lines/read` 发布 | 要角色线读时；不要另走一遍线列表、分配或位置 |
 | `createRoleFactsRead` | `src/core/work-graph/views/role-line-read.ts:42` | 存名的一次批量读（`RoleFactsReadPort`）：一次 `readMany`，缺记录是没有存名、损坏是 `unavailable` | 线读要存名时；不要另读 `SessionRoleFacts` 或另写解码 |
 | `createGraphContextReader` | `src/core/work-graph/views/graph-context-reader.ts:475` | 上下文事实、图 look/find、注意力图的只读视图；无 Goal 的 look/find 走项目分支 | 上下文组装、图页、注意力扫描、秘书轮的项目视图 |
 | `createGoalPointerFacts` | `src/core/work-graph/views/pointer-facts.ts:23` | 返回 Goal 理解指针及同次读取的水位，缺失保留必须不存在的版本期待 | 组合根向三版本读取器注入指针端口时 |
@@ -136,10 +136,10 @@
 | `compareNoticePositions` | `src/core/work-graph/views/notice-position.ts:42` | 按 ledger 游标再按 `itemKey` 比较两个位置 | 任何需要通知顺序时；唯一允许解析 ledger 游标的位置 |
 | `mergeNoticePages` | `src/core/work-graph/views/notice-position.ts:56` | 把各来源已过滤的页稳定合并，截到 limit，返回每类已显示位置 | 决定队列合并请知悉来源时 |
 | `member_created` 内置请知悉 | `src/core/work-graph/views/decision-read-model.ts:2596` | 每个写了 `noticeItemKey` 的 `automatic_notice` + `done` 成员操作一项（只读 `completed` 分区）；位置由保存的 fingerprint/caller/commandId 经 `principalIdentity` 用保存的 caller 折出 `member.request` 身份，用 `lookupCommittedReceipt` 按身份+指纹查回执，再 `readCommittedEvent` 解码原 `MemberCreationAccepted` 事件并核对 operation；键不是 `member:<operationId>`→`unavailable`、缺回执→`unavailable`、`conflict`→`idempotency_conflict`、坏事件→`unavailable`；subject 是 Goal；`host_pick` 为空键、不读 `caller.run` | 主对话/请知悉读；`records` 窄口含 `lookupCommit`/`eventAt`，组合根传同一个 `backend.records` |
-| `groupNotices` | `src/core/work-graph/views/notice-grouping.ts:65` | 按 `pass_through`/`user_affected_per_goal`/`main_conversation`/`summary` 折叠显示行；按 `decisionSubjectKey` 把每个 subject 的书记整理折成一行，主对话另把每个 subject 的自动返工折成一行，成员原行放在 `memberViews`；`summary` 在主对话的基础上用第三个参数（`itemKey` → 事件时间）把同一类别、同一 subject 窗口内的行汇总成“n 条自动调整”一行 | 显示前分组；输入必须已按位置排序；整页读用 `summary`，队列不用 |
+| `groupNotices` | `src/core/work-graph/views/notice-grouping.ts:66` | 按 `pass_through`/`user_affected_per_goal`/`main_conversation`/`summary` 折叠显示行；按 `decisionSubjectKey` 把每个 subject 的书记整理折成一行，主对话另把每个 subject 的自动返工折成一行，成员原行放在 `memberViews`；`summary` 在主对话的基础上用第三个参数（`itemKey` → 事件时间）把同一类别、同一 subject 窗口内的行汇总成“n 条自动调整”一行；一个窗口只有一条时照原样，两条以上才汇总 | 显示前分组；输入必须已按位置排序；整页读用 `summary`，队列不用 |
 | `NOTICE_SUMMARY_WINDOW_MS` | `src/core/work-graph/views/notice-grouping.ts:17` | 汇总窗口 900,000 毫秒（15 分钟）；离窗口第一条正好这么久的留在本窗口，超过才开新窗口 | `summary` 分组；不要另写窗口值 |
-| `seenThroughOfNotices` | `src/core/work-graph/views/notice-grouping.ts:186` | 只按实际显示的成员计算每类 seenThrough 推进 | `markNoticesSeen` 计算推进位置时 |
-| `noticePage` | `src/core/work-graph/views/notice-grouping.ts:221` | 按给定的 subject 集合放行（项目行加所选 Goal 的行）；推进按全部行里的连续前缀算，别的 subject 的行挡住就不越过 | 主对话页和整页读组请知悉时 |
+| `seenThroughOfNotices` | `src/core/work-graph/views/notice-grouping.ts:187` | 只按实际显示的成员计算每类 seenThrough 推进 | `markNoticesSeen` 计算推进位置时 |
+| `noticePage` | `src/core/work-graph/views/notice-grouping.ts:222` | 按给定的 subject 集合放行（项目行加所选 Goal 的行）；推进按全部行里的连续前缀算，别的 subject 的行挡住就不越过 | 主对话页和整页读组请知悉时 |
 | `createNoticeDisplayToken` | `src/core/work-graph/views/notice-display-token.ts:30` | 签发和校验展示页 token（HMAC，绑定 workspace/类别/调用者/水位） | composition 注入一次性密钥后装配 |
 | `createGoalConflictAssembler` | `src/core/work-graph/views/goal-conflicts.ts:198` | Goal 冲突读端口，供决定读模型与上层使用 | 需要冲突卡片/冲突事实时 |
 | `readGoalFootprint` | `src/core/work-graph/views/goal-conflicts.ts:354` | 一个 Goal 的足迹：计划模块 + 已执行文件映射 | 冲突判断、执行影响展示 |

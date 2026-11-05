@@ -355,6 +355,14 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     if (adviserRead.status !== 'ready') return adviserRead;
     if (adviserRead.value === null) return rejected('not_found', 'the adviser Session does not exist');
     const adviser = adviserRead.value;
+    // O5b ruling 35: the destination must be an adviser line. A person's assign may name any Session ref, and
+    // `planReanchor` checks only that the destination may take the link, never its duty; the allocation's own
+    // assignments pass the same check through the same duty read its candidate step uses (:510–:512).
+    const destinationDuty = await deps.duty(adviser.role, ctx);
+    if (destinationDuty.status !== 'ready') return asWriteRejection(destinationDuty, 'the destination Session duty');
+    if (roleLineDutyOf(destinationDuty.value) !== 'adviser') {
+      return rejected('invalid', 'the destination Session is not an adviser line');
+    }
     const target = { kind: 'goal' as const, ref: input.goalRef };
     const link = responsibleLinkRef(input.adviser, target);
     const existing = ownerReadValue(await readOwnerRecord({ store: deps.records, refKey: sessionWorkLinkRefKey(link),

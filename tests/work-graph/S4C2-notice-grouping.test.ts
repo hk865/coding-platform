@@ -220,7 +220,6 @@ describe('S4C2-N5 groupNotices summary (7D2 O3a)', () => {
   const T15x = '2026-11-04T08:15:00.001Z';
   const T5 = '2026-11-04T08:05:00.000Z';
   const P = '{"kind":"project","projectRef":{"projectId":"p1"}}';
-  const Gk = '{"goalRef":{"aggregateType":"Goal","goalId":"g1","projectId":"p1"},"kind":"goal"}';
   const a = projectItem({ itemKey: 'pa', category: 'project_notice', n: 1 });
   const b = projectItem({ itemKey: 'pb', category: 'project_notice', n: 2 });
   const c = projectItem({ itemKey: 'pc', category: 'project_notice', n: 3 });
@@ -234,30 +233,12 @@ describe('S4C2-N5 groupNotices summary (7D2 O3a)', () => {
     members: [{ itemKey: 'pa', position: pos(1, 'pa') }, { itemKey: 'pb', position: pos(2, 'pb') }],
     memberViews: [a, b],
   };
-  const cOnly: NoticeLineV1 = {
-    itemKey: `notice_summary:${P}:pc`, category: 'project_notice',
-    subject: { kind: 'project', projectRef: { projectId: 'p1' } },
-    position: pos(3, 'pc'), summary: '1 条自动调整', objects: [], rework: null,
-    members: [{ itemKey: 'pc', position: pos(3, 'pc') }], memberViews: [c],
-  };
-  const aOnly: NoticeLineV1 = {
-    itemKey: `notice_summary:${P}:pa`, category: 'project_notice',
-    subject: { kind: 'project', projectRef: { projectId: 'p1' } },
-    position: pos(1, 'pa'), summary: '1 条自动调整', objects: [], rework: null,
-    members: [{ itemKey: 'pa', position: pos(1, 'pa') }], memberViews: [a],
-  };
-  const gOnly: NoticeLineV1 = {
-    itemKey: `notice_summary:${Gk}:pg`, category: 'project_notice',
-    subject: { kind: 'goal', goalRef: goal('g1') },
-    position: pos(2, 'pg'), summary: '1 条自动调整', objects: [], rework: null,
-    members: [{ itemKey: 'pg', position: pos(2, 'pg') }], memberViews: [g],
-  };
 
   /* Named mutation: the boundary uses `>=` (exactly 900 000 ms also opens a new window) → items 1, 2 go red. */
   it.each<[n: number, name: string, items: NoticeItemV1[], at: [string, string][], expected: NoticeLineV1[]]>([
     [1, '同类同主体在窗口内合成一行；正好 900 000 毫秒仍在前一个窗口', [a, b], [['pa', T0], ['pb', T15]], [ab]],
-    [2, '超过 900 000 毫秒开新窗口（从窗口第一条算）', [a, b, c], [['pa', T0], ['pb', T15], ['pc', T15x]], [ab, cOnly]],
-    [3, '不同主体各自成窗', [a, g], [['pa', T0], ['pg', T5]], [aOnly, gOnly]],
+    [2, '超过 900 000 毫秒开新窗口（从窗口第一条算）', [a, b, c], [['pa', T0], ['pb', T15], ['pc', T15x]], [ab, c]],
+    [3, '不同主体各自成窗', [a, g], [['pa', T0], ['pg', T5]], [a, g]],
     [4, '没有时间的原样一行', [m], [], [m]],
   ])('S4C2-N5 O3a-R4 #%s %s', (_n, _name, items, at, expected) => {
     expect(groupNotices(items, 'summary', new Map(at))).toEqual(expected);

@@ -95,6 +95,11 @@ async function parentFactsOf(
   if (parent.action.kind === 'role_line') {
     if (parent.action.action === 'start_lines') return { status: 'ready', value: { kind: 'start_lines', operation: parent.ref } };
     if (parent.action.action === 'cold_start') return { status: 'ready', value: { kind: 'cold_start', operation: parent.ref } };
+    // A split's saved body names its source line and why it split (b02); the role facts follow the reason.
+    const split = parent.action.action === 'role_line_split' ? parent.action.split ?? null : null;
+    if (split !== null) {
+      return { status: 'ready', value: { kind: 'role_line_split', source: split.source, reason: split.reason } };
+    }
     return { status: 'ready', value: { kind: 'other' } };
   }
   return { status: 'ready', value: { kind: 'other' } };

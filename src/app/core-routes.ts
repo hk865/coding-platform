@@ -41,6 +41,7 @@ import type {
   RoleLineChangeScopeCommandV1, RoleLineOpenCommandV1, RoleLineOperationsPort,
 } from '../core/work-graph/sessions/role-line-operations.js';
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
+import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -362,6 +363,16 @@ export type CoreRouteBindings = {
     => ReturnType<AutonomyRulePort['update']>;
   // The project's Goal adviser queue read is person-only.
   readGoalAdviserQueue: GoalAdviserQueuePort['read'];
+  // The queue's two person writes unwrap the `GraphWrite` once like the role-line writes; `operationRef` is a card
+  // approval's alone (the queue owner pairs it with the approval pin), so a person's assign never names it.
+  reorderGoalAdviserQueue: (ctx: CoreCallContext,
+    request: GraphWrite<Omit<Parameters<GoalAdviserQueuePort['reorder']>[1], 'commandId'>>)
+    => ReturnType<GoalAdviserQueuePort['reorder']>;
+  assignGoalAdviser: (ctx: CoreCallContext,
+    request: GraphWrite<Omit<Parameters<GoalAdviserQueuePort['assign']>[1], 'commandId' | 'operationRef'>>)
+    => ReturnType<GoalAdviserQueuePort['assign']>;
+  // The role-line read is person-only (L44).
+  readRoleLines: RoleLineReadPort['readRoleLines'];
   // The two Goal-card commands and the initialization adoption are person-only, so their binding can answer a
   // `forbidden` rejection; the copy preview is a read like the other reads.
   confirmGoalDraft: GoalConfirmPort['confirmDraft'];
@@ -493,6 +504,8 @@ export type CoreRoutePlatform = {
   autonomyRules?: Pick<AutonomyRulePort, 'read' | 'create' | 'revoke' | 'update'>;
   /** The Goal adviser queue owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
   goalAdviserQueue?: Pick<GoalAdviserQueuePort, 'read' | 'reorder' | 'assign'>;
+  /** The role-line read owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
+  roleLineRead?: RoleLineReadPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -732,6 +745,9 @@ export const CORE_ROUTE_SPECS: Record<
   'autonomy-rules/revoke': { kind: 'graph_write', binding: 'revokeAutonomyRule', owner: 'autonomyRules.revoke' },
   'autonomy-rules/update': { kind: 'graph_write', binding: 'updateAutonomyRule', owner: 'autonomyRules.update' },
   'goals/adviser-queue': { kind: 'plain', binding: 'readGoalAdviserQueue', owner: 'goalAdviserQueue.read' },
+  'goals/adviser-queue/reorder': { kind: 'graph_write', binding: 'reorderGoalAdviserQueue', owner: 'goalAdviserQueue.reorder' },
+  'goals/adviser-queue/assign': { kind: 'graph_write', binding: 'assignGoalAdviser', owner: 'goalAdviserQueue.assign' },
+  'role-lines/read': { kind: 'plain', binding: 'readRoleLines', owner: 'roleLineRead.readRoleLines' },
 };
 
 export type ParsedCoreRequest =
@@ -1383,6 +1399,28 @@ export function createPlatformCoreRouteBindings(
     readGoalAdviserQueue: platform.goalAdviserQueue === undefined
       ? unsupported('the platform does not publish goalAdviserQueue.read')
       : personEntry(platform.goalAdviserQueue.read.bind(platform.goalAdviserQueue)),
+    // The queue's two person writes: the owner's `write` checks only the Host principal, so `personEntry` is the one
+    // person check.
+    reorderGoalAdviserQueue: platform.goalAdviserQueue === undefined
+      ? unsupported('the platform does not publish goalAdviserQueue.reorder')
+      : personEntry((ctx, request) => {
+        // The DTO's own fields, one by one (O5b ruling 36): a JSON body's extra keys, the owner's `kind` among them,
+        // never reach the owner.
+        const { order, expectedRevision } = request.input;
+        return platform.goalAdviserQueue!.reorder(ctx, { order, expectedRevision, commandId: request.meta.requestId });
+      }),
+    assignGoalAdviser: platform.goalAdviserQueue === undefined
+      ? unsupported('the platform does not publish goalAdviserQueue.assign')
+      : personEntry((ctx, request) => {
+        // The same (ruling 36); the card-only `operationRef` is no field of the DTO, so it is never forwarded (ruling 15).
+        const { goalRef, adviser, expectedRevision } = request.input;
+        return platform.goalAdviserQueue!.assign(ctx,
+          { goalRef, adviser, expectedRevision, commandId: request.meta.requestId });
+      }),
+    // The role-line read: person-only BEFORE the owner runs (L44), like the operations read.
+    readRoleLines: platform.roleLineRead === undefined
+      ? unsupported('the platform does not publish roleLineRead.readRoleLines')
+      : personEntry(platform.roleLineRead.readRoleLines.bind(platform.roleLineRead)),
     // The Goal service's three card owners; the Host's adoption owner arrives as the sixth argument.
     confirmGoalDraft: personEntry(platform.goals.confirmDraft.bind(platform.goals)),
     readGoalCopyDraft: platform.goals.readGoalCopyDraft.bind(platform.goals),
@@ -1680,6 +1718,10 @@ export async function dispatchCoreRoute(
       case 'autonomy-rules/update': return bindings.updateAutonomyRule(ctx, graphWrite.request as never);
       // The Goal adviser queue read takes the explicit empty input, like `role-lines/allocation`.
       case 'goals/adviser-queue': return bindings.readGoalAdviserQueue(ctx, plain.input as never);
+      case 'goals/adviser-queue/reorder': return bindings.reorderGoalAdviserQueue(ctx, graphWrite.request as never);
+      case 'goals/adviser-queue/assign': return bindings.assignGoalAdviser(ctx, graphWrite.request as never);
+      // The role-line read takes `{ workspace }`.
+      case 'role-lines/read': return bindings.readRoleLines(ctx, plain.input as never);
       // The two Goal-card commands, the copy preview and the initialization adoption.
       case 'goals/confirm-draft': return bindings.confirmGoalDraft(ctx, plain.input as never);
       case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);

@@ -3,7 +3,7 @@
 ## 负责什么，不负责什么
 - 外层 Host：依赖方向只允许 `src/composition`、`src/contracts` 和 `src/core`/`src/business` 各模块；`scripts/check-boundaries.mjs` 只按模块 owner 判方向，不细化到端口文件。不能开 store，不能被 core/business 反向 import。
 - 负责进程外壳：CLI、HTTP/SSE 传输、实例锁、启动 reconcile、Host 设置、提示词包、运行期配置，以及注意力、自动捕获、协作、Goal 扇出和请求驱动（唤醒循环加每 workspace 的两条请求队列）。
-- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:2150`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
+- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:2179`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
 - 不写状态：任何状态迁移只经 `src/core/work-graph/state/`（AGENTS 第 9 条）；本层只调用平台公开端口。
 - 请求体永远不提供 principal、root、token 或凭据；这些只来自受信任的 `options`。
 - `src/core`、`src/business` 不得反向 import 本层。
@@ -23,7 +23,7 @@
 ### HTTP 路由与服务器
 做 loopback HTTP、路由表和 `changes` SSE 的去这组。
 - `server.ts` — HTTP/静态外壳：token、同源、JSON/大小限制、SSE，再转发给 `core-routes.ts`。
-- `core-routes.ts` — 固定路由表、请求解析、端口绑定和逐 suffix 显式 dispatch；7A-2 的 `messages/apply` 是 `graph_write`，绑定 apply owner，路由不加人检查：owner 自己比较调用方的 effect；`secretaries/handoff` 与 `secretaries/archive` 是只限人的内部命令：先验人，再经 accept owner，然后驱动 Workflow 的 `advance`/`manualArchive`，公开 key 表不变。6B-3 的四条 `plain` 路由：`goals/confirm-draft` 和 `goals/copy-confirm` 只限人（与注记的两条处置共用一个人的守卫，原因是“only the person may call this route”），`goals/copy-draft` 是读；`initialization/adopt` 也只限人，它的 owner 经 `createPlatformCoreRouteBindings` 可选的第六个参数传入，没传时回答 `unsupported`。`goals/read` 的 Host 绑定在 `queryGoal` 的 `ready` 值上加 `ordinal`（读不到为 `null`，读坏不拒）；L 的两条人专用 `plain` 路由（body 是 `{scope,input}`）：`messages/forward` 绑定 F 的 `MessageForwardingPort.forwardMessage`（`copyGoalRef` 是复制臂），`waits/dispose` 绑定 `disposeWait`；两条都先过与注记处置同一个人的守卫，再进逐 suffix 显式 dispatch，公开 key 表只加这两行。7C-1 的两条 `plain` 路由是 `goals/overlap-release`（只限人，先过同一个人的守卫再走 `releaseOverlapGate`）和 `goals/overlap-gates`（`readOverlapGates` 的普通读）；两条都绑 N 的同一个 `overlapGates` owner，窄平台缺这个 owner 时回答 `unsupported`。语义层的两条读路由 `architecture/semantic-links`、`architecture/semantic-flows` 都是 `plain`、只按项目范围绑 `notes` owner 的读方法；人的“重新核对” `architecture/semantic-links/check` 也是 `plain`、同一个门（项目范围，不加人检查、不加租约），绑 `notes.checkSemanticLinks`：一次核 1–20 条注记，存疑的联系交第二档。
+- `core-routes.ts` — 固定路由表、请求解析、端口绑定和逐 suffix 显式 dispatch；7A-2 的 `messages/apply` 是 `graph_write`，绑定 apply owner，路由不加人检查：owner 自己比较调用方的 effect；`secretaries/handoff` 与 `secretaries/archive` 是只限人的内部命令：先验人，再经 accept owner，然后驱动 Workflow 的 `advance`/`manualArchive`，公开 key 表不变。6B-3 的四条 `plain` 路由：`goals/confirm-draft` 和 `goals/copy-confirm` 只限人（与注记的两条处置共用一个人的守卫，原因是“only the person may call this route”），`goals/copy-draft` 是读；`initialization/adopt` 也只限人，它的 owner 经 `createPlatformCoreRouteBindings` 可选的第六个参数传入，没传时回答 `unsupported`。`goals/read` 的 Host 绑定在 `queryGoal` 的 `ready` 值上加 `ordinal`（读不到为 `null`，读坏不拒）；L 的两条人专用 `plain` 路由（body 是 `{scope,input}`）：`messages/forward` 绑定 F 的 `MessageForwardingPort.forwardMessage`（`copyGoalRef` 是复制臂），`waits/dispose` 绑定 `disposeWait`；两条都先过与注记处置同一个人的守卫，再进逐 suffix 显式 dispatch，公开 key 表只加这两行。7C-1 的两条 `plain` 路由是 `goals/overlap-release`（只限人，先过同一个人的守卫再走 `releaseOverlapGate`）和 `goals/overlap-gates`（`readOverlapGates` 的普通读）；两条都绑 N 的同一个 `overlapGates` owner，窄平台缺这个 owner 时回答 `unsupported`。语义层的两条读路由 `architecture/semantic-links`、`architecture/semantic-flows` 都是 `plain`、只按项目范围绑 `notes` owner 的读方法；人的“重新核对” `architecture/semantic-links/check` 也是 `plain`、同一个门（项目范围，不加人检查、不加租约），绑 `notes.checkSemanticLinks`：一次核 1–20 条注记，存疑的联系交第二档。7D2 O5b 的 `goals/adviser-queue/reorder`、`goals/adviser-queue/assign`、`role-lines/read` 三条人用路由（读也只给人；两条写逐个转 DTO 字段，`assign` 不收卡专用的 `operationRef`）。
 - `core-http-types.ts` — 从公开端口派生的 HTTP/JSON DTO 与传输常量，含两条秘书生命周期命令的 body/response 和 `SecretaryLifecycleCoreRouteDto`；这两条的 body 从 owner 的 accept 输入派生（只把 `source` 叫 `session`），response 从 Workflow `advance`/`manualArchive` 的返回类型派生，绑定用同一组类型。6B-3 四条路由的 body/response从 `GoalConfirmPort`、`GoalCopyPort` 和 `InitializationAdoptionHostPort` 派生。7A-2 的 `GoalsReadResponse` 从 `CoreRouteBindings['queryGoal']` 派生（带 `ordinal`）；`MessagesApplyBody`/`MessagesApplyResponse` 从 `MessageApplyPort['applyMessage']` 派生，`MessagesCoreRouteDto` 收集这两条别名。7C-1 的 `OverlapCoreRouteDto` 收集两条 overlap 路由的 body/response，四个别名 `GoalsOverlapReleaseBody`/`GoalsOverlapReleaseResponse`/`GoalsOverlapGatesBody`/`GoalsOverlapGatesResponse` 都从 `OverlapGatePort` 派生。
 - `initialization-adoption.ts` — `initialization/adopt` 的 Host owner：端口 `InitializationAdoptionHostPort`（`adopt` 一次调用接受或续跑、冻结输入、跑完能完成的阶段，停下回答 `pending`；`read` 是恢复读，生产里还没有调用者）和 P11 组合 `createInitializationAdoptionHost`（`src/app/initialization-adoption.ts:131`）。每个阶段 `read → resume →（打开的前标记 | 新一代替换停下的标记 | saveBefore）→ 子 owner → saveAfter`；记录只由 J 的 `platform.initializationAdoption` 写，本 owner 只给写入输入、按冻结的 actor 调子 owner；四个子 owner 的身份前缀和指纹配方是它们的私有函数，这里照抄并注明出处。不持实例租约时在 accept 前回答 `busy`。Host 没有设置（没有建这个 owner）时，`initialization/adopt` 回答 `unsupported`。`committed` 之后 Host 用 `startGoalDriver` 启动该 Goal 的 collaboration driver。
 - `change-feed.ts` — 进程内变更通知中心，供 `changes` SSE 与 `Last-Event-ID` 恢复。
@@ -60,9 +60,9 @@
 | `createLocalWorkbenchHost` | `src/app/host.ts:492` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
 | `consumeStatus` | `src/app/host.ts:260` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
 | `createWorkbenchServer` | `src/app/server.ts:205` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，给画板 HTML 注入令牌 meta 并 `no-store`，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
-| `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:845` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
-| `dispatchCoreRoute` | `src/app/core-routes.ts:1490` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
-| `parseCoreRouteRequest` | `src/app/core-routes.ts:768` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
+| `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:861` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
+| `dispatchCoreRoute` | `src/app/core-routes.ts:1528` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
+| `parseCoreRouteRequest` | `src/app/core-routes.ts:790` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
 | `createWorkbenchTools` | `src/app/workbench-tools.ts:283` | 适配 Kernel 文件沙箱与进程沙箱：读写、列目录、后台命令 | 工作台的文件/命令路由；不要直接碰 Kernel sandbox |
 | `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:425` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
 | `validateWorkbenchRuntimeConfiguration` | `src/app/runtime-configuration.ts:297` | 纯校验 binding/profile/grant/budget，重复或错配直接报错 | 装载或替换运行期配置前 |
@@ -97,7 +97,7 @@
 | `listDiskPromptPacks` | `src/app/prompt-packs.ts:335` | 生成 `prompts/packs/list`：platform 在前，其余按 id | 设置页列出提示词包时 |
 | `parseWorkbenchCliConfig` | `src/app/main.ts:72` | 把可序列化 CLI 文件纯转换成本地 Host 选项 | CLI 与测试复用同一份配置转换 |
 | `runWorkbenchCli` | `src/app/main.ts:196` | 读配置、启动 loopback Host、返回退出码 | `main` 入口；token 不落盘、不打印 |
-| `messageExpiry` | `src/composition/create-platform.ts:1335` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
+| `messageExpiry` | `src/composition/create-platform.ts:1358` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
 | `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2364` / `:2506` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问目标的负责参谋（`platform.recipients.resolveRecipient`，L35 的唯一责任收件人读），没有再回配置目标，读失败这一趟不处理、下趟重试；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
 
 ## 内部用
@@ -106,7 +106,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:2150`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:2179`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:51`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。
