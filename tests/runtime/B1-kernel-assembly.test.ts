@@ -19,11 +19,14 @@ import type { RuntimeSourceCaptureAccess } from '../../src/core/agent-runtime/so
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { CaptureSummary, WorkspaceResult, WorkspaceToolsPort } from '../../src/core/workspace/ports.js';
 import { customSkillDirectory, openPCWorkFixture, scriptedModel } from '../helpers/PC-platform-fixture.js';
+import { workspaceToolsFixture } from '../helpers/workspace-tools-fixture.js';
 import { frozenPromptInputs } from './PC-frozen-prompt.js';
 
 const directories: string[] = [];
+const toolCleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  for (const cleanup of toolCleanups.splice(0).reverse()) await cleanup();
 });
 
 const SKILL_MARKER = 'B1_TRUSTED_SKILL_MARKER_ONLY';
@@ -109,17 +112,17 @@ function baseOptions(
 }
 
 /** Trusted test Host capability. Only the open/close timing and the real WorkspaceTools calls are asserted. */
-function sourceCapability(capture?: WorkspaceToolsPort['captureSourceChanges']) {
+async function sourceCapability(capture?: WorkspaceToolsPort['captureSourceChanges']) {
   const workspace = { aggregateType: 'Workspace' as const, projectId: 'b1-project', workspaceId: 'b1-workspace' };
-  const unavailable = async () => ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'B1 trusted fixture has no provider' });
-  const captureSourceChanges = vi.fn(capture ?? unavailable);
-  const close = vi.fn(async () => {});
-  const port: WorkspaceToolsPort = {
-    captureSourceChanges, captureObservation: unavailable, querySource: unavailable, exportCapture: unavailable,
-    verifyCapture: unavailable, releaseCapture: unavailable, captureArchitectureSource: unavailable,
-    captureFileGraph: unavailable, readWorkspace: unavailable, compareWorkspace: unavailable,
-    readUncommittedFiles: unavailable,
-  };
+  // The real WorkspaceToolsPort from the shared fixture; only the tested capture
+  // method (the count/payload seam) is wrapped, returning the real method otherwise.
+  const real = await workspaceToolsFixture({
+    projectId: workspace.projectId, actorId: 'b1-host-reader', permissionRevision: 'b1-tools@1',
+    tempPrefix: 'b1-tools-', cleanups: toolCleanups,
+  })([]);
+  const captureSourceChanges = vi.fn(capture ?? real.handle.tools.captureSourceChanges);
+  const close = vi.fn(async () => { await real.handle.close(); });
+  const port: WorkspaceToolsPort = { ...real.handle.tools, captureSourceChanges };
   const access: RuntimeSourceCaptureAccess = {
     port, workspace,
     context: signal => ({
@@ -221,7 +224,7 @@ describe('B1 Kernel assembly seam', () => {
 
   it('awaits before_model, snapshots the hook list/metadata/execute before the first await, and sees run.started/turn.started', async () => {
     const w = await tempWorkspace('barrier');
-    const source = sourceCapability();
+    const source = await sourceCapability();
     const open = vi.fn(async (signal: AbortSignal) => { signal.throwIfAborted(); return source.access; });
     const { client, requests } = scriptedClient([{ kind: 'text', text: 'after the barrier' }]);
 
@@ -290,7 +293,7 @@ describe('B1 Kernel assembly seam', () => {
 
   it('pauses at before_model with zero model requests and no first_use source factory open', async () => {
     const w = await tempWorkspace('pause');
-    const source = sourceCapability();
+    const source = await sourceCapability();
     const open = vi.fn(async (signal: AbortSignal) => { signal.throwIfAborted(); return source.access; });
     const { client, requests } = scriptedClient([{ kind: 'text', text: 'never delivered' }]);
     const hook: kernel.BeforeModelHookPort = {
@@ -312,7 +315,7 @@ describe('B1 Kernel assembly seam', () => {
 
   it('shares one suspended first_use open across parallel calls and delivers the real captured payload to the model', async () => {
     const w = await tempWorkspace('first-use');
-    const source = sourceCapability(async (): Promise<WorkspaceResult<CaptureSummary>> => ({ status: 'ready', value: captureSummary() }));
+    const source = await sourceCapability(async (): Promise<WorkspaceResult<CaptureSummary>> => ({ status: 'ready', value: captureSummary() }));
     const openControl = deferred<RuntimeSourceCaptureAccess>();
     const openCalled = deferred();
     const open = vi.fn((signal: AbortSignal) => { signal.throwIfAborted(); openCalled.resolve(); return openControl.promise; });
@@ -369,7 +372,7 @@ describe('B1 Kernel assembly seam', () => {
     // A per-tool cancellation while its currentness check is pending must not open a source.
     const checked = deferred(), finishCheck = deferred();
     const toolController = new AbortController();
-    const unusedSource = sourceCapability();
+    const unusedSource = await sourceCapability();
     const resolver = vi.fn(async () => unusedSource.access);
     const tool = createProjectSourceTool({ access: resolver, requireVisible: () => {},
       assertCurrent: async () => { checked.resolve(); await finishCheck.promise; } });
@@ -385,7 +388,7 @@ describe('B1 Kernel assembly seam', () => {
     } finally { finishCheck.resolve(); await toolPending.catch(() => {}); }
 
     const w = await tempWorkspace('drain');
-    const source = sourceCapability();
+    const source = await sourceCapability();
     const openControl = deferred<RuntimeSourceCaptureAccess>();
     const openCalled = deferred();
     const open = vi.fn((signal: AbortSignal) => { signal.throwIfAborted(); openCalled.resolve(); return openControl.promise; });
@@ -425,7 +428,7 @@ describe('B1 Kernel assembly seam', () => {
 
   it('reports a lazy open failure as a real tool result, reuses the one failed factory attempt in the next round, and keeps project_index out', async () => {
     const w = await tempWorkspace('lazy-failure');
-    const source = sourceCapability();
+    const source = await sourceCapability();
     // Factories may throw before returning a Promise; this failure must also be cached.
     const open = vi.fn((signal: AbortSignal): Promise<RuntimeSourceCaptureAccess> => { signal.throwIfAborted(); throw Object.assign(new Error('B1 lazy open failure'), { code: 'unsupported' }); });
     const { client, requests } = scriptedClient([

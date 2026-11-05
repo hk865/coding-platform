@@ -2,9 +2,8 @@
  * P-race (7a:730; R2-A-16+B-14): the apply's commit is held, the recipient line's own Runtime refuses the message
  * while it waits and commits, the apply is released and loses the message CAS. The refusal is the full command
  * port's refusal arm, because a plain reply does not consult the first-wins slot. The order is the book's; `hold`
- * is the commit's gate before the store, and `Promise.race([hold.reached, applying])` ends on the deferred named
- * error until L publishes the owner. Every prior state comes from the frozen fixture's public steps; the store is
- * never read.
+ * is the commit's gate before the store. Every prior state comes from the frozen fixture's public steps; the store
+ * is never read.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WriteResult } from '../../src/contracts/core/results.js';

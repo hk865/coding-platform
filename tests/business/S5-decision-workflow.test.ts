@@ -4,14 +4,9 @@
  *
  * Assembly follows `tests/business/R5c-workflow.test.ts`: the real seeded
  * WorkGraph/Session fixture (§5.1 P/W, Goals A/B/C@7, Workspace@3, T, operator
- * `human:operator`) with the real WorkGraph/Plan/Session owners and the real
- * Goal-settings owner; only the execution/verification owners are controlled
- * doubles. No model is called.
- *
- * Part 1 publishes `createGoalSettingsService` and the two Workflow seam
- * methods as stubs, so each case stops at the first `not implemented:` throw
- * (WF01 `setGoalSettings`, WF02 `reorderGoals`); the pins and assertions are
- * the frozen §5.4/§3.3 line 625 expectations for part 2.
+ * `human:operator`) with the real WorkGraph/Plan/Session owners, the real
+ * Goal-settings owner and the composition's real execution/verification ports
+ * over the same records. No model is called.
  */
 import { afterEach, expect, it } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
@@ -43,15 +38,12 @@ import {
   openS5DecisionFixture, type S5DecisionFixture,
 } from '../helpers/S5-decision-fixture.js';
 import { committed, ready } from '../helpers/S5-user-message-support.js';
+import { openMemoryPlatform } from '../helpers/K3-review-card-fixture.js';
 
 const fixtures: S5DecisionFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
 
 type Claims = WorkflowDependencies['claims'];
-
-function unsupported(reason: string) {
-  return { status: 'rejected' as const, code: 'unsupported' as const, reason };
-}
 
 /** The real claim owner plus a requeue counter whose double must never be reached when gated. */
 function countingClaims(service: Claims): { claims: Claims; requeueCalls: () => number } {
@@ -78,29 +70,10 @@ function makeClaims(fixture: S5DecisionFixture): Claims {
     roles: createRoleConfigurationService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }) });
 }
 
-/** Real WorkGraph/Plan/Session owners + real settings owner; execution/checks are doubles. */
-function assemble(fixture: S5DecisionFixture, goalSettings: GoalSettingsPort, claims: Claims) {
+/** Real WorkGraph/Plan/Session owners + real settings owner; execution/checks come
+ * from the real composition root over the same records. */
+async function assemble(fixture: S5DecisionFixture, goalSettings: GoalSettingsPort, claims: Claims) {
   const { authority } = createMaterialRecordReaders(fixture.records);
-  const runtime: RuntimeExecutionPort = {
-    capabilities: async () => unsupported('S5 workflow test never reads capabilities'),
-    createSession: async () => unsupported('S5 workflow test never creates a Session'),
-    readSessionHistory: async () => unsupported('S5 workflow test never reads Session history'),
-    readExecutionHistory: async () => unsupported('S5 workflow test never reads execution history'),
-    readTaskExecutionHistory: async () => unsupported('S5 workflow test never reads task history'),
-    prepareExecution: async () => unsupported('S5 workflow test stops before prepare'),
-    startRun: async () => unsupported('S5 workflow test stops before start'),
-    observeRun: async () => unsupported('S5 workflow test never observes'),
-  };
-  const evidence: EvidencePort = {
-    openVerification: async () => unsupported('S5 workflow test does not open checks'),
-    readVerification: async () => unsupported('S5 workflow test does not read checks'),
-    beginCheck: async () => unsupported('S5 workflow test does not begin checks'),
-    recordCheckResult: async () => unsupported('S5 workflow test does not record checks'),
-    finalizeChecks: async () => unsupported('S5 workflow test does not finalize checks'),
-  };
-  const checks: RegisteredCheckRunner = {
-    runRegisteredCheck: async () => unsupported('S5 workflow test does not run checks'),
-  };
   const configuration: WorkflowHostConfiguration = {
     consumerId: 's5-wf-consumer',
     bindings: [{
@@ -110,6 +83,24 @@ function assemble(fixture: S5DecisionFixture, goalSettings: GoalSettingsPort, cl
       budget: fixture.runRA.budget,
     }],
   };
+  // The real composition root over the SAME records and body store: its published
+  // runtime/evidence/checks are the production ports, not a hand-written whole object.
+  const platform = await openMemoryPlatform(fixture.records, fixture.bodies, {
+    now: fixture.now,
+    workspace: {
+      async resolveRoot() {
+        return { status: 'ready' as const, value: { root: fixture.base.directory, workspaceRevision: 1 } };
+      },
+      async authorize() {
+        return { status: 'ready' as const, value: { subjectKey: 's5-wf-host',
+          permissionRevision: 's5-wf@1', allowsRead: () => true } };
+      },
+    },
+    workflow: configuration,
+  });
+  const runtime: RuntimeExecutionPort = platform.runtime;
+  const evidence: EvidencePort = platform.evidence;
+  const checks: RegisteredCheckRunner = platform.checks;
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }).tasks,
     plans: createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
@@ -204,7 +195,7 @@ it('WF01 a system requeue under every_step waits with the derived automation cau
   // B's task tB has a previous failed Run that is automatically requeue-eligible (prior 0, cap 3).
   await endRunCrashed(fixture, fixture.claimRA);
   const { claims, requeueCalls } = countingClaims(makeClaims(fixture));
-  const workflow = assemble(fixture, goalSettings, claims);
+  const workflow = await assemble(fixture, goalSettings, claims);
 
   const before = await fixture.storeSnapshot();
   const result = await workflow.advanceWork(fixture.ctx, selectWork(GOAL_B, 's5-wf01-flow', null, 'b-work'));
@@ -251,7 +242,7 @@ it('WF02 reorders B before A and returns the advances in order without touching 
   // One idle Session can take both pending advances.
   const idle = await createIdleSession(fixture);
   const { claims } = countingClaims(makeClaims(fixture));
-  const workflow = assemble(fixture, goalSettings, claims);
+  const workflow = await assemble(fixture, goalSettings, claims);
 
   const advanceA = selectWork(GOAL_A, 's5-wf02-flow-a', idle);
   const advanceB = selectWork(GOAL_B, 's5-wf02-flow-b', idle);

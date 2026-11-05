@@ -803,9 +803,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
 /**
  * A published platform owner called in process as the Host's human operator bound to `scope`, for a case an HTTP
  * body cannot carry: the caller's own signal (an aborted one for a cancelled caller) or the caller's own input
- * object. `prefix` names the fixture in the two stable errors. The member is looked up at call time and started
- * before this returns; an unpublished member rejects with `${prefix}: the ${owner} command is not published yet
- * (${wave})`. The owner's whole result envelope comes back; this helper composes no fact.
+ * object. `prefix` names the fixture in the stable error. The published member is called directly and its whole
+ * result envelope comes back; this helper composes no fact.
  */
 export function callPublishedOwnerAsHost(world: S6AHostWorld, prefix: string, call: {
   owner: string; wave: string; scope: { projectId: string; workspaceId: string }; signal?: AbortSignal;
@@ -814,7 +813,7 @@ export function callPublishedOwnerAsHost(world: S6AHostWorld, prefix: string, ca
   const target = asRecord(asRecord(world.platform as unknown as Record<string, unknown>)[group]);
   const method = target[member];
   if (typeof method !== 'function') {
-    return Promise.reject(new Error(`${prefix}: the ${call.owner} command is not published yet (${call.wave})`));
+    return Promise.reject(new Error(`${prefix}: the ${call.owner} command is not a published owner method`));
   }
   const principal = world.humanContext().principal;
   if (principal.kind !== 'host') throw new Error(`${prefix}: the world has no Host human context`);

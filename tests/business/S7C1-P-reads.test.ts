@@ -7,9 +7,8 @@
  * the scale file.
  *
  * The faults are A2 wrappers over the real ports and run on memory: an armed facts read excludes with `waits` and an
- * armed task-target page returns `waiting` + `task_links` instead of picking. The `listWorkLines` fault arm is
- * BLOCKED: with the frozen required `PickReadsV1.activity.record` there is no real record reader in this Host, and
- * no stand-in is built (L1 supplies it later).
+ * armed task-target page returns `waiting` + `task_links` instead of picking. The chooser runs over the Host's own
+ * pick path; no activity-record stand-in is built.
  */
 import { describe, expect, it } from 'vitest';
 import type { MemberRequestResultV1 } from '../../src/core/work-graph/tasks/member-service.js';

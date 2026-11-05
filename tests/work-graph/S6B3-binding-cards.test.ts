@@ -1,5 +1,5 @@
-/** Rows 33 and 34 (deferred to the wave that publishes `platform.bindings` and `goals/confirm-draft`): each row runs its
- * whole business case on memory through the published owners, and its last statement is the fixture's exact named error. */
+/** Rows 33 and 34 over the published `platform.bindings` and `goals/confirm-draft` entries: each row runs its
+ * whole business case on memory through the published owners. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { QueryJobAnswerRef } from '../../src/contracts/query-job.js';

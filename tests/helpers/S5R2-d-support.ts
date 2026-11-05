@@ -22,6 +22,7 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { until } from './change-stream-reader.js';
 import { GOAL_A, GOAL_B, GOAL_C, WORKSPACE_SCOPE, type S5DecisionFixture } from './S5-decision-fixture.js';
 import { committed, ready } from './S5-user-message-support.js';
+import { openMemoryPlatform } from './K3-review-card-fixture.js';
 
 // ---------------------------------------------------------------------------
 // Driver-only doubles, following change-emitters.ts, with a REAL ordering seam.
@@ -73,15 +74,30 @@ export async function orderedDriver(f: S5DecisionFixture, script: AdvanceScript,
   for (const [goalRef, order] of [[GOAL_B, 0], [GOAL_A, 1], [GOAL_C, 2]] as const) {
     expect(ready(await goalSettings.readGoalSettings(f.ctx, { goalRef })).settings.order).toBe(order);
   }
-  const runtime: RuntimeExecutionPort = {
-    capabilities: unusedDriverPort, createSession: unusedDriverPort, readSessionHistory: unusedDriverPort,
-    readExecutionHistory: unusedDriverPort, readTaskExecutionHistory: unusedDriverPort,
-    prepareExecution: unusedDriverPort, startRun: unusedDriverPort, observeRun: unusedDriverPort,
-  };
-  const sessions: SessionDirectoryPort = {
-    admitSessionCreation: unusedDriverPort, recordSessionCreated: unusedDriverPort,
-    getSessionOperation: unusedDriverPort, readSession: unusedDriverPort, findSessions: unusedDriverPort,
-  };
+  // The real composition root over the SAME records: its published ports are the
+  // production owners, not a hand-written whole object. The group's named gates
+  // stay outside them, so an unexpected call still fails loudly.
+  const platform = await openMemoryPlatform(f.records, f.bodies, {
+    now: f.now,
+    workspace: {
+      async resolveRoot() {
+        return { status: 'ready' as const, value: { root: f.base.directory, workspaceRevision: 1 } };
+      },
+      async authorize() {
+        return { status: 'ready' as const, value: { subjectKey: 's5r2-d-host',
+          permissionRevision: 's5r2-d@1', allowsRead: () => true } };
+      },
+    },
+  });
+  const gate = <T extends object>(target: T): T => new Proxy(target, {
+    get(object, property, receiver) {
+      const value = Reflect.get(object, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (..._args: unknown[]): never => { unusedDriverPort(); throw new Error('unreachable'); };
+    },
+  });
+  const runtime: RuntimeExecutionPort = gate(platform.runtime);
+  const sessions: SessionDirectoryPort = gate(platform.sessions);
   const realWorkflow = createWorkflow({
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans: createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
@@ -90,9 +106,8 @@ export async function orderedDriver(f: S5DecisionFixture, script: AdvanceScript,
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
       roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),
     executions: createRunStateReader({ records: f.records }), runtime,
-    evidence: { openVerification: unusedDriverPort, readVerification: unusedDriverPort,
-      beginCheck: unusedDriverPort, recordCheckResult: unusedDriverPort, finalizeChecks: unusedDriverPort },
-    checks: { runRegisteredCheck: unusedDriverPort },
+    evidence: gate(platform.evidence),
+    checks: gate(platform.checks),
     sourceAuthority: createSourceAuthorityReader({ authority: createMaterialRecordReaders(f.records).authority }),
     goalSettings,
   });

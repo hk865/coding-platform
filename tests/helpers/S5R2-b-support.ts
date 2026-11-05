@@ -7,7 +7,7 @@ import type { WorkflowDependencies } from '../../src/business/workflow/ports.js'
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { DecisionSourceV1 } from '../../src/contracts/goal-decisions.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import type { RoundSnapshot } from '../../src/contracts/verification.js';
+import type { RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-execution.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
@@ -18,7 +18,6 @@ import { createInitializationBindingReader } from '../../src/core/work-graph/tas
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import type { MessageDutiesFactsPort } from '../../src/core/work-graph/model/decision-contracts.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
-import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -45,6 +44,7 @@ import { createNoticePositionComparator } from '../../src/core/work-graph/views/
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { committed, goalAt, keyOf, ready } from './S5-application-support.js';
+import { openMemoryPlatform } from './K3-review-card-fixture.js';
 import {
   GOAL_B, PLAN_B1, T, WORKSPACE, WORKSPACE_REVISION, WORKSPACE_SCOPE,
   type S5DecisionFixture, type S5StoreSnapshot,
@@ -117,25 +117,34 @@ export async function assembleB(f: S5DecisionFixture) {
     materials, messages: mailbox, goalSettings: settings, now: f.now, eventId: f.newId });
   const claims = { ...createTaskClaimService({ records, roles, bodies: f.bodies, now: f.now, newId: f.newId }),
     ...requeue };
-  const evidence = createEvidenceService({ records, materials, executions, workspaceHost, source,
-    configuration: { configurationRevision: 's5r2-b-checks@1', workspace: WORKSPACE,
-      executor: f.operatorActor, permissionRevision: 's5r2-b-source@1', sourceAccess: 'verification_workspace',
-      processAccess: 'all_except_denied', deniedPrefixes: ['.git'], checks: [] },
-    now: f.now, newId: f.newId });
-
+  const checkConfiguration: TrustedCheckConfiguration = { configurationRevision: 's5r2-b-checks@1', workspace: WORKSPACE,
+    executor: f.operatorActor, permissionRevision: 's5r2-b-source@1', sourceAccess: 'verification_workspace',
+    processAccess: 'all_except_denied', deniedPrefixes: ['.git'], checks: [] };
+  // The real composition root over the SAME records: its published ports are the
+  // production owners, not a hand-written whole object.
+  const platform = await openMemoryPlatform(f.records, f.bodies, {
+    now: f.now, workspace: workspaceHost, checks: checkConfiguration,
+  });
+  const evidence = platform.evidence;
+  // A3/A2: count the production Runtime's calls and keep the group's named gate.
   let runtimeCalls = 0;
-  const unusedRuntime = async (): Promise<never> => {
-    runtimeCalls += 1;
-    throw new Error('R2B: no Runtime/model call is allowed');
-  };
-  const runtime: RuntimeExecutionPort = {
-    capabilities: unusedRuntime, createSession: unusedRuntime,
-    readSessionHistory: unusedRuntime, readExecutionHistory: unusedRuntime, readTaskExecutionHistory: unusedRuntime,
-    prepareExecution: unusedRuntime, startRun: unusedRuntime, observeRun: unusedRuntime,
-  };
-  const checks: RegisteredCheckRunner = {
-    async runRegisteredCheck() { throw new Error('R2B: no check process is allowed'); },
-  };
+  const runtime: RuntimeExecutionPort = new Proxy(platform.runtime, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (..._args: unknown[]): never => {
+        runtimeCalls += 1;
+        throw new Error('R2B: no Runtime/model call is allowed');
+      };
+    },
+  });
+  const checks: RegisteredCheckRunner = new Proxy(platform.checks, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (..._args: unknown[]): never => { throw new Error('R2B: no check process is allowed'); };
+    },
+  });
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records, now: f.now, eventId: f.newId }).tasks,
     plans, sessions, claims, executions, runtime, evidence, checks,

@@ -30,7 +30,7 @@ async function open(kind: S5FixtureKind, completion = false) {
     ? await openS5DecisionFixture(kind, { catalog: 'modules', requirementKind: 'static' })
     : await openS5DecisionFixture(kind, { catalog: 'modules' });
   fixtures.push(f);
-  return assembleS5R2C(f);
+  return await assembleS5R2C(f);
 }
 
 const WAIT: DecisionSelectionV1 = { kind: 'conflict_wait', earlier: GOAL_A, later: GOAL_B };

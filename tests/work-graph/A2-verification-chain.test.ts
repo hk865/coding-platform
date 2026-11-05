@@ -31,6 +31,8 @@ import type { VerificationRoundSourcePort } from '../../src/contracts/verificati
 import type { CheckProcessObservation, RoundSnapshot } from '../../src/contracts/verification.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
+import { createTargetPlatform } from '../../src/composition/create-platform.js';
+import { openMemoryPlatform } from '../helpers/K3-review-card-fixture.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
 import type { EvidencePort } from '../../src/core/work-graph/model/evidence-contracts.js';
 import {
@@ -407,13 +409,23 @@ it.each(KINDS)('%s: VD-10: a result record that failed or lost its response is r
   expect(calls).toBe(1);
 });
 
-/** The real Workflow over the fixture's owners; no Run is started, so the Runtime answers unsupported. */
-function workflowOver(fixture: R3eEvidenceFixture, checks: RegisteredCheckRunner) {
-  const unsupported = async () => ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'no Runtime in this test' });
-  const runtime: RuntimeExecutionPort = { capabilities: unsupported, createSession: unsupported, readSessionHistory: unsupported,
-    readExecutionHistory: unsupported, readTaskExecutionHistory: unsupported, prepareExecution: unsupported,
-    startRun: unsupported, observeRun: unsupported };
+/** The real Workflow over the fixture's owners; no Run is started, so the
+ * composition's own unbound Runtime answers unsupported. */
+async function workflowOver(fixture: R3eEvidenceFixture, checks: RegisteredCheckRunner) {
   const base = fixture.b2.base;
+  const platformOptions = {
+    now: () => B2_AT,
+    workspace: fixture.workspaceHost,
+    workflow: { consumerId: 'a2-order-consumer', bindings: [{ workspace: fixture.scope,
+      sessionRole: { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' },
+      roleBinding: base.roleBinding, budget: base.budget }] },
+  };
+  // The real composition root over the SAME records: memory shares the fixture
+  // backend (A4), SQLite opens the same ledger directory.
+  const platform = fixture.kind === 'memory'
+    ? await openMemoryPlatform(fixture.records as never, fixture.b2.bodies, platformOptions)
+    : await createTargetPlatform({ ...platformOptions, storage: { kind: 'sqlite', directory: base.directory } });
+  const runtime: RuntimeExecutionPort = platform.runtime;
   return createWorkflow({ tasks: base.goals, plans: base.plans, sessions: base.sessionsPort, claims: base.service,
     executions: createRunStateReader({ records: fixture.records }), runtime, evidence: fixture.evidence, checks,
     sourceAuthority: createSourceAuthorityReader({ authority: createMaterialRecordReaders(fixture.records).authority }),
@@ -426,7 +438,7 @@ it.each(KINDS)('%s: §9.3 Workflow order: an interrupted check does not hold the
   const fixture = await openFixture(kind);
   // VR-13 interrupts the round's first check (its ticket is incomplete); the second runs normally.
   let firstCheckId: string | null = null;
-  const workflow = workflowOver(fixture, runnerWith(fixture, brokenTicketEvidence(fixture, () => firstCheckId)));
+  const workflow = await workflowOver(fixture, runnerWith(fixture, brokenTicketEvidence(fixture, () => firstCheckId)));
   const advance = async (input: WorkflowAdvanceInput) => {
     const result = await workflow.advanceWork(fixture.ctx, input);
     if (result.status !== 'ready') throw Error(`the Workflow call was not ready: ${JSON.stringify(result)}`);

@@ -139,31 +139,19 @@ function reviewService(world: K3ReviewCardWorld, options: {
 }
 
 /** The real owners plus the Workflow's decision seams; execution/checks are doubles. */
-function assemble(world: K3ReviewCardWorld, options: {
+async function assemble(world: K3ReviewCardWorld, options: {
   records?: K3ReviewCardWorld['records'];
   reviews?: WorkflowDependencies['unknownCallReviews'];
 } = {}) {
   const f = world.fixture;
   const reviews = options.reviews ?? world.reviews;
   const { authority } = createMaterialRecordReaders(f.records);
-  const runtime: RuntimeExecutionPort = {
-    capabilities: async () => unsupported('K3-46 never reads capabilities'),
-    createSession: async () => unsupported('K3-46 never creates a Session'),
-    readSessionHistory: async () => unsupported('K3-46 never reads Session history'),
-    readExecutionHistory: async () => unsupported('K3-46 never reads execution history'),
-    readTaskExecutionHistory: async () => unsupported('K3-46 never reads task history'),
-    prepareExecution: async () => unsupported('K3-46 stops before prepare'),
-    startRun: async () => unsupported('K3-46 stops before start'),
-    observeRun: async () => unsupported('K3-46 never observes'),
-  };
-  const evidence: EvidencePort = {
-    openVerification: async () => unsupported('K3-46 does not open checks'),
-    readVerification: async () => unsupported('K3-46 does not read checks'),
-    beginCheck: async () => unsupported('K3-46 does not begin checks'),
-    recordCheckResult: async () => unsupported('K3-46 does not record checks'),
-    finalizeChecks: async () => unsupported('K3-46 does not finalize checks'),
-  };
-  const checks: RegisteredCheckRunner = { runRegisteredCheck: async () => unsupported('K3-46 does not run checks') };
+  // The real composition root over the SAME records: its published ports are the
+  // production owners, not a hand-written whole object.
+  const platform = await world.openPlatform();
+  const runtime: RuntimeExecutionPort = platform.runtime;
+  const evidence: EvidencePort = platform.evidence;
+  const checks: RegisteredCheckRunner = platform.checks;
   const configuration: WorkflowHostConfiguration = {
     consumerId: 'k3-46-consumer',
     bindings: [{
@@ -336,7 +324,7 @@ describe('K3-46 (一) a refused ② skips that review card in the ordinary advan
 
     let applies = 0;
     const records = failingDispositionRecords(world.fixture.records, 'injected ② commit failure');
-    const workflow = assemble(world, { records,
+    const workflow = await assemble(world, { records,
       reviews: reviewService(world, { records, countApply: count => { applies = count; } }) });
 
     const selected = ready(await workflow.advanceWork(world.fixture.ctx, selectWork()));
@@ -366,7 +354,7 @@ describe('K3-46 (一) a refused ② skips that review card in the ordinary advan
     await answerCard(world, record, 'k3-46-designated-answer');
 
     const records = failingDispositionRecords(world.fixture.records, 'injected ② commit failure');
-    const workflow = assemble(world, { records, reviews: reviewService(world, { records }) });
+    const workflow = await assemble(world, { records, reviews: reviewService(world, { records }) });
 
     const selected = ready(await workflow.advanceWork(world.fixture.ctx, selectWork('k3-20-a')));
     expect(selected.state).toBe('advance');
@@ -392,7 +380,7 @@ describe('K3-46 (二) the T02 refusal is told apart from a Goal version race', (
 
     let rejectedReason: string | null = null;
     const records = pausedBeforeDisposition(world, (reason) => { if (rejectedReason === null) rejectedReason = reason; });
-    const workflow = assemble(world, { records, reviews: reviewService(world, { records }) });
+    const workflow = await assemble(world, { records, reviews: reviewService(world, { records }) });
 
     const selected = ready(await workflow.advanceWork(world.fixture.ctx, selectWork('k3-20-a')));
     expect(selected.next).toMatchObject({ kind: 'perform', taskId: 'k3-20-a',
@@ -421,7 +409,7 @@ describe('K3-46 (二) the T02 refusal is told apart from a Goal version race', (
     await adoptReorderedPlan(world, { planId: 'PB3', requestIdPrefix: 'k3-46-reorder',
       reasonText: 'K3-46 reordered Tasks' });
 
-    const workflow = assemble(world);
+    const workflow = await assemble(world);
     const selected = ready(await workflow.advanceWork(world.fixture.ctx, selectWork('k3-20-a')));
     expect(selected.next).toMatchObject({ kind: 'perform', taskId: 'k3-20-a',
       operation: { kind: 'apply_review_disposition' } });
@@ -454,7 +442,7 @@ describe('K3-46 (三) the continuous Host advance carries the failed cards and r
 
     const failureText = 'injected ② commit failure';
     const records = failingDispositionRecordsPerCard(world.fixture.records, failureText);
-    const workflow = assemble(world, { records, reviews: reviewService(world, { records }) });
+    const workflow = await assemble(world, { records, reviews: reviewService(world, { records }) });
 
     type AdvanceCall = { input: WorkflowAdvanceInput; result: WorkflowAdvanceResult };
     const calls: AdvanceCall[] = [];
@@ -547,7 +535,7 @@ describe('rejects: the failed-card set is never a public advance input', () => {
     const world = await openK3ReviewCardWorld(kind);
     worlds.push(world);
     const record = await createK3NeedsDecisionRecord(world, 'k3-20-a');
-    const workflow = assemble(world);
+    const workflow = await assemble(world);
 
     // The set is not public input at all: an own key of ANY shape is refused
     // `invalid` and the reason names the key, so the caller learns it can never
@@ -589,7 +577,7 @@ describe('K3-46 (三) the public route cannot carry the failed cards', () => {
     worlds.push(world);
     const record = await createK3NeedsDecisionRecord(world, 'k3-20-a');
     await answerCard(world, record, 'k3-46-route-answer');
-    const workflow = assemble(world);
+    const workflow = await assemble(world);
     const bindings = routedWorkflowBindings(workflow);
 
     // Forging a REAL same-project card that has an applicable answer must not
@@ -623,7 +611,7 @@ describe('K3-46 (三) the public route cannot carry the failed cards', () => {
     await answerCard(world, recordA, 'k3-46-route-failure-answer-a');
     await answerCard(world, recordB, 'k3-46-route-failure-answer-b');
     const records = failingDispositionRecords(world.fixture.records, 'injected ② commit failure');
-    const workflow = assemble(world, { records, reviews: reviewService(world, { records }) });
+    const workflow = await assemble(world, { records, reviews: reviewService(world, { records }) });
     const bindings = routedWorkflowBindings(workflow);
 
     // A is answered first in the reordered plan, so the ordinary selection hands

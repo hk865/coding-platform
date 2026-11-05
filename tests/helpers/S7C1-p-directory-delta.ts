@@ -174,8 +174,8 @@ export function pickOwned(world: S6AHostWorld): Owned {
 }
 
 /**
- * The real factory over the Host's own published owners. `pick` is only the extra activity/goal-runs/authorization
- * read set L1 would wire; absent, the chooser keeps its creation-time activity order and no authorization filter.
+ * The real factory over the Host's own published owners. `pick` is the optional extra activity/goal-runs/
+ * authorization read set; absent, the chooser keeps its creation-time activity order and no authorization filter.
  * `sessions`/`sessionFacts` are the same real owners unless an A2 wrapper around them is passed (the paging world's
  * fault arms); a wrapper never changes a result it does not fail.
  */

@@ -145,7 +145,7 @@ describe('S8C G3 R1/R9 activation and post-state', () => {
     if (current === null) throw new Error('R1: the Goal has no current adopted Plan');
     const currentPlanKey = canonicalJson(current.ref as unknown as JsonValue);
     const realReadMany = w.records.readMany.bind(w.records);
-    const owner = w.createOwner({
+    const owner = w.createFaultOwner({
       records: { ...w.records, readMany: async (keys) => keys.length === 1 && keys[0] === currentPlanKey
         ? { status: 'rejected', code: 'invalid', reason: 'injected current Plan read failure' }
         : realReadMany(keys) },
@@ -293,7 +293,7 @@ describe('S8C G3 R4 two repairs and replay', () => {
     const architecture = w.world.platform.architecture;
     let reads = 0;
     // A3: counts the observation reads and returns the platform's own reads.
-    const owner = w.createOwner({ observation: {
+    const owner = w.createFaultOwner({ observation: {
       observationState: async (ctx, input) => {
         reads += 1;
         return architecture.observationState(ctx, input);

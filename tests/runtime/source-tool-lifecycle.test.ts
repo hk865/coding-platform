@@ -11,6 +11,7 @@ import { ModelBudget, DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtim
 import { PythonSourceIndex } from '../../src/core/workspace/python-source-index.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { frozenPromptInputs } from './PC-frozen-prompt.js';
+import { workspaceToolsFixture } from '../helpers/workspace-tools-fixture.js';
 
 const resources = vi.hoisted(() => ({
   groups: [] as Array<{
@@ -43,10 +44,12 @@ vi.mock('../../src/core/agent-runtime/exploration-tools.js', async importOrigina
 
 const roots: string[] = [];
 const ownedAccess: RuntimeSourceCaptureAccess[] = [];
+const toolCleanups: Array<() => Promise<void>> = [];
 beforeEach(() => { resources.groups.length = 0; resources.groupCloseFailure = undefined; });
 afterEach(async () => {
   await Promise.allSettled(resources.groups.map(group => group.original.close()));
   await Promise.allSettled(ownedAccess.splice(0).map(access => access.close()));
+  for (const cleanup of toolCleanups.splice(0).reverse()) await cleanup();
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
@@ -57,18 +60,18 @@ function deferred() {
   return { promise, resolve };
 }
 
-function sourceCapability() {
+async function sourceCapability() {
   const workspace = { aggregateType: 'Workspace' as const, projectId: 'lifecycle-project', workspaceId: 'lifecycle-workspace' };
-  const unavailable = async () => ({ status: 'rejected' as const, code: 'unsupported' as const, reason: 'this lifecycle fixture has no source provider' });
-  const port: WorkspaceToolsPort = {
-    captureSourceChanges: unavailable, captureObservation: unavailable, querySource: unavailable, exportCapture: unavailable,
-    verifyCapture: unavailable, releaseCapture: unavailable, captureArchitectureSource: unavailable,
-    captureFileGraph: unavailable, readWorkspace: unavailable, compareWorkspace: unavailable,
-    readUncommittedFiles: unavailable,
-  };
+  const real = await workspaceToolsFixture({
+    projectId: workspace.projectId, actorId: 'test-host-grantee', permissionRevision: 'lifecycle-tools@1',
+    tempPrefix: 'lifecycle-tools-', cleanups: toolCleanups,
+  })([]);
+  const port: WorkspaceToolsPort = real.handle.tools;
   const state = { closeFailure: undefined as Error | undefined };
   // This is an explicitly granted test Host capability, not a fabricated production Run.
-  const close = vi.fn(async () => { if (state.closeFailure) throw state.closeFailure; });
+  const close = vi.fn(async () => {
+    try { await real.handle.close(); } finally { if (state.closeFailure) throw state.closeFailure; }
+  });
   const access: RuntimeSourceCaptureAccess = {
     port, workspace,
     context: signal => ({
@@ -99,7 +102,7 @@ async function fixture(client: kernel.ModelClientPort = finalClient()) {
   const storage = await mkdtemp(join(tmpdir(), 'source-tool-lifecycle-storage-'));
   roots.push(root, storage);
   await writeFile(join(root, 'source.ts'), 'export const evidence = 1;\n');
-  const source = sourceCapability();
+  const source = await sourceCapability();
   const budget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 128 };
   const meter = new ModelBudget(budget, async () => {}, {
     count: () => ({ tokens: 100, method: 'model_tokenizer', tokenizer: 'labelled-lifecycle-test-counter' }),

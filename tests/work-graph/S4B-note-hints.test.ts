@@ -8,12 +8,13 @@
  * `counted` RunActivity. Datasets come from the real 4A writer, the real plan
  * services and real claims.
  */
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import { createS4BNoteCheckFixture, type S4BNoteCheckFixture } from '../helpers/S4B-note-check-fixture.js';
 import { createS4BMultiScope } from '../helpers/S4B-note-multi-scope-fixture.js';
+import { openPLDeviationConsumptionWorld } from '../helpers/PL-deviation-fixture.js';
 
 function draft(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   return { kind: 'pitfall', topic: 'hints', conclusion: 'a conclusion', body: 'body',
@@ -146,9 +147,40 @@ describe('S4B MF13 class-5 hints', () => {
   });
 
   // R13: a `counted` RunActivity listing the path is also proof (the check reads
-  // it through `decodeRunActivitySnapshot`), but no public seam builds a
-  // RunActivity record without a real Kernel run end, so this case is skipped.
-  it.skip('MF13 a counted RunActivity that lists the deleted path is proof', () => { /* see comment */ });
+  // it through `decodeRunActivitySnapshot`). The Run deletes the file through the
+  // public `shell` tool and ends normally, so the platform writes its own tally.
+  it('MF13 a counted RunActivity that lists the deleted path is proof', async () => {
+    const fixture = await openPLDeviationConsumptionWorld({ label: 'mf13-runactivity', taskIds: ['mf13-a'],
+      write: true, checks: true });
+    try {
+      const path = 'src/gone.ts';
+      await mkdir(join(fixture.world.root, 'src'), { recursive: true });
+      await writeFile(join(fixture.world.root, path), 'export const gone = 1;\n');
+      const run = await fixture.runTask({ line: fixture.line, taskId: 'mf13-a', flowId: 'mf13-run', replies: [
+        { kind: 'calls', calls: [{ callId: 'mf13-remove', name: 'shell', args: { command: `rm -f ${path}` } }] },
+        { kind: 'text', text: 'MF13 removed the deleted path' },
+      ] });
+      const activity = await fixture.readRuns([run]);
+      expect(activity).toHaveLength(1);
+      expect(activity[0]!.status).toBe('counted');
+
+      const written = await fixture.world.platform.notes.writeNote(fixture.world.humanContext(), {
+        commandId: 'mf13-note', expectedPointerRevision: null, goalId: null,
+        note: draft({ anchor: { kind: 'project' },
+          extraAnchors: [{ kind: 'file', path, deleted: true }],
+          facts: [{ kind: 'record', revision: 1, digest: null,
+            ref: { aggregateType: 'RunActivity', projectId: run.projectId, goalId: run.goalId, runId: run.runId } }] }),
+      });
+      expect(written.status).toBe('accepted');
+      if (written.status === 'rejected') return;
+      const checks = await fixture.world.platform.notes.checkNotes(fixture.world.humanContext(),
+        { items: [{ noteId: written.noteId, version: 1 }] });
+      expect(checks.status).toBe('ready');
+      if (checks.status !== 'ready') return;
+      expect(checks.value[0]!.hints).toEqual([]);
+      expect(checks.value[0]!.freshness).toBe('fresh');
+    } finally { await fixture.close(); }
+  });
 
   it.each(['memory', 'sqlite'] as const)(
     'R13 %s: a failed deletion-proof read answers unavailable, never deleted_path_unverified', async kind => {

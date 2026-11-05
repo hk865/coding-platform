@@ -1,5 +1,4 @@
-/** Row 35a's service half: the 23 named rules, each over its own public world and the published owner calls;
- *  every row ends with the fixture's exact named error of the first unpublished call in its exercise. */
+/** Row 35a's service half: the 23 named rules, each over its own public world and the published owner calls. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';

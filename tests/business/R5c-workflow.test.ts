@@ -4,15 +4,10 @@
  * The real WorkGraph fixture produces a formal Project/Workspace/governance,
  * a Goal and an adopted Plan with two required work tasks and a Goal gate; the
  * Session facts come from the real Session directory and the real Runtime
- * Session creation. Only the execution/verification owner ports are controlled
- * doubles here, so this file proves the Workflow's own selection/continuation
- * decisions without faking any domain PASS or Task/Goal completion.
- *
- * These are FINAL behaviour assertions: stage one publishes the finite
- * interface and reports `unsupported` for `advanceWork`, so the run stops at
- * its first Workflow call and the later retry/continuation assertions are NOT
- * reached by the skeleton (they are reported as unreached, never as a green
- * "expected unsupported").
+ * Session creation. The execution/verification ports come from the real
+ * composition root over the same records; this file proves the Workflow's own
+ * selection/continuation decisions without faking any domain PASS or
+ * Task/Goal completion.
  *
  * Specification: docs/refactor/tasks/R5-workflow-advancement-skeleton.md §2/§4/§5.
  */
@@ -22,8 +17,6 @@ import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
-import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
-import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
@@ -37,6 +30,7 @@ import type { RegisteredCheckRunner } from '../../src/core/agent-runtime/check-e
 import { join } from 'node:path';
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import { workflowPlanReads } from '../helpers/S1-workflow-archive-fixture.js';
+import { openMemoryPlatform } from '../helpers/K3-review-card-fixture.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../../src/core/work-graph/persistence/initialization-binding-codecs.js';
@@ -53,38 +47,41 @@ const R5C_SCHEMAS = {
 const fixtures: TaskClaimFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
 
-function unsupported(reason: string) {
-  return { status: 'rejected' as const, code: 'unsupported' as const, reason };
-}
-
-/** Assembly under test: real WorkGraph owners + real Runtime Session creation,
- * with the execution/verification owners as explicit controlled doubles. */
+/** Assembly under test: the real WorkGraph owners and the composition's real
+ * Runtime/evidence/check ports over the same records. */
 async function assemble(fixture: TaskClaimFixture) {
-  const kernelStores = await createKernelStoreRegistry({ entries: [{
+  const kernelEntries = { entries: [{
     adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
     workspace: fixture.scope, databasePath: join(fixture.directory, 'kernel.sqlite'),
-  }] });
-  const sessions = createSessionOperations({ sessions: fixture.sessionsPort, kernelStores });
-  const runtime: RuntimeExecutionPort = {
-    capabilities: async () => unsupported('R5c business test never reads capabilities'),
-    createSession: (...args) => sessions.createSession(...args),
-    readSessionHistory: (...args) => sessions.readSessionHistory(...args),
-    readExecutionHistory: async () => unsupported('R5c business test never reads execution history'),
-    readTaskExecutionHistory: async () => unsupported('R5c business test never reads task history'),
-    prepareExecution: async () => unsupported('R5c business test stops before prepare'),
-    startRun: async () => unsupported('R5c business test stops before start'),
-    observeRun: async () => unsupported('R5c business test never observes'),
+  }] };
+  const configuration: WorkflowHostConfiguration = {
+    consumerId: 'r5c-business-consumer',
+    bindings: [{
+      workspace: fixture.scope,
+      sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
+      roleBinding: fixture.roleBinding,
+      budget: fixture.budget,
+    }],
   };
-  const evidence: EvidencePort = {
-    openVerification: async () => unsupported('R5c business test does not open checks'),
-    readVerification: async () => unsupported('R5c business test does not read checks'),
-    beginCheck: async () => unsupported('R5c business test does not begin checks'),
-    recordCheckResult: async () => unsupported('R5c business test does not record checks'),
-    finalizeChecks: async () => unsupported('R5c business test does not finalize checks'),
-  };
-  const checks: RegisteredCheckRunner = {
-    runRegisteredCheck: async () => unsupported('R5c business test does not run checks'),
-  };
+  // The real composition root over the SAME records and Kernel store: its published
+  // runtime/evidence/checks are the production ports, not a hand-written whole object.
+  const platform = await openMemoryPlatform(fixture.records as never, new RawArtifactBodyStore(), {
+    now: () => '2026-09-24T00:00:00.000Z',
+    kernelStores: kernelEntries,
+    workspace: {
+      async resolveRoot() {
+        return { status: 'ready' as const, value: { root: fixture.directory, workspaceRevision: 1 } };
+      },
+      async authorize() {
+        return { status: 'ready' as const, value: { subjectKey: 'r5c-business-host',
+          permissionRevision: 'r5c-business@1', allowsRead: () => true } };
+      },
+    },
+    workflow: configuration,
+  });
+  const runtime: RuntimeExecutionPort = platform.runtime;
+  const evidence: EvidencePort = platform.evidence;
+  const checks: RegisteredCheckRunner = platform.checks;
   const { authority } = createMaterialRecordReaders(fixture.records);
   const bodies = new RawArtifactBodyStore();
   const materials = createMaterialService({ bodies, authority, now: () => '2026-09-24T00:00:00.000Z' });
@@ -101,15 +98,6 @@ async function assemble(fixture: TaskClaimFixture) {
   const messages = createSessionMailbox(mailboxDeps);
   const planReads = workflowPlanReads({ records: fixture.records, messages, plans: fixture.plans,
     now: mailboxDeps.now, newId: mailboxDeps.newId, mailboxDeps, materials });
-  const configuration: WorkflowHostConfiguration = {
-    consumerId: 'r5c-business-consumer',
-    bindings: [{
-      workspace: fixture.scope,
-      sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-      roleBinding: fixture.roleBinding,
-      budget: fixture.budget,
-    }],
-  };
   const dependencies: WorkflowDependencies = {
     tasks: fixture.goals, plans: fixture.plans, sessions: fixture.sessionsPort, claims: fixture.service,
     executions: createRunStateReader({ records: fixture.records }), runtime,

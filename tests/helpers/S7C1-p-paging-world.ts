@@ -18,23 +18,20 @@
  * `workLines.listWorkLines`) with a one-shot fault arm: a `StoreError` or a plain `Error` is thrown at the named
  * read, never an empty page or a faked rejection. A `page` fault fires only on the plain directory read and a `link`
  * fault only on the task-target read, so A-10 can fail the responsible-link page without touching the directory.
- * The Host world publishes no real Session-activity record port and L1 injects it; `activity.record` is therefore
- * `null` with an explicit `blocked` (the wrapper still covers the real line read). Nothing reads a store, builds a
- * record or makes a context.
+ * The chooser itself is the composition's own pick path; no activity-record stand-in is built. Nothing reads a
+ * store, builds a record or makes a context.
  */
 import { StoreError } from '../../vendor/coding-agent/dist/public-api.js';
 import type { SessionCard, SessionPage } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionFactsPort } from '../../src/core/work-graph/model/session-facts-contracts.js';
-import type { WorkLineReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
-import type { SessionActivityReadPort } from '../../src/core/work-graph/model/session-activity-contracts.js';
 import { plainSessionRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { openS6AHostWorld } from './S6A-host-fixture.js';
 import { setS7D1Open } from './S7D1-allocation-world.js';
 import type { S6AHostWorld } from './S6A-host-fixture.js';
 import { S6A_AT, S6A_SCOPE, type S6ASession, type S6AWorldOptions } from './S6A-request-fixture.js';
 
-export type S7C1FaultTarget = 'page' | 'link' | 'facts' | 'lines';
+export type S7C1FaultTarget = 'page' | 'link' | 'facts';
 export type S7C1FaultKind = 'store' | 'plain';
 export type S7C1PagingMode = 'page_two' | 'bound' | 'single';
 
@@ -52,22 +49,12 @@ export type S7C1PagingWorld = {
   readonly bound: { readonly sessions: readonly S6ASession[]; readonly keys: readonly string[] } | null;
   readonly directory: SessionDirectoryPort;
   readonly facts: SessionFactsPort;
-  readonly activity: {
-    readonly lines: Pick<WorkLineReadPort, 'listWorkLines'>;
-    /** `null` when no real records port is reachable from the world; `blocked` then says why. */
-    readonly record: SessionActivityReadPort | null;
-    readonly blocked: string | null;
-  };
   readonly faults: {
     /** Arms the next read of `target`; `kind` defaults to `'store'`. */
     arm(target: S7C1FaultTarget, kind?: S7C1FaultKind): void;
   };
   close(): Promise<void>;
 };
-
-const ACTIVITY_BLOCKED =
-  'S7C1-UNSPECIFIED: the Host world publishes no real Session-activity record port, and L1 injects it; '
-  + 'no stand-in record reader is built here.';
 
 function ordered(sessions: readonly S6ASession[]): readonly S6ASession[] {
   return [...sessions].sort((left, right) =>
@@ -155,21 +142,10 @@ export async function openS7C1PagingWorld(options: {
     },
   };
 
-  const realLines = platform.workLines.listWorkLines;
-  const lines: Pick<WorkLineReadPort, 'listWorkLines'> = {
-    async listWorkLines(ctx, input) {
-      fire('lines');
-      return realLines(ctx, input);
-    },
-  };
-
-  const record: SessionActivityReadPort | null = null;
-
   return {
     backend: world.backend, world, page: { sessions: page.sessions, keys: page.keys },
     pageTwo, bound,
     directory, facts,
-    activity: { lines, record, blocked: ACTIVITY_BLOCKED },
     faults: {
       arm(target, kind = 'store') { armed.set(target, kind); },
     },

@@ -48,32 +48,19 @@ function unsupported(reason: string) {
 }
 
 /** The REAL Workflow over this world's owners; only the answer path is wired. */
-function workflowOf(world: K3ReviewCardWorld, flowId: string, message: SessionMessage,
+async function workflowOf(world: K3ReviewCardWorld, flowId: string, message: SessionMessage,
   decisionMessages: K3ReviewCardWorld['decisions'] = world.decisions) {
   const f = world.fixture;
   const records = world.records;
   const reads = createRunStateReader({ records });
   const { authority } = createMaterialRecordReaders(records);
   const mailbox = new Map<string, SessionMessage>([[message.ref.messageId, message]]);
-  const runtime: RuntimeExecutionPort = {
-    capabilities: async () => unsupported('the CRR answer row never reads capabilities'),
-    createSession: async () => unsupported('the CRR answer row stops before create_session'),
-    readSessionHistory: async () => unsupported('no history'),
-    readExecutionHistory: async () => unsupported('no history'),
-    readTaskExecutionHistory: async () => unsupported('no history'),
-    prepareExecution: async () => unsupported('the CRR answer row stops before prepare'),
-    startRun: async () => unsupported('the CRR answer row stops before start'),
-    observeRun: async () => unsupported('the CRR answer row never observes'),
-    reviewCapability: async () => ({ status: 'available' }),
-  };
-  const evidence: EvidencePort = {
-    openVerification: async () => unsupported('a CRR answer row never opens checks'),
-    readVerification: async () => unsupported('no round read'),
-    beginCheck: async () => unsupported('no begin'),
-    recordCheckResult: async () => unsupported('no record'),
-    finalizeChecks: async () => unsupported('no finalize'),
-  };
-  const checks: RegisteredCheckRunner = { runRegisteredCheck: async () => unsupported('no checks') };
+  // The real composition root over the SAME records: its published ports are the
+  // production owners, not a hand-written whole object.
+  const platform = await world.openPlatform();
+  const runtime: RuntimeExecutionPort = platform.runtime;
+  const evidence: EvidencePort = platform.evidence;
+  const checks: RegisteredCheckRunner = platform.checks;
   const dependencies: WorkflowDependencies = {
     tasks: f.b2.base.goals, plans: f.b2.base.plans, sessions: f.b2.base.sessionsPort,
     claims: f.b2.base.service, executions: reads, runtime, evidence, checks,
@@ -140,7 +127,7 @@ describe('UR7/F-035: the one real Workflow advance applies a saved CRR answer', 
     expect(before.request.revision).toBe(request.revision + 1);
     expect(before.message.application).toBeNull();
 
-    const workflow = workflowOf(world, `k3-ur7-${kind}`, message);
+    const workflow = await workflowOf(world, `k3-ur7-${kind}`, message);
     const advanced = await workflow.advanceWork(world.fixture.ctx, { schemaVersion: 1,
       goalRef: GOAL_B, flowId: `k3-ur7-${kind}`, sessionHint: null, kind: 'select_work',
       answers: [{ kind: 'command_rerun_request', requestRef: request.ref,
@@ -200,7 +187,7 @@ describe('UR7/F-035: the one real Workflow advance applies a saved CRR answer', 
     expect(before.message.application).toBeNull();
 
     let failedReads = 0;
-    const workflow = workflowOf(world, label, message, {
+    const workflow = await workflowOf(world, label, message, {
       ...world.decisions,
       readDecisionAnswer: async (ctx, input) => {
         if (failedReads === 0 && input.source.kind === card.source.kind

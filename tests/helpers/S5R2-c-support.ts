@@ -15,7 +15,6 @@ import { createDecisionSourceFacts } from '../../src/core/work-graph/communicati
 import { readStructuralProposalObjects } from '../../src/core/work-graph/views/structural-proposal-source.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createMessageWriteOwner, createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
-import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -34,6 +33,7 @@ import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { committed, decoded, goalAt, keyOf, owners, pin, ready } from './S5-application-support.js';
+import { openMemoryPlatform } from './K3-review-card-fixture.js';
 import { createGoalExecutedFilesReader } from '../../src/core/work-graph/tasks/goal-executed-files-reader.js';
 import {
   GOAL_A, GOAL_B, GOAL_C, MODULE_M, OPERATOR, PLAN_A1, PLAN_A2, PLAN_B1, PROJECT_ID, T,
@@ -41,7 +41,7 @@ import {
   conflictSourceOf, goalBasisOf, type S5DecisionFixture,
 } from './S5-decision-fixture.js';
 
-export function assembleS5R2C(f: S5DecisionFixture) {
+export async function assembleS5R2C(f: S5DecisionFixture) {
   const real = owners(f);
   const faults = { goalAPhase: false, goalCSettings: false, phaseHits: 0, settingsHits: 0 };
   const readsReached = { goalAPhase: 0, goalCSettings: 0 };
@@ -129,22 +129,34 @@ export function assembleS5R2C(f: S5DecisionFixture) {
         permissionRevision: configuration.permissionRevision, allowsRead: () => true } };
     },
   };
-  const evidence = createEvidenceService({ records: f.records, materials, executions, workspaceHost,
-    source: new VerificationWorkspaceReader(), configuration, now: f.now, newId: f.newId });
   const tasks = createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks;
+  // The real composition root over the SAME records: its published ports are the
+  // production owners, not a hand-written whole object.
+  const platform = await openMemoryPlatform(f.records, f.bodies, {
+    now: f.now, workspace: workspaceHost, checks: configuration,
+  });
+  const evidence = platform.evidence;
+  // A3/A2: count the production Runtime's calls and keep the group's named gate.
   let runtimeCalls = 0;
-  const unexpectedRuntime = async (): Promise<never> => {
-    runtimeCalls += 1;
-    throw new Error('R2C decision coordination must never call the Runtime/model');
-  };
-  const runtime: RuntimeExecutionPort = {
-    capabilities: unexpectedRuntime, createSession: unexpectedRuntime, readSessionHistory: unexpectedRuntime,
-    readExecutionHistory: unexpectedRuntime, readTaskExecutionHistory: unexpectedRuntime,
-    prepareExecution: unexpectedRuntime, startRun: unexpectedRuntime, observeRun: unexpectedRuntime,
-  };
-  const checks: RegisteredCheckRunner = { runRegisteredCheck: async () => {
-    throw new Error('R2C uses formal evidence entries with controlled process observations, not a process runner');
-  } };
+  const runtime: RuntimeExecutionPort = new Proxy(platform.runtime, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (..._args: unknown[]): never => {
+        runtimeCalls += 1;
+        throw new Error('R2C decision coordination must never call the Runtime/model');
+      };
+    },
+  });
+  const checks: RegisteredCheckRunner = new Proxy(platform.checks, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (..._args: unknown[]): never => {
+        throw new Error('R2C uses formal evidence entries with controlled process observations, not a process runner');
+      };
+    },
+  });
   const workflow = createWorkflow({ tasks, plans, sessions,
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId, roles }),
     executions, runtime, evidence, checks, sourceAuthority: createSourceAuthorityReader({ authority }),
@@ -157,7 +169,7 @@ export function assembleS5R2C(f: S5DecisionFixture) {
     sourceRoot, faults, readsReached, resolveDecision, runtimeCalls: () => runtimeCalls };
 }
 
-export type S5R2C = ReturnType<typeof assembleS5R2C>;
+export type S5R2C = Awaited<ReturnType<typeof assembleS5R2C>>;
 
 export async function readConflict(x: S5R2C, aRevision = 7, bRevision = 7, aPlan = PLAN_A1) {
   const read = ready(await x.reads.queryGoalConflicts(x.f.ctx, { workspace: WORKSPACE_SCOPE }));

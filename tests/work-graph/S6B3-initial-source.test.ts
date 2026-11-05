@@ -1,5 +1,5 @@
-/** Row 31 (deferred to L): a real no-goal answer's confirmations give a binding, both propose entries carry it, and the
- * adopt side re-checks the source, the Goal revision and the pins; `goals/confirm-draft` is unpublished, so the last statement is its named error. */
+/** Row 31: a real no-goal answer's confirmations give a binding, both propose entries carry it, and the
+ * adopt side re-checks the source, the Goal revision and the pins. */
 import { describe, expect, it } from 'vitest';
 import type { AdoptionGovernancePinsV1 } from '../../src/contracts/initialization-adoption.js';
 import type { GoalConfirmDraftReceiptV1 } from '../../src/contracts/goal-card.js';

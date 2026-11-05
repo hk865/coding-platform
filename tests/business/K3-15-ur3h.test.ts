@@ -60,10 +60,6 @@ type Fixture = {
   settleCalls(): number;
 };
 
-function unsupported(reason: string) {
-  return { status: 'rejected' as const, code: 'unsupported' as const, reason };
-}
-
 function configurationOf(world: K3ReviewCardWorld): WorkflowHostConfiguration {
   return {
     consumerId: 'k3-15-ur3h-consumer',
@@ -118,24 +114,16 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<Fixture> {
     eventId: () => `k3-15-ur3h-runtime-event-${String(++seq)}`, newId: () => world.fixture.newId(),
     kernelStores: await kernelStoresOf(world), workspaceRevision: () => workspaceRevision(world),
   });
-  const evidence: EvidencePort = {
-    openVerification: async () => unsupported('a review row never opens checks'),
-    readVerification: async () => unsupported('no round read'),
-    beginCheck: async () => unsupported('no begin'),
-    recordCheckResult: async () => unsupported('no record'),
-    finalizeChecks: async () => unsupported('no finalize'),
-  };
-  const checks: RegisteredCheckRunner = { runRegisteredCheck: async () => unsupported('no checks') };
-  // A3: count the Workflow's real settlement calls, returning the owner result
-  // unchanged. The source row (K3 UR8) asserted the held record is not settled.
-  let settleCalls = 0;
-  const reviews = {
-    ...world.reviews,
-    settleReview: async (...args: Parameters<K3ReviewCardWorld['reviews']['settleReview']>) => {
-      settleCalls += 1;
-      return await world.reviews.settleReview(...args);
-    },
-  };
+  // The real composition root over the SAME records: its published EvidencePort is
+  // the production owner, not a hand-written whole object.
+  const platform = await world.openPlatform();
+  const evidence: EvidencePort = platform.evidence;
+  const checks: RegisteredCheckRunner = platform.checks;
+  // A3: count the Workflow's real settlement calls on the one real owner,
+  // returning its result unchanged. The source row (K3 UR8) asserted the held
+  // record is not settled.
+  const settleSpy = vi.spyOn(world.reviews, 'settleReview');
+  const reviews = world.reviews;
   const dependencies: WorkflowDependencies = {
     tasks: world.fixture.b2.base.goals, plans: world.fixture.b2.base.plans, sessions: world.fixture.b2.base.sessionsPort,
     claims: { ...world.fixture.b2.base.service, requeueTask: requeues.requeueTask }, executions: reads,
@@ -147,7 +135,7 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<Fixture> {
     unknownCallReviews: reviews,
   };
   const workflow = createWorkflow(dependencies);
-  return { world, controls, workflow, runtime: runtimeService, model, settleCalls: () => settleCalls };
+  return { world, controls, workflow, runtime: runtimeService, model, settleCalls: () => settleSpy.mock.calls.length };
 }
 
 /** TASK-03r: the real claim owner writes `activeRound`; the Run stays unentered. */

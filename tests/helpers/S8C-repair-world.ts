@@ -5,13 +5,14 @@
  * `governS6B` the pointers, `createGoal`/`adoptS6BPlan`/`createS6BLine` the
  * Goal/Plan/Tasks/line, the scripted Work Run calls the real `edit` and
  * `record_note` tools, and the real Workflow runs `open_checks`/`run_check`/
- * `finalize_checks`. G5 has not wired the G3 owner in this tree, so the test
- * calls it with the platform's own records and observation reads. The commit
- * observer and the decision-message owner are captured by delegating wrappers
- * (A3/A4) that return the real objects and their real results; the commit
- * wrapper only counts. Reads are public routes/owners; a repair pin comes from
- * the public architecture read. No store is asserted on and no pin, receipt,
- * round or context is built by hand.
+ * `finalize_checks`; the `finalize_checks` step and the `repair_approval`
+ * answer both reach the platform's OWN repair activator. Only the fault rows
+ * open a second, fault-injecting activator with one production dependency
+ * replaced. The commit observer is captured by a delegating wrapper (A3/A4)
+ * that returns the real object and only counts (or drops a RunActivity record
+ * for the missing-footprint rows). Reads are public routes/owners; a repair pin
+ * comes from the public architecture read. No store is asserted on and no pin,
+ * receipt, round or context is built by hand.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -111,7 +112,7 @@ export type S8CRepairWorld = {
   /** The platform's own record port the activation owner reads through. */
   readonly records: RepairActivationDependencies['records'];
   /** An owner over the same dependencies, with A3 wrappers when a row needs one. */
-  createOwner(overrides?: { records?: RepairActivationDependencies['records'];
+  createFaultOwner(overrides?: { records?: RepairActivationDependencies['records'];
     observation?: RepairActivationDependencies['observation'] }): RepairActivationService;
   pin(): Promise<ArchitectureCatalogPinV1>;
   writeRepair(input: { taskId?: string; ops: CatalogRepairOpV1[];
@@ -453,10 +454,14 @@ export async function openS8CRepairWorld(options: { label: string; tasks?: reado
       recordsPort as Parameters<typeof catalogRevisionDeps>[2]),
     now: () => world.clock.now(), eventId: () => randomUUID(), newId: () => randomUUID(),
   });
-  const owner = createRepairActivationService(dependenciesOf(records, world.platform.architecture));
+  // Normal rows use the one platform activator the composition built and the
+  // Workflow's finalize / the answer path already trigger.
+  const owner = world.platform.repairs;
   const handle = {
     world, main, goal, tasks: taskRefs, line, link: link.ref, owner, records,
-    createOwner: (overrides: { records?: RepairActivationDependencies['records'];
+    // Fault-location rows only: the same production owner with ONE dependency
+    // replaced, built outside the platform so the fault is observable.
+    createFaultOwner: (overrides: { records?: RepairActivationDependencies['records'];
       observation?: RepairActivationDependencies['observation'] } = {}) => createRepairActivationService(
       dependenciesOf(overrides.records ?? records, overrides.observation ?? world.platform.architecture)),
     pin: () => pinOf(world),

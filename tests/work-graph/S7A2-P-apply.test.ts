@@ -3,9 +3,6 @@
  * receipt codes, the party rule, the original command's replay and the first-wins slot in both directions.
  * `appliedAt` is the effect's own event time, never the apply's clock. Every prior state comes from the frozen
  * fixture's public steps; the store is never read, and a receipt is the owner's own committed `proofReceipt`.
- *
- * Until L publishes `platform.messages.applyMessage`, each row's exercise ends on the one deferred named error
- * (`7a2-rgp-v7.md:241–:259`); L replaces only that last statement.
  */
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';

@@ -36,10 +36,8 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * A platform member a later 7A-2 wave publishes, called in process as the Host's human operator bound to `scope`
- * (`world.humanContext()`'s actor through `createHostCoreCallContext`). The member is looked up at call time and
- * started before this returns. An unpublished member rejects with the stable named error
- * `S7A2: the ${call.owner} command is not published yet (${call.wave})`. The owner's whole envelope comes back; the
+ * A published platform member called in process as the Host's human operator bound to `scope`
+ * (`world.humanContext()`'s actor through `createHostCoreCallContext`). The owner's whole envelope comes back; the
  * helper composes no fact.
  */
 export function callS7A2PublishedOwner(world: S6AHostWorld, call: {

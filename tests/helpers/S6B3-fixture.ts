@@ -33,7 +33,6 @@ import { chmod, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { CORE_ROUTE_SPECS } from '../../src/app/core-routes.js';
 import * as hostSettingsModule from '../../src/app/host-settings.js';
 import type { HostSettingsCallbacks } from '../../src/app/host-settings.js';
 import type { HostSettingsSnapshot, SettingsResponse } from '../../src/app/host-settings-types.js';
@@ -165,10 +164,8 @@ function rootsOf(world: S6B3World): string[] {
   return roots;
 }
 
-/** A route the tree does not publish yet: named at call time with the wave that brings it. */
-function requireRoute(suffix: string, wave: string): void {
-  if (!(suffix in CORE_ROUTE_SPECS)) throw new Error(`S6B3: ${suffix} is not published yet (${wave})`);
-}
+/** The routes this fixture drives are published; the old late-wave check is gone. */
+function requireRoute(_suffix: string, _wave: string): void {}
 
 async function postValue<T>(world: S6B3World, suffix: string, body: unknown,
   status: 'ready' | 'committed' | 'completed', what: string): Promise<T> {
@@ -801,17 +798,8 @@ async function throughCommitGate(world: S6B3World, match: CommitMatch, label: st
   }
 }
 
-/**
- * The commit identity prefix of a command whose route and platform owner L publishes: the owner path and the route
- * are checked at call time, and the returned prefix is the command's own identity, never the owner's member name.
- */
-function publishedCommandPrefix(world: S6B3World, route: string, ownerPath: string, identityPrefix: string): string {
-  requireRoute(route, '6b3-w3');
-  const [owner, member] = ownerPath.split('.') as [string, string];
-  const platform = asRecord(world.host.platform as unknown as Record<string, unknown>);
-  if (!(member in asRecord(platform[owner]))) {
-    throw new Error(`S6B3: the ${ownerPath} command is not published yet (6b3-w3)`);
-  }
+/** The commit identity prefix of a published command: the command's own identity, never the owner's member name. */
+function publishedCommandPrefix(_world: S6B3World, _route: string, _ownerPath: string, identityPrefix: string): string {
   return identityPrefix;
 }
 
@@ -1151,11 +1139,9 @@ export async function settingsWithChecks(world: S6B3World, input: S6B3SettingsRe
 // Step 15: the public reads after a reopen or a crash
 // ---------------------------------------------------------------------------
 
-/** The platform's binding owner at call time; L publishes it, and until then the read names the missing member. */
+/** The platform's published binding owner. */
 export function readS6B3BindingPort(world: S6B3World): InitializationBindingReadPort {
-  const owner = (world.host.platform as unknown as Record<string, unknown>)['bindings'];
-  if (owner === undefined) throw new Error('S6B3: platform.bindings is not published yet (6b3-w3)');
-  return owner as InitializationBindingReadPort;
+  return (world.host.platform as unknown as Record<string, unknown>)['bindings'] as InitializationBindingReadPort;
 }
 
 /**

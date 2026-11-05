@@ -185,35 +185,23 @@ function crrServiceOver(world: K3ReviewCardWorld, records: K3ReviewCardWorld['re
 }
 
 /** Real owners plus the Workflow's decision seams; execution/checks are doubles. */
-function assemble(world: K3ReviewCardWorld, options: {
+async function assemble(world: K3ReviewCardWorld, options: {
   records?: K3ReviewCardWorld['records'];
   reviews?: WorkflowDependencies['unknownCallReviews'];
   commandRerun?: ReturnType<typeof createCommandRerunRequestService>;
   countCrrApply?: () => void;
-} = {}): { workflow: WorkflowPort; crrApplies: () => number } {
+} = {}): Promise<{ workflow: WorkflowPort; crrApplies: () => number }> {
   const f = world.fixture;
   const reviews = options.reviews ?? world.reviews;
   const commandRerun = options.commandRerun ?? world.commandRerun;
   let crrApplies = 0;
   const { authority } = createMaterialRecordReaders(f.records);
-  const runtime: RuntimeExecutionPort = {
-    capabilities: async () => unsupported('K3 UR7 rework never reads capabilities'),
-    createSession: async () => unsupported('K3 UR7 rework never creates a Session'),
-    readSessionHistory: async () => unsupported('K3 UR7 rework never reads Session history'),
-    readExecutionHistory: async () => unsupported('K3 UR7 rework never reads execution history'),
-    readTaskExecutionHistory: async () => unsupported('K3 UR7 rework never reads task history'),
-    prepareExecution: async () => unsupported('K3 UR7 rework stops before prepare'),
-    startRun: async () => unsupported('K3 UR7 rework stops before start'),
-    observeRun: async () => unsupported('K3 UR7 rework never observes'),
-  };
-  const evidence: EvidencePort = {
-    openVerification: async () => unsupported('K3 UR7 rework does not open checks'),
-    readVerification: async () => unsupported('K3 UR7 rework does not read checks'),
-    beginCheck: async () => unsupported('K3 UR7 rework does not begin checks'),
-    recordCheckResult: async () => unsupported('K3 UR7 rework does not record checks'),
-    finalizeChecks: async () => unsupported('K3 UR7 rework does not finalize checks'),
-  };
-  const checks: RegisteredCheckRunner = { runRegisteredCheck: async () => unsupported('K3 UR7 rework does not run checks') };
+  // The real composition root over the SAME records: its published ports are the
+  // production owners, not a hand-written whole object.
+  const platform = await world.openPlatform();
+  const runtime: RuntimeExecutionPort = platform.runtime;
+  const evidence: EvidencePort = platform.evidence;
+  const checks: RegisteredCheckRunner = platform.checks;
   const configuration: WorkflowHostConfiguration = {
     consumerId: 'k3-ur7-crr-consumer',
     bindings: [{
@@ -296,7 +284,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
 
     const records = failingCardCommits(world.fixture.records, { crr: 'injected command_rerun_request ② failure' });
     const commandRerun = crrServiceOver(world, records);
-    const assembled = assemble(world, { records, commandRerun });
+    const assembled = await assemble(world, { records, commandRerun });
     const answers = [{ kind: 'command_rerun_request' as const, requestRef: request.ref,
       answerMessageRef: answerRef }];
 
@@ -348,7 +336,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     });
     const reviews = reviewServiceOver(world, records, { eventIdPrefix: 'k3-ur7-review-' });
     const commandRerun = crrServiceOver(world, records);
-    const assembled = assemble(world, { records, reviews, commandRerun });
+    const assembled = await assemble(world, { records, reviews, commandRerun });
 
     const advanced = await assembled.workflow.advanceWork(world.fixture.ctx, selectWork(undefined, [
       { kind: 'unknown_call_review', reviewRef: ucrRecord.ref, answerMessageRef: ucrAnswer },
@@ -381,7 +369,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
     const answerRef = await answerCrrCard(world, 'k3-ur7-named-reanswer');
     const records = failingCardCommits(world.fixture.records, { crr: 'injected named ② failure' });
     const commandRerun = crrServiceOver(world, records);
-    const assembled = assemble(world, { records, commandRerun });
+    const assembled = await assemble(world, { records, commandRerun });
 
     const advanced = await assembled.workflow.advanceWork(world.fixture.ctx,
       selectWork('k3-20-e', [{ kind: 'command_rerun_request', requestRef: request.ref,
@@ -405,7 +393,7 @@ describe.each(['memory', 'sqlite'] as const)('K3 UR7 (answer 7): the failed-card
 
     const records = failingCardCommits(world.fixture.records, { crr: 'injected driver CRR ② failure' });
     const commandRerun = crrServiceOver(world, records);
-    const assembled = assemble(world, { records, commandRerun });
+    const assembled = await assemble(world, { records, commandRerun });
     const answers = [{ kind: 'command_rerun_request' as const, requestRef: request.ref,
       answerMessageRef: answerRef }];
 

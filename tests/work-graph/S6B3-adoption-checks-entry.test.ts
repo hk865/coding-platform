@@ -249,7 +249,7 @@ const savedChecks = async (harness: ChecksHarness) => {
 const apply = async (harness: ChecksHarness, input: EntryInput) =>
   await harness.settings.applyChecksForAdoption(world.host.humanContext(), input);
 
-/** The real Host's own settings port, captured at its start: the saved and installed reads the deferred rows use. */
+/** The real Host's own settings port, captured at its start: the saved and installed reads these rows use. */
 const hostPort = (target: Awaited<ReturnType<typeof openS6B3World>>): SettingsPort => {
   const port = hostPorts.get(target.settingsDirectory);
   if (port === undefined) throw new Error('the real Host published no settings port for this world');
@@ -478,11 +478,11 @@ describe('the narrow checks entry (row 36a, own copy)', () => {
   });
 });
 
-// Deferred to L: these rows run the real public entry and keep their business assertions; J only proves the fixture's
-// named error. Every row runs on memory and SQLite, each in its own world, so no row inherits another row's commit.
+// These rows run the real public entry and keep their business assertions. Every row runs on memory and SQLite, each
+// in its own world, so no row inherits another row's commit.
 
 type ChecksBackend = 'memory' | 'sqlite';
-type DeferredWorld = {
+type PublishedWorld = {
   world: Awaited<ReturnType<typeof openS6B3World>>;
   scope: CoreScope;
   goals: readonly GoalRef[];
@@ -510,7 +510,7 @@ async function checksMarkChild(world: Awaited<ReturnType<typeof openS6B3World>>,
   return mark.child;
 }
 
-async function openDeferred(backend: ChecksBackend, label: string): Promise<DeferredWorld> {
+async function openRowWorld(backend: ChecksBackend, label: string): Promise<PublishedWorld> {
   const world = await openS6B3World({ backend, mainGoals: 'none' });
   try {
     const second = await configureS6B3SecondWorkspace(world, { name: `s6b3-checks-${label}`, goals: 2 });
@@ -533,7 +533,7 @@ async function openDeferred(backend: ChecksBackend, label: string): Promise<Defe
 }
 
 /** One real adopt call in the row's own world; the reply is L's `InitializationAdoptResultV1` unchanged. */
-const adoptIn = ({ world, scope, goals, answer }: DeferredWorld) => async (options: {
+const adoptIn = ({ world, scope, goals, answer }: PublishedWorld) => async (options: {
   effect?: 'ok' | 'fail-notify' | 'hang-notify' | 'fail-persist'; commandId?: string;
 } = {}) => {
   const save = await settingsWithChecks(world, {
@@ -544,8 +544,8 @@ const adoptIn = ({ world, scope, goals, answer }: DeferredWorld) => async (optio
   return { save, reply: await save.done };
 };
 
-const deferredRows: { name: string;
-  exercise(context: DeferredWorld, backend: ChecksBackend): Promise<void> }[] = [
+const publishedRows: { name: string;
+  exercise(context: PublishedWorld, backend: ChecksBackend): Promise<void> }[] = [
   { name: 'saves the checks child, reports saved_unconfirmed and retries the stopped stage without a second save',
     async exercise(context, backend) {
       const { world, scope, answer } = context;
@@ -627,11 +627,11 @@ const deferredRows: { name: string;
 
 for (const backend of ['memory', 'sqlite'] as const) {
   describe(`deferred to L (6b3-w3, ${backend})`, () => {
-    let row = 0;
-    for (const deferred of deferredRows) {
+    let ordinal = 0;
+    for (const deferred of publishedRows) {
       it(deferred.name, async () => {
         installSettingsWrapper();
-        const context = await openDeferred(backend, `${backend}-${++row}`);
+        const context = await openRowWorld(backend, `${backend}-${++ordinal}`);
         try {
           await deferred.exercise(context, backend);
         } finally {

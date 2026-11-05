@@ -90,7 +90,7 @@ describe('S8C G3 R8 goal paused', () => {
     const realCommit = w.records.commit.bind(w.records);
     // A3: the wrapper holds the real final commit, pauses the Goal through the
     // real `goals/control`, then hands the unchanged commit to the store.
-    const owner = w.createOwner({
+    const owner = w.createFaultOwner({
       records: { ...w.records, commit: async prepared => {
         if (!paused) { paused = true; await w.pause(); }
         return realCommit(prepared);

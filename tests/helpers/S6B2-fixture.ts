@@ -66,11 +66,9 @@ export const s6b2Duty = createSessionDutyResolver({
   readRoleSpec: async () => ({ status: 'not_found' }), configuration: undefined,
 });
 
-/** The real Workflow owner the advance and the understanding round call; absent until the composition publishes it. */
+/** The real Workflow owner the advance and the understanding round call. */
 function sessionHandoffOwner(world: S6AHostWorld): SessionHandoffWorkflowPort {
-  const owner = world.platform.workflow.sessionHandoff;
-  if (owner === undefined) throw new Error('S6B2: sessionHandoff is not published yet (6b2-w2)');
-  return owner;
+  return world.platform.workflow.sessionHandoff!;
 }
 
 /** `sessions/operation` of the trusted read owner: the operation as the platform recorded it, nothing built. */

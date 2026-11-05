@@ -4,8 +4,7 @@
  * `sessions/create` with a real `creation` intent, `operation` is `sessions/operation`, `restart` is the same SQLite
  * directory reopened, `retire` is the fixture's real unavailable-secretary step. `archiveS7D1Session` and
  * `reactivateS7D1Session` are the real `sessions/archive` and `sessions/reactivate` steps for a line. `allocation` and
- * `setOpen` are the frozen public steps W adds; before W they answer the transport's unpublished-route 404, which this
- * file names and never reads as a business answer (D2). No store is read, no record/cursor/context is hand-built, and
+ * `setOpen` are the published public steps W added. No store is read, no record/cursor/context is hand-built, and
  * no second world is opened for a restart.
  */
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
@@ -28,11 +27,13 @@ import { sessionOf } from './S7A-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
 import { S6A_SCOPE, S6A_SECRETARY_ROLE, type S6ABackend, type S6AHttpAnswer, type S6ASession } from './S6A-request-fixture.js';
 
-export const S7D1_ALLOCATION_DEFERRED = 'S7D1-DEFERRED: role-lines/allocation is not in the frozen table on '
-  + "G3-1's tree (W, §3.16 item 1); the call answers the transport's 404 (A/server.ts:415)";
-export const S7D1_LIMITS_DEFERRED = 'S7D1-DEFERRED: projects/role-limits/set is not in the frozen table on '
-  + "G3-1's tree (W, §3.16 item 1); the call answers the transport's 404 (A/server.ts:415)";
 
+/**
+ * Kept only because `tests/work-graph/S7D1-G3-allocation-read.test.ts` (outside this
+ * run's whitelist) still imports it for its own 404 branch; the published route no
+ * longer needs a deferred name here.
+ */
+export const S7D1_ALLOCATION_DEFERRED = 'S7D1-DEFERRED: role-lines/allocation';
 export type S7D1Create = {
   label: string; answer: S6AHttpAnswer; session: S6ASession | null; operationRef: OperationRef | null;
   /** `true` only for a first completion; an idempotent replay answers `completed` with `replayed: true`. */
@@ -51,24 +52,21 @@ export type S7D1AllocationWorld = {
   close(): Promise<void>;
 };
 
-/** The D2 deferred public read: an unpublished core route is never a business answer. */
+/** The published public allocation read. */
 export async function readS7D1Allocation(world: S6AHostWorld): Promise<RoleLineAllocationReportV1> {
   const answer = await world.post('role-lines/allocation', plain(S6A_SCOPE, {}));
-  if (answer.httpStatus === 404) throw new Error(S7D1_ALLOCATION_DEFERRED);
   const body = asRecord(answer.body);
   if (body['status'] !== 'ready') throw new Error(`S7D1: the allocation read did not answer: ${JSON.stringify(answer.body)}`);
   return body['value'] as RoleLineAllocationReportV1;
 }
 
-/** One limits write carrying only the levels the change names; the absent route is named, never read as an answer. */
+/** One published limits write carrying only the levels the change names. */
 export async function setS7D1Limits(world: S6AHostWorld,
   change: { running?: Partial<RoleLimitsNumbersV1>; open?: Partial<RoleLimitsNumbersV1> },
   expectedRevision: number, commandId: string): Promise<S6AHttpAnswer> {
-  const answer = await world.post('projects/role-limits/set', plain(S6A_SCOPE, {
+  return await world.post('projects/role-limits/set', plain(S6A_SCOPE, {
     commandId, expectedRevision, ...change,
   }));
-  if (answer.httpStatus === 404) throw new Error(S7D1_LIMITS_DEFERRED);
-  return answer;
 }
 
 /** The limits write; `expectedRevision` is always the revision the previous call returned (0 for the first). */
@@ -127,9 +125,6 @@ export async function openS7D1AllocationWorld(options: { backend: S6ABackend }):
   };
 }
 
-export const S7D1_LIMITS_READ_DEFERRED = 'S7D1-DEFERRED: projects/role-limits is not in the frozen table on '
-  + "G3-2's tree (W, §3.16 item 1); the call answers the transport's 404 (A/server.ts:415)";
-
 export type S7D1LimitsSeed = {
   /** The defaults the read returned before the first write (`revision` 0). */
   readonly before: RoleLimitsViewV1;
@@ -142,11 +137,10 @@ export type S7D1LimitsSeed = {
   readonly revisions: { readonly before: number; readonly first: number; readonly after: number };
 };
 
-/** The limits record or the defaults; the route is absent on G3-2's tree and answers the transport's 404. */
+/** The limits record or the defaults, from the published read. */
 export async function readS7D1Limits(world: S6AHostWorld): Promise<RoleLimitsViewV1> {
   const answer = await world.post('projects/role-limits',
     plain(S6A_SCOPE, { projectRef: { projectId: S6A_SCOPE.projectId } }));
-  if (answer.httpStatus === 404) throw new Error(S7D1_LIMITS_READ_DEFERRED);
   const body = asRecord(answer.body);
   if (body['status'] !== 'ready') throw new Error(`S7D1: the limits read did not answer: ${JSON.stringify(answer.body)}`);
   return body['value'] as RoleLimitsViewV1;
@@ -174,7 +168,6 @@ export async function seedS7D1Limits(world: S7D1AllocationWorld): Promise<S7D1Li
     const second = await world.world.post('projects/role-limits/set', plain(S6A_SCOPE, {
       commandId: 's7d1-limits-second', expectedRevision, open: { executor: 7 },
     }));
-    if (second.httpStatus === 404) throw new Error(S7D1_LIMITS_DEFERRED);
     conflict = asRecord(second.body);
     hold.release();
     first = await pending as unknown as RoleLimitsViewV1;
