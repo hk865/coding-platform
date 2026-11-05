@@ -13,15 +13,15 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "26cc340faf526fe0087b22d3aadf0a904c613681faf397215d526b10720757f6"
+    "sha256": "3b13ee013adadc1a95c31d68c4e174a39cd129fec228a56213f013a267b49197"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "092b6a09e88a42666aadfe4b926d7c04a06860da0e9aefa08440489c7b22b93a"
+    "sha256": "a34d314db2c86b129c6ab680a29a937675edf20d719145ac11dafe74ccfb7344"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "48f4e0beec1750b2ee7dc29c85ed1aa594a7164bc88a11ec62a735d86abb2806"
+    "sha256": "4601a71a11dc538d5b9667fc1cdf5bb4d66b31b22524fd25208fd42f1ca6346e"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -161,7 +161,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/propose_future_plan.json",
-    "sha256": "0cc4c6f1faabcf562a3b2b71eb5a07a5f46b9d8f00b4b1d6595cdb083eb1a899"
+    "sha256": "6c0b037b2b863f10b63a99dfdf96f72edf68cdad12ea91195e5020604b807a46"
   },
   {
     "path": "resources/prompts/platform/tools/create_member.json",
@@ -309,7 +309,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_plan.json",
-    "sha256": "cc96385489ddafab954d8c91333854014c253368c78e3dab72d59c459832a42a"
+    "sha256": "b54a3c26c80b16044d119f732e36ede8b054c5a28e8da951b33e4f81053645c0"
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_questions.json",
@@ -321,7 +321,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_plan_round.json",
-    "sha256": "1aff4528a71f0eb8816bd774ea41df60e686c017207cb99e7a3e7ea827f922f3"
+    "sha256": "4bc13fef522de755484841973eba70d9970be3f3fbdf52bbead5c25e16077d91"
   },
   {
     "path": "resources/prompts/platform/tools/hand_off.json",

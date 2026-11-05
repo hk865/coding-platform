@@ -109,6 +109,7 @@
   "context.task.stage": "stage: ",
   "context.task.undeclared": "(未声明)",
   "context.task.module": "module: ",
+  "context.task.plannedFiles": "plannedFiles（预计要改的文件，只是提示，不是限制）: ",
   "context.task.requirementLevel": "requirementLevel: ",
   "context.task.disposition": "disposition: ",
   "context.task.phase": "phase: ",

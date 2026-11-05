@@ -140,6 +140,7 @@ function reviewCandidateText(
     lines.push('', `## task ${task.taskId}: ${task.title}`);
     if (task.estimatedLines !== undefined) lines.push(`estimatedLines: ${String(task.estimatedLines)}`);
     if (task.sizeClass !== undefined) lines.push(`sizeClass: ${task.sizeClass}`);
+    if (task.plannedFiles !== undefined) lines.push(`plannedFiles: ${task.plannedFiles.join(', ')}`);
     if (task.replacedByTaskId !== undefined && task.replacedByTaskId !== null) {
       lines.push(`replacedByTaskId: ${task.replacedByTaskId}`);
     }

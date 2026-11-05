@@ -261,6 +261,8 @@ export function taskPayload(plan: PlanRevisionSnapshot, record: TaskExecutionRec
     `${S('context.task.definitionPlan')}${plan.ref.planId}@${String(plan.planRevision)}`,
     `${S('context.task.stage')}${stage === undefined ? S('context.task.undeclared') : `${stage.title} (${stage.stageId})`}`,
     `${S('context.task.module')}${task?.scope.kind === 'module' ? task.scope.moduleRef : S('context.task.undeclared')}`,
+      // Decision 121-10: the plan's hint list, only when it lists files (the frozen claim Plan's definition).
+      ...(task?.plannedFiles === undefined ? [] : [`${S('context.task.plannedFiles')}${task.plannedFiles.join(', ')}`]),
     `${S('context.task.requirementLevel')}${task?.requirementLevel ?? 'required'}`,
     `${S('context.task.disposition')}${task?.disposition ?? 'active'}`,
     `${S('context.task.phase')}${phase}`,
