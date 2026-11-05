@@ -618,7 +618,10 @@ export async function writeMessage(mailbox: MailboxContext, accepted: Accepted, 
   const event = {
     eventId: eventIdOf(identityKey, plan.eventType),
     eventType: plan.eventType, schemaVersion: 1, occurredAt: at,
-    projectId: owned.projectId, workspaceId: owned.workspaceId, requestId: write.requestId,
+    // The event's scope is the message record's own: the registration checks it
+    // against `message.ref`, and a cross-workspace Host notify writes its record
+    // in the recipient line's workspace.
+    projectId: message.ref.projectId, workspaceId: message.ref.workspaceId, requestId: write.requestId,
     actor: write.actor, message,
   } as unknown as SessionMessageEventV1;
   if (owned.signal.aborted) return reject('cancelled', write.cancelled);

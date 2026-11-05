@@ -2313,7 +2313,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   /**
    * §11.5/§11.7: the per-workspace reminder memory. It lasts for the life of
    * this Host only; after a restart the first check rebuilds the unhandled
-   * state by paging each recipient's whole inbox once.
+   * state by paging each recipient's whole inbox once in the recipient line's
+   * own workspace, while the reminder is sent as the Host system identity.
    *
    * Rework 2 item 2: the memory is PER RECIPIENT (a single `sentReminder` lost
    * the recipient change). Each entry keeps the last sent ref and whether that
@@ -2365,29 +2366,58 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * and the caller leaves `computedAtCursor` unset.
    */
   type ReminderDisposition = 'clear' | 'unhandled' | 'unknown';
+  /**
+   * The recipient line's own workspace. The sending workspace is read first (a
+   * single-workspace project only has that one, byte-identical to before); on
+   * `not_found` every other workspace of the same project is read, and the one
+   * that holds the line is its home. A failed read, or none holding it, is
+   * `unknown`: nothing is sent and no cursor is recorded.
+   */
+  async function scribeRecipientWorkspace(ctx: CoreCallContext, recipient: SessionRef):
+  Promise<CoreScope | 'unknown'> {
+    const sending: CoreScope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+    const here = await platform.sessions.readSession(ctx, recipient);
+    if (here.status === 'ready') return sending;
+    if (here.status !== 'not_found') return 'unknown';
+    for (const workspace of workspaces) {
+      if (workspace.scope.projectId !== ctx.projectId) continue;
+      if (workspace.scope.workspaceId === sending.workspaceId) continue;
+      const read = await platform.sessions.readSession(hostContext(workspace.scope), recipient);
+      if (read.status === 'ready') return workspace.scope;
+      if (read.status !== 'not_found') return 'unknown';
+    }
+    return 'unknown';
+  }
   async function scribeReminderDisposition(ctx: CoreCallContext, recipient: SessionRef,
     state: ScribeReminderState): Promise<ReminderDisposition> {
     const memory = recipientMemory(state, recipient);
     if (memory.ref !== null) {
-      const read = await platform.messages.readMessage(ctx, memory.ref);
+      // The memory ref is checked in the workspace the message record lives in.
+      const refCtx = hostContext({ projectId: memory.ref.projectId, workspaceId: memory.ref.workspaceId });
+      const read = await platform.messages.readMessage(refCtx, memory.ref);
       if (read.status !== 'ready') return 'unknown';
-      const completion = await inputCompletion(ctx, read.value);
+      const completion = await inputCompletion(refCtx, read.value);
       if (completion === 'unknown') return 'unknown';
       if (completion === 'not_completed') return 'unhandled';
       memory.ref = null; // handled: fall through to a fresh inbox page
     }
     if (!memory.recovered) {
+      // The one recovery scan pages the recipient's inbox in the recipient
+      // line's own workspace.
+      const home = await scribeRecipientWorkspace(ctx, recipient);
+      if (home === 'unknown') return 'unknown';
+      const inboxCtx = hostContext(home);
       let cursor: string | undefined;
       do {
-        const inbox = await platform.messages.readInbox(ctx, { recipient,
+        const inbox = await platform.messages.readInbox(inboxCtx, { recipient,
           page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
         if (inbox.status !== 'ready') return 'unknown';
         for (const message of inbox.value.items) {
           if (message.sender.kind !== 'host' || message.intent !== 'notify') continue;
-          const completion = await inputCompletion(ctx, message);
+          const completion = await inputCompletion(inboxCtx, message);
           if (completion === 'unknown') return 'unknown';
           if (completion === 'completed') continue;
-          const body = await platform.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'message' });
+          const body = await platform.messages.readMessageBody(inboxCtx, { messageRef: message.ref, part: 'message' });
           if (body.status !== 'ready') return 'unknown';
           if (body.value.text.startsWith(SCRIBE_REMINDER_MARKER)) {
             memory.ref = message.ref;
@@ -2592,6 +2622,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (atMs - state.lastCheckAtMs < scribeReminderPeriodMs) return;
     state.lastCheckAtMs = atMs;
     const ctx = hostContext(scope);
+    // The send uses the Host system identity (like the rework and attention
+    // notices), so a reminder can reach a scribe in another workspace. Every
+    // read keeps the configured Host identity.
+    const sendCtx: CoreCallContext = { ...reconcileContext(scope), signal: attentionAbort.signal };
 
     // 2. the ledger cursor. A failed read does nothing this pass and leaves
     // `computedAtCursor` unset, so the next period retries.
@@ -2603,7 +2637,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // belongs to a specific computed cursor; once the cursor moves it is stale.
     if (state.computedAtCursor !== undefined && cursor === state.computedAtCursor) {
       // A copy first: a committed send deletes its entry.
-      for (const [key, pending] of [...state.pendingSendByRecipient]) await sendPendingScribeReminder(ctx, state, key, pending);
+      for (const [key, pending] of [...state.pendingSendByRecipient]) await sendPendingScribeReminder(sendCtx, state, key, pending);
       return;
     }
     // The cursor moved (or this is the first check): drop any stale pending
@@ -2658,7 +2692,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }, []).text;
       const pending = systemNotifyRequest({ recipient: recipientRef, text, requestId });
       state.pendingSendByRecipient.set(recipientRef.sessionId, pending);
-      await sendPendingScribeReminder(ctx, state, recipientRef.sessionId, pending);
+      await sendPendingScribeReminder(sendCtx, state, recipientRef.sessionId, pending);
     }
     state.computedAtCursor = cursor;   // every scope computed (an `unknown` or a failed read returned above)
   }
@@ -2754,9 +2788,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (entry.pending.length > 0) {
           const remaining: typeof entry.pending = [];
           for (const item of entry.pending) {
+            // The pending notice is read in the message's OWN workspace: a Host
+            // system notify may have been delivered to another workspace.
+            const msgCtx = hostContext({ projectId: item.messageRef.projectId, workspaceId: item.messageRef.workspaceId });
             try {
-              const read = await platform.messages.readMessage(hostCtx, item.messageRef);
-              if (read.status === 'ready' && await inputCompleted(hostCtx, read.value)) {
+              const read = await platform.messages.readMessage(msgCtx, item.messageRef);
+              if (read.status === 'ready' && await inputCompleted(msgCtx, read.value)) {
                 const confirmed = item.signals.filter(signal => item.sequence > (entry.confirmedSequences.get(signal.kind) ?? 0));
                 if (confirmed.length > 0) {
                   entry.observer.markProcessed(item.snapshot, confirmed);

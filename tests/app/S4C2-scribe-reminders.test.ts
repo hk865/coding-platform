@@ -709,7 +709,9 @@ it('S4C2 item 5: the restart recovery crosses inbox pages and a failed page read
     await started.host.close();
     const reminderKey = canonicalJson(reminder.ref as never);
     if (reminder.sender.kind !== 'host') throw new Error('the reminder sender must be the host');
-    const senderIdentity = { kind: 'host', actor: { ...reminder.sender.actor } };
+    // The filler messages are sent by the fixture's human Host actor; the
+    // reminder itself is now sent as the Host system identity.
+    const senderIdentity = { kind: 'host', actor: { kind: 'human', id: 's4a-operator' } };
 
     // At least 100 REAL filler messages whose canonical refKeys sort BEFORE the
     // reminder, so the Host's 100-per-page read must cross a page boundary to

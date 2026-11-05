@@ -3156,6 +3156,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       return { status: 'ready', value: goalIds };
     };
     // The scope's own scribe (BK-09): the smallest-sessionId active scribe whose scope basis is exactly that scope.
+    // A scribe serves every workspace of its project, so the directory page is project-wide (no workspace filter);
+    // a second workspace has no role line of its own and is managed by the project's scribe.
     // A failed page, duty or `manages` read is the read's rejection, never a different scribe.
     const resolveScribeRecipient = async (
       ctx: CoreCallContext, scope: NoteScopeV1,
@@ -3165,7 +3167,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       let cursor: string | undefined;
       for (;;) {
         const page = await sessionDirectory.findSessions(ctx, {
-          workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
+          workspace: { projectId: ctx.projectId },
           includeArchived: false, page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) },
         });
         if (page.status !== 'ready') return page;

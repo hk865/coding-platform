@@ -66,10 +66,9 @@ import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../
 import { createDutyRecipient } from '../../core/work-graph/sessions/duty-recipient.js';
 import { decidePlanCandidate, type PlanCandidateFactsV1, type PlanCandidateSourceV1 } from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
-import { systemRoundContext, systemRoundOfText, systemRoundRequestId, hostMessageId,
+import { systemRoundContext, systemRoundOfText, systemRoundRequestId,
   systemRoundMessageRef, type SystemRoundV1 } from '../../contracts/plan-round.js';
-import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal,
-  type TaskReminderV1 } from '../../contracts/plan-deviation.js';
+import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal } from '../../contracts/plan-deviation.js';
 import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service.js';
 import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
@@ -2136,19 +2135,6 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return readRejection(read);
   }
 
-  /** PL §7.1 row 3: the ordinary notify's identity, deduped by Goal, Task and triggering revision. */
-  function reminderMessageRef(owned: Owned, reminder: TaskReminderV1):
-  { status: 'ready'; value: SessionMessageRef } | CoreRejection {
-    const requestId = `plan-reminder:${reminder.goalRef.goalId}:${reminder.taskRef.taskId}:${reminder.planRevision}`;
-    const id = hostMessageId({ projectId: owned.projectId, workspaceId: owned.workspaceId },
-      WORKFLOW_AUTOMATION_ACTOR, requestId);
-    if (id.status !== 'ready') return id;
-    return { status: 'ready', value: {
-      aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
-      messageId: id.value,
-    } };
-  }
-
   /**
    * §5.1.4 + the book's main flow: the plan_only `refine:` round is sent before
    * the deviation path. `selectOrdinary` only sends it at the gap, so an
@@ -2231,19 +2217,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if ('status' in reminderAdviser) return reminderAdviser;
     if (reminderAdviser.session === null) return null;
     for (const reminder of reminders) {
-      const ref = reminderMessageRef(owned, reminder);
-      if (ref.status !== 'ready') return ref;
-      const sent = await hostSendCommitted(owned, ref.value);
-      if (typeof sent !== 'string') return sent;
-      if (sent === 'sent') continue;
       const requestId = `plan-reminder:${reminder.goalRef.goalId}:${reminder.taskRef.taskId}:${reminder.planRevision}`;
+      const input: SessionMessageSendInputV1['input'] = {
+        recipient: reminderAdviser.session,
+        text: `${requestId}\n提醒（不需要开轮或改计划）：任务 ${reminder.taskRef.taskId} 在计划版本 `
+          + `${reminder.planRevision} 的上下文增长量已达 ${reminder.growthTokens} tokens（${reminder.sizeClass} 档）。`,
+        intent: 'notify' as const, needsReply: false,
+      };
+      // PL §7.1 row 3: "already sent" is the sender identity's committed receipt,
+      // not a message ref read in the sender's workspace. A reminder delivered
+      // to another workspace therefore reads as sent; `undetermined` still sends
+      // and the mailbox's identity receipt dedupes it.
+      if (await readHostSendReceipt(automationContext(owned), { requestId, arguments: input }) === 'committed') continue;
       return advancing(null, makePerform(base, { kind: 'notify_plan_reminder', request: {
-        input: {
-          recipient: reminderAdviser.session,
-          text: `${requestId}\n提醒（不需要开轮或改计划）：任务 ${reminder.taskRef.taskId} 在计划版本 `
-            + `${reminder.planRevision} 的上下文增长量已达 ${reminder.growthTokens} tokens（${reminder.sizeClass} 档）。`,
-          intent: 'notify' as const, needsReply: false,
-        },
+        input,
         meta: { requestId, expected: [] },
       } }));
     }

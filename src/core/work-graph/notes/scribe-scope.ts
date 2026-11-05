@@ -135,7 +135,9 @@ async function readCatalog(ctx: CoreCallContext, deps: ScribeScopeDependencies):
 type FactsFailureCode = 'invalid' | 'forbidden' | 'unavailable';
 type FactsOutcome = { ok: true; facts: ScribeFacts } | { ok: false; code: FactsFailureCode; reason: string };
 
-/** P6(a): a scribe's scope from open responsible module links; no module link → project. */
+/** P6(a): a scribe's scope from open responsible module links; no module link → project. A scribe serves every
+ * workspace of its project, so the directory page is project-wide; a second workspace has no role line of its own
+ * and is managed by the project's scribe. */
 async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies): Promise<FactsOutcome> {
   if (ctx.workspaceId === undefined) {
     return { ok: false, code: 'invalid', reason: 'a workspace is required to derive the scribe scope' };
@@ -149,7 +151,7 @@ async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies):
   for (;;) {
     let page: ReadResult<{ items: SessionCard[]; nextCursor: string | null }>;
     try {
-      page = await deps.sessions.findSessions(ctx, { workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId },
+      page = await deps.sessions.findSessions(ctx, { workspace: { projectId: ctx.projectId },
         includeArchived: false, page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) } });
     } catch {
       return { ok: false, code: 'unavailable', reason: 'the scribe sessions cannot be read' };

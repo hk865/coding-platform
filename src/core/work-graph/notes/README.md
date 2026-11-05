@@ -22,7 +22,7 @@
 `note-batch-reader.ts` — 批量读当前指针与被指 head，缺指针/缺 head 的语义由调用方选。
 `note-decision-source.ts` — 注记复核决定卡来源（communication/business 消费的对象）：Goal 的 bucket，或项目 subject 的无 Goal bucket `[projectId, null, 'pending_review']`。
 `note-scribe-todos.ts` — 书记待办：`updateDue`、`pending`、`immediate` 三类。
-`scribe-scope.ts` — 书记范围事实、写准入、管理范围与按范围计数；包含判定、模块深度与最深包含 region 的纯规则在 `state/role-scope.ts`（本文件只导入 `regionContains`/`deepestContainingRegion`，不另留副本）。只有目标链接的书记现在是 goal 范围：每条开着的 goal 负责链接给一个 `{kind:'goal'}` 范围，与 region 范围合并（同时持有 region 和目标的线两边都留）；目标类锚点在它持有的目标内准入，其余锚点 `anchor_out_of_scope`；单目标、没有模块锚点且有书记持有该目标时，管理范围是这个目标，所以计数与 `manages` 按同一个范围。`ScribeScope.managingScopeOfAnchors` 按同一规则给没有 head 的锚点（`updateDue` 待办）求管理范围。
+`scribe-scope.ts` — 书记范围事实、写准入、管理范围与按范围计数；包含判定、模块深度与最深包含 region 的纯规则在 `state/role-scope.ts`（本文件只导入 `regionContains`/`deepestContainingRegion`，不另留副本）。只有目标链接的书记现在是 goal 范围：每条开着的 goal 负责链接给一个 `{kind:'goal'}` 范围，与 region 范围合并（同时持有 region 和目标的线两边都留）；目标类锚点在它持有的目标内准入，其余锚点 `anchor_out_of_scope`；单目标、没有模块锚点且有书记持有该目标时，管理范围是这个目标，所以计数与 `manages` 按同一个范围。`ScribeScope.managingScopeOfAnchors` 按同一规则给没有 head 的锚点（`updateDue` 待办）求管理范围。书记范围事实按项目翻目录（不分工作区）：书记按项目服务所有工作区，第二个工作区没有自己的角色线，由主工作区的书记管。
 `note-version-lists.ts` — 计划版本与目录版本的分页列表。
 `note-memory-material.ts` — 记忆材料端口的薄适配；无 Goal 的项目材料由读模型组装。
 `note-rendering.ts` — 理解正文的五段渲染。
