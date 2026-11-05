@@ -6,9 +6,11 @@
  * runs after each lifecycle pass.
  *
  * Every queue commit is the shared event writer with one `GoalAdviserQueueChanged` (D-16): an assignment commits the
- * queue, the goal's responsible link, its `role-scope:` claim, the adviser Session's next revision and the closing of a
- * waiting card in one commit, guarded by the queue revision the assignment was decided on, the Goal, its phase, the
- * adviser Session at the revision the choice read (o4a ruling 54) and the link. A command
+ * queue, the goal's responsible link, its `role-scope:` claim, the adviser Session's next revision and the closing of
+ * the goal's not-yet-started card and line add in one commit (failed `{cancelled, goal_assigned}`; the approved card
+ * still completes), guarded by the queue revision the assignment was decided on, the Goal, its phase, the adviser
+ * Session at the revision the choice read (o4a ruling 54) and the link. A line add closed this way is opened again
+ * under the next generation's identity (`goal-line#<n>:<goalId>`). A command
  * identity is (operation, the goal's workspace, the principal, commandId): the platform callers share the principal
  * `WORKFLOW_AUTOMATION_ACTOR` and `goal-queue:<goalId>`, so a confirm, a Workflow trigger and a drain entry of one goal
  * are one command and replay one receipt. Every result is the queue record re-read, never projected from an event.
@@ -52,7 +54,7 @@ import { eventIdOf, trustedContext } from '../sessions/trusted-context.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
 import { dropGoal, emptyGoalAdviserQueue, enqueueGoal, reorderGoals } from '../state/goal-adviser-queue.js';
 import { planReanchor } from '../state/reanchor.js';
-import { roleLineOperationRef } from '../state/role-line-operation.js';
+import { roleLineOperationRef, roleLineStepTransition } from '../state/role-line-operation.js';
 import { latestActivityAt } from '../state/session-activity.js';
 import { adviserCandidateOf, type AdviserSlotFactsV1 } from './adviser-slots.js';
 import { readOwnerRecord, type OwnerRecordRead } from './owner-record-read.js';
@@ -161,10 +163,43 @@ function ownerReadValue<T>(read: OwnerRecordRead<T>): { status: 'ready'; value: 
   return 'notFound' in read ? { status: 'ready', value: null } : read.rejection;
 }
 
-/** The operation's terminal record of an assignment that answers its card (v4 :4939–:4942). */
+/** The approved card's terminal record of an assignment that answers it (v4 :4939–:4942). */
 function closedOperationOf(operation: RoleLineOperationV1, at: string): RoleLineOperationV1 {
   return { ...operation, revision: operation.revision + 1, updatedAt: at, phase: 'completed',
     action: { ...operation.action, phase: 'done', result: { status: 'done', reason: null } } };
+}
+
+/** The end reason of an operation an assignment made moot (o5b ruling 25). */
+const GOAL_ASSIGNED = 'goal_assigned';
+
+/** A goal's line-add identity of one generation: generation 1 is `goal-line:<goalId>`, generation n ≥ 2 is
+ *  `goal-line#<n>:<goalId>` (n in decimal). */
+function lineAddCommandId(goalId: string, generation: number): string {
+  return generation === 1 ? `goal-line:${goalId}` : `goal-line#${generation}:${goalId}`;
+}
+
+/** The record an assignment ends a not-yet-started card or line add with, or `null` when the operation is not one an
+ *  assignment ends (its record phase is not `accepted`, or a step has left `pending`). */
+function goalAssignedCloseOf(operation: RoleLineOperationV1, at: string): RoleLineOperationV1 | null {
+  if (operation.phase !== 'accepted' || operation.action.steps.some((step) => step.state !== 'pending')) return null;
+  let action = operation.action;
+  for (let index = 0; index < action.steps.length; index += 1) {
+    const moved = roleLineStepTransition(action, index, { state: 'failed' });
+    if (!moved.ok) return null;
+    action = moved.action;
+  }
+  return failedRoleLineRecordOf(operation, action, rejected('cancelled', GOAL_ASSIGNED), at);
+}
+
+/** One saved operation a commit ends: the record as read and the record the commit writes. */
+type OperationClosingV1 = { prior: RoleLineOperationV1; next: RoleLineOperationV1 };
+
+/** The records and guards of the operations one commit ends: each `next` record, guarded at its `prior` revision. */
+function closingWritesOf(closing: readonly OperationClosingV1[]): { records: EncodedRecord[]; guards: RecordGuard[] } {
+  return {
+    records: closing.map((entry) => encodeSessionOperationRecord(entry.next)),
+    guards: closing.map((entry) => ({ refKey: operationRefKey(entry.prior.ref), expectedRevision: entry.prior.revision })),
+  };
 }
 
 export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependenciesV1): GoalAdviserQueuePort {
@@ -179,6 +214,34 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     if (read.status !== 'ready' || read.value === null) return read as { status: 'ready'; value: null } | CoreRejection;
     if (read.value.action.kind !== 'role_line') return rejected('invalid', 'not a role_line operation');
     return { status: 'ready', value: read.value as RoleLineOperationV1 };
+  }
+
+  /** The goal's current line add: the first generation whose saved operation is absent or was not ended
+   *  `goal_assigned`. */
+  async function currentLineAddOf(goalRef: GoalRef):
+    Promise<{ status: 'ready'; value: { commandId: string; operation: RoleLineOperationV1 | null } } | CoreRejection> {
+    for (let generation = 1; ; generation += 1) {
+      const commandId = lineAddCommandId(goalRef.goalId, generation);
+      const saved = await readRoleLineOperation(roleLineOperationRef(goalRef.projectId, 'open:add', commandId));
+      if (saved.status !== 'ready') return saved;
+      const operation = saved.value;
+      if (operation === null
+        || !(operation.phase === 'failed' && operation.failure?.reason === GOAL_ASSIGNED)) {
+        return { status: 'ready', value: { commandId, operation } };
+      }
+    }
+  }
+
+  /** The goal's current line add ended `goal_assigned` at `at`; `null` when it has none or it is not one an assignment
+   *  ends. */
+  async function lineAddClosingOf(goalRef: GoalRef, at: string):
+    Promise<{ status: 'ready'; value: OperationClosingV1 | null } | CoreRejection> {
+    const current = await currentLineAddOf(goalRef);
+    if (current.status !== 'ready') return current;
+    const operation = current.value.operation;
+    if (operation === null) return { status: 'ready', value: null };
+    const next = goalAssignedCloseOf(operation, at);
+    return { status: 'ready', value: next === null ? null : { prior: operation, next } };
   }
 
   /** The goal's screening, from the binding the confirm wrote (`role-line-maintenance.ts` reads it the same way). */
@@ -383,37 +446,40 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
       authorization: { actor: trusted.actor, scope: [{ kind: 'project' }] }, proposed: null });
     if (!planned.ok) return planned.refusals[0]!;
 
-    // The card this assignment answers: an approval names its saved operation and the revision the card showed; a
-    // plain assignment closes whichever of the goal's two possible cards still waits (at most one waits at a time).
-    const closing: RoleLineOperationV1[] = [];
+    // The operations this assignment makes moot: an approval names the card it answers and closes it completed; a
+    // plain assignment closes the goal's waiting card; either closes the goal's current line add (o5b ruling 25).
+    const at = deps.now();
+    const closing: OperationClosingV1[] = [];
     if (input.operationRef !== undefined) {
       const pin = pinned.approval!;   // only an approval passes both; its one caller is `allocate`'s approval step
       const saved = await readRoleLineOperation(input.operationRef);
       if (saved.status !== 'ready') return saved;
       if (saved.value === null || saved.value.action.result?.status !== 'waiting'
         || saved.value.revision !== pin.expectedRevision) return rejected('source_stale', NO_LONGER_WAITS);
-      closing.push(saved.value);
+      closing.push({ prior: saved.value, next: closedOperationOf(saved.value, at) });
     } else {
-      for (const ref of [{ aggregateType: 'CoreOperation' as const, projectId, operationId: `goal-queue-assign:${input.goalRef.goalId}` },
-        roleLineOperationRef(projectId, 'open:add', `goal-line:${input.goalRef.goalId}`)]) {
-        const saved = await readRoleLineOperation(ref);
-        if (saved.status !== 'ready') return saved;
-        if (saved.value !== null && saved.value.action.result?.status === 'waiting') closing.push(saved.value);
-      }
+      const card = await readRoleLineOperation({ aggregateType: 'CoreOperation' as const, projectId,
+        operationId: `goal-queue-assign:${input.goalRef.goalId}` });
+      if (card.status !== 'ready') return card;
+      const next = card.value === null ? null : goalAssignedCloseOf(card.value, at);
+      if (card.value !== null && next !== null) closing.push({ prior: card.value, next });
     }
-    const at = deps.now();
+    const add = await lineAddClosingOf(input.goalRef, at);
+    if (add.status !== 'ready') return add;
+    if (add.value !== null) closing.push(add.value);
+    const writes = closingWritesOf(closing);
     const contribution = roleLineCommitContribution({
       projectRef: { projectId },
       records: [goalAdviserQueueCodec.encode(dropGoal(queue.value, input.goalRef)),
         ...planned.plan.sessions.map(encodeSessionRecord),
-        ...closing.map((operation) => encodeSessionOperationRecord(closedOperationOf(operation, at)))],
+        ...writes.records],
       guards: [
         queueGuardOf(queue.value),
         { refKey: canonicalKey(input.goalRef), expectedRevision: goal.goal.revision },
         phase.guard,
         { refKey: plainSessionRefKey(input.adviser), expectedRevision: adviser.revision },
         { refKey: sessionWorkLinkRefKey(link), expectedRevision: existing.value?.revision ?? null },
-        ...closing.map((operation) => ({ refKey: operationRefKey(operation.ref), expectedRevision: operation.revision })),
+        ...writes.guards,
       ],
       links: planned.plan.links, claimChanges: planned.plan.claimChanges, bindings: planned.plan.bindings,
       events: [],
@@ -614,7 +680,9 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     }
     if (candidate !== null) return assignToAdviser(candidate.session);
     // born with an empty scope: no initial goal link/claim, so the one assign below commits the Goal responsibility
-    const opened = await deps.lines.open(goalCtx, { commandId: `goal-line:${input.goalRef.goalId}`, duty: 'adviser',
+    const current = await currentLineAddOf(input.goalRef);
+    if (current.status !== 'ready') return { result: current, queueRevision: null, kind: null };
+    const opened = await deps.lines.open(goalCtx, { commandId: current.value.commandId, duty: 'adviser',
       scope: [], affectedGoals: [input.goalRef] });
     if (opened.status === 'committed' && opened.value.cardKey !== undefined) {
       return { result: { status: 'committed', value: { status: 'needs_decision', cardKey: opened.value.cardKey,
@@ -715,20 +783,25 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
       if (goalRead.status !== 'ready') { blocked += 1; continue; }
       const goal = goalRead.goal;
       const goalCtx = goalContextOf(goal, { ...ctx, principal: platformPrincipal() });
-      // (a) a cancelled, formally completed or already advised goal leaves the queue (o4a ruling Q7)
+      // (a) a cancelled, formally completed or already advised goal leaves the queue (o4a ruling Q7); an advised
+      //     goal's drop also closes its not-yet-started line add in that commit (o5b ruling 25)
       const phase = await readGoalPhase(deps.records,
         { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId });
       if (phase.status !== 'ready') { blocked += 1; continue; }
       const lines = await readOpenResponsibilityLines(deps.records, goalCtx, { goalRef }, deps.duty);
       if (lines.status !== 'ready') { blocked += 1; continue; }
-      if (goal.desiredState === 'cancelled' || phase.snapshot !== null
-        || lines.value.some((line) => line.duty === 'adviser')) {
+      const advised = lines.value.some((line) => line.duty === 'adviser');
+      if (goal.desiredState === 'cancelled' || phase.snapshot !== null || advised) {
         const queue = await readQueueRecord(deps.records, projectId);
         if (queue.status !== 'ready') { blocked += 1; continue; }
         if (!inQueue(queue.value, goalRef)) continue;
+        const add = advised ? await lineAddClosingOf(goalRef, deps.now()) : { status: 'ready' as const, value: null };
+        if (add.status !== 'ready') { blocked += 1; continue; }
+        const writes = closingWritesOf(add.value === null ? [] : [add.value]);
         const dropped = await commitQueue(goalCtx, { kind: 'drop', commandId: `goal-queue:${goalRef.goalId}`,
-          fingerprintInput: { goalRef }, fragment: { records: [goalAdviserQueueCodec.encode(dropGoal(queue.value, goalRef))],
-            guards: [queueGuardOf(queue.value)], claims: [], events: [] }, revision: queue.value.revision + 1 });
+          fingerprintInput: { goalRef }, fragment: { records: [goalAdviserQueueCodec.encode(dropGoal(queue.value, goalRef)),
+            ...writes.records], guards: [queueGuardOf(queue.value), ...writes.guards], claims: [], events: [] },
+          revision: queue.value.revision + 1 });
         if (dropped.status !== 'committed') blocked += 1;
         continue;
       }
