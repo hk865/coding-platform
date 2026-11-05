@@ -40,7 +40,6 @@ import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import type { TrustedCheckConfiguration, VerificationRoundRef } from '../../src/contracts/verification.js';
 import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
 import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
-import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { advanceUntil, driveWorkflow, type AdvanceValue } from './A2-restart-fixture.js';
 import type { CommitHold } from './S6A-commit-barrier.js';
 import {
@@ -50,14 +49,12 @@ import { createS6BLine, holdS6BRequestRound } from './S6B1-fixture.js';
 import { checkConfiguration, claimedRunOf, crashS7AHost, ready, receiptOf, sessionOf } from './S7A-fixture.js';
 import { understandingNote } from './S4C2-note-card-fixture.js';
 import { withConfiguredHost } from './S7C-member-fixture.js';
-import { openLink } from './S7D1-role-line-world.js';
+import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
 import { plain } from './AG2b-collaboration-fixture.js';
 import { inboxOf } from './S7B-F-support.js';
 import { readBody } from './IV-host-fixture.js';
 import type { QueueInput } from './S2A-queue-fixture.js';
 import { openS7CToolWorld, type S7CDuty, type S7CToolWorld } from './S7C-t-fixture.js';
-
-const ADVISER_ROLE = platformRoleProfile('adviser').template;
 
 /** The one watched fixed file a row writes to produce a real attention delivery. */
 export const S7C_L2_ATTENTION_PATH = 'src/s7c-l2-attention.txt';
@@ -455,15 +452,8 @@ async function openS7CBase(options: S7CSystemWorldOptions): Promise<S7CWorldBase
       label: 's7c-l2-attention-target', role: S6A_WORK_ROLE,
     }));
     const adviserLine = adviser
-      ? await sessionOf(world, await createS6BLine(main, { label: 's7c-l2-adviser', role: ADVISER_ROLE }))
+      ? await assignGoalAdviserLine(world, { goal, label: 's7c-l2-adviser', requestId: 's7c-l2-adviser' })
       : null;
-    if (adviserLine !== null) {
-      const linked = await openLink(world, { line: adviserLine, target: { kind: 'goal', ref: goal },
-        requestId: 's7c-l2-adviser-goal-link' });
-      if (linked.result.status !== 'committed') {
-        throw new Error(`S7C L2: the adviser Goal link did not commit: ${JSON.stringify(linked.result)}`);
-      }
-    }
     // The refs exist first; the one restart configures attention and the trusted checks. Memory reopens through
     // the A4 shared records/body seam the caller's test file installs; SQLite needs none.
     await reopenSystemHost(world, tools, {

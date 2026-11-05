@@ -22,30 +22,29 @@
  */
 import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
 import type { ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
-import type { ModuleRef, RoleConfigurationRef, SessionRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
+import type { ModuleRef, SessionRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
+import type { RoleLineLineV1 } from '../../src/core/work-graph/sessions/role-line-operations.js';
+import type { RoleScopeV1 } from '../../src/contracts/role-lines.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../src/contracts/role-lines.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import type { DecisionCardV1, DecisionQueueReadV1, ResolveDecisionReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import { notifyProject } from '../../src/core/work-graph/communication/project-notice-service.js';
-import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import {
-  openS6ATwoWorkspaceWorld, S6A_SCRIBE_ROLE, S6A_SECOND_SCOPE, S6A_SECRETARY_ROLE, S6A_SCOPE,
+  openS6ATwoWorkspaceWorld, S6A_SECOND_SCOPE, S6A_SCOPE,
   type S6ABackend, type S6AExtraBinding, type S6ARequestWorld,
 } from './S6A-request-fixture.js';
 import {
-  createS6BLine, scribeUnderstanding, seedS6BScribe, type S6BLine, type S6BScribe,
+  scribeUnderstanding, seedS6BScribe, type S6BLine, type S6BScribe,
 } from './S6B1-fixture.js';
 import { s6b2Backend, type S6B2Captured } from './S6B2-handoff-scene.js';
 import { committed, ready } from './S7A-fixture.js';
 
-/** The platform adviser template (the fixture's non-scribe region line). */
-const ADVISER_ROLE: Extract<RoleConfigurationRef, { kind: 'legacy_template' }> =
-  platformRoleProfile('adviser').template;
 /** The answer text the person writes; the rows assert it back exactly. */
 export const S7D1_ANSWER_TEXT = 'S7D1 G4 project card answer text';
 /** The first notice's line; the second notice the notice row writes uses another operation and summary. */
@@ -64,6 +63,22 @@ export async function linkS7D1Line(ws: S6ACardsWorkspace, line: { ref: SessionRe
   }, `s7d1-link-${label}`, [
     { ref: card.record.ref, revision: card.record.revision }, { ref: link, revision: 0 },
   ])), `the ${label} link`);
+}
+
+/**
+ * T4a: the real `role-lines/open` of one duty with the scopes the fixture's rows observe. It answers the same
+ * `S6BLine` shape the old `sessions/create` step did (label, Session ref, the operation the line opened).
+ */
+async function openScopedLine(ws: S6ACardsWorkspace, input: {
+  label: string; duty: 'adviser' | 'secretary'; scope: readonly RoleScopeV1[];
+}): Promise<S6BLine> {
+  const answer = await ws.post('role-lines/open', graphWrite(ws.scope, {
+    duty: input.duty, scope: [...input.scope],
+  }, `s7d1-open-${input.label}`)) as WriteResult<RoleLineLineV1>;
+  if (answer.status !== 'committed' || answer.value.session === null) {
+    throw new Error(`S7D1: the ${input.label} line did not open: ${JSON.stringify(answer)}`);
+  }
+  return { label: input.label, ref: answer.value.session, operation: answer.value.operation };
 }
 
 /** `sessions/archive-line` in `ws`'s own workspace (the second workspace's card is not readable from A's read). */
@@ -144,12 +159,12 @@ Promise<S7D1ProjectCardWorld> {
         responsibilityMoves: [], reason: 'S7D1 G4 adds module M and its child N' },
     }), 'the revised architecture');
     await world.settleDetached();
-    const adviser = await createS6BLine(a, { label: 's7d1-adviser', role: ADVISER_ROLE });
-    const secretary = await createS6BLine(a, { label: 's7d1-secretary', role: S6A_SECRETARY_ROLE });
-    await linkS7D1Line(a, adviser, { kind: 'module', ref: moduleM }, 'adviser-m');
-    await linkS7D1Line(a, adviser, { kind: 'module', ref: moduleN }, 'adviser-n');
-    await linkS7D1Line(a, adviser, { kind: 'goal', ref: world.goals.first }, 'adviser-goal');
-    await linkS7D1Line(a, secretary, { kind: 'project', ref: { projectId } }, 'secretary-project');
+    // T4a: both duty lines open with their scopes through `role-lines/open`; the scribe keeps its own link step.
+    const adviser = await openScopedLine(a, { label: 's7d1-adviser', duty: 'adviser', scope: [
+      { kind: 'region', moduleRef: moduleM }, { kind: 'region', moduleRef: moduleN },
+      { kind: 'goal', goalRef: world.goals.first }] });
+    const secretary = await openScopedLine(a, { label: 's7d1-secretary', duty: 'secretary',
+      scope: [{ kind: 'project' }] });
     await linkS7D1Line(a, scribe.line, { kind: 'project', ref: { projectId } }, 'scribe-project');
 
     // 3. The scribe's real Run leaves the project understanding pending for the person.

@@ -35,8 +35,8 @@ import {
   awaitPlanningAnswer, questionCards, readQueryAnswer,
 } from './IV-host-fixture.js';
 import { openS7C1World, type S7C1World } from './S7C-member-fixture.js';
-import { committed, sessionOf } from './S7A-fixture.js';
-import { openLink } from './S7D1-role-line-world.js';
+import { sessionOf } from './S7A-fixture.js';
+import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
 
 const REVIEWER = platformRoleProfile('reviewer');
 const ADVISER = platformRoleProfile('adviser');
@@ -343,15 +343,11 @@ export async function openPLReviewCandidateWorld(options: {
       reason: { text: 'PL review candidate', sources: [] },
     }, 'pl-review-candidate-propose')) as { status: string; value: { ref: PlanProposalRef; revision: number } };
     if (proposed.status !== 'committed') throw new Error('PL: the review candidate did not commit');
+    // 7D2 O4b-2: the review fix goes to the Goal's responsible adviser; T4a opens the line and lets the platform's
+    // queue assignment write the Goal link and its claim (no `sessions/link` patch).
     const adviser = options.adviser === true
-      ? await sessionOf(opened.world, await createS6BLine(main, { label: 'pl-adviser', role: ADVISER.template }))
+      ? await assignGoalAdviserLine(opened.world, { goal, label: 'pl-adviser', requestId: 'pl-adviser' })
       : null;
-    // 7D2 O4b-2: the review fix goes to the Goal's responsible adviser, so the adviser holds the Goal link.
-    if (adviser !== null) {
-      const linked = await openLink(opened.world, { line: adviser, target: { kind: 'goal', ref: goal },
-        requestId: 'pl-adviser-goal-link' });
-      committed(linked.result, 'the pl-adviser Goal link');
-    }
     return {
       ...opened,
       main,
@@ -421,13 +417,11 @@ export async function openPlanOnlyWorld(
       proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [],
     }, `${label}-apply`)) as { status: string };
     if (applied.status !== 'committed') throw new Error(`${label}: the plan was not adopted`);
-    const adviser = await sessionOf(world, await createS6BLine(main, {
-      label: `${label}-adviser`, role: ADVISER.template,
-    }));
-    // 7D2 O4b-2: the refine round goes to the Goal's responsible adviser, so the adviser holds the Goal link.
-    const linked = await openLink(world, { line: adviser, target: { kind: 'goal', ref: goal },
-      requestId: `${label}-adviser-goal-link` });
-    committed(linked.result, `the ${label}-adviser Goal link`);
+    // 7D2 O4b-2: the refine round goes to the Goal's responsible adviser; T4a opens the line and lets the platform's
+    // queue assignment write the Goal link and its claim (no `sessions/link` patch).
+    const adviser = await assignGoalAdviserLine(world, {
+      goal, label: `${label}-adviser`, requestId: `${label}-adviser`,
+    });
     return { world, goal, stageId, taskId, adviser, close: () => world.close() };
   } catch (error) {
     await world.close();

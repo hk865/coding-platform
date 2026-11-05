@@ -19,6 +19,8 @@ import type { NoteItemV1 } from '../../src/core/work-graph/model/note-contracts.
 import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
+import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
+import type { RoleLineLineV1 } from '../../src/core/work-graph/sessions/role-line-operations.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
@@ -133,6 +135,35 @@ export async function linkTask(world: S7CHandoffWorld['world'], card: SessionCar
   committed(await world.post('sessions/link', graphWrite(S6A_SCOPE, {
     sessionRef, target, relation: 'responsible', active,
   }, requestId, expected)), `the link ${requestId}`);
+}
+
+/**
+ * T4a: the platform's own adviser assignment for an already existing Goal. The person opens the adviser line with
+ * `role-lines/open`, then `goals/adviser-queue/assign` writes the Goal's responsible link and its claim in the queue
+ * owner's one commit (the same writer `goals/confirm-draft` reaches). No `sessions/link` patch is needed.
+ */
+export async function assignGoalAdviserLine(world: Pick<S6AHostWorld, 'post' | 'readSession'>, input: {
+  goal: GoalRef; label: string; requestId: string;
+}): Promise<S6ASession> {
+  const opened = (await world.post('role-lines/open', graphWrite(S6A_SCOPE, {
+    duty: 'adviser', scope: [],
+  }, `${input.requestId}-open`))).body as WriteResult<RoleLineLineV1>;
+  if (opened.status !== 'committed' || opened.value.session === null) {
+    throw new Error(`S7C: the ${input.label} adviser line did not open: ${JSON.stringify(opened)}`);
+  }
+  const queue = (await world.post('goals/adviser-queue', plain(S6A_SCOPE, {}))).body as
+    ReadResult<{ revision: number }>;
+  if (queue.status !== 'ready') {
+    throw new Error(`S7C: the ${input.label} adviser queue read failed: ${JSON.stringify(queue)}`);
+  }
+  const assigned = (await world.post('goals/adviser-queue/assign', graphWrite(S6A_SCOPE, {
+    goalRef: input.goal, adviser: opened.value.session, expectedRevision: queue.value.revision,
+  }, `${input.requestId}-assign`))).body as WriteResult<unknown>;
+  if (assigned.status !== 'committed') {
+    throw new Error(`S7C: the ${input.label} adviser assignment did not commit: ${JSON.stringify(assigned)}`);
+  }
+  return await sessionOf(world, { label: input.label, ref: opened.value.session,
+    operation: opened.value.operation });
 }
 
 /** The Session cards the world's directory gained since `before`. */
@@ -293,22 +324,10 @@ async function handoffCore(world: S6AHostWorld,
     const existing = await sessionOf(world, { label: 's7c-handoff-existing', ref: existingRef } as never);
 
     // The responsible adviser the secretary's `create_member` admission resolves; its Run comes after the round.
-    const adviserLine = await sessionOf(world, await createS6BLine(main, { label: 's7c-handoff-adviser',
-      role: ADVISER_ROLE }));
-    // The Goal link the admission's responsible-adviser read needs; the card's revision and the link's revision
-    // (0 when absent) are the two pins, the same step `linkTask` takes.
-    const adviserCard = await world.readSession(adviserLine.ref);
-    const adviserTarget = { kind: 'goal' as const, ref: goal };
-    const adviserGoalLink = adviserCard.links.find(candidate => candidate.ref.relation === 'responsible'
-      && candidate.ref.target.kind === 'goal' && candidate.ref.target.ref.goalId === goal.goalId);
-    committed(await world.post('sessions/link', graphWrite(S6A_SCOPE, {
-      sessionRef: { projectId: adviserCard.record.ref.projectId, sessionId: adviserCard.record.ref.sessionId },
-      target: adviserTarget, relation: 'responsible', active: true,
-    }, 's7c-handoff-adviser-goal', [
-      { ref: adviserCard.record.ref, revision: adviserCard.record.revision },
-      { ref: adviserGoalLink?.ref ?? { ...adviserCard.record.ref, aggregateType: 'SessionWorkLink' as const,
-        target: adviserTarget, relation: 'responsible' as const }, revision: adviserGoalLink?.revision ?? 0 },
-    ])), 'the adviser goal link');
+    // T4a: the line opens through `role-lines/open` and the platform's queue assignment writes the Goal link.
+    const adviserLine = await assignGoalAdviserLine(world, {
+      goal, label: 's7c-handoff-adviser', requestId: 's7c-handoff-adviser',
+    });
 
     // The secretary Query child on t1: the real `create_member` path, with the pin and no ceiling.
     await setAutonomy(world, goal, 'after_plan_confirmation');

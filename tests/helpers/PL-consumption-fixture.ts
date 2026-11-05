@@ -38,7 +38,7 @@ import { driveWorkflow } from './A2-restart-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import type { S6AHostWorld } from './S6A-host-fixture.js';
 import { openConsumeHostWorld } from './S7B2-consumable-sessions.js';
-import { openLink } from './S7D1-role-line-world.js';
+import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
 import { withConfiguredHost } from './S7C-member-fixture.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { checkConfiguration } from './S7A-fixture.js';
@@ -198,13 +198,9 @@ export async function createPLLine(world: S6AHostWorld, input: {
     { label: input.label, role: input.role, ...(input.tasks === undefined ? {} : { tasks: input.tasks }) }));
 }
 
-/** One idle adviser line (the platform adviser role; no Task links). */
+/** One idle adviser line (the platform adviser role; no Task links) holding the Goal through the platform's assign. */
 export async function createPLAdviserLine(world: S6AHostWorld, label: string): Promise<S6ASession> {
-  const line = await createPLLine(world, { label, role: PL_ADVISER_ROLE });
-  const linked = await openLink(world, { line, target: { kind: 'goal', ref: world.goals.first },
-    requestId: `${label}-goal-link` });
-  committed(linked.result, `the adviser Goal link of ${label}`);
-  return line;
+  return await assignGoalAdviserLine(world, { goal: world.goals.first, label, requestId: label });
 }
 
 /**

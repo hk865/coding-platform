@@ -24,8 +24,8 @@ import {
 } from '../helpers/PL-taskbook-fixture.js';
 import { asRecord, readyValue } from '../helpers/S6A-memory-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding } from '../helpers/S6A-request-fixture.js';
-import { committed, setS7AAutonomy, sessionOf } from '../helpers/S7A-fixture.js';
-import { openLink } from '../helpers/S7D1-role-line-world.js';
+import { setS7AAutonomy, sessionOf } from '../helpers/S7A-fixture.js';
+import { assignGoalAdviserLine } from '../helpers/S7C-handoff-fixture.js';
 import { awaitCandidate, awaitPlanningAnswer, readProposal } from '../helpers/IV-host-fixture.js';
 
 const PL47_EXTRA_BINDINGS: readonly S6AExtraBinding[] = [
@@ -126,14 +126,12 @@ describe('PL-47: taskbook export failure', () => {
       // The second stage's `plan_only` placeholder is the gap the plan loop
       // reads; automatic mode decides the adoption.
       await setS7AAutonomy(world.world, world.goal, 'after_plan_confirmation');
-      const adviserLine = await createS6BLine(world.main, {
-        label: `pl47-adviser-${fault.label}`, role: platformRoleProfile('adviser').template,
+      // 7D2 O4b-2 (o4b2 ruling 2 (a)): the refine round goes to the Goal's responsible adviser. T4a: the line opens
+      // through `role-lines/open` and the platform's queue assignment writes the Goal link.
+      const adviser = await assignGoalAdviserLine(world.world, {
+        goal: world.goal, label: `pl47-adviser-${fault.label}`,
+        requestId: `pl47-adviser-${fault.label}`,
       });
-      const adviser = await sessionOf(world.world, adviserLine);
-      // 7D2 O4b-2 (o4b2 ruling 2 (a)): the refine round goes to the Goal's responsible adviser, so it holds the link.
-      const linked = await openLink(world.world, { line: adviser, target: { kind: 'goal', ref: world.goal },
-        requestId: `pl47-adviser-${fault.label}-goal-link` });
-      committed(linked.result, `the pl47-adviser-${fault.label} Goal link`);
       const reviewerLine = await createS6BLine(world.main, {
         label: `pl47-reviewer-${fault.label}`, role: platformRoleProfile('reviewer').template,
       });
