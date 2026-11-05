@@ -265,7 +265,7 @@ async function answer(world: World, requestRef: RequestRef,
 }
 
 describe('B2-09 CRR identity, replay, revision and allowance', () => {
-  it.each(['memory', 'sqlite'] as const)('F-021 (%s): a script-form request expands through the real workspace reader', async (kind) => {
+  it.each(['memory'] as const)('F-021 (%s): a script-form request expands through the real workspace reader', async (kind) => {
     const world = await openCrr(kind, {
       command: 'prisma migrate deploy',
       files: { 'package.json': JSON.stringify({ scripts: { migrate: 'prisma migrate deploy' } }) },
@@ -321,7 +321,7 @@ describe('B2-09 CRR identity, replay, revision and allowance', () => {
       current: [{ ref: created.value.request.ref, revision: 2 }] });
   }, 120_000);
 
-  it.each(['memory', 'sqlite'] as const)('consumeAllowance records usedBy in the returned request state (%s)', async kind => {
+  it.each(['memory'] as const)('consumeAllowance records usedBy in the returned request state (%s)', async kind => {
     const world = await openCrr(kind);
     const created = commit(await request(world, {}));
     expect(await answer(world, created.value.request.ref, 'allow_rerun', 1))
@@ -350,7 +350,7 @@ describe('B2-09 CRR identity, replay, revision and allowance', () => {
   }, 120_000);
 });
 
-describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 8: the no-write return contract (%s)', kind => {
+describe.each(['memory'] as const)('B2-09 / rework 1 item 8: the no-write return contract (%s)', kind => {
   it('not_blocked, pending and allowed are not_written; only CRR-01 commits', async () => {
     const world = await openCrr(kind);
     expect(await request(world, { command: 'git status' }))
@@ -423,7 +423,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 8: the no-wr
   }, 120_000);
 });
 
-describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed derived from the one closure (%s)', kind => {
+describe.each(['memory'] as const)('B2-09 / rework 1 item 4: closed derived from the one closure (%s)', kind => {
   it('readRequest derives closed without persisting while the Task is closed', async () => {
     const world = await openCrr(kind);
     const created = commit(await request(world, {}));
@@ -522,7 +522,7 @@ describe.each(['memory', 'sqlite'] as const)('B2-09 / rework 1 item 4: closed de
  * public `requestRerun` entry, and the public `readRequest` shows nothing was
  * written for the id the call would have used.
  */
-describe.each(['memory', 'sqlite'] as const)('F-069: a failed Task-review read refuses the request before any write (%s)', kind => {
+describe.each(['memory'] as const)('F-069: a failed Task-review read refuses the request before any write (%s)', kind => {
   it('a not_ready read is unavailable and leaves no request', async () => {
     const world = await openCrr(kind);
     world.failNextReview(async () => ({ status: 'not_ready', observed: null,

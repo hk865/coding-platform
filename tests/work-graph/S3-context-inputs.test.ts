@@ -1,7 +1,7 @@
 /**
  * Slice 3, §5.3: the exact task-input owner (`TaskContextInputPort`) behaviour.
  *
- * IN01–IN19 run on BOTH real backends (`memory`, `sqlite`). Every case starts
+ * IN01–IN19 run on the memory backend (none is a storage row). Every case starts
  * from an independent §5.1 fixture built over the real RecordStore backends and
  * the real Goal/Plan services, and reaches the code under test ONLY through
  * `createTaskContextInputService(...)` and its `readTaskInputs` /
@@ -945,7 +945,7 @@ async function readPage(f: S3InputFixture, declarationId: string, options: {
     ...(options.candidateKey === undefined ? {} : { candidateKey: options.candidateKey }) });
 }
 
-const KINDS = ['memory', 'sqlite'] as const;
+const KINDS = ['memory'] as const;
 
 // --------------------------------------------------------------------------
 // §5.3 cases

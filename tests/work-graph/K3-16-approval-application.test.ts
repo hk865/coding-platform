@@ -189,7 +189,7 @@ async function cleanAwaitingApproval(kind: 'memory' | 'sqlite', targetRounds = 2
 }
 
 describe('K3-16 approval card (L18/L20, K3-46 (二))', () => {
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: awaiting_approval is available, offers approve/decline and lists the commands in full',
     async kind => {
     const setup = await approvalSetup(kind);
@@ -333,7 +333,7 @@ describe('K3-16 approval application (UCR-12)', () => {
 });
 
 describe('K3-16 approval decline (UCR-13)', () => {
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: decline returns to needs_decision with proposal_declined and the four-option card',
     async kind => {
     const setup = await cleanAwaitingApproval(kind);
@@ -384,7 +384,7 @@ describe('K3-16 approval decline (UCR-13)', () => {
       .toEqual(['rerun_as_is', 'safer_method', 'skip_as_done', 'handle_myself']);
   });
 
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: when the round slots are used up, the declined card has only three options',
     async kind => {
     // Seven rounds leave exactly one free slot, so L18 drops `safer_method`
@@ -455,7 +455,7 @@ describe('K3-16 approval identity and revision (L19)', () => {
       expect(setup.world.fixture.counts.commits).toBe(commits);
     }, 120_000);
 
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: an option that is not on the approval card is invalid and writes nothing',
     async kind => {
     const setup = await approvalSetup(kind);

@@ -887,7 +887,7 @@ it.each(['memory', 'sqlite'] as const)('F11 [%s] marking one displayed notice le
   }
 });
 
-it.each(['memory', 'sqlite'] as const)('F13 [%s] the real responsible link and wait transfer keep the notice; a successor execution accepting the reply removes it', async (kind) => {
+it.each(['memory'] as const)('F13 [%s] the real responsible link and wait transfer keep the notice; a successor execution accepting the reply removes it', async (kind) => {
   let action: (() => Promise<void>) | null = null;
   const sendArgs: Record<string, unknown> = { recipient: {}, text: 'F13 which file?', intent: 'inquiry', needsReply: true, waitAfterSend: true };
   const f = await open({

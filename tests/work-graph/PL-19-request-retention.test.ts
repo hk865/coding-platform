@@ -5,14 +5,15 @@
  * request: cumulative 33,152, growth 256, complete, omitted 0. 257 requests
  * keep the first 256: cumulative still 33,152 but incomplete, growth null
  * incomplete, omitted 1. The cumulative run limits are cleared to `null`
- * (unlimited; numbers are forbidden here); the world is built by
- * `PL-readings-fixture.ts` through the public steps.
+ * (unlimited; numbers are forbidden here); the world is built by the PC Work
+ * fixture through the public platform steps.
  */
 import { afterEach, expect, it } from 'vitest';
-import type { S6AReply } from '../helpers/S6A-host-fixture.js';
-import { openPLReadingsWorld, runView, usage, type PLReadingsWorld } from '../helpers/PL-readings-fixture.js';
+import type { RunActivityViewV1 } from '../../src/core/work-graph/views/activity-read-model.js';
+import { openPCWorkFixture, scriptedModel, type PCReply } from '../helpers/PC-platform-fixture.js';
+import { runView, usage } from '../helpers/PL-readings-fixture.js';
 
-const opened: PLReadingsWorld[] = [];
+const opened: Array<Awaited<ReturnType<typeof openPCWorkFixture>>> = [];
 afterEach(async () => { for (const fixture of opened.splice(0)) await fixture.close(); });
 
 const CASES = [
@@ -24,22 +25,28 @@ const CASES = [
 
 it.each(CASES)('PL-19: $label — cumulative 33,152, growth/complete/omitted as the cap', async (row) => {
   const taskId = `pl19-${String(row.count)}`;
-  const fixture = await openPLReadingsWorld({ taskIds: [taskId], unlimitedRunLimits: true });
-  opened.push(fixture);
-  const task = fixture.tasks[0];
-  if (task === undefined) throw new Error('PL-19: the Plan needs one task');
-  const line = await fixture.line(`pl19-${String(row.count)}`, [task]);
-
-  const replies: S6AReply[] = Array.from({ length: row.count }, (_unused, index) => {
+  const replies: PCReply[] = Array.from({ length: row.count }, (_unused, index) => {
     const request = index + 1;
     return request === row.count
-      ? { kind: 'text' as const, text: `PL-19 done ${String(row.count)}`, usage: usage(request, 1) }
-      : { kind: 'calls' as const, calls: [{ callId: `${taskId}-${String(request)}`, name: 'read',
-        args: { path: 'src/module.ts' } }], usage: usage(request, 1) };
+      ? { text: `PL-19 done ${String(row.count)}`, usage: usage(request, 1) }
+      : { toolCalls: [{ callId: `${taskId}-${String(request)}`, name: 'read',
+        arguments: { path: 'wp2-read.txt' } }], usage: usage(request, 1) };
   });
-  const run = await fixture.runTask({ line, taskId, flowId: taskId, replies });
+  const fixture = await openPCWorkFixture({
+    model: scriptedModel(replies), tools: ['read'],
+    budget: { maxRequests: null, maxToolCalls: null, timeoutMs: null },
+  });
+  opened.push(fixture);
 
-  const view = runView(await fixture.readRuns([run]), run);
+  await fixture.work.prepare();
+  const started = await fixture.work.start();
+  if (started.status !== 'ready') throw new Error(`PL-19 start: ${JSON.stringify(started)}`);
+  const runRef = fixture.base.runRef;
+  if (runRef === null) throw new Error('PL-19: the PC work fixture claimed no Run');
+  const read = await fixture.base.platform.activity.readRunActivities(fixture.base.ctx, { runRefs: [runRef] });
+  if (read.status !== 'ready') throw new Error(`PL-19 activity read: ${JSON.stringify(read)}`);
+
+  const view: RunActivityViewV1 = runView(read.value, runRef);
   expect(view.status).toBe('counted');
   expect(view.readings.usage.tokens).toBe(33_152);
   expect(view.readings.usage.growth).toEqual(row.growth);

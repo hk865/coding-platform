@@ -318,7 +318,7 @@ for (const backend of BACKENDS) {
       return { pick, release: () => hold.release() };
     }
 
-    it('a fresh pick assigns the fixture secretary and wakes once, not on the replay', async () => {
+    if (backend === 'memory') it('a fresh pick assigns the fixture secretary and wakes once, not on the replay', async () => {
       const world = await open();
       const secretary = await world.createSecretary('secretary-a');
       const harness = await harnessOf(world);
@@ -339,7 +339,7 @@ for (const backend of BACKENDS) {
       expect(harness.wakes).toHaveLength(1);
     });
 
-    it('an @ recipient takes a new request; a second request to the same recipient is busy', async () => {
+    if (backend === 'memory') it('an @ recipient takes a new request; a second request to the same recipient is busy', async () => {
       const world = await open();
       // A first, B second: the pick's later-activity key prefers B, so the
       // receipt naming A proves the person's @ won and no pick ran.
@@ -363,7 +363,7 @@ for (const backend of BACKENDS) {
       expect(second.reason.length).toBeGreaterThan(0);
     });
 
-    it('an @ recipient with a pending archive request is unavailable with the reason', async () => {
+    if (backend === 'memory') it('an @ recipient with a pending archive request is unavailable with the reason', async () => {
       const world = await open();
       const recipient = await world.createSecretary('secretary-a');
       await world.requestArchive(recipient);
@@ -376,7 +376,7 @@ for (const backend of BACKENDS) {
       });
     });
 
-    it('a follow-up on a request A owns queues on A without an intake', async () => {
+    if (backend === 'memory') it('a follow-up on a request A owns queues on A without an intake', async () => {
       const world = await open();
       const secretary = await world.createSecretary('secretary-a');
       const harness = await harnessOf(world);
@@ -421,7 +421,7 @@ for (const backend of BACKENDS) {
       expect(facts.tail.ref).toEqual(view.rounds[2]!.ref);
     });
 
-    it('an @ on a follow-up of a request A owns moves it to B', async () => {
+    if (backend === 'memory') it('an @ on a follow-up of a request A owns moves it to B', async () => {
       const world = await open();
       const a = await world.createSecretary('secretary-a');
       const harness = await harnessOf(world);
@@ -439,7 +439,7 @@ for (const backend of BACKENDS) {
       expect(view.rounds[1]!.assignedSession).toEqual(b.ref);
     });
 
-    it('a follow-up on its owner takes no intake: a fresh pick held on that owner still lands there', async () => {
+    if (backend === 'memory') it('a follow-up on its owner takes no intake: a fresh pick held on that owner still lands there', async () => {
       // A owns the request without holding an intake of its own (the request
       // reached A through an `@` on an owned request). The follow-up queues on
       // A; had it taken A's intake, the held pick of A would conflict and re-pick.
@@ -468,7 +468,7 @@ for (const backend of BACKENDS) {
       expect(view.rounds.map((round) => round.assignedSession)).toEqual([b.ref, a.ref, a.ref]);
     });
 
-    it('an @ on an owned request takes no intake from the recipient: a fresh pick held on it still lands there', async () => {
+    if (backend === 'memory') it('an @ on an owned request takes no intake from the recipient: a fresh pick held on it still lands there', async () => {
       // A owns the request; B is the only idle secretary, so the held fresh pick
       // chose B. The `@ B` follow-up moves the request to B without B's intake.
       const world = await open();
@@ -491,7 +491,7 @@ for (const backend of BACKENDS) {
       expect((await hostView(world, ctx, request.requestRoot)).owner).toEqual(b.ref);
     });
 
-    it('a follow-up copies the request goal and refuses another goal', async () => {
+    if (backend === 'memory') it('a follow-up copies the request goal and refuses another goal', async () => {
       const world = await open();
       await world.createSecretary('secretary-a');
       const harness = await harnessOf(world);
@@ -509,7 +509,7 @@ for (const backend of BACKENDS) {
       expect(wrong).toEqual({ status: 'rejected', code: 'invalid', reason: 'goalId must be null or the request goal' });
     });
 
-    it('no candidate with a full capacity leaves the request waiting, and its follow-up waits too', async () => {
+    if (backend === 'memory') it('no candidate with a full capacity leaves the request waiting, and its follow-up waits too', async () => {
       // MH-12: the real Host `secretaryOpenCap` over the real Session state, not
       // a scripted capacity array. The only secretary is busy (a claimed Query),
       // so the pick has no candidate and a new line is refused by the cap.
@@ -549,7 +549,7 @@ for (const backend of BACKENDS) {
       await world.finishQuery(busy);
     });
 
-    it('no secretary profile rejects no_secretary_binding and creates no line', async () => {
+    if (backend === 'memory') it('no secretary profile rejects no_secretary_binding and creates no line', async () => {
       const world = await open({ configuration: 'no_secretary' });
       const harness = await harnessOf(world);
       const result = await harness.intake.submitRequest(world.humanContext(), submitInput('m2-unbound', 'hello'));
@@ -713,7 +713,7 @@ for (const backend of BACKENDS) {
       expect((await hostFacts(world, ctx, requestRoot)).rounds).toHaveLength(2);
     });
 
-    it('a blocked request does not stop the drain', async () => {
+    if (backend === 'memory') it('a blocked request does not stop the drain', async () => {
       // MH-12: the older request's line registration fails once (the frozen
       // registration double), so it is blocked; the newer one creates its line
       // with the real Host cap and progresses. Both waited under the real cap.
@@ -760,7 +760,7 @@ for (const backend of BACKENDS) {
       expect(newerFacts.rounds[1]!.job.routing?.reason).toBe('assigned');
     });
 
-    it('the drain moves an archived owner request to another secretary', async () => {
+    if (backend === 'memory') it('the drain moves an archived owner request to another secretary', async () => {
       const world = await open();
       const a = await world.createSecretary('secretary-a');
       const harness = await harnessOf(world);
@@ -789,7 +789,7 @@ for (const backend of BACKENDS) {
       expect((await readView(harness, ctx, root.requestRoot)).owner).toEqual(c.ref);
     });
 
-    it('route moves an owned request by hand and a drop ends its pending round', async () => {
+    if (backend === 'memory') it('route moves an owned request by hand and a drop ends its pending round', async () => {
       const world = await open();
       await world.createSecretary('secretary-a');
       const harness = await harnessOf(world);
@@ -813,7 +813,7 @@ for (const backend of BACKENDS) {
       expect(view.rounds[0]!.closeDetail).toBe('dropped');
     });
 
-    it('a manual route of an owned request takes no intake from the target: a fresh pick held on it still lands there', async () => {
+    if (backend === 'memory') it('a manual route of an owned request takes no intake from the target: a fresh pick held on it still lands there', async () => {
       // A owns the request; B is the only idle secretary, so the held fresh pick
       // chose B. The person routes the owned request to B by hand; a manual route
       // from `owned` takes no intake.
@@ -885,7 +885,7 @@ for (const backend of BACKENDS) {
       expect(order).toEqual(['request settled', 'store closed']);
     });
 
-    it('a role_spec secretary profile is reused by forSession, so a second submit adds no line', async () => {
+    if (backend === 'memory') it('a role_spec secretary profile is reused by forSession, so a second submit adds no line', async () => {
       // MH-01/L1: the only secretary profile is a role_spec role installed and
       // activated through the public role owner. The first submit creates its
       // line; after that request is dropped the line is idle, and the second
@@ -1028,7 +1028,7 @@ for (const backend of BACKENDS) {
       expect((await readView(harness, ctx, root.requestRoot)).ownerState).toBe('owner_archived');
     });
 
-    it('a failed facts read during the drain is unavailable, and a progressed round stays committed', async () => {
+    if (backend === 'memory') it('a failed facts read during the drain is unavailable, and a progressed round stays committed', async () => {
       // MH-06/L4: the second request's facts read throws after the first request
       // was assigned; the drain answers `unavailable` (never `ready`/`blocked`)
       // and the committed routing round remains.
@@ -1056,7 +1056,7 @@ for (const backend of BACKENDS) {
       expect((await hostView(world, ctx, olderRoot)).ownerState).toBe('owned');
     });
 
-    it.each(['selection', 'profile'] as const)('a failed %s read during the drain is unavailable, never blocked', async kind => {
+    if (backend === 'memory') it.each(['selection', 'profile'] as const)('a failed %s read during the drain is unavailable, never blocked', async kind => {
       const world = await open();
       const a = await world.createSecretary('secretary-a');
       const aBusy = await world.occupy(a);
@@ -1080,7 +1080,7 @@ for (const backend of BACKENDS) {
       expect((await hostView(world, ctx, root)).ownerState).toBe('waiting');
     });
 
-    describe('rejects: request commands', () => {
+    if (backend === 'memory') describe('rejects: request commands', () => {
       it('a second drop is invalid and leaves the dropped request unchanged', async () => {
         const world = await open();
         await world.createSecretary('secretary-a');

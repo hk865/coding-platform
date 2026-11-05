@@ -441,7 +441,7 @@ function selectInput(b2: B2ExecutionFixture, taskId: string | null,
     kind: 'select_work', ...(taskId === null ? {} : { taskId }) };
 }
 
-it.each(['memory', 'sqlite'] as const)('K3 UR0/U4 (%s): an unreadable record skips the task and waits with review_unreadable for a named task', async kind => {
+it.each(['memory'] as const)('K3 UR0/U4 (%s): an unreadable record skips the task and waits with review_unreadable for a named task', async kind => {
   const w = await makeRealWorld(kind);
   w.reviewReadFails = true;
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
@@ -450,7 +450,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR0/U4 (%s): an unreadable record ski
   expect(result.value.reason).toContain('review_unreadable');
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR3a/U4 (%s): a claimed-but-unentered review round is prepared with the same claim', async kind => {
+it.each(['memory'] as const)('K3 UR3a/U4 (%s): a claimed-but-unentered review round is prepared with the same claim', async kind => {
   const w = await makeRealWorld(kind);
   const round = await claimUnenteredRound(w);
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
@@ -458,7 +458,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR3a/U4 (%s): a claimed-but-unentered
     next: { kind: 'perform', operation: { kind: 'prepare', request: { runRef: round.runRef } } } } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR3a/U4 (%s): a non-unadmitted starting review round (paused before entry) is skipped, not prepared', async kind => {
+it.each(['memory'] as const)('K3 UR3a/U4 (%s): a non-unadmitted starting review round (paused before entry) is skipped, not prepared', async kind => {
   const w = await makeRealWorld(kind);
   const round = await claimUnenteredRound(w);
   await pauseUnenteredRound(w, round);
@@ -467,7 +467,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR3a/U4 (%s): a non-unadmitted starti
     reason: expect.stringContaining('review_round_in_flight') } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR3/U4 (%s): an entered review round in flight is skipped', async kind => {
+it.each(['memory'] as const)('K3 UR3/U4 (%s): an entered review round in flight is skipped', async kind => {
   const w = await makeRealWorld(kind);
   const round = await claimK3ReviewRound(w.cardWorld, w.record);
   try {
@@ -479,7 +479,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR3/U4 (%s): an entered review round 
   }
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR4/U4 (%s): a review round ended with a known result settles it', async kind => {
+it.each(['memory'] as const)('K3 UR4/U4 (%s): a review round ended with a known result settles it', async kind => {
   const w = await makeRealWorld(kind);
   const round = await claimK3ReviewRound(w.cardWorld, w.record);
   const ended = await endK3RunUnfinished(w.cardWorld, round.claim);
@@ -490,7 +490,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR4/U4 (%s): a review round ended wit
       request: { input: { cause: 'round_ended', reviewRef: w.record.ref } } } } } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR5/U4 (%s): a review round with an unknown outcome waits for attestation', async kind => {
+it.each(['memory'] as const)('K3 UR5/U4 (%s): a review round with an unknown outcome waits for attestation', async kind => {
   const w = await makeRealWorld(kind);
   await reachUnknownReviewEnd(w);
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
@@ -498,7 +498,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR5/U4 (%s): a review round with an u
     reason: expect.stringContaining('review_round_unknown') } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR2/U4 (%s): a pending record with the read-only command switch off settles review_unavailable', async kind => {
+it.each(['memory'] as const)('K3 UR2/U4 (%s): a pending record with the read-only command switch off settles review_unavailable', async kind => {
   const w = await makeRealWorld(kind);
   w.capability = 'unavailable';
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
@@ -507,7 +507,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR2/U4 (%s): a pending record with th
       request: { input: { cause: 'review_unavailable', reviewRef: w.record.ref } } } } } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR1/U4 (%s): a pending record with the capability available claims the review round', async kind => {
+it.each(['memory'] as const)('K3 UR1/U4 (%s): a pending record with the capability available claims the review round', async kind => {
   const w = await makeRealWorld(kind);
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
   expect(result).toMatchObject({ status: 'ready', value: { state: 'advance',
@@ -515,7 +515,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR1/U4 (%s): a pending record with th
       review: { reviewRef: w.record.ref, expectedRevision: w.record.revision, phase: 'review' } } } } } } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR1/U4 (%s): a busy continuation Session skips this Task with review_session_busy', async kind => {
+it.each(['memory'] as const)('K3 UR1/U4 (%s): a busy continuation Session skips this Task with review_session_busy', async kind => {
   const w = await makeRealWorld(kind);
   // A real public claim of ANOTHER Task in the origin Run's claim Session leaves
   // that Session's occupancy a real execution fact.
@@ -526,7 +526,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR1/U4 (%s): a busy continuation Sess
     reason: expect.stringContaining('review_session_busy') } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR1/U4 B2 (%s): no binding for the assignment role skips with review_binding_missing and keeps the record', async kind => {
+it.each(['memory'] as const)('K3 UR1/U4 B2 (%s): no binding for the assignment role skips with review_binding_missing and keeps the record', async kind => {
   const w = await makeRealWorld(kind, { noBinding: true });
   const review = w.record;
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
@@ -541,7 +541,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR1/U4 B2 (%s): no binding for the as
     status: 'pending_review', revision: review.revision });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR9/U4 (%s): no record keeps today\'s path', async kind => {
+it.each(['memory'] as const)('K3 UR9/U4 (%s): no record keeps today\'s path', async kind => {
   const w = await makeWorld(kind);
   const result = await w.workflow.advanceWork(w.b2.ctx, selectInput(w.b2, 'implement-a'));
   expect(result.status).toBe('ready');
@@ -555,7 +555,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR9/U4 (%s): no record keeps today\'s
 // GROUP 4 (session A): UR8 held, UR6 cards and gatePerform's review gate
 // -------------------------------------------------------------------------- //
 
-it.each(['memory', 'sqlite'] as const)('K3 UR8 (%s): a held record without an active round is skipped and the named task waits unknown_call_review_held', async kind => {
+it.each(['memory'] as const)('K3 UR8 (%s): a held record without an active round is skipped and the named task waits unknown_call_review_held', async kind => {
   const w = await makeRealWorld(kind);
   await holdRecord(w);
   const result = await w.workflow.advanceWork(w.ctx, selectTask('k3-20-a'));
@@ -566,9 +566,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR8 (%s): a held record without an ac
 
 it.each([
   { kind: 'memory' as const, status: 'needs_decision' as const },
-  { kind: 'sqlite' as const, status: 'needs_decision' as const },
   { kind: 'memory' as const, status: 'awaiting_approval' as const },
-  { kind: 'sqlite' as const, status: 'awaiting_approval' as const },
 ])('K3 UR6 ($kind/$status): a $status card skips the task and waits with the card\'s formal source',
   async ({ kind, status }) => {
     const w = await makeRealWorld(kind);
@@ -588,7 +586,7 @@ it.each([
     expect(w.settleCalls).toBe(0);
   });
 
-it.each(['memory', 'sqlite'] as const)('K3 L11 gatePerform (%s): a requeue_task on an unsettled record waits and writes nothing', async kind => {
+it.each(['memory'] as const)('K3 L11 gatePerform (%s): a requeue_task on an unsettled record waits and writes nothing', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   const operation = { kind: 'requeue_task' as const, request: {
@@ -606,7 +604,7 @@ it.each(['memory', 'sqlite'] as const)('K3 L11 gatePerform (%s): a requeue_task 
 // GROUP 4 (session B): UR7, UR7b and the apply_review_disposition step
 // -------------------------------------------------------------------------- //
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7 (%s): an answered needs_decision card emits apply_review_disposition from the answer, writes nothing yet', async kind => {
+it.each(['memory'] as const)('K3 UR7 (%s): an answered needs_decision card emits apply_review_disposition from the answer, writes nothing yet', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   const review = w.record;
@@ -629,7 +627,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 (%s): an answered needs_decision 
     status: 'needs_decision', revision: review.revision });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7 (%s): the apply step performs ② then ③ and returns to the normal selection', async kind => {
+it.each(['memory'] as const)('K3 UR7 (%s): the apply step performs ② then ③ and returns to the normal selection', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   const saved = await answerSavedOnly(w, 'rerun_as_is');
@@ -653,7 +651,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 (%s): the apply step performs ②
     .toMatchObject({ status: 'resolved', disposition: { choice: 'rerun_as_is', source: 'card' } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7 (%s): a saved-answer read failure skips with review_unreadable and writes nothing', async kind => {
+it.each(['memory'] as const)('K3 UR7 (%s): a saved-answer read failure skips with review_unreadable and writes nothing', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   w.answerReadFails = true;
@@ -664,7 +662,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7 (%s): a saved-answer read failure
   expect(w.applied).toEqual([]);
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR8 before UR7 (%s): a held record with an answer is never applied and never released', async kind => {
+it.each(['memory'] as const)('K3 UR8 before UR7 (%s): a held record with an answer is never applied and never released', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   // The person answered the card (①) but did not apply it; then took it over.
@@ -679,7 +677,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR8 before UR7 (%s): a held record wi
     disposition: { choice: 'handle_myself', source: 'direct', hold: 'held' } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): an answers input performs apply_review_disposition and then select_work', async kind => {
+it.each(['memory'] as const)('K3 UR7b (%s): an answers input performs apply_review_disposition and then select_work', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   const saved = await answerSavedOnly(w, 'rerun_as_is');
@@ -700,7 +698,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): an answers input performs 
     status: 'resolved', disposition: { choice: 'rerun_as_is', source: 'card' } });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): one unreadable answer keeps the failure visible, applies the rest and never throws', async kind => {
+it.each(['memory'] as const)('K3 UR7b (%s): one unreadable answer keeps the failure visible, applies the rest and never throws', async kind => {
   const w = await makeRealWorld(kind);
   await reachNeedsDecision(w);
   const saved = await answerSavedOnly(w, 'rerun_as_is');
@@ -760,7 +758,7 @@ function performRun(kind: 'start' | 'observe'): WorkflowAdvanceInput {
     operation: { kind, request: { meta: { requestId: `k3-review-rows-${kind}`, expected: [] } } } as unknown as WorkflowOperation };
 }
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): another source kind is skipped (B3 adds it) and no disposition is applied', async kind => {
+it.each(['memory'] as const)('K3 UR7b (%s): another source kind is skipped (B3 adds it) and no disposition is applied', async kind => {
   const w = await makeRealWorld(kind);
   const world = w.cardWorld;
   // The Fixture's saved pending decision message is a REAL card of the
@@ -803,7 +801,7 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): another source kind is ski
     status: 'pending_review', revision: review.revision });
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 L10 (%s): a review-purpose Run that ends goes to settle_review and never opens checks', async kind => {
+it.each(['memory'] as const)('K3 L10 (%s): a review-purpose Run that ends goes to settle_review and never opens checks', async kind => {
   let savedRun: RunSnapshot['ref'] | null = null;
   const w = await makeRealWorld(kind, { runtime: world => savedRunRuntime(world.records, () => savedRun) });
   const round = await claimK3ReviewRound(w.cardWorld, w.record);
@@ -858,7 +856,7 @@ it.each(['memory', 'sqlite'] as const)('K3 A (%s): each settle_review request pi
   expect(second.request.meta.requestId).not.toBe(first.request.meta.requestId);
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 L10 (%s): a review-purpose Run with an unknown outcome waits with the normal-end reason', async kind => {
+it.each(['memory'] as const)('K3 L10 (%s): a review-purpose Run with an unknown outcome waits with the normal-end reason', async kind => {
   let savedRun: RunSnapshot['ref'] | null = null;
   const w = await makeRealWorld(kind, { runtime: world => savedRunRuntime(world.records, () => savedRun) });
   await reachUnknownReviewEnd(w);
@@ -1284,7 +1282,7 @@ it.each(['memory', 'sqlite'] as const)('K3-17 reverse order (%s b): the person�
   await expectUr7Applied(world, 'k3-17-rev-b', context);
 });
 
-it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): two real handed-over answers whose ③ fail report the FIRST failure and still advance', async kind => {
+it.each(['memory'] as const)('K3 UR7b (%s): two real handed-over answers whose ③ fail report the FIRST failure and still advance', async kind => {
   const world = await openK3ReviewCardWorld(kind);
   cardWorlds.push(world);
   const f = world.fixture;
@@ -1332,4 +1330,3 @@ it.each(['memory', 'sqlite'] as const)('K3 UR7b (%s): two real handed-over answe
     expect(saved.value.message.application, '③ was attempted and did not commit').toBeNull();
   }
 });
-

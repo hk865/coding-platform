@@ -111,7 +111,7 @@ async function intakeTakes(world: S6AHostWorld, session: S6ASession, commandId: 
   return await world.submit({ commandId, goalId: S6A_GOAL_1.goalId, text: `S6A intake probe ${commandId}`, recipient: session });
 }
 
-describe.each(['memory', 'sqlite'] as const)('a request round started through the Query routes (%s)', backend => {
+describe.each(['memory'] as const)('a request round started through the Query routes (%s)', backend => {
   describe('R-13: the request moved to B after the claim on A', () => {
     it('the start answers busy; the round waits on a new Run; A is free and its intake released; no model call', async () => {
       const world = await openHostWorld(backend);

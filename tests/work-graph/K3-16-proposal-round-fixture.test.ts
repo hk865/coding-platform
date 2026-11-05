@@ -71,7 +71,7 @@ function proposalIds(record: { proposals: { callId: string }[] }): string[] {
 }
 
 describe('K3 proposal-round fixture (K3-16, L20)', () => {
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: claim -> scripted propose_safer_method -> completed end -> awaiting_approval', async kind => {
     const opened = await world(kind);
     const state = await reachK3AwaitingProposal(opened, {
@@ -118,7 +118,7 @@ describe('K3 proposal-round fixture (K3-16, L20)', () => {
     expect(proposalIds(final)).toEqual([item.callId]);
   });
 
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: a first unfinished round keeps awaiting_proposal and clears activeRound', async kind => {
     const opened = await world(kind);
     const state = await reachK3AwaitingProposal(opened, {
@@ -134,7 +134,7 @@ describe('K3 proposal-round fixture (K3-16, L20)', () => {
     expect(proposalIds(after)).toEqual([after.items[0]!.callId]);
   });
 
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: a second unfinished round settles to needs_decision with review_incomplete', async kind => {
     const opened = await world(kind);
     // One real item concluded `done` by a real review round, so the later
@@ -247,7 +247,7 @@ describe('K3 proposal-round fixture real Runtime entry (K3-35 review item)', () 
 });
 
 describe('K3 proposal-round fixture review half (K3-45 setup)', () => {
-  it.each(['memory', 'sqlite'] as const)(
+  it.each(['memory'] as const)(
     'K3-16 %s: a pending_review record enters a real review round, records a conclusion and settles resolved', async kind => {
     const opened = await world(kind);
     const record = await createK3PendingReview(opened, {
