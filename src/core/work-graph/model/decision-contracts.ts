@@ -29,6 +29,7 @@ import type {
   DecisionSourceV1,
   DecisionSubjectV1,
   GoalAutonomyV1,
+  GoalFootprintV1,
   GoalSettingsV1,
   MessageReleaseBlockV1,
   NoticeCategoryV1,
@@ -72,6 +73,12 @@ export interface GoalExecutedFilesPort {
     guards: readonly RecordGuard[];
     sourceCursor: CommitCursor | null;
   }>>;
+}
+
+/** DESIGN §1.2 (decision 121-10): one Goal's conflict footprint (planned and executed), the conflict read's own
+ *  `readGoalFootprint`; the conflict card's source check reads it so the card and its answer see one footprint. */
+export interface GoalFootprintReadPort {
+  readGoalFootprint(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<GoalFootprintV1>>;
 }
 
 export interface MessageDutiesFactsPort {

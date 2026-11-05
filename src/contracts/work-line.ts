@@ -277,7 +277,7 @@ export type NodeDetailRequestV1 = {
 };
 export type NodeRiskV1 = {
   task: TaskTriple; title: string; phase: Phase;
-  shared: { kind: 'module'; module: ModuleRef } | { kind: 'file'; path: string; certainty: 'definite' | 'possible' };
+  shared: { kind: 'module'; module: ModuleRef } | { kind: 'file'; path: string; certainty: 'definite' | 'possible' | 'planned' }; // 'planned': at least one side only plans the file (decision 121-10)
 };
 
 /**
@@ -314,7 +314,7 @@ export type NodeNotesV1 =
 
 export type NodeDetailV1 =
   | { section: 'summary'; node: GraphNodeRefV1; pin: VersionPin;
-      task: (TaskHoverV1 & { plannedModules: ModuleRef[]; actualFiles: ExecutedFilesViewV1;
+      task: (TaskHoverV1 & { plannedModules: ModuleRef[]; plannedFiles: string[]; actualFiles: ExecutedFilesViewV1;
         responsibleNow: LineBriefV1[]; responsibility: 'has_responsibility' | 'none' }) | null;
       group: GroupHoverV1 | null;                                           // 目标、阶段节点
       goal: { anomalyCount: LineCountV1; workingLines: LineCountV1 } | null;

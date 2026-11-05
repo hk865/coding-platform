@@ -114,6 +114,7 @@ function footprint(ref: GoalRef, overrides: Partial<GoalFootprintV1> = {}): Goal
     goalRef: ref,
     planRef: ref.goalId === 'A' ? PA1 : PB1,
     plannedModules: [],
+    plannedFiles: [],
     executedFiles: [],
     executedFilesAvailable: true,
     possiblyIncomplete: false,

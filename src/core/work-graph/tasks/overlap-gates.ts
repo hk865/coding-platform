@@ -32,6 +32,8 @@ export type ModuleOverlapTaskFactsV1 = {
   task: TaskTriple;
   moduleId: string | null;
   effectivePhase: Phase;
+  /** The task's planned files (decision 121-10); absent when its plan lists none. */
+  plannedFiles?: readonly string[];
 };
 export type ModuleOverlapFactsV1 = {
   waiting: ModuleOverlapTaskFactsV1;
@@ -42,14 +44,17 @@ export type ModuleOverlapV1 =
   | { overlaps: false }
   | { overlaps: true; moduleId: string; running: TaskTriple[] };
 
-/** A-12: the waiting task overlaps when another running task of its Goal declares the same module. */
+/** A-12 (decision 49 第 16 项, decision 121-10): the waiting task overlaps when another running task of its Goal declares the same module; when both tasks list planned files, only a shared path makes it an overlap. Planned files never add an overlap across modules: the gate stays a module gate. */
 export function moduleOverlapOf(facts: ModuleOverlapFactsV1): ModuleOverlapV1 {
   const moduleId = facts.waiting.moduleId;
   if (moduleId === null) return { overlaps: false };
+  const own = facts.waiting.plannedFiles;
   const running = facts.others
     .filter(other => other.task.goalId === facts.waiting.task.goalId
       && other.effectivePhase === 'running'
-      && other.moduleId === moduleId)
+      && other.moduleId === moduleId
+      && (own === undefined || other.plannedFiles === undefined
+        || other.plannedFiles.some((path) => own.includes(path))))
     .map(other => other.task);
   return running.length === 0 ? { overlaps: false } : { overlaps: true, moduleId, running };
 }

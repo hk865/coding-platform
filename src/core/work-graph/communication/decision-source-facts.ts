@@ -32,7 +32,7 @@ import { isRecord } from '../../../contracts/validation/common.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../../../contracts/verification.js';
-import type { DecisionSourceFactsPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
+import type { DecisionSourceFactsPort, GoalFootprintReadPort, NoteDecisionSourcePort, S5RecordPort } from '../model/decision-contracts.js';
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { CommandRerunRequestReadPort } from '../model/command-rerun-request-contracts.js';
@@ -131,6 +131,12 @@ export type DecisionSourceFactsDependencies = {
    * present it is used instead of building a private reader here.
    */
   goalCauses?: GoalDecisionCauseReader;
+  /**
+   * DESIGN §1.2 (decision 121-10): the conflict read's own footprint read. With it a `goal_conflict` source is
+   * proven on the same planned and executed footprint the card was raised on; absent keeps the plan-only footprint
+   * of a narrow double.
+   */
+  goalFootprints?: GoalFootprintReadPort;
   /**
    * The ONE `structuralProposalObjects` read the structural card source uses.
    * The answer facts must store the card's frozen digest/ops/moves and member
@@ -423,7 +429,7 @@ export function createDecisionSourceFacts(
           case 'planning_question':
             return readPlanningQuestionSource(support, ctx, identity, goalRef, deps.bindings);
           case 'goal_conflict':
-            return readGoalConflictSource(support, identity, goalRef);
+            return readGoalConflictSource(support, ctx, identity, goalRef, deps.goalFootprints);
           case 'note_review':
             return readNoteReviewSource(support, ctx, source, identity, deps, goalRef);
           case 'unknown_call_review':

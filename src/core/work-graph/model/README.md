@@ -11,7 +11,7 @@
 
 ### Task/Run/执行
 做认领、执行进入与读取、Task/Goal 写入、plan 邻接和命令重跑请求的去这组。
-- `architecture-footprint.ts` — 执行文件到模块的唯一映射（`mapExecutedFilesToModules`）：按当前 catalog 的最长合法路径归属，找不到唯一 owner 的文件是 `moduleRef: null`，不猜；`views/goal-conflicts.ts` 转出它。
+- `architecture-footprint.ts` — 执行文件到模块的唯一映射（`mapExecutedFilesToModules`）：按当前 catalog 的最长合法路径归属，找不到唯一 owner 的文件是 `moduleRef: null`，不猜；`plannedFootprintOf` 是一个 Goal 计划足迹的唯一规则：没写清单的任务给模块，写了清单的给文件和它自己的模块，冲突读（经它也用在冲突卡的来源核对）用它；`views/goal-conflicts.ts` 转出它。
 - `catalog-revision-ports.ts` — catalog 修订规划读的窄端口：`CatalogTaskClosureV1`、`CatalogPlanTaskFactV1`、`CatalogPlanFactsV1`、`CatalogPlanFactsReadV1`、`CatalogPlanFactsPort`、`CatalogResponsibilityFactsV1`、`CatalogResponsibilityPlanInputV1`、`CatalogResponsibilityPort`；实现在 tasks/sessions，组合根注入，architecture 不 import 它们。
 - `claim-contracts.ts` — `TaskClaim` 认领、重新入队与审查认领的输入、`TaskClaimPort` 和依赖。
 - `command-rerun-request-contracts.ts` — `CommandRerunRequest` 读写端口、回复分支与 Task closure 读取 DTO。
@@ -49,7 +49,7 @@
 ### 计划/证据/审查
 做 Plan、证据/验证、决定队列和未知调用审查的去这组。
 - `completion-policy-contracts.ts` — 当前完成策略的读端口 `CompletionPolicyReadPort`（`readCurrentCompletionPolicy`）与它的读结果 `CurrentCompletionPolicyRead`（active 指针快照和它钉住的不可变策略版本）；实现是 `configuration/project-bootstrap-service.ts` 的同名读，`configuration/project-bootstrap-contracts.ts` 只从这里导入端口、转出读结果，P11 的采用 owner（`tasks/initialization-adoption-service.ts`）经注入的 `policies` 读它。
-- `decision-contracts.ts` — 决定队列/卡片/notice、Goal 设置与答复的端口和读 DTO；`DecisionCardV1` 与 `NoticeItemV1` 带 `subject`（`DecisionSubjectV1`，Goal 或 project），没有并列的 `goalRef`；卡片来源端口用 `project?: boolean` 标记兼服务项目 subject，注记决定来源按 `subject` 读；7A-1 的消息提交写端口（`MessageCommandWritePort`，扩展窄的 `MessageWriteOwnerPort`）、提交伴随记录与片段，以及交给 7A-2 的放行端口（`MessageReleasePort`、`MessageReleaseCandidatesPort`）和放行卡条目输入；7A-2 的 `ResolveDecisionActionV1` 加上放行答复提交后的 `WriteResult<SessionMessage>` 臂，候选的 `blockedReason` 改用 C 里 `MessageReleaseBlockV1` 的那三名加 `activity_conflict`；`CandidateRequestFactsPort` 另带 `interventionSource`。
+- `decision-contracts.ts` — 决定队列/卡片/notice、Goal 设置与答复的端口和读 DTO；`DecisionCardV1` 与 `NoticeItemV1` 带 `subject`（`DecisionSubjectV1`，Goal 或 project），没有并列的 `goalRef`；卡片来源端口用 `project?: boolean` 标记兼服务项目 subject，注记决定来源按 `subject` 读；7A-1 的消息提交写端口（`MessageCommandWritePort`，扩展窄的 `MessageWriteOwnerPort`）、提交伴随记录与片段，以及交给 7A-2 的放行端口（`MessageReleasePort`、`MessageReleaseCandidatesPort`）和放行卡条目输入；7A-2 的 `ResolveDecisionActionV1` 加上放行答复提交后的 `WriteResult<SessionMessage>` 臂，候选的 `blockedReason` 改用 C 里 `MessageReleaseBlockV1` 的那三名加 `activity_conflict`；`CandidateRequestFactsPort` 另带 `interventionSource`；`GoalFootprintReadPort` 是冲突卡来源核对也读的足迹读口。
 - `goal-card-contracts.ts` — 目标卡片的初始化 binding、理解指针、确认与复制端口：`InitializationBindingReadPort`、`GoalUnderstandingReadPort`、`GoalConfirmPort`、`GoalCopyPort`。
 - `goal-copy-contracts.ts` — 复制取消 Goal 的两个端口：`CopyInterventionReadPort`（分页读可复制干预，失败是拒绝不是空集）与 `CopyInterventionRetractionPort`（撤回一条），以及候选 DTO `CopyInterventionCandidateV1`（从 `src/contracts/goal-copy-retraction.ts` 转出，正本在 C）。
 - `evidence-contracts.ts` — `EvidencePort`：验证轮、检查开始/记录/终止/重验的写入口。
@@ -111,18 +111,19 @@
 | `MaterialPort` | `src/core/work-graph/model/material-contracts.ts:11` | 存 artifact、按引用打开并区分历史用途 | 材料读写 |
 | `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:379` | 消息发送、读取、ack、回复；读不改状态；7C-1 另带可选的 Host 发送回执读 `lookupHostSendCommit`（只按原发送身份查，不改答案） | 收件箱与决定消息 |
 | `ForwardMessageInputV1`、`DisposeWaitInputV1`、`ForwardMessageResultV1`、`MessageForwardingPort` | `src/core/work-graph/model/communication-contracts.ts:557` | 转发 owner 的输入/结果 DTO 与端口：`forwarded` 是一次提交，`existing` 是第二次同目标命令且不带游标；P 的复制转发只经 `forwardCopiedIntervention` | 组合根装配转发 owner、P 的复制 owner 与 F 的行时；不要另写转发输入/结果或端口 |
-| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:441` | 决定队列、来源页与冲突读取 | 决定读模型 |
+| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:448` | 决定队列、来源页与冲突读取 | 决定读模型 |
 | `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:241` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
-| `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:261` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
-| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:460` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
-| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:480` | notice 项的读取与排序 | notice 来源适配 |
+| `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:282` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
+| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:467` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
+| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:487` | notice 项的读取与排序 | notice 来源适配 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:17`、`src/core/work-graph/model/goal-copy-contracts.ts:22`、`src/core/work-graph/model/goal-copy-contracts.ts:15` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（C 的正本再导出；失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:110` | 注记写入、审核、撤回 | 注记写 owner |
 | `NoteHeadCheckPort`、`NoteLinkVerifyV1` | `src/core/work-graph/model/note-contracts.ts:300`、`src/core/work-graph/model/note-contracts.ts:253` | 注记检查端口：`checkNotes`（不带 `verifyLinks` 只做第一档、从不建程序；带 `verifyLinks: NoteLinkVerifyV1` 时存疑的头版本联系交第二档；`heldByRun` 是替哪个 Run 读）、`checkHeads`，和两个只读 Host 内存的方法：`doubtfulLinks`（读出 `refs_pending`、还没有结论的头版本联系，按 `noteId`）、`brokenLinks`（读出 `broken` 的 accepted/reviewed 头版本联系，带 `heldByRun`） | 注记读模型、写后核对、“重新核对”路由、Run 里改文件后的检查；Host 的后台批量读 `doubtfulLinks`，书记提醒读 `brokenLinks` |
 | `analysedDigestsMatch` | `src/core/work-graph/model/note-contracts.ts:260` | 第二档回的 `analysed` 摘要和之前读到的原始字节摘要比：两边都有的路径摘要都相等才算对得上 | 第一档记第二档结论之前、写入闸门比第二档的摘要时；不要另写比对 |
 | `NoteReadPort` | `src/core/work-graph/model/note-contracts.ts:399` | 注记按引用/列表/版本读取 | 注记读模型 |
 | `NoteMemoryReadPort` | `src/core/work-graph/model/note-contracts.ts:499` | 记忆 lookup/neighbors/history/conflicts/find/stale | 注记检索 |
-| `mapExecutedFilesToModules` | `src/core/work-graph/model/architecture-footprint.ts:17` | 把执行文件按当前 catalog 的最长合法路径映射到模块，无唯一 owner 时 `moduleRef: null`，不猜 | repair footprint 与 goal-conflict 读共用；不要另写路径归属 |
+| `mapExecutedFilesToModules` | `src/core/work-graph/model/architecture-footprint.ts:21` | 把执行文件按当前 catalog 的最长合法路径映射到模块，无唯一 owner 时 `moduleRef: null`，不猜 | repair footprint 与 goal-conflict 读共用；不要另写路径归属 |
+| `plannedFootprintOf` | `src/core/work-graph/model/architecture-footprint.ts:38` | 一个 Goal 计划足迹的唯一规则：没写清单的任务给模块，写了清单的给文件和它自己的模块 | 冲突读（经它也用在冲突卡的来源核对）；不要另写计划模块或计划文件的循环 |
 | `UnknownCallReviewPort` | `src/core/work-graph/model/unknown-call-review-contracts.ts:59` | 未知调用审查的读与写 | 审查/重跑链路 |
 | `WorkLineReadPort` | `src/core/work-graph/model/work-line-contracts.ts:21` | 工作线列表、详情、分页与对话来源 | 工作线读模型 |
 | `NodeDetailReadPort` | `src/core/work-graph/model/work-line-contracts.ts:33` | 图悬停与节点详情读取 | 图/节点详情 |

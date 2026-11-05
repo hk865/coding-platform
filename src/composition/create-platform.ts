@@ -83,7 +83,7 @@ import { createGoalSecretary } from '../core/work-graph/tasks/goal-secretary.js'
 import { createHandoffToolEntry } from '../business/workflow/handoff-tool-entry.js';
 import { createHandoffApprovalApplicationAdapter } from '../business/workflow/session-handoff.js';
 import {
-  createGoalConflictAssembler, listWorkspaceGoals, readGoalTerminalState,
+  createGoalConflictAssembler, listWorkspaceGoals, readGoalFootprint, readGoalTerminalState,
 } from '../core/work-graph/views/goal-conflicts.js';
 import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
@@ -1670,6 +1670,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // The SAME formal cause reader the queue source uses, so the card answer
       // verifies the same derived causes (including `no_adviser`).
       goalCauses: goalDecisionCauseReader,
+      // DESIGN §1.2 (decision 121-10): the conflict read's own footprint, so a conflict card raised by planned or by
+      // executed files is answerable; the arrow reads `goalExecutedFiles` at call time (it is built below).
+      goalFootprints: { readGoalFootprint: (ctx, input) =>
+        readGoalFootprint({ records: backend.records, catalog, executedFiles: goalExecutedFiles }, ctx, input) },
       // K3 L19a: the SAME CRR owner, original-Run execution read and Kernel
       // command reader (the K L9 window) the card source uses.
       commandRerunRequests, commandRerunExecutions: executionReader,

@@ -23,6 +23,8 @@ export type TaskScope = {
  * 一个与 revision 语境一致的名字，避免同一形状出现第二份定义。
  */
 export type PlanTaskAssignment = import('./initial-planning.js').InitialPlanAssignment;
+/** 一个任务的计划文件最多几项（决定 121-10）：一个任务一件事，更长的清单说明该拆任务。 */
+export const PLANNED_FILES_MAX = 50;
 /**
  * Runtime Task: four orthogonal dimensions (requirementLevel / taskKind /
  * disposition / phase) plus a scope. Whether a Task may be executed is a
@@ -58,6 +60,13 @@ export type RuntimeTask = {
     estimatedLines?: number;
     /** 任务书里模型给的档位；缺省 = 未分档，只累计、不提醒。 */
     sizeClass?: 'small' | 'medium' | 'large' | 'explore';
+    /**
+     * 计划写的、这个任务预计要改的文件：工作区相对的确切路径，1–PLANNED_FILES_MAX 项，不重复，只在 work 任务上
+     * （决定 121-10）。只是提示，不是限制：执行者改清单外的文件不用先问，界面把那些文件标“不在计划里”；两个都写了
+     * 清单的任务按文件判重叠。缺省 = 计划没写（不是“不改文件”），这时照旧按所属模块判。它是执行定义的一部分，
+     * 任务开始执行后不再变。
+     */
+    plannedFiles?: string[];
     /**
      * 只在 disposition="superseded" 时有意义：该任务在后一个
      * PlanRevision 里由哪个任务接手（同一义务、同一验收语义，只换承担者）。

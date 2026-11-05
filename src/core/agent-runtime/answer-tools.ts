@@ -25,7 +25,8 @@ import type {
   GoalCardDraftV1, GoalScreeningV1, QueryAnswerShapeV1, QueryJobAnswerV1, QueryRunRef,
   SecretaryRequestManifestV1,
 } from '../../contracts/query-job.js';
-import type { PlanRevisionDraft, RuntimeTask, TaskInputRequirementV2 } from '../../contracts/plan.js';
+import { PLANNED_FILES_MAX, type PlanRevisionDraft, type RuntimeTask, type TaskInputRequirementV2 } from '../../contracts/plan.js';
+import { isLiteralSourceFilePath } from '../workspace/path-validation.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import {
   planReviewAnswerText, parsePlanReviewAnswer, type PlanReviewFormV1,
@@ -309,6 +310,11 @@ function planSchema(texts: ToolTextV1['parameters']): z.ZodType {
       ...commonTaskFields,
       taskKind: z.literal('work'),
       executionIntent: z.enum(['plan_only', 'request_execution']).optional(),
+        // Decision 121-10: the planned files are a hint; one path rule with the plan codec.
+        plannedFiles: z.array(z.string().refine(isLiteralSourceFilePath, 'Use a normalized workspace-relative file path'))
+          .min(1).max(PLANNED_FILES_MAX)
+          .refine((paths) => new Set(paths).size === paths.length, 'List each path once')
+          .optional(),
     }).strict(),
     z.object({
       ...commonTaskFields,

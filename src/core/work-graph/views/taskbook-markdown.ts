@@ -49,6 +49,7 @@ export function renderTaskbookMarkdown(
     lines.push(`## ${task.title}`, '');
     lines.push(`- Task: ${task.taskId}`);
     lines.push(`- Scope: ${scopeText(task.scope)}`);
+    if (task.plannedFiles !== undefined) lines.push(`- Planned files: ${task.plannedFiles.join(', ')}`);
     lines.push(`- Estimated lines: ${task.estimatedLines === undefined ? '未预估' : String(task.estimatedLines)}`);
     lines.push('');
 

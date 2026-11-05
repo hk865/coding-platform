@@ -36,6 +36,8 @@ import type {
   PlanRevisionRef,
   PlanRevisionSnapshot,
 } from '../../../contracts/plan.js';
+import { PLANNED_FILES_MAX } from '../../../contracts/plan.js';
+import { isLiteralSourceFilePath } from '../../workspace/path-validation.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import { aggregateRefProblem } from './decision-record-codecs.js';
 import { encodeEventEnvelope } from './event-envelope.js';
@@ -360,6 +362,22 @@ function runtimeTaskIssues(value: unknown, path: string): string[] {
   }
   if (value['sizeClass'] !== undefined && !isEnum(value['sizeClass'], TASK_SIZE_CLASSES)) {
     issues.push('sizeClass must be small|medium|large|explore when present');
+  }
+  // Decision 121-10: the hint list of a work task's planned files, checked only when present (an old record has none).
+  const plannedFiles = value['plannedFiles'];
+  if (plannedFiles !== undefined) {
+    if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > PLANNED_FILES_MAX) {
+      issues.push(`${path}.plannedFiles must be an array of 1 to 50 paths when present`);
+    } else {
+      plannedFiles.forEach((entry, index) => {
+        if (!isLiteralSourceFilePath(entry)) {
+          issues.push(`${path}.plannedFiles[${index}] must be a normalized workspace-relative file path`);
+        } else if (plannedFiles.indexOf(entry) !== index) {
+          issues.push(`${path}.plannedFiles[${index}] repeats an earlier path`);
+        }
+      });
+    }
+    if (value['taskKind'] === 'gate') issues.push(`${path}.plannedFiles must not appear on a gate task`);
   }
   return issues;
 }

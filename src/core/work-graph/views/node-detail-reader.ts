@@ -1372,6 +1372,7 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
         phaseCause: row.phaseCause ?? null, disposition: row.disposition, display: display.display,
         module: moduleOf(row), owners, participatedLines: { status: 'exact', value: (participationIndex.get(keyOf(row.ref)) ?? []).length },
         plannedModules: moduleOf(row) === null ? [] : [moduleOf(row)!],
+        plannedFiles: [...(row.definition.plannedFiles ?? [])],
         actualFiles, responsibleNow: owners, responsibility: owners.length === 0 ? 'none' : 'has_responsibility',
       },
       group: null, goal: null, module: null, line: null,
@@ -1493,20 +1494,37 @@ async function readSection(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
       if (directEdge(row, candidate, graph.plan)) continue;
       const ownModule = moduleOf(row);
       const candidateModule = moduleOf(candidate);
-      if (ownModule !== null && candidateModule !== null && keyOf(ownModule) === keyOf(candidateModule)) {
+      const ownPlanned = row.definition.plannedFiles;
+      const candidatePlanned = candidate.definition.plannedFiles;
+      // Decision 121-10: a shared module is a risk while either task lists no planned files; two listing tasks meet
+      // only on a path.
+      if (ownModule !== null && candidateModule !== null && keyOf(ownModule) === keyOf(candidateModule)
+        && (ownPlanned === undefined || candidatePlanned === undefined)) {
         items.push({ task: candidate.ref, title: candidate.definition.title, phase: candidate.effectivePhase,
           shared: { kind: 'module', module: ownModule } });
         continue;
       }
+      const ownRuns = runs.get(row.ref.taskId) ?? [];
+      const candidateRuns = runs.get(candidate.ref.taskId) ?? [];
+      const changedBy = (taskRuns: typeof ownRuns): Set<string> => new Set(facts.availability !== 'available' ? []
+        : facts.files.filter((file) => taskRuns.some((run) => keyOf(run.ref) === keyOf(file.runRef))).map((file) => file.path));
+      const ownPaths = changedBy(ownRuns);
+      const candidatePaths = changedBy(candidateRuns);
       if (facts.availability === 'available') {
-        const ownRuns = runs.get(row.ref.taskId) ?? [];
-        const ownPaths = new Set(facts.files.filter((file) => ownRuns.some((run) => keyOf(run.ref) === keyOf(file.runRef)))
-          .map((file) => file.path));
-        const candidateRuns = runs.get(candidate.ref.taskId) ?? [];
         const shared = facts.files.find((file) => ownPaths.has(file.path)
           && candidateRuns.some((run) => keyOf(run.ref) === keyOf(file.runRef)));
-        if (shared !== undefined) items.push({ task: candidate.ref, title: candidate.definition.title,
-          phase: candidate.effectivePhase, shared: { kind: 'file', path: shared.path, certainty: shared.certainty } });
+        if (shared !== undefined) {
+          items.push({ task: candidate.ref, title: candidate.definition.title,
+            phase: candidate.effectivePhase, shared: { kind: 'file', path: shared.path, certainty: shared.certainty } });
+          continue;
+        }
+      }
+      // Decision 121-10: a planned file the other task plans or changed.
+      const planned = (ownPlanned ?? []).find((path) => (candidatePlanned ?? []).includes(path) || candidatePaths.has(path))
+        ?? (candidatePlanned ?? []).find((path) => ownPaths.has(path));
+      if (planned !== undefined) {
+        items.push({ task: candidate.ref, title: candidate.definition.title,
+          phase: candidate.effectivePhase, shared: { kind: 'file', path: planned, certainty: 'planned' } });
       }
     }
     // Underlying source: `risks` has no per-item index. The item order is the

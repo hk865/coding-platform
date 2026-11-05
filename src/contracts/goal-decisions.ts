@@ -190,7 +190,11 @@ export type MessageReleaseBlockV1 = {
 
 export type GoalFootprintV1 = {
   goalRef: GoalRef; planRef: PlanRevisionRef | null;
+  /** Module claims: the modules of the work tasks that list no planned files (decision 121-10). */
   plannedModules: ModuleRef[];
+  /** The planned files of the work tasks that list them, each with that task's own module (`null` without a module
+   *  scope), so the other Goal's module claim meets them without a catalog (decision 121-10). */
+  plannedFiles: { path: string; taskModule: ModuleRef | null }[];
   executedFiles: { path: string; moduleRef: ModuleRef | null;
     certainty: 'definite' | 'possible' }[];
   executedFilesAvailable: boolean; possiblyIncomplete: boolean;

@@ -575,6 +575,7 @@ function nodeDetail(input: Record<string, unknown>): NodeDetailV1 {
       display: { neverRanTerminal: null, anomaly: null, attention: null },
       module: null, owners: owner === undefined ? [] : [lineBrief(owner)], participatedLines: { status: 'exact', value: 0 },
       plannedModules: [],
+      plannedFiles: [],
       actualFiles: { availability: 'unavailable', cause: 'not_recorded', reason: 'scene' },
       responsibleNow: owner === undefined ? [] : [lineBrief(owner)], responsibility: owner === undefined ? 'none' : 'has_responsibility',
     },

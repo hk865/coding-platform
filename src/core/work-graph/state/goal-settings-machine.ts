@@ -262,24 +262,32 @@ export function goalDecisionBasisMatches(basis: GoalDecisionBasisV1, current: Go
   return sameJsonOrThrow(captured, actual);
 }
 
-/** §2.8: the overlap facts of two Goal footprints, pure and order-independent. */
+/**
+ * DESIGN §1.2 (decision 42 第 4 条甲 (b), decision 121-10): the overlap facts of two Goal footprints, pure and
+ * order-independent. A module claim (a planned module of a task with no file list) meets the other Goal's modules:
+ * its module claims, the own modules of its listing tasks and the modules its executed files map to. Planned and
+ * executed files meet only on the same path, so two Goals that list different files of one module do not overlap,
+ * and two Goals whose only shared module comes from executed files on both sides meet only on a shared path.
+ */
 export function goalConflictFacts(a: GoalFootprintV1, b: GoalFootprintV1): GoalConflictFactsV1 {
-  const moduleSet = (footprint: GoalFootprintV1): Map<string, GoalFootprintV1['plannedModules'][number]> => {
-    const modules = new Map<string, GoalFootprintV1['plannedModules'][number]>();
-    for (const moduleRef of footprint.plannedModules) modules.set(canonicalJson(moduleRef as JsonValue), moduleRef);
-    for (const file of footprint.executedFiles) {
-      if (file.moduleRef !== null) modules.set(canonicalJson(file.moduleRef as JsonValue), file.moduleRef);
-    }
-    return modules;
-  };
-  const fileSet = (footprint: GoalFootprintV1): Set<string> =>
-    new Set(footprint.executedFiles.map((file) => file.path));
-  const modulesA = moduleSet(a);
-  const modulesB = moduleSet(b);
-  const moduleRefs = [...modulesA.entries()]
-    .filter(([key]) => modulesB.has(key))
-    .map(([, moduleRef]) => moduleRef)
-    .sort((left, right) => compareText(canonicalJson(left as JsonValue), canonicalJson(right as JsonValue)));
+  type Module = GoalFootprintV1['plannedModules'][number];
+  const keyed = (refs: readonly Module[]): Map<string, Module> =>
+    new Map(refs.map((moduleRef) => [canonicalJson(moduleRef as JsonValue), moduleRef] as const));
+  const moduleClaims = (footprint: GoalFootprintV1): Map<string, Module> => keyed(footprint.plannedModules);
+  const reach = (footprint: GoalFootprintV1): Map<string, Module> => keyed([
+    ...footprint.plannedModules,
+    ...footprint.plannedFiles.flatMap((file) => (file.taskModule === null ? [] : [file.taskModule])),
+    ...footprint.executedFiles.flatMap((file) => (file.moduleRef === null ? [] : [file.moduleRef])),
+  ]);
+  const shared = new Map<string, Module>();
+  for (const [left, right] of [[moduleClaims(a), reach(b)], [reach(a), moduleClaims(b)]] as const) {
+    for (const [key, moduleRef] of left) if (right.has(key)) shared.set(key, moduleRef);
+  }
+  const moduleRefs = [...shared.entries()]
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([, moduleRef]) => moduleRef);
+  const fileSet = (footprint: GoalFootprintV1): Set<string> => new Set([
+    ...footprint.plannedFiles.map((file) => file.path), ...footprint.executedFiles.map((file) => file.path)]);
   const filesA = fileSet(a);
   const filesB = fileSet(b);
   const filePaths = [...filesA].filter((path) => filesB.has(path)).sort(compareText);

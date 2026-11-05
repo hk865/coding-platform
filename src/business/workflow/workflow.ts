@@ -1695,7 +1695,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     // `taskId`, never by the sorted array's index.
     const facts: ModuleOverlapTaskFactsV1[] = graph.tasks.map(row => ({
       task: row.ref, effectivePhase: row.effectivePhase,
-      moduleId: row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null }));
+      moduleId: row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null,
+      ...(row.definition.plannedFiles === undefined ? {} : { plannedFiles: row.definition.plannedFiles }) }));
     const factOf = new Map(facts.map(fact => [fact.task.taskId, fact] as const));
     const order = splitNonOverlapping(ordered.map(candidate => ({ candidate,
       overlap: moduleOverlapOf({ waiting: factOf.get(candidate.taskId)!, others: facts }) })));
@@ -1853,9 +1854,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const running: OverlapBasisV1['running'] = [];
         let incomplete: string | null = null;
         for (const conflicting of graph.tasks) {
-          if (conflicting.effectivePhase !== 'running') continue;
-          if (conflicting.definition.scope.kind !== 'module'
-            || conflicting.definition.scope.moduleRef !== overlap.moduleId) continue;
+          // The conflict set is the overlap rule's own `running` (planned files narrow it), never re-collected by module.
+          if (!overlap.running.some((ref) => ref.taskId === conflicting.ref.taskId)) continue;
           const run = conflicting.execution;
           if (run === null) {
             incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;

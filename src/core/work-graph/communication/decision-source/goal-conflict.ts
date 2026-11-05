@@ -1,11 +1,14 @@
-import type { ModuleRef, SessionRef, VersionPin } from '../../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin } from '../../../../contracts/core/identity.js';
+import type { CoreCallContext } from '../../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../../contracts/core/results.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
   GoalDecisionBasisV1, GoalFootprintV1 } from '../../../../contracts/goal-decisions.js';
-import { canonicalJson, canonicalOf, type JsonValue } from '../../../../contracts/fingerprint.js';
+import { canonicalJson, type JsonValue } from '../../../../contracts/fingerprint.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { goalConflictFacts } from '../../state/goal-settings-machine.js';
+import { plannedFootprintOf } from '../../model/architecture-footprint.js';
+import type { GoalFootprintReadPort } from '../../model/decision-contracts.js';
 import { decodeGoalPhaseSnapshot } from '../../tasks/completion-record-codecs.js';
 import { decodePlanRevisionSnapshot } from '../../persistence/plan-record-codecs.js';
 import { goalBasis, sameJson } from './read-support.js';
@@ -18,36 +21,29 @@ const CONFLICT_OPTIONS: readonly DecisionOptionV1[] = [
   { id: 'parallel', label: '接受风险并行', effect: 'apply' },
 ];
 
-/** §4.3: the active Plan's planned module scopes (work Tasks only). */
-async function plannedModules(support: SourceReadSupport, goal: GoalSnapshot): Promise<ReadResult<ModuleRef[]>> {
-  if (goal.activePlanRevision === null) return { status: 'ready', value: [] };
-  const read = await support.readDecoded(goal.activePlanRevision, decodePlanRevisionSnapshot, 'PlanRevision');
-  if (read.status !== 'ready') return read;
-  const modules: ModuleRef[] = [];
-  const seen = new Set<string>();
-  for (const task of read.value.tasks) {
-    if (task.taskKind !== 'work' || task.disposition === 'cancelled' || task.disposition === 'superseded'
-      || task.scope.kind !== 'module') continue;
-    const module = { projectId: goal.ref.projectId, moduleId: task.scope.moduleRef };
-    const key = canonicalOf(module) ?? '';
-    if (seen.has(key)) continue;
-    seen.add(key);
-    modules.push(module);
+/** DESIGN §1.2: a narrow double's plan-only footprint, by the one plan-footprint rule (no executed files read). */
+async function plannedFootprint(support: SourceReadSupport, goal: GoalSnapshot): Promise<ReadResult<GoalFootprintV1>> {
+  let planned: Pick<GoalFootprintV1, 'plannedModules' | 'plannedFiles'> = { plannedModules: [], plannedFiles: [] };
+  if (goal.activePlanRevision !== null) {
+    const read = await support.readDecoded(goal.activePlanRevision, decodePlanRevisionSnapshot, 'PlanRevision');
+    if (read.status !== 'ready') return read;
+    planned = plannedFootprintOf(read.value.tasks, goal.ref.projectId);
   }
-  return { status: 'ready', value: modules };
-}
-
-async function footprintOf(support: SourceReadSupport, goal: GoalSnapshot): Promise<ReadResult<GoalFootprintV1>> {
-  const modules = await plannedModules(support, goal);
-  if (modules.status !== 'ready') return modules;
   return { status: 'ready', value: {
     goalRef: structuredClone(goal.ref),
     planRef: structuredClone(goal.activePlanRevision),
-    plannedModules: modules.value,
+    ...planned,
     executedFiles: [],
     executedFilesAvailable: false,
     possiblyIncomplete: true,
   } };
+}
+
+/** The card's footprint: the conflict read's own (planned and executed, decision 121-10) when it is wired. */
+async function footprintOf(support: SourceReadSupport, ctx: CoreCallContext, goal: GoalSnapshot,
+  footprints: GoalFootprintReadPort | undefined): Promise<ReadResult<GoalFootprintV1>> {
+  if (footprints !== undefined) return footprints.readGoalFootprint(ctx, { goalRef: goal.ref });
+  return plannedFootprint(support, goal);
 }
 
 async function goalTerminal(support: SourceReadSupport, goal: GoalSnapshot): Promise<{ cancelled: boolean; completed: boolean } | ReadResult<never>> {
@@ -70,8 +66,10 @@ async function goalTerminal(support: SourceReadSupport, goal: GoalSnapshot): Pro
 /** The `goal_conflict` decision source: both Goals, both active Plans and a real §4.3 overlap. */
 export async function readGoalConflictSource(
   support: SourceReadSupport,
+  ctx: CoreCallContext,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'goal_conflict' }>,
   goalRef: GoalRef,
+  footprints?: GoalFootprintReadPort,
 ): Promise<SourceReadResult> {
   let goal: GoalSnapshot;
   let objects: DecisionObjectV1[] = [];
@@ -102,9 +100,9 @@ export async function readGoalConflictSource(
   if (goals.length !== 2 || sameJson(goals[0]!.ref, goals[1]!.ref)) {
     return rejectedWithCurrent('invalid', 'a goal conflict names two distinct Goals');
   }
-  const leftFootprint = await footprintOf(support, goals[0]!);
+  const leftFootprint = await footprintOf(support, ctx, goals[0]!, footprints);
   if (leftFootprint.status !== 'ready') return leftFootprint;
-  const rightFootprint = await footprintOf(support, goals[1]!);
+  const rightFootprint = await footprintOf(support, ctx, goals[1]!, footprints);
   if (rightFootprint.status !== 'ready') return rightFootprint;
   if (!goalConflictFacts(leftFootprint.value, rightFootprint.value).overlaps) {
     return rejectedWithCurrent('not_found', 'the two Goals have no §4.3 footprint conflict');

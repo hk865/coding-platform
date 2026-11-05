@@ -10,7 +10,7 @@
 
 ## 文件
 - `access.ts` — 根绑定与每次读取资格：包装 `WorkspaceSandbox`，把 Host 授权与内核路径策略取交集；`readMany` 把一次访问的多个读交给 Kernel 的 `readMany`（slice-8E2-SPEC W12），逐路径先判授权。
-- `path-validation.ts` — `isSafeSourceRelativePath`：唯一的词法源相对路径规则（非空、≤4096 UTF-16、无 `\`/`:`/NUL、每段非空且不是 `.`/`..`）。
+- `path-validation.ts` — `isSafeSourceRelativePath`：唯一的词法源相对路径规则（非空、≤4096 UTF-16、无 `\`/`:`/NUL、每段非空且不是 `.`/`..`）；`isLiteralSourceFilePath`（只认一个确切文件：词法规则再加不含 `*`、`?`；计划文件用）。
 - `ports.ts` — 本层请求/结果/端口 DTO，`deepFreeze` 与 `validateSourceQuery`；第二档引用核对的六个类型（`ReferencePriority`、`ReferenceQuestionV1`、`ReferenceAnswerV1`、`ReferenceCheckRequestV1`、`ReferenceCheckResultV1`、`ReferenceAnalyzerPort`，slice-8E2-SPEC §2.0）。
 - `workspace-tools.ts` — 装配唯一公开工具面 `WorkspaceToolsPort`、Host 限额校验与 continuation 读取；句柄另有 `readWorkspaceFiles`（一次访问读多个工作树文件）和 `listWorkspaceInputs`（列当前项目输入路径），都不在 `WorkspaceToolsPort` 上。
 - `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、一次访问读多个文件（`readFiles`）、列项目输入（`listInputs`）、关闭。

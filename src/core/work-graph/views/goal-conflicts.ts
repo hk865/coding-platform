@@ -19,7 +19,6 @@ import { decisionSourceKey,
   type GoalSettingsV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type {
   DecisionCardV1,
@@ -36,7 +35,7 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
-import { mapExecutedFilesToModules } from '../model/architecture-footprint.js';
+import { mapExecutedFilesToModules, plannedFootprintOf } from '../model/architecture-footprint.js';
 import { goalDecisionBasis } from '../tasks/goal-basis.js';
 
 // The two shared RecordStore failure helpers live in `persistence` (the
@@ -390,9 +389,8 @@ export async function readGoalFootprint(
   }
   // `not_found` is the genuine "no catalog adopted" answer: keep it as absence.
 
-  // The active Plan's planned modules (work + a real module scope). §4.3 line
-  // 825: future/deferred are still intent, only cancelled/superseded are out.
-  const plannedModules: ModuleRef[] = [];
+  // DESIGN §1.2: the active Plan's module claims and planned files, by the one plan-footprint rule.
+  let planned: Pick<GoalFootprintV1, 'plannedModules' | 'plannedFiles'> = { plannedModules: [], plannedFiles: [] };
   if (goal.activePlanRevision !== null) {
     try {
       const read = await deps.records.readMany([canonicalJson(goal.activePlanRevision as unknown as JsonValue)]);
@@ -401,16 +399,7 @@ export async function readGoalFootprint(
       if (record !== undefined) {
         const decoded = decodePlanRevisionSnapshot(record);
         if (decoded.status !== 'decoded') return { status: 'rejected', code: 'unavailable', reason: `Goal footprint plan: ${decoded.reason}` };
-        const seen = new Set<string>();
-        for (const task of decoded.value.tasks) {
-          if (task.taskKind !== 'work' || task.disposition === 'cancelled' || task.disposition === 'superseded'
-            || task.scope.kind !== 'module') continue;
-          const module = { projectId: goal.ref.projectId, moduleId: task.scope.moduleRef };
-          const key = canonicalJson(module as unknown as JsonValue);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          plannedModules.push(module);
-        }
+        planned = plannedFootprintOf(decoded.value.tasks, goal.ref.projectId);
       }
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
@@ -428,7 +417,7 @@ export async function readGoalFootprint(
   return { status: 'ready', value: {
     goalRef: { ...goal.ref },
     planRef: goal.activePlanRevision === null ? null : { ...goal.activePlanRevision },
-    plannedModules,
+    plannedModules: planned.plannedModules, plannedFiles: planned.plannedFiles,
     executedFiles: mapped,
     executedFilesAvailable: executed.value.availability === 'available',
     possiblyIncomplete: executed.value.possiblyIncomplete || executed.value.availability !== 'available'
